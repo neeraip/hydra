@@ -1,0 +1,42 @@
+[TITLE]
+Pump with energy price pattern — time-varying electricity cost
+
+[JUNCTIONS]
+J1    0    300
+
+[RESERVOIRS]
+R1    0
+
+[PUMPS]
+PMP1    R1    J1    HEAD C1
+
+[CURVES]
+;PUMP:
+C1    0    400
+C1    1000    200
+;EFFICIENCY:
+EC1   0      50
+EC1   500    85
+EC1   1000   60
+
+[PATTERNS]
+;Price varies: off-peak / peak / off-peak / peak
+PP1    0.05    0.15    0.05    0.15    0.05    0.15
+
+[ENERGY]
+Global Efficiency    75
+Global Price    0.10
+Global Pattern    PP1
+Pump    PMP1    Effic    EC1
+Pump    PMP1    Price    0.12
+
+[OPTIONS]
+Units    GPM
+Headloss    H-W
+
+[TIMES]
+Duration    6:00
+Hydraulic Timestep    1:00
+Report Timestep    1:00
+
+[END]

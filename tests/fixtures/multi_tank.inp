@@ -1,0 +1,30 @@
+[TITLE]
+Multi-tank network — two tanks at different elevations
+
+[JUNCTIONS]
+J1    50    200
+J2    50    100
+
+[RESERVOIRS]
+R1    200
+
+[TANKS]
+T1    100    10    0    30    20    0
+T2    80     5     0    25    15    0
+
+[PIPES]
+P1    R1    J1    1000    12    100    0    Open
+P2    J1    T1    500     12    100    0    Open
+P3    J1    J2    1500    12    100    0    Open
+P4    J2    T2    500     12    100    0    Open
+
+[TIMES]
+Duration    6:00
+Hydraulic Timestep    0:30
+Report Timestep    0:30
+
+[OPTIONS]
+Units    GPM
+Headloss    H-W
+
+[END]

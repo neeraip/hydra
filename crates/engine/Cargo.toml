@@ -1,0 +1,27 @@
+[package]
+name = "hydra-engine"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+publish = false
+description = "Hydra water distribution engine — data model, hydraulic solver, quality engine, session API, analytics"
+
+[features]
+test-support = []
+
+[dependencies]
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[dev-dependencies]
+approx = "0.5"
+criterion = { version = "0.5", features = ["html_reports"] }
+hydra-engine = { path = ".", features = ["test-support"] }
+pretty_assertions = "1"
+rstest = "0.23"
+
+[[bench]]
+name = "solver"
+harness = false

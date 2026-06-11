@@ -1,0 +1,31 @@
+[TITLE]
+Pipe closed via STATUS section (not inline on PIPES line)
+
+[JUNCTIONS]
+;ID    Elev    Demand
+J1     0       100
+J2     0       80
+
+[RESERVOIRS]
+R1    100
+
+[PIPES]
+;ID    Node1  Node2  Length  Diam  Rough  MLoss  Status
+P1     R1     J1     1000    12    100    0      Open
+P2     J1     J2     800     10    100    0      Open
+P3     R1     J2     1200    10    100    0      Open
+
+[STATUS]
+P2    Closed
+
+[TIMES]
+Duration           4:00
+Hydraulic Timestep 1:00
+Quality Timestep   0:05
+Report Timestep    1:00
+
+[OPTIONS]
+Units      GPM
+Headloss   H-W
+
+[END]

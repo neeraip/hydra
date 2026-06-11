@@ -1,0 +1,37 @@
+[TITLE]
+CONCEN source with time-varying pattern
+
+[JUNCTIONS]
+;ID    Elev    Demand
+J1     0       100
+J2     0       80
+
+[RESERVOIRS]
+R1    100
+
+[PIPES]
+P1    R1    J1    1000    12    100    0    Open
+P2    J1    J2    800     10    100    0    Open
+
+[PATTERNS]
+;Demand pattern
+PAT1    0.8    1.0    1.2    1.0
+;Source concentration pattern (varies!)
+SRC1    0.5    1.0    1.5    0.8
+
+[SOURCES]
+R1    CONCEN    2.0    SRC1
+
+[TIMES]
+Duration           4:00
+Hydraulic Timestep 1:00
+Quality Timestep   0:05
+Report Timestep    1:00
+
+[OPTIONS]
+Units      GPM
+Headloss   H-W
+Quality    Chemical mg/L
+Pattern    PAT1
+
+[END]

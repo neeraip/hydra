@@ -1,0 +1,54 @@
+[TITLE]
+Multiple simple controls — tank level controls two pumps independently
+
+[JUNCTIONS]
+J1    0    100
+J2    0    50
+
+[RESERVOIRS]
+R1    0
+
+[TANKS]
+; ID   Elev  Init  Min  Max  Diam  0
+T1     100   5     0    10   30    0
+
+[PIPES]
+P1    J1    T1    500     12    100    0    Open
+P2    J2    T1    500     10    100    0    Open
+
+[PUMPS]
+; Main pump — wide operating range
+PMP1    R1    J1    HEAD C1
+; Secondary pump — activates when tank is very low
+PMP2    R1    J2    HEAD C2
+
+[CURVES]
+C1    0    250
+C1    500    150
+C1    1000    20
+C2    0    200
+C2    300    120
+C2    600    10
+
+[CONTROLS]
+; Main pump: standard tank-level cycling
+LINK PMP1 CLOSED IF NODE T1 ABOVE 8
+LINK PMP1 OPEN IF NODE T1 BELOW 4
+; Secondary pump: only kicks in when tank is critically low
+LINK PMP2 OPEN IF NODE T1 BELOW 2
+LINK PMP2 CLOSED IF NODE T1 ABOVE 5
+
+[STATUS]
+; Secondary pump starts closed
+PMP2    Closed
+
+[OPTIONS]
+Units    GPM
+Headloss    H-W
+
+[TIMES]
+Duration    48:00
+Hydraulic Timestep    1:00
+Report Timestep    1:00
+
+[END]

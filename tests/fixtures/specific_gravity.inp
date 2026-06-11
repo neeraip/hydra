@@ -1,0 +1,28 @@
+[TITLE]
+Non-default specific gravity (1.1) — heavier fluid changes pressure conversion
+
+[JUNCTIONS]
+J1    0    100
+J2    50   80
+
+[RESERVOIRS]
+R1    200
+
+[PIPES]
+P1    R1    J1    1000    12    100    0    Open
+P2    J1    J2    800     10    100    0    Open
+
+[EMITTERS]
+J2    0.5
+
+[OPTIONS]
+Units    GPM
+Headloss    H-W
+Specific Gravity    1.1
+
+[TIMES]
+Duration    0
+Hydraulic Timestep    1:00
+Report Timestep    1:00
+
+[END]

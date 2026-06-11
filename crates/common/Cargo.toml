@@ -1,0 +1,11 @@
+[package]
+name = "hydra-common"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+publish = false
+description = "Engine-agnostic geographic primitives for Hydra"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }

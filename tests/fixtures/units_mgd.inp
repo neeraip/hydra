@@ -1,0 +1,19 @@
+[TITLE]
+Million gallons per day unit system — steady state
+
+[JUNCTIONS]
+J1    0    1.0
+J2    0    0.5
+
+[RESERVOIRS]
+R1    300
+
+[PIPES]
+P1    R1    J1    5000    24    100    0    Open
+P2    J1    J2    3000    24    100    0    Open
+
+[OPTIONS]
+Units    MGD
+Headloss    H-W
+
+[END]

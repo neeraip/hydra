@@ -1,0 +1,40 @@
+[TITLE]
+Non-midnight start clocktime (8 AM start)
+
+[JUNCTIONS]
+;ID    Elev    Demand
+J1     0       100
+J2     0       60
+
+[RESERVOIRS]
+R1    100
+
+[PIPES]
+P1    R1    J1    1000    12    100    0    Open
+P2    J1    J2    800     10    100    0    Open
+
+[PATTERNS]
+;24-hour diurnal pattern
+PAT1    0.5    0.6    0.8    1.2    1.4    1.2
+PAT1    1.0    0.9    0.8    0.7    0.6    0.5
+PAT1    0.5    0.6    0.8    1.2    1.4    1.2
+PAT1    1.0    0.9    0.8    0.7    0.6    0.5
+
+[TIMES]
+Duration            24:00
+Hydraulic Timestep   1:00
+Quality Timestep     0:05
+Pattern Timestep     1:00
+Report Timestep      1:00
+Start ClockTime      8 AM
+
+[OPTIONS]
+Units      GPM
+Headloss   H-W
+Quality    Chemical mg/L
+Pattern    PAT1
+
+[SOURCES]
+R1    CONCEN    1.0
+
+[END]

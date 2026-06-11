@@ -1,0 +1,23 @@
+[TITLE]
+Flow control valve — steady state
+
+[JUNCTIONS]
+J1    0    50
+J2    0    50
+
+[RESERVOIRS]
+R1    100
+R2    50
+
+[PIPES]
+P1    R1    J1    500    12    100    0    Open
+P2    J2    R2    500    12    100    0    Open
+
+[VALVES]
+FCV    J1    J2    12    FCV    100    0
+
+[OPTIONS]
+Units    GPM
+Headloss    H-W
+
+[END]

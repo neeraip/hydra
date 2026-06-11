@@ -1,0 +1,33 @@
+[TITLE]
+Negative demand — junction models inflow source (no reservoir)
+
+[JUNCTIONS]
+;ID    Elev    Demand
+J1     100     -500
+J2     50      200
+J3     50      150
+
+[TANKS]
+;ID    Elev    Init    Min    Max    Diam
+T1     80      15      5      25     40
+
+[PIPES]
+P1    J1    J2    1000    12    100    0    Open
+P2    J2    J3    800     10    100    0    Open
+P3    J1    T1    500     12    100    0    Open
+
+[TIMES]
+Duration           4:00
+Hydraulic Timestep 1:00
+Quality Timestep   0:05
+Report Timestep    1:00
+
+[OPTIONS]
+Units      GPM
+Headloss   H-W
+Quality    Chemical mg/L
+
+[SOURCES]
+J1    CONCEN    1.0
+
+[END]

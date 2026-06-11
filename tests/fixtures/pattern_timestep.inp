@@ -1,0 +1,37 @@
+[TITLE]
+Pattern timestep differs from hydraulic timestep (2h pattern, 1h hydraulic)
+
+[JUNCTIONS]
+;ID    Elev    Demand
+J1     0       100
+J2     0       80
+
+[RESERVOIRS]
+R1    100
+
+[PIPES]
+P1    R1    J1    1000    12    100    0    Open
+P2    J1    J2    800     10    100    0    Open
+
+[PATTERNS]
+;12 multipliers at 2h intervals = 24h
+PAT1    0.5    0.8    1.2    1.3    1.0    0.7
+PAT1    0.5    0.8    1.2    1.3    1.0    0.7
+
+[TIMES]
+Duration           24:00
+Hydraulic Timestep  1:00
+Quality Timestep    0:05
+Pattern Timestep    2:00
+Report Timestep     1:00
+
+[OPTIONS]
+Units      GPM
+Headloss   H-W
+Quality    Chemical mg/L
+Pattern    PAT1
+
+[SOURCES]
+R1    CONCEN    1.0
+
+[END]

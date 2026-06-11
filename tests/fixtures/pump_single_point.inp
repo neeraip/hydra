@@ -1,0 +1,21 @@
+[TITLE]
+Single-point pump curve — EPANET auto-expands to 3-point
+
+[JUNCTIONS]
+J1    0    150
+
+[RESERVOIRS]
+R1    0
+
+[PUMPS]
+PMP1    R1    J1    HEAD C1
+
+[CURVES]
+;PUMP: Single design point — EPANET generates shutoff and max-flow
+C1    500    250
+
+[OPTIONS]
+Units    GPM
+Headloss    H-W
+
+[END]

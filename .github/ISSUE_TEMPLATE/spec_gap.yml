@@ -1,0 +1,44 @@
+name: Spec Gap
+description: The specification is missing, ambiguous, or contradicts the implementation.
+labels: ["spec"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Spec files live in `crates/engine/src/*/spec.md`. Use this template when a spec section
+        is missing, under-specified, or the implementation and spec disagree.
+
+  - type: dropdown
+    id: spec_file
+    attributes:
+      label: Affected spec
+      options:
+        - crates/engine/src/model/spec.md
+        - crates/engine/src/hydraulics/spec.md
+        - crates/engine/src/quality/spec.md
+        - crates/engine/src/simulation/spec.md
+        - crates/engine/src/analysis/spec.md
+        - ref/epanet-analysis.md
+        - Not sure / multiple
+    validations:
+      required: true
+
+  - type: dropdown
+    id: gap_type
+    attributes:
+      label: Gap type
+      options:
+        - Missing — behaviour is not specified at all
+        - Ambiguous — spec allows multiple interpretations
+        - Contradicts implementation — spec and code disagree
+        - Contradicts EPANET — spec diverges from EPANET without a stated reason
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: What is missing or wrong? Reference the relevant spec section if possible.
+    validations:
+      required: true

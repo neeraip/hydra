@@ -1,0 +1,17 @@
+[TITLE]
+Single pipe — Darcy-Weisbach steady state (LPS/SI)
+
+[JUNCTIONS]
+J1    0    1.0
+
+[RESERVOIRS]
+R1    100
+
+[PIPES]
+P1    R1    J1    1000    300    0.5    0    Open
+
+[OPTIONS]
+Units    LPS
+Headloss    D-W
+
+[END]

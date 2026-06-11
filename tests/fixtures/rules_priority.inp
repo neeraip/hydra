@@ -1,0 +1,54 @@
+[TITLE]
+Rule priority tie-breaking — two conflicting rules at different priorities
+
+[JUNCTIONS]
+J1    100    100
+J2    100    50
+
+[RESERVOIRS]
+R1    0
+
+[TANKS]
+T1    150    5    0    10    20    0
+
+[PIPES]
+P1    J1    J2    500     12    100    0    Open
+P2    J2    T1    500     12    100    0    Open
+
+[PUMPS]
+PMP1    R1    J1    HEAD C1
+
+[CURVES]
+C1    0    300
+C1    500    200
+
+[RULES]
+; Low-priority rule wants pump ON when tank below 4
+RULE 1
+IF NODE T1 LEVEL BELOW 4.0
+THEN LINK PMP1 STATUS IS OPEN
+PRIORITY 1
+
+; High-priority rule wants pump OFF when tank below 2
+; (e.g. maintenance override — the higher priority wins)
+RULE 2
+IF NODE T1 LEVEL BELOW 2.0
+THEN LINK PMP1 STATUS IS CLOSED
+PRIORITY 3
+
+; Turn pump off once tank fills above 7
+RULE 3
+IF NODE T1 LEVEL ABOVE 7.0
+THEN LINK PMP1 STATUS IS CLOSED
+PRIORITY 2
+
+[OPTIONS]
+Units    GPM
+Headloss    H-W
+
+[TIMES]
+Duration    24:00
+Hydraulic Timestep    1:00
+Report Timestep    1:00
+
+[END]

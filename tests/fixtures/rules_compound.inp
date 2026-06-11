@@ -1,0 +1,50 @@
+[TITLE]
+Compound rule conditions — AND/OR logic
+
+[JUNCTIONS]
+J1    0    50
+J2    0    30
+
+[RESERVOIRS]
+R1    0
+
+[TANKS]
+; ID   Elev  Init  Min  Max  Diam  0
+T1     100   5     0    10   50    0
+
+[PIPES]
+P1    J1    J2    500    12    100    0    Open
+P2    J2    T1    500    12    100    0    Open
+
+[PUMPS]
+PMP1    R1    J1    HEAD C1
+
+[CURVES]
+C1    0    300
+C1    500    200
+C1    1000    50
+
+[RULES]
+; Compound AND: pump on when tank is low AND pressure at J1 is below threshold
+RULE 1
+IF NODE T1 LEVEL BELOW 3.0
+AND NODE J1 PRESSURE BELOW 200
+THEN LINK PMP1 STATUS IS OPEN
+PRIORITY 2
+
+; Pump off when tank is full
+RULE 2
+IF NODE T1 LEVEL ABOVE 8.0
+THEN LINK PMP1 STATUS IS CLOSED
+PRIORITY 1
+
+[OPTIONS]
+Units    GPM
+Headloss    H-W
+
+[TIMES]
+Duration    48:00
+Hydraulic Timestep    1:00
+Report Timestep    1:00
+
+[END]

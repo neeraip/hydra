@@ -1,0 +1,37 @@
+[TITLE]
+Chlorine decay — short EPS
+
+[JUNCTIONS]
+J1    0    100
+J2    0    50
+
+[RESERVOIRS]
+R1    100
+
+[TANKS]
+T1    50    20    0    40    20    0
+
+[PIPES]
+P1    R1    J1    1000    12    100    0    Open
+P2    J1    J2    2000    12    100    0    Open
+P3    J1    T1    1500    12    100    0    Open
+
+[SOURCES]
+R1    CONCEN    1.5
+
+[TIMES]
+Duration    1:00
+Hydraulic Timestep    0:10
+Quality Timestep    0:01
+Report Timestep    0:10
+
+[REACTIONS]
+Global Bulk    -0.5
+Global Wall    -1.0
+
+[OPTIONS]
+Units    GPM
+Headloss    H-W
+Quality    Chlorine mg/L
+
+[END]

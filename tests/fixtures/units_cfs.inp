@@ -1,0 +1,19 @@
+[TITLE]
+Cubic feet per second unit system — steady state
+
+[JUNCTIONS]
+J1    0    10.0
+J2    0    5.0
+
+[RESERVOIRS]
+R1    300
+
+[PIPES]
+P1    R1    J1    5000    180    100    0    Open
+P2    J1    J2    3000    180    100    0    Open
+
+[OPTIONS]
+Units    CFS
+Headloss    H-W
+
+[END]

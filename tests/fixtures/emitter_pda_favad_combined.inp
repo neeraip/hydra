@@ -1,0 +1,36 @@
+[TITLE]
+PDA demand model + emitter + FAVAD leakage interaction
+
+A single reservoir feeding one junction. The junction has an emitter and
+pressure-dependent demand (PDA), while the connecting pipe has FAVAD leakage.
+This exercises all three nodal outflow mechanisms concurrently.
+
+[JUNCTIONS]
+;ID      Elev   Demand
+J1       50     100
+
+[RESERVOIRS]
+;ID      Head
+R1       200
+
+[PIPES]
+;ID  Node1  Node2  Length  Diam  Roughness  MinorLoss  Status
+P1   R1     J1     1000    12    100        0          Open
+
+[EMITTERS]
+;Junction  Coeff
+J1         1.0
+
+[LEAKAGE]
+;Pipe  Coeff1  Coeff2
+P1     50      0.1
+
+[OPTIONS]
+Units                GPM
+Headloss             H-W
+Demand Model         PDA
+Minimum Pressure     0
+Required Pressure    30
+Pressure Exponent    0.5
+
+[END]

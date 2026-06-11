@@ -1,0 +1,17 @@
+{
+  "recommendations": [
+    // Rust
+    "rust-lang.rust-analyzer",
+    "vadimcn.vscode-lldb",
+
+    // Tauri
+    "tauri-apps.tauri-vscode",
+
+    // Frontend
+    "biomejs.biome",
+
+    // General
+    "EditorConfig.EditorConfig",
+    "github.vscode-github-actions"
+  ]
+}

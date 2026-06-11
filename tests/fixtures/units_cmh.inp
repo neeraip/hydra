@@ -1,0 +1,19 @@
+[TITLE]
+Cubic metres per hour unit system — steady state
+
+[JUNCTIONS]
+J1    0    5.0
+J2    0    3.0
+
+[RESERVOIRS]
+R1    100
+
+[PIPES]
+P1    R1    J1    1000    200    100
+P2    J1    J2    800     150    100
+
+[OPTIONS]
+Units    CMH
+Headloss    H-W
+
+[END]

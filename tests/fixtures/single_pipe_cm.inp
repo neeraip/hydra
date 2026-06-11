@@ -1,0 +1,17 @@
+[TITLE]
+Single pipe — Chezy-Manning steady state
+
+[JUNCTIONS]
+J1    0    10
+
+[RESERVOIRS]
+R1    100
+
+[PIPES]
+P1    R1    J1    1000    12    0.010    0    Open
+
+[OPTIONS]
+Units    GPM
+Headloss    C-M
+
+[END]

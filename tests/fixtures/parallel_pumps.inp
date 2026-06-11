@@ -1,0 +1,36 @@
+[TITLE]
+Parallel pumps — two pumps on same junction pair share flow
+
+[JUNCTIONS]
+J1    0    500
+
+[RESERVOIRS]
+R1    0
+
+[PUMPS]
+PMP1    R1    J1    HEAD C1
+PMP2    R1    J1    HEAD C2
+
+[CURVES]
+;PUMP: Head curve for pump 1 (larger capacity)
+C1    0    400
+C1    500    300
+C1    1000    100
+;PUMP: Head curve for pump 2 (smaller capacity)
+C2    0    400
+C2    300    300
+C2    600    100
+
+[ENERGY]
+Global Efficiency    75
+
+[OPTIONS]
+Units    GPM
+Headloss    H-W
+
+[TIMES]
+Duration    6:00
+Hydraulic Timestep    1:00
+Report Timestep    1:00
+
+[END]

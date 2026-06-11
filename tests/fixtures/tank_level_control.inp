@@ -1,0 +1,33 @@
+[TITLE]
+Tank-level control cycles pump on/off
+
+[JUNCTIONS]
+J1    0    0
+
+[RESERVOIRS]
+R1    0
+
+[TANKS]
+; ID   Elev  Init  Min  Max  Diam  0
+T1     100   5     0    20   50    0
+
+[PIPES]
+P1    J1    T1    500    12    100    0    Open
+
+[PUMPS]
+PMP1    R1    J1    POWER 100
+
+[CONTROLS]
+LINK PMP1 CLOSED IF NODE T1 ABOVE 15
+LINK PMP1 OPEN IF NODE T1 BELOW 3
+
+[OPTIONS]
+Units    GPM
+Headloss    H-W
+
+[TIMES]
+Duration    48:00
+Hydraulic Timestep    1:00
+Report Timestep    1:00
+
+[END]

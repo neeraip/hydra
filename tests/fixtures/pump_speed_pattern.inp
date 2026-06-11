@@ -1,0 +1,32 @@
+[TITLE]
+Pump with time-varying speed pattern
+
+[JUNCTIONS]
+J1    0    200
+
+[RESERVOIRS]
+R1    0
+
+[PUMPS]
+PMP1    R1    J1    HEAD C1    PATTERN SP1
+
+[CURVES]
+C1    0    400
+C1    1000    200
+
+[PATTERNS]
+SP1    1.0    0.5    1.0    0.5    1.0    0.5
+
+[ENERGY]
+Global Efficiency    75
+
+[OPTIONS]
+Units    GPM
+Headloss    H-W
+
+[TIMES]
+Duration    6:00
+Hydraulic Timestep    1:00
+Report Timestep    1:00
+
+[END]

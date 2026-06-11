@@ -1,0 +1,19 @@
+[TITLE]
+Cubic metres per second unit system — steady state
+
+[JUNCTIONS]
+J1    0    0.5
+J2    0    0.2
+
+[RESERVOIRS]
+R1    100
+
+[PIPES]
+P1    R1    J1    1000    600    100    0    Open
+P2    J1    J2    800     600    100    0    Open
+
+[OPTIONS]
+Units    CMS
+Headloss    H-W
+
+[END]

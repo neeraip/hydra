@@ -1,0 +1,19 @@
+[TITLE]
+Megalitres per day unit system — steady state
+
+[JUNCTIONS]
+J1    0    5.0
+J2    0    2.0
+
+[RESERVOIRS]
+R1    100
+
+[PIPES]
+P1    R1    J1    1000    500    100    0    Open
+P2    J1    J2    800     500    100    0    Open
+
+[OPTIONS]
+Units    MLD
+Headloss    H-W
+
+[END]
