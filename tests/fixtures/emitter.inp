@@ -1,0 +1,20 @@
+[TITLE]
+Emitter produces flow proportional to pressure
+
+[JUNCTIONS]
+J1    0    0
+
+[RESERVOIRS]
+R1    100
+
+[PIPES]
+P1    R1    J1    1000    12    100    0    Open
+
+[EMITTERS]
+J1    1.0
+
+[OPTIONS]
+Units    GPM
+Headloss    H-W
+
+[END]

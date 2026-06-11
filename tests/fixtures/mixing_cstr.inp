@@ -1,0 +1,35 @@
+[TITLE]
+CSTR (complete mix) tank quality — explicit test of default mixing model
+
+[JUNCTIONS]
+J1    0    50
+
+[RESERVOIRS]
+R1    100
+
+[TANKS]
+; Default mixing model is CSTR (complete/fully mixed)
+T1    50    10    0    20    30    0
+
+[PIPES]
+P1    R1    J1    1000    12    100    0    Open
+P2    J1    T1    500     12    100    0    Open
+
+[SOURCES]
+R1    CONCEN    2.0
+
+[REACTIONS]
+Global Bulk    -0.3
+
+[TIMES]
+Duration    6:00
+Hydraulic Timestep    0:30
+Quality Timestep    0:05
+Report Timestep    0:30
+
+[OPTIONS]
+Units    GPM
+Headloss    H-W
+Quality    Chlorine mg/L
+
+[END]

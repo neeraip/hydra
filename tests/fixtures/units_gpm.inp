@@ -1,0 +1,19 @@
+[TITLE]
+Gallons per minute unit system — steady state
+
+[JUNCTIONS]
+J1    0    500.0
+J2    0    200.0
+
+[RESERVOIRS]
+R1    300
+
+[PIPES]
+P1    R1    J1    5000    12    100    0    Open
+P2    J1    J2    3000    12    100    0    Open
+
+[OPTIONS]
+Units    GPM
+Headloss    H-W
+
+[END]

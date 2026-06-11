@@ -1,0 +1,27 @@
+[TITLE]
+Overflow tank — excess inflow passes through as demand
+
+[JUNCTIONS]
+J1    0    0
+
+[RESERVOIRS]
+R1    200
+
+[TANKS]
+;     Elev  Init   Min   Max   Diam  MinVol  VolCurve  Overflow
+T1    50    5      0     10    20    0       *         YES
+
+[PIPES]
+P1    R1    T1    500    12    100    0    Open
+P2    T1    J1    500    12    100    0    Open
+
+[OPTIONS]
+Units    GPM
+Headloss    H-W
+
+[TIMES]
+Duration    6:00
+Hydraulic Timestep    1:00
+Report Timestep    1:00
+
+[END]

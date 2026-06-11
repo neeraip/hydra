@@ -1,0 +1,38 @@
+[TITLE]
+Tank mixing — FIFO (plug flow)
+
+[JUNCTIONS]
+J1    0    100
+
+[RESERVOIRS]
+R1    100
+
+[TANKS]
+T1    50    10    0    40    20    0
+
+[PIPES]
+P1    R1    J1    100     12    100    0    Open
+P2    J1    T1    100     12    100    0    Open
+
+[MIXING]
+T1    FIFO
+
+[SOURCES]
+R1    CONCEN    1.0
+
+[TIMES]
+Duration    6:00
+Hydraulic Timestep    0:10
+Quality Timestep    0:01
+Report Timestep    0:10
+
+[REACTIONS]
+Global Bulk    0.0
+Global Wall    0.0
+
+[OPTIONS]
+Units    GPM
+Headloss    H-W
+Quality    Chemical mg/L
+
+[END]

@@ -1,0 +1,28 @@
+[TITLE]
+Dead-end branch — junction at end of single pipe with no downstream
+
+[JUNCTIONS]
+J1    0    100
+J2    0    80
+; Dead-end junction — no demand, single connection
+J3    0    0
+
+[RESERVOIRS]
+R1    100
+
+[PIPES]
+P1    R1    J1    1000    12    100    0    Open
+P2    J1    J2    800     10    100    0    Open
+; Dead-end branch off J1
+P3    J1    J3    500     6     100    0    Open
+
+[OPTIONS]
+Units    GPM
+Headloss    H-W
+
+[TIMES]
+Duration    4:00
+Hydraulic Timestep    1:00
+Report Timestep    1:00
+
+[END]

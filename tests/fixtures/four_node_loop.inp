@@ -1,0 +1,23 @@
+[TITLE]
+Diamond loop — symmetric four-node convergence test
+
+[JUNCTIONS]
+J1    0    50
+J2    0    50
+J3    0    50
+
+[RESERVOIRS]
+R1    200
+
+[PIPES]
+P1    R1    J1    500    12    100    0    Open
+P2    R1    J2    500    12    100    0    Open
+P3    J1    J3    500    12    100    0    Open
+P4    J2    J3    500    12    100    0    Open
+P5    J1    J2    200    8     100    0    Open
+
+[OPTIONS]
+Units    GPM
+Headloss    H-W
+
+[END]

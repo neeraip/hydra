@@ -1,0 +1,40 @@
+[TITLE]
+Per-pipe reaction coefficients via REACTIONS section
+
+[JUNCTIONS]
+J1    0    100
+J2    0    50
+J3    0    30
+
+[RESERVOIRS]
+R1    100
+
+[PIPES]
+P1    R1    J1    1000    12    100    0    Open
+P2    J1    J2    2000    10    100    0    Open
+P3    J2    J3    1500    8     100    0    Open
+
+[SOURCES]
+R1    CONCEN    2.0
+
+[REACTIONS]
+; Global defaults
+Global Bulk    -0.3
+Global Wall    -0.5
+; Per-pipe overrides: P2 has faster decay, P3 has no wall reaction
+Bulk    P2    -1.5
+Wall    P2    -2.0
+Wall    P3    0.0
+
+[TIMES]
+Duration    2:00
+Hydraulic Timestep    0:15
+Quality Timestep    0:01
+Report Timestep    0:15
+
+[OPTIONS]
+Units    GPM
+Headloss    H-W
+Quality    Chlorine mg/L
+
+[END]

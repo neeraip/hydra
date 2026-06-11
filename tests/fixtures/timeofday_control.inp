@@ -1,0 +1,27 @@
+[TITLE]
+Clocktime control — opens pipe at 2 AM, closes at 4 AM
+
+[JUNCTIONS]
+J1    0    100
+
+[RESERVOIRS]
+R1    200
+
+[PIPES]
+P1    R1    J1    1000    12    100    0    Closed
+
+[CONTROLS]
+LINK P1 OPEN AT CLOCKTIME 2 AM
+LINK P1 CLOSED AT CLOCKTIME 4 AM
+
+[OPTIONS]
+Units    GPM
+Headloss    H-W
+
+[TIMES]
+Duration    6:00
+Hydraulic Timestep    1:00
+Report Timestep    1:00
+Start Clocktime    12 AM
+
+[END]

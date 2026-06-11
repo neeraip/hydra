@@ -1,0 +1,27 @@
+[TITLE]
+Demand multiplier doubles all base demands
+
+[JUNCTIONS]
+J1    0    100
+J2    0    80
+J3    0    60
+
+[RESERVOIRS]
+R1    200
+
+[PIPES]
+P1    R1    J1    1000    12    100    0    Open
+P2    J1    J2    800     10    100    0    Open
+P3    J2    J3    600     8     100    0    Open
+
+[OPTIONS]
+Units    GPM
+Headloss    H-W
+Demand Multiplier    2.0
+
+[TIMES]
+Duration    0
+Hydraulic Timestep    1:00
+Report Timestep    1:00
+
+[END]

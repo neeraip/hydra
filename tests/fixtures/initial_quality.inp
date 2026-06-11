@@ -1,0 +1,47 @@
+[TITLE]
+Initial quality at specific nodes via QUALITY section
+
+[JUNCTIONS]
+J1    0    100
+J2    0    50
+J3    0    30
+
+[RESERVOIRS]
+R1    100
+
+[TANKS]
+T1    50    20    0    40    20    0
+
+[PIPES]
+P1    R1    J1    1000    12    100    0    Open
+P2    J1    J2    500     10    100    0    Open
+P3    J2    J3    500     8     100    0    Open
+P4    J1    T1    800     10    100    0    Open
+
+[QUALITY]
+; Per-node initial concentrations
+R1    2.0
+J1    1.5
+J2    0.8
+J3    0.3
+T1    1.0
+
+[SOURCES]
+R1    CONCEN    2.0
+
+[REACTIONS]
+Global Bulk    -0.5
+Global Wall    -1.0
+
+[TIMES]
+Duration    2:00
+Hydraulic Timestep    0:15
+Quality Timestep    0:01
+Report Timestep    0:15
+
+[OPTIONS]
+Units    GPM
+Headloss    H-W
+Quality    Chlorine mg/L
+
+[END]

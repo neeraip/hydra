@@ -1,0 +1,172 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+
+permissions:
+  contents: write
+
+# Never cancel a release in flight.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+
+  # ── 1. Create an empty draft release to collect assets into. ─────────────
+  prepare-release:
+    name: Create Draft Release
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    outputs:
+      release-id: ${{ steps.create.outputs.id }}
+
+    steps:
+      - uses: actions/checkout@v4  # v4.2.2
+        with:
+          fetch-depth: 1
+
+      - name: Create draft release
+        id: create
+        uses: softprops/action-gh-release@v2  # v2.3.2
+        with:
+          draft: true
+          generate_release_notes: true
+
+  # ── 2. Build the CLI binary for each target and attach it. ───────────────
+  cli:
+    name: CLI / ${{ matrix.target }}
+    needs: prepare-release
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+
+    env:
+      CARGO_TERM_COLOR: always
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { target: x86_64-unknown-linux-gnu,  runner: ubuntu-latest,  cross: false }
+          - { target: aarch64-unknown-linux-gnu, runner: ubuntu-latest,  cross: true  }
+          - { target: x86_64-pc-windows-msvc,   runner: windows-latest, cross: false }
+          - { target: x86_64-apple-darwin,       runner: macos-13,       cross: false }
+          - { target: aarch64-apple-darwin,      runner: macos-latest,   cross: false }
+
+    steps:
+      - uses: actions/checkout@v4  # v4.2.2
+        with:
+          fetch-depth: 1
+
+      - uses: dtolnay/rust-toolchain@stable  # 2026-06-09
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2  # v2.8.0
+
+      - uses: cargo-bins/cargo-binstall@v1.20.0  # v1.20.0
+        if: matrix.cross
+
+      - name: Install cross
+        if: matrix.cross
+        run: cargo binstall cross --no-confirm
+
+      - name: Build (native)
+        if: ${{ !matrix.cross }}
+        run: cargo build --release --locked -p hydra-cli --target ${{ matrix.target }}
+
+      - name: Build (cross)
+        if: matrix.cross
+        run: cross build --release --locked -p hydra-cli --target ${{ matrix.target }}
+
+      - name: Archive (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          bin="target/${{ matrix.target }}/release/hydra"
+          archive="hydra-${version}-${{ matrix.target }}.tar.gz"
+          tar -czf "${archive}" -C "$(dirname "${bin}")" "$(basename "${bin}")"
+          echo "ARCHIVE=${archive}" >> "${GITHUB_ENV}"
+
+      - name: Archive (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $version = $env:GITHUB_REF_NAME -replace '^v', ''
+          $archive = "hydra-${version}-${{ matrix.target }}.zip"
+          Compress-Archive -Path "target/${{ matrix.target }}/release/hydra.exe" -DestinationPath $archive
+          "ARCHIVE=${archive}" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Upload to release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload "${{ github.ref_name }}" "${{ env.ARCHIVE }}" --clobber
+
+  # ── 3. Build the Tauri desktop app and attach platform installers. ────────
+  gui:
+    name: GUI / ${{ matrix.platform }}
+    needs: prepare-release
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { platform: macOS-x86_64,   runner: macos-13,       target: x86_64-apple-darwin      }
+          - { platform: macOS-aarch64,  runner: macos-latest,   target: aarch64-apple-darwin     }
+          - { platform: windows-x86_64, runner: windows-latest, target: x86_64-pc-windows-msvc  }
+          - { platform: linux-x86_64,   runner: ubuntu-22.04,   target: x86_64-unknown-linux-gnu }
+
+    steps:
+      - uses: actions/checkout@v4  # v4.2.2
+        with:
+          fetch-depth: 1
+
+      - name: Install Tauri system dependencies
+        if: matrix.platform == 'linux-x86_64'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            patchelf
+
+      - uses: actions/setup-node@v4  # v4.4.0
+        with:
+          node-version: 22
+
+      - uses: pnpm/action-setup@v4  # v4.1.0
+        with:
+          version: 10
+
+      - name: Install frontend dependencies
+        working-directory: crates/gui/frontend
+        run: pnpm install --frozen-lockfile
+
+      - uses: dtolnay/rust-toolchain@stable  # 2026-06-09
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2  # v2.8.0
+
+      - uses: cargo-bins/cargo-binstall@v1.20.0  # v1.20.0
+
+      - name: Install Tauri CLI
+        run: cargo binstall tauri-cli --version "^2" --no-confirm
+
+      - name: Build and upload installer
+        uses: tauri-apps/tauri-action@v0  # v0.5.20
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          projectPath: crates/gui
+          tauriScript: cargo tauri
+          args: --target ${{ matrix.target }}
+          releaseId: ${{ needs.prepare-release.outputs.release-id }}
+          uploadArtifacts: false

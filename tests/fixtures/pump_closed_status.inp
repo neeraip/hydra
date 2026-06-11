@@ -1,0 +1,43 @@
+[TITLE]
+Pump initially closed via STATUS section, opened by time control
+
+[JUNCTIONS]
+;ID    Elev    Demand
+J1     50      100
+J2     50      80
+
+[RESERVOIRS]
+R1    10
+
+[TANKS]
+T1    80    15    5    25    40
+
+[PIPES]
+P1    J1    J2    800     10    100    0    Open
+P2    J1    T1    500     12    100    0    Open
+
+[PUMPS]
+PU1    R1    J1    HEAD C1
+
+[CURVES]
+C1    0      200
+C1    500    50
+
+[STATUS]
+PU1    Closed
+
+[CONTROLS]
+LINK PU1 OPEN AT TIME 2
+LINK PU1 CLOSED AT TIME 6
+
+[TIMES]
+Duration           8:00
+Hydraulic Timestep 1:00
+Quality Timestep   0:05
+Report Timestep    1:00
+
+[OPTIONS]
+Units      GPM
+Headloss   H-W
+
+[END]

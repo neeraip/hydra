@@ -1,0 +1,30 @@
+[workspace]
+members = [
+    "crates/common",
+    "crates/engine",
+    "crates/hydra",
+    "crates/cli",
+    "crates/gui",
+]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.95"
+authors = ["Matthew Downs <matthew@neer.ai>"]
+license = "AGPL-3.0-only"
+
+
+# Optimise the core library even in dev/test builds so that benchmark parity
+# tests (and any other integration test that exercises the solver) run at
+# near-release speed without requiring `--release`.
+[profile.dev.package.hydra-common]
+opt-level = 2
+
+[profile.dev.package.hydra-engine]
+opt-level = 2
+
+[profile.release]
+lto = "fat"
+codegen-units = 1

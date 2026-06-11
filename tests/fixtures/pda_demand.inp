@@ -1,0 +1,21 @@
+[TITLE]
+PDA demand is reduced when pressure is below required pressure
+
+[JUNCTIONS]
+J1    50    100
+
+[RESERVOIRS]
+R1    100
+
+[PIPES]
+P1    R1    J1    1000    12    100    0    Open
+
+[OPTIONS]
+Units                GPM
+Headloss             H-W
+Demand Model         PDA
+Minimum Pressure     0
+Required Pressure    30
+Pressure Exponent    0.5
+
+[END]

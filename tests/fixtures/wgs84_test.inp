@@ -1,0 +1,61 @@
+[TITLE]
+Simple WGS84 test network
+
+[JUNCTIONS]
+;ID              Elev        Demand      Pattern
+ J1              50          10                          
+ J2              45          15                          
+ J3              40          20                          
+
+[RESERVOIRS]
+;ID              Head        Pattern
+ R1              100                                     
+
+[TANKS]
+;ID              Elevation   InitLevel   MinLevel    MaxLevel    Diameter    MinVol      VolCurve
+
+[PIPES]
+;ID              Node1           Node2           Length      Diameter    Roughness   MinorLoss   Status
+ P1              R1              J1              500         300         100         0           Open
+ P2              J1              J2              400         250         100         0           Open
+ P3              J2              J3              300         200         100         0           Open
+
+[PUMPS]
+;ID              Node1           Node2           Parameters
+
+[VALVES]
+;ID              Node1           Node2           Diameter    Type    Setting     MinorLoss
+
+[PATTERNS]
+
+[CURVES]
+
+[CONTROLS]
+
+[RULES]
+
+[ENERGY]
+
+[TIMES]
+ Duration            1:00
+ Hydraulic Timestep  0:15
+ Quality Timestep    0:05
+ Report Timestep     0:15
+ Report Start        0:00
+
+[OPTIONS]
+ Units               LPS
+ Headloss            H-W
+
+[REPORT]
+ Status              No
+ Summary             No
+
+[COORDINATES]
+;Node            X-Coord            Y-Coord
+ R1              -73.9857           40.7484
+ J1              -73.9830           40.7500
+ J2              -73.9800           40.7510
+ J3              -73.9770           40.7525
+
+[END]

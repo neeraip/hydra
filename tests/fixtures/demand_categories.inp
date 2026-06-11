@@ -1,0 +1,43 @@
+[TITLE]
+Multiple demand categories with different patterns per junction
+
+[JUNCTIONS]
+;ID    Elev    Demand
+J1     0       50
+J2     0       30
+
+[RESERVOIRS]
+R1    100
+
+[DEMANDS]
+;ID    Demand    Pattern
+J1     80        PAT2
+
+[PIPES]
+P1    R1    J1    1000    12    100    0    Open
+P2    J1    J2    800     10    100    0    Open
+
+[PATTERNS]
+;Residential morning peak
+PAT1    0.4    0.6    1.2    1.4    1.0    0.8
+PAT1    0.6    0.4    0.4    0.6    1.0    0.6
+;Commercial midday peak
+PAT2    0.2    0.4    1.0    1.5    1.5    1.0
+PAT2    0.8    0.6    0.3    0.2    0.3    0.2
+
+[TIMES]
+Duration           12:00
+Hydraulic Timestep  1:00
+Quality Timestep    0:05
+Report Timestep     1:00
+
+[OPTIONS]
+Units      GPM
+Headloss   H-W
+Quality    Chemical mg/L
+Pattern    PAT1
+
+[SOURCES]
+R1    CONCEN    1.0
+
+[END]

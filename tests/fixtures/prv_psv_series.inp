@@ -1,0 +1,29 @@
+[TITLE]
+PRV and PSV in series — exercises both valve types simultaneously
+
+[JUNCTIONS]
+J1    0    20
+J2    0    10
+J3    0    10
+J4    0    15
+
+[RESERVOIRS]
+R1    200
+
+[PIPES]
+P1    R1    J1    500    12    100    0    Open
+P2    J2    J3    300    12    100    0    Open
+P3    J4    J1    800    12    100    0    Open
+
+[VALVES]
+; PRV limits downstream pressure to 50 psi
+PRV1    J1    J2    12    PRV    50    0
+; PSV sustains upstream pressure at 30 psi
+PSV1    J3    J4    12    PSV    30    0
+
+[OPTIONS]
+Units    GPM
+Headloss    H-W
+Accuracy    0.0001
+
+[END]

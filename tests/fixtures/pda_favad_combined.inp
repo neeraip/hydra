@@ -1,0 +1,33 @@
+[TITLE]
+PDA demand model combined with FAVAD leakage on the same pipe
+
+A single reservoir feeding one junction. The junction has a demand that
+is pressure-dependent (PDA), and the connecting pipe has FAVAD leakage.
+This exercises the interaction between PDA demand reduction and pipe
+leakage, both of which modify the demand residual in the GGA solver.
+
+[JUNCTIONS]
+;ID      Elev   Demand
+J1       50     100
+
+[RESERVOIRS]
+;ID      Head
+R1       200
+
+[PIPES]
+;ID  Node1  Node2  Length  Diam  Roughness  MinorLoss  Status
+P1   R1     J1     1000    12    100        0          Open
+
+[LEAKAGE]
+;Pipe  Coeff1  Coeff2
+P1     50      0.1
+
+[OPTIONS]
+Units                GPM
+Headloss             H-W
+Demand Model         PDA
+Minimum Pressure     0
+Required Pressure    30
+Pressure Exponent    0.5
+
+[END]

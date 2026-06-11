@@ -1,0 +1,53 @@
+[TITLE]
+Rule with ELSE clause — pump speed varies by tank level
+
+[JUNCTIONS]
+J1    0    30
+
+[RESERVOIRS]
+R1    0
+
+[TANKS]
+; Tank bottom=50 ft, init level=10, range 0–20, diam=40 ft
+T1    50    10    0    20    40    0
+
+[PIPES]
+P1    J1    T1    1000    10    100    0    Open
+
+[PUMPS]
+PMP1    R1    J1    HEAD C1
+
+[CURVES]
+; Shutoff 100 ft, design 50 GPM @ 80 ft, max 100 GPM @ 40 ft
+C1    0    100
+C1    50   80
+C1    100  40
+
+[RULES]
+RULE 1
+IF NODE T1 LEVEL BELOW 5.0
+THEN LINK PMP1 SETTING IS 1.2
+ELSE LINK PMP1 SETTING IS 0.8
+PRIORITY 1
+
+RULE 2
+IF NODE T1 LEVEL ABOVE 17.0
+THEN LINK PMP1 STATUS IS CLOSED
+PRIORITY 2
+
+RULE 3
+IF NODE T1 LEVEL BELOW 3.0
+AND LINK PMP1 STATUS IS CLOSED
+THEN LINK PMP1 STATUS IS OPEN
+PRIORITY 2
+
+[OPTIONS]
+Units    GPM
+Headloss    H-W
+
+[TIMES]
+Duration    24:00
+Hydraulic Timestep    1:00
+Report Timestep    1:00
+
+[END]

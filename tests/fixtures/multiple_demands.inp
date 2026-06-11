@@ -1,0 +1,21 @@
+[TITLE]
+Multiple demand categories sum at junction
+
+[JUNCTIONS]
+; ID  Elev  Demand
+J1    0    10
+
+[RESERVOIRS]
+R1    100
+
+[PIPES]
+P1    R1    J1    1000    12    100    0    Open
+
+[DEMANDS]
+J1    5    ;second demand
+
+[OPTIONS]
+Units    GPM
+Headloss    H-W
+
+[END]

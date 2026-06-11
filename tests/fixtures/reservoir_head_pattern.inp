@@ -1,0 +1,26 @@
+[TITLE]
+Reservoir with time-varying head pattern (tidal / diurnal)
+
+[JUNCTIONS]
+J1    0    100
+
+[RESERVOIRS]
+R1    200    tidal
+
+[PIPES]
+P1    R1    J1    500    12    100    0    Open
+
+[PATTERNS]
+tidal    1.0    0.8    1.2    0.9
+
+[OPTIONS]
+Units    GPM
+Headloss    H-W
+
+[TIMES]
+Duration    4:00
+Hydraulic Timestep    1:00
+Pattern Timestep    1:00
+Report Timestep    1:00
+
+[END]

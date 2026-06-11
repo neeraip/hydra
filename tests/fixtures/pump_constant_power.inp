@@ -1,0 +1,17 @@
+[TITLE]
+Constant power pump lifts head
+
+[JUNCTIONS]
+J1    200    100
+
+[RESERVOIRS]
+R1    0
+
+[PUMPS]
+PMP1    R1    J1    POWER 100
+
+[OPTIONS]
+Units    GPM
+Headloss    H-W
+
+[END]

@@ -1,0 +1,20 @@
+[TITLE]
+FAVAD leakage produces flow at junction under pressure
+
+[JUNCTIONS]
+J1    0    0
+
+[RESERVOIRS]
+R1    100
+
+[PIPES]
+P1    R1    J1    1000    12    100    0    Open
+
+[LEAKAGE]
+P1    100    0.1
+
+[OPTIONS]
+Units    GPM
+Headloss    H-W
+
+[END]

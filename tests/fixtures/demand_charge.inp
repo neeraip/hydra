@@ -1,0 +1,44 @@
+[TITLE]
+Energy accounting with demand charge (peak kW surcharge)
+
+[JUNCTIONS]
+J1    0    200
+
+[RESERVOIRS]
+R1    0
+
+[PUMPS]
+PMP1    R1    J1    HEAD C1
+
+[CURVES]
+;PUMP: Head curve
+C1    0      300
+C1    500    250
+C1    1000   150
+;EFFICIENCY:
+EFF1    0      0
+EFF1    500    75
+EFF1    1000   50
+
+[PATTERNS]
+; Demand varies to create peak/off-peak energy usage
+DPAT    0.5    0.8    1.5    1.8    1.2    0.6
+
+[ENERGY]
+Global Efficiency    75
+Global Price    0.10
+Demand Charge    5.00
+Pump    PMP1    Efficiency    EFF1
+Pump    PMP1    Price    0.12
+
+[OPTIONS]
+Units    GPM
+Headloss    H-W
+Pattern    DPAT
+
+[TIMES]
+Duration    12:00
+Hydraulic Timestep    1:00
+Report Timestep    1:00
+
+[END]

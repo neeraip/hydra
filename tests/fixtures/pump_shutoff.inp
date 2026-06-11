@@ -1,0 +1,37 @@
+[TITLE]
+Pump shutoff — tank fills until required head exceeds pump shutoff
+
+[JUNCTIONS]
+J1    0    10
+
+[RESERVOIRS]
+R1    0
+
+[TANKS]
+; Tank bottom=250 ft, init level=5, range 0–60, diam=10 ft (small → fills fast)
+; At max level: head = 250+60 = 310 ft > pump shutoff 300 ft → XHEAD
+T1    250    5    0    60    10    0
+
+[PIPES]
+P1    J1    T1    200    12    100    0    Open
+
+[PUMPS]
+; Shutoff head 300 ft; at zero flow pump delivers 300 ft of head.
+; When tank head > 300 ft, pump cannot deliver → XHEAD
+PMP1    R1    J1    HEAD C1
+
+[CURVES]
+C1    0      300
+C1    50     250
+C1    100    150
+
+[OPTIONS]
+Units    GPM
+Headloss    H-W
+
+[TIMES]
+Duration    24:00
+Hydraulic Timestep    1:00
+Report Timestep    1:00
+
+[END]

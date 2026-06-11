@@ -1,0 +1,16 @@
+[package]
+name = "hydra"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Water distribution network simulator — EPANET-compatible extended-period simulation"
+repository = "https://github.com/neeraip/hydra"
+homepage = "https://github.com/neeraip/hydra"
+documentation = "https://github.com/neeraip/hydra"
+keywords = ["epanet", "water", "hydraulics", "simulation", "network"]
+categories = ["science", "simulation"]
+publish = false
+
+[dependencies]
+hydra-engine = { path = "../engine" }

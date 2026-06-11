@@ -1,0 +1,26 @@
+[TITLE]
+Demand pattern modulates flow over time
+
+[JUNCTIONS]
+J1    0    100    pat1
+
+[RESERVOIRS]
+R1    200
+
+[PIPES]
+P1    R1    J1    1000    12    100    0    Open
+
+[PATTERNS]
+pat1    1.0    0.5    2.0    0.5
+
+[OPTIONS]
+Units    GPM
+Headloss    H-W
+
+[TIMES]
+Duration    4:00
+Hydraulic Timestep    1:00
+Pattern Timestep    1:00
+Report Timestep    1:00
+
+[END]

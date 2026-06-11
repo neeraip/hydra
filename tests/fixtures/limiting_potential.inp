@@ -1,0 +1,35 @@
+[TITLE]
+Bulk reaction with limiting potential
+
+[JUNCTIONS]
+;ID    Elev    Demand
+J1     0       100
+J2     0       80
+
+[RESERVOIRS]
+R1    100
+
+[PIPES]
+P1    R1    J1    1000    12    100    0    Open
+P2    J1    J2    800     10    100    0    Open
+
+[SOURCES]
+R1    CONCEN    2.0
+
+[TIMES]
+Duration           4:00
+Hydraulic Timestep 0:15
+Quality Timestep   0:01
+Report Timestep    0:15
+
+[REACTIONS]
+Order Bulk         1
+Global Bulk       -0.5
+Limiting Potential 0.1
+
+[OPTIONS]
+Units      GPM
+Headloss   H-W
+Quality    Chemical mg/L
+
+[END]

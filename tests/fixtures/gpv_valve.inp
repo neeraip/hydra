@@ -1,0 +1,27 @@
+[TITLE]
+General purpose valve — headloss curve
+
+[JUNCTIONS]
+J1    0    0
+J2    0    10
+
+[RESERVOIRS]
+R1    100
+
+[PIPES]
+P1    R1    J1    300    12    100    0    Open
+P2    J2    R1    300    12    100    0    Open
+
+[VALVES]
+GPV    J1    J2    12    GPV    HC1    0
+
+[CURVES]
+HC1    0      0
+HC1    50     50
+HC1    150    50
+
+[OPTIONS]
+Units    GPM
+Headloss    H-W
+
+[END]

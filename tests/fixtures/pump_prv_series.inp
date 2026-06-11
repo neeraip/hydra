@@ -1,0 +1,33 @@
+[TITLE]
+Pump feeding PRV — common booster station configuration
+
+[JUNCTIONS]
+J1    0    0
+J2    0    200
+
+[RESERVOIRS]
+R1    0
+
+[PUMPS]
+PMP1    R1    J1    HEAD C1
+
+[VALVES]
+PRV1    J1    J2    12    PRV    50
+
+[CURVES]
+C1    0    300
+C1    1000    100
+
+[ENERGY]
+Global Efficiency    75
+
+[OPTIONS]
+Units    GPM
+Headloss    H-W
+
+[TIMES]
+Duration    4:00
+Hydraulic Timestep    1:00
+Report Timestep    1:00
+
+[END]

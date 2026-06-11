@@ -1,0 +1,33 @@
+[TITLE]
+Quality source — MASS booster at junction
+
+[JUNCTIONS]
+J1    0    100
+J2    0    50
+
+[RESERVOIRS]
+R1    100
+
+[PIPES]
+P1    R1    J1    100     12    100    0    Open
+P2    J1    J2    200     12    100    0    Open
+
+[SOURCES]
+J1    MASS    100
+
+[TIMES]
+Duration    1:00
+Hydraulic Timestep    0:10
+Quality Timestep    0:01
+Report Timestep    0:10
+
+[REACTIONS]
+Global Bulk    0.0
+Global Wall    0.0
+
+[OPTIONS]
+Units    GPM
+Headloss    H-W
+Quality    Chemical mg/L
+
+[END]

@@ -1,0 +1,1386 @@
+@import "tailwindcss";
+
+/* ── Design tokens ──────────────────────────────────────────────────────────── */
+:root {
+  /* Typography */
+  --font-size-base: 14px;
+  --font-ui:
+    -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Roboto, sans-serif;
+  --font-mono:
+    "SF Mono", "Cascadia Code", "JetBrains Mono", "Fira Code", monospace;
+  --line-height: 1.6;
+
+  /* Layout */
+  --activity-w: 56px;
+  --rail-w: 280px;
+  --rail-transition: 200ms cubic-bezier(0.4, 0, 0.2, 1);
+
+  /* Backgrounds */
+  --bg-app: #0f0f12;
+  --bg-activity: #0b0b0e;
+  --bg-rail: #101015;
+  --bg-panel: rgba(17, 17, 23, 0.94);
+  --bg-panel-hover: rgba(26, 26, 36, 0.97);
+  --bg-card: #13131a;
+  --bg-card-hover: #1a1a24;
+  --bg-elevated: #1c1c26;
+  --bg-input: rgba(255, 255, 255, 0.045);
+  --bg-overlay: rgba(0, 0, 0, 0.62);
+
+  /* Borders */
+  --border: rgba(255, 255, 255, 0.07);
+  --border-hover: rgba(255, 255, 255, 0.13);
+  --border-focus: rgba(74, 144, 217, 0.55);
+
+  /* Text */
+  --text-primary: #e2e2ec;
+  --text-secondary: #78788c;
+  --text-tertiary: #4e4e62;
+  --text-disabled: #3a3a4c;
+
+  /* Accent */
+  --accent: #4a90d9;
+  --accent-hover: #5fa3e8;
+  --accent-dim: rgba(74, 144, 217, 0.15);
+
+  /* Nav */
+  --nav-hover: rgba(255, 255, 255, 0.055);
+
+  /* Status */
+  --status-success: #3daf75;
+  --status-warning: #d4a017;
+  --status-error: #c94040;
+  --status-neutral: #56566a;
+
+  /* Elevation */
+  --shadow-1: 0 1px 4px rgba(0, 0, 0, 0.4);
+  --shadow-2: 0 4px 16px rgba(0, 0, 0, 0.5);
+  --shadow-3: 0 12px 40px rgba(0, 0, 0, 0.7);
+
+  /* Radius scale */
+  --radius-xs: 3px;
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --radius-xl: 10px;
+  --radius-pill: 14px;
+
+  /* Tooltip */
+  --tooltip-bg: #1e1e2a;
+  --tooltip-text: #e2e2ec;
+
+  /* Motion */
+  --t-fast: 120ms ease-out;
+  --t-base: 200ms ease-out;
+  --t-slow: 320ms ease-out;
+}
+
+:root[data-theme="light"] {
+  --bg-app: #eff1f7;
+  --bg-activity: #e3e6ef;
+  --bg-rail: #e8ebf3;
+  --bg-panel: rgba(255, 255, 255, 0.96);
+  --bg-panel-hover: rgba(255, 255, 255, 1);
+  --bg-card: #ffffff;
+  --bg-card-hover: #f5f7fc;
+  --bg-elevated: #f0f2f9;
+  --bg-input: rgba(23, 33, 55, 0.04);
+  --bg-overlay: rgba(0, 0, 0, 0.42);
+
+  --border: rgba(23, 33, 55, 0.09);
+  --border-hover: rgba(23, 33, 55, 0.16);
+  --border-focus: rgba(46, 114, 194, 0.5);
+
+  --text-primary: #14213a;
+  --text-secondary: #4a536a;
+  --text-tertiary: #8090a8;
+  --text-disabled: #aab3c5;
+
+  --accent: #2e72c2;
+  --accent-hover: #3a82d4;
+  --accent-dim: rgba(46, 114, 194, 0.1);
+
+  --nav-hover: rgba(23, 33, 55, 0.06);
+
+  --status-success: #1e9a5f;
+  --status-warning: #b08810;
+  --status-error: #b03030;
+
+  --shadow-1: 0 1px 4px rgba(0, 0, 0, 0.1);
+  --shadow-2: 0 4px 16px rgba(0, 0, 0, 0.14);
+  --shadow-3: 0 12px 40px rgba(0, 0, 0, 0.2);
+
+  /* Tooltip */
+  --tooltip-bg: #1e1e2a;
+  --tooltip-text: #e2e2ec;
+}
+
+/* ── Accessibility: reduced motion ──────────────────────────────────────────── */
+:root[data-reduced-motion="true"],
+:root[data-reduced-motion="true"] * {
+  animation-duration: 1ms;
+  animation-delay: 0ms;
+  transition-duration: 1ms;
+  transition-delay: 0ms;
+}
+
+/* ── Accessibility: high contrast ───────────────────────────────────────────── */
+:root[data-high-contrast="true"] {
+  --border: rgba(255, 255, 255, 0.18);
+  --border-hover: rgba(255, 255, 255, 0.3);
+  --border-focus: rgba(74, 144, 217, 0.8);
+  --text-secondary: #b4b4cc;
+  --text-tertiary: #8a8aa8;
+  --status-success: #4dc98a;
+  --status-warning: #e0b020;
+  --status-error: #e05050;
+}
+
+:root[data-theme="light"][data-high-contrast="true"] {
+  --border: rgba(23, 33, 55, 0.22);
+  --border-hover: rgba(23, 33, 55, 0.38);
+  --border-focus: rgba(46, 114, 194, 0.8);
+  --text-secondary: #2e3c56;
+  --text-tertiary: #4e6080;
+}
+
+/* ── Reset ──────────────────────────────────────────────────────────────────── */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: var(--bg-app);
+  color: var(--text-primary);
+  font-family: var(--font-ui);
+  font-size: var(--font-size-base);
+  line-height: var(--line-height);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+.mono {
+  font-family: var(--font-mono);
+}
+
+/* ── Nav buttons ─────────────────────────────────────────────────────────────
+   All navigation buttons use CSS :hover — never JS onMouseEnter/onMouseLeave.
+   The active state uses a 3px left-edge accent bar, not a background fill.   */
+.nav-btn {
+  position: relative;
+  width: 40px;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition:
+    background var(--t-fast),
+    color var(--t-fast);
+  flex-shrink: 0;
+  padding: 0;
+  user-select: none;
+}
+
+.nav-btn:hover {
+  background: var(--nav-hover);
+  color: var(--text-primary);
+}
+
+.nav-btn:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: 2px;
+}
+
+.nav-btn.active {
+  color: var(--text-primary);
+}
+
+/* The 3px left-edge accent bar — communicates "you are here" without
+   filling the icon with accent colour. */
+.nav-btn.active::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 3px;
+  height: 20px;
+  background: var(--accent);
+  border-radius: 0 2px 2px 0;
+}
+
+/* Badge — small counter overlaid on nav button (e.g. failed task count) */
+.nav-badge {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  min-width: 14px;
+  height: 14px;
+  padding: 0 3px;
+  border-radius: 7px;
+  background: var(--status-error);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 14px;
+  text-align: center;
+  pointer-events: none;
+}
+
+/* ── Activity bar logo button ────────────────────────────────────────────────
+   Uses CSS :hover rather than JS onMouseEnter/onMouseLeave.                  */
+.logo-btn {
+  transition: opacity var(--t-fast);
+}
+.logo-btn:hover {
+  opacity: 0.85;
+}
+
+/* ── Command-palette shortcut button ─────────────────────────────────────────
+   Hover handled via CSS so JS event handlers can be removed.                 */
+.cmd-palette-btn {
+  transition:
+    border-color var(--t-fast),
+    color var(--t-fast);
+}
+.cmd-palette-btn:hover {
+  border-color: var(--border-focus);
+  color: var(--text-primary);
+}
+
+/* Pulse dot — shown when tasks are running, no failed count */
+.nav-pulse-dot {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: pulseDot 2s ease-in-out infinite;
+  pointer-events: none;
+}
+
+/* ── Scrollbar ───────────────────────────────────────────────────────────────*/
+::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.11);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+[data-theme="light"] ::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.13);
+}
+[data-theme="light"] ::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 0, 0, 0.22);
+}
+
+/* ── Divider ─────────────────────────────────────────────────────────────────*/
+.divider {
+  width: 24px;
+  height: 1px;
+  background: var(--border);
+  margin: 4px 0;
+  flex-shrink: 0;
+}
+
+/* ── Tooltip (portal-based, see TooltipPortal.tsx) ──────────────────────────*/
+/* The [data-tooltip] attribute is consumed by TooltipPortal via event
+   delegation; no CSS pseudo-element is needed. */
+[data-tooltip] {
+  position: relative; /* keeps layout expectations intact */
+}
+
+/* ── Animations ──────────────────────────────────────────────────────────────*/
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes scaleIn {
+  from {
+    opacity: 0;
+    transform: scale(0.97) translateY(-6px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+@keyframes slideInRight {
+  from {
+    opacity: 0;
+    transform: translateX(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes slideInLeft {
+  from {
+    opacity: 0;
+    transform: translateX(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes slideUp {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes pulseDot {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.45;
+    transform: scale(0.85);
+  }
+}
+
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* ── Toggle switch ───────────────────────────────────────────────────────────*/
+.toggle {
+  position: relative;
+  display: inline-flex;
+  width: 36px;
+  height: 20px;
+  flex-shrink: 0;
+  cursor: pointer;
+}
+.toggle input {
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+.toggle-track {
+  width: 100%;
+  height: 100%;
+  background: var(--border-hover);
+  border-radius: 10px;
+  transition: background var(--t-fast);
+}
+.toggle input:checked + .toggle-track {
+  background: var(--accent);
+}
+.toggle-thumb {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 14px;
+  height: 14px;
+  background: #fff;
+  border-radius: 50%;
+  transition: transform var(--t-fast);
+  pointer-events: none;
+}
+.toggle input:checked ~ .toggle-thumb {
+  transform: translateX(16px);
+}
+.toggle:focus-within .toggle-track {
+  outline: 2px solid var(--border-focus);
+  outline-offset: 2px;
+}
+
+/* ── Badge / chip atoms ─────────────────────────────────────────────────────
+   Small inline labels: engine pill, "Draft", "1,247 nodes", "Simulated",
+   etc. `.badge` is the base; modifiers swap colour + border. Designed for
+   `<span>` content only — never put onClick on a badge.                       */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  line-height: 1.4;
+  padding: 1px 6px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--bg-input);
+  color: var(--text-tertiary);
+  font-family: var(--font-ui);
+  white-space: nowrap;
+}
+.badge-soft {
+  /* Slightly larger variant with breathing room — used on standalone
+     status pills like "Simulated", "n loggers". */
+  padding: 2px 8px;
+}
+.badge-success {
+  color: var(--status-success);
+  border-color: var(--status-success);
+}
+.badge-warning {
+  color: var(--status-warning);
+  border-color: var(--status-warning);
+}
+.badge-error {
+  color: var(--status-error);
+  border-color: var(--status-error);
+}
+
+/* ── Link-style button ──────────────────────────────────────────────────────
+   Plain text button used for back/cancel actions in wizards.                 */
+.btn-link {
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 14px;
+  padding: 0;
+  font-family: var(--font-ui);
+  transition: color var(--t-fast);
+}
+.btn-link:hover {
+  color: var(--text-primary);
+}
+.btn-link:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: 3px;
+  border-radius: var(--radius-xs);
+}
+
+/* ── Canvas view ─────────────────────────────────────────────────────────────*/
+/* (canvas-bg defined further below with full depth gradient) */
+
+/* ── Canvas toolbar ──────────────────────────────────────────────────────────*/
+.canvas-toolbar {
+  background: rgba(11, 11, 14, 0.72);
+  backdrop-filter: blur(16px) saturate(1.4);
+  -webkit-backdrop-filter: blur(16px) saturate(1.4);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 10px;
+  box-shadow:
+    0 4px 20px rgba(0, 0, 0, 0.4),
+    0 1px 0 rgba(255, 255, 255, 0.04) inset;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 4px;
+}
+
+.tool-btn {
+  width: 30px;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 14px;
+  transition:
+    background var(--t-fast),
+    color var(--t-fast);
+  flex-shrink: 0;
+  padding: 0;
+  user-select: none;
+  white-space: nowrap;
+}
+.tool-btn:hover {
+  background: var(--nav-hover);
+  color: var(--text-primary);
+}
+.tool-btn.active {
+  background: var(--accent-dim);
+  color: var(--accent);
+}
+.tool-btn:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: 1px;
+}
+
+.tool-divider {
+  width: 1px;
+  height: 20px;
+  background: var(--border);
+  margin: 0 2px;
+  flex-shrink: 0;
+}
+
+/* ── Timeline scrubber ───────────────────────────────────────────────────────*/
+.timeline-bar {
+  height: 64px;
+  background: var(--bg-panel);
+  border-top: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  padding: 0 12px;
+  gap: 12px;
+  flex-shrink: 0;
+  user-select: none;
+}
+
+.timeline-bar--steady {
+  justify-content: center;
+  gap: 10px;
+}
+
+.timeline-steady-pill {
+  display: inline-flex;
+  align-items: center;
+  height: 24px;
+  padding: 0 10px;
+  border-radius: 999px;
+  border: 1px solid var(--accent);
+  background: var(--accent-dim);
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.timeline-steady-text {
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.tl-btn {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+  border-radius: 5px;
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  cursor: pointer;
+  font-family: var(--font-ui);
+  transition:
+    background var(--t-fast),
+    color var(--t-fast),
+    border-color var(--t-fast);
+}
+.tl-btn:hover {
+  background: var(--bg-card);
+  color: var(--text-primary);
+}
+.tl-btn.tl-play {
+  width: 36px;
+  height: 36px;
+  font-size: 14px;
+  background: var(--accent-dim);
+  color: var(--accent);
+  border-color: var(--accent);
+}
+.tl-btn.tl-play:hover {
+  background: var(--accent);
+  color: #fff;
+}
+.tl-btn.tl-active {
+  background: var(--accent-dim);
+  color: var(--accent);
+  border-color: var(--accent);
+}
+.tl-speed {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+  border-radius: 5px;
+  height: 28px;
+  padding: 0 8px;
+  font-size: 11px;
+  font-family: var(--font-mono);
+  cursor: pointer;
+}
+.tl-speed:hover {
+  background: var(--bg-card);
+  color: var(--text-primary);
+}
+
+/* ── Inspector panel ─────────────────────────────────────────────────────────*/
+.inspector-panel {
+  width: 288px;
+  height: 100%;
+  background: rgba(13, 13, 18, 0.97);
+  backdrop-filter: blur(14px) saturate(1.3);
+  -webkit-backdrop-filter: blur(14px) saturate(1.3);
+  border-left: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  overflow: hidden;
+  animation: slideInRight 180ms ease-out;
+}
+
+/* ── Inspector tab strip buttons ─────────────────────────────────────────────*/
+.inspector-tab {
+  flex: 1;
+  padding: 8px 4px;
+  font-size: 11px;
+  font-weight: 600;
+  border: none;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  font-family: var(--font-ui);
+  position: relative;
+  transition: color var(--t-fast);
+}
+.inspector-tab:not(.active):hover {
+  color: var(--text-secondary);
+}
+.inspector-tab.active {
+  background: var(--bg-panel);
+  color: var(--text-primary);
+}
+
+/* ── Results panel tabs ──────────────────────────────────────────────────────*/
+.result-tab {
+  padding: 6px 12px;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 12px;
+  font-family: var(--font-ui);
+  border-bottom: 2px solid transparent;
+  transition:
+    color var(--t-fast),
+    border-color var(--t-fast);
+  white-space: nowrap;
+}
+.result-tab:hover {
+  color: var(--text-primary);
+}
+.result-tab.active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+
+/* ── Metric chip ─────────────────────────────────────────────────────────────*/
+.metric-chip {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 14px;
+  background: linear-gradient(
+    145deg,
+    var(--bg-card) 0%,
+    rgba(74, 144, 217, 0.05) 100%
+  );
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  flex: 1;
+  min-width: 0;
+  transition:
+    border-color var(--t-fast),
+    box-shadow var(--t-fast);
+}
+.metric-chip:hover {
+  border-color: var(--border-hover);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+}
+.metric-chip .metric-value {
+  font-family: var(--font-mono);
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text-primary);
+  line-height: 1.2;
+}
+.metric-chip .metric-label {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ── Overview quick insights ─────────────────────────────────────────────────*/
+.insights-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 16px;
+}
+
+.warning-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 6px 0;
+  border-top: 1px solid var(--border);
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+.warning-row:first-child {
+  border-top: none;
+}
+
+/* ── Toast notification ──────────────────────────────────────────────────────*/
+.toast-container {
+  position: fixed;
+  bottom: 72px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 9999;
+  pointer-events: none;
+}
+.toast {
+  background: var(--bg-panel);
+  border: 1px solid var(--border-hover);
+  border-radius: 8px;
+  padding: 8px 16px;
+  max-width: min(92vw, 760px);
+  font-size: 13px;
+  color: var(--text-primary);
+  box-shadow: var(--shadow-3);
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  line-height: 1.35;
+  animation: slideUp 180ms ease-out;
+}
+.toast.success {
+  border-color: var(--status-success);
+  color: var(--status-success);
+}
+.toast.warn {
+  border-color: var(--status-warning);
+  color: var(--status-warning);
+}
+.toast.error {
+  border-color: var(--status-error);
+  color: var(--status-error);
+}
+.toast.info {
+  border-color: #4a90d9;
+  color: #4a90d9;
+}
+
+/* ── Animated pump flow ──────────────────────────────────────────────────────*/
+@keyframes flowDash {
+  from {
+    stroke-dashoffset: 0;
+  }
+  to {
+    stroke-dashoffset: -18;
+  }
+}
+.pump-flow {
+  animation: flowDash 1.4s linear infinite;
+}
+
+/* ── Gradient run / primary button ──────────────────────────────────────────*/
+.btn-run {
+  background: linear-gradient(135deg, #4a90d9 0%, #2f6dba 100%);
+  box-shadow:
+    0 2px 8px rgba(74, 144, 217, 0.3),
+    inset 0 1px 0 rgba(255, 255, 255, 0.1);
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  padding: 0 12px;
+  height: 30px;
+  font-size: 12px;
+  font-weight: 500;
+  font-family: var(--font-ui);
+  cursor: pointer;
+  transition:
+    box-shadow var(--t-fast),
+    transform var(--t-fast);
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+.btn-run:hover {
+  box-shadow:
+    0 4px 16px rgba(74, 144, 217, 0.45),
+    inset 0 1px 0 rgba(255, 255, 255, 0.14);
+  transform: translateY(-1px);
+}
+.btn-run:active {
+  transform: translateY(0);
+  box-shadow: 0 1px 4px rgba(74, 144, 217, 0.2);
+}
+.btn-run--stale {
+  background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
+  box-shadow:
+    0 2px 8px rgba(245, 158, 11, 0.35),
+    inset 0 1px 0 rgba(255, 255, 255, 0.1);
+}
+.btn-run--stale:hover {
+  box-shadow:
+    0 4px 16px rgba(245, 158, 11, 0.5),
+    inset 0 1px 0 rgba(255, 255, 255, 0.14);
+  transform: translateY(-1px);
+}
+.btn-run--outline {
+  background: transparent;
+  border: 1.5px solid #4a90d9;
+  color: #4a90d9;
+  box-shadow: none;
+}
+.btn-run--outline:hover {
+  background: rgba(74, 144, 217, 0.08);
+  box-shadow: 0 2px 8px rgba(74, 144, 217, 0.2);
+}
+
+/* ── Custom range input (timeline scrubber) ──────────────────────────────────*/
+input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 4px;
+  background: var(--border-hover);
+  border-radius: 2px;
+  outline: none;
+  cursor: pointer;
+}
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--accent);
+  cursor: pointer;
+  box-shadow:
+    0 0 0 3px rgba(74, 144, 217, 0.22),
+    0 1px 4px rgba(0, 0, 0, 0.45);
+  transition:
+    transform var(--t-fast),
+    box-shadow var(--t-fast);
+}
+input[type="range"]::-webkit-slider-thumb:hover {
+  transform: scale(1.25);
+  box-shadow:
+    0 0 0 5px rgba(74, 144, 217, 0.18),
+    0 1px 6px rgba(0, 0, 0, 0.5);
+}
+input[type="range"]::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--accent);
+  border: none;
+  cursor: pointer;
+  box-shadow: 0 0 0 3px rgba(74, 144, 217, 0.22);
+}
+input[type="range"]::-moz-range-track {
+  height: 4px;
+  background: var(--border-hover);
+  border-radius: 2px;
+}
+
+/* ── Canvas background depth ─────────────────────────────────────────────────*/
+.canvas-bg {
+  background:
+    radial-gradient(
+      ellipse at 25% 35%,
+      rgba(74, 144, 217, 0.06) 0%,
+      transparent 55%
+    ),
+    radial-gradient(
+      ellipse at 75% 65%,
+      rgba(61, 175, 117, 0.05) 0%,
+      transparent 50%
+    ),
+    radial-gradient(
+      ellipse at 50% 50%,
+      rgba(74, 144, 217, 0.025) 0%,
+      transparent 70%
+    ),
+    var(--bg-app);
+}
+
+/* ── Light-mode glass overrides ──────────────────────────────────────────────*/
+[data-theme="light"] .canvas-toolbar {
+  background: rgba(255, 255, 255, 0.82);
+  border-color: rgba(23, 33, 55, 0.1);
+  box-shadow:
+    0 4px 20px rgba(0, 0, 0, 0.1),
+    0 1px 0 rgba(255, 255, 255, 0.8) inset;
+}
+[data-theme="light"] .inspector-panel {
+  background: rgba(242, 245, 252, 0.97);
+}
+[data-theme="light"] .metric-chip {
+  background: linear-gradient(
+    145deg,
+    #ffffff 0%,
+    rgba(46, 114, 194, 0.04) 100%
+  );
+}
+[data-theme="light"] .btn-run {
+  background: linear-gradient(135deg, #2e72c2 0%, #1e5aa0 100%);
+  box-shadow:
+    0 2px 8px rgba(46, 114, 194, 0.28),
+    inset 0 1px 0 rgba(255, 255, 255, 0.2);
+}
+[data-theme="light"] .btn-run:hover {
+  box-shadow:
+    0 4px 16px rgba(46, 114, 194, 0.4),
+    inset 0 1px 0 rgba(255, 255, 255, 0.25);
+}
+[data-theme="light"] input[type="range"]::-webkit-slider-thumb {
+  box-shadow:
+    0 0 0 3px rgba(46, 114, 194, 0.2),
+    0 1px 4px rgba(0, 0, 0, 0.2);
+}
+
+/* ── Shortcut key badge ──────────────────────────────────────────────────────*/
+.shortcut-key {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 2px 6px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-secondary);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+}
+
+/* ── Wizard card ─────────────────────────────────────────────────────────────*/
+.wizard-card {
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 40px;
+  width: 100%;
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.3);
+}
+
+/* ── Report preview — printed page look, stays white in dark mode ────────────*/
+.report-preview {
+  background: #fff;
+  color: #1a1a1a;
+  padding: 48px 56px;
+  border-radius: 4px;
+  max-width: 760px;
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.2);
+  font-family: Georgia, serif;
+  margin: 0 auto;
+}
+
+/* ── Context menu item ───────────────────────────────────────────────────────*/
+.context-menu-item {
+  width: 100%;
+  text-align: left;
+  border: none;
+  background: transparent;
+  color: var(--text-primary);
+  cursor: pointer;
+  padding: 7px 14px;
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--font-ui);
+  transition: background var(--t-fast);
+}
+.context-menu-item:hover {
+  background: var(--nav-hover);
+}
+.context-menu-item.danger {
+  color: var(--status-error);
+}
+
+/* ── Light-mode overrides for new elements ───────────────────────────────────*/
+[data-theme="light"] .wizard-card {
+  background: var(--bg-panel);
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.12);
+}
+[data-theme="light"] .report-preview {
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.1);
+}
+
+/* ── Global focus-visible ring ───────────────────────────────────────────────
+   Every interactive element gets a consistent focus ring for keyboard nav.
+   Browser default outline is removed globally; we restore it for keyboard users
+   only via :focus-visible.                                                     */
+:focus {
+  outline: none;
+}
+:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: 2px;
+}
+/* Nav and tool buttons already have their own focus-visible — keep them */
+.nav-btn:focus-visible,
+.tool-btn:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: 2px;
+}
+
+/* ── Input / textarea polished focus ─────────────────────────────────────────*/
+input[type="text"]:focus-visible,
+input[type="search"]:focus-visible,
+textarea:focus-visible,
+select:focus-visible {
+  outline: none;
+  box-shadow:
+    0 0 0 2px var(--border-focus),
+    0 0 0 1px var(--accent);
+}
+
+/* ── Secondary / ghost button ────────────────────────────────────────────────*/
+.btn-secondary {
+  background: transparent;
+  border: 1px solid var(--border-hover);
+  color: var(--text-secondary);
+  border-radius: 6px;
+  padding: 0 12px;
+  height: 30px;
+  font-size: 12px;
+  font-weight: 500;
+  font-family: var(--font-ui);
+  cursor: pointer;
+  transition:
+    border-color var(--t-fast),
+    color var(--t-fast),
+    background var(--t-fast);
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+.btn-secondary:hover {
+  border-color: var(--border-focus);
+  color: var(--text-primary);
+  background: var(--nav-hover);
+}
+.btn-secondary:active {
+  background: var(--accent-dim);
+}
+.btn-secondary:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: 2px;
+}
+
+/* ── Pager button — paginated table footers ──────────────────────────────*/
+.btn-pager {
+  height: 28px;
+  min-width: 28px;
+  padding: 0 6px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-family: var(--font-ui);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition:
+    background var(--t-fast),
+    color var(--t-fast),
+    border-color var(--t-fast);
+  flex-shrink: 0;
+}
+.btn-pager:hover:not(:disabled) {
+  background: var(--nav-hover);
+  color: var(--text-primary);
+  border-color: var(--border-hover);
+}
+.btn-pager:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  color: var(--text-disabled);
+}
+.btn-pager.pager-active {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+  font-weight: 600;
+  cursor: default;
+}
+.btn-pager.pager-active:hover {
+  background: var(--accent);
+  color: #fff;
+}
+
+/* ── Drag-drop zone ──────────────────────────────────────────────────────────*/
+.drop-zone {
+  border: 2px dashed var(--border-hover);
+  border-radius: 10px;
+  background: var(--bg-input);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 32px;
+  cursor: pointer;
+  transition:
+    border-color var(--t-base),
+    background var(--t-base);
+  text-align: center;
+}
+.drop-zone:hover,
+.drop-zone.dragging {
+  border-color: var(--accent);
+  background: var(--accent-dim);
+}
+@keyframes dropZonePulse {
+  0%,
+  100% {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 0 rgba(74, 144, 217, 0.3);
+  }
+  50% {
+    border-color: var(--accent-hover);
+    box-shadow: 0 0 0 6px rgba(74, 144, 217, 0);
+  }
+}
+.drop-zone.dragging {
+  animation: dropZonePulse 1.4s ease-in-out infinite;
+}
+.drop-zone .drop-icon {
+  font-size: 32px;
+  opacity: 0.5;
+}
+.drop-zone .drop-label {
+  font-size: 14px;
+  color: var(--text-secondary);
+}
+.drop-zone .drop-link {
+  font-size: 13px;
+  color: var(--accent);
+  text-decoration: underline;
+  cursor: pointer;
+}
+.drop-zone.detected {
+  border-color: var(--status-success);
+  background: rgba(61, 175, 117, 0.08);
+  border-style: solid;
+}
+
+/* ── Project card lift on hover ──────────────────────────────────────────────*/
+.project-card {
+  transition:
+    transform var(--t-base),
+    border-color var(--t-base),
+    box-shadow var(--t-base);
+}
+.project-card:hover {
+  transform: translateY(-3px);
+  border-color: var(--border-hover);
+  box-shadow:
+    0 8px 28px rgba(0, 0, 0, 0.35),
+    0 0 0 1px rgba(74, 144, 217, 0.12);
+}
+[data-theme="light"] .project-card:hover {
+  box-shadow:
+    0 8px 28px rgba(0, 0, 0, 0.12),
+    0 0 0 1px rgba(46, 114, 194, 0.15);
+}
+
+/* ── Scrollable panel fade mask ──────────────────────────────────────────────
+   Wrap scrollable content in .scroll-fade and the parent gets soft gradient
+   edges indicating more content above/below.                                  */
+.scroll-fade {
+  position: relative;
+}
+.scroll-fade::before,
+.scroll-fade::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 24px;
+  pointer-events: none;
+  z-index: 1;
+}
+.scroll-fade::before {
+  top: 0;
+  background: linear-gradient(to bottom, var(--bg-panel) 0%, transparent 100%);
+}
+.scroll-fade::after {
+  bottom: 0;
+  background: linear-gradient(to top, var(--bg-panel) 0%, transparent 100%);
+}
+
+/* ── Table row hover ─────────────────────────────────────────────────────────*/
+.data-table tr:hover td {
+  background: var(--bg-card-hover);
+}
+.data-table td,
+.data-table th {
+  transition: background var(--t-fast);
+}
+
+/* ── Activity bar active glow ────────────────────────────────────────────────*/
+.nav-btn.active::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 1px;
+  height: 32px;
+  background: var(--accent);
+  filter: blur(6px);
+  opacity: 0.55;
+  border-radius: 2px;
+}
+
+/* ── Wizard step progress indicator ─────────────────────────────────────────*/
+.wizard-steps {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  margin-bottom: 32px;
+}
+.wizard-step-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+}
+.wizard-step-item:last-child {
+  flex: none;
+}
+.wizard-step-dot {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 600;
+  flex-shrink: 0;
+  transition:
+    background var(--t-base),
+    border-color var(--t-base),
+    color var(--t-base);
+}
+.wizard-step-dot.pending {
+  background: transparent;
+  border: 1.5px solid var(--border-hover);
+  color: var(--text-tertiary);
+}
+.wizard-step-dot.active {
+  background: var(--accent);
+  border: 1.5px solid var(--accent);
+  color: #fff;
+  box-shadow: 0 0 0 4px var(--accent-dim);
+}
+.wizard-step-dot.done {
+  background: var(--status-success);
+  border: 1.5px solid var(--status-success);
+  color: #fff;
+}
+.wizard-step-label {
+  font-size: 12px;
+  color: var(--text-tertiary);
+  white-space: nowrap;
+}
+.wizard-step-label.active {
+  color: var(--text-primary);
+  font-weight: 500;
+}
+.wizard-step-label.done {
+  color: var(--status-success);
+}
+.wizard-step-connector {
+  flex: 1;
+  height: 1px;
+  background: var(--border-hover);
+  margin: 0 8px;
+  min-width: 24px;
+}
+.wizard-step-connector.done {
+  background: var(--status-success);
+}
+
+/* ── Homepage radial depth gradient ─────────────────────────────────────────*/
+.home-bg {
+  background:
+    radial-gradient(
+      ellipse at 20% 20%,
+      rgba(74, 144, 217, 0.07) 0%,
+      transparent 50%
+    ),
+    radial-gradient(
+      ellipse at 80% 80%,
+      rgba(61, 175, 117, 0.05) 0%,
+      transparent 45%
+    ),
+    radial-gradient(
+      ellipse at 50% 0%,
+      rgba(74, 144, 217, 0.04) 0%,
+      transparent 60%
+    ),
+    var(--bg-app);
+}
+[data-theme="light"] .home-bg {
+  background:
+    radial-gradient(
+      ellipse at 20% 20%,
+      rgba(46, 114, 194, 0.06) 0%,
+      transparent 50%
+    ),
+    radial-gradient(
+      ellipse at 80% 80%,
+      rgba(30, 154, 95, 0.04) 0%,
+      transparent 45%
+    ),
+    var(--bg-app);
+}
+
+/* ── Reduced motion — honour OS preference ───────────────────────────────────
+   All CSS animations and transitions are cut to instant for users who have
+   enabled "Reduce motion" in their OS accessibility settings.                 */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms;
+    animation-iteration-count: 1;
+    transition-duration: 0.01ms;
+  }
+}

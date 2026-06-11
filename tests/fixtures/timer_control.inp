@@ -1,0 +1,25 @@
+[TITLE]
+Timer control closes pipe at t=2h
+
+[JUNCTIONS]
+J1    0    10
+
+[RESERVOIRS]
+R1    100
+
+[PIPES]
+P1    R1    J1    1000    12    100    0    Open
+
+[CONTROLS]
+LINK P1 CLOSED AT TIME 2
+
+[OPTIONS]
+Units    GPM
+Headloss    H-W
+
+[TIMES]
+Duration    4:00
+Hydraulic Timestep    1:00
+Report Timestep    1:00
+
+[END]

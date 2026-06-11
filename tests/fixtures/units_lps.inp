@@ -1,0 +1,28 @@
+[TITLE]
+SI units (LPS) — catches metric conversion bugs
+
+[JUNCTIONS]
+J1    0    5
+J2    0    3
+
+[RESERVOIRS]
+R1    50
+
+[TANKS]
+T1    30    2    0    5    10    0
+
+[PIPES]
+P1    R1    J1    200    300    100    0    Open
+P2    J1    J2    200    300    100    0    Open
+P3    J2    T1    200    300    100    0    Open
+
+[OPTIONS]
+Units    LPS
+Headloss    H-W
+
+[TIMES]
+Duration    4:00
+Hydraulic Timestep    1:00
+Report Timestep    1:00
+
+[END]

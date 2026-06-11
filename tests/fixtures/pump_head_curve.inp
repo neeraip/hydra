@@ -1,0 +1,21 @@
+[TITLE]
+Head curve pump steady state
+
+[JUNCTIONS]
+J1    0    100
+
+[RESERVOIRS]
+R1    0
+
+[PUMPS]
+PMP1    R1    J1    HEAD C1
+
+[CURVES]
+C1    0    300
+C1    1000    200
+
+[OPTIONS]
+Units    GPM
+Headloss    H-W
+
+[END]

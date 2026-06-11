@@ -1,0 +1,19 @@
+[TITLE]
+Dual reservoir feeding single junction — steady state
+
+[JUNCTIONS]
+J1    0    400
+
+[RESERVOIRS]
+R1    100
+R2    80
+
+[PIPES]
+P1    R1    J1    3000    6    100    0    Open
+P2    R2    J1    3000    6    100    0    Open
+
+[OPTIONS]
+Units    GPM
+Headloss    H-W
+
+[END]

@@ -1,0 +1,37 @@
+[TITLE]
+Multiple quality sources — setpoint and flowpaced in one network
+
+[JUNCTIONS]
+J1    0    100
+J2    0    100
+J3    0    50
+
+[RESERVOIRS]
+R1    200
+
+[PIPES]
+P1    R1    J1    500    12    100    0    Open
+P2    J1    J2    500    12    100    0    Open
+P3    J2    J3    500    12    100    0    Open
+
+[SOURCES]
+R1    CONCEN     1.0
+J1    SETPOINT   5.0
+J2    FLOWPACED  2.0
+
+[TIMES]
+Duration    4:00
+Hydraulic Timestep    0:10
+Quality Timestep    0:01
+Report Timestep    0:30
+
+[REACTIONS]
+Global Bulk    0.0
+Global Wall    0.0
+
+[OPTIONS]
+Units    GPM
+Headloss    H-W
+Quality    Chemical mg/L
+
+[END]

@@ -1,0 +1,17 @@
+[TITLE]
+Pipe with minor loss coefficient K=10
+
+[JUNCTIONS]
+J1    0    100
+
+[RESERVOIRS]
+R1    200
+
+[PIPES]
+P1    R1    J1    1000    12    100    10    Open
+
+[OPTIONS]
+Units    GPM
+Headloss    H-W
+
+[END]

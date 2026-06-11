@@ -1,0 +1,45 @@
+[TITLE]
+Rule-based control on link flow — throttles bypass when main exceeds threshold
+
+[JUNCTIONS]
+J1    0    200
+J2    0    100
+
+[RESERVOIRS]
+R1    150
+
+[PIPES]
+; Main supply path
+P1    R1    J1    1000    12    100    0    Open
+P2    J1    J2    800     10    100    0    Open
+; Bypass pipe (initially closed, opened when main flow is high)
+P3    R1    J2    1200    8     100    0    Closed
+
+[PATTERNS]
+; Demand varies to push flow above/below thresholds
+PAT1    0.5    0.8    1.5    1.8    1.0    0.6
+
+[RULES]
+; Open bypass when main flow exceeds 250 GPM
+RULE 1
+IF LINK P1 FLOW > 250
+THEN LINK P3 STATUS IS OPEN
+PRIORITY 1
+
+; Close bypass when main flow drops below 150 GPM
+RULE 2
+IF LINK P1 FLOW < 150
+THEN LINK P3 STATUS IS CLOSED
+PRIORITY 1
+
+[OPTIONS]
+Units    GPM
+Headloss    H-W
+Pattern    PAT1
+
+[TIMES]
+Duration    12:00
+Hydraulic Timestep    1:00
+Report Timestep    1:00
+
+[END]

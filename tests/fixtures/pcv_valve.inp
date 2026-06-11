@@ -1,0 +1,31 @@
+[TITLE]
+Positional control valve — 50% open with loss curve
+
+[JUNCTIONS]
+J1    0    50
+J2    0    50
+
+[RESERVOIRS]
+R1    200
+R2    50
+
+[PIPES]
+P1    R1    J1    1000    12    100    0    Open
+P2    J2    R2    1000    12    100    0    Open
+
+[VALVES]
+PCV1    J1    J2    12    PCV    50    5    LC1
+
+[CURVES]
+;PCV loss ratio curve: percent-open vs Kv/Kv_full (%)
+LC1    0      0
+LC1    25     10
+LC1    50     40
+LC1    75     70
+LC1    100    100
+
+[OPTIONS]
+Units    GPM
+Headloss    H-W
+
+[END]

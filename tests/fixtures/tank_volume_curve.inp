@@ -1,0 +1,31 @@
+[TITLE]
+Tank with a volume curve (conical shape — non-cylindrical)
+
+[RESERVOIRS]
+R1    200
+
+[TANKS]
+;     Elev  Init   Min   Max   Diam  MinVol  VolCurve
+T1    0     5      0     20    50    0       VC1
+
+[PIPES]
+P1    R1    T1    500    12    100    0    Open
+
+[CURVES]
+;VOLUME:
+VC1    0     0
+VC1    5     200
+VC1    10    800
+VC1    15    1800
+VC1    20    3200
+
+[OPTIONS]
+Units    GPM
+Headloss    H-W
+
+[TIMES]
+Duration    6:00
+Hydraulic Timestep    1:00
+Report Timestep    1:00
+
+[END]

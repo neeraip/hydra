@@ -1,0 +1,18 @@
+[TITLE]
+Parallel pipes between two nodes — steady state
+
+[JUNCTIONS]
+J1    0    100
+
+[RESERVOIRS]
+R1    100
+
+[PIPES]
+PA    R1    J1    1000    200    100    0    Open
+PB    R1    J1    1000    200    100    0    Open
+
+[OPTIONS]
+Units    GPM
+Headloss    H-W
+
+[END]
