@@ -270,7 +270,7 @@ function XSChart({ xs, accent }: { xs: CrossSection; accent: string }) {
   const wsElev =
     lowestInChannel +
     0.6 *
-    ((xs.points.find((p) => p.station === xs.bankLeft)?.elev ?? 0) -
+      ((xs.points.find((p) => p.station === xs.bankLeft)?.elev ?? 0) -
         lowestInChannel);
 
   // ground line

@@ -28,19 +28,26 @@ import type { CanvasTool, LinkVariable, NodeVariable, ViewMode } from "./types";
 const BLANK_STYLE: maplibregl.StyleSpecification = {
   version: 8,
   sources: {},
-  layers: [{ id: "background", type: "background", paint: { "background-color": "#16181c" } }],
+  layers: [
+    {
+      id: "background",
+      type: "background",
+      paint: { "background-color": "#16181c" },
+    },
+  ],
 };
 
 // "streets" = OpenFreeMap Liberty (full coloured streets)
 // "light"   = OpenFreeMap Positron (minimal light theme)
 // "dark"    = OpenFreeMap Dark (dark theme)
 // "none"    = tile-free blank background
-const MAP_STYLES: Record<BasemapStyle, string | maplibregl.StyleSpecification> = {
-  streets: "https://tiles.openfreemap.org/styles/liberty",
-  light: "https://tiles.openfreemap.org/styles/positron",
-  dark: "https://tiles.openfreemap.org/styles/dark",
-  none: BLANK_STYLE,
-};
+const MAP_STYLES: Record<BasemapStyle, string | maplibregl.StyleSpecification> =
+  {
+    streets: "https://tiles.openfreemap.org/styles/liberty",
+    light: "https://tiles.openfreemap.org/styles/positron",
+    dark: "https://tiles.openfreemap.org/styles/dark",
+    none: BLANK_STYLE,
+  };
 
 interface MapCanvasProps {
   nodes: Node[];
