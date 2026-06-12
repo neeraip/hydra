@@ -2,6 +2,7 @@ name: pnpm CI
 
 on:
   push:
+    branches: [main]
     paths:
       - 'crates/gui/frontend/**'
       - '.github/workflows/pnpm-ci.yml'

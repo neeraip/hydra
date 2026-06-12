@@ -2,6 +2,7 @@ name: Cargo CI
 
 on:
   push:
+    branches: [main]
     paths:
       - 'crates/**/*.rs'
       - 'crates/**/Cargo.toml'
