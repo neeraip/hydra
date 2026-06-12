@@ -1,0 +1,112 @@
+name: Release GUI
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux x86_64
+            os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            # Installers:  .deb, .AppImage
+            # Portable:    .AppImage (self-contained — no extra step needed)
+            bundles: deb,appimage
+          - name: macOS Intel
+            os: macos-13
+            target: x86_64-apple-darwin
+            # Installers:  .dmg
+            # Portable:    .app zipped
+            bundles: dmg,app
+          - name: macOS Apple Silicon
+            os: macos-latest
+            target: aarch64-apple-darwin
+            bundles: dmg,app
+          - name: Windows x86_64
+            os: windows-latest
+            target: x86_64-pc-windows-msvc
+            # Installers:  NSIS .exe
+            # Portable:    raw .exe zipped (WebView2 is pre-installed on Win10/11)
+            bundles: nsis
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4.2.2
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4.4.0
+        with:
+          node-version: 22
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4.1.0
+        with:
+          version: 10
+
+      - name: Install frontend dependencies
+        working-directory: crates/gui/frontend
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1.11.0
+        with:
+          target: ${{ matrix.target }}
+          cache: false
+
+      - name: Install Linux system dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            patchelf
+
+      - name: Build and upload installers
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          projectPath: crates/gui
+          tagName: ${{ github.event.release.tag_name }}
+          releaseName: ${{ github.event.release.name }}
+          releaseId: ${{ github.event.release.id }}
+          releaseDraft: false
+          prerelease: false
+          args: --target ${{ matrix.target }} --bundles ${{ matrix.bundles }}
+
+      # ── Portable distributions ─────────────────────────────────────────────
+
+      - name: Package portable (macOS — zip .app bundle)
+        if: runner.os == 'macOS'
+        run: |
+          APP=$(find crates/gui/target/${{ matrix.target }}/release/bundle/macos -name "*.app" | head -1)
+          ARCHIVE="Hydra-${{ github.event.release.tag_name }}-${{ matrix.target }}-portable.tar.gz"
+          tar -czf "$ARCHIVE" -C "$(dirname "$APP")" "$(basename "$APP")"
+          echo "PORTABLE=$ARCHIVE" >> "$GITHUB_ENV"
+
+      - name: Package portable (Windows — zip .exe)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $exe = Get-ChildItem "crates\gui\target\${{ matrix.target }}\release" -Filter "hydra-gui.exe" | Select-Object -First 1
+          $archive = "Hydra-${{ github.event.release.tag_name }}-${{ matrix.target }}-portable.zip"
+          Compress-Archive -Path $exe.FullName -DestinationPath $archive
+          echo "PORTABLE=$archive" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Upload portable (macOS / Windows)
+        if: runner.os != 'Linux'
+        run: gh release upload "${{ github.event.release.tag_name }}" "${{ env.PORTABLE }}"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
