@@ -9,8 +9,8 @@ permissions:
   pull-requests: read
 
 jobs:
-  lint:
-    name: lint
+  validate:
+    name: Validate PR Title
     runs-on: ubuntu-latest
     timeout-minutes: 5
 

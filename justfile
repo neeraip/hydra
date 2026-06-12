@@ -2,6 +2,116 @@
 default:
     @just --list
 
+# ── Check & Test ──────────────────────────────────────────────────────────────
+
+# Run cargo check (fast compile verification)
+check:
+    cargo check
+
+# Run all tests
+test:
+    cargo test --workspace --all-targets --locked
+
+# Run hydra-common tests only
+test-common:
+    cargo test -p hydra-common
+
+# Run hydra-engine tests only
+test-engine:
+    cargo test -p hydra-engine
+
+# Run hydra-sdk tests only
+test-sdk:
+    cargo test -p hydra-sdk
+
+# Run hydra-cli tests only
+test-cli:
+    cargo test -p hydra-cli
+
+# Run hydra-gui tests only
+test-gui:
+    cargo test -p hydra-gui
+
+# ── Lint & Format ─────────────────────────────────────────────────────────────
+
+# Format all Rust source files
+fmt:
+    cargo fmt --all
+
+# Check formatting without modifying files
+fmt-check:
+    cargo fmt --all -- --check
+
+# Run clippy lints
+clippy:
+    cargo clippy --workspace --all-targets --locked -- -D warnings
+
+# Run all Rust lints (format check + clippy)
+lint: fmt-check clippy
+
+# Check dependency licenses and bans
+deny:
+    cargo deny check
+
+# Audit dependencies for known vulnerabilities
+audit:
+    cargo audit
+
+# Check documentation compiles without warnings
+doc:
+    RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
+
+# ── Frontend ──────────────────────────────────────────────────────────────────
+
+# Format frontend source files
+fmt-frontend:
+    cd crates/gui/frontend && pnpm format
+
+# Check frontend linting and formatting
+lint-frontend:
+    cd crates/gui/frontend && pnpm lint
+
+# Type-check frontend source files
+type-check-frontend:
+    cd crates/gui/frontend && pnpm exec tsc --noEmit
+
+# Build frontend
+build-frontend:
+    cd crates/gui/frontend && pnpm build
+
+# Run frontend tests
+test-frontend:
+    cd crates/gui/frontend && pnpm test
+
+# ── CI ────────────────────────────────────────────────────────────────────────
+
+# Run all checks that CI runs (mirrors cargo-ci + pnpm-ci workflows)
+ci: deny fmt-check clippy doc test type-check-frontend lint-frontend build-frontend test-frontend
+
+# ── Build ─────────────────────────────────────────────────────────────────────
+
+# Build debug binaries
+build:
+    cargo build
+
+# Build optimised release binaries (fat LTO)
+release:
+    cargo build --release
+
+# Build release binaries tuned for the local CPU
+release-native:
+    RUSTFLAGS="-C target-cpu=native" cargo build --release
+
+# ── Benchmarks ────────────────────────────────────────────────────────────────
+
+# Benchmark Hydra vs EPANET on synthetic networks
+bench: release
+    python3 ref/benchmarks/synthetic.py
+
+# Benchmark with CPU-native release build
+bench-native: release-native
+    python3 ref/benchmarks/synthetic.py
+
 # ── Release ───────────────────────────────────────────────────────────────────
 
 # Bump the workspace version and sync it into tauri.conf.json, then commit and tag.
@@ -26,83 +136,9 @@ bump version:
     subprocess.run(["git", "tag", "-a", f"v{version}", "-m", f"v{version}"], check=True)
     print(f"Tagged v{version}. Push with: git push && git push --tags")
 
-
-
-# Build debug binaries
-build:
-    cargo build
-
-# Build optimised release binaries (fat LTO)
-release:
-    cargo build --release
-
-# Build release binaries tuned for the local CPU
-release-native:
-    RUSTFLAGS="-C target-cpu=native" cargo build --release
-
-# ── Check & Test ──────────────────────────────────────────────────────────────
-
-# Run cargo check (fast compile verification)
-check:
-    cargo check
-
-# Run all tests
-test:
-    cargo test --workspace --all-targets --locked
-
-# Run hydra-common tests only
-test-common:
-    cargo test -p hydra-common
-
-# Run hydra-engine tests only
-test-engine:
-    cargo test -p hydra-engine
-
-# Run hydra-cli tests only
-test-cli:
-    cargo test -p hydra-cli
-
-# Run hydra-gui tests only
-test-gui:
-    cargo test -p hydra-gui
-
-# ── Lint & Format ─────────────────────────────────────────────────────────────
-
-# Format all Rust source files
-fmt:
-    cargo fmt --all
-
-# Check formatting without modifying files
-fmt-check:
-    cargo fmt --all -- --check
-
-# Run clippy lints
-clippy:
-    cargo clippy --workspace --all-targets --locked -- -D warnings
-
-# Run all lints (format check + clippy)
-lint: fmt-check clippy
-
-# Check frontend linting and formatting
-lint-frontend:
-    cd crates/gui/frontend && pnpm lint
-
-# Format frontend source files
-fmt-frontend:
-    cd crates/gui/frontend && pnpm format
-
-# ── Benchmarks ────────────────────────────────────────────────────────────────
-
-# Benchmark Hydra vs EPANET on synthetic networks
-bench: release
-    python3 ref/benchmarks/synthetic.py
-
-# Benchmark with CPU-native release build
-bench-native: release-native
-    python3 ref/benchmarks/synthetic.py
-
 # ── Clean ─────────────────────────────────────────────────────────────────────
 
 # Remove build artifacts (target/)
 clean:
     cargo clean
+

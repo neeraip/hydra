@@ -1,0 +1,17 @@
+# cargo-release configuration
+# https://github.com/crate-ci/cargo-release/blob/master/docs/reference.md
+#
+# This config is used exclusively for the `cargo release publish` step in CI.
+# Versioning, tagging, and changelog management are handled outside of cargo-release.
+
+# Never modify version numbers — versions are set manually.
+allow-branch = ["HEAD"]
+
+# Do not create or push any commits or tags.
+pre-release-commit-message = ""
+tag = false
+push = false
+
+# Do not run any pre/post-release hooks.
+pre-release-hook = []
+post-release-hook = []

@@ -22,7 +22,8 @@ jobs:
         with:
           fetch-depth: 1
 
-      - uses: cargo-bins/cargo-binstall@v1.20.0
+      - name: Install cargo-binstall
+        uses: cargo-bins/cargo-binstall@v1.20.0
 
       - name: Install cargo-audit
         run: cargo binstall cargo-audit --no-confirm

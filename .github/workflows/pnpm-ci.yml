@@ -1,4 +1,4 @@
-name: pnpm CI
+name: PNPM CI
 
 on:
   push:
@@ -20,7 +20,7 @@ permissions:
 
 jobs:
   check:
-    name: pnpm CI
+    name: PNPM CI
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
@@ -38,6 +38,8 @@ jobs:
         uses: actions/setup-node@v6.4.0
         with:
           node-version: 22
+          cache: 'pnpm'
+          cache-dependency-path: crates/gui/frontend/pnpm-lock.yaml
 
       - name: Install pnpm
         uses: pnpm/action-setup@v6.0.8
@@ -52,6 +54,9 @@ jobs:
 
       - name: Lint
         run: pnpm lint
+
+      - name: Build
+        run: pnpm build
 
       - name: Run tests
         run: pnpm test
