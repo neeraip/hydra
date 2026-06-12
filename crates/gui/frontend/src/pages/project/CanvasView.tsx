@@ -981,6 +981,7 @@ export function CanvasView() {
               }}
               onClick={handleSvgClick}
             >
+              <title>Schematic annotations overlay</title>
               {/* Annotation overlays */}
               <MeasureOverlay points={measurePts} />
             </svg>
@@ -1011,6 +1012,7 @@ export function CanvasView() {
               >
                 {(["map", "schematic"] as ViewMode[]).map((m) => (
                   <button
+                    type="button"
                     key={m}
                     onClick={() => setViewMode(m)}
                     style={{
@@ -1063,6 +1065,7 @@ export function CanvasView() {
                 }}
               >
                 <button
+                  type="button"
                   className="tool-btn"
                   disabled={viewMode !== "map"}
                   style={{
@@ -1111,6 +1114,7 @@ export function CanvasView() {
                       ["streets", "light", "dark", "none"] as BasemapStyle[]
                     ).map((b) => (
                       <button
+                        type="button"
                         key={b}
                         onClick={() => {
                           setBasemap(b);
@@ -1151,6 +1155,7 @@ export function CanvasView() {
                 }}
               >
                 <button
+                  type="button"
                   className="tool-btn"
                   disabled={viewMode !== "map"}
                   style={{
@@ -1219,6 +1224,7 @@ export function CanvasView() {
                     </div>
                     {COMMON_CRS.map((c) => (
                       <button
+                        type="button"
                         key={c.epsg}
                         onClick={() => {
                           setSourceCrs(c.epsg);
@@ -1325,6 +1331,7 @@ export function CanvasView() {
               {/* ── BOTH MODES ───────────────────────────────────────────────── */}
 
               <button
+                type="button"
                 className={`tool-btn${activeTool === "select" ? " active" : ""}`}
                 onClick={() => setActiveTool("select")}
                 data-tooltip="Select (S)"
@@ -1340,6 +1347,7 @@ export function CanvasView() {
               </button>
 
               <button
+                type="button"
                 className={`tool-btn${activeTool === "edit" ? " active" : ""}`}
                 onClick={() => setActiveTool("edit")}
                 data-tooltip="Edit / move nodes (E)"
@@ -1355,6 +1363,7 @@ export function CanvasView() {
               </button>
 
               <button
+                type="button"
                 className={`tool-btn${activeTool === "add-node" ? " active" : ""}`}
                 disabled={viewMode !== "map"}
                 onClick={() => setActiveTool("add-node")}
@@ -1375,6 +1384,7 @@ export function CanvasView() {
               </button>
 
               <button
+                type="button"
                 className={`tool-btn${activeTool === "add-link" ? " active" : ""}`}
                 disabled={viewMode !== "map"}
                 onClick={() => setActiveTool("add-link")}
@@ -1396,6 +1406,7 @@ export function CanvasView() {
 
               {/* Measure distance */}
               <button
+                type="button"
                 className={`tool-btn${activeTool === "measure" ? " active" : ""}`}
                 disabled={viewMode !== "map"}
                 onClick={() => {
@@ -1424,6 +1435,7 @@ export function CanvasView() {
               {(measureGeoPts.length > 0 || measurePts.length > 0) &&
                 viewMode === "map" && (
                   <button
+                    type="button"
                     className="tool-btn"
                     onClick={clearAnnotations}
                     data-tooltip="Clear annotations"
@@ -1445,6 +1457,7 @@ export function CanvasView() {
 
               {/* Layer visibility toggles */}
               <button
+                type="button"
                 className={`tool-btn${canvasLayers.model ? " active" : ""}`}
                 onClick={() => setLayer("model", !canvasLayers.model)}
                 data-tooltip="Toggle base model"
@@ -1460,6 +1473,7 @@ export function CanvasView() {
               </button>
 
               <button
+                type="button"
                 className={`tool-btn${canvasLayers.nodeLabels ? " active" : ""}`}
                 onClick={() => setLayer("nodeLabels", !canvasLayers.nodeLabels)}
                 data-tooltip="Toggle node labels"
@@ -1470,6 +1484,7 @@ export function CanvasView() {
               </button>
 
               <button
+                type="button"
                 className={`tool-btn${canvasLayers.linkLabels ? " active" : ""}`}
                 onClick={() => setLayer("linkLabels", !canvasLayers.linkLabels)}
                 data-tooltip="Toggle link labels"

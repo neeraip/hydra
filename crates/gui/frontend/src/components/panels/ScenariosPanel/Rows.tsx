@@ -85,6 +85,7 @@ export function BaseRow({
 
       {!isActive && (
         <button
+          type="button"
           onClick={onActivate}
           style={rowButtonStyle}
           data-tooltip="Switch to Base model"
@@ -94,6 +95,7 @@ export function BaseRow({
       )}
 
       <button
+        type="button"
         onClick={onNewScenario}
         style={{
           ...rowButtonStyle,
@@ -222,6 +224,7 @@ export function ScenarioRow({
               }}
             />
             <button
+              type="button"
               onClick={onRenameCommit}
               style={iconButtonStyle}
               data-tooltip="Save"
@@ -229,6 +232,7 @@ export function ScenarioRow({
               <CheckIcon style={{ width: 11, height: 11 }} />
             </button>
             <button
+              type="button"
               onClick={onRenameCancel}
               style={iconButtonStyle}
               data-tooltip="Cancel"
@@ -311,6 +315,7 @@ export function ScenarioRow({
         >
           {!isActive && (
             <button
+              type="button"
               onClick={onActivate}
               style={rowButtonStyle}
               data-tooltip="Switch to this scenario"
@@ -320,6 +325,7 @@ export function ScenarioRow({
           )}
 
           <button
+            type="button"
             onClick={onRun}
             disabled={isRunning}
             style={{
@@ -332,6 +338,7 @@ export function ScenarioRow({
           </button>
 
           <button
+            type="button"
             onClick={onBranch}
             style={iconButtonStyle}
             data-tooltip="Branch from this scenario"
@@ -340,6 +347,7 @@ export function ScenarioRow({
           </button>
 
           <button
+            type="button"
             onClick={onRenameStart}
             style={iconButtonStyle}
             data-tooltip="Rename"
@@ -348,6 +356,7 @@ export function ScenarioRow({
           </button>
 
           <button
+            type="button"
             onClick={onOpenFolder}
             style={iconButtonStyle}
             data-tooltip="Open in Finder"
@@ -356,6 +365,7 @@ export function ScenarioRow({
           </button>
 
           <button
+            type="button"
             onClick={onDelete}
             disabled={isDeleting}
             style={{
@@ -453,10 +463,15 @@ export const CreateRow = React.forwardRef<
         }}
       />
 
-      <button onClick={onCommit} style={rowButtonStyle}>
+      <button type="button" onClick={onCommit} style={rowButtonStyle}>
         Create
       </button>
-      <button onClick={onCancel} style={iconButtonStyle} data-tooltip="Cancel">
+      <button
+        type="button"
+        onClick={onCancel}
+        style={iconButtonStyle}
+        data-tooltip="Cancel"
+      >
         <XMarkIcon style={{ width: 12, height: 12 }} />
       </button>
     </div>

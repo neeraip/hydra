@@ -293,6 +293,7 @@ export function RunModal() {
             </div>
           </div>
           <button
+            type="button"
             className="tl-btn"
             onClick={closeRunModal}
             data-tooltip="Close (Esc)"
@@ -324,6 +325,7 @@ export function RunModal() {
               <div style={{ display: "flex", gap: 10 }}>
                 {hasOutdated && (
                   <button
+                    type="button"
                     onClick={selectOutdated}
                     style={{ ...linkBtn, color: "var(--text-secondary)" }}
                   >
@@ -332,6 +334,7 @@ export function RunModal() {
                 )}
                 {scenarios.length > 1 && (
                   <button
+                    type="button"
                     onClick={toggleAll}
                     style={{ ...linkBtn, color: "var(--accent)" }}
                   >
@@ -403,6 +406,7 @@ export function RunModal() {
           >
             <Label>Simulation settings</Label>
             <button
+              type="button"
               onClick={goEditSettings}
               style={{
                 background: "transparent",
@@ -444,6 +448,7 @@ export function RunModal() {
         >
           <div style={{ flex: 1 }} />
           <button
+            type="button"
             onClick={closeRunModal}
             style={{
               background: "transparent",
@@ -459,6 +464,7 @@ export function RunModal() {
             Cancel
           </button>
           <button
+            type="button"
             onClick={runSimulation}
             disabled={!canRun}
             data-tooltip={

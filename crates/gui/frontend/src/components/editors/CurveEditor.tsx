@@ -60,6 +60,7 @@ export function CurveEditor({ accent }: { accent: string }) {
           const active = c.id === (activeId ?? curves[0]?.id);
           return (
             <button
+              type="button"
               key={c.id}
               onClick={() => setActiveId(c.id)}
               style={{
@@ -145,6 +146,7 @@ export function CurveEditor({ accent }: { accent: string }) {
             )}
             <div style={{ display: "flex", gap: 4, marginTop: 6 }}>
               <button
+                type="button"
                 onClick={handleCreate}
                 style={{
                   flex: 1,
@@ -160,6 +162,7 @@ export function CurveEditor({ accent }: { accent: string }) {
                 Add
               </button>
               <button
+                type="button"
                 onClick={() => {
                   setCreating(false);
                   setNewId("");
@@ -182,6 +185,7 @@ export function CurveEditor({ accent }: { accent: string }) {
           </div>
         ) : (
           <button
+            type="button"
             onClick={() => setCreating(true)}
             style={{
               width: "100%",
@@ -374,6 +378,7 @@ function CurveChart({
       style={{ width: "100%", height: "100%", position: "relative" }}
     >
       <svg width={W} height={H} style={{ display: "block" }}>
+        <title>Curve preview</title>
         <defs>
           <linearGradient id={`pc-${curve.id}`} x1="0" y1="0" x2="0" y2="1">
             <stop offset="0%" stopColor={accent} stopOpacity={0.25} />

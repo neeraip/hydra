@@ -633,6 +633,7 @@ export function CommandPalette() {
                 const active = i === activeIdx;
                 return (
                   <button
+                    type="button"
                     key={`${m.kind}-${m.id}`}
                     onClick={() => executeElement(m)}
                     onMouseEnter={() => setActiveIdx(i)}
@@ -720,6 +721,7 @@ export function CommandPalette() {
                     const isActive = idx === activeIdx;
                     return (
                       <button
+                        type="button"
                         key={cmd.id}
                         data-idx={idx}
                         onClick={() => execute(cmd)}

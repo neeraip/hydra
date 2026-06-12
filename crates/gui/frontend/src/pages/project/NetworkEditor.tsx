@@ -65,6 +65,7 @@ export function NetworkEditor() {
           const active = s.id === validSection;
           return (
             <button
+              type="button"
               key={s.id}
               onClick={() => setActiveSectionId(s.id)}
               onMouseEnter={(e) => {

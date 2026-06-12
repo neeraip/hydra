@@ -56,7 +56,12 @@ export function TabButton({
         };
 
   return (
-    <button onClick={onClick} style={{ ...baseStyle, ...style }} {...rest}>
+    <button
+      type="button"
+      onClick={onClick}
+      style={{ ...baseStyle, ...style }}
+      {...rest}
+    >
       {children}
       {dirty && (
         <span

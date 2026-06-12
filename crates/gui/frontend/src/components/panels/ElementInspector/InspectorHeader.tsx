@@ -54,6 +54,7 @@ export function Header({
         </div>
       </div>
       <button
+        type="button"
         onClick={onClose}
         data-tooltip="Close inspector"
         style={{

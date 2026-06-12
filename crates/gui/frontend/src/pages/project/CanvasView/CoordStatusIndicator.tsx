@@ -39,6 +39,7 @@ export function CoordStatusIndicator({
   return (
     <div style={{ position: "relative" }}>
       <button
+        type="button"
         ref={btnRef}
         className="tool-btn"
         onClick={() => setOpen((v) => !v)}
@@ -163,6 +164,7 @@ export function CoordStatusIndicator({
 
           {/* Dismiss */}
           <button
+            type="button"
             onClick={() => setOpen(false)}
             style={{
               alignSelf: "flex-end",

@@ -210,6 +210,7 @@ export function ScenariosPanel({
           <div style={{ flex: 1 }} />
 
           <button
+            type="button"
             onClick={() => {
               setCreateParentId(null);
               setCreating(true);
@@ -283,6 +284,7 @@ export function ScenariosPanel({
             >
               No named scenarios yet.{" "}
               <button
+                type="button"
                 onClick={() => {
                   setCreateParentId(null);
                   setCreating(true);

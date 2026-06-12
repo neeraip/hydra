@@ -49,6 +49,7 @@ export function CrossSectionEditor({ accent }: { accent: string }) {
           const active = c.id === activeId;
           return (
             <button
+              type="button"
               key={c.id}
               onClick={() => setActiveId(c.id)}
               style={{
@@ -89,6 +90,7 @@ export function CrossSectionEditor({ accent }: { accent: string }) {
           );
         })}
         <button
+          type="button"
           onClick={() => showToast("Feature coming soon")}
           style={{
             width: "100%",
@@ -293,6 +295,7 @@ function XSChart({ xs, accent }: { xs: CrossSection; accent: string }) {
       style={{ width: "100%", height: "100%", position: "relative" }}
     >
       <svg width={W} height={H} style={{ display: "block" }}>
+        <title>Cross section preview</title>
         <defs>
           <linearGradient id={`xs-w-${xs.id}`} x1="0" y1="0" x2="0" y2="1">
             <stop offset="0%" stopColor={accent} stopOpacity={0.35} />

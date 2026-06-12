@@ -45,6 +45,7 @@ export function SplitActionButton({
       }}
     >
       <button
+        type="button"
         onClick={onClick}
         style={{
           ...btnBase,
@@ -72,6 +73,7 @@ export function SplitActionButton({
       />
 
       <button
+        type="button"
         onClick={() => setOpen((v) => !v)}
         aria-label="More actions"
         style={{
@@ -109,6 +111,7 @@ export function SplitActionButton({
         >
           {menuItems.map((item) => (
             <button
+              type="button"
               key={item.label}
               onClick={() => {
                 item.onClick();

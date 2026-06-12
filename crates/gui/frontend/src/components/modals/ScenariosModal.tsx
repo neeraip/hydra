@@ -89,6 +89,7 @@ export function ScenariosModal() {
           </span>
           <div style={{ flex: 1 }} />
           <button
+            type="button"
             onClick={closeScenariosModal}
             aria-label="Close"
             style={{

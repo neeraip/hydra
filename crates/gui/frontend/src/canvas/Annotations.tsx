@@ -190,6 +190,7 @@ export function AnnotationSummary({
       {body}
       {hasResult && (
         <button
+          type="button"
           onClick={onClear}
           style={{
             background: "transparent",

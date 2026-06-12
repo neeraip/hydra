@@ -136,6 +136,7 @@ export function SimulationSettings({ projectId }: { projectId: string }) {
       >
         {!editing ? (
           <button
+            type="button"
             onClick={() => setEditing(true)}
             style={ghostBtn}
             data-tooltip="Edit simulation settings"
@@ -145,10 +146,16 @@ export function SimulationSettings({ projectId }: { projectId: string }) {
           </button>
         ) : (
           <>
-            <button onClick={cancel} disabled={saving} style={ghostBtn}>
+            <button
+              type="button"
+              onClick={cancel}
+              disabled={saving}
+              style={ghostBtn}
+            >
               Cancel
             </button>
             <button
+              type="button"
               onClick={save}
               disabled={saving || !dirty}
               style={{
@@ -367,6 +374,7 @@ export function SimulationSettings({ projectId }: { projectId: string }) {
 
       {/* Advanced */}
       <button
+        type="button"
         onClick={() => setShowAdvanced((v) => !v)}
         style={{
           marginTop: 16,

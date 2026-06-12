@@ -113,6 +113,7 @@ export function ShortcutCard({ onClose }: { onClose: () => void }) {
             Keyboard Shortcuts
           </h2>
           <button
+            type="button"
             onClick={onClose}
             style={{
               border: "none",

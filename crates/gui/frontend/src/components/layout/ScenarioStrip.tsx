@@ -178,6 +178,7 @@ export function ScenarioStrip() {
     >
       {/* Base pill — always present, active when no scenario is selected */}
       <button
+        type="button"
         onClick={() => setActiveScenarioId(null)}
         data-tooltip={baseTitle}
         data-tooltip-pos="bottom"
@@ -310,6 +311,7 @@ export function ScenarioStrip() {
 
       {/* Manage — opens the Scenarios management modal */}
       <button
+        type="button"
         onClick={() => openScenariosModal()}
         data-tooltip="Manage scenarios"
         data-tooltip-pos="bottom"
@@ -415,6 +417,7 @@ function ScenarioChip({
       )}
 
       <button
+        type="button"
         onClick={onClick}
         data-tooltip={`${scenario.name} · ${STATE_LABEL[state]}${titleSuffix}`}
         data-tooltip-pos="bottom"

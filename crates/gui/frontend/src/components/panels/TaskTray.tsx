@@ -201,6 +201,7 @@ export function TaskTray() {
           {/* Cancel remaining — only when queued items exist */}
           {queuedTasks.length > 0 && (
             <button
+              type="button"
               onClick={handleCancelAll}
               style={{
                 border: "1px solid var(--border-hover)",
@@ -230,6 +231,7 @@ export function TaskTray() {
           {/* Clear settled tasks */}
           {totalSettled > 0 && totalActive === 0 && (
             <button
+              type="button"
               onClick={clearSettled}
               style={{
                 border: "none",
@@ -255,6 +257,7 @@ export function TaskTray() {
             </button>
           )}
           <button
+            type="button"
             onClick={closeTaskTray}
             style={{
               border: "none",

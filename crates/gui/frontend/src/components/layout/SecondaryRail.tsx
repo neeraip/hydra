@@ -200,6 +200,7 @@ export function SecondaryRail() {
 
       {/* Toggle tab — sibling of the clip layer so translateX(100%) is never clipped */}
       <button
+        type="button"
         onClick={toggleRail}
         data-tooltip={railOpen ? "Collapse panel" : "Expand panel"}
         style={{

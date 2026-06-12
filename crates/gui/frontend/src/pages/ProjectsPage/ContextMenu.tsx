@@ -94,6 +94,7 @@ export function ContextMenu({
     >
       {folderMissing ? (
         <button
+          type="button"
           style={{ ...itemStyle, color: "var(--status-error)" }}
           onMouseEnter={(e) => {
             (e.currentTarget as HTMLButtonElement).style.background =
@@ -113,6 +114,7 @@ export function ContextMenu({
       ) : (
         <>
           <button
+            type="button"
             style={itemStyle}
             onMouseEnter={(e) => {
               (e.currentTarget as HTMLButtonElement).style.background =
@@ -130,6 +132,7 @@ export function ContextMenu({
             Open
           </button>
           <button
+            type="button"
             style={itemStyle}
             onMouseEnter={(e) => {
               (e.currentTarget as HTMLButtonElement).style.background =
@@ -173,6 +176,7 @@ export function ContextMenu({
             </div>
           ) : (
             <button
+              type="button"
               style={itemStyle}
               onMouseEnter={(e) => {
                 (e.currentTarget as HTMLButtonElement).style.background =

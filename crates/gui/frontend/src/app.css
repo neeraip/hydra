@@ -115,7 +115,24 @@
   --tooltip-text: #e2e2ec;
 }
 
+/* ── Reset ──────────────────────────────────────────────────────────────────── */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
 /* ── Accessibility: reduced motion ──────────────────────────────────────────── */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms;
+    animation-iteration-count: 1;
+    transition-duration: 0.01ms;
+  }
+}
+
 :root[data-reduced-motion="true"],
 :root[data-reduced-motion="true"] * {
   animation-duration: 1ms;
@@ -142,13 +159,6 @@
   --border-focus: rgba(46, 114, 194, 0.8);
   --text-secondary: #2e3c56;
   --text-tertiary: #4e6080;
-}
-
-/* ── Reset ──────────────────────────────────────────────────────────────────── */
-*,
-*::before,
-*::after {
-  box-sizing: border-box;
 }
 
 html,
@@ -1243,13 +1253,13 @@ select:focus-visible {
   background: linear-gradient(to top, var(--bg-panel) 0%, transparent 100%);
 }
 
-/* ── Table row hover ─────────────────────────────────────────────────────────*/
-.data-table tr:hover td {
-  background: var(--bg-card-hover);
-}
 .data-table td,
 .data-table th {
   transition: background var(--t-fast);
+}
+/* ── Table row hover ─────────────────────────────────────────────────────────*/
+.data-table tr:hover td {
+  background: var(--bg-card-hover);
 }
 
 /* ── Activity bar active glow ────────────────────────────────────────────────*/
@@ -1370,17 +1380,4 @@ select:focus-visible {
       transparent 45%
     ),
     var(--bg-app);
-}
-
-/* ── Reduced motion — honour OS preference ───────────────────────────────────
-   All CSS animations and transitions are cut to instant for users who have
-   enabled "Reduce motion" in their OS accessibility settings.                 */
-@media (prefers-reduced-motion: reduce) {
-  *,
-  *::before,
-  *::after {
-    animation-duration: 0.01ms;
-    animation-iteration-count: 1;
-    transition-duration: 0.01ms;
-  }
 }

@@ -145,6 +145,7 @@ export function DeleteConfirmModal({
           }}
         >
           <button
+            type="button"
             onClick={onCancel}
             style={{
               background: "transparent",
@@ -168,6 +169,7 @@ export function DeleteConfirmModal({
             Cancel
           </button>
           <button
+            type="button"
             ref={confirmRef}
             onClick={onConfirm}
             style={{

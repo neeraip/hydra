@@ -49,6 +49,7 @@ export class CanvasErrorBoundary extends Component<
             {error.message}
           </span>
           <button
+            type="button"
             className="tool-btn"
             style={{ marginTop: 8 }}
             onClick={() => this.setState({ error: null })}

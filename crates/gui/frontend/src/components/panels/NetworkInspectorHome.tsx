@@ -226,6 +226,7 @@ function NodesTab({
                     }}
                   >
                     <button
+                      type="button"
                       onClick={(e) => {
                         e.stopPropagation();
                         onZoomTo(node.id);
@@ -430,6 +431,7 @@ function LinksTab({
                     }}
                   >
                     <button
+                      type="button"
                       onClick={(e) => {
                         e.stopPropagation();
                         onZoomTo(link.id);
@@ -558,6 +560,9 @@ function PatternsTab({
               preserveAspectRatio="none"
               style={{ display: "block" }}
             >
+              <title>
+                {pattern.id ? `${pattern.id} preview` : "Pattern preview"}
+              </title>
               {pattern.multipliers.map((value, i) => {
                 const bh = (value / max) * H;
                 return (
@@ -706,6 +711,7 @@ export function NetworkInspectorHome({
         </div>
         {onClose && (
           <button
+            type="button"
             onClick={onClose}
             data-tooltip="Close"
             style={{
@@ -761,6 +767,7 @@ export function NetworkInspectorHome({
           const active = t === tab;
           return (
             <button
+              type="button"
               key={t}
               onClick={() => setTab(t)}
               className={`inspector-tab${active ? " active" : ""}`}

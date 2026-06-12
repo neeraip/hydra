@@ -191,6 +191,7 @@ export function IssuesPanel() {
           <CountChip n={counts.info} color="#4a90d9" />
           <div style={{ flex: 1 }} />
           <button
+            type="button"
             onClick={closeIssuesPanel}
             aria-label="Close"
             style={{
@@ -218,6 +219,7 @@ export function IssuesPanel() {
             const on = tab === t;
             return (
               <button
+                type="button"
                 key={t}
                 onClick={() => setTab(t)}
                 style={{
@@ -254,6 +256,7 @@ export function IssuesPanel() {
             const on = activeSeverity.has(s);
             return (
               <button
+                type="button"
                 key={s}
                 onClick={() => toggleSeverity(s)}
                 style={{
@@ -290,6 +293,7 @@ export function IssuesPanel() {
             const on = activeSource.has(src);
             return (
               <button
+                type="button"
                 key={src}
                 onClick={() => toggleSource(src)}
                 style={{
@@ -459,6 +463,7 @@ function IssueRow({
         </div>
       </div>
       <button
+        type="button"
         onClick={(e) => {
           e.stopPropagation();
           showRestore ? onRestore() : onDismiss();
@@ -553,6 +558,7 @@ function DetailPane({
       </div>
       {issue.link && (
         <button
+          type="button"
           onClick={onDeepLink}
           style={{
             marginTop: 10,

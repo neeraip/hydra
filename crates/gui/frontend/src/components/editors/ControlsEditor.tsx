@@ -98,6 +98,7 @@ export function ControlsEditor({ accent }: { accent: string }) {
           }}
         />
         <button
+          type="button"
           onClick={() => showToast("Feature coming soon")}
           style={{
             background: `${accent}26`,
@@ -177,6 +178,7 @@ function Segmented({
         const active = o.id === value;
         return (
           <button
+            type="button"
             key={o.id}
             onClick={() => onChange(o.id)}
             style={{
@@ -397,6 +399,7 @@ function Toggle({
 }) {
   return (
     <button
+      type="button"
       onClick={onChange}
       data-tooltip={checked ? "Disable" : "Enable"}
       style={{

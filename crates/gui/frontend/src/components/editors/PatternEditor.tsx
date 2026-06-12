@@ -71,6 +71,7 @@ export function PatternEditor({ accent }: { accent: string }) {
           const active = p.id === effectiveId;
           return (
             <button
+              type="button"
               key={p.id}
               onClick={() => setActiveId(p.id)}
               style={{
@@ -156,6 +157,7 @@ export function PatternEditor({ accent }: { accent: string }) {
             )}
             <div style={{ display: "flex", gap: 4, marginTop: 6 }}>
               <button
+                type="button"
                 onClick={handleCreate}
                 style={{
                   flex: 1,
@@ -171,6 +173,7 @@ export function PatternEditor({ accent }: { accent: string }) {
                 Add
               </button>
               <button
+                type="button"
                 onClick={() => {
                   setCreating(false);
                   setNewId("");
@@ -193,6 +196,7 @@ export function PatternEditor({ accent }: { accent: string }) {
           </div>
         ) : (
           <button
+            type="button"
             onClick={() => setCreating(true)}
             style={{
               width: "100%",
@@ -537,6 +541,7 @@ function PatternRow({
           </span>
         )}
         <button
+          type="button"
           onClick={onReset}
           disabled={!isOverridden}
           style={{

@@ -109,6 +109,7 @@ export function MapExhibitModal({
           </span>
           <div style={{ flex: 1 }} />
           <button
+            type="button"
             onClick={onClose}
             aria-label="Close"
             style={{
@@ -353,6 +354,7 @@ export function MapExhibitModal({
           </span>
           <div style={{ flex: 1 }} />
           <button
+            type="button"
             onClick={onClose}
             style={{
               border: "1px solid var(--border)",
@@ -368,6 +370,7 @@ export function MapExhibitModal({
             Cancel
           </button>
           <button
+            type="button"
             onClick={() => onInsert(spec)}
             style={{
               background: accent,
@@ -433,6 +436,7 @@ function RailItem({
 }) {
   return (
     <button
+      type="button"
       onClick={onClick}
       style={{
         display: "flex",
@@ -557,6 +561,7 @@ function CalloutsEditor({
             style={{ ...inputStyle, flex: 1 }}
           />
           <button
+            type="button"
             onClick={() => onChange(callouts.filter((_, j) => j !== i))}
             style={{
               background: "transparent",
@@ -576,6 +581,7 @@ function CalloutsEditor({
         </div>
       ))}
       <button
+        type="button"
         onClick={() =>
           onChange([
             ...callouts,

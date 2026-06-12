@@ -120,6 +120,7 @@ export function Timeline({
         style={{ display: "flex", alignItems: "center", gap: 4, flexShrink: 0 }}
       >
         <button
+          type="button"
           className="tl-btn"
           onClick={() => setCurrentHour(0)}
           data-tooltip="Jump to start (Home)"
@@ -132,6 +133,7 @@ export function Timeline({
           <BackwardIcon style={{ width: 14, height: 14 }} />
         </button>
         <button
+          type="button"
           className="tl-btn"
           onClick={() => step(-1)}
           data-tooltip="Step back (←)"
@@ -144,6 +146,7 @@ export function Timeline({
           <ChevronDoubleLeftIcon style={{ width: 14, height: 14 }} />
         </button>
         <button
+          type="button"
           className="tl-btn tl-play"
           onClick={() => setIsPlaying(!isPlaying)}
           data-tooltip={isPlaying ? "Pause (Space)" : "Play (Space)"}
@@ -160,6 +163,7 @@ export function Timeline({
           )}
         </button>
         <button
+          type="button"
           className="tl-btn"
           onClick={() => step(1)}
           data-tooltip="Step forward (→)"
@@ -172,6 +176,7 @@ export function Timeline({
           <ChevronDoubleRightIcon style={{ width: 14, height: 14 }} />
         </button>
         <button
+          type="button"
           className="tl-btn"
           onClick={() => setCurrentHour(effectiveMaxStep)}
           data-tooltip="Jump to end (End)"
@@ -202,6 +207,7 @@ export function Timeline({
           <option value={8}>8×</option>
         </select>
         <button
+          type="button"
           className={`tl-btn ${loop ? "tl-active" : ""}`}
           onClick={() => setLoop(!loop)}
           data-tooltip={loop ? "Loop on" : "Loop off"}

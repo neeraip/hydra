@@ -84,6 +84,7 @@ export function Sparkline({
       preserveAspectRatio="none"
       style={{ height: 36 }}
     >
+      <title>Trend sparkline</title>
       <polyline points={pts} fill="none" stroke={stroke} strokeWidth={1.5} />
     </svg>
   );
@@ -113,6 +114,7 @@ export function HorizontalBarChart({
       viewBox={`0 0 ${labelW + barAreaW + 24} ${height}`}
       style={{ overflow: "visible" }}
     >
+      <title>Horizontal bar chart</title>
       {bars.map((bar, i) => {
         const y = i * rowH;
         const barW = maxCount > 0 ? (bar.count / maxCount) * barAreaW : 0;

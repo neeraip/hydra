@@ -21,6 +21,7 @@ export function PrimaryButton({
 }: PrimaryButtonProps) {
   return (
     <button
+      type="button"
       className={`btn-run${className ? ` ${className}` : ""}`}
       style={{ ...SIZE_STYLES[size], ...style }}
       data-tooltip={title}

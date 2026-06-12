@@ -55,6 +55,7 @@ export function ActivityBar() {
     >
       {/* ── Logo / Home ────────────────────────────────────────────────────── */}
       <button
+        type="button"
         onClick={handleHomeClick}
         aria-label="Home"
         data-tooltip="Home"
@@ -76,7 +77,13 @@ export function ActivityBar() {
         }}
       >
         {/* Hydra wordmark glyph */}
-        <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+        <svg
+          width="18"
+          height="18"
+          viewBox="0 0 18 18"
+          fill="none"
+          aria-hidden="true"
+        >
           <path
             d="M3 3v12M3 9h12M15 3v12"
             stroke="#fff"
@@ -137,6 +144,7 @@ export function ActivityBar() {
 
       {/* ⌘K opens the command palette; ? opens keyboard shortcuts */}
       <button
+        type="button"
         onClick={openCommandPalette}
         data-tooltip="Command Palette (⌘K) · Shortcuts (?)"
         data-tooltip-pos="right"
