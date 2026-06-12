@@ -1,5 +1,5 @@
 [package]
-name = "hydra"
+name = "hydra-sdk"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
@@ -10,7 +10,7 @@ documentation.workspace = true
 description = "Water distribution network simulator — EPANET-compatible extended-period simulation"
 keywords = ["epanet", "water", "hydraulics", "simulation", "network"]
 categories = ["science", "simulation"]
-publish = false
+publish = true
 
 [dependencies]
 hydra-engine = { path = "../engine" }
