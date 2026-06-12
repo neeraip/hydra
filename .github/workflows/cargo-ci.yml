@@ -59,7 +59,7 @@ jobs:
         uses: Swatinem/rust-cache@v2.8.0
 
       - name: Check dependencies (cargo-deny)
-        uses: EmbarkStudios/cargo-deny-action@v2.0.12
+        uses: EmbarkStudios/cargo-deny-action@v2.0.20
 
       - name: Check formatting
         run: cargo fmt --all -- --check
