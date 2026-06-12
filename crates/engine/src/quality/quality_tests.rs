@@ -7,9 +7,9 @@
 // Unlike hydraulics tests, quality tests set link flows *manually* to isolate
 // quality physics from the hydraulic solver.
 
-use approx::{assert_abs_diff_eq, assert_relative_eq};
 use crate::test_support::TestNetworkBuilder;
 use crate::{MixModel, QualityMode, QualitySource, SimulationOptions, SourceType};
+use approx::{assert_abs_diff_eq, assert_relative_eq};
 
 use crate::quality::{advance_quality, init_quality};
 

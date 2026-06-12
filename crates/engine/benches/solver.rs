@@ -23,8 +23,8 @@
 //! | bwsn2     |    12,523 | 14,831 |
 
 use criterion::{black_box, criterion_group, criterion_main, BatchSize, Criterion};
-use hydra_engine::{LinkKind, LinkState, LinkStatus, Network, NodeKind, NodeState};
 use hydra_engine::{build_solver_context, solve_hydraulic_step};
+use hydra_engine::{LinkKind, LinkState, LinkStatus, Network, NodeKind, NodeState};
 use std::path::PathBuf;
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -86,13 +86,9 @@ fn init_link_states(network: &Network) -> Vec<LinkState> {
                 1.0e-6
             } else {
                 match &l.kind {
-                    LinkKind::Pipe(p) => {
-                        std::f64::consts::PI * p.diameter * p.diameter / 4.0
-                    }
+                    LinkKind::Pipe(p) => std::f64::consts::PI * p.diameter * p.diameter / 4.0,
                     LinkKind::Pump(_) => 1.0,
-                    LinkKind::Valve(v) => {
-                        std::f64::consts::PI * v.diameter * v.diameter / 4.0
-                    }
+                    LinkKind::Valve(v) => std::f64::consts::PI * v.diameter * v.diameter / 4.0,
                 }
             };
             LinkState {
@@ -118,8 +114,8 @@ fn bench_network(c: &mut Criterion, name: &str) {
         }
     };
 
-    let network = hydra_engine::io::parse(&bytes)
-        .unwrap_or_else(|e| panic!("parse failed for {name}: {e}"));
+    let network =
+        hydra_engine::io::parse(&bytes).unwrap_or_else(|e| panic!("parse failed for {name}: {e}"));
     let favad = network.compute_favad();
 
     let init_nodes = init_node_states(&network);
@@ -180,13 +176,7 @@ fn bench_network(c: &mut Criterion, name: &str) {
             |(mut ns, mut ls)| {
                 black_box(
                     solve_hydraulic_step(
-                        &network,
-                        &favad,
-                        &mut ctx,
-                        &mut ns,
-                        &mut ls,
-                        0.0,
-                        no_pswitch,
+                        &network, &favad, &mut ctx, &mut ns, &mut ls, 0.0, no_pswitch,
                     )
                     .unwrap(),
                 )

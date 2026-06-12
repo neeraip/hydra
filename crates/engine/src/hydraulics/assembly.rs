@@ -175,7 +175,13 @@ mod tests {
         node_junc_step_opt[junction_node] = Some(0);
         let xflow_before = xflow[junction_node];
 
-        assemble_node_residuals(&network, &mut sparse, &node_junc_step_opt, &demands, &mut xflow);
+        assemble_node_residuals(
+            &network,
+            &mut sparse,
+            &node_junc_step_opt,
+            &demands,
+            &mut xflow,
+        );
 
         let row = sparse.row[0];
         // RHS gets xflow_before - demand.

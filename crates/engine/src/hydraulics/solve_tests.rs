@@ -7,23 +7,19 @@
 // All builder inputs are in user units (GPM, ft, inches for US customary).
 // Expected values are computed in internal units (CFS, ft) where needed.
 
-use approx::assert_relative_eq;
 use crate::io::units::make_ucf;
 use crate::test_support::{no_pswitch, TestNetworkBuilder};
 use crate::{
     CurveKind, DemandModel, FlowUnits, HeadLossFormula, LinkKind, SimulationOptions, ValveType,
 };
+use approx::assert_relative_eq;
 
 use crate::hydraulics::{build_solver_context, solve_hydraulic_step, SolveResult};
 
 /// Solve one hydraulic step at t=0 and return (node_states, link_states).
 fn solve_once(
     builder: TestNetworkBuilder,
-) -> (
-    Vec<crate::NodeState>,
-    Vec<crate::LinkState>,
-    SolveResult,
-) {
+) -> (Vec<crate::NodeState>, Vec<crate::LinkState>, SolveResult) {
     let (net, mut ns, mut ls, favad) = builder.build_with_favad();
     let mut ctx = build_solver_context(&net, &favad).unwrap();
     let result =
@@ -172,7 +168,7 @@ fn two_pipes_series_mass_balance() {
 
     let ucf = make_ucf(FlowUnits::Gpm, 1.0);
     let q1_m3s = 100.0 / ucf.flow; // P1 carries total demand
-    let q2_m3s = 50.0 / ucf.flow;  // P2 carries only J2's demand
+    let q2_m3s = 50.0 / ucf.flow; // P2 carries only J2's demand
 
     // Flow balance
     assert_relative_eq!(ls[0].flow, q1_m3s, epsilon = 1e-5);
@@ -442,7 +438,10 @@ fn junction_pressure_positive() {
     assert!(pressure_m > 0.0, "junction should have positive pressure");
 
     // Pressure should be less than max possible ((200-50) ft → m with no headloss)
-    assert!(pressure_m < 150.0 / ucf.elev, "pressure should be less than static");
+    assert!(
+        pressure_m < 150.0 / ucf.elev,
+        "pressure should be less than static"
+    );
     assert!(
         pressure_m > 100.0 / ucf.elev,
         "pressure shouldn't drop too much for 100 GPM in 12in pipe"
@@ -920,7 +919,11 @@ fn four_node_loop_kirchhoff() {
 
     // All junction heads should be below reservoir and positive
     for i in 1..4 {
-        assert!(ns[i].head < 200.0 / ucf.elev, "J{} head should be < reservoir", i);
+        assert!(
+            ns[i].head < 200.0 / ucf.elev,
+            "J{} head should be < reservoir",
+            i
+        );
         assert!(ns[i].head > 0.0, "J{} head should be positive", i);
     }
 
@@ -1384,7 +1387,10 @@ fn flow_units_conversion_matrix_matches_internal_mass_balance() {
     ];
 
     for &(units, d1, d2, r_head, l1, l2, diam) in cases {
-        let options = SimulationOptions { flow_units: units, ..Default::default() };
+        let options = SimulationOptions {
+            flow_units: units,
+            ..Default::default()
+        };
         let ucf = make_ucf(units, options.specific_gravity);
         let expected_total = (d1 + d2) / ucf.flow;
 
@@ -1457,9 +1463,8 @@ fn max_iter_exceeded_returns_unbalanced() {
     builder.options_mut().flow_tol = 1e-20;
     let (net, mut ns, mut ls, favad) = builder.build_with_favad();
     let mut ctx = build_solver_context(&net, &favad).unwrap();
-    let result =
-        solve_hydraulic_step(&net, &favad, &mut ctx, &mut ns, &mut ls, 0.0, no_pswitch)
-            .expect("should not error when extra_iter >= 0");
+    let result = solve_hydraulic_step(&net, &favad, &mut ctx, &mut ns, &mut ls, 0.0, no_pswitch)
+        .expect("should not error when extra_iter >= 0");
     assert_eq!(result, SolveResult::Unbalanced);
 }
 
@@ -1478,9 +1483,8 @@ fn halt_on_non_convergence_returns_unbalanced_for_caller_to_handle() {
     builder.options_mut().flow_tol = 1e-20;
     let (net, mut ns, mut ls, favad) = builder.build_with_favad();
     let mut ctx = build_solver_context(&net, &favad).unwrap();
-    let result =
-        solve_hydraulic_step(&net, &favad, &mut ctx, &mut ns, &mut ls, 0.0, no_pswitch)
-            .expect("solve_hydraulic_step should not Err on iteration overflow");
+    let result = solve_hydraulic_step(&net, &favad, &mut ctx, &mut ns, &mut ls, 0.0, no_pswitch)
+        .expect("solve_hydraulic_step should not Err on iteration overflow");
     // The solver returns Unbalanced; the simulation layer checks extra_iter and
     // halts or continues accordingly (see §3.6 and crates/simulation/).
     assert_eq!(result, SolveResult::Unbalanced);

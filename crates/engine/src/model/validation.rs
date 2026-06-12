@@ -896,7 +896,8 @@ mod tests {
         });
         let errs = net.validate().unwrap_err();
         assert!(
-            errs.iter().any(|e| matches!(e, ValidationError::NoReservoir)),
+            errs.iter()
+                .any(|e| matches!(e, ValidationError::NoReservoir)),
             "expected NoReservoir"
         );
     }

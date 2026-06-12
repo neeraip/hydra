@@ -1,6 +1,6 @@
-use crate::ValidationError;
 use crate::hydraulics::HydraulicError;
 use crate::quality::QualityError;
+use crate::ValidationError;
 
 // SimWarning, WarningKind, NodeQuantity, and LinkQuantity are defined in
 // crate::io so that the output writers in that crate can reference them

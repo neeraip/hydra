@@ -1,5 +1,4 @@
 #![doc = include_str!("spec.md")]
-#![allow(clippy::too_many_arguments, clippy::needless_range_loop)]
 
 /// Semver version of the hydraulics engine, taken from `Cargo.toml` at compile time.
 pub const HYDRA_HYDRAULICS_VERSION: &str = env!("CARGO_PKG_VERSION");

@@ -86,8 +86,12 @@ pub use hydra_engine::{
     CurvePoint,
     // §2.4 / §2.5 — nodes and demands
     DemandCategory,
+    // §2.1 — top-level options and enums
+    DemandModel,
     // §2.10 — FAVAD
     FavadCoeffs,
+    FlowUnits,
+    HeadLossFormula,
     // §2.4.2 — node subtypes
     Junction,
     // §2.6 — links
@@ -113,6 +117,7 @@ pub use hydra_engine::{
     PremiseOperator,
     Pump,
     PumpCurveType,
+    QualityMode,
     // §2.7 — quality sources
     QualitySource,
     // report options
@@ -135,11 +140,6 @@ pub use hydra_engine::{
     Valve,
     ValveType,
     WallOrder,
-    // §2.1 — top-level options and enums
-    DemandModel,
-    HeadLossFormula,
-    QualityMode,
-    FlowUnits,
 };
 
 // ── I/O ───────────────────────────────────────────────────────────────────────

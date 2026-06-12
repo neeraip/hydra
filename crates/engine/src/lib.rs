@@ -52,14 +52,14 @@
 //! Downstream crates (`hydra`, `hydra-cli`, `hydra-gui`) depend only on this
 //! crate's public re-export surface; they do not depend on any internal module.
 
+pub mod analysis;
 #[allow(clippy::too_many_arguments, clippy::needless_range_loop)]
 mod hydraulics;
-mod quality;
-pub mod simulation;
-pub mod analysis;
-pub mod model;
 /// Parsing and output-writing utilities: INP parser, binary `.out` reader/writer, `.rpt` writer, and unit conversion.
 pub mod io;
+pub mod model;
+mod quality;
+pub mod simulation;
 
 #[cfg(feature = "test-support")]
 pub mod test_support;
@@ -70,114 +70,38 @@ pub use hydraulics::{build_solver_context, solve_hydraulic_step, SolverContext};
 // ── Data model ────────────────────────────────────────────────────────────────
 
 pub use model::{
-    ActionValue,
-    Curve,
-    CurveKind,
-    CurvePoint,
-    DemandCategory,
-    DemandModel,
-    FavadCoeffs,
-    FlowUnits,
-    HeadLossFormula,
-    Junction,
-    Link,
-    LinkBase,
-    LinkKind,
-    LinkState,
-    LinkStatus,
-    LogicOp,
-    MixModel,
-    Network,
-    Node,
-    NodeBase,
-    NodeKind,
-    NodeState,
-    Pattern,
-    Pipe,
-    Premise,
-    PremiseAttribute,
-    PremiseObject,
-    PremiseOperator,
-    Pump,
-    PumpCurveType,
-    QualityMode,
-    QualitySource,
-    ReportFieldOption,
-    ReportOptions,
-    ReportSelection,
-    ReportStatus,
-    Reservoir,
-    Rule,
-    RuleAction,
-    RuntimeEstimate,
-    SimpleControl,
-    SimulationOptions,
-    SourceType,
-    StatisticType,
-    Tank,
-    TriggerType,
-    ValidationError,
-    Valve,
-    ValveType,
-    WallOrder,
+    ActionValue, Curve, CurveKind, CurvePoint, DemandCategory, DemandModel, FavadCoeffs, FlowUnits,
+    HeadLossFormula, Junction, Link, LinkBase, LinkKind, LinkState, LinkStatus, LogicOp, MixModel,
+    Network, Node, NodeBase, NodeKind, NodeState, Pattern, Pipe, Premise, PremiseAttribute,
+    PremiseObject, PremiseOperator, Pump, PumpCurveType, QualityMode, QualitySource,
+    ReportFieldOption, ReportOptions, ReportSelection, ReportStatus, Reservoir, Rule, RuleAction,
+    RuntimeEstimate, SimpleControl, SimulationOptions, SourceType, StatisticType, Tank,
+    TriggerType, ValidationError, Valve, ValveType, WallOrder,
 };
 
 // ── Session API ───────────────────────────────────────────────────────────────
 
 pub use simulation::{
-    classify_simulation_runtime_millis,
-    estimate_simulation_runtime,
-    estimate_simulation_runtime_from_summary,
-    estimate_simulation_runtime_millis_from_summary,
-    FlowBalance,
-    FlowBalanceSummary,
-    HydSnapshot,
-    HydraulicError,
-    LinkProperty,
-    LinkQuantity,
-    LinkResult,
-    MassBalance,
-    NodeProperty,
-    NodeQuantity,
-    NodeResult,
-    PumpEnergy,
-    QualityError,
-    ResultRanges,
-    SessionError,
-    SimWarning,
-    Simulation,
-    WarningKind,
-    WritableSimulation,
-    HYDRA_HYDRAULICS_VERSION,
-    HYDRA_QUALITY_VERSION,
-    HYDRA_SIMULATION_VERSION,
+    classify_simulation_runtime_millis, estimate_simulation_runtime,
+    estimate_simulation_runtime_from_summary, estimate_simulation_runtime_millis_from_summary,
+    FlowBalance, FlowBalanceSummary, HydSnapshot, HydraulicError, LinkProperty, LinkQuantity,
+    LinkResult, MassBalance, NodeProperty, NodeQuantity, NodeResult, PumpEnergy, QualityError,
+    ResultRanges, SessionError, SimWarning, Simulation, WarningKind, WritableSimulation,
+    HYDRA_HYDRAULICS_VERSION, HYDRA_QUALITY_VERSION, HYDRA_SIMULATION_VERSION,
 };
 
 // ── Analytics ─────────────────────────────────────────────────────────────────
 
 pub use analysis::{
-    build_analysis_artifact,
-    build_analysis_artifact_from_out,
+    build_analysis_artifact, build_analysis_artifact_from_out,
     build_analysis_artifact_from_out_with_progress,
     build_analysis_artifact_from_out_with_progress_and_selection,
-    compute_demand_reliability_from_out,
-    compute_demand_reliability_from_out_with_options,
-    compute_service_compliance_from_out,
-    decode_analysis_artifact,
-    encode_analysis_artifact,
-    estimate_analysis_runtime_millis,
-    AnalysisBytesError,
-    AnalysisComputeError,
-    AnalysisSelection,
-    DemandReliabilityNode,
-    DemandReliabilityOptions,
-    DemandReliabilityReport,
-    DemandReliabilitySummary,
-    ServiceComplianceNode,
-    ServiceComplianceReport,
-    ServiceComplianceSummary,
-    ServiceComplianceThresholds,
-    HYDRA_ANALYSIS_VERSION,
+    compute_demand_reliability_from_out, compute_demand_reliability_from_out_with_options,
+    compute_service_compliance_from_out, decode_analysis_artifact, encode_analysis_artifact,
+    estimate_analysis_runtime_millis, AnalysisBytesError, AnalysisComputeError, AnalysisSelection,
+    DemandReliabilityNode, DemandReliabilityOptions, DemandReliabilityReport,
+    DemandReliabilitySummary, ServiceComplianceNode, ServiceComplianceReport,
+    ServiceComplianceSummary, ServiceComplianceThresholds, HYDRA_ANALYSIS_VERSION,
 };
 
 // ── I/O helpers ───────────────────────────────────────────────────────────────

@@ -9,13 +9,13 @@ use std::{f64, time::SystemTime};
 use super::accounting::{self, AccountingState};
 use super::controls;
 use super::timestep;
+use crate::hydraulics::{self as hydraulics, SolveResult, SolverContext};
 use crate::io::HydSnapshot;
+use crate::quality::{self as quality, QualityState};
 use crate::{
     FavadCoeffs, FlowUnits, LinkKind, LinkState, LinkStatus, Network, NodeKind, NodeState,
     QualityMode,
 };
-use crate::hydraulics::{self as hydraulics, SolveResult, SolverContext};
-use crate::quality::{self as quality, QualityState};
 
 #[path = "lifecycle.rs"]
 mod lifecycle;
@@ -261,9 +261,7 @@ fn init_link_states(network: &Network) -> Vec<LinkState> {
                     }
                     if matches!(
                         v.valve_type,
-                        crate::ValveType::Prv
-                            | crate::ValveType::Psv
-                            | crate::ValveType::Fcv
+                        crate::ValveType::Prv | crate::ValveType::Psv | crate::ValveType::Fcv
                     ) && setting.is_some()
                     {
                         status = LinkStatus::Active;

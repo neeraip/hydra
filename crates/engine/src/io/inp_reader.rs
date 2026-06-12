@@ -1856,11 +1856,10 @@ fn parse_rules(
                 let action = parse_rule_action(&fields[1..], link_map)?;
                 current_else.push(action);
             }
-            "PRIORITY" => {
-                if fields.len() > 1 {
-                    current_priority = parse_f64(fields[1], "RULES.PRIORITY")?;
-                }
+            "PRIORITY" if fields.len() > 1 => {
+                current_priority = parse_f64(fields[1], "RULES.PRIORITY")?;
             }
+            "PRIORITY" => {}
             _ => {}
         }
     }
@@ -2355,16 +2354,14 @@ fn parse_tags(
         let id = fields[1];
         let tag = fields[2];
         match kind.as_str() {
-            "NODE" => {
-                if node_id_to_idx.contains_key(id) {
-                    node_tags.insert(id.to_string(), tag.to_string());
-                }
+            "NODE" if node_id_to_idx.contains_key(id) => {
+                node_tags.insert(id.to_string(), tag.to_string());
             }
-            "LINK" => {
-                if link_id_to_idx.contains_key(id) {
-                    link_tags.insert(id.to_string(), tag.to_string());
-                }
+            "NODE" => {}
+            "LINK" if link_id_to_idx.contains_key(id) => {
+                link_tags.insert(id.to_string(), tag.to_string());
             }
+            "LINK" => {}
             _ => {} // silently skip unknown prefixes
         }
     }

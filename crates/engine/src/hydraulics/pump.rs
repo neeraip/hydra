@@ -37,7 +37,8 @@ pub(super) fn initialise_flows(
             match &link.kind {
                 LinkKind::Pump(_) => {
                     let omega = settings[k];
-                    let q_design = pump_design_flow(k, link, pump_coeffs, pump_curve_idx, &network.curves);
+                    let q_design =
+                        pump_design_flow(k, link, pump_coeffs, pump_curve_idx, &network.curves);
                     omega * q_design
                 }
                 LinkKind::Pipe(pipe) => std::f64::consts::PI * pipe.diameter * pipe.diameter / 4.0,

@@ -105,7 +105,9 @@ impl RunQueue {
     /// should spawn the queue processor (i.e. it was not already running).
     pub fn try_claim_processor(&self) -> bool {
         let mut g = self.inner.lock().unwrap();
-        if g.processor_running { return false; }
+        if g.processor_running {
+            return false;
+        }
         g.processor_running = true;
         true
     }
@@ -115,7 +117,11 @@ impl RunQueue {
     }
 
     fn get_for_project(&self, project_id: &str) -> Vec<RunQueueItem> {
-        self.inner.lock().unwrap().items.iter()
+        self.inner
+            .lock()
+            .unwrap()
+            .items
+            .iter()
             .filter(|i| i.project_id == project_id)
             .cloned()
             .collect()
@@ -123,7 +129,11 @@ impl RunQueue {
 
     /// Returns cloned data of the next "queued" item (global FIFO across all projects).
     fn next_queued(&self) -> Option<RunQueueItem> {
-        self.inner.lock().unwrap().items.iter()
+        self.inner
+            .lock()
+            .unwrap()
+            .items
+            .iter()
             .find(|i| i.status == "queued")
             .cloned()
     }
@@ -337,10 +347,8 @@ where
             let _ = std::fs::create_dir_all(parent);
         }
         let file = std::fs::File::create(p).ok()?;
-        hydra::io::out_writer::OutStreamWriter::begin(
-            file, &sim, "", "", hydra::FlowUnits::Lps,
-        )
-        .ok()
+        hydra::io::out_writer::OutStreamWriter::begin(file, &sim, "", "", hydra::FlowUnits::Lps)
+            .ok()
     });
 
     if let Some(w) = out_writer.as_mut() {
@@ -363,16 +371,17 @@ where
         }
         match sim.step_hydraulics() {
             Ok(dt) => {
-                if dt == 0.0 { break; }
+                if dt == 0.0 {
+                    break;
+                }
                 simulated_seconds += dt;
                 hyd_steps += 1;
                 if let Some(w) = out_writer.as_mut() {
                     let _ = w.append_available(&sim);
                 }
-                let pct    = progress_percent(simulated_seconds, duration_seconds);
+                let pct = progress_percent(simulated_seconds, duration_seconds);
                 let bucket = pct.floor() as i64;
-                if bucket != last_percent_bucket
-                    || last_emit_at.elapsed() >= PROGRESS_EMIT_INTERVAL
+                if bucket != last_percent_bucket || last_emit_at.elapsed() >= PROGRESS_EMIT_INTERVAL
                 {
                     emit("hydraulics", simulated_seconds, false, false, None);
                     last_percent_bucket = bucket;
@@ -381,7 +390,13 @@ where
             }
             Err(e) => {
                 let msg = e.to_string();
-                emit("hydraulics", simulated_seconds, false, true, Some(msg.clone()));
+                emit(
+                    "hydraulics",
+                    simulated_seconds,
+                    false,
+                    true,
+                    Some(msg.clone()),
+                );
                 run_err = Some(RunLoopError::Failed(msg));
                 break;
             }
@@ -393,7 +408,13 @@ where
         if let Some(w) = out_writer.as_mut() {
             let _ = w.append_available(&sim);
         }
-        emit("hydraulics", duration_seconds.max(simulated_seconds), !run_quality, false, None);
+        emit(
+            "hydraulics",
+            duration_seconds.max(simulated_seconds),
+            !run_quality,
+            false,
+            None,
+        );
     }
 
     if run_err.is_none() && run_quality {
@@ -411,13 +432,15 @@ where
             }
             match sim.step_quality() {
                 Ok(dt) => {
-                    if dt == 0.0 { break; }
+                    if dt == 0.0 {
+                        break;
+                    }
                     if !quality_started {
                         emit("quality", 0.0, false, false, None);
                         quality_started = true;
                     }
                     quality_simulated_seconds += dt;
-                    let pct    = progress_percent(quality_simulated_seconds, duration_seconds);
+                    let pct = progress_percent(quality_simulated_seconds, duration_seconds);
                     let bucket = pct.floor() as i64;
                     if bucket != last_percent_bucket
                         || last_emit_at.elapsed() >= PROGRESS_EMIT_INTERVAL
@@ -429,7 +452,13 @@ where
                 }
                 Err(e) => {
                     let msg = e.to_string();
-                    emit("quality", quality_simulated_seconds, false, true, Some(msg.clone()));
+                    emit(
+                        "quality",
+                        quality_simulated_seconds,
+                        false,
+                        true,
+                        Some(msg.clone()),
+                    );
                     run_err = Some(RunLoopError::Failed(msg));
                     break;
                 }
@@ -451,7 +480,12 @@ where
         let _ = w.finish(&sim);
     }
 
-    (sim, run_err, wall_start.elapsed().as_millis() as u64, hyd_steps)
+    (
+        sim,
+        run_err,
+        wall_start.elapsed().as_millis() as u64,
+        hyd_steps,
+    )
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -499,7 +533,9 @@ pub fn list_projects(app: tauri::AppHandle) -> Result<Vec<Project>, String> {
     for entry in entries {
         let entry = entry.map_err(|e| e.to_string())?;
         let path = entry.path();
-        if !path.is_dir() { continue; }
+        if !path.is_dir() {
+            continue;
+        }
         let id = match path.file_name().and_then(|n| n.to_str()) {
             Some(s) => s.to_string(),
             None => continue,
@@ -520,7 +556,13 @@ pub fn list_projects(app: tauri::AppHandle) -> Result<Vec<Project>, String> {
             .or_else(|| meta::mtime_secs(&path))
             .unwrap_or_else(meta::now_secs);
         projects.push(project_to_dto(
-            &id, &meta, scenario_count, last_run_at, sim_state, false, modified_at,
+            &id,
+            &meta,
+            scenario_count,
+            last_run_at,
+            sim_state,
+            false,
+            modified_at,
         ));
     }
     // Sort most-recently-modified first.
@@ -541,6 +583,7 @@ pub fn create_project(
     id: String,
     name: String,
 ) -> Result<Project, String> {
+    validate_id(&id)?;
     let app_data = app_data_dir(&app)?;
 
     // Snapshot the currently loaded network (if any).
@@ -577,7 +620,15 @@ pub fn create_project(
     let modified_at = meta::mtime_secs(&bundle::base_model_path(&app_data, &id))
         .or_else(|| meta::mtime_secs(&project_dir))
         .unwrap_or_else(meta::now_secs);
-    Ok(project_to_dto(&id, &meta, 0, None, "not-run", false, modified_at))
+    Ok(project_to_dto(
+        &id,
+        &meta,
+        0,
+        None,
+        "not-run",
+        false,
+        modified_at,
+    ))
 }
 
 /// Result returned by `load_project`: the persisted row, plus the network it
@@ -602,6 +653,7 @@ pub fn load_project(
     state: tauri::State<'_, NetworkState>,
     id: String,
 ) -> Result<Option<LoadedProject>, String> {
+    validate_id(&id)?;
     let app_data = app_data_dir(&app)?;
     let project_dir = bundle::project_dir(&app_data, &id);
     if !project_dir.exists() {
@@ -614,7 +666,11 @@ pub fn load_project(
     let scenario_count = count_scenario_dirs(&app_data, &id);
     let results_path = bundle::base_results_path(&app_data, &id);
     let sim_state = meta::sim_state_from_results(&results_path);
-    let last_run_at = if results_path.exists() { meta::mtime_secs(&results_path) } else { None };
+    let last_run_at = if results_path.exists() {
+        meta::mtime_secs(&results_path)
+    } else {
+        None
+    };
     let modified_at = meta::mtime_secs(&bundle::base_model_path(&app_data, &id))
         .or_else(|| meta::mtime_secs(&project_dir))
         .unwrap_or_else(meta::now_secs);
@@ -637,7 +693,15 @@ pub fn load_project(
     };
 
     Ok(Some(LoadedProject {
-        project: project_to_dto(&id, &meta, scenario_count, last_run_at, sim_state, false, modified_at),
+        project: project_to_dto(
+            &id,
+            &meta,
+            scenario_count,
+            last_run_at,
+            sim_state,
+            false,
+            modified_at,
+        ),
         network,
     }))
 }
@@ -647,6 +711,7 @@ pub fn load_project(
 #[tauri::command]
 /// Remove the project directory tree.
 pub fn delete_project(app: tauri::AppHandle, id: String) -> Result<bool, String> {
+    validate_id(&id)?;
     let app_data = app_data_dir(&app)?;
     let dir = bundle::project_dir(&app_data, &id);
     if !dir.exists() {
@@ -665,6 +730,7 @@ pub fn rename_project(
     id: String,
     name: String,
 ) -> Result<Option<Project>, String> {
+    validate_id(&id)?;
     let app_data = app_data_dir(&app)?;
     let project_dir = bundle::project_dir(&app_data, &id);
     if !project_dir.exists() {
@@ -676,22 +742,31 @@ pub fn rename_project(
     let scenario_count = count_scenario_dirs(&app_data, &id);
     let results_path = bundle::base_results_path(&app_data, &id);
     let sim_state = meta::sim_state_from_results(&results_path);
-    let last_run_at = if results_path.exists() { meta::mtime_secs(&results_path) } else { None };
+    let last_run_at = if results_path.exists() {
+        meta::mtime_secs(&results_path)
+    } else {
+        None
+    };
     let modified_at = meta::mtime_secs(&bundle::base_model_path(&app_data, &id))
         .or_else(|| meta::mtime_secs(&project_dir))
         .unwrap_or_else(meta::now_secs);
-    Ok(Some(project_to_dto(&id, &project_meta, scenario_count, last_run_at, sim_state, false, modified_at)))
+    Ok(Some(project_to_dto(
+        &id,
+        &project_meta,
+        scenario_count,
+        last_run_at,
+        sim_state,
+        false,
+        modified_at,
+    )))
 }
 
 /// Update the source CRS for a project. Returns `true` when the metadata was
 /// updated, `false` when the project is not found on disk.
 #[tauri::command]
 /// Update the `source_crs` field in project `meta.json`.
-pub fn update_project_crs(
-    app: tauri::AppHandle,
-    id: String,
-    crs: String,
-) -> Result<bool, String> {
+pub fn update_project_crs(app: tauri::AppHandle, id: String, crs: String) -> Result<bool, String> {
+    validate_id(&id)?;
     let app_data = app_data_dir(&app)?;
     let project_dir = bundle::project_dir(&app_data, &id);
     if !project_dir.exists() {
@@ -707,6 +782,14 @@ fn app_data_dir(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
     app.path().app_data_dir().map_err(|e| e.to_string())
 }
 
+/// Reject any string that is not a valid UUID v4, preventing path traversal via
+/// `project_id` / `scenario_id` parameters supplied by the frontend.
+fn validate_id(id: &str) -> Result<(), String> {
+    uuid::Uuid::parse_str(id)
+        .map(|_| ())
+        .map_err(|_| format!("invalid id: expected UUID, got {:?}", id))
+}
+
 /// Count the number of scenario subdirectories under `<app_data>/projects/<id>/scenarios/`.
 fn count_scenario_dirs(app_data: &std::path::Path, project_id: &str) -> u32 {
     let scenarios_dir = bundle::project_dir(app_data, project_id).join("scenarios");
@@ -714,7 +797,12 @@ fn count_scenario_dirs(app_data: &std::path::Path, project_id: &str) -> u32 {
         return 0;
     }
     std::fs::read_dir(&scenarios_dir)
-        .map(|entries| entries.filter_map(|e| e.ok()).filter(|e| e.path().is_dir()).count() as u32)
+        .map(|entries| {
+            entries
+                .filter_map(|e| e.ok())
+                .filter(|e| e.path().is_dir())
+                .count() as u32
+        })
         .unwrap_or(0)
 }
 
@@ -753,7 +841,11 @@ pub struct ScenarioDto {
 /// assembles the tree from `parent_scenario_id`.
 #[tauri::command]
 /// Scan the project `scenarios/` directory and return all scenarios.
-pub fn list_scenarios(app: tauri::AppHandle, project_id: String) -> Result<Vec<ScenarioDto>, String> {
+pub fn list_scenarios(
+    app: tauri::AppHandle,
+    project_id: String,
+) -> Result<Vec<ScenarioDto>, String> {
+    validate_id(&project_id)?;
     let app_data = app_data_dir(&app)?;
     let scenarios_dir = bundle::project_dir(&app_data, &project_id).join("scenarios");
     if !scenarios_dir.exists() {
@@ -764,7 +856,9 @@ pub fn list_scenarios(app: tauri::AppHandle, project_id: String) -> Result<Vec<S
     for entry in entries {
         let entry = entry.map_err(|e| e.to_string())?;
         let path = entry.path();
-        if !path.is_dir() { continue; }
+        if !path.is_dir() {
+            continue;
+        }
         let sc_id = match path.file_name().and_then(|n| n.to_str()) {
             Some(s) => s.to_string(),
             None => continue,
@@ -775,7 +869,12 @@ pub fn list_scenarios(app: tauri::AppHandle, project_id: String) -> Result<Vec<S
         };
         let results_path = bundle::scenario_results_path(&app_data, &project_id, &sc_id);
         let sim_state = meta::sim_state_from_results(&results_path);
-        result.push(scenario_meta_to_dto(&sc_id, &project_id, &sc_meta, sim_state));
+        result.push(scenario_meta_to_dto(
+            &sc_id,
+            &project_id,
+            &sc_meta,
+            sim_state,
+        ));
     }
     result.sort_by_key(|s| s.id.clone());
     Ok(result)
@@ -793,6 +892,10 @@ pub fn create_scenario(
     name: String,
     parent_scenario_id: Option<String>,
 ) -> Result<ScenarioDto, String> {
+    validate_id(&project_id)?;
+    if let Some(pid) = &parent_scenario_id {
+        validate_id(pid)?;
+    }
     let app_data = app_data_dir(&app)?;
     let id = uuid::Uuid::new_v4().to_string();
 
@@ -819,7 +922,12 @@ pub fn create_scenario(
     Ok(scenario_meta_to_dto(&id, &project_id, &sc_meta, "not-run"))
 }
 
-fn scenario_meta_to_dto(id: &str, project_id: &str, m: &meta::ScenarioMeta, sim_state: &str) -> ScenarioDto {
+fn scenario_meta_to_dto(
+    id: &str,
+    project_id: &str,
+    m: &meta::ScenarioMeta,
+    sim_state: &str,
+) -> ScenarioDto {
     let state = match sim_state {
         "done" => "simulated",
         _ => "not-run",
@@ -842,13 +950,14 @@ pub fn delete_scenario(
     project_id: String,
     scenario_id: String,
 ) -> Result<bool, String> {
+    validate_id(&project_id)?;
+    validate_id(&scenario_id)?;
     let app_data = app_data_dir(&app)?;
     let dir = bundle::scenario_dir(&app_data, &project_id, &scenario_id);
     if !dir.exists() {
         return Ok(false);
     }
-    bundle::delete_scenario_dir(&app_data, &project_id, &scenario_id)
-        .map_err(|e| e.to_string())?;
+    bundle::delete_scenario_dir(&app_data, &project_id, &scenario_id).map_err(|e| e.to_string())?;
     Ok(true)
 }
 
@@ -861,6 +970,8 @@ pub fn rename_scenario(
     scenario_id: String,
     name: String,
 ) -> Result<bool, String> {
+    validate_id(&project_id)?;
+    validate_id(&scenario_id)?;
     let app_data = app_data_dir(&app)?;
     let sc_dir = bundle::scenario_dir(&app_data, &project_id, &scenario_id);
     if !sc_dir.exists() {
@@ -880,12 +991,15 @@ pub fn rename_scenario(
 /// Open the project base bundle directory in the OS file manager.
 pub fn open_base_folder(app: tauri::AppHandle, project_id: String) -> Result<(), String> {
     use tauri_plugin_opener::OpenerExt;
+    validate_id(&project_id)?;
     let app_data = app_data_dir(&app)?;
     let dir = bundle::base_dir(&app_data, &project_id);
     if !dir.exists() {
         std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     }
-    app.opener().reveal_item_in_dir(&dir).map_err(|e| e.to_string())
+    app.opener()
+        .reveal_item_in_dir(&dir)
+        .map_err(|e| e.to_string())
 }
 
 /// Open the scenario directory for `scenario_id` in the system file manager.
@@ -897,12 +1011,16 @@ pub fn open_scenario_folder(
     scenario_id: String,
 ) -> Result<(), String> {
     use tauri_plugin_opener::OpenerExt;
+    validate_id(&project_id)?;
+    validate_id(&scenario_id)?;
     let app_data = app_data_dir(&app)?;
     let dir = bundle::scenario_dir(&app_data, &project_id, &scenario_id);
     if !dir.exists() {
         std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     }
-    app.opener().reveal_item_in_dir(&dir).map_err(|e| e.to_string())
+    app.opener()
+        .reveal_item_in_dir(&dir)
+        .map_err(|e| e.to_string())
 }
 
 fn project_to_dto(
@@ -950,7 +1068,10 @@ pub struct ReconcileReport {
 #[tauri::command]
 /// No-op (returns empty report); the filesystem is always authoritative.
 pub fn reconcile_projects(_app: tauri::AppHandle) -> Result<ReconcileReport, String> {
-    Ok(ReconcileReport { recovered: 0, folder_missing: vec![] })
+    Ok(ReconcileReport {
+        recovered: 0,
+        folder_missing: vec![],
+    })
 }
 
 fn format_modified(modified_at: i64) -> String {
@@ -1083,7 +1204,10 @@ pub struct NetworkDto {
 }
 
 /// Inner state for `NetworkState`.
+#[allow(clippy::large_enum_variant)]
+#[derive(Default)]
 pub enum NetworkStateInner {
+    #[default]
     Empty,
     Loaded {
         /// INP bytes kept for `save_project` / `create_project`.
@@ -1092,10 +1216,6 @@ pub enum NetworkStateInner {
         network: hydra::Network,
         dto: NetworkDto,
     },
-}
-
-impl Default for NetworkStateInner {
-    fn default() -> Self { NetworkStateInner::Empty }
 }
 
 /// Tauri managed state — holds the most recently loaded network (if any).
@@ -1116,9 +1236,7 @@ pub struct PickedCsvFile {
 /// return just the filename. Returns `null` when the dialog is cancelled.
 #[tauri::command]
 /// Open a file-picker filtered to CSV/Excel; returns the filename and a generated ID.
-pub async fn pick_csv_file(
-    app: tauri::AppHandle,
-) -> Result<Option<PickedCsvFile>, String> {
+pub async fn pick_csv_file(app: tauri::AppHandle) -> Result<Option<PickedCsvFile>, String> {
     use tauri_plugin_dialog::DialogExt;
 
     let path = app
@@ -1139,10 +1257,13 @@ pub async fn pick_csv_file(
         .unwrap_or_else(|| "unknown".to_string());
 
     Ok(Some(PickedCsvFile {
-        id: format!("src-{}", std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_millis())
-            .unwrap_or(0)),
+        id: format!(
+            "src-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis())
+                .unwrap_or(0)
+        ),
         filename,
     }))
 }
@@ -1241,12 +1362,9 @@ fn summarize_unknown_pattern_refs(errors: &[hydra::ValidationError]) -> Option<S
         }
     }
 
-    let Some((pattern_id, object_ids)) = refs_by_pattern
+    let (pattern_id, object_ids) = refs_by_pattern
         .iter()
-        .max_by_key(|(_, object_ids)| object_ids.len())
-    else {
-        return None;
-    };
+        .max_by_key(|(_, object_ids)| object_ids.len())?;
 
     let group_count = object_ids.len();
     if group_count == 0 {
@@ -1263,11 +1381,18 @@ fn summarize_unknown_pattern_refs(errors: &[hydra::ValidationError]) -> Option<S
     let remaining_in_group = group_count.saturating_sub(preview_limit);
 
     fn pluralize<'a>(count: usize, singular: &'a str, plural: &'a str) -> &'a str {
-        if count == 1 { singular } else { plural }
+        if count == 1 {
+            singular
+        } else {
+            plural
+        }
     }
 
     let mut summary = if group_count == 1 {
-        format!("missing pattern '{}' referenced by {}", pattern_id, object_ids[0])
+        format!(
+            "missing pattern '{}' referenced by {}",
+            pattern_id, object_ids[0]
+        )
     } else {
         let mut detail = format!(
             "missing pattern '{}' referenced by {} network {} ({})",
@@ -1337,7 +1462,7 @@ pub fn get_curves(state: tauri::State<'_, NetworkState>) -> Vec<CurveDto> {
 // ── Internal helpers ─────────────────────────────────────────────────────────
 
 fn network_to_dto(network: &hydra::Network) -> NetworkDto {
-    use hydra::{NodeKind, LinkKind};
+    use hydra::{LinkKind, NodeKind};
 
     // Build a node-index → node-id map for resolving link endpoints.
     let node_id_by_index: std::collections::HashMap<usize, &str> = network
@@ -1354,9 +1479,9 @@ fn network_to_dto(network: &hydra::Network) -> NetworkDto {
         .iter()
         .map(|n| {
             let kind = match &n.kind {
-                NodeKind::Junction(_)  => "junction",
+                NodeKind::Junction(_) => "junction",
                 NodeKind::Reservoir(_) => "reservoir",
-                NodeKind::Tank(_)      => "tank",
+                NodeKind::Tank(_) => "tank",
             };
             let (x, y) = network
                 .coordinates
@@ -1365,22 +1490,28 @@ fn network_to_dto(network: &hydra::Network) -> NetworkDto {
                 .unwrap_or((0.0, 0.0));
             let elevation = n.base.elevation * FT_TO_M;
             let base_demand = match &n.kind {
-                NodeKind::Junction(j) =>
-                    j.demands.iter().map(|d| d.base_demand).sum::<f64>() * CFS_TO_LPS,
+                NodeKind::Junction(j) => {
+                    j.demands.iter().map(|d| d.base_demand).sum::<f64>() * CFS_TO_LPS
+                }
                 _ => 0.0,
             };
-            let (tank_min_level, tank_max_level, tank_initial_level, tank_diameter, tank_volume_curve) =
-                if let NodeKind::Tank(t) = &n.kind {
-                    (
-                        Some(t.min_level * FT_TO_M),
-                        Some(t.max_level * FT_TO_M),
-                        Some(t.initial_level * FT_TO_M),
-                        Some(t.diameter * FT_TO_M),
-                        t.volume_curve.clone(),
-                    )
-                } else {
-                    (None, None, None, None, None)
-                };
+            let (
+                tank_min_level,
+                tank_max_level,
+                tank_initial_level,
+                tank_diameter,
+                tank_volume_curve,
+            ) = if let NodeKind::Tank(t) = &n.kind {
+                (
+                    Some(t.min_level * FT_TO_M),
+                    Some(t.max_level * FT_TO_M),
+                    Some(t.initial_level * FT_TO_M),
+                    Some(t.diameter * FT_TO_M),
+                    t.volume_curve.clone(),
+                )
+            } else {
+                (None, None, None, None, None)
+            };
             let head_pattern = if let NodeKind::Reservoir(r) = &n.kind {
                 r.head_pattern.clone()
             } else {
@@ -1410,8 +1541,8 @@ fn network_to_dto(network: &hydra::Network) -> NetworkDto {
         .iter()
         .map(|l| {
             let (kind, diameter, length, roughness) = match &l.kind {
-                LinkKind::Pipe(p)  => ("pipe",  p.diameter * 304.8, p.length * FT_TO_M, p.roughness),
-                LinkKind::Pump(_)  => ("pump",  0.0, 0.0, 0.0),
+                LinkKind::Pipe(p) => ("pipe", p.diameter * 304.8, p.length * FT_TO_M, p.roughness),
+                LinkKind::Pump(_) => ("pump", 0.0, 0.0, 0.0),
                 LinkKind::Valve(v) => ("valve", v.diameter * 304.8, 0.0, 0.0),
             };
             let (pump_curve, pump_power_kw, pump_speed) = if let LinkKind::Pump(p) = &l.kind {
@@ -1436,12 +1567,11 @@ fn network_to_dto(network: &hydra::Network) -> NetworkDto {
                 };
                 // Convert setting from internal ft/cfs/dimensionless to display units.
                 let setting = match v.valve_type {
-                    ValveType::Prv | ValveType::Psv | ValveType::Pbv =>
-                        l.base.initial_setting.map(|s| s * FT_TO_M),
-                    ValveType::Fcv =>
-                        l.base.initial_setting.map(|s| s * CFS_TO_LPS),
-                    ValveType::Tcv =>
-                        l.base.initial_setting,
+                    ValveType::Prv | ValveType::Psv | ValveType::Pbv => {
+                        l.base.initial_setting.map(|s| s * FT_TO_M)
+                    }
+                    ValveType::Fcv => l.base.initial_setting.map(|s| s * CFS_TO_LPS),
+                    ValveType::Tcv => l.base.initial_setting,
                     ValveType::Gpv | ValveType::Pcv => None,
                 };
                 (Some(vt.to_string()), setting, v.curve.clone())
@@ -1478,7 +1608,10 @@ fn network_to_dto(network: &hydra::Network) -> NetworkDto {
     let patterns = network
         .patterns
         .iter()
-        .map(|p| PatternDto { id: p.id.clone(), multipliers: p.factors.clone() })
+        .map(|p| PatternDto {
+            id: p.id.clone(),
+            multipliers: p.factors.clone(),
+        })
         .collect();
 
     let curves = network
@@ -1487,27 +1620,41 @@ fn network_to_dto(network: &hydra::Network) -> NetworkDto {
         .map(|c| {
             use hydra::CurveKind;
             let kind = match c.kind {
-                CurveKind::PumpHead       => "pump-head",
+                CurveKind::PumpHead => "pump-head",
                 CurveKind::PumpEfficiency => "pump-efficiency",
-                CurveKind::PumpVolume     => "pump-volume",
-                CurveKind::TankVolume     => "tank-volume",
-                CurveKind::GpvHeadloss    => "gpv-headloss",
-                CurveKind::PcvLossRatio   => "pcv-loss-ratio",
-                CurveKind::Generic        => "generic",
+                CurveKind::PumpVolume => "pump-volume",
+                CurveKind::TankVolume => "tank-volume",
+                CurveKind::GpvHeadloss => "gpv-headloss",
+                CurveKind::PcvLossRatio => "pcv-loss-ratio",
+                CurveKind::Generic => "generic",
             };
             // Pump-head: x = flow (cfs → L/s), y = head (ft → m).
             // All others: pass raw values through (unit conversion is
             // context-dependent; the frontend labels accordingly).
             let (xs, ys): (Vec<f64>, Vec<f64>) = if c.kind == CurveKind::PumpHead {
-                c.points.iter().map(|p| (p.x * CFS_TO_LPS, p.y * FT_TO_M)).unzip()
+                c.points
+                    .iter()
+                    .map(|p| (p.x * CFS_TO_LPS, p.y * FT_TO_M))
+                    .unzip()
             } else {
                 c.points.iter().map(|p| (p.x, p.y)).unzip()
             };
-            CurveDto { id: c.id.clone(), kind: kind.into(), x: xs, y: ys }
+            CurveDto {
+                id: c.id.clone(),
+                kind: kind.into(),
+                x: xs,
+                y: ys,
+            }
         })
         .collect();
 
-    NetworkDto { nodes, links, patterns, curves, file_stem: String::new() }
+    NetworkDto {
+        nodes,
+        links,
+        patterns,
+        curves,
+        file_stem: String::new(),
+    }
 }
 
 // ── Simulation helpers ───────────────────────────────────────────────────────
@@ -1769,6 +1916,12 @@ pub async fn run_simulation(
     trace_node: Option<String>,
 ) -> Result<Option<SimulationResultDto>, String> {
     use hydra::{QualityMode, Simulation};
+    if let Some(pid) = &project_id {
+        validate_id(pid)?;
+    }
+    if let Some(sid) = &scenario_id {
+        validate_id(sid)?;
+    }
 
     // Load model bytes.  When IDs are supplied we read directly from the
     // bundle on disk so the correct model.inp is always used, regardless of
@@ -1776,13 +1929,11 @@ pub async fn run_simulation(
     let raw_bytes: Vec<u8> = if let (Some(pid), Some(sid)) = (&project_id, &scenario_id) {
         let app_data = app.path().app_data_dir().map_err(|e| format!("{e:?}"))?;
         let path = bundle::scenario_model_path(&app_data, pid, sid);
-        std::fs::read(&path)
-            .map_err(|e| format!("Cannot read scenario model '{}': {}", sid, e))?
+        std::fs::read(&path).map_err(|e| format!("Cannot read scenario model '{}': {}", sid, e))?
     } else if let Some(pid) = &project_id {
         let app_data = app.path().app_data_dir().map_err(|e| format!("{e:?}"))?;
         let path = bundle::base_model_path(&app_data, pid);
-        std::fs::read(&path)
-            .map_err(|e| format!("Cannot read base model '{}': {}", pid, e))?
+        std::fs::read(&path).map_err(|e| format!("Cannot read base model '{}': {}", pid, e))?
     } else {
         // Fall back to the in-memory network (opened via file picker).
         let guard = state.0.lock().unwrap();
@@ -1800,9 +1951,9 @@ pub async fn run_simulation(
     if let Some(q) = quality_mode.as_deref() {
         let resolved = match q {
             "chemical" => QualityMode::Chemical,
-            "age"      => QualityMode::Age,
-            "trace"    => QualityMode::Trace,
-            _          => QualityMode::None,
+            "age" => QualityMode::Age,
+            "trace" => QualityMode::Trace,
+            _ => QualityMode::None,
         };
         network.options.quality_mode = resolved;
         if resolved == QualityMode::Trace {
@@ -1817,8 +1968,8 @@ pub async fn run_simulation(
     let out_path: Option<std::path::PathBuf> = if let Ok(app_data) = app.path().app_data_dir() {
         match (&project_id, &scenario_id) {
             (Some(pid), Some(sid)) => Some(bundle::scenario_results_path(&app_data, pid, sid)),
-            (Some(pid), None)      => Some(bundle::base_results_path(&app_data, pid)),
-            _                      => None,
+            (Some(pid), None) => Some(bundle::base_results_path(&app_data, pid)),
+            _ => None,
         }
     } else {
         None
@@ -1831,19 +1982,33 @@ pub async fn run_simulation(
     let direct_run_id = uuid::Uuid::new_v4().to_string();
     let app2 = app.clone();
     let (sim, run_err, _wall_ms, _hyd_steps) = tauri::async_runtime::spawn_blocking(move || {
-        run_sim_loops(sim, out_path, duration_seconds, run_quality, |phase, ss, done, failed, msg| {
-            let _ = app2.emit(SIMULATION_PROGRESS_EVENT, &SimulationProgressDto {
-                run_id: Some(direct_run_id.clone()),
-                phase,
-                simulated_seconds: ss,
-                duration_seconds,
-                percent: if done { 100.0 } else { progress_percent(ss, duration_seconds) },
-                done,
-                failed,
-                message: msg,
-                run_quality,
-            });
-        }, || false)
+        run_sim_loops(
+            sim,
+            out_path,
+            duration_seconds,
+            run_quality,
+            |phase, ss, done, failed, msg| {
+                let _ = app2.emit(
+                    SIMULATION_PROGRESS_EVENT,
+                    &SimulationProgressDto {
+                        run_id: Some(direct_run_id.clone()),
+                        phase,
+                        simulated_seconds: ss,
+                        duration_seconds,
+                        percent: if done {
+                            100.0
+                        } else {
+                            progress_percent(ss, duration_seconds)
+                        },
+                        done,
+                        failed,
+                        message: msg,
+                        run_quality,
+                    },
+                );
+            },
+            || false,
+        )
     })
     .await
     .map_err(|e| format!("Simulation task panicked: {e:?}"))?;
@@ -1855,7 +2020,9 @@ pub async fn run_simulation(
         });
     }
 
-    let result = SimulationResultDto { pump_energy: collect_pump_energy(&sim, duration_seconds) };
+    let result = SimulationResultDto {
+        pump_energy: collect_pump_energy(&sim, duration_seconds),
+    };
 
     Ok(Some(result))
 }
@@ -1876,6 +2043,10 @@ pub fn save_project(
     state: tauri::State<'_, NetworkState>,
     app: tauri::AppHandle,
 ) -> Result<bool, String> {
+    validate_id(&id)?;
+    if let Some(sid) = &scenario_id {
+        validate_id(sid)?;
+    }
     let (raw, node_count, link_count) = {
         let guard = state.0.lock().unwrap();
         match &*guard {
@@ -1917,7 +2088,8 @@ pub fn get_run_queue(
     run_queue: tauri::State<'_, RunQueue>,
     project_id: String,
 ) -> Result<Vec<RunQueueItemDto>, String> {
-    Ok(run_queue.get_for_project(&project_id)
+    Ok(run_queue
+        .get_for_project(&project_id)
         .into_iter()
         .map(run_queue_item_to_dto)
         .collect())
@@ -1936,6 +2108,10 @@ pub async fn enqueue_runs(
     project_id: String,
     targets: Vec<Option<String>>,
 ) -> Result<Vec<RunQueueItemDto>, String> {
+    validate_id(&project_id)?;
+    for sid in targets.iter().flatten() {
+        validate_id(sid)?;
+    }
     let app_data = app_data_dir(&app)?;
     let now = meta::now_secs();
     for target_id in &targets {
@@ -1944,15 +2120,15 @@ pub async fn enqueue_runs(
             meta::read_scenario_meta(&sc_dir).ok().map(|m| m.name)
         });
         run_queue.enqueue(RunQueueItem {
-            id:          uuid::Uuid::new_v4().to_string(),
-            project_id:  project_id.clone(),
-            target_id:   target_id.clone(),
+            id: uuid::Uuid::new_v4().to_string(),
+            project_id: project_id.clone(),
+            target_id: target_id.clone(),
             target_name,
-            status:      "queued".into(),
-            queued_at:   now,
-            started_at:  None,
+            status: "queued".into(),
+            queued_at: now,
+            started_at: None,
             finished_at: None,
-            error:       None,
+            error: None,
         });
     }
 
@@ -1968,7 +2144,8 @@ pub async fn enqueue_runs(
         });
     }
 
-    Ok(run_queue.get_for_project(&project_id)
+    Ok(run_queue
+        .get_for_project(&project_id)
         .into_iter()
         .map(run_queue_item_to_dto)
         .collect())
@@ -2188,6 +2365,7 @@ pub fn get_sim_params(
     app: tauri::AppHandle,
     project_id: String,
 ) -> Result<Option<SimParamsDto>, String> {
+    validate_id(&project_id)?;
     let app_data = app_data_dir(&app)?;
     let path = bundle::base_model_path(&app_data, &project_id);
     if !path.exists() {
@@ -2208,6 +2386,7 @@ pub fn update_sim_params(
     project_id: String,
     params: SimParamsDto,
 ) -> Result<(), String> {
+    validate_id(&project_id)?;
     let app_data = app_data_dir(&app)?;
 
     // 1) Base model.
@@ -2252,15 +2431,15 @@ pub fn update_sim_params(
 
 fn run_queue_item_to_dto(item: RunQueueItem) -> RunQueueItemDto {
     RunQueueItemDto {
-        id:          item.id,
-        project_id:  item.project_id,
-        target_id:   item.target_id,
+        id: item.id,
+        project_id: item.project_id,
+        target_id: item.target_id,
         target_name: item.target_name,
-        status:      item.status,
-        queued_at:   item.queued_at,
-        started_at:  item.started_at,
+        status: item.status,
+        queued_at: item.queued_at,
+        started_at: item.started_at,
         finished_at: item.finished_at,
-        error:       item.error,
+        error: item.error,
     }
 }
 
@@ -2275,14 +2454,15 @@ async fn process_queue(app: tauri::AppHandle) {
         let item = rq.next_queued();
         let item = match item {
             Some(i) => i,
-            None    => break,
+            None => break,
         };
 
         let now = meta::now_secs();
         rq.mark_running(&item.id, now);
         let _ = app.emit(RUN_QUEUE_UPDATE_EVENT, &item.project_id);
 
-        let result = run_sim_for_queue(&app, &item.id, &item.project_id, item.target_id.as_deref()).await;
+        let result =
+            run_sim_for_queue(&app, &item.id, &item.project_id, item.target_id.as_deref()).await;
 
         let now = meta::now_secs();
         match result {
@@ -2321,8 +2501,7 @@ async fn run_sim_for_queue(
     let raw_bytes: Vec<u8> = match scenario_id {
         Some(sid) => {
             let path = bundle::scenario_model_path(&app_data, project_id, sid);
-            std::fs::read(&path)
-                .map_err(|e| format!("Cannot read scenario '{}': {}", sid, e))?
+            std::fs::read(&path).map_err(|e| format!("Cannot read scenario '{}': {}", sid, e))?
         }
         None => {
             let path = bundle::base_model_path(&app_data, project_id);
@@ -2331,13 +2510,13 @@ async fn run_sim_for_queue(
         }
     };
 
-    let network          = hydra::io::parse(&raw_bytes).map_err(|e| format!("{e:?}"))?;
-    let run_quality      = network.options.quality_mode != QualityMode::None;
+    let network = hydra::io::parse(&raw_bytes).map_err(|e| format!("{e:?}"))?;
+    let run_quality = network.options.quality_mode != QualityMode::None;
     let duration_seconds = network.options.duration;
 
     let out_path = match scenario_id {
         Some(sid) => bundle::scenario_results_path(&app_data, project_id, sid),
-        None      => bundle::base_results_path(&app_data, project_id),
+        None => bundle::base_results_path(&app_data, project_id),
     };
 
     let mut sim = Simulation::create();
@@ -2348,19 +2527,37 @@ async fn run_sim_for_queue(
     let app_emit = app.clone();
     let app_cancel = app.clone();
     let (_, run_err, _wall_ms, _hyd_steps) = tauri::async_runtime::spawn_blocking(move || {
-        run_sim_loops(sim, Some(out_path), duration_seconds, run_quality, |phase, ss, done, failed, msg| {
-            let _ = app_emit.emit(SIMULATION_PROGRESS_EVENT, &SimulationProgressDto {
-                run_id: Some(run_id_owned.clone()),
-                phase,
-                simulated_seconds: ss,
-                duration_seconds,
-                percent: if done { 100.0 } else { progress_percent(ss, duration_seconds) },
-                done,
-                failed,
-                message: msg,
-                run_quality,
-            });
-        }, || app_cancel.state::<RunQueue>().is_cancel_requested(&run_id_owned))
+        run_sim_loops(
+            sim,
+            Some(out_path),
+            duration_seconds,
+            run_quality,
+            |phase, ss, done, failed, msg| {
+                let _ = app_emit.emit(
+                    SIMULATION_PROGRESS_EVENT,
+                    &SimulationProgressDto {
+                        run_id: Some(run_id_owned.clone()),
+                        phase,
+                        simulated_seconds: ss,
+                        duration_seconds,
+                        percent: if done {
+                            100.0
+                        } else {
+                            progress_percent(ss, duration_seconds)
+                        },
+                        done,
+                        failed,
+                        message: msg,
+                        run_quality,
+                    },
+                );
+            },
+            || {
+                app_cancel
+                    .state::<RunQueue>()
+                    .is_cancel_requested(&run_id_owned)
+            },
+        )
     })
     .await
     .map_err(|e| format!("Simulation task panicked: {e:?}"))?;
@@ -2397,6 +2594,10 @@ pub fn load_result_meta(
     project_id: String,
     scenario_id: Option<String>,
 ) -> Result<ResultMetaDto, String> {
+    validate_id(&project_id)?;
+    if let Some(sid) = &scenario_id {
+        validate_id(sid)?;
+    }
     let app_data = app_data_dir(&app)?;
     let out_path = match &scenario_id {
         Some(sid) => bundle::scenario_results_path(&app_data, &project_id, sid),
@@ -2444,6 +2645,10 @@ pub fn get_period_results(
     period: usize,
     scenario_id: Option<String>,
 ) -> Result<PeriodResultsDto, String> {
+    validate_id(&project_id)?;
+    if let Some(sid) = &scenario_id {
+        validate_id(sid)?;
+    }
     let app_data = app_data_dir(&app)?;
     let out_path = match &scenario_id {
         Some(sid) => bundle::scenario_results_path(&app_data, &project_id, sid),
@@ -2460,8 +2665,16 @@ pub fn get_period_results(
         link_velocity: pr.link_velocity,
         link_headloss: pr.link_headloss,
         link_status: pr.link_status,
-        node_quality: if has_quality { Some(pr.node_quality) } else { None },
-        link_quality: if has_quality { Some(pr.link_quality) } else { None },
+        node_quality: if has_quality {
+            Some(pr.node_quality)
+        } else {
+            None
+        },
+        link_quality: if has_quality {
+            Some(pr.link_quality)
+        } else {
+            None
+        },
     })
 }
 
@@ -2476,6 +2689,10 @@ pub fn get_pump_energy(
     project_id: String,
     scenario_id: Option<String>,
 ) -> Result<Vec<PumpEnergyDto>, String> {
+    validate_id(&project_id)?;
+    if let Some(sid) = &scenario_id {
+        validate_id(sid)?;
+    }
     let app_data = app_data_dir(&app)?;
     let out_path = match &scenario_id {
         Some(sid) => bundle::scenario_results_path(&app_data, &project_id, sid),
@@ -2485,8 +2702,7 @@ pub fn get_pump_energy(
         Some(sid) => bundle::scenario_model_path(&app_data, &project_id, sid),
         None => bundle::base_model_path(&app_data, &project_id),
     };
-    let raw = std::fs::read(&model_path)
-        .map_err(|e| format!("Cannot read model: {e}"))?;
+    let raw = std::fs::read(&model_path).map_err(|e| format!("Cannot read model: {e}"))?;
     let network = hydra::io::parse(&raw).map_err(|e| format!("{e:?}"))?;
     let meta = hydra::io::out_reader::read_metadata(&out_path)?;
     Ok(pump_energy_from_out(&out_path, &network, &meta))
@@ -2506,6 +2722,10 @@ pub fn get_result_analytics(
     project_id: String,
     scenario_id: Option<String>,
 ) -> Result<ResultAnalyticsDto, String> {
+    validate_id(&project_id)?;
+    if let Some(sid) = &scenario_id {
+        validate_id(sid)?;
+    }
     let app_data = app_data_dir(&app)?;
     let out_path = match &scenario_id {
         Some(sid) => bundle::scenario_results_path(&app_data, &project_id, sid),
@@ -2515,29 +2735,33 @@ pub fn get_result_analytics(
         Some(sid) => bundle::scenario_model_path(&app_data, &project_id, sid),
         None => bundle::base_model_path(&app_data, &project_id),
     };
-    let raw = std::fs::read(&model_path)
-        .map_err(|e| format!("Cannot read model: {e}"))?;
+    let raw = std::fs::read(&model_path).map_err(|e| format!("Cannot read model: {e}"))?;
     let network = hydra::io::parse(&raw).map_err(|e| format!("{e:?}"))?;
     let meta = hydra::io::out_reader::read_metadata(&out_path)?;
 
-    let n_nodes   = meta.n_nodes;
-    let n_tanks   = meta.n_tanks;
-    let n_links   = meta.n_links;
+    let n_nodes = meta.n_nodes;
+    let n_tanks = meta.n_tanks;
+    let n_links = meta.n_links;
     let n_periods = meta.n_periods;
     let tank_start = n_nodes.saturating_sub(n_tanks);
 
     let scan = hydra::io::out_reader::scan_analytics(&out_path, &meta)?;
     let node_min_pressure = scan.node_min_pressure;
     let link_max_velocity = scan.link_max_velocity;
-    let mb_series         = scan.mb_series;
-    let total_inflow      = scan.total_inflow;
-    let total_outflow     = scan.total_outflow;
-    let tank_head         = scan.tank_head;
+    let mb_series = scan.mb_series;
+    let total_inflow = scan.total_inflow;
+    let total_outflow = scan.total_outflow;
+    let tank_head = scan.tank_head;
 
     // ── Pressure histogram (same 7 bins as the frontend) ─────────────────────
     const PRESSURE_BINS: &[(f64, f64)] = &[
-        (0.0, 10.0), (10.0, 20.0), (20.0, 30.0), (30.0, 40.0),
-        (40.0, 50.0), (50.0, 60.0), (60.0, f64::MAX),
+        (0.0, 10.0),
+        (10.0, 20.0),
+        (20.0, 30.0),
+        (30.0, 40.0),
+        (40.0, 50.0),
+        (50.0, 60.0),
+        (60.0, f64::MAX),
     ];
     let mut pressure_histogram: Vec<HistogramBucketDto> = PRESSURE_BINS
         .iter()
@@ -2545,23 +2769,35 @@ pub fn get_result_analytics(
         .collect();
 
     const LOW_PRESSURE_THRESHOLD: f64 = 14.0; // m
-    let mut low_pressure_count  = 0u32;
-    let mut min_pressure_val    = f64::INFINITY;
-    let mut min_pressure_idx    = 0usize;
+    let mut low_pressure_count = 0u32;
+    let mut min_pressure_val = f64::INFINITY;
+    let mut min_pressure_idx = 0usize;
 
     for (i, &p) in node_min_pressure.iter().enumerate() {
         if p.is_finite() {
-            if p < LOW_PRESSURE_THRESHOLD { low_pressure_count += 1; }
-            if p < min_pressure_val { min_pressure_val = p; min_pressure_idx = i; }
+            if p < LOW_PRESSURE_THRESHOLD {
+                low_pressure_count += 1;
+            }
+            if p < min_pressure_val {
+                min_pressure_val = p;
+                min_pressure_idx = i;
+            }
             for bin in &mut pressure_histogram {
-                if p >= bin.lo && p < bin.hi { bin.count += 1; break; }
+                if p >= bin.lo && p < bin.hi {
+                    bin.count += 1;
+                    break;
+                }
             }
         }
     }
 
     // ── Velocity histogram (same 5 bins as the frontend) ─────────────────────
     const VELOCITY_BINS: &[(f64, f64)] = &[
-        (0.0, 0.1), (0.1, 0.3), (0.3, 0.6), (0.6, 1.0), (1.0, f64::MAX),
+        (0.0, 0.1),
+        (0.1, 0.3),
+        (0.3, 0.6),
+        (0.6, 1.0),
+        (1.0, f64::MAX),
     ];
     let mut velocity_histogram: Vec<HistogramBucketDto> = VELOCITY_BINS
         .iter()
@@ -2572,9 +2808,15 @@ pub fn get_result_analytics(
     let mut max_velocity_idx = 0usize;
 
     for (i, &v) in link_max_velocity.iter().enumerate() {
-        if v > max_velocity_val { max_velocity_val = v; max_velocity_idx = i; }
+        if v > max_velocity_val {
+            max_velocity_val = v;
+            max_velocity_idx = i;
+        }
         for bin in &mut velocity_histogram {
-            if v >= bin.lo && v < bin.hi { bin.count += 1; break; }
+            if v >= bin.lo && v < bin.hi {
+                bin.count += 1;
+                break;
+            }
         }
     }
 
@@ -2591,10 +2833,14 @@ pub fn get_result_analytics(
         .filter(|&&idx| link_max_velocity[idx] > 0.0)
         .filter_map(|&idx| {
             let link = network.links.get(idx)?;
-            let from_id = network.nodes.get(link.base.from_idx())
+            let from_id = network
+                .nodes
+                .get(link.base.from_idx())
                 .map(|n| n.base.id.clone())
                 .unwrap_or_default();
-            let to_id = network.nodes.get(link.base.to_idx())
+            let to_id = network
+                .nodes
+                .get(link.base.to_idx())
                 .map(|n| n.base.id.clone())
                 .unwrap_or_default();
             let diameter_mm = match &link.kind {
@@ -2612,14 +2858,17 @@ pub fn get_result_analytics(
         .collect();
 
     // ── Tank head series ──────────────────────────────────────────────────────
-    let tank_series: Vec<TankHeadSeriesDto> = network.nodes
+    let tank_series: Vec<TankHeadSeriesDto> = network
+        .nodes
         .iter()
         .enumerate()
         .filter(|(_, n)| matches!(n.kind, hydra::NodeKind::Tank(_)))
         .filter_map(|(node_idx, n)| {
             // The relative index within the tank block at the end of the node array.
             let ti = node_idx.checked_sub(tank_start)?;
-            if ti >= n_tanks { return None; }
+            if ti >= n_tanks {
+                return None;
+            }
             Some(TankHeadSeriesDto {
                 node_id: n.base.id.clone(),
                 head: tank_head[ti].clone(),
@@ -2628,12 +2877,18 @@ pub fn get_result_analytics(
         .collect();
 
     // ── Summary strings ───────────────────────────────────────────────────────
-    let min_pressure_node_id = network.nodes
+    let min_pressure_node_id = network
+        .nodes
         .get(min_pressure_idx)
         .map(|n| n.base.id.clone())
         .unwrap_or_default();
-    let min_pressure_m = if min_pressure_val.is_finite() { min_pressure_val } else { 0.0 };
-    let max_velocity_link_id = network.links
+    let min_pressure_m = if min_pressure_val.is_finite() {
+        min_pressure_val
+    } else {
+        0.0
+    };
+    let max_velocity_link_id = network
+        .links
         .get(max_velocity_idx)
         .map(|l| l.base.id.clone())
         .unwrap_or_default();
@@ -2642,14 +2897,18 @@ pub fn get_result_analytics(
     // period duration in seconds then by ft³→m³).
     const FT3_TO_M3: f64 = 0.028_316_847;
     let report_step_s = meta.report_step;
-    let inflow_m3  = total_inflow  * report_step_s * FT3_TO_M3;
+    let inflow_m3 = total_inflow * report_step_s * FT3_TO_M3;
     let outflow_m3 = total_outflow * report_step_s * FT3_TO_M3;
-    let balance_pct = if inflow_m3 > 0.0 { (outflow_m3 / inflow_m3 * 100.0).min(100.0) } else { 100.0 };
+    let balance_pct = if inflow_m3 > 0.0 {
+        (outflow_m3 / inflow_m3 * 100.0).min(100.0)
+    } else {
+        100.0
+    };
 
     Ok(ResultAnalyticsDto {
         period_count: n_periods as u32,
-        node_count:   n_nodes   as u32,
-        link_count:   n_links   as u32,
+        node_count: n_nodes as u32,
+        link_count: n_links as u32,
         mass_balance: MassBalanceDto {
             inflow_m3,
             outflow_m3,
@@ -2681,6 +2940,10 @@ pub fn get_violations(
     pressure_min_m: f64,
     velocity_max_ms: f64,
 ) -> Result<ViolationsDto, String> {
+    validate_id(&project_id)?;
+    if let Some(sid) = &scenario_id {
+        validate_id(sid)?;
+    }
     let app_data = app_data_dir(&app)?;
     let out_path = match &scenario_id {
         Some(sid) => bundle::scenario_results_path(&app_data, &project_id, sid),
@@ -2690,8 +2953,7 @@ pub fn get_violations(
         Some(sid) => bundle::scenario_model_path(&app_data, &project_id, sid),
         None => bundle::base_model_path(&app_data, &project_id),
     };
-    let raw = std::fs::read(&model_path)
-        .map_err(|e| format!("Cannot read model: {e}"))?;
+    let raw = std::fs::read(&model_path).map_err(|e| format!("Cannot read model: {e}"))?;
     let network = hydra::io::parse(&raw).map_err(|e| format!("{e:?}"))?;
     let meta = hydra::io::out_reader::read_metadata(&out_path)?;
 
@@ -2699,33 +2961,44 @@ pub fn get_violations(
     let node_min_pressure = scan.node_min_pressure;
     let link_max_velocity = scan.link_max_velocity;
 
-    let pressure_violations: Vec<NodeViolationDto> = network.nodes
+    let pressure_violations: Vec<NodeViolationDto> = network
+        .nodes
         .iter()
         .enumerate()
         .filter_map(|(i, n)| {
             let min_p = node_min_pressure[i];
             if min_p.is_finite() && min_p < pressure_min_m {
-                Some(NodeViolationDto { id: n.base.id.clone(), min_pressure_m: min_p })
+                Some(NodeViolationDto {
+                    id: n.base.id.clone(),
+                    min_pressure_m: min_p,
+                })
             } else {
                 None
             }
         })
         .collect();
 
-    let velocity_violations: Vec<LinkViolationDto> = network.links
+    let velocity_violations: Vec<LinkViolationDto> = network
+        .links
         .iter()
         .enumerate()
         .filter_map(|(i, l)| {
             let max_v = link_max_velocity[i];
             if max_v > velocity_max_ms {
-                Some(LinkViolationDto { id: l.base.id.clone(), max_velocity_ms: max_v })
+                Some(LinkViolationDto {
+                    id: l.base.id.clone(),
+                    max_velocity_ms: max_v,
+                })
             } else {
                 None
             }
         })
         .collect();
 
-    Ok(ViolationsDto { pressure_violations, velocity_violations })
+    Ok(ViolationsDto {
+        pressure_violations,
+        velocity_violations,
+    })
 }
 
 /// Load the INP for a project's base model or a named scenario into
@@ -2742,6 +3015,10 @@ pub fn load_project_network(
     project_id: String,
     scenario_id: Option<String>,
 ) -> Result<Option<NetworkDto>, String> {
+    validate_id(&project_id)?;
+    if let Some(sid) = &scenario_id {
+        validate_id(sid)?;
+    }
     let app_data = app_data_dir(&app)?;
     let path = match &scenario_id {
         Some(sid) => bundle::scenario_model_path(&app_data, &project_id, sid),
@@ -2790,21 +3067,26 @@ fn apply_patch_to_network(
     field: &str,
     value: serde_json::Value,
 ) -> Result<(), String> {
-    const M_TO_FT:    f64 = 1.0 / 0.3048;
+    const M_TO_FT: f64 = 1.0 / 0.3048;
     const LPS_TO_CFS: f64 = 1.0 / 28.3168;
-    const MM_TO_FT:   f64 = 1.0 / 304.8;
+    const MM_TO_FT: f64 = 1.0 / 304.8;
 
     let as_f64 = |v: &serde_json::Value| -> Result<f64, String> {
-        v.as_f64().ok_or_else(|| format!("expected number, got {v}"))
+        v.as_f64()
+            .ok_or_else(|| format!("expected number, got {v}"))
     };
 
     match kind {
         "junction" => {
-            let node = network.nodes.iter_mut()
+            let node = network
+                .nodes
+                .iter_mut()
                 .find(|n| n.base.id == id && matches!(n.kind, hydra::NodeKind::Junction(_)))
                 .ok_or_else(|| format!("junction '{id}' not found"))?;
             match field {
-                "elevation" => { node.base.elevation = as_f64(&value)? * M_TO_FT; }
+                "elevation" => {
+                    node.base.elevation = as_f64(&value)? * M_TO_FT;
+                }
                 "baseDemand" => {
                     if let hydra::NodeKind::Junction(ref mut j) = node.kind {
                         let demand_cfs = as_f64(&value)? * LPS_TO_CFS;
@@ -2820,22 +3102,32 @@ fn apply_patch_to_network(
                     }
                 }
                 "x" => {
-                    let entry = network.coordinates.entry(id.to_string()).or_insert((0.0, 0.0));
+                    let entry = network
+                        .coordinates
+                        .entry(id.to_string())
+                        .or_insert((0.0, 0.0));
                     entry.0 = as_f64(&value)?;
                 }
                 "y" => {
-                    let entry = network.coordinates.entry(id.to_string()).or_insert((0.0, 0.0));
+                    let entry = network
+                        .coordinates
+                        .entry(id.to_string())
+                        .or_insert((0.0, 0.0));
                     entry.1 = as_f64(&value)?;
                 }
                 other => return Err(format!("unknown junction field '{other}'")),
             }
         }
         "reservoir" => {
-            let node = network.nodes.iter_mut()
+            let node = network
+                .nodes
+                .iter_mut()
                 .find(|n| n.base.id == id && matches!(n.kind, hydra::NodeKind::Reservoir(_)))
                 .ok_or_else(|| format!("reservoir '{id}' not found"))?;
             match field {
-                "head" => { node.base.elevation = as_f64(&value)? * M_TO_FT; }
+                "head" => {
+                    node.base.elevation = as_f64(&value)? * M_TO_FT;
+                }
                 "headPattern" => {
                     if let hydra::NodeKind::Reservoir(ref mut r) = node.kind {
                         let s = value.as_str().unwrap_or("").trim().to_string();
@@ -2843,18 +3135,26 @@ fn apply_patch_to_network(
                     }
                 }
                 "x" => {
-                    let entry = network.coordinates.entry(id.to_string()).or_insert((0.0, 0.0));
+                    let entry = network
+                        .coordinates
+                        .entry(id.to_string())
+                        .or_insert((0.0, 0.0));
                     entry.0 = as_f64(&value)?;
                 }
                 "y" => {
-                    let entry = network.coordinates.entry(id.to_string()).or_insert((0.0, 0.0));
+                    let entry = network
+                        .coordinates
+                        .entry(id.to_string())
+                        .or_insert((0.0, 0.0));
                     entry.1 = as_f64(&value)?;
                 }
                 other => return Err(format!("unknown reservoir field '{other}'")),
             }
         }
         "tank" => {
-            let node = network.nodes.iter_mut()
+            let node = network
+                .nodes
+                .iter_mut()
                 .find(|n| n.base.id == id && matches!(n.kind, hydra::NodeKind::Tank(_)))
                 .ok_or_else(|| format!("tank '{id}' not found"))?;
             match field {
@@ -2894,23 +3194,33 @@ fn apply_patch_to_network(
                     }
                 }
                 "x" => {
-                    let entry = network.coordinates.entry(id.to_string()).or_insert((0.0, 0.0));
+                    let entry = network
+                        .coordinates
+                        .entry(id.to_string())
+                        .or_insert((0.0, 0.0));
                     entry.0 = as_f64(&value)?;
                 }
                 "y" => {
-                    let entry = network.coordinates.entry(id.to_string()).or_insert((0.0, 0.0));
+                    let entry = network
+                        .coordinates
+                        .entry(id.to_string())
+                        .or_insert((0.0, 0.0));
                     entry.1 = as_f64(&value)?;
                 }
                 other => return Err(format!("unknown tank field '{other}'")),
             }
         }
         "pipe" => {
-            let link = network.links.iter_mut()
+            let link = network
+                .links
+                .iter_mut()
                 .find(|l| l.base.id == id && matches!(l.kind, hydra::LinkKind::Pipe(_)))
                 .ok_or_else(|| format!("pipe '{id}' not found"))?;
             if let hydra::LinkKind::Pipe(ref mut p) = link.kind {
                 match field {
-                    "length" => { p.length = as_f64(&value)? * M_TO_FT; }
+                    "length" => {
+                        p.length = as_f64(&value)? * M_TO_FT;
+                    }
                     "diameter" => {
                         let new_diam_ft = as_f64(&value)? * MM_TO_FT;
                         if p.minor_loss > 0.0 {
@@ -2921,12 +3231,14 @@ fn apply_patch_to_network(
                         }
                         p.diameter = new_diam_ft;
                     }
-                    "roughness" => { p.roughness = as_f64(&value)?; }
+                    "roughness" => {
+                        p.roughness = as_f64(&value)?;
+                    }
                     "status" => {
                         let s = value.as_str().unwrap_or("Open");
                         link.base.initial_status = match s.to_ascii_lowercase().as_str() {
                             "closed" => hydra::LinkStatus::Closed,
-                            _        => hydra::LinkStatus::Open,
+                            _ => hydra::LinkStatus::Open,
                         };
                     }
                     other => return Err(format!("unknown pipe field '{other}'")),
@@ -2934,17 +3246,23 @@ fn apply_patch_to_network(
             }
         }
         "pump" => {
-            let link = network.links.iter_mut()
+            let link = network
+                .links
+                .iter_mut()
                 .find(|l| l.base.id == id && matches!(l.kind, hydra::LinkKind::Pump(_)))
                 .ok_or_else(|| format!("pump '{id}' not found"))?;
             match field {
-                "speed" => { link.base.initial_setting = Some(as_f64(&value)?); }
+                "speed" => {
+                    link.base.initial_setting = Some(as_f64(&value)?);
+                }
                 "curve" => {
                     if let hydra::LinkKind::Pump(ref mut p) = link.kind {
                         let s = value.as_str().unwrap_or("").trim().to_string();
                         p.head_curve = if s.is_empty() { None } else { Some(s) };
                         // Curve and constant power are mutually exclusive.
-                        if p.head_curve.is_some() { p.power = None; }
+                        if p.head_curve.is_some() {
+                            p.power = None;
+                        }
                     }
                 }
                 "powerKw" => {
@@ -2959,7 +3277,9 @@ fn apply_patch_to_network(
             }
         }
         "valve" => {
-            let link = network.links.iter_mut()
+            let link = network
+                .links
+                .iter_mut()
                 .find(|l| l.base.id == id && matches!(l.kind, hydra::LinkKind::Valve(_)))
                 .ok_or_else(|| format!("valve '{id}' not found"))?;
             match field {
@@ -2986,9 +3306,15 @@ fn apply_patch_to_network(
                 "valveSetting" => {
                     let raw = as_f64(&value)?;
                     // Read the valve type before taking a mutable borrow on link.kind.
-                    let vt = if let hydra::LinkKind::Valve(ref v) = link.kind { v.valve_type } else { unreachable!() };
+                    let vt = if let hydra::LinkKind::Valve(ref v) = link.kind {
+                        v.valve_type
+                    } else {
+                        unreachable!()
+                    };
                     link.base.initial_setting = Some(match vt {
-                        hydra::ValveType::Prv | hydra::ValveType::Psv | hydra::ValveType::Pbv => raw * M_TO_FT,
+                        hydra::ValveType::Prv | hydra::ValveType::Psv | hydra::ValveType::Pbv => {
+                            raw * M_TO_FT
+                        }
                         hydra::ValveType::Fcv => raw * LPS_TO_CFS,
                         _ => raw,
                     });
@@ -3020,7 +3346,11 @@ pub fn patch_element(
     let result = {
         let mut guard = state.0.lock().unwrap();
         match &mut *guard {
-            NetworkStateInner::Loaded { raw_bytes, network, dto } => {
+            NetworkStateInner::Loaded {
+                raw_bytes,
+                network,
+                dto,
+            } => {
                 apply_patch_to_network(network, &kind, &id, &field, value)?;
                 *raw_bytes = hydra::write_inp(network);
                 *dto = network_to_dto(network);
@@ -3048,7 +3378,11 @@ pub fn patch_node_position(
     let result = {
         let mut guard = state.0.lock().unwrap();
         match &mut *guard {
-            NetworkStateInner::Loaded { raw_bytes, network, dto } => {
+            NetworkStateInner::Loaded {
+                raw_bytes,
+                network,
+                dto,
+            } => {
                 let entry = network.coordinates.entry(id.clone()).or_insert((0.0, 0.0));
                 entry.0 = x;
                 entry.1 = y;
@@ -3086,15 +3420,26 @@ pub fn delete_element(
     let result = {
         let mut guard = state.0.lock().unwrap();
         match &mut *guard {
-            NetworkStateInner::Loaded { raw_bytes, network, dto } => {
+            NetworkStateInner::Loaded {
+                raw_bytes,
+                network,
+                dto,
+            } => {
                 match kind.as_str() {
                     "junction" | "reservoir" | "tank" => {
-                        let pos = network.nodes.iter().position(|n| n.base.id == id)
+                        let pos = network
+                            .nodes
+                            .iter()
+                            .position(|n| n.base.id == id)
                             .ok_or_else(|| format!("node '{}' not found", id))?;
                         let node_1based = pos + 1;
                         // Collect + remove dangling links that reference this node.
-                        let dangling: Vec<String> = network.links.iter()
-                            .filter(|l| l.base.from_node == node_1based || l.base.to_node == node_1based)
+                        let dangling: Vec<String> = network
+                            .links
+                            .iter()
+                            .filter(|l| {
+                                l.base.from_node == node_1based || l.base.to_node == node_1based
+                            })
                             .map(|l| l.base.id.clone())
                             .collect();
                         for lid in &dangling {
@@ -3115,12 +3460,19 @@ pub fn delete_element(
                         for l in network.links.iter_mut() {
                             // from_node and to_node are 1-based; shift down if they
                             // referred to a node that was after the deleted one.
-                            if l.base.from_node > node_1based { l.base.from_node -= 1; }
-                            if l.base.to_node   > node_1based { l.base.to_node   -= 1; }
+                            if l.base.from_node > node_1based {
+                                l.base.from_node -= 1;
+                            }
+                            if l.base.to_node > node_1based {
+                                l.base.to_node -= 1;
+                            }
                         }
                     }
                     "pipe" | "pump" | "valve" => {
-                        let pos = network.links.iter().position(|l| l.base.id == id)
+                        let pos = network
+                            .links
+                            .iter()
+                            .position(|l| l.base.id == id)
                             .ok_or_else(|| format!("link '{}' not found", id))?;
                         network.links.remove(pos);
                         network.vertices.remove(&id);
@@ -3152,6 +3504,7 @@ pub fn delete_element(
 /// `[COORDINATES]`.  Sensible hydraulic defaults are used for all
 /// type-specific fields so the resulting network is immediately parseable.
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub fn create_node(
     app: tauri::AppHandle,
     state: tauri::State<'_, NetworkState>,
@@ -3169,7 +3522,11 @@ pub fn create_node(
     let result = {
         let mut guard = state.0.lock().unwrap();
         match &mut *guard {
-            NetworkStateInner::Loaded { raw_bytes, network, dto } => {
+            NetworkStateInner::Loaded {
+                raw_bytes,
+                network,
+                dto,
+            } => {
                 if id.trim().is_empty() {
                     return Err("ID must not be empty".into());
                 }
@@ -3180,8 +3537,8 @@ pub fn create_node(
                 }
                 let index = network.nodes.len() + 1;
                 // Tank level defaults: ~3 m min gap, ~1.5 m initial (matching original 10 ft / 5 ft).
-                let min_ft  = min_level.unwrap_or(0.0) * M_TO_FT;
-                let max_ft  = max_level.map(|v| v * M_TO_FT).unwrap_or(10.0);
+                let min_ft = min_level.unwrap_or(0.0) * M_TO_FT;
+                let max_ft = max_level.map(|v| v * M_TO_FT).unwrap_or(10.0);
                 let init_ft = initial_level.map(|v| v * M_TO_FT).unwrap_or(5.0);
                 let node_kind = match kind.as_str() {
                     "junction" => hydra::NodeKind::Junction(hydra::Junction {
@@ -3193,9 +3550,9 @@ pub fn create_node(
                         emitter_coeff: 0.0,
                         emitter_exp: 0.5,
                     }),
-                    "reservoir" => hydra::NodeKind::Reservoir(hydra::Reservoir {
-                        head_pattern: None,
-                    }),
+                    "reservoir" => {
+                        hydra::NodeKind::Reservoir(hydra::Reservoir { head_pattern: None })
+                    }
                     "tank" => hydra::NodeKind::Tank(hydra::Tank {
                         min_level: min_ft,
                         max_level: max_ft,
@@ -3259,7 +3616,11 @@ pub fn create_link(
     let result = {
         let mut guard = state.0.lock().unwrap();
         match &mut *guard {
-            NetworkStateInner::Loaded { raw_bytes, network, dto } => {
+            NetworkStateInner::Loaded {
+                raw_bytes,
+                network,
+                dto,
+            } => {
                 if id.trim().is_empty() {
                     return Err("ID must not be empty".into());
                 }
@@ -3268,11 +3629,15 @@ pub fn create_link(
                 {
                     return Err(format!("ID '{}' is already in use", id));
                 }
-                let from_node = network.nodes.iter()
+                let from_node = network
+                    .nodes
+                    .iter()
                     .find(|n| n.base.id == from_id)
                     .map(|n| n.base.index)
                     .ok_or_else(|| format!("node '{}' not found", from_id))?;
-                let to_node = network.nodes.iter()
+                let to_node = network
+                    .nodes
+                    .iter()
                     .find(|n| n.base.id == to_id)
                     .map(|n| n.base.index)
                     .ok_or_else(|| format!("node '{}' not found", to_id))?;
@@ -3304,7 +3669,7 @@ pub fn create_link(
                     }),
                     "valve" => hydra::LinkKind::Valve(hydra::Valve {
                         valve_type: hydra::ValveType::Prv,
-                        diameter: 0.3,  // 300 mm in metres
+                        diameter: 0.3, // 300 mm in metres
                         minor_loss: 0.0,
                         curve: None,
                     }),
@@ -3354,7 +3719,11 @@ pub fn create_curve(
     let result = {
         let mut guard = state.0.lock().unwrap();
         match &mut *guard {
-            NetworkStateInner::Loaded { network, raw_bytes, dto } => {
+            NetworkStateInner::Loaded {
+                network,
+                raw_bytes,
+                dto,
+            } => {
                 if network.curves.iter().any(|c| c.id == id) {
                     return Err(format!("curve '{}' already exists", id));
                 }
@@ -3363,8 +3732,14 @@ pub fn create_curve(
                     id: id.clone(),
                     kind: hydra::CurveKind::PumpHead,
                     points: vec![
-                        hydra::CurvePoint { x: 0.0, y: 50.0 / FT_TO_M },
-                        hydra::CurvePoint { x: 5.0 / CFS_TO_LS, y: 0.0 },
+                        hydra::CurvePoint {
+                            x: 0.0,
+                            y: 50.0 / FT_TO_M,
+                        },
+                        hydra::CurvePoint {
+                            x: 5.0 / CFS_TO_LS,
+                            y: 0.0,
+                        },
                     ],
                 });
                 *raw_bytes = hydra::write_inp(network);
@@ -3392,7 +3767,11 @@ pub fn create_pattern(
     let result = {
         let mut guard = state.0.lock().unwrap();
         match &mut *guard {
-            NetworkStateInner::Loaded { network, raw_bytes, dto } => {
+            NetworkStateInner::Loaded {
+                network,
+                raw_bytes,
+                dto,
+            } => {
                 if network.patterns.iter().any(|p| p.id == id) {
                     return Err(format!("pattern '{}' already exists", id));
                 }
@@ -3413,13 +3792,13 @@ pub fn create_pattern(
     result
 }
 
-
 ///
 /// Used by the "Preview changes" diff dialog so the frontend can compare the
 /// saved file against a prospective patched version.
 #[tauri::command]
 /// Return the raw INP text for a project or scenario.
 pub fn get_project_inp(app: tauri::AppHandle, project_id: String) -> Result<String, String> {
+    validate_id(&project_id)?;
     let app_data = app_data_dir(&app)?;
     let path = bundle::base_model_path(&app_data, &project_id);
     let bytes = std::fs::read(&path).map_err(|e| e.to_string())?;
@@ -3456,7 +3835,13 @@ pub fn preview_patches(
     };
 
     for patch in patches {
-        apply_patch_to_network(&mut network, &patch.kind, &patch.id, &patch.field, patch.value)?;
+        apply_patch_to_network(
+            &mut network,
+            &patch.kind,
+            &patch.id,
+            &patch.field,
+            patch.value,
+        )?;
     }
 
     let new_bytes = hydra::write_inp(&network);

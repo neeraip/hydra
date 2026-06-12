@@ -1089,10 +1089,7 @@ mod tests {
             }
             fn analysis_times(
                 &self,
-            ) -> (
-                Option<std::time::SystemTime>,
-                Option<std::time::SystemTime>,
-            ) {
+            ) -> (Option<std::time::SystemTime>, Option<std::time::SystemTime>) {
                 (None, None)
             }
             fn flow_balance(&self) -> Option<&crate::io::FlowBalance> {

@@ -241,18 +241,23 @@ Let $v_{\text{in}}$ = inflow volume during the sub-step, $w_{\text{in}}$ = inflo
 **Filling** ($v_{\text{net}} > 0$):
 
 1. Mix inflow into the mixing zone:
-$$c_m \leftarrow \frac{c_m \cdot V_m + w_{\text{in}}}{V_m + v_{\text{in}}}$$
+
+   $$c_m \leftarrow \frac{c_m \cdot V_m + w_{\text{in}}}{V_m + v_{\text{in}}}$$
+
 2. Compute overflow from mixing zone: $v_t = \max(0,\; V_m + v_{\text{net}} - V_{\text{mz}})$.
 3. If $v_t > 0$, transfer to stagnant zone:
-$$c_s \leftarrow \frac{c_s \cdot V_s + c_m \cdot v_t}{V_s + v_t}$$
-Then clamp: $V_m \leftarrow V_{\text{mz}}$, $V_s \leftarrow V_s + v_t$. If $V_s > V_{\text{sz}}$, the surplus $(V_s - V_{\text{sz}}) \cdot c_s$ exits as overflow mass and $V_s \leftarrow V_{\text{sz}}$.
+
+   $$c_s \leftarrow \frac{c_s \cdot V_s + c_m \cdot v_t}{V_s + v_t}$$
+
+   Then clamp: $V_m \leftarrow V_{\text{mz}}$, $V_s \leftarrow V_s + v_t$. If $V_s > V_{\text{sz}}$, the surplus $(V_s - V_{\text{sz}}) \cdot c_s$ exits as overflow mass and $V_s \leftarrow V_{\text{sz}}$.
 4. If $v_t = 0$: $V_m \leftarrow V_m + v_{\text{net}}$, clamped to $[0, V_{\text{mz}}]$. If the updated mixing zone volume is below its maximum capacity ($V_m < V_{\text{mz}}$), clear the stagnant zone ($V_s \leftarrow 0$) — unmixed water is only retained when the mixing zone is at capacity.
 
 **Emptying** ($v_{\text{net}} < 0$):
 
 1. Compute transfer back from stagnant zone: $v_t = \min(V_s,\; |v_{\text{net}}|)$.
 2. Mix inflow and transferred water into the mixing zone:
-$$c_m \leftarrow \frac{c_m \cdot V_m + w_{\text{in}} + c_s \cdot v_t}{V_m + v_{\text{in}} + v_t}$$
+
+   $$c_m \leftarrow \frac{c_m \cdot V_m + w_{\text{in}} + c_s \cdot v_t}{V_m + v_{\text{in}} + v_t}$$
 3. Update volumes: $V_s \leftarrow \max(0,\; V_s - v_t)$, $V_m \leftarrow V_{\text{mz}} + v_t + v_{\text{net}}$.
 
 **No net flow** ($v_{\text{net}} = 0$): inflow mass still mixes into the mixing zone (step 1 of filling); no volume transfer occurs.

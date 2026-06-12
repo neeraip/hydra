@@ -4,8 +4,8 @@ use crate::io::analysis_io::{
     StatusDistribution, SummaryStats, ANALYSIS_SCHEMA_VERSION,
 };
 use crate::io::out_reader;
-use crate::RuntimeEstimate;
 use crate::simulation::Simulation;
+use crate::RuntimeEstimate;
 
 /// Selects which result variables are included in an [`AnalysisArtifact`].
 ///

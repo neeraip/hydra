@@ -17,7 +17,7 @@ completed simulation outputs and publishes derived statistics.
 ## 2. Design Goals
 
 1. GUI and CLI consumers must be able to read analysis results directly from a
-persisted file with no expensive recomputation.
+   persisted file with no expensive recomputation.
 2. Analysis compute must be deterministic for a given simulation output.
 3. The artifact must be versioned so schemas can evolve safely.
 
