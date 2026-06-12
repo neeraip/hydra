@@ -2,7 +2,7 @@
 members = [
     "crates/common",
     "crates/engine",
-    "crates/hydra",
+    "crates/sdk",
     "crates/cli",
     "crates/gui",
 ]
