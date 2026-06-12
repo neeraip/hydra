@@ -161,7 +161,10 @@ mod tests {
 
     #[test]
     fn classifier_thresholds_are_stable() {
-        assert_eq!(classify_simulation_runtime_millis(100.0), crate::RuntimeEstimate::Low);
+        assert_eq!(
+            classify_simulation_runtime_millis(100.0),
+            crate::RuntimeEstimate::Low
+        );
         assert_eq!(
             classify_simulation_runtime_millis(1_000.0),
             crate::RuntimeEstimate::Medium

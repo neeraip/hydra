@@ -66,10 +66,7 @@ fn update_flows_and_check(
 
         // ConstHp pump flow cap: if the unconstrained correction would exceed
         // the current flow, cap the step to half the current flow (§3.8).
-        if is_const_hp_pump[k]
-            && matches!(statuses[k], LinkStatus::Open)
-            && dq > flows[k]
-        {
+        if is_const_hp_pump[k] && matches!(statuses[k], LinkStatus::Open) && dq > flows[k] {
             dq = flows[k] / 2.0;
         }
 
@@ -701,8 +698,12 @@ pub fn solve_hydraulic_step(
         );
 
         ctx.prev_emitter_flows.copy_from_slice(&ctx.emitter_flows);
-        let (emit_qsum, emit_dqsum) =
-            update_emitter_flows(network, &ctx.node_heads, &ctx.emitter_node_indices, &mut ctx.emitter_flows);
+        let (emit_qsum, emit_dqsum) = update_emitter_flows(
+            network,
+            &ctx.node_heads,
+            &ctx.emitter_node_indices,
+            &mut ctx.emitter_flows,
+        );
 
         for i in 0..n_nodes {
             ctx.prev_leakage_flows[i] = ctx.leakage_fa_flows[i] + ctx.leakage_va_flows[i];
@@ -766,10 +767,7 @@ pub fn solve_hydraulic_step(
             // EPANET: when converged, always run linkstatus (inside the
             // hasconverged branch, not the periodic-check branch).
             true
-        } else if !status_frozen
-            && iter <= options.max_check as usize
-            && iter == next_check
-        {
+        } else if !status_frozen && iter <= options.max_check as usize && iter == next_check {
             // EPANET: periodic check at nextcheck counter.
             next_check += options.check_freq as usize;
             true
@@ -873,8 +871,7 @@ pub fn solve_hydraulic_step(
                     ctx.junction_demands[i]
                 };
                 node_states[i].emitter_flow = ctx.emitter_flows[i];
-                node_states[i].leakage_flow =
-                    ctx.leakage_fa_flows[i] + ctx.leakage_va_flows[i];
+                node_states[i].leakage_flow = ctx.leakage_fa_flows[i] + ctx.leakage_va_flows[i];
             }
             NodeKind::Reservoir(_) | NodeKind::Tank(_) => {
                 node_states[i].net_flow = ctx.net_flow_accum[i];

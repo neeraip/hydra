@@ -821,7 +821,7 @@ mod tests {
         let t0 = times[0];
         for id in session.node_ids() {
             let head = session
-                .get_node_result(&id, NodeQuantity::Head, t0)
+                .get_node_result(id, NodeQuantity::Head, t0)
                 .expect("get_node_result");
             assert!(
                 head.is_finite(),

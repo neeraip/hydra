@@ -55,8 +55,12 @@ pub(super) fn apply_emitter_coeffs(
     let rq_tol = network.options.rq_tol;
     for &i in emitter_indices {
         let node = &network.nodes[i];
-        let NodeKind::Junction(j) = &node.kind else { continue };
-        let Some(ji) = node_junc_step_opt[i] else { continue };
+        let NodeKind::Junction(j) = &node.kind else {
+            continue;
+        };
+        let Some(ji) = node_junc_step_opt[i] else {
+            continue;
+        };
 
         let qexp = 1.0 / j.emitter_exp;
         let flow = emitter_flows[i];
@@ -90,7 +94,9 @@ pub(super) fn update_emitter_flows(
 
     for &i in emitter_indices {
         let node = &network.nodes[i];
-        let NodeKind::Junction(j) = &node.kind else { continue };
+        let NodeKind::Junction(j) = &node.kind else {
+            continue;
+        };
 
         let qexp = 1.0 / j.emitter_exp;
         let flow = emitter_flows[i];
@@ -133,7 +139,9 @@ pub(super) fn apply_favad_leakage_coeffs(
     }
     for &i in favad_indices {
         let node = &network.nodes[i];
-        let Some(ji) = node_junc_step_opt[i] else { continue };
+        let Some(ji) = node_junc_step_opt[i] else {
+            continue;
+        };
         let pr = sparse.row[ji];
         let z = node.base.elevation;
 
@@ -309,7 +317,9 @@ pub(super) fn apply_pda_demand_coeffs(
         if d_full <= 0.0 {
             continue;
         }
-        let Some(ji) = node_junc_step_opt[i] else { continue };
+        let Some(ji) = node_junc_step_opt[i] else {
+            continue;
+        };
         let pr = sparse.row[ji];
         let z = node.base.elevation;
 

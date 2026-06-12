@@ -145,11 +145,7 @@ fn premise_lhs(
                     if head_gain <= 0.0 {
                         return 0.0;
                     }
-                    GAMMA_WATER
-                        * network.options.specific_gravity
-                        * flow
-                        * head_gain
-                        * KW_PER_W
+                    GAMMA_WATER * network.options.specific_gravity * flow * head_gain * KW_PER_W
                 }
                 _ => f64::NAN,
             }

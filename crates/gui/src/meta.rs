@@ -50,10 +50,9 @@ pub struct ScenarioMeta {
 
 pub fn read_project_meta(dir: &Path) -> Result<ProjectMeta, String> {
     let path = dir.join("meta.json");
-    let bytes = std::fs::read(&path)
-        .map_err(|e| format!("cannot read {}: {}", path.display(), e))?;
-    serde_json::from_slice(&bytes)
-        .map_err(|e| format!("cannot parse {}: {}", path.display(), e))
+    let bytes =
+        std::fs::read(&path).map_err(|e| format!("cannot read {}: {}", path.display(), e))?;
+    serde_json::from_slice(&bytes).map_err(|e| format!("cannot parse {}: {}", path.display(), e))
 }
 
 pub fn write_project_meta(dir: &Path, meta: &ProjectMeta) -> Result<(), String> {
@@ -62,18 +61,17 @@ pub fn write_project_meta(dir: &Path, meta: &ProjectMeta) -> Result<(), String> 
         std::fs::create_dir_all(parent)
             .map_err(|e| format!("cannot create dir {}: {}", parent.display(), e))?;
     }
-    let json = serde_json::to_string_pretty(meta)
-        .map_err(|e| format!("cannot serialise meta: {e}"))?;
+    let json =
+        serde_json::to_string_pretty(meta).map_err(|e| format!("cannot serialise meta: {e}"))?;
     std::fs::write(&path, json.as_bytes())
         .map_err(|e| format!("cannot write {}: {}", path.display(), e))
 }
 
 pub fn read_scenario_meta(dir: &Path) -> Result<ScenarioMeta, String> {
     let path = dir.join("meta.json");
-    let bytes = std::fs::read(&path)
-        .map_err(|e| format!("cannot read {}: {}", path.display(), e))?;
-    serde_json::from_slice(&bytes)
-        .map_err(|e| format!("cannot parse {}: {}", path.display(), e))
+    let bytes =
+        std::fs::read(&path).map_err(|e| format!("cannot read {}: {}", path.display(), e))?;
+    serde_json::from_slice(&bytes).map_err(|e| format!("cannot parse {}: {}", path.display(), e))
 }
 
 pub fn write_scenario_meta(dir: &Path, meta: &ScenarioMeta) -> Result<(), String> {
@@ -82,8 +80,8 @@ pub fn write_scenario_meta(dir: &Path, meta: &ScenarioMeta) -> Result<(), String
         std::fs::create_dir_all(parent)
             .map_err(|e| format!("cannot create dir {}: {}", parent.display(), e))?;
     }
-    let json = serde_json::to_string_pretty(meta)
-        .map_err(|e| format!("cannot serialise meta: {e}"))?;
+    let json =
+        serde_json::to_string_pretty(meta).map_err(|e| format!("cannot serialise meta: {e}"))?;
     std::fs::write(&path, json.as_bytes())
         .map_err(|e| format!("cannot write {}: {}", path.display(), e))
 }
@@ -111,7 +109,11 @@ pub fn mtime_secs(path: &Path) -> Option<i64> {
 
 /// Returns `"done"` if `results_path` exists on disk, `"not-run"` otherwise.
 pub fn sim_state_from_results(results_path: &Path) -> &'static str {
-    if results_path.exists() { "done" } else { "not-run" }
+    if results_path.exists() {
+        "done"
+    } else {
+        "not-run"
+    }
 }
 
 // ── Bundle path helpers ───────────────────────────────────────────────────────

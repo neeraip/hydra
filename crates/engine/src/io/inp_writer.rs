@@ -19,12 +19,12 @@
 
 use std::fmt::Write as _;
 
+use super::units::make_ucf;
 use crate::{
     ActionValue, CurveKind, HeadLossFormula, LinkKind, LinkStatus, LogicOp, MixModel, Network,
     NodeKind, PremiseAttribute, PremiseObject, PremiseOperator, QualityMode, ReportSelection,
     ReportStatus, SourceType, StatisticType, TriggerType, ValveType, WallOrder,
 };
-use super::units::make_ucf;
 
 /// Write `network` to EPANET 2.3 INP bytes.
 ///
@@ -67,7 +67,9 @@ pub fn write_inp(network: &Network) -> Vec<u8> {
 
     // ── [JUNCTIONS] ──────────────────────────────────────────────────────────
     {
-        let junctions: Vec<_> = network.nodes.iter()
+        let junctions: Vec<_> = network
+            .nodes
+            .iter()
             .filter(|n| matches!(n.kind, NodeKind::Junction(_)))
             .collect();
         if !junctions.is_empty() {
@@ -76,14 +78,21 @@ pub fn write_inp(network: &Network) -> Vec<u8> {
             for n in &junctions {
                 if let NodeKind::Junction(ref j) = n.kind {
                     let elev = n.base.elevation * ucf.elev;
-                    let base_demand = j.demands.first()
+                    let base_demand = j
+                        .demands
+                        .first()
                         .map(|d| d.base_demand * ucf.flow)
                         .unwrap_or(0.0);
-                    let pattern = j.demands.first()
+                    let pattern = j
+                        .demands
+                        .first()
                         .and_then(|d| d.pattern.as_deref())
                         .unwrap_or("");
-                    let _ = writeln!(out, " {:<16} {:>12.4} {:>12.4}   {}",
-                        n.base.id, elev, base_demand, pattern);
+                    let _ = writeln!(
+                        out,
+                        " {:<16} {:>12.4} {:>12.4}   {}",
+                        n.base.id, elev, base_demand, pattern
+                    );
                 }
             }
             out.push('\n');
@@ -92,7 +101,9 @@ pub fn write_inp(network: &Network) -> Vec<u8> {
 
     // ── [RESERVOIRS] ─────────────────────────────────────────────────────────
     {
-        let reservoirs: Vec<_> = network.nodes.iter()
+        let reservoirs: Vec<_> = network
+            .nodes
+            .iter()
             .filter(|n| matches!(n.kind, NodeKind::Reservoir(_)))
             .collect();
         if !reservoirs.is_empty() {
@@ -111,7 +122,9 @@ pub fn write_inp(network: &Network) -> Vec<u8> {
 
     // ── [TANKS] ──────────────────────────────────────────────────────────────
     {
-        let tanks: Vec<_> = network.nodes.iter()
+        let tanks: Vec<_> = network
+            .nodes
+            .iter()
             .filter(|n| matches!(n.kind, NodeKind::Tank(_)))
             .collect();
         if !tanks.is_empty() {
@@ -122,15 +135,16 @@ pub fn write_inp(network: &Network) -> Vec<u8> {
                     // INP bottom elevation = node elevation (m) − min_level (m)
                     let bottom_ft = n.base.elevation - t.min_level;
                     let bottom_user = bottom_ft * ucf.elev;
-                    let init   = t.initial_level * ucf.elev;
-                    let min_l  = t.min_level     * ucf.elev;
-                    let max_l  = t.max_level     * ucf.elev;
+                    let init = t.initial_level * ucf.elev;
+                    let min_l = t.min_level * ucf.elev;
+                    let max_l = t.max_level * ucf.elev;
                     // Tank diameter uses length conversion, not pipe-diameter conv.
-                    let diam   = t.diameter      * ucf.elev;
-                    let min_v  = t.min_volume    * ucf.vol;
+                    let diam = t.diameter * ucf.elev;
+                    let min_v = t.min_volume * ucf.vol;
                     let vol_curve = t.volume_curve.as_deref().unwrap_or("");
                     let overflow = if t.overflow { "YES" } else { "" };
-                    let _ = writeln!(out,
+                    let _ =
+                        writeln!(out,
                         " {:<16} {:>12.4} {:>12.4} {:>12.4} {:>12.4} {:>12.4} {:>12.4}   {:<14}{}",
                         n.base.id, bottom_user, init, min_l, max_l, diam, min_v,
                         vol_curve, overflow);
@@ -142,7 +156,9 @@ pub fn write_inp(network: &Network) -> Vec<u8> {
 
     // ── [PIPES] ──────────────────────────────────────────────────────────────
     {
-        let pipes: Vec<_> = network.links.iter()
+        let pipes: Vec<_> = network
+            .links
+            .iter()
             .filter(|l| matches!(l.kind, LinkKind::Pipe(_)))
             .collect();
         if !pipes.is_empty() {
@@ -151,8 +167,8 @@ pub fn write_inp(network: &Network) -> Vec<u8> {
             for l in &pipes {
                 if let LinkKind::Pipe(ref p) = l.kind {
                     let from = node_id.get(l.base.from_node).copied().unwrap_or("");
-                    let to   = node_id.get(l.base.to_node).copied().unwrap_or("");
-                    let len  = p.length   * ucf.elev;
+                    let to = node_id.get(l.base.to_node).copied().unwrap_or("");
+                    let len = p.length * ucf.elev;
                     // Pipe diameter uses pipe-diameter conversion (inches/mm).
                     let diam = p.diameter * ucf.diam;
                     // DW roughness is in mm (SI) or milli-ft (US); HW is dimensionless.
@@ -174,9 +190,11 @@ pub fn write_inp(network: &Network) -> Vec<u8> {
                     } else {
                         link_status_str(l.base.initial_status)
                     };
-                    let _ = writeln!(out,
+                    let _ = writeln!(
+                        out,
                         " {:<16} {:<14} {:<14} {:>12.4} {:>12.4} {:>12.4} {:>12.4}  {}",
-                        l.base.id, from, to, len, diam, rough, minor, status);
+                        l.base.id, from, to, len, diam, rough, minor, status
+                    );
                 }
             }
             out.push('\n');
@@ -185,7 +203,9 @@ pub fn write_inp(network: &Network) -> Vec<u8> {
 
     // ── [PUMPS] ──────────────────────────────────────────────────────────────
     {
-        let pumps: Vec<_> = network.links.iter()
+        let pumps: Vec<_> = network
+            .links
+            .iter()
             .filter(|l| matches!(l.kind, LinkKind::Pump(_)))
             .collect();
         if !pumps.is_empty() {
@@ -194,7 +214,7 @@ pub fn write_inp(network: &Network) -> Vec<u8> {
             for l in &pumps {
                 if let LinkKind::Pump(ref p) = l.kind {
                     let from = node_id.get(l.base.from_node).copied().unwrap_or("");
-                    let to   = node_id.get(l.base.to_node).copied().unwrap_or("");
+                    let to = node_id.get(l.base.to_node).copied().unwrap_or("");
                     // Build keyword-value pairs.
                     let mut params = String::new();
                     if let Some(ref curve_id) = p.head_curve {
@@ -212,8 +232,7 @@ pub fn write_inp(network: &Network) -> Vec<u8> {
                     if let Some(ref pat) = p.speed_pattern {
                         let _ = write!(params, " PATTERN {}", pat);
                     }
-                    let _ = writeln!(out, " {:<16} {:<14} {:<14}{}",
-                        l.base.id, from, to, params);
+                    let _ = writeln!(out, " {:<16} {:<14} {:<14}{}", l.base.id, from, to, params);
                 }
             }
             out.push('\n');
@@ -222,7 +241,9 @@ pub fn write_inp(network: &Network) -> Vec<u8> {
 
     // ── [VALVES] ─────────────────────────────────────────────────────────────
     {
-        let valves: Vec<_> = network.links.iter()
+        let valves: Vec<_> = network
+            .links
+            .iter()
             .filter(|l| matches!(l.kind, LinkKind::Valve(_)))
             .collect();
         if !valves.is_empty() {
@@ -231,17 +252,23 @@ pub fn write_inp(network: &Network) -> Vec<u8> {
             for l in &valves {
                 if let LinkKind::Valve(ref v) = l.kind {
                     let from = node_id.get(l.base.from_node).copied().unwrap_or("");
-                    let to   = node_id.get(l.base.to_node).copied().unwrap_or("");
+                    let to = node_id.get(l.base.to_node).copied().unwrap_or("");
                     let diam = v.diameter * ucf.diam;
                     let vtype = valve_type_str(v.valve_type);
                     // Setting: convert back to user units depending on type.
-                    let setting_user = l.base.initial_setting.map(|s| {
-                        match v.valve_type {
-                            ValveType::Prv | ValveType::Psv | ValveType::Pbv => s * ucf.pressure,
-                            ValveType::Fcv => s * ucf.flow,
-                            _ => s, // TCV, GPV, PCV: dimensionless or curve-based
-                        }
-                    }).unwrap_or(0.0);
+                    let setting_user = l
+                        .base
+                        .initial_setting
+                        .map(|s| {
+                            match v.valve_type {
+                                ValveType::Prv | ValveType::Psv | ValveType::Pbv => {
+                                    s * ucf.pressure
+                                }
+                                ValveType::Fcv => s * ucf.flow,
+                                _ => s, // TCV, GPV, PCV: dimensionless or curve-based
+                            }
+                        })
+                        .unwrap_or(0.0);
                     // Minor loss reverse.
                     let minor = if v.minor_loss > 0.0 {
                         let d4 = v.diameter.powi(4);
@@ -249,9 +276,11 @@ pub fn write_inp(network: &Network) -> Vec<u8> {
                     } else {
                         0.0
                     };
-                    let _ = writeln!(out,
+                    let _ = writeln!(
+                        out,
                         " {:<16} {:<14} {:<14} {:>12.4} {:<8} {:>12.4} {:>12.4}",
-                        l.base.id, from, to, diam, vtype, setting_user, minor);
+                        l.base.id, from, to, diam, vtype, setting_user, minor
+                    );
                 }
             }
             out.push('\n');
@@ -296,8 +325,11 @@ pub fn write_inp(network: &Network) -> Vec<u8> {
                         let demand = d.base_demand * ucf.flow;
                         let pattern = d.pattern.as_deref().unwrap_or("");
                         let name = d.name.as_deref().unwrap_or("");
-                        let _ = writeln!(out, " {:<16} {:>12.4}   {:<14}{}",
-                            n.base.id, demand, pattern, name);
+                        let _ = writeln!(
+                            out,
+                            " {:<16} {:>12.4}   {:<14}{}",
+                            n.base.id, demand, pattern, name
+                        );
                     }
                 }
             }
@@ -325,8 +357,10 @@ pub fn write_inp(network: &Network) -> Vec<u8> {
                 LinkKind::Valve(_) => {
                     // Valves default to Active; only emit if explicitly Open/Closed.
                     match l.base.initial_status {
-                        LinkStatus::Open   => status_lines.push(format!(" {:<16} Open",   l.base.id)),
-                        LinkStatus::Closed => status_lines.push(format!(" {:<16} Closed", l.base.id)),
+                        LinkStatus::Open => status_lines.push(format!(" {:<16} Open", l.base.id)),
+                        LinkStatus::Closed => {
+                            status_lines.push(format!(" {:<16} Closed", l.base.id))
+                        }
                         _ => {}
                     }
                 }
@@ -350,13 +384,9 @@ pub fn write_inp(network: &Network) -> Vec<u8> {
         for pat in &network.patterns {
             // Write 6 factors per line.
             let chunks: Vec<_> = pat.factors.chunks(6).collect();
-            for (i, chunk) in chunks.iter().enumerate() {
+            for chunk in chunks.iter() {
                 let vals: Vec<String> = chunk.iter().map(|f| format!("{:.4}", f)).collect();
-                if i == 0 {
-                    let _ = writeln!(out, " {:<16} {}", pat.id, vals.join("   "));
-                } else {
-                    let _ = writeln!(out, " {:<16} {}", pat.id, vals.join("   "));
-                }
+                let _ = writeln!(out, " {:<16} {}", pat.id, vals.join("   "));
             }
         }
         out.push('\n');
@@ -369,10 +399,10 @@ pub fn write_inp(network: &Network) -> Vec<u8> {
         for curve in &network.curves {
             // Emit a type comment for known curve kinds.
             let kind_comment = match curve.kind {
-                CurveKind::PumpHead       => Some(";PUMP"),
+                CurveKind::PumpHead => Some(";PUMP"),
                 CurveKind::PumpEfficiency => Some(";EFFICIENCY"),
-                CurveKind::TankVolume     => Some(";VOLUME"),
-                CurveKind::GpvHeadloss    => Some(";HEADLOSS"),
+                CurveKind::TankVolume => Some(";VOLUME"),
+                CurveKind::GpvHeadloss => Some(";HEADLOSS"),
                 _ => None,
             };
             if let Some(cmt) = kind_comment {
@@ -397,25 +427,32 @@ pub fn write_inp(network: &Network) -> Vec<u8> {
     if !network.controls.is_empty() {
         out.push_str("[CONTROLS]\n");
         for ctrl in &network.controls {
-            if !ctrl.enabled { continue; }
+            if !ctrl.enabled {
+                continue;
+            }
             let link_id_str = link_id.get(ctrl.link).copied().unwrap_or("?");
             // Action part.
             let action_str = match (ctrl.action_status, ctrl.action_setting) {
-                (Some(LinkStatus::Open),   _) => "OPEN".to_string(),
+                (Some(LinkStatus::Open), _) => "OPEN".to_string(),
                 (Some(LinkStatus::Closed), _) => "CLOSED".to_string(),
                 (_, Some(s)) => {
                     // Setting: reverse valve conversion if applicable.
-                    let link_setting_user = if let Some(link) = network.links.get(ctrl.link.saturating_sub(1)) {
-                        if let LinkKind::Valve(ref v) = link.kind {
-                            match v.valve_type {
-                                ValveType::Prv | ValveType::Psv | ValveType::Pbv => s * ucf.pressure,
-                                ValveType::Fcv => s * ucf.flow,
-                                _ => s,
+                    let link_setting_user =
+                        if let Some(link) = network.links.get(ctrl.link.saturating_sub(1)) {
+                            if let LinkKind::Valve(ref v) = link.kind {
+                                match v.valve_type {
+                                    ValveType::Prv | ValveType::Psv | ValveType::Pbv => {
+                                        s * ucf.pressure
+                                    }
+                                    ValveType::Fcv => s * ucf.flow,
+                                    _ => s,
+                                }
+                            } else {
+                                s // pump speed — dimensionless
                             }
                         } else {
-                            s // pump speed — dimensionless
-                        }
-                    } else { s };
+                            s
+                        };
                     format!("{:.4}", link_setting_user)
                 }
                 _ => continue,
@@ -433,20 +470,25 @@ pub fn write_inp(network: &Network) -> Vec<u8> {
                 TriggerType::HiLevel | TriggerType::LowLevel => {
                     let node_idx = ctrl.trigger_node.unwrap_or(0);
                     let node_id_str = node_id.get(node_idx).copied().unwrap_or("?");
-                    let dir = if ctrl.trigger_type == TriggerType::HiLevel { "ABOVE" } else { "BELOW" };
+                    let dir = if ctrl.trigger_type == TriggerType::HiLevel {
+                        "ABOVE"
+                    } else {
+                        "BELOW"
+                    };
                     let grade_internal = ctrl.trigger_grade.unwrap_or(0.0);
                     // Convert back to user units.
-                    let grade_user = if let Some(node) = network.nodes.get(node_idx.saturating_sub(1)) {
-                        match &node.kind {
-                            NodeKind::Tank(ref t) => {
-                                let bottom = node.base.elevation - t.min_level;
-                                (grade_internal - bottom) * ucf.elev
+                    let grade_user =
+                        if let Some(node) = network.nodes.get(node_idx.saturating_sub(1)) {
+                            match &node.kind {
+                                NodeKind::Tank(ref t) => {
+                                    let bottom = node.base.elevation - t.min_level;
+                                    (grade_internal - bottom) * ucf.elev
+                                }
+                                _ => (grade_internal - node.base.elevation) * ucf.pressure,
                             }
-                            _ => {
-                                (grade_internal - node.base.elevation) * ucf.pressure
-                            }
-                        }
-                    } else { grade_internal };
+                        } else {
+                            grade_internal
+                        };
                     format!("IF NODE {} {} {:.4}", node_id_str, dir, grade_user)
                 }
             };
@@ -484,8 +526,11 @@ pub fn write_inp(network: &Network) -> Vec<u8> {
                 let attr_str = premise_attr_str(prem.attribute);
                 let op_str = premise_op_str(prem.operator);
                 let value_user = convert_premise_value(prem, &ucf);
-                let _ = writeln!(out, " {} {} {} {} {:.4}",
-                    connective, obj_str, attr_str, op_str, value_user);
+                let _ = writeln!(
+                    out,
+                    " {} {} {} {} {:.4}",
+                    connective, obj_str, attr_str, op_str, value_user
+                );
             }
             for action in &rule.then_actions {
                 let lid = link_id.get(action.link).copied().unwrap_or("?");
@@ -520,7 +565,10 @@ pub fn write_inp(network: &Network) -> Vec<u8> {
             energy_lines.push(format!(" Global Pattern      {}", pat));
         }
         if opts.peak_demand_charge > 0.0 {
-            energy_lines.push(format!(" Demand Charge       {:.4}", opts.peak_demand_charge));
+            energy_lines.push(format!(
+                " Demand Charge       {:.4}",
+                opts.peak_demand_charge
+            ));
         }
         // Per-pump energy parameters.
         for l in &network.links {
@@ -557,7 +605,13 @@ pub fn write_inp(network: &Network) -> Vec<u8> {
             rxn_lines.push(format!(" Order Tank   {:.4}", opts.tank_order));
         }
         if opts.wall_order != WallOrder::One {
-            rxn_lines.push(format!(" Order Wall   {}", match opts.wall_order { WallOrder::Zero => 0, WallOrder::One => 1 }));
+            rxn_lines.push(format!(
+                " Order Wall   {}",
+                match opts.wall_order {
+                    WallOrder::Zero => 0,
+                    WallOrder::One => 1,
+                }
+            ));
         }
         if opts.bulk_coeff != 0.0 {
             rxn_lines.push(format!(" Global Bulk  {:.4}", opts.bulk_coeff * 86400.0));
@@ -569,7 +623,10 @@ pub fn write_inp(network: &Network) -> Vec<u8> {
             rxn_lines.push(format!(" Limiting Potential  {:.4}", opts.conc_limit));
         }
         if opts.roughness_reaction_factor != 0.0 {
-            rxn_lines.push(format!(" Roughness Correlation  {:.4}", opts.roughness_reaction_factor));
+            rxn_lines.push(format!(
+                " Roughness Correlation  {:.4}",
+                opts.roughness_reaction_factor
+            ));
         }
         // Per-pipe reactions.
         for l in &network.links {
@@ -586,7 +643,11 @@ pub fn write_inp(network: &Network) -> Vec<u8> {
         for n in &network.nodes {
             if let NodeKind::Tank(ref t) = n.kind {
                 if t.bulk_coeff != 0.0 {
-                    rxn_lines.push(format!(" Tank  {:<16} {:.4}", n.base.id, t.bulk_coeff * 86400.0));
+                    rxn_lines.push(format!(
+                        " Tank  {:<16} {:.4}",
+                        n.base.id,
+                        t.bulk_coeff * 86400.0
+                    ));
                 }
             }
         }
@@ -602,7 +663,11 @@ pub fn write_inp(network: &Network) -> Vec<u8> {
 
     // ── [SOURCES] ────────────────────────────────────────────────────────────
     {
-        let sources: Vec<_> = network.nodes.iter().filter(|n| n.source.is_some()).collect();
+        let sources: Vec<_> = network
+            .nodes
+            .iter()
+            .filter(|n| n.source.is_some())
+            .collect();
         if !sources.is_empty() {
             out.push_str("[SOURCES]\n");
             out.push_str(";Node             Type          Quality       Pattern\n");
@@ -610,13 +675,16 @@ pub fn write_inp(network: &Network) -> Vec<u8> {
                 if let Some(ref src) = n.source {
                     let src_type = match src.kind {
                         SourceType::Concentration => "CONCEN",
-                        SourceType::Mass          => "MASS",
-                        SourceType::Setpoint      => "SETPOINT",
-                        SourceType::FlowPaced     => "FLOWPACED",
+                        SourceType::Mass => "MASS",
+                        SourceType::Setpoint => "SETPOINT",
+                        SourceType::FlowPaced => "FLOWPACED",
                     };
                     let pattern = src.pattern.as_deref().unwrap_or("");
-                    let _ = writeln!(out, " {:<16} {:<14} {:>12.4}   {}",
-                        n.base.id, src_type, src.base_value, pattern);
+                    let _ = writeln!(
+                        out,
+                        " {:<16} {:<14} {:>12.4}   {}",
+                        n.base.id, src_type, src.base_value, pattern
+                    );
                 }
             }
             out.push('\n');
@@ -625,24 +693,34 @@ pub fn write_inp(network: &Network) -> Vec<u8> {
 
     // ── [MIXING] ─────────────────────────────────────────────────────────────
     {
-        let non_default: Vec<_> = network.nodes.iter().filter(|n| {
-            if let NodeKind::Tank(ref t) = n.kind {
-                t.mix_model != MixModel::Cstr || t.mix_fraction != 0.0
-            } else { false }
-        }).collect();
+        let non_default: Vec<_> = network
+            .nodes
+            .iter()
+            .filter(|n| {
+                if let NodeKind::Tank(ref t) = n.kind {
+                    t.mix_model != MixModel::Cstr || t.mix_fraction != 0.0
+                } else {
+                    false
+                }
+            })
+            .collect();
         if !non_default.is_empty() {
             out.push_str("[MIXING]\n");
             out.push_str(";Tank             Model         Fraction\n");
             for n in &non_default {
                 if let NodeKind::Tank(ref t) = n.kind {
                     let model_str = match t.mix_model {
-                        MixModel::Cstr           => "MIXED",
+                        MixModel::Cstr => "MIXED",
                         MixModel::TwoCompartment => "2COMP",
-                        MixModel::Fifo           => "FIFO",
-                        MixModel::Lifo           => "LIFO",
+                        MixModel::Fifo => "FIFO",
+                        MixModel::Lifo => "LIFO",
                     };
                     if t.mix_model == MixModel::TwoCompartment {
-                        let _ = writeln!(out, " {:<16} {:<14} {:.4}", n.base.id, model_str, t.mix_fraction);
+                        let _ = writeln!(
+                            out,
+                            " {:<16} {:<14} {:.4}",
+                            n.base.id, model_str, t.mix_fraction
+                        );
                     } else {
                         let _ = writeln!(out, " {:<16} {}", n.base.id, model_str);
                     }
@@ -654,9 +732,17 @@ pub fn write_inp(network: &Network) -> Vec<u8> {
 
     // ── [EMITTERS] ───────────────────────────────────────────────────────────
     {
-        let emitters: Vec<_> = network.nodes.iter().filter(|n| {
-            if let NodeKind::Junction(ref j) = n.kind { j.emitter_coeff > 0.0 } else { false }
-        }).collect();
+        let emitters: Vec<_> = network
+            .nodes
+            .iter()
+            .filter(|n| {
+                if let NodeKind::Junction(ref j) = n.kind {
+                    j.emitter_coeff > 0.0
+                } else {
+                    false
+                }
+            })
+            .collect();
         if !emitters.is_empty() {
             out.push_str("[EMITTERS]\n");
             out.push_str(";Junction        Flow Coefficient\n");
@@ -676,7 +762,9 @@ pub fn write_inp(network: &Network) -> Vec<u8> {
 
     // ── [QUALITY] ────────────────────────────────────────────────────────────
     {
-        let non_zero: Vec<_> = network.nodes.iter()
+        let non_zero: Vec<_> = network
+            .nodes
+            .iter()
             .filter(|n| n.base.initial_quality != 0.0)
             .collect();
         if !non_zero.is_empty() {
@@ -694,11 +782,15 @@ pub fn write_inp(network: &Network) -> Vec<u8> {
         out.push_str("[OPTIONS]\n");
         let opts = &network.options;
         let _ = writeln!(out, " Units           {}", flow_units_str(opts.flow_units));
-        let _ = writeln!(out, " Headloss        {}", match opts.head_loss_formula {
-            HeadLossFormula::HazenWilliams => "H-W",
-            HeadLossFormula::DarcyWeisbach => "D-W",
-            HeadLossFormula::ChezyManning  => "C-M",
-        });
+        let _ = writeln!(
+            out,
+            " Headloss        {}",
+            match opts.head_loss_formula {
+                HeadLossFormula::HazenWilliams => "H-W",
+                HeadLossFormula::DarcyWeisbach => "D-W",
+                HeadLossFormula::ChezyManning => "C-M",
+            }
+        );
         if opts.specific_gravity != 1.0 {
             let _ = writeln!(out, " Specific Gravity {:.4}", opts.specific_gravity);
         }
@@ -718,17 +810,33 @@ pub fn write_inp(network: &Network) -> Vec<u8> {
         let _ = writeln!(out, " Trials          {}", opts.max_iter);
         let _ = writeln!(out, " Accuracy        {:.6}", opts.flow_tol);
         if opts.head_error_limit > 0.0 {
-            let _ = writeln!(out, " HEADERROR       {:.6}", opts.head_error_limit * ucf.elev);
+            let _ = writeln!(
+                out,
+                " HEADERROR       {:.6}",
+                opts.head_error_limit * ucf.elev
+            );
         }
         if opts.flow_change_limit > 0.0 {
-            let _ = writeln!(out, " FLOWCHANGE      {:.6}", opts.flow_change_limit * ucf.flow);
+            let _ = writeln!(
+                out,
+                " FLOWCHANGE      {:.6}",
+                opts.flow_change_limit * ucf.flow
+            );
         }
         if opts.damp_limit > 0.0 {
             let _ = writeln!(out, " DAMPLIMIT       {:.6}", opts.damp_limit);
         }
-        let _ = writeln!(out, " Unbalanced      {}", if opts.extra_iter < 0 { "STOP".to_string() } else { format!("CONTINUE {}", opts.extra_iter) });
+        let _ = writeln!(
+            out,
+            " Unbalanced      {}",
+            if opts.extra_iter < 0 {
+                "STOP".to_string()
+            } else {
+                format!("CONTINUE {}", opts.extra_iter)
+            }
+        );
         let demand_model_str = match opts.demand_model {
-            crate::DemandModel::DemandDriven  => "DDA",
+            crate::DemandModel::DemandDriven => "DDA",
             crate::DemandModel::PressureDriven => "PDA",
         };
         let _ = writeln!(out, " Demand Model    {}", demand_model_str);
@@ -739,8 +847,16 @@ pub fn write_inp(network: &Network) -> Vec<u8> {
             let _ = writeln!(out, " Default Pattern {}", pat);
         }
         if opts.demand_model == crate::DemandModel::PressureDriven {
-            let _ = writeln!(out, " Minimum Pressure {:.4}", opts.pda_min_pressure * ucf.pressure);
-            let _ = writeln!(out, " Required Pressure {:.4}", opts.pda_required_pressure * ucf.pressure);
+            let _ = writeln!(
+                out,
+                " Minimum Pressure {:.4}",
+                opts.pda_min_pressure * ucf.pressure
+            );
+            let _ = writeln!(
+                out,
+                " Required Pressure {:.4}",
+                opts.pda_required_pressure * ucf.pressure
+            );
             let _ = writeln!(out, " Pressure Exponent {:.4}", opts.pda_pressure_exponent);
         }
         // Quality.
@@ -752,7 +868,11 @@ pub fn write_inp(network: &Network) -> Vec<u8> {
                 if opts.chem_name.is_empty() {
                     let _ = writeln!(out, " Quality         Chemical");
                 } else {
-                    let _ = writeln!(out, " Quality         {} {}", opts.chem_name, opts.chem_units);
+                    let _ = writeln!(
+                        out,
+                        " Quality         {} {}",
+                        opts.chem_name, opts.chem_units
+                    );
                 }
             }
             QualityMode::Age => {
@@ -782,29 +902,61 @@ pub fn write_inp(network: &Network) -> Vec<u8> {
     {
         out.push_str("[TIMES]\n");
         let opts = &network.options;
-        let _ = writeln!(out, " Duration           {}", fmt_duration_hm(opts.duration));
-        let _ = writeln!(out, " Hydraulic Timestep {}", fmt_duration_hm(opts.hyd_step));
-        let _ = writeln!(out, " Quality Timestep   {}", fmt_duration_hm(opts.qual_step));
-        let _ = writeln!(out, " Report Timestep    {}", fmt_duration_hm(opts.report_step));
+        let _ = writeln!(
+            out,
+            " Duration           {}",
+            fmt_duration_hm(opts.duration)
+        );
+        let _ = writeln!(
+            out,
+            " Hydraulic Timestep {}",
+            fmt_duration_hm(opts.hyd_step)
+        );
+        let _ = writeln!(
+            out,
+            " Quality Timestep   {}",
+            fmt_duration_hm(opts.qual_step)
+        );
+        let _ = writeln!(
+            out,
+            " Report Timestep    {}",
+            fmt_duration_hm(opts.report_step)
+        );
         if opts.report_start > 0.0 {
-            let _ = writeln!(out, " Report Start       {}", fmt_duration_hm(opts.report_start));
+            let _ = writeln!(
+                out,
+                " Report Start       {}",
+                fmt_duration_hm(opts.report_start)
+            );
         }
         if opts.pattern_step != opts.hyd_step {
-            let _ = writeln!(out, " Pattern Timestep   {}", fmt_duration_hm(opts.pattern_step));
+            let _ = writeln!(
+                out,
+                " Pattern Timestep   {}",
+                fmt_duration_hm(opts.pattern_step)
+            );
         }
         if opts.pattern_start > 0.0 {
-            let _ = writeln!(out, " Pattern Start      {}", fmt_duration_hm(opts.pattern_start));
+            let _ = writeln!(
+                out,
+                " Pattern Start      {}",
+                fmt_duration_hm(opts.pattern_start)
+            );
         }
         if opts.start_clocktime > 0.0 {
-            let _ = writeln!(out, " Start Clocktime    {}", fmt_clocktime(opts.start_clocktime));
+            let _ = writeln!(
+                out,
+                " Start Clocktime    {}",
+                fmt_clocktime(opts.start_clocktime)
+            );
         }
         if opts.statistic != StatisticType::Series {
             let stat_str = match opts.statistic {
                 StatisticType::Average => "AVERAGE",
                 StatisticType::Minimum => "MINIMUM",
                 StatisticType::Maximum => "MAXIMUM",
-                StatisticType::Range   => "RANGE",
-                StatisticType::Series  => "NONE",
+                StatisticType::Range => "RANGE",
+                StatisticType::Series => "NONE",
             };
             let _ = writeln!(out, " Statistic          {}", stat_str);
         }
@@ -819,8 +971,8 @@ pub fn write_inp(network: &Network) -> Vec<u8> {
             rep_lines.push(format!(" Pagesize   {}", rep.page_size));
         }
         let status_str = match rep.status {
-            ReportStatus::No   => None,
-            ReportStatus::Yes  => Some("Yes"),
+            ReportStatus::No => None,
+            ReportStatus::Yes => Some("Yes"),
             ReportStatus::Full => Some("Full"),
         };
         if let Some(s) = status_str {
@@ -895,7 +1047,9 @@ pub fn write_inp(network: &Network) -> Vec<u8> {
 
 /// Format seconds as `H:MM` (no sub-minute precision needed for INP).
 fn fmt_duration_hm(secs: f64) -> String {
-    if secs == 0.0 { return "0:00".to_string(); }
+    if secs == 0.0 {
+        return "0:00".to_string();
+    }
     let total_min = (secs / 60.0).round() as u64;
     let h = total_min / 60;
     let m = total_min % 60;
@@ -906,7 +1060,7 @@ fn fmt_duration_hm(secs: f64) -> String {
 fn fmt_clocktime(secs: f64) -> String {
     let total_min = (secs / 60.0).round() as u32 % (24 * 60);
     let h24 = total_min / 60;
-    let m   = total_min % 60;
+    let m = total_min % 60;
     let (h12, ampm) = if h24 < 12 {
         (if h24 == 0 { 12 } else { h24 }, "AM")
     } else {
@@ -921,9 +1075,9 @@ fn fmt_clocktime(secs: f64) -> String {
 
 fn link_status_str(status: LinkStatus) -> &'static str {
     match status {
-        LinkStatus::Open   => "Open",
+        LinkStatus::Open => "Open",
         LinkStatus::Closed => "Closed",
-        _                  => "Open",
+        _ => "Open",
     }
 }
 
@@ -941,53 +1095,53 @@ fn valve_type_str(vtype: ValveType) -> &'static str {
 
 fn flow_units_str(units: crate::FlowUnits) -> &'static str {
     match units {
-        crate::FlowUnits::Cfs  => "CFS",
-        crate::FlowUnits::Gpm  => "GPM",
-        crate::FlowUnits::Mgd  => "MGD",
+        crate::FlowUnits::Cfs => "CFS",
+        crate::FlowUnits::Gpm => "GPM",
+        crate::FlowUnits::Mgd => "MGD",
         crate::FlowUnits::Imgd => "IMGD",
-        crate::FlowUnits::Afd  => "AFD",
-        crate::FlowUnits::Lps  => "LPS",
-        crate::FlowUnits::Lpm  => "LPM",
-        crate::FlowUnits::Mld  => "MLD",
-        crate::FlowUnits::Cmh  => "CMH",
-        crate::FlowUnits::Cmd  => "CMD",
-        crate::FlowUnits::Cms  => "CMS",
+        crate::FlowUnits::Afd => "AFD",
+        crate::FlowUnits::Lps => "LPS",
+        crate::FlowUnits::Lpm => "LPM",
+        crate::FlowUnits::Mld => "MLD",
+        crate::FlowUnits::Cmh => "CMH",
+        crate::FlowUnits::Cmd => "CMD",
+        crate::FlowUnits::Cms => "CMS",
     }
 }
 
 fn premise_attr_str(attr: PremiseAttribute) -> &'static str {
     match attr {
-        PremiseAttribute::Head      => "HEAD",
-        PremiseAttribute::Pressure  => "PRESSURE",
-        PremiseAttribute::Demand    => "DEMAND",
-        PremiseAttribute::Level     => "LEVEL",
-        PremiseAttribute::Flow      => "FLOW",
-        PremiseAttribute::Status    => "STATUS",
-        PremiseAttribute::Setting   => "SETTING",
-        PremiseAttribute::Power     => "POWER",
-        PremiseAttribute::FillTime  => "FILLTIME",
+        PremiseAttribute::Head => "HEAD",
+        PremiseAttribute::Pressure => "PRESSURE",
+        PremiseAttribute::Demand => "DEMAND",
+        PremiseAttribute::Level => "LEVEL",
+        PremiseAttribute::Flow => "FLOW",
+        PremiseAttribute::Status => "STATUS",
+        PremiseAttribute::Setting => "SETTING",
+        PremiseAttribute::Power => "POWER",
+        PremiseAttribute::FillTime => "FILLTIME",
         PremiseAttribute::DrainTime => "DRAINTIME",
         PremiseAttribute::ClockTime => "CLOCKTIME",
-        PremiseAttribute::Time      => "TIME",
+        PremiseAttribute::Time => "TIME",
     }
 }
 
 fn premise_op_str(op: PremiseOperator) -> &'static str {
     match op {
-        PremiseOperator::Eq  => "=",
+        PremiseOperator::Eq => "=",
         PremiseOperator::Neq => "<>",
-        PremiseOperator::Lt  => "<",
-        PremiseOperator::Gt  => ">",
-        PremiseOperator::Le  => "<=",
-        PremiseOperator::Ge  => ">=",
+        PremiseOperator::Lt => "<",
+        PremiseOperator::Gt => ">",
+        PremiseOperator::Le => "<=",
+        PremiseOperator::Ge => ">=",
     }
 }
 
 fn convert_premise_value(prem: &crate::Premise, ucf: &super::units::Ucf) -> f64 {
     match prem.attribute {
         PremiseAttribute::Demand | PremiseAttribute::Flow => prem.value * ucf.flow,
-        PremiseAttribute::Head | PremiseAttribute::Level  => prem.value * ucf.elev,
-        PremiseAttribute::Pressure                        => prem.value * ucf.pressure,
+        PremiseAttribute::Head | PremiseAttribute::Level => prem.value * ucf.elev,
+        PremiseAttribute::Pressure => prem.value * ucf.pressure,
         // All others (Status, Setting, Power, time-related) need no unit conversion.
         _ => prem.value,
     }
@@ -1000,9 +1154,9 @@ fn rule_action_str(
     ucf: &super::units::Ucf,
 ) -> String {
     match value {
-        ActionValue::Status(LinkStatus::Open)   => "STATUS IS OPEN".to_string(),
+        ActionValue::Status(LinkStatus::Open) => "STATUS IS OPEN".to_string(),
         ActionValue::Status(LinkStatus::Closed) => "STATUS IS CLOSED".to_string(),
-        ActionValue::Status(_)                  => "STATUS IS OPEN".to_string(),
+        ActionValue::Status(_) => "STATUS IS OPEN".to_string(),
         ActionValue::Setting(s) => {
             let setting_user = if let Some(link) = links.get(link_1based.saturating_sub(1)) {
                 if let LinkKind::Valve(ref v) = link.kind {
@@ -1014,7 +1168,9 @@ fn rule_action_str(
                 } else {
                     *s // pump speed
                 }
-            } else { *s };
+            } else {
+                *s
+            };
             format!("SETTING IS {:.4}", setting_user)
         }
     }
@@ -1039,51 +1195,72 @@ mod tests {
     /// that the key network properties are preserved within a tight tolerance.
     fn round_trip_fixture(name: &str) {
         let path = fixture(name);
-        let original_bytes = std::fs::read(&path)
-            .unwrap_or_else(|e| panic!("could not read {name}: {e}"));
+        let original_bytes =
+            std::fs::read(&path).unwrap_or_else(|e| panic!("could not read {name}: {e}"));
 
         let net1 = parse(&original_bytes)
             .unwrap_or_else(|e| panic!("first parse of {name} failed: {e:?}"));
         let written = write_inp(&net1);
-        let net2 = parse(&written)
-            .unwrap_or_else(|e| {
-                let s = String::from_utf8_lossy(&written);
-                panic!("second parse of {name} failed: {e:?}\n\nwritten INP:\n{s}");
-            });
+        let net2 = parse(&written).unwrap_or_else(|e| {
+            let s = String::from_utf8_lossy(&written);
+            panic!("second parse of {name} failed: {e:?}\n\nwritten INP:\n{s}");
+        });
 
         // Node count, link count, and IDs must be identical.
-        assert_eq!(net1.nodes.len(), net2.nodes.len(),
-            "{name}: node count changed after round-trip");
-        assert_eq!(net1.links.len(), net2.links.len(),
-            "{name}: link count changed after round-trip");
+        assert_eq!(
+            net1.nodes.len(),
+            net2.nodes.len(),
+            "{name}: node count changed after round-trip"
+        );
+        assert_eq!(
+            net1.links.len(),
+            net2.links.len(),
+            "{name}: link count changed after round-trip"
+        );
 
         // Every node ID present in net1 must still be present in net2.
         for n1 in &net1.nodes {
-            let n2 = net2.nodes.iter().find(|n| n.base.id == n1.base.id)
-                .unwrap_or_else(|| panic!("{name}: node '{}' missing after round-trip", n1.base.id));
+            let n2 = net2
+                .nodes
+                .iter()
+                .find(|n| n.base.id == n1.base.id)
+                .unwrap_or_else(|| {
+                    panic!("{name}: node '{}' missing after round-trip", n1.base.id)
+                });
 
             // Elevation round-trips to within 0.1 ft (conversion noise).
-            assert!((n1.base.elevation - n2.base.elevation).abs() < 0.1,
+            assert!(
+                (n1.base.elevation - n2.base.elevation).abs() < 0.1,
                 "{name}: node '{}' elevation drifted: {} → {}",
-                n1.base.id, n1.base.elevation, n2.base.elevation);
+                n1.base.id,
+                n1.base.elevation,
+                n2.base.elevation
+            );
 
             // Node kind must be preserved.
             assert_eq!(
                 std::mem::discriminant(&n1.kind),
                 std::mem::discriminant(&n2.kind),
-                "{name}: node '{}' kind changed after round-trip", n1.base.id
+                "{name}: node '{}' kind changed after round-trip",
+                n1.base.id
             );
         }
 
         // Every link ID present in net1 must still be present in net2.
         for l1 in &net1.links {
-            let l2 = net2.links.iter().find(|l| l.base.id == l1.base.id)
-                .unwrap_or_else(|| panic!("{name}: link '{}' missing after round-trip", l1.base.id));
+            let l2 = net2
+                .links
+                .iter()
+                .find(|l| l.base.id == l1.base.id)
+                .unwrap_or_else(|| {
+                    panic!("{name}: link '{}' missing after round-trip", l1.base.id)
+                });
 
             assert_eq!(
                 std::mem::discriminant(&l1.kind),
                 std::mem::discriminant(&l2.kind),
-                "{name}: link '{}' kind changed after round-trip", l1.base.id
+                "{name}: link '{}' kind changed after round-trip",
+                l1.base.id
             );
         }
     }
@@ -1155,26 +1332,26 @@ mod tests {
     /// Pipe diameter (ft → mm) and back (mm → ft) must cancel exactly.
     #[test]
     fn pipe_diameter_unit_conversion_round_trips() {
-        use crate::FlowUnits;
         use super::super::units::make_ucf;
+        use crate::FlowUnits;
 
         let ucf = make_ucf(FlowUnits::Lps, 1.0);
         // 0.5 ft diameter pipe.
         let d_ft = 0.5_f64;
-        let d_mm = d_ft * ucf.diam;    // ft → mm
-        let d_ft2 = d_mm / ucf.diam;   // mm → ft
+        let d_mm = d_ft * ucf.diam; // ft → mm
+        let d_ft2 = d_mm / ucf.diam; // mm → ft
         assert!((d_ft - d_ft2).abs() < 1e-12);
     }
 
     /// Elevation (ft → m) and back must cancel exactly.
     #[test]
     fn elevation_unit_conversion_round_trips() {
-        use crate::FlowUnits;
         use super::super::units::make_ucf;
+        use crate::FlowUnits;
 
         let ucf = make_ucf(FlowUnits::Lps, 1.0);
         let elev_ft = 100.0_f64;
-        let elev_m  = elev_ft * ucf.elev;
+        let elev_m = elev_ft * ucf.elev;
         let elev_ft2 = elev_m / ucf.elev;
         assert!((elev_ft - elev_ft2).abs() < 1e-12);
     }
@@ -1184,7 +1361,7 @@ mod tests {
     fn minor_loss_round_trip() {
         // K_m = 0.02517 * K_v / D^4
         // K_v = K_m * D^4 / 0.02517
-        let d_ft = 0.5_f64;    // 6-inch pipe
+        let d_ft = 0.5_f64; // 6-inch pipe
         let kv_original = 0.25_f64;
         let km = 0.02517 * kv_original / d_ft.powi(4);
         let kv_recovered = km * d_ft.powi(4) / 0.02517;
@@ -1208,9 +1385,9 @@ mod tests {
     /// Reaction coefficients (per-s → per-day → per-s) must cancel exactly.
     #[test]
     fn reaction_coeff_unit_conversion() {
-        let kb_per_s = -1.157e-5_f64;  // representative bulk coefficient
+        let kb_per_s = -1.157e-5_f64; // representative bulk coefficient
         let kb_per_day = kb_per_s * 86400.0;
-        let kb_per_s2  = kb_per_day / 86400.0;
+        let kb_per_s2 = kb_per_day / 86400.0;
         assert!((kb_per_s - kb_per_s2).abs() < 1e-20);
     }
 

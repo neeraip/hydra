@@ -1,8 +1,6 @@
 // valve — §3.5 valve coefficients, §3.9 link/valve status helpers
 
-use crate::{
-    Link, LinkKind, LinkStatus, Network, NodeState, PumpCurveType, ValveType,
-};
+use crate::{Link, LinkKind, LinkStatus, Network, NodeState, PumpCurveType, ValveType};
 
 use super::pump::curve_segment;
 use super::shared::{HydraulicError, PumpCoeffs, Py, C_INF, G_MIN};
@@ -439,7 +437,9 @@ pub(super) fn check_link_status(
             if !matches!(statuses[k], LinkStatus::Closed) {
                 let head_n2 = node_states[n2].head;
                 let q_out = -q;
-                if (head_n2 >= node_h_max[n2] && q_out < 0.0) || (head_n2 <= node_h_min[n2] && q_out > 0.0) {
+                if (head_n2 >= node_h_max[n2] && q_out < 0.0)
+                    || (head_n2 <= node_h_min[n2] && q_out > 0.0)
+                {
                     statuses[k] = LinkStatus::TempClosed;
                 }
             }

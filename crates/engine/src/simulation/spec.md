@@ -149,8 +149,10 @@ For each enabled simple control $c$:
 - Let $h$ be the tank's current head and $Q_{\text{net}}$ the net inflow (positive = filling).
 - If $\lvert Q_{\text{net}} \rvert \leq Q_{\text{zero}}$, skip (no flow, no crossing).
 - If $h < G_c$ and $c$ is `HILEVEL` and $Q_{\text{net}} > 0$ (tank filling toward the threshold), or $h > G_c$ and $c$ is `LOWLEVEL` and $Q_{\text{net}} < 0$ (tank draining toward the threshold):
-$$t_c = \operatorname{round}\!\left(\frac{V(G_c) - V_{\text{current}}}{Q_{\text{net}}}\right)$$
-where $V(G_c)$ is the tank volume at head $G_c$ and $V_{\text{current}}$ is the current tank volume. The result is rounded to the nearest whole second.
+
+  $$t_c = \operatorname{round}\!\left(\frac{V(G_c) - V_{\text{current}}}{Q_{\text{net}}}\right)$$
+
+  where $V(G_c)$ is the tank volume at head $G_c$ and $V_{\text{current}}$ is the current tank volume. The result is rounded to the nearest whole second.
 
 2. **Timer controls**: if $t_{\text{trigger}} > t$, then $t_c = t_{\text{trigger}} - t$.
 

@@ -25,13 +25,13 @@ jobs:
       release-id: ${{ steps.create.outputs.id }}
 
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+      - uses: actions/checkout@v4.2.2
         with:
           fetch-depth: 1
 
       - name: Create draft release
         id: create
-        uses: softprops/action-gh-release@72f2c25fcb47643c292f7107632f7a47c1df5cd8  # v2.3.2
+        uses: softprops/action-gh-release@v2.3.2
         with:
           draft: true
           generate_release_notes: true
@@ -57,17 +57,17 @@ jobs:
           - { target: aarch64-apple-darwin,      runner: macos-latest,   cross: false }
 
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+      - uses: actions/checkout@v4.2.2
         with:
           fetch-depth: 1
 
-      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8  # stable (resolved 2026-06-11)
+      - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
 
-      - uses: Swatinem/rust-cache@98c8021b550208e191a6a3145459bfc9fb29c4c0  # v2.8.0
+      - uses: Swatinem/rust-cache@v2.8.0
 
-      - uses: cargo-bins/cargo-binstall@30b5ca8b54e1dcffd9548bc87ede1531310fdc67  # v1.20.0
+      - uses: cargo-bins/cargo-binstall@v1.20.0
         if: matrix.cross
 
       - name: Install cross
@@ -123,7 +123,7 @@ jobs:
           - { platform: linux-x86_64,   runner: ubuntu-22.04,   target: x86_64-unknown-linux-gnu }
 
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+      - uses: actions/checkout@v4.2.2
         with:
           fetch-depth: 1
 
@@ -137,11 +137,11 @@ jobs:
             librsvg2-dev \
             patchelf
 
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020  # v4.4.0
+      - uses: actions/setup-node@v4.4.0
         with:
           node-version: 22
 
-      - uses: pnpm/action-setup@a7487c7e89a18df4991f7f222e4898a00d66ddda  # v4.1.0
+      - uses: pnpm/action-setup@v4.1.0
         with:
           version: 10
 
@@ -149,19 +149,19 @@ jobs:
         working-directory: crates/gui/frontend
         run: pnpm install --frozen-lockfile
 
-      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8  # stable (resolved 2026-06-11)
+      - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
 
-      - uses: Swatinem/rust-cache@98c8021b550208e191a6a3145459bfc9fb29c4c0  # v2.8.0
+      - uses: Swatinem/rust-cache@v2.8.0
 
-      - uses: cargo-bins/cargo-binstall@30b5ca8b54e1dcffd9548bc87ede1531310fdc67  # v1.20.0
+      - uses: cargo-bins/cargo-binstall@v1.20.0
 
       - name: Install Tauri CLI
         run: cargo binstall tauri-cli --version "^2" --no-confirm
 
       - name: Build and upload installer
-        uses: tauri-apps/tauri-action@42e9df6c59070d114bf90dcd3943a1b8f138b113  # v0.5.20
+        uses: tauri-apps/tauri-action@v0.5.20
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:

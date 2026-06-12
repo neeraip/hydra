@@ -1418,7 +1418,10 @@ mod tests {
             emitter_coeff: 0.0,
             emitter_exp: 0.5,
         };
-        let opts = SimulationOptions { demand_multiplier: 2.0, ..Default::default() };
+        let opts = SimulationOptions {
+            demand_multiplier: 2.0,
+            ..Default::default()
+        };
         let total = j.total_demand(0.0, &opts, &[], &HashMap::new());
         // base_demand=0.01, multiplier=2.0, pattern factor=1.0 → 0.02.
         assert!((total - 0.02).abs() < 1e-12);

@@ -458,12 +458,12 @@ pub fn read_energy(path: &std::path::Path, meta: &OutMetadata) -> Result<OutEner
         let mut buf = [0u8; 28];
         f.read_exact(&mut buf).map_err(|e| e.to_string())?;
         pump_records.push(PumpEnergyRecord {
-            link_index:       i32::from_le_bytes(buf[0..4].try_into().unwrap()),
-            pct_online:       f32::from_le_bytes(buf[4..8].try_into().unwrap()),
-            avg_efficiency:   f32::from_le_bytes(buf[8..12].try_into().unwrap()),
+            link_index: i32::from_le_bytes(buf[0..4].try_into().unwrap()),
+            pct_online: f32::from_le_bytes(buf[4..8].try_into().unwrap()),
+            avg_efficiency: f32::from_le_bytes(buf[8..12].try_into().unwrap()),
             avg_kwh_per_flow: f32::from_le_bytes(buf[12..16].try_into().unwrap()),
-            avg_kw:           f32::from_le_bytes(buf[16..20].try_into().unwrap()),
-            peak_kw:          f32::from_le_bytes(buf[20..24].try_into().unwrap()),
+            avg_kw: f32::from_le_bytes(buf[16..20].try_into().unwrap()),
+            peak_kw: f32::from_le_bytes(buf[20..24].try_into().unwrap()),
             avg_cost_per_day: f32::from_le_bytes(buf[24..28].try_into().unwrap()),
         });
     }
@@ -683,12 +683,24 @@ impl ResultRanges {
         for &v in pr.node_quality.iter().chain(pr.link_quality.iter()) {
             let v = v as f64;
             match &mut self.quality_min {
-                Some(m) => { if v < *m { *m = v; } }
-                None    => { self.quality_min = Some(v); }
+                Some(m) => {
+                    if v < *m {
+                        *m = v;
+                    }
+                }
+                None => {
+                    self.quality_min = Some(v);
+                }
             }
             match &mut self.quality_max {
-                Some(m) => { if v > *m { *m = v; } }
-                None    => { self.quality_max = Some(v); }
+                Some(m) => {
+                    if v > *m {
+                        *m = v;
+                    }
+                }
+                None => {
+                    self.quality_max = Some(v);
+                }
             }
         }
     }
@@ -769,12 +781,24 @@ pub fn scan_ranges(
             if meta.quality_flag != 0 {
                 let q = f32_at(&buf, 3 * nn + i) as f64;
                 match &mut ranges.quality_min {
-                    Some(m) => { if q < *m { *m = q; } }
-                    None    => { ranges.quality_min = Some(q); }
+                    Some(m) => {
+                        if q < *m {
+                            *m = q;
+                        }
+                    }
+                    None => {
+                        ranges.quality_min = Some(q);
+                    }
                 }
                 match &mut ranges.quality_max {
-                    Some(m) => { if q > *m { *m = q; } }
-                    None    => { ranges.quality_max = Some(q); }
+                    Some(m) => {
+                        if q > *m {
+                            *m = q;
+                        }
+                    }
+                    None => {
+                        ranges.quality_max = Some(q);
+                    }
                 }
             }
         }
@@ -800,12 +824,24 @@ pub fn scan_ranges(
             if meta.quality_flag != 0 {
                 let q = f32_at(&buf, link_base + 3 * nl + i) as f64;
                 match &mut ranges.quality_min {
-                    Some(m) => { if q < *m { *m = q; } }
-                    None    => { ranges.quality_min = Some(q); }
+                    Some(m) => {
+                        if q < *m {
+                            *m = q;
+                        }
+                    }
+                    None => {
+                        ranges.quality_min = Some(q);
+                    }
                 }
                 match &mut ranges.quality_max {
-                    Some(m) => { if q > *m { *m = q; } }
-                    None    => { ranges.quality_max = Some(q); }
+                    Some(m) => {
+                        if q > *m {
+                            *m = q;
+                        }
+                    }
+                    None => {
+                        ranges.quality_max = Some(q);
+                    }
                 }
             }
         }
@@ -841,51 +877,57 @@ pub struct AnalyticsScan {
 ///
 /// Reads one period at a time — never loads more than a single period's data
 /// into memory, so it is safe for arbitrarily large result files.
-pub fn scan_analytics(
-    path: &std::path::Path,
-    meta: &OutMetadata,
-) -> Result<AnalyticsScan, String> {
-    let n_nodes    = meta.n_nodes;
-    let n_tanks    = meta.n_tanks;
-    let n_links    = meta.n_links;
-    let n_periods  = meta.n_periods;
+pub fn scan_analytics(path: &std::path::Path, meta: &OutMetadata) -> Result<AnalyticsScan, String> {
+    let n_nodes = meta.n_nodes;
+    let n_tanks = meta.n_tanks;
+    let n_links = meta.n_links;
+    let n_periods = meta.n_periods;
     let tank_start = n_nodes.saturating_sub(n_tanks);
 
     let mut node_min_pressure: Vec<f64> = vec![f64::INFINITY; n_nodes];
     let mut link_max_velocity: Vec<f64> = vec![0.0_f64; n_links];
-    let mut mb_series: Vec<f64>         = vec![0.0_f64; n_periods];
-    let mut total_inflow:  f64          = 0.0;
-    let mut total_outflow: f64          = 0.0;
-    let mut tank_head: Vec<Vec<f64>>    = vec![vec![0.0_f64; n_periods]; n_tanks];
+    let mut mb_series: Vec<f64> = vec![0.0_f64; n_periods];
+    let mut total_inflow: f64 = 0.0;
+    let mut total_outflow: f64 = 0.0;
+    let mut tank_head: Vec<Vec<f64>> = vec![vec![0.0_f64; n_periods]; n_tanks];
 
     for p in 0..n_periods {
         let pr = read_period(path, meta, p)?;
 
-        let mut period_inflow  = 0.0_f64;
+        let mut period_inflow = 0.0_f64;
         let mut period_outflow = 0.0_f64;
         for &d in &pr.node_demand {
             let d = d as f64;
-            if d > 0.0 { period_inflow  += d; }
-            else        { period_outflow -= d; }
+            if d > 0.0 {
+                period_inflow += d;
+            } else {
+                period_outflow -= d;
+            }
         }
         mb_series[p] = if period_inflow > 0.0 {
             (period_outflow / period_inflow * 100.0).min(100.0)
         } else {
             100.0
         };
-        total_inflow  += period_inflow;
+        total_inflow += period_inflow;
         total_outflow += period_outflow;
 
         for (i, &p_val) in pr.node_pressure.iter().enumerate() {
             let v = p_val as f64;
-            if v < node_min_pressure[i] { node_min_pressure[i] = v; }
+            if v < node_min_pressure[i] {
+                node_min_pressure[i] = v;
+            }
         }
         for (ti, h_val) in pr.node_head[tank_start..].iter().enumerate() {
-            if ti < n_tanks { tank_head[ti][p] = *h_val as f64; }
+            if ti < n_tanks {
+                tank_head[ti][p] = *h_val as f64;
+            }
         }
         for (i, &v_val) in pr.link_velocity.iter().enumerate() {
             let v = (v_val as f64).abs();
-            if v > link_max_velocity[i] { link_max_velocity[i] = v; }
+            if v > link_max_velocity[i] {
+                link_max_velocity[i] = v;
+            }
         }
     }
 
@@ -1383,7 +1425,7 @@ mod tests {
             n_periods: 5,
         };
         assert_eq!(meta.prolog_bytes(), (884 + 36 * 4 + 52 * 3 + 8 * 2) as u64);
-        assert_eq!(meta.energy_bytes(), (28 * 1 + 4) as u64);
+        assert_eq!(meta.energy_bytes(), (28 + 4) as u64);
         assert_eq!(meta.period_bytes(), (4 * (4 * 4 + 8 * 3)) as u64);
         assert_eq!(
             meta.dynamic_offset(),
@@ -1424,17 +1466,19 @@ mod tests {
 
     #[test]
     fn result_ranges_sanitise_expands_equal_min_max() {
-        let mut r = ResultRanges::default();
-        r.pressure_min = 5.0;
-        r.pressure_max = 5.0; // equal → should be expanded
-        r.head_min = f64::INFINITY;
-        r.head_max = f64::NEG_INFINITY;
-        r.demand_min = f64::INFINITY;
-        r.demand_max = f64::NEG_INFINITY;
-        r.flow_min = f64::INFINITY;
-        r.flow_max = f64::NEG_INFINITY;
-        r.velocity_min = f64::INFINITY;
-        r.velocity_max = f64::NEG_INFINITY;
+        let mut r = ResultRanges {
+            pressure_min: 5.0,
+            pressure_max: 5.0, // equal → should be expanded
+            head_min: f64::INFINITY,
+            head_max: f64::NEG_INFINITY,
+            demand_min: f64::INFINITY,
+            demand_max: f64::NEG_INFINITY,
+            flow_min: f64::INFINITY,
+            flow_max: f64::NEG_INFINITY,
+            velocity_min: f64::INFINITY,
+            velocity_max: f64::NEG_INFINITY,
+            ..Default::default()
+        };
         r.sanitise();
         assert!(
             r.pressure_max > r.pressure_min,

@@ -64,20 +64,20 @@ pub fn make_ucf(flow_units: FlowUnits, specific_gravity: f64) -> Ucf {
     if is_si {
         Ucf {
             flow,
-            elev: 1.0,        // m → m
-            diam: 1_000.0,    // mm → m
-            vol: 1.0,         // m³ → m³
-            power: 0.001,     // kW → W (÷ 0.001 = × 1000)
-            pressure: 1.0,    // m of head → m of head
+            elev: 1.0,     // m → m
+            diam: 1_000.0, // mm → m
+            vol: 1.0,      // m³ → m³
+            power: 0.001,  // kW → W (÷ 0.001 = × 1000)
+            pressure: 1.0, // m of head → m of head
         }
     } else {
         Ucf {
             flow,
-            elev: 3.2808,                          // ft → m
-            diam: 39.370,                          // inches → m
-            vol: 35.315,                           // ft³ → m³
-            power: 0.001_341,                      // HP → W (1 HP = 745.7 W)
-            pressure: 1.4219 * specific_gravity,   // PSI → m of head
+            elev: 3.2808,                        // ft → m
+            diam: 39.370,                        // inches → m
+            vol: 35.315,                         // ft³ → m³
+            power: 0.001_341,                    // HP → W (1 HP = 745.7 W)
+            pressure: 1.4219 * specific_gravity, // PSI → m of head
         }
     }
 }
