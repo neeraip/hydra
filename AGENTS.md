@@ -10,7 +10,7 @@ Hydra is a water distribution network simulator written in Rust. It is cleanly a
 |---|---|---|
 | `hydra-common` | `Coordinate` and `Crs` types — engine-agnostic geographic primitives | Solver logic; data model; session API; I/O |
 | `hydra-engine` | Complete simulation engine: data model; INP/OUT/RPT parsers and writers; unit conversion; GGA hydraulic solver; Lagrangian quality engine; controls; timestep; accounting; session API (`Simulation`); post-simulation analytics | Interface logic; filesystem/network I/O |
-| `hydra` | Curated public re-exports — the umbrella crate | Any new logic |
+| `hydra-sdk` | Curated public re-exports — the umbrella crate | Any new logic |
 | `hydra-cli` | CLI argument parsing; input source resolution; file I/O | All simulation logic |
 | `hydra-gui` | Tauri command surface; project/scenario persistence; background run queue; React frontend | Solver algorithms; session logic |
 

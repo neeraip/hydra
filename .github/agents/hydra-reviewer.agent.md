@@ -41,7 +41,7 @@ Work through every changed file against each of these criteria. Report every vio
 ### 5. Crate boundaries
 - `hydra-common` must contain only `Coordinate` and `Crs`. Flag any solver logic, data model types, parsers, or engine-specific code added to it.
 - `hydra-engine` must not perform filesystem I/O or network calls. Flag any `std::fs`, `std::net`, or HTTP client usage in `crates/engine/src/`.
-- `hydra` must contain only re-exports. Flag any function, struct, trait implementation, or logic added directly to `crates/hydra/src/`.
+- `hydra-sdk` must contain only re-exports. Flag any function, struct, trait implementation, or logic added directly to `crates/sdk/src/`.
 - `hydra-cli` and `hydra-gui` must not contain simulation logic. Flag any solver algorithm, data model definition, or quality computation added to those crates.
 
 ### 6. Build and test correctness
