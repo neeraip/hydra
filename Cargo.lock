@@ -1817,19 +1817,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6dbf3de79e51f3d586ab4cb9d5c3e2c14aa28ed23d180cf89b4df0454a69cc87"
 
 [[package]]
-name = "hydra"
-version = "0.1.0"
-dependencies = [
- "hydra-engine",
-]
-
-[[package]]
 name = "hydra-cli"
 version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
- "hydra",
+ "hydra-sdk",
  "serde",
  "serde_json",
  "ureq",
@@ -1860,7 +1853,7 @@ dependencies = [
 name = "hydra-gui"
 version = "0.1.0"
 dependencies = [
- "hydra",
+ "hydra-sdk",
  "serde",
  "serde_json",
  "tauri",
@@ -1869,6 +1862,13 @@ dependencies = [
  "tauri-plugin-opener",
  "tempfile",
  "uuid",
+]
+
+[[package]]
+name = "hydra-sdk"
+version = "0.1.0"
+dependencies = [
+ "hydra-engine",
 ]
 
 [[package]]
