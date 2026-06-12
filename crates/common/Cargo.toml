@@ -4,7 +4,10 @@ version.workspace = true
 edition.workspace = true
 authors.workspace = true
 license.workspace = true
-publish = false
+publish = true
+repository.workspace = true
+homepage.workspace = true
+documentation.workspace = true
 description = "Engine-agnostic geographic primitives for Hydra"
 
 [dependencies]
