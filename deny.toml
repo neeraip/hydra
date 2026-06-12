@@ -9,10 +9,8 @@ all-features = false
 [advisories]
 # Deny crates with known security vulnerabilities.
 version = 2
-deny = []
-unmaintained = "warn"
+unmaintained = "workspace"
 yanked = "warn"
-notice = "warn"
 
 # ── Licences ──────────────────────────────────────────────────────────────────
 [licenses]
@@ -32,6 +30,7 @@ allow = [
     "Zlib",
     "MPL-2.0",
     "AGPL-3.0-only",
+    "CDLA-Permissive-2.0",
 ]
 
 # ── Banned crates ─────────────────────────────────────────────────────────────
