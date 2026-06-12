@@ -659,6 +659,7 @@ export function ElementsEditor({
 
         {/* Add button */}
         <button
+          type="button"
           onClick={handleAddElement}
           style={{
             background: "var(--accent-dim)",
@@ -678,6 +679,7 @@ export function ElementsEditor({
         </button>
 
         <button
+          type="button"
           onClick={handleDeleteSelected}
           disabled={!selectedId}
           style={{
@@ -817,6 +819,7 @@ export function ElementsEditor({
             <div style={{ flex: 1 }} />
             {dirtyCount > 0 && (
               <button
+                type="button"
                 onClick={() => setPreviewOpen(true)}
                 onMouseEnter={(e) => {
                   (e.currentTarget as HTMLButtonElement).style.background =
@@ -851,6 +854,7 @@ export function ElementsEditor({
               </button>
             )}
             <button
+              type="button"
               onClick={handleDiscard}
               onMouseEnter={(e) => {
                 (e.currentTarget as HTMLButtonElement).style.background =
@@ -884,6 +888,7 @@ export function ElementsEditor({
               Discard
             </button>
             <button
+              type="button"
               onClick={handleSave}
               onMouseEnter={(e) => {
                 (e.currentTarget as HTMLButtonElement).style.background =

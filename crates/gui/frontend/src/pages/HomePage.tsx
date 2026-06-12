@@ -220,6 +220,7 @@ export function HomePage() {
               {recentProjects.map((p) => {
                 return (
                   <button
+                    type="button"
                     key={p.id}
                     onClick={() => openRecentProject(p)}
                     style={{
@@ -337,6 +338,7 @@ export function HomePage() {
                   {release.date ? ` · ${release.date}` : ""}
                 </span>
                 <button
+                  type="button"
                   onClick={() =>
                     window.open(release.releaseUrl, "_blank", "noopener")
                   }
@@ -402,6 +404,7 @@ export function HomePage() {
           <div style={{ display: "flex", flexDirection: "column", gap: 1 }}>
             {HELP_LINKS.map(({ label, url }) => (
               <button
+                type="button"
                 key={label}
                 onClick={() => window.open(url, "_blank", "noopener")}
                 style={{

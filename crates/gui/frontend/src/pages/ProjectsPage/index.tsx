@@ -153,6 +153,7 @@ export function ProjectsPage() {
               style={{ display: "inline-flex", alignItems: "center", gap: 6 }}
             >
               <button
+                type="button"
                 onClick={() => !p.folderMissing && handleOpenProject(p.id)}
                 style={{
                   background: "none",
@@ -542,6 +543,7 @@ export function ProjectsPage() {
           }}
         >
           <button
+            type="button"
             onClick={() => table.previousPage()}
             disabled={!canPrev}
             className="btn-pager"
@@ -563,6 +565,7 @@ export function ProjectsPage() {
               </span>
             ) : (
               <button
+                type="button"
                 key={item}
                 onClick={() => table.setPageIndex(item as number)}
                 className={`btn-pager${item === pageIndex ? " pager-active" : ""}`}
@@ -574,6 +577,7 @@ export function ProjectsPage() {
           )}
 
           <button
+            type="button"
             onClick={() => table.nextPage()}
             disabled={!canNext}
             className="btn-pager"

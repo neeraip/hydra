@@ -49,6 +49,7 @@ export const HistoryButton = forwardRef<
     <div ref={ref} style={{ position: "relative", display: "inline-flex" }}>
       {/* Main action */}
       <button
+        type="button"
         data-tooltip={disabled ? undefined : `${title} (${shortcut})`}
         data-tooltip-pos="bottom"
         disabled={disabled}
@@ -68,6 +69,7 @@ export const HistoryButton = forwardRef<
       </button>
       {/* Caret toggle */}
       <button
+        type="button"
         disabled={disabled}
         onClick={onToggleDropdown}
         aria-label={`${title} history`}
@@ -111,6 +113,7 @@ export const HistoryButton = forwardRef<
         >
           {labels.map((label, i) => (
             <button
+              type="button"
               key={i}
               onClick={() => onJump(i + 1)}
               style={{

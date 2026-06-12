@@ -132,6 +132,7 @@ export function NewProjectWizard({
 
             <div style={{ marginBottom: 20 }}>
               <label
+                htmlFor="new-project-name"
                 style={{
                   display: "block",
                   fontSize: 11,
@@ -145,6 +146,7 @@ export function NewProjectWizard({
                 Project name
               </label>
               <input
+                id="new-project-name"
                 value={projectName}
                 onChange={(e) => setProjectName(e.target.value)}
                 onKeyDown={(e) => {
@@ -175,7 +177,7 @@ export function NewProjectWizard({
                 marginTop: 32,
               }}
             >
-              <button className="btn-link" onClick={onClose}>
+              <button type="button" className="btn-link" onClick={onClose}>
                 Cancel
               </button>
               <PrimaryButton onClick={() => setStep(2)}>
@@ -322,6 +324,7 @@ export function NewProjectWizard({
                     file here
                   </div>
                   <button
+                    type="button"
                     onClick={handleBrowse}
                     style={{
                       border: "1px solid var(--border-hover)",
@@ -361,7 +364,11 @@ export function NewProjectWizard({
                 alignItems: "center",
               }}
             >
-              <button className="btn-link" onClick={() => setStep(1)}>
+              <button
+                type="button"
+                className="btn-link"
+                onClick={() => setStep(1)}
+              >
                 <span
                   style={{
                     display: "inline-flex",
@@ -374,6 +381,7 @@ export function NewProjectWizard({
               </button>
               <div style={{ display: "flex", gap: 10 }}>
                 <button
+                  type="button"
                   onClick={() => setStep(3)}
                   style={{
                     border: "1px solid var(--border-hover)",
@@ -500,7 +508,11 @@ export function NewProjectWizard({
                 alignItems: "center",
               }}
             >
-              <button className="btn-link" onClick={() => setStep(2)}>
+              <button
+                type="button"
+                className="btn-link"
+                onClick={() => setStep(2)}
+              >
                 <span
                   style={{
                     display: "inline-flex",

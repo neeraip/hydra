@@ -121,7 +121,7 @@ export function CreateLinkModal({
         </span>
 
         {/* Link type */}
-        <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
           <span
             style={{
               fontSize: 11,
@@ -135,6 +135,7 @@ export function CreateLinkModal({
           <div style={{ display: "flex", gap: 6 }}>
             {LINK_TYPES.map((t) => (
               <button
+                type="button"
                 key={t.value}
                 onClick={() => handleKindChange(t.value)}
                 style={{
@@ -162,7 +163,7 @@ export function CreateLinkModal({
               </button>
             ))}
           </div>
-        </label>
+        </div>
 
         {/* ID */}
         <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
@@ -278,6 +279,7 @@ export function CreateLinkModal({
         {/* Actions */}
         <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
           <button
+            type="button"
             className="tool-btn"
             onClick={onCancel}
             disabled={submitting}
@@ -286,6 +288,7 @@ export function CreateLinkModal({
             Cancel
           </button>
           <button
+            type="button"
             className="tool-btn"
             disabled={!canSubmit}
             onClick={handleSubmit}

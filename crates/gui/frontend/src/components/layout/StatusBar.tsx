@@ -79,6 +79,7 @@ export function StatusBar() {
 
       {/* Issues counter — clickable to open IssuesPanel */}
       <button
+        type="button"
         onClick={toggleIssuesPanel}
         data-tooltip="Issues & notifications (⌘⇧M)"
         style={{
@@ -138,6 +139,7 @@ export function StatusBar() {
       {/* Timestep count — shown after a simulation has run */}
       {project && timestepCount !== null && (
         <button
+          type="button"
           onClick={() => setHistoryOpen((v) => !v)}
           style={{
             display: "inline-flex",
@@ -310,6 +312,7 @@ function SolverHistoryPopover({
         Detailed solver diagnostics will be available in a future update.
       </div>
       <button
+        type="button"
         onClick={onClose}
         style={{
           marginTop: 10,

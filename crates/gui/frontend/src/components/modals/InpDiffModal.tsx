@@ -138,6 +138,7 @@ export function InpDiffModal({ patches, onClose }: InpDiffModalProps) {
             {patches.length} staged change{patches.length !== 1 ? "s" : ""}
           </span>
           <button
+            type="button"
             onClick={onClose}
             onMouseEnter={(e) => {
               (e.currentTarget as HTMLButtonElement).style.background =

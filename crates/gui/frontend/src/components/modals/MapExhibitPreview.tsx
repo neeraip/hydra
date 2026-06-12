@@ -85,6 +85,7 @@ export function MapExhibitPreview({
         display: "block",
       }}
     >
+      <title>{spec.title || "Map exhibit preview"}</title>
       {/* Heatmap underlay (optional) */}
       {spec.style === "heatmap" && (
         <g opacity={0.55}>

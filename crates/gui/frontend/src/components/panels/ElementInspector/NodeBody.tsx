@@ -93,6 +93,7 @@ export function NodeBody({
               </td>
               <td style={{ padding: "4px 0" }}>
                 <button
+                  type="button"
                   onClick={() => onOpenPattern?.(node.headPattern!)}
                   data-tooltip={
                     onOpenPattern

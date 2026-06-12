@@ -171,11 +171,12 @@ export function CreateNodeModal({
         </span>
 
         {/* Node type */}
-        <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
           <span style={labelStyle}>Type</span>
           <div style={{ display: "flex", gap: 6 }}>
             {NODE_TYPES.map((t) => (
               <button
+                type="button"
                 key={t.value}
                 onClick={() => handleKindChange(t.value)}
                 style={{
@@ -203,7 +204,7 @@ export function CreateNodeModal({
               </button>
             ))}
           </div>
-        </label>
+        </div>
 
         {/* ID */}
         <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
@@ -307,6 +308,7 @@ export function CreateNodeModal({
         {/* Actions */}
         <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
           <button
+            type="button"
             className="tool-btn"
             onClick={onCancel}
             disabled={submitting}
@@ -315,6 +317,7 @@ export function CreateNodeModal({
             Cancel
           </button>
           <button
+            type="button"
             className="tool-btn"
             disabled={!canSubmit}
             onClick={handleSubmit}

@@ -214,6 +214,7 @@ export class ErrorBoundary extends Component<Props, State> {
           }}
         >
           <button
+            type="button"
             onClick={() => this.handleReload()}
             style={{
               display: "inline-flex",
@@ -234,6 +235,7 @@ export class ErrorBoundary extends Component<Props, State> {
             Try again
           </button>
           <button
+            type="button"
             onClick={() => this.handleCopy()}
             style={{
               display: "inline-flex",
@@ -270,6 +272,7 @@ export class ErrorBoundary extends Component<Props, State> {
           >
             {/* Collapsible toggle */}
             <button
+              type="button"
               onClick={() =>
                 this.setState((s) => ({ devExpanded: !s.devExpanded }))
               }

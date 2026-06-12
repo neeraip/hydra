@@ -382,6 +382,7 @@ export function Legend({
           {colorMode === "threshold" && (
             <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
               <button
+                type="button"
                 onClick={() => setEditing((v) => !v)}
                 style={{
                   width: "100%",
@@ -594,6 +595,7 @@ export function Legend({
                   </div>
 
                   <button
+                    type="button"
                     onClick={applyEdits}
                     style={{
                       width: "100%",
@@ -618,6 +620,7 @@ export function Legend({
           <div style={{ display: "flex", gap: 6 }}>
             {(["relative", "threshold"] as const).map((m) => (
               <button
+                type="button"
                 key={m}
                 onClick={() => {
                   onColorModeChange(m);
@@ -648,6 +651,7 @@ export function Legend({
 
       {/* ── Compact chip ─────────────────────────────────────────────────── */}
       <button
+        type="button"
         onClick={() => setOpen((o) => !o)}
         onMouseEnter={() => setHovered(true)}
         onMouseLeave={() => setHovered(false)}

@@ -118,6 +118,7 @@ export function TopBar() {
         // ── Project breadcrumb: Projects / [engine] / [name] / [view] ─────
         <>
           <button
+            type="button"
             onClick={closeProject}
             style={{
               border: "none",
@@ -184,6 +185,7 @@ export function TopBar() {
               </span>
               {project && (
                 <button
+                  type="button"
                   onClick={startRename}
                   data-tooltip="Rename project"
                   data-tooltip-pos="bottom"
@@ -262,6 +264,7 @@ function NavArrowButton({
 }) {
   return (
     <button
+      type="button"
       data-tooltip={title}
       data-tooltip-pos="bottom"
       onClick={onClick}

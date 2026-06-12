@@ -107,6 +107,7 @@ export function SubcatchmentsEditor({ accent }: { accent: string }) {
           }}
         />
         <button
+          type="button"
           onClick={() => showToast("Feature coming soon")}
           style={{
             background: `${accent}26`,

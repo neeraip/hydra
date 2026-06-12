@@ -49,6 +49,7 @@ export function ProjectInfo({
           </span>
           {r.action ? (
             <button
+              type="button"
               onClick={r.action}
               onMouseEnter={(e) => {
                 (e.currentTarget as HTMLButtonElement).style.opacity = "0.7";

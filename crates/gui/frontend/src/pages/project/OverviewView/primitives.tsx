@@ -173,6 +173,7 @@ export function EmptyState({
         {message}
       </span>
       <button
+        type="button"
         onClick={onCta}
         onMouseEnter={(e) => {
           (e.currentTarget as HTMLButtonElement).style.background =
@@ -228,6 +229,7 @@ export function PrimaryButton({
 }) {
   return (
     <button
+      type="button"
       onClick={onClick}
       onMouseEnter={(e) => {
         (e.currentTarget as HTMLButtonElement).style.background =
@@ -269,6 +271,7 @@ export function SecondaryButton({
 }) {
   return (
     <button
+      type="button"
       onClick={onClick}
       onMouseEnter={(e) => {
         (e.currentTarget as HTMLButtonElement).style.background =
@@ -319,6 +322,7 @@ export function IconButton({
 }) {
   return (
     <button
+      type="button"
       onClick={onClick}
       data-tooltip={title}
       onMouseEnter={(e) => {

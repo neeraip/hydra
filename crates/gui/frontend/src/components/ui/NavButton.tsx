@@ -31,6 +31,7 @@ export function NavButton({
 }: NavButtonProps) {
   return (
     <button
+      type="button"
       className={`nav-btn${active ? " active" : ""}${className ? ` ${className}` : ""}`}
       aria-label={label}
       aria-current={active ? "page" : undefined}
@@ -42,9 +43,7 @@ export function NavButton({
 
       {/* Error badge takes priority over the pulse dot */}
       {badgeCount != null && badgeCount > 0 ? (
-        <span className="nav-badge" aria-label={`${badgeCount} failed`}>
-          {badgeCount}
-        </span>
+        <span className="nav-badge">{badgeCount}</span>
       ) : pulse ? (
         <span className="nav-pulse-dot" aria-hidden="true" />
       ) : null}

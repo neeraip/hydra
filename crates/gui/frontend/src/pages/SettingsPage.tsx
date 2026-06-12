@@ -85,6 +85,7 @@ function ThemeToggle() {
     <div style={{ display: "flex", gap: 6 }}>
       {(["dark", "light", "system"] as const).map((t) => (
         <button
+          type="button"
           key={t}
           onClick={() => setTheme(t)}
           style={{
@@ -241,6 +242,7 @@ export function SettingsPage() {
           description="Scan the projects folder for orphaned bundles and re-import them. Also flags projects whose folder is missing."
         >
           <button
+            type="button"
             disabled={isReconciling}
             onClick={async () => {
               setIsReconciling(true);

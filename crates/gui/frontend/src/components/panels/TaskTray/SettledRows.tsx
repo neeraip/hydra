@@ -67,6 +67,7 @@ export function QueuedRow({
         </div>
       </div>
       <button
+        type="button"
         onClick={onCancel}
         data-tooltip="Remove from queue"
         style={{
@@ -155,6 +156,7 @@ export function CompletedRow({
         {/* "View results" link — click without expanding */}
         {task.primaryAction === "View results" && (
           <button
+            type="button"
             onClick={(e) => {
               e.stopPropagation();
               onViewResults();
@@ -183,6 +185,7 @@ export function CompletedRow({
           </button>
         )}
         <button
+          type="button"
           onClick={(e) => {
             e.stopPropagation();
             onDismiss();
@@ -325,6 +328,7 @@ export function FailedRow({
           </div>
         </div>
         <button
+          type="button"
           onClick={onDismiss}
           data-tooltip="Dismiss"
           style={{

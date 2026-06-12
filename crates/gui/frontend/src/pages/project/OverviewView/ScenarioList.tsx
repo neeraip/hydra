@@ -52,6 +52,7 @@ export function ScenarioList({
       ))}
       {rows.length > 6 && (
         <button
+          type="button"
           onClick={onOpen}
           onMouseEnter={(e) => {
             (e.currentTarget as HTMLButtonElement).style.opacity = "0.75";

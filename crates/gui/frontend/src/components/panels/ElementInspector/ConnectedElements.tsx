@@ -14,6 +14,7 @@ export function ConnectedLink({
   const hasFlow = link.flow != null;
   return (
     <button
+      type="button"
       onClick={() => onLocate(link.id)}
       style={{
         display: "flex",
@@ -110,6 +111,7 @@ export function ConnectedNodeChip({
   const node = allNodes.find((n) => n.id === nodeId);
   return (
     <button
+      type="button"
       onClick={() => onLocate(nodeId)}
       style={{
         flex: 1,

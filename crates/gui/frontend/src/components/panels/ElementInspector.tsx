@@ -122,6 +122,7 @@ export function NodeInspector({
         }}
       >
         <button
+          type="button"
           onClick={onOpenInEditor}
           data-tooltip="Open in editor"
           style={btnIcon}
@@ -130,6 +131,7 @@ export function NodeInspector({
         </button>
         {onZoomTo && (
           <button
+            type="button"
             onClick={onZoomTo}
             data-tooltip="Zoom to feature"
             style={btnIcon}
@@ -139,6 +141,7 @@ export function NodeInspector({
         )}
         {onDelete && (
           <button
+            type="button"
             onClick={onDelete}
             data-tooltip="Delete element"
             style={{
@@ -233,6 +236,7 @@ export function LinkInspector({
         }}
       >
         <button
+          type="button"
           onClick={onOpenInEditor}
           data-tooltip="Open in editor"
           style={btnIcon}
@@ -241,6 +245,7 @@ export function LinkInspector({
         </button>
         {onZoomTo && (
           <button
+            type="button"
             onClick={onZoomTo}
             data-tooltip="Zoom to feature"
             style={btnIcon}
@@ -250,6 +255,7 @@ export function LinkInspector({
         )}
         {onDelete && (
           <button
+            type="button"
             onClick={onDelete}
             data-tooltip="Delete element"
             style={{

@@ -38,6 +38,7 @@ export function AnalysisView() {
           const isActive = tab.id === activeTab;
           return (
             <button
+              type="button"
               key={tab.id}
               onClick={() => setActiveTab(tab.id)}
               style={{

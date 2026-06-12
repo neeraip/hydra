@@ -21,6 +21,7 @@ export function RingIcon({
   const RING_C = 2 * Math.PI * RING_R;
   return (
     <svg width="14" height="14" viewBox="0 0 14 14" style={{ flexShrink: 0 }}>
+      <title>Task progress</title>
       <circle
         cx="7"
         cy="7"
@@ -192,6 +193,7 @@ export function RunningCard({
         </div>
         {onCancel && (
           <button
+            type="button"
             onClick={onCancel}
             data-tooltip="Cancel run"
             style={{
