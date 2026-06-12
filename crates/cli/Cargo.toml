@@ -4,7 +4,10 @@ version.workspace = true
 edition.workspace = true
 authors.workspace = true
 license.workspace = true
-publish = false
+publish = true
+repository.workspace = true
+homepage.workspace = true
+documentation.workspace = true
 description = "CLI for Hydra — reads network descriptions from files, writes results to files"
 
 [[bin]]
@@ -12,7 +15,7 @@ name = "hydra"
 path = "src/main.rs"
 
 [dependencies]
-hydra = { package = "hydra-sdk", path = "../sdk" }
+hydra = { package = "hydra-sdk", path = "../sdk", version = "0.1.0" }
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }

@@ -46,3 +46,12 @@ jobs:
         run: cargo publish -p hydra-sdk
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+
+      # Wait for crates.io to index hydra-sdk before publishing the CLI.
+      - name: Wait for hydra-sdk to index
+        run: sleep 30
+
+      - name: Publish hydra-cli
+        run: cargo publish -p hydra-cli
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
