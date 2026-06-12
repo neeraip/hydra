@@ -12,7 +12,7 @@ name = "hydra"
 path = "src/main.rs"
 
 [dependencies]
-hydra = { package = "hydra-sdk", path = "../hydra" }
+hydra = { package = "hydra-sdk", path = "../sdk" }
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }
