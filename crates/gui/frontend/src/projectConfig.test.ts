@@ -25,8 +25,8 @@ describe("PROJECT_VIEWS", () => {
     const ids = PROJECT_VIEWS.map((v) => v.id);
     expect(ids).toContain("overview");
     expect(ids).toContain("canvas");
-    expect(ids).not.toContain("analysis");
-    expect(ids).not.toContain("editor");
+    expect(ids).toContain("editor");
+    expect(ids).toContain("analysis");
   });
 
   it("each view spec has a non-empty id and label", () => {
