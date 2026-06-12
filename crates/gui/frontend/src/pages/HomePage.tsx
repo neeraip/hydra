@@ -299,14 +299,22 @@ export function HomePage() {
           <SidebarSection title="What's New" />
           {release.status === "loading" && (
             <div
-              style={{ fontSize: 13, color: "var(--text-tertiary)", lineHeight: 1.5 }}
+              style={{
+                fontSize: 13,
+                color: "var(--text-tertiary)",
+                lineHeight: 1.5,
+              }}
             >
               Loading…
             </div>
           )}
           {release.status === "unavailable" && (
             <div
-              style={{ fontSize: 13, color: "var(--text-tertiary)", lineHeight: 1.5 }}
+              style={{
+                fontSize: 13,
+                color: "var(--text-tertiary)",
+                lineHeight: 1.5,
+              }}
             >
               No release information available.
             </div>
@@ -370,7 +378,11 @@ export function HomePage() {
                 </ul>
               ) : (
                 <div
-                  style={{ fontSize: 13, color: "var(--text-tertiary)", lineHeight: 1.5 }}
+                  style={{
+                    fontSize: 13,
+                    color: "var(--text-tertiary)",
+                    lineHeight: 1.5,
+                  }}
                 >
                   See release notes for details.
                 </div>

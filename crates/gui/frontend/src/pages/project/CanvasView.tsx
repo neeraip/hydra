@@ -1108,12 +1108,7 @@ export function CanvasView() {
                     }}
                   >
                     {(
-                      [
-                        "streets",
-                        "light",
-                        "dark",
-                        "none",
-                      ] as BasemapStyle[]
+                      ["streets", "light", "dark", "none"] as BasemapStyle[]
                     ).map((b) => (
                       <button
                         key={b}
