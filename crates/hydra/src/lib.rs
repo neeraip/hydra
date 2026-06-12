@@ -7,7 +7,7 @@
 //! # Quick start
 //!
 //! ```no_run
-//! use hydra::{io, Simulation, NodeQuantity, LinkQuantity};
+//! use hydra_sdk::{io, Simulation, NodeQuantity, LinkQuantity};
 //!
 //! let bytes = std::fs::read("network.inp").unwrap();
 //! let network = io::parse(&bytes).unwrap();
