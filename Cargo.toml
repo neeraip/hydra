@@ -14,6 +14,9 @@ edition = "2021"
 rust-version = "1.95"
 authors = ["Matthew Downs <matthew@neer.ai>"]
 license = "AGPL-3.0-only"
+repository = "https://github.com/neeraip/hydra"
+homepage = "https://github.com/neeraip/hydra"
+documentation = "https://github.com/neeraip/hydra"
 
 
 # Optimise the core library even in dev/test builds so that benchmark parity
