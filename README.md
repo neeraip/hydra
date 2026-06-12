@@ -84,17 +84,17 @@ cargo tauri build  # production build
 
 ## Library Usage
 
-Add `hydra` to your `Cargo.toml`:
+Add `hydra-sdk` to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-hydra = { git = "https://github.com/neeraip/hydra" }
+hydra-sdk = { git = "https://github.com/neeraip/hydra" }
 ```
 
 ### Parse an INP file and run a full simulation
 
 ```rust
-use hydra::{io, Simulation, NodeQuantity, LinkQuantity};
+use hydra_sdk::{io, Simulation, NodeQuantity, LinkQuantity};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // 1. Read and parse an EPANET .inp file.
@@ -128,7 +128,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 ### Create a simulation from a parsed network directly
 
 ```rust
-use hydra::{io, Simulation};
+use hydra_sdk::{io, Simulation};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let bytes = std::fs::read("network.inp")?;
@@ -145,7 +145,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 ### Step through hydraulics manually
 
 ```rust
-use hydra::{io, Simulation};
+use hydra_sdk::{io, Simulation};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let bytes = std::fs::read("network.inp")?;
@@ -171,7 +171,7 @@ Hydra is a multi-crate Rust workspace:
 
 | Crate | Role |
 |---|---|
-| `hydra` | Umbrella facade — re-exports the complete user-facing API with all dependency versions pre-pinned |
+| `hydra-sdk` | Umbrella facade — re-exports the complete user-facing API with all dependency versions pre-pinned |
 | `hydra-common` | Thin shared infrastructure — engine-agnostic types (`Coordinate`, `Crs`) |
 | `hydra-engine` | Complete simulation engine — data model, parsers, unit conversion, GGA hydraulic solver, Lagrangian quality engine, session API, analytics |
 | `hydra-cli` | Command-line interface — resolves input, writes output files; no simulation logic |
