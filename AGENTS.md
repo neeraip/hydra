@@ -91,7 +91,21 @@ If the change also requires a session API change, follow the solver workflow fir
 
 ---
 
-## Response Style
+## Version Management
+
+**Never use `just bump` to reset or change the version unless the user explicitly asks to bump to a specific version AND create a tag.** `just bump` commits, creates a git tag, and that tag triggers the release workflow and crates.io publish — these are irreversible side effects.
+
+---
+
+## Git Discipline
+
+**Never run `git commit` or `git push` unless the user explicitly asks you to commit or push.** Making file changes is sufficient; the user will commit and push when ready.
+
+**Never create git tags** unless the user explicitly asks for a tag or release.
+
+---
+
+
 
 Be concise. Responses should communicate what was done and any decisions or blockers — nothing more. Avoid preamble, summaries of what you are about to do, and closing affirmations ("I've successfully…", "Let me know if…").
 
