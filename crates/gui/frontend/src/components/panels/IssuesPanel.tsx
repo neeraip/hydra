@@ -335,7 +335,7 @@ export function IssuesPanel() {
               }}
             >
               {tab === "active"
-                ? "All clear — no issues match the current filters."
+                ? "All clear. No issues match the current filters."
                 : "No dismissed issues."}
             </div>
           ) : (

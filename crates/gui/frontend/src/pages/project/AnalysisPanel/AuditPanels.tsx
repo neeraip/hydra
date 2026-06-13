@@ -160,7 +160,7 @@ function EnergyAudit({ periodCount }: { periodCount: number | null }) {
               lineHeight: 1.4,
             }}
           >
-            No pump energy data — network may have no pumps.
+            No pump energy data. The network may have no pumps.
           </div>
         )}
       </div>

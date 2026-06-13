@@ -418,7 +418,7 @@ export function CanvasView() {
         return {
           nodes: rawPositionNodes,
           error:
-            "Coordinates are outside WGS84 range — set the source CRS in the toolbar.",
+            "Coordinates are outside WGS84 range. Set the source CRS in the toolbar.",
         } as { nodes: typeof rawPositionNodes; error: string | null };
       }
       return { nodes: rawPositionNodes, error: null as string | null };

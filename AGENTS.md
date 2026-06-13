@@ -1,6 +1,6 @@
 # Hydra — Agent Instructions
 
-Hydra is a water distribution network simulator written in Rust. It is cleanly architected, parallel where mathematically valid, and free of the historical implementation constraints that shaped its predecessors. Correctness is defined by Hydra's own convergence criteria and physical conservation laws.
+Hydra is a water distribution network simulator written in Rust. It implements the Global Gradient Algorithm (GGA) hydraulic solver and a Lagrangian water quality engine, operating on the EPANET 2.3 data model. Correctness is defined by Hydra's own convergence criteria and physical conservation laws.
 
 ---
 

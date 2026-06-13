@@ -3,23 +3,8 @@ name: Cargo CI
 on:
   push:
     branches: [main]
-    paths:
-      - 'crates/**/*.rs'
-      - 'crates/**/Cargo.toml'
-      - 'crates/**/*.md'
-      - 'Cargo.toml'
-      - 'Cargo.lock'
-      - 'deny.toml'
-      - '.github/workflows/cargo-ci.yml'
   pull_request:
-    paths:
-      - 'crates/**/*.rs'
-      - 'crates/**/Cargo.toml'
-      - 'crates/**/*.md'
-      - 'Cargo.toml'
-      - 'Cargo.lock'
-      - 'deny.toml'
-      - '.github/workflows/cargo-ci.yml'
+  workflow_dispatch:
 
 concurrency:
   group: cargo-ci-${{ github.event.pull_request.number || github.ref }}

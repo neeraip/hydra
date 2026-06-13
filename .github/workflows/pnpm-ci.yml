@@ -3,13 +3,8 @@ name: PNPM CI
 on:
   push:
     branches: [main]
-    paths:
-      - 'crates/gui/frontend/**'
-      - '.github/workflows/pnpm-ci.yml'
   pull_request:
-    paths:
-      - 'crates/gui/frontend/**'
-      - '.github/workflows/pnpm-ci.yml'
+  workflow_dispatch:
 
 concurrency:
   group: pnpm-ci-${{ github.event.pull_request.number || github.ref }}

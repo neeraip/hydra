@@ -1178,7 +1178,7 @@ function SimulationProvider({ children }: { children: ReactNode }) {
                     status: "failed",
                     timeLabel: `Failed ${elapsed}`,
                     errorMessage:
-                      "Simulation returned no results — is a network loaded?",
+                      "Simulation returned no results. Is a network loaded?",
                   }
                 : t,
             ),

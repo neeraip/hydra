@@ -79,7 +79,7 @@ export function BaseRow({
         <div
           style={{ fontSize: 11, color: "var(--text-tertiary)", marginTop: 2 }}
         >
-          Canonical network — all scenarios branch from here
+          Canonical network. All scenarios branch from here.
         </div>
       </div>
 

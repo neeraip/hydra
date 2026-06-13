@@ -157,7 +157,7 @@ export function ScenarioStrip() {
       : undefined;
   const runBtnLabel = "Simulate";
   const runBtnTitle = activeIsStale
-    ? "Network edited since last run — rerun simulation"
+    ? "Network edited since last run. Rerun simulation."
     : "Configure & run simulation (⌘R)";
 
   return (

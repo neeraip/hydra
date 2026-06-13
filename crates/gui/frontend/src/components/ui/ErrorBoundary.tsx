@@ -54,7 +54,7 @@ function friendlyMessage(error: Error): { title: string; detail: string } {
       title: "A page module failed to load",
       detail:
         "Part of the interface could not be downloaded. " +
-        "This sometimes happens after an update — reloading the app should resolve it.",
+        "This sometimes happens after an update. Reloading the app should resolve it.",
     };
   }
 

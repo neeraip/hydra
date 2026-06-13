@@ -1,16 +1,14 @@
+<!-- Use the Copilot buttons above to auto-generate the title and summary. -->
+
 ## Summary
 
-<!-- One paragraph describing what this PR does and why. -->
+<!-- What changed and why. -->
 
-## Related
+## Spec
 
-<!-- Link to the relevant spec section, issue, or discussion. -->
-<!-- e.g. Closes #123 | Spec: crates/engine/src/hydraulics/spec.md §3.2 -->
+<!-- Which spec section(s) does this implement or update? -->
+<!-- e.g. crates/engine/src/hydraulics/spec.md §3.2 — or N/A for non-engine changes. -->
 
-## Checklist
+## Testing
 
-- [ ] Spec updated before implementation (solver/model/analysis changes)
-- [ ] `just fmt` passes
-- [ ] `just lint` passes
-- [ ] `just test` passes
-- [ ] New behaviour is covered by tests
+<!-- How was the change verified? New fixtures, unit tests, manual checks? -->

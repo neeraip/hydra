@@ -7,8 +7,8 @@ src = "src"
 
 [output.html]
 git-repository-url = "https://github.com/neeraip/hydra"
-git-repository-icon = "fa-github"
-edit-url-template = "https://github.com/neeraip/hydra/edit/main/docs/src/{path}"
+git-repository-icon = "fab-github"
+edit-url-template = "https://github.com/neeraip/hydra/edit/main/docs/{path}"
 site-url = "/hydra/"
 
 [output.html.fold]

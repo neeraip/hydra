@@ -1405,12 +1405,12 @@ export const STYLE_SPECS: { id: ExhibitStyle; label: string; desc: string }[] =
     {
       id: "dot",
       label: "Dot density",
-      desc: "Proportional dots — best for demand and counts.",
+      desc: "Proportional dots, best for demand and counts.",
     },
     {
       id: "heatmap",
       label: "Heatmap",
-      desc: "Smooth radial blend — best for coverage themes.",
+      desc: "Smooth radial blend, best for coverage themes.",
     },
   ];
 export const SCOPE_SPECS: { id: ExhibitScope; label: string; desc: string }[] =
@@ -1536,7 +1536,7 @@ export function defaultExhibit(theme: ExhibitTheme): ExhibitSpec {
   const t = THEMES[theme];
   return {
     id: `EX-${Date.now().toString(36)}`,
-    title: `${t.label} — Peak Hour`,
+    title: `${t.label}: Peak Hour`,
     caption: t.narrative,
     theme,
     style:

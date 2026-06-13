@@ -2,8 +2,6 @@
 
 Hydra is a water distribution network simulator written in Rust. It performs extended-period simulation (EPS) of hydraulic behaviour and water quality dynamics across pressurised pipe networks, computing the full time history of flows, pressures, and constituent concentrations at every node and link.
 
-Hydra is a complete evolution of water distribution network simulation — encompassing EPANET-class hydraulics and water quality, with SWMM-class and HEC-RAS-class engines to follow. It is cleanly architected, parallel where mathematically valid, and free of the historical implementation constraints that shaped its predecessors. Correctness is defined by Hydra's own convergence criteria and physical conservation laws — not by agreement with any prior tool's output.
-
 ## Features
 
 ### Hydraulics
@@ -34,7 +32,7 @@ Hydra is a complete evolution of water distribution network simulation — encom
 
 ## Relationship to EPANET
 
-Hydra's hydraulic and quality engines were derived by studying EPANET's mathematical foundations. Hydra is **not** an EPANET clone or compatibility layer — it is a distinct solver that models the same physics. Where the two diverge, Hydra's result is authoritative.
+Hydra's hydraulic and quality engines were derived by studying EPANET's mathematical foundations. Hydra is **not** an EPANET clone or compatibility layer; it is a distinct solver that models the same physics. Where the two diverge, Hydra's result is authoritative.
 
 For migration guidance, see [Migrating from EPANET](reference/migrating-from-epanet.md). For the preserved derivation work, see [EPANET Analysis](internals/epanet-analysis.md).
 
@@ -50,7 +48,5 @@ For migration guidance, see [Migrating from EPANET](reference/migrating-from-epa
 |---|---|
 | Hydraulics (WD) | ✅ Complete |
 | Water quality | ✅ Complete |
-| Stormwater (SWMM-class) | 🔲 Planned |
-| 1D river hydraulics (HEC-RAS-class) | 🔲 Planned |
 
 See [INP Format Support](reference/inp-format.md) for current EPANET input coverage.
