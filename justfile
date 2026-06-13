@@ -122,7 +122,15 @@ ci: deny fmt-check clippy doc test type-check-frontend lint-frontend build-front
 # Usage: just bump 1.2.3  |  just bump patch  |  just bump minor  |  just bump major
 bump version:
     #!/usr/bin/env python3
-    import pathlib, re, subprocess
+    import pathlib, re, subprocess, sys
+    result = subprocess.run(["git", "status", "--porcelain"], capture_output=True, text=True)
+    if result.stdout.strip():
+        print("error: working tree is dirty — commit or stash changes before bumping", file=sys.stderr)
+        sys.exit(1)
+    branch = subprocess.run(["git", "branch", "--show-current"], capture_output=True, text=True).stdout.strip()
+    if branch != "main":
+        print(f"error: must be on main branch to bump (currently on '{branch}')", file=sys.stderr)
+        sys.exit(1)
     arg = "{{version}}"
     cargo = pathlib.Path("Cargo.toml")
     m = re.search(r'^version = "(\d+)\.(\d+)\.(\d+)"', cargo.read_text(), re.MULTILINE)
@@ -151,7 +159,15 @@ bump version:
 # Usage: just bump-cli 1.2.3  |  just bump-cli patch  |  just bump-cli minor  |  just bump-cli major
 bump-cli version:
     #!/usr/bin/env python3
-    import pathlib, re, subprocess
+    import pathlib, re, subprocess, sys
+    result = subprocess.run(["git", "status", "--porcelain"], capture_output=True, text=True)
+    if result.stdout.strip():
+        print("error: working tree is dirty — commit or stash changes before bumping", file=sys.stderr)
+        sys.exit(1)
+    branch = subprocess.run(["git", "branch", "--show-current"], capture_output=True, text=True).stdout.strip()
+    if branch != "main":
+        print(f"error: must be on main branch to bump (currently on '{branch}')", file=sys.stderr)
+        sys.exit(1)
     arg = "{{version}}"
     cli = pathlib.Path("crates/cli/Cargo.toml")
     m = re.search(r'^version = "(\d+)\.(\d+)\.(\d+)"', cli.read_text(), re.MULTILINE)
@@ -175,7 +191,15 @@ bump-cli version:
 # Usage: just bump-gui 1.2.3  |  just bump-gui patch  |  just bump-gui minor  |  just bump-gui major
 bump-gui version:
     #!/usr/bin/env python3
-    import json, pathlib, re, subprocess
+    import json, pathlib, re, subprocess, sys
+    result = subprocess.run(["git", "status", "--porcelain"], capture_output=True, text=True)
+    if result.stdout.strip():
+        print("error: working tree is dirty — commit or stash changes before bumping", file=sys.stderr)
+        sys.exit(1)
+    branch = subprocess.run(["git", "branch", "--show-current"], capture_output=True, text=True).stdout.strip()
+    if branch != "main":
+        print(f"error: must be on main branch to bump (currently on '{branch}')", file=sys.stderr)
+        sys.exit(1)
     arg = "{{version}}"
     gui = pathlib.Path("crates/gui/Cargo.toml")
     m = re.search(r'^version = "(\d+)\.(\d+)\.(\d+)"', gui.read_text(), re.MULTILINE)
@@ -193,8 +217,13 @@ bump-gui version:
     d = json.loads(p.read_text())
     d["version"] = version
     p.write_text(json.dumps(d, indent=2) + "\n")
+    pkg = pathlib.Path("crates/gui/frontend/package.json")
+    d = json.loads(pkg.read_text())
+    d["version"] = version
+    pkg.write_text(json.dumps(d, indent=2) + "\n")
     subprocess.run(["cargo", "update", "--workspace"], check=True)
-    subprocess.run(["git", "add", "crates/gui/Cargo.toml", "crates/gui/tauri.conf.json", "Cargo.lock"], check=True)
+    subprocess.run(["git", "add", "crates/gui/Cargo.toml", "crates/gui/tauri.conf.json",
+                    "crates/gui/frontend/package.json", "Cargo.lock"], check=True)
     subprocess.run(["git", "commit", "-m", f"chore(gui): bump version to {version}"], check=True)
     subprocess.run(["git", "tag", "-a", f"gui-v{version}", "-m", f"gui-v{version}"], check=True)
     print(f"Tagged gui-v{version}. Push with: git push && git push --tags")
