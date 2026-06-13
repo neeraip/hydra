@@ -12,6 +12,5 @@ pre-release-commit-message = ""
 tag = false
 push = false
 
-# Do not run any pre/post-release hooks.
+# Do not run any pre-release hooks.
 pre-release-hook = []
-post-release-hook = []
