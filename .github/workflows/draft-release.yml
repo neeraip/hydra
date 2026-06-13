@@ -169,6 +169,6 @@ jobs:
         with:
           projectPath: crates/gui
           tauriScript: cargo tauri
-          args: --target ${{ matrix.target }} --locked
+          args: --target ${{ matrix.target }}
           tagName: ${{ github.ref_name }}
           releaseDraft: true
