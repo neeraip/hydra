@@ -21,20 +21,19 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
 
-    outputs:
-      release-id: ${{ steps.create.outputs.id }}
-
     steps:
-      - uses: actions/checkout@v6.0.3
+      - uses: actions/checkout@v4
         with:
           fetch-depth: 1
 
       - name: Create draft release
-        id: create
-        uses: softprops/action-gh-release@v3.0.0
-        with:
-          draft: true
-          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "${{ github.ref_name }}" \
+            --draft \
+            --generate-notes \
+            --title "${{ github.ref_name }}"
 
   # ── 2. Build the CLI binary for each target and attach it. ───────────────
   cli:
@@ -57,7 +56,7 @@ jobs:
           - { target: aarch64-apple-darwin,      runner: macos-latest,   cross: false }
 
     steps:
-      - uses: actions/checkout@v6.0.3
+      - uses: actions/checkout@v4
         with:
           fetch-depth: 1
 
@@ -106,12 +105,7 @@ jobs:
         shell: bash
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          gh api \
-            --method POST \
-            -H "Content-Type: application/octet-stream" \
-            "repos/${{ github.repository }}/releases/${{ needs.prepare-release.outputs.release-id }}/assets?name=${{ env.ARCHIVE }}" \
-            --input "${{ env.ARCHIVE }}"
+        run: gh release upload "${{ github.ref_name }}" "${{ env.ARCHIVE }}"
 
   # ── 3. Build the Tauri desktop app and attach platform installers. ────────
   gui:
@@ -130,7 +124,7 @@ jobs:
           - { platform: linux-x86_64,   runner: ubuntu-22.04,   target: x86_64-unknown-linux-gnu }
 
     steps:
-      - uses: actions/checkout@v6.0.3
+      - uses: actions/checkout@v4
         with:
           fetch-depth: 1
 
@@ -144,7 +138,7 @@ jobs:
             librsvg2-dev \
             patchelf
 
-      - uses: actions/setup-node@v6.4.0
+      - uses: actions/setup-node@v4
         with:
           node-version: 22
 
@@ -176,4 +170,5 @@ jobs:
           projectPath: crates/gui
           tauriScript: cargo tauri
           args: --target ${{ matrix.target }} --locked
-          releaseId: ${{ needs.prepare-release.outputs.release-id }}
+          tagName: ${{ github.ref_name }}
+          releaseDraft: true
