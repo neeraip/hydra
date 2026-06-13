@@ -103,9 +103,15 @@ jobs:
           "ARCHIVE=${archive}" | Out-File -FilePath $env:GITHUB_ENV -Append
 
       - name: Upload to release
+        shell: bash
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release upload "${{ github.ref_name }}" "${{ env.ARCHIVE }}" --clobber
+        run: |
+          gh api \
+            --method POST \
+            -H "Content-Type: application/octet-stream" \
+            "repos/${{ github.repository }}/releases/${{ needs.prepare-release.outputs.release-id }}/assets?name=${{ env.ARCHIVE }}" \
+            --input "${{ env.ARCHIVE }}"
 
   # ── 3. Build the Tauri desktop app and attach platform installers. ────────
   gui:
@@ -160,7 +166,7 @@ jobs:
       - uses: cargo-bins/cargo-binstall@v1.20.0
 
       - name: Install Tauri CLI
-        run: cargo binstall tauri-cli --version "^2" --no-confirm
+        run: cargo binstall tauri-cli --version "=2.11.2" --no-confirm
 
       - name: Build and upload installer
         uses: tauri-apps/tauri-action@v0.5.20
@@ -169,5 +175,5 @@ jobs:
         with:
           projectPath: crates/gui
           tauriScript: cargo tauri
-          args: --target ${{ matrix.target }}
+          args: --target ${{ matrix.target }} --locked
           releaseId: ${{ needs.prepare-release.outputs.release-id }}
