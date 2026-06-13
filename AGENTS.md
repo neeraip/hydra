@@ -101,6 +101,15 @@ CLI (`hydra-cli`) and GUI (`hydra-gui`) are versioned **independently** from the
 | `just bump-cli [patch\|minor\|major\|x.y.z]` | `crates/cli/Cargo.toml` only | `cli-v{version}` | CLI binary release + crates.io publish of hydra-cli |
 | `just bump-gui [patch\|minor\|major\|x.y.z]` | `crates/gui/Cargo.toml` + `tauri.conf.json` | `gui-v{version}` | GUI installer release |
 
+**When bumping multiple tracks at once, always run `just bump` first.** It updates the `hydra-sdk` dep pin inside `crates/cli/Cargo.toml` — if you run `just bump-cli` before `just bump`, the cli bump commit will reference the old SDK version and `just bump` will add a second fixup commit on top. Correct order:
+
+```sh
+just bump minor        # library stack first
+just bump-cli minor    # cli second (picks up updated sdk pin)
+just bump-gui minor    # gui last (independent)
+git push && git push --tags
+```
+
 **Never use these recipes just to set a version without intending a release.** They commit and tag, which triggers CI/CD. To reset or change a version without releasing, edit the relevant `Cargo.toml` and `tauri.conf.json` files directly, run `cargo update --workspace`, and commit — no tag.
 
 ---

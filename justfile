@@ -119,6 +119,7 @@ ci: deny fmt-check clippy doc test type-check-frontend lint-frontend build-front
 # ── Release ───────────────────────────────────────────────────────────────────
 
 # Bump the workspace library version (hydra-common, hydra-engine, hydra-sdk) and tag v{version}.
+# When bumping multiple tracks, always run this first — it updates the hydra-sdk dep pin in hydra-cli.
 # Usage: just bump 1.2.3  |  just bump patch  |  just bump minor  |  just bump major
 bump version:
     #!/usr/bin/env python3
