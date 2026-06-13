@@ -2,7 +2,7 @@
 
 Hydra is a water distribution network simulator written in Rust. It performs extended-period simulation (EPS) of hydraulic behaviour and water quality dynamics across pressurised pipe networks, computing the full time history of flows, pressures, and constituent concentrations at every node and link.
 
-Hydra is a ground-up implementation, encompassing EPANET-class hydraulics and water quality, with SWMM-class and HEC-RAS-class engines to follow. It is free of the historical implementation constraints that shaped its predecessors. Correctness is defined by Hydra's own convergence criteria and physical conservation laws, not by agreement with any prior tool's output.
+Hydra is a ground-up implementation focused on water distribution network simulation. It is free of the historical implementation constraints that shaped its predecessors. Correctness is defined by Hydra's own convergence criteria and physical conservation laws, not by agreement with any prior tool's output.
 
 ## Features
 
@@ -50,7 +50,5 @@ For migration guidance, see [Migrating from EPANET](reference/migrating-from-epa
 |---|---|
 | Hydraulics (WD) | ✅ Complete |
 | Water quality | ✅ Complete |
-| Stormwater (SWMM-class) | 🔲 Planned |
-| 1D river hydraulics (HEC-RAS-class) | 🔲 Planned |
 
 See [INP Format Support](reference/inp-format.md) for current EPANET input coverage.
