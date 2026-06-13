@@ -2,7 +2,6 @@
   "recommendations": [
     // Rust
     "rust-lang.rust-analyzer",
-    "vadimcn.vscode-lldb",
 
     // Tauri
     "tauri-apps.tauri-vscode",
@@ -12,6 +11,7 @@
 
     // General
     "EditorConfig.EditorConfig",
-    "github.vscode-github-actions"
+    "github.vscode-github-actions",
+    "skellock.just"
   ]
 }
