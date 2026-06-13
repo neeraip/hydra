@@ -1,8 +1,10 @@
 name: Publish Crates
 
 on:
-  release:
-    types: [published]
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+      - 'cli-v[0-9]+.[0-9]+.[0-9]+'
 
 permissions:
   contents: read
@@ -18,7 +20,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6.0.3
+        uses: actions/checkout@v4
         with:
           fetch-depth: 1
 
@@ -33,7 +35,14 @@ jobs:
       - name: Install cargo-release
         run: cargo binstall cargo-release --no-confirm
 
-      - name: Publish workspace crates
-        run: cargo release publish --workspace --execute --no-confirm
+      - name: Publish library crates (v* tag)
+        if: startsWith(github.ref_name, 'v')
+        run: cargo release publish -p hydra-common -p hydra-engine -p hydra-sdk --execute --no-confirm
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+
+      - name: Publish CLI crate (cli-v* tag)
+        if: startsWith(github.ref_name, 'cli-v')
+        run: cargo release publish -p hydra-cli --execute --no-confirm
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}

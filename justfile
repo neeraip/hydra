@@ -118,11 +118,11 @@ ci: deny fmt-check clippy doc test type-check-frontend lint-frontend build-front
 
 # ── Release ───────────────────────────────────────────────────────────────────
 
-# Bump the workspace version and sync it into tauri.conf.json, then commit and tag.
+# Bump the workspace library version (hydra-common, hydra-engine, hydra-sdk) and tag v{version}.
 # Usage: just bump 1.2.3  |  just bump patch  |  just bump minor  |  just bump major
 bump version:
     #!/usr/bin/env python3
-    import json, pathlib, re, subprocess, sys
+    import pathlib, re, subprocess
     arg = "{{version}}"
     cargo = pathlib.Path("Cargo.toml")
     m = re.search(r'^version = "(\d+)\.(\d+)\.(\d+)"', cargo.read_text(), re.MULTILINE)
@@ -135,25 +135,69 @@ bump version:
         version = f"{cur_major + 1}.0.0"
     else:
         version = arg
-    # Bump Cargo.toml workspace version
+    # Bump workspace version
     cargo.write_text(re.sub(r'^version = ".*"', f'version = "{version}"', cargo.read_text(), count=1, flags=re.MULTILINE))
-    # Sync cross-crate version pins
+    # Sync the hydra-sdk dep pin in hydra-cli, and the hydra-engine dep pin in hydra-sdk
     for pin_path in ["crates/cli/Cargo.toml", "crates/sdk/Cargo.toml"]:
         p = pathlib.Path(pin_path)
         p.write_text(re.sub(r'version = "\d+\.\d+\.\d+"', f'version = "{version}"', p.read_text()))
-    # Sync tauri.conf.json
+    subprocess.run(["cargo", "update", "--workspace"], check=True)
+    subprocess.run(["git", "add", "Cargo.toml", "Cargo.lock", "crates/cli/Cargo.toml", "crates/sdk/Cargo.toml"], check=True)
+    subprocess.run(["git", "commit", "-m", f"chore: bump library version to {version}"], check=True)
+    subprocess.run(["git", "tag", "-a", f"v{version}", "-m", f"v{version}"], check=True)
+    print(f"Tagged v{version}. Push with: git push && git push --tags")
+
+# Bump the CLI application version independently and tag cli-v{version}.
+# Usage: just bump-cli 1.2.3  |  just bump-cli patch  |  just bump-cli minor  |  just bump-cli major
+bump-cli version:
+    #!/usr/bin/env python3
+    import pathlib, re, subprocess
+    arg = "{{version}}"
+    cli = pathlib.Path("crates/cli/Cargo.toml")
+    m = re.search(r'^version = "(\d+)\.(\d+)\.(\d+)"', cli.read_text(), re.MULTILINE)
+    cur_major, cur_minor, cur_patch = int(m.group(1)), int(m.group(2)), int(m.group(3))
+    if arg == "patch":
+        version = f"{cur_major}.{cur_minor}.{cur_patch + 1}"
+    elif arg == "minor":
+        version = f"{cur_major}.{cur_minor + 1}.0"
+    elif arg == "major":
+        version = f"{cur_major + 1}.0.0"
+    else:
+        version = arg
+    cli.write_text(re.sub(r'^version = ".*"', f'version = "{version}"', cli.read_text(), count=1, flags=re.MULTILINE))
+    subprocess.run(["cargo", "update", "--workspace"], check=True)
+    subprocess.run(["git", "add", "crates/cli/Cargo.toml", "Cargo.lock"], check=True)
+    subprocess.run(["git", "commit", "-m", f"chore(cli): bump version to {version}"], check=True)
+    subprocess.run(["git", "tag", "-a", f"cli-v{version}", "-m", f"cli-v{version}"], check=True)
+    print(f"Tagged cli-v{version}. Push with: git push && git push --tags")
+
+# Bump the GUI application version independently and tag gui-v{version}.
+# Usage: just bump-gui 1.2.3  |  just bump-gui patch  |  just bump-gui minor  |  just bump-gui major
+bump-gui version:
+    #!/usr/bin/env python3
+    import json, pathlib, re, subprocess
+    arg = "{{version}}"
+    gui = pathlib.Path("crates/gui/Cargo.toml")
+    m = re.search(r'^version = "(\d+)\.(\d+)\.(\d+)"', gui.read_text(), re.MULTILINE)
+    cur_major, cur_minor, cur_patch = int(m.group(1)), int(m.group(2)), int(m.group(3))
+    if arg == "patch":
+        version = f"{cur_major}.{cur_minor}.{cur_patch + 1}"
+    elif arg == "minor":
+        version = f"{cur_major}.{cur_minor + 1}.0"
+    elif arg == "major":
+        version = f"{cur_major + 1}.0.0"
+    else:
+        version = arg
+    gui.write_text(re.sub(r'^version = ".*"', f'version = "{version}"', gui.read_text(), count=1, flags=re.MULTILINE))
     p = pathlib.Path("crates/gui/tauri.conf.json")
     d = json.loads(p.read_text())
     d["version"] = version
     p.write_text(json.dumps(d, indent=2) + "\n")
-    # Regenerate Cargo.lock with the new workspace version
     subprocess.run(["cargo", "update", "--workspace"], check=True)
-    # Commit and tag
-    subprocess.run(["git", "add", "Cargo.toml", "Cargo.lock", "crates/gui/tauri.conf.json",
-                    "crates/cli/Cargo.toml", "crates/sdk/Cargo.toml"], check=True)
-    subprocess.run(["git", "commit", "-m", f"chore: bump version to {version}"], check=True)
-    subprocess.run(["git", "tag", "-a", f"v{version}", "-m", f"v{version}"], check=True)
-    print(f"Tagged v{version}. Push with: git push && git push --tags")
+    subprocess.run(["git", "add", "crates/gui/Cargo.toml", "crates/gui/tauri.conf.json", "Cargo.lock"], check=True)
+    subprocess.run(["git", "commit", "-m", f"chore(gui): bump version to {version}"], check=True)
+    subprocess.run(["git", "tag", "-a", f"gui-v{version}", "-m", f"gui-v{version}"], check=True)
+    print(f"Tagged gui-v{version}. Push with: git push && git push --tags")
 
 # ── Clean ─────────────────────────────────────────────────────────────────────
 
