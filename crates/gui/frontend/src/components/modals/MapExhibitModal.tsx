@@ -155,7 +155,7 @@ export function MapExhibitModal({
                   onClick={() =>
                     patch({
                       theme: id,
-                      title: `${t.label} — ${captureScope(spec.scope)}`,
+                      title: `${t.label}: ${captureScope(spec.scope)}`,
                     })
                   }
                 >
@@ -326,7 +326,7 @@ export function MapExhibitModal({
                 onChange={(e) => patch({ sectionId: e.target.value || null })}
                 style={inputStyle}
               >
-                <option value="">— end of report —</option>
+                <option value="">End of report</option>
                 {sections.map((s) => (
                   <option key={s.id} value={s.id}>
                     {s.label}

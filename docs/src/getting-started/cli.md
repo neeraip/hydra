@@ -1,7 +1,7 @@
 # CLI
 
 ```sh
-# Run a simulation — writes report to stdout, no binary output
+# Run a simulation (writes report to stdout, no binary output)
 cargo run --bin hydra -- network.inp
 
 # With explicit output paths (EPANET-style positional convention)

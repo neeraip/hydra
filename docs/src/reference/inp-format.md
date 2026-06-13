@@ -37,7 +37,7 @@ All data in these sections is parsed and applied.
 | `[COORDINATES]` | Node XY positions (visual metadata, no unit conversion) |
 | `[VERTICES]` | Link intermediate vertices (visual metadata) |
 | `[TAGS]` | Node and link string tags (metadata) |
-| `[LEAKAGE]` | Per-pipe FAVAD leakage coefficients — added in OWA-EPANET 2.3; not present in legacy EPANET 2.2 |
+| `[LEAKAGE]` | Per-pipe FAVAD leakage coefficients, added in OWA-EPANET 2.3; not present in legacy EPANET 2.2 |
 
 ### Silently Ignored
 
@@ -45,9 +45,9 @@ These sections are recognised and accepted without error but produce no simulati
 
 | Section | Notes |
 |---|---|
-| `[ROUGHNESS]` | Legacy EPANET 1.x section — superseded by roughness column in `[PIPES]` |
-| `[LABELS]` | Map label annotations — visual only |
-| `[BACKDROP]` | Background image metadata — visual only |
+| `[ROUGHNESS]` | Legacy EPANET 1.x section, superseded by roughness column in `[PIPES]` |
+| `[LABELS]` | Map label annotations (visual only) |
+| `[BACKDROP]` | Background image metadata (visual only) |
 
 Unknown sections (not listed in either table) are also silently ignored for forward compatibility.
 
@@ -90,7 +90,7 @@ All standard EPANET 2.3 `[OPTIONS]` keywords are supported. Unknown keywords are
 
 ## Pump Curves
 
-A single-point pump curve `(Q₁, H₁)` is automatically expanded to a three-point power-function curve `(0, 1.33334·H₁), (Q₁, H₁), (2·Q₁, 0)` — matching EPANET's internal behaviour.
+A single-point pump curve `(Q₁, H₁)` is automatically expanded to a three-point power-function curve `(0, 1.33334·H₁), (Q₁, H₁), (2·Q₁, 0)`, matching EPANET's internal behaviour.
 
 ---
 
@@ -105,7 +105,7 @@ P1        0.0002   0.5
 P2        0.00015  0.6
 ```
 
-Where `C1` is the fixed-area discharge coefficient and `C2` is the variable-area discharge coefficient. Standard EPANET files (without a `[LEAKAGE]` section) parse cleanly — leakage is simply zero for all pipes.
+Where `C1` is the fixed-area discharge coefficient and `C2` is the variable-area discharge coefficient. Standard EPANET files (without a `[LEAKAGE]` section) parse cleanly; leakage is simply zero for all pipes.
 
 ---
 
@@ -115,4 +115,4 @@ Where `C1` is the fixed-area discharge coefficient and `C2` is the variable-area
 |---|---|---|
 | Quality timestep minimum | Can become 0 s (integer division truncation) when hydraulic step is very small | Enforced minimum of 1 s to prevent zero-length sub-steps |
 | `UNBALANCED STOP` | Halts the EPS on the first step that does not converge within `TRIALS` iterations | Halts with a warning and returns a partial result; simulation terminates at that step |
-| GGA numerical path | Specific convergence trajectory tied to EPANET's C implementation | Independent GGA path — per-step hydraulic solutions are close but not byte-identical; differences can cascade into larger deviations over long quality runs or in networks with many demand periods |
+| GGA numerical path | Specific convergence trajectory tied to EPANET's C implementation | Independent GGA path: per-step hydraulic solutions are close but not byte-identical; differences can cascade into larger deviations over long quality runs or in networks with many demand periods |

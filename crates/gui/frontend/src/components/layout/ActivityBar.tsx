@@ -173,7 +173,7 @@ export function ActivityBar() {
       {/* ── Task monitor ───────────────────────────────────────────────────── */}
       <NavButton
         icon={<BoltIcon {...ICON} />}
-        label={`Task Monitor${hasActivity ? " — tasks in progress" : ""}`}
+        label={`Task Monitor${hasActivity ? " (tasks in progress)" : ""}`}
         active={taskTrayOpen}
         badgeCount={failedCount > 0 ? failedCount : undefined}
         pulse={runningCount > 0 && failedCount === 0}

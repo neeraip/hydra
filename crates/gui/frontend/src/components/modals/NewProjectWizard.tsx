@@ -238,7 +238,7 @@ export function NewProjectWizard({
               <span style={{ flexShrink: 0, fontSize: 14 }}>ℹ</span>
               <span>
                 Hydra uses its own hydraulic solver. Results for the same
-                network may differ slightly from EPANET — this is expected.
+                network may differ slightly from EPANET (this is expected).
                 Hydra defines correctness by its own convergence criteria and
                 physical conservation laws, independent of EPANET's output.
               </span>

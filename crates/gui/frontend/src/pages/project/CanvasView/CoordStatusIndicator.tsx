@@ -139,7 +139,7 @@ export function CoordStatusIndicator({
                 >
                   [COORDINATES]
                 </code>{" "}
-                entry. Map mode will be empty — switch to{" "}
+                entry. Map mode will be empty. Switch to{" "}
                 <strong>Schematic</strong> to see the topology.
               </>
             ) : (

@@ -86,7 +86,7 @@ export function SimulationSettings({ projectId }: { projectId: string }) {
     // null = no base INP yet, draft project. (loading state also lands here briefly.)
     return (
       <Empty>
-        No base model yet — import or create a model to configure simulation
+        No base model yet. Import or create a model to configure simulation
         settings.
       </Empty>
     );
@@ -114,7 +114,7 @@ export function SimulationSettings({ projectId }: { projectId: string }) {
       markEdited(null);
       for (const s of scenariosRef.current) markEdited(s.id);
       showToast(
-        "Simulation settings saved — existing results marked stale",
+        "Simulation settings saved. Existing results marked stale.",
         "success",
       );
     } else {

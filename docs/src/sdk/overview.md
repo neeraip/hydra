@@ -7,4 +7,4 @@
 hydra-sdk = { git = "https://github.com/neeraip/hydra" }
 ```
 
-It re-exports the primary types and modules needed to parse EPANET inputs, construct simulations, run hydraulics and quality, and query results — including `Simulation`, `io`, `NodeQuantity`, and `LinkQuantity`.
+It re-exports the primary types and modules needed to parse EPANET inputs, construct simulations, run hydraulics and quality, and query results, including `Simulation`, `io`, `NodeQuantity`, and `LinkQuantity`.

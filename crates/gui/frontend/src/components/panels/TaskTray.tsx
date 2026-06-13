@@ -330,7 +330,7 @@ export function TaskTray() {
                       borderBottom: "1px solid var(--border)",
                     }}
                   >
-                    Queued — {queuedTasks.length}
+                    Queued: {queuedTasks.length}
                   </div>
                 )}
                 {queuedTasks.map((task, i) => (
@@ -358,7 +358,7 @@ export function TaskTray() {
                   borderBottom: "1px solid var(--border)",
                 }}
               >
-                Finished — {settledTasks.length}
+                Finished: {settledTasks.length}
               </div>
             )}
             {settledTasks.map((task) =>

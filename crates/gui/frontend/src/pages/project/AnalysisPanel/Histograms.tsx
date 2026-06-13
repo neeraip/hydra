@@ -184,7 +184,7 @@ export function VelocityHistogram({
         style={{ fontSize: 12, color: "var(--text-tertiary)", marginTop: 10 }}
       >
         {highVelocityCount > 0
-          ? `${highVelocityCount} pipe${highVelocityCount > 1 ? "s" : ""} exceed 1.0 m/s — check for head loss`
+          ? `${highVelocityCount} pipe${highVelocityCount > 1 ? "s" : ""} exceed 1.0 m/s; check for head loss`
           : "All pipes within acceptable velocity range"}
       </div>
     </div>

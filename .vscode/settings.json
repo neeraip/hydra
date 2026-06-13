@@ -1,3 +1,26 @@
 {
-    "cmake.sourceDirectory": "${workspaceFolder}/ref/EPANET"
+    "editor.rulers": [100],
+    "editor.formatOnSave": true,
+    "editor.trimAutoWhitespace": true,
+    "[rust]": {
+        "editor.defaultFormatter": "rust-lang.rust-analyzer"
+    },
+    "[typescript]": {
+        "editor.defaultFormatter": "esbenp.prettier-vscode"
+    },
+    "[typescriptreact]": {
+        "editor.defaultFormatter": "esbenp.prettier-vscode"
+    },
+    "[json]": {
+        "editor.defaultFormatter": "esbenp.prettier-vscode"
+    },
+    "[toml]": {
+        "editor.defaultFormatter": "tamasfe.even-better-toml"
+    },
+    "rust-analyzer.checkOnSave": true,
+    "rust-analyzer.cargo.features": "all",
+    "files.exclude": {
+        "**/target": true,
+        "**/docs/book": true
+    }
 }

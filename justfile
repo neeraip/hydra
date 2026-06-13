@@ -2,11 +2,7 @@
 default:
     @just --list
 
-# ── Check & Test ──────────────────────────────────────────────────────────────
-
-# Run cargo check (fast compile verification)
-check:
-    cargo check
+# ── Test ──────────────────────────────────────────────────────────────────────
 
 # Run all tests
 test:
@@ -32,6 +28,14 @@ test-cli:
 test-gui:
     cargo test -p hydra-gui
 
+# Run frontend tests only
+test-frontend:
+    cd crates/gui/frontend && pnpm test
+
+# Run criterion benchmarks
+bench:
+    cargo bench -p hydra-engine
+
 # ── Lint & Format ─────────────────────────────────────────────────────────────
 
 # Format all Rust source files
@@ -49,20 +53,6 @@ clippy:
 # Run all Rust lints (format check + clippy)
 lint: fmt-check clippy
 
-# Check dependency licenses and bans
-deny:
-    cargo deny check
-
-# Audit dependencies for known vulnerabilities
-audit:
-    cargo audit
-
-# Check documentation compiles without warnings
-doc:
-    RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
-
-# ── Frontend ──────────────────────────────────────────────────────────────────
-
 # Format frontend source files
 fmt-frontend:
     cd crates/gui/frontend && pnpm format
@@ -75,24 +65,29 @@ lint-frontend:
 type-check-frontend:
     cd crates/gui/frontend && pnpm exec tsc --noEmit
 
-# Build frontend
-build-frontend:
-    cd crates/gui/frontend && pnpm build
+# ── Security ──────────────────────────────────────────────────────────────────
 
-# Run frontend tests
-test-frontend:
-    cd crates/gui/frontend && pnpm test
+# Check dependency licenses and bans
+deny:
+    cargo deny check
 
-# ── CI ────────────────────────────────────────────────────────────────────────
-
-# Run all checks that CI runs (mirrors cargo-ci + pnpm-ci workflows)
-ci: deny fmt-check clippy doc test type-check-frontend lint-frontend build-frontend test-frontend
+# Audit dependencies for known vulnerabilities
+audit:
+    cargo audit
 
 # ── Build ─────────────────────────────────────────────────────────────────────
+
+# Run cargo check (fast compile verification)
+check:
+    cargo check
 
 # Build debug binaries
 build:
     cargo build
+
+# Build frontend
+build-frontend:
+    cd crates/gui/frontend && pnpm build
 
 # Build optimised release binaries (fat LTO)
 release:
@@ -102,15 +97,24 @@ release:
 release-native:
     RUSTFLAGS="-C target-cpu=native" cargo build --release
 
-# ── Benchmarks ────────────────────────────────────────────────────────────────
+# ── Docs ──────────────────────────────────────────────────────────────────────
 
-# Benchmark Hydra vs EPANET on synthetic networks
-bench: release
-    python3 ref/benchmarks/synthetic.py
+# Check Rust API documentation compiles without warnings
+doc:
+    RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
 
-# Benchmark with CPU-native release build
-bench-native: release-native
-    python3 ref/benchmarks/synthetic.py
+# Build the mdbook docs
+docs-build:
+    mdbook build docs
+
+# Serve the mdbook docs locally with live reload
+docs:
+    mdbook serve docs --open
+
+# ── CI ────────────────────────────────────────────────────────────────────────
+
+# Run all checks that CI runs (mirrors cargo-ci + pnpm-ci workflows)
+ci: deny fmt-check clippy doc test type-check-frontend lint-frontend build-frontend test-frontend
 
 # ── Release ───────────────────────────────────────────────────────────────────
 
@@ -138,7 +142,7 @@ bump version:
 
 # ── Clean ─────────────────────────────────────────────────────────────────────
 
-# Remove build artifacts (target/)
+# Remove all build artifacts
 clean:
     cargo clean
-
+    rm -rf crates/gui/frontend/dist docs/book

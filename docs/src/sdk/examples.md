@@ -43,7 +43,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let bytes = std::fs::read("network.inp")?;
     let network = io::parse(&bytes)?;
 
-    // Convenience constructor — shorthand for create() + load().
+    // Convenience constructor: shorthand for create() + load().
     let mut sim = Simulation::from_network(network)?;
     sim.run()?;
 

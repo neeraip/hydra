@@ -18,23 +18,23 @@ See [INP Format Support](inp-format.md) for the full section-by-section referenc
 |---|---|
 | `.out` binary | EPANET-compatible. Post-processing tools that read EPANET binary output files will work with Hydra's output. |
 | `.rpt` text report | EPANET-style report. Field names and layout follow EPANET conventions. |
-| `.json` report | Hydra extension — not an EPANET format. |
+| `.json` report | Hydra extension (not an EPANET format). |
 
 ---
 
 ## Expect Small Numerical Differences
 
-Hydra and EPANET solve the same physics using the same Global Gradient Algorithm, but they follow independent numerical paths. On most networks you will see differences of less than 0.1% in head and flow values. These are not bugs — they are the expected consequence of floating-point arithmetic being non-associative.
+Hydra and EPANET solve the same physics using the same Global Gradient Algorithm, but they follow independent numerical paths. On most networks you will see differences of less than 0.1% in head and flow values. These are not bugs; they are the expected consequence of floating-point arithmetic being non-associative.
 
 The practical impact depends on network topology:
 
 | Network type | Typical difference |
 |---|---|
-| Simple, stable (few controls, no quality) | < 0.01% — effectively zero |
+| Simple, stable (few controls, no quality) | < 0.01% (effectively zero) |
 | Medium complexity (KY8/KY9/KY10 scale) | 3–4 individual node/link values at t=0 |
 | Large with quality simulation (D-Town scale) | Flow differences at t=0 can cascade into quality concentration drift of 1–2 orders of magnitude over 100+ periods |
 
-Quality results are more sensitive than hydraulic results because transport errors accumulate over time. If your workflow depends on sub-percent quality agreement with EPANET output, treat both results as independent estimates of the same physical system — neither is more "correct" than the other in an absolute sense.
+Quality results are more sensitive than hydraulic results because transport errors accumulate over time. If your workflow depends on sub-percent quality agreement with EPANET output, treat both results as independent estimates of the same physical system; neither is more "correct" than the other in an absolute sense.
 
 **Hydra's result is authoritative.** If you observe a difference and suspect a Hydra bug, open a [GitHub issue](https://github.com/neeraip/hydra/issues) with a minimal reproducer.
 
@@ -62,7 +62,7 @@ These features were added in OWA-EPANET 2.3 and are fully supported by Hydra. Th
 
 ### FAVAD Leakage
 
-Per-pipe background leakage is modelled using the FAVAD (Fixed and Variable Area Discharge) model, configured via a `[LEAKAGE]` section in the `.inp` file. Standard EPANET 2.2 files (without `[LEAKAGE]`) parse cleanly — leakage is simply zero for all pipes.
+Per-pipe background leakage is modelled using the FAVAD (Fixed and Variable Area Discharge) model, configured via a `[LEAKAGE]` section in the `.inp` file. Standard EPANET 2.2 files (without `[LEAKAGE]`) parse cleanly; leakage is simply zero for all pipes.
 
 ### Pressure-Dependent Analysis
 
@@ -85,6 +85,6 @@ If you are migrating code that uses the EPANET Toolkit C API, the equivalent Hyd
 | `EN_getnodevalue(EN_HEAD)` | `sim.get_node_result(id, NodeQuantity::Head, t)` |
 | `EN_getnodevalue(EN_PRESSURE)` | `sim.get_node_result(id, NodeQuantity::GaugePressure, t)` |
 | `EN_getlinkvalue(EN_FLOW)` | `sim.get_link_result(id, LinkQuantity::Flow, t)` |
-| `EN_deleteproject` | Drop the `Simulation` — handled by Rust's ownership system |
+| `EN_deleteproject` | Drop the `Simulation`, handled by Rust's ownership system |
 
 See the [README](https://github.com/neeraip/hydra#library-usage) for complete library usage examples.
