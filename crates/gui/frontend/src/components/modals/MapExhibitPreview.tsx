@@ -1,7 +1,13 @@
 /* Renders an exhibit spec to an SVG. Pure function of (spec, accent).
    Used both inside the modal preview pane and inline in the report. */
 
-import { type ExhibitSpec, THEMES, useLinks, useNodes } from "../../hooks";
+import {
+  type ExhibitSpec,
+  type Link,
+  THEMES,
+  useLinks,
+  useNodes,
+} from "../../hooks";
 
 interface Props {
   spec: ExhibitSpec;
@@ -71,7 +77,7 @@ export function MapExhibitPreview({
       toId: "",
       velocity: 1,
       diameter: 100,
-    } as any) !== null;
+    } satisfies Link) !== null;
 
   return (
     <svg
@@ -331,7 +337,10 @@ export function MapExhibitPreview({
             {theme.label} ({theme.unit})
           </text>
           {theme.stops.map((s, i) => (
-            <g key={i} transform={`translate(0 ${i * 14 + 14})`}>
+            <g
+              key={`${s.v}-${s.color}`}
+              transform={`translate(0 ${i * 14 + 14})`}
+            >
               <rect
                 x={0}
                 y={-7}

@@ -162,22 +162,25 @@ export function ElementsEditor({
 
   const q = searchQuery.toLowerCase();
 
-  function filterSort<T extends Record<string, unknown>>(rows: T[]): T[] {
-    const filtered = q
-      ? rows.filter((r) =>
-          Object.values(r).some((v) => String(v).toLowerCase().includes(q)),
-        )
-      : rows;
-    return [...filtered].sort((a, b) => {
-      const av = a[sortField];
-      const bv = b[sortField];
-      if (typeof av === "number" && typeof bv === "number")
-        return sortAsc ? av - bv : bv - av;
-      return sortAsc
-        ? String(av).localeCompare(String(bv))
-        : String(bv).localeCompare(String(av));
-    });
-  }
+  const filterSort = useCallback(
+    <T extends Record<string, unknown>>(rows: T[]): T[] => {
+      const filtered = q
+        ? rows.filter((r) =>
+            Object.values(r).some((v) => String(v).toLowerCase().includes(q)),
+          )
+        : rows;
+      return [...filtered].sort((a, b) => {
+        const av = a[sortField];
+        const bv = b[sortField];
+        if (typeof av === "number" && typeof bv === "number")
+          return sortAsc ? av - bv : bv - av;
+        return sortAsc
+          ? String(av).localeCompare(String(bv))
+          : String(bv).localeCompare(String(av));
+      });
+    },
+    [q, sortAsc, sortField],
+  );
 
   const pendingJunctionRows = useMemo<JunctionRow[]>(
     () =>
@@ -372,12 +375,24 @@ export function ElementsEditor({
 
   const allElementIds = useMemo(() => {
     const ids = new Set<string>();
-    junctionRowsAll.forEach((r) => ids.add(r.id));
-    pipeRowsAll.forEach((r) => ids.add(r.id));
-    pumpRowsAll.forEach((r) => ids.add(r.id));
-    tankRowsAll.forEach((r) => ids.add(r.id));
-    reservoirRowsAll.forEach((r) => ids.add(r.id));
-    valveRowsAll.forEach((r) => ids.add(r.id));
+    junctionRowsAll.forEach((r) => {
+      ids.add(r.id);
+    });
+    pipeRowsAll.forEach((r) => {
+      ids.add(r.id);
+    });
+    pumpRowsAll.forEach((r) => {
+      ids.add(r.id);
+    });
+    tankRowsAll.forEach((r) => {
+      ids.add(r.id);
+    });
+    reservoirRowsAll.forEach((r) => {
+      ids.add(r.id);
+    });
+    valveRowsAll.forEach((r) => {
+      ids.add(r.id);
+    });
     return ids;
   }, [
     junctionRowsAll,
@@ -390,9 +405,15 @@ export function ElementsEditor({
 
   const nodeReferenceOptions = useMemo(() => {
     const ids = new Set<string>();
-    junctionRowsExisting.forEach((r) => ids.add(r.id));
-    tankRowsExisting.forEach((r) => ids.add(r.id));
-    reservoirRowsExisting.forEach((r) => ids.add(r.id));
+    junctionRowsExisting.forEach((r) => {
+      ids.add(r.id);
+    });
+    tankRowsExisting.forEach((r) => {
+      ids.add(r.id);
+    });
+    reservoirRowsExisting.forEach((r) => {
+      ids.add(r.id);
+    });
 
     for (const pending of pendingAdds) {
       if (

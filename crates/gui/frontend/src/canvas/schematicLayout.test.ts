@@ -27,6 +27,17 @@ function pipe(id: string, from: string, to: string): Link {
   };
 }
 
+function getLayoutPoint(
+  layout: Map<string, [number, number]>,
+  id: string,
+): [number, number] {
+  const point = layout.get(id);
+  if (!point) {
+    throw new Error(`Missing layout point for ${id}`);
+  }
+  return point;
+}
+
 // ── empty input ───────────────────────────────────────────────────────────────
 
 describe("computeSchematicLayout – empty input", () => {
@@ -42,7 +53,7 @@ describe("computeSchematicLayout – single node", () => {
   it("assigns a position to the lone node", () => {
     const layout = computeSchematicLayout([junction("j1")], []);
     expect(layout.has("j1")).toBe(true);
-    const [x, y] = layout.get("j1")!;
+    const [x, y] = getLayoutPoint(layout, "j1");
     expect(typeof x).toBe("number");
     expect(typeof y).toBe("number");
   });
@@ -61,15 +72,15 @@ describe("computeSchematicLayout – linear chain R → J1 → J2", () => {
   });
 
   it("reservoir is at depth 0 (leftmost x)", () => {
-    const [rX] = layout.get("R")!;
-    const [j1X] = layout.get("J1")!;
-    const [j2X] = layout.get("J2")!;
+    const [rX] = getLayoutPoint(layout, "R");
+    const [j1X] = getLayoutPoint(layout, "J1");
+    const [j2X] = getLayoutPoint(layout, "J2");
     expect(rX).toBeLessThan(j1X);
     expect(j1X).toBeLessThan(j2X);
   });
 
   it("nodes at different depths have strictly increasing x", () => {
-    const xs = ["R", "J1", "J2"].map((id) => layout.get(id)![0]);
+    const xs = ["R", "J1", "J2"].map((id) => getLayoutPoint(layout, id)[0]);
     for (let i = 1; i < xs.length; i++) {
       expect(xs[i]).toBeGreaterThan(xs[i - 1]);
     }
@@ -99,14 +110,14 @@ describe("computeSchematicLayout – branching network", () => {
   });
 
   it("J2 and J3 are at the same BFS depth (same x)", () => {
-    const [x2] = layout.get("J2")!;
-    const [x3] = layout.get("J3")!;
+    const [x2] = getLayoutPoint(layout, "J2");
+    const [x3] = getLayoutPoint(layout, "J3");
     expect(x2).toBe(x3);
   });
 
   it("J2 and J3 are at different y positions", () => {
-    const [, y2] = layout.get("J2")!;
-    const [, y3] = layout.get("J3")!;
+    const [, y2] = getLayoutPoint(layout, "J2");
+    const [, y3] = getLayoutPoint(layout, "J3");
     expect(y2).not.toBe(y3);
   });
 });
@@ -137,7 +148,7 @@ describe("computeSchematicLayout – reservoir/tank is BFS root", () => {
     const nodes = [junction("J1"), junction("J2"), reservoir("R")];
     const links = [pipe("P1", "R", "J1"), pipe("P2", "J1", "J2")];
     const layout = computeSchematicLayout(nodes, links);
-    const [rX] = layout.get("R")!;
+    const [rX] = getLayoutPoint(layout, "R");
     expect(rX).toBe(0);
   });
 
@@ -145,8 +156,8 @@ describe("computeSchematicLayout – reservoir/tank is BFS root", () => {
     const nodes = [tank("T"), junction("J1")];
     const links = [pipe("P1", "T", "J1")];
     const layout = computeSchematicLayout(nodes, links);
-    const [tX] = layout.get("T")!;
-    const [jX] = layout.get("J1")!;
+    const [tX] = getLayoutPoint(layout, "T");
+    const [jX] = getLayoutPoint(layout, "J1");
     expect(tX).toBeLessThan(jX);
   });
 });

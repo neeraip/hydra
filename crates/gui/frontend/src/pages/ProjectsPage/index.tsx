@@ -551,10 +551,10 @@ export function ProjectsPage() {
             <ChevronLeftIcon style={{ width: 14, height: 14 }} />
           </button>
 
-          {buildPageNumbers(pageIndex, pageCount).map((item, i) =>
+          {buildPageNumbers(pageIndex, pageCount).map((item, i, items) =>
             item === "…" ? (
               <span
-                key={`ellipsis-${i}`}
+                key={`ellipsis-${items[i - 1] ?? "start"}-${items[i + 1] ?? "end"}`}
                 style={{
                   fontSize: 12,
                   color: "var(--text-disabled)",

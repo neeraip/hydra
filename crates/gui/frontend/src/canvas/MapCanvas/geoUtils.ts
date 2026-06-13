@@ -92,8 +92,8 @@ export function fitMapExtents(
   } catch {
     return;
   }
-  if (!camera) return;
-  const center = maplibregl.LngLat.convert(camera.center!);
+  if (!camera?.center) return;
+  const center = maplibregl.LngLat.convert(camera.center);
   if (opts.animate) {
     map.flyTo({
       center: [center.lng, center.lat],

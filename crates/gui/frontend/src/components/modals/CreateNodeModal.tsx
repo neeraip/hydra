@@ -133,6 +133,7 @@ export function CreateNodeModal({
   };
 
   return (
+    // biome-ignore lint/a11y/noStaticElementInteractions: backdrop closes the modal on pointer interaction.
     <div
       style={{
         position: "fixed",

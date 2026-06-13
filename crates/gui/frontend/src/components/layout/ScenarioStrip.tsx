@@ -73,7 +73,9 @@ function flattenScenarios(dtos: ScenarioDto[]): FlatScenario[] {
     depth: 0,
   }));
   while (queue.length > 0) {
-    const { id, depth } = queue.shift()!;
+    const next = queue.shift();
+    if (!next) break;
+    const { id, depth } = next;
     const dto = byId.get(id);
     if (!dto) continue;
     result.push({ ...dto, depth });

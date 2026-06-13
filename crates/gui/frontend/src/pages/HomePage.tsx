@@ -365,9 +365,9 @@ export function HomePage() {
                     gap: 5,
                   }}
                 >
-                  {release.items.map((item, i) => (
+                  {release.items.map((item) => (
                     <li
-                      key={i}
+                      key={item}
                       style={{
                         fontSize: 13,
                         color: "var(--text-secondary)",

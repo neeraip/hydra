@@ -12,6 +12,7 @@ export function ConnectedLink({
   onLocate: (id: string) => void;
 }) {
   const hasFlow = link.flow != null;
+  const flow = link.flow ?? 0;
   return (
     <button
       type="button"
@@ -85,10 +86,10 @@ export function ConnectedLink({
           style={{
             fontSize: 10,
             fontFamily: "var(--font-mono)",
-            color: flowColor(link.flow!, 0),
+            color: flowColor(flow, 0),
           }}
         >
-          {link.flow?.toFixed(2)}&thinsp;L/s
+          {flow.toFixed(2)}&thinsp;L/s
         </span>
       )}
     </button>

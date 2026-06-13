@@ -101,11 +101,15 @@ export function TaskTray() {
         .map((t) => t.projectId)
         .filter(Boolean) as string[],
     );
-    projectIds.forEach((pid) => cancelRunQueue(pid));
+    projectIds.forEach((pid) => {
+      cancelRunQueue(pid);
+    });
   }
 
   function clearSettled() {
-    settledTasks.forEach((t) => dismissTask(t.id));
+    settledTasks.forEach((t) => {
+      dismissTask(t.id);
+    });
   }
 
   const isEmpty = totalAll === 0;

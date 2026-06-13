@@ -28,6 +28,7 @@ export function NodeBody({
   onLocateLink: (id: string) => void;
 }) {
   const connectedLinks = useLinksConnectedTo(node.id);
+  const headPattern = node.headPattern;
 
   return (
     <div
@@ -79,7 +80,7 @@ export function NodeBody({
             <PropRow label="Volume curve" value={node.tankVolumeCurve} />
           )}
           {/* Reservoir fields */}
-          {node.headPattern && (
+          {headPattern && (
             <tr>
               <td
                 style={{
@@ -94,10 +95,10 @@ export function NodeBody({
               <td style={{ padding: "4px 0" }}>
                 <button
                   type="button"
-                  onClick={() => onOpenPattern?.(node.headPattern!)}
+                  onClick={() => onOpenPattern?.(headPattern)}
                   data-tooltip={
                     onOpenPattern
-                      ? `Open pattern ${node.headPattern} in editor`
+                      ? `Open pattern ${headPattern} in editor`
                       : undefined
                   }
                   style={{
@@ -115,7 +116,7 @@ export function NodeBody({
                     fontWeight: 500,
                   }}
                 >
-                  {node.headPattern}
+                  {headPattern}
                 </button>
               </td>
             </tr>

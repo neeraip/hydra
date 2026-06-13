@@ -37,6 +37,7 @@ if (isTauri()) {
   );
 }
 
+// biome-ignore lint/style/noNonNullAssertion: React mounts into the static root element provided by index.html.
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
     <ErrorBoundary scope="Application">

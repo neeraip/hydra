@@ -1,6 +1,6 @@
 import { Cog6ToothIcon, PlayIcon, XMarkIcon } from "@heroicons/react/16/solid";
 import type React from "react";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useActiveProject, useAppState } from "../../AppContext";
 import {
   ACCENT,
@@ -137,6 +137,7 @@ export function RunModal() {
     new Set([activeScenarioId]),
   );
   const [params, setParams] = useState<SimParams | null>(null);
+  const checkedIds = useMemo(() => [...checked], [checked]);
 
   // When the modal opens, reset the checklist to just the active scenario.
   useEffect(() => {
@@ -156,6 +157,13 @@ export function RunModal() {
     };
   }, [runModalOpen, activeProjectId]);
 
+  const runSimulation = useCallback(() => {
+    if (!activeProjectId || checkedIds.length === 0) return;
+    closeRunModal();
+    setTimeout(() => toggleTaskTray(), 200);
+    enqueueRuns(activeProjectId, checkedIds);
+  }, [activeProjectId, checkedIds, closeRunModal, toggleTaskTray]);
+
   // Esc closes; Cmd/Ctrl+Enter runs.
   useEffect(() => {
     if (!runModalOpen) return;
@@ -171,12 +179,10 @@ export function RunModal() {
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [runModalOpen, runSimulation, closeRunModal]);
 
   if (!runModalOpen) return null;
 
-  const checkedIds = [...checked];
   const canRun = params != null && checkedIds.length > 0;
   const allChecked = scenarios.every((s) => checked.has(s.id));
 
@@ -202,13 +208,6 @@ export function RunModal() {
 
   const hasOutdated = scenarios.some((s) => isOutdated(s.state));
 
-  function runSimulation() {
-    if (!activeProjectId || checkedIds.length === 0) return;
-    closeRunModal();
-    setTimeout(() => toggleTaskTray(), 200);
-    enqueueRuns(activeProjectId, checkedIds);
-  }
-
   const runLabel =
     checkedIds.length === 0
       ? "Run"
@@ -224,6 +223,8 @@ export function RunModal() {
   }
 
   return (
+    // biome-ignore lint/a11y/noStaticElementInteractions: backdrop closes the modal on pointer interaction.
+    // biome-ignore lint/a11y/useKeyWithClickEvents: backdrop closes the modal on pointer interaction.
     <div
       onClick={closeRunModal}
       style={{
@@ -237,8 +238,9 @@ export function RunModal() {
         animation: "fadeIn 120ms ease-out",
       }}
     >
+      {/* biome-ignore lint/a11y/noStaticElementInteractions: panel only stops backdrop clicks. */}
       <div
-        onClick={(e) => e.stopPropagation()}
+        onMouseDown={(e) => e.stopPropagation()}
         style={{
           width: "100%",
           maxWidth: 560,

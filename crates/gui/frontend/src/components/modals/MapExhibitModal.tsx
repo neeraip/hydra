@@ -54,6 +54,8 @@ export function MapExhibitModal({
   }
 
   return (
+    // biome-ignore lint/a11y/noStaticElementInteractions: backdrop closes the modal on pointer interaction.
+    // biome-ignore lint/a11y/useKeyWithClickEvents: backdrop closes the modal on pointer interaction.
     <div
       onClick={(e) => {
         if (e.target === e.currentTarget) onClose();

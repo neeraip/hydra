@@ -114,7 +114,7 @@ export const HistoryButton = forwardRef<
           {labels.map((label, i) => (
             <button
               type="button"
-              key={i}
+              key={label}
               onClick={() => onJump(i + 1)}
               style={{
                 display: "flex",

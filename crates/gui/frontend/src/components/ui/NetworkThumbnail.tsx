@@ -56,9 +56,9 @@ function Thumbnail({ accent }: SvgProps) {
       style={{ width: "100%", height: "100%" }}
       aria-hidden="true"
     >
-      {edges.map(([a, b], i) => (
+      {edges.map(([a, b]) => (
         <line
-          key={i}
+          key={`${a}-${b}`}
           x1={nodes[a][0]}
           y1={nodes[a][1]}
           x2={nodes[b][0]}
@@ -68,9 +68,9 @@ function Thumbnail({ accent }: SvgProps) {
           strokeOpacity="0.35"
         />
       ))}
-      {nodes.map(([x, y], i) => (
+      {nodes.map(([x, y]) => (
         <circle
-          key={i}
+          key={`${x}-${y}`}
           cx={x}
           cy={y}
           r="2.5"

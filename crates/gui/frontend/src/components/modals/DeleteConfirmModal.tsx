@@ -60,6 +60,8 @@ export function DeleteConfirmModal({
   const kindLabel = elementKind.charAt(0).toUpperCase() + elementKind.slice(1);
 
   return (
+    // biome-ignore lint/a11y/noStaticElementInteractions: backdrop closes the modal on pointer interaction.
+    // biome-ignore lint/a11y/useKeyWithClickEvents: backdrop closes the modal on pointer interaction.
     <div
       style={{
         position: "fixed",
@@ -76,7 +78,7 @@ export function DeleteConfirmModal({
         role="dialog"
         aria-modal="true"
         aria-labelledby="delete-modal-title"
-        onClick={(e) => e.stopPropagation()}
+        onMouseDown={(e) => e.stopPropagation()}
         style={{
           background: "var(--bg-panel)",
           border: "1px solid var(--border)",

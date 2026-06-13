@@ -525,11 +525,22 @@ function PatternsTab({
         const barW = Math.max(1, VW / pattern.multipliers.length - 1);
 
         return (
-          <div
+          <button
+            type="button"
             key={pattern.id}
             onClick={() => onSelect?.(pattern.id)}
+            onKeyDown={(e) => {
+              if (!onSelect) return;
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                onSelect(pattern.id);
+              }
+            }}
             style={{
               cursor: onSelect ? "pointer" : undefined,
+              border: "none",
+              textAlign: "left",
+              background: "transparent",
               borderRadius: 4,
               padding: "4px 6px",
               margin: "-4px -6px",
@@ -537,11 +548,11 @@ function PatternsTab({
             }}
             onMouseEnter={(e) => {
               if (onSelect)
-                (e.currentTarget as HTMLDivElement).style.background =
+                (e.currentTarget as HTMLButtonElement).style.background =
                   "var(--bg-hover, rgba(255,255,255,0.06))";
             }}
             onMouseLeave={(e) => {
-              (e.currentTarget as HTMLDivElement).style.background = "";
+              (e.currentTarget as HTMLButtonElement).style.background = "";
             }}
           >
             <div
@@ -564,11 +575,12 @@ function PatternsTab({
                 {pattern.id ? `${pattern.id} preview` : "Pattern preview"}
               </title>
               {pattern.multipliers.map((value, i) => {
+                const x = i * (barW + 1);
                 const bh = (value / max) * H;
                 return (
                   <rect
-                    key={i}
-                    x={i * (barW + 1)}
+                    key={`${pattern.id}-${x}`}
+                    x={x}
                     y={H - bh}
                     width={barW}
                     height={bh}
@@ -589,7 +601,7 @@ function PatternsTab({
               {pattern.multipliers.length === 1 ? "" : "s"} · peak{" "}
               {peak.toFixed(2)}
             </div>
-          </div>
+          </button>
         );
       })}
     </div>

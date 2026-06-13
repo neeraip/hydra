@@ -93,6 +93,24 @@ export function Timeline({
 
   const playheadFrac =
     effectiveMaxStep > 0 ? currentHour / effectiveMaxStep : 0;
+  const handleTrackKeyDown = useCallback(
+    (e: React.KeyboardEvent<HTMLDivElement>) => {
+      if (e.key === "ArrowLeft") {
+        e.preventDefault();
+        step(-1);
+      } else if (e.key === "ArrowRight") {
+        e.preventDefault();
+        step(1);
+      } else if (e.key === "Home") {
+        e.preventDefault();
+        setCurrentHour(0);
+      } else if (e.key === "End") {
+        e.preventDefault();
+        setCurrentHour(effectiveMaxStep);
+      }
+    },
+    [effectiveMaxStep, setCurrentHour, step],
+  );
 
   // Tick mark positions: up to 5 ticks evenly spaced across the step range.
   const tickFracs = useMemo(() => {
@@ -251,7 +269,14 @@ export function Timeline({
       {/* Scrubber track */}
       <div
         ref={trackRef}
+        role="slider"
+        aria-label="Simulation timeline"
+        aria-valuemin={0}
+        aria-valuemax={effectiveMaxStep}
+        aria-valuenow={currentHour}
+        tabIndex={0}
         onClick={onTrackClick}
+        onKeyDown={handleTrackKeyDown}
         onMouseMove={onTrackMove}
         onMouseLeave={() => setHoverHour(null)}
         style={{
@@ -291,9 +316,9 @@ export function Timeline({
           />
 
           {/* Tick marks */}
-          {tickFracs.map((frac, i) => (
+          {tickFracs.map((frac) => (
             <div
-              key={i}
+              key={`tick-${frac}`}
               style={{
                 position: "absolute",
                 left: `${frac * 100}%`,
@@ -351,10 +376,10 @@ export function Timeline({
             pointerEvents: "none",
           }}
         >
-          {tickFracs.map((frac, i) => {
+          {tickFracs.map((frac) => {
             const idx = Math.round(frac * effectiveMaxStep);
             const label = timeLabels[idx] ?? timeLabels[timeLabels.length - 1];
-            return <span key={i}>{label}</span>;
+            return <span key={`${label}-${frac}`}>{label}</span>;
           })}
         </div>
 

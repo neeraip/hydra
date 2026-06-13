@@ -502,8 +502,9 @@ function CurveChart({
         {curve.points.map((p, i) => {
           const r = hoverIdx === i ? 5 : 3.5;
           return (
+            // biome-ignore lint/a11y/noStaticElementInteractions: SVG points only expose hover feedback.
             <circle
-              key={i}
+              key={`${p.flow}-${p.head}`}
               cx={sx(p.flow)}
               cy={sy(p.head)}
               r={r}
@@ -571,7 +572,7 @@ function PointsTable({
             const isHover = hoverIdx === i;
             return (
               <tr
-                key={i}
+                key={`${p.flow}-${p.head}`}
                 onMouseEnter={() => setHoverIdx(i)}
                 onMouseLeave={() => setHoverIdx(null)}
                 style={{

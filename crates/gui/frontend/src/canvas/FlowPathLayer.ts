@@ -19,16 +19,16 @@
 import type { UpdateParameters } from "@deck.gl/core";
 import { PathLayer } from "@deck.gl/layers";
 
-export interface FlowPathLayerProps {
+export interface FlowPathLayerProps<DataT = unknown> {
   getFlowTime: () => number;
-  getFlowSpeed: (d: any) => number;
-  getFlowFrequency: (d: any) => number;
-  getFlowPhaseOffset: (d: any) => number;
+  getFlowSpeed: (d: DataT) => number;
+  getFlowFrequency: (d: DataT) => number;
+  getFlowPhaseOffset: (d: DataT) => number;
 }
 
 export class FlowPathLayer<DataT = unknown> extends PathLayer<
   DataT,
-  FlowPathLayerProps
+  FlowPathLayerProps<DataT>
 > {
   static layerName = "FlowPathLayer";
 

@@ -108,7 +108,7 @@ interface AppActions {
   canNavForward: boolean;
 }
 
-const Ctx = createContext<AppState & AppActions>(null!);
+const Ctx = createContext<(AppState & AppActions) | null>(null);
 
 /** Push a new location onto the history stack, discarding any forward entries. */
 function pushNav(
@@ -587,7 +587,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
 }
 
 export function useAppState() {
-  return useContext(Ctx);
+  const ctx = useContext(Ctx);
+  if (!ctx) {
+    throw new Error("useAppState must be used within AppProvider");
+  }
+  return ctx;
 }
 
 /**

@@ -85,6 +85,8 @@ export function InpDiffModal({ patches, onClose }: InpDiffModalProps) {
   };
 
   return (
+    // biome-ignore lint/a11y/noStaticElementInteractions: backdrop closes the modal on pointer interaction.
+    // biome-ignore lint/a11y/useKeyWithClickEvents: backdrop closes the modal on pointer interaction.
     <div
       onClick={onClose}
       style={{
@@ -98,8 +100,9 @@ export function InpDiffModal({ patches, onClose }: InpDiffModalProps) {
         animation: "fadeIn 120ms ease-out",
       }}
     >
+      {/* biome-ignore lint/a11y/noStaticElementInteractions: panel only stops backdrop clicks. */}
       <div
-        onClick={(e) => e.stopPropagation()}
+        onMouseDown={(e) => e.stopPropagation()}
         style={{
           width: "min(700px, 92vw)",
           maxHeight: "80vh",
@@ -208,9 +211,9 @@ export function InpDiffModal({ patches, onClose }: InpDiffModalProps) {
                   </tr>
                 </thead>
                 <tbody>
-                  {items.map((item, i) => (
+                  {items.map((item) => (
                     <tr
-                      key={i}
+                      key={`${item.id}-${item.field}-${String(item.value)}`}
                       onMouseEnter={(e) => {
                         (
                           e.currentTarget as HTMLTableRowElement

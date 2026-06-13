@@ -57,6 +57,12 @@ import { useNetworkVersion } from "../../hooks/NetworkVersionContext";
 import { CanvasErrorBoundary } from "./CanvasView/CanvasErrorBoundary";
 import { CoordStatusIndicator } from "./CanvasView/CoordStatusIndicator";
 
+const NODE_KIND_PREFIX: Record<string, string> = {
+  junction: "J",
+  reservoir: "R",
+  tank: "T",
+};
+
 export function CanvasView() {
   const { activeScenarioId, setProjectView, projectView } = useAppState();
   const { project } = useActiveProject();
@@ -673,11 +679,6 @@ export function CanvasView() {
   // Generates a short unique ID by finding the first gap in the existing IDs.
   // Accepts the node kind ("junction" | "reservoir" | "tank") and picks the
   // appropriate prefix automatically.
-  const NODE_KIND_PREFIX: Record<string, string> = {
-    junction: "J",
-    reservoir: "R",
-    tank: "T",
-  };
   const suggestNodeId = useCallback(
     (kind: string) => {
       const prefix = NODE_KIND_PREFIX[kind] ?? "N";
@@ -687,9 +688,8 @@ export function CanvasView() {
         if (!existing.has(id)) return id;
       }
       return `${prefix}${Date.now()}`;
-      // eslint-disable-next-line react-hooks/exhaustive-deps
     },
-    [allNodes, NODE_KIND_PREFIX],
+    [allNodes],
   );
 
   const suggestLinkId = useCallback(
@@ -967,6 +967,7 @@ export function CanvasView() {
           {/* Legacy SVG annotation overlays (schematic mode only).
                pointer-events: none — deck.gl handles all interaction. */}
           {viewMode === "schematic" && (
+            // biome-ignore lint/a11y/useKeyWithClickEvents: SVG overlay handles pointer measurement gestures.
             <svg
               ref={svgRef}
               width="100%"

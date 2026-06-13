@@ -777,6 +777,8 @@ export function useNodes(_version = 0): Node[] {
   const { version: ctxVersion } = useNetworkVersion();
   const [nodes, setNodes] = useState<Node[]>([]);
   useEffect(() => {
+    void ctxVersion;
+    void _version;
     let cancelled = false;
     tryInvoke<Node[]>("get_nodes").then((rows) => {
       if (!cancelled && rows !== null) setNodes(rows);
@@ -784,7 +786,7 @@ export function useNodes(_version = 0): Node[] {
     return () => {
       cancelled = true;
     };
-  }, [ctxVersion]);
+  }, [ctxVersion, _version]);
   return nodes;
 }
 
@@ -792,6 +794,8 @@ export function useLinks(_version = 0): Link[] {
   const { version: ctxVersion } = useNetworkVersion();
   const [links, setLinks] = useState<Link[]>([]);
   useEffect(() => {
+    void ctxVersion;
+    void _version;
     let cancelled = false;
     tryInvoke<Link[]>("get_links").then((rows) => {
       if (!cancelled && rows !== null) setLinks(rows);
@@ -799,7 +803,7 @@ export function useLinks(_version = 0): Link[] {
     return () => {
       cancelled = true;
     };
-  }, [ctxVersion]);
+  }, [ctxVersion, _version]);
   return links;
 }
 
@@ -807,6 +811,8 @@ export function usePatterns(_version = 0): Pattern[] {
   const { version: ctxVersion } = useNetworkVersion();
   const [patterns, setPatterns] = useState<Pattern[]>([]);
   useEffect(() => {
+    void ctxVersion;
+    void _version;
     let cancelled = false;
     tryInvoke<Pattern[]>("get_patterns").then((rows) => {
       if (!cancelled && rows !== null) setPatterns(rows);
@@ -814,7 +820,7 @@ export function usePatterns(_version = 0): Pattern[] {
     return () => {
       cancelled = true;
     };
-  }, [ctxVersion]);
+  }, [ctxVersion, _version]);
   return patterns;
 }
 
@@ -837,6 +843,8 @@ export function useCurves(version = 0): PumpCurve[] {
   const [dtos, setDtos] = useState<NetworkCurveDto[]>([]);
   const links = useLinks(version);
   useEffect(() => {
+    void ctxVersion;
+    void version;
     let cancelled = false;
     tryInvoke<NetworkCurveDto[]>("get_curves").then((rows) => {
       if (!cancelled && rows !== null) setDtos(rows);
@@ -844,7 +852,7 @@ export function useCurves(version = 0): PumpCurve[] {
     return () => {
       cancelled = true;
     };
-  }, [ctxVersion]);
+  }, [ctxVersion, version]);
 
   return useMemo<PumpCurve[]>(() => {
     const pumpByCurveId = new Map<string, string>();
@@ -1012,6 +1020,7 @@ export function useSimParams(
   const { version: networkVersion } = useNetworkVersion();
   const [params, setParams] = useState<SimParams | null>(null);
   useEffect(() => {
+    void networkVersion;
     if (!projectId) {
       setParams(null);
       return;

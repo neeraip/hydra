@@ -402,6 +402,7 @@ function PatternBars({
   }
 
   return (
+    // biome-ignore lint/a11y/noStaticElementInteractions: drag surface is intentionally pointer-driven.
     <div
       ref={containerRef}
       onMouseUp={() => setDragIdx(null)}
@@ -432,9 +433,11 @@ function PatternBars({
       {multipliers.map((m, i) => {
         const ratio = m / yMax;
         const isActive = dragIdx === i || hoverIdx === i;
+        const hour = i * stepHours;
         return (
+          // biome-ignore lint/a11y/noStaticElementInteractions: bars support pointer dragging only.
           <div
-            key={i}
+            key={`${hour}`}
             onMouseDown={() => setDragIdx(i)}
             onMouseEnter={() => setHoverIdx(i)}
             onMouseLeave={() => setHoverIdx(null)}
@@ -513,6 +516,7 @@ function PatternRow({
   onReset: () => void;
   isOverridden: boolean;
 }) {
+  const hours = multipliers.map((_multiplier, i) => i * stepHours);
   return (
     <div>
       <div
@@ -570,43 +574,46 @@ function PatternRow({
           gap: 6,
         }}
       >
-        {multipliers.map((m, i) => (
-          <label
-            key={i}
-            style={{ display: "flex", flexDirection: "column", gap: 2 }}
-          >
-            <span
-              style={{
-                fontSize: 9,
-                color: "var(--text-tertiary)",
-                fontFamily: "var(--font-mono)",
-              }}
+        {multipliers.map((m, i) => {
+          const hour = hours[i];
+          return (
+            <label
+              key={`${hour}`}
+              style={{ display: "flex", flexDirection: "column", gap: 2 }}
             >
-              {(i * stepHours).toString().padStart(2, "0")}:00
-            </span>
-            <input
-              type="number"
-              step="0.05"
-              value={m}
-              onChange={(e) => {
-                const v = parseFloat(e.target.value);
-                if (!Number.isNaN(v)) onChange(i, v);
-              }}
-              style={{
-                width: "100%",
-                height: 26,
-                background: "var(--bg-input, var(--bg-card))",
-                border: "1px solid var(--border)",
-                borderRadius: 4,
-                color: "var(--text-primary)",
-                fontSize: 12,
-                fontFamily: "var(--font-mono)",
-                padding: "0 6px",
-                outline: "none",
-              }}
-            />
-          </label>
-        ))}
+              <span
+                style={{
+                  fontSize: 9,
+                  color: "var(--text-tertiary)",
+                  fontFamily: "var(--font-mono)",
+                }}
+              >
+                {hour.toString().padStart(2, "0")}:00
+              </span>
+              <input
+                type="number"
+                step="0.05"
+                value={m}
+                onChange={(e) => {
+                  const v = parseFloat(e.target.value);
+                  if (!Number.isNaN(v)) onChange(i, v);
+                }}
+                style={{
+                  width: "100%",
+                  height: 26,
+                  background: "var(--bg-input, var(--bg-card))",
+                  border: "1px solid var(--border)",
+                  borderRadius: 4,
+                  color: "var(--text-primary)",
+                  fontSize: 12,
+                  fontFamily: "var(--font-mono)",
+                  padding: "0 6px",
+                  outline: "none",
+                }}
+              />
+            </label>
+          );
+        })}
       </div>
     </div>
   );

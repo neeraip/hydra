@@ -197,8 +197,11 @@ export function ShortcutCard({ onClose }: { onClose: () => void }) {
                             justifyContent: "flex-end",
                           }}
                         >
-                          {row.keys.map((k, i) => (
-                            <kbd key={i} className="shortcut-key">
+                          {row.keys.map((k) => (
+                            <kbd
+                              key={`${row.action}-${k}`}
+                              className="shortcut-key"
+                            >
                               {k}
                             </kbd>
                           ))}

@@ -138,6 +138,8 @@ export function IssuesPanel() {
   return (
     <>
       {/* Backdrop */}
+      {/* biome-ignore lint/a11y/noStaticElementInteractions: transparent backdrop closes the drawer on pointer interaction. */}
+      {/* biome-ignore lint/a11y/useKeyWithClickEvents: transparent backdrop closes the drawer on pointer interaction. */}
       <div
         onClick={closeIssuesPanel}
         style={{
@@ -395,8 +397,17 @@ function IssueRow({
 }) {
   const m = SEVERITY_META[issue.severity];
   return (
+    // biome-ignore lint/a11y/useSemanticElements: row includes nested action buttons, so a native button is not valid markup.
     <div
+      role="button"
+      tabIndex={0}
       onClick={onSelect}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onSelect();
+        }
+      }}
       style={{
         display: "flex",
         gap: 10,

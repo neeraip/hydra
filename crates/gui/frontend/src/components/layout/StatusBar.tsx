@@ -271,6 +271,8 @@ function SolverHistoryPopover({
   accent: string;
 }) {
   return (
+    // biome-ignore lint/a11y/noStaticElementInteractions: popover container only stops backdrop clicks.
+    // biome-ignore lint/a11y/useKeyWithClickEvents: popover container only stops backdrop clicks.
     <div
       onClick={(e) => e.stopPropagation()}
       style={{

@@ -475,8 +475,9 @@ function XSChart({ xs, accent }: { xs: CrossSection; accent: string }) {
 
         {/* Points */}
         {xs.points.map((p, i) => (
+          // biome-ignore lint/a11y/noStaticElementInteractions: SVG points only expose hover feedback.
           <circle
-            key={i}
+            key={`${p.station}-${p.elev}`}
             cx={sx(p.station)}
             cy={sy(p.elev)}
             r={hoverIdx === i ? 5 : 3}
@@ -604,7 +605,7 @@ function XSPointsTable({ xs }: { xs: CrossSection }) {
         </thead>
         <tbody>
           {xs.points.map((p, i) => (
-            <tr key={i}>
+            <tr key={`${p.station}-${p.elev}`}>
               <td style={{ ...tdStyle, color: "var(--text-tertiary)" }}>
                 {i + 1}
               </td>

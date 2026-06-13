@@ -46,7 +46,8 @@ export function computeSchematicLayout(
   let head = 0;
   while (head < queue.length) {
     const cur = queue[head++];
-    const d = depth.get(cur)!;
+    const d = depth.get(cur);
+    if (d == null) continue;
     for (const neighbor of adj.get(cur) ?? []) {
       if (!depth.has(neighbor)) {
         depth.set(neighbor, d + 1);
@@ -63,7 +64,8 @@ export function computeSchematicLayout(
       let i = queue.length - 1;
       while (i < queue.length) {
         const cur = queue[i++];
-        const d = depth.get(cur)!;
+        const d = depth.get(cur);
+        if (d == null) continue;
         for (const neighbor of adj.get(cur) ?? []) {
           if (!depth.has(neighbor)) {
             depth.set(neighbor, d + 1);

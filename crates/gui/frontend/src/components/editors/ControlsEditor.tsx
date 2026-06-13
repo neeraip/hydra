@@ -5,10 +5,12 @@ import { useMemo, useState } from "react";
 import { useAppState } from "../../AppContext";
 import type { ControlEntry } from "../../hooks";
 
+type ControlFilter = "all" | "simple" | "rule";
+
 export function ControlsEditor({ accent }: { accent: string }) {
   const { showToast } = useAppState();
   const [entries, setEntries] = useState<ControlEntry[]>([]);
-  const [filter, setFilter] = useState<"all" | "simple" | "rule">("all");
+  const [filter, setFilter] = useState<ControlFilter>("all");
   const [search, setSearch] = useState("");
 
   const visible = useMemo(() => {
@@ -76,7 +78,7 @@ export function ControlsEditor({ accent }: { accent: string }) {
             { id: "simple", label: `Simple · ${counts.simple}` },
             { id: "rule", label: `Rules · ${counts.rule}` },
           ]}
-          onChange={(v) => setFilter(v as any)}
+          onChange={(v) => setFilter(v as ControlFilter)}
         />
         <div style={{ flex: 1 }} />
         <input

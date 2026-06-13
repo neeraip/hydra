@@ -184,6 +184,7 @@ export function SecondaryRail() {
         </div>
 
         {/* Resize handle — sits on the right edge of the clip layer */}
+        {/* biome-ignore lint/a11y/noStaticElementInteractions: resize handle is pointer-driven only. */}
         <div
           onMouseDown={handleResizeMouseDown}
           style={{

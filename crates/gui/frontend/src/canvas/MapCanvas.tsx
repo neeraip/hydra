@@ -1,4 +1,8 @@
-import type { Deck as DeckType, Layer } from "@deck.gl/core";
+import type {
+  Layer,
+  OrthographicViewState,
+  ViewStateChangeParameters,
+} from "@deck.gl/core";
 import { COORDINATE_SYSTEM, Deck, OrthographicView } from "@deck.gl/core";
 import {
   LineLayer,
@@ -48,6 +52,10 @@ const MAP_STYLES: Record<BasemapStyle, string | maplibregl.StyleSpecification> =
     dark: "https://tiles.openfreemap.org/styles/dark",
     none: BLANK_STYLE,
   };
+
+type GeoViewState = ReturnType<typeof roughGeoViewState>;
+type SchematicViewState = ReturnType<typeof orthoCenterFromMap>;
+type CanvasViewState = GeoViewState | SchematicViewState;
 
 interface MapCanvasProps {
   nodes: Node[];
@@ -143,7 +151,7 @@ export function MapCanvas({
   const onSelectLinkRef = useRef(onSelectLink);
   const mapRef = useRef<maplibregl.Map | null>(null);
   const overlayRef = useRef<MapboxOverlay | null>(null);
-  const deckRef = useRef<DeckType | null>(null);
+  const deckRef = useRef<Deck<OrthographicView> | null>(null);
   const deckCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const draggingNodePosRef = useRef<{
     id: string;
@@ -157,7 +165,7 @@ export function MapCanvas({
   // Measure tool: point A anchor + live cursor position for rubber-band line.
   const measureAnchorRef = useRef<[number, number] | null>(null);
   const measureCursorRef = useRef<[number, number] | null>(null);
-  const viewStateRef = useRef<any>(roughGeoViewState(nodes));
+  const viewStateRef = useRef<CanvasViewState>(roughGeoViewState(nodes));
   const prevViewModeRef = useRef<ViewMode | null>(null);
   const orthoViewRef = useRef(
     new OrthographicView({ id: "main", controller: true }),
@@ -287,7 +295,7 @@ export function MapCanvas({
       if (nodeId) {
         const center = geoCoordsRef.current.get(nodeId);
         if (!center) return;
-        const currentZoom = viewStateRef.current?.zoom ?? 12;
+        const currentZoom = Number(viewStateRef.current.zoom ?? 12);
         const zoom = Math.max(currentZoom, 14);
         map.flyTo({ center, zoom, curve: 1, duration: 800 });
       } else if (linkId) {
@@ -307,14 +315,14 @@ export function MapCanvas({
       if (nodeId) {
         const target = coords.get(nodeId);
         if (!target) return;
-        const currentZoom = (viewStateRef.current as any)?.zoom ?? 0;
+        const currentZoom = Number(viewStateRef.current.zoom ?? 0);
         const zoom = Math.max(currentZoom, currentZoom + 2);
         const vs = {
           target: [target[0], target[1], 0] as [number, number, number],
           zoom,
         };
         viewStateRef.current = vs;
-        deck.setProps({ viewState: vs as any });
+        deck.setProps({ viewState: vs });
       } else if (linkId) {
         const link = linksRef.current.find((l) => l.id === linkId);
         if (!link) return;
@@ -332,12 +340,12 @@ export function MapCanvas({
         );
         const minDim = Math.min(viewW, viewH) * 0.4;
         // In orthographic mode zoom is pixels-per-unit, so zoom = minDim / linkPx.
-        const currentZoom = (viewStateRef.current as any)?.zoom ?? 1;
+        const currentZoom = Number(viewStateRef.current.zoom ?? 1);
         const zoom =
           linkPx > 0 ? Math.min(minDim / linkPx, currentZoom * 4) : currentZoom;
         const vs = { target: [cx, cy, 0] as [number, number, number], zoom };
         viewStateRef.current = vs;
-        deck.setProps({ viewState: vs as any });
+        deck.setProps({ viewState: vs });
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -893,16 +901,24 @@ export function MapCanvas({
 
   const ensureDeck = useCallback(() => {
     if (deckRef.current || !deckHostRef.current) return deckRef.current;
+    const initialViewState = orthoCenterFromMap(schematicCoordsRef.current);
+    viewStateRef.current = initialViewState;
     const deck = new Deck({
       parent: deckHostRef.current,
       style: { position: "absolute", inset: "0", zIndex: "1" },
-      views: orthoViewRef.current as any,
-      viewState: viewStateRef.current,
+      views: orthoViewRef.current,
+      viewState: initialViewState,
       controller: true,
       pickingRadius: 6,
-      onViewStateChange: ({ viewState }: any) => {
-        viewStateRef.current = viewState;
-        deckRef.current?.setProps({ viewState });
+      onViewStateChange: ({
+        viewState,
+      }: ViewStateChangeParameters<OrthographicViewState>) => {
+        const nextViewState: SchematicViewState = {
+          target: viewState.target as [number, number, number],
+          zoom: Number(viewState.zoom ?? 0),
+        };
+        viewStateRef.current = nextViewState;
+        deckRef.current?.setProps({ viewState: nextViewState });
       },
       layers: [],
     });
@@ -934,7 +950,7 @@ export function MapCanvas({
     });
 
     const overlay = new MapboxOverlay({ layers: [], pickingRadius: 6 });
-    map.addControl(overlay as any);
+    map.addControl(overlay);
     overlayRef.current = overlay;
 
     map.on("mousedown", (e) => {
@@ -1012,7 +1028,7 @@ export function MapCanvas({
 
     return () => {
       try {
-        map.removeControl(overlay as any);
+        map.removeControl(overlay);
       } catch {
         /* ignore */
       }
@@ -1042,8 +1058,8 @@ export function MapCanvas({
     const vs = { target, zoom };
     viewStateRef.current = vs;
     deck.setProps({
-      views: orthoViewRef.current as any,
-      viewState: vs as any,
+      views: orthoViewRef.current,
+      viewState: vs,
       layers: buildLayersRef.current(),
     });
     if (deckCanvasRef.current) deckCanvasRef.current.style.display = "";
@@ -1151,8 +1167,8 @@ export function MapCanvas({
       const vs = { target, zoom };
       viewStateRef.current = vs;
       deck.setProps({
-        views: orthoViewRef.current as any,
-        viewState: vs as any,
+        views: orthoViewRef.current,
+        viewState: vs,
         layers: buildLayers(),
       });
     } else {

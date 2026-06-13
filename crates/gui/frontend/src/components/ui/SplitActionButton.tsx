@@ -34,6 +34,7 @@ export function SplitActionButton({
   };
 
   return (
+    // biome-ignore lint/a11y/noStaticElementInteractions: wrapper manages focus transitions for the split button.
     <div
       ref={ref}
       onBlur={handleBlur}

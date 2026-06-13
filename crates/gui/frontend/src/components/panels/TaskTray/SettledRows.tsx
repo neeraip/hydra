@@ -113,8 +113,17 @@ export function CompletedRow({
   return (
     <div style={{ borderBottom: "1px solid var(--border)" }}>
       {/* Collapsed one-line row */}
+      {/* biome-ignore lint/a11y/useSemanticElements: row includes nested action buttons, so a native button is not valid markup. */}
       <div
+        role="button"
+        tabIndex={0}
         onClick={() => setExpanded((x) => !x)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            setExpanded((x) => !x);
+          }
+        }}
         style={{
           display: "flex",
           alignItems: "center",
@@ -252,9 +261,9 @@ export function CompletedRow({
           </div>
           {historyEntries.length > 0 && (
             <div style={{ marginTop: 6, display: "grid", gap: 2 }}>
-              {historyEntries.map((entry, i) => (
+              {historyEntries.map((entry) => (
                 <div
-                  key={`${entry.at}-${i}`}
+                  key={`${entry.at}-${entry.label}`}
                   style={{
                     display: "grid",
                     gridTemplateColumns: "68px 1fr",

@@ -350,7 +350,7 @@ export function Legend({
               <>
                 <Ramp
                   label=""
-                  gradient={lg!}
+                  gradient={lg ?? SEQ_GRADIENT_CSS}
                   min={lMin}
                   max={lMax}
                   dot={false}
@@ -711,7 +711,12 @@ export function Legend({
             </div>
           ) : (
             <div
-              style={{ width: 52, height: 5, borderRadius: 3, background: lg! }}
+              style={{
+                width: 52,
+                height: 5,
+                borderRadius: 3,
+                background: lg ?? SEQ_GRADIENT_CSS,
+              }}
             />
           )}
         </div>
