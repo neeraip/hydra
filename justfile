@@ -119,14 +119,28 @@ ci: deny fmt-check clippy doc test type-check-frontend lint-frontend build-front
 # ── Release ───────────────────────────────────────────────────────────────────
 
 # Bump the workspace version and sync it into tauri.conf.json, then commit and tag.
-# Usage: just bump 1.2.3
+# Usage: just bump 1.2.3  |  just bump patch  |  just bump minor  |  just bump major
 bump version:
     #!/usr/bin/env python3
     import json, pathlib, re, subprocess, sys
-    version = "{{version}}"
-    # Bump Cargo.toml workspace version
+    arg = "{{version}}"
     cargo = pathlib.Path("Cargo.toml")
+    m = re.search(r'^version = "(\d+)\.(\d+)\.(\d+)"', cargo.read_text(), re.MULTILINE)
+    cur_major, cur_minor, cur_patch = int(m.group(1)), int(m.group(2)), int(m.group(3))
+    if arg == "patch":
+        version = f"{cur_major}.{cur_minor}.{cur_patch + 1}"
+    elif arg == "minor":
+        version = f"{cur_major}.{cur_minor + 1}.0"
+    elif arg == "major":
+        version = f"{cur_major + 1}.0.0"
+    else:
+        version = arg
+    # Bump Cargo.toml workspace version
     cargo.write_text(re.sub(r'^version = ".*"', f'version = "{version}"', cargo.read_text(), count=1, flags=re.MULTILINE))
+    # Sync cross-crate version pins
+    for pin_path in ["crates/cli/Cargo.toml", "crates/sdk/Cargo.toml"]:
+        p = pathlib.Path(pin_path)
+        p.write_text(re.sub(r'version = "\d+\.\d+\.\d+"', f'version = "{version}"', p.read_text()))
     # Sync tauri.conf.json
     p = pathlib.Path("crates/gui/tauri.conf.json")
     d = json.loads(p.read_text())
@@ -135,7 +149,8 @@ bump version:
     # Regenerate Cargo.lock with the new workspace version
     subprocess.run(["cargo", "update", "--workspace"], check=True)
     # Commit and tag
-    subprocess.run(["git", "add", "Cargo.toml", "Cargo.lock", "crates/gui/tauri.conf.json"], check=True)
+    subprocess.run(["git", "add", "Cargo.toml", "Cargo.lock", "crates/gui/tauri.conf.json",
+                    "crates/cli/Cargo.toml", "crates/sdk/Cargo.toml"], check=True)
     subprocess.run(["git", "commit", "-m", f"chore: bump version to {version}"], check=True)
     subprocess.run(["git", "tag", "-a", f"v{version}", "-m", f"v{version}"], check=True)
     print(f"Tagged v{version}. Push with: git push && git push --tags")
