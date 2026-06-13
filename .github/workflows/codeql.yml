@@ -1,9 +1,6 @@
 name: CodeQL
 
 on:
-  push:
-    branches: [main]
-  pull_request:
   schedule:
     - cron: '0 6 * * 1'  # Every Monday at 06:00 UTC
 
@@ -20,7 +17,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6.0.3
+        uses: actions/checkout@v4
 
       - name: Initialize CodeQL
         uses: github/codeql-action/init@v3
@@ -42,7 +39,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6.0.3
+        uses: actions/checkout@v4
 
       - name: Install Tauri system dependencies
         run: |
@@ -57,6 +54,8 @@ jobs:
         uses: actions-rust-lang/setup-rust-toolchain@v1.11.0
         with:
           cache: false
+
+      - uses: Swatinem/rust-cache@v2.8.0
 
       - name: Initialize CodeQL
         uses: github/codeql-action/init@v3
