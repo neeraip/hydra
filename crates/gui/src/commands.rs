@@ -511,7 +511,7 @@ pub struct Project {
     pub last_run_label: Option<String>,
     pub node_count: u32,
     pub link_count: u32,
-    /// EPSG code for the coordinate reference system of the INP [COORDINATES].
+    /// EPSG code for the coordinate reference system of the INP \[COORDINATES\].
     pub source_crs: String,
     pub insights: Option<ProjectInsights>,
     /// `true` when the DB row exists but the on-disk bundle directory is absent.
@@ -2357,7 +2357,7 @@ fn apply_dto_to_options(
     Ok(())
 }
 
-/// Parse the base `model.inp` for `project_id` and return its [TIMES]/[OPTIONS]
+/// Parse the base `model.inp` for `project_id` and return its \[TIMES\]/\[OPTIONS\]
 /// values. Returns `None` when the project has no base INP yet (draft).
 #[tauri::command]
 /// Return simulation parameter overrides for a project.
