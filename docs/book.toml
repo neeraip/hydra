@@ -1,0 +1,16 @@
+[book]
+title = "Hydra Documentation"
+description = "Extended-period hydraulic and water quality simulation for pressurised pipe networks."
+authors = ["NEER"]
+language = "en"
+src = "src"
+
+[output.html]
+git-repository-url = "https://github.com/neeraip/hydra"
+git-repository-icon = "fa-github"
+edit-url-template = "https://github.com/neeraip/hydra/edit/main/docs/src/{path}"
+site-url = "/hydra/"
+
+[output.html.fold]
+enable = true
+level = 1
