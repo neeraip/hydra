@@ -58,9 +58,9 @@ Analysis → Spec → Implementation
 
 | Type of change | Required steps |
 |---|---|
-| Solver algorithm (hydraulics, quality, simulation) | 1. Update the relevant `crates/engine/src/*/spec.md`. 2. Write/change implementation. |
-| Data model or parser | 1. Update `crates/engine/src/model/spec.md`. 2. Write/change implementation. |
-| Post-simulation analytics | 1. Update `crates/engine/src/analysis/spec.md`. 2. Write/change implementation. |
+| Solver algorithm (hydraulics, quality, simulation) | 1. Update the relevant `crates/engine-wds/src/*/spec.md`. 2. Write/change implementation. |
+| Data model or parser | 1. Update `crates/engine-wds/src/model/spec.md`. 2. Write/change implementation. |
+| Post-simulation analytics | 1. Update `crates/engine-wds/src/analysis/spec.md`. 2. Write/change implementation. |
 | CLI or GUI | Make changes directly — no spec document needed. |
 | Public API (`hydra` facade) | Update re-exports and `README.md` examples. No spec document needed. |
 
@@ -68,11 +68,11 @@ Analysis → Spec → Implementation
 
 | File | Covers |
 |---|---|
-| `crates/engine/src/model/spec.md` | Data model, unit system, INP/OUT/RPT formats |
-| `crates/engine/src/hydraulics/spec.md` | GGA Newton-Raphson solver, valve models, demand models |
-| `crates/engine/src/quality/spec.md` | Lagrangian transport, mixing, reactions, source tracing |
-| `crates/engine/src/simulation/spec.md` | Session API, controls, timestep, accounting |
-| `crates/engine/src/analysis/spec.md` | Post-simulation analytics |
+| `crates/engine-wds/src/model/spec.md` | Data model, unit system, INP/OUT/RPT formats |
+| `crates/engine-wds/src/hydraulics/spec.md` | GGA Newton-Raphson solver, valve models, demand models |
+| `crates/engine-wds/src/quality/spec.md` | Lagrangian transport, mixing, reactions, source tracing |
+| `crates/engine-wds/src/simulation/spec.md` | Session API, controls, timestep, accounting |
+| `crates/engine-wds/src/analysis/spec.md` | Post-simulation analytics |
 
 ### Implementation rules
 

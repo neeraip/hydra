@@ -9,20 +9,20 @@ Hydra is a water distribution network simulator written in Rust. It implements t
 | Crate | Owns | Does not own |
 |---|---|---|
 | `hydra-common` | `Coordinate` and `Crs` types — engine-agnostic geographic primitives | Solver logic; data model; session API; I/O |
-| `hydra-engine` | Complete simulation engine: data model; INP/OUT/RPT parsers and writers; unit conversion; GGA hydraulic solver; Lagrangian quality engine; controls; timestep; accounting; session API (`Simulation`); post-simulation analytics | Interface logic; filesystem/network I/O |
+| `hydra-engine-wds` | Complete simulation engine: data model; INP/OUT/RPT parsers and writers; unit conversion; GGA hydraulic solver; Lagrangian quality engine; controls; timestep; accounting; session API (`Simulation`); post-simulation analytics | Interface logic; filesystem/network I/O |
 | `hydra-sdk` | Curated public re-exports — the umbrella crate | Any new logic |
 | `hydra-cli` | CLI argument parsing; input source resolution; file I/O | All simulation logic |
 | `hydra-gui` | Tauri command surface; project/scenario persistence; background run queue; React frontend | Solver algorithms; session logic |
 
 **`hydra-common` contains only `Coordinate` and `Crs`.** Never add solver logic, data model types, parsers, or any engine-specific code there. Hydra is WD-only; `hydra-common` is intentionally minimal and will not grow.
 
-**`hydra-engine` is a self-contained black box.** Its internal module structure (`hydraulics/`, `quality/`, `simulation/`, `analysis/`, `model/`, `io/`) is an implementation detail. Callers depend only on its public re-export surface.
+**`hydra-engine-wds` is a self-contained black box.** Its internal module structure (`hydraulics/`, `quality/`, `simulation/`, `analysis/`, `model/`, `io/`) is an implementation detail. Callers depend only on its public re-export surface.
 
-**`hydra-cli` and `hydra-gui` are downstream consumers of Hydra** — they depend on the umbrella crate and never import from `hydra-engine` or `hydra-common` directly. This is the same contract any third-party integrator has.
+**`hydra-cli` and `hydra-gui` are downstream consumers of Hydra** — they depend on the umbrella crate and never import from `hydra-engine-wds` or `hydra-common` directly. This is the same contract any third-party integrator has.
 
 **`hydra` contains no logic** — only re-exports. Never add functions, structs, or trait implementations to it.
 
-**Serialisation and output formatting** belong in `hydra-engine`. Reading from disk or making HTTP calls do not — those belong in `hydra-cli` or `hydra-gui`.
+**Serialisation and output formatting** belong in `hydra-engine-wds`. Reading from disk or making HTTP calls do not — those belong in `hydra-cli` or `hydra-gui`.
 
 ---
 
@@ -34,11 +34,11 @@ authoritative definition of Hydra's mathematical behaviour:
 
 | Spec file | Covers |
 |---|---|
-| `crates/engine/src/model/spec.md` | Network data model, unit system, INP/OUT/RPT formats |
-| `crates/engine/src/hydraulics/spec.md` | GGA Newton-Raphson solver, valve models, demand models |
-| `crates/engine/src/quality/spec.md` | Lagrangian transport, mixing, reactions, source tracing |
-| `crates/engine/src/simulation/spec.md` | Session API, controls, timestep orchestration, accounting |
-| `crates/engine/src/analysis/spec.md` | Post-simulation analytics |
+| `crates/engine-wds/src/model/spec.md` | Network data model, unit system, INP/OUT/RPT formats |
+| `crates/engine-wds/src/hydraulics/spec.md` | GGA Newton-Raphson solver, valve models, demand models |
+| `crates/engine-wds/src/quality/spec.md` | Lagrangian transport, mixing, reactions, source tracing |
+| `crates/engine-wds/src/simulation/spec.md` | Session API, controls, timestep orchestration, accounting |
+| `crates/engine-wds/src/analysis/spec.md` | Post-simulation analytics |
 
 **Always update the relevant spec before changing solver/model/analysis implementation.**
 If a spec and its implementation disagree, the spec wins — fix the implementation
@@ -66,17 +66,17 @@ is documented in the source code itself — `hydra-cli/src/main.rs` and
 
 ### Solver algorithms (hydraulics, quality, simulation)
 
-1. Update the relevant sub-spec in `crates/engine/` to define the new behaviour.
+1. Update the relevant sub-spec in `crates/engine-wds/` to define the new behaviour.
 2. Only then write or change implementation code.
 
-### Data model and parsers (hydra-engine model/io)
+### Data model and parsers (hydra-engine-wds model/io)
 
-1. Update `crates/engine/src/model/spec.md`.
+1. Update `crates/engine-wds/src/model/spec.md`.
 2. Only then write or change implementation code.
 
-### Post-simulation analytics (hydra-engine analysis)
+### Post-simulation analytics (hydra-engine-wds analysis)
 
-1. Update `crates/engine/src/analysis/spec.md`.
+1. Update `crates/engine-wds/src/analysis/spec.md`.
 2. Only then write or change implementation code.
 
 ### Facade (hydra)

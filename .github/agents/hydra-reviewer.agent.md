@@ -17,7 +17,7 @@ You **do not modify code**. You report findings only.
 Work through every changed file against each of these criteria. Report every violation you find; report nothing else.
 
 ### 1. Spec compliance
-- Read the relevant spec file(s) in `crates/engine/src/<subsystem>/spec.md`.
+- Read the relevant spec file(s) in `crates/engine-wds/src/<subsystem>/spec.md`.
 - Verify that the implementation matches the spec's algorithm exactly: same equations, same convergence criteria, same defaults, same edge-case handling.
 - If a section of the spec is missing or ambiguous and the implementation had to make a choice, flag it with: **Spec gap** — the implementation assumes X, but the spec does not define this. The spec should be updated.
 - Look for `// TODO: spec section missing for <subsystem>` comments — these are known gaps and should be counted but not treated as implementation bugs.
@@ -40,7 +40,7 @@ Work through every changed file against each of these criteria. Report every vio
 
 ### 5. Crate boundaries
 - `hydra-common` must contain only `Coordinate` and `Crs`. Flag any solver logic, data model types, parsers, or engine-specific code added to it.
-- `hydra-engine` must not perform filesystem I/O or network calls. Flag any `std::fs`, `std::net`, or HTTP client usage in `crates/engine/src/`.
+- `hydra-engine-wds` must not perform filesystem I/O or network calls. Flag any `std::fs`, `std::net`, or HTTP client usage in `crates/engine-wds/src/`.
 - `hydra-sdk` must contain only re-exports. Flag any function, struct, trait implementation, or logic added directly to `crates/sdk/src/`.
 - `hydra-cli` and `hydra-gui` must not contain simulation logic. Flag any solver algorithm, data model definition, or quality computation added to those crates.
 

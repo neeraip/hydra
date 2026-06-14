@@ -7,7 +7,7 @@
 ## Spec
 
 <!-- Which spec section(s) does this implement or update? -->
-<!-- e.g. crates/engine/src/hydraulics/spec.md §3.2 — or N/A for non-engine changes. -->
+<!-- e.g. crates/engine-wds/src/hydraulics/spec.md §3.2 — or N/A for non-engine changes. -->
 
 ## Testing
 
