@@ -169,6 +169,19 @@ bump-cli version:
     if branch != "main":
         print(f"error: must be on main branch to bump (currently on '{branch}')", file=sys.stderr)
         sys.exit(1)
+    # Check that the pinned hydra-sdk version is already on crates.io.
+    import urllib.request, json as _json
+    sdk_pin = re.search(r'hydra-sdk[^}]+version = "([^"]+)"', pathlib.Path("crates/cli/Cargo.toml").read_text())
+    if sdk_pin:
+        sdk_version = sdk_pin.group(1)
+        try:
+            url = f"https://crates.io/api/v1/crates/hydra-sdk/{sdk_version}"
+            req = urllib.request.Request(url, headers={"User-Agent": "hydra-justfile"})
+            urllib.request.urlopen(req, timeout=10)
+        except urllib.error.HTTPError:
+            print(f"error: hydra-sdk {sdk_version} is not yet on crates.io.", file=sys.stderr)
+            print("       Wait for the publish-crates workflow to finish before bumping the CLI.", file=sys.stderr)
+            sys.exit(1)
     arg = "{{version}}"
     cli = pathlib.Path("crates/cli/Cargo.toml")
     m = re.search(r'^version = "(\d+)\.(\d+)\.(\d+)"', cli.read_text(), re.MULTILINE)
