@@ -22,8 +22,6 @@ jobs:
     name: Create Draft Release
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    # Library-only tags (v*) are published to crates.io but don't need a GitHub release.
-    if: startsWith(github.ref_name, 'cli-v') || startsWith(github.ref_name, 'gui-v')
 
     steps:
       - uses: actions/checkout@v4
@@ -36,8 +34,10 @@ jobs:
         run: |
           if [[ "${{ github.ref_name }}" == cli-v* ]]; then
             title="Hydra CLI ${GITHUB_REF_NAME#cli-}"
-          else
+          elif [[ "${{ github.ref_name }}" == gui-v* ]]; then
             title="Hydra GUI ${GITHUB_REF_NAME#gui-}"
+          else
+            title="Hydra ${GITHUB_REF_NAME#v}"
           fi
           gh release create "${{ github.ref_name }}" \
             --draft \
