@@ -314,7 +314,7 @@ export function useScenarios(
     return () => {
       cancelled = true;
     };
-  }, [projectId]);
+  }, [projectId, _version]);
 
   return scenarios;
 }

@@ -2,8 +2,6 @@
   "recommendations": [
     // Rust
     "rust-lang.rust-analyzer",
-
-    // Tauri
     "tauri-apps.tauri-vscode",
 
     // Frontend
@@ -12,6 +10,7 @@
     // General
     "EditorConfig.EditorConfig",
     "github.vscode-github-actions",
-    "skellock.just"
+    "skellock.just",
+    "tamasfe.even-better-toml",
   ]
 }

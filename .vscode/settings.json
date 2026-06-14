@@ -6,21 +6,17 @@
         "editor.defaultFormatter": "rust-lang.rust-analyzer"
     },
     "[typescript]": {
-        "editor.defaultFormatter": "esbenp.prettier-vscode"
+        "editor.defaultFormatter": "biomejs.biome"
     },
     "[typescriptreact]": {
-        "editor.defaultFormatter": "esbenp.prettier-vscode"
+        "editor.defaultFormatter": "biomejs.biome"
     },
     "[json]": {
-        "editor.defaultFormatter": "esbenp.prettier-vscode"
+        "editor.defaultFormatter": "biomejs.biome"
     },
     "[toml]": {
         "editor.defaultFormatter": "tamasfe.even-better-toml"
     },
     "rust-analyzer.checkOnSave": true,
-    "rust-analyzer.cargo.features": "all",
-    "files.exclude": {
-        "**/target": true,
-        "**/docs/book": true
-    }
+    "rust-analyzer.cargo.features": "all"
 }

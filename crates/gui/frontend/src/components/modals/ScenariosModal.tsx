@@ -45,6 +45,7 @@ export function ScenariosModal() {
       {/* biome-ignore lint/a11y/noStaticElementInteractions: panel only stops backdrop clicks. */}
       <div
         onMouseDown={(e) => e.stopPropagation()}
+        onClick={(e) => e.stopPropagation()}
         style={{
           width: "min(860px, 90vw)",
           height: "min(640px, 85vh)",

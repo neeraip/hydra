@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 
 const RELEASES_URL =
-  "https://api.github.com/repos/neeraip/hydra/releases/latest";
+  "https://api.github.com/repos/neeraip/hydra/releases?per_page=20";
 
 export type ReleaseInfo =
   | { status: "loading" }
@@ -51,15 +51,21 @@ export function useLatestRelease(): ReleaseInfo {
           if (!cancelled) setInfo({ status: "unavailable" });
           return;
         }
-        const data = await res.json();
+        const releases = await res.json();
         if (cancelled) return;
 
-        const tag: string = data.tag_name ?? "";
-        const version = tag.replace(/^v/, "");
-        if (!version) {
+        // Find the latest published (non-draft, non-prerelease) gui-v* release.
+        const data = releases.find(
+          (r: { tag_name: string; draft: boolean; prerelease: boolean }) =>
+            r.tag_name.startsWith("gui-v") && !r.draft && !r.prerelease,
+        );
+
+        if (!data) {
           setInfo({ status: "unavailable" });
           return;
         }
+
+        const version = data.tag_name.replace(/^gui-v/, "");
 
         setInfo({
           status: "loaded",
