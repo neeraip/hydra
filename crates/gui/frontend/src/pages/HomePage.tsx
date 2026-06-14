@@ -1,4 +1,4 @@
-import { open as openUrl } from "@tauri-apps/plugin-opener";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import { useMemo, useState } from "react";
 import { useAppState } from "../AppContext";
 import { NewProjectWizard } from "../components/modals/NewProjectWizard";
