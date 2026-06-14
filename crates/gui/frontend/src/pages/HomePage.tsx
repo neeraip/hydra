@@ -1,3 +1,4 @@
+import { open as openUrl } from "@tauri-apps/plugin-opener";
 import { useMemo, useState } from "react";
 import { useAppState } from "../AppContext";
 import { NewProjectWizard } from "../components/modals/NewProjectWizard";
@@ -340,7 +341,7 @@ export function HomePage() {
                 <button
                   type="button"
                   onClick={() =>
-                    window.open(release.releaseUrl, "_blank", "noopener")
+                    openUrl(release.releaseUrl)
                   }
                   style={{
                     background: "transparent",
@@ -406,7 +407,7 @@ export function HomePage() {
               <button
                 type="button"
                 key={label}
-                onClick={() => window.open(url, "_blank", "noopener")}
+                onClick={() => openUrl(url)}
                 style={{
                   display: "flex",
                   alignItems: "center",

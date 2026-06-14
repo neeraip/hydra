@@ -20,6 +20,7 @@
     "@heroicons/react": "^2.2.0",
     "@tanstack/react-table": "^8.21.3",
     "@tauri-apps/api": "^2.10.1",
+    "@tauri-apps/plugin-opener": "^2.5.4",
     "maplibre-gl": "^5.24.0",
     "proj4": "^2.20.8",
     "react": "^19.2.7",
