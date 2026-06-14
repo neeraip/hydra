@@ -12,9 +12,9 @@ test:
 test-common:
     cargo test -p hydra-common
 
-# Run hydra-engine tests only
+# Run hydra-engine-wds tests only
 test-engine:
-    cargo test -p hydra-engine
+    cargo test -p hydra-engine-wds
 
 # Run hydra-sdk tests only
 test-sdk:
@@ -34,7 +34,7 @@ test-frontend:
 
 # Run criterion benchmarks
 bench:
-    cargo bench -p hydra-engine
+    cargo bench -p hydra-engine-wds
 
 # ── Lint & Format ─────────────────────────────────────────────────────────────
 
@@ -118,7 +118,7 @@ ci: deny fmt-check clippy doc test type-check-frontend lint-frontend build-front
 
 # ── Release ───────────────────────────────────────────────────────────────────
 
-# Bump the workspace library version (hydra-common, hydra-engine, hydra-sdk) and tag v{version}.
+# Bump the workspace library version (hydra-common, hydra-engine-wds, hydra-sdk) and tag v{version}.
 # When bumping multiple tracks, always run this first — it updates the hydra-sdk dep pin in hydra-cli.
 # Usage: just bump 1.2.3  |  just bump patch  |  just bump minor  |  just bump major
 bump version:
@@ -146,7 +146,7 @@ bump version:
         version = arg
     # Bump workspace version
     cargo.write_text(re.sub(r'^version = ".*"', f'version = "{version}"', cargo.read_text(), count=1, flags=re.MULTILINE))
-    # Sync the hydra-sdk dep pin in hydra-cli, and the hydra-engine dep pin in hydra-sdk
+    # Sync the hydra-sdk dep pin in hydra-cli, and the hydra-engine-wds dep pin in hydra-sdk
     for pin_path in ["crates/cli/Cargo.toml", "crates/sdk/Cargo.toml"]:
         p = pathlib.Path(pin_path)
         p.write_text(re.sub(r'version = "\d+\.\d+\.\d+"', f'version = "{version}"', p.read_text()))
