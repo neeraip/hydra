@@ -1,7 +1,9 @@
 # Hydra
 
 [![Cargo CI](https://github.com/neeraip/hydra/actions/workflows/cargo-ci.yml/badge.svg)](https://github.com/neeraip/hydra/actions/workflows/cargo-ci.yml)
-[![GitHub release](https://img.shields.io/github/v/release/neeraip/hydra)](https://github.com/neeraip/hydra/releases/latest)
+[![Library](https://img.shields.io/github/v/release/neeraip/hydra?filter=v*&label=library)](https://github.com/neeraip/hydra/releases?q=v&expanded=true)
+[![CLI](https://img.shields.io/github/v/release/neeraip/hydra?filter=cli-v*&label=CLI)](https://github.com/neeraip/hydra/releases?q=cli-v&expanded=true)
+[![GUI](https://img.shields.io/github/v/release/neeraip/hydra?filter=gui-v*&label=GUI)](https://github.com/neeraip/hydra/releases?q=gui-v&expanded=true)
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](LICENSE)
 
 Hydra is a water distribution network simulator written in Rust: extended-period hydraulics and water quality for pressurised pipe networks, built without the historical constraints that shaped EPANET.
@@ -10,13 +12,7 @@ Hydra is a water distribution network simulator written in Rust: extended-period
 
 ## Install
 
-```sh
-cargo install hydra-cli
-```
-
-Or download a pre-built binary from the [releases page](https://github.com/neeraip/hydra/releases/latest).
-
-## GUI
+### GUI
 
 Download the installer for your platform from the [releases page](https://github.com/neeraip/hydra/releases/latest).
 
@@ -26,7 +22,24 @@ Download the installer for your platform from the [releases page](https://github
 > ```sh
 > xattr -cr /Applications/Hydra.app
 > ```
-> Then try opening the app again.
+> Then try opening the app again. See the [GUI documentation](https://neeraip.github.io/hydra/getting-started/gui.html) for a full usage guide.
+
+### CLI
+
+**Option 1 — Pre-built binary** (no Rust required)
+
+Download the `hydra` binary for your platform from the [releases page](https://github.com/neeraip/hydra/releases/latest).
+
+> **macOS** — After downloading, remove the quarantine flag before running:
+> ```sh
+> xattr -d com.apple.quarantine hydra
+> ```
+
+**Option 2 — Cargo**
+
+```sh
+cargo install hydra-cli
+```
 
 ## Usage
 

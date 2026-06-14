@@ -34,19 +34,6 @@ Hydra is a water distribution network simulator written in Rust. It performs ext
 
 Hydra's hydraulic and quality engines were derived by studying EPANET's mathematical foundations. Hydra is **not** an EPANET clone or compatibility layer; it is a distinct solver that models the same physics. Where the two diverge, Hydra's result is authoritative.
 
-For migration guidance, see [Migrating from EPANET](reference/migrating-from-epanet.md). For the preserved derivation work, see [EPANET Analysis](internals/epanet-analysis.md).
-
-## Correctness Policy
-
-- Correctness is established by Hydra-native tests: physics/behaviour invariants and deterministic Hydra-vs-Hydra regression checks.
-- EPANET parity data is retained as historical baseline evidence and for deviation characterisation only.
-- No active correctness gate may require EPANET executables or EPANET reference output.
-
-## Roadmap
-
-| Engine | Status |
-|---|---|
-| Hydraulics (WD) | ✅ Complete |
-| Water quality | ✅ Complete |
+For migration guidance, see [Migrating from EPANET](reference/migrating-from-epanet.md).
 
 See [INP Format Support](reference/inp-format.md) for current EPANET input coverage.
