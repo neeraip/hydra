@@ -13,7 +13,7 @@ test-common:
     cargo test -p hydra-common
 
 # Run hydra-engine-wds tests only
-test-engine:
+test-engine-wds:
     cargo test -p hydra-engine-wds
 
 # Run hydra-sdk tests only
@@ -120,7 +120,7 @@ ci: deny fmt-check clippy doc test type-check-frontend lint-frontend build-front
 
 # Bump the workspace library version (hydra-common, hydra-engine-wds, hydra-sdk) and tag v{version}.
 # When bumping multiple tracks, always run this first — it updates the hydra-sdk dep pin in hydra-cli.
-# Usage: just bump 1.2.3  |  just bump patch  |  just bump minor  |  just bump major
+# Usage: just bump patch  |  just bump minor  |  just bump major
 bump version:
     #!/usr/bin/env python3
     import pathlib, re, subprocess, sys
@@ -133,6 +133,9 @@ bump version:
         print(f"error: must be on main branch to bump (currently on '{branch}')", file=sys.stderr)
         sys.exit(1)
     arg = "{{version}}"
+    if arg not in ("patch", "minor", "major"):
+        print(f"error: invalid bump level '{arg}' — must be patch, minor, or major", file=sys.stderr)
+        sys.exit(1)
     cargo = pathlib.Path("Cargo.toml")
     m = re.search(r'^version = "(\d+)\.(\d+)\.(\d+)"', cargo.read_text(), re.MULTILINE)
     cur_major, cur_minor, cur_patch = int(m.group(1)), int(m.group(2)), int(m.group(3))
@@ -140,10 +143,8 @@ bump version:
         version = f"{cur_major}.{cur_minor}.{cur_patch + 1}"
     elif arg == "minor":
         version = f"{cur_major}.{cur_minor + 1}.0"
-    elif arg == "major":
-        version = f"{cur_major + 1}.0.0"
     else:
-        version = arg
+        version = f"{cur_major + 1}.0.0"
     # Bump workspace version
     cargo.write_text(re.sub(r'^version = ".*"', f'version = "{version}"', cargo.read_text(), count=1, flags=re.MULTILINE))
     # Sync the hydra-sdk dep pin in hydra-cli, and the hydra-engine-wds dep pin in hydra-sdk
@@ -157,7 +158,7 @@ bump version:
     print(f"Tagged v{version}. Push with: git push && git push --tags")
 
 # Bump the CLI application version independently and tag cli-v{version}.
-# Usage: just bump-cli 1.2.3  |  just bump-cli patch  |  just bump-cli minor  |  just bump-cli major
+# Usage: just bump-cli patch  |  just bump-cli minor  |  just bump-cli major
 bump-cli version:
     #!/usr/bin/env python3
     import pathlib, re, subprocess, sys
@@ -168,6 +169,10 @@ bump-cli version:
     branch = subprocess.run(["git", "branch", "--show-current"], capture_output=True, text=True).stdout.strip()
     if branch != "main":
         print(f"error: must be on main branch to bump (currently on '{branch}')", file=sys.stderr)
+        sys.exit(1)
+    arg = "{{version}}"
+    if arg not in ("patch", "minor", "major"):
+        print(f"error: invalid bump level '{arg}' — must be patch, minor, or major", file=sys.stderr)
         sys.exit(1)
     # Check that the pinned hydra-sdk version is already on crates.io.
     import urllib.request, json as _json
@@ -182,7 +187,6 @@ bump-cli version:
             print(f"error: hydra-sdk {sdk_version} is not yet on crates.io.", file=sys.stderr)
             print("       Wait for the publish-crates workflow to finish before bumping the CLI.", file=sys.stderr)
             sys.exit(1)
-    arg = "{{version}}"
     cli = pathlib.Path("crates/cli/Cargo.toml")
     m = re.search(r'^version = "(\d+)\.(\d+)\.(\d+)"', cli.read_text(), re.MULTILINE)
     cur_major, cur_minor, cur_patch = int(m.group(1)), int(m.group(2)), int(m.group(3))
@@ -190,10 +194,8 @@ bump-cli version:
         version = f"{cur_major}.{cur_minor}.{cur_patch + 1}"
     elif arg == "minor":
         version = f"{cur_major}.{cur_minor + 1}.0"
-    elif arg == "major":
-        version = f"{cur_major + 1}.0.0"
     else:
-        version = arg
+        version = f"{cur_major + 1}.0.0"
     cli.write_text(re.sub(r'^version = ".*"', f'version = "{version}"', cli.read_text(), count=1, flags=re.MULTILINE))
     subprocess.run(["cargo", "update", "--workspace"], check=True)
     subprocess.run(["git", "add", "crates/cli/Cargo.toml", "Cargo.lock"], check=True)
@@ -202,7 +204,7 @@ bump-cli version:
     print(f"Tagged cli-v{version}. Push with: git push && git push --tags")
 
 # Bump the GUI application version independently and tag gui-v{version}.
-# Usage: just bump-gui 1.2.3  |  just bump-gui patch  |  just bump-gui minor  |  just bump-gui major
+# Usage: just bump-gui patch  |  just bump-gui minor  |  just bump-gui major
 bump-gui version:
     #!/usr/bin/env python3
     import json, pathlib, re, subprocess, sys
@@ -215,6 +217,9 @@ bump-gui version:
         print(f"error: must be on main branch to bump (currently on '{branch}')", file=sys.stderr)
         sys.exit(1)
     arg = "{{version}}"
+    if arg not in ("patch", "minor", "major"):
+        print(f"error: invalid bump level '{arg}' — must be patch, minor, or major", file=sys.stderr)
+        sys.exit(1)
     gui = pathlib.Path("crates/gui/Cargo.toml")
     m = re.search(r'^version = "(\d+)\.(\d+)\.(\d+)"', gui.read_text(), re.MULTILINE)
     cur_major, cur_minor, cur_patch = int(m.group(1)), int(m.group(2)), int(m.group(3))
@@ -222,10 +227,8 @@ bump-gui version:
         version = f"{cur_major}.{cur_minor}.{cur_patch + 1}"
     elif arg == "minor":
         version = f"{cur_major}.{cur_minor + 1}.0"
-    elif arg == "major":
-        version = f"{cur_major + 1}.0.0"
     else:
-        version = arg
+        version = f"{cur_major + 1}.0.0"
     gui.write_text(re.sub(r'^version = ".*"', f'version = "{version}"', gui.read_text(), count=1, flags=re.MULTILINE))
     p = pathlib.Path("crates/gui/tauri.conf.json")
     d = json.loads(p.read_text())

@@ -4,9 +4,9 @@ CLI (`hydra-cli`) and GUI (`hydra-gui`) are versioned **independently** from the
 
 | Command | What it bumps | Tag created | Triggers |
 |---|---|---|---|
-| `just bump [patch\|minor\|major\|x.y.z]` | Workspace version (common + engine + sdk) + dep pins in cli/sdk | `v{version}` | GitHub draft release (crates.io publish triggers when release is published) |
-| `just bump-cli [patch\|minor\|major\|x.y.z]` | `crates/cli/Cargo.toml` only | `cli-v{version}` | CLI binary release + crates.io publish of hydra-cli |
-| `just bump-gui [patch\|minor\|major\|x.y.z]` | `crates/gui/Cargo.toml` + `tauri.conf.json` | `gui-v{version}` | GUI installer release |
+| `just bump [patch\|minor\|major]` | Workspace version (common + engine + sdk) + dep pins in cli/sdk | `v{version}` | GitHub draft release (crates.io publish triggers when release is published) |
+| `just bump-cli [patch\|minor\|major]` | `crates/cli/Cargo.toml` only | `cli-v{version}` | CLI binary release + crates.io publish of hydra-cli |
+| `just bump-gui [patch\|minor\|major]` | `crates/gui/Cargo.toml` + `tauri.conf.json` | `gui-v{version}` | GUI installer release |
 
 ## Release patterns
 
