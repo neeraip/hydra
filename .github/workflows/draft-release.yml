@@ -185,13 +185,50 @@ jobs:
         if: steps.cache-tauri-cli.outputs.cache-hit != 'true'
         run: cargo binstall tauri-cli --version "=2.11.2" --no-confirm
 
-      - name: Build and upload installer
+      - name: Build GUI installer
+        id: tauri
         uses: tauri-apps/tauri-action@v0.5.20
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           projectPath: crates/gui
           tauriScript: cargo tauri
           args: --target ${{ matrix.target }}
-          tagName: ${{ github.ref_name }}
-          releaseDraft: true
+
+      - name: Rename and upload GUI artifacts
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ARTIFACT_PATHS: ${{ steps.tauri.outputs.artifactPaths }}
+          TARGET: ${{ matrix.target }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          python3 << 'EOF'
+          import json, os, shutil, subprocess
+
+          paths = json.loads(os.environ['ARTIFACT_PATHS'])
+          tag    = os.environ['TAG']
+          target = os.environ['TARGET']
+          version = tag.removeprefix('gui-v')
+
+          def classify(path):
+              if path.endswith('.app.tar.gz.sig'):      return ('updater', '.app.tar.gz.sig')
+              if path.endswith('.app.tar.gz'):          return ('updater', '.app.tar.gz')
+              if path.endswith('.AppImage.tar.gz.sig'): return ('updater', '.AppImage.tar.gz.sig')
+              if path.endswith('.AppImage.tar.gz'):     return ('updater', '.AppImage.tar.gz')
+              if path.endswith('.nsis.zip.sig'):        return ('updater', '.nsis.zip.sig')
+              if path.endswith('.nsis.zip'):            return ('updater', '.nsis.zip')
+              if path.endswith('.AppImage'):            return ('installer', '.AppImage')
+              if path.endswith('.dmg'):                 return ('installer', '.dmg')
+              if path.endswith('.exe'):                 return ('installer', '.exe')
+              if path.endswith('.msi'):                 return ('installer', '.msi')
+              return (None, None)
+
+          for src in paths:
+              kind, ext = classify(src)
+              if kind is None:
+                  print(f'Skipping unrecognised artifact: {os.path.basename(src)}')
+                  continue
+              dst_name = f'hydra-gui-{version}-{target}-{kind}{ext}'
+              dst = os.path.join(os.path.dirname(src), dst_name)
+              shutil.copy2(src, dst)
+              subprocess.run(['gh', 'release', 'upload', tag, dst, '--clobber'], check=True)
+              print(f'Uploaded: {dst_name}')
+          EOF
