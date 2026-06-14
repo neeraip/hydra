@@ -194,6 +194,7 @@ jobs:
           args: --target ${{ matrix.target }}
 
       - name: Rename and upload GUI artifacts
+        shell: bash
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           ARTIFACT_PATHS: ${{ steps.tauri.outputs.artifactPaths }}
