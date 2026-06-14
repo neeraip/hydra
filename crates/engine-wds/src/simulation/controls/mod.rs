@@ -1,4 +1,4 @@
-// controls — §4 of crates/common/spec.md
+// controls — §4 of crates/engine-wds/src/simulation/spec.md
 //
 // Evaluates simple controls (§4.1) and rule-based controls (§4.2) and applies
 // resulting status and setting changes to links.

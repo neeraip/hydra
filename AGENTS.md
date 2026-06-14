@@ -8,17 +8,14 @@ Hydra is a water distribution network simulator written in Rust. It implements t
 
 | Crate | Owns | Does not own |
 |---|---|---|
-| `hydra-common` | `Coordinate` and `Crs` types — engine-agnostic geographic primitives | Solver logic; data model; session API; I/O |
 | `hydra-engine-wds` | Complete simulation engine: data model; INP/OUT/RPT parsers and writers; unit conversion; GGA hydraulic solver; Lagrangian quality engine; controls; timestep; accounting; session API (`Simulation`); post-simulation analytics | Interface logic; filesystem/network I/O |
 | `hydra-sdk` | Curated public re-exports — the umbrella crate | Any new logic |
 | `hydra-cli` | CLI argument parsing; input source resolution; file I/O | All simulation logic |
 | `hydra-gui` | Tauri command surface; project/scenario persistence; background run queue; React frontend | Solver algorithms; session logic |
 
-**`hydra-common` contains only `Coordinate` and `Crs`.** Never add solver logic, data model types, parsers, or any engine-specific code there. Hydra is WD-only; `hydra-common` is intentionally minimal and will not grow.
-
 **`hydra-engine-wds` is a self-contained black box.** Its internal module structure (`hydraulics/`, `quality/`, `simulation/`, `analysis/`, `model/`, `io/`) is an implementation detail. Callers depend only on its public re-export surface.
 
-**`hydra-cli` and `hydra-gui` are downstream consumers of Hydra** — they depend on the umbrella crate and never import from `hydra-engine-wds` or `hydra-common` directly. This is the same contract any third-party integrator has.
+**`hydra-cli` and `hydra-gui` are downstream consumers of Hydra** — they depend on the umbrella crate and never import from `hydra-engine-wds` directly. This is the same contract any third-party integrator has.
 
 **`hydra` contains no logic** — only re-exports. Never add functions, structs, or trait implementations to it.
 

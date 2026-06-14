@@ -1,6 +1,5 @@
 [workspace]
 members = [
-    "crates/common",
     "crates/engine-wds",
     "crates/sdk",
     "crates/cli",
@@ -22,9 +21,6 @@ documentation = "https://github.com/neeraip/hydra"
 # Optimise the core library even in dev/test builds so that benchmark parity
 # tests (and any other integration test that exercises the solver) run at
 # near-release speed without requiring `--release`.
-[profile.dev.package.hydra-common]
-opt-level = 2
-
 [profile.dev.package.hydra-engine-wds]
 opt-level = 2
 

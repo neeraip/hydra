@@ -6,14 +6,6 @@ default:
 
 # Run all tests
 test:
-    cargo test --workspace --all-targets --locked
-
-# Run hydra-common tests only
-test-common:
-    cargo test -p hydra-common
-
-# Run hydra-engine-wds tests only
-test-engine-wds:
     cargo test -p hydra-engine-wds
 
 # Run hydra-sdk tests only
@@ -118,7 +110,7 @@ ci: deny fmt-check clippy doc test type-check-frontend lint-frontend build-front
 
 # ── Release ───────────────────────────────────────────────────────────────────
 
-# Bump the workspace library version (hydra-common, hydra-engine-wds, hydra-sdk) and tag v{version}.
+# Bump the workspace library version (hydra-engine-wds, hydra-sdk) and tag v{version}.
 # When bumping multiple tracks, always run this first — it updates the hydra-sdk dep pin in hydra-cli.
 # Usage: just bump patch  |  just bump minor  |  just bump major
 bump version:

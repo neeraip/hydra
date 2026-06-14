@@ -1186,7 +1186,7 @@ mod tests {
     // Resolve a fixture path relative to the workspace root.
     fn fixture(name: &str) -> std::path::PathBuf {
         let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-        // crates/common  →  workspace root
+        // crates/engine-wds  →  workspace root
         let root = manifest.parent().unwrap().parent().unwrap();
         root.join("tests/fixtures").join(name)
     }

@@ -25,7 +25,7 @@ use std::fmt;
 
 use crate::{Network, ValidationError};
 
-// ── Parse entry point (§4 of crates/common/spec.md) ──────────────────────────
+// ── Parse entry point (§4 of crates/engine-wds/src/model/spec.md) ───────────
 
 /// Error returned by [`parse`] when a model file cannot be processed.
 #[derive(Debug)]

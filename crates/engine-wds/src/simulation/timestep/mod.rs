@@ -1,4 +1,4 @@
-// timestep — §5 of crates/common/spec.md
+// timestep — §5 of crates/engine-wds/src/simulation/spec.md
 //
 // Selects the adaptive hydraulic time step Δtₕ (§5.2) and advances tank
 // levels between hydraulic solves (§5.3).

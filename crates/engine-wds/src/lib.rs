@@ -35,8 +35,7 @@
 //! engine, the simulation session API, and post-simulation analytics.
 //!
 //! It does **not** own interface logic (CLI, GUI) or filesystem/network I/O —
-//! callers supply bytes. The only types outside this crate are the two
-//! geographic primitives `Coordinate` and `Crs` in `hydra-common`.
+//! callers supply bytes. all types are defined within this crate.
 //!
 //! # Internal module structure
 //!
