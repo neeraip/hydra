@@ -209,24 +209,24 @@ jobs:
           version = tag.removeprefix('gui-v')
 
           def classify(path):
-              if path.endswith('.app.tar.gz.sig'):      return ('updater', '.app.tar.gz.sig')
-              if path.endswith('.app.tar.gz'):          return ('updater', '.app.tar.gz')
-              if path.endswith('.AppImage.tar.gz.sig'): return ('updater', '.AppImage.tar.gz.sig')
-              if path.endswith('.AppImage.tar.gz'):     return ('updater', '.AppImage.tar.gz')
-              if path.endswith('.nsis.zip.sig'):        return ('updater', '.nsis.zip.sig')
-              if path.endswith('.nsis.zip'):            return ('updater', '.nsis.zip')
-              if path.endswith('.AppImage'):            return ('installer', '.AppImage')
-              if path.endswith('.dmg'):                 return ('installer', '.dmg')
-              if path.endswith('.exe'):                 return ('installer', '.exe')
-              if path.endswith('.msi'):                 return ('installer', '.msi')
-              return (None, None)
+              if path.endswith('.app.tar.gz'):          return None  # updater bundle — not configured
+              if path.endswith('.app.tar.gz.sig'):      return None
+              if path.endswith('.AppImage.tar.gz'):     return None
+              if path.endswith('.AppImage.tar.gz.sig'): return None
+              if path.endswith('.nsis.zip'):            return None
+              if path.endswith('.nsis.zip.sig'):        return None
+              if path.endswith('.AppImage'):            return '.AppImage'
+              if path.endswith('.dmg'):                 return '.dmg'
+              if path.endswith('.exe'):                 return '.exe'
+              if path.endswith('.msi'):                 return '.msi'
+              return None
 
           for src in paths:
-              kind, ext = classify(src)
-              if kind is None:
-                  print(f'Skipping unrecognised artifact: {os.path.basename(src)}')
+              ext = classify(src)
+              if ext is None:
+                  print(f'Skipping: {os.path.basename(src)}')
                   continue
-              dst_name = f'hydra-gui-{version}-{target}-{kind}{ext}'
+              dst_name = f'hydra-gui-{version}-{target}{ext}'
               dst = os.path.join(os.path.dirname(src), dst_name)
               shutil.copy2(src, dst)
               subprocess.run(['gh', 'release', 'upload', tag, dst, '--clobber'], check=True)
