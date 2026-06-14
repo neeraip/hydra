@@ -219,6 +219,8 @@ jobs:
               if path.endswith('.dmg'):                 return '.dmg'
               if path.endswith('.exe'):                 return '.exe'
               if path.endswith('.msi'):                 return '.msi'
+              if path.endswith('.deb'):                 return '.deb'
+              if path.endswith('.rpm'):                 return '.rpm'
               return None
 
           for src in paths:
