@@ -28,7 +28,7 @@ pub const HYDRA_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 // ── Session API ───────────────────────────────────────────────────────────────
 
-pub use hydra_engine::{
+pub use hydra_engine_wds::{
     classify_simulation_runtime_millis,
     estimate_simulation_runtime,
     estimate_simulation_runtime_from_summary,
@@ -67,7 +67,7 @@ pub use hydra_engine::{
 
 // ── Analytics ─────────────────────────────────────────────────────────────────
 
-pub use hydra_engine::{
+pub use hydra_engine_wds::{
     compute_demand_reliability_from_out, compute_demand_reliability_from_out_with_options,
     compute_service_compliance_from_out, estimate_analysis_runtime_millis, AnalysisSelection,
     DemandReliabilityNode, DemandReliabilityOptions, DemandReliabilityReport,
@@ -77,7 +77,7 @@ pub use hydra_engine::{
 
 // ── Data model ────────────────────────────────────────────────────────────────
 
-pub use hydra_engine::{
+pub use hydra_engine_wds::{
     // §2.8 — controls
     ActionValue,
     // §2.3 — curves
@@ -149,7 +149,7 @@ pub use hydra_engine::{
 /// - [`io::parse`] — parse EPANET `.inp` bytes into a [`Network`].
 /// - [`io::out_writer`] / [`io::rpt_writer`] — write binary `.out` and text `.rpt` output.
 pub mod io {
-    pub use hydra_engine::io::{
+    pub use hydra_engine_wds::io::{
         analysis_io, out_reader, out_writer, parse, rpt_writer, write_inp, ParseError,
     };
 }
@@ -158,7 +158,7 @@ pub mod io {
 ///
 /// The inverse of [`io::parse`]: all values are converted from the internal
 /// unit system back to the user-declared unit system.
-pub use hydra_engine::write_inp;
+pub use hydra_engine_wds::write_inp;
 
 #[cfg(test)]
 mod tests {

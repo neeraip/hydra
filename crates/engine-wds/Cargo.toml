@@ -1,5 +1,5 @@
 [package]
-name = "hydra-engine"
+name = "hydra-engine-wds"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
@@ -21,7 +21,7 @@ serde_json = "1"
 [dev-dependencies]
 approx = "0.5"
 criterion = { version = "0.5", features = ["html_reports"] }
-hydra-engine = { path = ".", features = ["test-support"] }
+hydra-engine-wds = { path = ".", features = ["test-support"] }
 pretty_assertions = "1"
 rstest = "0.23"
 

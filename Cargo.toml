@@ -1,7 +1,7 @@
 [workspace]
 members = [
     "crates/common",
-    "crates/engine",
+    "crates/engine-wds",
     "crates/sdk",
     "crates/cli",
     "crates/gui",
@@ -25,7 +25,7 @@ documentation = "https://github.com/neeraip/hydra"
 [profile.dev.package.hydra-common]
 opt-level = 2
 
-[profile.dev.package.hydra-engine]
+[profile.dev.package.hydra-engine-wds]
 opt-level = 2
 
 [profile.release]

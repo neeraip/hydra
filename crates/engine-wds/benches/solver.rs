@@ -23,8 +23,8 @@
 //! | bwsn2     |    12,523 | 14,831 |
 
 use criterion::{black_box, criterion_group, criterion_main, BatchSize, Criterion};
-use hydra_engine::{build_solver_context, solve_hydraulic_step};
-use hydra_engine::{LinkKind, LinkState, LinkStatus, Network, NodeKind, NodeState};
+use hydra_engine_wds::{build_solver_context, solve_hydraulic_step};
+use hydra_engine_wds::{LinkKind, LinkState, LinkStatus, Network, NodeKind, NodeState};
 use std::path::PathBuf;
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -115,7 +115,7 @@ fn bench_network(c: &mut Criterion, name: &str) {
     };
 
     let network =
-        hydra_engine::io::parse(&bytes).unwrap_or_else(|e| panic!("parse failed for {name}: {e}"));
+        hydra_engine_wds::io::parse(&bytes).unwrap_or_else(|e| panic!("parse failed for {name}: {e}"));
     let favad = network.compute_favad();
 
     let init_nodes = init_node_states(&network);
