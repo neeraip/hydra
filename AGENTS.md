@@ -101,14 +101,29 @@ CLI (`hydra-cli`) and GUI (`hydra-gui`) are versioned **independently** from the
 | `just bump-cli [patch\|minor\|major\|x.y.z]` | `crates/cli/Cargo.toml` only | `cli-v{version}` | CLI binary release + crates.io publish of hydra-cli |
 | `just bump-gui [patch\|minor\|major\|x.y.z]` | `crates/gui/Cargo.toml` + `tauri.conf.json` | `gui-v{version}` | GUI installer release |
 
-**When bumping multiple tracks at once, always run `just bump` first.** It updates the `hydra-sdk` dep pin inside `crates/cli/Cargo.toml` — if you run `just bump-cli` before `just bump`, the cli bump commit will reference the old SDK version and `just bump` will add a second fixup commit on top. Correct order:
+**There are only two valid release patterns:**
+
+**Pattern 1 — Library + CLI/GUI release (library changed):**
+`hydra-cli` depends on `hydra-sdk`, which must be indexed on crates.io before the CLI publish can succeed. Push the library tag first and wait for the `publish-crates` workflow to complete before pushing CLI/GUI tags.
 
 ```sh
-just bump minor        # library stack first
-just bump-cli minor    # cli second (picks up updated sdk pin)
-just bump-gui minor    # gui last (independent)
+just bump minor
+git push && git push --tags   # wait for publish-crates workflow to finish
+
+just bump-cli minor
+just bump-gui minor
+git push && git push --tags   # cli and gui are safe to push together
+```
+
+**Pattern 2 — CLI and/or GUI release only (no library change):**
+CLI and GUI are independent of each other. Push their tags together or separately.
+
+```sh
+just bump-cli patch   # and/or just bump-gui patch
 git push && git push --tags
 ```
+
+**Never push a `cli-v*` or `gui-v*` tag at the same time as a `v*` tag** — the CLI publish will race against the library publish and fail because `hydra-sdk` won't be on crates.io yet.
 
 **Never use these recipes just to set a version without intending a release.** They commit and tag, which triggers CI/CD. To reset or change a version without releasing, edit the relevant `Cargo.toml` and `tauri.conf.json` files directly, run `cargo update --workspace`, and commit — no tag.
 
