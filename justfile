@@ -139,10 +139,12 @@ bump version:
         version = f"{cur_major + 1}.0.0"
     # Bump workspace version
     cargo.write_text(re.sub(r'^version = ".*"', f'version = "{version}"', cargo.read_text(), count=1, flags=re.MULTILINE))
-    # Sync the hydra-sdk dep pin in hydra-cli, and the hydra-engine-wds dep pin in hydra-sdk
-    for pin_path in ["crates/cli/Cargo.toml", "crates/sdk/Cargo.toml"]:
-        p = pathlib.Path(pin_path)
-        p.write_text(re.sub(r'version = "\d+\.\d+\.\d+"', f'version = "{version}"', p.read_text()))
+    # Update only the hydra-sdk dep pin in hydra-cli (not the cli package version)
+    cli = pathlib.Path("crates/cli/Cargo.toml")
+    cli.write_text(re.sub(r'(hydra-sdk[^\n]+version = ")\d+\.\d+\.\d+"', rf'\g<1>{version}"', cli.read_text()))
+    # Update only the hydra-engine-wds dep pin in hydra-sdk
+    sdk = pathlib.Path("crates/sdk/Cargo.toml")
+    sdk.write_text(re.sub(r'(hydra-engine-wds[^\n]+version = ")\d+\.\d+\.\d+"', rf'\g<1>{version}"', sdk.read_text()))
     subprocess.run(["cargo", "update", "--workspace"], check=True)
     subprocess.run(["git", "add", "Cargo.toml", "Cargo.lock", "crates/cli/Cargo.toml", "crates/sdk/Cargo.toml"], check=True)
     subprocess.run(["git", "commit", "-m", f"chore: bump library version to {version}"], check=True)
