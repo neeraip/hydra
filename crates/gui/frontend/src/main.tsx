@@ -18,25 +18,6 @@ if (localStorage.getItem("hydra2-reduced-motion") === "true")
 if (localStorage.getItem("hydra2-high-contrast") === "true")
   root.setAttribute("data-high-contrast", "true");
 
-// In the packaged Tauri app, suppress the native WebView context menu
-// (which exposes Reload / Inspect Element). Individual controls can opt out
-// by adding data-allow-native-context-menu="true".
-function isTauri(): boolean {
-  return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
-}
-
-if (isTauri()) {
-  document.addEventListener(
-    "contextmenu",
-    (e) => {
-      const target = e.target as Element | null;
-      if (target?.closest("[data-allow-native-context-menu='true']")) return;
-      e.preventDefault();
-    },
-    true,
-  );
-}
-
 // biome-ignore lint/style/noNonNullAssertion: React mounts into the static root element provided by index.html.
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
