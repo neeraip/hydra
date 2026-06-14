@@ -87,4 +87,4 @@ If you are migrating code that uses the EPANET Toolkit C API, the equivalent Hyd
 | `EN_getlinkvalue(EN_FLOW)` | `sim.get_link_result(id, LinkQuantity::Flow, t)` |
 | `EN_deleteproject` | Drop the `Simulation`, handled by Rust's ownership system |
 
-See the [README](https://github.com/neeraip/hydra#library-usage) for complete library usage examples.
+See the [SDK overview](../sdk/overview.md) for complete library usage examples.
