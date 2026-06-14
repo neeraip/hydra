@@ -1,6 +1,6 @@
 [package]
 name = "hydra-cli"
-version = "0.1.0"
+version = "0.0.0"
 edition.workspace = true
 authors.workspace = true
 license.workspace = true
@@ -15,7 +15,7 @@ name = "hydra"
 path = "src/main.rs"
 
 [dependencies]
-hydra = { package = "hydra-sdk", path = "../sdk", version = "0.1.0" }
+hydra = { package = "hydra-sdk", path = "../sdk", version = "0.0.0" }
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }
