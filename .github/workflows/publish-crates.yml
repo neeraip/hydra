@@ -12,6 +12,7 @@ jobs:
     name: Publish Crates
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    if: startsWith(github.ref_name, 'v') || startsWith(github.ref_name, 'cli-v')
 
     env:
       CARGO_TERM_COLOR: always
