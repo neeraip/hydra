@@ -4,7 +4,7 @@ CLI (`hydra-cli`) and GUI (`hydra-gui`) are versioned **independently** from the
 
 | Command | What it bumps | Tag created | Triggers |
 |---|---|---|---|
-| `just bump [patch\|minor\|major\|x.y.z]` | Workspace version (common + engine + sdk) + dep pins in cli/sdk | `v{version}` | GitHub draft release + crates.io publish of common/engine/sdk |
+| `just bump [patch\|minor\|major\|x.y.z]` | Workspace version (common + engine + sdk) + dep pins in cli/sdk | `v{version}` | GitHub draft release (crates.io publish triggers when release is published) |
 | `just bump-cli [patch\|minor\|major\|x.y.z]` | `crates/cli/Cargo.toml` only | `cli-v{version}` | CLI binary release + crates.io publish of hydra-cli |
 | `just bump-gui [patch\|minor\|major\|x.y.z]` | `crates/gui/Cargo.toml` + `tauri.conf.json` | `gui-v{version}` | GUI installer release |
 
@@ -16,10 +16,11 @@ CLI (`hydra-cli`) and GUI (`hydra-gui`) are versioned **independently** from the
 
 ```sh
 just bump minor
-git push && git push --tags   # creates library draft release + starts crates.io publish
+git push && git push --tags   # creates library draft release
 
-# 1. Wait for the publish-crates workflow to go green
-# 2. Publish the library draft release from the GitHub releases page
+# 1. Review and publish the library draft release from the GitHub releases page
+# 2. Publishing triggers the publish-crates workflow — wait for it to go green
+#    (hydra-sdk must be on crates.io before the CLI publish can succeed)
 
 just bump-cli minor
 just bump-gui minor
