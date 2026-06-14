@@ -19,7 +19,7 @@ import { useLatestRelease } from "../hooks/useLatestRelease";
 const HELP_LINKS = [
   {
     label: "Documentation",
-    url: "https://github.com/neeraip/hydra/wiki",
+    url: "https://neeraip.github.io/hydra/",
   },
   {
     label: "Community",
