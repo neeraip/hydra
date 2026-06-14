@@ -8,13 +8,37 @@ Hydra is a water distribution network simulator written in Rust: extended-period
 
 **[→ Full documentation](https://neeraip.github.io/hydra/)**
 
-## Quick Start
+## Install
 
 ```sh
-# Prerequisites: Rust ≥ 1.95, just
-just build
-just test
+cargo install hydra-cli
+```
+
+Or download a pre-built binary from the [releases page](https://github.com/neeraip/hydra/releases/latest).
+
+## Usage
+
+```sh
+# Run a simulation — report goes to stdout
 hydra network.inp
+
+# Write report and binary output to files
+hydra network.inp report.rpt output.out
+
+# Named flags (equivalent)
+hydra --input network.inp --report report.rpt --output output.out
+
+# Accept an HTTP URL as input
+hydra https://example.com/network.inp
+
+# JSON report
+hydra network.inp --report report.json
+
+# Suppress progress output
+hydra -q network.inp
+
+# Print version
+hydra -v
 ```
 
 ## Documentation
