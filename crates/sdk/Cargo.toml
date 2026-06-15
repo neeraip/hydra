@@ -8,6 +8,7 @@ repository.workspace = true
 homepage.workspace = true
 documentation.workspace = true
 description = "Water distribution network simulator — EPANET-compatible extended-period simulation"
+readme = "README.md"
 keywords = ["epanet", "water", "hydraulics", "simulation", "network"]
 categories = ["science", "simulation"]
 publish = true

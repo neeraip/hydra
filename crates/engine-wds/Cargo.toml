@@ -9,6 +9,9 @@ repository.workspace = true
 homepage.workspace = true
 documentation.workspace = true
 description = "Hydra water distribution engine — data model, hydraulic solver, quality engine, session API, analytics"
+readme = "README.md"
+keywords = ["epanet", "water", "hydraulics", "simulation", "network"]
+categories = ["science", "simulation"]
 
 [features]
 test-support = []
