@@ -9,6 +9,9 @@ repository.workspace = true
 homepage.workspace = true
 documentation.workspace = true
 description = "CLI for Hydra — reads network descriptions from files, writes results to files"
+readme = "README.md"
+keywords = ["epanet", "water", "hydraulics", "simulation", "cli"]
+categories = ["science", "simulation", "command-line-utilities"]
 
 [[bin]]
 name = "hydra"

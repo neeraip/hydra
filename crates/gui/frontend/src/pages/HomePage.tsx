@@ -340,9 +340,7 @@ export function HomePage() {
                 </span>
                 <button
                   type="button"
-                  onClick={() =>
-                    openUrl(release.releaseUrl)
-                  }
+                  onClick={() => openUrl(release.releaseUrl)}
                   style={{
                     background: "transparent",
                     border: "none",

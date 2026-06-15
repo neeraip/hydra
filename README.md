@@ -26,45 +26,7 @@ Download the installer for your platform from the [releases page](https://github
 
 ### CLI
 
-**Option 1 — Pre-built binary** (no Rust required)
-
-Download the `hydra` binary for your platform from the [releases page](https://github.com/neeraip/hydra/releases/latest).
-
-> **macOS** — After downloading, remove the quarantine flag before running:
-> ```sh
-> xattr -d com.apple.quarantine hydra
-> ```
-
-**Option 2 — Cargo**
-
-```sh
-cargo install hydra-cli
-```
-
-## Usage
-
-```sh
-# Run a simulation — report goes to stdout
-hydra network.inp
-
-# Write report and binary output to files
-hydra network.inp report.rpt output.out
-
-# Named flags (equivalent)
-hydra --input network.inp --report report.rpt --output output.out
-
-# Accept an HTTP URL as input
-hydra https://example.com/network.inp
-
-# JSON report
-hydra network.inp --report report.json
-
-# Suppress progress output
-hydra -q network.inp
-
-# Print version
-hydra -v
-```
+See [crates/cli/README.md](crates/cli/README.md) for install options and usage.
 
 ## Documentation
 

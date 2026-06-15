@@ -298,10 +298,11 @@ export interface ScenarioDto {
  */
 export function useScenarios(
   projectId: string | null,
-  _version: number = 0,
+  version: number = 0,
 ): ScenarioDto[] {
   const [scenarios, setScenarios] = useState<ScenarioDto[]>([]);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `version` is a caller-controlled refetch counter; it is a valid dep.
   useEffect(() => {
     if (!projectId) {
       setScenarios([]);
@@ -314,7 +315,7 @@ export function useScenarios(
     return () => {
       cancelled = true;
     };
-  }, [projectId, _version]);
+  }, [projectId, version]);
 
   return scenarios;
 }
