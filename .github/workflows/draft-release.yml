@@ -37,7 +37,7 @@ jobs:
           elif [[ "${{ github.ref_name }}" == gui-v* ]]; then
             title="Hydra GUI ${GITHUB_REF_NAME#gui-}"
           else
-            title="Hydra ${GITHUB_REF_NAME#v}"
+            title="Hydra Library ${GITHUB_REF_NAME#v}"
           fi
           gh release create "${{ github.ref_name }}" \
             --draft \
