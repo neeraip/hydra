@@ -153,9 +153,10 @@ export function CanvasView() {
   // the new network.  Does NOT increment on scenario switch so the user's
   // chosen pan/zoom position is preserved during scenario comparisons.
   const [mapFitKey, setMapFitKey] = useState(0);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `project?.id` is an intentional trigger to reset the map viewport on project switch.
   useEffect(() => {
     setMapFitKey((k) => k + 1);
-  }, []);
+  }, [project?.id]);
 
   // ── Measure clicks ──────────────────────────────────────────
   // In map mode: geo points { lng, lat }. In schematic mode: SVG ClickPoints.
@@ -202,9 +203,10 @@ export function CanvasView() {
 
   // On project or scenario change, discard stale period results immediately.
   // This guarantees overlays never show data from a previously active scenario.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `project?.id` and `activeScenarioId` are intentional triggers to discard stale period data on switch.
   useEffect(() => {
     setCurrentPeriodResult(null);
-  }, []);
+  }, [project?.id, activeScenarioId]);
 
   useEffect(() => {
     if (!resultMeta || !project?.id) {
