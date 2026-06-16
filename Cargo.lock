@@ -1830,7 +1830,7 @@ dependencies = [
 
 [[package]]
 name = "hydra-engine-wds"
-version = "1.0.1"
+version = "1.0.2"
 dependencies = [
  "approx",
  "chrono",
@@ -1859,7 +1859,7 @@ dependencies = [
 
 [[package]]
 name = "hydra-sdk"
-version = "1.0.1"
+version = "1.0.2"
 dependencies = [
  "hydra-engine-wds",
 ]
