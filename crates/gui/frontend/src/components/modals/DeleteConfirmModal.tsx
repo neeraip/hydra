@@ -79,6 +79,8 @@ export function DeleteConfirmModal({
         aria-modal="true"
         aria-labelledby="delete-modal-title"
         onMouseDown={(e) => e.stopPropagation()}
+        onKeyDown={(e) => e.stopPropagation()}
+        onClick={(e) => e.stopPropagation()}
         style={{
           background: "var(--bg-panel)",
           border: "1px solid var(--border)",

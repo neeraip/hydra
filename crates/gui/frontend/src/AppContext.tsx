@@ -702,10 +702,11 @@ function SimulationProvider({ children }: { children: ReactNode }) {
   // Scenario-only switches do NOT clear here — keeping the stale metadata
   // prevents transient nulls from causing deck.gl layer re-initialisation,
   // inspector card unmounts, and the timeline-height CSS variable flip.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `activeProjectId` is an intentional trigger to clear stale result metadata on project switch.
   useEffect(() => {
     setResultMeta(null);
     setPumpEnergy(null);
-  }, []);
+  }, [activeProjectId]);
 
   // When the active project OR scenario changes, reload result metadata and
   // pump energy from disk.  Per-period data and cross-period analytics are

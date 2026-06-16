@@ -103,6 +103,8 @@ export function InpDiffModal({ patches, onClose }: InpDiffModalProps) {
       {/* biome-ignore lint/a11y/noStaticElementInteractions: panel only stops backdrop clicks. */}
       <div
         onMouseDown={(e) => e.stopPropagation()}
+        onKeyDown={(e) => e.stopPropagation()}
+        onClick={(e) => e.stopPropagation()}
         style={{
           width: "min(700px, 92vw)",
           maxHeight: "80vh",
@@ -112,7 +114,6 @@ export function InpDiffModal({ patches, onClose }: InpDiffModalProps) {
           boxShadow: "var(--shadow-3)",
           display: "flex",
           flexDirection: "column",
-          overflow: "hidden",
           animation: "scaleIn 160ms ease-out",
         }}
       >

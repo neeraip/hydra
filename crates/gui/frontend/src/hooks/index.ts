@@ -105,6 +105,7 @@ import type { ProjectView } from "../projectConfig";
 export function useProjects(_version: number = 0): Project[] {
   const [projects, setProjects] = useState<Project[]>([]);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `_version` is a caller-controlled refetch counter; it is a valid dep.
   useEffect(() => {
     let cancelled = false;
     tryInvoke<Project[]>("list_projects").then((rows) => {
@@ -113,7 +114,7 @@ export function useProjects(_version: number = 0): Project[] {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [_version]);
 
   return projects;
 }

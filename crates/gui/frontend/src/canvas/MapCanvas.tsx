@@ -895,9 +895,10 @@ export function MapCanvas({
   // Clear the drag-position override once geoCoords has been rebuilt with the
   // updated coordinates from the backend.  Keying on geoCoords (not nodes)
   // ensures the new coordMap is in place before buildLayers uses it.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `geoCoords` is an intentional trigger to clear the drag override once the backend has updated coordinates.
   useEffect(() => {
     draggingNodePosRef.current = null;
-  }, []);
+  }, [geoCoords]);
 
   const ensureDeck = useCallback(() => {
     if (deckRef.current || !deckHostRef.current) return deckRef.current;

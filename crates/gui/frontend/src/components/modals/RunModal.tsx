@@ -241,6 +241,8 @@ export function RunModal() {
       {/* biome-ignore lint/a11y/noStaticElementInteractions: panel only stops backdrop clicks. */}
       <div
         onMouseDown={(e) => e.stopPropagation()}
+        onKeyDown={(e) => e.stopPropagation()}
+        onClick={(e) => e.stopPropagation()}
         style={{
           width: "100%",
           maxWidth: 560,
