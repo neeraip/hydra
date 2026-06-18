@@ -33,8 +33,8 @@ importers:
         specifier: ^5.24.0
         version: 5.24.0
       proj4:
-        specifier: ^2.20.8
-        version: 2.20.8
+        specifier: ^2.20.9
+        version: 2.20.9
       react:
         specifier: ^19.2.7
         version: 19.2.7
@@ -1006,8 +1006,13 @@ packages:
   potpack@2.1.0:
     resolution: {integrity: sha512-pcaShQc1Shq0y+E7GqJqvZj8DTthWV1KeHGdi0Z6IAin2Oi3JnLCOfwnCo84qc+HAp52wT9nK9H7FAJp5a44GQ==}
 
-  proj4@2.20.8:
-    resolution: {integrity: sha512-1C8sfT4xY4PAPwk0MroFBTGF4R4bzDXdmPQTGYVLsoNssrZ9odzObxS2dTeGBty8jW8KO7h16C1Hs2JP+ctfFw==}
+  proj4@2.20.9:
+    resolution: {integrity: sha512-GLBGqXaTcdWnppre3o1sMmy4DcMGSGq/ng+9k2MTNddarRK6SveINqlqYzi3xEXuy06ljY1TTrC6H9C4f360IQ==}
+    peerDependencies:
+      geotiff: '*'
+    peerDependenciesMeta:
+      geotiff:
+        optional: true
 
   protocol-buffers-schema@3.6.1:
     resolution: {integrity: sha512-VG2K63Igkiv9p76tk1lilczEK1cT+kCjKtkdhw1dQZV3k3IXJbd3o6Ho8b9zJZaHSnT2hKe4I+ObmX9w6m5SmQ==}
@@ -1714,7 +1719,9 @@ snapshots:
 
   '@types/proj4@2.19.0':
     dependencies:
-      proj4: 2.20.8
+      proj4: 2.20.9
+    transitivePeerDependencies:
+      - geotiff
 
   '@types/react-dom@19.2.3(@types/react@19.2.17)':
     dependencies:
@@ -2012,7 +2019,7 @@ snapshots:
 
   potpack@2.1.0: {}
 
-  proj4@2.20.8:
+  proj4@2.20.9:
     dependencies:
       mgrs: 1.0.0
       wkt-parser: 1.5.5
