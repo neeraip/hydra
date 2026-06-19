@@ -26,7 +26,7 @@ approx = "0.5"
 criterion = { version = "0.5", features = ["html_reports"] }
 hydra-engine-wds = { path = ".", features = ["test-support"] }
 pretty_assertions = "1"
-rstest = "0.23"
+rstest = "0.26"
 
 [[bench]]
 name = "solver"
