@@ -51,7 +51,7 @@ jobs:
             patchelf
 
       - name: Install Rust toolchain
-        uses: actions-rust-lang/setup-rust-toolchain@v1.11.0
+        uses: actions-rust-lang/setup-rust-toolchain@v1.16.1
         with:
           cache: false
 
