@@ -25,14 +25,6 @@ Inputs are EPANET 2.3 `.inp` files (local or via HTTP URL). Outputs are an EPANE
 
 Download the installer for your platform from the [releases page](https://github.com/neeraip/hydra/releases/latest).
 
-> **macOS — "Hydra is damaged and can't be opened"**
->
-> The app is not yet code-signed. macOS Gatekeeper blocks unsigned apps downloaded from the internet. To open it, run the following in Terminal after installing:
-> ```sh
-> xattr -cr /Applications/Hydra.app
-> ```
-> Then try opening the app again. See the [GUI documentation](https://neeraip.github.io/hydra/getting-started/gui.html) for a full usage guide.
-
 ### CLI
 
 **Pre-built binary** (no Rust required) — download from the [releases page](https://github.com/neeraip/hydra/releases/latest).
