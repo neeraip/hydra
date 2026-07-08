@@ -185,6 +185,9 @@ jobs:
         if: steps.cache-tauri-cli.outputs.cache-hit != 'true'
         run: cargo binstall tauri-cli --version "=2.11.2" --no-confirm
 
+      - name: Regenerate CRS catalog
+        run: node scripts/update-crs-catalog.mjs
+
       - name: Build GUI installer
         id: tauri
         uses: tauri-apps/tauri-action@v1.0.0

@@ -73,6 +73,17 @@ audit:
 
 # ── Build ─────────────────────────────────────────────────────────────────────
 
+# Regenerate the bundled CRS catalog from the currently-installed @esri/proj-codes.
+# No network access required — safe to call in CI and build pipelines.
+regen-crs-catalog:
+    node scripts/update-crs-catalog.mjs
+
+# Update @esri/proj-codes to its latest version and regenerate the catalog.
+# Run deliberately before a release to pull in new CRS definitions.
+update-crs-catalog: regen-crs-catalog
+    cd crates/gui/frontend && pnpm update @esri/proj-codes
+    node scripts/update-crs-catalog.mjs
+
 # Run cargo check (fast compile verification)
 check:
     cargo check
@@ -82,7 +93,7 @@ build:
     cargo build
 
 # Build frontend
-build-frontend:
+build-frontend: regen-crs-catalog
     cd crates/gui/frontend && pnpm build
 
 # Build optimised release binaries (fat LTO)

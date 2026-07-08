@@ -76,6 +76,13 @@ jobs:
       - name: Lint
         run: pnpm lint
 
+      - name: Regenerate CRS catalog
+        working-directory: .
+        run: node scripts/update-crs-catalog.mjs
+
+      - name: Check CRS catalog is up to date
+        run: git diff --exit-code crates/gui/frontend/public/crs-catalog.json
+
       - name: Build
         run: pnpm build
 

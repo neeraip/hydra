@@ -45,12 +45,12 @@ importers:
       '@biomejs/biome':
         specifier: ^2.5.3
         version: 2.5.3
+      '@esri/proj-codes':
+        specifier: ^3.7.0
+        version: 3.7.0
       '@tailwindcss/vite':
         specifier: ^4.3.2
         version: 4.3.2(vite@8.0.16(@types/node@24.13.2)(esbuild@0.27.7)(jiti@2.7.0))
-      '@types/proj4':
-        specifier: ^2.5.6
-        version: 2.19.0
       '@types/react':
         specifier: ^19.2.17
         version: 19.2.17
@@ -314,6 +314,9 @@ packages:
     engines: {node: '>=18'}
     cpu: [x64]
     os: [win32]
+
+  '@esri/proj-codes@3.7.0':
+    resolution: {integrity: sha512-xUVxFOiQrBvCO8bFjDkX4IjABkZkT5OAO3v6aP5w21ZsjLSpralvlK5hVBpyL0r1PCQjD5/tAfyHgS6cqi38Qw==}
 
   '@heroicons/react@2.2.0':
     resolution: {integrity: sha512-LMcepvRaS9LYHJGsF0zzmgKCUim/X3N/DQKc4jepAXJ7l8QxJ1PmxJzqplF2Z3FE4PqBAIGyJAQ/w4B5dsqbtQ==}
@@ -689,10 +692,6 @@ packages:
 
   '@types/offscreencanvas@2019.7.3':
     resolution: {integrity: sha512-ieXiYmgSRXUDeOntE1InxjWyvEelZGP63M+cGuquuRLuIKKT1osnkXjxev9B7d1nXSug5vpunx+gNlbVxMlC9A==}
-
-  '@types/proj4@2.19.0':
-    resolution: {integrity: sha512-mirdnXu5sW9+IphQ4r+ZVii2JVLDbXgMp1lxqbiCppdgL22EwMwL4Dy/cyHVaJ2y/mi7LUQHghpILd3w3j2bnA==}
-    deprecated: This is a stub types definition. proj4 provides its own type definitions, so you do not need this installed.
 
   '@types/react-dom@19.2.3':
     resolution: {integrity: sha512-jp2L/eY6fn+KgVVQAOqYItbF0VY/YApe5Mz2F0aykSO8gx31bYCZyvSeYxCHKvzHG5eZjc+zyaS5BrBWya2+kQ==}
@@ -1375,6 +1374,8 @@ snapshots:
   '@esbuild/win32-x64@0.27.7':
     optional: true
 
+  '@esri/proj-codes@3.7.0': {}
+
   '@heroicons/react@2.2.0(react@19.2.7)':
     dependencies:
       react: 19.2.7
@@ -1716,12 +1717,6 @@ snapshots:
       undici-types: 7.18.2
 
   '@types/offscreencanvas@2019.7.3': {}
-
-  '@types/proj4@2.19.0':
-    dependencies:
-      proj4: 2.20.9
-    transitivePeerDependencies:
-      - geotiff
 
   '@types/react-dom@19.2.3(@types/react@19.2.17)':
     dependencies:
