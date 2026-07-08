@@ -81,6 +81,7 @@ export function StatusBar() {
       <button
         type="button"
         onClick={toggleIssuesPanel}
+        disabled={!project}
         data-tooltip="Issues & notifications (⌘⇧M)"
         style={{
           display: "inline-flex",
@@ -91,7 +92,8 @@ export function StatusBar() {
           borderLeft: "1px solid var(--border)",
           color: "var(--text-secondary)",
           padding: "0 10px",
-          cursor: "pointer",
+          cursor: project ? "pointer" : "not-allowed",
+          opacity: project ? undefined : 0.45,
           fontFamily: "var(--font-ui)",
           fontSize: 11,
         }}

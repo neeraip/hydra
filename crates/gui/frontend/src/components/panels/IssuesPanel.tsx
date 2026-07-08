@@ -47,8 +47,14 @@ const SOURCE_LABEL: Record<IssueSource, string> = {
 type Tab = "active" | "dismissed";
 
 export function IssuesPanel() {
-  const { issuesPanelOpen, closeIssuesPanel, setProjectView, page, showToast } =
-    useAppState();
+  const {
+    issuesPanelOpen,
+    closeIssuesPanel,
+    setProjectView,
+    page,
+    showToast,
+    activeProjectId,
+  } = useAppState();
   const { issues: contextIssues, setIssues: setContextIssues } =
     useSimulation();
   // Mirror context issues into local state so dismiss/restore works without
@@ -133,7 +139,7 @@ export function IssuesPanel() {
     showToast(`Navigated to ${issue.link.label ?? issue.link.view}`, "info");
   }
 
-  if (!issuesPanelOpen) return null;
+  if (!issuesPanelOpen || !activeProjectId) return null;
 
   return (
     <>
