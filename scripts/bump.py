@@ -4,18 +4,19 @@
 Run this first when bumping multiple tracks — it also updates the hydra-sdk dep
 pin in hydra-cli and the hydra-engine-wds dep pin in hydra-sdk.
 
-Usage: scripts/bump.py <patch|minor|major>
+Usage: scripts/bump.py <patch|minor|major> [--push|--no-push]
 """
 
 import pathlib
 import re
 import sys
 
-from _release import commit_and_tag, next_version, parse_level, read_version, require_clean_main, set_version
+from _release import commit_and_tag, maybe_push, next_version, parse_level, parse_push_pref, read_version, require_clean_main, set_version
 
 
 def main():
-    level = parse_level(sys.argv[1] if len(sys.argv) > 1 else "")
+    args, push_pref = parse_push_pref(sys.argv[1:])
+    level = parse_level(args[0] if args else "")
     require_clean_main()
 
     cargo = pathlib.Path("Cargo.toml")
@@ -35,7 +36,8 @@ def main():
         f"chore: bump library version to {version}",
         f"v{version}",
     )
-    print(f"Tagged v{version}. Push with: git push && git push --tags")
+    print(f"Tagged v{version}.")
+    maybe_push(push_pref)
 
 
 if __name__ == "__main__":

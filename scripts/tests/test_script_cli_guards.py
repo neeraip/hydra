@@ -39,6 +39,11 @@ class TestScriptCliGuards(unittest.TestCase):
         self.assertNotEqual(cp.returncode, 0)
         self.assertIn("unknown track", cp.stderr)
 
+    def test_bump_rejects_conflicting_push_flags(self):
+        cp = self.run_script("bump.py", "patch", "--push", "--no-push")
+        self.assertNotEqual(cp.returncode, 0)
+        self.assertIn("cannot pass both --push and --no-push", cp.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -116,19 +116,22 @@ ci: deny fmt-check clippy doc test type-check-frontend lint-frontend build-front
 
 # Bump the workspace library version (hydra-engine-wds, hydra-sdk) and tag v{version}.
 # When bumping multiple tracks, always run this first — it updates the hydra-sdk dep pin in hydra-cli.
-# Usage: just bump patch  |  just bump minor  |  just bump major
-bump version:
-    @python3 scripts/bump.py {{version}}
+# Usage: just bump patch [push_flag]  |  just bump minor [push_flag]  |  just bump major [push_flag]
+# push_flag: --push or --no-push (or omit to be prompted)
+bump version push_flag="":
+    @python3 scripts/bump.py {{version}} {{push_flag}}
 
 # Bump the CLI application version independently and tag cli-v{version}.
-# Usage: just bump-cli patch  |  just bump-cli minor  |  just bump-cli major
-bump-cli version:
-    @python3 scripts/bump-cli.py {{version}}
+# Usage: just bump-cli patch [push_flag]  |  just bump-cli minor [push_flag]  |  just bump-cli major [push_flag]
+# push_flag: --push or --no-push (or omit to be prompted)
+bump-cli version push_flag="":
+    @python3 scripts/bump-cli.py {{version}} {{push_flag}}
 
 # Bump the GUI application version independently and tag gui-v{version}.
-# Usage: just bump-gui patch  |  just bump-gui minor  |  just bump-gui major
-bump-gui version:
-    @python3 scripts/bump-gui.py {{version}}
+# Usage: just bump-gui patch [push_flag]  |  just bump-gui minor [push_flag]  |  just bump-gui major [push_flag]
+# push_flag: --push or --no-push (or omit to be prompted)
+bump-gui version push_flag="":
+    @python3 scripts/bump-gui.py {{version}} {{push_flag}}
 
 # Release CANDIDATES are determined by changed files (reliable). Version SEVERITY
 # is left to your discretion — commit-message signals are shown as hints only,

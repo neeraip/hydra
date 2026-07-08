@@ -4,7 +4,7 @@
 Verifies the pinned hydra-sdk version is already on crates.io before proceeding,
 since the CLI publish will fail otherwise.
 
-Usage: scripts/bump-cli.py <patch|minor|major>
+Usage: scripts/bump-cli.py <patch|minor|major> [--push|--no-push]
 """
 
 import pathlib
@@ -13,7 +13,7 @@ import sys
 import urllib.error
 import urllib.request
 
-from _release import commit_and_tag, fail, next_version, parse_level, read_version, require_clean_main, set_version
+from _release import commit_and_tag, fail, maybe_push, next_version, parse_level, parse_push_pref, read_version, require_clean_main, set_version
 
 
 def ensure_sdk_published(cli_toml: pathlib.Path):
@@ -33,7 +33,8 @@ def ensure_sdk_published(cli_toml: pathlib.Path):
 
 
 def main():
-    level = parse_level(sys.argv[1] if len(sys.argv) > 1 else "")
+    args, push_pref = parse_push_pref(sys.argv[1:])
+    level = parse_level(args[0] if args else "")
     require_clean_main()
 
     cli = pathlib.Path("crates/cli/Cargo.toml")
@@ -47,7 +48,8 @@ def main():
         f"chore(cli): bump version to {version}",
         f"cli-v{version}",
     )
-    print(f"Tagged cli-v{version}. Push with: git push && git push --tags")
+    print(f"Tagged cli-v{version}.")
+    maybe_push(push_pref)
 
 
 if __name__ == "__main__":

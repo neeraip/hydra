@@ -2,6 +2,7 @@ import importlib.util
 import pathlib
 import tempfile
 import unittest
+from unittest import mock
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
@@ -58,6 +59,77 @@ class TestReleaseHelpers(unittest.TestCase):
             with self.assertRaises(SystemExit) as ctx:
                 release.read_version(path)
             self.assertEqual(ctx.exception.code, 1)
+
+    def test_parse_push_pref_no_flag(self):
+        args, push_pref = release.parse_push_pref(["patch"])
+        self.assertEqual(args, ["patch"])
+        self.assertIsNone(push_pref)
+
+    def test_parse_push_pref_push(self):
+        args, push_pref = release.parse_push_pref(["minor", "--push"])
+        self.assertEqual(args, ["minor"])
+        self.assertTrue(push_pref)
+
+    def test_parse_push_pref_no_push(self):
+        args, push_pref = release.parse_push_pref(["--no-push", "major"])
+        self.assertEqual(args, ["major"])
+        self.assertFalse(push_pref)
+
+    def test_parse_push_pref_conflicting_flags_raises(self):
+        with self.assertRaises(SystemExit) as ctx:
+            release.parse_push_pref(["patch", "--push", "--no-push"])
+        self.assertEqual(ctx.exception.code, 1)
+
+    def test_maybe_push_yes(self):
+        calls = []
+
+        def fake_sh(*args, **kwargs):
+            calls.append((args, kwargs))
+
+            class R:
+                stdout = ""
+
+            return R()
+
+        with mock.patch.object(release, "sh", new=fake_sh):
+            release.maybe_push(True)
+
+        self.assertEqual(calls[0][0], ("git", "push"))
+        self.assertEqual(calls[1][0], ("git", "push", "--tags"))
+
+    def test_maybe_push_no(self):
+        calls = []
+
+        def fake_sh(*args, **kwargs):
+            calls.append((args, kwargs))
+
+            class R:
+                stdout = ""
+
+            return R()
+
+        with mock.patch.object(release, "sh", new=fake_sh):
+            release.maybe_push(False)
+
+        self.assertEqual(calls, [])
+
+    def test_maybe_push_prompt_yes(self):
+        calls = []
+
+        def fake_sh(*args, **kwargs):
+            calls.append((args, kwargs))
+
+            class R:
+                stdout = ""
+
+            return R()
+
+        with mock.patch.object(release, "sh", new=fake_sh):
+            with mock.patch("builtins.input", return_value="y"):
+                release.maybe_push(None)
+
+        self.assertEqual(calls[0][0], ("git", "push"))
+        self.assertEqual(calls[1][0], ("git", "push", "--tags"))
 
 
 if __name__ == "__main__":

@@ -26,6 +26,24 @@ def parse_level(arg):
     return arg
 
 
+def parse_push_pref(args):
+    push_pref = None
+    positionals = []
+    for arg in args:
+        if arg == "--push":
+            if push_pref is False:
+                fail("cannot pass both --push and --no-push")
+            push_pref = True
+            continue
+        if arg == "--no-push":
+            if push_pref is True:
+                fail("cannot pass both --push and --no-push")
+            push_pref = False
+            continue
+        positionals.append(arg)
+    return positionals, push_pref
+
+
 def require_clean_main():
     if sh("git", "status", "--porcelain").stdout.strip():
         fail("working tree is dirty — commit or stash changes before bumping")
@@ -61,3 +79,17 @@ def commit_and_tag(files, message, tag):
     sh("git", "add", *files)
     sh("git", "commit", "-m", message)
     sh("git", "tag", "-a", tag, "-m", tag)
+
+
+def maybe_push(push_pref):
+    if push_pref is None:
+        answer = input("Push commit and tags now? [y/N]: ").strip().lower()
+        push_pref = answer in {"y", "yes"}
+
+    if push_pref:
+        sh("git", "push", capture=False)
+        sh("git", "push", "--tags", capture=False)
+        print("Pushed branch and tags.")
+        return
+
+    print("Not pushed. Push with: git push && git push --tags")
