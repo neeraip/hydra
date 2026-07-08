@@ -69,6 +69,12 @@ export interface Project {
   folderMissing: boolean;
 }
 
+export interface CustomCrsDef {
+  label: string;
+  epsg: string;
+  proj4: string;
+}
+
 // ── Public type surface ────────────────────────────────────────────────────
 
 export type { ProjectView } from "../projectConfig";
@@ -262,6 +268,24 @@ export async function updateProjectCrs(
   crs: string,
 ): Promise<boolean> {
   return (await tryInvoke<boolean>("update_project_crs", { id, crs })) ?? false;
+}
+
+export async function listCustomCrsDefs(): Promise<CustomCrsDef[]> {
+  return (await tryInvoke<CustomCrsDef[]>("list_custom_crs")) ?? [];
+}
+
+export async function upsertCustomCrsDef(input: {
+  label: string;
+  epsg: string;
+  proj4: string;
+}): Promise<CustomCrsDef[] | null> {
+  return await tryInvoke<CustomCrsDef[]>("upsert_custom_crs", input);
+}
+
+export async function deleteCustomCrsDef(
+  epsg: string,
+): Promise<CustomCrsDef[] | null> {
+  return await tryInvoke<CustomCrsDef[]>("delete_custom_crs", { epsg });
 }
 
 /**

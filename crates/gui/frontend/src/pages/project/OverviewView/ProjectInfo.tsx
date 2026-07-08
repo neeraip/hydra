@@ -3,12 +3,14 @@ export function ProjectInfo({
   modifiedLabel,
   lastRunLabel,
   engineLabel,
+  onEditCrs,
   onOpenFolder,
 }: {
   crs: string;
   modifiedLabel: string;
   lastRunLabel: string | null;
   engineLabel: string;
+  onEditCrs: () => void;
   onOpenFolder: () => void;
 }) {
   const rows: Array<{
@@ -16,9 +18,16 @@ export function ProjectInfo({
     value: string;
     mono?: boolean;
     action?: () => void;
+    actionLabel?: string;
   }> = [
     { label: "Engine", value: engineLabel },
-    { label: "CRS", value: crs, mono: true },
+    {
+      label: "CRS",
+      value: crs,
+      mono: true,
+      action: onEditCrs,
+      actionLabel: "Change...",
+    },
     { label: "Modified", value: modifiedLabel },
     { label: "Last run", value: lastRunLabel ?? "Never" },
     { label: "Bundle", value: "Open in Finder", action: onOpenFolder },
@@ -47,30 +56,14 @@ export function ProjectInfo({
           >
             {r.label}
           </span>
-          {r.action ? (
-            <button
-              type="button"
-              onClick={r.action}
-              onMouseEnter={(e) => {
-                (e.currentTarget as HTMLButtonElement).style.opacity = "0.7";
-              }}
-              onMouseLeave={(e) => {
-                (e.currentTarget as HTMLButtonElement).style.opacity = "1";
-              }}
-              style={{
-                background: "transparent",
-                border: "none",
-                padding: 0,
-                fontSize: 12,
-                color: "var(--accent)",
-                cursor: "pointer",
-                fontFamily: "var(--font-ui)",
-                transition: "opacity var(--t-fast)",
-              }}
-            >
-              {r.value}
-            </button>
-          ) : (
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 10,
+              minWidth: 0,
+            }}
+          >
             <span
               style={{
                 fontSize: 12,
@@ -85,7 +78,32 @@ export function ProjectInfo({
             >
               {r.value}
             </span>
-          )}
+            {r.action && (
+              <button
+                type="button"
+                onClick={r.action}
+                onMouseEnter={(e) => {
+                  (e.currentTarget as HTMLButtonElement).style.opacity = "0.7";
+                }}
+                onMouseLeave={(e) => {
+                  (e.currentTarget as HTMLButtonElement).style.opacity = "1";
+                }}
+                style={{
+                  background: "transparent",
+                  border: "none",
+                  padding: 0,
+                  fontSize: 12,
+                  color: "var(--accent)",
+                  cursor: "pointer",
+                  fontFamily: "var(--font-ui)",
+                  transition: "opacity var(--t-fast)",
+                  flexShrink: 0,
+                }}
+              >
+                {r.actionLabel ?? "Open"}
+              </button>
+            )}
+          </div>
         </div>
       ))}
     </div>
