@@ -24,6 +24,10 @@ test-gui:
 test-frontend:
     cd crates/gui/frontend && pnpm test
 
+# Run Python script unit tests
+test-scripts:
+    python3 -m unittest discover -s scripts/tests -p "test_*.py" -v
+
 # Run criterion benchmarks
 bench:
     cargo bench -p hydra-engine-wds
@@ -114,130 +118,25 @@ ci: deny fmt-check clippy doc test type-check-frontend lint-frontend build-front
 # When bumping multiple tracks, always run this first — it updates the hydra-sdk dep pin in hydra-cli.
 # Usage: just bump patch  |  just bump minor  |  just bump major
 bump version:
-    #!/usr/bin/env python3
-    import pathlib, re, subprocess, sys
-    result = subprocess.run(["git", "status", "--porcelain"], capture_output=True, text=True)
-    if result.stdout.strip():
-        print("error: working tree is dirty — commit or stash changes before bumping", file=sys.stderr)
-        sys.exit(1)
-    branch = subprocess.run(["git", "branch", "--show-current"], capture_output=True, text=True).stdout.strip()
-    if branch != "main":
-        print(f"error: must be on main branch to bump (currently on '{branch}')", file=sys.stderr)
-        sys.exit(1)
-    arg = "{{version}}"
-    if arg not in ("patch", "minor", "major"):
-        print(f"error: invalid bump level '{arg}' — must be patch, minor, or major", file=sys.stderr)
-        sys.exit(1)
-    cargo = pathlib.Path("Cargo.toml")
-    m = re.search(r'^version = "(\d+)\.(\d+)\.(\d+)"', cargo.read_text(), re.MULTILINE)
-    cur_major, cur_minor, cur_patch = int(m.group(1)), int(m.group(2)), int(m.group(3))
-    if arg == "patch":
-        version = f"{cur_major}.{cur_minor}.{cur_patch + 1}"
-    elif arg == "minor":
-        version = f"{cur_major}.{cur_minor + 1}.0"
-    else:
-        version = f"{cur_major + 1}.0.0"
-    # Bump workspace version
-    cargo.write_text(re.sub(r'^version = ".*"', f'version = "{version}"', cargo.read_text(), count=1, flags=re.MULTILINE))
-    # Update only the hydra-sdk dep pin in hydra-cli (not the cli package version)
-    cli = pathlib.Path("crates/cli/Cargo.toml")
-    cli.write_text(re.sub(r'(hydra-sdk[^\n]+version = ")\d+\.\d+\.\d+"', rf'\g<1>{version}"', cli.read_text()))
-    # Update only the hydra-engine-wds dep pin in hydra-sdk
-    sdk = pathlib.Path("crates/sdk/Cargo.toml")
-    sdk.write_text(re.sub(r'(hydra-engine-wds[^\n]+version = ")\d+\.\d+\.\d+"', rf'\g<1>{version}"', sdk.read_text()))
-    subprocess.run(["cargo", "update", "--workspace"], check=True)
-    subprocess.run(["git", "add", "Cargo.toml", "Cargo.lock", "crates/cli/Cargo.toml", "crates/sdk/Cargo.toml"], check=True)
-    subprocess.run(["git", "commit", "-m", f"chore: bump library version to {version}"], check=True)
-    subprocess.run(["git", "tag", "-a", f"v{version}", "-m", f"v{version}"], check=True)
-    print(f"Tagged v{version}. Push with: git push && git push --tags")
+    @python3 scripts/bump.py {{version}}
 
 # Bump the CLI application version independently and tag cli-v{version}.
 # Usage: just bump-cli patch  |  just bump-cli minor  |  just bump-cli major
 bump-cli version:
-    #!/usr/bin/env python3
-    import pathlib, re, subprocess, sys
-    result = subprocess.run(["git", "status", "--porcelain"], capture_output=True, text=True)
-    if result.stdout.strip():
-        print("error: working tree is dirty — commit or stash changes before bumping", file=sys.stderr)
-        sys.exit(1)
-    branch = subprocess.run(["git", "branch", "--show-current"], capture_output=True, text=True).stdout.strip()
-    if branch != "main":
-        print(f"error: must be on main branch to bump (currently on '{branch}')", file=sys.stderr)
-        sys.exit(1)
-    arg = "{{version}}"
-    if arg not in ("patch", "minor", "major"):
-        print(f"error: invalid bump level '{arg}' — must be patch, minor, or major", file=sys.stderr)
-        sys.exit(1)
-    # Check that the pinned hydra-sdk version is already on crates.io.
-    import urllib.request, json as _json
-    sdk_pin = re.search(r'hydra-sdk[^}]+version = "([^"]+)"', pathlib.Path("crates/cli/Cargo.toml").read_text())
-    if sdk_pin:
-        sdk_version = sdk_pin.group(1)
-        try:
-            url = f"https://crates.io/api/v1/crates/hydra-sdk/{sdk_version}"
-            req = urllib.request.Request(url, headers={"User-Agent": "hydra-justfile"})
-            urllib.request.urlopen(req, timeout=10)
-        except urllib.error.HTTPError:
-            print(f"error: hydra-sdk {sdk_version} is not yet on crates.io.", file=sys.stderr)
-            print("       Wait for the publish-crates workflow to finish before bumping the CLI.", file=sys.stderr)
-            sys.exit(1)
-    cli = pathlib.Path("crates/cli/Cargo.toml")
-    m = re.search(r'^version = "(\d+)\.(\d+)\.(\d+)"', cli.read_text(), re.MULTILINE)
-    cur_major, cur_minor, cur_patch = int(m.group(1)), int(m.group(2)), int(m.group(3))
-    if arg == "patch":
-        version = f"{cur_major}.{cur_minor}.{cur_patch + 1}"
-    elif arg == "minor":
-        version = f"{cur_major}.{cur_minor + 1}.0"
-    else:
-        version = f"{cur_major + 1}.0.0"
-    cli.write_text(re.sub(r'^version = ".*"', f'version = "{version}"', cli.read_text(), count=1, flags=re.MULTILINE))
-    subprocess.run(["cargo", "update", "--workspace"], check=True)
-    subprocess.run(["git", "add", "crates/cli/Cargo.toml", "Cargo.lock"], check=True)
-    subprocess.run(["git", "commit", "-m", f"chore(cli): bump version to {version}"], check=True)
-    subprocess.run(["git", "tag", "-a", f"cli-v{version}", "-m", f"cli-v{version}"], check=True)
-    print(f"Tagged cli-v{version}. Push with: git push && git push --tags")
+    @python3 scripts/bump-cli.py {{version}}
 
 # Bump the GUI application version independently and tag gui-v{version}.
 # Usage: just bump-gui patch  |  just bump-gui minor  |  just bump-gui major
 bump-gui version:
-    #!/usr/bin/env python3
-    import json, pathlib, re, subprocess, sys
-    result = subprocess.run(["git", "status", "--porcelain"], capture_output=True, text=True)
-    if result.stdout.strip():
-        print("error: working tree is dirty — commit or stash changes before bumping", file=sys.stderr)
-        sys.exit(1)
-    branch = subprocess.run(["git", "branch", "--show-current"], capture_output=True, text=True).stdout.strip()
-    if branch != "main":
-        print(f"error: must be on main branch to bump (currently on '{branch}')", file=sys.stderr)
-        sys.exit(1)
-    arg = "{{version}}"
-    if arg not in ("patch", "minor", "major"):
-        print(f"error: invalid bump level '{arg}' — must be patch, minor, or major", file=sys.stderr)
-        sys.exit(1)
-    gui = pathlib.Path("crates/gui/Cargo.toml")
-    m = re.search(r'^version = "(\d+)\.(\d+)\.(\d+)"', gui.read_text(), re.MULTILINE)
-    cur_major, cur_minor, cur_patch = int(m.group(1)), int(m.group(2)), int(m.group(3))
-    if arg == "patch":
-        version = f"{cur_major}.{cur_minor}.{cur_patch + 1}"
-    elif arg == "minor":
-        version = f"{cur_major}.{cur_minor + 1}.0"
-    else:
-        version = f"{cur_major + 1}.0.0"
-    gui.write_text(re.sub(r'^version = ".*"', f'version = "{version}"', gui.read_text(), count=1, flags=re.MULTILINE))
-    p = pathlib.Path("crates/gui/tauri.conf.json")
-    d = json.loads(p.read_text())
-    d["version"] = version
-    p.write_text(json.dumps(d, indent=2) + "\n")
-    pkg = pathlib.Path("crates/gui/frontend/package.json")
-    d = json.loads(pkg.read_text())
-    d["version"] = version
-    pkg.write_text(json.dumps(d, indent=2) + "\n")
-    subprocess.run(["cargo", "update", "--workspace"], check=True)
-    subprocess.run(["git", "add", "crates/gui/Cargo.toml", "crates/gui/tauri.conf.json",
-                    "crates/gui/frontend/package.json", "Cargo.lock"], check=True)
-    subprocess.run(["git", "commit", "-m", f"chore(gui): bump version to {version}"], check=True)
-    subprocess.run(["git", "tag", "-a", f"gui-v{version}", "-m", f"gui-v{version}"], check=True)
-    print(f"Tagged gui-v{version}. Push with: git push && git push --tags")
+    @python3 scripts/bump-gui.py {{version}}
+
+# Release CANDIDATES are determined by changed files (reliable). Version SEVERITY
+# is left to your discretion — commit-message signals are shown as hints only,
+# never as an authoritative bump. Optionally focus on one track: e.g.
+#   just release-status gui
+# Show which tracks have unreleased changes; you choose the semver bump.
+release-status track="":
+    @python3 scripts/release-status.py {{track}}
 
 # ── Clean ─────────────────────────────────────────────────────────────────────
 
