@@ -10,8 +10,36 @@ permissions:
   contents: read
 
 jobs:
+  changes:
+    name: Detect changes
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    outputs:
+      lockfile: ${{ steps.filter.outputs.lockfile }}
+    steps:
+      - uses: actions/checkout@v7.0.0
+        with:
+          fetch-depth: 1
+      - name: Check for Cargo.lock changes
+        id: filter
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          git fetch --depth=1 origin "$BASE"
+          if git diff --name-only "$BASE" HEAD | grep -qE '^Cargo\.lock$'; then
+            echo "lockfile=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "lockfile=false" >> "$GITHUB_OUTPUT"
+          fi
+
   audit:
     name: Cargo Audit
+    needs: changes
+    if: |
+      always() && (
+        needs.changes.outputs.lockfile == 'true' ||
+        github.event_name != 'pull_request'
+      )
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
