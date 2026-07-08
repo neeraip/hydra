@@ -61,8 +61,8 @@ importers:
         specifier: ^6.0.1
         version: 6.0.2(vite@8.0.16(@types/node@24.13.2)(esbuild@0.27.7)(jiti@2.7.0))
       tailwindcss:
-        specifier: ^4.3.1
-        version: 4.3.1
+        specifier: ^4.3.2
+        version: 4.3.2
       typescript:
         specifier: ^6.0.3
         version: 6.0.3
@@ -1063,9 +1063,6 @@ packages:
   table-layout@4.1.1:
     resolution: {integrity: sha512-iK5/YhZxq5GO5z8wb0bY1317uDF3Zjpha0QFFLA8/trAoiLbQD0HUbMesEaxyzUgDxi2QlcbM8IvqOlEjgoXBA==}
     engines: {node: '>=12.17'}
-
-  tailwindcss@4.3.1:
-    resolution: {integrity: sha512-hk+TB1m+K8CYNrP6rjQaq/Y+4Zylwpa87mLYBKCunwnnQ9p+fHb7kmSfGqyEJoxF/O6CDyABWVFEafNSYKll+Q==}
 
   tailwindcss@4.3.2:
     resolution: {integrity: sha512-WtctNNSH8A9jlMIqxzuYumOHU5uGZyRv0Q5svQl+oEPy5w84YpBxdb7MdqyiSPQge5jTJ6zFQLq0PFygdccSBA==}
@@ -2085,8 +2082,6 @@ snapshots:
     dependencies:
       array-back: 6.2.3
       wordwrapjs: 5.1.1
-
-  tailwindcss@4.3.1: {}
 
   tailwindcss@4.3.2: {}
 
