@@ -778,6 +778,107 @@ pub fn update_project_crs(app: tauri::AppHandle, id: String, crs: String) -> Res
     Ok(true)
 }
 
+/// Persisted custom CRS definition shared across all projects.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CustomCrsDef {
+    pub label: String,
+    pub epsg: String,
+    pub proj4: String,
+}
+
+fn custom_crs_path(app_data: &std::path::Path) -> std::path::PathBuf {
+    app_data.join("custom_crs.json")
+}
+
+fn read_custom_crs_defs(app_data: &std::path::Path) -> Result<Vec<CustomCrsDef>, String> {
+    let path = custom_crs_path(app_data);
+    if !path.exists() {
+        return Ok(vec![]);
+    }
+    let bytes =
+        std::fs::read(&path).map_err(|e| format!("cannot read {}: {}", path.display(), e))?;
+    serde_json::from_slice::<Vec<CustomCrsDef>>(&bytes)
+        .map_err(|e| format!("cannot parse {}: {}", path.display(), e))
+}
+
+fn write_custom_crs_defs(app_data: &std::path::Path, defs: &[CustomCrsDef]) -> Result<(), String> {
+    let path = custom_crs_path(app_data);
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("cannot create dir {}: {}", parent.display(), e))?;
+    }
+    let json = serde_json::to_string_pretty(defs)
+        .map_err(|e| format!("cannot serialise custom CRS: {e}"))?;
+    std::fs::write(&path, json.as_bytes())
+        .map_err(|e| format!("cannot write {}: {}", path.display(), e))
+}
+
+fn normalize_epsg(raw: &str) -> String {
+    let upper = raw.trim().to_uppercase();
+    if upper.is_empty() {
+        return String::new();
+    }
+    if upper.starts_with("EPSG:") {
+        return upper;
+    }
+    if upper.chars().all(|c| c.is_ascii_digit()) {
+        return format!("EPSG:{}", upper);
+    }
+    upper
+}
+
+#[tauri::command]
+/// Return globally saved custom CRS definitions.
+pub fn list_custom_crs(app: tauri::AppHandle) -> Result<Vec<CustomCrsDef>, String> {
+    let app_data = app_data_dir(&app)?;
+    let mut defs = read_custom_crs_defs(&app_data)?;
+    defs.sort_by(|a, b| a.label.cmp(&b.label));
+    Ok(defs)
+}
+
+#[tauri::command]
+/// Create or update a globally saved custom CRS definition.
+pub fn upsert_custom_crs(
+    app: tauri::AppHandle,
+    label: String,
+    epsg: String,
+    proj4: String,
+) -> Result<Vec<CustomCrsDef>, String> {
+    let label = label.trim().to_string();
+    let epsg = normalize_epsg(&epsg);
+    let proj4 = proj4.trim().to_string();
+    if label.is_empty() {
+        return Err("custom CRS label is required".into());
+    }
+    if epsg.is_empty() {
+        return Err("custom CRS code is required".into());
+    }
+    if proj4.is_empty() {
+        return Err("custom CRS proj4 definition is required".into());
+    }
+
+    let app_data = app_data_dir(&app)?;
+    let mut defs = read_custom_crs_defs(&app_data)?;
+    defs.retain(|d| normalize_epsg(&d.epsg) != epsg);
+    defs.push(CustomCrsDef { label, epsg, proj4 });
+    defs.sort_by(|a, b| a.label.cmp(&b.label));
+    write_custom_crs_defs(&app_data, &defs)?;
+    Ok(defs)
+}
+
+#[tauri::command]
+/// Delete a globally saved custom CRS definition.
+pub fn delete_custom_crs(app: tauri::AppHandle, epsg: String) -> Result<Vec<CustomCrsDef>, String> {
+    let app_data = app_data_dir(&app)?;
+    let normalized = normalize_epsg(&epsg);
+    let mut defs = read_custom_crs_defs(&app_data)?;
+    defs.retain(|d| normalize_epsg(&d.epsg) != normalized);
+    defs.sort_by(|a, b| a.label.cmp(&b.label));
+    write_custom_crs_defs(&app_data, &defs)?;
+    Ok(defs)
+}
+
 fn app_data_dir(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
     app.path().app_data_dir().map_err(|e| e.to_string())
 }
