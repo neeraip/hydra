@@ -1,6 +1,9 @@
 import {
+  ArrowsPointingOutIcon,
   ArrowsRightLeftIcon,
   ChevronUpDownIcon,
+  MinusIcon,
+  PlusIcon,
   CursorArrowRaysIcon,
   EyeIcon,
   LinkIcon,
@@ -12,11 +15,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useActiveProject, useAppState, useSimulation } from "../../AppContext";
 import { AnnotationSummary, MeasureOverlay } from "../../canvas/Annotations";
 import type { BasemapStyle } from "../../canvas/Basemap";
-import {
-  COMMON_CRS,
-  haversineMeters,
-  reprojectNodes,
-} from "../../canvas/coords";
+import { haversineMeters, reprojectNodes } from "../../canvas/coords";
 import { Legend, type LegendThresholds } from "../../canvas/Legend";
 import { useCanvasLayers } from "../../canvas/layers-context";
 import { MapCanvas } from "../../canvas/MapCanvas";
@@ -48,7 +47,6 @@ import {
   type PeriodResults,
   patchNodePosition,
   saveProjectOnDisk,
-  updateProjectCrs,
   useLinks,
   useNodes,
   useSimParams,
@@ -64,7 +62,8 @@ const NODE_KIND_PREFIX: Record<string, string> = {
 };
 
 export function CanvasView() {
-  const { activeScenarioId, setProjectView, projectView } = useAppState();
+  const { activeScenarioId, openCrsModal, setProjectView, projectView } =
+    useAppState();
   const { project } = useActiveProject();
   const { bumpNetwork, markEdited } = useNetworkVersion();
   const simParams = useSimParams(project?.id);
@@ -148,11 +147,63 @@ export function CanvasView() {
   const [viewMode, setViewMode] = useState<ViewMode>("map");
   const [basemap, setBasemap] = useState<BasemapStyle>("streets");
 
+  useEffect(() => {
+    function onLayoutCommand(e: Event) {
+      const mode = (e as CustomEvent<"toggle" | "map" | "schematic">).detail;
+      if (mode === "map") {
+        setViewMode("map");
+      } else if (mode === "schematic") {
+        setViewMode("schematic");
+      } else {
+        setViewMode((v) => (v === "schematic" ? "map" : "schematic"));
+      }
+    }
+    window.addEventListener("hydra:canvas-layout", onLayoutCommand);
+    return () =>
+      window.removeEventListener("hydra:canvas-layout", onLayoutCommand);
+  }, []);
+
   // ── Map fit key ──────────────────────────────────────────────────────
   // Increments only on project switch so MapCanvas resets its view to fit
   // the new network.  Does NOT increment on scenario switch so the user's
   // chosen pan/zoom position is preserved during scenario comparisons.
   const [mapFitKey, setMapFitKey] = useState(0);
+  const [zoomInKey, setZoomInKey] = useState(0);
+  const [zoomOutKey, setZoomOutKey] = useState(0);
+  const [resetNorthKey, setResetNorthKey] = useState(0);
+
+  useEffect(() => {
+    function onToolCommand(e: Event) {
+      const tool = (e as CustomEvent<CanvasTool>).detail;
+      if (tool === "measure") {
+        setMeasurePts([]);
+        setMeasureGeoPts([]);
+      }
+      setActiveTool(tool);
+    }
+    window.addEventListener("hydra:canvas-tool", onToolCommand);
+    return () => window.removeEventListener("hydra:canvas-tool", onToolCommand);
+  }, []);
+
+  useEffect(() => {
+    function onViewportCommand(e: Event) {
+      const cmd =
+        (e as CustomEvent<"zoom-in" | "zoom-out" | "fit" | "reset-north">)
+          .detail;
+      if (cmd === "zoom-in") {
+        setZoomInKey((k) => k + 1);
+      } else if (cmd === "zoom-out") {
+        setZoomOutKey((k) => k + 1);
+      } else if (cmd === "fit") {
+        setMapFitKey((k) => k + 1);
+      } else if (cmd === "reset-north") {
+        setResetNorthKey((k) => k + 1);
+      }
+    }
+    window.addEventListener("hydra:canvas-viewport", onViewportCommand);
+    return () =>
+      window.removeEventListener("hydra:canvas-viewport", onViewportCommand);
+  }, []);
   // biome-ignore lint/correctness/useExhaustiveDependencies: `project?.id` is an intentional trigger to reset the map viewport on project switch.
   useEffect(() => {
     setMapFitKey((k) => k + 1);
@@ -270,7 +321,7 @@ export function CanvasView() {
   }, [isPlaying, speed, loop, maxStep]);
 
   // Keyboard transport: Space = play/pause, ←/→ = step, Home/End = jump.
-  // Cmd+Z / Ctrl+Z = undo; Cmd+Shift+Z / Ctrl+Y = redo.
+  // Tool shortcuts: S/E/N/L/D switch tools; Escape returns to Select.
   // Guard: only handle keys when canvas tab is active (all tabs are always mounted).
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
@@ -329,9 +380,6 @@ export function CanvasView() {
         case "Escape":
           setActiveTool("select");
           break;
-        case "`":
-          setViewMode((v) => (v === "schematic" ? "map" : "schematic"));
-          break;
         case "Delete":
         case "Backspace": {
           const nid = selectedNodeIdRef.current;
@@ -358,7 +406,6 @@ export function CanvasView() {
   // When the user sets a different source CRS we reproject the raw x/y to
   // WGS84 before passing them to MapCanvas. Schematic mode uses the BFS layout
   // so it is never affected by CRS — only geo/map mode needs this.
-  const [showCrsDropdown, setShowCrsDropdown] = useState(false);
   // Initialise from the persisted project value so the reprojection survives
   // session restarts. Falls back to WGS84 for draft projects (project is null).
   const [sourceCrs, setSourceCrs] = useState<string>(
@@ -638,7 +685,8 @@ export function CanvasView() {
   useEffect(() => {
     if (
       viewMode === "schematic" &&
-      (activeTool === "add-node" ||
+      (activeTool === "edit" ||
+        activeTool === "add-node" ||
         activeTool === "add-link" ||
         activeTool === "measure")
     ) {
@@ -796,7 +844,6 @@ export function CanvasView() {
   const handleSvgClick = useCallback(
     (e: React.MouseEvent<SVGSVGElement>) => {
       setShowBasemapDropdown(false);
-      setShowCrsDropdown(false);
       if (activeTool === "measure") {
         const p = eventToSvgPoint(e);
         if (!p) return;
@@ -808,20 +855,17 @@ export function CanvasView() {
   );
 
   // Global click-outside: close any open toolbar dropdown when the user clicks
-  // anywhere outside the toolbar.  Triggers and panels are tagged with
-  // `data-toolbar-dropdown`, so we can distinguish a click on the dropdown UI
-  // (do nothing) from a click anywhere else (close all).
+  // anywhere outside the toolbar.
   useEffect(() => {
-    if (!showBasemapDropdown && !showCrsDropdown) return;
+    if (!showBasemapDropdown) return;
     function onDown(e: PointerEvent) {
       const target = e.target as HTMLElement | null;
       if (target?.closest("[data-toolbar-dropdown]")) return;
       setShowBasemapDropdown(false);
-      setShowCrsDropdown(false);
     }
     window.addEventListener("pointerdown", onDown);
     return () => window.removeEventListener("pointerdown", onDown);
-  }, [showBasemapDropdown, showCrsDropdown]);
+  }, [showBasemapDropdown]);
 
   function clearAnnotations() {
     setMeasurePts([]);
@@ -887,6 +931,9 @@ export function CanvasView() {
               flyToLinkId={flyToState.linkId}
               flyToKey={flyToState.key}
               fitKey={mapFitKey}
+              zoomInKey={zoomInKey}
+              zoomOutKey={zoomOutKey}
+              resetNorthKey={resetNorthKey}
             />
           </CanvasErrorBoundary>
 
@@ -958,10 +1005,22 @@ export function CanvasView() {
                     lineHeight: 1.6,
                   }}
                 >
-                  Map view requires valid WGS84 coordinates. Select the correct
-                  CRS from the toolbar to reproject the network, or switch to
+                  Map view requires valid WGS84 coordinates. Set the correct
+                  source CRS to reproject the network, or switch to
                   Schematic view.
                 </span>
+                <button
+                  type="button"
+                  className="tool-btn"
+                  onClick={openCrsModal}
+                  style={{
+                    pointerEvents: "auto",
+                    padding: "0 10px",
+                    fontSize: 12,
+                  }}
+                >
+                  Set source CRS
+                </button>
               </div>
             </div>
           )}
@@ -1038,8 +1097,8 @@ export function CanvasView() {
                     }}
                     data-tooltip={
                       m === "map"
-                        ? "Geographic layout (M)"
-                        : "Idealised orthogonal layout (S)"
+                        ? "Geographic layout"
+                        : "Idealised orthogonal layout"
                     }
                     data-tooltip-pos="bottom"
                   >
@@ -1084,7 +1143,6 @@ export function CanvasView() {
                     if (viewMode !== "map") return;
                     e.stopPropagation();
                     setShowBasemapDropdown((v) => !v);
-                    setShowCrsDropdown(false);
                   }}
                   data-tooltip={
                     viewMode !== "map" ? "Map mode only" : "Basemap"
@@ -1149,7 +1207,7 @@ export function CanvasView() {
                 )}
               </div>
 
-              {/* CRS picker */}
+              {/* CRS status + modal launcher */}
               <div
                 data-toolbar-dropdown
                 style={{
@@ -1169,12 +1227,6 @@ export function CanvasView() {
                     display: "flex",
                     alignItems: "center",
                     cursor: viewMode !== "map" ? "not-allowed" : undefined,
-                    color:
-                      viewMode === "map" &&
-                      sourceCrs !== "EPSG:4326" &&
-                      !crsError
-                        ? "var(--accent)"
-                        : undefined,
                     borderColor:
                       viewMode === "map" && crsError
                         ? "var(--status-error)"
@@ -1183,150 +1235,21 @@ export function CanvasView() {
                   onClick={(e) => {
                     if (viewMode !== "map") return;
                     e.stopPropagation();
-                    setShowCrsDropdown((v) => !v);
                     setShowBasemapDropdown(false);
+                    openCrsModal();
                   }}
                   data-tooltip={
                     viewMode !== "map"
                       ? "Map mode only"
-                      : (crsError ?? "Source coordinate reference system")
+                      : (crsError ?? "Set source coordinate reference system")
                   }
                   data-tooltip-pos="bottom"
                 >
-                  {sourceCrs === "EPSG:4326" ? "CRS" : sourceCrs}{" "}
+                  {sourceCrs}{" "}
                   <ChevronUpDownIcon
                     style={{ width: 12, height: 12, verticalAlign: "middle" }}
                   />
                 </button>
-                {showCrsDropdown && viewMode === "map" && (
-                  <div
-                    style={{
-                      position: "absolute",
-                      top: "calc(100% + 4px)",
-                      left: 0,
-                      background: "var(--bg-panel)",
-                      border: "1px solid var(--border)",
-                      borderRadius: 7,
-                      boxShadow: "var(--shadow-2)",
-                      overflow: "hidden",
-                      minWidth: 280,
-                      zIndex: 20,
-                    }}
-                  >
-                    <div
-                      style={{
-                        padding: "6px 10px 4px",
-                        fontSize: 10,
-                        color: "var(--text-tertiary)",
-                        fontWeight: 600,
-                        letterSpacing: "0.05em",
-                        textTransform: "uppercase",
-                      }}
-                    >
-                      Source CRS
-                    </div>
-                    {COMMON_CRS.map((c) => (
-                      <button
-                        type="button"
-                        key={c.epsg}
-                        onClick={() => {
-                          setSourceCrs(c.epsg);
-                          if (project?.id) updateProjectCrs(project.id, c.epsg);
-                          setShowCrsDropdown(false);
-                        }}
-                        style={{
-                          display: "block",
-                          width: "100%",
-                          padding: "7px 12px",
-                          border: "none",
-                          background:
-                            sourceCrs === c.epsg
-                              ? "var(--accent-dim)"
-                              : "transparent",
-                          color:
-                            sourceCrs === c.epsg
-                              ? "var(--accent)"
-                              : "var(--text-secondary)",
-                          cursor: "pointer",
-                          fontSize: 12,
-                          textAlign: "left",
-                          fontFamily: "var(--font-ui)",
-                        }}
-                      >
-                        {c.label}
-                      </button>
-                    ))}
-                    {/* Custom EPSG entry */}
-                    <div
-                      style={{
-                        padding: "6px 10px 8px",
-                        borderTop: "1px solid var(--border)",
-                      }}
-                    >
-                      <div
-                        style={{
-                          fontSize: 10,
-                          color: "var(--text-tertiary)",
-                          marginBottom: 4,
-                        }}
-                      >
-                        Custom EPSG code
-                      </div>
-                      <form
-                        onSubmit={(e) => {
-                          e.preventDefault();
-                          const val = (
-                            e.currentTarget.elements.namedItem(
-                              "epsg",
-                            ) as HTMLInputElement
-                          ).value
-                            .trim()
-                            .toUpperCase();
-                          const code = val.startsWith("EPSG:")
-                            ? val
-                            : `EPSG:${val}`;
-                          setSourceCrs(code);
-                          if (project?.id) updateProjectCrs(project.id, code);
-                          setShowCrsDropdown(false);
-                        }}
-                        style={{ display: "flex", gap: 6 }}
-                      >
-                        <input
-                          name="epsg"
-                          placeholder="e.g. 28355"
-                          style={{
-                            flex: 1,
-                            fontSize: 12,
-                            padding: "3px 7px",
-                            background: "var(--bg-input, var(--bg-card))",
-                            border: "1px solid var(--border)",
-                            borderRadius: 4,
-                            color: "var(--text-primary)",
-                            fontFamily: "var(--font-mono)",
-                          }}
-                        />
-                        <button
-                          type="submit"
-                          className="tool-btn"
-                          style={{ padding: "0 8px", fontSize: 11 }}
-                        >
-                          Apply
-                        </button>
-                      </form>
-                      {crsError && (
-                        <div
-                          style={{
-                            fontSize: 11,
-                            color: "var(--status-error)",
-                            marginTop: 4,
-                          }}
-                        >
-                          {crsError}
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                )}
               </div>
 
               <div className="tool-divider" />
@@ -1353,13 +1276,18 @@ export function CanvasView() {
                 type="button"
                 className={`tool-btn${activeTool === "edit" ? " active" : ""}`}
                 onClick={() => setActiveTool("edit")}
-                data-tooltip="Edit / move nodes (E)"
+                disabled={viewMode !== "map"}
+                data-tooltip={
+                  viewMode !== "map" ? "Map mode only" : "Edit / move nodes (E)"
+                }
                 data-tooltip-pos="bottom"
                 aria-label="Edit"
                 style={{
                   display: "inline-flex",
                   alignItems: "center",
                   justifyContent: "center",
+                  opacity: viewMode !== "map" ? 0.38 : undefined,
+                  cursor: viewMode !== "map" ? "not-allowed" : undefined,
                 }}
               >
                 <PencilSquareIcon style={{ width: 14, height: 14 }} />
@@ -1512,6 +1440,79 @@ export function CanvasView() {
               onClear={clearAnnotations}
             />
           )}
+
+          {/* Floating viewport controls */}
+          <div
+            className="canvas-toolbar"
+            style={{
+              position: "absolute",
+              right: 12,
+              bottom: 12,
+              zIndex: 11,
+              flexDirection: "column",
+              gap: 8,
+            }}
+          >
+            <div style={{ display: "flex", flexDirection: "column", gap: 0 }}>
+              <button
+                type="button"
+                className="tool-btn"
+                onClick={() => setZoomInKey((k) => k + 1)}
+                data-tooltip="Zoom in"
+                data-tooltip-pos="left"
+                aria-label="Zoom in"
+                style={{
+                  borderBottomLeftRadius: 0,
+                  borderBottomRightRadius: 0,
+                }}
+              >
+                <PlusIcon style={{ width: 14, height: 14 }} />
+              </button>
+
+              <button
+                type="button"
+                className="tool-btn"
+                onClick={() => setZoomOutKey((k) => k + 1)}
+                data-tooltip="Zoom out"
+                data-tooltip-pos="left"
+                aria-label="Zoom out"
+                style={{
+                  borderTopLeftRadius: 0,
+                  borderTopRightRadius: 0,
+                  marginTop: -1,
+                }}
+              >
+                <MinusIcon style={{ width: 14, height: 14 }} />
+              </button>
+            </div>
+
+            <button
+              type="button"
+              className="tool-btn"
+              onClick={() => setResetNorthKey((k) => k + 1)}
+              disabled={viewMode !== "map"}
+              data-tooltip={viewMode !== "map" ? "Map mode only" : "Reset north"}
+              data-tooltip-pos="left"
+              aria-label="Reset north"
+              style={{
+                opacity: viewMode !== "map" ? 0.38 : undefined,
+                cursor: viewMode !== "map" ? "not-allowed" : undefined,
+              }}
+            >
+              <ArrowsRightLeftIcon style={{ width: 14, height: 14 }} />
+            </button>
+
+            <button
+              type="button"
+              className="tool-btn"
+              onClick={() => setMapFitKey((k) => k + 1)}
+              data-tooltip="Fit network"
+              data-tooltip-pos="left"
+              aria-label="Fit network"
+            >
+              <ArrowsPointingOutIcon style={{ width: 14, height: 14 }} />
+            </button>
+          </div>
 
           {/* Inspector panel — node or link detail view */}
           {inspectorView === "node" && stableSelectedNode && (

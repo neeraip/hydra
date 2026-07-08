@@ -103,6 +103,12 @@ interface MapCanvasProps {
    * Should change only on project switch (not scenario switch) so the user's
    * view position is preserved across scenario comparisons. */
   fitKey?: number;
+  /** Increment to zoom in one step in the active view. */
+  zoomInKey?: number;
+  /** Increment to zoom out one step in the active view. */
+  zoomOutKey?: number;
+  /** Increment to reset map bearing/pitch (north up). Map mode only. */
+  resetNorthKey?: number;
 }
 
 export function MapCanvas({
@@ -136,6 +142,9 @@ export function MapCanvas({
   flyToLinkId,
   flyToKey,
   fitKey,
+  zoomInKey,
+  zoomOutKey,
+  resetNorthKey,
 }: MapCanvasProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapElRef = useRef<HTMLDivElement>(null);
@@ -312,11 +321,13 @@ export function MapCanvas({
       const deck = deckRef.current;
       if (!deck) return;
       const coords = schematicCoordsRef.current;
+      const { zoom: fitZoom } = orthoCenterFromMap(coords);
       if (nodeId) {
         const target = coords.get(nodeId);
         if (!target) return;
-        const currentZoom = Number(viewStateRef.current.zoom ?? 0);
-        const zoom = Math.max(currentZoom, currentZoom + 2);
+        // Use a bounded zoom relative to whole-network fit to avoid runaway
+        // cumulative zooming in orthographic mode.
+        const zoom = Math.min(fitZoom + 1, 10);
         const vs = {
           target: [target[0], target[1], 0] as [number, number, number],
           zoom,
@@ -335,14 +346,16 @@ export function MapCanvas({
         const canvas = deckCanvasRef.current;
         const viewW = canvas?.clientWidth ?? 800;
         const viewH = canvas?.clientHeight ?? 600;
-        const linkPx = Math.sqrt(
+        const linkUnits = Math.sqrt(
           (to[0] - from[0]) ** 2 + (to[1] - from[1]) ** 2,
         );
-        const minDim = Math.min(viewW, viewH) * 0.4;
-        // In orthographic mode zoom is pixels-per-unit, so zoom = minDim / linkPx.
-        const currentZoom = Number(viewStateRef.current.zoom ?? 1);
+        const targetSpanPx = Math.min(viewW, viewH) * 0.4;
+        // OrthographicView uses zoom in log2 scale (scale = 2^zoom). Convert
+        // desired pixels-per-unit to zoom and cap relative to fit zoom.
         const zoom =
-          linkPx > 0 ? Math.min(minDim / linkPx, currentZoom * 4) : currentZoom;
+          linkUnits > 0
+            ? Math.min(Math.log2(targetSpanPx / linkUnits), fitZoom + 3)
+            : Math.min(fitZoom + 2, 10);
         const vs = { target: [cx, cy, 0] as [number, number, number], zoom };
         viewStateRef.current = vs;
         deck.setProps({ viewState: vs });
@@ -1183,6 +1196,67 @@ export function MapCanvas({
       }
     }
   }, [buildLayers, ensureDeck, fitKey, nodes, schematicCoords, viewMode]);
+
+  // ── Generic viewport controls (zoom +/- and north reset) ───────────────
+  const prevZoomInKeyRef = useRef(zoomInKey);
+  const prevZoomOutKeyRef = useRef(zoomOutKey);
+  const prevResetNorthKeyRef = useRef(resetNorthKey);
+  useEffect(() => {
+    const zoomInChanged = zoomInKey !== prevZoomInKeyRef.current;
+    const zoomOutChanged = zoomOutKey !== prevZoomOutKeyRef.current;
+    const resetNorthChanged = resetNorthKey !== prevResetNorthKeyRef.current;
+    prevZoomInKeyRef.current = zoomInKey;
+    prevZoomOutKeyRef.current = zoomOutKey;
+    prevResetNorthKeyRef.current = resetNorthKey;
+
+    if (zoomInChanged) {
+      if (viewMode === "map") {
+        const map = mapRef.current;
+        if (map) {
+          map.easeTo({
+            zoom: Math.min(22, map.getZoom() + 1),
+            duration: 220,
+          });
+        }
+      } else {
+        const deck = ensureDeck();
+        if (!deck) return;
+        const current = viewStateRef.current as SchematicViewState;
+        const vs = {
+          target: current.target,
+          zoom: Math.min(12, Number(current.zoom ?? 0) + 1),
+        };
+        viewStateRef.current = vs;
+        deck.setProps({ viewState: vs });
+      }
+    }
+
+    if (zoomOutChanged) {
+      if (viewMode === "map") {
+        const map = mapRef.current;
+        if (map) {
+          map.easeTo({
+            zoom: Math.max(0, map.getZoom() - 1),
+            duration: 220,
+          });
+        }
+      } else {
+        const deck = ensureDeck();
+        if (!deck) return;
+        const current = viewStateRef.current as SchematicViewState;
+        const vs = {
+          target: current.target,
+          zoom: Math.max(-6, Number(current.zoom ?? 0) - 1),
+        };
+        viewStateRef.current = vs;
+        deck.setProps({ viewState: vs });
+      }
+    }
+
+    if (resetNorthChanged && viewMode === "map") {
+      mapRef.current?.easeTo({ bearing: 0, pitch: 0, duration: 260 });
+    }
+  }, [ensureDeck, resetNorthKey, viewMode, zoomInKey, zoomOutKey]);
 
   return (
     <div

@@ -1,4 +1,7 @@
-import { MagnifyingGlassPlusIcon, XMarkIcon } from "@heroicons/react/16/solid";
+import {
+  MagnifyingGlassPlusIcon,
+  XMarkIcon,
+} from "@heroicons/react/16/solid";
 import { useMemo, useState } from "react";
 import type { Link, Node, Pattern } from "../../hooks";
 import { useLinks, useNodes, usePatterns } from "../../hooks";
@@ -721,26 +724,36 @@ export function NetworkInspectorHome({
             {allNodes.length} nodes · {allLinks.length} links
           </div>
         </div>
-        {onClose && (
-          <button
-            type="button"
-            onClick={onClose}
-            data-tooltip="Close"
-            style={{
-              background: "transparent",
-              border: "none",
-              color: "var(--text-tertiary)",
-              cursor: "pointer",
-              padding: 4,
-              lineHeight: 1,
-              display: "inline-flex",
-              alignItems: "center",
-              justifyContent: "center",
-            }}
-          >
-            <XMarkIcon style={{ width: 14, height: 14 }} />
-          </button>
-        )}
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            alignSelf: "flex-start",
+            marginTop: 1,
+          }}
+        >
+          {onClose && (
+            <button
+              type="button"
+              onClick={onClose}
+              data-tooltip="Close"
+              style={{
+                background: "transparent",
+                border: "none",
+                color: "var(--text-tertiary)",
+                cursor: "pointer",
+                padding: 4,
+                lineHeight: 1,
+                display: "inline-flex",
+                alignItems: "center",
+                justifyContent: "center",
+              }}
+            >
+              <XMarkIcon style={{ width: 14, height: 14 }} />
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Search */}

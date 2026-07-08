@@ -12,7 +12,7 @@ import {
   CheckIcon,
 } from "@heroicons/react/16/solid";
 import { ClockIcon } from "@heroicons/react/24/outline";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useAppState } from "../../AppContext";
 import {
   ACCENT,
@@ -54,6 +54,14 @@ export function NewProjectWizard({
   const [detectedLinkCount, setDetectedLinkCount] = useState(
     preloadedNetwork?.links ?? 0,
   );
+
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") onClose();
+    }
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [onClose]);
 
   async function handleBrowse() {
     setDetecting(true);

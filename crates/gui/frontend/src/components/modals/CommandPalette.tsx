@@ -205,6 +205,99 @@ export function CommandPalette() {
           action: "run-sim",
         },
         {
+          id: "p-layout-toggle",
+          label: "Toggle layout (Geographic/Orthogonal)",
+          description: "Switch between geographic and orthogonal layouts",
+          category: "Page",
+          shortcut: "⌘M",
+          action: "canvas-layout-toggle",
+        },
+        {
+          id: "p-layout-map",
+          label: "Use geographic layout",
+          description: "Switch canvas to geographic map layout",
+          category: "Page",
+          action: "canvas-layout-map",
+        },
+        {
+          id: "p-layout-schematic",
+          label: "Use orthogonal layout",
+          description: "Switch canvas to orthogonal schematic layout",
+          category: "Page",
+          action: "canvas-layout-schematic",
+        },
+        {
+          id: "p-tool-select",
+          label: "Use select tool",
+          description: "Activate selection tool",
+          category: "Page",
+          shortcut: "S",
+          action: "canvas-tool-select",
+        },
+        {
+          id: "p-tool-edit",
+          label: "Use edit tool",
+          description: "Activate move/edit nodes tool",
+          category: "Page",
+          shortcut: "E",
+          action: "canvas-tool-edit",
+        },
+        {
+          id: "p-tool-add-node",
+          label: "Use add node tool",
+          description: "Activate add node tool",
+          category: "Page",
+          shortcut: "N",
+          action: "canvas-tool-add-node",
+        },
+        {
+          id: "p-tool-add-link",
+          label: "Use add link tool",
+          description: "Activate add link tool",
+          category: "Page",
+          shortcut: "L",
+          action: "canvas-tool-add-link",
+        },
+        {
+          id: "p-tool-measure",
+          label: "Use measure tool",
+          description: "Activate distance measure tool",
+          category: "Page",
+          shortcut: "D",
+          action: "canvas-tool-measure",
+        },
+        {
+          id: "p-zoom-in",
+          label: "Zoom in",
+          description: "Zoom the active canvas in",
+          category: "Page",
+          shortcut: "⌘=",
+          action: "canvas-zoom-in",
+        },
+        {
+          id: "p-zoom-out",
+          label: "Zoom out",
+          description: "Zoom the active canvas out",
+          category: "Page",
+          shortcut: "⌘-",
+          action: "canvas-zoom-out",
+        },
+        {
+          id: "p-fit-network",
+          label: "Fit network",
+          description: "Fit the viewport to network bounds",
+          category: "Page",
+          shortcut: "⌘0",
+          action: "canvas-fit-network",
+        },
+        {
+          id: "p-reset-north",
+          label: "Reset north",
+          description: "Reset map bearing to north-up",
+          category: "Page",
+          action: "canvas-reset-north",
+        },
+        {
           id: "p-issues",
           label: "Open issues panel",
           description: "Review warnings and errors",
@@ -419,6 +512,80 @@ export function CommandPalette() {
         case "run-sim":
           openRunModal();
           break;
+        case "canvas-layout-toggle":
+          setProjectView("canvas");
+          window.dispatchEvent(
+            new CustomEvent("hydra:canvas-layout", { detail: "toggle" }),
+          );
+          break;
+        case "canvas-layout-map":
+          setProjectView("canvas");
+          window.dispatchEvent(
+            new CustomEvent("hydra:canvas-layout", { detail: "map" }),
+          );
+          break;
+        case "canvas-layout-schematic":
+          setProjectView("canvas");
+          window.dispatchEvent(
+            new CustomEvent("hydra:canvas-layout", { detail: "schematic" }),
+          );
+          break;
+        case "canvas-tool-select":
+          setProjectView("canvas");
+          window.dispatchEvent(
+            new CustomEvent("hydra:canvas-tool", { detail: "select" }),
+          );
+          break;
+        case "canvas-tool-edit":
+          setProjectView("canvas");
+          window.dispatchEvent(
+            new CustomEvent("hydra:canvas-tool", { detail: "edit" }),
+          );
+          break;
+        case "canvas-tool-add-node":
+          setProjectView("canvas");
+          window.dispatchEvent(
+            new CustomEvent("hydra:canvas-tool", { detail: "add-node" }),
+          );
+          break;
+        case "canvas-tool-add-link":
+          setProjectView("canvas");
+          window.dispatchEvent(
+            new CustomEvent("hydra:canvas-tool", { detail: "add-link" }),
+          );
+          break;
+        case "canvas-tool-measure":
+          setProjectView("canvas");
+          window.dispatchEvent(
+            new CustomEvent("hydra:canvas-tool", { detail: "measure" }),
+          );
+          break;
+        case "canvas-zoom-in":
+          setProjectView("canvas");
+          window.dispatchEvent(
+            new CustomEvent("hydra:canvas-viewport", { detail: "zoom-in" }),
+          );
+          break;
+        case "canvas-zoom-out":
+          setProjectView("canvas");
+          window.dispatchEvent(
+            new CustomEvent("hydra:canvas-viewport", { detail: "zoom-out" }),
+          );
+          break;
+        case "canvas-fit-network":
+          setProjectView("canvas");
+          window.dispatchEvent(
+            new CustomEvent("hydra:canvas-viewport", { detail: "fit" }),
+          );
+          break;
+        case "canvas-reset-north":
+          setProjectView("canvas");
+          window.dispatchEvent(
+            new CustomEvent("hydra:canvas-viewport", {
+              detail: "reset-north",
+            }),
+          );
+          break;
         default:
           break;
       }
@@ -497,8 +664,8 @@ export function CommandPalette() {
         else execute(item as DynamicCommand);
       }
     }
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
   }, [activeIdx, closeCommandPalette, execute, executeElement, flat, findMode]);
 
   // Scroll the active item into view.
