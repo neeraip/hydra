@@ -10,6 +10,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { useCanvasStatus } from "./canvas/status-context";
 import {
   ACCENT,
   loadProjectNetwork,
@@ -38,6 +39,7 @@ interface AppState {
   commandPaletteOpen: boolean;
   runModalOpen: boolean;
   scenariosModalOpen: boolean;
+  crsModalOpen: boolean;
   taskTrayOpen: boolean;
   issuesPanelOpen: boolean;
   theme: "dark" | "light" | "system";
@@ -76,6 +78,8 @@ interface AppActions {
   closeRunModal: () => void;
   openScenariosModal: () => void;
   closeScenariosModal: () => void;
+  openCrsModal: () => void;
+  closeCrsModal: () => void;
   toggleTaskTray: () => void;
   openTaskTray: () => void;
   closeTaskTray: () => void;
@@ -144,6 +148,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     commandPaletteOpen: false,
     runModalOpen: false,
     scenariosModalOpen: false,
+    crsModalOpen: false,
     taskTrayOpen: false,
     issuesPanelOpen: false,
     theme:
@@ -498,6 +503,18 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setS((prev) => ({ ...prev, scenariosModalOpen: false }));
   }, []);
 
+  const openCrsModal = useCallback(() => {
+    setS((prev) => ({
+      ...prev,
+      crsModalOpen: true,
+      commandPaletteOpen: false,
+    }));
+  }, []);
+
+  const closeCrsModal = useCallback(() => {
+    setS((prev) => ({ ...prev, crsModalOpen: false }));
+  }, []);
+
   const toggleTaskTray = useCallback(() => {
     setS((prev) => ({
       ...prev,
@@ -537,14 +554,28 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const toggleIssuesPanel = useCallback(() => {
-    setS((prev) => ({ ...prev, issuesPanelOpen: !prev.issuesPanelOpen }));
+    setS((prev) => {
+      if (!prev.activeProjectId) return { ...prev, issuesPanelOpen: false };
+      return { ...prev, issuesPanelOpen: !prev.issuesPanelOpen };
+    });
   }, []);
   const openIssuesPanel = useCallback(() => {
-    setS((prev) => ({ ...prev, issuesPanelOpen: true }));
+    setS((prev) => {
+      if (!prev.activeProjectId) return { ...prev, issuesPanelOpen: false };
+      return { ...prev, issuesPanelOpen: true };
+    });
   }, []);
   const closeIssuesPanel = useCallback(() => {
     setS((prev) => ({ ...prev, issuesPanelOpen: false }));
   }, []);
+
+  // Never allow Issues drawer without an active project.
+  useEffect(() => {
+    if (s.activeProjectId) return;
+    setS((prev) =>
+      prev.issuesPanelOpen ? { ...prev, issuesPanelOpen: false } : prev,
+    );
+  }, [s.activeProjectId]);
 
   return (
     <Ctx.Provider
@@ -561,6 +592,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
         closeRunModal,
         openScenariosModal,
         closeScenariosModal,
+        openCrsModal,
+        closeCrsModal,
         toggleTaskTray,
         openTaskTray,
         closeTaskTray,
@@ -690,12 +723,171 @@ function SimulationProvider({ children }: { children: ReactNode }) {
     activeProjectId,
     activeScenarioId,
   } = useAppState();
-  const { clearEdited } = useNetworkVersion();
+  const { clearEdited, editedScenarioIds } = useNetworkVersion();
+  const { coordStatus, coordMissingCount, coordTotalCount } = useCanvasStatus();
   const [pumpEnergy, setPumpEnergy] = useState<PumpEnergyRecord[] | null>(null);
   const [resultMeta, setResultMeta] = useState<ResultMeta | null>(null);
   const [resultMetaLoading, setResultMetaLoading] = useState(false);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [issues, setIssues] = useState<Issue[]>([]);
+
+  // Derive live issues from runtime/task/network signals. This keeps the
+  // Issues drawer populated without requiring manual seeding.
+  useEffect(() => {
+    if (!activeProjectId) {
+      setIssues([]);
+      return;
+    }
+
+    const firstSeenNow = new Date().toLocaleTimeString([], {
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+
+    const next: Issue[] = [];
+
+    const runningForProject = tasks.filter(
+      (t) => t.projectId === activeProjectId && t.status === "running",
+    );
+    const queuedForProject = tasks.filter(
+      (t) => t.projectId === activeProjectId && t.status === "queued",
+    );
+
+    if (runningForProject.length > 0) {
+      next.push({
+        id: `runtime-running-${activeProjectId}`,
+        severity: "info",
+        source: "runtime",
+        code: "SIM-RUNNING",
+        title:
+          runningForProject.length === 1
+            ? "Simulation in progress"
+            : `${runningForProject.length} simulations in progress`,
+        detail:
+          "Hydraulics/quality solve is currently running. Results and status badges will update automatically when complete.",
+        link: { view: "canvas", label: "Open canvas" },
+        firstSeen: firstSeenNow,
+        dismissed: false,
+      });
+    }
+
+    if (queuedForProject.length > 0) {
+      next.push({
+        id: `runtime-queued-${activeProjectId}`,
+        severity: "info",
+        source: "runtime",
+        code: "SIM-QUEUED",
+        title:
+          queuedForProject.length === 1
+            ? "Simulation queued"
+            : `${queuedForProject.length} simulations queued`,
+        detail:
+          "One or more runs are queued and will execute when backend workers are available.",
+        link: { view: "canvas", label: "Open canvas" },
+        firstSeen: firstSeenNow,
+        dismissed: false,
+      });
+    }
+
+    if (
+      !resultMeta &&
+      runningForProject.length === 0 &&
+      queuedForProject.length === 0
+    ) {
+      next.push({
+        id: `preflight-no-results-${activeScenarioId ?? "base"}`,
+        severity: "info",
+        source: "preflight",
+        code: "NO-RESULTS",
+        title: "No simulation results for active scenario",
+        detail:
+          "Run a simulation to populate timeline, analysis summaries, and result overlays for this scenario.",
+        link: { view: "canvas", label: "Open canvas" },
+        firstSeen: firstSeenNow,
+        dismissed: false,
+      });
+    }
+
+    if (coordTotalCount > 0 && coordStatus === "empty") {
+      next.push({
+        id: "data-coords-empty",
+        severity: "error",
+        source: "data",
+        code: "COORDS-EMPTY",
+        title: "No geospatial coordinates available",
+        detail:
+          "All nodes are missing geographic coordinates. Map mode cannot place the network until coordinates are provided or corrected.",
+        link: { view: "canvas", label: "Open canvas" },
+        firstSeen: firstSeenNow,
+        dismissed: false,
+      });
+    } else if (coordTotalCount > 0 && coordStatus === "partial") {
+      next.push({
+        id: "data-coords-partial",
+        severity: "warn",
+        source: "data",
+        code: "COORDS-PARTIAL",
+        title: "Some nodes are missing coordinates",
+        detail: `${coordMissingCount} of ${coordTotalCount} nodes are missing map coordinates. Geographic view may be incomplete.`,
+        link: { view: "canvas", label: "Open canvas" },
+        firstSeen: firstSeenNow,
+        dismissed: false,
+      });
+    }
+
+    if (editedScenarioIds.has(activeScenarioId ?? null)) {
+      next.push({
+        id: `preflight-stale-${activeScenarioId ?? "base"}`,
+        severity: "warn",
+        source: "preflight",
+        code: "RESULTS-STALE",
+        title: "Network changed since the last run",
+        detail:
+          "Simulation results may be stale for the active scenario because the network was edited after the last successful run.",
+        link: { view: "canvas", label: "Open canvas" },
+        firstSeen: firstSeenNow,
+        dismissed: false,
+      });
+    }
+
+    for (const t of tasks) {
+      if (t.status !== "failed") continue;
+      if (t.projectId !== activeProjectId) continue;
+      next.push({
+        id: `runtime-task-failed-${t.id}`,
+        severity: "error",
+        source: "runtime",
+        code: "SIM-RUN-FAILED",
+        title: `Simulation failed: ${t.scenarioName}`,
+        detail: t.errorMessage ?? "Simulation failed.",
+        link: { view: "canvas", label: "Open canvas" },
+        firstSeen: firstSeenNow,
+        dismissed: false,
+      });
+    }
+
+    setIssues((prev) => {
+      const prevById = new Map(prev.map((i) => [i.id, i]));
+      return next.map((i) => {
+        const existing = prevById.get(i.id);
+        if (!existing) return i;
+        return {
+          ...i,
+          firstSeen: existing.firstSeen,
+          dismissed: existing.dismissed,
+        };
+      });
+    });
+  }, [
+    activeProjectId,
+    activeScenarioId,
+    coordMissingCount,
+    coordStatus,
+    coordTotalCount,
+    editedScenarioIds,
+    resultMeta,
+    tasks,
+  ]);
 
   // When the active *project* changes, immediately clear stale metadata so we
   // never show one project's result ranges while a different project is loading.
@@ -1129,6 +1321,8 @@ function SimulationProvider({ children }: { children: ReactNode }) {
       setTasks((prev) => [
         {
           id,
+          projectId: opts?.projectId,
+          scenarioId: opts?.scenarioId ?? null,
           projectName,
           scenarioName,
           status: "running",

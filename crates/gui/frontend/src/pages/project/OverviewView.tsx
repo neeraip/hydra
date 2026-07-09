@@ -23,7 +23,7 @@ import { ScenarioList } from "./OverviewView/ScenarioList";
 // ─────────────────────────────────────────────────────────────────────────────
 
 export function OverviewView() {
-  const { setProjectView, openScenariosModal, scenariosVersion } =
+  const { setProjectView, openScenariosModal, openCrsModal, scenariosVersion } =
     useAppState();
   const { project, accent } = useActiveProject();
 
@@ -89,6 +89,7 @@ export function OverviewView() {
             modifiedLabel={project.modifiedLabel}
             lastRunLabel={project.lastRunLabel ?? null}
             engineLabel={LABEL}
+            onEditCrs={openCrsModal}
             onOpenFolder={() => openBaseFolder(project.id)}
           />
         </Section>

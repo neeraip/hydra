@@ -1,5 +1,6 @@
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { type Page, useAppState } from "./AppContext";
+import { loadCrsCatalog, registerCustomCrsDefinitions } from "./canvas/coords";
 import { ActivityBar } from "./components/layout/ActivityBar";
 import { StatusBar } from "./components/layout/StatusBar";
 import { TopBar } from "./components/layout/TopBar";
@@ -7,6 +8,7 @@ import { IssuesPanel } from "./components/panels/IssuesPanel";
 import { TaskTray } from "./components/panels/TaskTray";
 import { Toast } from "./components/ui/Toast";
 import { TooltipPortal } from "./components/ui/TooltipPortal";
+import { tryInvoke } from "./hooks/ipc";
 
 const CommandPalette = lazy(() =>
   import("./components/modals/CommandPalette").then((m) => ({
@@ -19,6 +21,11 @@ const RunModal = lazy(() =>
 const ScenariosModal = lazy(() =>
   import("./components/modals/ScenariosModal").then((m) => ({
     default: m.ScenariosModal,
+  })),
+);
+const CrsModal = lazy(() =>
+  import("./components/modals/CrsModal").then((m) => ({
+    default: m.CrsModal,
   })),
 );
 const ShortcutCard = lazy(() =>
@@ -67,6 +74,27 @@ export function App() {
   const isFirstRender = useRef(true);
 
   useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      // Load the bundled CRS catalog first so ~8 000 EPSG + Esri definitions
+      // are available before any reprojection runs.
+      await loadCrsCatalog();
+      if (cancelled) return;
+      // Overlay user-defined custom CRS on top — these take precedence because
+      // proj4.defs() overwrites any existing entry for the same code.
+      const defs =
+        await tryInvoke<Array<{ label: string; epsg: string; proj4: string }>>(
+          "list_custom_crs",
+        );
+      if (cancelled || !defs) return;
+      registerCustomCrsDefinitions(defs);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
     if (isFirstRender.current) {
       isFirstRender.current = false;
       prevPageRef.current = page;
@@ -92,6 +120,48 @@ export function App() {
           runModalOpen ? closeRunModal() : openRunModal();
         }
       }
+      // ⌘M / Ctrl-M — toggle canvas geographic/orthogonal layout
+      if ((e.metaKey || e.ctrlKey) && (e.key === "m" || e.key === "M")) {
+        if (page === "project" && activeProjectId && !e.shiftKey) {
+          e.preventDefault();
+          setProjectView("canvas");
+          window.dispatchEvent(
+            new CustomEvent("hydra:canvas-layout", { detail: "toggle" }),
+          );
+        }
+      }
+      // ⌘= / Ctrl-= — zoom in on canvas
+      if ((e.metaKey || e.ctrlKey) && e.key === "=") {
+        if (page === "project" && activeProjectId) {
+          e.preventDefault();
+          setProjectView("canvas");
+          window.dispatchEvent(
+            new CustomEvent("hydra:canvas-viewport", { detail: "zoom-in" }),
+          );
+        }
+      }
+      // ⌘- / Ctrl-- — zoom out on canvas
+      if ((e.metaKey || e.ctrlKey) && e.key === "-") {
+        if (page === "project" && activeProjectId) {
+          e.preventDefault();
+          setProjectView("canvas");
+          window.dispatchEvent(
+            new CustomEvent("hydra:canvas-viewport", {
+              detail: "zoom-out",
+            }),
+          );
+        }
+      }
+      // ⌘0 / Ctrl-0 — fit canvas to full network extent
+      if ((e.metaKey || e.ctrlKey) && e.key === "0") {
+        if (page === "project" && activeProjectId) {
+          e.preventDefault();
+          setProjectView("canvas");
+          window.dispatchEvent(
+            new CustomEvent("hydra:canvas-viewport", { detail: "fit" }),
+          );
+        }
+      }
       if (e.key === "?" && !e.metaKey && !e.ctrlKey && !e.altKey) {
         setShortcutCardOpen((prev) => !prev);
       }
@@ -101,8 +171,10 @@ export function App() {
         e.shiftKey &&
         (e.key === "m" || e.key === "M")
       ) {
-        e.preventDefault();
-        toggleIssuesPanel();
+        if (activeProjectId) {
+          e.preventDefault();
+          toggleIssuesPanel();
+        }
       }
       if (e.key === "Escape") {
         if (shortcutCardOpen) {
@@ -224,6 +296,9 @@ export function App() {
       )}
       <Suspense fallback={null}>
         <ScenariosModal />
+      </Suspense>
+      <Suspense fallback={null}>
+        <CrsModal />
       </Suspense>
       {shortcutCardOpen && (
         <Suspense fallback={null}>

@@ -35,14 +35,88 @@
 import proj4 from "proj4";
 import type { Node } from "../types";
 
-// Register common CRS definitions that are frequently used in water networks
-// but may not be included in proj4's default bundle.
-// WGS84 and WebMercator are always available; UTM zones are auto-generated.
+export interface CustomCrsDefinition {
+  label: string;
+  epsg: string;
+  proj4: string;
+}
+
+export function normalizeEpsgCode(raw: string): string {
+  const val = raw.trim().toUpperCase();
+  if (!val) return "";
+  if (val.startsWith("EPSG:")) return val;
+  if (/^\d+$/.test(val)) return `EPSG:${val}`;
+  return val;
+}
+
+export function validateCustomCrsDefinition(
+  epsgRaw: string,
+  projDefRaw: string,
+): boolean {
+  const epsg = normalizeEpsgCode(epsgRaw);
+  const projDef = projDefRaw.trim();
+  if (!epsg || !projDef) return false;
+  try {
+    proj4.defs(epsg, projDef);
+    proj4(epsg, "EPSG:4326");
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export function registerCustomCrsDefinitions(
+  entries: CustomCrsDefinition[],
+): void {
+  for (const entry of entries) {
+    const epsg = normalizeEpsgCode(entry.epsg);
+    const projDef = entry.proj4?.trim();
+    if (!epsg || !projDef) continue;
+    try {
+      proj4.defs(epsg, projDef);
+    } catch {
+      // Ignore invalid entries. The modal validates before save.
+    }
+  }
+}
+
+// Baseline definitions — always available regardless of whether the catalog
+// has loaded yet.
 proj4.defs("EPSG:4326", "+proj=longlat +datum=WGS84 +no_defs");
 proj4.defs(
   "EPSG:3857",
   "+proj=merc +a=6378137 +b=6378137 +lat_ts=0 +lon_0=0 +x_0=0 +y_0=0 +k=1 +units=m +nadgrids=@null +wktext +no_defs",
 );
+
+/**
+ * Load and register the bundled CRS catalog (public/crs-catalog.json).
+ *
+ * The catalog is a frozen JSON snapshot of ~8 000 EPSG and Esri CRS definitions
+ * generated at build time from @esri/proj-codes and validated against proj4js.
+ * It is served as a static asset so no network access is required at runtime.
+ *
+ * Call once at app boot. Safe to call multiple times — duplicate registrations
+ * are no-ops in proj4js. User-defined custom CRS registered afterwards take
+ * precedence because proj4.defs() overwrites any existing entry.
+ */
+export async function loadCrsCatalog(): Promise<void> {
+  try {
+    const res = await fetch("/crs-catalog.json");
+    if (!res.ok) return;
+    const catalog = (await res.json()) as Record<string, string>;
+    for (const [code, wkt] of Object.entries(catalog)) {
+      try {
+        proj4.defs(code, wkt);
+      } catch {
+        // Individual failures are expected for ~2% of entries on some proj4js
+        // versions. Skip silently — baseline definitions always cover the
+        // most common cases.
+      }
+    }
+  } catch {
+    // Non-fatal: the app runs with only the baseline + custom definitions.
+  }
+}
 
 /** Euclidean distance between two canvas points scaled to metres.
  *  1 canvas unit ≈ 4 m so a typical pipe reads as ~400 m. */

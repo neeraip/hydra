@@ -1,7 +1,17 @@
 import { useEffect, useState } from "react";
 
-const RELEASES_URL =
-  "https://api.github.com/repos/neeraip/hydra/releases?per_page=20";
+const RELEASES_URL = "https://api.github.com/repos/neeraip/hydra/releases";
+const RELEASES_PAGE_SIZE = 5;
+const RELEASES_MAX_PAGES = 4;
+
+type GitHubRelease = {
+  tag_name: string;
+  draft: boolean;
+  prerelease: boolean;
+  published_at?: string;
+  body?: string;
+  html_url?: string;
+};
 
 export type ReleaseInfo =
   | { status: "loading" }
@@ -44,36 +54,45 @@ export function useLatestRelease(): ReleaseInfo {
 
     async function load() {
       try {
-        const res = await fetch(RELEASES_URL, {
-          headers: { Accept: "application/vnd.github+json" },
-        });
-        if (!res.ok) {
-          if (!cancelled) setInfo({ status: "unavailable" });
-          return;
+        for (let page = 1; page <= RELEASES_MAX_PAGES; page += 1) {
+          const params = new URLSearchParams({
+            per_page: String(RELEASES_PAGE_SIZE),
+            page: String(page),
+          });
+          const res = await fetch(`${RELEASES_URL}?${params.toString()}`, {
+            headers: { Accept: "application/vnd.github+json" },
+          });
+          if (!res.ok) {
+            if (!cancelled) setInfo({ status: "unavailable" });
+            return;
+          }
+
+          const releases: GitHubRelease[] = await res.json();
+          if (cancelled) return;
+
+          // Find the latest published (non-draft, non-prerelease) gui-v* release.
+          const data = releases.find(
+            (r) => r.tag_name.startsWith("gui-v") && !r.draft && !r.prerelease,
+          );
+
+          if (data) {
+            const version = data.tag_name.replace(/^gui-v/, "");
+            setInfo({
+              status: "loaded",
+              version,
+              date: data.published_at ? formatDate(data.published_at) : "",
+              items: data.body ? parseItems(data.body) : [],
+              releaseUrl: data.html_url ?? "",
+            });
+            return;
+          }
+
+          if (releases.length < RELEASES_PAGE_SIZE) {
+            break;
+          }
         }
-        const releases = await res.json();
-        if (cancelled) return;
 
-        // Find the latest published (non-draft, non-prerelease) gui-v* release.
-        const data = releases.find(
-          (r: { tag_name: string; draft: boolean; prerelease: boolean }) =>
-            r.tag_name.startsWith("gui-v") && !r.draft && !r.prerelease,
-        );
-
-        if (!data) {
-          setInfo({ status: "unavailable" });
-          return;
-        }
-
-        const version = data.tag_name.replace(/^gui-v/, "");
-
-        setInfo({
-          status: "loaded",
-          version,
-          date: data.published_at ? formatDate(data.published_at) : "",
-          items: data.body ? parseItems(data.body) : [],
-          releaseUrl: data.html_url ?? "",
-        });
+        setInfo({ status: "unavailable" });
       } catch {
         if (!cancelled) setInfo({ status: "unavailable" });
       }
