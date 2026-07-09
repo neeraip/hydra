@@ -1,5 +1,5 @@
 import { XMarkIcon } from "@heroicons/react/16/solid";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useActiveProject, useAppState } from "../../AppContext";
 import {
   COMMON_CRS,
@@ -8,9 +8,9 @@ import {
   validateCustomCrsDefinition,
 } from "../../canvas/coords";
 import {
+  type CustomCrsDef,
   deleteCustomCrsDef,
   listCustomCrsDefs,
-  type CustomCrsDef,
   updateProjectCrs,
   upsertCustomCrsDef,
 } from "../../hooks";
@@ -33,14 +33,14 @@ export function CrsModal() {
   const [savedCustom, setSavedCustom] = useState<CustomCrsDef[]>([]);
   const [projectSaving, setProjectSaving] = useState(false);
 
-  function dismissModal() {
+  const dismissModal = useCallback(() => {
     setDraftCrs(project?.sourceCrs ?? "");
     setQuery("");
     setCustomCode("");
     setCustomName("");
     setCustomProj4("");
     closeCrsModal();
-  }
+  }, [closeCrsModal, project?.sourceCrs]);
 
   useEffect(() => {
     if (!crsModalOpen) return;
@@ -59,7 +59,7 @@ export function CrsModal() {
     return () => {
       cancelled = true;
     };
-  }, [crsModalOpen]);
+  }, [crsModalOpen, project?.sourceCrs]);
 
   useEffect(() => {
     if (!crsModalOpen) return;
@@ -68,7 +68,7 @@ export function CrsModal() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [crsModalOpen, closeCrsModal, project?.sourceCrs]);
+  }, [crsModalOpen, dismissModal]);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();

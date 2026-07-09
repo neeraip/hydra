@@ -10,6 +10,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { useCanvasStatus } from "./canvas/status-context";
 import {
   ACCENT,
   loadProjectNetwork,
@@ -18,7 +19,6 @@ import {
   useProject,
   useProjects,
 } from "./hooks";
-import { useCanvasStatus } from "./canvas/status-context";
 import { useNetworkVersion } from "./hooks/NetworkVersionContext";
 
 export type Page = "home" | "projects" | "project" | "settings";

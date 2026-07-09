@@ -2,13 +2,13 @@ import {
   ArrowsPointingOutIcon,
   ArrowsRightLeftIcon,
   ChevronUpDownIcon,
-  MinusIcon,
-  PlusIcon,
   CursorArrowRaysIcon,
   EyeIcon,
   LinkIcon,
   MapPinIcon,
+  MinusIcon,
   PencilSquareIcon,
+  PlusIcon,
   XMarkIcon,
 } from "@heroicons/react/16/solid";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -187,9 +187,9 @@ export function CanvasView() {
 
   useEffect(() => {
     function onViewportCommand(e: Event) {
-      const cmd =
-        (e as CustomEvent<"zoom-in" | "zoom-out" | "fit" | "reset-north">)
-          .detail;
+      const cmd = (
+        e as CustomEvent<"zoom-in" | "zoom-out" | "fit" | "reset-north">
+      ).detail;
       if (cmd === "zoom-in") {
         setZoomInKey((k) => k + 1);
       } else if (cmd === "zoom-out") {
@@ -1006,8 +1006,8 @@ export function CanvasView() {
                   }}
                 >
                   Map view requires valid WGS84 coordinates. Set the correct
-                  source CRS to reproject the network, or switch to
-                  Schematic view.
+                  source CRS to reproject the network, or switch to Schematic
+                  view.
                 </span>
                 <button
                   type="button"
@@ -1491,7 +1491,9 @@ export function CanvasView() {
               className="tool-btn"
               onClick={() => setResetNorthKey((k) => k + 1)}
               disabled={viewMode !== "map"}
-              data-tooltip={viewMode !== "map" ? "Map mode only" : "Reset north"}
+              data-tooltip={
+                viewMode !== "map" ? "Map mode only" : "Reset north"
+              }
               data-tooltip-pos="left"
               aria-label="Reset north"
               style={{

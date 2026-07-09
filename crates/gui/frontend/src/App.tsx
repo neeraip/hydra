@@ -1,9 +1,9 @@
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { type Page, useAppState } from "./AppContext";
+import { loadCrsCatalog, registerCustomCrsDefinitions } from "./canvas/coords";
 import { ActivityBar } from "./components/layout/ActivityBar";
 import { StatusBar } from "./components/layout/StatusBar";
 import { TopBar } from "./components/layout/TopBar";
-import { registerCustomCrsDefinitions, loadCrsCatalog } from "./canvas/coords";
 import { IssuesPanel } from "./components/panels/IssuesPanel";
 import { TaskTray } from "./components/panels/TaskTray";
 import { Toast } from "./components/ui/Toast";
@@ -82,9 +82,10 @@ export function App() {
       if (cancelled) return;
       // Overlay user-defined custom CRS on top — these take precedence because
       // proj4.defs() overwrites any existing entry for the same code.
-      const defs = await tryInvoke<
-        Array<{ label: string; epsg: string; proj4: string }>
-      >("list_custom_crs");
+      const defs =
+        await tryInvoke<Array<{ label: string; epsg: string; proj4: string }>>(
+          "list_custom_crs",
+        );
       if (cancelled || !defs) return;
       registerCustomCrsDefinitions(defs);
     })();

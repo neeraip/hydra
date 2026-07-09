@@ -1,7 +1,4 @@
-import {
-  MagnifyingGlassPlusIcon,
-  XMarkIcon,
-} from "@heroicons/react/16/solid";
+import { MagnifyingGlassPlusIcon, XMarkIcon } from "@heroicons/react/16/solid";
 import { useMemo, useState } from "react";
 import type { Link, Node, Pattern } from "../../hooks";
 import { useLinks, useNodes, usePatterns } from "../../hooks";
