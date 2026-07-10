@@ -7,6 +7,10 @@ import { useLinks, useNodes, usePatterns } from "../../hooks";
 
 type SortDir = "asc" | "desc";
 
+function hasNodeCoordinates(node: Node): boolean {
+  return !(node.x === 0 && node.y === 0);
+}
+
 function useSortedFiltered<T>(
   items: T[],
   query: string,
@@ -164,6 +168,7 @@ function NodesTab({
         <tbody>
           {rows.map((node) => {
             const isActive = node.id === activeId;
+            const canZoomTo = hasNodeCoordinates(node);
             return (
               <tr
                 key={node.id}
@@ -227,21 +232,25 @@ function NodesTab({
                   >
                     <button
                       type="button"
+                      disabled={!canZoomTo}
                       onClick={(e) => {
                         e.stopPropagation();
+                        if (!canZoomTo) return;
                         onZoomTo(node.id);
                       }}
                       style={{
                         background: "transparent",
                         border: "none",
                         padding: 2,
-                        cursor: "pointer",
+                        cursor: canZoomTo ? "pointer" : "not-allowed",
                         color: "var(--text-tertiary)",
                         display: "inline-flex",
                         borderRadius: 3,
                         lineHeight: 0,
+                        opacity: canZoomTo ? 1 : 0.45,
                       }}
                       onMouseEnter={(e) => {
+                        if (!canZoomTo) return;
                         (e.currentTarget as HTMLButtonElement).style.color =
                           "var(--accent)";
                       }}
@@ -305,12 +314,14 @@ const LINK_SEARCH_KEYS: (keyof Link)[] = ["id", "type", "fromId", "toId"];
 function LinksTab({
   query,
   links,
+  zoomableNodeIds,
   onSelect,
   onZoomTo,
   activeId,
 }: {
   query: string;
   links: Link[];
+  zoomableNodeIds: Set<string>;
   onSelect: (id: string) => void;
   onZoomTo?: (id: string) => void;
   activeId?: string | null;
@@ -355,6 +366,9 @@ function LinksTab({
         <tbody>
           {rows.map((link) => {
             const isActive = link.id === activeId;
+            const canZoomTo =
+              zoomableNodeIds.has(link.fromId) &&
+              zoomableNodeIds.has(link.toId);
             return (
               <tr
                 key={link.id}
@@ -432,21 +446,25 @@ function LinksTab({
                   >
                     <button
                       type="button"
+                      disabled={!canZoomTo}
                       onClick={(e) => {
                         e.stopPropagation();
+                        if (!canZoomTo) return;
                         onZoomTo(link.id);
                       }}
                       style={{
                         background: "transparent",
                         border: "none",
                         padding: 2,
-                        cursor: "pointer",
+                        cursor: canZoomTo ? "pointer" : "not-allowed",
                         color: "var(--text-tertiary)",
                         display: "inline-flex",
                         borderRadius: 3,
                         lineHeight: 0,
+                        opacity: canZoomTo ? 1 : 0.45,
                       }}
                       onMouseEnter={(e) => {
+                        if (!canZoomTo) return;
                         (e.currentTarget as HTMLButtonElement).style.color =
                           "var(--accent)";
                       }}
@@ -655,6 +673,10 @@ export function NetworkInspectorHome({
   const internalLinks = useLinks();
   const allNodes = nodesProp ?? internalNodes;
   const allLinks = linksProp ?? internalLinks;
+  const zoomableNodeIds = useMemo(
+    () => new Set(allNodes.filter(hasNodeCoordinates).map((n) => n.id)),
+    [allNodes],
+  );
   const patterns = usePatterns();
 
   const [tab, setTab] = useState<HomeTab>("nodes");
@@ -829,6 +851,7 @@ export function NetworkInspectorHome({
         <LinksTab
           query={query}
           links={allLinks}
+          zoomableNodeIds={zoomableNodeIds}
           onSelect={onSelectLink}
           onZoomTo={onZoomToLink}
           activeId={activeLinkId}

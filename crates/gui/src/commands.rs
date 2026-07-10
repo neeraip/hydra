@@ -787,6 +787,83 @@ pub struct CustomCrsDef {
     pub proj4: String,
 }
 
+#[derive(Debug, Clone)]
+struct CuratedCrsDef {
+    label: String,
+    epsg: String,
+    proj4: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CrsCatalogEntry {
+    pub label: String,
+    pub epsg: String,
+    pub proj4: String,
+    pub custom: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CrsCatalogPage {
+    pub items: Vec<CrsCatalogEntry>,
+    pub total: u32,
+    pub page: u32,
+    pub page_size: u32,
+    pub has_more: bool,
+}
+
+fn parse_wkt_label(wkt: &str, epsg: &str) -> String {
+    if let Some(start) = wkt.find('"') {
+        let rest = &wkt[(start + 1)..];
+        if let Some(end) = rest.find('"') {
+            let name = rest[..end].trim();
+            if !name.is_empty() {
+                return format!("{} ({})", name, epsg);
+            }
+        }
+    }
+    epsg.to_string()
+}
+
+fn curated_crs_defs() -> &'static Vec<CuratedCrsDef> {
+    static CACHE: std::sync::OnceLock<Vec<CuratedCrsDef>> = std::sync::OnceLock::new();
+    CACHE.get_or_init(|| {
+        let raw = include_str!("../resources/crs-catalog.json");
+        let parsed = serde_json::from_str::<std::collections::BTreeMap<String, String>>(raw);
+        match parsed {
+            Ok(entries) => entries
+                .into_iter()
+                .map(|(epsg, proj4)| {
+                    let normalized = normalize_epsg(&epsg);
+                    CuratedCrsDef {
+                        label: parse_wkt_label(&proj4, &normalized),
+                        epsg: normalized,
+                        proj4,
+                    }
+                })
+                .collect(),
+            Err(_) => vec![],
+        }
+    })
+}
+
+fn custom_to_catalog_entry(def: CustomCrsDef) -> CrsCatalogEntry {
+    let epsg = normalize_epsg(&def.epsg);
+    let label = def.label.trim();
+    let display = if label.is_empty() {
+        epsg.clone()
+    } else {
+        format!("{} ({})", label, epsg)
+    };
+    CrsCatalogEntry {
+        label: display,
+        epsg,
+        proj4: def.proj4,
+        custom: true,
+    }
+}
+
 fn custom_crs_path(app_data: &std::path::Path) -> std::path::PathBuf {
     app_data.join("custom_crs.json")
 }
@@ -835,6 +912,69 @@ pub fn list_custom_crs(app: tauri::AppHandle) -> Result<Vec<CustomCrsDef>, Strin
     let mut defs = read_custom_crs_defs(&app_data)?;
     defs.sort_by(|a, b| a.label.cmp(&b.label));
     Ok(defs)
+}
+
+#[tauri::command]
+/// Return a paginated CRS catalog for the picker, merging curated + custom
+/// definitions and applying query filtering in the backend.
+pub fn list_crs_catalog_page(
+    app: tauri::AppHandle,
+    query: Option<String>,
+    page: Option<u32>,
+    page_size: Option<u32>,
+) -> Result<CrsCatalogPage, String> {
+    let app_data = app_data_dir(&app)?;
+    let custom_defs = read_custom_crs_defs(&app_data)?;
+    let mut custom_by_epsg: std::collections::HashMap<String, CustomCrsDef> =
+        std::collections::HashMap::new();
+    for def in custom_defs {
+        custom_by_epsg.insert(normalize_epsg(&def.epsg), def);
+    }
+
+    let mut merged: Vec<CrsCatalogEntry> = Vec::with_capacity(curated_crs_defs().len());
+    for curated in curated_crs_defs() {
+        if let Some(custom) = custom_by_epsg.remove(&curated.epsg) {
+            merged.push(custom_to_catalog_entry(custom));
+        } else {
+            merged.push(CrsCatalogEntry {
+                label: curated.label.clone(),
+                epsg: curated.epsg.clone(),
+                proj4: curated.proj4.clone(),
+                custom: false,
+            });
+        }
+    }
+    for (_, custom) in custom_by_epsg {
+        merged.push(custom_to_catalog_entry(custom));
+    }
+
+    let q = query.unwrap_or_default().trim().to_lowercase();
+    if !q.is_empty() {
+        merged.retain(|entry| {
+            let hay = format!("{} {}", entry.label, entry.epsg).to_lowercase();
+            hay.contains(&q)
+        });
+    }
+    merged.sort_by(|a, b| a.label.cmp(&b.label).then(a.epsg.cmp(&b.epsg)));
+
+    let total = merged.len() as u32;
+    let page_size = page_size.unwrap_or(100).clamp(1, 250);
+    let page = page.unwrap_or(0);
+    let start = (page as usize).saturating_mul(page_size as usize);
+    let end = std::cmp::min(start.saturating_add(page_size as usize), merged.len());
+    let items = if start < merged.len() {
+        merged[start..end].to_vec()
+    } else {
+        vec![]
+    };
+
+    Ok(CrsCatalogPage {
+        items,
+        total,
+        page,
+        page_size,
+        has_more: end < merged.len(),
+    })
 }
 
 #[tauri::command]

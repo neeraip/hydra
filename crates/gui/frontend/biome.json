@@ -6,7 +6,7 @@
     "useIgnoreFile": false
   },
   "files": {
-    "includes": ["**", "!!**/dist", "!!**/public/crs-catalog.json"]
+    "includes": ["**", "!!**/dist"]
   },
   "formatter": {
     "enabled": true,

@@ -1,6 +1,6 @@
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { type Page, useAppState } from "./AppContext";
-import { loadCrsCatalog, registerCustomCrsDefinitions } from "./canvas/coords";
+import { registerCustomCrsDefinitions } from "./canvas/coords";
 import { ActivityBar } from "./components/layout/ActivityBar";
 import { StatusBar } from "./components/layout/StatusBar";
 import { TopBar } from "./components/layout/TopBar";
@@ -76,10 +76,6 @@ export function App() {
   useEffect(() => {
     let cancelled = false;
     void (async () => {
-      // Load the bundled CRS catalog first so ~8 000 EPSG + Esri definitions
-      // are available before any reprojection runs.
-      await loadCrsCatalog();
-      if (cancelled) return;
       // Overlay user-defined custom CRS on top — these take precedence because
       // proj4.defs() overwrites any existing entry for the same code.
       const defs =

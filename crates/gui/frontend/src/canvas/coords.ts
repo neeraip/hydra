@@ -80,43 +80,12 @@ export function registerCustomCrsDefinitions(
   }
 }
 
-// Baseline definitions — always available regardless of whether the catalog
-// has loaded yet.
+// Baseline definitions — always available in the frontend.
 proj4.defs("EPSG:4326", "+proj=longlat +datum=WGS84 +no_defs");
 proj4.defs(
   "EPSG:3857",
   "+proj=merc +a=6378137 +b=6378137 +lat_ts=0 +lon_0=0 +x_0=0 +y_0=0 +k=1 +units=m +nadgrids=@null +wktext +no_defs",
 );
-
-/**
- * Load and register the bundled CRS catalog (public/crs-catalog.json).
- *
- * The catalog is a frozen JSON snapshot of ~8 000 EPSG and Esri CRS definitions
- * generated at build time from @esri/proj-codes and validated against proj4js.
- * It is served as a static asset so no network access is required at runtime.
- *
- * Call once at app boot. Safe to call multiple times — duplicate registrations
- * are no-ops in proj4js. User-defined custom CRS registered afterwards take
- * precedence because proj4.defs() overwrites any existing entry.
- */
-export async function loadCrsCatalog(): Promise<void> {
-  try {
-    const res = await fetch("/crs-catalog.json");
-    if (!res.ok) return;
-    const catalog = (await res.json()) as Record<string, string>;
-    for (const [code, wkt] of Object.entries(catalog)) {
-      try {
-        proj4.defs(code, wkt);
-      } catch {
-        // Individual failures are expected for ~2% of entries on some proj4js
-        // versions. Skip silently — baseline definitions always cover the
-        // most common cases.
-      }
-    }
-  } catch {
-    // Non-fatal: the app runs with only the baseline + custom definitions.
-  }
-}
 
 /** Euclidean distance between two canvas points scaled to metres.
  *  1 canvas unit ≈ 4 m so a typical pipe reads as ~400 m. */

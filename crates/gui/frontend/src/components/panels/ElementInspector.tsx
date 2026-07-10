@@ -47,6 +47,7 @@ interface NodeInspectorProps {
   onClose: () => void;
   onOpenInEditor: () => void;
   onZoomTo?: () => void;
+  disableZoomTo?: boolean;
   onDelete?: () => void;
   onLocateRelated: (id: string) => void;
   onOpenPattern?: (id: string) => void;
@@ -61,6 +62,7 @@ export function NodeInspector({
   onClose,
   onOpenInEditor,
   onZoomTo,
+  disableZoomTo,
   onDelete,
   onLocateRelated,
   onOpenPattern,
@@ -133,8 +135,13 @@ export function NodeInspector({
           <button
             type="button"
             onClick={onZoomTo}
+            disabled={disableZoomTo}
             data-tooltip="Zoom to feature"
-            style={btnIcon}
+            style={{
+              ...btnIcon,
+              opacity: disableZoomTo ? 0.45 : 1,
+              cursor: disableZoomTo ? "not-allowed" : btnIcon.cursor,
+            }}
           >
             <MagnifyingGlassPlusIcon style={{ width: 14, height: 14 }} />
           </button>
@@ -165,6 +172,7 @@ interface LinkInspectorProps {
   onClose: () => void;
   onOpenInEditor: () => void;
   onZoomTo?: () => void;
+  disableZoomTo?: boolean;
   onDelete?: () => void;
   onLocateNode: (id: string) => void;
   linkVar?: LinkVariable;
@@ -178,6 +186,7 @@ export function LinkInspector({
   onClose,
   onOpenInEditor,
   onZoomTo,
+  disableZoomTo,
   onDelete,
   onLocateNode,
   linkVar,
@@ -247,8 +256,13 @@ export function LinkInspector({
           <button
             type="button"
             onClick={onZoomTo}
+            disabled={disableZoomTo}
             data-tooltip="Zoom to feature"
-            style={btnIcon}
+            style={{
+              ...btnIcon,
+              opacity: disableZoomTo ? 0.45 : 1,
+              cursor: disableZoomTo ? "not-allowed" : btnIcon.cursor,
+            }}
           >
             <MagnifyingGlassPlusIcon style={{ width: 14, height: 14 }} />
           </button>

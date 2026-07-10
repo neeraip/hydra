@@ -645,6 +645,18 @@ export function CanvasView() {
       : (stableSelectedLinkRef.current ?? selectedLink)
     : null;
 
+  const selectedNodeHasCoordinates =
+    stableSelectedNode != null &&
+    !(stableSelectedNode.x === 0 && stableSelectedNode.y === 0);
+  const selectedLinkHasCoordinates =
+    stableSelectedLink != null &&
+    (() => {
+      const from = nodeMap.get(stableSelectedLink.fromId);
+      const to = nodeMap.get(stableSelectedLink.toId);
+      if (!from || !to) return false;
+      return !(from.x === 0 && from.y === 0) && !(to.x === 0 && to.y === 0);
+    })();
+
   // Keep stable refs in sync so the keyboard handler can read the current
   // selection without being re-registered on every selection change.
   selectedNodeIdRef.current = selectedNodeId;
@@ -1531,6 +1543,7 @@ export function CanvasView() {
                   key: s.key + 1,
                 }))
               }
+              disableZoomTo={!selectedNodeHasCoordinates}
               onDelete={() =>
                 setPendingDelete({
                   kind: stableSelectedNode.type,
@@ -1563,6 +1576,7 @@ export function CanvasView() {
                   key: s.key + 1,
                 }))
               }
+              disableZoomTo={!selectedLinkHasCoordinates}
               onDelete={() =>
                 setPendingDelete({
                   kind: stableSelectedLink.type,

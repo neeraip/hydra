@@ -5,7 +5,7 @@
  * Reads all geographic and projected CRS definitions from @esri/proj-codes
  * (covers both EPSG and Esri-authority codes), probes each entry against
  * proj4js to verify it parses and can form a WGS84 conversion, then writes
- * a frozen JSON snapshot to the frontend public directory.
+ * a frozen JSON snapshot to the GUI backend resources directory.
  *
  * The snapshot is committed to the repo and loaded by the app at runtime as
  * a static asset — no network access required.
@@ -27,7 +27,7 @@ const __dir = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(__dir, "..");
 const outPath = resolve(
   repoRoot,
-  "crates/gui/frontend/public/crs-catalog.json",
+  "crates/gui/resources/crs-catalog.json",
 );
 
 // ── Load source data ──────────────────────────────────────────────────────────

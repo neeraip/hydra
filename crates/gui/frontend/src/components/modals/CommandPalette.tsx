@@ -48,6 +48,27 @@ const STATIC_COMMANDS: DynamicCommand[] = [
     category: "Navigate",
     action: "nav-settings",
   },
+  {
+    id: "a-theme-dark",
+    label: "Theme: Dark",
+    description: "Switch app theme to dark",
+    category: "Actions",
+    action: "theme-dark",
+  },
+  {
+    id: "a-theme-light",
+    label: "Theme: Light",
+    description: "Switch app theme to light",
+    category: "Actions",
+    action: "theme-light",
+  },
+  {
+    id: "a-theme-system",
+    label: "Theme: System",
+    description: "Follow OS appearance setting",
+    category: "Actions",
+    action: "theme-system",
+  },
 ];
 
 export function CommandPalette() {
@@ -56,6 +77,7 @@ export function CommandPalette() {
     openProject,
     setPage,
     setProjectView,
+    setTheme,
     openRunModal,
     openScenariosModal,
     openIssuesPanel,
@@ -586,6 +608,15 @@ export function CommandPalette() {
             }),
           );
           break;
+        case "theme-dark":
+          setTheme("dark");
+          break;
+        case "theme-light":
+          setTheme("light");
+          break;
+        case "theme-system":
+          setTheme("system");
+          break;
         default:
           break;
       }
@@ -596,6 +627,7 @@ export function CommandPalette() {
       openProject,
       setPage,
       setProjectView,
+      setTheme,
       openRunModal,
       openScenariosModal,
       resultMeta,

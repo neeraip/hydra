@@ -28,6 +28,9 @@ export interface Command {
     | "canvas-zoom-out"
     | "canvas-fit-network"
     | "canvas-reset-north"
+    | "theme-dark"
+    | "theme-light"
+    | "theme-system"
     | "compare";
   projectId?: string;
 }

@@ -16,6 +16,7 @@ fn main() {
             commands::delete_project,
             commands::rename_project,
             commands::update_project_crs,
+            commands::list_crs_catalog_page,
             commands::list_custom_crs,
             commands::upsert_custom_crs,
             commands::delete_custom_crs,

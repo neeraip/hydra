@@ -75,6 +75,21 @@ export interface CustomCrsDef {
   proj4: string;
 }
 
+export interface CrsCatalogEntry {
+  label: string;
+  epsg: string;
+  proj4: string;
+  custom: boolean;
+}
+
+export interface CrsCatalogPage {
+  items: CrsCatalogEntry[];
+  total: number;
+  page: number;
+  pageSize: number;
+  hasMore: boolean;
+}
+
 // ── Public type surface ────────────────────────────────────────────────────
 
 export type { ProjectView } from "../projectConfig";
@@ -272,6 +287,27 @@ export async function updateProjectCrs(
 
 export async function listCustomCrsDefs(): Promise<CustomCrsDef[]> {
   return (await tryInvoke<CustomCrsDef[]>("list_custom_crs")) ?? [];
+}
+
+export async function listCrsCatalogPage(params: {
+  query?: string;
+  page?: number;
+  pageSize?: number;
+}): Promise<CrsCatalogPage> {
+  const payload = {
+    query: params.query,
+    page: params.page,
+    page_size: params.pageSize,
+  };
+  return (
+    (await tryInvoke<CrsCatalogPage>("list_crs_catalog_page", payload)) ?? {
+      items: [],
+      total: 0,
+      page: params.page ?? 0,
+      pageSize: params.pageSize ?? 100,
+      hasMore: false,
+    }
+  );
 }
 
 export async function upsertCustomCrsDef(input: {
