@@ -14,7 +14,7 @@ Download the installer for your platform from the [releases page](https://github
 
 > **macOS — "Hydra is damaged and can't be opened"**
 >
-> macOS Gatekeeper blocks apps that are not code-signed. After dragging Hydra to Applications, run this once in Terminal:
+> Hydra GUI macOS releases are notarised. If Gatekeeper still shows this warning after dragging Hydra to Applications, run this once in Terminal:
 > ```sh
 > xattr -cr /Applications/Hydra.app
 > ```

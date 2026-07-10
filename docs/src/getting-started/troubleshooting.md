@@ -4,7 +4,7 @@
 
 ### macOS — "Hydra is damaged and can't be opened"
 
-macOS Gatekeeper blocks apps that are not code-signed with an Apple Developer certificate. This is a known limitation while Hydra's builds are not yet notarised.
+Hydra GUI macOS releases are code-signed and notarised. If Gatekeeper still shows this message, the app bundle usually has stale quarantine metadata from the download/copy step.
 
 To open Hydra after installing it to `/Applications`, run this once in Terminal:
 
@@ -16,7 +16,7 @@ Then open the app normally from Finder or Spotlight.
 
 ### macOS — App opens but immediately quits
 
-This can happen if the app was extracted from a `.dmg` without being moved to `/Applications` first. Move `Hydra.app` to `/Applications`, run the `xattr -cr` command above, then try again.
+This can happen if the app was launched directly from the `.dmg` or if macOS retained stale quarantine metadata. Move `Hydra.app` to `/Applications` first, then run the `xattr -cr` command above only if the app still fails to open.
 
 ### Windows — "Windows protected your PC" (SmartScreen)
 
@@ -47,7 +47,7 @@ sudo dnf install fuse-libs
 
 ### macOS — "hydra cannot be opened because the developer cannot be verified"
 
-The pre-built binary is not code-signed. Remove the quarantine attribute after downloading:
+Pre-built macOS CLI binaries are currently not notarised. If this warning appears for a downloaded binary, clear the quarantine attribute and try again:
 
 ```sh
 xattr -d com.apple.quarantine hydra

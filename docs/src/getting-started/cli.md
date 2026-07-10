@@ -2,16 +2,18 @@
 
 ## Install
 
+For most users, **Cargo install is the recommended path** on macOS, Linux, and Windows.
+
 **Option 1 — Pre-built binary** (no Rust required)
 
 Download the `hydra` binary for your platform from the [releases page](https://github.com/neeraip/hydra/releases/latest) and place it on your `PATH`.
 
-> **macOS** — After downloading, remove the quarantine flag before running:
+> **macOS** — Pre-built CLI binaries are currently not notarised. If Gatekeeper blocks the binary, remove the quarantine flag:
 > ```sh
 > xattr -d com.apple.quarantine hydra
 > ```
 
-**Option 2 — Cargo**
+**Option 2 — Cargo (recommended)**
 
 ```sh
 cargo install hydra-cli
