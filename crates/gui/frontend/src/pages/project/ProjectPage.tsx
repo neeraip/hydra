@@ -63,7 +63,7 @@ export function ProjectPage() {
                 minHeight: 0,
               }}
             >
-              <CanvasView />
+              <CanvasView isActive={projectView === "canvas"} />
             </div>
             <div
               style={{

@@ -7,7 +7,6 @@ import {
   ACCENT,
   createProjectOnDisk,
   formatInpImportError,
-  loadProject,
   openAndLoadNetwork,
   PILL,
   type Project,
@@ -57,7 +56,6 @@ export function HomePage() {
     projectsVersion,
     createdProject,
     openProject,
-    enterLoadedProject,
     createProject,
     showToast,
   } = useAppState();
@@ -101,14 +99,9 @@ export function HomePage() {
     }
   }
 
-  async function openRecentProject(project: Project) {
-    const loaded = await loadProject(project.id);
-    if (loaded) {
-      if (loaded.network) bumpNetwork();
-      enterLoadedProject(loaded.project);
-    } else {
-      openProject(project.id);
-    }
+  function openRecentProject(project: Project) {
+    // Navigate immediately; AppContext loads and primes network data in the background.
+    openProject(project.id);
   }
 
   return (

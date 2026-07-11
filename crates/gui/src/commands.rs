@@ -1670,6 +1670,29 @@ pub fn get_nodes(state: tauri::State<'_, NetworkState>) -> Vec<NodeDto> {
     }
 }
 
+/// Combined snapshot used by the frontend to fetch nodes and links in one IPC call.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NetworkSnapshotDto {
+    pub nodes: Vec<NodeDto>,
+    pub links: Vec<LinkDto>,
+}
+
+#[tauri::command]
+/// Return nodes + links in one payload for the loaded network.
+pub fn get_network_snapshot(state: tauri::State<'_, NetworkState>) -> NetworkSnapshotDto {
+    match &*state.0.lock().unwrap() {
+        NetworkStateInner::Loaded { dto, .. } => NetworkSnapshotDto {
+            nodes: dto.nodes.clone(),
+            links: dto.links.clone(),
+        },
+        NetworkStateInner::Empty => NetworkSnapshotDto {
+            nodes: vec![],
+            links: vec![],
+        },
+    }
+}
+
 /// Return the links of the currently loaded network, or an empty list.
 #[tauri::command]
 /// Return the link list for the loaded network.
@@ -3245,9 +3268,8 @@ pub fn get_violations(
 /// Load the INP for a project's base model or a named scenario into
 /// `NetworkState`, making it available to `get_nodes` / `get_links`.
 ///
-/// Returns the parsed `NetworkDto` so the caller can update any local cache
-/// without a separate `get_nodes` + `get_links` round-trip.
-/// Returns `null` when the target INP does not exist on disk yet.
+/// Returns a lightweight nodes+links snapshot when loaded, or `null` when the
+/// target INP does not exist on disk yet.
 #[tauri::command]
 /// Parse the project bundle's INP and load it into `NetworkState`.
 pub fn load_project_network(
@@ -3255,7 +3277,7 @@ pub fn load_project_network(
     state: tauri::State<'_, NetworkState>,
     project_id: String,
     scenario_id: Option<String>,
-) -> Result<Option<NetworkDto>, String> {
+) -> Result<Option<NetworkSnapshotDto>, String> {
     validate_id(&project_id)?;
     if let Some(sid) = &scenario_id {
         validate_id(sid)?;
@@ -3272,12 +3294,16 @@ pub fn load_project_network(
     let bytes = std::fs::read(&path).map_err(|e| e.to_string())?;
     let network = hydra::io::parse(&bytes).map_err(|e| format!("{e:?}"))?;
     let dto = network_to_dto(&network);
+    let snapshot = NetworkSnapshotDto {
+        nodes: dto.nodes.clone(),
+        links: dto.links.clone(),
+    };
     *state.0.lock().unwrap() = NetworkStateInner::Loaded {
         raw_bytes: bytes,
         network,
-        dto: dto.clone(),
+        dto,
     };
-    Ok(Some(dto))
+    Ok(Some(snapshot))
 }
 
 /// Apply a single field change to the in-memory `Network`, re-serialise it to

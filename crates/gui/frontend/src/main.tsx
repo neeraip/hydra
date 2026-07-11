@@ -8,6 +8,7 @@ import { CanvasLayersProvider } from "./canvas/layers-context";
 import { CanvasSelectionProvider } from "./canvas/selection-context";
 import { CanvasStatusProvider } from "./canvas/status-context";
 import { ErrorBoundary } from "./components/ui/ErrorBoundary";
+import { NetworkDataProvider } from "./hooks/NetworkDataContext";
 import { NetworkVersionProvider } from "./hooks/NetworkVersionContext";
 
 // Apply persisted accessibility settings before React renders so the DOM
@@ -23,15 +24,17 @@ createRoot(document.getElementById("root")!).render(
   <StrictMode>
     <ErrorBoundary scope="Application">
       <NetworkVersionProvider>
-        <CanvasLayersProvider>
-          <CanvasSelectionProvider>
-            <CanvasStatusProvider>
-              <AppProvider>
-                <App />
-              </AppProvider>
-            </CanvasStatusProvider>
-          </CanvasSelectionProvider>
-        </CanvasLayersProvider>
+        <NetworkDataProvider>
+          <CanvasLayersProvider>
+            <CanvasSelectionProvider>
+              <CanvasStatusProvider>
+                <AppProvider>
+                  <App />
+                </AppProvider>
+              </CanvasStatusProvider>
+            </CanvasSelectionProvider>
+          </CanvasLayersProvider>
+        </NetworkDataProvider>
       </NetworkVersionProvider>
     </ErrorBoundary>
   </StrictMode>,

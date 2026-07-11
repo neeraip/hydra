@@ -15,7 +15,11 @@
 import { listen } from "@tauri-apps/api/event";
 import { useEffect, useMemo, useState } from "react";
 import { invoke, isTauri, tryInvoke } from "./ipc";
+import { useNetworkData } from "./NetworkDataContext";
+import type { NetworkSummary } from "./NetworkDataContext";
 import { useNetworkVersion } from "./NetworkVersionContext";
+
+export type { NetworkSummary } from "./NetworkDataContext";
 
 // Re-export so callers only need to import from the data seam.
 export { useNetworkVersion } from "./NetworkVersionContext";
@@ -444,10 +448,11 @@ export async function renameScenario(
 
 /**
  * Load the INP for the base model (`scenarioId = null`) or a named scenario
- * into the backend `NetworkState`, then return the parsed network so callers
- * can bump `networkVersion` to trigger a `useNodes` / `useLinks` refetch.
+ * into the backend `NetworkState` so callers can bump `networkVersion` to
+ * trigger a `useNodes` / `useLinks` refetch.
  *
- * Returns `null` when the target INP does not exist on disk yet (draft project).
+ * Returns a nodes+links snapshot when loaded, or `null` when the target INP
+ * does not exist yet.
  */
 export async function loadProjectNetwork(
   projectId: string,
@@ -456,7 +461,10 @@ export async function loadProjectNetwork(
   return (
     (await tryInvoke<{ nodes: Node[]; links: Link[] } | null>(
       "load_project_network",
-      { projectId, scenarioId },
+      {
+      projectId,
+      scenarioId,
+      },
     )) ?? null
   );
 }
@@ -836,37 +844,22 @@ export async function getPeriodResults(
 }
 
 export function useNodes(_version = 0): Node[] {
-  const { version: ctxVersion } = useNetworkVersion();
-  const [nodes, setNodes] = useState<Node[]>([]);
-  useEffect(() => {
-    void ctxVersion;
-    void _version;
-    let cancelled = false;
-    tryInvoke<Node[]>("get_nodes").then((rows) => {
-      if (!cancelled && rows !== null) setNodes(rows);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [ctxVersion, _version]);
+  // `_version` is kept for API compatibility with existing callers.
+  void _version;
+  const { nodes } = useNetworkData();
   return nodes;
 }
 
 export function useLinks(_version = 0): Link[] {
-  const { version: ctxVersion } = useNetworkVersion();
-  const [links, setLinks] = useState<Link[]>([]);
-  useEffect(() => {
-    void ctxVersion;
-    void _version;
-    let cancelled = false;
-    tryInvoke<Link[]>("get_links").then((rows) => {
-      if (!cancelled && rows !== null) setLinks(rows);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [ctxVersion, _version]);
+  // `_version` is kept for API compatibility with existing callers.
+  void _version;
+  const { links } = useNetworkData();
   return links;
+}
+
+export function useNetworkSummary(): NetworkSummary {
+  const { summary } = useNetworkData();
+  return summary;
 }
 
 export function usePatterns(_version = 0): Pattern[] {

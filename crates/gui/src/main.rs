@@ -29,6 +29,7 @@ fn main() {
             commands::open_scenario_folder,
             commands::open_and_load_network,
             commands::pick_csv_file,
+            commands::get_network_snapshot,
             commands::get_nodes,
             commands::get_links,
             commands::get_patterns,

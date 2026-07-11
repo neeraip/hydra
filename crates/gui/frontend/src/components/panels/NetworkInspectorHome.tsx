@@ -1,7 +1,9 @@
 import { MagnifyingGlassPlusIcon, XMarkIcon } from "@heroicons/react/16/solid";
-import { useMemo, useState } from "react";
+import { useVirtualizer } from "@tanstack/react-virtual";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { Link, Node, Pattern } from "../../hooks";
 import { useLinks, useNodes, usePatterns } from "../../hooks";
+import { perfTrace } from "../../perfTrace";
 
 // ── Sort / filter hook ────────────────────────────────────────────────────────
 
@@ -15,9 +17,11 @@ function useSortedFiltered<T>(
   items: T[],
   query: string,
   searchKeys: (keyof T)[],
+  traceTab: "nodes" | "links",
 ): [T[], string | null, SortDir, (col: string) => void] {
   const [sortCol, setSortCol] = useState<string | null>(null);
   const [sortDir, setSortDir] = useState<SortDir>("asc");
+  const lastTraceKeyRef = useRef<string>("");
 
   function toggleSort(col: string) {
     if (sortCol === col) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
@@ -28,6 +32,7 @@ function useSortedFiltered<T>(
   }
 
   const result = useMemo(() => {
+    const t0 = performance.now();
     const q = query.toLowerCase();
     let arr = q
       ? items.filter((item) =>
@@ -46,10 +51,42 @@ function useSortedFiltered<T>(
         return sortDir === "asc" ? cmp : -cmp;
       });
     }
+
+    const deriveMs = performance.now() - t0;
+    const shouldTrace =
+      items.length > 0 &&
+      deriveMs >= 2 &&
+      (q.length > 0 || sortCol !== null || items.length > 1000);
+    if (shouldTrace) {
+      const traceKey = `${traceTab}:${items.length}:${arr.length}:${q}:${sortCol ?? "none"}:${sortDir}`;
+      if (lastTraceKeyRef.current !== traceKey) {
+        lastTraceKeyRef.current = traceKey;
+        perfTrace("network-list-derive", deriveMs, {
+          tab: traceTab,
+          inputCount: items.length,
+          resultCount: arr.length,
+          queryLen: q.length,
+          sortCol: sortCol ?? "none",
+          sortDir,
+        });
+      }
+    }
+
     return arr;
-  }, [items, query, sortCol, sortDir, searchKeys]);
+  }, [items, query, searchKeys, sortCol, sortDir, traceTab]);
 
   return [result, sortCol, sortDir, toggleSort];
+}
+
+function useDebouncedValue<T>(value: T, delayMs: number): T {
+  const [debounced, setDebounced] = useState(value);
+
+  useEffect(() => {
+    const id = window.setTimeout(() => setDebounced(value), delayMs);
+    return () => window.clearTimeout(id);
+  }, [delayMs, value]);
+
+  return debounced;
 }
 
 // ── Shared table styles ───────────────────────────────────────────────────────
@@ -122,12 +159,32 @@ function NodesTab({
     nodes,
     query,
     NODE_SEARCH_KEYS,
+    "nodes",
   );
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+  const rowVirtualizer = useVirtualizer({
+    count: rows.length,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: () => 27,
+    overscan: 12,
+  });
+  const virtualRows = rowVirtualizer.getVirtualItems();
+  const padTop = virtualRows.length > 0 ? virtualRows[0].start : 0;
+  const padBottom =
+    virtualRows.length > 0
+      ? rowVirtualizer.getTotalSize() - virtualRows[virtualRows.length - 1].end
+      : 0;
+  const nodeColSpan = hasResults ? (onZoomTo ? 6 : 5) : onZoomTo ? 5 : 4;
 
   return (
-    <div style={{ overflow: "auto", flex: 1 }}>
+    <div ref={scrollRef} style={{ overflow: "auto", flex: 1 }}>
       <table
-        style={{ width: "100%", minWidth: "100%", borderCollapse: "collapse" }}
+        style={{
+          width: "100%",
+          minWidth: "100%",
+          borderCollapse: "collapse",
+          tableLayout: "fixed",
+        }}
       >
         <colgroup>
           <col style={{ width: 64 }} />
@@ -166,7 +223,16 @@ function NodesTab({
           </tr>
         </thead>
         <tbody>
-          {rows.map((node) => {
+          {padTop > 0 && (
+            <tr aria-hidden="true">
+              <td
+                colSpan={nodeColSpan}
+                style={{ height: padTop, padding: 0, borderBottom: "none" }}
+              />
+            </tr>
+          )}
+          {virtualRows.map((virtualRow) => {
+            const node = rows[virtualRow.index];
             const isActive = node.id === activeId;
             const canZoomTo = hasNodeCoordinates(node);
             return (
@@ -268,6 +334,14 @@ function NodesTab({
               </tr>
             );
           })}
+          {padBottom > 0 && (
+            <tr aria-hidden="true">
+              <td
+                colSpan={nodeColSpan}
+                style={{ height: padBottom, padding: 0, borderBottom: "none" }}
+              />
+            </tr>
+          )}
         </tbody>
       </table>
       {rows.length === 0 && (
@@ -331,12 +405,32 @@ function LinksTab({
     links,
     query,
     LINK_SEARCH_KEYS,
+    "links",
   );
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+  const rowVirtualizer = useVirtualizer({
+    count: rows.length,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: () => 27,
+    overscan: 12,
+  });
+  const virtualRows = rowVirtualizer.getVirtualItems();
+  const padTop = virtualRows.length > 0 ? virtualRows[0].start : 0;
+  const padBottom =
+    virtualRows.length > 0
+      ? rowVirtualizer.getTotalSize() - virtualRows[virtualRows.length - 1].end
+      : 0;
+  const linkColSpan = hasResults ? (onZoomTo ? 6 : 5) : onZoomTo ? 5 : 4;
 
   return (
-    <div style={{ overflow: "auto", flex: 1 }}>
+    <div ref={scrollRef} style={{ overflow: "auto", flex: 1 }}>
       <table
-        style={{ width: "100%", minWidth: "100%", borderCollapse: "collapse" }}
+        style={{
+          width: "100%",
+          minWidth: "100%",
+          borderCollapse: "collapse",
+          tableLayout: "fixed",
+        }}
       >
         <colgroup>
           <col style={{ width: 60 }} />
@@ -364,7 +458,16 @@ function LinksTab({
           </tr>
         </thead>
         <tbody>
-          {rows.map((link) => {
+          {padTop > 0 && (
+            <tr aria-hidden="true">
+              <td
+                colSpan={linkColSpan}
+                style={{ height: padTop, padding: 0, borderBottom: "none" }}
+              />
+            </tr>
+          )}
+          {virtualRows.map((virtualRow) => {
+            const link = rows[virtualRow.index];
             const isActive = link.id === activeId;
             const canZoomTo =
               zoomableNodeIds.has(link.fromId) &&
@@ -482,6 +585,14 @@ function LinksTab({
               </tr>
             );
           })}
+          {padBottom > 0 && (
+            <tr aria-hidden="true">
+              <td
+                colSpan={linkColSpan}
+                style={{ height: padBottom, padding: 0, borderBottom: "none" }}
+              />
+            </tr>
+          )}
         </tbody>
       </table>
       {rows.length === 0 && (
@@ -680,7 +791,8 @@ export function NetworkInspectorHome({
   const patterns = usePatterns();
 
   const [tab, setTab] = useState<HomeTab>("nodes");
-  const [query, setQuery] = useState("");
+  const [queryInput, setQueryInput] = useState("");
+  const query = useDebouncedValue(queryInput, 120);
 
   const counts: Record<HomeTab, number> = {
     nodes: allNodes.length,
@@ -778,8 +890,8 @@ export function NetworkInspectorHome({
       {/* Search */}
       <div style={{ padding: "8px 12px 0", flexShrink: 0 }}>
         <input
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
+          value={queryInput}
+          onChange={(e) => setQueryInput(e.target.value)}
           placeholder="Search…"
           style={{
             width: "100%",

@@ -3,8 +3,7 @@ import { SimulationSettings } from "../../components/editors/SimulationSettings"
 import {
   LABEL,
   openBaseFolder,
-  useLinks,
-  useNodes,
+  useNetworkSummary,
   useScenarios,
 } from "../../hooks";
 import { Header } from "./OverviewView/Header";
@@ -27,8 +26,7 @@ export function OverviewView() {
     useAppState();
   const { project, accent } = useActiveProject();
 
-  const nodes = useNodes();
-  const links = useLinks();
+  const summary = useNetworkSummary();
   const scenarios = useScenarios(project?.id ?? null, scenariosVersion);
 
   if (!project) {
@@ -39,7 +37,7 @@ export function OverviewView() {
     );
   }
 
-  const networkLoaded = nodes.length > 0 || links.length > 0;
+  const networkLoaded = summary.totalNodes > 0 || summary.totalLinks > 0;
 
   return (
     <div
@@ -62,8 +60,7 @@ export function OverviewView() {
       {/* ── Tier 1: Static project facts ─────────────────────────────── */}
       <Section title="Network">
         <NetworkComposition
-          nodes={nodes}
-          links={links}
+          summary={summary}
           networkLoaded={networkLoaded}
           fallbackNodeCount={project.nodeCount}
           fallbackLinkCount={project.linkCount}

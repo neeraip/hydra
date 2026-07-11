@@ -24,6 +24,7 @@ import {
   orthoCenterFromMap,
   roughGeoViewState,
 } from "./MapCanvas/geoUtils";
+import { startPerfSpan } from "../perfTrace";
 import { computeSchematicLayout } from "./schematicLayout";
 import type { CanvasTool, LinkVariable, NodeVariable, ViewMode } from "./types";
 
@@ -109,6 +110,8 @@ interface MapCanvasProps {
   zoomOutKey?: number;
   /** Increment to reset map bearing/pitch (north up). Map mode only. */
   resetNorthKey?: number;
+  /** Whether canvas is the currently active project tab. */
+  isActive?: boolean;
 }
 
 export function MapCanvas({
@@ -145,6 +148,7 @@ export function MapCanvas({
   zoomInKey,
   zoomOutKey,
   resetNorthKey,
+  isActive = true,
 }: MapCanvasProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapElRef = useRef<HTMLDivElement>(null);
@@ -176,11 +180,25 @@ export function MapCanvas({
   const measureCursorRef = useRef<[number, number] | null>(null);
   const viewStateRef = useRef<CanvasViewState>(roughGeoViewState(nodes));
   const prevViewModeRef = useRef<ViewMode | null>(null);
+  const prevBasemapRef = useRef<BasemapStyle>(basemap);
   const orthoViewRef = useRef(
     new OrthographicView({ id: "main", controller: true }),
   );
   const flowAnimRef = useRef(0);
   const buildLayersRef = useRef<() => Layer[]>(() => []);
+  const firstFrameSpanRef = useRef<ReturnType<typeof startPerfSpan> | null>(
+    null,
+  );
+  const firstFrameKeyRef = useRef<string>("");
+  const lastFirstFrameTraceRef = useRef<{ key: string; ts: number }>({
+    key: "",
+    ts: -Infinity,
+  });
+  const firstFramePendingRef = useRef(false);
+  const firstFrameRafRef = useRef<number | null>(null);
+  const prevActivePerfRef = useRef(isActive);
+  const prevFitKeyPerfRef = useRef(fitKey);
+  const isActiveRef = useRef(isActive);
 
   // Refs kept current for stable closures used in drag/edit handlers.
   const toolRef = useRef<CanvasTool>(tool);
@@ -203,6 +221,70 @@ export function MapCanvas({
     () => computeSchematicLayout(nodes, links),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [nodes, links],
+  );
+
+  const markFirstFrame = useCallback((source: "map" | "schematic") => {
+    if (!firstFramePendingRef.current) return;
+    firstFramePendingRef.current = false;
+    if (firstFrameRafRef.current != null) {
+      cancelAnimationFrame(firstFrameRafRef.current);
+    }
+    firstFrameRafRef.current = requestAnimationFrame(() => {
+      firstFrameRafRef.current = null;
+      const now = performance.now();
+      const key = `${firstFrameKeyRef.current}:${source}`;
+      const duplicateRecent =
+        lastFirstFrameTraceRef.current.key === key &&
+        now - lastFirstFrameTraceRef.current.ts < 1200;
+      if (!duplicateRecent) {
+        firstFrameSpanRef.current?.end({ source });
+        lastFirstFrameTraceRef.current = { key, ts: now };
+      }
+      firstFrameSpanRef.current = null;
+      firstFrameKeyRef.current = "";
+    });
+  }, []);
+
+  useEffect(() => {
+    const becameActive = isActive && !prevActivePerfRef.current;
+    const fitChanged = fitKey !== prevFitKeyPerfRef.current;
+    prevActivePerfRef.current = isActive;
+    prevFitKeyPerfRef.current = fitKey;
+
+    if (!isActive) {
+      firstFramePendingRef.current = false;
+      if (firstFrameRafRef.current != null) {
+        cancelAnimationFrame(firstFrameRafRef.current);
+        firstFrameRafRef.current = null;
+      }
+      firstFrameSpanRef.current = null;
+      return;
+    }
+
+    if ((becameActive || fitChanged) && (nodes.length > 0 || links.length > 0)) {
+      if (firstFramePendingRef.current) return;
+      firstFramePendingRef.current = true;
+      firstFrameKeyRef.current = `${viewMode}:${nodes.length}:${links.length}`;
+      firstFrameSpanRef.current = startPerfSpan("canvas-first-frame", {
+        viewMode,
+        nodeCount: nodes.length,
+        linkCount: links.length,
+        fitKey: fitKey ?? null,
+      });
+    }
+  }, [fitKey, isActive, links.length, nodes.length, viewMode]);
+
+  useEffect(() => {
+    isActiveRef.current = isActive;
+  }, [isActive]);
+
+  useEffect(
+    () => () => {
+      if (firstFrameRafRef.current != null) {
+        cancelAnimationFrame(firstFrameRafRef.current);
+      }
+    },
+    [],
   );
 
   const geoCoords = useMemo(() => {
@@ -293,6 +375,7 @@ export function MapCanvas({
 
   // Fly/zoom to a specific element when flyToKey changes.
   useEffect(() => {
+    if (!isActive) return;
     if (flyToKey == null) return;
     const nodeId = flyToNodeId;
     const linkId = flyToLinkId;
@@ -362,7 +445,7 @@ export function MapCanvas({
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [flyToKey, viewMode, flyToLinkId, flyToNodeId]);
+  }, [flyToKey, isActive, viewMode, flyToLinkId, flyToNodeId]);
 
   const buildLayers = useCallback((): Layer[] => {
     const isSchematic = viewMode === "schematic";
@@ -960,6 +1043,25 @@ export function MapCanvas({
     mapRef.current = map;
 
     map.on("style.load", () => {
+      // setStyle tears down style-owned layers/sources. Reattach and reapply
+      // the deck overlay so network features remain visible after basemap switches.
+      const overlay = overlayRef.current;
+      if (overlay) {
+        try {
+          map.removeControl(overlay);
+        } catch {
+          /* ignore */
+        }
+        try {
+          map.addControl(overlay);
+        } catch {
+          /* ignore */
+        }
+      }
+      if (isActiveRef.current && viewModeRef.current === "map") {
+        overlayRef.current?.setProps({ layers: buildLayersRef.current() });
+        markFirstFrame("map");
+      }
       fitMapExtents(nodesRef.current, map);
     });
 
@@ -1062,9 +1164,10 @@ export function MapCanvas({
       mapRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [basemap]);
+  }, []);
 
   useEffect(() => {
+    if (!isActive) return;
     if (viewMode !== "schematic") return;
     const deck = ensureDeck();
     if (!deck) return;
@@ -1076,18 +1179,20 @@ export function MapCanvas({
       viewState: vs,
       layers: buildLayersRef.current(),
     });
+    markFirstFrame("schematic");
     if (deckCanvasRef.current) deckCanvasRef.current.style.display = "";
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ensureDeck, schematicCoords, viewMode]);
+  }, [ensureDeck, isActive, markFirstFrame, schematicCoords, viewMode]);
 
   useEffect(() => {
     const deck = deckRef.current;
-    if (!deck || viewMode !== "schematic") return;
+    if (!isActive || !deck || viewMode !== "schematic") return;
     deck.setProps({ layers: buildLayers(), viewState: viewStateRef.current });
-  }, [buildLayers, viewMode]);
+    markFirstFrame("schematic");
+  }, [buildLayers, isActive, markFirstFrame, viewMode]);
 
   useEffect(() => {
-    if (viewMode !== "schematic" || linkVar !== "flow") {
+    if (!isActive || viewMode !== "schematic" || linkVar !== "flow") {
       flowAnimRef.current = 0;
       return;
     }
@@ -1102,17 +1207,18 @@ export function MapCanvas({
     }
     rafId = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(rafId);
-  }, [linkVar, viewMode]);
+  }, [isActive, linkVar, viewMode]);
 
   // Update overlay when data/layers change in map mode.
   useEffect(() => {
-    if (viewMode !== "map") return;
+    if (!isActive || viewMode !== "map") return;
     overlayRef.current?.setProps({ layers: buildLayers() });
-  }, [buildLayers, viewMode]);
+    markFirstFrame("map");
+  }, [buildLayers, isActive, markFirstFrame, viewMode]);
 
   // Map-mode flow animation via overlay.
   useEffect(() => {
-    if (viewMode !== "map" || linkVar !== "flow") return;
+    if (!isActive || viewMode !== "map" || linkVar !== "flow") return;
     let rafId: number;
     let lastTs = performance.now();
     function tick(now: number) {
@@ -1124,17 +1230,28 @@ export function MapCanvas({
     }
     rafId = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(rafId);
-  }, [linkVar, viewMode]);
+  }, [isActive, linkVar, viewMode]);
+
+  // Drop all render layers while inactive so hidden tabs don't keep repainting.
+  useEffect(() => {
+    if (isActive) return;
+    overlayRef.current?.setProps({ layers: [] });
+    deckRef.current?.setProps({ layers: [] });
+  }, [isActive]);
 
   // Basemap style change — MapboxOverlay re-attaches automatically as IControl.
   useEffect(() => {
+    if (!isActive) return;
     const map = mapRef.current;
     if (!map) return;
+    if (prevBasemapRef.current === basemap) return;
+    prevBasemapRef.current = basemap;
     map.setStyle(MAP_STYLES[basemap]);
-  }, [basemap]);
+  }, [basemap, isActive]);
 
   // View mode switch.
   useEffect(() => {
+    if (!isActive) return;
     const enteringMapMode =
       viewMode === "map" && prevViewModeRef.current !== "map";
     prevViewModeRef.current = viewMode;
@@ -1157,7 +1274,7 @@ export function MapCanvas({
       const map = mapRef.current;
       if (map) fitMapExtents(nodesRef.current, map);
     }
-  }, [viewMode]);
+  }, [isActive, viewMode]);
 
   // ── Fit-to-network: fires when nodes first arrive (initial load) or when
   //    fitKey changes (explicit project switch).  Does NOT fire on scenario
@@ -1165,6 +1282,7 @@ export function MapCanvas({
   const prevHasNodesRef = useRef(nodes.length > 0);
   const prevFitKeyRef = useRef(fitKey);
   useEffect(() => {
+    if (!isActive) return;
     const hasNodes = nodes.length > 0;
     const nodesJustArrived = hasNodes && !prevHasNodesRef.current;
     const fitKeyChanged = fitKey !== prevFitKeyRef.current;
@@ -1195,13 +1313,14 @@ export function MapCanvas({
         map.jumpTo({ center: [0, 20], zoom: 1 });
       }
     }
-  }, [buildLayers, ensureDeck, fitKey, nodes, schematicCoords, viewMode]);
+  }, [buildLayers, ensureDeck, fitKey, isActive, nodes, schematicCoords, viewMode]);
 
   // ── Generic viewport controls (zoom +/- and north reset) ───────────────
   const prevZoomInKeyRef = useRef(zoomInKey);
   const prevZoomOutKeyRef = useRef(zoomOutKey);
   const prevResetNorthKeyRef = useRef(resetNorthKey);
   useEffect(() => {
+    if (!isActive) return;
     const zoomInChanged = zoomInKey !== prevZoomInKeyRef.current;
     const zoomOutChanged = zoomOutKey !== prevZoomOutKeyRef.current;
     const resetNorthChanged = resetNorthKey !== prevResetNorthKeyRef.current;
@@ -1256,7 +1375,7 @@ export function MapCanvas({
     if (resetNorthChanged && viewMode === "map") {
       mapRef.current?.easeTo({ bearing: 0, pitch: 0, duration: 260 });
     }
-  }, [ensureDeck, resetNorthKey, viewMode, zoomInKey, zoomOutKey]);
+  }, [ensureDeck, isActive, resetNorthKey, viewMode, zoomInKey, zoomOutKey]);
 
   return (
     <div

@@ -61,7 +61,7 @@ const NODE_KIND_PREFIX: Record<string, string> = {
   tank: "T",
 };
 
-export function CanvasView() {
+export function CanvasView({ isActive = true }: { isActive?: boolean }) {
   const { activeScenarioId, openCrsModal, setProjectView, projectView } =
     useAppState();
   const { project } = useActiveProject();
@@ -707,6 +707,7 @@ export function CanvasView() {
   }, [viewMode, activeTool]); // intentionally omit activeTool — only re-evaluate on mode switch
 
   const svgCursor = activeTool === "measure" ? "crosshair" : "default";
+  const canvasIsActive = isActive && projectView === "canvas";
 
   const handleNodeMoved = useCallback(
     async (id: string, x: number, y: number) => {
@@ -915,6 +916,7 @@ export function CanvasView() {
             <MapCanvas
               nodes={canvasNodes}
               links={canvasLinks}
+              isActive={canvasIsActive}
               viewMode={viewMode}
               nodeVar={nodeVar}
               linkVar={linkVar}

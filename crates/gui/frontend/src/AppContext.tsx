@@ -19,7 +19,9 @@ import {
   useProject,
   useProjects,
 } from "./hooks";
+import { useNetworkData } from "./hooks/NetworkDataContext";
 import { useNetworkVersion } from "./hooks/NetworkVersionContext";
+import { startPerfSpan } from "./perfTrace";
 
 export type Page = "home" | "projects" | "project" | "settings";
 export type { ProjectView } from "./hooks";
@@ -200,6 +202,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // Reload NetworkState whenever the active project or scenario changes so that
   // `useNodes()` / `useLinks()` and the canvas automatically pick up the right INP.
   const { bumpNetwork } = useNetworkVersion();
+  const { primeNetworkData } = useNetworkData();
   useEffect(() => {
     if (!s.activeProjectId) return;
     let cancelled = false;
@@ -215,15 +218,30 @@ export function AppProvider({ children }: { children: ReactNode }) {
       targetScenarioId: string | null,
       attempts = 3,
     ) => {
+      const loadSpan = startPerfSpan("network-load-with-retry", {
+        projectId,
+        scenarioId: targetScenarioId ?? "base",
+        attempts,
+      });
       for (let i = 0; i < attempts; i += 1) {
-        const net = await loadProjectNetwork(projectId, targetScenarioId);
+        const attemptSpan = startPerfSpan("network-load-attempt", {
+          projectId,
+          scenarioId: targetScenarioId ?? "base",
+          attempt: i + 1,
+        });
+        const snapshot = await loadProjectNetwork(projectId, targetScenarioId);
+        attemptSpan.end({ loaded: snapshot !== null });
         if (cancelled) return null;
-        if (net !== null) return net;
+        if (snapshot !== null) {
+          loadSpan.end({ loaded: true, attempt: i + 1 });
+          return snapshot;
+        }
         if (i < attempts - 1) {
           await delay(120 * (i + 1));
           if (cancelled) return null;
         }
       }
+      loadSpan.end({ loaded: false });
       return null;
     };
 
@@ -231,6 +249,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       const net = await loadWithRetry(scenarioId);
       if (cancelled) return;
       if (net !== null) {
+        primeNetworkData(net);
         bumpNetwork();
         return;
       }
@@ -240,6 +259,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         const baseNet = await loadWithRetry(null);
         if (cancelled) return;
         if (baseNet !== null) {
+          primeNetworkData(baseNet);
           setS((prev) => {
             if (
               prev.activeProjectId !== projectId ||
@@ -255,7 +275,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     return () => {
       cancelled = true;
     };
-  }, [s.activeProjectId, s.activeScenarioId, bumpNetwork]);
+  }, [s.activeProjectId, s.activeScenarioId, bumpNetwork, primeNetworkData]);
 
   const setPage = useCallback((page: Page) => {
     setS((prev) => {

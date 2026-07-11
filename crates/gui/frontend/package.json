@@ -19,6 +19,7 @@
     "@deck.gl/mapbox": "^9.3.6",
     "@heroicons/react": "^2.2.0",
     "@tanstack/react-table": "^8.21.3",
+    "@tanstack/react-virtual": "^3.14.5",
     "@tauri-apps/api": "^2.11.1",
     "@tauri-apps/plugin-opener": "^2.5.4",
     "maplibre-gl": "^5.24.0",

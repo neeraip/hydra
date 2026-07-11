@@ -24,7 +24,6 @@ import {
   createProjectOnDisk,
   deleteProjectOnDisk,
   formatInpImportError,
-  loadProject,
   openAndLoadNetwork,
   openBaseFolder,
   type Project,
@@ -64,7 +63,6 @@ export function ProjectsPage() {
   const {
     projectsVersion,
     openProject,
-    enterLoadedProject,
     bumpProjects,
     createProject,
     showToast,
@@ -99,16 +97,11 @@ export function ProjectsPage() {
     }
   }
   const handleOpenProject = useCallback(
-    async (id: string) => {
-      const loaded = await loadProject(id);
-      if (loaded) {
-        if (loaded.network) bumpNetwork();
-        enterLoadedProject(loaded.project);
-      } else {
-        openProject(id);
-      }
+    (id: string) => {
+      // Navigate immediately; AppContext loads and primes network data in the background.
+      openProject(id);
     },
-    [bumpNetwork, enterLoadedProject, openProject],
+    [openProject],
   );
   const projects = useProjects(projectsVersion);
 
