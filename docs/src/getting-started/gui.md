@@ -28,6 +28,14 @@ Hydra organises work into **projects**. Each project holds a network model and o
 2. **Configure and run** — press **⌘R** (macOS) or **Ctrl+R** (Windows/Linux), or click the **Simulate** button in the scenario strip at the bottom of the screen. Select which scenarios to run and confirm.
 3. **Explore results** — after the simulation completes, the network map updates with colour-coded results. Click any node or link to inspect its time-series values (pressure, head, flow, velocity, water age, etc.). Use the timeline scrubber to step through reporting periods.
 
+## Performance on Large Networks
+
+Hydra GUI is tuned to stay responsive on larger models.
+
+- Opening a project navigates immediately while network data finishes loading.
+- Network Inspector node/link lists use virtualized rendering to avoid large DOM slowdowns.
+- Basemap switching keeps network overlays attached so features remain visible while the style reloads.
+
 ## Accessing Output Files
 
 Hydra saves output files inside the project folder on disk. To open the folder for a scenario, go to the **Scenarios** panel and click the **Open in Finder** (macOS) / **Open in Explorer** (Windows) icon next to the scenario name. The folder contains:

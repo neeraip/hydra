@@ -41,6 +41,16 @@ sudo apt install libfuse2
 sudo dnf install fuse-libs
 ```
 
+### Canvas features disappear after changing basemap
+
+This should not happen in current releases, but if the map style reload fails on a specific GPU/driver stack, try:
+
+- Switch basemap once more (for example, to **No basemap**, then back).
+- Change to another project tab and return to the canvas.
+- Restart Hydra to reset the map renderer.
+
+If the issue keeps reproducing, open an issue and include your OS version, GPU model, and whether it happens on all projects or only specific large networks.
+
 ---
 
 ## CLI

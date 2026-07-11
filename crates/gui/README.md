@@ -2,6 +2,16 @@
 
 Tauri-based desktop GUI for Hydra.
 
+## Developer diagnostics
+
+Performance tracing is automatic in development builds and disabled in production builds.
+
+- Enabled: `pnpm dev`, `cargo tauri dev`
+- Disabled: packaged release builds
+- User toggle: none (intentional)
+
+Trace events are emitted to the developer console and include key spans such as network load retries, network-list derive time, and first canvas frame timing.
+
 ## Regenerating icons
 
 The source logo is `icons/logo.png` (1024×1024, rounded corners, transparent background).
