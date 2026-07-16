@@ -29,7 +29,7 @@ jobs:
           cache: false
 
       - name: Install cargo-binstall
-        uses: cargo-bins/cargo-binstall@v1.20.1
+        uses: cargo-bins/cargo-binstall@v1.21.0
 
       - name: Install cargo-release
         run: cargo binstall cargo-release --version "=1.1.2" --no-confirm
