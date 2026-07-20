@@ -24,3 +24,12 @@ clap = { version = "4", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 ureq = "3"
+
+# Applies when hydra-cli is built standalone (e.g. `cargo install hydra-cli`
+# from crates.io), where this manifest becomes the build root and the
+# workspace root's [profile.release] is unavailable. Ignored (with a benign
+# warning) when built as part of the hydra workspace, since the workspace
+# root profile already applies there.
+[profile.release]
+lto = "fat"
+codegen-units = 1
