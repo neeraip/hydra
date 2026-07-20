@@ -785,42 +785,6 @@ export function Legend({
             "background 120ms ease, border-color 120ms ease, box-shadow 120ms ease",
         }}
       >
-        <PickerButton
-          value={nodeVar}
-          options={nodeOptions}
-          isOpen={nodePickerOpen}
-          onToggle={() => {
-            setNodePickerOpen((v) => !v);
-            setLinkPickerOpen(false);
-            setDetailsOpen(false);
-          }}
-          onSelect={(v) => {
-            setNodeVar(v);
-            setNodePickerOpen(false);
-          }}
-        />
-        <PickerButton
-          value={linkVar}
-          options={linkOptions}
-          isOpen={linkPickerOpen}
-          onToggle={() => {
-            setLinkPickerOpen((v) => !v);
-            setNodePickerOpen(false);
-            setDetailsOpen(false);
-          }}
-          onSelect={(v) => {
-            setLinkVar(v);
-            setLinkPickerOpen(false);
-          }}
-        />
-        <div
-          style={{
-            width: 1,
-            height: 16,
-            background: "rgba(255,255,255,0.12)",
-            flexShrink: 0,
-          }}
-        />
         {/* Colour scale / thresholds toggle — separate from variable switching */}
         <button
           type="button"
@@ -892,6 +856,42 @@ export function Legend({
             style={{ width: 10, height: 10, color: "var(--text-tertiary)" }}
           />
         </button>
+        <div
+          style={{
+            width: 1,
+            height: 16,
+            background: "rgba(255,255,255,0.12)",
+            flexShrink: 0,
+          }}
+        />
+        <PickerButton
+          value={nodeVar}
+          options={nodeOptions}
+          isOpen={nodePickerOpen}
+          onToggle={() => {
+            setNodePickerOpen((v) => !v);
+            setLinkPickerOpen(false);
+            setDetailsOpen(false);
+          }}
+          onSelect={(v) => {
+            setNodeVar(v);
+            setNodePickerOpen(false);
+          }}
+        />
+        <PickerButton
+          value={linkVar}
+          options={linkOptions}
+          isOpen={linkPickerOpen}
+          onToggle={() => {
+            setLinkPickerOpen((v) => !v);
+            setNodePickerOpen(false);
+            setDetailsOpen(false);
+          }}
+          onSelect={(v) => {
+            setLinkVar(v);
+            setLinkPickerOpen(false);
+          }}
+        />
       </div>
     </div>
   );
