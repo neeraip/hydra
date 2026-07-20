@@ -1,3 +1,9 @@
+import {
+  altModifierLabel,
+  primaryModifierLabel,
+  shiftModifierLabel,
+} from "../../shortcuts";
+
 interface ShortcutRow {
   action: string;
   keys: string[];
@@ -8,63 +14,67 @@ interface ShortcutSection {
   rows: ShortcutRow[];
 }
 
-const SECTIONS: ShortcutSection[] = [
-  {
-    title: "Global",
-    rows: [
-      { action: "Command palette", keys: ["⌘K"] },
-      { action: "Run simulation", keys: ["⌘R"] },
-      { action: "Toggle geographic/orthogonal", keys: ["⌘M"] },
-      { action: "Zoom in", keys: ["⌘="] },
-      { action: "Zoom out", keys: ["⌘-"] },
-      { action: "Fit network", keys: ["⌘0"] },
-      { action: "Open issues panel", keys: ["⌘⇧M"] },
-      { action: "Keyboard shortcuts", keys: ["?"] },
-      { action: "Go to Overview", keys: ["⌘", "1"] },
-      { action: "Go to Canvas", keys: ["⌘", "2"] },
-      { action: "Go to Editor", keys: ["⌘", "3"] },
-      { action: "Go to Analysis", keys: ["⌘", "4"] },
-    ],
-  },
-  {
-    title: "Canvas",
-    rows: [
-      { action: "Use select tool", keys: ["S"] },
-      { action: "Use edit tool", keys: ["E"] },
-      { action: "Use add node tool", keys: ["N"] },
-      { action: "Use add link tool", keys: ["L"] },
-      { action: "Use measure tool", keys: ["D"] },
-      { action: "Return to select tool", keys: ["Esc"] },
-      { action: "Delete selected element", keys: ["Del", "Backspace"] },
-      { action: "Select element", keys: ["Click"] },
-      { action: "Zoom in/out", keys: ["Scroll"] },
-    ],
-  },
-  {
-    title: "Playback",
-    rows: [
-      { action: "Play / Pause", keys: ["Space"] },
-      { action: "Step forward", keys: ["→"] },
-      { action: "Step backward", keys: ["←"] },
-      { action: "Jump to start", keys: ["Home"] },
-      { action: "Jump to end", keys: ["End"] },
-    ],
-  },
-  {
-    title: "Editor",
-    rows: [
-      { action: "Save changes", keys: ["⌘S"] },
-      { action: "New scenario", keys: ["⌥⌘N"] },
-      { action: "Run simulation", keys: ["⌘R"] },
-      { action: "Find element", keys: ["⌘F"] },
-      { action: "Copy row", keys: ["⌘C"] },
-      { action: "Undo", keys: ["⌘Z"] },
-      { action: "Redo", keys: ["⌘⇧Z"] },
-    ],
-  },
-];
-
 export function ShortcutCard({ onClose }: { onClose: () => void }) {
+  const modifier = primaryModifierLabel();
+  const alt = altModifierLabel();
+  const shift = shiftModifierLabel();
+
+  const sections: ShortcutSection[] = [
+    {
+      title: "Global",
+      rows: [
+        { action: "Command palette", keys: [modifier, "K"] },
+        { action: "Run simulation", keys: [modifier, "R"] },
+        { action: "Toggle geographic/orthogonal", keys: [modifier, "M"] },
+        { action: "Zoom in", keys: [modifier, "="] },
+        { action: "Zoom out", keys: [modifier, "-"] },
+        { action: "Fit network", keys: [modifier, "0"] },
+        { action: "Open issues panel", keys: [modifier, shift, "M"] },
+        { action: "Keyboard shortcuts", keys: ["?"] },
+        { action: "Go to Overview", keys: [modifier, "1"] },
+        { action: "Go to Canvas", keys: [modifier, "2"] },
+        { action: "Go to Editor", keys: [modifier, "3"] },
+        { action: "Go to Analysis", keys: [modifier, "4"] },
+      ],
+    },
+    {
+      title: "Canvas",
+      rows: [
+        { action: "Use select tool", keys: ["S"] },
+        { action: "Use edit tool", keys: ["E"] },
+        { action: "Use add node tool", keys: ["N"] },
+        { action: "Use add link tool", keys: ["L"] },
+        { action: "Use measure tool", keys: ["D"] },
+        { action: "Return to select tool", keys: ["Esc"] },
+        { action: "Delete selected element", keys: ["Del", "Backspace"] },
+        { action: "Select element", keys: ["Click"] },
+        { action: "Zoom in/out", keys: ["Scroll"] },
+      ],
+    },
+    {
+      title: "Playback",
+      rows: [
+        { action: "Play / Pause", keys: ["Space"] },
+        { action: "Step forward", keys: ["→"] },
+        { action: "Step backward", keys: ["←"] },
+        { action: "Jump to start", keys: ["Home"] },
+        { action: "Jump to end", keys: ["End"] },
+      ],
+    },
+    {
+      title: "Editor",
+      rows: [
+        { action: "Save changes", keys: [modifier, "S"] },
+        { action: "New scenario", keys: [alt, modifier, "N"] },
+        { action: "Run simulation", keys: [modifier, "R"] },
+        { action: "Find element", keys: [modifier, "F"] },
+        { action: "Copy row", keys: [modifier, "C"] },
+        { action: "Undo", keys: [modifier, "Z"] },
+        { action: "Redo", keys: [modifier, shift, "Z"] },
+      ],
+    },
+  ];
+
   return (
     <div
       style={{
@@ -157,7 +167,7 @@ export function ShortcutCard({ onClose }: { onClose: () => void }) {
             gap: 0,
           }}
         >
-          {SECTIONS.map((section) => (
+          {sections.map((section) => (
             <div key={section.title} style={{ padding: "16px 24px" }}>
               <div
                 style={{

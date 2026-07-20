@@ -1,7 +1,10 @@
 const PERF_TRACE_SUPPORTED = import.meta.env.DEV;
 
 function nowMs(): number {
-  if (typeof performance !== "undefined" && typeof performance.now === "function") {
+  if (
+    typeof performance !== "undefined" &&
+    typeof performance.now === "function"
+  ) {
     return performance.now();
   }
   return Date.now();

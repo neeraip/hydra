@@ -8,8 +8,8 @@ import {
   useRef,
   useState,
 } from "react";
-import type { Link, Node } from "../types";
 import { perfTrace } from "../perfTrace";
+import type { Link, Node } from "../types";
 import { tryInvoke } from "./ipc";
 import { useNetworkVersion } from "./NetworkVersionContext";
 
@@ -62,7 +62,8 @@ function summarizeNetwork(nodes: Node[], links: Link[]): NetworkSummary {
   for (const l of links) {
     if (l.type === "pipe") {
       pipes += 1;
-      if (typeof l.length === "number" && l.length > 0) totalLengthM += l.length;
+      if (typeof l.length === "number" && l.length > 0)
+        totalLengthM += l.length;
       if (l.diameter > 0) {
         diaSum += l.diameter;
         diaCount += 1;

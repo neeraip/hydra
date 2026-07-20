@@ -12,6 +12,12 @@ import {
   useNodes,
   useProjects,
 } from "../../hooks";
+import {
+  formatPrimaryShortcut,
+  formatShortcut,
+  primaryModifierLabel,
+  shiftModifierLabel,
+} from "../../shortcuts";
 
 /**
  * Display-only category union — extends the data-layer `CommandCategory`
@@ -126,6 +132,15 @@ export function CommandPalette() {
   const [activeIdx, setActiveIdx] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
+  const modifier = primaryModifierLabel();
+  const nav1Shortcut = formatShortcut([modifier, "1"]);
+  const nav2Shortcut = formatShortcut([modifier, "2"]);
+  const runShortcut = formatPrimaryShortcut("R");
+  const toggleLayoutShortcut = formatPrimaryShortcut("M");
+  const zoomInShortcut = formatPrimaryShortcut("=");
+  const zoomOutShortcut = formatPrimaryShortcut("-");
+  const fitShortcut = formatPrimaryShortcut("0");
+  const issuesShortcut = formatShortcut([modifier, shiftModifierLabel(), "M"]);
 
   /** Dynamically computed "Page" group — varies by current page / view. */
   const pageCommands = useMemo<DynamicCommand[]>(() => {
@@ -168,14 +183,14 @@ export function CommandPalette() {
           id: "n1",
           label: "Canvas",
           category: "Navigate",
-          shortcut: "⌘ 1",
+          shortcut: nav1Shortcut,
           action: "nav-canvas",
         },
         {
           id: "n2",
           label: "Scenarios",
           category: "Navigate",
-          shortcut: "⌘ 2",
+          shortcut: nav2Shortcut,
           action: "nav-scenarios",
         },
         {
@@ -199,7 +214,7 @@ export function CommandPalette() {
           label: "Run simulation",
           description: "Run hydraulics for the active scenario",
           category: "Simulate",
-          shortcut: "⌘R",
+          shortcut: runShortcut,
           action: "run-sim",
         },
       ];
@@ -223,7 +238,7 @@ export function CommandPalette() {
           label: "Run simulation",
           description: "Run hydraulics for the active scenario",
           category: "Page",
-          shortcut: "⌘R",
+          shortcut: runShortcut,
           action: "run-sim",
         },
         {
@@ -231,7 +246,7 @@ export function CommandPalette() {
           label: "Toggle layout (Geographic/Orthogonal)",
           description: "Switch between geographic and orthogonal layouts",
           category: "Page",
-          shortcut: "⌘M",
+          shortcut: toggleLayoutShortcut,
           action: "canvas-layout-toggle",
         },
         {
@@ -293,7 +308,7 @@ export function CommandPalette() {
           label: "Zoom in",
           description: "Zoom the active canvas in",
           category: "Page",
-          shortcut: "⌘=",
+          shortcut: zoomInShortcut,
           action: "canvas-zoom-in",
         },
         {
@@ -301,7 +316,7 @@ export function CommandPalette() {
           label: "Zoom out",
           description: "Zoom the active canvas out",
           category: "Page",
-          shortcut: "⌘-",
+          shortcut: zoomOutShortcut,
           action: "canvas-zoom-out",
         },
         {
@@ -309,7 +324,7 @@ export function CommandPalette() {
           label: "Fit network",
           description: "Fit the viewport to network bounds",
           category: "Page",
-          shortcut: "⌘0",
+          shortcut: fitShortcut,
           action: "canvas-fit-network",
         },
         {
@@ -324,7 +339,7 @@ export function CommandPalette() {
           label: "Open issues panel",
           description: "Review warnings and errors",
           category: "Page",
-          shortcut: "⌘⇧M",
+          shortcut: issuesShortcut,
         },
         {
           id: "p-tasks",
@@ -352,7 +367,19 @@ export function CommandPalette() {
       }
     }
     return [];
-  }, [page, projectView, activeProjectId]);
+  }, [
+    page,
+    projectView,
+    activeProjectId,
+    nav1Shortcut,
+    nav2Shortcut,
+    runShortcut,
+    toggleLayoutShortcut,
+    zoomInShortcut,
+    zoomOutShortcut,
+    fitShortcut,
+    issuesShortcut,
+  ]);
 
   // "Find element" mode: query starts with `#`. Searches model nodes + links.
   const findMode = query.startsWith("#");

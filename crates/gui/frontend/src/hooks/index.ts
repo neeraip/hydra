@@ -15,8 +15,8 @@
 import { listen } from "@tauri-apps/api/event";
 import { useEffect, useMemo, useState } from "react";
 import { invoke, isTauri, tryInvoke } from "./ipc";
-import { useNetworkData } from "./NetworkDataContext";
 import type { NetworkSummary } from "./NetworkDataContext";
+import { useNetworkData } from "./NetworkDataContext";
 import { useNetworkVersion } from "./NetworkVersionContext";
 
 export type { NetworkSummary } from "./NetworkDataContext";
@@ -462,8 +462,8 @@ export async function loadProjectNetwork(
     (await tryInvoke<{ nodes: Node[]; links: Link[] } | null>(
       "load_project_network",
       {
-      projectId,
-      scenarioId,
+        projectId,
+        scenarioId,
       },
     )) ?? null
   );

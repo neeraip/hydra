@@ -15,6 +15,11 @@ import {
   useTasks,
 } from "../../AppContext";
 import { countIssues, LABEL, PILL } from "../../hooks";
+import {
+  formatShortcut,
+  primaryModifierLabel,
+  shiftModifierLabel,
+} from "../../shortcuts";
 
 type SolverState = "idle" | "loading" | "running" | "converged" | "warning";
 
@@ -42,6 +47,11 @@ export function StatusBar() {
 
   const [historyOpen, setHistoryOpen] = useState(false);
   const issueCounts = countIssues(issues);
+  const issuesShortcut = formatShortcut([
+    primaryModifierLabel(),
+    shiftModifierLabel(),
+    "M",
+  ]);
 
   return (
     <div
@@ -82,7 +92,7 @@ export function StatusBar() {
         type="button"
         onClick={toggleIssuesPanel}
         disabled={!project}
-        data-tooltip="Issues & notifications (⌘⇧M)"
+        data-tooltip={`Issues & notifications (${issuesShortcut})`}
         style={{
           display: "inline-flex",
           alignItems: "center",

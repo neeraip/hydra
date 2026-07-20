@@ -14,6 +14,7 @@ import { MapboxOverlay } from "@deck.gl/mapbox";
 import maplibregl from "maplibre-gl";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Link, Node } from "../hooks";
+import { startPerfSpan } from "../perfTrace";
 import type { BasemapStyle } from "./Basemap";
 import { FlowPathLayer } from "./FlowPathLayer";
 import { useCanvasLayers } from "./layers-context";
@@ -24,7 +25,6 @@ import {
   orthoCenterFromMap,
   roughGeoViewState,
 } from "./MapCanvas/geoUtils";
-import { startPerfSpan } from "../perfTrace";
 import { computeSchematicLayout } from "./schematicLayout";
 import type { CanvasTool, LinkVariable, NodeVariable, ViewMode } from "./types";
 
@@ -261,7 +261,10 @@ export function MapCanvas({
       return;
     }
 
-    if ((becameActive || fitChanged) && (nodes.length > 0 || links.length > 0)) {
+    if (
+      (becameActive || fitChanged) &&
+      (nodes.length > 0 || links.length > 0)
+    ) {
       if (firstFramePendingRef.current) return;
       firstFramePendingRef.current = true;
       firstFrameKeyRef.current = `${viewMode}:${nodes.length}:${links.length}`;
@@ -1164,7 +1167,7 @@ export function MapCanvas({
       mapRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [markFirstFrame, basemap]);
 
   useEffect(() => {
     if (!isActive) return;
@@ -1313,7 +1316,15 @@ export function MapCanvas({
         map.jumpTo({ center: [0, 20], zoom: 1 });
       }
     }
-  }, [buildLayers, ensureDeck, fitKey, isActive, nodes, schematicCoords, viewMode]);
+  }, [
+    buildLayers,
+    ensureDeck,
+    fitKey,
+    isActive,
+    nodes,
+    schematicCoords,
+    viewMode,
+  ]);
 
   // ── Generic viewport controls (zoom +/- and north reset) ───────────────
   const prevZoomInKeyRef = useRef(zoomInKey);

@@ -224,7 +224,7 @@ function NodesTab({
         </thead>
         <tbody>
           {padTop > 0 && (
-            <tr aria-hidden="true">
+            <tr>
               <td
                 colSpan={nodeColSpan}
                 style={{ height: padTop, padding: 0, borderBottom: "none" }}
@@ -335,7 +335,7 @@ function NodesTab({
             );
           })}
           {padBottom > 0 && (
-            <tr aria-hidden="true">
+            <tr>
               <td
                 colSpan={nodeColSpan}
                 style={{ height: padBottom, padding: 0, borderBottom: "none" }}
@@ -459,7 +459,7 @@ function LinksTab({
         </thead>
         <tbody>
           {padTop > 0 && (
-            <tr aria-hidden="true">
+            <tr>
               <td
                 colSpan={linkColSpan}
                 style={{ height: padTop, padding: 0, borderBottom: "none" }}
@@ -586,7 +586,7 @@ function LinksTab({
             );
           })}
           {padBottom > 0 && (
-            <tr aria-hidden="true">
+            <tr>
               <td
                 colSpan={linkColSpan}
                 style={{ height: padBottom, padding: 0, borderBottom: "none" }}

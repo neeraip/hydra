@@ -9,6 +9,7 @@ import { TaskTray } from "./components/panels/TaskTray";
 import { Toast } from "./components/ui/Toast";
 import { TooltipPortal } from "./components/ui/TooltipPortal";
 import { tryInvoke } from "./hooks/ipc";
+import { primaryModifierPressed } from "./shortcuts";
 
 const CommandPalette = lazy(() =>
   import("./components/modals/CommandPalette").then((m) => ({
@@ -105,19 +106,22 @@ export function App() {
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
-      if ((e.metaKey || e.ctrlKey) && e.key === "k") {
+      const key = e.key.toLowerCase();
+      const primary = primaryModifierPressed(e);
+
+      if (primary && key === "k") {
         e.preventDefault();
         commandPaletteOpen ? closeCommandPalette() : openCommandPalette();
       }
       // ⌘R / Ctrl-R — open Run modal (only when a project is open)
-      if ((e.metaKey || e.ctrlKey) && (e.key === "r" || e.key === "R")) {
+      if (primary && key === "r") {
         if (page === "project" && activeProjectId) {
           e.preventDefault();
           runModalOpen ? closeRunModal() : openRunModal();
         }
       }
       // ⌘M / Ctrl-M — toggle canvas geographic/orthogonal layout
-      if ((e.metaKey || e.ctrlKey) && (e.key === "m" || e.key === "M")) {
+      if (primary && key === "m") {
         if (page === "project" && activeProjectId && !e.shiftKey) {
           e.preventDefault();
           setProjectView("canvas");
@@ -127,7 +131,7 @@ export function App() {
         }
       }
       // ⌘= / Ctrl-= — zoom in on canvas
-      if ((e.metaKey || e.ctrlKey) && e.key === "=") {
+      if (primary && (key === "=" || key === "+")) {
         if (page === "project" && activeProjectId) {
           e.preventDefault();
           setProjectView("canvas");
@@ -137,7 +141,7 @@ export function App() {
         }
       }
       // ⌘- / Ctrl-- — zoom out on canvas
-      if ((e.metaKey || e.ctrlKey) && e.key === "-") {
+      if (primary && (key === "-" || key === "_")) {
         if (page === "project" && activeProjectId) {
           e.preventDefault();
           setProjectView("canvas");
@@ -149,7 +153,7 @@ export function App() {
         }
       }
       // ⌘0 / Ctrl-0 — fit canvas to full network extent
-      if ((e.metaKey || e.ctrlKey) && e.key === "0") {
+      if (primary && key === "0") {
         if (page === "project" && activeProjectId) {
           e.preventDefault();
           setProjectView("canvas");
@@ -158,15 +162,15 @@ export function App() {
           );
         }
       }
-      if (e.key === "?" && !e.metaKey && !e.ctrlKey && !e.altKey) {
+      if (
+        (key === "?" || (e.shiftKey && key === "/")) &&
+        !primary &&
+        !e.altKey
+      ) {
         setShortcutCardOpen((prev) => !prev);
       }
       // ⌘⇧M / Ctrl-Shift-M — toggle issues panel
-      if (
-        (e.metaKey || e.ctrlKey) &&
-        e.shiftKey &&
-        (e.key === "m" || e.key === "M")
-      ) {
+      if (primary && e.shiftKey && key === "m") {
         if (activeProjectId) {
           e.preventDefault();
           toggleIssuesPanel();
@@ -183,17 +187,17 @@ export function App() {
       }
       // Project-scoped view shortcuts:
       // ⌘1 Overview, ⌘2 Canvas, ⌘3 Analysis, ⌘4 Editor.
-      if ((e.metaKey || e.ctrlKey) && page === "project") {
-        if (e.key === "1") {
+      if (primary && page === "project") {
+        if (key === "1") {
           e.preventDefault();
           setProjectView("overview");
-        } else if (e.key === "2") {
+        } else if (key === "2") {
           e.preventDefault();
           setProjectView("canvas");
-        } else if (e.key === "3") {
+        } else if (key === "3") {
           e.preventDefault();
           setProjectView("editor");
-        } else if (e.key === "4") {
+        } else if (key === "4") {
           e.preventDefault();
           setProjectView("analysis");
         }

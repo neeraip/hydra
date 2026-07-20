@@ -12,6 +12,11 @@ import {
 } from "../../hooks";
 import { useNetworkVersion } from "../../hooks/NetworkVersionContext";
 import {
+  formatShortcut,
+  primaryModifierLabel,
+  primaryModifierPressed,
+} from "../../shortcuts";
+import {
   ActiveBadge,
   Label,
   SimStateBadge,
@@ -172,7 +177,7 @@ export function RunModal() {
         e.preventDefault();
         closeRunModal();
       }
-      if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
+      if (primaryModifierPressed(e) && e.key === "Enter") {
         e.preventDefault();
         runSimulation();
       }
@@ -182,6 +187,8 @@ export function RunModal() {
   }, [runModalOpen, runSimulation, closeRunModal]);
 
   if (!runModalOpen) return null;
+
+  const runShortcut = formatShortcut([primaryModifierLabel(), "Enter"]);
 
   const canRun = params != null && checkedIds.length > 0;
   const allChecked = scenarios.every((s) => checked.has(s.id));
@@ -473,7 +480,7 @@ export function RunModal() {
             disabled={!canRun}
             data-tooltip={
               canRun
-                ? "Run (⌘↵)"
+                ? `Run (${runShortcut})`
                 : checkedIds.length === 0
                   ? "Select a scenario"
                   : "No model loaded"
@@ -502,7 +509,7 @@ export function RunModal() {
                 fontFamily: "var(--font-mono)",
               }}
             >
-              ⌘↵
+              {runShortcut}
             </span>
           </button>
         </div>

@@ -7,6 +7,7 @@ import { useEffect } from "react";
 import { useActiveProject, useAppState } from "../../AppContext";
 import { type ScenarioDto, useScenarios } from "../../hooks";
 import { useNetworkVersion } from "../../hooks/NetworkVersionContext";
+import { formatPrimaryShortcut } from "../../shortcuts";
 import { PrimaryButton } from "../ui/PrimaryButton";
 
 /* ─── ScenarioStrip ─────────────────────────────────────────────────────────
@@ -158,9 +159,10 @@ export function ScenarioStrip() {
       ? "btn-run--outline"
       : undefined;
   const runBtnLabel = "Simulate";
+  const runShortcut = formatPrimaryShortcut("R");
   const runBtnTitle = activeIsStale
     ? "Network edited since last run. Rerun simulation."
-    : "Configure & run simulation (⌘R)";
+    : `Configure & run simulation (${runShortcut})`;
 
   return (
     <div

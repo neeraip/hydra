@@ -43,7 +43,7 @@ export function CrsModal() {
   });
   const [catalogLoading, setCatalogLoading] = useState(false);
   const [pageIndex, setPageIndex] = useState(0);
-  const [catalogVersion, setCatalogVersion] = useState(0);
+  const [_catalogVersion, setCatalogVersion] = useState(0);
   const [selectedResultIndex, setSelectedResultIndex] = useState(0);
   const [panelView, setPanelView] = useState<"select" | "custom">("select");
   const [projectSaving, setProjectSaving] = useState(false);
@@ -100,12 +100,14 @@ export function CrsModal() {
     return () => {
       cancelled = true;
     };
-  }, [crsModalOpen, panelView, query, pageIndex, catalogVersion]);
+  }, [crsModalOpen, panelView, query, pageIndex]);
 
   useEffect(() => {
     if (panelView !== "select") return;
     const draft = normalizeEpsgCode(draftCrs);
-    const draftIdx = catalogPage.items.findIndex((entry) => entry.epsg === draft);
+    const draftIdx = catalogPage.items.findIndex(
+      (entry) => entry.epsg === draft,
+    );
     setSelectedResultIndex((prev) => {
       if (draftIdx >= 0) return draftIdx;
       if (catalogPage.items.length === 0) return 0;
@@ -119,7 +121,7 @@ export function CrsModal() {
     if (el) {
       el.scrollIntoView({ block: "nearest" });
     }
-  }, [panelView, selectedResultIndex, catalogPage.items]);
+  }, [panelView, selectedResultIndex]);
 
   useEffect(() => {
     if (!crsModalOpen) return;
@@ -150,7 +152,7 @@ export function CrsModal() {
     setDraftCrs(code);
   }
 
-  async function saveProjectCrs() {
+  const saveProjectCrs = useCallback(async () => {
     if (!activeProjectId || !project) return;
 
     if (!normalizedDraft) {
@@ -176,7 +178,15 @@ export function CrsModal() {
     } finally {
       setProjectSaving(false);
     }
-  }
+  }, [
+    activeProjectId,
+    bumpProjects,
+    closeCrsModal,
+    dirty,
+    normalizedDraft,
+    project,
+    showToast,
+  ]);
 
   useEffect(() => {
     if (!crsModalOpen || panelView !== "select") return;
@@ -342,7 +352,9 @@ export function CrsModal() {
                 background:
                   panelView === "select" ? "var(--accent-dim)" : "transparent",
                 color:
-                  panelView === "select" ? "var(--accent)" : "var(--text-secondary)",
+                  panelView === "select"
+                    ? "var(--accent)"
+                    : "var(--text-secondary)",
               }}
             >
               Select CRS
@@ -360,7 +372,9 @@ export function CrsModal() {
                 background:
                   panelView === "custom" ? "var(--accent-dim)" : "transparent",
                 color:
-                  panelView === "custom" ? "var(--accent)" : "var(--text-secondary)",
+                  panelView === "custom"
+                    ? "var(--accent)"
+                    : "var(--text-secondary)",
               }}
             >
               Custom CRS
@@ -826,7 +840,8 @@ export function CrsModal() {
                         alignItems: "center",
                         gap: 6,
                         padding: "4px 8px",
-                        borderTop: idx === 0 ? "none" : "1px solid var(--border)",
+                        borderTop:
+                          idx === 0 ? "none" : "1px solid var(--border)",
                       }}
                     >
                       <div style={{ flex: 1, minWidth: 0 }}>

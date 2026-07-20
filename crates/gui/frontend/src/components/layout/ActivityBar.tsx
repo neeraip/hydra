@@ -5,6 +5,7 @@ import {
 } from "@heroicons/react/24/outline";
 import { useActiveProject, useAppState, useTasks } from "../../AppContext";
 import { PROJECT_VIEWS } from "../../hooks";
+import { formatPrimaryShortcut, isMacLikePlatform } from "../../shortcuts";
 import { NavButton } from "../ui/NavButton";
 
 const ICON = { width: 20, height: 20 };
@@ -27,6 +28,8 @@ export function ActivityBar() {
   const runningCount = tasks.filter((t) => t.status === "running").length;
   const failedCount = tasks.filter((t) => t.status === "failed").length;
   const hasActivity = runningCount > 0 || failedCount > 0;
+  const commandPaletteShortcut = formatPrimaryShortcut("K");
+  const isMac = isMacLikePlatform();
 
   function handleHomeClick() {
     if (activeProjectId) {
@@ -146,12 +149,12 @@ export function ActivityBar() {
       <button
         type="button"
         onClick={openCommandPalette}
-        data-tooltip="Command Palette (⌘K) · Shortcuts (?)"
+        data-tooltip={`Command Palette (${commandPaletteShortcut}) · Shortcuts (?)`}
         data-tooltip-pos="right"
         aria-label="Command Palette"
         className="cmd-palette-btn"
         style={{
-          width: 32,
+          width: isMac ? 32 : 50,
           height: 32,
           border: "1px solid var(--border-hover)",
           borderRadius: 7,
@@ -167,7 +170,7 @@ export function ActivityBar() {
           fontFamily: "var(--font-mono)",
         }}
       >
-        ⌘K
+        {commandPaletteShortcut}
       </button>
 
       {/* ── Task monitor ───────────────────────────────────────────────────── */}
