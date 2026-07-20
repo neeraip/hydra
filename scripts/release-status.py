@@ -142,10 +142,14 @@ HINT = {
     "none": ("2", "no feat/breaking markers → likely PATCH (verify against commits)"),
 }
 
-# Severity ranking used to pick the single worst signal across every track in
-# the release plan, and the version-bump level it maps to.
-SIGNAL_RANK = {"major": 2, "minor": 1, "none": 0}
+# Version-bump level implied by a track's own commit-message signal.
 LEVEL_FOR_SIGNAL = {"major": "major", "minor": "minor", "none": "patch"}
+
+# Colour for the suggested level itself, shown next to each bump command.
+# Kept separate from HINT's colours: a "patch" suggestion isn't inherently
+# less important than major/minor (it could be a critical security fix), so
+# it uses the default foreground instead of HINT's dim "none" colour.
+LEVEL_COLOR = {"major": "1;31", "minor": "33", "none": None}
 
 # Per-commit colour by classification. "prod" uses the terminal's default
 # foreground (no wrapping) so it stands out against the dimmed/highlighted ones.
@@ -261,21 +265,21 @@ def main():
         print()
         return 0
 
-    worst_signal = max((info[n]["signal"] for n in plan), key=lambda s: SIGNAL_RANK[s])
-    suggested_level = LEVEL_FOR_SIGNAL[worst_signal]
-    suggestion = paint(HINT[worst_signal][0], suggested_level)
-    print(
-        paint("2", "  You choose the level: <patch|minor|major>  ")
-        + paint("2", "(signal suggests ")
-        + suggestion
-        + paint("2", " — verify against commits above)")
-    )
+    print(paint("2", "  You choose the level: <patch|minor|major>"))
     note_shown = False
     for name in plan:
         if name != "Library" and lib_changed and not note_shown:
             print("  " + paint("2", "# after publish-crates completes for the library:"))
             note_shown = True
-        print(f"  {info[name]['cmd']} <level>")
+        own_signal = info[name]["signal"]
+        level_text = LEVEL_FOR_SIGNAL[own_signal]
+        color = LEVEL_COLOR[own_signal]
+        suggested_level = paint(color, level_text) if color else level_text
+        note = paint("2", "(signal suggests ") + suggested_level
+        if not info[name]["impactful"]:
+            note += paint("2", ", cascade only — no own changes")
+        note += paint("2", ")")
+        print(f"  {info[name]['cmd']} <level>   {note}")
     print()
     return 0
 
