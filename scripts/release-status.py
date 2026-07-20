@@ -142,6 +142,11 @@ HINT = {
     "none": ("2", "no feat/breaking markers → likely PATCH (verify against commits)"),
 }
 
+# Severity ranking used to pick the single worst signal across every track in
+# the release plan, and the version-bump level it maps to.
+SIGNAL_RANK = {"major": 2, "minor": 1, "none": 0}
+LEVEL_FOR_SIGNAL = {"major": "major", "minor": "minor", "none": "patch"}
+
 # Per-commit colour by classification. "prod" uses the terminal's default
 # foreground (no wrapping) so it stands out against the dimmed/highlighted ones.
 COMMIT_COLOR = {"dev": "2", "mixed": "33"}
@@ -256,7 +261,15 @@ def main():
         print()
         return 0
 
-    print(paint("2", "  You choose the level: <patch|minor|major>"))
+    worst_signal = max((info[n]["signal"] for n in plan), key=lambda s: SIGNAL_RANK[s])
+    suggested_level = LEVEL_FOR_SIGNAL[worst_signal]
+    suggestion = paint(HINT[worst_signal][0], suggested_level)
+    print(
+        paint("2", "  You choose the level: <patch|minor|major>  ")
+        + paint("2", "(signal suggests ")
+        + suggestion
+        + paint("2", " — verify against commits above)")
+    )
     note_shown = False
     for name in plan:
         if name != "Library" and lib_changed and not note_shown:
