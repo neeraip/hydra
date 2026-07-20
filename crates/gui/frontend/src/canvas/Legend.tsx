@@ -1,13 +1,16 @@
 /**
- * Legend — compact colour-scale legend overlay for the canvas.
+ * Legend — colour-scale legend + variable picker overlay for the canvas.
  *
- * Renders as a small pill chip at the bottom-left of the canvas showing
- * the active node and link variable ramps.  Clicking it opens a popover
- * with full gradient bars, min/max labels, and optional threshold editing
- * when colorMode is "threshold".
+ * Renders as a small persistent control bar at the bottom-left of the canvas
+ * with two always-visible dropdown buttons for switching the active node and
+ * link variables (Pressure, Head, Flow, Velocity, etc.) — no expand step
+ * required. A separate swatch button opens a details popover with the full
+ * gradient bars, min/max labels, and optional threshold editing when
+ * colorMode is "threshold".
  */
 
-import React, { type CSSProperties, useEffect, useState } from "react";
+import { ChevronUpDownIcon } from "@heroicons/react/16/solid";
+import React, { type CSSProperties, useEffect, useRef, useState } from "react";
 import {
   FLOW_GRADIENT_CSS,
   PRESSURE_GRADIENT_CSS,
@@ -153,20 +156,107 @@ const inputStyle: CSSProperties = {
 
 // ── Legend component ──────────────────────────────────────────────────────────
 
-const SELECT_STYLE: React.CSSProperties = {
-  fontSize: 11,
+const SECTION_LABEL_STYLE: React.CSSProperties = {
+  fontSize: 10,
   fontWeight: 600,
-  color: "var(--text-primary)",
-  background: "rgba(255,255,255,0.06)",
-  border: "none",
-  outline: "none",
-  cursor: "pointer",
-  padding: "3px 4px",
-  width: "100%",
-  fontFamily: "var(--font-ui)",
-  borderRadius: 5,
+  color: "var(--text-secondary)",
   marginBottom: 5,
 };
+
+const PICKER_BTN_STYLE: React.CSSProperties = {
+  width: "auto",
+  height: 26,
+  padding: "0 8px",
+  gap: 4,
+  display: "flex",
+  alignItems: "center",
+  fontSize: 11,
+  fontWeight: 600,
+  fontFamily: "var(--font-ui)",
+  color: "var(--text-primary)",
+  whiteSpace: "nowrap",
+};
+
+const PICKER_LIST_STYLE: React.CSSProperties = {
+  position: "absolute",
+  bottom: "calc(100% + 6px)",
+  left: 0,
+  background: "rgba(20,22,27,0.95)",
+  backdropFilter: "blur(20px) saturate(160%)",
+  WebkitBackdropFilter: "blur(20px) saturate(160%)",
+  border: "1px solid rgba(255,255,255,0.10)",
+  borderRadius: 8,
+  boxShadow: "0 8px 32px rgba(0,0,0,0.65)",
+  overflow: "hidden",
+  minWidth: 130,
+  zIndex: 40,
+};
+
+interface PickerOption<T extends string> {
+  value: T;
+  label: string;
+}
+
+/** Always-visible dropdown button for switching a canvas variable — mirrors
+ * the basemap/CRS picker pattern used in the canvas toolbar. */
+function PickerButton<T extends string>({
+  value,
+  options,
+  isOpen,
+  onToggle,
+  onSelect,
+}: {
+  value: T;
+  options: PickerOption<T>[];
+  isOpen: boolean;
+  onToggle: () => void;
+  onSelect: (v: T) => void;
+}) {
+  const current = options.find((o) => o.value === value);
+  return (
+    <div style={{ position: "relative" }}>
+      <button
+        type="button"
+        className="tool-btn"
+        onClick={(e) => {
+          e.stopPropagation();
+          onToggle();
+        }}
+        style={PICKER_BTN_STYLE}
+      >
+        {current?.label ?? value}
+        <ChevronUpDownIcon style={{ width: 12, height: 12 }} />
+      </button>
+      {isOpen && (
+        <div style={PICKER_LIST_STYLE}>
+          {options.map((o) => (
+            <button
+              type="button"
+              key={o.value}
+              onClick={() => onSelect(o.value)}
+              style={{
+                display: "block",
+                width: "100%",
+                padding: "6px 10px",
+                border: "none",
+                background:
+                  o.value === value ? "rgba(74,144,217,0.22)" : "transparent",
+                color:
+                  o.value === value ? "var(--accent)" : "var(--text-secondary)",
+                cursor: "pointer",
+                fontSize: 11,
+                textAlign: "left",
+                fontFamily: "var(--font-ui)",
+              }}
+            >
+              {o.label}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 
 export function Legend({
   nodeVar,
@@ -186,9 +276,24 @@ export function Legend({
   onColorModeChange,
   onThresholdsChange,
 }: LegendProps) {
-  const [open, setOpen] = useState(false);
+  const [detailsOpen, setDetailsOpen] = useState(false);
+  const [nodePickerOpen, setNodePickerOpen] = useState(false);
+  const [linkPickerOpen, setLinkPickerOpen] = useState(false);
   const [hovered, setHovered] = useState(false);
   const [editing, setEditing] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+
+  // Close any open dropdown/popover when clicking outside the legend.
+  useEffect(() => {
+    function onPointerDown(e: PointerEvent) {
+      if (rootRef.current?.contains(e.target as Node)) return;
+      setDetailsOpen(false);
+      setNodePickerOpen(false);
+      setLinkPickerOpen(false);
+    }
+    window.addEventListener("pointerdown", onPointerDown);
+    return () => window.removeEventListener("pointerdown", onPointerDown);
+  }, []);
 
   // Local editors — strings so the user can type freely
   const [pressEd, setPressEd] = useState({ low: "", required: "", high: "" });
@@ -272,8 +377,23 @@ export function Legend({
     colorMode === "threshold" && linkVar === "velocity";
   const showFlowAnnotations = colorMode === "threshold" && linkVar === "flow";
 
+  const nodeOptions: PickerOption<NodeVariable>[] = [
+    { value: "pressure", label: "Pressure (m)" },
+    { value: "head", label: "Head (m)" },
+    { value: "demand", label: "Demand (L/s)" },
+    ...(qualityMode !== "none"
+      ? [{ value: "quality" as const, label: "Quality" }]
+      : []),
+  ];
+  const linkOptions: PickerOption<LinkVariable>[] = [
+    { value: "flow", label: "Flow (L/s)" },
+    { value: "velocity", label: "Velocity (m/s)" },
+    { value: "status", label: "Status" },
+  ];
+
   return (
     <div
+      ref={rootRef}
       style={{
         position: "absolute",
         bottom: 14,
@@ -285,8 +405,8 @@ export function Legend({
         transition: "left var(--rail-transition)",
       }}
     >
-      {/* ── Popover ─────────────────────────────────────────────────────── */}
-      {open && (
+      {/* ── Popover: gradient ramps, threshold editor, colour-mode toggle ── */}
+      {detailsOpen && (
         <div
           style={{
             marginBottom: 8,
@@ -304,20 +424,11 @@ export function Legend({
             gap: 12,
           }}
         >
-          {/* Node variable selector + ramp */}
+          {/* Node variable ramp — variable is switched via the picker below */}
           <div>
-            <select
-              value={nodeVar}
-              onChange={(e) => setNodeVar(e.target.value as NodeVariable)}
-              style={SELECT_STYLE}
-            >
-              <option value="pressure">Pressure (m)</option>
-              <option value="head">Head (m)</option>
-              <option value="demand">Demand (L/s)</option>
-              {qualityMode !== "none" && (
-                <option value="quality">Quality</option>
-              )}
-            </select>
+            <div style={SECTION_LABEL_STYLE}>
+              {nodeOptions.find((o) => o.value === nodeVar)?.label}
+            </div>
             <Ramp label="" gradient={ng} min={nMin} max={nMax} dot={false} />
             {showPressureAnnotations && (
               <div
@@ -333,17 +444,11 @@ export function Legend({
             )}
           </div>
 
-          {/* Link variable selector + ramp */}
+          {/* Link variable ramp — variable is switched via the picker below */}
           <div>
-            <select
-              value={linkVar}
-              onChange={(e) => setLinkVar(e.target.value as LinkVariable)}
-              style={SELECT_STYLE}
-            >
-              <option value="flow">Flow (L/s)</option>
-              <option value="velocity">Velocity (m/s)</option>
-              <option value="status">Status</option>
-            </select>
+            <div style={SECTION_LABEL_STYLE}>
+              {linkOptions.find((o) => o.value === linkVar)?.label}
+            </div>
             {linkVar === "status" ? (
               <StatusSwatches />
             ) : (
@@ -649,88 +754,145 @@ export function Legend({
         </div>
       )}
 
-      {/* ── Compact chip ─────────────────────────────────────────────────── */}
-      <button
-        type="button"
-        onClick={() => setOpen((o) => !o)}
+      {/* ── Persistent control bar: variable pickers + colour-scale toggle ── */}
+      {/* biome-ignore lint/a11y/noStaticElementInteractions: hover-only styling; all interactive children (PickerButton, toggle) are already focusable/clickable. */}
+      <div
         onMouseEnter={() => setHovered(true)}
         onMouseLeave={() => setHovered(false)}
         style={{
           display: "flex",
           alignItems: "center",
-          gap: 8,
-          padding: "6px 10px",
+          gap: 4,
+          padding: 4,
           minHeight: 32,
           borderRadius: 20,
-          border: `1px solid ${hovered || open ? "rgba(255,255,255,0.20)" : "rgba(255,255,255,0.10)"}`,
+          border: `1px solid ${
+            hovered || detailsOpen || nodePickerOpen || linkPickerOpen
+              ? "rgba(255,255,255,0.20)"
+              : "rgba(255,255,255,0.10)"
+          }`,
           background:
-            hovered || open ? "rgba(30,34,42,0.88)" : "rgba(12,14,18,0.75)",
+            hovered || detailsOpen || nodePickerOpen || linkPickerOpen
+              ? "rgba(30,34,42,0.88)"
+              : "rgba(12,14,18,0.75)",
           backdropFilter: "blur(20px) saturate(160%)",
           WebkitBackdropFilter: "blur(20px) saturate(160%)",
-          cursor: "pointer",
           boxShadow:
-            hovered || open
+            hovered || detailsOpen || nodePickerOpen || linkPickerOpen
               ? "0 6px 20px rgba(0,0,0,0.70), inset 0 1px 0 rgba(255,255,255,0.10)"
               : "0 4px 16px rgba(0,0,0,0.55), inset 0 1px 0 rgba(255,255,255,0.06)",
           transition:
             "background 120ms ease, border-color 120ms ease, box-shadow 120ms ease",
         }}
       >
-        <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
-          {/* Node ramp swatch */}
-          <div
-            style={{ width: 52, height: 5, borderRadius: 3, background: ng }}
-          />
-          {/* Link ramp swatch (or discrete status swatches) */}
-          {linkVar === "status" ? (
-            <div style={{ display: "flex", gap: 2 }}>
-              <div
-                style={{
-                  width: 17,
-                  height: 5,
-                  borderRadius: 3,
-                  background: "#78a0b9",
-                }}
-              />
-              <div
-                style={{
-                  width: 17,
-                  height: 5,
-                  borderRadius: 3,
-                  background: "#d4a017",
-                }}
-              />
-              <div
-                style={{
-                  width: 17,
-                  height: 5,
-                  borderRadius: 3,
-                  background: "#c94040",
-                }}
-              />
-            </div>
-          ) : (
-            <div
-              style={{
-                width: 52,
-                height: 5,
-                borderRadius: 3,
-                background: lg ?? SEQ_GRADIENT_CSS,
-              }}
-            />
-          )}
-        </div>
-        <span
+        <PickerButton
+          value={nodeVar}
+          options={nodeOptions}
+          isOpen={nodePickerOpen}
+          onToggle={() => {
+            setNodePickerOpen((v) => !v);
+            setLinkPickerOpen(false);
+            setDetailsOpen(false);
+          }}
+          onSelect={(v) => {
+            setNodeVar(v);
+            setNodePickerOpen(false);
+          }}
+        />
+        <PickerButton
+          value={linkVar}
+          options={linkOptions}
+          isOpen={linkPickerOpen}
+          onToggle={() => {
+            setLinkPickerOpen((v) => !v);
+            setNodePickerOpen(false);
+            setDetailsOpen(false);
+          }}
+          onSelect={(v) => {
+            setLinkVar(v);
+            setLinkPickerOpen(false);
+          }}
+        />
+        <div
           style={{
-            fontSize: 10,
-            color: "var(--text-secondary)",
-            lineHeight: 1.2,
-            whiteSpace: "nowrap",
+            width: 1,
+            height: 16,
+            background: "rgba(255,255,255,0.12)",
+            flexShrink: 0,
+          }}
+        />
+        {/* Colour scale / thresholds toggle — separate from variable switching */}
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            setDetailsOpen((v) => !v);
+            setNodePickerOpen(false);
+            setLinkPickerOpen(false);
+          }}
+          title="Colour scale & thresholds"
+          data-tooltip="Colour scale & thresholds"
+          data-tooltip-pos="top"
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 5,
+            border: "none",
+            background: "transparent",
+            cursor: "pointer",
+            padding: "4px 6px 4px 4px",
+            borderRadius: 16,
           }}
         >
-          Legend
-        </span>
-      </button>
+          <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+            {/* Node ramp swatch */}
+            <div
+              style={{ width: 28, height: 5, borderRadius: 3, background: ng }}
+            />
+            {/* Link ramp swatch (or discrete status swatches) */}
+            {linkVar === "status" ? (
+              <div style={{ display: "flex", gap: 2 }}>
+                <div
+                  style={{
+                    width: 8,
+                    height: 5,
+                    borderRadius: 3,
+                    background: "#78a0b9",
+                  }}
+                />
+                <div
+                  style={{
+                    width: 8,
+                    height: 5,
+                    borderRadius: 3,
+                    background: "#d4a017",
+                  }}
+                />
+                <div
+                  style={{
+                    width: 8,
+                    height: 5,
+                    borderRadius: 3,
+                    background: "#c94040",
+                  }}
+                />
+              </div>
+            ) : (
+              <div
+                style={{
+                  width: 28,
+                  height: 5,
+                  borderRadius: 3,
+                  background: lg ?? SEQ_GRADIENT_CSS,
+                }}
+              />
+            )}
+          </div>
+          <ChevronUpDownIcon
+            style={{ width: 10, height: 10, color: "var(--text-tertiary)" }}
+          />
+        </button>
+      </div>
     </div>
   );
 }
