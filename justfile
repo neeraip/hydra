@@ -2,6 +2,32 @@
 default:
     @just --list
 
+# ── Setup ─────────────────────────────────────────────────────────────────────
+
+# Install everything needed for local development: Cargo deps, frontend deps,
+# and the extra CLI tools (Tauri CLI, cargo-deny, cargo-audit, mdbook) that
+# other recipes in this justfile call. Safe to re-run.
+# Linux only: Tauri also needs system packages, installed separately —
+# see https://tauri.app/start/prerequisites/
+setup: setup-tools setup-rust setup-frontend
+    @echo "Setup complete. Try 'just build' or 'cargo tauri dev' (from crates/gui) next."
+
+# Fetch Cargo dependencies for the whole workspace.
+setup-rust:
+    cargo fetch
+
+# Install frontend (pnpm) dependencies.
+setup-frontend:
+    cd crates/gui/frontend && pnpm install
+
+# Install the extra cargo subcommands this justfile relies on: Tauri CLI (GUI
+# builds), cargo-deny (license/advisory checks), cargo-audit (vulnerability
+# scanning), and mdbook (docs). Uses cargo-binstall to fetch prebuilt binaries
+# instead of compiling each one from source.
+setup-tools:
+    @command -v cargo-binstall >/dev/null 2>&1 || cargo install cargo-binstall --locked
+    cargo binstall tauri-cli cargo-deny cargo-audit mdbook --no-confirm
+
 # ── Test ──────────────────────────────────────────────────────────────────────
 
 # Run all tests
