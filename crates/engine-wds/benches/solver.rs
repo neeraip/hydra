@@ -22,9 +22,10 @@
 //! | micropolis|     1,574 |  1,619 |
 //! | bwsn2     |    12,523 | 14,831 |
 
-use criterion::{black_box, criterion_group, criterion_main, BatchSize, Criterion};
+use criterion::{criterion_group, criterion_main, BatchSize, Criterion};
 use hydra_engine_wds::{build_solver_context, solve_hydraulic_step};
 use hydra_engine_wds::{LinkKind, LinkState, LinkStatus, Network, NodeKind, NodeState};
+use std::hint::black_box;
 use std::path::PathBuf;
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
