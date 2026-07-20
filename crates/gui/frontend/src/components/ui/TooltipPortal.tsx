@@ -136,13 +136,30 @@ export function TooltipPortal() {
       }
     }
 
+    // Clicking a tooltip anchor almost always opens something (a popup,
+    // dropdown, menu) that the tooltip would otherwise float over or
+    // reappear on top of, since the pointer never actually leaves the
+    // anchor. Treat mousedown like an immediate leave: hide/cancel the tip.
+    // It won't reappear until the pointer truly leaves and re-enters, which
+    // naturally covers the entire time the popup/dropdown stays open.
+    function onPointerDown() {
+      clearShowTimer();
+      pendingTargetRef.current = null;
+      if (targetRef.current) {
+        targetRef.current = null;
+        setTip(null);
+      }
+    }
+
     // Use capture so we see events on disabled buttons too
     document.addEventListener("mouseenter", onEnter, true);
     document.addEventListener("mouseleave", onLeave, true);
+    document.addEventListener("mousedown", onPointerDown, true);
     return () => {
       clearShowTimer();
       document.removeEventListener("mouseenter", onEnter, true);
       document.removeEventListener("mouseleave", onLeave, true);
+      document.removeEventListener("mousedown", onPointerDown, true);
     };
   }, []);
 
