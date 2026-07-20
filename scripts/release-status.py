@@ -7,6 +7,12 @@ SEVERITY is left to the user's discretion: commit-message signals are surfaced
 as hints only (positive evidence such as `feat:` or `!`/`BREAKING CHANGE`),
 never as an authoritative bump level.
 
+Commits that touch only `benches/` files or only the `[dev-dependencies]`
+table of a Cargo.toml (e.g. a criterion version bump) have no effect on what
+ships in the library/CLI/GUI, so they're excluded from candidate detection.
+They're still listed (dimmed) for visibility; commits mixing dev-only and
+release-affecting files are highlighted so nothing is silently hidden.
+
 Usage:
     scripts/release-status.py [library|cli|gui]
 """
@@ -15,6 +21,8 @@ import os
 import re
 import subprocess
 import sys
+import tomllib
+from pathlib import Path
 
 SEMVER_RE = r"\d+\.\d+\.\d+"
 
@@ -51,6 +59,71 @@ def subjects_since(tag, paths):
     return [s for s in out.splitlines() if s.strip()] if out else []
 
 
+def commit_shas_since(tag, paths):
+    out = sh("git", "log", f"{tag}..HEAD", "--pretty=format:%H", "--", *paths)
+    return [s for s in out.splitlines() if s.strip()] if out else []
+
+
+def file_at_revision(rev, path):
+    try:
+        return subprocess.run(
+            ["git", "show", f"{rev}:{path}"], check=True, capture_output=True, text=True
+        ).stdout
+    except subprocess.CalledProcessError:
+        return None  # file didn't exist at that revision
+
+
+def cargo_toml_change_is_dev_only(sha, path):
+    """True if this commit's edit to a Cargo.toml only touches [dev-dependencies].
+
+    Dev-dependency version bumps (e.g. criterion, used only for benchmarking)
+    can't affect what ships in the CLI/GUI, so they shouldn't force a cascade.
+    """
+    old = file_at_revision(f"{sha}~1", path)
+    new = file_at_revision(sha, path)
+    if old is None or new is None:
+        return False  # file added or removed — treat as impactful
+    try:
+        old_doc, new_doc = tomllib.loads(old), tomllib.loads(new)
+    except tomllib.TOMLDecodeError:
+        return False
+    old_doc.pop("dev-dependencies", None)
+    new_doc.pop("dev-dependencies", None)
+    return old_doc == new_doc
+
+
+def classify_commit(sha, paths):
+    """Classify a commit's effect on the compiled library/binary.
+
+    Returns "dev" if every file the commit touched (within `paths`) is a
+    bench file or a dev-dependency-only Cargo.toml edit (no effect on what
+    ships), "prod" if every touched file could affect the shipped artifact,
+    or "mixed" if it's a combination of both.
+    """
+    out = sh("git", "diff-tree", "--no-commit-id", "--name-only", "-r", sha, "--", *paths)
+    files = [f for f in out.splitlines() if f.strip()]
+    if not files:
+        return "prod"
+    dev_files = 0
+    for f in files:
+        if "benches" in Path(f).parts:
+            dev_files += 1
+        elif Path(f).name == "Cargo.toml" and cargo_toml_change_is_dev_only(sha, f):
+            dev_files += 1
+    if dev_files == 0:
+        return "prod"
+    if dev_files == len(files):
+        return "dev"
+    return "mixed"
+
+
+def has_impactful_change(tag, paths):
+    """True if at least one commit in `tag..HEAD` touching `paths` could
+    affect the compiled library/binary (classification "prod" or "mixed").
+    """
+    return any(classify_commit(sha, paths) != "dev" for sha in commit_shas_since(tag, paths))
+
+
 def signal(messages):
     # Positive evidence only. Returns "major", "minor", or "none".
     result = "none"
@@ -68,6 +141,10 @@ HINT = {
     "minor": ("33", "feature commit(s) present → suggests at least MINOR"),
     "none": ("2", "no feat/breaking markers → likely PATCH (verify against commits)"),
 }
+
+# Per-commit colour by classification. "prod" uses the terminal's default
+# foreground (no wrapping) so it stands out against the dimmed/highlighted ones.
+COMMIT_COLOR = {"dev": "2", "mixed": "33"}
 
 TRACKS = [
     ("Library", "v[0-9]*.[0-9]*.[0-9]*", ["Cargo.toml", "crates/engine-wds", "crates/sdk"], "just bump"),
@@ -91,11 +168,14 @@ def main():
             missing.append(pattern)
             continue
         subjects = subjects_since(tag, paths)
+        shas = commit_shas_since(tag, paths)
+        classifications = [classify_commit(sha, paths) for sha in shas]
         info[name] = {
             "tag": tag,
             "cmd": cmd,
-            "subjects": subjects,
+            "commits": list(zip(subjects, classifications)),
             "count": len(subjects),
+            "impactful": any(c != "dev" for c in classifications),
             "signal": signal(messages_since(tag, paths)),
         }
 
@@ -103,14 +183,15 @@ def main():
         print(f"error: no release tags found matching: {', '.join(missing)}", file=sys.stderr)
         return 1
 
-    lib_changed = info["Library"]["count"] > 0
+    lib_changed = info["Library"]["impactful"]
     # Definitive candidate determination from changed files:
     #   - a library change cascades a required release onto CLI and GUI
     #   - otherwise CLI and GUI are independent, candidates only if they changed
+    #   - dev-only changes (bench files, [dev-dependencies] bumps) don't count
     candidate = {
         "Library": lib_changed,
-        "CLI": lib_changed or info["CLI"]["count"] > 0,
-        "GUI": lib_changed or info["GUI"]["count"] > 0,
+        "CLI": lib_changed or info["CLI"]["impactful"],
+        "GUI": lib_changed or info["GUI"]["impactful"],
     }
 
     print()
@@ -118,28 +199,46 @@ def main():
     print(paint("2", "─" * 60))
     print(paint("2", "Candidates come from changed files (reliable). Severity is your"))
     print(paint("2", "call — commit-message signals below are hints, not decisions."))
+    print(
+        "  "
+        + paint("2", "■ dev-only")
+        + "   "
+        + paint("33", "■ mixed (dev + release-affecting)")
+        + "   "
+        + "■ affects release"
+    )
     print()
 
     shown = [t for t in ("Library", "CLI", "GUI") if focus in ("", t.lower())]
     list_cap = None if focus else 10
 
+    def print_commits(commits):
+        capped = commits if list_cap is None else commits[:list_cap]
+        for subject, cls in capped:
+            color = COMMIT_COLOR.get(cls)
+            text = paint(color, subject) if color else subject
+            print(f"    {paint('2', '•')} {text}")
+        if list_cap is not None and len(commits) > list_cap:
+            print(paint("2", f"    … and {len(commits) - list_cap} more (pass a track name to see all)"))
+
     for name in shown:
         i = info[name]
+        commits = i["commits"]
         if not candidate[name]:
-            status = paint("2", "up to date · no changes since tag")
+            if i["count"] > 0:
+                plural = "" if i["count"] == 1 else "s"
+                status = paint("2", f"up to date · {i['count']} dev-only commit{plural} (no release needed)")
+            else:
+                status = paint("2", "up to date · no changes since tag")
             print(f"{paint('1', name)}  {i['tag']}   {status}")
+            print_commits(commits)
             print()
             continue
-        reason = "own changes" if i["count"] > 0 else "library cascade (no own changes)"
+        reason = "own changes" if i["impactful"] else "library cascade (no own changes)"
         status = paint("32", "release candidate")
         plural = "" if i["count"] == 1 else "s"
         print(f"{paint('1', name)}  {i['tag']}   {status} · {i['count']} commit{plural} · {reason}")
-        subjects = i["subjects"]
-        capped = subjects if list_cap is None else subjects[:list_cap]
-        for s in capped:
-            print(f"    {paint('2', '•')} {s}")
-        if list_cap is not None and len(subjects) > list_cap:
-            print(paint("2", f"    … and {len(subjects) - list_cap} more (pass a track name to see all)"))
+        print_commits(commits)
         if i["count"] > 0:
             code, text = HINT[i["signal"]]
             print(f"    {paint(code, 'hint: ' + text)}")

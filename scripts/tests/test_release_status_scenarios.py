@@ -23,7 +23,13 @@ release_status = load_module("release-status.py", "release_status")
 
 
 class TestReleaseStatusScenarios(unittest.TestCase):
-    def run_with_fake_history(self, subjects_by_track, messages_by_track=None, focus=""):
+    def run_with_fake_history(
+        self, subjects_by_track, messages_by_track=None, focus="", classifications_by_track=None
+    ):
+        """classifications_by_track: optional dict of track name -> list of
+        "prod"/"dev"/"mixed", parallel to subjects_by_track[name]. Commits
+        default to "prod" when omitted.
+        """
         if messages_by_track is None:
             messages_by_track = subjects_by_track
 
@@ -33,6 +39,8 @@ class TestReleaseStatusScenarios(unittest.TestCase):
         old_latest_tag = release_status.latest_tag
         old_subjects_since = release_status.subjects_since
         old_messages_since = release_status.messages_since
+        old_commit_shas_since = release_status.commit_shas_since
+        old_classify_commit = release_status.classify_commit
         old_argv = release_status.sys.argv
         old_use_color = release_status.USE_COLOR
 
@@ -54,10 +62,21 @@ class TestReleaseStatusScenarios(unittest.TestCase):
             name = paths_to_name[tuple(paths)]
             return messages_by_track[name]
 
+        def fake_commit_shas_since(_tag, paths):
+            name = paths_to_name[tuple(paths)]
+            return [f"{name}:{i}" for i in range(len(subjects_by_track[name]))]
+
+        def fake_classify_commit(sha, _paths):
+            name, idx = sha.rsplit(":", 1)
+            classes = (classifications_by_track or {}).get(name)
+            return classes[int(idx)] if classes else "prod"
+
         try:
             release_status.latest_tag = fake_latest_tag
             release_status.subjects_since = fake_subjects_since
             release_status.messages_since = fake_messages_since
+            release_status.commit_shas_since = fake_commit_shas_since
+            release_status.classify_commit = fake_classify_commit
             release_status.USE_COLOR = False
             release_status.sys.argv = ["release-status.py"] + ([focus] if focus else [])
 
@@ -70,6 +89,8 @@ class TestReleaseStatusScenarios(unittest.TestCase):
             release_status.latest_tag = old_latest_tag
             release_status.subjects_since = old_subjects_since
             release_status.messages_since = old_messages_since
+            release_status.commit_shas_since = old_commit_shas_since
+            release_status.classify_commit = old_classify_commit
             release_status.sys.argv = old_argv
             release_status.USE_COLOR = old_use_color
 
@@ -175,6 +196,8 @@ class TestReleaseStatusScenarios(unittest.TestCase):
         old_latest_tag = release_status.latest_tag
         old_subjects_since = release_status.subjects_since
         old_messages_since = release_status.messages_since
+        old_commit_shas_since = release_status.commit_shas_since
+        old_classify_commit = release_status.classify_commit
         old_argv = release_status.sys.argv
         old_use_color = release_status.USE_COLOR
 
@@ -193,10 +216,18 @@ class TestReleaseStatusScenarios(unittest.TestCase):
         def fake_messages_since(_tag, _paths):
             return []
 
+        def fake_commit_shas_since(_tag, _paths):
+            return []
+
+        def fake_classify_commit(_sha, _paths):
+            return "prod"
+
         try:
             release_status.latest_tag = fake_latest_tag
             release_status.subjects_since = fake_subjects_since
             release_status.messages_since = fake_messages_since
+            release_status.commit_shas_since = fake_commit_shas_since
+            release_status.classify_commit = fake_classify_commit
             release_status.USE_COLOR = False
             release_status.sys.argv = ["release-status.py"]
 
@@ -213,6 +244,8 @@ class TestReleaseStatusScenarios(unittest.TestCase):
             release_status.latest_tag = old_latest_tag
             release_status.subjects_since = old_subjects_since
             release_status.messages_since = old_messages_since
+            release_status.commit_shas_since = old_commit_shas_since
+            release_status.classify_commit = old_classify_commit
             release_status.sys.argv = old_argv
             release_status.USE_COLOR = old_use_color
 
@@ -243,6 +276,59 @@ class TestReleaseStatusScenarios(unittest.TestCase):
         self.assertNotIn("Library  v1.0.0", out_gui)
         self.assertNotIn("CLI  cli-v1.0.0", out_gui)
         self.assertIn("GUI  gui-v1.0.0", out_gui)
+
+    def test_dev_only_library_change_does_not_cascade(self):
+        code, out, err = self.run_with_fake_history(
+            {
+                "Library": ["chore(engine-wds): bump criterion from 0.5.1 to 0.8.2"],
+                "CLI": [],
+                "GUI": [],
+            },
+            classifications_by_track={"Library": ["dev"]},
+        )
+
+        self.assertEqual(code, 0)
+        self.assertEqual(err, "")
+        self.assertIn("Library  v1.0.0", out)
+        self.assertIn("up to date", out)
+        self.assertIn("1 dev-only commit", out)
+        self.assertIn("chore(engine-wds): bump criterion from 0.5.1 to 0.8.2", out)
+        self.assertIn("Nothing to release", out)
+        self.assertNotIn("Cascade", out)
+        self.assertNotIn("just bump <level>", out)
+
+    def test_dev_only_own_change_still_cascades_from_library(self):
+        code, out, err = self.run_with_fake_history(
+            {
+                "Library": ["fix(engine): adjust matrix assembly"],
+                "CLI": ["chore(cli): bump a dev-only tool"],
+                "GUI": [],
+            },
+            classifications_by_track={"CLI": ["dev"]},
+        )
+
+        self.assertEqual(code, 0)
+        self.assertEqual(err, "")
+        self.assertIn("CLI  cli-v1.0.0", out)
+        self.assertIn("library cascade (no own changes)", out)
+        self.assertIn("chore(cli): bump a dev-only tool", out)
+
+    def test_mixed_commit_counts_as_impactful(self):
+        code, out, err = self.run_with_fake_history(
+            {
+                "Library": ["chore(engine-wds): bump criterion and touch solver.rs"],
+                "CLI": [],
+                "GUI": [],
+            },
+            classifications_by_track={"Library": ["mixed"]},
+        )
+
+        self.assertEqual(code, 0)
+        self.assertEqual(err, "")
+        self.assertIn("Library  v1.0.0", out)
+        self.assertIn("release candidate · 1 commit · own changes", out)
+        self.assertIn("chore(engine-wds): bump criterion and touch solver.rs", out)
+        self.assertIn("just bump <level>", out)
 
 
 if __name__ == "__main__":
