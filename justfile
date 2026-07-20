@@ -6,7 +6,7 @@ default:
 
 # Run all tests
 test:
-    cargo test -p hydra-engine-wds
+    cargo test
 
 # Run hydra-sdk tests only
 test-sdk:
@@ -121,7 +121,7 @@ docs:
 # ── CI ────────────────────────────────────────────────────────────────────────
 
 # Run all checks that CI runs (mirrors cargo-ci + pnpm-ci workflows)
-ci: deny fmt-check clippy doc test type-check-frontend lint-frontend build-frontend test-frontend
+ci: deny fmt-check clippy doc test test-sdk test-cli test-gui type-check-frontend lint-frontend build-frontend test-frontend
 
 # ── Release ───────────────────────────────────────────────────────────────────
 
