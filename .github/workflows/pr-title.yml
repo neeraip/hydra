@@ -6,7 +6,7 @@ on:
     types: [opened, edited, synchronize, reopened]
 
 permissions:
-  pull-requests: read
+  pull-requests: write
 
 jobs:
   validate:
@@ -31,3 +31,29 @@ jobs:
             perf
             build
             revert
+
+      # Applies a label matching the PR title's Conventional Commit type, so
+      # `gh release create --generate-notes` (draft-release.yml) can group
+      # entries into the categories defined in .github/release.yml without
+      # any manual labeling. Only feat/fix/perf/chore/ci/refactor map to a
+      # release-notes category — other types (docs/style/test/build/revert)
+      # are left unlabeled and fall into the default "Other Changes" bucket.
+      - name: Label by commit type
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TITLE: ${{ github.event.pull_request.title }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          type=$(echo "$TITLE" | sed -E 's/^([a-zA-Z]+)(\([^)]*\))?!?:.*/\1/')
+          case "$type" in
+            feat) label="enhancement" ;;
+            fix) label="fix" ;;
+            perf) label="performance" ;;
+            chore) label="chore" ;;
+            ci) label="ci" ;;
+            refactor) label="refactor" ;;
+            *) label="" ;;
+          esac
+          if [ -n "$label" ]; then
+            gh pr edit "$PR" --repo "${{ github.repository }}" --add-label "$label"
+          fi
