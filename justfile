@@ -1,6 +1,11 @@
+# ── Quickstart ─────────────────────────────────────────────────────────────────
+
 # List available recipes (default)
 default:
     @just --list
+
+# One-shot quickstart: install everything, then launch the GUI in dev mode.
+start: setup dev-gui
 
 # ── Setup ─────────────────────────────────────────────────────────────────────
 
@@ -10,7 +15,7 @@ default:
 # Linux only: Tauri also needs system packages, installed separately —
 # see https://tauri.app/start/prerequisites/
 setup: setup-tools setup-rust setup-frontend
-    @echo "Setup complete. Try 'just build' or 'cargo tauri dev' (from crates/gui) next."
+    @echo "Setup complete. Try 'just build' or 'just dev-gui' next."
 
 # Fetch Cargo dependencies for the whole workspace.
 setup-rust:
@@ -93,11 +98,30 @@ type-check-frontend:
 deny:
     cargo deny check
 
-# Audit dependencies for known vulnerabilities
+# Audit Rust dependencies for known vulnerabilities
 audit:
     cargo audit
 
+# Audit frontend (pnpm) dependencies for known vulnerabilities
+audit-frontend:
+    cd crates/gui/frontend && pnpm audit --audit-level=high
+
+# Run all dependency audits (Rust + frontend)
+audit-all: audit audit-frontend
+
 # ── Build ─────────────────────────────────────────────────────────────────────
+
+# All three recipes below wrap the same script (scripts/update-crs-catalog.mjs)
+# for three different call sites:
+#   regen-crs-catalog  — regenerate from whatever @esri/proj-codes is installed
+#                        now. Silent/non-failing; used as a normal build step.
+#   update-crs-catalog — bump @esri/proj-codes to latest, then regenerate. The
+#                        only one that changes package.json/the lockfile; run
+#                        deliberately before a release.
+#   check-crs-catalog  — regenerate, then fail if it differs from what's
+#                        committed. CI-only drift check — never run as part of
+#                        a normal local build, since that would fail on any
+#                        version skew instead of just fixing it.
 
 # Regenerate the bundled CRS catalog from the currently-installed @esri/proj-codes.
 # No network access required — safe to call in CI and build pipelines.
@@ -110,6 +134,12 @@ update-crs-catalog: regen-crs-catalog
     cd crates/gui/frontend && pnpm update @esri/proj-codes
     node scripts/update-crs-catalog.mjs
 
+# Regenerate the CRS catalog and fail if it doesn't match what's committed.
+# Mirrors the "Check CRS catalog is up to date" step in pnpm-ci.yml — catches
+# a stale catalog in CI instead of only discovering it after merge.
+check-crs-catalog: regen-crs-catalog
+    git diff --exit-code -- crates/gui/resources/crs-catalog.json
+
 # Run cargo check (fast compile verification)
 check:
     cargo check
@@ -121,6 +151,10 @@ build:
 # Build frontend
 build-frontend: regen-crs-catalog
     cd crates/gui/frontend && pnpm build
+
+# Run the GUI in development mode (Tauri hot-reload for frontend + backend)
+dev-gui:
+    cd crates/gui && cargo tauri dev
 
 # Build optimised release binaries (fat LTO)
 release:
@@ -146,8 +180,8 @@ docs:
 
 # ── CI ────────────────────────────────────────────────────────────────────────
 
-# Run all checks that CI runs (mirrors cargo-ci + pnpm-ci workflows)
-ci: deny fmt-check clippy doc test test-sdk test-cli test-gui type-check-frontend lint-frontend build-frontend test-frontend
+# Run all checks that CI runs (mirrors cargo-ci + pnpm-ci + scripts-ci workflows)
+ci: deny fmt-check clippy doc test test-sdk test-cli test-gui type-check-frontend lint-frontend check-crs-catalog build-frontend test-frontend test-scripts
 
 # ── Release ───────────────────────────────────────────────────────────────────
 
