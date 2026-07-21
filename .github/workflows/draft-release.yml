@@ -156,12 +156,13 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: 24
-          # actions/setup-node's built-in pnpm caching is unreliable on the
-          # Windows runner in this matrix ("Path Validation Error" on the
-          # post-job cache-save, even though the build itself succeeds).
-          # Release builds run rarely, so skip caching here rather than
-          # chase a flaky Windows-specific cache-path resolution bug.
-          cache: false
+          # actions/setup-node's `cache` input is a string enum (npm/yarn/pnpm),
+          # not a boolean — unlike setup-rust-toolchain's `cache` below. Its
+          # built-in pnpm caching is also unreliable on the Windows runner in
+          # this matrix ("Path Validation Error" on the post-job cache-save,
+          # even though the build itself succeeds). Release builds run rarely,
+          # so just omit `cache` entirely rather than chase a flaky
+          # Windows-specific cache-path resolution bug.
 
       - name: Install frontend dependencies
         working-directory: crates/gui/frontend
