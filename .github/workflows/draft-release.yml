@@ -156,8 +156,12 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: 24
-          cache: pnpm
-          cache-dependency-path: crates/gui/frontend/pnpm-lock.yaml
+          # actions/setup-node's built-in pnpm caching is unreliable on the
+          # Windows runner in this matrix ("Path Validation Error" on the
+          # post-job cache-save, even though the build itself succeeds).
+          # Release builds run rarely, so skip caching here rather than
+          # chase a flaky Windows-specific cache-path resolution bug.
+          cache: false
 
       - name: Install frontend dependencies
         working-directory: crates/gui/frontend
