@@ -55,7 +55,13 @@ jobs:
         with:
           cache: false
 
-      - uses: Swatinem/rust-cache@v2.9.1
+      # No Swatinem/rust-cache here deliberately: CodeQL's Rust extractor
+      # works by tracing actual rustc invocations during the build. Restoring
+      # cached compiled artifacts skips those invocations for dependency
+      # crates, so CodeQL never observes them — producing the "Low Rust
+      # analysis quality" warning (call targets/types unresolved for anything
+      # that came from cache instead of a real compile). This job only runs
+      # weekly, so the extra build time is worth it for a complete trace.
 
       - name: Initialize CodeQL
         uses: github/codeql-action/init@v4
