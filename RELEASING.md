@@ -45,3 +45,12 @@ just bump-cli patch   # and/or just bump-gui patch
 
 - **Never push a `cli-v*` or `gui-v*` tag at the same time as a `v*` tag.** The CLI publish will race against the library publish and fail because `hydra-sdk` won't be on crates.io yet.
 - **Never use these recipes just to set a version without intending a release.** They commit and tag, which triggers CI/CD. To reset or change a version without releasing, edit the relevant `Cargo.toml`, `tauri.conf.json`, and `crates/gui/frontend/package.json` files directly, run `cargo update --workspace`, and commit — no tag.
+
+## Release notes
+
+GitHub release notes should keep the categorized sections from `.github/release.yml` (`What's New`, `Bug Fixes`, `Performance`, `Internal`) — this distinction genuinely helps readers tell new capabilities apart from fixes and security-relevant patches, and is worth preserving even when writing notes by hand instead of using `gh release create --generate-notes`.
+
+The GUI's in-app "What's New" panel (`crates/gui/frontend/src/hooks/useLatestRelease.ts`) does **not** render this structure — it only extracts flat bullet lines (`- ` / `* `) from the release body via regex and discards everything else, including section headers. So:
+
+- Keep section headers (`## What's New`, `## Bug Fixes`, etc.) in the GitHub release body for readers on GitHub.
+- Don't expect those headers to appear in-app — the GUI intentionally flattens everything into one plain bullet list under its own single "What's New" heading. This is expected behavior, not a bug; no changes are needed on the GUI side to support categorized release notes.
