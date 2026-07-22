@@ -8,7 +8,7 @@ Hydra is a water distribution network simulator written in Rust. It implements t
 
 | Crate | Owns | Does not own |
 |---|---|---|
-| `hydra-engine-wds` | Complete simulation engine: data model; INP/OUT/RPT parsers and writers; unit conversion; GGA hydraulic solver; Lagrangian quality engine; controls; timestep; accounting; session API (`Simulation`); post-simulation analytics | Interface logic; filesystem/network I/O |
+| `hydra-engine-wds` | Complete simulation engine: data model; INP/OUT/RPT parsers and writers; unit conversion; GGA hydraulic solver; Lagrangian quality engine; controls; timestep; accounting; session API (`Simulation`); post-simulation analytics; local filesystem reads for `.out`/analysis-artifact files via explicit path-based helpers (`io::out_reader`, `io::analysis_io`) | Interface logic; network I/O; any other filesystem I/O (INP model bytes are supplied in memory by callers) |
 | `hydra-sdk` | Curated public re-exports — the umbrella crate | Any new logic |
 | `hydra-cli` | CLI argument parsing; input source resolution; file I/O | All simulation logic |
 | `hydra-gui` | Tauri command surface; project/scenario persistence; background run queue; React frontend | Solver algorithms; session logic |
@@ -19,7 +19,7 @@ Hydra is a water distribution network simulator written in Rust. It implements t
 
 **`hydra` contains no logic** — only re-exports. Never add functions, structs, or trait implementations to it.
 
-**Serialisation and output formatting** belong in `hydra-engine-wds`. Reading from disk or making HTTP calls do not — those belong in `hydra-cli` or `hydra-gui`.
+**Serialisation and output formatting** belong in `hydra-engine-wds`. Acquiring model bytes (reading INP files from disk, making HTTP calls) does not — that belongs in `hydra-cli` or `hydra-gui`. The one filesystem carve-out inside the engine is the explicit path-based streaming of `.out` result files and analysis artifacts (`io::out_reader`, `io::analysis_io`), which exists so large results never have to be loaded whole.
 
 ---
 
@@ -99,6 +99,17 @@ See [RELEASING.md](../RELEASING.md) for the release process and version bump com
 **Never run `git commit` or `git push` unless the user explicitly asks you to commit or push.** Making file changes is sufficient; the user will commit and push when ready.
 
 **Never create git tags** unless the user explicitly asks for a tag or release.
+
+**Commit messages follow Conventional Commits:**
+
+```
+<type>(<optional scope>): <description>
+```
+
+Valid types: `feat`, `fix`, `chore`, `docs`, `style`, `refactor`, `test`, `ci`, `perf`, `build`, `revert`.
+Use the imperative mood in the description ("add", "fix", "remove", not "added", "fixes", "removed").
+Keep the subject line under 72 characters. Add a body if the change needs more context.
+PR titles follow the same format (see `.github/copilot-instructions.md`).
 
 ---
 
