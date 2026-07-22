@@ -2,7 +2,6 @@
 
 [![Crates.io](https://img.shields.io/crates/v/hydra-engine-wds)](https://crates.io/crates/hydra-engine-wds)
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](https://github.com/neeraip/hydra/blob/main/LICENSE)
-[![Cargo CI](https://github.com/neeraip/hydra/actions/workflows/cargo-ci.yml/badge.svg)](https://github.com/neeraip/hydra/actions/workflows/cargo-ci.yml)
 
 Core simulation engine for [Hydra](https://github.com/neeraip/hydra) — water distribution network data model, EPANET INP/OUT/RPT I/O, Global Gradient Algorithm hydraulic solver, Lagrangian water quality engine, simulation session API, and post-simulation analytics.
 

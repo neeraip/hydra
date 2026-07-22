@@ -2,7 +2,6 @@
 
 [![Crates.io](https://img.shields.io/crates/v/hydra-sdk)](https://crates.io/crates/hydra-sdk)
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](https://github.com/neeraip/hydra/blob/main/LICENSE)
-[![Cargo CI](https://github.com/neeraip/hydra/actions/workflows/cargo-ci.yml/badge.svg)](https://github.com/neeraip/hydra/actions/workflows/cargo-ci.yml)
 
 Water distribution network simulator — EPANET-compatible extended-period simulation.
 
