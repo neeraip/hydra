@@ -18,6 +18,7 @@ import {
   renameScenario,
   useScenarios,
 } from "../../hooks";
+import { formatIpcError } from "../../hooks/ipc";
 import { BaseRow, CreateRow, ScenarioRow } from "./ScenariosPanel/Rows";
 import { type FlatScenario, flattenScenarios } from "./ScenariosPanel/shared";
 
@@ -136,12 +137,17 @@ export function ScenariosPanel({
     async (s: FlatScenario) => {
       if (!project) return;
       setRunningId(s.id);
-      await enqueueRuns(project.id, [s.id]);
-      setRunningId(null);
-      bumpScenarios();
-      openTaskTray();
+      try {
+        await enqueueRuns(project.id, [s.id]);
+        bumpScenarios();
+        openTaskTray();
+      } catch (err) {
+        showToast(`Failed to queue run: ${formatIpcError(err)}`, "error");
+      } finally {
+        setRunningId(null);
+      }
     },
-    [project, bumpScenarios, openTaskTray],
+    [project, bumpScenarios, openTaskTray, showToast],
   );
 
   const handleActivate = useCallback(

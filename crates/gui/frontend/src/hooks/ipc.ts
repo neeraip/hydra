@@ -13,8 +13,44 @@ export function isTauri(): boolean {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 }
 
-/** Silent variant — swallows errors and returns `null`. Use for read-only
- *  data fetches where absence of data is an acceptable fallback. */
+/** Render `err` (usually a Tauri command error string or an `Error`) as
+ *  concise human-readable text for toasts/status lines. */
+export function formatIpcError(err: unknown): string {
+  if (err instanceof Error) return err.message;
+  if (typeof err === "string") return err;
+  try {
+    return JSON.stringify(err);
+  } catch {
+    return String(err);
+  }
+}
+
+type IpcErrorHandler = (cmd: string, err: unknown) => void;
+
+let ipcErrorHandler: IpcErrorHandler | null = null;
+
+/**
+ * Register a handler for *real* backend errors hit by the otherwise-silent
+ * `tryInvoke` (i.e. we are inside a Tauri shell and the command rejected —
+ * not the expected "plain browser dev server" case). Lets the app shell
+ * surface failures like a corrupted app-data DB instead of rendering them
+ * as empty data. Returns an unregister function; the latest registration
+ * wins (single-handler by design — the app shell owns user notification).
+ */
+export function onIpcError(handler: IpcErrorHandler): () => void {
+  ipcErrorHandler = handler;
+  return () => {
+    if (ipcErrorHandler === handler) ipcErrorHandler = null;
+  };
+}
+
+/** Silent variant — returns `null` instead of throwing. Use for read-only
+ *  data fetches where absence of data is an acceptable fallback.
+ *
+ *  Outside a Tauri shell (plain `vite` dev server) this resolves `null`
+ *  silently — expected. Inside Tauri, a rejected command is a real backend
+ *  error: it still resolves `null` so callers don't crash, but the error is
+ *  reported to the `onIpcError` handler so the UI can surface it. */
 export async function tryInvoke<T>(
   cmd: string,
   args?: Record<string, unknown>,
@@ -23,9 +59,11 @@ export async function tryInvoke<T>(
   try {
     return await tauriInvoke<T>(cmd, args);
   } catch (err) {
-    // Surface in dev tools but don't crash callers — they return null.
+    // Surface in dev tools and notify the app shell, but don't crash
+    // callers — they return null.
     // eslint-disable-next-line no-console
     console.warn(`[ipc] ${cmd} failed:`, err);
+    ipcErrorHandler?.(cmd, err);
     return null;
   }
 }

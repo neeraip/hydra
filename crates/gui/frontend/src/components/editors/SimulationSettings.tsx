@@ -11,6 +11,7 @@ import {
   updateSimParams,
   useScenarios,
 } from "../../hooks";
+import { formatIpcError } from "../../hooks/ipc";
 import { useNetworkVersion } from "../../hooks/NetworkVersionContext";
 import {
   Empty,
@@ -105,9 +106,8 @@ export function SimulationSettings({ projectId }: { projectId: string }) {
   async function save() {
     if (!draft) return;
     setSaving(true);
-    const ok = await updateSimParams(projectId, draft);
-    setSaving(false);
-    if (ok) {
+    try {
+      await updateSimParams(projectId, draft);
       setOriginal(draft);
       setEditing(false);
       // Mark base model and every scenario as stale so the Run button turns amber.
@@ -117,8 +117,13 @@ export function SimulationSettings({ projectId }: { projectId: string }) {
         "Simulation settings saved. Existing results marked stale.",
         "success",
       );
-    } else {
-      showToast("Failed to save simulation settings", "info");
+    } catch (err) {
+      showToast(
+        `Failed to save simulation settings: ${formatIpcError(err)}`,
+        "error",
+      );
+    } finally {
+      setSaving(false);
     }
   }
 

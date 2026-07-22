@@ -19,6 +19,7 @@ import {
   useProject,
   useProjects,
 } from "./hooks";
+import { formatIpcError, onIpcError } from "./hooks/ipc";
 import { useNetworkData } from "./hooks/NetworkDataContext";
 import { useNetworkVersion } from "./hooks/NetworkVersionContext";
 import { startPerfSpan } from "./perfTrace";
@@ -575,6 +576,17 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const dismissToast = useCallback(() => {
     setS((prev) => ({ ...prev, toast: null }));
   }, []);
+
+  // Surface real backend IPC failures from the otherwise-silent `tryInvoke`
+  // reads (e.g. a corrupted app-data DB making `list_projects` fail) so they
+  // don't masquerade as empty data. Only fires inside a Tauri shell.
+  useEffect(
+    () =>
+      onIpcError((cmd, err) => {
+        showToast(`Backend error (${cmd}): ${formatIpcError(err)}`, "error");
+      }),
+    [showToast],
+  );
 
   const toggleIssuesPanel = useCallback(() => {
     setS((prev) => {

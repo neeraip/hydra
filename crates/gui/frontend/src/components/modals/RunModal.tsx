@@ -10,6 +10,7 @@ import {
   type SimParams,
   useScenarios,
 } from "../../hooks";
+import { formatIpcError } from "../../hooks/ipc";
 import { useNetworkVersion } from "../../hooks/NetworkVersionContext";
 import {
   formatShortcut,
@@ -114,6 +115,7 @@ export function RunModal() {
     activeScenarioId,
     setProjectView,
     scenariosVersion,
+    showToast,
   } = useAppState();
   const { project } = useActiveProject();
   const { editedScenarioIds } = useNetworkVersion();
@@ -166,8 +168,10 @@ export function RunModal() {
     if (!activeProjectId || checkedIds.length === 0) return;
     closeRunModal();
     setTimeout(() => toggleTaskTray(), 200);
-    enqueueRuns(activeProjectId, checkedIds);
-  }, [activeProjectId, checkedIds, closeRunModal, toggleTaskTray]);
+    enqueueRuns(activeProjectId, checkedIds).catch((err) => {
+      showToast(`Failed to queue runs: ${formatIpcError(err)}`, "error");
+    });
+  }, [activeProjectId, checkedIds, closeRunModal, toggleTaskTray, showToast]);
 
   // Esc closes; Cmd/Ctrl+Enter runs.
   useEffect(() => {

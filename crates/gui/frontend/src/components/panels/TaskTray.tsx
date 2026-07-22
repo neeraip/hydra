@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useAppState, useSimulation, useTasks } from "../../AppContext";
 import type { Task } from "../../hooks";
 import { cancelRunItem, cancelRunQueue, loadResultMeta } from "../../hooks";
+import { formatIpcError } from "../../hooks/ipc";
 import { RunningCard } from "./TaskTray/RunningCard";
 import { CompletedRow, FailedRow, QueuedRow } from "./TaskTray/SettledRows";
 
@@ -15,8 +16,13 @@ const HOLD_MS = 700;
 // ── Main component ────────────────────────────────────────────────────────────
 
 export function TaskTray() {
-  const { closeTaskTray, setProjectView, setPage, setActiveScenarioId } =
-    useAppState();
+  const {
+    closeTaskTray,
+    setProjectView,
+    setPage,
+    setActiveScenarioId,
+    showToast,
+  } = useAppState();
   const { dismissTask, setResultMeta } = useSimulation();
   const ref = useRef<HTMLDivElement>(null);
 
@@ -163,11 +169,15 @@ export function TaskTray() {
     };
   }, [closeTaskTray]);
 
+  function notifyCancelFailed(err: unknown) {
+    showToast(`Failed to cancel run: ${formatIpcError(err)}`, "error");
+  }
+
   function handleCancelItem(task: Task) {
     if (task.id.startsWith("queue-")) {
       cancelRunItem(task.id.slice("queue-".length));
     } else if (task.projectId) {
-      cancelRunQueue(task.projectId);
+      cancelRunQueue(task.projectId).catch(notifyCancelFailed);
     }
   }
 
@@ -180,7 +190,7 @@ export function TaskTray() {
         .filter(Boolean) as string[],
     );
     projectIds.forEach((pid) => {
-      cancelRunQueue(pid);
+      cancelRunQueue(pid).catch(notifyCancelFailed);
     });
   }
 
