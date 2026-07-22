@@ -1,33 +1,49 @@
-/* Time-pattern editor — 24-hour multiplier bars with editable values. */
+/* Time-pattern editor — 24-hour multiplier bars with editable values.
+   Edits are staged into the shared DraftContext, not committed to the
+   backend immediately — they become part of the unified Network Editor
+   draft alongside Elements/Curves/Controls, saved or discarded together. */
 
 import { TrashIcon } from "@heroicons/react/16/solid";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useAppState } from "../../AppContext";
-import {
-  createPattern,
-  deletePattern,
-  type TimePattern,
-  usePatterns,
-} from "../../hooks";
+import { renamePattern, type TimePattern, usePatterns } from "../../hooks";
+import { useDraft } from "../../hooks/DraftContext";
 import { useNetworkVersion } from "../../hooks/NetworkVersionContext";
 import { DeleteConfirmModal } from "../modals/DeleteConfirmModal";
+
+const DEFAULT_PATTERN_MULTIPLIERS: number[] = new Array(24).fill(1.0);
 
 export function PatternEditor({ accent }: { accent: string }) {
   const { showToast } = useAppState();
   const { bumpNetwork } = useNetworkVersion();
   const rawPatterns = usePatterns();
-  const patterns = useMemo<TimePattern[]>(
-    () =>
-      rawPatterns.map((p) => ({
+  const {
+    patternAdds,
+    setPatternAdds,
+    patternEdits,
+    setPatternEdits,
+    patternDeletes,
+    setPatternDeletes,
+  } = useDraft();
+
+  // Merge staged creates/edits/deletes on top of the real pattern list so
+  // the sidebar and editor always reflect the current draft.
+  const patterns = useMemo<TimePattern[]>(() => {
+    const existing = rawPatterns
+      .filter((p) => !patternDeletes.has(p.id))
+      .map((p) => ({
         id: p.id,
         label: p.id,
-        multipliers: p.multipliers,
+        multipliers: patternEdits.get(p.id) ?? p.multipliers,
         stepHours: 1,
-      })),
-    [rawPatterns],
-  );
+      }));
+    const added: TimePattern[] = Array.from(patternAdds.entries()).map(
+      ([id, multipliers]) => ({ id, label: id, multipliers, stepHours: 1 }),
+    );
+    return [...existing, ...added];
+  }, [rawPatterns, patternEdits, patternDeletes, patternAdds]);
+
   const [activeId, setActiveId] = useState<string | null>(null);
-  const [overrides, setOverrides] = useState<Record<string, number[]>>({});
   const [creating, setCreating] = useState(false);
   const [newId, setNewId] = useState("");
   const [createError, setCreateError] = useState<string | null>(null);
@@ -40,42 +56,100 @@ export function PatternEditor({ accent }: { accent: string }) {
 
   const effectiveId = activeId ?? patterns[0]?.id ?? "";
   const pattern = patterns.find((p) => p.id === effectiveId) ?? null;
-  const multipliers = pattern
-    ? (overrides[effectiveId] ?? pattern.multipliers)
-    : [];
+  const multipliers = pattern?.multipliers ?? [];
+  const isNew = patternAdds.has(effectiveId);
+  const isOverridden = isNew || patternEdits.has(effectiveId);
 
-  async function handleCreate() {
+  function stageMultipliers(next: number[]) {
+    if (isNew) {
+      setPatternAdds((prev) => new Map(prev).set(effectiveId, next));
+    } else {
+      setPatternEdits((prev) => new Map(prev).set(effectiveId, next));
+    }
+  }
+
+  function handleCreate() {
     const trimmed = newId.trim();
     if (!trimmed) {
       setCreateError("ID required");
       return;
     }
-    try {
-      await createPattern(trimmed);
-      bumpNetwork();
-      setActiveId(trimmed);
-      setCreating(false);
-      setNewId("");
-      setCreateError(null);
-    } catch (err) {
-      setCreateError(
-        typeof err === "string" ? err : "Failed to create pattern",
-      );
+    if (rawPatterns.some((p) => p.id === trimmed) || patternAdds.has(trimmed)) {
+      setCreateError(`pattern '${trimmed}' already exists`);
+      return;
     }
+    setPatternAdds((prev) =>
+      new Map(prev).set(trimmed, DEFAULT_PATTERN_MULTIPLIERS),
+    );
+    setActiveId(trimmed);
+    setCreating(false);
+    setNewId("");
+    setCreateError(null);
   }
 
-  async function handleDelete() {
+  function handleDelete() {
     if (!pendingDeleteId) return;
     const id = pendingDeleteId;
     setPendingDeleteId(null);
+    if (patternAdds.has(id)) {
+      setPatternAdds((prev) => {
+        const next = new Map(prev);
+        next.delete(id);
+        return next;
+      });
+    } else {
+      setPatternDeletes((prev) => new Set(prev).add(id));
+      setPatternEdits((prev) => {
+        if (!prev.has(id)) return prev;
+        const next = new Map(prev);
+        next.delete(id);
+        return next;
+      });
+    }
+    if (activeId === id) setActiveId(null);
+  }
+
+  // Renaming affects the ID used as the key throughout the draft's
+  // patternAdds/patternEdits maps, so (unlike other pattern edits) it isn't
+  // staged — it's applied immediately, same as most single-shot renames
+  // elsewhere in the app (project/scenario rename).
+  async function handleRename(oldId: string, rawNewId: string) {
+    const trimmed = rawNewId.trim();
+    if (!trimmed || trimmed === oldId) return;
+    if (
+      rawPatterns.some((p) => p.id === trimmed) ||
+      (patternAdds.has(trimmed) && trimmed !== oldId)
+    ) {
+      showToast(`pattern '${trimmed}' already exists`, "error");
+      return;
+    }
+    if (patternAdds.has(oldId)) {
+      // Not yet created — just re-key the local draft entry.
+      setPatternAdds((prev) => {
+        const next = new Map(prev);
+        const multipliers = next.get(oldId);
+        next.delete(oldId);
+        if (multipliers) next.set(trimmed, multipliers);
+        return next;
+      });
+      setActiveId(trimmed);
+      return;
+    }
     try {
-      await deletePattern(id);
+      await renamePattern(oldId, trimmed);
       bumpNetwork();
-      if (activeId === id) setActiveId(null);
-      showToast(`Deleted pattern "${id}"`, "success");
+      setPatternEdits((prev) => {
+        if (!prev.has(oldId)) return prev;
+        const next = new Map(prev);
+        const m = next.get(oldId);
+        next.delete(oldId);
+        if (m) next.set(trimmed, m);
+        return next;
+      });
+      setActiveId(trimmed);
     } catch (err) {
       showToast(
-        typeof err === "string" ? err : "Failed to delete pattern",
+        typeof err === "string" ? err : "Failed to rename pattern",
         "error",
       );
     }
@@ -94,6 +168,10 @@ export function PatternEditor({ accent }: { accent: string }) {
       >
         {patterns.map((p) => {
           const active = p.id === effectiveId;
+          const isDirty =
+            patternAdds.has(p.id) ||
+            patternEdits.has(p.id) ||
+            patternDeletes.has(p.id);
           return (
             <button
               type="button"
@@ -113,16 +191,32 @@ export function PatternEditor({ accent }: { accent: string }) {
                 fontFamily: "var(--font-ui)",
                 color: active ? "var(--text-primary)" : "var(--text-secondary)",
                 borderBottom: "1px solid var(--border)",
+                opacity: patternDeletes.has(p.id) ? 0.5 : 1,
               }}
             >
               <div
                 style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 6,
                   fontSize: 13,
                   fontWeight: 500,
                   fontFamily: "var(--font-mono)",
                 }}
               >
                 {p.id}
+                {isDirty && (
+                  <span
+                    style={{
+                      width: 6,
+                      height: 6,
+                      borderRadius: "50%",
+                      background: "rgba(220, 160, 40, 0.9)",
+                      display: "inline-block",
+                      flexShrink: 0,
+                    }}
+                  />
+                )}
               </div>
               <div
                 style={{
@@ -256,6 +350,7 @@ export function PatternEditor({ accent }: { accent: string }) {
             accent={accent}
             multipliers={multipliers}
             onDelete={() => setPendingDeleteId(pattern.id)}
+            onRename={(newId) => handleRename(pattern.id, newId)}
           />
 
           <div
@@ -275,7 +370,7 @@ export function PatternEditor({ accent }: { accent: string }) {
               onChange={(idx, val) => {
                 const next = [...multipliers];
                 next[idx] = val;
-                setOverrides({ ...overrides, [effectiveId]: next });
+                stageMultipliers(next);
               }}
             />
             <PatternRow
@@ -285,14 +380,23 @@ export function PatternEditor({ accent }: { accent: string }) {
               onChange={(idx, val) => {
                 const next = [...multipliers];
                 next[idx] = val;
-                setOverrides({ ...overrides, [effectiveId]: next });
+                stageMultipliers(next);
               }}
               onReset={() => {
-                const { [effectiveId]: _, ...rest } = overrides;
-                setOverrides(rest);
-                showToast("Pattern reset to defaults");
+                if (isNew) {
+                  setPatternAdds((prev) =>
+                    new Map(prev).set(effectiveId, DEFAULT_PATTERN_MULTIPLIERS),
+                  );
+                } else {
+                  setPatternEdits((prev) => {
+                    if (!prev.has(effectiveId)) return prev;
+                    const next = new Map(prev);
+                    next.delete(effectiveId);
+                    return next;
+                  });
+                }
               }}
-              isOverridden={overrides[effectiveId] != null}
+              isOverridden={isOverridden}
             />
           </div>
         </div>
@@ -326,15 +430,23 @@ function PatternHeader({
   accent,
   multipliers,
   onDelete,
+  onRename,
 }: {
   pattern: TimePattern;
   accent: string;
   multipliers: number[];
   onDelete: () => void;
+  onRename: (newId: string) => void;
 }) {
   const min = Math.min(...multipliers);
   const max = Math.max(...multipliers);
   const mean = multipliers.reduce((a, b) => a + b, 0) / multipliers.length;
+  const [nameDraft, setNameDraft] = useState(pattern.id);
+  const prevPatternId = useRef(pattern.id);
+  if (pattern.id !== prevPatternId.current) {
+    prevPatternId.current = pattern.id;
+    setNameDraft(pattern.id);
+  }
   return (
     <div
       style={{
@@ -345,19 +457,37 @@ function PatternHeader({
         gap: 16,
       }}
     >
-      <div
+      <input
+        value={nameDraft}
+        onChange={(e) => setNameDraft(e.target.value)}
+        onBlur={() => {
+          if (nameDraft.trim() !== pattern.id) onRename(nameDraft);
+          else setNameDraft(pattern.id);
+        }}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+          if (e.key === "Escape") {
+            setNameDraft(pattern.id);
+            (e.target as HTMLInputElement).blur();
+          }
+        }}
         style={{
           fontSize: 16,
           fontWeight: 600,
           color: "var(--text-primary)",
           fontFamily: "var(--font-mono)",
+          background: "transparent",
+          border: "1px solid transparent",
+          borderRadius: 4,
+          padding: "2px 6px",
+          outline: "none",
+          width: 140,
         }}
-      >
-        {pattern.id}
-      </div>
-      <div style={{ fontSize: 13, color: "var(--text-secondary)" }}>
-        {pattern.label}
-      </div>
+        onFocus={(e) => {
+          e.currentTarget.style.border = "1px solid var(--border-focus)";
+          e.currentTarget.style.background = "var(--bg-input, var(--bg-app))";
+        }}
+      />
       <div
         style={{
           marginLeft: "auto",
@@ -376,36 +506,26 @@ function PatternHeader({
       <button
         type="button"
         onClick={onDelete}
+        title="Delete pattern"
         style={{
           flexShrink: 0,
+          border: "none",
+          background: "transparent",
+          color: "var(--text-tertiary)",
+          cursor: "pointer",
           display: "flex",
           alignItems: "center",
-          gap: 5,
-          border: "1px solid rgba(239,68,68,0.35)",
-          borderRadius: 5,
-          background: "transparent",
-          color: "#ef4444",
-          cursor: "pointer",
-          fontSize: 12,
-          fontFamily: "var(--font-ui)",
-          padding: "4px 10px",
-          transition: "background var(--t-fast), border-color var(--t-fast)",
+          padding: 4,
         }}
         onMouseEnter={(e) => {
-          (e.currentTarget as HTMLButtonElement).style.background =
-            "rgba(239,68,68,0.12)";
-          (e.currentTarget as HTMLButtonElement).style.borderColor =
-            "rgba(239,68,68,0.6)";
+          (e.currentTarget as HTMLButtonElement).style.color = "#ef4444";
         }}
         onMouseLeave={(e) => {
-          (e.currentTarget as HTMLButtonElement).style.background =
-            "transparent";
-          (e.currentTarget as HTMLButtonElement).style.borderColor =
-            "rgba(239,68,68,0.35)";
+          (e.currentTarget as HTMLButtonElement).style.color =
+            "var(--text-tertiary)";
         }}
       >
-        <TrashIcon style={{ width: 13, height: 13 }} />
-        Delete
+        <TrashIcon style={{ width: 14, height: 14 }} />
       </button>
     </div>
   );

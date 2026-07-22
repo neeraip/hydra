@@ -55,6 +55,13 @@ const RUN_QUEUE_UPDATE_EVENT: &str = "run_queue_update";
 const NETWORK_CHANGED_EVENT: &str = "network-changed";
 const PROGRESS_EMIT_INTERVAL: Duration = Duration::from_millis(125);
 const RUN_QUEUE_TERMINAL_TTL_SECS: i64 = 6 * 60 * 60;
+/// Shared unit-conversion factors for the controls/rules DTO layer (see
+/// `link_setting_internal_to_display` and friends). Other functions in this
+/// module define their own local copies of these same factors; this pair is
+/// module-level purely because the controls/rules helpers are numerous and
+/// all need them.
+const FT_TO_M: f64 = 0.3048;
+const CFS_TO_LPS: f64 = 28.3168;
 const RUN_QUEUE_TERMINAL_MAX_PER_PROJECT: usize = 100;
 
 fn is_terminal_queue_status(status: &str) -> bool {
@@ -1430,6 +1437,91 @@ pub struct CurveDto {
     pub y: Vec<f64>,
 }
 
+/// Serialisable simple control (`[CONTROLS]`) sent to the frontend.
+///
+/// Addressed by array position (no natural ID in the INP format) — the
+/// frontend uses the index within `get_controls()`'s response array when
+/// calling `update_control`/`delete_control`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ControlDto {
+    pub link_id: String,
+    /// "open" | "closed"; `null` when only `action_setting` is used.
+    pub action_status: Option<String>,
+    /// Display-unit setting value (see `LinkDto.valve_setting` for the
+    /// per-valve-type unit convention; dimensionless for pumps/pipes).
+    /// `null` when only `action_status` is used.
+    pub action_setting: Option<f64>,
+    /// "timer" | "clocktime" | "hiLevel" | "loLevel"
+    pub trigger_kind: String,
+    /// Seconds — elapsed sim time for "timer", seconds-from-midnight for
+    /// "clocktime". `null` for "hiLevel"/"loLevel".
+    pub trigger_seconds: Option<f64>,
+    /// Trigger node ID for "hiLevel"/"loLevel". `null` otherwise.
+    pub trigger_node_id: Option<String>,
+    /// Display-unit threshold for "hiLevel"/"loLevel": tank level above
+    /// bottom (m) for tanks, pressure-equivalent head (m) for junctions and
+    /// reservoirs. `null` for "timer"/"clocktime".
+    pub trigger_value: Option<f64>,
+    pub enabled: bool,
+}
+
+/// A single predicate clause within a `RuleDto` (mirrors `Premise`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RulePremiseDto {
+    /// "node" | "link" | "clock"
+    pub object: String,
+    /// Node ID when `object == "node"`; `null` otherwise.
+    pub node_id: Option<String>,
+    /// Link ID when `object == "link"`; `null` otherwise.
+    pub link_id: Option<String>,
+    /// "head" | "pressure" | "demand" | "level" | "flow" | "status" |
+    /// "setting" | "power" | "fillTime" | "drainTime" | "clockTime" | "time"
+    pub attribute: String,
+    /// "eq" | "neq" | "lt" | "gt" | "le" | "ge"
+    pub operator: String,
+    /// Display-unit threshold. For "status" this is ignored in favour of
+    /// `status_value`. Units otherwise follow `attribute`: m for
+    /// head/pressure/level, L/s for demand/flow, hours for fillTime/
+    /// drainTime, kW for power, seconds for clockTime/time, and the
+    /// per-link-kind convention (see `ControlDto.action_setting`) for
+    /// "setting".
+    pub value: f64,
+    /// "open" | "closed" | "active"; only meaningful when `attribute == "status"`.
+    pub status_value: Option<String>,
+    /// Connective joining this premise to the next; `null` for the last premise.
+    /// "and" | "or"
+    pub connective: Option<String>,
+}
+
+/// A single action applied by a `RuleDto`'s THEN or ELSE clause.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RuleActionDto {
+    pub link_id: String,
+    /// "open" | "closed"; `null` when `setting` is used instead.
+    pub status: Option<String>,
+    /// Display-unit setting value (see `ControlDto.action_setting`); `null`
+    /// when `status` is used instead.
+    pub setting: Option<f64>,
+}
+
+/// Serialisable rule-based control (`[RULES]`) sent to the frontend.
+///
+/// Addressed by array position, like `ControlDto`. `name` is a display-only
+/// label synthesised from position (`R1`, `R2`, …) — the engine's `Rule`
+/// struct has no name field, so custom INP rule names are not preserved.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RuleDto {
+    pub name: String,
+    pub priority: f64,
+    pub premises: Vec<RulePremiseDto>,
+    pub then_actions: Vec<RuleActionDto>,
+    pub else_actions: Vec<RuleActionDto>,
+}
+
 /// The full network payload returned to the frontend after parsing.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -1438,6 +1530,8 @@ pub struct NetworkDto {
     pub links: Vec<LinkDto>,
     pub patterns: Vec<PatternDto>,
     pub curves: Vec<CurveDto>,
+    pub controls: Vec<ControlDto>,
+    pub rules: Vec<RuleDto>,
     /// Stem of the source file name (no directory, no extension).
     /// Empty string when the DTO was constructed without a file context.
     #[serde(default)]
@@ -1917,7 +2011,332 @@ fn network_to_dto(network: &hydra::Network) -> NetworkDto {
         links,
         patterns,
         curves,
+        controls: network
+            .controls
+            .iter()
+            .map(|c| control_to_dto(c, network))
+            .collect(),
+        rules: network
+            .rules
+            .iter()
+            .enumerate()
+            .map(|(i, r)| rule_to_dto(i, r, network))
+            .collect(),
         file_stem: String::new(),
+    }
+}
+
+/// Convert a link's setting from internal units to the display units used
+/// throughout the GUI: dimensionless for pumps/pipes, head (m) for
+/// PRV/PSV/PBV, flow (L/s) for FCV, dimensionless loss coefficient for TCV,
+/// and raw (curve-based; caller should not use this) for GPV/PCV.
+fn link_setting_internal_to_display(link: &hydra::Link, internal: f64) -> f64 {
+    match &link.kind {
+        hydra::LinkKind::Valve(v) => match v.valve_type {
+            hydra::ValveType::Prv | hydra::ValveType::Psv | hydra::ValveType::Pbv => {
+                internal * FT_TO_M
+            }
+            hydra::ValveType::Fcv => internal * CFS_TO_LPS,
+            _ => internal,
+        },
+        _ => internal,
+    }
+}
+
+/// Inverse of [`link_setting_internal_to_display`].
+fn link_setting_display_to_internal(link: &hydra::Link, display: f64) -> f64 {
+    match &link.kind {
+        hydra::LinkKind::Valve(v) => match v.valve_type {
+            hydra::ValveType::Prv | hydra::ValveType::Psv | hydra::ValveType::Pbv => {
+                display / FT_TO_M
+            }
+            hydra::ValveType::Fcv => display / CFS_TO_LPS,
+            _ => display,
+        },
+        _ => display,
+    }
+}
+
+/// Convert a HiLevel/LowLevel trigger grade from internal absolute hydraulic
+/// grade (ft) to the display threshold shown to the user: level above bottom
+/// (m) for tanks, pressure-equivalent head (m) for junctions/reservoirs.
+/// Mirrors `inp_writer`'s `[CONTROLS]` emission.
+fn node_grade_internal_to_display(node: &hydra::Node, internal_grade: f64) -> f64 {
+    match &node.kind {
+        hydra::NodeKind::Tank(t) => {
+            let bottom = node.base.elevation - t.min_level;
+            (internal_grade - bottom) * FT_TO_M
+        }
+        _ => (internal_grade - node.base.elevation) * FT_TO_M,
+    }
+}
+
+/// Inverse of [`node_grade_internal_to_display`].
+fn node_grade_display_to_internal(node: &hydra::Node, display: f64) -> f64 {
+    match &node.kind {
+        hydra::NodeKind::Tank(t) => {
+            let bottom = node.base.elevation - t.min_level;
+            display / FT_TO_M + bottom
+        }
+        _ => display / FT_TO_M + node.base.elevation,
+    }
+}
+
+fn link_status_to_str(status: hydra::LinkStatus) -> Option<&'static str> {
+    match status {
+        hydra::LinkStatus::Open => Some("open"),
+        hydra::LinkStatus::Closed => Some("closed"),
+        hydra::LinkStatus::Active => Some("active"),
+        _ => None,
+    }
+}
+
+fn link_status_from_str(s: &str) -> Option<hydra::LinkStatus> {
+    match s {
+        "open" => Some(hydra::LinkStatus::Open),
+        "closed" => Some(hydra::LinkStatus::Closed),
+        "active" => Some(hydra::LinkStatus::Active),
+        _ => None,
+    }
+}
+
+fn control_to_dto(ctrl: &hydra::SimpleControl, network: &hydra::Network) -> ControlDto {
+    let link = network.links.get(ctrl.link.saturating_sub(1));
+    let link_id = link.map(|l| l.base.id.clone()).unwrap_or_default();
+    let action_status = ctrl
+        .action_status
+        .and_then(link_status_to_str)
+        .map(Into::into);
+    let action_setting = match (link, ctrl.action_setting) {
+        (Some(l), Some(s)) => Some(link_setting_internal_to_display(l, s)),
+        _ => None,
+    };
+    let (trigger_kind, trigger_seconds, trigger_node_id, trigger_value) = match ctrl.trigger_type {
+        hydra::TriggerType::Timer => ("timer", ctrl.trigger_time, None, None),
+        hydra::TriggerType::TimeOfDay => ("clocktime", ctrl.trigger_time, None, None),
+        hydra::TriggerType::HiLevel | hydra::TriggerType::LowLevel => {
+            let kind = if ctrl.trigger_type == hydra::TriggerType::HiLevel {
+                "hiLevel"
+            } else {
+                "loLevel"
+            };
+            let node = ctrl
+                .trigger_node
+                .and_then(|idx| network.nodes.get(idx.saturating_sub(1)));
+            let node_id = node.map(|n| n.base.id.clone());
+            let value = match (node, ctrl.trigger_grade) {
+                (Some(n), Some(g)) => Some(node_grade_internal_to_display(n, g)),
+                _ => None,
+            };
+            (kind, None, node_id, value)
+        }
+    };
+    ControlDto {
+        link_id,
+        action_status,
+        action_setting,
+        trigger_kind: trigger_kind.into(),
+        trigger_seconds,
+        trigger_node_id,
+        trigger_value,
+        enabled: ctrl.enabled,
+    }
+}
+
+fn premise_attribute_to_str(a: hydra::PremiseAttribute) -> &'static str {
+    match a {
+        hydra::PremiseAttribute::Head => "head",
+        hydra::PremiseAttribute::Pressure => "pressure",
+        hydra::PremiseAttribute::Demand => "demand",
+        hydra::PremiseAttribute::Level => "level",
+        hydra::PremiseAttribute::Flow => "flow",
+        hydra::PremiseAttribute::Status => "status",
+        hydra::PremiseAttribute::Setting => "setting",
+        hydra::PremiseAttribute::Power => "power",
+        hydra::PremiseAttribute::FillTime => "fillTime",
+        hydra::PremiseAttribute::DrainTime => "drainTime",
+        hydra::PremiseAttribute::ClockTime => "clockTime",
+        hydra::PremiseAttribute::Time => "time",
+    }
+}
+
+fn premise_attribute_from_str(s: &str) -> Result<hydra::PremiseAttribute, String> {
+    Ok(match s {
+        "head" => hydra::PremiseAttribute::Head,
+        "pressure" => hydra::PremiseAttribute::Pressure,
+        "demand" => hydra::PremiseAttribute::Demand,
+        "level" => hydra::PremiseAttribute::Level,
+        "flow" => hydra::PremiseAttribute::Flow,
+        "status" => hydra::PremiseAttribute::Status,
+        "setting" => hydra::PremiseAttribute::Setting,
+        "power" => hydra::PremiseAttribute::Power,
+        "fillTime" => hydra::PremiseAttribute::FillTime,
+        "drainTime" => hydra::PremiseAttribute::DrainTime,
+        "clockTime" => hydra::PremiseAttribute::ClockTime,
+        "time" => hydra::PremiseAttribute::Time,
+        other => return Err(format!("unknown premise attribute '{other}'")),
+    })
+}
+
+fn premise_operator_to_str(o: hydra::PremiseOperator) -> &'static str {
+    match o {
+        hydra::PremiseOperator::Eq => "eq",
+        hydra::PremiseOperator::Neq => "neq",
+        hydra::PremiseOperator::Lt => "lt",
+        hydra::PremiseOperator::Gt => "gt",
+        hydra::PremiseOperator::Le => "le",
+        hydra::PremiseOperator::Ge => "ge",
+    }
+}
+
+fn premise_operator_from_str(s: &str) -> Result<hydra::PremiseOperator, String> {
+    Ok(match s {
+        "eq" => hydra::PremiseOperator::Eq,
+        "neq" => hydra::PremiseOperator::Neq,
+        "lt" => hydra::PremiseOperator::Lt,
+        "gt" => hydra::PremiseOperator::Gt,
+        "le" => hydra::PremiseOperator::Le,
+        "ge" => hydra::PremiseOperator::Ge,
+        other => return Err(format!("unknown premise operator '{other}'")),
+    })
+}
+
+/// Convert a premise/action threshold from internal units to display units,
+/// given the attribute and (for node/link-scoped attributes) the referenced
+/// object. See `RulePremiseDto.value` for the per-attribute unit convention.
+fn premise_value_internal_to_display(
+    attribute: hydra::PremiseAttribute,
+    object: hydra::PremiseObject,
+    value: f64,
+    network: &hydra::Network,
+) -> f64 {
+    use hydra::{PremiseAttribute, PremiseObject};
+    match attribute {
+        PremiseAttribute::Head | PremiseAttribute::Pressure | PremiseAttribute::Level => {
+            value * FT_TO_M
+        }
+        PremiseAttribute::Demand | PremiseAttribute::Flow => value * CFS_TO_LPS,
+        PremiseAttribute::FillTime | PremiseAttribute::DrainTime => value / 3600.0,
+        PremiseAttribute::Setting => {
+            if let PremiseObject::Link(idx) = object {
+                if let Some(link) = network.links.get(idx.saturating_sub(1)) {
+                    return link_setting_internal_to_display(link, value);
+                }
+            }
+            value
+        }
+        _ => value,
+    }
+}
+
+/// Inverse of [`premise_value_internal_to_display`].
+fn premise_value_display_to_internal(
+    attribute: hydra::PremiseAttribute,
+    object: hydra::PremiseObject,
+    value: f64,
+    network: &hydra::Network,
+) -> f64 {
+    use hydra::{PremiseAttribute, PremiseObject};
+    match attribute {
+        PremiseAttribute::Head | PremiseAttribute::Pressure | PremiseAttribute::Level => {
+            value / FT_TO_M
+        }
+        PremiseAttribute::Demand | PremiseAttribute::Flow => value / CFS_TO_LPS,
+        PremiseAttribute::FillTime | PremiseAttribute::DrainTime => value * 3600.0,
+        PremiseAttribute::Setting => {
+            if let PremiseObject::Link(idx) = object {
+                if let Some(link) = network.links.get(idx.saturating_sub(1)) {
+                    return link_setting_display_to_internal(link, value);
+                }
+            }
+            value
+        }
+        _ => value,
+    }
+}
+
+fn premise_to_dto(p: &hydra::Premise, network: &hydra::Network) -> RulePremiseDto {
+    let (object, node_id, link_id) = match p.object {
+        hydra::PremiseObject::Node(idx) => (
+            "node",
+            network
+                .nodes
+                .get(idx.saturating_sub(1))
+                .map(|n| n.base.id.clone()),
+            None,
+        ),
+        hydra::PremiseObject::Link(idx) => (
+            "link",
+            None,
+            network
+                .links
+                .get(idx.saturating_sub(1))
+                .map(|l| l.base.id.clone()),
+        ),
+        hydra::PremiseObject::Clock => ("clock", None, None),
+    };
+    let status_value = if p.attribute == hydra::PremiseAttribute::Status {
+        // Status thresholds are encoded as 0/1/2 (closed/open/active) per
+        // `parse_premise_value`.
+        match p.value as i32 {
+            1 => Some("open".to_string()),
+            2 => Some("active".to_string()),
+            _ => Some("closed".to_string()),
+        }
+    } else {
+        None
+    };
+    RulePremiseDto {
+        object: object.into(),
+        node_id,
+        link_id,
+        attribute: premise_attribute_to_str(p.attribute).into(),
+        operator: premise_operator_to_str(p.operator).into(),
+        value: premise_value_internal_to_display(p.attribute, p.object, p.value, network),
+        status_value,
+        connective: p.connective.map(|c| match c {
+            hydra::LogicOp::And => "and".into(),
+            hydra::LogicOp::Or => "or".into(),
+        }),
+    }
+}
+
+fn rule_action_to_dto(a: &hydra::RuleAction, network: &hydra::Network) -> RuleActionDto {
+    let link = network.links.get(a.link.saturating_sub(1));
+    let link_id = link.map(|l| l.base.id.clone()).unwrap_or_default();
+    let (status, setting) = match &a.value {
+        hydra::ActionValue::Status(s) => (link_status_to_str(*s).map(Into::into), None),
+        hydra::ActionValue::Setting(v) => (
+            None,
+            Some(link.map_or(*v, |l| link_setting_internal_to_display(l, *v))),
+        ),
+    };
+    RuleActionDto {
+        link_id,
+        status,
+        setting,
+    }
+}
+
+fn rule_to_dto(index: usize, rule: &hydra::Rule, network: &hydra::Network) -> RuleDto {
+    RuleDto {
+        name: format!("R{}", index + 1),
+        priority: rule.priority,
+        premises: rule
+            .premises
+            .iter()
+            .map(|p| premise_to_dto(p, network))
+            .collect(),
+        then_actions: rule
+            .then_actions
+            .iter()
+            .map(|a| rule_action_to_dto(a, network))
+            .collect(),
+        else_actions: rule
+            .else_actions
+            .iter()
+            .map(|a| rule_action_to_dto(a, network))
+            .collect(),
     }
 }
 
@@ -3669,6 +4088,89 @@ pub fn patch_node_position(
     result
 }
 
+/// Names of controls/rules that reference any of the given (old, 1-based)
+/// node or link indices — used to block deletion of a still-referenced
+/// element, mirroring `delete_curve`/`delete_pattern`'s safety check.
+fn control_rule_refs(
+    network: &hydra::Network,
+    node_idx: &[usize],
+    link_idx: &[usize],
+) -> Vec<String> {
+    let mut refs = Vec::new();
+    for (i, ctrl) in network.controls.iter().enumerate() {
+        let hits_link = link_idx.contains(&ctrl.link);
+        let hits_node = ctrl.trigger_node.is_some_and(|n| node_idx.contains(&n));
+        if hits_link || hits_node {
+            refs.push(format!("Control #{}", i + 1));
+        }
+    }
+    for (i, rule) in network.rules.iter().enumerate() {
+        let mut hit = false;
+        for p in &rule.premises {
+            match p.object {
+                hydra::PremiseObject::Node(idx) => {
+                    if node_idx.contains(&idx) {
+                        hit = true;
+                    }
+                }
+                hydra::PremiseObject::Link(idx) => {
+                    if link_idx.contains(&idx) {
+                        hit = true;
+                    }
+                }
+                hydra::PremiseObject::Clock => {}
+            }
+        }
+        for a in rule.then_actions.iter().chain(rule.else_actions.iter()) {
+            if link_idx.contains(&a.link) {
+                hit = true;
+            }
+        }
+        if hit {
+            refs.push(format!("Rule R{}", i + 1));
+        }
+    }
+    refs
+}
+
+/// Remap a 1-based index after the elements at `removed` (old 1-based
+/// indices) have been removed from the vec it addresses.
+fn remap_index(old: usize, removed: &[usize]) -> usize {
+    let shift = removed.iter().filter(|&&r| r < old).count();
+    old - shift
+}
+
+/// Fix up every control/rule's node/link index references after node(s)
+/// and/or link(s) at the given old 1-based indices have been removed.
+fn remap_controls_rules(
+    network: &mut hydra::Network,
+    removed_nodes: &[usize],
+    removed_links: &[usize],
+) {
+    for ctrl in network.controls.iter_mut() {
+        ctrl.link = remap_index(ctrl.link, removed_links);
+        if let Some(n) = ctrl.trigger_node {
+            ctrl.trigger_node = Some(remap_index(n, removed_nodes));
+        }
+    }
+    for rule in network.rules.iter_mut() {
+        for p in rule.premises.iter_mut() {
+            match &mut p.object {
+                hydra::PremiseObject::Node(idx) => *idx = remap_index(*idx, removed_nodes),
+                hydra::PremiseObject::Link(idx) => *idx = remap_index(*idx, removed_links),
+                hydra::PremiseObject::Clock => {}
+            }
+        }
+        for a in rule
+            .then_actions
+            .iter_mut()
+            .chain(rule.else_actions.iter_mut())
+        {
+            a.link = remap_index(a.link, removed_links);
+        }
+    }
+}
+
 /// Remove a node or link from the in-memory network.
 ///
 /// `kind` must be one of `"junction"`, `"reservoir"`, `"tank"`, `"pipe"`,
@@ -3677,6 +4179,12 @@ pub fn patch_node_position(
 /// Any links that reference a deleted node are also removed (dangling links).
 /// All `base.index` values are rebuilt after deletion so the INP writer
 /// produces a valid file.
+///
+/// Fails without mutating anything if the node/link (or, for nodes, any link
+/// that would be cascade-removed with it) is still referenced by a control
+/// or rule — the reference must be cleared first. Every surviving control's
+/// and rule's node/link index references are remapped afterward so they
+/// keep pointing at the correct element once indices shift.
 #[tauri::command]
 pub fn delete_element(
     app: tauri::AppHandle,
@@ -3701,15 +4209,27 @@ pub fn delete_element(
                             .ok_or_else(|| format!("node '{}' not found", id))?;
                         let node_1based = pos + 1;
                         // Collect + remove dangling links that reference this node.
-                        let dangling: Vec<String> = network
+                        let dangling: Vec<(String, usize)> = network
                             .links
                             .iter()
                             .filter(|l| {
                                 l.base.from_node == node_1based || l.base.to_node == node_1based
                             })
-                            .map(|l| l.base.id.clone())
+                            .map(|l| (l.base.id.clone(), l.base.index))
                             .collect();
-                        for lid in &dangling {
+                        let dangling_idx: Vec<usize> =
+                            dangling.iter().map(|(_, idx)| *idx).collect();
+
+                        let refs = control_rule_refs(network, &[node_1based], &dangling_idx);
+                        if !refs.is_empty() {
+                            return Err(format!(
+                                "node '{}' is still attached to {}; detach it first",
+                                id,
+                                refs.join(", ")
+                            ));
+                        }
+
+                        for (lid, _) in &dangling {
                             network.vertices.remove(lid);
                             network.link_tags.remove(lid);
                         }
@@ -3734,6 +4254,7 @@ pub fn delete_element(
                                 l.base.to_node -= 1;
                             }
                         }
+                        remap_controls_rules(network, &[node_1based], &dangling_idx);
                     }
                     "pipe" | "pump" | "valve" => {
                         let pos = network
@@ -3741,6 +4262,17 @@ pub fn delete_element(
                             .iter()
                             .position(|l| l.base.id == id)
                             .ok_or_else(|| format!("link '{}' not found", id))?;
+                        let link_1based = pos + 1;
+
+                        let refs = control_rule_refs(network, &[], &[link_1based]);
+                        if !refs.is_empty() {
+                            return Err(format!(
+                                "link '{}' is still attached to {}; detach it first",
+                                id,
+                                refs.join(", ")
+                            ));
+                        }
+
                         network.links.remove(pos);
                         network.vertices.remove(&id);
                         network.link_tags.remove(&id);
@@ -3748,6 +4280,7 @@ pub fn delete_element(
                         for (i, l) in network.links.iter_mut().enumerate() {
                             l.base.index = i + 1;
                         }
+                        remap_controls_rules(network, &[], &[link_1based]);
                     }
                     other => return Err(format!("unknown element kind '{}'", other)),
                 }
@@ -4186,6 +4719,135 @@ pub fn create_pattern(
     result
 }
 
+/// Replace all multipliers of an existing time pattern.
+///
+/// `multipliers` must have at least one entry.
+#[tauri::command]
+pub fn update_pattern_multipliers(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, NetworkState>,
+    id: String,
+    multipliers: Vec<f64>,
+) -> Result<(), String> {
+    if multipliers.is_empty() {
+        return Err("pattern must have at least one multiplier".into());
+    }
+    let result = {
+        let mut guard = state.0.lock().unwrap();
+        match &mut *guard {
+            NetworkStateInner::Loaded {
+                network,
+                raw_bytes,
+                dto,
+            } => {
+                let pattern = network
+                    .patterns
+                    .iter_mut()
+                    .find(|p| p.id == id)
+                    .ok_or_else(|| format!("pattern '{}' not found", id))?;
+                pattern.factors = multipliers;
+                *raw_bytes = hydra::write_inp(network);
+                *dto = network_to_dto(network);
+                Ok(())
+            }
+            NetworkStateInner::Empty => Err("no network loaded".into()),
+        }
+    };
+    if result.is_ok() {
+        let _ = app.emit(NETWORK_CHANGED_EVENT, ());
+    }
+    result
+}
+
+/// Rename a time pattern, cascading the new ID to every reference:
+/// junction demand categories, reservoir/tank head patterns, pump
+/// speed/price patterns, and the network's global default/energy-price
+/// pattern (from `[OPTIONS]`).
+///
+/// Fails without mutating anything if `new_id` is empty or already in use
+/// by another pattern.
+#[tauri::command]
+pub fn rename_pattern(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, NetworkState>,
+    old_id: String,
+    new_id: String,
+) -> Result<(), String> {
+    let trimmed = new_id.trim().to_string();
+    if trimmed.is_empty() {
+        return Err("pattern ID must not be empty".into());
+    }
+    let result = {
+        let mut guard = state.0.lock().unwrap();
+        match &mut *guard {
+            NetworkStateInner::Loaded {
+                network,
+                raw_bytes,
+                dto,
+            } => {
+                if !network.patterns.iter().any(|p| p.id == old_id) {
+                    return Err(format!("pattern '{}' not found", old_id));
+                }
+                if trimmed != old_id && network.patterns.iter().any(|p| p.id == trimmed) {
+                    return Err(format!("pattern '{}' already exists", trimmed));
+                }
+
+                for p in network.patterns.iter_mut() {
+                    if p.id == old_id {
+                        p.id = trimmed.clone();
+                    }
+                }
+                for n in network.nodes.iter_mut() {
+                    match &mut n.kind {
+                        hydra::NodeKind::Junction(j) => {
+                            for d in j.demands.iter_mut() {
+                                if d.pattern.as_deref() == Some(old_id.as_str()) {
+                                    d.pattern = Some(trimmed.clone());
+                                }
+                            }
+                        }
+                        hydra::NodeKind::Reservoir(r) => {
+                            if r.head_pattern.as_deref() == Some(old_id.as_str()) {
+                                r.head_pattern = Some(trimmed.clone());
+                            }
+                        }
+                        hydra::NodeKind::Tank(t) => {
+                            if t.head_pattern.as_deref() == Some(old_id.as_str()) {
+                                t.head_pattern = Some(trimmed.clone());
+                            }
+                        }
+                    }
+                }
+                for l in network.links.iter_mut() {
+                    if let hydra::LinkKind::Pump(p) = &mut l.kind {
+                        if p.speed_pattern.as_deref() == Some(old_id.as_str()) {
+                            p.speed_pattern = Some(trimmed.clone());
+                        }
+                        if p.price_pattern.as_deref() == Some(old_id.as_str()) {
+                            p.price_pattern = Some(trimmed.clone());
+                        }
+                    }
+                }
+                if network.options.default_pattern.as_deref() == Some(old_id.as_str()) {
+                    network.options.default_pattern = Some(trimmed.clone());
+                }
+                if network.options.energy_price_pattern.as_deref() == Some(old_id.as_str()) {
+                    network.options.energy_price_pattern = Some(trimmed.clone());
+                }
+
+                *raw_bytes = hydra::write_inp(network);
+                *dto = network_to_dto(network);
+                Ok(())
+            }
+            NetworkStateInner::Empty => Err("no network loaded".into()),
+        }
+    };
+    if result.is_ok() {
+        let _ = app.emit(NETWORK_CHANGED_EVENT, ());
+    }
+    result
+}
+
 /// Delete a time pattern from the network.
 ///
 /// Fails if any junction demand, reservoir/tank head pattern, pump
@@ -4258,6 +4920,408 @@ pub fn delete_pattern(
                 }
 
                 network.patterns.retain(|p| p.id != id);
+                *raw_bytes = hydra::write_inp(network);
+                *dto = network_to_dto(network);
+                Ok(())
+            }
+            NetworkStateInner::Empty => Err("no network loaded".into()),
+        }
+    };
+    if result.is_ok() {
+        let _ = app.emit(NETWORK_CHANGED_EVENT, ());
+    }
+    result
+}
+
+// ── Controls & rules ──────────────────────────────────────────────────────────
+
+fn resolve_node_id(network: &hydra::Network, id: &str) -> Result<usize, String> {
+    network
+        .nodes
+        .iter()
+        .position(|n| n.base.id == id)
+        .map(|p| p + 1)
+        .ok_or_else(|| format!("node '{}' not found", id))
+}
+
+fn resolve_link_id(network: &hydra::Network, id: &str) -> Result<usize, String> {
+    network
+        .links
+        .iter()
+        .position(|l| l.base.id == id)
+        .map(|p| p + 1)
+        .ok_or_else(|| format!("link '{}' not found", id))
+}
+
+fn control_from_dto(
+    dto: &ControlDto,
+    network: &hydra::Network,
+) -> Result<hydra::SimpleControl, String> {
+    let link_idx = resolve_link_id(network, &dto.link_id)?;
+    let link = &network.links[link_idx - 1];
+
+    let action_status = dto
+        .action_status
+        .as_deref()
+        .map(|s| link_status_from_str(s).ok_or_else(|| format!("invalid action status '{}'", s)))
+        .transpose()?;
+    let action_setting = dto
+        .action_setting
+        .map(|v| link_setting_display_to_internal(link, v));
+    if action_status.is_none() && action_setting.is_none() {
+        return Err("control must set an action status or setting".into());
+    }
+
+    let (trigger_type, trigger_time, trigger_node, trigger_grade) = match dto.trigger_kind.as_str()
+    {
+        "timer" => (
+            hydra::TriggerType::Timer,
+            Some(
+                dto.trigger_seconds
+                    .ok_or("timer trigger requires trigger_seconds")?,
+            ),
+            None,
+            None,
+        ),
+        "clocktime" => (
+            hydra::TriggerType::TimeOfDay,
+            Some(
+                dto.trigger_seconds
+                    .ok_or("clocktime trigger requires trigger_seconds")?,
+            ),
+            None,
+            None,
+        ),
+        "hiLevel" | "loLevel" => {
+            let node_id = dto
+                .trigger_node_id
+                .as_deref()
+                .ok_or("node-level trigger requires trigger_node_id")?;
+            let node_idx = resolve_node_id(network, node_id)?;
+            let node = &network.nodes[node_idx - 1];
+            let value = dto
+                .trigger_value
+                .ok_or("node-level trigger requires trigger_value")?;
+            let kind = if dto.trigger_kind == "hiLevel" {
+                hydra::TriggerType::HiLevel
+            } else {
+                hydra::TriggerType::LowLevel
+            };
+            (
+                kind,
+                None,
+                Some(node_idx),
+                Some(node_grade_display_to_internal(node, value)),
+            )
+        }
+        other => return Err(format!("unknown trigger kind '{}'", other)),
+    };
+
+    Ok(hydra::SimpleControl {
+        link: link_idx,
+        trigger_type,
+        trigger_time,
+        trigger_node,
+        trigger_grade,
+        action_status,
+        action_setting,
+        enabled: dto.enabled,
+    })
+}
+
+fn premise_from_dto(
+    dto: &RulePremiseDto,
+    network: &hydra::Network,
+) -> Result<hydra::Premise, String> {
+    let object = match dto.object.as_str() {
+        "node" => {
+            let id = dto
+                .node_id
+                .as_deref()
+                .ok_or("node premise requires node_id")?;
+            hydra::PremiseObject::Node(resolve_node_id(network, id)?)
+        }
+        "link" => {
+            let id = dto
+                .link_id
+                .as_deref()
+                .ok_or("link premise requires link_id")?;
+            hydra::PremiseObject::Link(resolve_link_id(network, id)?)
+        }
+        "clock" => hydra::PremiseObject::Clock,
+        other => return Err(format!("unknown premise object '{}'", other)),
+    };
+    let attribute = premise_attribute_from_str(&dto.attribute)?;
+    let operator = premise_operator_from_str(&dto.operator)?;
+    let value = if attribute == hydra::PremiseAttribute::Status {
+        match dto.status_value.as_deref() {
+            Some("open") => 1.0,
+            Some("active") => 2.0,
+            _ => 0.0,
+        }
+    } else {
+        premise_value_display_to_internal(attribute, object, dto.value, network)
+    };
+    let connective = match dto.connective.as_deref() {
+        Some("and") => Some(hydra::LogicOp::And),
+        Some("or") => Some(hydra::LogicOp::Or),
+        _ => None,
+    };
+    Ok(hydra::Premise {
+        object,
+        attribute,
+        operator,
+        value,
+        connective,
+    })
+}
+
+fn rule_action_from_dto(
+    dto: &RuleActionDto,
+    network: &hydra::Network,
+) -> Result<hydra::RuleAction, String> {
+    let link_idx = resolve_link_id(network, &dto.link_id)?;
+    let link = &network.links[link_idx - 1];
+    let value = match (&dto.status, dto.setting) {
+        (Some(s), _) => hydra::ActionValue::Status(
+            link_status_from_str(s).ok_or_else(|| format!("invalid action status '{}'", s))?,
+        ),
+        (None, Some(v)) => hydra::ActionValue::Setting(link_setting_display_to_internal(link, v)),
+        (None, None) => return Err("rule action must set a status or setting".into()),
+    };
+    Ok(hydra::RuleAction {
+        link: link_idx,
+        value,
+    })
+}
+
+fn rule_from_dto(dto: &RuleDto, network: &hydra::Network) -> Result<hydra::Rule, String> {
+    if dto.premises.is_empty() {
+        return Err("rule must have at least one premise".into());
+    }
+    let premises = dto
+        .premises
+        .iter()
+        .map(|p| premise_from_dto(p, network))
+        .collect::<Result<Vec<_>, _>>()?;
+    let then_actions = dto
+        .then_actions
+        .iter()
+        .map(|a| rule_action_from_dto(a, network))
+        .collect::<Result<Vec<_>, _>>()?;
+    let else_actions = dto
+        .else_actions
+        .iter()
+        .map(|a| rule_action_from_dto(a, network))
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(hydra::Rule {
+        priority: dto.priority,
+        premises,
+        then_actions,
+        else_actions,
+    })
+}
+
+/// Return the simple controls (`[CONTROLS]`) of the loaded network, or an empty list.
+#[tauri::command]
+pub fn get_controls(state: tauri::State<'_, NetworkState>) -> Vec<ControlDto> {
+    match &*state.0.lock().unwrap() {
+        NetworkStateInner::Loaded { dto, .. } => dto.controls.clone(),
+        NetworkStateInner::Empty => vec![],
+    }
+}
+
+/// Return the rule-based controls (`[RULES]`) of the loaded network, or an empty list.
+#[tauri::command]
+pub fn get_rules(state: tauri::State<'_, NetworkState>) -> Vec<RuleDto> {
+    match &*state.0.lock().unwrap() {
+        NetworkStateInner::Loaded { dto, .. } => dto.rules.clone(),
+        NetworkStateInner::Empty => vec![],
+    }
+}
+
+/// Append a new simple control to the network.
+#[tauri::command]
+pub fn create_control(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, NetworkState>,
+    control: ControlDto,
+) -> Result<(), String> {
+    let result = {
+        let mut guard = state.0.lock().unwrap();
+        match &mut *guard {
+            NetworkStateInner::Loaded {
+                network,
+                raw_bytes,
+                dto,
+            } => {
+                let ctrl = control_from_dto(&control, network)?;
+                network.controls.push(ctrl);
+                *raw_bytes = hydra::write_inp(network);
+                *dto = network_to_dto(network);
+                Ok(())
+            }
+            NetworkStateInner::Empty => Err("no network loaded".into()),
+        }
+    };
+    if result.is_ok() {
+        let _ = app.emit(NETWORK_CHANGED_EVENT, ());
+    }
+    result
+}
+
+/// Replace the simple control at `index` (position in `get_controls()`'s
+/// response array).
+#[tauri::command]
+pub fn update_control(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, NetworkState>,
+    index: usize,
+    control: ControlDto,
+) -> Result<(), String> {
+    let result = {
+        let mut guard = state.0.lock().unwrap();
+        match &mut *guard {
+            NetworkStateInner::Loaded {
+                network,
+                raw_bytes,
+                dto,
+            } => {
+                let ctrl = control_from_dto(&control, network)?;
+                let slot = network
+                    .controls
+                    .get_mut(index)
+                    .ok_or_else(|| format!("control index {} out of range", index))?;
+                *slot = ctrl;
+                *raw_bytes = hydra::write_inp(network);
+                *dto = network_to_dto(network);
+                Ok(())
+            }
+            NetworkStateInner::Empty => Err("no network loaded".into()),
+        }
+    };
+    if result.is_ok() {
+        let _ = app.emit(NETWORK_CHANGED_EVENT, ());
+    }
+    result
+}
+
+/// Delete the simple control at `index`.
+#[tauri::command]
+pub fn delete_control(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, NetworkState>,
+    index: usize,
+) -> Result<(), String> {
+    let result = {
+        let mut guard = state.0.lock().unwrap();
+        match &mut *guard {
+            NetworkStateInner::Loaded {
+                network,
+                raw_bytes,
+                dto,
+            } => {
+                if index >= network.controls.len() {
+                    return Err(format!("control index {} out of range", index));
+                }
+                network.controls.remove(index);
+                *raw_bytes = hydra::write_inp(network);
+                *dto = network_to_dto(network);
+                Ok(())
+            }
+            NetworkStateInner::Empty => Err("no network loaded".into()),
+        }
+    };
+    if result.is_ok() {
+        let _ = app.emit(NETWORK_CHANGED_EVENT, ());
+    }
+    result
+}
+
+/// Append a new rule-based control to the network.
+#[tauri::command]
+pub fn create_rule(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, NetworkState>,
+    rule: RuleDto,
+) -> Result<(), String> {
+    let result = {
+        let mut guard = state.0.lock().unwrap();
+        match &mut *guard {
+            NetworkStateInner::Loaded {
+                network,
+                raw_bytes,
+                dto,
+            } => {
+                let r = rule_from_dto(&rule, network)?;
+                network.rules.push(r);
+                *raw_bytes = hydra::write_inp(network);
+                *dto = network_to_dto(network);
+                Ok(())
+            }
+            NetworkStateInner::Empty => Err("no network loaded".into()),
+        }
+    };
+    if result.is_ok() {
+        let _ = app.emit(NETWORK_CHANGED_EVENT, ());
+    }
+    result
+}
+
+/// Replace the rule at `index` (position in `get_rules()`'s response array).
+#[tauri::command]
+pub fn update_rule(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, NetworkState>,
+    index: usize,
+    rule: RuleDto,
+) -> Result<(), String> {
+    let result = {
+        let mut guard = state.0.lock().unwrap();
+        match &mut *guard {
+            NetworkStateInner::Loaded {
+                network,
+                raw_bytes,
+                dto,
+            } => {
+                let r = rule_from_dto(&rule, network)?;
+                let slot = network
+                    .rules
+                    .get_mut(index)
+                    .ok_or_else(|| format!("rule index {} out of range", index))?;
+                *slot = r;
+                *raw_bytes = hydra::write_inp(network);
+                *dto = network_to_dto(network);
+                Ok(())
+            }
+            NetworkStateInner::Empty => Err("no network loaded".into()),
+        }
+    };
+    if result.is_ok() {
+        let _ = app.emit(NETWORK_CHANGED_EVENT, ());
+    }
+    result
+}
+
+/// Delete the rule at `index`.
+#[tauri::command]
+pub fn delete_rule(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, NetworkState>,
+    index: usize,
+) -> Result<(), String> {
+    let result = {
+        let mut guard = state.0.lock().unwrap();
+        match &mut *guard {
+            NetworkStateInner::Loaded {
+                network,
+                raw_bytes,
+                dto,
+            } => {
+                if index >= network.rules.len() {
+                    return Err(format!("rule index {} out of range", index));
+                }
+                network.rules.remove(index);
                 *raw_bytes = hydra::write_inp(network);
                 *dto = network_to_dto(network);
                 Ok(())

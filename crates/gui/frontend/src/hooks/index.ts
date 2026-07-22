@@ -579,6 +579,28 @@ export async function createPattern(id: string): Promise<void> {
   await invoke<void>("create_pattern", { id });
 }
 
+/** Replace all multipliers of an existing time pattern. */
+export async function updatePatternMultipliers(
+  id: string,
+  multipliers: number[],
+): Promise<void> {
+  await invoke<void>("update_pattern_multipliers", { id, multipliers });
+}
+
+/**
+ * Rename a time pattern, cascading the new ID to every junction demand,
+ * reservoir/tank head pattern, pump speed/price pattern, and the network's
+ * global default/energy-price pattern that referenced it. Applied
+ * immediately (not staged in the Network Editor draft) since it's a single
+ * atomic, low-risk operation.
+ */
+export async function renamePattern(
+  oldId: string,
+  newId: string,
+): Promise<void> {
+  await invoke<void>("rename_pattern", { oldId, newId });
+}
+
 /**
  * Delete a time pattern. Rejects if any junction demand, reservoir/tank head
  * pattern, pump speed/price pattern, or the global default/energy-price
@@ -1367,24 +1389,131 @@ export interface TimePattern {
   multipliers: number[];
   stepHours: number;
 }
-export type ControlMode = "simple" | "rule";
-export interface SimpleControl {
-  id: string;
-  mode: "simple";
-  text: string;
+
+// ── Controls & rules ────────────────────────────────────────────────────────
+
+/** Mirrors the Rust `ControlDto`. Addressed by array position — there is no
+ *  natural ID for simple controls in the INP format. */
+export interface SimpleControlDto {
+  linkId: string;
+  /** "open" | "closed"; `null` when only `actionSetting` is used. */
+  actionStatus: "open" | "closed" | null;
+  /** Display-unit setting value; `null` when only `actionStatus` is used. */
+  actionSetting: number | null;
+  triggerKind: "timer" | "clocktime" | "hiLevel" | "loLevel";
+  /** Seconds — elapsed sim time for "timer", seconds-from-midnight for "clocktime". */
+  triggerSeconds: number | null;
+  /** Trigger node ID for "hiLevel"/"loLevel". */
+  triggerNodeId: string | null;
+  /** Display-unit threshold (m) for "hiLevel"/"loLevel". */
+  triggerValue: number | null;
   enabled: boolean;
 }
-export interface RuleControl {
-  id: string;
-  mode: "rule";
+
+export type RulePremiseAttribute =
+  | "head"
+  | "pressure"
+  | "demand"
+  | "level"
+  | "flow"
+  | "status"
+  | "setting"
+  | "power"
+  | "fillTime"
+  | "drainTime"
+  | "clockTime"
+  | "time";
+export type RulePremiseOperator = "eq" | "neq" | "lt" | "gt" | "le" | "ge";
+
+/** Mirrors the Rust `RulePremiseDto`. */
+export interface RulePremiseDto {
+  object: "node" | "link" | "clock";
+  nodeId: string | null;
+  linkId: string | null;
+  attribute: RulePremiseAttribute;
+  operator: RulePremiseOperator;
+  /** Display-unit threshold; ignored when `attribute === "status"`. */
+  value: number;
+  /** Only meaningful when `attribute === "status"`. */
+  statusValue: "open" | "closed" | "active" | null;
+  connective: "and" | "or" | null;
+}
+
+/** Mirrors the Rust `RuleActionDto`. */
+export interface RuleActionDto {
+  linkId: string;
+  status: "open" | "closed" | null;
+  setting: number | null;
+}
+
+/** Mirrors the Rust `RuleDto`. `name` is a display-only label ("R1", "R2", …)
+ *  synthesised from array position — rule-based controls have no persisted
+ *  name in the engine's data model. Addressed by array position. */
+export interface RuleDto {
   name: string;
   priority: number;
-  ifClause: string;
-  thenClause: string;
-  elseClause?: string;
-  enabled: boolean;
+  premises: RulePremiseDto[];
+  thenActions: RuleActionDto[];
+  elseActions: RuleActionDto[];
 }
-export type ControlEntry = SimpleControl | RuleControl;
+
+export function useControls(version = 0): SimpleControlDto[] {
+  const { version: ctxVersion } = useNetworkVersion();
+  const [controls, setControls] = useState<SimpleControlDto[]>([]);
+  useEffect(() => {
+    void ctxVersion;
+    void version;
+    let cancelled = false;
+    tryInvoke<SimpleControlDto[]>("get_controls").then((rows) => {
+      if (!cancelled && rows !== null) setControls(rows);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [ctxVersion, version]);
+  return controls;
+}
+
+export function useRules(version = 0): RuleDto[] {
+  const { version: ctxVersion } = useNetworkVersion();
+  const [rules, setRules] = useState<RuleDto[]>([]);
+  useEffect(() => {
+    void ctxVersion;
+    void version;
+    let cancelled = false;
+    tryInvoke<RuleDto[]>("get_rules").then((rows) => {
+      if (!cancelled && rows !== null) setRules(rows);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [ctxVersion, version]);
+  return rules;
+}
+
+export async function createControl(control: SimpleControlDto): Promise<void> {
+  await invoke<void>("create_control", { control });
+}
+export async function updateControl(
+  index: number,
+  control: SimpleControlDto,
+): Promise<void> {
+  await invoke<void>("update_control", { index, control });
+}
+export async function deleteControl(index: number): Promise<void> {
+  await invoke<void>("delete_control", { index });
+}
+
+export async function createRule(rule: RuleDto): Promise<void> {
+  await invoke<void>("create_rule", { rule });
+}
+export async function updateRule(index: number, rule: RuleDto): Promise<void> {
+  await invoke<void>("update_rule", { index, rule });
+}
+export async function deleteRule(index: number): Promise<void> {
+  await invoke<void>("delete_rule", { index });
+}
+
 export interface XSStation {
   station: number;
   elev: number;

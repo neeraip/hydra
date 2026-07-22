@@ -5,7 +5,6 @@ import {
   type JunctionRow,
   patchElement,
   type ReservoirRow,
-  saveProjectOnDisk,
   type TankRow,
 } from "../../../hooks";
 import type {
@@ -25,9 +24,6 @@ export interface SaveStagedElementsArgs {
   reservoirRowsAll: ReservoirRow[];
   allElementIds: Set<string>;
   tempIdPrefix: string;
-  projectId?: string;
-  activeScenarioId: string | null;
-  markEdited: (scenarioId: string | null) => void;
 }
 
 export interface SaveStagedElementsResult {
@@ -49,9 +45,6 @@ export async function saveStagedElements(
     reservoirRowsAll,
     allElementIds,
     tempIdPrefix,
-    projectId,
-    activeScenarioId,
-    markEdited,
   } = args;
 
   const persistedNodeIds = [
@@ -279,11 +272,6 @@ export async function saveStagedElements(
       failed++;
       errors.push(errorMessage(err, `Could not delete ${kind} '${id}'`));
     }
-  }
-
-  if (applied > 0 && projectId) {
-    await saveProjectOnDisk(projectId, activeScenarioId);
-    markEdited(activeScenarioId);
   }
 
   return { applied, failed, errors };

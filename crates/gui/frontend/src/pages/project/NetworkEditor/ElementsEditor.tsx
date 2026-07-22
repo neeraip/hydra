@@ -1,6 +1,4 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useActiveProject, useAppState } from "../../../AppContext";
-import { InpDiffModal } from "../../../components/modals/InpDiffModal";
 import { TabButton } from "../../../components/ui/TabButton";
 import {
   type JunctionRow,
@@ -16,16 +14,11 @@ import {
   useValveRows,
   type ValveRow,
 } from "../../../hooks";
-import { useNetworkVersion } from "../../../hooks/NetworkVersionContext";
+import { ELEMENT_TEMP_ID_PREFIX, useDraft } from "../../../hooks/DraftContext";
 import {
-  buildPreviewPatches,
   collectDirtyKinds,
-  type DraftEntry,
   type ElementKind,
-  type PendingAdd,
-  type PendingDelete,
 } from "./elementsEditorDerivations";
-import { saveStagedElements } from "./elementsEditorSave";
 import { JunctionTable } from "./JunctionTable";
 import { PipeTable } from "./PipeTable";
 import { PumpTable } from "./PumpTable";
@@ -41,24 +34,27 @@ type Section =
   | "reservoirs"
   | "valves";
 
-const TEMP_ID_PREFIX = "__new__:";
+const TEMP_ID_PREFIX = ELEMENT_TEMP_ID_PREFIX;
 
 export function ElementsEditor({
-  onDraftSizeChange,
   focusPumpId,
   focusPumpToken,
 }: {
-  onDraftSizeChange?: (n: number) => void;
   /** Pump ID to select when `focusPumpToken` changes (e.g. "attached to" link
    *  clicked from the Pump curves tab). */
   focusPumpId?: string;
   /** Bump this (e.g. `Date.now()`) to re-trigger the jump even for the same id. */
   focusPumpToken?: number;
 }) {
-  const { showToast, activeScenarioId } = useAppState();
-  const { project } = useActiveProject();
-  const { bumpNetwork, markEdited } = useNetworkVersion();
-  const [previewOpen, setPreviewOpen] = useState(false);
+  const {
+    elementsDraft: draft,
+    setElementsDraft: setDraft,
+    pendingAdds,
+    setPendingAdds,
+    pendingDeletes,
+    setPendingDeletes,
+    nextTempIndex,
+  } = useDraft();
   const junctionRowsAll = useJunctionRows();
   const pipeRowsAll = usePipeRows();
   const pumpRowsAll = usePumpRows();
@@ -70,11 +66,7 @@ export function ElementsEditor({
   const [sortField, setSortField] = useState<string>("id");
   const [sortAsc, setSortAsc] = useState(true);
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [pendingAdds, setPendingAdds] = useState<PendingAdd[]>([]);
-  const [pendingDeletes, setPendingDeletes] = useState<PendingDelete[]>([]);
-  const [draft, setDraft] = useState<Map<string, DraftEntry>>(() => new Map());
   const [discardGen, setDiscardGen] = useState(0);
-  const nextTempIndex = useRef(1);
   const tableScrollRef = useRef<HTMLDivElement>(null);
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: `focusPumpToken` is an intentional trigger to re-run the jump even for the same pump id; `focusPumpId` is read only when a jump fires.
@@ -94,29 +86,21 @@ export function ElementsEditor({
     () => new Set(pendingDeletes.map((d) => `${d.kind}:${d.id}`)),
     [pendingDeletes],
   );
-  const dirtyCount = draft.size + pendingAdds.length + pendingDeletes.length;
-  const previewPatches = useMemo(
-    () =>
-      buildPreviewPatches({
-        draftEntries: draftValues,
-        pendingAdds,
-        pendingDeletes,
-        pendingDeleteKeys,
-        pipeRowsAll,
-        pumpRowsAll,
-        valveRowsAll,
-        tempIdPrefix: TEMP_ID_PREFIX,
-      }),
-    [
-      draftValues,
-      pendingAdds,
-      pendingDeletes,
-      pendingDeleteKeys,
-      pipeRowsAll,
-      pumpRowsAll,
-      valveRowsAll,
-    ],
-  );
+
+  // Reset EditableCell drafts to committed values whenever the elements
+  // draft becomes empty (a save or discard) — this is what previously
+  // happened inside this component's own handleSave/handleDiscard, now
+  // triggered from the DraftContext (which may be cleared from the global
+  // save bar in NetworkEditor.tsx).
+  const elementsDirtyCount =
+    draft.size + pendingAdds.length + pendingDeletes.length;
+  const prevElementsDirtyCount = useRef(elementsDirtyCount);
+  useEffect(() => {
+    if (prevElementsDirtyCount.current > 0 && elementsDirtyCount === 0) {
+      setDiscardGen((n) => n + 1);
+    }
+    prevElementsDirtyCount.current = elementsDirtyCount;
+  }, [elementsDirtyCount]);
 
   const stagedValue = useCallback(
     (
@@ -140,13 +124,6 @@ export function ElementsEditor({
     [draftValues, pendingAdds, pendingDeletes],
   );
 
-  // Notify parent whenever unsaved count changes so the section rail can show a dot.
-  const prevDraftSize = useRef(-1);
-  if (dirtyCount !== prevDraftSize.current) {
-    prevDraftSize.current = dirtyCount;
-    onDraftSizeChange?.(dirtyCount);
-  }
-
   // Stage a change locally without writing to the backend yet.
   const handleStage = useCallback(
     (kind: string, id: string, field: string, value: number | string) => {
@@ -156,7 +133,7 @@ export function ElementsEditor({
         return next;
       });
     },
-    [],
+    [setDraft],
   );
 
   const handleTabClick = (section: Section) => {
@@ -389,36 +366,6 @@ export function ElementsEditor({
     [valveRowsAllWithPending, filterSort],
   );
 
-  const allElementIds = useMemo(() => {
-    const ids = new Set<string>();
-    junctionRowsAll.forEach((r) => {
-      ids.add(r.id);
-    });
-    pipeRowsAll.forEach((r) => {
-      ids.add(r.id);
-    });
-    pumpRowsAll.forEach((r) => {
-      ids.add(r.id);
-    });
-    tankRowsAll.forEach((r) => {
-      ids.add(r.id);
-    });
-    reservoirRowsAll.forEach((r) => {
-      ids.add(r.id);
-    });
-    valveRowsAll.forEach((r) => {
-      ids.add(r.id);
-    });
-    return ids;
-  }, [
-    junctionRowsAll,
-    pipeRowsAll,
-    pumpRowsAll,
-    tankRowsAll,
-    reservoirRowsAll,
-    valveRowsAll,
-  ]);
-
   const nodeReferenceOptions = useMemo(() => {
     const ids = new Set<string>();
     junctionRowsExisting.forEach((r) => {
@@ -472,7 +419,7 @@ export function ElementsEditor({
     setSortField("id");
     setSortAsc(true);
     setSelectedId(tempId);
-  }, [activeKind]);
+  }, [activeKind, nextTempIndex, setPendingAdds]);
 
   const handleDeleteSelected = useCallback(() => {
     if (!selectedId) return;
@@ -505,71 +452,7 @@ export function ElementsEditor({
       return next;
     });
     setSelectedId(null);
-  }, [activeKind, selectedId]);
-
-  // Apply all staged changes/new rows to the backend sequentially, then clear local draft state.
-  const handleSave = useCallback(async () => {
-    const { applied, failed, errors } = await saveStagedElements({
-      draftEntries: draftValues,
-      pendingAdds,
-      pendingDeletes,
-      pendingDeleteKeys,
-      junctionRowsAll,
-      tankRowsAll,
-      reservoirRowsAll,
-      allElementIds,
-      tempIdPrefix: TEMP_ID_PREFIX,
-      projectId: project?.id,
-      activeScenarioId,
-      markEdited: (scenarioId) => markEdited(scenarioId ?? null),
-    });
-
-    if (failed > 0) {
-      const detail = errors.length > 0 ? `: ${errors[0]}` : "";
-      showToast(
-        `${failed} change${failed > 1 ? "s" : ""} could not be saved${detail}`,
-      );
-    }
-
-    if (failed === 0) {
-      setPendingAdds([]);
-      setPendingDeletes([]);
-      setDraft(new Map());
-      bumpNetwork();
-      return;
-    }
-
-    // If some writes succeeded, reset local draft state to avoid retrying
-    // already-applied mutations against changed IDs.
-    if (applied > 0) {
-      setPendingAdds([]);
-      setPendingDeletes([]);
-      setDraft(new Map());
-      bumpNetwork();
-    }
-  }, [
-    draftValues,
-    pendingAdds,
-    pendingDeletes,
-    pendingDeleteKeys,
-    junctionRowsAll,
-    tankRowsAll,
-    reservoirRowsAll,
-    allElementIds,
-    bumpNetwork,
-    markEdited,
-    showToast,
-    project,
-    activeScenarioId,
-  ]);
-
-  // Discard all staged changes/new rows and reset cells to server values.
-  const handleDiscard = useCallback(() => {
-    setPendingAdds([]);
-    setPendingDeletes([]);
-    setDraft(new Map());
-    setDiscardGen((n) => n + 1);
-  }, []);
+  }, [activeKind, selectedId, setPendingAdds, setPendingDeletes, setDraft]);
 
   const shownRows =
     activeSection === "junctions"
@@ -844,142 +727,23 @@ export function ElementsEditor({
         )}
       </div>
 
-      {/* Status / save bar */}
+      {/* Status bar — Save/Discard/Preview now live in the unified bar at
+          the bottom of NetworkEditor.tsx, spanning all four tabs. */}
       <div
         style={{
           display: "flex",
           alignItems: "center",
           gap: 8,
           padding: "6px 16px",
-          borderTop: `1px solid ${dirtyCount > 0 ? "rgba(220, 160, 40, 0.3)" : "var(--border)"}`,
+          borderTop: "1px solid var(--border)",
           flexShrink: 0,
           fontSize: 12,
-          background: dirtyCount > 0 ? "rgba(220, 160, 40, 0.07)" : undefined,
-          transition: "background 200ms",
         }}
       >
-        {dirtyCount > 0 ? (
-          <>
-            <span style={{ color: "rgba(220, 160, 40, 0.9)", fontWeight: 500 }}>
-              {dirtyCount} unsaved change{dirtyCount !== 1 ? "s" : ""}
-            </span>
-            <div style={{ flex: 1 }} />
-            {dirtyCount > 0 && (
-              <button
-                type="button"
-                onClick={() => setPreviewOpen(true)}
-                onMouseEnter={(e) => {
-                  (e.currentTarget as HTMLButtonElement).style.background =
-                    "var(--nav-hover)";
-                  (e.currentTarget as HTMLButtonElement).style.borderColor =
-                    "var(--border-hover)";
-                  (e.currentTarget as HTMLButtonElement).style.color =
-                    "var(--text-primary)";
-                }}
-                onMouseLeave={(e) => {
-                  (e.currentTarget as HTMLButtonElement).style.background =
-                    "transparent";
-                  (e.currentTarget as HTMLButtonElement).style.borderColor =
-                    "var(--border)";
-                  (e.currentTarget as HTMLButtonElement).style.color =
-                    "var(--text-secondary)";
-                }}
-                style={{
-                  padding: "4px 12px",
-                  borderRadius: 5,
-                  border: "1px solid var(--border)",
-                  background: "transparent",
-                  color: "var(--text-secondary)",
-                  fontFamily: "var(--font-ui)",
-                  fontSize: 12,
-                  cursor: "pointer",
-                  transition:
-                    "background var(--t-fast), border-color var(--t-fast), color var(--t-fast)",
-                }}
-              >
-                Preview changes
-              </button>
-            )}
-            <button
-              type="button"
-              onClick={handleDiscard}
-              onMouseEnter={(e) => {
-                (e.currentTarget as HTMLButtonElement).style.background =
-                  "var(--nav-hover)";
-                (e.currentTarget as HTMLButtonElement).style.borderColor =
-                  "var(--border-hover)";
-                (e.currentTarget as HTMLButtonElement).style.color =
-                  "var(--text-primary)";
-              }}
-              onMouseLeave={(e) => {
-                (e.currentTarget as HTMLButtonElement).style.background =
-                  "transparent";
-                (e.currentTarget as HTMLButtonElement).style.borderColor =
-                  "var(--border)";
-                (e.currentTarget as HTMLButtonElement).style.color =
-                  "var(--text-secondary)";
-              }}
-              style={{
-                padding: "4px 12px",
-                borderRadius: 5,
-                border: "1px solid var(--border)",
-                background: "transparent",
-                color: "var(--text-secondary)",
-                fontFamily: "var(--font-ui)",
-                fontSize: 12,
-                cursor: "pointer",
-                transition:
-                  "background var(--t-fast), border-color var(--t-fast), color var(--t-fast)",
-              }}
-            >
-              Discard
-            </button>
-            <button
-              type="button"
-              onClick={handleSave}
-              onMouseEnter={(e) => {
-                (e.currentTarget as HTMLButtonElement).style.background =
-                  "rgba(220, 160, 40, 0.22)";
-                (e.currentTarget as HTMLButtonElement).style.borderColor =
-                  "rgba(220, 160, 40, 0.65)";
-              }}
-              onMouseLeave={(e) => {
-                (e.currentTarget as HTMLButtonElement).style.background =
-                  "rgba(220, 160, 40, 0.12)";
-                (e.currentTarget as HTMLButtonElement).style.borderColor =
-                  "rgba(220, 160, 40, 0.4)";
-              }}
-              style={{
-                padding: "4px 12px",
-                borderRadius: 5,
-                border: "1px solid rgba(220, 160, 40, 0.4)",
-                background: "rgba(220, 160, 40, 0.12)",
-                color: "rgba(220, 160, 40, 0.95)",
-                fontFamily: "var(--font-ui)",
-                fontSize: 12,
-                fontWeight: 500,
-                cursor: "pointer",
-                transition:
-                  "background var(--t-fast), border-color var(--t-fast)",
-              }}
-            >
-              Save changes
-            </button>
-          </>
-        ) : (
-          <span style={{ color: "var(--text-tertiary)" }}>
-            Showing {shownRows} of {totalRows} elements
-          </span>
-        )}
+        <span style={{ color: "var(--text-tertiary)" }}>
+          Showing {shownRows} of {totalRows} elements
+        </span>
       </div>
-
-      {/* Preview changes modal */}
-      {previewOpen && project && (
-        <InpDiffModal
-          patches={previewPatches}
-          onClose={() => setPreviewOpen(false)}
-        />
-      )}
     </div>
   );
 }

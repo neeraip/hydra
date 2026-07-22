@@ -1,19 +1,24 @@
-/* WD pump-curve editor — head/flow scatter+spline with editable points. */
+/* WD pump-curve editor — head/flow scatter+spline with editable points.
+   Edits are staged into the shared DraftContext, not committed to the
+   backend immediately — they become part of the unified Network Editor
+   draft alongside Elements/Patterns/Controls, saved or discarded together. */
 
 import { TrashIcon } from "@heroicons/react/16/solid";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useAppState } from "../../AppContext";
-import {
-  type CurvePoint,
-  createCurve,
-  deleteCurve,
-  type PumpCurve,
-  updateCurvePoints,
-  useCurves,
-} from "../../hooks";
-import { useNetworkVersion } from "../../hooks/NetworkVersionContext";
+import { type CurvePoint, type PumpCurve, useCurves } from "../../hooks";
+import { useDraft } from "../../hooks/DraftContext";
 import { EditableCell } from "../../pages/project/NetworkEditor/TablePrimitives";
 import { DeleteConfirmModal } from "../modals/DeleteConfirmModal";
+
+const DEFAULT_CURVE_POINTS: CurvePoint[] = [
+  { flow: 0, head: 50 },
+  { flow: 5, head: 0 },
+];
+
+function classifyCurveType(n: number): PumpCurve["curveType"] {
+  return n === 1 ? "single-point" : n === 3 ? "three-point" : "multi-point";
+}
 
 export function CurveEditor({
   accent,
@@ -25,8 +30,15 @@ export function CurveEditor({
   onNavigateToPump?: (pumpId: string) => void;
 }) {
   const { showToast } = useAppState();
-  const { bumpNetwork } = useNetworkVersion();
   const curves = useCurves();
+  const {
+    curveAdds,
+    setCurveAdds,
+    curveEdits,
+    setCurveEdits,
+    curveDeletes,
+    setCurveDeletes,
+  } = useDraft();
   const [activeId, setActiveId] = useState<string | null>(null);
   const [hoverIdx, setHoverIdx] = useState<number | null>(null);
   const [creating, setCreating] = useState(false);
@@ -39,58 +51,80 @@ export function CurveEditor({
     if (creating) newIdRef.current?.focus();
   }, [creating]);
 
-  const curve =
-    curves.find((c) => c.id === activeId) ??
-    (curves.length > 0 ? curves[0] : null);
+  // Merge staged creates/edits/deletes on top of the real curve list so the
+  // sidebar and editor always reflect the current draft.
+  const mergedCurves = useMemo<PumpCurve[]>(() => {
+    const existing = curves
+      .filter((c) => !curveDeletes.has(c.id))
+      .map((c) => {
+        const staged = curveEdits.get(c.id);
+        if (!staged) return c;
+        return {
+          ...c,
+          points: staged,
+          curveType: classifyCurveType(staged.length),
+        };
+      });
+    const added: PumpCurve[] = Array.from(curveAdds.entries()).map(
+      ([id, points]) => ({
+        id,
+        pumpId: "",
+        curveType: classifyCurveType(points.length),
+        points,
+      }),
+    );
+    return [...existing, ...added];
+  }, [curves, curveEdits, curveDeletes, curveAdds]);
 
-  async function handleCreate() {
+  const curve =
+    mergedCurves.find((c) => c.id === activeId) ??
+    (mergedCurves.length > 0 ? mergedCurves[0] : null);
+
+  function handleCreate() {
     const trimmed = newId.trim();
     if (!trimmed) {
       setCreateError("ID required");
       return;
     }
-    try {
-      await createCurve(trimmed);
-      bumpNetwork();
-      setActiveId(trimmed);
-      setCreating(false);
-      setNewId("");
-      setCreateError(null);
-    } catch (err) {
-      setCreateError(typeof err === "string" ? err : "Failed to create curve");
+    if (curves.some((c) => c.id === trimmed) || curveAdds.has(trimmed)) {
+      setCreateError(`curve '${trimmed}' already exists`);
+      return;
     }
+    setCurveAdds((prev) => new Map(prev).set(trimmed, DEFAULT_CURVE_POINTS));
+    setActiveId(trimmed);
+    setCreating(false);
+    setNewId("");
+    setCreateError(null);
   }
 
-  async function handleDelete() {
+  function handleDelete() {
     if (!pendingDeleteId) return;
     const id = pendingDeleteId;
     setPendingDeleteId(null);
-    try {
-      await deleteCurve(id);
-      bumpNetwork();
-      if (activeId === id) setActiveId(null);
-      showToast(`Deleted curve "${id}"`, "success");
-    } catch (err) {
-      showToast(
-        typeof err === "string" ? err : "Failed to delete curve",
-        "error",
-      );
+    if (curveAdds.has(id)) {
+      setCurveAdds((prev) => {
+        const next = new Map(prev);
+        next.delete(id);
+        return next;
+      });
+    } else {
+      setCurveDeletes((prev) => new Set(prev).add(id));
+      setCurveEdits((prev) => {
+        if (!prev.has(id)) return prev;
+        const next = new Map(prev);
+        next.delete(id);
+        return next;
+      });
     }
+    if (activeId === id) setActiveId(null);
   }
 
-  async function commitPoints(points: CurvePoint[]) {
+  function commitPoints(points: CurvePoint[]) {
     if (!curve) return;
-    try {
-      await updateCurvePoints(
-        curve.id,
-        points.map((p) => p.flow),
-        points.map((p) => p.head),
-      );
-      bumpNetwork();
-    } catch (err) {
-      showToast(
-        typeof err === "string" ? err : "Failed to update curve points",
-      );
+    if (curveAdds.has(curve.id)) {
+      setCurveAdds((prev) => new Map(prev).set(curve.id, points));
+    } else {
+      setCurveEdits((prev) => new Map(prev).set(curve.id, points));
     }
   }
 
@@ -102,7 +136,7 @@ export function CurveEditor({
     if (!curve) return;
     const v = parseFloat(raw);
     if (!Number.isFinite(v)) return;
-    void commitPoints(
+    commitPoints(
       curve.points.map((p, i) => (i === index ? { ...p, [field]: v } : p)),
     );
   }
@@ -110,7 +144,7 @@ export function CurveEditor({
   function handleAddPoint() {
     if (!curve) return;
     const last = curve.points[curve.points.length - 1];
-    void commitPoints([
+    commitPoints([
       ...curve.points,
       { flow: (last?.flow ?? 0) + 1, head: Math.max(0, (last?.head ?? 0) - 1) },
     ]);
@@ -122,7 +156,7 @@ export function CurveEditor({
       showToast("A curve needs at least 2 points");
       return;
     }
-    void commitPoints(curve.points.filter((_, i) => i !== index));
+    commitPoints(curve.points.filter((_, i) => i !== index));
   }
 
   return (
@@ -136,8 +170,12 @@ export function CurveEditor({
           flexShrink: 0,
         }}
       >
-        {curves.map((c) => {
-          const active = c.id === (activeId ?? curves[0]?.id);
+        {mergedCurves.map((c) => {
+          const active = c.id === (activeId ?? mergedCurves[0]?.id);
+          const isDirty =
+            curveAdds.has(c.id) ||
+            curveEdits.has(c.id) ||
+            curveDeletes.has(c.id);
           return (
             <button
               type="button"
@@ -157,16 +195,32 @@ export function CurveEditor({
                 fontFamily: "var(--font-ui)",
                 color: active ? "var(--text-primary)" : "var(--text-secondary)",
                 borderBottom: "1px solid var(--border)",
+                opacity: curveDeletes.has(c.id) ? 0.5 : 1,
               }}
             >
               <div
                 style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 6,
                   fontSize: 13,
                   fontWeight: 500,
                   fontFamily: "var(--font-mono)",
                 }}
               >
                 {c.id}
+                {isDirty && (
+                  <span
+                    style={{
+                      width: 6,
+                      height: 6,
+                      borderRadius: "50%",
+                      background: "rgba(220, 160, 40, 0.9)",
+                      display: "inline-block",
+                      flexShrink: 0,
+                    }}
+                  />
+                )}
               </div>
               <div
                 style={{
@@ -366,38 +420,27 @@ export function CurveEditor({
             <button
               type="button"
               onClick={() => setPendingDeleteId(curve.id)}
+              title="Delete curve"
               style={{
                 marginLeft: curve.bep != null ? undefined : "auto",
                 flexShrink: 0,
+                border: "none",
+                background: "transparent",
+                color: "var(--text-tertiary)",
+                cursor: "pointer",
                 display: "flex",
                 alignItems: "center",
-                gap: 5,
-                border: "1px solid rgba(239,68,68,0.35)",
-                borderRadius: 5,
-                background: "transparent",
-                color: "#ef4444",
-                cursor: "pointer",
-                fontSize: 12,
-                fontFamily: "var(--font-ui)",
-                padding: "4px 10px",
-                transition:
-                  "background var(--t-fast), border-color var(--t-fast)",
+                padding: 4,
               }}
               onMouseEnter={(e) => {
-                (e.currentTarget as HTMLButtonElement).style.background =
-                  "rgba(239,68,68,0.12)";
-                (e.currentTarget as HTMLButtonElement).style.borderColor =
-                  "rgba(239,68,68,0.6)";
+                (e.currentTarget as HTMLButtonElement).style.color = "#ef4444";
               }}
               onMouseLeave={(e) => {
-                (e.currentTarget as HTMLButtonElement).style.background =
-                  "transparent";
-                (e.currentTarget as HTMLButtonElement).style.borderColor =
-                  "rgba(239,68,68,0.35)";
+                (e.currentTarget as HTMLButtonElement).style.color =
+                  "var(--text-tertiary)";
               }}
             >
-              <TrashIcon style={{ width: 13, height: 13 }} />
-              Delete
+              <TrashIcon style={{ width: 14, height: 14 }} />
             </button>
           </div>
 
