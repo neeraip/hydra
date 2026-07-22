@@ -54,3 +54,12 @@ The GUI's in-app "What's New" panel (`crates/gui/frontend/src/hooks/useLatestRel
 
 - Keep section headers (`## What's New`, `## Bug Fixes`, etc.) in the GitHub release body for readers on GitHub.
 - Don't expect those headers to appear in-app — the GUI intentionally flattens everything into one plain bullet list under its own single "What's New" heading. This is expected behavior, not a bug; no changes are needed on the GUI side to support categorized release notes.
+
+### Writing style
+
+Release notes are consumer-facing — most readers are end users, not engineers. Each bullet should be understandable to someone who has never looked at the code:
+
+- Describe the *user-visible effect* ("Pump curves can now be edited directly"), not the implementation ("refactored CurveEditor to stage points via DraftContext").
+- Avoid internal jargon — component/file/function names, crate names, data structures, PR/issue numbers — unless there is genuinely no other way to describe the change (e.g. a specific `.inp` keyword or unit-system term users already know from EPANET).
+- Prefer plain verbs over technical ones: "fixed", "added", "now supports" instead of "refactored", "migrated", "unified".
+- Keep each bullet to one sentence. If a change needs a technical caveat for advanced users, put it in the PR description or commit body instead — not the release notes.
