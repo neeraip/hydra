@@ -1844,7 +1844,7 @@ dependencies = [
 
 [[package]]
 name = "hydra-gui"
-version = "1.4.2"
+version = "1.5.0"
 dependencies = [
  "hydra-sdk",
  "serde",
