@@ -38,7 +38,9 @@ hydra network.inp report.rpt output.out
 # Named flags (equivalent)
 hydra --input network.inp --report report.rpt --output output.out
 
-# Accept an HTTP URL as input
+# Accept an HTTP URL as input (redirects are followed, up to 10; plain
+# http:// is accepted; response bodies up to 1 GiB; 10 s connect / 300 s
+# overall timeout)
 hydra https://example.com/network.inp
 
 # JSON report
@@ -56,9 +58,9 @@ hydra -v
 | Code | Meaning |
 |------|---------|
 | `0` | Simulation completed (warnings may appear in the report) |
-| `1` | Input validation error (bad INP, HTTP 4xx, missing file) |
+| `1` | Usage/input error (bad arguments, bad INP, HTTP 4xx, missing input file) |
 | `2` | Solver error (non-convergence or singularity) |
-| `3` | I/O error (file not found, permission denied, HTTP 5xx, network) |
+| `3` | I/O error (permission denied, HTTP 5xx, network failure) |
 
 ## License
 

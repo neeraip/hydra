@@ -6,9 +6,9 @@
 //
 // Exit codes:
 //   0 — simulation completed (warnings may appear in the report)
-//   1 — input validation error (bad INP, HTTP 4xx, missing file)
+//   1 — usage/input error (bad arguments, bad INP, HTTP 4xx, missing input file)
 //   2 — solver error (non-convergence or singularity)
-//   3 — I/O error (file not found, permission denied, HTTP 5xx, network)
+//   3 — I/O error (permission denied, HTTP 5xx, network failure)
 
 use std::io::{IsTerminal, Write};
 use std::process;
@@ -38,11 +38,14 @@ enum CliRunError {
 )]
 struct Cli {
     /// Model file path, and optionally report and output file paths.
-    /// Follows the EPANET convention: `hydra <input> <report> <output>`
+    /// Follows the EPANET convention: `hydra <input> <report> <output>`.
+    /// The input may also be an http:// or https:// URL (redirects are
+    /// followed, up to 10; bodies up to 1 GiB are accepted).
     #[arg(value_name = "INPUT [REPORT] [OUTPUT]")]
     positional: Vec<String>,
 
-    /// Path to the model file (alternative to positional argument).
+    /// Path (or http:// / https:// URL) of the model file
+    /// (alternative to positional argument).
     #[arg(long = "input", value_name = "PATH")]
     input_named: Option<String>,
 
@@ -90,13 +93,35 @@ impl Cli {
 }
 
 fn main() {
-    let cli = Cli::parse();
+    // clap's default `parse()` exits with code 2 on usage errors, but this
+    // CLI reserves 2 for solver errors. Map usage errors to exit 1 while
+    // keeping clap's rendered output verbatim on the stream clap chose
+    // (help/version go to stdout and exit 0; errors go to stderr).
+    let cli = match Cli::try_parse() {
+        Ok(cli) => cli,
+        Err(e) => {
+            let code = clap_error_exit_code(&e);
+            let _ = e.print();
+            process::exit(code);
+        }
+    };
     if cli.version {
         print_version_info();
         process::exit(0);
     }
     let exit_code = run(&cli);
     process::exit(exit_code);
+}
+
+/// Exit code for a clap parse error: 0 for help/version display, 1 for
+/// genuine usage errors (never clap's default 2, which is reserved for
+/// solver errors).
+fn clap_error_exit_code(e: &clap::Error) -> i32 {
+    use clap::error::ErrorKind;
+    match e.kind() {
+        ErrorKind::DisplayHelp | ErrorKind::DisplayVersion => 0,
+        _ => 1,
+    }
 }
 
 fn print_version_info() {
@@ -309,7 +334,7 @@ fn run(cli: &Cli) -> i32 {
         }
     }
 
-    // ── Write report (crates/cli/spec.md §4) ────────────────────────────────────────
+    // ── Write report ──────────────────────────────────────────────────────────
     // When the report goes to stdout and progress was printed on stderr,
     // add a blank separator line so the two don't visually run together.
     if cli.report().is_none() && progress.enabled {
@@ -548,14 +573,31 @@ fn fetch(uri: &str) -> Result<Vec<u8>, FetchError> {
     }
 }
 
+/// Connect timeout for HTTP model fetches.
+const HTTP_CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+/// Global timeout for an entire HTTP model fetch (connect + response + body).
+const HTTP_GLOBAL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(300);
+/// Maximum accepted response body size for an HTTP model fetch (1 GiB).
+/// ureq's default is 10 MB, which is too small for large network models.
+const HTTP_BODY_LIMIT: u64 = 1024 * 1024 * 1024;
+
 /// Download a model file over HTTP/HTTPS.
 ///
 /// Performs a single GET and buffers the full response before returning
 /// (HTTP bodies cannot be seeked, so the two-pass INP parser runs against
-/// the buffer). Redirects are followed automatically by ureq.
+/// the buffer). Redirects (up to 10) are followed automatically by ureq,
+/// and plain `http://` is accepted — callers wrapping the CLI should be
+/// aware of both. The fetch uses a 10 s connect timeout and a 300 s global
+/// timeout so a stalled server cannot hang the CLI forever, and accepts
+/// response bodies up to 1 GiB.
 /// Error mapping: HTTP 4xx → Input (exit 1), 5xx / network → Io (exit 3).
 fn fetch_http(url: &str) -> Result<Vec<u8>, FetchError> {
-    let response = ureq::get(url).call().map_err(|e| match &e {
+    let agent: ureq::Agent = ureq::Agent::config_builder()
+        .timeout_connect(Some(HTTP_CONNECT_TIMEOUT))
+        .timeout_global(Some(HTTP_GLOBAL_TIMEOUT))
+        .build()
+        .new_agent();
+    let response = agent.get(url).call().map_err(|e| match &e {
         ureq::Error::StatusCode(code) => {
             let code = *code;
             if (400..500).contains(&code) {
@@ -568,6 +610,8 @@ fn fetch_http(url: &str) -> Result<Vec<u8>, FetchError> {
     })?;
     response
         .into_body()
+        .with_config()
+        .limit(HTTP_BODY_LIMIT)
         .read_to_vec()
         .map_err(|e| FetchError::Io(format!("error reading response body from {url}: {e}")))
 }
@@ -745,6 +789,21 @@ mod tests {
         let cli = parse(&["hydra", "a", "b", "c", "d"]);
         assert_eq!(cli.positional.len(), 4);
         // run() would return exit code 1 for this case
+    }
+
+    // ── Usage-error exit codes ───────────────────────────────────────────
+
+    #[test]
+    fn unknown_flag_maps_to_exit_1_not_clap_default_2() {
+        let err = Cli::try_parse_from(["hydra", "--no-such-flag"])
+            .expect_err("unknown flag should fail to parse");
+        assert_eq!(clap_error_exit_code(&err), 1);
+    }
+
+    #[test]
+    fn help_display_maps_to_exit_0() {
+        let err = Cli::try_parse_from(["hydra", "--help"]).expect_err("--help renders as Err");
+        assert_eq!(clap_error_exit_code(&err), 0);
     }
 
     #[test]
