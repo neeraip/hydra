@@ -75,7 +75,7 @@ fn is_terminal_queue_status(status: &str) -> bool {
 /// intentionally transient: closing the application clears all pending items.
 #[derive(Default)]
 pub struct RunQueue {
-    inner: std::sync::Mutex<RunQueueInner>,
+    inner: parking_lot::Mutex<RunQueueInner>,
 }
 
 #[derive(Default)]
@@ -103,7 +103,7 @@ struct RunQueueItem {
 
 impl RunQueue {
     fn enqueue(&self, item: RunQueueItem) {
-        let mut g = self.inner.lock().unwrap();
+        let mut g = self.inner.lock();
         g.items.push(item);
         Self::prune_terminal_history_locked(&mut g, meta::now_secs());
     }
@@ -111,7 +111,7 @@ impl RunQueue {
     /// Atomically claim the processor slot. Returns `true` if the caller
     /// should spawn the queue processor (i.e. it was not already running).
     pub fn try_claim_processor(&self) -> bool {
-        let mut g = self.inner.lock().unwrap();
+        let mut g = self.inner.lock();
         if g.processor_running {
             return false;
         }
@@ -119,14 +119,26 @@ impl RunQueue {
         true
     }
 
-    pub fn release_processor(&self) {
-        self.inner.lock().unwrap().processor_running = false;
+    /// Atomically fetch the next "queued" item (global FIFO across all
+    /// projects) or, when none exists, release the processor slot.
+    ///
+    /// Performing the emptiness check and the release under a single lock
+    /// closes the shutdown race where `enqueue_runs` inserts an item after the
+    /// processor's final emptiness check but before the release — with a
+    /// separate `release_processor()` call that item would sit queued forever
+    /// because `try_claim_processor` still saw the slot as taken.
+    fn next_queued_or_release(&self) -> Option<RunQueueItem> {
+        let mut g = self.inner.lock();
+        let next = g.items.iter().find(|i| i.status == "queued").cloned();
+        if next.is_none() {
+            g.processor_running = false;
+        }
+        next
     }
 
     fn get_for_project(&self, project_id: &str) -> Vec<RunQueueItem> {
         self.inner
             .lock()
-            .unwrap()
             .items
             .iter()
             .filter(|i| i.project_id == project_id)
@@ -134,19 +146,8 @@ impl RunQueue {
             .collect()
     }
 
-    /// Returns cloned data of the next "queued" item (global FIFO across all projects).
-    fn next_queued(&self) -> Option<RunQueueItem> {
-        self.inner
-            .lock()
-            .unwrap()
-            .items
-            .iter()
-            .find(|i| i.status == "queued")
-            .cloned()
-    }
-
     fn mark_running(&self, id: &str, started_at: i64) {
-        let mut g = self.inner.lock().unwrap();
+        let mut g = self.inner.lock();
         if let Some(item) = g.items.iter_mut().find(|i| i.id == id) {
             item.status = "running".into();
             item.started_at = Some(started_at);
@@ -154,7 +155,7 @@ impl RunQueue {
     }
 
     fn mark_done(&self, id: &str, finished_at: i64) {
-        let mut g = self.inner.lock().unwrap();
+        let mut g = self.inner.lock();
         if let Some(item) = g.items.iter_mut().find(|i| i.id == id) {
             item.status = "done".into();
             item.finished_at = Some(finished_at);
@@ -164,7 +165,7 @@ impl RunQueue {
     }
 
     fn mark_failed(&self, id: &str, finished_at: i64, error: &str) {
-        let mut g = self.inner.lock().unwrap();
+        let mut g = self.inner.lock();
         if let Some(item) = g.items.iter_mut().find(|i| i.id == id) {
             item.status = "failed".into();
             item.finished_at = Some(finished_at);
@@ -175,7 +176,7 @@ impl RunQueue {
     }
 
     fn mark_cancelled(&self, id: &str, finished_at: i64) {
-        let mut g = self.inner.lock().unwrap();
+        let mut g = self.inner.lock();
         if let Some(item) = g.items.iter_mut().find(|i| i.id == id) {
             item.status = "cancelled".into();
             item.finished_at = Some(finished_at);
@@ -188,11 +189,15 @@ impl RunQueue {
     /// for `project_id`. Returns number of affected items.
     fn cancel_for_project(&self, project_id: &str) -> u32 {
         let mut count = 0u32;
-        let mut g = self.inner.lock().unwrap();
+        let now = meta::now_secs();
+        let mut g = self.inner.lock();
         let mut running_ids: Vec<String> = Vec::new();
         for item in g.items.iter_mut() {
             if item.project_id == project_id && item.status == "queued" {
                 item.status = "cancelled".into();
+                // Stamp `finished_at` like `mark_cancelled` does so TTL
+                // pruning and the frontend see a real completion time.
+                item.finished_at = Some(now);
                 count += 1;
             } else if item.project_id == project_id && item.status == "running" {
                 running_ids.push(item.id.clone());
@@ -204,7 +209,7 @@ impl RunQueue {
             }
         }
         if count > 0 {
-            Self::prune_terminal_history_locked(&mut g, meta::now_secs());
+            Self::prune_terminal_history_locked(&mut g, now);
         }
         count
     }
@@ -212,12 +217,14 @@ impl RunQueue {
     /// Cancel a single queued item, or request cancellation for a running item.
     /// Returns `(cancelled_or_requested, project_id)`.
     fn cancel_item(&self, id: &str) -> (bool, Option<String>) {
-        let mut g = self.inner.lock().unwrap();
+        let mut g = self.inner.lock();
         if let Some(item) = g.items.iter_mut().find(|i| i.id == id) {
             let pid = item.project_id.clone();
             if item.status == "queued" {
+                let now = meta::now_secs();
                 item.status = "cancelled".into();
-                Self::prune_terminal_history_locked(&mut g, meta::now_secs());
+                item.finished_at = Some(now);
+                Self::prune_terminal_history_locked(&mut g, now);
                 return (true, Some(pid));
             }
             if item.status == "running" {
@@ -231,7 +238,7 @@ impl RunQueue {
     }
 
     fn is_cancel_requested(&self, id: &str) -> bool {
-        self.inner.lock().unwrap().cancel_requested.contains(id)
+        self.inner.lock().cancel_requested.contains(id)
     }
 
     /// Keep active queue items forever, but cap terminal history growth so
@@ -513,6 +520,9 @@ pub struct Project {
     pub scenario_count: u32,
     pub state: String,
     pub modified_label: String,
+    /// Epoch seconds of the last modification (mtime of `base/model.inp`,
+    /// falling back to the project directory mtime). Used for sorting.
+    pub modified_at: i64,
     /// Relative label for the last completed simulation, e.g. "2h ago".
     /// `None` when the project has never been simulated.
     pub last_run_label: Option<String>,
@@ -572,8 +582,7 @@ pub fn list_projects(app: tauri::AppHandle) -> Result<Vec<Project>, String> {
             modified_at,
         ));
     }
-    // Sort most-recently-modified first.
-    projects.sort_by(|a, b| b.modified_label.cmp(&a.modified_label));
+    sort_projects_most_recent_first(&mut projects);
     Ok(projects)
 }
 
@@ -594,7 +603,7 @@ pub fn create_project(
     let app_data = app_data_dir(&app)?;
 
     // Snapshot the currently loaded network (if any).
-    let (inp_bytes, node_count, link_count) = match &*state.0.lock().unwrap() {
+    let (inp_bytes, node_count, link_count) = match &*state.0.lock() {
         NetworkStateInner::Loaded { raw_bytes, dto, .. } => (
             Some(raw_bytes.clone()),
             dto.nodes.len() as u32,
@@ -688,14 +697,15 @@ pub fn load_project(
         let bytes = std::fs::read(&model_path).map_err(|e| e.to_string())?;
         let net = hydra::io::parse(&bytes).map_err(|e| format!("{e:?}"))?;
         let dto = network_to_dto(&net);
-        *state.0.lock().unwrap() = NetworkStateInner::Loaded {
+        *state.0.lock() = NetworkStateInner::Loaded {
             raw_bytes: bytes,
             network: net.clone(),
             dto: dto.clone(),
+            owner_project_id: Some(id.clone()),
         };
         (Some(dto), Some(net))
     } else {
-        *state.0.lock().unwrap() = NetworkStateInner::Empty;
+        *state.0.lock() = NetworkStateInner::Empty;
         (None, None)
     };
 
@@ -1288,6 +1298,7 @@ fn project_to_dto(
     };
     Project {
         modified_label: format_modified(modified_at),
+        modified_at,
         last_run_label,
         id: id.to_string(),
         name: meta.name.clone(),
@@ -1320,6 +1331,12 @@ pub fn reconcile_projects(_app: tauri::AppHandle) -> Result<ReconcileReport, Str
         recovered: 0,
         folder_missing: vec![],
     })
+}
+
+/// Sort projects most-recently-modified first, by the epoch `modified_at`
+/// (never by the human-readable label, which does not sort chronologically).
+fn sort_projects_most_recent_first(projects: &mut [Project]) {
+    projects.sort_by_key(|p| std::cmp::Reverse(p.modified_at));
 }
 
 fn format_modified(modified_at: i64) -> String {
@@ -1550,12 +1567,19 @@ pub enum NetworkStateInner {
         /// Parsed network — cached to avoid re-parsing on every `patch_element` call.
         network: hydra::Network,
         dto: NetworkDto,
+        /// Project that owns this network — `Some` when loaded from a project
+        /// bundle (`load_project` / `load_project_network`), `None` when loaded
+        /// from the file picker (`open_and_load_network`, pre-`create_project`).
+        /// `save_project` refuses to write when the caller's project id does
+        /// not match, so a stale `activeProjectId` in the frontend can never
+        /// silently overwrite another project's `model.inp`.
+        owner_project_id: Option<String>,
     },
 }
 
 /// Tauri managed state — holds the most recently loaded network (if any).
 #[derive(Default)]
-pub struct NetworkState(pub std::sync::Mutex<NetworkStateInner>);
+pub struct NetworkState(pub parking_lot::Mutex<NetworkStateInner>);
 
 /// Minimal descriptor returned when the user picks a field-data file (CSV,
 /// Excel, etc.) via the native file-open dialog. The frontend adds this to the
@@ -1639,10 +1663,11 @@ pub async fn open_and_load_network(
     let mut dto = network_to_dto(&network);
     dto.file_stem = file_stem;
 
-    *state.0.lock().unwrap() = NetworkStateInner::Loaded {
+    *state.0.lock() = NetworkStateInner::Loaded {
         raw_bytes: bytes,
         network,
         dto: dto.clone(),
+        owner_project_id: None,
     };
     Ok(Some(dto))
 }
@@ -1758,7 +1783,7 @@ fn summarize_unknown_pattern_refs(errors: &[hydra::ValidationError]) -> Option<S
 #[tauri::command]
 /// Return the node list for the loaded network.
 pub fn get_nodes(state: tauri::State<'_, NetworkState>) -> Vec<NodeDto> {
-    match &*state.0.lock().unwrap() {
+    match &*state.0.lock() {
         NetworkStateInner::Loaded { dto, .. } => dto.nodes.clone(),
         NetworkStateInner::Empty => vec![],
     }
@@ -1775,7 +1800,7 @@ pub struct NetworkSnapshotDto {
 #[tauri::command]
 /// Return nodes + links in one payload for the loaded network.
 pub fn get_network_snapshot(state: tauri::State<'_, NetworkState>) -> NetworkSnapshotDto {
-    match &*state.0.lock().unwrap() {
+    match &*state.0.lock() {
         NetworkStateInner::Loaded { dto, .. } => NetworkSnapshotDto {
             nodes: dto.nodes.clone(),
             links: dto.links.clone(),
@@ -1791,7 +1816,7 @@ pub fn get_network_snapshot(state: tauri::State<'_, NetworkState>) -> NetworkSna
 #[tauri::command]
 /// Return the link list for the loaded network.
 pub fn get_links(state: tauri::State<'_, NetworkState>) -> Vec<LinkDto> {
-    match &*state.0.lock().unwrap() {
+    match &*state.0.lock() {
         NetworkStateInner::Loaded { dto, .. } => dto.links.clone(),
         NetworkStateInner::Empty => vec![],
     }
@@ -1801,7 +1826,7 @@ pub fn get_links(state: tauri::State<'_, NetworkState>) -> Vec<LinkDto> {
 #[tauri::command]
 /// Return demand/head patterns for the loaded network.
 pub fn get_patterns(state: tauri::State<'_, NetworkState>) -> Vec<PatternDto> {
-    match &*state.0.lock().unwrap() {
+    match &*state.0.lock() {
         NetworkStateInner::Loaded { dto, .. } => dto.patterns.clone(),
         NetworkStateInner::Empty => vec![],
     }
@@ -1811,7 +1836,7 @@ pub fn get_patterns(state: tauri::State<'_, NetworkState>) -> Vec<PatternDto> {
 #[tauri::command]
 /// Return pump/GPV/volume curves for the loaded network.
 pub fn get_curves(state: tauri::State<'_, NetworkState>) -> Vec<CurveDto> {
-    match &*state.0.lock().unwrap() {
+    match &*state.0.lock() {
         NetworkStateInner::Loaded { dto, .. } => dto.curves.clone(),
         NetworkStateInner::Empty => vec![],
     }
@@ -2583,6 +2608,41 @@ pub struct PeriodResultsDto {
     pub link_quality: Option<Vec<f32>>,
 }
 
+/// Simulation targets (project/scenario pairs) whose `results.out` is
+/// currently being written, by direct `run_simulation` calls or by the queue
+/// processor. Guards against two runs corrupting the same output file.
+static ACTIVE_RUN_TARGETS: parking_lot::Mutex<Vec<String>> = parking_lot::Mutex::new(Vec::new());
+
+/// RAII lock on a single simulation target. Released on drop.
+struct RunTargetGuard(String);
+
+impl Drop for RunTargetGuard {
+    fn drop(&mut self) {
+        ACTIVE_RUN_TARGETS.lock().retain(|k| k != &self.0);
+    }
+}
+
+/// Claim exclusive write access to the `results.out` of
+/// `(project_id, scenario_id)`. Fails fast with a clear error when another
+/// simulation (direct or queued) is already writing to the same target.
+fn try_acquire_run_target(
+    project_id: &str,
+    scenario_id: Option<&str>,
+) -> Result<RunTargetGuard, String> {
+    // Scenario ids are UUIDs, so "base" can never collide with one.
+    let key = format!("{}/{}", project_id, scenario_id.unwrap_or("base"));
+    let mut active = ACTIVE_RUN_TARGETS.lock();
+    if active.contains(&key) {
+        return Err(
+            "A simulation is already running for this target; wait for it to finish \
+             or cancel it before starting another run"
+                .into(),
+        );
+    }
+    active.push(key.clone());
+    Ok(RunTargetGuard(key))
+}
+
 /// Run hydraulics (and optionally water quality) on the currently loaded
 /// network and return EPS results.
 ///
@@ -2619,7 +2679,7 @@ pub async fn run_simulation(
         std::fs::read(&path).map_err(|e| format!("Cannot read base model '{}': {}", pid, e))?
     } else {
         // Fall back to the in-memory network (opened via file picker).
-        let guard = state.0.lock().unwrap();
+        let guard = state.0.lock();
         match &*guard {
             NetworkStateInner::Loaded { raw_bytes, .. } => raw_bytes.clone(),
             NetworkStateInner::Empty => return Ok(None),
@@ -2656,6 +2716,15 @@ pub async fn run_simulation(
         }
     } else {
         None
+    };
+
+    // Claim exclusive write access to this target's results.out so a direct
+    // run and a queued run can never write the same file concurrently. Held
+    // (via RAII) until this function returns. In-memory runs (no project id)
+    // write no .out file and need no lock.
+    let _run_guard = match &project_id {
+        Some(pid) => Some(try_acquire_run_target(pid, scenario_id.as_deref())?),
+        None => None,
     };
 
     let mut sim = Simulation::create();
@@ -2718,6 +2787,20 @@ pub async fn run_simulation(
 ///
 /// When `scenario_id` is `Some`, writes to the scenario's INP file instead of
 /// the base model file (and skips the base-model node/link count update).
+/// Reject a `save_project` call whose target project does not own the network
+/// currently held in `NetworkState`. `owner_project_id` is `None` only for
+/// networks loaded from the file picker (no owning project yet), which are
+/// allowed through to preserve the draft/`create_project` flow.
+fn check_save_target(owner_project_id: Option<&str>, id: &str) -> Result<(), String> {
+    match owner_project_id {
+        Some(owner) if owner != id => Err(format!(
+            "save_project refused: the loaded network belongs to project {owner}, not {id}; \
+             reload the project before saving"
+        )),
+        _ => Ok(()),
+    }
+}
+
 #[tauri::command]
 /// Flush in-memory patches to `base/model.inp`; update node/link counts in `meta.json`.
 pub fn save_project(
@@ -2731,13 +2814,21 @@ pub fn save_project(
         validate_id(sid)?;
     }
     let (raw, node_count, link_count) = {
-        let guard = state.0.lock().unwrap();
+        let guard = state.0.lock();
         match &*guard {
-            NetworkStateInner::Loaded { raw_bytes, dto, .. } => (
-                raw_bytes.clone(),
-                dto.nodes.len() as u32,
-                dto.links.len() as u32,
-            ),
+            NetworkStateInner::Loaded {
+                raw_bytes,
+                dto,
+                owner_project_id,
+                ..
+            } => {
+                check_save_target(owner_project_id.as_deref(), &id)?;
+                (
+                    raw_bytes.clone(),
+                    dto.nodes.len() as u32,
+                    dto.links.len() as u32,
+                )
+            }
             NetworkStateInner::Empty => return Ok(false),
         }
     };
@@ -2771,6 +2862,7 @@ pub fn get_run_queue(
     run_queue: tauri::State<'_, RunQueue>,
     project_id: String,
 ) -> Result<Vec<RunQueueItemDto>, String> {
+    validate_id(&project_id)?;
     Ok(run_queue
         .get_for_project(&project_id)
         .into_iter()
@@ -2843,6 +2935,7 @@ pub fn cancel_run_queue(
     run_queue: tauri::State<'_, RunQueue>,
     project_id: String,
 ) -> Result<u32, String> {
+    validate_id(&project_id)?;
     let n = run_queue.cancel_for_project(&project_id);
     let _ = app.emit(RUN_QUEUE_UPDATE_EVENT, &project_id);
     Ok(n)
@@ -2857,6 +2950,7 @@ pub fn cancel_run_item(
     run_queue: tauri::State<'_, RunQueue>,
     run_id: String,
 ) -> Result<bool, String> {
+    validate_id(&run_id)?;
     let (cancelled, project_id) = run_queue.cancel_item(&run_id);
     if cancelled {
         if let Some(pid) = project_id {
@@ -3129,17 +3223,16 @@ fn run_queue_item_to_dto(item: RunQueueItem) -> RunQueueItemDto {
 /// Background queue processor. Drains the in-memory run queue one item at a
 /// time, emitting [`RUN_QUEUE_UPDATE_EVENT`] events after each state change.
 ///
-/// Claims the processor slot on entry and releases it on exit so that at
-/// most one processor is active at any time.
+/// The caller claims the processor slot (via `try_claim_processor`) before
+/// spawning this task; the slot is released atomically with the final
+/// queue-emptiness check inside `next_queued_or_release`, so at most one
+/// processor is active at any time and no queued item can be stranded.
 async fn process_queue(app: tauri::AppHandle) {
     let rq = app.state::<RunQueue>();
-    loop {
-        let item = rq.next_queued();
-        let item = match item {
-            Some(i) => i,
-            None => break,
-        };
-
+    // `next_queued_or_release` releases the processor slot atomically with
+    // the queue-emptiness check, so an item enqueued concurrently is either
+    // seen here or triggers a fresh processor spawn in `enqueue_runs`.
+    while let Some(item) = rq.next_queued_or_release() {
         let now = meta::now_secs();
         rq.mark_running(&item.id, now);
         let _ = app.emit(RUN_QUEUE_UPDATE_EVENT, &item.project_id);
@@ -3161,9 +3254,6 @@ async fn process_queue(app: tauri::AppHandle) {
         }
         let _ = app.emit(RUN_QUEUE_UPDATE_EVENT, &item.project_id);
     }
-
-    // Release the slot so future `enqueue_runs` calls can respawn the processor.
-    rq.release_processor();
 }
 
 /// Run a single simulation on behalf of the queue processor.
@@ -3201,6 +3291,10 @@ async fn run_sim_for_queue(
         Some(sid) => bundle::scenario_results_path(&app_data, project_id, sid),
         None => bundle::base_results_path(&app_data, project_id),
     };
+
+    // Exclusive write access to this target's results.out — fails the queue
+    // item with a clear error if a direct run is currently writing it.
+    let _run_guard = try_acquire_run_target(project_id, scenario_id)?;
 
     let mut sim = Simulation::create();
     sim.load(network).map_err(|e| format!("{e:?}"))?;
@@ -3286,7 +3380,8 @@ pub fn load_result_meta(
         Some(sid) => bundle::scenario_results_path(&app_data, &project_id, sid),
         None => bundle::base_results_path(&app_data, &project_id),
     };
-    let meta = hydra::io::out_reader::read_metadata(&out_path)?;
+    let meta =
+        hydra::io::out_reader::read_metadata_checked(&out_path).map_err(|e| e.to_string())?;
     let times = meta.snapshot_times();
     let ranges = hydra::io::out_reader::scan_ranges(&out_path, &meta, 2048)?;
     let quality_mode = match meta.quality_flag {
@@ -3337,7 +3432,8 @@ pub fn get_period_results(
         Some(sid) => bundle::scenario_results_path(&app_data, &project_id, sid),
         None => bundle::base_results_path(&app_data, &project_id),
     };
-    let meta = hydra::io::out_reader::read_metadata(&out_path)?;
+    let meta =
+        hydra::io::out_reader::read_metadata_checked(&out_path).map_err(|e| e.to_string())?;
     let pr = hydra::io::out_reader::read_period(&out_path, &meta, period)?;
     let has_quality = meta.quality_flag != 0;
     Ok(PeriodResultsDto {
@@ -3387,7 +3483,8 @@ pub fn get_pump_energy(
     };
     let raw = std::fs::read(&model_path).map_err(|e| format!("Cannot read model: {e}"))?;
     let network = hydra::io::parse(&raw).map_err(|e| format!("{e:?}"))?;
-    let meta = hydra::io::out_reader::read_metadata(&out_path)?;
+    let meta =
+        hydra::io::out_reader::read_metadata_checked(&out_path).map_err(|e| e.to_string())?;
     Ok(pump_energy_from_out(&out_path, &network, &meta))
 }
 
@@ -3420,7 +3517,8 @@ pub fn get_result_analytics(
     };
     let raw = std::fs::read(&model_path).map_err(|e| format!("Cannot read model: {e}"))?;
     let network = hydra::io::parse(&raw).map_err(|e| format!("{e:?}"))?;
-    let meta = hydra::io::out_reader::read_metadata(&out_path)?;
+    let meta =
+        hydra::io::out_reader::read_metadata_checked(&out_path).map_err(|e| e.to_string())?;
 
     let n_nodes = meta.n_nodes;
     let n_tanks = meta.n_tanks;
@@ -3638,7 +3736,8 @@ pub fn get_violations(
     };
     let raw = std::fs::read(&model_path).map_err(|e| format!("Cannot read model: {e}"))?;
     let network = hydra::io::parse(&raw).map_err(|e| format!("{e:?}"))?;
-    let meta = hydra::io::out_reader::read_metadata(&out_path)?;
+    let meta =
+        hydra::io::out_reader::read_metadata_checked(&out_path).map_err(|e| e.to_string())?;
 
     let scan = hydra::io::out_reader::scan_analytics(&out_path, &meta)?;
     let node_min_pressure = scan.node_min_pressure;
@@ -3707,7 +3806,7 @@ pub fn load_project_network(
         None => bundle::base_model_path(&app_data, &project_id),
     };
     if !path.exists() {
-        *state.0.lock().unwrap() = NetworkStateInner::Empty;
+        *state.0.lock() = NetworkStateInner::Empty;
         return Ok(None);
     }
     let bytes = std::fs::read(&path).map_err(|e| e.to_string())?;
@@ -3717,10 +3816,11 @@ pub fn load_project_network(
         nodes: dto.nodes.clone(),
         links: dto.links.clone(),
     };
-    *state.0.lock().unwrap() = NetworkStateInner::Loaded {
+    *state.0.lock() = NetworkStateInner::Loaded {
         raw_bytes: bytes,
         network,
         dto,
+        owner_project_id: Some(project_id.clone()),
     };
     Ok(Some(snapshot))
 }
@@ -4030,12 +4130,13 @@ pub fn patch_element(
     value: serde_json::Value,
 ) -> Result<NetworkDto, String> {
     let result = {
-        let mut guard = state.0.lock().unwrap();
+        let mut guard = state.0.lock();
         match &mut *guard {
             NetworkStateInner::Loaded {
                 raw_bytes,
                 network,
                 dto,
+                ..
             } => {
                 apply_patch_to_network(network, &kind, &id, &field, value)?;
                 *raw_bytes = hydra::write_inp(network);
@@ -4062,12 +4163,13 @@ pub fn patch_node_position(
     y: f64,
 ) -> Result<(), String> {
     let result = {
-        let mut guard = state.0.lock().unwrap();
+        let mut guard = state.0.lock();
         match &mut *guard {
             NetworkStateInner::Loaded {
                 raw_bytes,
                 network,
                 dto,
+                ..
             } => {
                 let entry = network.coordinates.entry(id.clone()).or_insert((0.0, 0.0));
                 entry.0 = x;
@@ -4193,12 +4295,13 @@ pub fn delete_element(
     id: String,
 ) -> Result<(), String> {
     let result = {
-        let mut guard = state.0.lock().unwrap();
+        let mut guard = state.0.lock();
         match &mut *guard {
             NetworkStateInner::Loaded {
                 raw_bytes,
                 network,
                 dto,
+                ..
             } => {
                 match kind.as_str() {
                     "junction" | "reservoir" | "tank" => {
@@ -4320,12 +4423,13 @@ pub fn create_node(
     const M_TO_FT: f64 = 1.0 / 0.3048;
     let elev_ft = elevation.unwrap_or(0.0) * M_TO_FT;
     let result = {
-        let mut guard = state.0.lock().unwrap();
+        let mut guard = state.0.lock();
         match &mut *guard {
             NetworkStateInner::Loaded {
                 raw_bytes,
                 network,
                 dto,
+                ..
             } => {
                 if id.trim().is_empty() {
                     return Err("ID must not be empty".into());
@@ -4414,12 +4518,13 @@ pub fn create_link(
     to_id: String,
 ) -> Result<(), String> {
     let result = {
-        let mut guard = state.0.lock().unwrap();
+        let mut guard = state.0.lock();
         match &mut *guard {
             NetworkStateInner::Loaded {
                 raw_bytes,
                 network,
                 dto,
+                ..
             } => {
                 if id.trim().is_empty() {
                     return Err("ID must not be empty".into());
@@ -4517,12 +4622,13 @@ pub fn create_curve(
     const FT_TO_M: f64 = 0.3048;
     const CFS_TO_LS: f64 = 28.316_846_6;
     let result = {
-        let mut guard = state.0.lock().unwrap();
+        let mut guard = state.0.lock();
         match &mut *guard {
             NetworkStateInner::Loaded {
                 network,
                 raw_bytes,
                 dto,
+                ..
             } => {
                 if network.curves.iter().any(|c| c.id == id) {
                     return Err(format!("curve '{}' already exists", id));
@@ -4568,12 +4674,13 @@ pub fn delete_curve(
     id: String,
 ) -> Result<(), String> {
     let result = {
-        let mut guard = state.0.lock().unwrap();
+        let mut guard = state.0.lock();
         match &mut *guard {
             NetworkStateInner::Loaded {
                 network,
                 raw_bytes,
                 dto,
+                ..
             } => {
                 if !network.curves.iter().any(|c| c.id == id) {
                     return Err(format!("curve '{}' not found", id));
@@ -4640,12 +4747,13 @@ pub fn update_curve_points(
         return Err("mismatched point array lengths".into());
     }
     let result = {
-        let mut guard = state.0.lock().unwrap();
+        let mut guard = state.0.lock();
         match &mut *guard {
             NetworkStateInner::Loaded {
                 network,
                 raw_bytes,
                 dto,
+                ..
             } => {
                 let curve = network
                     .curves
@@ -4692,12 +4800,13 @@ pub fn create_pattern(
     id: String,
 ) -> Result<(), String> {
     let result = {
-        let mut guard = state.0.lock().unwrap();
+        let mut guard = state.0.lock();
         match &mut *guard {
             NetworkStateInner::Loaded {
                 network,
                 raw_bytes,
                 dto,
+                ..
             } => {
                 if network.patterns.iter().any(|p| p.id == id) {
                     return Err(format!("pattern '{}' already exists", id));
@@ -4733,12 +4842,13 @@ pub fn update_pattern_multipliers(
         return Err("pattern must have at least one multiplier".into());
     }
     let result = {
-        let mut guard = state.0.lock().unwrap();
+        let mut guard = state.0.lock();
         match &mut *guard {
             NetworkStateInner::Loaded {
                 network,
                 raw_bytes,
                 dto,
+                ..
             } => {
                 let pattern = network
                     .patterns
@@ -4778,12 +4888,13 @@ pub fn rename_pattern(
         return Err("pattern ID must not be empty".into());
     }
     let result = {
-        let mut guard = state.0.lock().unwrap();
+        let mut guard = state.0.lock();
         match &mut *guard {
             NetworkStateInner::Loaded {
                 network,
                 raw_bytes,
                 dto,
+                ..
             } => {
                 if !network.patterns.iter().any(|p| p.id == old_id) {
                     return Err(format!("pattern '{}' not found", old_id));
@@ -4862,12 +4973,13 @@ pub fn delete_pattern(
     id: String,
 ) -> Result<(), String> {
     let result = {
-        let mut guard = state.0.lock().unwrap();
+        let mut guard = state.0.lock();
         match &mut *guard {
             NetworkStateInner::Loaded {
                 network,
                 raw_bytes,
                 dto,
+                ..
             } => {
                 if !network.patterns.iter().any(|p| p.id == id) {
                     return Err(format!("pattern '{}' not found", id));
@@ -5125,7 +5237,7 @@ fn rule_from_dto(dto: &RuleDto, network: &hydra::Network) -> Result<hydra::Rule,
 /// Return the simple controls (`[CONTROLS]`) of the loaded network, or an empty list.
 #[tauri::command]
 pub fn get_controls(state: tauri::State<'_, NetworkState>) -> Vec<ControlDto> {
-    match &*state.0.lock().unwrap() {
+    match &*state.0.lock() {
         NetworkStateInner::Loaded { dto, .. } => dto.controls.clone(),
         NetworkStateInner::Empty => vec![],
     }
@@ -5134,7 +5246,7 @@ pub fn get_controls(state: tauri::State<'_, NetworkState>) -> Vec<ControlDto> {
 /// Return the rule-based controls (`[RULES]`) of the loaded network, or an empty list.
 #[tauri::command]
 pub fn get_rules(state: tauri::State<'_, NetworkState>) -> Vec<RuleDto> {
-    match &*state.0.lock().unwrap() {
+    match &*state.0.lock() {
         NetworkStateInner::Loaded { dto, .. } => dto.rules.clone(),
         NetworkStateInner::Empty => vec![],
     }
@@ -5148,12 +5260,13 @@ pub fn create_control(
     control: ControlDto,
 ) -> Result<(), String> {
     let result = {
-        let mut guard = state.0.lock().unwrap();
+        let mut guard = state.0.lock();
         match &mut *guard {
             NetworkStateInner::Loaded {
                 network,
                 raw_bytes,
                 dto,
+                ..
             } => {
                 let ctrl = control_from_dto(&control, network)?;
                 network.controls.push(ctrl);
@@ -5180,12 +5293,13 @@ pub fn update_control(
     control: ControlDto,
 ) -> Result<(), String> {
     let result = {
-        let mut guard = state.0.lock().unwrap();
+        let mut guard = state.0.lock();
         match &mut *guard {
             NetworkStateInner::Loaded {
                 network,
                 raw_bytes,
                 dto,
+                ..
             } => {
                 let ctrl = control_from_dto(&control, network)?;
                 let slot = network
@@ -5214,12 +5328,13 @@ pub fn delete_control(
     index: usize,
 ) -> Result<(), String> {
     let result = {
-        let mut guard = state.0.lock().unwrap();
+        let mut guard = state.0.lock();
         match &mut *guard {
             NetworkStateInner::Loaded {
                 network,
                 raw_bytes,
                 dto,
+                ..
             } => {
                 if index >= network.controls.len() {
                     return Err(format!("control index {} out of range", index));
@@ -5246,12 +5361,13 @@ pub fn create_rule(
     rule: RuleDto,
 ) -> Result<(), String> {
     let result = {
-        let mut guard = state.0.lock().unwrap();
+        let mut guard = state.0.lock();
         match &mut *guard {
             NetworkStateInner::Loaded {
                 network,
                 raw_bytes,
                 dto,
+                ..
             } => {
                 let r = rule_from_dto(&rule, network)?;
                 network.rules.push(r);
@@ -5277,12 +5393,13 @@ pub fn update_rule(
     rule: RuleDto,
 ) -> Result<(), String> {
     let result = {
-        let mut guard = state.0.lock().unwrap();
+        let mut guard = state.0.lock();
         match &mut *guard {
             NetworkStateInner::Loaded {
                 network,
                 raw_bytes,
                 dto,
+                ..
             } => {
                 let r = rule_from_dto(&rule, network)?;
                 let slot = network
@@ -5311,12 +5428,13 @@ pub fn delete_rule(
     index: usize,
 ) -> Result<(), String> {
     let result = {
-        let mut guard = state.0.lock().unwrap();
+        let mut guard = state.0.lock();
         match &mut *guard {
             NetworkStateInner::Loaded {
                 network,
                 raw_bytes,
                 dto,
+                ..
             } => {
                 if index >= network.rules.len() {
                     return Err(format!("rule index {} out of range", index));
@@ -5370,7 +5488,7 @@ pub fn preview_patches(
     patches: Vec<PatchItem>,
 ) -> Result<String, String> {
     let mut network = {
-        let guard = state.0.lock().unwrap();
+        let guard = state.0.lock();
         match &*guard {
             NetworkStateInner::Loaded { network, .. } => network.clone(),
             NetworkStateInner::Empty => return Err("no network loaded".into()),
@@ -5517,6 +5635,126 @@ mod tests {
         assert!(result.is_some());
         let t = result.unwrap();
         assert!(t > 0);
+    }
+
+    // ── project list sorting ──────────────────────────────────────────────
+
+    #[test]
+    fn projects_sort_by_epoch_not_label() {
+        let now = meta::now_secs();
+        // "20m ago" vs "5h ago": lexicographic label comparison would put
+        // "5h ago" first; epoch comparison must put "20m ago" first.
+        let older = project_to_dto(
+            "old",
+            &sample_meta(1, 1),
+            0,
+            None,
+            "not-run",
+            false,
+            now - 5 * 3_600,
+        );
+        let newer = project_to_dto(
+            "new",
+            &sample_meta(1, 1),
+            0,
+            None,
+            "not-run",
+            false,
+            now - 20 * 60,
+        );
+        assert_eq!(older.modified_label, "5h ago");
+        assert_eq!(newer.modified_label, "20m ago");
+        let mut projects = vec![older, newer];
+        sort_projects_most_recent_first(&mut projects);
+        assert_eq!(projects[0].id, "new");
+        assert_eq!(projects[1].id, "old");
+    }
+
+    // ── run queue ─────────────────────────────────────────────────────────
+
+    fn queued_item(id: &str, project_id: &str) -> RunQueueItem {
+        RunQueueItem {
+            id: id.into(),
+            project_id: project_id.into(),
+            target_id: None,
+            target_name: None,
+            status: "queued".into(),
+            queued_at: meta::now_secs(),
+            started_at: None,
+            finished_at: None,
+            error: None,
+        }
+    }
+
+    #[test]
+    fn processor_release_is_atomic_with_empty_check() {
+        let rq = RunQueue::default();
+        assert!(rq.try_claim_processor());
+        // Queue empty: the fetch must release the processor slot...
+        assert!(rq.next_queued_or_release().is_none());
+        // ...so a subsequent enqueue can reclaim it (no stranded items).
+        assert!(rq.try_claim_processor());
+        // An item enqueued while the slot is claimed is returned, and the
+        // slot stays claimed.
+        rq.enqueue(queued_item("r1", "p1"));
+        assert_eq!(rq.next_queued_or_release().unwrap().id, "r1");
+        assert!(!rq.try_claim_processor());
+    }
+
+    #[test]
+    fn cancel_for_project_stamps_finished_at() {
+        let rq = RunQueue::default();
+        rq.enqueue(queued_item("r1", "p1"));
+        assert_eq!(rq.cancel_for_project("p1"), 1);
+        let items = rq.get_for_project("p1");
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].status, "cancelled");
+        assert!(items[0].finished_at.is_some());
+    }
+
+    #[test]
+    fn cancel_item_stamps_finished_at() {
+        let rq = RunQueue::default();
+        rq.enqueue(queued_item("r1", "p1"));
+        let (cancelled, pid) = rq.cancel_item("r1");
+        assert!(cancelled);
+        assert_eq!(pid.as_deref(), Some("p1"));
+        let items = rq.get_for_project("p1");
+        assert_eq!(items[0].status, "cancelled");
+        assert!(items[0].finished_at.is_some());
+    }
+
+    // ── run-target lock ───────────────────────────────────────────────────
+
+    #[test]
+    fn run_target_lock_is_exclusive_per_target() {
+        let base = try_acquire_run_target("proj-lock-test", None).unwrap();
+        // Same target: rejected while held.
+        assert!(try_acquire_run_target("proj-lock-test", None).is_err());
+        // Different scenario of the same project: independent target.
+        let scenario = try_acquire_run_target("proj-lock-test", Some("sc-1")).unwrap();
+        assert!(try_acquire_run_target("proj-lock-test", Some("sc-1")).is_err());
+        // Dropping the guard releases the target.
+        drop(base);
+        assert!(try_acquire_run_target("proj-lock-test", None).is_ok());
+        drop(scenario);
+        assert!(try_acquire_run_target("proj-lock-test", Some("sc-1")).is_ok());
+    }
+
+    // ── save_project ownership check ──────────────────────────────────────
+
+    #[test]
+    fn check_save_target_rejects_mismatched_project() {
+        let err = check_save_target(Some("owner-a"), "other-b").unwrap_err();
+        assert!(err.contains("owner-a"));
+        assert!(err.contains("other-b"));
+    }
+
+    #[test]
+    fn check_save_target_allows_matching_or_unowned() {
+        assert!(check_save_target(Some("owner-a"), "owner-a").is_ok());
+        // File-picker loads have no owner yet (pre-create_project draft flow).
+        assert!(check_save_target(None, "owner-a").is_ok());
     }
 
     // ── sim_state_from_results ────────────────────────────────────────────
