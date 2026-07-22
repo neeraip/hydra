@@ -279,18 +279,37 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const setPage = useCallback((page: Page) => {
     setS((prev) => {
+      // Leaving the project view must always clear project-scoped state,
+      // regardless of which call site triggered the navigation. Enforced
+      // here centrally (rather than requiring every caller to remember to
+      // use closeProject) so future nav entry points can't regress this.
+      const activeProjectId = page === "project" ? prev.activeProjectId : null;
+      const activeScenarioId =
+        page === "project" ? prev.activeScenarioId : null;
+      const leavingProject =
+        page !== "project" && prev.activeProjectId !== null;
+
       const nav = pushNav(prev, {
         page,
         projectView: prev.projectView,
-        activeProjectId: prev.activeProjectId,
-        activeScenarioId: prev.activeScenarioId,
+        activeProjectId,
+        activeScenarioId,
       });
       return {
         ...prev,
         ...nav,
         page,
+        activeProjectId,
+        activeScenarioId,
         railOpen: page === "project" ? prev.railOpen : false,
         taskTrayOpen: false,
+        ...(leavingProject
+          ? {
+              scenariosVersion: 0,
+              createdProject: null,
+              isNetworkLoaded: false,
+            }
+          : {}),
       };
     });
   }, []);
@@ -350,28 +369,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
     });
   }, []);
 
+  // Just navigates to "projects" — setPage centrally clears all
+  // project-scoped state (activeProjectId, isNetworkLoaded, etc.) whenever
+  // the destination isn't "project", so there's nothing extra to do here.
   const closeProject = useCallback(() => {
-    setS((prev) => {
-      const newLoc = {
-        page: "projects" as Page,
-        projectView: prev.projectView,
-        activeProjectId: null,
-        activeScenarioId: null,
-      };
-      const nav = pushNav(prev, newLoc);
-      return {
-        ...prev,
-        ...nav,
-        page: "projects",
-        activeProjectId: null,
-        activeScenarioId: null,
-        scenariosVersion: 0,
-        railOpen: false,
-        createdProject: null,
-        isNetworkLoaded: false,
-      };
-    });
-  }, []);
+    setPage("projects");
+  }, [setPage]);
 
   const createProject = useCallback((p: Project) => {
     setS((prev) => {
@@ -1063,8 +1066,11 @@ function SimulationProvider({ children }: { children: ReactNode }) {
         if (ev.phase === "hydraulics") {
           hydraulicsPercent = ev.percent;
           if (ev.done) {
-            hydraulicsDone = true;
             hydraulicsPercent = 100;
+            // hydraulicsDone intentionally not flipped here — see the
+            // staged transition below. Flipping it in this same update
+            // would replace the "100%" text with "Done" before the 100%
+            // frame ever renders.
           }
         } else if (ev.phase === "quality") {
           // First quality event: mark hydraulics as fully done.
@@ -1104,6 +1110,7 @@ function SimulationProvider({ children }: { children: ReactNode }) {
             ? {
                 status: "completed" as const,
                 timeLabel: `Completed ${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`,
+                primaryAction: "View results" as const,
               }
             : {}),
           ...(ev.failed

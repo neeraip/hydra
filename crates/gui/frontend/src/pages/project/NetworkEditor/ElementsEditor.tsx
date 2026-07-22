@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useActiveProject, useAppState } from "../../../AppContext";
 import { InpDiffModal } from "../../../components/modals/InpDiffModal";
 import { TabButton } from "../../../components/ui/TabButton";
@@ -45,8 +45,15 @@ const TEMP_ID_PREFIX = "__new__:";
 
 export function ElementsEditor({
   onDraftSizeChange,
+  focusPumpId,
+  focusPumpToken,
 }: {
   onDraftSizeChange?: (n: number) => void;
+  /** Pump ID to select when `focusPumpToken` changes (e.g. "attached to" link
+   *  clicked from the Pump curves tab). */
+  focusPumpId?: string;
+  /** Bump this (e.g. `Date.now()`) to re-trigger the jump even for the same id. */
+  focusPumpToken?: number;
 }) {
   const { showToast, activeScenarioId } = useAppState();
   const { project } = useActiveProject();
@@ -68,6 +75,15 @@ export function ElementsEditor({
   const [draft, setDraft] = useState<Map<string, DraftEntry>>(() => new Map());
   const [discardGen, setDiscardGen] = useState(0);
   const nextTempIndex = useRef(1);
+  const tableScrollRef = useRef<HTMLDivElement>(null);
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `focusPumpToken` is an intentional trigger to re-run the jump even for the same pump id; `focusPumpId` is read only when a jump fires.
+  useEffect(() => {
+    if (focusPumpToken == null || !focusPumpId) return;
+    setActiveSection("pumps");
+    setSelectedId(focusPumpId);
+    setSearchQuery("");
+  }, [focusPumpToken]);
   const draftValues = useMemo(() => Array.from(draft.values()), [draft]);
   const pendingKeys = useMemo(() => new Set(draft.keys()), [draft]);
   const pendingRowIds = useMemo(
@@ -728,7 +744,10 @@ export function ElementsEditor({
       </div>
 
       {/* Table */}
-      <div style={{ flex: 1, overflow: "auto", minHeight: 0 }}>
+      <div
+        ref={tableScrollRef}
+        style={{ flex: 1, overflow: "auto", minHeight: 0 }}
+      >
         {activeSection === "junctions" && (
           <JunctionTable
             rows={junctionRows}
@@ -741,6 +760,7 @@ export function ElementsEditor({
             pendingKeys={pendingKeys}
             pendingRowIds={pendingRowIds}
             discardGen={discardGen}
+            scrollContainerRef={tableScrollRef}
           />
         )}
         {activeSection === "pipes" && (
@@ -756,6 +776,7 @@ export function ElementsEditor({
             pendingKeys={pendingKeys}
             pendingRowIds={pendingRowIds}
             discardGen={discardGen}
+            scrollContainerRef={tableScrollRef}
           />
         )}
         {activeSection === "pumps" && (
@@ -771,6 +792,8 @@ export function ElementsEditor({
             pendingKeys={pendingKeys}
             pendingRowIds={pendingRowIds}
             discardGen={discardGen}
+            scrollContainerRef={tableScrollRef}
+            focusToken={focusPumpToken}
           />
         )}
         {activeSection === "tanks" && (
@@ -785,6 +808,7 @@ export function ElementsEditor({
             pendingKeys={pendingKeys}
             pendingRowIds={pendingRowIds}
             discardGen={discardGen}
+            scrollContainerRef={tableScrollRef}
           />
         )}
         {activeSection === "reservoirs" && (
@@ -799,6 +823,7 @@ export function ElementsEditor({
             pendingKeys={pendingKeys}
             pendingRowIds={pendingRowIds}
             discardGen={discardGen}
+            scrollContainerRef={tableScrollRef}
           />
         )}
         {activeSection === "valves" && (
@@ -814,6 +839,7 @@ export function ElementsEditor({
             pendingKeys={pendingKeys}
             pendingRowIds={pendingRowIds}
             discardGen={discardGen}
+            scrollContainerRef={tableScrollRef}
           />
         )}
       </div>

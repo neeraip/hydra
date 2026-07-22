@@ -18,6 +18,7 @@ import {
 } from "@tanstack/react-table";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAppState } from "../../AppContext";
+import { DeleteProjectModal } from "../../components/modals/DeleteProjectModal";
 import { NewProjectWizard } from "../../components/modals/NewProjectWizard";
 import { SplitActionButton } from "../../components/ui/SplitActionButton";
 import {
@@ -119,6 +120,8 @@ export function ProjectsPage() {
   const [stateFilter, setStateFilter] = useState<string>("all");
   const [pageSize, setPageSize] = useState(20);
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
+  const [pendingDeleteProject, setPendingDeleteProject] =
+    useState<Project | null>(null);
 
   const handleRowContextMenu = useCallback(
     (e: React.MouseEvent, project: Project) => {
@@ -603,8 +606,21 @@ export function ProjectsPage() {
           onRename={(id, name) => {
             renameProjectOnDisk(id, name).then(() => bumpProjects());
           }}
+          onDelete={(project) => setPendingDeleteProject(project)}
         />
       )}
+
+      <DeleteProjectModal
+        open={!!pendingDeleteProject}
+        projectName={pendingDeleteProject?.name ?? ""}
+        onCancel={() => setPendingDeleteProject(null)}
+        onConfirm={() => {
+          if (!pendingDeleteProject) return;
+          const id = pendingDeleteProject.id;
+          setPendingDeleteProject(null);
+          deleteProjectOnDisk(id).then(() => bumpProjects());
+        }}
+      />
 
       {showWizard && (
         <NewProjectWizard

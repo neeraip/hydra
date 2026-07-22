@@ -4022,6 +4022,133 @@ pub fn create_curve(
     result
 }
 
+/// Delete a curve from the network.
+///
+/// Fails if any pump, valve, or tank still references the curve (by
+/// head-curve, valve-curve, or volume-curve respectively) — the reference
+/// must be cleared first so the network never ends up with a dangling curve
+/// ID that would fail to parse on the next INP round-trip.
+#[tauri::command]
+pub fn delete_curve(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, NetworkState>,
+    id: String,
+) -> Result<(), String> {
+    let result = {
+        let mut guard = state.0.lock().unwrap();
+        match &mut *guard {
+            NetworkStateInner::Loaded {
+                network,
+                raw_bytes,
+                dto,
+            } => {
+                if !network.curves.iter().any(|c| c.id == id) {
+                    return Err(format!("curve '{}' not found", id));
+                }
+
+                let mut referenced_by: Vec<String> = Vec::new();
+                for l in &network.links {
+                    if let hydra::LinkKind::Pump(p) = &l.kind {
+                        if p.head_curve.as_deref() == Some(id.as_str()) {
+                            referenced_by.push(l.base.id.clone());
+                        }
+                    }
+                    if let hydra::LinkKind::Valve(v) = &l.kind {
+                        if v.curve.as_deref() == Some(id.as_str()) {
+                            referenced_by.push(l.base.id.clone());
+                        }
+                    }
+                }
+                for n in &network.nodes {
+                    if let hydra::NodeKind::Tank(t) = &n.kind {
+                        if t.volume_curve.as_deref() == Some(id.as_str()) {
+                            referenced_by.push(n.base.id.clone());
+                        }
+                    }
+                }
+                if !referenced_by.is_empty() {
+                    return Err(format!(
+                        "curve '{}' is still attached to {}; detach it first",
+                        id,
+                        referenced_by.join(", ")
+                    ));
+                }
+
+                network.curves.retain(|c| c.id != id);
+                *raw_bytes = hydra::write_inp(network);
+                *dto = network_to_dto(network);
+                Ok(())
+            }
+            NetworkStateInner::Empty => Err("no network loaded".into()),
+        }
+    };
+    if result.is_ok() {
+        let _ = app.emit(NETWORK_CHANGED_EVENT, ());
+    }
+    result
+}
+
+///
+/// `xs`/`ys` must be in the same display units returned by `get_curves`
+/// (flow L/s and head m for pump-head curves; raw pass-through units for all
+/// other curve kinds) and have equal length. Pump-head curves require at
+/// least 2 points.
+#[tauri::command]
+pub fn update_curve_points(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, NetworkState>,
+    id: String,
+    xs: Vec<f64>,
+    ys: Vec<f64>,
+) -> Result<(), String> {
+    const FT_TO_M: f64 = 0.3048;
+    const CFS_TO_LS: f64 = 28.316_846_6;
+    if xs.len() != ys.len() {
+        return Err("mismatched point array lengths".into());
+    }
+    let result = {
+        let mut guard = state.0.lock().unwrap();
+        match &mut *guard {
+            NetworkStateInner::Loaded {
+                network,
+                raw_bytes,
+                dto,
+            } => {
+                let curve = network
+                    .curves
+                    .iter_mut()
+                    .find(|c| c.id == id)
+                    .ok_or_else(|| format!("curve '{}' not found", id))?;
+                if curve.kind == hydra::CurveKind::PumpHead && xs.len() < 2 {
+                    return Err("pump-head curves require at least 2 points".into());
+                }
+                curve.points = if curve.kind == hydra::CurveKind::PumpHead {
+                    xs.iter()
+                        .zip(ys.iter())
+                        .map(|(&x, &y)| hydra::CurvePoint {
+                            x: x / CFS_TO_LS,
+                            y: y / FT_TO_M,
+                        })
+                        .collect()
+                } else {
+                    xs.iter()
+                        .zip(ys.iter())
+                        .map(|(&x, &y)| hydra::CurvePoint { x, y })
+                        .collect()
+                };
+                *raw_bytes = hydra::write_inp(network);
+                *dto = network_to_dto(network);
+                Ok(())
+            }
+            NetworkStateInner::Empty => Err("no network loaded".into()),
+        }
+    };
+    if result.is_ok() {
+        let _ = app.emit(NETWORK_CHANGED_EVENT, ());
+    }
+    result
+}
+
 /// Create a new time pattern with flat multipliers (all 1.0) at 24 hourly steps.
 ///
 /// `id` must be unique within the network.
@@ -4046,6 +4173,91 @@ pub fn create_pattern(
                     id: id.clone(),
                     factors: vec![1.0; 24],
                 });
+                *raw_bytes = hydra::write_inp(network);
+                *dto = network_to_dto(network);
+                Ok(())
+            }
+            NetworkStateInner::Empty => Err("no network loaded".into()),
+        }
+    };
+    if result.is_ok() {
+        let _ = app.emit(NETWORK_CHANGED_EVENT, ());
+    }
+    result
+}
+
+/// Delete a time pattern from the network.
+///
+/// Fails if any junction demand, reservoir/tank head pattern, pump
+/// speed/price pattern, or the global default/energy-price pattern (from
+/// `[OPTIONS]`) still references it — the reference must be cleared first so
+/// the network never ends up with a dangling pattern ID that would fail to
+/// parse on the next INP round-trip.
+#[tauri::command]
+pub fn delete_pattern(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, NetworkState>,
+    id: String,
+) -> Result<(), String> {
+    let result = {
+        let mut guard = state.0.lock().unwrap();
+        match &mut *guard {
+            NetworkStateInner::Loaded {
+                network,
+                raw_bytes,
+                dto,
+            } => {
+                if !network.patterns.iter().any(|p| p.id == id) {
+                    return Err(format!("pattern '{}' not found", id));
+                }
+
+                let mut referenced_by: Vec<String> = Vec::new();
+                for n in &network.nodes {
+                    match &n.kind {
+                        hydra::NodeKind::Junction(j) => {
+                            if j.demands
+                                .iter()
+                                .any(|d| d.pattern.as_deref() == Some(id.as_str()))
+                            {
+                                referenced_by.push(n.base.id.clone());
+                            }
+                        }
+                        hydra::NodeKind::Reservoir(r) => {
+                            if r.head_pattern.as_deref() == Some(id.as_str()) {
+                                referenced_by.push(n.base.id.clone());
+                            }
+                        }
+                        hydra::NodeKind::Tank(t) => {
+                            if t.head_pattern.as_deref() == Some(id.as_str()) {
+                                referenced_by.push(n.base.id.clone());
+                            }
+                        }
+                    }
+                }
+                for l in &network.links {
+                    if let hydra::LinkKind::Pump(p) = &l.kind {
+                        if p.speed_pattern.as_deref() == Some(id.as_str())
+                            || p.price_pattern.as_deref() == Some(id.as_str())
+                        {
+                            referenced_by.push(l.base.id.clone());
+                        }
+                    }
+                }
+                if network.options.default_pattern.as_deref() == Some(id.as_str()) {
+                    referenced_by.push("global default pattern (Options)".into());
+                }
+                if network.options.energy_price_pattern.as_deref() == Some(id.as_str()) {
+                    referenced_by.push("global energy price pattern (Options)".into());
+                }
+                if !referenced_by.is_empty() {
+                    return Err(format!(
+                        "pattern '{}' is still attached to {}; detach it first",
+                        id,
+                        referenced_by.join(", ")
+                    ));
+                }
+
+                network.patterns.retain(|p| p.id != id);
                 *raw_bytes = hydra::write_inp(network);
                 *dto = network_to_dto(network);
                 Ok(())

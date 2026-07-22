@@ -1,6 +1,14 @@
 import type React from "react";
 import type { PipeRow } from "../../../hooks";
-import { EditableCell, RefInputCell, SortTh } from "./TablePrimitives";
+import {
+  EditableCell,
+  RefInputCell,
+  SortTh,
+  useVirtualRows,
+  VirtualSpacerRow,
+} from "./TablePrimitives";
+
+const COL_COUNT = 6;
 
 export function PipeTable({
   rows,
@@ -14,6 +22,7 @@ export function PipeTable({
   pendingKeys,
   pendingRowIds,
   discardGen,
+  scrollContainerRef,
 }: {
   rows: PipeRow[];
   sortField: string;
@@ -31,6 +40,7 @@ export function PipeTable({
   pendingKeys: Set<string>;
   pendingRowIds?: Set<string>;
   discardGen: number;
+  scrollContainerRef: React.RefObject<HTMLDivElement | null>;
 }) {
   const tdStyle: React.CSSProperties = {
     padding: "7px 10px",
@@ -38,6 +48,10 @@ export function PipeTable({
     fontFamily: "var(--font-mono)",
     borderBottom: "1px solid var(--border)",
   };
+  const { virtualItems, paddingTop, paddingBottom } = useVirtualRows(
+    rows,
+    scrollContainerRef,
+  );
 
   return (
     <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
@@ -91,7 +105,9 @@ export function PipeTable({
         </tr>
       </thead>
       <tbody>
-        {rows.map((row) => {
+        <VirtualSpacerRow height={paddingTop} colSpan={COL_COUNT} />
+        {virtualItems.map((vi) => {
+          const row = rows[vi.index];
           const isSelected = selectedId === row.id;
           const isPendingRow = pendingRowIds?.has(row.id) ?? false;
           return (
@@ -222,6 +238,7 @@ export function PipeTable({
             </tr>
           );
         })}
+        <VirtualSpacerRow height={paddingBottom} colSpan={COL_COUNT} />
       </tbody>
     </table>
   );

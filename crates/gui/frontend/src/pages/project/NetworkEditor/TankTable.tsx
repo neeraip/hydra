@@ -1,6 +1,13 @@
 import type React from "react";
 import type { TankRow } from "../../../hooks";
-import { EditableCell, SortTh } from "./TablePrimitives";
+import {
+  EditableCell,
+  SortTh,
+  useVirtualRows,
+  VirtualSpacerRow,
+} from "./TablePrimitives";
+
+const COL_COUNT = 9;
 
 export function TankTable({
   rows,
@@ -13,6 +20,7 @@ export function TankTable({
   pendingKeys,
   pendingRowIds,
   discardGen,
+  scrollContainerRef,
 }: {
   rows: TankRow[];
   sortField: string;
@@ -29,6 +37,7 @@ export function TankTable({
   pendingKeys: Set<string>;
   pendingRowIds?: Set<string>;
   discardGen: number;
+  scrollContainerRef: React.RefObject<HTMLDivElement | null>;
 }) {
   const tdStyle: React.CSSProperties = {
     padding: "7px 10px",
@@ -36,6 +45,10 @@ export function TankTable({
     fontFamily: "var(--font-mono)",
     borderBottom: "1px solid var(--border)",
   };
+  const { virtualItems, paddingTop, paddingBottom } = useVirtualRows(
+    rows,
+    scrollContainerRef,
+  );
 
   return (
     <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
@@ -114,7 +127,9 @@ export function TankTable({
         </tr>
       </thead>
       <tbody>
-        {rows.map((row) => {
+        <VirtualSpacerRow height={paddingTop} colSpan={COL_COUNT} />
+        {virtualItems.map((vi) => {
+          const row = rows[vi.index];
           const isSelected = selectedId === row.id;
           const isPendingRow = pendingRowIds?.has(row.id) ?? false;
           return (
@@ -265,6 +280,7 @@ export function TankTable({
             </tr>
           );
         })}
+        <VirtualSpacerRow height={paddingBottom} colSpan={COL_COUNT} />
       </tbody>
     </table>
   );

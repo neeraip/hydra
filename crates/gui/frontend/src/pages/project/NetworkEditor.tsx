@@ -3,7 +3,7 @@ import { useActiveProject } from "../../AppContext";
 import { ControlsEditor } from "../../components/editors/ControlsEditor";
 import { CurveEditor } from "../../components/editors/CurveEditor";
 import { PatternEditor } from "../../components/editors/PatternEditor";
-import { useLinks, useNodes } from "../../hooks";
+import { useCurves, useLinks, useNodes, usePatterns } from "../../hooks";
 import { ElementsEditor } from "./NetworkEditor/ElementsEditor";
 
 type EditorSectionId = "elements" | "curves" | "patterns" | "controls";
@@ -24,16 +24,30 @@ const EDITOR_SECTIONS: EditorSectionSpec[] = [
 export function NetworkEditor() {
   const allNodes = useNodes();
   const allLinks = useLinks();
+  const curves = useCurves();
+  const patterns = usePatterns();
   const { accent } = useActiveProject();
   const elementsCount = allNodes.length + allLinks.length;
-  const sections = EDITOR_SECTIONS.map((s) =>
-    s.id === "elements" ? { ...s, count: elementsCount } : s,
-  );
+  const sections = EDITOR_SECTIONS.map((s) => {
+    if (s.id === "elements") return { ...s, count: elementsCount };
+    if (s.id === "curves") return { ...s, count: curves.length };
+    if (s.id === "patterns") return { ...s, count: patterns.length };
+    return s;
+  });
 
   const [activeSectionId, setActiveSectionId] = useState<EditorSectionId>(
     sections[0].id,
   );
   const [elementsDraftSize, setElementsDraftSize] = useState(0);
+  const [pumpFocus, setPumpFocus] = useState<{
+    id: string;
+    token: number;
+  } | null>(null);
+
+  function handleNavigateToPump(pumpId: string) {
+    setActiveSectionId("elements");
+    setPumpFocus({ id: pumpId, token: Date.now() });
+  }
 
   const validSection = sections.find((s) => s.id === activeSectionId)
     ? activeSectionId
@@ -136,9 +150,18 @@ export function NetworkEditor() {
         }}
       >
         {validSection === "elements" && (
-          <ElementsEditor onDraftSizeChange={setElementsDraftSize} />
+          <ElementsEditor
+            onDraftSizeChange={setElementsDraftSize}
+            focusPumpId={pumpFocus?.id}
+            focusPumpToken={pumpFocus?.token}
+          />
         )}
-        {validSection === "curves" && <CurveEditor accent={accent} />}
+        {validSection === "curves" && (
+          <CurveEditor
+            accent={accent}
+            onNavigateToPump={handleNavigateToPump}
+          />
+        )}
         {validSection === "patterns" && <PatternEditor accent={accent} />}
         {validSection === "controls" && <ControlsEditor accent={accent} />}
       </div>

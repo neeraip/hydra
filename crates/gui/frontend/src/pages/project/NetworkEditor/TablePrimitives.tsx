@@ -1,6 +1,58 @@
 import { ChevronDownIcon, ChevronUpIcon } from "@heroicons/react/16/solid";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import type React from "react";
 import { useRef, useState } from "react";
+
+/* ── Row virtualization ──────────────────────────────────────────────────────── */
+
+/** Row height used to estimate virtualizer offsets. Matches the ~7px vertical
+ * cell padding + ~13px line-height used by these tables' cells. */
+export const EDITOR_ROW_HEIGHT = 30;
+
+/**
+ * Shared virtualization for the Editor's element tables, so only the rows
+ * actually visible in the scroll container are mounted — large networks
+ * (thousands of junctions/pipes) don't render every row up front.
+ *
+ * `scrollRef` must point at the actual scrolling ancestor (owned by
+ * ElementsEditor, shared across whichever table is active) so `<thead>`'s
+ * `position: sticky` headers keep working unmodified.
+ */
+export function useVirtualRows<T>(
+  rows: T[],
+  scrollRef: React.RefObject<HTMLDivElement | null>,
+) {
+  const virtualizer = useVirtualizer({
+    count: rows.length,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: () => EDITOR_ROW_HEIGHT,
+    overscan: 12,
+  });
+  const virtualItems = virtualizer.getVirtualItems();
+  const paddingTop = virtualItems.length > 0 ? virtualItems[0].start : 0;
+  const paddingBottom =
+    virtualItems.length > 0
+      ? virtualizer.getTotalSize() - virtualItems[virtualItems.length - 1].end
+      : 0;
+  return { virtualItems, paddingTop, paddingBottom, virtualizer };
+}
+
+/** Spacer `<tr>` used above/below the rendered window to preserve the
+ * scrollbar's total height without mounting every row. */
+export function VirtualSpacerRow({
+  height,
+  colSpan,
+}: {
+  height: number;
+  colSpan: number;
+}) {
+  if (height <= 0) return null;
+  return (
+    <tr aria-hidden style={{ height }}>
+      <td colSpan={colSpan} style={{ padding: 0, border: "none" }} />
+    </tr>
+  );
+}
 
 /* ── EditableCell ────────────────────────────────────────────────────────────── */
 

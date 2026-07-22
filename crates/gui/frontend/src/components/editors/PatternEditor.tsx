@@ -1,9 +1,16 @@
 /* Time-pattern editor — 24-hour multiplier bars with editable values. */
 
+import { TrashIcon } from "@heroicons/react/16/solid";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useAppState } from "../../AppContext";
-import { createPattern, type TimePattern, usePatterns } from "../../hooks";
+import {
+  createPattern,
+  deletePattern,
+  type TimePattern,
+  usePatterns,
+} from "../../hooks";
 import { useNetworkVersion } from "../../hooks/NetworkVersionContext";
+import { DeleteConfirmModal } from "../modals/DeleteConfirmModal";
 
 export function PatternEditor({ accent }: { accent: string }) {
   const { showToast } = useAppState();
@@ -24,6 +31,7 @@ export function PatternEditor({ accent }: { accent: string }) {
   const [creating, setCreating] = useState(false);
   const [newId, setNewId] = useState("");
   const [createError, setCreateError] = useState<string | null>(null);
+  const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
   const newIdRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
@@ -52,6 +60,23 @@ export function PatternEditor({ accent }: { accent: string }) {
     } catch (err) {
       setCreateError(
         typeof err === "string" ? err : "Failed to create pattern",
+      );
+    }
+  }
+
+  async function handleDelete() {
+    if (!pendingDeleteId) return;
+    const id = pendingDeleteId;
+    setPendingDeleteId(null);
+    try {
+      await deletePattern(id);
+      bumpNetwork();
+      if (activeId === id) setActiveId(null);
+      showToast(`Deleted pattern "${id}"`, "success");
+    } catch (err) {
+      showToast(
+        typeof err === "string" ? err : "Failed to delete pattern",
+        "error",
       );
     }
   }
@@ -230,6 +255,7 @@ export function PatternEditor({ accent }: { accent: string }) {
             pattern={pattern}
             accent={accent}
             multipliers={multipliers}
+            onDelete={() => setPendingDeleteId(pattern.id)}
           />
 
           <div
@@ -284,6 +310,13 @@ export function PatternEditor({ accent }: { accent: string }) {
           No time patterns defined. Use "+ New pattern" to create one.
         </div>
       )}
+      <DeleteConfirmModal
+        open={pendingDeleteId != null}
+        elementKind="pattern"
+        elementId={pendingDeleteId ?? ""}
+        onConfirm={handleDelete}
+        onCancel={() => setPendingDeleteId(null)}
+      />
     </div>
   );
 }
@@ -292,10 +325,12 @@ function PatternHeader({
   pattern,
   accent,
   multipliers,
+  onDelete,
 }: {
   pattern: TimePattern;
   accent: string;
   multipliers: number[];
+  onDelete: () => void;
 }) {
   const min = Math.min(...multipliers);
   const max = Math.max(...multipliers);
@@ -338,6 +373,40 @@ function PatternHeader({
         <Stat label="Mean" value={mean.toFixed(2)} accent={accent} />
         <Stat label="Max" value={max.toFixed(2)} accent={accent} />
       </div>
+      <button
+        type="button"
+        onClick={onDelete}
+        style={{
+          flexShrink: 0,
+          display: "flex",
+          alignItems: "center",
+          gap: 5,
+          border: "1px solid rgba(239,68,68,0.35)",
+          borderRadius: 5,
+          background: "transparent",
+          color: "#ef4444",
+          cursor: "pointer",
+          fontSize: 12,
+          fontFamily: "var(--font-ui)",
+          padding: "4px 10px",
+          transition: "background var(--t-fast), border-color var(--t-fast)",
+        }}
+        onMouseEnter={(e) => {
+          (e.currentTarget as HTMLButtonElement).style.background =
+            "rgba(239,68,68,0.12)";
+          (e.currentTarget as HTMLButtonElement).style.borderColor =
+            "rgba(239,68,68,0.6)";
+        }}
+        onMouseLeave={(e) => {
+          (e.currentTarget as HTMLButtonElement).style.background =
+            "transparent";
+          (e.currentTarget as HTMLButtonElement).style.borderColor =
+            "rgba(239,68,68,0.35)";
+        }}
+      >
+        <TrashIcon style={{ width: 13, height: 13 }} />
+        Delete
+      </button>
     </div>
   );
 }

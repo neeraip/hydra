@@ -552,9 +552,41 @@ export async function createCurve(id: string): Promise<void> {
   await invoke<void>("create_curve", { id });
 }
 
+/**
+ * Replace all points of an existing curve. `xs`/`ys` must be in the same
+ * display units returned by `useCurves()` (flow L/s and head m for pump-head
+ * curves) and have equal length.
+ */
+export async function updateCurvePoints(
+  id: string,
+  xs: number[],
+  ys: number[],
+): Promise<void> {
+  await invoke<void>("update_curve_points", { id, xs, ys });
+}
+
+/**
+ * Delete a curve. Rejects if any pump, valve, or tank still references it —
+ * the caller should surface the returned error and let the user detach it
+ * first.
+ */
+export async function deleteCurve(id: string): Promise<void> {
+  await invoke<void>("delete_curve", { id });
+}
+
 /** Create a new time pattern with 24 flat hourly multipliers (all 1.0). */
 export async function createPattern(id: string): Promise<void> {
   await invoke<void>("create_pattern", { id });
+}
+
+/**
+ * Delete a time pattern. Rejects if any junction demand, reservoir/tank head
+ * pattern, pump speed/price pattern, or the global default/energy-price
+ * pattern still references it — the caller should surface the returned
+ * error and let the user detach it first.
+ */
+export async function deletePattern(id: string): Promise<void> {
+  await invoke<void>("delete_pattern", { id });
 }
 
 export interface Versions {

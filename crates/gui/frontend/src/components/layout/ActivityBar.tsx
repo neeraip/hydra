@@ -102,9 +102,7 @@ export function ActivityBar() {
         icon={<FolderIcon {...ICON} />}
         label="Projects"
         active={page === "projects"}
-        onClick={() =>
-          page === "project" ? setPage("projects") : setPage("projects")
-        }
+        onClick={() => setPage("projects")}
       />
 
       {/* ── Project sub-nav (child items under Projects) ────────────────────

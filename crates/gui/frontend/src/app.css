@@ -4,6 +4,8 @@
 
 /* ── Design tokens ──────────────────────────────────────────────────────────── */
 :root {
+  color-scheme: dark;
+
   /* Typography */
   --font-size-base: 14px;
   --font-ui:
@@ -78,6 +80,8 @@
 }
 
 :root[data-theme="light"] {
+  color-scheme: light;
+
   --bg-app: #eff1f7;
   --bg-activity: #e3e6ef;
   --bg-rail: #e8ebf3;
@@ -562,6 +566,66 @@ body,
   flex-shrink: 0;
 }
 
+/* ── Legend / variable picker overlay ─────────────────────────────────────────*/
+.legend-glass {
+  background: rgba(12, 14, 18, 0.75);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  backdrop-filter: blur(20px) saturate(160%);
+  -webkit-backdrop-filter: blur(20px) saturate(160%);
+  box-shadow:
+    0 4px 16px rgba(0, 0, 0, 0.55),
+    inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  transition:
+    background 120ms ease,
+    border-color 120ms ease,
+    box-shadow 120ms ease;
+}
+.legend-glass.legend-glass--raised {
+  background: rgba(30, 34, 42, 0.9);
+  border-color: rgba(255, 255, 255, 0.2);
+  box-shadow:
+    0 6px 20px rgba(0, 0, 0, 0.7),
+    inset 0 1px 0 rgba(255, 255, 255, 0.1);
+}
+.legend-input,
+.legend-glass input {
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.06);
+}
+.legend-btn-secondary {
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.05);
+}
+.legend-btn-secondary.legend-btn-secondary--active {
+  background: rgba(74, 144, 217, 0.22);
+}
+
+/* ── Context menu ──────────────────────────────────────────────────────────────*/
+.context-menu-item {
+  display: block;
+  width: 100%;
+  padding: 7px 14px;
+  border: none;
+  background: transparent;
+  text-align: left;
+  font-size: 13px;
+  font-family: var(--font-ui);
+  color: var(--text-primary);
+  cursor: pointer;
+  border-radius: 4px;
+}
+.context-menu-item:hover {
+  background: var(--nav-hover);
+}
+.context-menu-item--danger {
+  color: var(--status-error);
+}
+.context-menu-divider {
+  height: 1px;
+  background: var(--border);
+  margin: 4px 0;
+}
+
 /* ── Timeline scrubber ───────────────────────────────────────────────────────*/
 .timeline-bar {
   height: 64px;
@@ -956,6 +1020,29 @@ input[type="range"]::-moz-range-track {
   box-shadow:
     0 4px 20px rgba(0, 0, 0, 0.1),
     0 1px 0 rgba(255, 255, 255, 0.8) inset;
+}
+[data-theme="light"] .legend-glass {
+  background: rgba(255, 255, 255, 0.82);
+  border-color: rgba(23, 33, 55, 0.1);
+  box-shadow:
+    0 4px 16px rgba(0, 0, 0, 0.1),
+    inset 0 1px 0 rgba(255, 255, 255, 0.8);
+}
+[data-theme="light"] .legend-glass.legend-glass--raised {
+  background: rgba(255, 255, 255, 0.94);
+  border-color: rgba(23, 33, 55, 0.18);
+  box-shadow:
+    0 6px 20px rgba(0, 0, 0, 0.14),
+    inset 0 1px 0 rgba(255, 255, 255, 0.85);
+}
+[data-theme="light"] .legend-input,
+[data-theme="light"] .legend-glass input {
+  border-color: rgba(23, 33, 55, 0.14);
+  background: rgba(23, 33, 55, 0.04);
+}
+[data-theme="light"] .legend-btn-secondary {
+  border-color: rgba(23, 33, 55, 0.14);
+  background: rgba(23, 33, 55, 0.03);
 }
 [data-theme="light"] .inspector-panel {
   background: rgba(242, 245, 252, 0.97);

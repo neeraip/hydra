@@ -1,8 +1,16 @@
 import type React from "react";
 import type { ValveRow } from "../../../hooks";
-import { EditableCell, RefInputCell, SortTh } from "./TablePrimitives";
+import {
+  EditableCell,
+  RefInputCell,
+  SortTh,
+  useVirtualRows,
+  VirtualSpacerRow,
+} from "./TablePrimitives";
 
 export const VALVE_TYPES = ["PRV", "PSV", "FCV", "TCV", "GPV", "PBV", "PCV"];
+
+const COL_COUNT = 6;
 
 export function ValveTable({
   rows,
@@ -16,6 +24,7 @@ export function ValveTable({
   pendingKeys,
   pendingRowIds,
   discardGen,
+  scrollContainerRef,
 }: {
   rows: ValveRow[];
   sortField: string;
@@ -33,6 +42,7 @@ export function ValveTable({
   pendingKeys: Set<string>;
   pendingRowIds?: Set<string>;
   discardGen: number;
+  scrollContainerRef: React.RefObject<HTMLDivElement | null>;
 }) {
   const tdStyle: React.CSSProperties = {
     padding: "7px 10px",
@@ -40,6 +50,10 @@ export function ValveTable({
     fontFamily: "var(--font-mono)",
     borderBottom: "1px solid var(--border)",
   };
+  const { virtualItems, paddingTop, paddingBottom } = useVirtualRows(
+    rows,
+    scrollContainerRef,
+  );
 
   return (
     <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
@@ -92,7 +106,9 @@ export function ValveTable({
         </tr>
       </thead>
       <tbody>
-        {rows.map((row) => {
+        <VirtualSpacerRow height={paddingTop} colSpan={COL_COUNT} />
+        {virtualItems.map((vi) => {
+          const row = rows[vi.index];
           const isSelected = selectedId === row.id;
           const isPendingRow = pendingRowIds?.has(row.id) ?? false;
           const settingUnit =
@@ -277,6 +293,7 @@ export function ValveTable({
             </tr>
           );
         })}
+        <VirtualSpacerRow height={paddingBottom} colSpan={COL_COUNT} />
       </tbody>
     </table>
   );

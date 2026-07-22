@@ -14,6 +14,7 @@ export function ContextMenu({
   onOpenFolder,
   onRemove,
   onRename,
+  onDelete,
 }: {
   menu: ContextMenuState;
   onClose: () => void;
@@ -21,6 +22,7 @@ export function ContextMenu({
   onOpenFolder: (id: string) => void;
   onRemove: (id: string) => void;
   onRename: (id: string, name: string) => void;
+  onDelete: (project: Project) => void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const [renaming, setRenaming] = useState(false);
@@ -58,23 +60,9 @@ export function ContextMenu({
 
   const folderMissing = menu.project.folderMissing;
   const MENU_W = 180,
-    MENU_H = folderMissing ? 44 : 116;
+    MENU_H = folderMissing ? 44 : 165;
   const x = Math.min(menu.x, window.innerWidth - MENU_W - 8);
   const y = Math.min(menu.y, window.innerHeight - MENU_H - 8);
-
-  const itemStyle: React.CSSProperties = {
-    display: "block",
-    width: "100%",
-    padding: "7px 14px",
-    border: "none",
-    background: "transparent",
-    textAlign: "left",
-    fontSize: 13,
-    fontFamily: "var(--font-ui)",
-    color: "var(--text-primary)",
-    cursor: "pointer",
-    borderRadius: 4,
-  };
 
   return (
     <div
@@ -95,15 +83,7 @@ export function ContextMenu({
       {folderMissing ? (
         <button
           type="button"
-          style={{ ...itemStyle, color: "var(--status-error)" }}
-          onMouseEnter={(e) => {
-            (e.currentTarget as HTMLButtonElement).style.background =
-              "var(--bg-card)";
-          }}
-          onMouseLeave={(e) => {
-            (e.currentTarget as HTMLButtonElement).style.background =
-              "transparent";
-          }}
+          className="context-menu-item context-menu-item--danger"
           onClick={() => {
             onRemove(menu.project.id);
             onClose();
@@ -115,15 +95,7 @@ export function ContextMenu({
         <>
           <button
             type="button"
-            style={itemStyle}
-            onMouseEnter={(e) => {
-              (e.currentTarget as HTMLButtonElement).style.background =
-                "var(--bg-card)";
-            }}
-            onMouseLeave={(e) => {
-              (e.currentTarget as HTMLButtonElement).style.background =
-                "transparent";
-            }}
+            className="context-menu-item"
             onClick={() => {
               onOpen(menu.project.id);
               onClose();
@@ -133,15 +105,7 @@ export function ContextMenu({
           </button>
           <button
             type="button"
-            style={itemStyle}
-            onMouseEnter={(e) => {
-              (e.currentTarget as HTMLButtonElement).style.background =
-                "var(--bg-card)";
-            }}
-            onMouseLeave={(e) => {
-              (e.currentTarget as HTMLButtonElement).style.background =
-                "transparent";
-            }}
+            className="context-menu-item"
             onClick={() => {
               onOpenFolder(menu.project.id);
               onClose();
@@ -177,20 +141,23 @@ export function ContextMenu({
           ) : (
             <button
               type="button"
-              style={itemStyle}
-              onMouseEnter={(e) => {
-                (e.currentTarget as HTMLButtonElement).style.background =
-                  "var(--bg-card)";
-              }}
-              onMouseLeave={(e) => {
-                (e.currentTarget as HTMLButtonElement).style.background =
-                  "transparent";
-              }}
+              className="context-menu-item"
               onClick={() => setRenaming(true)}
             >
               Rename…
             </button>
           )}
+          <div className="context-menu-divider" />
+          <button
+            type="button"
+            className="context-menu-item context-menu-item--danger"
+            onClick={() => {
+              onDelete(menu.project);
+              onClose();
+            }}
+          >
+            Delete…
+          </button>
         </>
       )}
     </div>

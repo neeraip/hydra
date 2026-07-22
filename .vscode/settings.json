@@ -17,6 +17,13 @@
     "[toml]": {
         "editor.defaultFormatter": "tamasfe.even-better-toml"
     },
+    // VS Code's built-in CSS validator doesn't understand Tailwind v4's
+    // `@import "tailwindcss" source(none);` / `@source` syntax and flags
+    // false-positive "semi-colon expected" / "{ expected" errors on
+    // app.css. Biome (this repo's actual CSS linter) handles it correctly.
+    "[css]": {
+        "css.validate": false
+    },
     "rust-analyzer.checkOnSave": true,
     "rust-analyzer.cargo.features": "all"
 }

@@ -81,6 +81,7 @@ export function CommandPalette() {
   const {
     closeCommandPalette,
     openProject,
+    closeProject,
     setPage,
     setProjectView,
     setTheme,
@@ -553,7 +554,11 @@ export function CommandPalette() {
           setPage("settings");
           break;
         case "nav-home":
-          setPage("home");
+          if (activeProjectId) {
+            closeProject();
+          } else {
+            setPage("home");
+          }
           break;
         case "nav-projects":
           setPage("projects");
@@ -652,6 +657,8 @@ export function CommandPalette() {
     [
       closeCommandPalette,
       openProject,
+      closeProject,
+      activeProjectId,
       setPage,
       setProjectView,
       setTheme,

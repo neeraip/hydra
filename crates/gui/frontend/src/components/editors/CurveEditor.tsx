@@ -1,15 +1,30 @@
 /* WD pump-curve editor — head/flow scatter+spline with editable points. */
 
+import { TrashIcon } from "@heroicons/react/16/solid";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useAppState } from "../../AppContext";
 import {
   type CurvePoint,
   createCurve,
+  deleteCurve,
   type PumpCurve,
+  updateCurvePoints,
   useCurves,
 } from "../../hooks";
 import { useNetworkVersion } from "../../hooks/NetworkVersionContext";
+import { EditableCell } from "../../pages/project/NetworkEditor/TablePrimitives";
+import { DeleteConfirmModal } from "../modals/DeleteConfirmModal";
 
-export function CurveEditor({ accent }: { accent: string }) {
+export function CurveEditor({
+  accent,
+  onNavigateToPump,
+}: {
+  accent: string;
+  /** When provided, the "attached to <pump>" label becomes clickable and
+   *  navigates to that pump in the Elements tab. */
+  onNavigateToPump?: (pumpId: string) => void;
+}) {
+  const { showToast } = useAppState();
   const { bumpNetwork } = useNetworkVersion();
   const curves = useCurves();
   const [activeId, setActiveId] = useState<string | null>(null);
@@ -17,6 +32,7 @@ export function CurveEditor({ accent }: { accent: string }) {
   const [creating, setCreating] = useState(false);
   const [newId, setNewId] = useState("");
   const [createError, setCreateError] = useState<string | null>(null);
+  const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
   const newIdRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
@@ -43,6 +59,70 @@ export function CurveEditor({ accent }: { accent: string }) {
     } catch (err) {
       setCreateError(typeof err === "string" ? err : "Failed to create curve");
     }
+  }
+
+  async function handleDelete() {
+    if (!pendingDeleteId) return;
+    const id = pendingDeleteId;
+    setPendingDeleteId(null);
+    try {
+      await deleteCurve(id);
+      bumpNetwork();
+      if (activeId === id) setActiveId(null);
+      showToast(`Deleted curve "${id}"`, "success");
+    } catch (err) {
+      showToast(
+        typeof err === "string" ? err : "Failed to delete curve",
+        "error",
+      );
+    }
+  }
+
+  async function commitPoints(points: CurvePoint[]) {
+    if (!curve) return;
+    try {
+      await updateCurvePoints(
+        curve.id,
+        points.map((p) => p.flow),
+        points.map((p) => p.head),
+      );
+      bumpNetwork();
+    } catch (err) {
+      showToast(
+        typeof err === "string" ? err : "Failed to update curve points",
+      );
+    }
+  }
+
+  function handleCommitPoint(
+    index: number,
+    field: "flow" | "head",
+    raw: string,
+  ) {
+    if (!curve) return;
+    const v = parseFloat(raw);
+    if (!Number.isFinite(v)) return;
+    void commitPoints(
+      curve.points.map((p, i) => (i === index ? { ...p, [field]: v } : p)),
+    );
+  }
+
+  function handleAddPoint() {
+    if (!curve) return;
+    const last = curve.points[curve.points.length - 1];
+    void commitPoints([
+      ...curve.points,
+      { flow: (last?.flow ?? 0) + 1, head: Math.max(0, (last?.head ?? 0) - 1) },
+    ]);
+  }
+
+  function handleRemovePoint(index: number) {
+    if (!curve) return;
+    if (curve.points.length <= 2) {
+      showToast("A curve needs at least 2 points");
+      return;
+    }
+    void commitPoints(curve.points.filter((_, i) => i !== index));
   }
 
   return (
@@ -235,10 +315,39 @@ export function CurveEditor({ accent }: { accent: string }) {
               {curve.id}
             </div>
             <div style={{ fontSize: 12, color: "var(--text-tertiary)" }}>
-              attached to{" "}
-              <span style={{ color: accent, fontFamily: "var(--font-mono)" }}>
-                {curve.pumpId}
-              </span>
+              {curve.pumpId ? (
+                <>
+                  attached to{" "}
+                  {onNavigateToPump ? (
+                    <button
+                      type="button"
+                      onClick={() => onNavigateToPump(curve.pumpId)}
+                      style={{
+                        color: accent,
+                        fontFamily: "var(--font-mono)",
+                        background: "none",
+                        border: "none",
+                        padding: 0,
+                        cursor: "pointer",
+                        textDecoration: "underline",
+                        font: "inherit",
+                      }}
+                    >
+                      {curve.pumpId}
+                    </button>
+                  ) : (
+                    <span
+                      style={{ color: accent, fontFamily: "var(--font-mono)" }}
+                    >
+                      {curve.pumpId}
+                    </span>
+                  )}
+                </>
+              ) : (
+                <span style={{ fontStyle: "italic" }}>
+                  not attached to any pump
+                </span>
+              )}
             </div>
             {curve.bep != null && (
               <div
@@ -254,6 +363,42 @@ export function CurveEditor({ accent }: { accent: string }) {
                 </span>
               </div>
             )}
+            <button
+              type="button"
+              onClick={() => setPendingDeleteId(curve.id)}
+              style={{
+                marginLeft: curve.bep != null ? undefined : "auto",
+                flexShrink: 0,
+                display: "flex",
+                alignItems: "center",
+                gap: 5,
+                border: "1px solid rgba(239,68,68,0.35)",
+                borderRadius: 5,
+                background: "transparent",
+                color: "#ef4444",
+                cursor: "pointer",
+                fontSize: 12,
+                fontFamily: "var(--font-ui)",
+                padding: "4px 10px",
+                transition:
+                  "background var(--t-fast), border-color var(--t-fast)",
+              }}
+              onMouseEnter={(e) => {
+                (e.currentTarget as HTMLButtonElement).style.background =
+                  "rgba(239,68,68,0.12)";
+                (e.currentTarget as HTMLButtonElement).style.borderColor =
+                  "rgba(239,68,68,0.6)";
+              }}
+              onMouseLeave={(e) => {
+                (e.currentTarget as HTMLButtonElement).style.background =
+                  "transparent";
+                (e.currentTarget as HTMLButtonElement).style.borderColor =
+                  "rgba(239,68,68,0.35)";
+              }}
+            >
+              <TrashIcon style={{ width: 13, height: 13 }} />
+              Delete
+            </button>
           </div>
 
           <div
@@ -286,6 +431,9 @@ export function CurveEditor({ accent }: { accent: string }) {
                 accent={accent}
                 hoverIdx={hoverIdx}
                 setHoverIdx={setHoverIdx}
+                onCommitPoint={handleCommitPoint}
+                onAddPoint={handleAddPoint}
+                onRemovePoint={handleRemovePoint}
               />
               {curve.notes && (
                 <div
@@ -317,6 +465,13 @@ export function CurveEditor({ accent }: { accent: string }) {
           No pump curves defined. Use "+ New curve" to create one.
         </div>
       )}
+      <DeleteConfirmModal
+        open={pendingDeleteId != null}
+        elementKind="curve"
+        elementId={pendingDeleteId ?? ""}
+        onConfirm={handleDelete}
+        onCancel={() => setPendingDeleteId(null)}
+      />
     </div>
   );
 }
@@ -527,11 +682,17 @@ function PointsTable({
   accent,
   hoverIdx,
   setHoverIdx,
+  onCommitPoint,
+  onAddPoint,
+  onRemovePoint,
 }: {
   curve: PumpCurve;
   accent: string;
   hoverIdx: number | null;
   setHoverIdx: (n: number | null) => void;
+  onCommitPoint: (index: number, field: "flow" | "head", raw: string) => void;
+  onAddPoint: () => void;
+  onRemovePoint: (index: number) => void;
 }) {
   const total = useMemo(() => curve.points.length, [curve]);
   return (
@@ -551,6 +712,24 @@ function PointsTable({
         }}
       >
         Points <span style={{ color: "var(--text-disabled)" }}>· {total}</span>
+        <button
+          type="button"
+          onClick={onAddPoint}
+          style={{
+            marginLeft: "auto",
+            fontSize: 11,
+            fontFamily: "var(--font-ui)",
+            textTransform: "none",
+            letterSpacing: 0,
+            color: accent,
+            background: "none",
+            border: "none",
+            cursor: "pointer",
+            padding: 0,
+          }}
+        >
+          + Add point
+        </button>
       </div>
       <table
         style={{
@@ -565,6 +744,7 @@ function PointsTable({
             <th style={thStyle}>#</th>
             <th style={{ ...thStyle, textAlign: "right" }}>Flow</th>
             <th style={{ ...thStyle, textAlign: "right" }}>Head</th>
+            <th style={thStyle} />
           </tr>
         </thead>
         <tbody>
@@ -572,7 +752,8 @@ function PointsTable({
             const isHover = hoverIdx === i;
             return (
               <tr
-                key={`${p.flow}-${p.head}`}
+                // biome-ignore lint/suspicious/noArrayIndexKey: points have no stable id; edits append/remove/edit in place rather than reordering.
+                key={`${p.flow}-${p.head}-${i}`}
                 onMouseEnter={() => setHoverIdx(i)}
                 onMouseLeave={() => setHoverIdx(null)}
                 style={{
@@ -580,23 +761,43 @@ function PointsTable({
                   borderLeft: isHover
                     ? `2px solid ${accent}`
                     : "2px solid transparent",
-                  cursor: "pointer",
                 }}
               >
                 <td style={{ ...tdStyle, color: "var(--text-tertiary)" }}>
                   {i + 1}
                 </td>
-                <td style={{ ...tdStyle, textAlign: "right" }}>
-                  {p.flow.toFixed(1)}
-                </td>
-                <td
-                  style={{
-                    ...tdStyle,
-                    textAlign: "right",
-                    color: isHover ? accent : "var(--text-primary)",
-                  }}
-                >
-                  {p.head.toFixed(1)}
+                <EditableCell
+                  display={p.flow.toFixed(1)}
+                  align="right"
+                  inputType="number"
+                  min={0}
+                  onCommit={(v) => onCommitPoint(i, "flow", v)}
+                />
+                <EditableCell
+                  display={p.head.toFixed(1)}
+                  align="right"
+                  inputType="number"
+                  min={0}
+                  style={{ color: isHover ? accent : undefined }}
+                  onCommit={(v) => onCommitPoint(i, "head", v)}
+                />
+                <td style={{ ...tdStyle, padding: "0 6px" }}>
+                  <button
+                    type="button"
+                    onClick={() => onRemovePoint(i)}
+                    title="Remove point"
+                    style={{
+                      background: "none",
+                      border: "none",
+                      color: "var(--text-tertiary)",
+                      cursor: "pointer",
+                      fontSize: 13,
+                      lineHeight: 1,
+                      padding: "2px 4px",
+                    }}
+                  >
+                    ×
+                  </button>
                 </td>
               </tr>
             );

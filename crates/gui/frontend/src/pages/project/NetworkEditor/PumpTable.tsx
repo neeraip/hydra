@@ -1,6 +1,15 @@
 import type React from "react";
+import { useEffect, useRef } from "react";
 import type { PumpRow } from "../../../hooks";
-import { EditableCell, RefInputCell, SortTh } from "./TablePrimitives";
+import {
+  EditableCell,
+  RefInputCell,
+  SortTh,
+  useVirtualRows,
+  VirtualSpacerRow,
+} from "./TablePrimitives";
+
+const COL_COUNT = 6;
 
 export function PumpTable({
   rows,
@@ -14,6 +23,8 @@ export function PumpTable({
   pendingKeys,
   pendingRowIds,
   discardGen,
+  scrollContainerRef,
+  focusToken,
 }: {
   rows: PumpRow[];
   sortField: string;
@@ -31,6 +42,10 @@ export function PumpTable({
   pendingKeys: Set<string>;
   pendingRowIds?: Set<string>;
   discardGen: number;
+  scrollContainerRef: React.RefObject<HTMLDivElement | null>;
+  /** Bumped (e.g. `Date.now()`) whenever `selectedId` should be scrolled into
+   *  view, such as a jump from the Pump curves tab's "attached to" link. */
+  focusToken?: number;
 }) {
   const tdStyle: React.CSSProperties = {
     padding: "7px 10px",
@@ -38,6 +53,18 @@ export function PumpTable({
     fontFamily: "var(--font-mono)",
     borderBottom: "1px solid var(--border)",
   };
+  const { virtualItems, paddingTop, paddingBottom, virtualizer } =
+    useVirtualRows(rows, scrollContainerRef);
+  const appliedFocusToken = useRef<number | undefined>(undefined);
+  useEffect(() => {
+    if (focusToken == null || focusToken === appliedFocusToken.current) return;
+    if (!selectedId) return;
+    const idx = rows.findIndex((r) => r.id === selectedId);
+    if (idx >= 0) {
+      virtualizer.scrollToIndex(idx, { align: "center" });
+      appliedFocusToken.current = focusToken;
+    }
+  }, [focusToken, selectedId, rows, virtualizer]);
 
   return (
     <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
@@ -90,7 +117,9 @@ export function PumpTable({
         </tr>
       </thead>
       <tbody>
-        {rows.map((row) => {
+        <VirtualSpacerRow height={paddingTop} colSpan={COL_COUNT} />
+        {virtualItems.map((vi) => {
+          const row = rows[vi.index];
           const isSelected = selectedId === row.id;
           const isPendingRow = pendingRowIds?.has(row.id) ?? false;
           return (
@@ -228,6 +257,7 @@ export function PumpTable({
             </tr>
           );
         })}
+        <VirtualSpacerRow height={paddingBottom} colSpan={COL_COUNT} />
       </tbody>
     </table>
   );

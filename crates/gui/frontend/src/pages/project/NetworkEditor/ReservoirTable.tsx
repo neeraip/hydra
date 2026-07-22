@@ -1,6 +1,13 @@
 import type React from "react";
 import type { ReservoirRow } from "../../../hooks";
-import { EditableCell, SortTh } from "./TablePrimitives";
+import {
+  EditableCell,
+  SortTh,
+  useVirtualRows,
+  VirtualSpacerRow,
+} from "./TablePrimitives";
+
+const COL_COUNT = 5;
 
 export function ReservoirTable({
   rows,
@@ -13,6 +20,7 @@ export function ReservoirTable({
   pendingKeys,
   pendingRowIds,
   discardGen,
+  scrollContainerRef,
 }: {
   rows: ReservoirRow[];
   sortField: string;
@@ -29,6 +37,7 @@ export function ReservoirTable({
   pendingKeys: Set<string>;
   pendingRowIds?: Set<string>;
   discardGen: number;
+  scrollContainerRef: React.RefObject<HTMLDivElement | null>;
 }) {
   const tdStyle: React.CSSProperties = {
     padding: "7px 10px",
@@ -36,6 +45,10 @@ export function ReservoirTable({
     fontFamily: "var(--font-mono)",
     borderBottom: "1px solid var(--border)",
   };
+  const { virtualItems, paddingTop, paddingBottom } = useVirtualRows(
+    rows,
+    scrollContainerRef,
+  );
 
   return (
     <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
@@ -82,7 +95,9 @@ export function ReservoirTable({
         </tr>
       </thead>
       <tbody>
-        {rows.map((row) => {
+        <VirtualSpacerRow height={paddingTop} colSpan={COL_COUNT} />
+        {virtualItems.map((vi) => {
+          const row = rows[vi.index];
           const isSelected = selectedId === row.id;
           const isPendingRow = pendingRowIds?.has(row.id) ?? false;
           return (
@@ -178,6 +193,7 @@ export function ReservoirTable({
             </tr>
           );
         })}
+        <VirtualSpacerRow height={paddingBottom} colSpan={COL_COUNT} />
       </tbody>
     </table>
   );

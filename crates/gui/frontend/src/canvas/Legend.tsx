@@ -147,8 +147,6 @@ const inputStyle: CSSProperties = {
   width: "100%",
   padding: "4px 6px",
   borderRadius: 6,
-  border: "1px solid rgba(255,255,255,0.12)",
-  background: "rgba(255,255,255,0.06)",
   color: "var(--text-primary)",
   fontSize: 10,
   boxSizing: "border-box",
@@ -181,12 +179,9 @@ const PICKER_LIST_STYLE: React.CSSProperties = {
   position: "absolute",
   bottom: "calc(100% + 6px)",
   left: 0,
-  background: "rgba(20,22,27,0.95)",
   backdropFilter: "blur(20px) saturate(160%)",
   WebkitBackdropFilter: "blur(20px) saturate(160%)",
-  border: "1px solid rgba(255,255,255,0.10)",
   borderRadius: 8,
-  boxShadow: "0 8px 32px rgba(0,0,0,0.65)",
   overflow: "hidden",
   minWidth: 130,
   zIndex: 40,
@@ -228,7 +223,10 @@ function PickerButton<T extends string>({
         <ChevronUpDownIcon style={{ width: 12, height: 12 }} />
       </button>
       {isOpen && (
-        <div style={PICKER_LIST_STYLE}>
+        <div
+          className="legend-glass legend-glass--raised"
+          style={PICKER_LIST_STYLE}
+        >
           {options.map((o) => (
             <button
               type="button"
@@ -408,17 +406,14 @@ export function Legend({
       {/* ── Popover: gradient ramps, threshold editor, colour-mode toggle ── */}
       {detailsOpen && (
         <div
+          className="legend-glass legend-glass--raised"
           style={{
             marginBottom: 8,
-            background: "rgba(12,14,18,0.82)",
             backdropFilter: "blur(20px) saturate(160%)",
             WebkitBackdropFilter: "blur(20px) saturate(160%)",
-            border: "1px solid rgba(255,255,255,0.10)",
             borderRadius: 10,
             padding: "10px 14px",
             width: 200,
-            boxShadow:
-              "0 8px 32px rgba(0,0,0,0.65), inset 0 1px 0 rgba(255,255,255,0.06)",
             display: "flex",
             flexDirection: "column",
             gap: 12,
@@ -489,14 +484,11 @@ export function Legend({
               <button
                 type="button"
                 onClick={() => setEditing((v) => !v)}
+                className={`legend-btn-secondary${editing ? " legend-btn-secondary--active" : ""}`}
                 style={{
                   width: "100%",
                   padding: "5px 8px",
                   borderRadius: 6,
-                  border: "1px solid rgba(255,255,255,0.12)",
-                  background: editing
-                    ? "rgba(74,144,217,0.22)"
-                    : "rgba(255,255,255,0.05)",
                   color: "var(--text-secondary)",
                   fontSize: 10,
                   cursor: "pointer",
@@ -731,15 +723,11 @@ export function Legend({
                   onColorModeChange(m);
                   if (m === "relative") setEditing(false);
                 }}
+                className={`legend-btn-secondary${colorMode === m ? " legend-btn-secondary--active" : ""}`}
                 style={{
                   flex: 1,
                   padding: "5px 8px",
                   borderRadius: 6,
-                  border: "1px solid rgba(255,255,255,0.12)",
-                  background:
-                    colorMode === m
-                      ? "rgba(74,144,217,0.22)"
-                      : "rgba(255,255,255,0.05)",
                   color:
                     colorMode === m ? "var(--accent)" : "var(--text-secondary)",
                   fontSize: 10,
@@ -759,6 +747,11 @@ export function Legend({
       <div
         onMouseEnter={() => setHovered(true)}
         onMouseLeave={() => setHovered(false)}
+        className={`legend-glass${
+          hovered || detailsOpen || nodePickerOpen || linkPickerOpen
+            ? " legend-glass--raised"
+            : ""
+        }`}
         style={{
           display: "flex",
           alignItems: "center",
@@ -766,23 +759,8 @@ export function Legend({
           padding: 4,
           minHeight: 32,
           borderRadius: 20,
-          border: `1px solid ${
-            hovered || detailsOpen || nodePickerOpen || linkPickerOpen
-              ? "rgba(255,255,255,0.20)"
-              : "rgba(255,255,255,0.10)"
-          }`,
-          background:
-            hovered || detailsOpen || nodePickerOpen || linkPickerOpen
-              ? "rgba(30,34,42,0.88)"
-              : "rgba(12,14,18,0.75)",
           backdropFilter: "blur(20px) saturate(160%)",
           WebkitBackdropFilter: "blur(20px) saturate(160%)",
-          boxShadow:
-            hovered || detailsOpen || nodePickerOpen || linkPickerOpen
-              ? "0 6px 20px rgba(0,0,0,0.70), inset 0 1px 0 rgba(255,255,255,0.10)"
-              : "0 4px 16px rgba(0,0,0,0.55), inset 0 1px 0 rgba(255,255,255,0.06)",
-          transition:
-            "background 120ms ease, border-color 120ms ease, box-shadow 120ms ease",
         }}
       >
         {/* Colour scale / thresholds toggle — separate from variable switching */}
@@ -856,14 +834,7 @@ export function Legend({
             style={{ width: 10, height: 10, color: "var(--text-tertiary)" }}
           />
         </button>
-        <div
-          style={{
-            width: 1,
-            height: 16,
-            background: "rgba(255,255,255,0.12)",
-            flexShrink: 0,
-          }}
-        />
+        <div className="tool-divider" />
         <PickerButton
           value={nodeVar}
           options={nodeOptions}
