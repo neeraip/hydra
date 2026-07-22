@@ -60,6 +60,10 @@ pub struct LinkResult {
 impl Simulation {
     /// Query a single scalar result for a node at (or near) simulation time `t`.
     ///
+    /// `t` snaps to the nearest recorded snapshot within a 0.5 s tolerance;
+    /// times further than 0.5 s from any snapshot yield
+    /// `Err(SessionError::NoSnapshotAtTime)`.
+    ///
     /// Returns `Err(SessionError::UnknownId)` if `node_id` is not in the network
     /// and `Err(SessionError::NoSnapshotAtTime)` if no hydraulic snapshot was
     /// recorded at or near `t`. All returned values are in the internal SI unit
@@ -71,7 +75,8 @@ impl Simulation {
         t: f64,
     ) -> Result<f64, SessionError> {
         let network = self.require_loaded_network()?;
-        let node_index = node_index_by_id(network, node_id)
+        let node_index = self
+            .node_index_by_id(node_id)
             .ok_or_else(|| SessionError::UnknownId(node_id.to_string()))?;
         let snapshot = self
             .snapshot_near(t)
@@ -108,6 +113,10 @@ impl Simulation {
     }
 
     /// Return a link result quantity at the specified simulation time (§8.2.1).
+    ///
+    /// `t` snaps to the nearest recorded snapshot within a 0.5 s tolerance;
+    /// times further than 0.5 s from any snapshot yield
+    /// `Err(SessionError::NoSnapshotAtTime)`.
     pub fn get_link_result(
         &self,
         link_id: &str,
@@ -115,7 +124,8 @@ impl Simulation {
         t: f64,
     ) -> Result<f64, SessionError> {
         let network = self.require_loaded_network()?;
-        let link_index = link_index_by_id(network, link_id)
+        let link_index = self
+            .link_index_by_id(link_id)
             .ok_or_else(|| SessionError::UnknownId(link_id.to_string()))?;
         let snapshot = self
             .snapshot_near(t)
@@ -337,6 +347,10 @@ impl Simulation {
 
     /// Return all node results at a given simulation time, indexed by position.
     ///
+    /// `t` snaps to the nearest recorded snapshot within a 0.5 s tolerance;
+    /// times further than 0.5 s from any snapshot yield
+    /// `Err(SessionError::NoSnapshotAtTime)`.
+    ///
     /// Returns one `NodeResult` per node in the same order as `node_ids()`.
     /// Uses direct index access — O(N) with no string lookups.
     pub fn all_node_results_at(&self, t: f64) -> Result<Vec<NodeResult>, SessionError> {
@@ -373,6 +387,10 @@ impl Simulation {
     }
 
     /// Return all link results at a given simulation time, indexed by position.
+    ///
+    /// `t` snaps to the nearest recorded snapshot within a 0.5 s tolerance;
+    /// times further than 0.5 s from any snapshot yield
+    /// `Err(SessionError::NoSnapshotAtTime)`.
     ///
     /// Returns one `LinkResult` per link in the same order as `link_ids()`.
     /// Uses direct index access — O(L) with no string lookups.
@@ -467,7 +485,8 @@ impl Simulation {
     /// Return energy statistics for a pump link (§8.2.1).
     pub fn get_pump_energy(&self, pump_id: &str) -> Result<&PumpEnergy, SessionError> {
         let network = self.require_loaded_network()?;
-        let link_index = link_index_by_id(network, pump_id)
+        let link_index = self
+            .link_index_by_id(pump_id)
             .ok_or_else(|| SessionError::UnknownId(pump_id.to_string()))?;
         // Verify it is a pump.
         if !matches!(network.links[link_index].kind, LinkKind::Pump(_)) {
@@ -537,5 +556,170 @@ impl Simulation {
     /// Borrow the list of simulation warnings.
     pub fn warnings(&self) -> &[SimWarning] {
         &self.warnings
+    }
+}
+
+// ── Tests ─────────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_support::TestNetworkBuilder;
+    use crate::SimulationOptions;
+
+    /// Reservoir → J1 → J2 two-pipe network with a 4 h EPS horizon.
+    fn eps_network(quality_mode: QualityMode) -> Network {
+        TestNetworkBuilder::new()
+            .with_options(SimulationOptions {
+                duration: 4.0 * 3600.0,
+                hyd_step: 3600.0,
+                qual_step: 300.0,
+                report_step: 3600.0,
+                report_start: 0.0,
+                quality_mode,
+                ..SimulationOptions::default()
+            })
+            .reservoir("R1", 100.0)
+            .junction("J1", 0.0, 10.0)
+            .junction("J2", 0.0, 5.0)
+            .hw_pipe("P1", "R1", "J1", 1000.0, 12.0, 100.0)
+            .hw_pipe("P2", "J1", "J2", 1000.0, 8.0, 100.0)
+            .build()
+            .0
+    }
+
+    /// Reservoir → J1 ← T1 network with a tank, 4 h EPS horizon.
+    fn tank_network() -> Network {
+        TestNetworkBuilder::new()
+            .with_options(SimulationOptions {
+                duration: 4.0 * 3600.0,
+                hyd_step: 3600.0,
+                report_step: 3600.0,
+                report_start: 0.0,
+                ..SimulationOptions::default()
+            })
+            .reservoir("R1", 100.0)
+            .junction("J1", 0.0, 10.0)
+            .tank("T1", 50.0, 10.0, 0.0, 20.0, 40.0)
+            .hw_pipe("P1", "R1", "J1", 1000.0, 12.0, 100.0)
+            .hw_pipe("P2", "J1", "T1", 1000.0, 8.0, 100.0)
+            .build()
+            .0
+    }
+
+    fn run_session(net: Network) -> Simulation {
+        let mut sess = Simulation::from_network(net).expect("load");
+        sess.run().expect("run");
+        sess
+    }
+
+    #[test]
+    fn queries_before_any_step_report_no_snapshot() {
+        let sess = Simulation::from_network(eps_network(QualityMode::None)).expect("load");
+        let err = sess.get_node_result("J1", NodeQuantity::Head, 0.0);
+        assert!(matches!(err, Err(SessionError::NoSnapshotAtTime { .. })));
+        let err = sess.all_node_results_at(0.0);
+        assert!(matches!(err, Err(SessionError::NoSnapshotAtTime { .. })));
+        let err = sess.result_ranges();
+        assert!(matches!(err, Err(SessionError::InvalidPhase { .. })));
+    }
+
+    #[test]
+    fn result_ranges_bracket_sampled_values() {
+        let sess = run_session(eps_network(QualityMode::None));
+        let ranges = sess.result_ranges().expect("result_ranges");
+        assert!(ranges.head_min <= ranges.head_max);
+        assert!(ranges.pressure_min <= ranges.pressure_max);
+        assert!(ranges.flow_min <= ranges.flow_max);
+        assert!(ranges.velocity_min <= ranges.velocity_max);
+
+        let t0 = sess.snapshot_times()[0];
+        let head = sess
+            .get_node_result("J1", NodeQuantity::Head, t0)
+            .expect("head");
+        assert!(head >= ranges.head_min && head <= ranges.head_max);
+        let flow = sess
+            .get_link_result("P1", LinkQuantity::Flow, t0)
+            .expect("flow");
+        assert!(flow >= ranges.flow_min && flow <= ranges.flow_max);
+    }
+
+    #[test]
+    fn all_node_results_agree_with_scalar_queries() {
+        let sess = run_session(eps_network(QualityMode::None));
+        let t = *sess.snapshot_times().last().expect("snapshots");
+        let all = sess.all_node_results_at(t).expect("all_node_results_at");
+        let ids = sess.node_ids();
+        assert_eq!(all.len(), ids.len());
+        for (i, id) in ids.iter().enumerate() {
+            let head = sess.get_node_result(id, NodeQuantity::Head, t).unwrap();
+            let pressure = sess
+                .get_node_result(id, NodeQuantity::GaugePressure, t)
+                .unwrap();
+            let demand = sess.get_node_result(id, NodeQuantity::Demand, t).unwrap();
+            approx::assert_abs_diff_eq!(all[i].head, head, epsilon = 1e-12);
+            approx::assert_abs_diff_eq!(all[i].pressure, pressure, epsilon = 1e-12);
+            approx::assert_abs_diff_eq!(all[i].demand, demand, epsilon = 1e-12);
+        }
+    }
+
+    #[test]
+    fn all_link_results_agree_with_scalar_queries() {
+        let sess = run_session(eps_network(QualityMode::None));
+        let t = *sess.snapshot_times().last().expect("snapshots");
+        let all = sess.all_link_results_at(t).expect("all_link_results_at");
+        let ids = sess.link_ids();
+        assert_eq!(all.len(), ids.len());
+        for (i, id) in ids.iter().enumerate() {
+            let flow = sess.get_link_result(id, LinkQuantity::Flow, t).unwrap();
+            let velocity = sess
+                .get_link_result(id, LinkQuantity::MeanVelocity, t)
+                .unwrap();
+            let status = sess.get_link_result(id, LinkQuantity::Status, t).unwrap();
+            approx::assert_abs_diff_eq!(all[i].flow, flow, epsilon = 1e-12);
+            approx::assert_abs_diff_eq!(all[i].velocity, velocity, epsilon = 1e-12);
+            approx::assert_abs_diff_eq!(all[i].status, status, epsilon = 1e-12);
+        }
+    }
+
+    #[test]
+    fn snapshot_times_ascend_and_cover_full_horizon() {
+        let sess = run_session(eps_network(QualityMode::None));
+        let times = sess.snapshot_times();
+        assert!(!times.is_empty());
+        assert_eq!(times[0], 0.0);
+        assert!(times.windows(2).all(|w| w[0] < w[1]), "times = {times:?}");
+        assert_eq!(*times.last().unwrap(), 4.0 * 3600.0);
+    }
+
+    #[test]
+    fn mass_balance_is_phase_gated() {
+        let net = eps_network(QualityMode::Age);
+        let mut sess = Simulation::from_network(net).expect("load");
+        assert!(matches!(
+            sess.get_mass_balance(),
+            Err(SessionError::InvalidPhase { .. })
+        ));
+        sess.run_hydraulics().expect("run_hydraulics");
+        assert!(matches!(
+            sess.get_mass_balance(),
+            Err(SessionError::InvalidPhase { .. })
+        ));
+        sess.run_quality().expect("run_quality");
+        let mb = sess.get_mass_balance().expect("mass balance after quality");
+        assert!(mb.init.is_finite());
+    }
+
+    #[test]
+    fn tank_volume_and_flow_balance_summary_available_after_run() {
+        let sess = run_session(tank_network());
+        let vol = sess.final_tank_volume().expect("final_tank_volume");
+        assert!(vol > 0.0, "vol = {vol}");
+        let summary = sess.flow_balance_summary().expect("flow_balance_summary");
+        assert!(summary.total_inflow >= 0.0);
+
+        // The no-tank network reports zero final tank volume.
+        let sess2 = run_session(eps_network(QualityMode::None));
+        assert_eq!(sess2.final_tank_volume().expect("volume"), 0.0);
     }
 }

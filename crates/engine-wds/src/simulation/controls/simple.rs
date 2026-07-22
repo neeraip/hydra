@@ -1,5 +1,13 @@
 use crate::{LinkKind, LinkState, LinkStatus, Network, NodeKind, NodeState, TriggerType};
 
+/// Tolerance ε_t for time-trigger comparisons (§4.1).
+///
+/// Simulation time is real-valued; the adaptive stepper lands on trigger
+/// times only up to floating-point rounding, which this tolerance absorbs.
+/// Far smaller than any achievable time step, so a trigger fires on exactly
+/// one step per occurrence.
+pub(crate) const TIME_TRIGGER_TOL: f64 = 1.0e-6;
+
 /// Resolve the effective (status, setting) pair for a control action,
 /// matching EPANET's `controldata()` (input3.c) derivation:
 ///
@@ -72,11 +80,18 @@ pub(crate) fn apply_simple_controls(
         }
 
         let fires = match ctrl.trigger_type {
-            TriggerType::Timer => ctrl.trigger_time.is_some_and(|tt| t == tt),
-
-            TriggerType::TimeOfDay => ctrl
+            // §4.1: time triggers compare within ε_t rather than exactly —
+            // any accumulated floating-point error in `t` would otherwise
+            // silently prevent the control from ever firing.
+            TriggerType::Timer => ctrl
                 .trigger_time
-                .is_some_and(|tt| (t + clock_start).rem_euclid(86400.0) == tt),
+                .is_some_and(|tt| (t - tt).abs() <= TIME_TRIGGER_TOL),
+
+            TriggerType::TimeOfDay => ctrl.trigger_time.is_some_and(|tt| {
+                // Circular distance covers rounding on either side of midnight.
+                let d = (t + clock_start - tt).rem_euclid(86400.0);
+                d.min(86400.0 - d) <= TIME_TRIGGER_TOL
+            }),
 
             TriggerType::HiLevel | TriggerType::LowLevel => {
                 let (node_idx, grade) = match (ctrl.trigger_node, ctrl.trigger_grade) {
@@ -286,5 +301,63 @@ mod tests {
             resolve_control_action(None, Some(35.0), false, false, true),
             (Some(LinkStatus::Active), Some(35.0))
         );
+    }
+
+    fn timer_control_network(
+        trigger_type: TriggerType,
+        trigger_time: f64,
+    ) -> (Network, Vec<NodeState>, Vec<LinkState>) {
+        use crate::test_support::TestNetworkBuilder;
+        use crate::SimpleControl;
+
+        let (mut net, ns, ls) = TestNetworkBuilder::new()
+            .reservoir("R1", 100.0)
+            .junction("J1", 0.0, 10.0)
+            .hw_pipe("P1", "R1", "J1", 1000.0, 12.0, 100.0)
+            .build();
+        net.controls.push(SimpleControl {
+            link: 1,
+            trigger_type,
+            trigger_time: Some(trigger_time),
+            trigger_node: None,
+            trigger_grade: None,
+            action_status: Some(LinkStatus::Closed),
+            action_setting: None,
+            enabled: true,
+        });
+        (net, ns, ls)
+    }
+
+    #[test]
+    fn timer_control_fires_within_time_tolerance() {
+        // §4.1: time triggers compare within ε_t, so a non-integral simulation
+        // time carrying floating-point rounding still fires the control.
+        let (net, ns, mut ls) = timer_control_network(TriggerType::Timer, 7200.0);
+        assert!(apply_simple_controls(&net, &ns, &mut ls, 7200.0 + 2.0e-7));
+        assert_eq!(ls[0].status, LinkStatus::Closed);
+
+        // Outside the tolerance the trigger must not fire.
+        let (net, ns, mut ls) = timer_control_network(TriggerType::Timer, 7200.0);
+        assert!(!apply_simple_controls(&net, &ns, &mut ls, 7200.5));
+        assert_eq!(ls[0].status, LinkStatus::Open);
+    }
+
+    #[test]
+    fn time_of_day_control_fires_within_circular_tolerance() {
+        // Rounding on either side of the wall-clock trigger fires exactly once.
+        let (net, ns, mut ls) = timer_control_network(TriggerType::TimeOfDay, 3600.0);
+        assert!(apply_simple_controls(
+            &net,
+            &ns,
+            &mut ls,
+            86400.0 + 3600.0 - 3.0e-7
+        ));
+        assert_eq!(ls[0].status, LinkStatus::Closed);
+
+        // Midnight trigger: a time fractionally before midnight is within the
+        // circular distance of trigger_time = 0.
+        let (net, ns, mut ls) = timer_control_network(TriggerType::TimeOfDay, 0.0);
+        assert!(apply_simple_controls(&net, &ns, &mut ls, 86400.0 - 5.0e-7));
+        assert_eq!(ls[0].status, LinkStatus::Closed);
     }
 }

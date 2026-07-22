@@ -1,9 +1,11 @@
-// simulation — §8 of crates/simulation/spec.md
+// simulation — §8 of crates/engine-wds/src/simulation/spec.md
 //
 // The public-facing API of hydra. Exposes the full simulation lifecycle:
 // create → load → run/step hydraulics → run/step quality → get results →
 // destroy. No I/O is performed here; all I/O is the responsibility of adapters.
 
+use std::collections::HashMap;
+use std::sync::OnceLock;
 use std::{f64, time::SystemTime};
 
 use super::accounting::{self, AccountingState};
@@ -48,6 +50,11 @@ pub struct Simulation {
     favad: Option<FavadCoeffs>,
     solver_ctx: Option<SolverContext>,
 
+    // Lazily-built id → index lookup maps for the loaded network.
+    // Reset on every `load()`; safe to cache between loads because object IDs
+    // and topology never change after load (mutations only set property values).
+    id_index: OnceLock<IdIndex>,
+
     // Live simulation state.
     node_states: Vec<NodeState>,
     link_states: Vec<LinkState>,
@@ -76,9 +83,48 @@ pub struct Simulation {
     analysis_ended: Option<SystemTime>,
 }
 
+/// Lazily-built lookup maps from object ID to 0-based index.
+#[derive(Default)]
+struct IdIndex {
+    nodes: HashMap<String, usize>,
+    links: HashMap<String, usize>,
+}
+
 // ── Session internal helpers ──────────────────────────────────────────────────
 
 impl Simulation {
+    /// Return the id → index maps, building them on first use (O(N + L) once
+    /// per loaded network; subsequent lookups are O(1)).
+    fn id_index(&self) -> &IdIndex {
+        self.id_index.get_or_init(|| {
+            let mut idx = IdIndex::default();
+            if let Some(network) = &self.network {
+                idx.nodes = network
+                    .nodes
+                    .iter()
+                    .enumerate()
+                    .map(|(i, n)| (n.base.id.clone(), i))
+                    .collect();
+                idx.links = network
+                    .links
+                    .iter()
+                    .enumerate()
+                    .map(|(i, l)| (l.base.id.clone(), i))
+                    .collect();
+            }
+            idx
+        })
+    }
+
+    /// Find a node's 0-based index by string ID — O(1) via the lazily-built map.
+    fn node_index_by_id(&self, id: &str) -> Option<usize> {
+        self.id_index().nodes.get(id).copied()
+    }
+
+    /// Find a link's 0-based index by string ID — O(1) via the lazily-built map.
+    fn link_index_by_id(&self, id: &str) -> Option<usize> {
+        self.id_index().links.get(id).copied()
+    }
     fn require_phase(&self, expected: Phase) -> Result<(), SessionError> {
         if self.phase != expected {
             Err(SessionError::InvalidPhase {
@@ -137,9 +183,15 @@ impl Simulation {
     }
 
     /// Find the snapshot closest to `t` (within 0.5 s tolerance).
+    fn snapshot_near(&self, t: f64) -> Option<&HydSnapshot> {
+        self.find_snapshot_index_at(t)
+            .map(|i| &self.hyd_snapshots[i])
+    }
+
+    /// Find the index of the snapshot closest to `t` (within 0.5 s tolerance).
     ///
     /// Uses binary search — snapshots are always in ascending time order.
-    fn snapshot_near(&self, t: f64) -> Option<&HydSnapshot> {
+    fn find_snapshot_index_at(&self, t: f64) -> Option<usize> {
         if self.hyd_snapshots.is_empty() {
             return None;
         }
@@ -155,15 +207,7 @@ impl Simulation {
                 let db = (self.hyd_snapshots[b].t - t).abs();
                 da.partial_cmp(&db).unwrap_or(std::cmp::Ordering::Equal)
             })
-            .map(|i| &self.hyd_snapshots[i])
-            .filter(|s| (s.t - t).abs() < 0.5)
-    }
-
-    /// Find the snapshot whose time matches `t` (within 0.5 s tolerance).
-    fn find_snapshot_index_at(&self, t: f64) -> Option<usize> {
-        self.hyd_snapshots
-            .iter()
-            .position(|s| (s.t - t).abs() < 0.5)
+            .filter(|&i| (self.hyd_snapshots[i].t - t).abs() < 0.5)
     }
 
     /// Return initial states from the first snapshot (or live states if no
@@ -180,103 +224,116 @@ impl Simulation {
 
 /// Initialise node states from the static network (§2.4).
 fn init_node_states(network: &Network) -> Vec<NodeState> {
-    network
-        .nodes
-        .iter()
-        .map(|n| {
-            let mut ns = NodeState::default();
-            // Initial head: 0.0 for junctions (matching EPANET's calloc-zeroed NodeHead),
-            // elevation for reservoirs, or head_from_level for tanks.
-            ns.head = match &n.kind {
-                NodeKind::Junction(_) => 0.0,
-                NodeKind::Reservoir(_) => n.base.elevation,
-                NodeKind::Tank(t) => t.head_from_level(n.base.elevation, t.initial_level),
-            };
-            ns.level = match &n.kind {
-                NodeKind::Tank(t) => t.initial_level,
-                _ => 0.0,
-            };
-            ns.volume = match &n.kind {
-                NodeKind::Tank(t) => {
-                    // Use volume curve if present, otherwise π r² h.
-                    if let Some(ref cv_id) = t.volume_curve {
-                        if let Some(curve) = network.curves.iter().find(|c| c.id == *cv_id) {
-                            return NodeState {
-                                head: ns.head,
-                                level: t.initial_level,
-                                volume: curve.eval(t.initial_level),
-                                quality: n.base.initial_quality,
-                                ..NodeState::default()
-                            };
-                        }
-                    }
-                    std::f64::consts::PI * (t.diameter / 2.0).powi(2) * t.initial_level
-                }
-                _ => 0.0,
-            };
-            ns.quality = n.base.initial_quality;
-            ns
-        })
+    (0..network.nodes.len())
+        .map(|i| init_node_state(network, i))
         .collect()
+}
+
+/// Derive the initial state of node `i` from static network data (§2.4).
+///
+/// Used both at load and by `set_node_property` when an initial-state-affecting
+/// property (e.g. elevation) is mutated before the first hydraulic step
+/// (spec §8.3 mutation semantics).
+fn init_node_state(network: &Network, i: usize) -> NodeState {
+    let n = &network.nodes[i];
+    let mut ns = NodeState::default();
+    // Initial head: 0.0 for junctions (matching EPANET's calloc-zeroed NodeHead),
+    // elevation for reservoirs, or head_from_level for tanks.
+    ns.head = match &n.kind {
+        NodeKind::Junction(_) => 0.0,
+        NodeKind::Reservoir(_) => n.base.elevation,
+        NodeKind::Tank(t) => t.head_from_level(n.base.elevation, t.initial_level),
+    };
+    ns.level = match &n.kind {
+        NodeKind::Tank(t) => t.initial_level,
+        _ => 0.0,
+    };
+    ns.volume = match &n.kind {
+        NodeKind::Tank(t) => {
+            // Use volume curve if present, otherwise π r² h.
+            if let Some(ref cv_id) = t.volume_curve {
+                if let Some(curve) = network.curves.iter().find(|c| c.id == *cv_id) {
+                    return NodeState {
+                        head: ns.head,
+                        level: t.initial_level,
+                        volume: curve.eval(t.initial_level),
+                        quality: n.base.initial_quality,
+                        ..NodeState::default()
+                    };
+                }
+            }
+            std::f64::consts::PI * (t.diameter / 2.0).powi(2) * t.initial_level
+        }
+        _ => 0.0,
+    };
+    ns.quality = n.base.initial_quality;
+    ns
 }
 
 /// Initialise link states from static network data (§2.6).
 fn init_link_states(network: &Network) -> Vec<LinkState> {
-    network
-        .links
-        .iter()
-        .map(|l| {
-            let flow = if l.base.initial_status == LinkStatus::Closed {
-                1.0e-6 // QZERO
-            } else {
-                match &l.kind {
-                    LinkKind::Pipe(pipe) => {
-                        // Flow at 1 fps velocity = cross-section area (§3.1).
-                        std::f64::consts::PI * pipe.diameter * pipe.diameter / 4.0
-                    }
-                    LinkKind::Pump(pump) => {
-                        let speed = l.base.initial_setting.unwrap_or(1.0);
-                        let q0 = pump_design_flow(pump, &network.curves);
-                        speed * q0
-                    }
-                    LinkKind::Valve(v) => {
-                        // Same as pipe: area at 1 fps.
-                        std::f64::consts::PI * v.diameter * v.diameter / 4.0
-                    }
-                }
-            };
-            // EPANET inithyd: for non-GPV valves with InitStatus != Active,
-            // setting is cleared to MISSING (NaN), preventing automatic status
-            // transitions. Then, PRV/PSV/FCV with a surviving (non-None)
-            // setting are forced Active. GPV always starts Open.
-            let mut status = l.base.initial_status;
-            let mut setting = l.base.initial_setting;
-            if let LinkKind::Valve(v) = &l.kind {
-                if v.valve_type == crate::ValveType::Gpv {
-                    // GPV: always Open (EPANET never sets GPV to Active).
-                    status = LinkStatus::Open;
-                } else {
-                    if status != LinkStatus::Active {
-                        setting = None;
-                    }
-                    if matches!(
-                        v.valve_type,
-                        crate::ValveType::Prv | crate::ValveType::Psv | crate::ValveType::Fcv
-                    ) && setting.is_some()
-                    {
-                        status = LinkStatus::Active;
-                    }
-                }
-            }
-            LinkState {
-                flow,
-                status,
-                setting: setting.unwrap_or(f64::NAN),
-                quality: 0.0,
-                reaction_rate: 0.0,
-            }
-        })
+    (0..network.links.len())
+        .map(|k| init_link_state(network, k))
         .collect()
+}
+
+/// Derive the initial state of link `k` from static network data (§2.6).
+///
+/// Used both at load and by `set_link_property` when the initial status or
+/// setting is mutated before the first hydraulic step (spec §8.3 mutation
+/// semantics), so a pre-run mutation behaves exactly like loading a network
+/// that had the mutated value from the start.
+fn init_link_state(network: &Network, k: usize) -> LinkState {
+    let l = &network.links[k];
+    let flow = if l.base.initial_status == LinkStatus::Closed {
+        1.0e-6 // QZERO
+    } else {
+        match &l.kind {
+            LinkKind::Pipe(pipe) => {
+                // Flow at 1 fps velocity = cross-section area (§3.1).
+                std::f64::consts::PI * pipe.diameter * pipe.diameter / 4.0
+            }
+            LinkKind::Pump(pump) => {
+                let speed = l.base.initial_setting.unwrap_or(1.0);
+                let q0 = pump_design_flow(pump, &network.curves);
+                speed * q0
+            }
+            LinkKind::Valve(v) => {
+                // Same as pipe: area at 1 fps.
+                std::f64::consts::PI * v.diameter * v.diameter / 4.0
+            }
+        }
+    };
+    // EPANET inithyd: for non-GPV valves with InitStatus != Active,
+    // setting is cleared to MISSING (NaN), preventing automatic status
+    // transitions. Then, PRV/PSV/FCV with a surviving (non-None)
+    // setting are forced Active. GPV always starts Open.
+    let mut status = l.base.initial_status;
+    let mut setting = l.base.initial_setting;
+    if let LinkKind::Valve(v) = &l.kind {
+        if v.valve_type == crate::ValveType::Gpv {
+            // GPV: always Open (EPANET never sets GPV to Active).
+            status = LinkStatus::Open;
+        } else {
+            if status != LinkStatus::Active {
+                setting = None;
+            }
+            if matches!(
+                v.valve_type,
+                crate::ValveType::Prv | crate::ValveType::Psv | crate::ValveType::Fcv
+            ) && setting.is_some()
+            {
+                status = LinkStatus::Active;
+            }
+        }
+    }
+    LinkState {
+        flow,
+        status,
+        setting: setting.unwrap_or(f64::NAN),
+        quality: 0.0,
+        reaction_rate: 0.0,
+    }
 }
 
 /// Compute the design flow Q0 for a pump (spec §3.10).
@@ -312,16 +369,6 @@ fn pump_design_flow(pump: &crate::Pump, curves: &[crate::Curve]) -> f64 {
             0.028317 // fallback: 1 ft³/s in m³/s (spec §3.10)
         }
     }
-}
-
-/// Find a node's 0-based index by string ID.
-fn node_index_by_id(network: &Network, id: &str) -> Option<usize> {
-    network.nodes.iter().position(|n| n.base.id == id)
-}
-
-/// Find a link's 0-based index by string ID.
-fn link_index_by_id(network: &Network, id: &str) -> Option<usize> {
-    network.links.iter().position(|l| l.base.id == id)
 }
 
 fn link_status_to_f64(status: LinkStatus) -> f64 {
@@ -434,6 +481,27 @@ mod tests {
         sess.load(simple_network()).expect("load failed");
         sess.run_hydraulics().expect("run_hydraulics failed");
         assert_eq!(sess.phase, Phase::HydraulicsDone);
+    }
+
+    #[test]
+    fn id_index_lookups_and_reload_invalidation() {
+        let mut sess = Simulation::from_network(simple_network()).expect("load failed");
+        // Lazily-built map: O(1) lookups resolve to load-time indices.
+        assert_eq!(sess.node_index_by_id("R1"), Some(0));
+        assert_eq!(sess.node_index_by_id("J1"), Some(1));
+        assert_eq!(sess.link_index_by_id("P1"), Some(0));
+        assert_eq!(sess.node_index_by_id("nope"), None);
+        assert_eq!(sess.link_index_by_id("nope"), None);
+
+        // Re-loading a network with different IDs must discard the cached map.
+        let mut renamed = simple_network();
+        renamed.nodes[1].base.id = "J2".into();
+        renamed.links[0].base.id = "P2".into();
+        sess.load(renamed).expect("reload failed");
+        assert_eq!(sess.node_index_by_id("J1"), None);
+        assert_eq!(sess.node_index_by_id("J2"), Some(1));
+        assert_eq!(sess.link_index_by_id("P1"), None);
+        assert_eq!(sess.link_index_by_id("P2"), Some(0));
     }
 
     #[test]

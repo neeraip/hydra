@@ -47,7 +47,16 @@ pub(super) fn precompute_pump_powers(
                 _ => return None,
             };
             let ls = &link_states[li];
-            if matches!(ls.status, crate::LinkStatus::Closed) {
+            // §7.1: CLOSED, XHEAD, and TEMPCLOSED pumps are offline — they
+            // draw no power and accumulate no energy statistics. (XHead /
+            // TempClosed pumps keep a small placeholder flow, so they must be
+            // excluded by status, not by flow.)
+            if matches!(
+                ls.status,
+                crate::LinkStatus::Closed
+                    | crate::LinkStatus::XHead
+                    | crate::LinkStatus::TempClosed
+            ) {
                 return None;
             }
             let omega: f64 = ls.setting.max(0.0);
@@ -308,6 +317,40 @@ mod tests {
         assert!((pump_powers[0].q_guard - Q_MIN_ENERGY).abs() < 1e-15);
         assert!(!pump_powers[0].is_online);
         assert!(pump_powers[0].w_elec_kw > 0.0);
+    }
+
+    #[test]
+    fn precompute_pump_powers_excludes_xhead_and_tempclosed_pumps() {
+        // §7.1: XHead / TempClosed pumps keep a small placeholder flow but are
+        // offline — they must accumulate no energy statistics at all.
+        let network = pump_network();
+        let node_states = vec![
+            NodeState {
+                head: 10.0,
+                ..NodeState::default()
+            },
+            NodeState {
+                head: 25.0,
+                ..NodeState::default()
+            },
+        ];
+        for status in [
+            LinkStatus::Closed,
+            LinkStatus::XHead,
+            LinkStatus::TempClosed,
+        ] {
+            let link_states = vec![LinkState {
+                flow: 1.0e-6,
+                status,
+                setting: 1.0,
+                ..LinkState::default()
+            }];
+            let pump_powers = precompute_pump_powers(&network, &node_states, &link_states);
+            assert!(
+                pump_powers.is_empty(),
+                "pump with status {status:?} must be excluded from energy accounting"
+            );
+        }
     }
 
     #[test]

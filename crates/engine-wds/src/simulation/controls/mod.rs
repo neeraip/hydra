@@ -8,7 +8,7 @@ mod rules;
 mod simple;
 
 pub(crate) use rules::{apply_link_actions, eval_rules};
-pub(crate) use simple::{apply_simple_controls, pswitch, resolve_control_action};
+pub(crate) use simple::{apply_simple_controls, pswitch, resolve_control_action, TIME_TRIGGER_TOL};
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
 

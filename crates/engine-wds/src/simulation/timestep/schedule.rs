@@ -1,4 +1,4 @@
-use crate::simulation::controls::resolve_control_action;
+use crate::simulation::controls::{resolve_control_action, TIME_TRIGGER_TOL};
 use crate::{LinkKind, LinkState, Network, NodeKind, NodeState, TriggerType};
 
 /// Computes the adaptive hydraulic time step (§5.2).
@@ -104,6 +104,9 @@ pub(crate) fn control_timestep(
                     (Some(n), Some(g)) => (n, g),
                     _ => continue,
                 };
+                if node_1based < 1 || node_1based > network.nodes.len() {
+                    continue;
+                }
                 let node_idx = node_1based - 1;
                 let node = &network.nodes[node_idx];
                 let tank = match &node.kind {
@@ -135,7 +138,9 @@ pub(crate) fn control_timestep(
             }
             TriggerType::Timer => {
                 if let Some(trigger_time) = ctrl.trigger_time {
-                    if trigger_time > t {
+                    // §5.2.1: a trigger within ε_t of `t` fires at `t` itself
+                    // (§4.1), so only strictly future triggers schedule a step.
+                    if trigger_time > t + TIME_TRIGGER_TOL {
                         tc = trigger_time - t;
                     }
                 }
@@ -145,7 +150,9 @@ pub(crate) fn control_timestep(
                     let t1 = (t + clock_start) % 86400.0;
                     let t2 = trigger_time;
                     tc = if t2 >= t1 { t2 - t1 } else { 86400.0 - t1 + t2 };
-                    if tc == 0.0 {
+                    // §5.2.1: the current occurrence fires at `t` itself —
+                    // schedule the next one a day away.
+                    if tc <= TIME_TRIGGER_TOL {
                         tc = 86400.0;
                     }
                 }
@@ -411,5 +418,43 @@ mod tests {
             dt, 3600.0,
             "tank with zero net_flow should not constrain dt"
         );
+    }
+
+    #[test]
+    fn control_timestep_ignores_out_of_range_trigger_node() {
+        use super::control_timestep;
+        use crate::{LinkState, SimpleControl, TriggerType};
+
+        let opts = SimulationOptions {
+            duration: 86400.0,
+            hyd_step: 3600.0,
+            report_step: 3600.0,
+            pattern_step: 3600.0,
+            pattern_start: 0.0,
+            ..SimulationOptions::default()
+        };
+        let tank = cylindrical_tank_node(1, 0.0, 0.0, 10.0, 5.0, 10.0, false);
+        let (mut net, _) = network_with_tank(opts, tank);
+        // trigger_node = 0 previously underflowed `node_1based - 1`; an index
+        // past the node list previously panicked on the slice access.
+        for bad_node in [0usize, 99] {
+            net.controls = vec![SimpleControl {
+                link: 1,
+                trigger_type: TriggerType::HiLevel,
+                trigger_time: None,
+                trigger_node: Some(bad_node),
+                trigger_grade: Some(5.0),
+                action_status: Some(LinkStatus::Closed),
+                action_setting: None,
+                enabled: true,
+            }];
+            let node_states = vec![NodeState::default()];
+            let link_states = vec![LinkState::default()];
+            let dt = control_timestep(0.0, &net, &node_states, &link_states);
+            assert!(
+                dt.is_infinite(),
+                "out-of-range trigger node must be skipped, got dt={dt}"
+            );
+        }
     }
 }

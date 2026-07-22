@@ -22,10 +22,12 @@ Simple controls are evaluated **once per hydraulic time step**, before the hydra
 
 | Trigger type | Condition |
 |---|---|
-| `TIMER` | $t = t_{\text{trigger}}$ (exact match in seconds) |
-| `TIMEOFDAY` | $(t + t_{\text{clock\_start}}) \bmod 86400 = t_{\text{trigger}}$ |
+| `TIMER` | $\lvert t - t_{\text{trigger}} \rvert \leq \varepsilon_t$ |
+| `TIMEOFDAY` | $\min(d,\; 86400 - d) \leq \varepsilon_t$ where $d = (t + t_{\text{clock\_start}} - t_{\text{trigger}}) \bmod 86400$ |
 | `HILEVEL` | $V(h_{\text{node}}) \geq V(H_{\text{threshold}}) - \lvert Q_{\text{net,tank}} \rvert$ |
 | `LOWLEVEL` | $V(h_{\text{node}}) \leq V(H_{\text{threshold}}) + \lvert Q_{\text{net,tank}} \rvert$ |
+
+Time triggers use an absolute tolerance $\varepsilon_t = 10^{-6}$ s rather than exact equality (EPANET compares integer seconds; simulation time here is real-valued). The adaptive stepper (§5.2.1) lands each step on the pending trigger time up to floating-point rounding, which the tolerance absorbs. $\varepsilon_t$ is far smaller than any achievable time step, so a trigger fires on exactly one step per occurrence. For `TIMEOFDAY` the distance $d$ is circular, covering rounding on either side of midnight.
 
 Level controls compare **volumes** (not levels) to avoid ambiguity with non-cylindrical tanks. Both volumes are computed through the same $V(h)$ function: $V(h_{\text{node}})$ from the current head, $V(H_{\text{threshold}})$ from the control grade. This ensures floating-point consistency regardless of how the current level/volume was accumulated.
 
@@ -154,9 +156,9 @@ For each enabled simple control $c$:
 
   where $V(G_c)$ is the tank volume at head $G_c$ and $V_{\text{current}}$ is the current tank volume. The result is rounded to the nearest whole second.
 
-2. **Timer controls**: if $t_{\text{trigger}} > t$, then $t_c = t_{\text{trigger}} - t$.
+2. **Timer controls**: if $t_{\text{trigger}} > t + \varepsilon_t$ (the trigger has not yet fired at $t$; see §4.1), then $t_c = t_{\text{trigger}} - t$.
 
-3. **Time-of-day controls**: $t_c$ is the time remaining until the next occurrence of $t_{\text{trigger}}$ in wall-clock time: $t_c = (t_{\text{trigger}} - (t + t_{\text{start}}) \bmod 86400 + 86400) \bmod 86400$. If $t_c = 0$, use $86400$.
+3. **Time-of-day controls**: $t_c$ is the time remaining until the next occurrence of $t_{\text{trigger}}$ in wall-clock time: $t_c = (t_{\text{trigger}} - (t + t_{\text{start}}) \bmod 86400 + 86400) \bmod 86400$. If $t_c \leq \varepsilon_t$ (the current occurrence fires at $t$ itself), use $86400$.
 
 4. **Applicability check**: $t_c$ only shortens the time step if $t_c > 0$ **and** the control's target status or setting differs from the link's current status or setting. Controls that would not actually change anything are ignored.
 
@@ -212,6 +214,8 @@ The accounting subsystem accumulates energy statistics for each pump and global 
 ### 7.1 Pump Energy
 
 After each hydraulic step of duration $\Delta t$, for each pump $p$ with flow $Q_p$ and head gain $\Delta H_p$:
+
+**Offline pumps**: a pump whose status for the step is `CLOSED`, `XHEAD`, or `TEMPCLOSED` is not running — it draws no electrical power and accumulates nothing for the step (no energy, cost, online time, or contribution to the peak power draw). This matches EPANET, where any status at or below `CLOSED` yields zero power and efficiency.
 
 **Hydraulic power** (in internal power units):
 
@@ -426,6 +430,15 @@ destroy(session) // release all resources
 - A session is not thread-safe with respect to itself — concurrent calls on the same session are not supported; the outcome is unspecified. Concurrent calls on different sessions are safe.
 - Property setters that change a value affecting the sparse matrix structure (e.g. adding a node or link) are only valid before `run_hydraulics` / `step_hydraulics` begins. Property setters that change only values (e.g. roughness, demand, pump speed) may be called between steps.
 - The unit system of values passed to and returned from the API is an implementation decision. The solver operates in the internal unit system (`../model/spec.md` §3); the API may expose internal units directly (requiring callers to convert) or may accept a unit selection and convert at the API boundary. Either approach is conforming, provided the solver itself never performs unit-dependent branching.
+
+**Mutation semantics**: A property mutation must change subsequent simulation behaviour — never only the stored model. If an implementation caches quantities derived from a mutable property, the mutation must refresh those caches. Mutations never alter results already recorded; a value takes effect from the next hydraulic solve (or, for initial quality, from quality initialisation) onward. The precise semantics per property:
+
+- **Pipe roughness** (`set_link_property`): the stored roughness is updated and the pipe's head-loss resistance coefficient (`../hydraulics/spec.md` §3.2) is re-derived from the pipe's current length, diameter, and roughness under the network's head-loss formula. The new resistance is used from the next hydraulic solve onward. On a non-pipe link the mutation is accepted but has no effect (roughness is not a pump or valve property).
+- **Initial link status / initial link setting** (`set_link_property`): the stored initial value is updated, and additionally:
+  - **Before the first hydraulic step**: the link's live state — status, setting, and initial flow estimate — is re-derived under the same initialisation rules applied at load (`../hydraulics/spec.md` §3.10, including the valve `ACTIVE` status resolution). The simulation must produce the same results as if the network had been loaded with the mutated value from the start.
+  - **After stepping has begun**: the value is applied to the link's live state as an operational status/setting change under the same rules as a control action (§4.2.3), taking effect from the next hydraulic solve. The link's current flow is preserved as the next Newton-Raphson initial iterate; completed steps are unaffected.
+- **Node elevation** (`set_node_property`): the stored elevation is updated together with every cached elevation-derived quantity the solver consumes: the elevation datum used to convert pressure-based valve settings to heads (`../hydraulics/spec.md` §3.5, §3.9) and the tank head limits corresponding to minimum and maximum levels (`../hydraulics/spec.md` §3.9). Quantities derived live from the stored elevation — fixed-grade reservoir head (re-derived every step), pressure-dependent demand, tank level-to-head conversion at tank updates, and pressure reporting — pick the new value up without further action. Before the first hydraulic step, initial reservoir and tank heads are re-derived from the new elevation; after stepping has begun, a tank's current level and volume are preserved and its head is re-derived from the new elevation at the next tank level update.
+- **Initial node quality** (`set_node_property`): consumed at quality initialisation (`../quality/spec.md`); mutations at any time before the quality phase initialises take effect. Mutations after quality initialisation do not retroactively change the quality state.
 
 ### 8.4 Error Handling
 

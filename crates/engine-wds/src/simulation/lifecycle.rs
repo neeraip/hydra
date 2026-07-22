@@ -14,6 +14,7 @@ impl Simulation {
             network: None,
             favad: None,
             solver_ctx: None,
+            id_index: OnceLock::new(),
             node_states: vec![],
             link_states: vec![],
             current_t: 0.0,
@@ -41,7 +42,6 @@ impl Simulation {
         Ok(session)
     }
 
-    /// Load and validate a network, preparing for simulation.
     /// Load and validate a network, preparing for simulation (§8.3 `load()`).
     ///
     /// Runs the §2.9 validation checks. Returns `SessionError::ValidationFailed`
@@ -68,6 +68,8 @@ impl Simulation {
         let next_report = options.report_start;
 
         self.network = Some(network);
+        // Discard any id → index maps cached for a previously loaded network.
+        self.id_index = OnceLock::new();
         self.favad = Some(favad);
         self.solver_ctx = Some(solver_ctx);
         self.node_states = node_states;
@@ -570,5 +572,149 @@ impl Simulation {
             self.phase = Phase::QualityDone;
         }
         Ok(dt_h)
+    }
+}
+
+// ── Tests ─────────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_support::TestNetworkBuilder;
+    use crate::SimulationOptions;
+
+    /// Reservoir → J1 → J2 two-pipe network with a 4 h EPS horizon.
+    fn eps_network(quality_mode: QualityMode) -> Network {
+        TestNetworkBuilder::new()
+            .with_options(SimulationOptions {
+                duration: 4.0 * 3600.0,
+                hyd_step: 3600.0,
+                qual_step: 300.0,
+                report_step: 3600.0,
+                report_start: 0.0,
+                quality_mode,
+                ..SimulationOptions::default()
+            })
+            .reservoir("R1", 100.0)
+            .junction("J1", 0.0, 10.0)
+            .junction("J2", 0.0, 5.0)
+            .hw_pipe("P1", "R1", "J1", 1000.0, 12.0, 100.0)
+            .hw_pipe("P2", "J1", "J2", 1000.0, 8.0, 100.0)
+            .build()
+            .0
+    }
+
+    #[test]
+    fn run_completes_hydraulics_and_quality_and_exposes_results() {
+        let mut sess = Simulation::from_network(eps_network(QualityMode::Age)).expect("load");
+        sess.run().expect("run");
+        assert_eq!(sess.phase, Phase::QualityDone);
+
+        let times = sess.snapshot_times();
+        assert_eq!(*times.last().expect("snapshots"), 4.0 * 3600.0);
+        let head = sess
+            .get_node_result("J1", crate::NodeQuantity::Head, *times.last().unwrap())
+            .expect("head");
+        assert!(head.is_finite() && head > 0.0, "head = {head}");
+        // Age at the reservoir stays 0; downstream junction age is positive.
+        let age = sess
+            .get_node_result("J2", crate::NodeQuantity::Quality, *times.last().unwrap())
+            .expect("age");
+        assert!(age > 0.0, "age = {age}");
+    }
+
+    #[test]
+    fn step_hydraulics_sentinel_reaches_duration_exactly() {
+        let net = eps_network(QualityMode::None);
+        let duration = net.options.duration;
+        let mut sess = Simulation::from_network(net).expect("load");
+
+        let mut total = 0.0;
+        let mut steps = 0;
+        loop {
+            let dt = sess.step_hydraulics().expect("step_hydraulics");
+            if dt == 0.0 {
+                break;
+            }
+            total += dt;
+            steps += 1;
+            assert!(steps < 1000, "did not terminate");
+        }
+        assert!((total - duration).abs() < 1e-6, "total = {total}");
+        assert_eq!(sess.phase, Phase::HydraulicsDone);
+
+        // Stepping past completion is a phase error, not a silent no-op.
+        let err = sess.step_hydraulics();
+        assert!(matches!(err, Err(SessionError::InvalidPhase { .. })));
+    }
+
+    #[test]
+    fn step_quality_sentinel_reaches_duration_then_reports_done() {
+        let net = eps_network(QualityMode::Age);
+        let duration = net.options.duration;
+        let mut sess = Simulation::from_network(net).expect("load");
+        sess.run_hydraulics().expect("run_hydraulics");
+
+        let mut total = 0.0;
+        loop {
+            let dt = sess.step_quality().expect("step_quality");
+            if dt == 0.0 {
+                break;
+            }
+            total += dt;
+        }
+        assert!((total - duration).abs() < 1e-6, "total = {total}");
+        assert_eq!(sess.phase, Phase::QualityDone);
+
+        // After QualityDone, further step_quality calls return the sentinel.
+        assert_eq!(sess.step_quality().expect("step_quality"), 0.0);
+    }
+
+    #[test]
+    fn step_hydraulics_before_load_is_phase_error() {
+        let mut sess = Simulation::create();
+        let err = sess.step_hydraulics();
+        assert!(matches!(err, Err(SessionError::InvalidPhase { .. })));
+    }
+
+    #[test]
+    fn run_quality_before_hydraulics_is_phase_error() {
+        let mut sess = Simulation::from_network(eps_network(QualityMode::Age)).expect("load");
+        let err = sess.run_quality();
+        assert!(matches!(err, Err(SessionError::InvalidPhase { .. })));
+        // The failed call must not have corrupted the phase.
+        assert_eq!(sess.phase, Phase::Loaded);
+    }
+
+    #[test]
+    fn reload_after_completed_run_resets_session() {
+        let mut sess = Simulation::from_network(eps_network(QualityMode::Age)).expect("load");
+        sess.run().expect("first run");
+        assert!(!sess.snapshot_times().is_empty());
+
+        sess.load(eps_network(QualityMode::None)).expect("reload");
+        assert_eq!(sess.phase, Phase::Loaded);
+        assert!(sess.snapshot_times().is_empty(), "snapshots must be reset");
+        assert!(sess.warnings().is_empty(), "warnings must be reset");
+
+        sess.run().expect("second run");
+        assert_eq!(sess.phase, Phase::QualityDone);
+    }
+
+    #[test]
+    fn load_invalid_network_fails_validation_and_stays_created() {
+        let mut net = eps_network(QualityMode::None);
+        // Corrupt a link endpoint: out-of-bounds node index fails validation.
+        net.links[0].base.from_node = 999;
+
+        let mut sess = Simulation::create();
+        let err = sess.load(net);
+        assert!(matches!(err, Err(SessionError::ValidationFailed(_))));
+        assert_eq!(sess.phase, Phase::Created);
+        // The session is still unusable until a valid load.
+        assert!(matches!(
+            sess.run_hydraulics(),
+            Err(SessionError::InvalidPhase { .. })
+        ));
     }
 }
