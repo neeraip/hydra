@@ -396,14 +396,16 @@ The internal unit is always SI. The factor converts from the user-facing unit to
 | Friction factor | — | 1.0 | — | 1.0 | — |
 | Quality (concentration) | mg/L | 1.0 | mg/L | 1.0 | mg/L |
 
-**Pressure** is handled separately because its user-facing unit is configurable independently of the flow unit group. The factor converts from user-facing pressure to internal head in metres: $h_{\text{m}} = p_{\text{user}} / \text{factor}$:
+**Pressure** is handled separately because its user-facing unit is in principle configurable independently of the flow unit group. The factor converts from user-facing pressure to internal head in metres: $h_{\text{m}} = p_{\text{user}} / \text{factor}$:
 
 | Pressure unit | Factor (user units per m of head) | Notes |
 |---|---|---|
 | psi | $1.4219 \times S_g$ | Default for US customary; $S_g$ = specific gravity |
-| kPa | $9.807 \times S_g$ | Default for SI |
-| m (metres of head) | 1.0 | Internal unit; no conversion |
+| m (metres of head) | 1.0 | Default for SI; also the internal unit (no conversion) |
+| kPa | $9.807 \times S_g$ | Optional SI unit (EPANET `PRESSURE kPa` option); not currently selectable in Hydra |
 | ft (feet of head) | 3.2808 | Direct length conversion |
+
+The defaults match EPANET: US-customary models report pressure in psi, and SI models report pressure in **metres of head** unless the EPANET `PRESSURE kPa` option is set. Hydra does not currently parse the `PRESSURE` unit option, so pressure is always psi (US group) or metres (SI group).
 
 ---
 
@@ -417,10 +419,13 @@ One format is currently defined. Additional formats may be added in future.
 
 Format is **always detected from file contents**, not from the file extension. Any extension, including no extension, is accepted.
 
-| First non-whitespace content | Detected format |
+| First non-whitespace character | Detected format |
 |---|---|
-| `[` at the start of a line | INP (§4.3) |
+| `[` (section header) | INP (§4.3) |
+| `;` (INP comment line) | INP (§4.3) |
 | Anything else | Error: unrecognised format |
+
+Accepting a leading `;` allows INP files that begin with comment lines before their first section header.
 
 ### 4.2 Parse Complexity
 
@@ -441,7 +446,17 @@ The INP format is the plain-text network description format used by EPANET. Supp
 - `[REPORT]`: controls output filtering and verbosity. These are component-level settings, not simulation parameters.
 - `[TIMES] Statistic`: the `STATISTIC` keyword within `[TIMES]` (values: `NONE`, `AVERAGED`, `MINIMUM`, `MAXIMUM`, `RANGE`) controls how per-timestep results are post-processed before output. `NONE` writes every reporting step individually. The other modes aggregate across all reporting steps (time-weighted average, element-wise minimum/maximum, or max−min range). This is a post-processing mode; the core always delivers all per-step results regardless of this setting.
 
-**Non-supported constructs:** EPANET INP quirks not present in the 2.3 spec, undocumented section names, and any constructs specific to the EPANET 2 Toolkit's binary project format are not supported and must produce a parse error identifying the offending section or keyword.
+**Malformed data lines:** a data line in a recognised section that has fewer fields than the section's required columns, or a field that fails numeric conversion or range validation, must produce a parse error identifying the section, the 1-based source line number, and the offending field or value. This applies uniformly to the object-defining sections (`[JUNCTIONS]`, `[RESERVOIRS]`, `[TANKS]`, `[PIPES]`, `[PUMPS]`, `[VALVES]`) and the node/link property sections (`[DEMANDS]`, `[EMITTERS]`, `[QUALITY]`, `[MIXING]`, `[SOURCES]`, `[STATUS]`, `[LEAKAGE]`). Display/annotation sections (`[COORDINATES]`, `[VERTICES]`, `[TAGS]`, `[REPORT]`) remain lenient: under-length lines and unknown IDs there are skipped, matching EPANET.
+
+**Duplicate identifiers:** defining two nodes with the same ID (across `[JUNCTIONS]`, `[RESERVOIRS]`, and `[TANKS]`) or two links with the same ID (across `[PIPES]`, `[PUMPS]`, and `[VALVES]`) is a parse error naming the duplicated ID. This matches EPANET, which treats a duplicate ID as a hard error (error 215). A node and a link may share the same ID.
+
+**Option range validation:** `TRIALS`, `CHECKFREQ`, and `MAXCHECK` values below 1 (or non-numeric/NaN) are parse errors naming the option, enforcing the §2.1 constraints `max_iter ≥ 1` and `check_freq ≥ 1` at the input boundary instead of silently truncating to 0.
+
+**Non-supported constructs:** constructs specific to the EPANET 2 Toolkit's binary project format are not supported and must produce a parse error identifying the offending section or keyword.
+
+> **DEVIATION from EPANET:** unknown (undocumented) section names are silently ignored rather than rejected. This is deliberate leniency for forward compatibility — files written by newer tools with extra metadata sections still load.
+
+> **DEVIATION from EPANET:** unknown keywords inside `[OPTIONS]` are silently ignored rather than rejected, for the same forward-compatibility reason. Recognised keywords with invalid values are still parse errors.
 
 The INP parser uses the two-pass strategy described in §4.2.
 

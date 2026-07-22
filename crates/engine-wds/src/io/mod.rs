@@ -41,6 +41,37 @@ pub enum ParseError {
         /// Human-readable explanation of why the value is invalid.
         reason: String,
     },
+    /// A node or link ID was defined more than once (EPANET error 215).
+    DuplicateId {
+        /// Object class: `"node"` or `"link"`.
+        object: &'static str,
+        /// The duplicated ID.
+        id: String,
+    },
+    /// A parse error annotated with the INP section and 1-based source line
+    /// number where it occurred.
+    AtLine {
+        /// INP section name (upper-case, without brackets).
+        section: String,
+        /// 1-based line number in the input file.
+        line: usize,
+        /// The underlying parse error.
+        source: Box<ParseError>,
+    },
+}
+
+impl ParseError {
+    /// Attach section and line context to an error that does not already have it.
+    pub(crate) fn at_line(self, section: &str, line: usize) -> ParseError {
+        match self {
+            Self::AtLine { .. } | Self::ValidationFailed(_) => self,
+            other => Self::AtLine {
+                section: section.to_string(),
+                line,
+                source: Box::new(other),
+            },
+        }
+    }
 }
 
 impl fmt::Display for ParseError {
@@ -51,11 +82,28 @@ impl fmt::Display for ParseError {
             Self::InvalidField { field, reason } => {
                 write!(f, "invalid field '{field}': {reason}")
             }
+            Self::DuplicateId { object, id } => {
+                write!(f, "duplicate {object} ID '{id}'")
+            }
+            Self::AtLine {
+                section,
+                line,
+                source,
+            } => {
+                write!(f, "[{section}] line {line}: {source}")
+            }
         }
     }
 }
 
-impl std::error::Error for ParseError {}
+impl std::error::Error for ParseError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::AtLine { source, .. } => Some(source.as_ref()),
+            _ => None,
+        }
+    }
+}
 
 /// Parse a model file from raw bytes, returning a fully validated `Network`.
 ///

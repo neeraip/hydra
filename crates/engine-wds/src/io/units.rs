@@ -30,12 +30,10 @@ pub struct Ucf {
     pub pressure: f64,
 }
 
-/// Build a [`Ucf`] from the declared flow-unit system and specific gravity.
-///
-/// `flow_units` determines whether SI or US-customary factors are used.
-/// `specific_gravity` scales pressure conversion (typically 1.0 for water).
-pub fn make_ucf(flow_units: FlowUnits, specific_gravity: f64) -> Ucf {
-    let is_si = matches!(
+/// Whether a named flow-unit variant belongs to the SI/metric group
+/// (spec.md §3: LPS, LPM, MLD, CMH, CMD, CMS) rather than US customary.
+pub fn is_si(flow_units: FlowUnits) -> bool {
+    matches!(
         flow_units,
         FlowUnits::Lps
             | FlowUnits::Lpm
@@ -43,7 +41,15 @@ pub fn make_ucf(flow_units: FlowUnits, specific_gravity: f64) -> Ucf {
             | FlowUnits::Cmh
             | FlowUnits::Cmd
             | FlowUnits::Cms
-    );
+    )
+}
+
+/// Build a [`Ucf`] from the declared flow-unit system and specific gravity.
+///
+/// `flow_units` determines whether SI or US-customary factors are used.
+/// `specific_gravity` scales pressure conversion (typically 1.0 for water).
+pub fn make_ucf(flow_units: FlowUnits, specific_gravity: f64) -> Ucf {
+    let is_si = is_si(flow_units);
 
     // Flow factors: user flow units per m³/s.
     // value_internal_m3s = value_user / flow.

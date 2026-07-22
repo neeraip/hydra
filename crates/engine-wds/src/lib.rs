@@ -34,8 +34,13 @@
 //! writers, unit conversion, the GGA hydraulic solver, the Lagrangian quality
 //! engine, the simulation session API, and post-simulation analytics.
 //!
-//! It does **not** own interface logic (CLI, GUI) or filesystem/network I/O —
-//! callers supply bytes. all types are defined within this crate.
+//! It does **not** own interface logic (CLI, GUI) and performs no network I/O —
+//! simulation inputs (INP model bytes) are supplied in memory by callers.
+//! One deliberate carve-out exists for local filesystem reads: `io::out_reader`
+//! and `io::analysis_io` expose explicit path-based helpers that stream binary
+//! `.out` result files and analysis artifacts from disk, so large results
+//! never need to be loaded whole. All public types are defined within this
+//! crate.
 //!
 //! # Internal module structure
 //!

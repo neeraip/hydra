@@ -52,9 +52,9 @@
 
 use std::io::{Seek, Write};
 
-use super::units::{make_ucf, Ucf};
+use super::units::{is_si, make_ucf, Ucf};
 use super::WritableSimulation;
-use crate::{FlowUnits, LinkKind, LinkStatus, NodeKind, QualityMode, ValveType};
+use crate::{FlowUnits, HeadLossFormula, LinkKind, LinkStatus, NodeKind, QualityMode, ValveType};
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -402,15 +402,19 @@ fn write_energy<W: Write>(
             };
             let avg_eff = (pe.avg_efficiency() * 100.0) as f32;
             // kWh per unit of flow: EPANET reports kWh/Mgal (US) or kWh/m³ (SI).
-            // kwh_per_flow is accumulated as (kW / flow_CFS) * dt; divide by
-            // time_online to get average kW/CFS, then convert to output units.
+            // kwh_per_flow is accumulated as (kW / flow_m³/s) * dt (see
+            // simulation/accounting/energy.rs — flow is internal m³/s); dividing
+            // by time_online yields the average kW per (m³/s), which is the
+            // energy intensity in kJ/m³ (kW·s/m³ = kJ/m³).
             let avg_kwh_per_flow = if pe.time_online > 0.0 {
-                let raw = pe.kwh_per_flow / pe.time_online;
-                // GPMperCFS = 448.831, LPSperCFS = 28.317
+                let kj_per_m3 = pe.kwh_per_flow / pe.time_online;
                 if is_si(output_units) {
-                    (raw * (1000.0 / 28.317 / 3600.0)) as f32
+                    // kJ/m³ → kWh/m³
+                    (kj_per_m3 / 3600.0) as f32
                 } else {
-                    (raw * (1.0e6 / 448.831 / 60.0)) as f32
+                    // kJ/m³ → kWh/Mgal (1 Mgal = 3785.411784 m³)
+                    const M3_PER_MGAL: f64 = 3_785.411_784;
+                    (kj_per_m3 * M3_PER_MGAL / 3600.0) as f32
                 }
             } else {
                 0.0
@@ -512,7 +516,8 @@ fn write_dynamic_snapshot<W: Write>(
 ) -> std::io::Result<()> {
     let n_nodes = network.nodes.len();
     let n_links = network.links.len();
-    let snapshot_bytes = (n_nodes * 4 + n_links * 9) * 4;
+    // 4 node variables + 8 link variables, 4 bytes each (see file layout above).
+    let snapshot_bytes = (n_nodes * 4 + n_links * 8) * 4;
     let mut buf: Vec<u8> = Vec::with_capacity(snapshot_bytes);
 
     // Demand
@@ -641,7 +646,17 @@ fn write_dynamic_snapshot<W: Write>(
     for (i, link) in network.links.iter().enumerate() {
         let link_state = &snapshot.link_states[i];
         let setting = match &link.kind {
-            LinkKind::Pipe(p) => p.roughness,
+            // Pipe "setting" is the roughness coefficient. Hazen-Williams C and
+            // Manning n are dimensionless; Darcy-Weisbach roughness was
+            // converted to metres at parse time (units.rs) and must be
+            // converted back to user units (mm / milli-ft) for output.
+            LinkKind::Pipe(p) => {
+                if network.options.head_loss_formula == HeadLossFormula::DarcyWeisbach {
+                    p.roughness * 1000.0 * ucf.elev
+                } else {
+                    p.roughness
+                }
+            }
             LinkKind::Pump(_) => link_state.setting,
             LinkKind::Valve(v) => {
                 if link_state.setting.is_nan() {
@@ -835,18 +850,6 @@ fn write_fixed_str<W: Write>(w: &mut W, s: &str, width: usize) -> std::io::Resul
         }
     }
     Ok(())
-}
-
-fn is_si(fu: FlowUnits) -> bool {
-    matches!(
-        fu,
-        FlowUnits::Lps
-            | FlowUnits::Lpm
-            | FlowUnits::Mld
-            | FlowUnits::Cmh
-            | FlowUnits::Cmd
-            | FlowUnits::Cms
-    )
 }
 
 fn flow_units_to_code(fu: FlowUnits) -> i32 {
@@ -1118,6 +1121,106 @@ mod tests {
         assert!(
             (bulk_rate - 1000.0_f32).abs() < 0.001_f32,
             "expected 1000.0 mg/hr but got {bulk_rate:.3} (old code with 28.317 factor would give ≈28.317)"
+        );
+    }
+
+    /// Session mock that supplies a fixed `PumpEnergy` record for every pump.
+    struct EnergySession {
+        network: crate::Network,
+        pe: crate::io::PumpEnergy,
+    }
+
+    impl crate::io::WritableSimulation for EnergySession {
+        fn net(&self) -> &crate::Network {
+            &self.network
+        }
+        fn snapshots(&self) -> &[crate::io::HydSnapshot] {
+            &[]
+        }
+        fn pump_energy_at(&self, _: usize) -> Option<&crate::io::PumpEnergy> {
+            Some(&self.pe)
+        }
+        fn peak_demand_kw(&self) -> f64 {
+            0.0
+        }
+        fn mass_balance(&self) -> Option<&crate::io::MassBalance> {
+            None
+        }
+        fn warnings(&self) -> &[crate::io::SimWarning] {
+            &[]
+        }
+        fn pump_energy_by_id(&self, _: &str) -> Option<&crate::io::PumpEnergy> {
+            Some(&self.pe)
+        }
+        fn analysis_times(&self) -> (Option<std::time::SystemTime>, Option<std::time::SystemTime>) {
+            (None, None)
+        }
+        fn flow_balance(&self) -> Option<&crate::io::FlowBalance> {
+            None
+        }
+        fn flow_balance_summary(&self) -> Option<crate::io::FlowBalanceSummary> {
+            None
+        }
+    }
+
+    /// Verifies the kWh-per-flow unit conversion in the energy section.
+    ///
+    /// The accumulator `kwh_per_flow` sums `(kW / Q[m³/s]) × dt` with flow in
+    /// internal m³/s.  A pump drawing 3.6 kW at 0.001 m³/s for 3600 s gives
+    /// `kwh_per_flow = (3.6 / 0.001) × 3600 = 12 960 000` and
+    /// `time_online = 3600`, i.e. an average intensity of 3600 kJ/m³ =
+    /// exactly 1.0 kWh/m³ (SI) = 3785.411784 kWh/Mgal (US).
+    ///
+    /// The old code treated the accumulator as kW-per-CFS and multiplied by
+    /// EPANET's CFS-based constants, over-reporting by ×35.315.
+    #[test]
+    fn energy_kwh_per_flow_converts_from_m3s_accumulator() {
+        let network = load_fixture_network("pump_head_curve.inp");
+        let pe = crate::io::PumpEnergy {
+            kwh_per_flow: 12_960_000.0,
+            time_online: 3600.0,
+            ..crate::io::PumpEnergy::default()
+        };
+        let session = EnergySession { network, pe };
+
+        // avg_kwh_per_flow is the 4th field of the 28-byte pump record
+        // (i32 link_index, f32 pct_online, f32 avg_eff, f32 avg_kwh_per_flow, …).
+        let read_kwh_per_flow = |units: FlowUnits, session: &EnergySession| -> f32 {
+            let mut buf = Vec::new();
+            write_energy(&mut buf, session, units).unwrap();
+            f32::from_le_bytes(buf[12..16].try_into().unwrap())
+        };
+
+        let si = read_kwh_per_flow(FlowUnits::Lps, &session);
+        assert!(
+            (si - 1.0_f32).abs() < 1e-5,
+            "SI: expected 1.0 kWh/m³, got {si} (old code would give ≈35.3)"
+        );
+
+        let us = read_kwh_per_flow(FlowUnits::Gpm, &session);
+        assert!(
+            (us - 3785.4118_f32).abs() < 0.01,
+            "US: expected 3785.41 kWh/Mgal, got {us}"
+        );
+    }
+
+    /// Verifies that the link "setting" written for Darcy-Weisbach pipes is the
+    /// roughness in user units (mm for SI), not the internal metres value.
+    #[test]
+    fn dynamic_setting_reports_dw_roughness_in_user_units() {
+        // single_pipe_dw.inp: LPS units, D-W, roughness 0.5 mm (internal 0.0005 m).
+        let session = mock_session("single_pipe_dw.inp");
+        let mut buf = Cursor::new(Vec::new());
+        write_binary_output(&mut buf, &session, "test.inp", "test.rpt", FlowUnits::Lps)
+            .expect("write binary output");
+        let out = crate::io::out_reader::parse(&buf.into_inner()).expect("parse .out");
+
+        assert_eq!(out.periods.len(), 1);
+        let setting = out.periods[0].link_setting[0];
+        assert!(
+            (setting - 0.5_f32).abs() < 1e-6,
+            "expected D-W roughness 0.5 mm in user units, got {setting} \
+             (old code wrote the internal metres value 0.0005)"
         );
     }
 }

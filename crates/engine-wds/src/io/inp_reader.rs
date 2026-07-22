@@ -24,16 +24,22 @@ const PUMP_SHUTOFF_HEAD_FACTOR: f64 = 1.33334;
 /// Return type for `parse_tags`: `(node_tags, link_tags)` maps.
 type TagMaps = (HashMap<String, String>, HashMap<String, String>);
 
+/// A section data line paired with its 1-based line number in the source file.
+type SecLine<'a> = (usize, &'a str);
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // Pass 1 — split file into named sections
 // ═══════════════════════════════════════════════════════════════════════════════
 
-/// Collect section name → Vec of data lines (comments and blanks stripped).
-fn split_sections(text: &str) -> HashMap<String, Vec<&str>> {
-    let mut sections: HashMap<String, Vec<&str>> = HashMap::new();
+/// Collect section name → Vec of `(line_number, data_line)` pairs (comments
+/// and blanks stripped).  Line numbers are 1-based positions in the input
+/// text, retained so parse errors can point at the offending line.
+fn split_sections(text: &str) -> HashMap<String, Vec<SecLine<'_>>> {
+    let mut sections: HashMap<String, Vec<SecLine<'_>>> = HashMap::new();
     let mut current: Option<String> = None;
 
-    for line in text.lines() {
+    for (idx, line) in text.lines().enumerate() {
+        let line_no = idx + 1;
         let trimmed = line.trim();
         if trimmed.starts_with('[') {
             if let Some(end) = trimmed.find(']') {
@@ -54,7 +60,10 @@ fn split_sections(text: &str) -> HashMap<String, Vec<&str>> {
             // TITLE section: preserve raw lines (EPANET copies the full
             // line including any `;` characters as literal title text).
             if sec == "TITLE" {
-                sections.entry(sec.clone()).or_default().push(trimmed);
+                sections
+                    .entry(sec.clone())
+                    .or_default()
+                    .push((line_no, trimmed));
                 continue;
             }
             // Strip trailing comments (after `;`).
@@ -64,11 +73,30 @@ fn split_sections(text: &str) -> HashMap<String, Vec<&str>> {
                 trimmed
             };
             if !data.is_empty() {
-                sections.entry(sec.clone()).or_default().push(data);
+                sections
+                    .entry(sec.clone())
+                    .or_default()
+                    .push((line_no, data));
             }
         }
     }
     sections
+}
+
+/// Iterate a section's data lines, attaching the section name and the line's
+/// 1-based source line number to any error produced by `f`.
+fn for_each_line<F>(
+    lines: &[SecLine<'_>],
+    section: &'static str,
+    mut f: F,
+) -> Result<(), ParseError>
+where
+    F: FnMut(&str) -> Result<(), ParseError>,
+{
+    for &(line_no, line) in lines {
+        f(line).map_err(|e| e.at_line(section, line_no))?;
+    }
+    Ok(())
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -88,7 +116,7 @@ pub fn parse_inp(bytes: &[u8]) -> Result<Network, ParseError> {
     // ── 0. Title lines (up to 3, preserving original text) ───────────────────
     let title: Vec<String> = sections
         .get("TITLE")
-        .map(|v| v.iter().take(3).map(|&s| s.to_string()).collect())
+        .map(|v| v.iter().take(3).map(|&(_, s)| s.to_string()).collect())
         .unwrap_or_default();
 
     // ── 1. Patterns (no dependencies) ─────────────────────────────────────────
@@ -265,14 +293,14 @@ pub fn parse_inp(bytes: &[u8]) -> Result<Network, ParseError> {
     // EPANET allows a 1-point pump curve (Q1, H1) and internally expands to
     // three points: (0, 1.33334·H1), (Q1, H1), (2·Q1, 0).  Our validation
     // requires ≥ 2 points, so do the expansion here.
-    let pump_head_curve_ids: Vec<String> = links
+    let pump_head_curve_ids: HashSet<String> = links
         .iter()
         .filter_map(|l| match &l.kind {
             LinkKind::Pump(p) => p.head_curve.clone(),
             _ => None,
         })
         .collect();
-    let pump_effic_curve_ids: Vec<String> = links
+    let pump_effic_curve_ids: HashSet<String> = links
         .iter()
         .filter_map(|l| match &l.kind {
             LinkKind::Pump(p) => p.efficiency_curve.clone(),
@@ -306,6 +334,13 @@ pub fn parse_inp(bytes: &[u8]) -> Result<Network, ParseError> {
     }
 
     // ── Post-processing: tag valve and tank curves ─────────────────────────────
+    // Curve IDs are unique, so a one-time id → index map avoids a linear scan
+    // of `curves` for every link/node that references a curve.
+    let curve_index: HashMap<String, usize> = curves
+        .iter()
+        .enumerate()
+        .map(|(i, c)| (c.id.clone(), i))
+        .collect();
     for link in &links {
         if let LinkKind::Valve(v) = &link.kind {
             if let Some(ref curve_id) = v.curve {
@@ -315,8 +350,8 @@ pub fn parse_inp(bytes: &[u8]) -> Result<Network, ParseError> {
                     _ => None,
                 };
                 if let Some(kind) = target_kind {
-                    if let Some(c) = curves.iter_mut().find(|c| c.id == *curve_id) {
-                        c.kind = kind;
+                    if let Some(&ci) = curve_index.get(curve_id) {
+                        curves[ci].kind = kind;
                     }
                 }
             }
@@ -325,8 +360,8 @@ pub fn parse_inp(bytes: &[u8]) -> Result<Network, ParseError> {
     for node in &nodes {
         if let NodeKind::Tank(t) = &node.kind {
             if let Some(ref curve_id) = t.volume_curve {
-                if let Some(c) = curves.iter_mut().find(|c| c.id == *curve_id) {
-                    c.kind = CurveKind::TankVolume;
+                if let Some(&ci) = curve_index.get(curve_id) {
+                    curves[ci].kind = CurveKind::TankVolume;
                 }
             }
         }
@@ -341,7 +376,8 @@ pub fn parse_inp(bytes: &[u8]) -> Result<Network, ParseError> {
         if let LinkKind::Pump(pump) = &mut link.kind {
             if pump.curve_type == PumpCurveType::PowerFunction {
                 if let Some(ref curve_id) = pump.head_curve {
-                    if let Some(curve) = curves.iter().find(|c| &c.id == curve_id) {
+                    if let Some(&ci) = curve_index.get(curve_id) {
+                        let curve = &curves[ci];
                         let npts = curve.points.len();
                         let is_power = npts == 3 && curve.points[0].x == 0.0;
                         if !is_power {
@@ -378,7 +414,7 @@ pub fn parse_inp(bytes: &[u8]) -> Result<Network, ParseError> {
     {
         let option_lines = sections.get("OPTIONS").map(|v| v.as_slice()).unwrap_or(&[]);
         let mut global_emit_exp: f64 = 0.5; // default
-        for line in option_lines {
+        for &(_, line) in option_lines {
             let fields: Vec<&str> = line.split_whitespace().collect();
             if fields.len() >= 3
                 && fields[0].eq_ignore_ascii_case("EMITTER")
@@ -481,15 +517,15 @@ pub fn parse_inp(bytes: &[u8]) -> Result<Network, ParseError> {
 
 // ── Patterns ──────────────────────────────────────────────────────────────────
 
-fn parse_patterns(lines: &[&str]) -> Result<Vec<Pattern>, ParseError> {
+fn parse_patterns(lines: &[SecLine<'_>]) -> Result<Vec<Pattern>, ParseError> {
     // INP patterns: continuation lines with the same ID are concatenated.
     let mut map: HashMap<String, Vec<f64>> = HashMap::new();
     let mut order: Vec<String> = Vec::new();
 
-    for line in lines {
+    for_each_line(lines, "PATTERNS", |line| {
         let fields: Vec<&str> = line.split_whitespace().collect();
         if fields.len() < 2 {
-            continue;
+            return Ok(());
         }
         let id = fields[0].to_string();
         if !map.contains_key(&id) {
@@ -500,7 +536,8 @@ fn parse_patterns(lines: &[&str]) -> Result<Vec<Pattern>, ParseError> {
             let v = parse_f64(f, "pattern multiplier")?;
             map.entry(id.clone()).or_default().push(v);
         }
-    }
+        Ok(())
+    })?;
 
     order
         .into_iter()
@@ -513,16 +550,16 @@ fn parse_patterns(lines: &[&str]) -> Result<Vec<Pattern>, ParseError> {
 
 // ── Curves ────────────────────────────────────────────────────────────────────
 
-fn parse_curves(lines: &[&str]) -> Result<Vec<Curve>, ParseError> {
+fn parse_curves(lines: &[SecLine<'_>]) -> Result<Vec<Curve>, ParseError> {
     // Curves: continuation lines with the same ID add more points.
     // Curve type is inferred later based on usage context.
     let mut map: HashMap<String, Vec<CurvePoint>> = HashMap::new();
     let mut order: Vec<String> = Vec::new();
 
-    for line in lines {
+    for_each_line(lines, "CURVES", |line| {
         let fields: Vec<&str> = line.split_whitespace().collect();
         if fields.len() < 3 {
-            continue;
+            return Ok(());
         }
         let id = fields[0].to_string();
         if !map.contains_key(&id) {
@@ -532,7 +569,8 @@ fn parse_curves(lines: &[&str]) -> Result<Vec<Curve>, ParseError> {
         let x = parse_f64(fields[1], "curve x")?;
         let y = parse_f64(fields[2], "curve y")?;
         map.entry(id).or_default().push(CurvePoint { x, y });
-    }
+        Ok(())
+    })?;
 
     order
         .into_iter()
@@ -550,7 +588,7 @@ fn parse_curves(lines: &[&str]) -> Result<Vec<Curve>, ParseError> {
 
 // ── Options ───────────────────────────────────────────────────────────────────
 
-fn parse_options(lines: &[&str]) -> Result<SimulationOptions, ParseError> {
+fn parse_options(lines: &[SecLine<'_>]) -> Result<SimulationOptions, ParseError> {
     let mut opts = SimulationOptions::default();
     // Track whether HTOL/QTOL were explicitly set so we can convert them
     // from user units to internal (SI) units. Default values are
@@ -558,10 +596,10 @@ fn parse_options(lines: &[&str]) -> Result<SimulationOptions, ParseError> {
     let mut htol: Option<f64> = None;
     let mut qtol: Option<f64> = None;
 
-    for line in lines {
+    for_each_line(lines, "OPTIONS", |line| {
         let fields: Vec<&str> = line.split_whitespace().collect();
         if fields.is_empty() {
-            continue;
+            return Ok(());
         }
         let key = fields[0].to_ascii_uppercase();
         match key.as_str() {
@@ -596,7 +634,16 @@ fn parse_options(lines: &[&str]) -> Result<SimulationOptions, ParseError> {
                 opts.specific_gravity = opt_f64(&fields, 2, "OPTIONS.Specific Gravity")?;
             }
             "TRIALS" => {
-                opts.max_iter = opt_f64(&fields, 1, "OPTIONS.Trials")? as u32;
+                // Spec §2.1: max_iter ≥ 1.  A bare `as u32` cast would turn
+                // 0/negative/NaN into 0, silently disabling the solver loop.
+                let v = opt_f64(&fields, 1, "OPTIONS.Trials")?;
+                if v.is_nan() || v < 1.0 {
+                    return Err(ParseError::InvalidField {
+                        field: "OPTIONS.Trials".into(),
+                        reason: format!("must be >= 1, got '{v}'"),
+                    });
+                }
+                opts.max_iter = v as u32;
             }
             "ACCURACY" => {
                 opts.flow_tol = opt_f64(&fields, 1, "OPTIONS.Accuracy")?;
@@ -686,10 +733,26 @@ fn parse_options(lines: &[&str]) -> Result<SimulationOptions, ParseError> {
                 opts.quality_tolerance = opt_f64(&fields, 1, "OPTIONS.Tolerance")?;
             }
             "CHECKFREQ" => {
-                opts.check_freq = opt_f64(&fields, 1, "OPTIONS.CHECKFREQ")? as u32;
+                // Spec §2.1: check_freq ≥ 1 (see TRIALS note above).
+                let v = opt_f64(&fields, 1, "OPTIONS.CHECKFREQ")?;
+                if v.is_nan() || v < 1.0 {
+                    return Err(ParseError::InvalidField {
+                        field: "OPTIONS.CHECKFREQ".into(),
+                        reason: format!("must be >= 1, got '{v}'"),
+                    });
+                }
+                opts.check_freq = v as u32;
             }
             "MAXCHECK" => {
-                opts.max_check = opt_f64(&fields, 1, "OPTIONS.MAXCHECK")? as u32;
+                // Spec §2.1: max_check ≥ check_freq ≥ 1.
+                let v = opt_f64(&fields, 1, "OPTIONS.MAXCHECK")?;
+                if v.is_nan() || v < 1.0 {
+                    return Err(ParseError::InvalidField {
+                        field: "OPTIONS.MAXCHECK".into(),
+                        reason: format!("must be >= 1, got '{v}'"),
+                    });
+                }
+                opts.max_check = v as u32;
             }
             "DAMPLIMIT" => {
                 opts.damp_limit = opt_f64(&fields, 1, "OPTIONS.DAMPLIMIT")?;
@@ -724,10 +787,12 @@ fn parse_options(lines: &[&str]) -> Result<SimulationOptions, ParseError> {
                 }
             }
             _ => {
-                // Unknown option — ignore silently for forward compat.
+                // Unknown option — ignore silently for forward compat
+                // (deliberate leniency; see spec.md §4.3 DEVIATION note).
             }
         }
-    }
+        Ok(())
+    })?;
 
     // Convert user-specified HTOL/QTOL from user units to internal (SI)
     // units. Default values are already in internal units and are not touched
@@ -747,11 +812,11 @@ fn parse_options(lines: &[&str]) -> Result<SimulationOptions, ParseError> {
 
 // ── Times ─────────────────────────────────────────────────────────────────────
 
-fn apply_times(opts: &mut SimulationOptions, lines: &[&str]) -> Result<(), ParseError> {
-    for line in lines {
+fn apply_times(opts: &mut SimulationOptions, lines: &[SecLine<'_>]) -> Result<(), ParseError> {
+    for_each_line(lines, "TIMES", |line| {
         let fields: Vec<&str> = line.split_whitespace().collect();
         if fields.is_empty() {
-            continue;
+            return Ok(());
         }
         let key = fields[0].to_ascii_uppercase();
         match key.as_str() {
@@ -804,17 +869,17 @@ fn apply_times(opts: &mut SimulationOptions, lines: &[&str]) -> Result<(), Parse
             }
             _ => {}
         }
-    }
-    Ok(())
+        Ok(())
+    })
 }
 
 // ── Reactions ─────────────────────────────────────────────────────────────────
 
-fn apply_reactions(opts: &mut SimulationOptions, lines: &[&str]) -> Result<(), ParseError> {
-    for line in lines {
+fn apply_reactions(opts: &mut SimulationOptions, lines: &[SecLine<'_>]) -> Result<(), ParseError> {
+    for_each_line(lines, "REACTIONS", |line| {
         let fields: Vec<&str> = line.split_whitespace().collect();
         if fields.len() < 2 {
-            continue;
+            return Ok(());
         }
         let key = fields[0].to_ascii_uppercase();
         match key.as_str() {
@@ -857,8 +922,8 @@ fn apply_reactions(opts: &mut SimulationOptions, lines: &[&str]) -> Result<(), P
             }
             _ => {}
         }
-    }
-    Ok(())
+        Ok(())
+    })
 }
 
 // ── Per-element reaction coefficients (post-processing) ───────────────────────
@@ -867,16 +932,16 @@ fn apply_reactions(opts: &mut SimulationOptions, lines: &[&str]) -> Result<(), P
 //          TANK  <tank_id>  <value>
 
 fn apply_per_element_reactions(
-    lines: &[&str],
+    lines: &[SecLine<'_>],
     nodes: &mut [Node],
     node_map: &HashMap<String, usize>,
     links: &mut [Link],
     link_map: &HashMap<String, usize>,
 ) -> Result<(), ParseError> {
-    for line in lines {
+    for_each_line(lines, "REACTIONS", |line| {
         let fields: Vec<&str> = line.split_whitespace().collect();
         if fields.len() < 3 {
-            continue;
+            return Ok(());
         }
         let key = fields[0].to_ascii_uppercase();
         match key.as_str() {
@@ -906,17 +971,17 @@ fn apply_per_element_reactions(
             }
             _ => {}
         }
-    }
-    Ok(())
+        Ok(())
+    })
 }
 
 // ── Energy ────────────────────────────────────────────────────────────────────
 
-fn apply_energy(opts: &mut SimulationOptions, lines: &[&str]) -> Result<(), ParseError> {
-    for line in lines {
+fn apply_energy(opts: &mut SimulationOptions, lines: &[SecLine<'_>]) -> Result<(), ParseError> {
+    for_each_line(lines, "ENERGY", |line| {
         let fields: Vec<&str> = line.split_whitespace().collect();
         if fields.len() < 2 {
-            continue;
+            return Ok(());
         }
         let key = fields[0].to_ascii_uppercase();
         match key.as_str() {
@@ -943,31 +1008,38 @@ fn apply_energy(opts: &mut SimulationOptions, lines: &[&str]) -> Result<(), Pars
             }
             _ => {}
         }
-    }
-    Ok(())
+        Ok(())
+    })
 }
 
 /// Second-pass ENERGY parsing: apply per-pump settings (PUMP <id> EFFIC/PRICE/PATTERN).
 /// Must be called after links are parsed.
 fn apply_pump_energy(
-    lines: &[&str],
+    lines: &[SecLine<'_>],
     links: &mut [Link],
     link_id_to_idx: &HashMap<String, usize>,
     curves: &mut [Curve],
 ) -> Result<(), ParseError> {
-    for line in lines {
+    // One-time curve id → index map to avoid a linear scan per PUMP line.
+    let curve_index: HashMap<String, usize> = curves
+        .iter()
+        .enumerate()
+        .map(|(i, c)| (c.id.clone(), i))
+        .collect();
+
+    for_each_line(lines, "ENERGY", |line| {
         let fields: Vec<&str> = line.split_whitespace().collect();
         if fields.len() < 4 {
-            continue;
+            return Ok(());
         }
         let key = fields[0].to_ascii_uppercase();
         if key != "PUMP" {
-            continue;
+            return Ok(());
         }
         let pump_id = fields[1];
         let idx = match link_id_to_idx.get(pump_id) {
             Some(&i) => i,
-            None => continue, // unknown pump ID — skip silently (EPANET does)
+            None => return Ok(()), // unknown pump ID — skip silently (EPANET does)
         };
         let field_name = fields[2].to_ascii_uppercase();
         let value = fields[3];
@@ -977,8 +1049,8 @@ fn apply_pump_energy(
                 s if s.starts_with("EFFIC") => {
                     pump.efficiency_curve = Some(value.to_string());
                     // Tag this curve as PumpEfficiency if it exists.
-                    if let Some(c) = curves.iter_mut().find(|c| c.id == value) {
-                        c.kind = CurveKind::PumpEfficiency;
+                    if let Some(&ci) = curve_index.get(value) {
+                        curves[ci].kind = CurveKind::PumpEfficiency;
                     }
                 }
                 "PRICE" => {
@@ -990,24 +1062,30 @@ fn apply_pump_energy(
                 _ => {}
             }
         }
-    }
-    Ok(())
+        Ok(())
+    })
 }
 
 // ── Junctions ─────────────────────────────────────────────────────────────────
 // Format: ID  Elev  Demand  Pattern
 
 fn parse_junctions(
-    lines: &[&str],
+    lines: &[SecLine<'_>],
     nodes: &mut Vec<Node>,
     id_map: &mut HashMap<String, usize>,
 ) -> Result<(), ParseError> {
-    for line in lines {
+    for_each_line(lines, "JUNCTIONS", |line| {
         let fields: Vec<&str> = line.split_whitespace().collect();
         if fields.len() < 2 {
-            continue;
+            return Err(ParseError::InvalidField {
+                field: "JUNCTIONS".into(),
+                reason: format!("need at least 2 fields (ID Elev), got {}", fields.len()),
+            });
         }
         let id = fields[0].to_string();
+        if id_map.contains_key(&id) {
+            return Err(ParseError::DuplicateId { object: "node", id });
+        }
         let elevation = parse_f64(fields[1], "JUNCTIONS.Elev")?;
         let base_demand = if fields.len() > 2 {
             parse_f64(fields[2], "JUNCTIONS.Demand")?
@@ -1046,24 +1124,30 @@ fn parse_junctions(
             }),
             source: None,
         });
-    }
-    Ok(())
+        Ok(())
+    })
 }
 
 // ── Reservoirs ────────────────────────────────────────────────────────────────
 // Format: ID  Head  Pattern
 
 fn parse_reservoirs(
-    lines: &[&str],
+    lines: &[SecLine<'_>],
     nodes: &mut Vec<Node>,
     id_map: &mut HashMap<String, usize>,
 ) -> Result<(), ParseError> {
-    for line in lines {
+    for_each_line(lines, "RESERVOIRS", |line| {
         let fields: Vec<&str> = line.split_whitespace().collect();
         if fields.len() < 2 {
-            continue;
+            return Err(ParseError::InvalidField {
+                field: "RESERVOIRS".into(),
+                reason: format!("need at least 2 fields (ID Head), got {}", fields.len()),
+            });
         }
         let id = fields[0].to_string();
+        if id_map.contains_key(&id) {
+            return Err(ParseError::DuplicateId { object: "node", id });
+        }
         let head = parse_f64(fields[1], "RESERVOIRS.Head")?;
         let pattern = if fields.len() > 2 && !fields[2].is_empty() {
             Some(fields[2].to_string())
@@ -1085,19 +1169,19 @@ fn parse_reservoirs(
             }),
             source: None,
         });
-    }
-    Ok(())
+        Ok(())
+    })
 }
 
 // ── Tanks ─────────────────────────────────────────────────────────────────────
 // Format: ID  Elevation  InitLevel  MinLevel  MaxLevel  Diameter  MinVol  VolCurve  Overflow
 
 fn parse_tanks(
-    lines: &[&str],
+    lines: &[SecLine<'_>],
     nodes: &mut Vec<Node>,
     id_map: &mut HashMap<String, usize>,
 ) -> Result<(), ParseError> {
-    for line in lines {
+    for_each_line(lines, "TANKS", |line| {
         let fields: Vec<&str> = line.split_whitespace().collect();
         if fields.len() < 2 {
             return Err(ParseError::InvalidField {
@@ -1106,6 +1190,9 @@ fn parse_tanks(
             });
         }
         let id = fields[0].to_string();
+        if id_map.contains_key(&id) {
+            return Err(ParseError::DuplicateId { object: "node", id });
+        }
         let elevation = parse_f64(fields[1], "TANKS.Elevation")?;
         // Fields beyond ID and Elev default to 0 when omitted (EPANET compat).
         let init_level = if fields.len() > 2 {
@@ -1177,15 +1264,15 @@ fn parse_tanks(
             }),
             source: None,
         });
-    }
-    Ok(())
+        Ok(())
+    })
 }
 
 // ── Demands (additional categories) ───────────────────────────────────────────
 // Format: Junction  Demand  Pattern  Category
 
 fn apply_demands(
-    lines: &[&str],
+    lines: &[SecLine<'_>],
     nodes: &mut [Node],
     id_map: &HashMap<String, usize>,
 ) -> Result<(), ParseError> {
@@ -1194,10 +1281,16 @@ fn apply_demands(
     // the demand category created in [JUNCTIONS]; subsequent entries append.
     let mut first_replaced: HashSet<usize> = HashSet::new();
 
-    for line in lines {
+    for_each_line(lines, "DEMANDS", |line| {
         let fields: Vec<&str> = line.split_whitespace().collect();
         if fields.len() < 2 {
-            continue;
+            return Err(ParseError::InvalidField {
+                field: "DEMANDS".into(),
+                reason: format!(
+                    "need at least 2 fields (Junction Demand), got {}",
+                    fields.len()
+                ),
+            });
         }
         let idx = resolve_node(id_map, fields[0])?;
         let demand = parse_f64(fields[1], "DEMANDS.Demand")?;
@@ -1229,44 +1322,64 @@ fn apply_demands(
             }
             first_replaced.insert(idx);
         }
-    }
-    Ok(())
+        Ok(())
+    })
 }
 
 // ── Emitters ──────────────────────────────────────────────────────────────────
 // Format: Junction  Coefficient
 
 fn apply_emitters(
-    lines: &[&str],
+    lines: &[SecLine<'_>],
     nodes: &mut [Node],
     id_map: &HashMap<String, usize>,
 ) -> Result<(), ParseError> {
-    for line in lines {
+    for_each_line(lines, "EMITTERS", |line| {
         let fields: Vec<&str> = line.split_whitespace().collect();
         if fields.len() < 2 {
-            continue;
+            return Err(ParseError::InvalidField {
+                field: "EMITTERS".into(),
+                reason: format!(
+                    "need at least 2 fields (Junction Coefficient), got {}",
+                    fields.len()
+                ),
+            });
         }
         let idx = resolve_node(id_map, fields[0])?;
         let coeff = parse_f64(fields[1], "EMITTERS.Coefficient")?;
         if let NodeKind::Junction(ref mut j) = nodes[idx].kind {
             j.emitter_coeff = coeff;
         }
-    }
-    Ok(())
+        Ok(())
+    })
 }
 
 // ── Quality (initial concentrations) ──────────────────────────────────────────
 // Format: Node  InitQual
 
 fn apply_quality(
-    lines: &[&str],
+    lines: &[SecLine<'_>],
     nodes: &mut [Node],
     id_map: &HashMap<String, usize>,
 ) -> Result<(), ParseError> {
-    for line in lines {
+    // Pre-parse each node ID as a number once, instead of re-parsing every
+    // node ID for every range-format line.
+    let numeric_ids: Vec<(usize, i64)> = nodes
+        .iter()
+        .enumerate()
+        .filter_map(|(i, n)| n.base.id.parse::<i64>().ok().map(|v| (i, v)))
+        .collect();
+
+    for_each_line(lines, "QUALITY", |line| {
         let fields: Vec<&str> = line.split_whitespace().collect();
         if fields.len() < 2 {
-            continue;
+            return Err(ParseError::InvalidField {
+                field: "QUALITY".into(),
+                reason: format!(
+                    "need at least 2 fields (Node InitQual), got {}",
+                    fields.len()
+                ),
+            });
         }
 
         if fields.len() == 2 {
@@ -1274,7 +1387,7 @@ fn apply_quality(
             // Skip unknown node IDs (some legacy INP files reference removed nodes).
             let idx = match resolve_node(id_map, fields[0]) {
                 Ok(i) => i,
-                Err(_) => continue,
+                Err(_) => return Ok(()),
             };
             let qual = parse_f64(fields[1], "QUALITY.InitQual")?;
             nodes[idx].base.initial_quality = qual;
@@ -1287,11 +1400,9 @@ fn apply_quality(
 
             if let (Some(i1), Some(i2)) = (i1_opt, i2_opt) {
                 // Numeric range: assign to all nodes whose ID parses as a number in [i1, i2].
-                for node in nodes.iter_mut() {
-                    if let Ok(nid) = node.base.id.parse::<i64>() {
-                        if nid >= i1 && nid <= i2 {
-                            node.base.initial_quality = qual;
-                        }
+                for &(idx, nid) in &numeric_ids {
+                    if nid >= i1 && nid <= i2 {
+                        nodes[idx].base.initial_quality = qual;
                     }
                 }
             } else {
@@ -1303,22 +1414,25 @@ fn apply_quality(
                 }
             }
         }
-    }
-    Ok(())
+        Ok(())
+    })
 }
 
 // ── Mixing ────────────────────────────────────────────────────────────────────
 // Format: Tank  Model  [Fraction]
 
 fn apply_mixing(
-    lines: &[&str],
+    lines: &[SecLine<'_>],
     nodes: &mut [Node],
     id_map: &HashMap<String, usize>,
 ) -> Result<(), ParseError> {
-    for line in lines {
+    for_each_line(lines, "MIXING", |line| {
         let fields: Vec<&str> = line.split_whitespace().collect();
         if fields.len() < 2 {
-            continue;
+            return Err(ParseError::InvalidField {
+                field: "MIXING".into(),
+                reason: format!("need at least 2 fields (Tank Model), got {}", fields.len()),
+            });
         }
         let idx = resolve_node(id_map, fields[0])?;
         let model = match fields[1].to_ascii_uppercase().as_str() {
@@ -1343,22 +1457,28 @@ fn apply_mixing(
             t.mix_model = model;
             t.mix_fraction = fraction;
         }
-    }
-    Ok(())
+        Ok(())
+    })
 }
 
 // ── Sources ───────────────────────────────────────────────────────────────────
 // Format: Node  Type  Quality  Pattern
 
 fn apply_sources(
-    lines: &[&str],
+    lines: &[SecLine<'_>],
     nodes: &mut [Node],
     id_map: &HashMap<String, usize>,
 ) -> Result<(), ParseError> {
-    for line in lines {
+    for_each_line(lines, "SOURCES", |line| {
         let fields: Vec<&str> = line.split_whitespace().collect();
         if fields.len() < 2 {
-            continue;
+            return Err(ParseError::InvalidField {
+                field: "SOURCES".into(),
+                reason: format!(
+                    "need at least 2 fields (Node Type/Quality), got {}",
+                    fields.len()
+                ),
+            });
         }
         let idx = resolve_node(id_map, fields[0])?;
 
@@ -1383,7 +1503,7 @@ fn apply_sources(
             }
         };
         if fields.len() <= quality_idx {
-            continue;
+            return Ok(());
         }
         let base_value = parse_f64(fields[quality_idx], "SOURCES.Quality")?;
         let pattern_idx = quality_idx + 1;
@@ -1399,25 +1519,34 @@ fn apply_sources(
             base_value,
             pattern,
         });
-    }
-    Ok(())
+        Ok(())
+    })
 }
 
 // ── Pipes ─────────────────────────────────────────────────────────────────────
 // Format: ID  Node1  Node2  Length  Diameter  Roughness  MinorLoss  Status
 
 fn parse_pipes(
-    lines: &[&str],
+    lines: &[SecLine<'_>],
     links: &mut Vec<Link>,
     link_map: &mut HashMap<String, usize>,
     node_map: &HashMap<String, usize>,
 ) -> Result<(), ParseError> {
-    for line in lines {
+    for_each_line(lines, "PIPES", |line| {
         let fields: Vec<&str> = line.split_whitespace().collect();
         if fields.len() < 6 {
-            continue;
+            return Err(ParseError::InvalidField {
+                field: "PIPES".into(),
+                reason: format!(
+                    "need at least 6 fields (ID Node1 Node2 Length Diameter Roughness), got {}",
+                    fields.len()
+                ),
+            });
         }
         let id = fields[0].to_string();
+        if link_map.contains_key(&id) {
+            return Err(ParseError::DuplicateId { object: "link", id });
+        }
         let from_node = resolve_node(node_map, fields[1])? + 1;
         let to_node = resolve_node(node_map, fields[2])? + 1;
         let length = parse_f64(fields[3], "PIPES.Length")?;
@@ -1475,8 +1604,8 @@ fn parse_pipes(
                 leak_coeff_2: 0.0,
             }),
         });
-    }
-    Ok(())
+        Ok(())
+    })
 }
 
 // ── Pumps ─────────────────────────────────────────────────────────────────────
@@ -1484,17 +1613,26 @@ fn parse_pipes(
 // Parameters:  HEAD <curve_id>  |  POWER <value>  |  SPEED <value>  |  PATTERN <id>
 
 fn parse_pumps(
-    lines: &[&str],
+    lines: &[SecLine<'_>],
     links: &mut Vec<Link>,
     link_map: &mut HashMap<String, usize>,
     node_map: &HashMap<String, usize>,
 ) -> Result<(), ParseError> {
-    for line in lines {
+    for_each_line(lines, "PUMPS", |line| {
         let fields: Vec<&str> = line.split_whitespace().collect();
         if fields.len() < 4 {
-            continue;
+            return Err(ParseError::InvalidField {
+                field: "PUMPS".into(),
+                reason: format!(
+                    "need at least 4 fields (ID Node1 Node2 Parameters...), got {}",
+                    fields.len()
+                ),
+            });
         }
         let id = fields[0].to_string();
+        if link_map.contains_key(&id) {
+            return Err(ParseError::DuplicateId { object: "link", id });
+        }
         let from_node = resolve_node(node_map, fields[1])? + 1;
         let to_node = resolve_node(node_map, fields[2])? + 1;
 
@@ -1567,25 +1705,34 @@ fn parse_pumps(
                 price_pattern: None,
             }),
         });
-    }
-    Ok(())
+        Ok(())
+    })
 }
 
 // ── Valves ────────────────────────────────────────────────────────────────────
 // Format: ID  Node1  Node2  Diameter  Type  Setting  MinorLoss
 
 fn parse_valves(
-    lines: &[&str],
+    lines: &[SecLine<'_>],
     links: &mut Vec<Link>,
     link_map: &mut HashMap<String, usize>,
     node_map: &HashMap<String, usize>,
 ) -> Result<(), ParseError> {
-    for line in lines {
+    for_each_line(lines, "VALVES", |line| {
         let fields: Vec<&str> = line.split_whitespace().collect();
         if fields.len() < 6 {
-            continue;
+            return Err(ParseError::InvalidField {
+                field: "VALVES".into(),
+                reason: format!(
+                    "need at least 6 fields (ID Node1 Node2 Diameter Type Setting), got {}",
+                    fields.len()
+                ),
+            });
         }
         let id = fields[0].to_string();
+        if link_map.contains_key(&id) {
+            return Err(ParseError::DuplicateId { object: "link", id });
+        }
         let from_node = resolve_node(node_map, fields[1])? + 1;
         let to_node = resolve_node(node_map, fields[2])? + 1;
         let diameter = parse_f64(fields[3], "VALVES.Diameter")?;
@@ -1633,22 +1780,28 @@ fn parse_valves(
                 curve,
             }),
         });
-    }
-    Ok(())
+        Ok(())
+    })
 }
 
 // ── Status overrides ──────────────────────────────────────────────────────────
 // Format: ID  Status/Setting
 
 fn apply_status(
-    lines: &[&str],
+    lines: &[SecLine<'_>],
     links: &mut [Link],
     link_map: &HashMap<String, usize>,
 ) -> Result<(), ParseError> {
-    for line in lines {
+    for_each_line(lines, "STATUS", |line| {
         let fields: Vec<&str> = line.split_whitespace().collect();
         if fields.len() < 2 {
-            continue;
+            return Err(ParseError::InvalidField {
+                field: "STATUS".into(),
+                reason: format!(
+                    "need at least 2 fields (ID Status/Setting), got {}",
+                    fields.len()
+                ),
+            });
         }
         let idx = resolve_link(link_map, fields[0])?;
         let val = fields[1].to_ascii_uppercase();
@@ -1674,8 +1827,8 @@ fn apply_status(
                 }
             }
         }
-    }
-    Ok(())
+        Ok(())
+    })
 }
 
 // ── Leakage ───────────────────────────────────────────────────────────────────
@@ -1683,14 +1836,20 @@ fn apply_status(
 // [LEAKAGE] section — assigns FAVAD leak coefficients to pipes (spec.md §4.3).
 
 fn apply_leakage(
-    lines: &[&str],
+    lines: &[SecLine<'_>],
     links: &mut [Link],
     link_map: &HashMap<String, usize>,
 ) -> Result<(), ParseError> {
-    for line in lines {
+    for_each_line(lines, "LEAKAGE", |line| {
         let fields: Vec<&str> = line.split_whitespace().collect();
         if fields.len() < 3 {
-            continue;
+            return Err(ParseError::InvalidField {
+                field: "LEAKAGE".into(),
+                reason: format!(
+                    "need at least 3 fields (PipeID Coeff1 Coeff2), got {}",
+                    fields.len()
+                ),
+            });
         }
         let idx = resolve_link(link_map, fields[0])?;
         // Only pipes have leakage — silently skip non-pipe links (matches EPANET).
@@ -1698,8 +1857,8 @@ fn apply_leakage(
             pipe.leak_coeff_1 = parse_f64(fields[1], "LEAKAGE.Coeff1")?;
             pipe.leak_coeff_2 = parse_f64(fields[2], "LEAKAGE.Coeff2")?;
         }
-    }
-    Ok(())
+        Ok(())
+    })
 }
 
 // ── Controls ──────────────────────────────────────────────────────────────────
@@ -1708,20 +1867,20 @@ fn apply_leakage(
 //                  LINK <id> <status/setting> AT CLOCKTIME <value> AM/PM
 
 fn parse_controls(
-    lines: &[&str],
+    lines: &[SecLine<'_>],
     node_map: &HashMap<String, usize>,
     link_map: &HashMap<String, usize>,
 ) -> Result<Vec<SimpleControl>, ParseError> {
     let mut controls = Vec::new();
 
-    for line in lines {
+    for_each_line(lines, "CONTROLS", |line| {
         let fields: Vec<&str> = line.split_whitespace().collect();
         if fields.len() < 6 {
-            continue;
+            return Ok(());
         }
         // LINK <link_id> <status_or_setting> ...
         if !fields[0].eq_ignore_ascii_case("LINK") {
-            continue;
+            return Ok(());
         }
         let link_idx = resolve_link(link_map, fields[1])? + 1; // 1-based
         let (action_status, action_setting) = parse_control_action(fields[2])?;
@@ -1782,7 +1941,8 @@ fn parse_controls(
                 enabled: true,
             });
         }
-    }
+        Ok(())
+    })?;
 
     Ok(controls)
 }
@@ -1807,7 +1967,7 @@ fn parse_control_action(s: &str) -> Result<(Option<LinkStatus>, Option<f64>), Pa
 // PRIORITY <value>
 
 fn parse_rules(
-    lines: &[&str],
+    lines: &[SecLine<'_>],
     node_map: &HashMap<String, usize>,
     link_map: &HashMap<String, usize>,
 ) -> Result<Vec<Rule>, ParseError> {
@@ -1818,10 +1978,10 @@ fn parse_rules(
     let mut current_priority = 0.0;
     let mut in_rule = false;
 
-    for line in lines {
+    for_each_line(lines, "RULES", |line| {
         let fields: Vec<&str> = line.split_whitespace().collect();
         if fields.is_empty() {
-            continue;
+            return Ok(());
         }
         let kw = fields[0].to_ascii_uppercase();
 
@@ -1862,7 +2022,8 @@ fn parse_rules(
             "PRIORITY" => {}
             _ => {}
         }
-    }
+        Ok(())
+    })?;
 
     // Finish last rule.
     if in_rule && !current_premises.is_empty() {
@@ -2288,25 +2449,26 @@ fn parse_premise_value(s: &str, attr: &PremiseAttribute) -> Result<f64, ParseErr
 
 /// Parses the [COORDINATES] section: `NodeID  X  Y`.
 fn parse_coordinates(
-    lines: &[&str],
+    lines: &[SecLine<'_>],
     node_id_to_idx: &HashMap<String, usize>,
 ) -> Result<HashMap<String, (f64, f64)>, ParseError> {
     let mut coords = HashMap::new();
-    for line in lines {
+    for_each_line(lines, "COORDINATES", |line| {
         let fields: Vec<&str> = line.split_whitespace().collect();
         if fields.len() < 3 {
-            continue;
+            return Ok(());
         }
         let id = fields[0];
         // Only store coordinates for known nodes (silently skip unknown IDs,
         // matching EPANET behaviour).
         if !node_id_to_idx.contains_key(id) {
-            continue;
+            return Ok(());
         }
         let x = parse_f64(fields[1], "COORDINATES X")?;
         let y = parse_f64(fields[2], "COORDINATES Y")?;
         coords.insert(id.to_string(), (x, y));
-    }
+        Ok(())
+    })?;
     Ok(coords)
 }
 
@@ -2315,23 +2477,24 @@ fn parse_coordinates(
 /// Parses the [VERTICES] section: `LinkID  X  Y`.
 /// Multiple lines with the same LinkID append successive bend-points.
 fn parse_vertices(
-    lines: &[&str],
+    lines: &[SecLine<'_>],
     link_id_to_idx: &HashMap<String, usize>,
 ) -> Result<HashMap<String, Vec<(f64, f64)>>, ParseError> {
     let mut verts: HashMap<String, Vec<(f64, f64)>> = HashMap::new();
-    for line in lines {
+    for_each_line(lines, "VERTICES", |line| {
         let fields: Vec<&str> = line.split_whitespace().collect();
         if fields.len() < 3 {
-            continue;
+            return Ok(());
         }
         let id = fields[0];
         if !link_id_to_idx.contains_key(id) {
-            continue;
+            return Ok(());
         }
         let x = parse_f64(fields[1], "VERTICES X")?;
         let y = parse_f64(fields[2], "VERTICES Y")?;
         verts.entry(id.to_string()).or_default().push((x, y));
-    }
+        Ok(())
+    })?;
     Ok(verts)
 }
 
@@ -2339,16 +2502,16 @@ fn parse_vertices(
 
 /// Parses the [TAGS] section: `NODE  <nodeid>  <tag>` or `LINK  <linkid>  <tag>`.
 fn parse_tags(
-    lines: &[&str],
+    lines: &[SecLine<'_>],
     node_id_to_idx: &HashMap<String, usize>,
     link_id_to_idx: &HashMap<String, usize>,
 ) -> Result<TagMaps, ParseError> {
     let mut node_tags = HashMap::new();
     let mut link_tags = HashMap::new();
-    for line in lines {
+    for_each_line(lines, "TAGS", |line| {
         let fields: Vec<&str> = line.split_whitespace().collect();
         if fields.len() < 3 {
-            continue;
+            return Ok(());
         }
         let kind = fields[0].to_ascii_uppercase();
         let id = fields[1];
@@ -2364,7 +2527,8 @@ fn parse_tags(
             "LINK" => {}
             _ => {} // silently skip unknown prefixes
         }
-    }
+        Ok(())
+    })?;
     Ok((node_tags, link_tags))
 }
 
@@ -2390,12 +2554,16 @@ const REPORT_FIELD_NAMES: &[&str] = &[
 ];
 
 /// Parses the [REPORT] section.
-fn parse_report(lines: &[&str]) -> Result<ReportOptions, ParseError> {
+///
+/// NOTE: the parsed options are stored in `Network::report` for API
+/// completeness, but `rpt_writer` does not yet consult them — node/link
+/// report tables and field filtering are not implemented.
+fn parse_report(lines: &[SecLine<'_>]) -> Result<ReportOptions, ParseError> {
     let mut report = ReportOptions::default();
-    for line in lines {
+    for_each_line(lines, "REPORT", |line| {
         let fields: Vec<&str> = line.split_whitespace().collect();
         if fields.is_empty() {
-            continue;
+            return Ok(());
         }
         let key = fields[0].to_ascii_uppercase();
         match key.as_str() {
@@ -2508,13 +2676,20 @@ fn parse_report(lines: &[&str]) -> Result<ReportOptions, ParseError> {
                 }
             }
         }
-    }
+        Ok(())
+    })?;
     Ok(report)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Attach synthetic 1-based line numbers to raw data lines, mirroring the
+    /// `SecLine` shape produced by `split_sections`.
+    fn secs<'a>(lines: &[&'a str]) -> Vec<SecLine<'a>> {
+        lines.iter().enumerate().map(|(i, &l)| (i + 1, l)).collect()
+    }
 
     // ── split_sections comment handling ──────────────────────────────────────
 
@@ -2524,7 +2699,7 @@ mod tests {
         let sections = split_sections(inp);
         let lines = sections.get("JUNCTIONS").unwrap();
         assert_eq!(lines.len(), 1);
-        assert_eq!(lines[0], "J1  0  10");
+        assert_eq!(lines[0], (3, "J1  0  10"));
     }
 
     #[test]
@@ -2533,7 +2708,7 @@ mod tests {
         let sections = split_sections(inp);
         let lines = sections.get("JUNCTIONS").unwrap();
         assert_eq!(lines.len(), 1);
-        assert_eq!(lines[0], "J1  0  10");
+        assert_eq!(lines[0], (2, "J1  0  10"));
     }
 
     #[test]
@@ -2550,8 +2725,8 @@ mod tests {
         let sections = split_sections(inp);
         let lines = sections.get("TITLE").unwrap();
         assert_eq!(lines.len(), 2);
-        assert_eq!(lines[0], "My Network ; version 2");
-        assert_eq!(lines[1], "Second line");
+        assert_eq!(lines[0], (2, "My Network ; version 2"));
+        assert_eq!(lines[1], (3, "Second line"));
     }
 
     #[test]
@@ -2560,7 +2735,7 @@ mod tests {
         let sections = split_sections(inp);
         let lines = sections.get("TITLE").unwrap();
         assert_eq!(lines.len(), 1);
-        assert_eq!(lines[0], "Actual title");
+        assert_eq!(lines[0], (4, "Actual title"));
     }
 
     #[test]
@@ -2617,6 +2792,286 @@ Quality    Fluoride mg/L
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
+    // Duplicate ID detection (EPANET error 215)
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /// Unwrap an `AtLine` error, returning `(section, line, inner)`.
+    fn unwrap_at_line(err: ParseError) -> (String, usize, ParseError) {
+        match err {
+            ParseError::AtLine {
+                section,
+                line,
+                source,
+            } => (section, line, *source),
+            other => panic!("expected AtLine error, got: {other}"),
+        }
+    }
+
+    #[test]
+    fn duplicate_junction_id_is_a_parse_error() {
+        let inp = b"\
+[JUNCTIONS]
+J1    0    10
+J1    5    20
+
+[RESERVOIRS]
+R1    100
+
+[PIPES]
+P1    R1    J1    1000    12    100    0    Open
+
+[OPTIONS]
+Units    GPM
+Headloss    H-W
+";
+        let err = parse_inp(inp).expect_err("duplicate junction ID should fail");
+        let (section, line, inner) = unwrap_at_line(err);
+        assert_eq!(section, "JUNCTIONS");
+        assert_eq!(line, 3);
+        assert!(
+            matches!(inner, ParseError::DuplicateId { object: "node", ref id } if id == "J1"),
+            "unexpected inner error: {inner}"
+        );
+    }
+
+    #[test]
+    fn duplicate_node_id_across_sections_is_a_parse_error() {
+        // Same ID used for a junction and a tank.
+        let inp = b"\
+[JUNCTIONS]
+N1    0    10
+
+[RESERVOIRS]
+R1    100
+
+[TANKS]
+N1    50    5    0    10    20    0
+
+[PIPES]
+P1    R1    N1    1000    12    100    0    Open
+
+[OPTIONS]
+Units    GPM
+Headloss    H-W
+";
+        let err = parse_inp(inp).expect_err("duplicate node ID across sections should fail");
+        let (section, _line, inner) = unwrap_at_line(err);
+        assert_eq!(section, "TANKS");
+        assert!(
+            matches!(inner, ParseError::DuplicateId { object: "node", ref id } if id == "N1"),
+            "unexpected inner error: {inner}"
+        );
+    }
+
+    #[test]
+    fn duplicate_link_id_is_a_parse_error() {
+        let inp = b"\
+[JUNCTIONS]
+J1    0    10
+J2    0    5
+
+[RESERVOIRS]
+R1    100
+
+[PIPES]
+P1    R1    J1    1000    12    100    0    Open
+P1    J1    J2    500     12    100    0    Open
+
+[OPTIONS]
+Units    GPM
+Headloss    H-W
+";
+        let err = parse_inp(inp).expect_err("duplicate pipe ID should fail");
+        let (section, _line, inner) = unwrap_at_line(err);
+        assert_eq!(section, "PIPES");
+        assert!(
+            matches!(inner, ParseError::DuplicateId { object: "link", ref id } if id == "P1"),
+            "unexpected inner error: {inner}"
+        );
+    }
+
+    #[test]
+    fn duplicate_link_id_across_sections_is_a_parse_error() {
+        // Same ID used for a pipe and a valve.
+        let inp = b"\
+[JUNCTIONS]
+J1    0    10
+J2    0    5
+
+[RESERVOIRS]
+R1    100
+
+[PIPES]
+L1    R1    J1    1000    12    100    0    Open
+
+[VALVES]
+L1    J1    J2    12    PRV    50    0
+
+[OPTIONS]
+Units    GPM
+Headloss    H-W
+";
+        let err = parse_inp(inp).expect_err("duplicate link ID across sections should fail");
+        let (section, _line, inner) = unwrap_at_line(err);
+        assert_eq!(section, "VALVES");
+        assert!(
+            matches!(inner, ParseError::DuplicateId { object: "link", ref id } if id == "L1"),
+            "unexpected inner error: {inner}"
+        );
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Malformed data lines produce parse errors (spec §4.3)
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn junction_line_with_too_few_fields_is_a_parse_error() {
+        let inp = b"\
+[JUNCTIONS]
+J1
+
+[OPTIONS]
+Units    GPM
+";
+        let err = parse_inp(inp).expect_err("1-field junction line should fail");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("[JUNCTIONS] line 2"),
+            "error should locate the malformed line, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn pipe_line_with_too_few_fields_is_a_parse_error() {
+        let inp = b"\
+[JUNCTIONS]
+J1    0    10
+
+[RESERVOIRS]
+R1    100
+
+[PIPES]
+P1    R1    J1    1000
+
+[OPTIONS]
+Units    GPM
+";
+        let err = parse_inp(inp).expect_err("4-field pipe line should fail");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("[PIPES]"),
+            "expected PIPES context, got: {msg}"
+        );
+        assert!(msg.contains("at least 6"), "got: {msg}");
+    }
+
+    #[test]
+    fn pump_line_with_too_few_fields_is_a_parse_error() {
+        let inp = b"\
+[JUNCTIONS]
+J1    0    10
+
+[RESERVOIRS]
+R1    100
+
+[PUMPS]
+PMP1    R1    J1
+
+[OPTIONS]
+Units    GPM
+";
+        let err = parse_inp(inp).expect_err("3-field pump line should fail");
+        assert!(err.to_string().contains("[PUMPS]"), "got: {err}");
+    }
+
+    #[test]
+    fn valve_line_with_too_few_fields_is_a_parse_error() {
+        let inp = b"\
+[JUNCTIONS]
+J1    0    10
+J2    0    5
+
+[RESERVOIRS]
+R1    100
+
+[PIPES]
+P1    R1    J1    1000    12    100    0    Open
+
+[VALVES]
+V1    J1    J2    12    PRV
+
+[OPTIONS]
+Units    GPM
+";
+        let err = parse_inp(inp).expect_err("5-field valve line should fail");
+        assert!(err.to_string().contains("[VALVES]"), "got: {err}");
+    }
+
+    #[test]
+    fn parse_error_display_includes_section_and_line_number() {
+        let inp = b"\
+[JUNCTIONS]
+J1    0    10
+
+[RESERVOIRS]
+R1    100
+
+[PIPES]
+P1    R1    J1    1000    twelve    100    0    Open
+
+[OPTIONS]
+Units    GPM
+";
+        let err = parse_inp(inp).expect_err("non-numeric diameter should fail");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("[PIPES] line 8"),
+            "expected section+line context, got: {msg}"
+        );
+        assert!(msg.contains("twelve"), "got: {msg}");
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // [OPTIONS] TRIALS / CHECKFREQ / MAXCHECK validation (spec §2.1)
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    fn minimal_net_with_options(options: &str) -> Vec<u8> {
+        format!(
+            "[JUNCTIONS]\nJ1    0    10\n\n[RESERVOIRS]\nR1    100\n\n\
+             [PIPES]\nP1    R1    J1    1000    12    100    0    Open\n\n\
+             [OPTIONS]\nUnits    GPM\nHeadloss    H-W\n{options}\n"
+        )
+        .into_bytes()
+    }
+
+    #[test]
+    fn trials_below_one_is_a_parse_error() {
+        for bad in ["Trials 0", "Trials -3", "Trials NaN"] {
+            let err = parse_inp(&minimal_net_with_options(bad))
+                .expect_err("TRIALS < 1 should be rejected");
+            assert!(err.to_string().contains("Trials"), "for '{bad}': {err}");
+        }
+        // Valid value still accepted.
+        let network = parse_inp(&minimal_net_with_options("Trials 40")).unwrap();
+        assert_eq!(network.options.max_iter, 40);
+    }
+
+    #[test]
+    fn checkfreq_and_maxcheck_below_one_are_parse_errors() {
+        let err = parse_inp(&minimal_net_with_options("CHECKFREQ 0"))
+            .expect_err("CHECKFREQ 0 should be rejected");
+        assert!(err.to_string().contains("CHECKFREQ"), "got: {err}");
+
+        let err = parse_inp(&minimal_net_with_options("MAXCHECK -1"))
+            .expect_err("MAXCHECK -1 should be rejected");
+        assert!(err.to_string().contains("MAXCHECK"), "got: {err}");
+
+        let network = parse_inp(&minimal_net_with_options("CHECKFREQ 4\nMAXCHECK 12")).unwrap();
+        assert_eq!(network.options.check_freq, 4);
+        assert_eq!(network.options.max_check, 12);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
     // [COORDINATES] section
     // ═══════════════════════════════════════════════════════════════════════════
 
@@ -2626,7 +3081,7 @@ Quality    Fluoride mg/L
         node_id_to_idx.insert("J1".to_string(), 1);
         node_id_to_idx.insert("J2".to_string(), 2);
         let lines = vec!["J1  100.0  200.0", "J2  300.0  400.0"];
-        let coords = parse_coordinates(&lines, &node_id_to_idx).unwrap();
+        let coords = parse_coordinates(&secs(&lines), &node_id_to_idx).unwrap();
         assert_eq!(coords.len(), 2);
         assert_eq!(coords["J1"], (100.0, 200.0));
         assert_eq!(coords["J2"], (300.0, 400.0));
@@ -2637,7 +3092,7 @@ Quality    Fluoride mg/L
         let mut node_id_to_idx = HashMap::new();
         node_id_to_idx.insert("J1".to_string(), 1);
         let lines = vec!["J1  10.0  20.0", "UNKNOWN  30.0  40.0"];
-        let coords = parse_coordinates(&lines, &node_id_to_idx).unwrap();
+        let coords = parse_coordinates(&secs(&lines), &node_id_to_idx).unwrap();
         assert_eq!(coords.len(), 1);
         assert!(coords.contains_key("J1"));
         assert!(!coords.contains_key("UNKNOWN"));
@@ -2647,7 +3102,7 @@ Quality    Fluoride mg/L
     fn parse_coordinates_skips_short_lines() {
         let node_id_to_idx = HashMap::new();
         let lines = vec!["J1  10.0"]; // only 2 fields, need 3
-        let coords = parse_coordinates(&lines, &node_id_to_idx).unwrap();
+        let coords = parse_coordinates(&secs(&lines), &node_id_to_idx).unwrap();
         assert!(coords.is_empty());
     }
 
@@ -2656,7 +3111,7 @@ Quality    Fluoride mg/L
         let mut node_id_to_idx = HashMap::new();
         node_id_to_idx.insert("N1".to_string(), 1);
         let lines = vec!["N1  -50.5  -100.25"];
-        let coords = parse_coordinates(&lines, &node_id_to_idx).unwrap();
+        let coords = parse_coordinates(&secs(&lines), &node_id_to_idx).unwrap();
         assert_eq!(coords["N1"], (-50.5, -100.25));
     }
 
@@ -2665,7 +3120,7 @@ Quality    Fluoride mg/L
         let mut node_id_to_idx = HashMap::new();
         node_id_to_idx.insert("J1".to_string(), 1);
         let lines = vec!["J1  10.0  20.0", "J1  30.0  40.0"];
-        let coords = parse_coordinates(&lines, &node_id_to_idx).unwrap();
+        let coords = parse_coordinates(&secs(&lines), &node_id_to_idx).unwrap();
         // Last line overwrites.
         assert_eq!(coords["J1"], (30.0, 40.0));
     }
@@ -2705,7 +3160,7 @@ Headloss    H-W
         let mut link_id_to_idx = HashMap::new();
         link_id_to_idx.insert("P1".to_string(), 1);
         let lines = vec!["P1  100.0  200.0", "P1  300.0  400.0"];
-        let verts = parse_vertices(&lines, &link_id_to_idx).unwrap();
+        let verts = parse_vertices(&secs(&lines), &link_id_to_idx).unwrap();
         assert_eq!(verts.len(), 1);
         assert_eq!(verts["P1"], vec![(100.0, 200.0), (300.0, 400.0)]);
     }
@@ -2716,7 +3171,7 @@ Headloss    H-W
         link_id_to_idx.insert("P1".to_string(), 1);
         link_id_to_idx.insert("P2".to_string(), 2);
         let lines = vec!["P1  10.0  20.0", "P2  30.0  40.0", "P1  50.0  60.0"];
-        let verts = parse_vertices(&lines, &link_id_to_idx).unwrap();
+        let verts = parse_vertices(&secs(&lines), &link_id_to_idx).unwrap();
         assert_eq!(verts["P1"], vec![(10.0, 20.0), (50.0, 60.0)]);
         assert_eq!(verts["P2"], vec![(30.0, 40.0)]);
     }
@@ -2725,7 +3180,7 @@ Headloss    H-W
     fn parse_vertices_skips_unknown_links() {
         let link_id_to_idx = HashMap::new();
         let lines = vec!["NOPE  10.0  20.0"];
-        let verts = parse_vertices(&lines, &link_id_to_idx).unwrap();
+        let verts = parse_vertices(&secs(&lines), &link_id_to_idx).unwrap();
         assert!(verts.is_empty());
     }
 
@@ -2734,7 +3189,7 @@ Headloss    H-W
         let mut link_id_to_idx = HashMap::new();
         link_id_to_idx.insert("P1".to_string(), 1);
         let lines = vec!["P1  10.0"]; // only 2 fields, need 3
-        let verts = parse_vertices(&lines, &link_id_to_idx).unwrap();
+        let verts = parse_vertices(&secs(&lines), &link_id_to_idx).unwrap();
         assert!(verts.is_empty());
     }
 
@@ -2778,7 +3233,7 @@ Headloss    H-W
         let mut link_id_to_idx = HashMap::new();
         link_id_to_idx.insert("P1".to_string(), 1);
         let lines = vec!["NODE  J1  residential", "LINK  P1  main"];
-        let (nt, lt) = parse_tags(&lines, &node_id_to_idx, &link_id_to_idx).unwrap();
+        let (nt, lt) = parse_tags(&secs(&lines), &node_id_to_idx, &link_id_to_idx).unwrap();
         assert_eq!(nt["J1"], "residential");
         assert_eq!(lt["P1"], "main");
     }
@@ -2789,7 +3244,7 @@ Headloss    H-W
         node_id_to_idx.insert("J1".to_string(), 1);
         let link_id_to_idx = HashMap::new();
         let lines = vec!["node  J1  zone_A", "Node  J1  zone_B"]; // last wins
-        let (nt, _lt) = parse_tags(&lines, &node_id_to_idx, &link_id_to_idx).unwrap();
+        let (nt, _lt) = parse_tags(&secs(&lines), &node_id_to_idx, &link_id_to_idx).unwrap();
         assert_eq!(nt["J1"], "zone_B");
     }
 
@@ -2798,7 +3253,7 @@ Headloss    H-W
         let node_id_to_idx = HashMap::new();
         let link_id_to_idx = HashMap::new();
         let lines = vec!["NODE  UNKNOWN  tag1", "LINK  UNKNOWN  tag2"];
-        let (nt, lt) = parse_tags(&lines, &node_id_to_idx, &link_id_to_idx).unwrap();
+        let (nt, lt) = parse_tags(&secs(&lines), &node_id_to_idx, &link_id_to_idx).unwrap();
         assert!(nt.is_empty());
         assert!(lt.is_empty());
     }
@@ -2808,7 +3263,7 @@ Headloss    H-W
         let node_id_to_idx = HashMap::new();
         let link_id_to_idx = HashMap::new();
         let lines = vec!["NODE  J1"]; // only 2 fields, need 3
-        let (nt, lt) = parse_tags(&lines, &node_id_to_idx, &link_id_to_idx).unwrap();
+        let (nt, lt) = parse_tags(&secs(&lines), &node_id_to_idx, &link_id_to_idx).unwrap();
         assert!(nt.is_empty());
         assert!(lt.is_empty());
     }
@@ -2818,7 +3273,7 @@ Headloss    H-W
         let node_id_to_idx = HashMap::new();
         let link_id_to_idx = HashMap::new();
         let lines = vec!["BOGUS  J1  tag"];
-        let (nt, lt) = parse_tags(&lines, &node_id_to_idx, &link_id_to_idx).unwrap();
+        let (nt, lt) = parse_tags(&secs(&lines), &node_id_to_idx, &link_id_to_idx).unwrap();
         assert!(nt.is_empty());
         assert!(lt.is_empty());
     }
@@ -2873,84 +3328,84 @@ Headloss    H-W
     #[test]
     fn parse_report_page_size() {
         let lines = vec!["PAGE  55"];
-        let report = parse_report(&lines).unwrap();
+        let report = parse_report(&secs(&lines)).unwrap();
         assert_eq!(report.page_size, 55);
     }
 
     #[test]
     fn parse_report_status_yes() {
         let lines = vec!["STATUS  YES"];
-        let report = parse_report(&lines).unwrap();
+        let report = parse_report(&secs(&lines)).unwrap();
         assert_eq!(report.status, ReportStatus::Yes);
     }
 
     #[test]
     fn parse_report_status_full() {
         let lines = vec!["STATUS  FULL"];
-        let report = parse_report(&lines).unwrap();
+        let report = parse_report(&secs(&lines)).unwrap();
         assert_eq!(report.status, ReportStatus::Full);
     }
 
     #[test]
     fn parse_report_status_no() {
         let lines = vec!["STATUS  NO"];
-        let report = parse_report(&lines).unwrap();
+        let report = parse_report(&secs(&lines)).unwrap();
         assert_eq!(report.status, ReportStatus::No);
     }
 
     #[test]
     fn parse_report_summary_no() {
         let lines = vec!["SUMMARY  NO"];
-        let report = parse_report(&lines).unwrap();
+        let report = parse_report(&secs(&lines)).unwrap();
         assert!(!report.summary);
     }
 
     #[test]
     fn parse_report_summary_yes() {
         let lines = vec!["SUMMARY  YES"];
-        let report = parse_report(&lines).unwrap();
+        let report = parse_report(&secs(&lines)).unwrap();
         assert!(report.summary);
     }
 
     #[test]
     fn parse_report_messages_no() {
         let lines = vec!["MESSAGES  NO"];
-        let report = parse_report(&lines).unwrap();
+        let report = parse_report(&secs(&lines)).unwrap();
         assert!(!report.messages);
     }
 
     #[test]
     fn parse_report_energy_yes() {
         let lines = vec!["ENERGY  YES"];
-        let report = parse_report(&lines).unwrap();
+        let report = parse_report(&secs(&lines)).unwrap();
         assert!(report.energy);
     }
 
     #[test]
     fn parse_report_energy_no() {
         let lines = vec!["ENERGY  NO"];
-        let report = parse_report(&lines).unwrap();
+        let report = parse_report(&secs(&lines)).unwrap();
         assert!(!report.energy);
     }
 
     #[test]
     fn parse_report_nodes_all() {
         let lines = vec!["NODES  ALL"];
-        let report = parse_report(&lines).unwrap();
+        let report = parse_report(&secs(&lines)).unwrap();
         assert_eq!(report.nodes, ReportSelection::All);
     }
 
     #[test]
     fn parse_report_nodes_none() {
         let lines = vec!["NODES  NONE"];
-        let report = parse_report(&lines).unwrap();
+        let report = parse_report(&secs(&lines)).unwrap();
         assert_eq!(report.nodes, ReportSelection::None);
     }
 
     #[test]
     fn parse_report_nodes_specific() {
         let lines = vec!["NODES  J1  J2  J3"];
-        let report = parse_report(&lines).unwrap();
+        let report = parse_report(&secs(&lines)).unwrap();
         assert_eq!(
             report.nodes,
             ReportSelection::Some(vec!["J1".to_string(), "J2".to_string(), "J3".to_string()])
@@ -2960,7 +3415,7 @@ Headloss    H-W
     #[test]
     fn parse_report_nodes_accumulate_across_lines() {
         let lines = vec!["NODES  J1  J2", "NODES  J3"];
-        let report = parse_report(&lines).unwrap();
+        let report = parse_report(&secs(&lines)).unwrap();
         assert_eq!(
             report.nodes,
             ReportSelection::Some(vec!["J1".to_string(), "J2".to_string(), "J3".to_string()])
@@ -2970,14 +3425,14 @@ Headloss    H-W
     #[test]
     fn parse_report_links_all() {
         let lines = vec!["LINKS  ALL"];
-        let report = parse_report(&lines).unwrap();
+        let report = parse_report(&secs(&lines)).unwrap();
         assert_eq!(report.links, ReportSelection::All);
     }
 
     #[test]
     fn parse_report_links_specific() {
         let lines = vec!["LINKS  P1  P2"];
-        let report = parse_report(&lines).unwrap();
+        let report = parse_report(&secs(&lines)).unwrap();
         assert_eq!(
             report.links,
             ReportSelection::Some(vec!["P1".to_string(), "P2".to_string()])
@@ -2987,21 +3442,21 @@ Headloss    H-W
     #[test]
     fn parse_report_file() {
         let lines = vec!["FILE  output.rpt"];
-        let report = parse_report(&lines).unwrap();
+        let report = parse_report(&secs(&lines)).unwrap();
         assert_eq!(report.file, Some("output.rpt".to_string()));
     }
 
     #[test]
     fn parse_report_file_with_spaces() {
         let lines = vec!["FILE  my output file.rpt"];
-        let report = parse_report(&lines).unwrap();
+        let report = parse_report(&secs(&lines)).unwrap();
         assert_eq!(report.file, Some("my output file.rpt".to_string()));
     }
 
     #[test]
     fn parse_report_field_yes_no() {
         let lines = vec!["FLOW  YES", "PRESSURE  NO"];
-        let report = parse_report(&lines).unwrap();
+        let report = parse_report(&secs(&lines)).unwrap();
         assert!(report.fields["FLOW"].enabled);
         assert!(!report.fields["PRESSURE"].enabled);
     }
@@ -3009,14 +3464,14 @@ Headloss    H-W
     #[test]
     fn parse_report_field_precision() {
         let lines = vec!["FLOW  PRECISION  4"];
-        let report = parse_report(&lines).unwrap();
+        let report = parse_report(&secs(&lines)).unwrap();
         assert_eq!(report.fields["FLOW"].precision, Some(4));
     }
 
     #[test]
     fn parse_report_field_above_below() {
         let lines = vec!["PRESSURE  ABOVE  20.0", "VELOCITY  BELOW  0.5"];
-        let report = parse_report(&lines).unwrap();
+        let report = parse_report(&secs(&lines)).unwrap();
         assert_eq!(report.fields["PRESSURE"].above, Some(20.0));
         assert_eq!(report.fields["VELOCITY"].below, Some(0.5));
     }
@@ -3029,7 +3484,7 @@ Headloss    H-W
             .map(|name| format!("{}  YES", name))
             .collect();
         let line_refs: Vec<&str> = lines.iter().map(|s| s.as_str()).collect();
-        let report = parse_report(&line_refs).unwrap();
+        let report = parse_report(&secs(&line_refs)).unwrap();
         assert_eq!(report.fields.len(), REPORT_FIELD_NAMES.len());
         for name in REPORT_FIELD_NAMES {
             assert!(report.fields.contains_key(*name), "Missing field: {}", name);
@@ -3040,7 +3495,7 @@ Headloss    H-W
     #[test]
     fn parse_report_unknown_keyword_ignored() {
         let lines = vec!["BOGUS  VALUE"];
-        let report = parse_report(&lines).unwrap();
+        let report = parse_report(&secs(&lines)).unwrap();
         assert!(report.fields.is_empty());
     }
 

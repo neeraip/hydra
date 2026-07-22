@@ -12,7 +12,7 @@
 pub struct OutProlog {
     /// EPANET magic number (must be 516114521).
     pub magic: i32,
-    /// EPANET file format version (must be 200).
+    /// EPANET file format version (must be 20012).
     pub version: i32,
     /// Number of nodes (junctions + reservoirs + tanks).
     pub n_nodes: usize,
@@ -30,7 +30,8 @@ pub struct OutProlog {
     pub trace_node: i32,
     /// Flow unit code (see EPANET spec table §4.1).
     pub flow_units: i32,
-    /// Pressure unit code (0=psi, 1=m, 2=kPa).
+    /// Pressure unit code (0=psi, 1=kPa, 2=m) — EPANET `PressUnitsType` order,
+    /// as written by `out_writer` (2 for SI files, 0 for US-customary files).
     pub pressure_units: i32,
     /// Report-statistic code (0=Series, 1=Average, 2=Minimum, 3=Maximum, 4=Range).
     pub report_statistic: i32,
@@ -245,6 +246,7 @@ impl OutMetadata {
 /// Read only the 60-byte prolog header and 12-byte epilog from a `.out` file.
 ///
 /// Total I/O is 72 bytes — this never touches the dynamic data section.
+#[deprecated(note = "use the _checked variant (read_metadata_checked)")]
 pub fn read_metadata(path: &std::path::Path) -> Result<OutMetadata, String> {
     read_metadata_checked(path).map_err(|e| e.to_string())
 }
@@ -946,7 +948,11 @@ pub fn scan_analytics(path: &std::path::Path, meta: &OutMetadata) -> Result<Anal
 /// Parse an EPANET binary output file from a byte slice.
 ///
 /// Returns an error string if the data is too short, the opening or closing
-/// magic numbers are wrong, or any read extends beyond the buffer.
+/// magic numbers are wrong, header counts are negative or inconsistent, the
+/// epilog period count does not fit the buffer, or any read extends beyond
+/// the buffer.  All size computations are validated against the actual
+/// buffer length before any allocation, so hostile inputs cannot trigger
+/// huge allocations or arithmetic overflow.
 pub fn parse(data: &[u8]) -> Result<OutFile, String> {
     if data.len() < 12 {
         return Err(format!("too short: {} bytes (minimum 12)", data.len()));
@@ -955,7 +961,11 @@ pub fn parse(data: &[u8]) -> Result<OutFile, String> {
     // Read n_periods from the epilog (last 12 bytes) before parsing the dynamic
     // section, so the number of periods is known without a seek.
     let epi_off = data.len() - 12;
-    let n_periods = i32::from_le_bytes(data[epi_off..epi_off + 4].try_into().unwrap()) as usize;
+    let n_periods_i = i32::from_le_bytes(data[epi_off..epi_off + 4].try_into().unwrap());
+    if n_periods_i < 0 {
+        return Err(format!("negative period count in epilog: {n_periods_i}"));
+    }
+    let n_periods = n_periods_i as usize;
 
     let mut cur = Cursor::new(data);
 
@@ -966,11 +976,32 @@ pub fn parse(data: &[u8]) -> Result<OutFile, String> {
         return Err(format!("unexpected magic at start: {magic_start}"));
     }
     let version = cur.read_i32()?;
-    let n_nodes = cur.read_i32()? as usize;
-    let n_tanks = cur.read_i32()? as usize;
-    let n_links = cur.read_i32()? as usize;
-    let n_pumps = cur.read_i32()? as usize;
-    let n_valves = cur.read_i32()? as usize;
+    let n_nodes_i = cur.read_i32()?;
+    let n_tanks_i = cur.read_i32()?;
+    let n_links_i = cur.read_i32()?;
+    let n_pumps_i = cur.read_i32()?;
+    let n_valves_i = cur.read_i32()?;
+    if n_nodes_i < 0 || n_tanks_i < 0 || n_links_i < 0 || n_pumps_i < 0 || n_valves_i < 0 {
+        return Err(format!(
+            "negative object counts in header: nodes={n_nodes_i} tanks={n_tanks_i} \
+             links={n_links_i} pumps={n_pumps_i} valves={n_valves_i}"
+        ));
+    }
+    let n_nodes = n_nodes_i as usize;
+    let n_tanks = n_tanks_i as usize;
+    let n_links = n_links_i as usize;
+    let n_pumps = n_pumps_i as usize;
+    let n_valves = n_valves_i as usize;
+    if n_tanks > n_nodes {
+        return Err(format!(
+            "invalid counts: n_tanks ({n_tanks}) > n_nodes ({n_nodes})"
+        ));
+    }
+    if n_pumps > n_links {
+        return Err(format!(
+            "invalid counts: n_pumps ({n_pumps}) > n_links ({n_links})"
+        ));
+    }
     let quality_flag = cur.read_i32()?;
     let trace_node = cur.read_i32()?;
     let flow_units = cur.read_i32()?;
@@ -985,7 +1016,14 @@ pub fn parse(data: &[u8]) -> Result<OutFile, String> {
 
     // Per-object arrays: node IDs (n_nodes×32), link IDs (n_links×32),
     // link from/to/type (3×n_links×INT4), tank node indices (n_tanks×INT4).
-    cur.skip(32 * n_nodes + 32 * n_links + 12 * n_links + 4 * n_tanks)?;
+    // Checked arithmetic: header counts up to i32::MAX would overflow the
+    // byte total on 32-bit targets.
+    let per_object_bytes = 32usize
+        .checked_mul(n_nodes)
+        .and_then(|a| 44usize.checked_mul(n_links).and_then(|b| a.checked_add(b)))
+        .and_then(|a| 4usize.checked_mul(n_tanks).and_then(|b| a.checked_add(b)))
+        .ok_or_else(|| "prolog size overflow".to_string())?;
+    cur.skip(per_object_bytes)?;
 
     // Tank areas, node elevations, link lengths, link diameters.
     let tank_areas = cur.read_f32s(n_tanks)?;
@@ -1043,6 +1081,29 @@ pub fn parse(data: &[u8]) -> Result<OutFile, String> {
     };
 
     // ── Dynamic results (§4.1.3) ──────────────────────────────────────────────
+
+    // Bound the epilog's period count against the bytes actually remaining in
+    // the buffer before allocating: a crafted epilog on a tiny file could
+    // otherwise request a multi-GB `Vec` and abort the process.
+    let period_bytes = 4 * (4 * n_nodes + 8 * n_links); // counts already buffer-bounded
+    let remaining = data.len().saturating_sub(cur.pos);
+    if period_bytes == 0 {
+        if n_periods > 0 {
+            return Err(format!(
+                "epilog claims {n_periods} periods but the network has no nodes or links"
+            ));
+        }
+    } else {
+        let dynamic_bytes = period_bytes
+            .checked_mul(n_periods)
+            .ok_or_else(|| "dynamic section size overflow".to_string())?;
+        if dynamic_bytes > remaining {
+            return Err(format!(
+                "epilog claims {n_periods} periods ({dynamic_bytes} bytes) \
+                 but only {remaining} bytes remain in the buffer"
+            ));
+        }
+    }
 
     let mut periods = Vec::with_capacity(n_periods);
     for _ in 0..n_periods {
@@ -1125,34 +1186,34 @@ impl<'a> Cursor<'a> {
         Self { data, pos: 0 }
     }
 
+    /// Checked `pos + n` that also verifies the result stays inside the
+    /// buffer.  Returns the new end position without advancing.
+    fn checked_end(&self, n: usize, what: &str) -> Result<usize, String> {
+        self.pos
+            .checked_add(n)
+            .filter(|&end| end <= self.data.len())
+            .ok_or_else(|| format!("unexpected EOF {} at offset {}", what, self.pos))
+    }
+
     fn read_i32(&mut self) -> Result<i32, String> {
-        let end = self.pos + 4;
-        if end > self.data.len() {
-            return Err(format!("unexpected EOF reading i32 at offset {}", self.pos));
-        }
+        let end = self.checked_end(4, "reading i32")?;
         let v = i32::from_le_bytes(self.data[self.pos..end].try_into().unwrap());
         self.pos = end;
         Ok(v)
     }
 
     fn read_f32(&mut self) -> Result<f32, String> {
-        let end = self.pos + 4;
-        if end > self.data.len() {
-            return Err(format!("unexpected EOF reading f32 at offset {}", self.pos));
-        }
+        let end = self.checked_end(4, "reading f32")?;
         let v = f32::from_le_bytes(self.data[self.pos..end].try_into().unwrap());
         self.pos = end;
         Ok(v)
     }
 
     fn read_f32s(&mut self, n: usize) -> Result<Vec<f32>, String> {
-        let end = self.pos + n * 4;
-        if end > self.data.len() {
-            return Err(format!(
-                "unexpected EOF reading {} f32 values at offset {}",
-                n, self.pos
-            ));
-        }
+        let bytes = n
+            .checked_mul(4)
+            .ok_or_else(|| format!("f32 array size overflow ({n} values)"))?;
+        let end = self.checked_end(bytes, "reading f32 values")?;
         let mut v = Vec::with_capacity(n);
         for i in 0..n {
             let off = self.pos + i * 4;
@@ -1165,14 +1226,7 @@ impl<'a> Cursor<'a> {
     }
 
     fn skip(&mut self, n: usize) -> Result<(), String> {
-        let end = self.pos + n;
-        if end > self.data.len() {
-            return Err(format!(
-                "unexpected EOF skipping {} bytes at offset {}",
-                n, self.pos
-            ));
-        }
-        self.pos = end;
+        self.pos = self.checked_end(n, "skipping bytes")?;
         Ok(())
     }
 }
@@ -1226,6 +1280,77 @@ mod tests {
     #[test]
     fn parse_rejects_too_short_input() {
         assert!(parse(&[0u8; 4]).is_err());
+    }
+
+    // ── Hostile-input hardening ──────────────────────────────────────────────
+
+    #[test]
+    fn parse_rejects_negative_node_count() {
+        // A negative n_nodes cast to usize would become a huge value and
+        // trigger an enormous skip/allocation.
+        let mut data = make_minimal_out(2, 1, 1, 0);
+        data[8..12].copy_from_slice(&(-1_i32).to_le_bytes());
+        let err = parse(&data).expect_err("negative n_nodes must be rejected");
+        assert!(err.contains("negative object counts"), "got: {err}");
+    }
+
+    #[test]
+    fn parse_rejects_negative_period_count() {
+        let mut data = make_minimal_out(2, 1, 1, 0);
+        let epi = data.len() - 12;
+        data[epi..epi + 4].copy_from_slice(&(-5_i32).to_le_bytes());
+        let err = parse(&data).expect_err("negative n_periods must be rejected");
+        assert!(err.contains("negative period count"), "got: {err}");
+    }
+
+    #[test]
+    fn parse_rejects_huge_period_count_on_small_file() {
+        // A tiny file whose epilog claims i32::MAX periods: must error out
+        // instead of attempting a multi-GB Vec allocation.
+        let mut data = make_minimal_out(2, 1, 1, 0);
+        let epi = data.len() - 12;
+        data[epi..epi + 4].copy_from_slice(&i32::MAX.to_le_bytes());
+        let err = parse(&data).expect_err("oversized n_periods must be rejected");
+        assert!(
+            err.contains("periods"),
+            "expected a period-bound error, got: {err}"
+        );
+    }
+
+    #[test]
+    fn parse_rejects_huge_object_counts_on_small_file() {
+        // Header claims i32::MAX nodes/links in a small buffer: the prolog
+        // skip must fail cleanly (no overflow panic, no huge allocation).
+        let mut data = make_minimal_out(2, 1, 1, 0);
+        data[8..12].copy_from_slice(&i32::MAX.to_le_bytes()); // n_nodes
+        data[16..20].copy_from_slice(&i32::MAX.to_le_bytes()); // n_links
+        assert!(parse(&data).is_err());
+    }
+
+    #[test]
+    fn parse_rejects_inconsistent_counts() {
+        // n_tanks > n_nodes and n_pumps > n_links are structurally impossible.
+        let mut data = make_minimal_out(2, 1, 1, 0);
+        data[12..16].copy_from_slice(&3_i32.to_le_bytes()); // n_tanks > n_nodes
+        let err = parse(&data).expect_err("n_tanks > n_nodes must be rejected");
+        assert!(err.contains("n_tanks"), "got: {err}");
+
+        let mut data = make_minimal_out(2, 1, 1, 0);
+        data[20..24].copy_from_slice(&2_i32.to_le_bytes()); // n_pumps > n_links
+        let err = parse(&data).expect_err("n_pumps > n_links must be rejected");
+        assert!(err.contains("n_pumps"), "got: {err}");
+    }
+
+    #[test]
+    fn parse_rejects_periods_with_empty_network() {
+        // Zero nodes and links makes each period zero bytes; a huge period
+        // count would then pass any byte-budget check but still allocate
+        // unbounded empty PeriodResults.
+        let mut data = make_minimal_out(0, 0, 0, 0);
+        let epi = data.len() - 12;
+        data[epi..epi + 4].copy_from_slice(&i32::MAX.to_le_bytes());
+        let err = parse(&data).expect_err("periods with empty network must be rejected");
+        assert!(err.contains("no nodes or links"), "got: {err}");
     }
 
     #[test]
