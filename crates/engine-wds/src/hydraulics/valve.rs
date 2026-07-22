@@ -622,23 +622,27 @@ fn fcv_status(
 /// EPANET `badvalve`: if node `ni` is adjacent to an Active FCV/PRV/PSV,
 /// demote that valve (FCV→XFcv, PRV/PSV→XPressure) and return `true`.
 pub(super) fn bad_valve(network: &Network, statuses: &mut [LinkStatus], ni: usize) -> bool {
+    // EPANET iterates over valves only — other link kinds incident to `ni`
+    // must not short-circuit the search.
     for (k, link) in network.links.iter().enumerate() {
+        let v = match &link.kind {
+            LinkKind::Valve(v) => v,
+            _ => continue,
+        };
         let from_node_index = link.base.from_idx();
         let to_node_index = link.base.to_idx();
         if from_node_index == ni || to_node_index == ni {
-            if let LinkKind::Valve(v) = &link.kind {
-                if matches!(
-                    v.valve_type,
-                    ValveType::Prv | ValveType::Psv | ValveType::Fcv
-                ) && statuses[k] == LinkStatus::Active
-                {
-                    statuses[k] = if v.valve_type == ValveType::Fcv {
-                        LinkStatus::XFcv
-                    } else {
-                        LinkStatus::XPressure
-                    };
-                    return true;
-                }
+            if matches!(
+                v.valve_type,
+                ValveType::Prv | ValveType::Psv | ValveType::Fcv
+            ) && statuses[k] == LinkStatus::Active
+            {
+                statuses[k] = if v.valve_type == ValveType::Fcv {
+                    LinkStatus::XFcv
+                } else {
+                    LinkStatus::XPressure
+                };
+                return true;
             }
             return false;
         }
@@ -801,6 +805,33 @@ mod tests {
         let (p, y) = valve_open_py(2.0, 0.0, LinkStatus::Open);
         assert!((p - 1.0 / G_MIN).abs() < 1e-12);
         assert!((y - 2.0).abs() < 1e-12);
+    }
+
+    #[test]
+    fn bad_valve_skips_non_valve_links_incident_to_node() {
+        use crate::test_support::TestNetworkBuilder;
+
+        // Pipe P1 (link 0) and PRV V1 (link 1) are both incident to J1.
+        // The pipe must not short-circuit the valve search (EPANET iterates
+        // over valves only), so the active PRV is found and demoted.
+        let (net, _ns, _ls) = TestNetworkBuilder::new()
+            .reservoir("R1", 100.0)
+            .junction("J1", 0.0, 0.0)
+            .junction("J2", 0.0, 10.0)
+            .hw_pipe("P1", "R1", "J1", 1000.0, 12.0, 100.0)
+            .valve("V1", "J1", "J2", ValveType::Prv, 12.0, 30.0)
+            .build();
+        let j1 = 1; // 0-based node index of J1
+
+        let mut statuses = vec![LinkStatus::Open, LinkStatus::Active];
+        assert!(bad_valve(&net, &mut statuses, j1));
+        assert_eq!(statuses[1], LinkStatus::XPressure);
+
+        // An incident valve that is not Active stops the search without
+        // demotion (matching EPANET's early return).
+        let mut statuses = vec![LinkStatus::Open, LinkStatus::Open];
+        assert!(!bad_valve(&net, &mut statuses, j1));
+        assert_eq!(statuses[1], LinkStatus::Open);
     }
 
     #[test]

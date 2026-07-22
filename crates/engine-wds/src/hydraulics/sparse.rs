@@ -114,8 +114,11 @@ impl SparseSolver {
     /// On entry: `aii` = diagonal of A, `aij` = off-diagonal entries (assembled as
     /// negative values, matching EPANET's sign convention), `f` = RHS.
     /// On success: `f` holds the solution (permuted head vector).
-    /// Returns `true` on success, `false` if the matrix is ill-conditioned.
-    pub fn factorize_solve(&mut self) -> bool {
+    /// Returns `Ok(())` on success, or `Err(step)` with the zero-based
+    /// elimination step at which a non-positive pivot was found (the matrix is
+    /// ill-conditioned). Map `step` through the inverse permutation (`row`) to
+    /// recover the original junction index.
+    pub fn factorize_solve(&mut self) -> Result<(), usize> {
         if solve_timing_enabled() {
             return self.factorize_solve_timed();
         }
@@ -123,12 +126,12 @@ impl SparseSolver {
         self.factorize_solve_fast()
     }
 
-    fn factorize_solve_fast(&mut self) -> bool {
+    fn factorize_solve_fast(&mut self) -> Result<(), usize> {
         self.factorize_solve_scalar()
     }
 
     /// Scalar left-looking Cholesky factorisation + solve (§3.6 EPANET kernel).
-    fn factorize_solve_scalar(&mut self) -> bool {
+    fn factorize_solve_scalar(&mut self) -> Result<(), usize> {
         let n = self.n;
         self.link_chain.fill(n);
         self.first_ptr.fill(0);
@@ -189,7 +192,11 @@ impl SparseSolver {
 
             diagj = aii[j] - diagj;
             if diagj <= 0.0 {
-                return false;
+                // The column scatter above may have left partial sums in
+                // `temp`; restore the all-zeros invariant so the caller can
+                // safely retry factorisation after adjusting the matrix.
+                temp.fill(0.0);
+                return Err(j);
             }
             diagj = diagj.sqrt();
             aii[j] = diagj;
@@ -256,10 +263,10 @@ impl SparseSolver {
             f[j] = bj / aii[j];
         }
 
-        true
+        Ok(())
     }
 
-    fn factorize_solve_timed(&mut self) -> bool {
+    fn factorize_solve_timed(&mut self) -> Result<(), usize> {
         let mut timings = SparsePhaseTimings::default();
         let n = self.n;
 
@@ -303,7 +310,9 @@ impl SparseSolver {
 
             diagj = self.aii[j] - diagj;
             if diagj <= 0.0 {
-                return false;
+                // Restore the all-zeros `temp` invariant (see the scalar path).
+                self.temp.fill(0.0);
+                return Err(j);
             }
             diagj = diagj.sqrt();
             self.aii[j] = diagj;
@@ -359,7 +368,7 @@ impl SparseSolver {
         self.last_timings = timings;
         self.last_timings.backward += phase_started.elapsed();
 
-        true
+        Ok(())
     }
 }
 
@@ -388,6 +397,43 @@ mod tests {
         assert!(solver.aij.iter().all(|v| *v == 0.0));
         assert!(solver.aii.iter().all(|v| *v == 0.0));
         assert!(solver.f.iter().all(|v| *v == 0.0));
+    }
+
+    #[test]
+    fn factorize_failure_reports_step_and_leaves_temp_clean() {
+        // Triangle graph 0-1-2 so that the first eliminated column has two
+        // below-diagonal entries: the failing column then has partial sums
+        // scattered into `temp` before the non-positive pivot is detected.
+        let adj = vec![
+            BTreeSet::from([1usize, 2]),
+            BTreeSet::from([0usize, 2]),
+            BTreeSet::from([0usize, 1]),
+        ];
+        let mut solver = SparseSolver::new(3, &adj);
+
+        // A = [[1,-2,-2],[-2,1,-2],[-2,-2,1]] is not positive-definite:
+        // column 0 factorises (pivot 1) but column 1's pivot is 1 - 4 = -3.
+        solver.clear();
+        solver.aii.fill(1.0);
+        solver.aij.fill(-2.0);
+        solver.f.fill(1.0);
+        assert_eq!(solver.factorize_solve(), Err(1));
+        assert!(
+            solver.temp.iter().all(|&v| v == 0.0),
+            "temp buffer must be restored to all-zeros on factorisation failure"
+        );
+
+        // A subsequent factorisation with a well-conditioned matrix must
+        // succeed and produce the correct solution (buffer not corrupted).
+        solver.clear();
+        solver.aii.fill(4.0);
+        solver.aij.fill(-1.0);
+        solver.f.fill(2.0);
+        assert_eq!(solver.factorize_solve(), Ok(()));
+        // A = [[4,-1,-1],[-1,4,-1],[-1,-1,4]], b = [2,2,2] → x = [1,1,1].
+        for &x in &solver.f {
+            assert!((x - 1.0).abs() < 1e-12, "expected 1.0, got {x}");
+        }
     }
 
     #[test]

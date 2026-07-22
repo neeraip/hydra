@@ -212,19 +212,14 @@ pub(super) fn link_py(
                 formula,
                 viscosity,
             );
-            Ok(match formula {
-                HeadLossFormula::DarcyWeisbach => Py {
-                    p: 1.0 / g,
-                    y: h / g,
-                },
-                _ => {
-                    let n_f = match formula {
-                        HeadLossFormula::HazenWilliams => HW_EXP,
-                        _ => 2.0,
-                    };
-                    Py::from_hg(h, g, n_f, q)
-                }
-            })
+            // §3.3 guard conditions apply to every formula: from_hg clamps a
+            // degenerate gradient (g < g_min) using the formula's flow
+            // exponent n_f (1.852 for HW, 2 for DW and CM).
+            let n_f = match formula {
+                HeadLossFormula::HazenWilliams => HW_EXP,
+                _ => 2.0,
+            };
+            Ok(Py::from_hg(h, g, n_f, q))
         }
         LinkKind::Pump(pump) => {
             if setting == 0.0 {
@@ -350,6 +345,38 @@ mod tests {
                 .map(|(x, y)| CurvePoint { x: *x, y: *y })
                 .collect(),
         }
+    }
+
+    #[test]
+    fn dw_pipe_degenerate_gradient_uses_from_hg_clamp() {
+        use crate::test_support::TestNetworkBuilder;
+
+        let (net, _ns, _ls) = TestNetworkBuilder::new()
+            .reservoir("R1", 100.0)
+            .junction("J1", 0.0, 10.0)
+            .hw_pipe("P1", "R1", "J1", 10.0, 36.0, 100.0)
+            .build();
+        // Zero flow + tiny resistance → laminar DW gradient far below G_MIN.
+        let py = link_py(
+            &net.links[0],
+            0.0,
+            LinkStatus::Open,
+            1.0,
+            1.0e-8,
+            &None,
+            &[],
+            HeadLossFormula::DarcyWeisbach,
+            1.0e-6,
+            1.0,
+            None,
+            1.0e-7,
+        )
+        .expect("link_py");
+        // §3.3 guard: g < g_min → g2 = g_min / n_f with n_f = 2 for DW,
+        // giving P = n_f / g_min and Y = Q (= 0 here).
+        let expected_p = 2.0 / G_MIN;
+        assert!((py.p - expected_p).abs() / expected_p < 1e-12);
+        assert!(py.y.abs() < 1e-12);
     }
 
     #[test]

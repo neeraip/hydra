@@ -166,9 +166,56 @@ pub struct SolverContext {
 impl SolverContext {
     /// Maximum flow rate for pump at link index `k` at unit speed (§3.4.2).
     ///
-    /// Returns 0.0 if `k` is not a pump or is out of range.
+    /// Returns `f64::INFINITY` (no flow limit) if `k` is not a pump or is out
+    /// of range, matching the constant-power pump convention: with
+    /// $Q_{\max} = \infty$ the out-of-range (XFLOW) check never triggers.
     pub fn pump_qmax(&self, k: usize) -> f64 {
-        self.pump_qmax_inner.get(k).copied().unwrap_or(0.0)
+        self.pump_qmax_inner
+            .get(k)
+            .copied()
+            .unwrap_or(f64::INFINITY)
+    }
+
+    /// Re-derive the head-loss resistance coefficient for link `k` from the
+    /// network's current pipe data (§3.2).
+    ///
+    /// Called once per link at context build and again by the session API when
+    /// a pipe's roughness is mutated (`../simulation/spec.md` §8.3) so the
+    /// next hydraulic solve uses the updated value. Non-pipe links keep a
+    /// zero resistance.
+    pub(crate) fn refresh_pipe_resistance(&mut self, network: &Network, k: usize) {
+        if let LinkKind::Pipe(pipe) = &network.links[k].kind {
+            self.pipe_r[k] = pipe_resistance(
+                pipe.length,
+                pipe.diameter,
+                pipe.roughness,
+                network.options.head_loss_formula,
+            );
+        }
+    }
+
+    /// Re-derive the elevation-dependent precomputes for node `i` from the
+    /// network's current data: the elevation snapshot used for valve setpoint
+    /// conversion (§3.5, §3.9) and the per-node `h_min`/`h_max` tank level
+    /// limits (§2.10). Non-tanks and empty tanks get sentinels so neither
+    /// tank-level condition fires; overflow tanks keep `h_max = INFINITY` so
+    /// the "full tank" branch never fires.
+    ///
+    /// Called once per node at context build and again by the session API when
+    /// a node's elevation is mutated (`../simulation/spec.md` §8.3).
+    pub(crate) fn refresh_node_elevation(&mut self, network: &Network, i: usize) {
+        let node = &network.nodes[i];
+        self.node_elevations[i] = node.base.elevation;
+        self.node_h_min[i] = f64::NEG_INFINITY;
+        self.node_h_max[i] = f64::INFINITY;
+        if let NodeKind::Tank(t) = &node.kind {
+            if t.diameter > 0.0 || t.volume_curve.is_some() {
+                self.node_h_min[i] = t.head_from_level(node.base.elevation, t.min_level);
+                if !t.overflow {
+                    self.node_h_max[i] = t.head_from_level(node.base.elevation, t.max_level);
+                }
+            }
+        }
     }
 }
 
@@ -227,19 +274,12 @@ pub fn build_solver_context(
         }
     }
 
-    let formula = network.options.head_loss_formula;
     let curve_id_to_index: std::collections::HashMap<&str, usize> = network
         .curves
         .iter()
         .enumerate()
         .map(|(idx, curve)| (curve.id.as_str(), idx))
         .collect();
-    let mut pipe_r = vec![0.0f64; n_links];
-    for (k, link) in network.links.iter().enumerate() {
-        if let LinkKind::Pipe(pipe) = &link.kind {
-            pipe_r[k] = pipe_resistance(pipe.length, pipe.diameter, pipe.roughness, formula);
-        }
-    }
 
     let mut pump_coeffs: Vec<Option<PumpCoeffs>> = vec![None; n_links];
     let mut pump_curve_idx: Vec<Option<usize>> = vec![None; n_links];
@@ -300,7 +340,6 @@ pub fn build_solver_context(
 
     let link_from: Vec<usize> = network.links.iter().map(|l| l.base.from_idx()).collect();
     let link_to: Vec<usize> = network.links.iter().map(|l| l.base.to_idx()).collect();
-    let node_elevations: Vec<f64> = network.nodes.iter().map(|n| n.base.elevation).collect();
 
     let mut emitter_flows = vec![0.0f64; n_nodes];
     for (i, node) in network.nodes.iter().enumerate() {
@@ -350,23 +389,6 @@ pub fn build_solver_context(
         }
     }
 
-    // §2.10 Precompute per-node h_min/h_max for tank level checks.
-    // Non-tanks and empty tanks get sentinels so neither condition fires.
-    // Overflow tanks get h_max = INFINITY so the "full" branch never fires.
-    let mut node_h_min = vec![f64::NEG_INFINITY; n_nodes];
-    let mut node_h_max = vec![f64::INFINITY; n_nodes];
-    for (i, node) in network.nodes.iter().enumerate() {
-        if let NodeKind::Tank(t) = &node.kind {
-            if t.diameter > 0.0 || t.volume_curve.is_some() {
-                node_h_min[i] = t.head_from_level(node.base.elevation, t.min_level);
-                if !t.overflow {
-                    node_h_max[i] = t.head_from_level(node.base.elevation, t.max_level);
-                }
-                // overflow tanks: h_max stays INFINITY — matches `!t.overflow` guard.
-            }
-        }
-    }
-
     // §3.7 Precompute has_leakage: avoids per-convergence O(n_nodes) scan.
     let has_leakage = favad.c_fa.iter().chain(favad.c_va.iter()).any(|&c| c > 0.0);
 
@@ -412,11 +434,11 @@ pub fn build_solver_context(
         })
         .collect();
 
-    let ctx = SolverContext {
+    let mut ctx = SolverContext {
         node_junc_step_opt,
         junc_nodes,
         junction_demand_terms,
-        pipe_r,
+        pipe_r: vec![0.0; n_links],
         pump_coeffs,
         pump_curve_idx,
         pump_qmax_inner,
@@ -427,7 +449,7 @@ pub fn build_solver_context(
         p: vec![0.0; n_links],
         y: vec![0.0; n_links],
         node_heads: vec![0.0; n_nodes],
-        node_elevations,
+        node_elevations: vec![0.0; n_nodes],
         junction_demands: vec![0.0; n_nodes],
         xflow: vec![0.0; n_nodes],
         prev_flows: vec![0.0; n_links],
@@ -442,8 +464,8 @@ pub fn build_solver_context(
         pda_demand_flows,
         prev_pda_demand_flows: vec![0.0; n_nodes],
         net_flow_accum: vec![0.0; n_nodes],
-        node_h_min,
-        node_h_max,
+        node_h_min: vec![f64::NEG_INFINITY; n_nodes],
+        node_h_max: vec![f64::INFINITY; n_nodes],
         has_leakage,
         is_const_hp_pump,
         emitter_node_indices,
@@ -451,6 +473,17 @@ pub fn build_solver_context(
         pda_node_indices,
         initialised: false,
     };
+
+    // Fill the pipe resistances (§3.2) and elevation-derived precomputes
+    // (§2.10 tank h_min/h_max, valve elevation datum) through the same
+    // refresh path used by the session API on property mutation
+    // (`../simulation/spec.md` §8.3), so both derive from one formula.
+    for k in 0..n_links {
+        ctx.refresh_pipe_resistance(network, k);
+    }
+    for i in 0..n_nodes {
+        ctx.refresh_node_elevation(network, i);
+    }
 
     Ok(ctx)
 }
@@ -644,11 +677,17 @@ pub fn solve_hydraulic_step(
         }
 
         let phase_started = timing_enabled.then(Instant::now);
-        if !ctx.sparse.factorize_solve() {
-            // Identify the first non-positive diagonal — the elimination step
-            // where Cholesky broke down — to report in SingularMatrix.
-            let step = ctx.sparse.aii.iter().position(|&d| d <= 0.0).unwrap_or(0);
-            let node_idx = ctx.junc_nodes.get(step).copied();
+        if let Err(step) = ctx.sparse.factorize_solve() {
+            // `step` is the elimination step at which Cholesky broke down.
+            // Map it back through the inverse permutation (`row[ji]` = the
+            // elimination step of junction ji) to the original junction, then
+            // to the network node index for the bad-valve check.
+            let node_idx = ctx
+                .sparse
+                .row
+                .iter()
+                .position(|&perm| perm == step)
+                .and_then(|ji| ctx.junc_nodes.get(ji).copied());
             let demoted = if let Some(ni) = node_idx {
                 bad_valve(network, &mut ctx.statuses, ni)
             } else {
@@ -999,5 +1038,13 @@ mod tests {
         assert_eq!(ctx.pump_qmax(pump_idx), expected_qmax);
         assert_eq!(ctx.link_from.len(), network.links.len());
         assert_eq!(ctx.link_to.len(), network.links.len());
+
+        // Non-pump links and out-of-range indices carry no flow limit.
+        for (idx, link) in network.links.iter().enumerate() {
+            if !matches!(link.kind, LinkKind::Pump(_)) {
+                assert_eq!(ctx.pump_qmax(idx), f64::INFINITY);
+            }
+        }
+        assert_eq!(ctx.pump_qmax(network.links.len()), f64::INFINITY);
     }
 }
