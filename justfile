@@ -63,6 +63,11 @@ test-scripts:
 bench:
     cargo bench -p hydra-engine-wds
 
+# Generate an HTML test-coverage report (target/llvm-cov/html/index.html).
+# Requires cargo-llvm-cov: `cargo install cargo-llvm-cov --locked`
+coverage:
+    cargo llvm-cov --workspace --html
+
 # ── Lint & Format ─────────────────────────────────────────────────────────────
 
 # Format all Rust source files

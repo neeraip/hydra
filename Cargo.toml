@@ -18,9 +18,9 @@ homepage = "https://github.com/neeraip/hydra"
 documentation = "https://neeraip.github.io/hydra/"
 
 
-# Optimise the core library even in dev/test builds so that benchmark parity
-# tests (and any other integration test that exercises the solver) run at
-# near-release speed without requiring `--release`.
+# Optimise the engine even in dev/test builds so that the test suite — and any
+# test that exercises the solver — runs at near-release speed without
+# requiring `--release`.
 [profile.dev.package.hydra-engine-wds]
 opt-level = 2
 

@@ -35,8 +35,10 @@ allow = [
 
 # ── Banned crates ─────────────────────────────────────────────────────────────
 [bans]
-# Warn on duplicate versions of the same crate; bump to "deny" once the
-# dependency tree is tidy.
+# Warn on duplicate versions of the same crate. Kept at "warn" deliberately:
+# the Tauri/wry dependency tree (GUI) drags in ~47 duplicated crates
+# (windows-sys, zbus, phf, toml, …) that we cannot deduplicate ourselves, so
+# "deny" would only produce permanent unfixable failures.
 multiple-versions = "warn"
 wildcards = "allow"
 deny = []
