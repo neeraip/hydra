@@ -194,10 +194,12 @@ pub(super) fn transport_step(
                 // Add demand outflow.
                 let demand_out = node_state.demand_flow.max(0.0) * dt;
                 volout += demand_out;
-                // §6.9: Track mass removed by consumer demand.
-                let demand_vol = node_state.demand_flow.abs() * dt;
-                if demand_vol > 0.0 {
-                    state.mass_balance.demand += state.node_conc[node_0] * demand_vol;
+                // §6.9: Track mass removed by consumer demand. A negative
+                // demand is an external inflow — its volume already mixed in
+                // via `volin` above — so it must not be charged to the
+                // withdrawal side of the ledger.
+                if demand_out > 0.0 {
+                    state.mass_balance.demand += state.node_conc[node_0] * demand_out;
                 }
             }
             NodeKind::Reservoir(_) => {
@@ -206,6 +208,7 @@ pub(super) fn transport_step(
                     network,
                     node_states,
                     network.options.quality_mode,
+                    t,
                 );
             }
             NodeKind::Tank(tank) => {

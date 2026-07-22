@@ -401,6 +401,61 @@ mod tests {
     }
 
     #[test]
+    fn negative_demand_is_inflow_not_demand_withdrawal() {
+        // §6.9: a junction with negative demand is an external inflow point.
+        // Its inflow volume dilutes the node at zero concentration and must
+        // not be charged to the demand (withdrawal) side of the ledger.
+        let options = SimulationOptions {
+            quality_mode: crate::QualityMode::Chemical,
+            qual_step: 10.0,
+            ..SimulationOptions::default()
+        };
+        let network = Network {
+            title: vec![],
+            options,
+            patterns: vec![],
+            curves: vec![],
+            nodes: vec![
+                test_support::junction_node(1, 0.0),
+                test_support::junction_node(2, 0.0),
+            ],
+            links: vec![test_support::link(
+                1,
+                1,
+                2,
+                test_support::default_pipe(100.0, 1.0),
+            )],
+            controls: vec![],
+            rules: vec![],
+            pattern_index: std::collections::HashMap::new(),
+            report: crate::ReportOptions::default(),
+            coordinates: std::collections::HashMap::new(),
+            vertices: std::collections::HashMap::new(),
+            node_tags: std::collections::HashMap::new(),
+            link_tags: std::collections::HashMap::new(),
+        };
+        let mut node_states = vec![NodeState::default(); 2];
+        node_states[1].demand_flow = -0.5; // external inflow at J2
+        let link_states = vec![test_support::link_state_q(1.0)];
+        let mut state = init_quality(&network, &node_states, &link_states).unwrap();
+        if let Some(pq) = &mut state.pipe_quality[0] {
+            for seg in &mut pq.segments {
+                seg.concentration = 5.0;
+            }
+        }
+
+        advance_quality(&mut state, &network, &node_states, &link_states, 100.0, 0.0);
+
+        assert_eq!(
+            state.mass_balance.demand, 0.0,
+            "negative demand must not accumulate on the withdrawal side"
+        );
+        // Pipe inflow (1.0 m³/s at 5.0 mg/L) dilutes with the external inflow
+        // (0.5 m³/s at zero concentration): c = 5.0 / 1.5.
+        approx::assert_abs_diff_eq!(state.node_conc[1], 5.0 / 1.5, epsilon = 1e-9);
+    }
+
+    #[test]
     fn age_mode_increments_concentration_each_substep() {
         // AGE mode: sub-step of 3600 s → each segment gains 1.0 hour.
         let options = SimulationOptions {

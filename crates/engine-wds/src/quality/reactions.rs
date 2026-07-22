@@ -268,8 +268,11 @@ pub(super) fn bulk_rate(kb: f64, order: f64, c: f64, conc_limit: f64) -> f64 {
     } else {
         // General order n.
         if kb < 0.0 {
-            // decay: c^(n-1) * max(0, c - C_L)
+            // decay: c^(n-1) * max(0, c - C_L); reduces to c^n when C_L = 0.
             c.powf(order - 1.0) * (c - conc_limit).max(0.0)
+        } else if conc_limit == 0.0 {
+            // growth without a limiting concentration: c^n (§6.5.1).
+            c.powf(order)
         } else {
             // growth: c^(n-1) * max(0, C_L - c)
             c.powf(order - 1.0) * (conc_limit - c).max(0.0)
@@ -350,6 +353,28 @@ mod tests {
     fn bulk_rate_zero_concentration_returns_zero() {
         let r = bulk_rate(-0.5, 1.0, 0.0, 0.0);
         assert_eq!(r, 0.0);
+    }
+
+    #[test]
+    fn bulk_rate_general_order_growth_without_limit_is_c_to_the_n() {
+        // §6.5.1: general-order growth with C_L = 0 reduces to kb·c^n.
+        let r = bulk_rate(0.5, 2.0, 3.0, 0.0);
+        approx::assert_abs_diff_eq!(r, 0.5 * 9.0, epsilon = 1e-12);
+    }
+
+    #[test]
+    fn bulk_rate_general_order_growth_with_limit_uses_potential() {
+        // Growth toward C_L: kb · c^(n-1) · max(0, C_L − c).
+        let r = bulk_rate(0.5, 2.0, 3.0, 5.0);
+        approx::assert_abs_diff_eq!(r, 0.5 * 3.0 * 2.0, epsilon = 1e-12);
+        // At or above the limit, growth stops.
+        assert_eq!(bulk_rate(0.5, 2.0, 6.0, 5.0), 0.0);
+    }
+
+    #[test]
+    fn bulk_rate_general_order_decay_without_limit_is_c_to_the_n() {
+        let r = bulk_rate(-0.5, 2.0, 3.0, 0.0);
+        approx::assert_abs_diff_eq!(r, -0.5 * 9.0, epsilon = 1e-12);
     }
 
     #[test]

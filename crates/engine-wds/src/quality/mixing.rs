@@ -245,12 +245,13 @@ pub(super) fn stagnant_conc(
     }
 }
 
-/// §6.4.3 Returns the outflow concentration of a reservoir node.
+/// §6.4.3 Returns the outflow concentration of a reservoir node at time `t`.
 pub(super) fn reservoir_source_conc(
     node_0: usize,
     network: &Network,
     node_states: &[NodeState],
     mode: QualityMode,
+    t: f64,
 ) -> f64 {
     match mode {
         QualityMode::Age => 0.0, // reservoirs reset age to 0
@@ -264,16 +265,22 @@ pub(super) fn reservoir_source_conc(
             }
         }
         _ => {
-            // CHEMICAL: use source concentration if defined, else initial_quality.
-            if let Some(src) = &network.nodes[node_0].source {
-                src.effective_value(
-                    0.0,
-                    &network.options,
-                    &network.patterns,
-                    &network.pattern_index,
-                )
-            } else {
-                node_states[node_0].quality
+            // CHEMICAL: a Concentration-type source defines the outflow
+            // concentration directly (§6.6 full override), evaluated at the
+            // current time so patterned sources track their pattern. Other
+            // source types (Mass/Setpoint/FlowPaced) adjust the reservoir's
+            // baseline — its initial quality — during source injection
+            // (§6.6), so they contribute nothing here.
+            match &network.nodes[node_0].source {
+                Some(src) if matches!(src.kind, crate::SourceType::Concentration) => src
+                    .effective_value(
+                        t,
+                        &network.options,
+                        &network.patterns,
+                        &network.pattern_index,
+                    ),
+                Some(_) => network.nodes[node_0].base.initial_quality,
+                None => node_states[node_0].quality,
             }
         }
     }
@@ -284,6 +291,46 @@ mod tests {
     use super::*;
     use crate::io::MassBalance;
     use crate::{SimulationOptions, Tank};
+
+    #[test]
+    fn reservoir_source_conc_tracks_pattern_and_source_type() {
+        use crate::test_support::TestNetworkBuilder;
+        use crate::{QualitySource, SourceType};
+
+        let (mut net, ns, _ls) = TestNetworkBuilder::new()
+            .reservoir("R1", 100.0)
+            .junction("J1", 0.0, 10.0)
+            .hw_pipe("P1", "R1", "J1", 1000.0, 12.0, 100.0)
+            .pattern("SRC", &[1.0, 2.0])
+            .node_quality("R1", 0.5)
+            .build();
+
+        // A patterned Concentration source must be evaluated at the current
+        // time, not frozen at t = 0.
+        net.nodes[0].source = Some(QualitySource {
+            node: 1,
+            kind: SourceType::Concentration,
+            base_value: 10.0,
+            pattern: Some("SRC".to_string()),
+        });
+        let t1 = net.options.pattern_step; // second pattern period, factor 2.0
+        let c0 = reservoir_source_conc(0, &net, &ns, QualityMode::Chemical, 0.0);
+        let c1 = reservoir_source_conc(0, &net, &ns, QualityMode::Chemical, t1);
+        assert!((c0 - 10.0).abs() < 1e-12, "expected 10.0, got {c0}");
+        assert!((c1 - 20.0).abs() < 1e-12, "expected 20.0, got {c1}");
+
+        // A Mass-type rate (mg/min) must not be used directly as the outflow
+        // concentration — the baseline is the reservoir's initial quality and
+        // the mass injection is applied later in source injection (§6.6).
+        net.nodes[0].source = Some(QualitySource {
+            node: 1,
+            kind: SourceType::Mass,
+            base_value: 600.0,
+            pattern: None,
+        });
+        let c = reservoir_source_conc(0, &net, &ns, QualityMode::Chemical, 0.0);
+        assert!((c - 0.5).abs() < 1e-12, "expected baseline 0.5, got {c}");
+    }
 
     #[test]
     fn cstr_tank_mixing_dilution() {

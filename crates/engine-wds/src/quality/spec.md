@@ -107,7 +107,7 @@ where $c_{k,\text{near}}$ is the concentration of the segment at the end of pipe
 
 #### 6.4.3 Reservoirs
 
-A reservoir's outflow concentration is its source concentration (`../model/spec.md` §2.7 / §6.6), or 0 for `AGE` and for non-traced nodes in `TRACE` mode.
+A reservoir's outflow concentration is its source concentration (`../model/spec.md` §2.7 / §6.6), or 0 for `AGE` and for non-traced nodes in `TRACE` mode. The source is evaluated at the **current simulation time** (§6.6 pattern modulation). A `CONCENTRATION` source defines the outflow concentration directly (full override, §6.6); `MASS`, `SETPOINT`, and `FLOWPACED` sources instead adjust the reservoir's baseline concentration — its initial quality, since nothing mixes into a fixed-grade node — during source injection (§6.6).
 
 #### 6.4.4 Tanks
 
