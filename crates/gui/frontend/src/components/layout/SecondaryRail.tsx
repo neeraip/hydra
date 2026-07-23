@@ -169,19 +169,25 @@ export function SecondaryRail() {
           borderRight: "1px solid var(--border)",
         }}
       >
-        {/* Content fills the clip layer — width tracked via DOM during drag */}
-        <div
-          ref={contentRef}
-          style={{
-            width: "100%",
-            height: "100%",
-            display: "flex",
-            flexDirection: "column",
-            overflow: "hidden",
-          }}
-        >
-          <Content />
-        </div>
+        {/* Content fills the clip layer — width tracked via DOM during drag.
+            Not rendered while the rail is collapsed: the inspector recomputes
+            O(N) derived data on every timeline scrub, which is wasted work
+            when nothing is visible. Local UI state (tab, query, sort) resets
+            on reopen, which is acceptable for a collapsed panel. */}
+        {railOpen && (
+          <div
+            ref={contentRef}
+            style={{
+              width: "100%",
+              height: "100%",
+              display: "flex",
+              flexDirection: "column",
+              overflow: "hidden",
+            }}
+          >
+            <Content />
+          </div>
+        )}
 
         {/* Resize handle — sits on the right edge of the clip layer */}
         {/* biome-ignore lint/a11y/noStaticElementInteractions: resize handle is pointer-driven only. */}

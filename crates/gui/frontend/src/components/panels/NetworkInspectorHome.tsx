@@ -784,9 +784,12 @@ export function NetworkInspectorHome({
   const internalLinks = useLinks();
   const allNodes = nodesProp ?? internalNodes;
   const allLinks = linksProp ?? internalLinks;
+  // Derived from the base network rather than `allNodes`: sim-merged node
+  // arrays change identity on every timeline scrub, but x/y never do — using
+  // `internalNodes` keeps this Set stable across scrubs.
   const zoomableNodeIds = useMemo(
-    () => new Set(allNodes.filter(hasNodeCoordinates).map((n) => n.id)),
-    [allNodes],
+    () => new Set(internalNodes.filter(hasNodeCoordinates).map((n) => n.id)),
+    [internalNodes],
   );
   const patterns = usePatterns();
 

@@ -6,6 +6,8 @@ import {
   type Command,
   type CommandCategory,
   formatInpImportError,
+  type Link,
+  type Node,
   openAndLoadNetwork,
   useLinks,
   useNetworkVersion,
@@ -39,11 +41,55 @@ interface DynamicCommand extends Omit<Command, "category"> {
   category: DisplayCategory;
 }
 
-interface ElementMatch {
+export interface ElementMatch {
   id: string;
   kind: "node" | "link";
   subtype: string;
   description: string;
+}
+
+/** Maximum matches returned per element kind in find-element mode. */
+export const FIND_MAX_PER_KIND = 12;
+
+/**
+ * Find-element search: case-insensitive substring match of `findQuery`
+ * (expected pre-lowercased and trimmed by the caller) against node/link ids.
+ * Early-exit loops instead of full `.filter()` passes: with ~46k nodes/links
+ * a full scan per keystroke is wasted work once the first `maxPerKind`
+ * matches per kind are found. Nodes are listed before links.
+ */
+export function searchElements(
+  allNodes: readonly Node[],
+  allLinks: readonly Link[],
+  findQuery: string,
+  maxPerKind: number = FIND_MAX_PER_KIND,
+): ElementMatch[] {
+  const matches: ElementMatch[] = [];
+  let found = 0;
+  for (const n of allNodes) {
+    if (found >= maxPerKind) break;
+    if (!n.id.toLowerCase().includes(findQuery)) continue;
+    matches.push({
+      id: n.id,
+      kind: "node",
+      subtype: n.type,
+      description: `${n.type} · (${n.x}, ${n.y})`,
+    });
+    found += 1;
+  }
+  found = 0;
+  for (const l of allLinks) {
+    if (found >= maxPerKind) break;
+    if (!l.id.toLowerCase().includes(findQuery)) continue;
+    matches.push({
+      id: l.id,
+      kind: "link",
+      subtype: l.type,
+      description: `${l.type} · ${l.fromId} → ${l.toId} · ⌀${l.diameter} mm`,
+    });
+    found += 1;
+  }
+  return matches;
 }
 
 /** Commands always available regardless of context. */
@@ -386,29 +432,10 @@ export function CommandPalette() {
   const findMode = query.startsWith("#");
   const findQuery = findMode ? query.slice(1).trim().toLowerCase() : "";
 
-  const elementMatches = useMemo<ElementMatch[]>(() => {
-    if (!findMode) return [];
-    return [
-      ...allNodes
-        .filter((n) => n.id.toLowerCase().includes(findQuery))
-        .slice(0, 12)
-        .map<ElementMatch>((n) => ({
-          id: n.id,
-          kind: "node",
-          subtype: n.type,
-          description: `${n.type} · (${n.x}, ${n.y})`,
-        })),
-      ...allLinks
-        .filter((l) => l.id.toLowerCase().includes(findQuery))
-        .slice(0, 12)
-        .map<ElementMatch>((l) => ({
-          id: l.id,
-          kind: "link",
-          subtype: l.type,
-          description: `${l.type} · ${l.fromId} → ${l.toId} · ⌀${l.diameter} mm`,
-        })),
-    ];
-  }, [findMode, findQuery, allNodes, allLinks]);
+  const elementMatches = useMemo<ElementMatch[]>(
+    () => (findMode ? searchElements(allNodes, allLinks, findQuery) : []),
+    [findMode, findQuery, allNodes, allLinks],
+  );
 
   // Auto-focus the input when the palette opens.
   useEffect(() => {

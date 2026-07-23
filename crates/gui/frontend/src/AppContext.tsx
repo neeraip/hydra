@@ -222,7 +222,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       const loadSpan = startPerfSpan("network-load-with-retry", {
         projectId,
         scenarioId: targetScenarioId ?? "base",
-        attempts,
+        maxAttempts: attempts,
       });
       for (let i = 0; i < attempts; i += 1) {
         const attemptSpan = startPerfSpan("network-load-attempt", {
@@ -565,6 +565,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const showToast = useCallback(
     (message: string, type: "info" | "success" | "warn" | "error" = "info") => {
+      // Toasts auto-dismiss, so in dev keep a durable copy of error/warn
+      // messages in the console for inspection after the toast is gone.
+      if (import.meta.env.DEV && (type === "error" || type === "warn")) {
+        const log = type === "error" ? console.error : console.warn;
+        log(`[toast:${type}] ${message}`);
+      }
       setS((prev) => ({
         ...prev,
         toast: { id: String(Date.now()), message, type },
@@ -1448,24 +1454,33 @@ function SimulationProvider({ children }: { children: ReactNode }) {
     setTasks((prev) => prev.filter((t) => t.id !== id));
   }, []);
 
-  return (
-    <SimCtx.Provider
-      value={{
-        pumpEnergy,
-        setPumpEnergy,
-        resultMeta,
-        resultMetaLoading,
-        setResultMeta,
-        tasks,
-        issues,
-        setIssues,
-        runSim,
-        dismissTask,
-      }}
-    >
-      {children}
-    </SimCtx.Provider>
+  // Memoized so provider re-renders caused by unrelated app state (toasts,
+  // navigation, rail toggles) don't invalidate every useSimulation consumer.
+  const simCtxValue = useMemo<SimulationCtxValue>(
+    () => ({
+      pumpEnergy,
+      setPumpEnergy,
+      resultMeta,
+      resultMetaLoading,
+      setResultMeta,
+      tasks,
+      issues,
+      setIssues,
+      runSim,
+      dismissTask,
+    }),
+    [
+      pumpEnergy,
+      resultMeta,
+      resultMetaLoading,
+      tasks,
+      issues,
+      runSim,
+      dismissTask,
+    ],
   );
+
+  return <SimCtx.Provider value={simCtxValue}>{children}</SimCtx.Provider>;
 }
 
 export function useSimulation(): SimulationCtxValue {
