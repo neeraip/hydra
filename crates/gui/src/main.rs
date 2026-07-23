@@ -44,6 +44,7 @@ fn main() {
             commands::get_controls,
             commands::get_rules,
             commands::run_simulation,
+            commands::get_run_warnings,
             commands::load_result_meta,
             commands::get_period_results,
             commands::get_pump_energy,

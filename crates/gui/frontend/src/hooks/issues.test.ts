@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   countIssues,
+  type RunWarning,
+  runWarningsToIssues,
+  runWarningToIssue,
   type ValidationFinding,
   validationFindingsToIssues,
   validationFindingToIssue,
@@ -99,5 +102,83 @@ describe("validationFindingsToIssues", () => {
 
   it("returns [] for an empty findings list", () => {
     expect(validationFindingsToIssues([], FIRST_SEEN)).toEqual([]);
+  });
+});
+
+describe("runWarningToIssue", () => {
+  it("always maps to severity 'warn' and source 'runtime'", () => {
+    const issue = runWarningToIssue(
+      { code: "NEG-PRESSURE", message: "Negative pressures", elementId: null },
+      FIRST_SEEN,
+    );
+    expect(issue.severity).toBe("warn");
+    expect(issue.source).toBe("runtime");
+    expect(issue.code).toBe("NEG-PRESSURE");
+  });
+
+  it("derives a stable simwarn id from code + elementId (dismissals persist)", () => {
+    const w: RunWarning = {
+      code: "PUMP-LIMIT",
+      message: "Pump cannot deliver head",
+      elementId: "PU-7",
+    };
+    const a = runWarningToIssue(w, "10:00");
+    const b = runWarningToIssue(w, "11:00");
+    expect(a.id).toBe(b.id);
+    expect(a.id).toBe("simwarn-PUMP-LIMIT-PU-7");
+  });
+
+  it("falls back to 'network' scope when elementId is null", () => {
+    const issue = runWarningToIssue(
+      { code: "UNBALANCED", message: "System unbalanced", elementId: null },
+      FIRST_SEEN,
+    );
+    expect(issue.id).toBe("simwarn-UNBALANCED-network");
+  });
+
+  it("passes the solver message through, naming the element in the detail", () => {
+    const withElement = runWarningToIssue(
+      { code: "X", message: "Valve caused ill-conditioning", elementId: "V2" },
+      FIRST_SEEN,
+    );
+    expect(withElement.title).toBe("Valve caused ill-conditioning");
+    expect(withElement.detail).toBe(
+      "Valve caused ill-conditioning (element V2)",
+    );
+    const withoutElement = runWarningToIssue(
+      { code: "X", message: "System unbalanced", elementId: null },
+      FIRST_SEEN,
+    );
+    expect(withoutElement.detail).toBe("System unbalanced");
+  });
+
+  it("starts undismissed with the provided firstSeen", () => {
+    const issue = runWarningToIssue(
+      { code: "C", message: "m", elementId: null },
+      FIRST_SEEN,
+    );
+    expect(issue.dismissed).toBe(false);
+    expect(issue.firstSeen).toBe(FIRST_SEEN);
+  });
+});
+
+describe("runWarningsToIssues", () => {
+  it("maps every warning and counts them all as warns", () => {
+    const issues = runWarningsToIssues(
+      [
+        { code: "A", message: "a", elementId: null },
+        { code: "B", message: "b", elementId: "J1" },
+      ],
+      FIRST_SEEN,
+    );
+    expect(issues).toHaveLength(2);
+    const counts = countIssues(issues);
+    expect(counts.warn).toBe(2);
+    expect(counts.error).toBe(0);
+    expect(counts.info).toBe(0);
+  });
+
+  it("returns [] for an empty warnings list", () => {
+    expect(runWarningsToIssues([], FIRST_SEEN)).toEqual([]);
   });
 });

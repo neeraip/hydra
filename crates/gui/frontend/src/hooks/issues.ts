@@ -1,6 +1,7 @@
 /**
  * Issue types + counting helpers for the Issues panel, plus the
- * `validate_network` fetcher and its finding→Issue mapper.
+ * `validate_network` / `get_run_warnings` fetchers and their finding→Issue
+ * mappers.
  */
 
 import type { ProjectView } from "../projectConfig";
@@ -98,4 +99,60 @@ export function validationFindingsToIssues(
   firstSeen: string,
 ): Issue[] {
   return findings.map((f) => validationFindingToIssue(f, firstSeen));
+}
+
+// ── Simulation run warnings (get_run_warnings command) ─────────────────────
+
+/** One solver warning from the backend `get_run_warnings` command. */
+export interface RunWarning {
+  code: string;
+  message: string;
+  elementId: string | null;
+}
+
+/**
+ * Fetch the last run's solver warnings for a project/scenario. Resolves `[]`
+ * when the command is unavailable (older backend, non-Tauri shell), fails,
+ * or no run/warnings exist — the Issues panel then shows nothing extra.
+ */
+export async function fetchRunWarnings(
+  projectId: string,
+  scenarioId: string | null,
+): Promise<RunWarning[]> {
+  const warnings = await tryInvokeOr<RunWarning[]>(
+    "get_run_warnings",
+    { projectId, scenarioId },
+    [],
+  );
+  return Array.isArray(warnings) ? warnings : [];
+}
+
+/**
+ * Map one run warning to an Issues-panel `Issue`.
+ *
+ * The id is derived from `code` + `elementId` (not array position) so it is
+ * stable across refetches — the panel's dismissed flags key on issue id and
+ * are merged forward by the AppContext issues derivation. Severity is always
+ * "warn" and source "runtime"; the solver message is passed through as the
+ * title (the detail additionally names the element when one is present).
+ */
+export function runWarningToIssue(w: RunWarning, firstSeen: string): Issue {
+  return {
+    id: `simwarn-${w.code}-${w.elementId ?? "network"}`,
+    severity: "warn",
+    source: "runtime",
+    code: w.code,
+    title: w.message,
+    detail: w.elementId ? `${w.message} (element ${w.elementId})` : w.message,
+    link: { view: "canvas", label: "Open canvas" },
+    firstSeen,
+    dismissed: false,
+  };
+}
+
+export function runWarningsToIssues(
+  warnings: RunWarning[],
+  firstSeen: string,
+): Issue[] {
+  return warnings.map((w) => runWarningToIssue(w, firstSeen));
 }

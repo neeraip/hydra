@@ -15,10 +15,12 @@ import {
 import { useCanvasStatus } from "./canvas/status-context";
 import {
   ACCENT,
+  fetchRunWarnings,
   fetchValidationFindings,
   loadProjectNetwork,
   type Project,
   type ProjectView,
+  runWarningsToIssues,
   useProject,
   useProjects,
   validationFindingsToIssues,
@@ -1013,6 +1015,8 @@ function SimulationProvider({ children }: { children: ReactNode }) {
   const [issues, setIssues] = useState<Issue[]>([]);
   // Backend `validate_network` findings, already mapped to Issue shape.
   const [validationIssues, setValidationIssues] = useState<Issue[]>([]);
+  // Last run's solver warnings (`get_run_warnings`), mapped to Issue shape.
+  const [runWarningIssues, setRunWarningIssues] = useState<Issue[]>([]);
 
   // Fetch validation findings whenever the active project/scenario changes or
   // the network structurally changes (`networkVersion` is the same retrigger
@@ -1035,6 +1039,26 @@ function SimulationProvider({ children }: { children: ReactNode }) {
       cancelled = true;
     };
   }, [activeProjectId, activeScenarioId, networkVersion]);
+
+  // Fetch the last run's solver warnings whenever the active project/scenario
+  // changes or fresh results land (`resultGeneration` bumps on every
+  // (re)loaded result metadata). Command-missing/error/no-run resolves to [].
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `resultGeneration` is an intentional retrigger — refetch run warnings after every completed run.
+  useEffect(() => {
+    if (!activeProjectId) {
+      setRunWarningIssues([]);
+      return;
+    }
+    let cancelled = false;
+    const firstSeen = formatClockTime();
+    fetchRunWarnings(activeProjectId, activeScenarioId).then((warnings) => {
+      if (cancelled) return;
+      setRunWarningIssues(runWarningsToIssues(warnings, firstSeen));
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [activeProjectId, activeScenarioId, resultGeneration]);
 
   // Derive live issues from runtime/task/network signals. This keeps the
   // Issues drawer populated without requiring manual seeding.
@@ -1162,6 +1186,10 @@ function SimulationProvider({ children }: { children: ReactNode }) {
     // code+elementId keys so the dismissed-merge below persists dismissals).
     next.push(...validationIssues);
 
+    // Solver warnings from the last run (also Issue-shaped with stable
+    // simwarn-<code>-<elementId|network> ids for the dismissed-merge).
+    next.push(...runWarningIssues);
+
     setIssues((prev) => {
       const prevById = new Map(prev.map((i) => [i.id, i]));
       return next.map((i) => {
@@ -1182,6 +1210,7 @@ function SimulationProvider({ children }: { children: ReactNode }) {
     coordTotalCount,
     editedScenarioIds,
     resultMeta,
+    runWarningIssues,
     tasks,
     validationIssues,
   ]);

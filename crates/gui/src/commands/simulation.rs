@@ -41,6 +41,157 @@ pub(crate) enum RunLoopError {
     Cancelled,
 }
 
+// ── Run warnings ──────────────────────────────────────────────────────────────
+
+/// One non-fatal simulation warning, persisted to `warnings.json` beside
+/// `results.out` and served by [`get_run_warnings`]. Wire shape (camelCase):
+/// `{ "code": string, "message": string, "elementId": string|null }`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RunWarningDto {
+    /// Stable kebab-case code derived from the engine's `WarningKind`:
+    /// `"unbalanced-hydraulics"` | `"negative-pressure"` | `"pump-x-head"`.
+    pub code: String,
+    /// Human-readable description, including the simulation time.
+    pub message: String,
+    /// ID of the affected node/link, or `null` for network-wide warnings.
+    pub element_id: Option<String>,
+}
+
+/// Format a simulation time (seconds) as `H:MM:SS` for warning messages.
+fn format_sim_time(t: f64) -> String {
+    let total = t.max(0.0).round() as u64;
+    format!(
+        "{}:{:02}:{:02}",
+        total / 3600,
+        (total % 3600) / 60,
+        total % 60
+    )
+}
+
+/// Map one engine warning to its wire DTO. `node_ids` / `link_ids` are the
+/// load-order ID arrays (`Simulation::node_ids` / `link_ids`) used to resolve
+/// the zero-based indices carried by `WarningKind`.
+pub(crate) fn warning_to_dto(
+    w: &hydra::SimWarning,
+    node_ids: &[&str],
+    link_ids: &[&str],
+) -> RunWarningDto {
+    use hydra::WarningKind;
+    let at = format_sim_time(w.t);
+    match &w.kind {
+        WarningKind::UnbalancedHydraulics => RunWarningDto {
+            code: "unbalanced-hydraulics".into(),
+            message: format!("Hydraulic equations were not fully balanced at {at}"),
+            element_id: None,
+        },
+        WarningKind::NegativePressure { node_index } => {
+            let id = node_ids.get(*node_index).map(|s| s.to_string());
+            let name = id.clone().unwrap_or_else(|| format!("#{}", node_index + 1));
+            RunWarningDto {
+                code: "negative-pressure".into(),
+                message: format!("Negative pressure at junction {name} at {at}"),
+                element_id: id,
+            }
+        }
+        WarningKind::PumpXHead { link_index } => {
+            let id = link_ids.get(*link_index).map(|s| s.to_string());
+            let name = id.clone().unwrap_or_else(|| format!("#{}", link_index + 1));
+            RunWarningDto {
+                code: "pump-x-head".into(),
+                message: format!("Pump {name} operating outside its head curve at {at}"),
+                element_id: id,
+            }
+        }
+    }
+}
+
+/// Collect a finished run's warnings as wire DTOs.
+pub(crate) fn collect_run_warnings(sim: &hydra::Simulation) -> Vec<RunWarningDto> {
+    let node_ids = sim.node_ids();
+    let link_ids = sim.link_ids();
+    sim.warnings()
+        .iter()
+        .map(|w| warning_to_dto(w, &node_ids, &link_ids))
+        .collect()
+}
+
+/// `warnings.json` path for the run whose results live at `results_path`.
+fn run_warnings_path(results_path: &std::path::Path) -> std::path::PathBuf {
+    results_path.with_file_name("warnings.json")
+}
+
+/// Persist or clear the `warnings.json` sibling of `results_path`:
+/// `Some(warnings)` (successful published run) writes the JSON array
+/// atomically; `None` (failed run) removes any stale file so warnings can
+/// never describe a run whose results were discarded. Both directions are
+/// best-effort — warnings are diagnostics and must never fail a finished run.
+pub(crate) fn sync_run_warnings_file(
+    results_path: &std::path::Path,
+    warnings: Option<&[RunWarningDto]>,
+) {
+    let path = run_warnings_path(results_path);
+    match warnings {
+        Some(w) => {
+            let bytes = match serde_json::to_vec(w) {
+                Ok(b) => b,
+                Err(e) => {
+                    tracing::warn!(error = %e, "could not serialise run warnings");
+                    return;
+                }
+            };
+            if let Err(e) = bundle::atomic_write(&path, &bytes) {
+                tracing::warn!(
+                    path = %path.display(),
+                    error = %e,
+                    "could not write run warnings file"
+                );
+            }
+        }
+        None => {
+            if let Err(e) = std::fs::remove_file(&path) {
+                if e.kind() != std::io::ErrorKind::NotFound {
+                    tracing::warn!(
+                        path = %path.display(),
+                        error = %e,
+                        "could not remove stale run warnings file"
+                    );
+                }
+            }
+        }
+    }
+}
+
+/// Read a `warnings.json` written by [`sync_run_warnings_file`]. An absent
+/// file is an empty warning list (target never run, last run predates warning
+/// persistence, or last run failed).
+pub(crate) fn read_run_warnings_file(path: &std::path::Path) -> Result<Vec<RunWarningDto>, String> {
+    let bytes = match std::fs::read(path) {
+        Ok(b) => b,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(vec![]),
+        Err(e) => return Err(format!("Cannot read run warnings: {e}")),
+    };
+    serde_json::from_slice(&bytes).map_err(|e| format!("Malformed warnings file: {e}"))
+}
+
+/// Return the non-fatal warnings recorded by the last successful simulation
+/// run for `(project_id, scenario_id)` — the contents of the target's
+/// `warnings.json`. Empty when the file is absent.
+#[tauri::command(async)]
+pub fn get_run_warnings(
+    app: tauri::AppHandle,
+    project_id: String,
+    scenario_id: Option<String>,
+) -> Result<Vec<RunWarningDto>, String> {
+    validate_id(&project_id)?;
+    if let Some(sid) = &scenario_id {
+        validate_id(sid)?;
+    }
+    let app_data = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let out_path = results_path_for(&app_data, &project_id, scenario_id.as_deref());
+    read_run_warnings_file(&run_warnings_path(&out_path))
+}
+
 /// Emit `event` to all windows, logging a warning instead of silently
 /// swallowing a failed emit (delivery is best-effort; the frontend recovers
 /// via refetch, but the failure should not be invisible).
@@ -346,6 +497,21 @@ where
         }
     }
 
+    // Persist the run's non-fatal warnings beside results.out: written when a
+    // run publishes results, removed when a run fails (stale warnings must
+    // not outlive discarded results), and left untouched on cancellation or
+    // when no stream was ever opened — in both of those cases results.out
+    // still holds the previous successful run, and so does warnings.json.
+    if let Some(final_path) = out_path.as_ref() {
+        match &run_err {
+            None if streamed => {
+                sync_run_warnings_file(final_path, Some(&collect_run_warnings(&sim)));
+            }
+            Some(RunLoopError::Failed(_)) => sync_run_warnings_file(final_path, None),
+            _ => {}
+        }
+    }
+
     (
         sim,
         run_err,
@@ -641,5 +807,180 @@ mod tests {
         assert_eq!(progress_percent(50.0, 200.0), 25.0);
         assert_eq!(progress_percent(300.0, 200.0), 100.0);
         assert_eq!(progress_percent(-10.0, 200.0), 0.0);
+    }
+
+    // ── run warnings ──────────────────────────────────────────────────────
+
+    #[test]
+    fn warning_kind_maps_to_stable_codes_and_wire_shape() {
+        use hydra::{SimWarning, WarningKind};
+        let node_ids = ["J1", "J2"];
+        let link_ids = ["P1", "PU1"];
+
+        let w = warning_to_dto(
+            &SimWarning {
+                t: 3661.0,
+                kind: WarningKind::UnbalancedHydraulics,
+            },
+            &node_ids,
+            &link_ids,
+        );
+        assert_eq!(w.code, "unbalanced-hydraulics");
+        assert_eq!(w.element_id, None);
+        assert!(
+            w.message.contains("1:01:01"),
+            "time in message: {}",
+            w.message
+        );
+        // Pinned wire shape: camelCase keys, explicit null for elementId.
+        let json = serde_json::to_string(&w).unwrap();
+        assert!(
+            json.contains("\"code\":\"unbalanced-hydraulics\""),
+            "{json}"
+        );
+        assert!(json.contains("\"message\":"), "{json}");
+        assert!(json.contains("\"elementId\":null"), "{json}");
+
+        let w = warning_to_dto(
+            &SimWarning {
+                t: 0.0,
+                kind: WarningKind::NegativePressure { node_index: 1 },
+            },
+            &node_ids,
+            &link_ids,
+        );
+        assert_eq!(w.code, "negative-pressure");
+        assert_eq!(w.element_id.as_deref(), Some("J2"));
+        let json = serde_json::to_string(&w).unwrap();
+        assert!(json.contains("\"elementId\":\"J2\""), "{json}");
+
+        let w = warning_to_dto(
+            &SimWarning {
+                t: 0.0,
+                kind: WarningKind::PumpXHead { link_index: 1 },
+            },
+            &node_ids,
+            &link_ids,
+        );
+        assert_eq!(w.code, "pump-x-head");
+        assert_eq!(w.element_id.as_deref(), Some("PU1"));
+    }
+
+    #[test]
+    fn read_run_warnings_file_absent_returns_empty() {
+        let dir = tempfile::tempdir().unwrap();
+        let missing = dir.path().join("warnings.json");
+        assert_eq!(
+            read_run_warnings_file(&missing).unwrap(),
+            Vec::<RunWarningDto>::new()
+        );
+    }
+
+    #[test]
+    fn run_sim_loops_writes_warnings_json_on_success() {
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path().join("results.out");
+        // Stale warnings from an earlier run must be overwritten, not merged.
+        std::fs::write(dir.path().join("warnings.json"), b"[{\"bogus\":1}]").unwrap();
+        let (_sim, err, _wall, _steps) = run_sim_loops(
+            loaded_sim(),
+            Some(out),
+            0.0,
+            false,
+            |_, _, _, _, _| {},
+            || false,
+        );
+        assert!(err.is_none(), "steady-state run must succeed: {err:?}");
+        let warnings = read_run_warnings_file(&dir.path().join("warnings.json")).unwrap();
+        assert!(
+            warnings.is_empty(),
+            "steady-state fixture yields no warnings: {warnings:?}"
+        );
+    }
+
+    #[test]
+    fn run_sim_loops_records_negative_pressure_warning_end_to_end() {
+        // Junction 100 ft above the reservoir head with positive demand →
+        // DDA negative-pressure warning attributed to J1.
+        const NEG_PRESSURE_INP: &str = "\
+[JUNCTIONS]
+J1  200  5
+
+[RESERVOIRS]
+R1  100
+
+[PIPES]
+P1  R1  J1  1000  12  100  0  Open
+
+[COORDINATES]
+J1  1.0  2.0
+R1  0.0  0.0
+
+[OPTIONS]
+Units  GPM
+
+[TIMES]
+Duration  0
+
+[END]
+";
+        let network = hydra::io::parse(NEG_PRESSURE_INP.as_bytes()).unwrap();
+        let mut sim = hydra::Simulation::create();
+        sim.load(network).unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path().join("results.out");
+        let (_sim, err, _wall, _steps) =
+            run_sim_loops(sim, Some(out), 0.0, false, |_, _, _, _, _| {}, || false);
+        assert!(err.is_none(), "run must succeed with a warning: {err:?}");
+        let warnings = read_run_warnings_file(&dir.path().join("warnings.json")).unwrap();
+        assert!(
+            warnings
+                .iter()
+                .any(|w| w.code == "negative-pressure" && w.element_id.as_deref() == Some("J1")),
+            "expected a negative-pressure warning for J1, got: {warnings:?}"
+        );
+    }
+
+    #[test]
+    fn run_sim_loops_failed_run_discards_stale_warnings() {
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path().join("results.out");
+        // Occupying the rename target with a directory makes the promote step
+        // fail deterministically, driving the run to Failed after streaming.
+        std::fs::create_dir(&out).unwrap();
+        std::fs::write(dir.path().join("warnings.json"), b"[]").unwrap();
+        let (_sim, err, _wall, _steps) = run_sim_loops(
+            loaded_sim(),
+            Some(out),
+            0.0,
+            false,
+            |_, _, _, _, _| {},
+            || false,
+        );
+        assert!(matches!(err, Some(RunLoopError::Failed(_))), "{err:?}");
+        assert!(
+            !dir.path().join("warnings.json").exists(),
+            "stale warnings.json must be removed on a failed run"
+        );
+    }
+
+    #[test]
+    fn sync_run_warnings_file_round_trips_and_tolerates_absent_removal() {
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path().join("results.out");
+        let warnings = vec![RunWarningDto {
+            code: "pump-x-head".into(),
+            message: "Pump PU1 operating outside its head curve at 0:00:00".into(),
+            element_id: Some("PU1".into()),
+        }];
+        sync_run_warnings_file(&out, Some(&warnings));
+        assert_eq!(
+            read_run_warnings_file(&dir.path().join("warnings.json")).unwrap(),
+            warnings
+        );
+        // Failed-run direction removes the file; a second removal is a no-op.
+        sync_run_warnings_file(&out, None);
+        assert!(!dir.path().join("warnings.json").exists());
+        sync_run_warnings_file(&out, None);
     }
 }
