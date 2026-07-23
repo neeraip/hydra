@@ -3,7 +3,8 @@ import {
   createNode,
   deleteElement,
   type JunctionRow,
-  patchElement,
+  type PatchItem,
+  patchElements,
   type ReservoirRow,
   type TankRow,
 } from "../../../hooks";
@@ -30,6 +31,49 @@ export interface SaveStagedElementsResult {
   applied: number;
   failed: number;
   errors: string[];
+}
+
+/**
+ * Collect all staged field edits into the `PatchItem[]` for a single bulk
+ * `patch_elements` call: one IPC round trip, one INP dirty-flag set, and one
+ * `network-changed` event for the whole batch, instead of one command per
+ * changed field.
+ *
+ * - Entries for elements staged for deletion are dropped.
+ * - Entries for freshly created (temp-id) elements are re-targeted to the
+ *   real id assigned at creation; create-only fields (`id`, and `from`/`to`
+ *   for links) are dropped since they were consumed by the create call.
+ * - Temp-id entries whose element failed to create (no real id) are dropped.
+ */
+export function buildFieldPatches(args: {
+  draftEntries: DraftEntry[];
+  pendingDeleteKeys: ReadonlySet<string>;
+  tempIdPrefix: string;
+  tempToRealId: ReadonlyMap<string, string>;
+}): PatchItem[] {
+  const { draftEntries, pendingDeleteKeys, tempIdPrefix, tempToRealId } = args;
+  const fieldPatches: PatchItem[] = [];
+  for (const { kind, id, field, value } of draftEntries) {
+    const targetId = id.startsWith(tempIdPrefix) ? tempToRealId.get(id) : id;
+    if (pendingDeleteKeys.has(`${kind}:${targetId ?? id}`)) {
+      continue;
+    }
+
+    if (id.startsWith(tempIdPrefix)) {
+      const isCreateOnlyField =
+        ((kind === "junction" || kind === "tank" || kind === "reservoir") &&
+          field === "id") ||
+        ((kind === "pipe" || kind === "pump" || kind === "valve") &&
+          (field === "id" || field === "from" || field === "to"));
+      if (isCreateOnlyField) {
+        continue;
+      }
+    }
+
+    if (!targetId) continue;
+    fieldPatches.push({ kind, id: targetId, field, value });
+  }
+  return fieldPatches;
 }
 
 export async function saveStagedElements(
@@ -237,30 +281,23 @@ export async function saveStagedElements(
     }
   }
 
-  for (const { kind, id, field, value } of draftEntries) {
+  // Collect all field edits and apply them in a single bulk backend call
+  // (see buildFieldPatches).
+  const fieldPatches = buildFieldPatches({
+    draftEntries,
+    pendingDeleteKeys,
+    tempIdPrefix,
+    tempToRealId,
+  });
+  if (fieldPatches.length > 0) {
     try {
-      const targetId = id.startsWith(tempIdPrefix) ? tempToRealId.get(id) : id;
-      if (pendingDeleteKeys.has(`${kind}:${targetId ?? id}`)) {
-        continue;
-      }
-
-      if (id.startsWith(tempIdPrefix)) {
-        const isCreateOnlyField =
-          ((kind === "junction" || kind === "tank" || kind === "reservoir") &&
-            field === "id") ||
-          ((kind === "pipe" || kind === "pump" || kind === "valve") &&
-            (field === "id" || field === "from" || field === "to"));
-        if (isCreateOnlyField) {
-          continue;
-        }
-      }
-
-      if (!targetId) continue;
-      await patchElement(kind, targetId, field, value);
-      applied++;
+      const result = await patchElements(fieldPatches);
+      applied += result.applied;
+      failed += result.errors.length;
+      errors.push(...result.errors);
     } catch (err) {
-      failed++;
-      errors.push(errorMessage(err, "Could not apply change"));
+      failed += fieldPatches.length;
+      errors.push(errorMessage(err, "Could not apply changes"));
     }
   }
 

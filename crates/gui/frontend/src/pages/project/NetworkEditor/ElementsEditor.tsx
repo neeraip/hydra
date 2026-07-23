@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useAppState } from "../../../AppContext";
 import { TabButton } from "../../../components/ui/TabButton";
 import {
   type JunctionRow,
@@ -24,6 +25,7 @@ import { PipeTable } from "./PipeTable";
 import { PumpTable } from "./PumpTable";
 import { ReservoirTable } from "./ReservoirTable";
 import { TankTable } from "./TankTable";
+import { compareIds, filterSortRows, SEARCH_DEBOUNCE_MS } from "./tableSearch";
 import { ValveTable } from "./ValveTable";
 
 type Section =
@@ -61,9 +63,31 @@ export function ElementsEditor({
   const tankRowsAll = useTankRows();
   const reservoirRowsAll = useReservoirRows();
   const valveRowsAll = useValveRows();
+  // The editor stays mounted (display:none) while other project views are
+  // active so drafts survive tab switches — skip rebuilding the filtered +
+  // sorted row models while it is hidden.
+  const { projectView } = useAppState();
+  const editorVisible = projectView === "editor";
   const [activeSection, setActiveSection] = useState<Section>("junctions");
   const [searchQuery, setSearchQuery] = useState("");
-  const [sortField, setSortField] = useState<string>("id");
+  // Filtering runs against a debounced copy of the query so fast typing does
+  // not re-filter ~46k rows on every keystroke. Clearing is applied
+  // immediately (tab switches and the clear action should not lag).
+  const [debouncedQuery, setDebouncedQuery] = useState("");
+  useEffect(() => {
+    if (searchQuery === "") {
+      setDebouncedQuery("");
+      return;
+    }
+    const t = window.setTimeout(
+      () => setDebouncedQuery(searchQuery),
+      SEARCH_DEBOUNCE_MS,
+    );
+    return () => window.clearTimeout(t);
+  }, [searchQuery]);
+  // `null` = no explicit sort: rows keep network order and filterSort skips
+  // the O(N log N) copy + sort entirely.
+  const [sortField, setSortField] = useState<string | null>(null);
   const [sortAsc, setSortAsc] = useState(true);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [discardGen, setDiscardGen] = useState(0);
@@ -139,7 +163,7 @@ export function ElementsEditor({
   const handleTabClick = (section: Section) => {
     setActiveSection(section);
     setSearchQuery("");
-    setSortField("id");
+    setSortField(null);
     setSortAsc(true);
     setSelectedId(null);
   };
@@ -153,27 +177,17 @@ export function ElementsEditor({
     }
   };
 
-  const q = searchQuery.toLowerCase();
-
-  const filterSort = useCallback(
-    <T extends Record<string, unknown>>(rows: T[]): T[] => {
-      const filtered = q
-        ? rows.filter((r) =>
-            Object.values(r).some((v) => String(v).toLowerCase().includes(q)),
-          )
-        : rows;
-      return [...filtered].sort((a, b) => {
-        const av = a[sortField];
-        const bv = b[sortField];
-        if (typeof av === "number" && typeof bv === "number")
-          return sortAsc ? av - bv : bv - av;
-        return sortAsc
-          ? String(av).localeCompare(String(bv))
-          : String(bv).localeCompare(String(av));
-      });
-    },
-    [q, sortAsc, sortField],
-  );
+  // Search + sort only ever apply to the visible section: the query and sort
+  // state are reset on tab switch, so passing an empty query / null sort for
+  // the five hidden sections is behaviour-preserving while making each
+  // keystroke cost one section's filter instead of six (~650k stringify +
+  // lowercase calls per keystroke at 46k-node scale before).
+  const junctionsActive = activeSection === "junctions";
+  const pipesActive = activeSection === "pipes";
+  const pumpsActive = activeSection === "pumps";
+  const tanksActive = activeSection === "tanks";
+  const reservoirsActive = activeSection === "reservoirs";
+  const valvesActive = activeSection === "valves";
 
   const pendingJunctionRows = useMemo<JunctionRow[]>(
     () =>
@@ -323,47 +337,111 @@ export function ElementsEditor({
     [valveRowsExisting, pendingValveRows],
   );
 
+  // While the editor tab is hidden the query/sort row models are not shown
+  // anywhere, so fall back to the raw arrays and recompute on next reveal.
+  // Per-section query/sort inputs: "" / null for every inactive section, so
+  // a keystroke only invalidates the active section's memo.
+  const junctionQuery = junctionsActive ? debouncedQuery : "";
+  const junctionSortField = junctionsActive ? sortField : null;
   const junctionRows = useMemo(
     () =>
-      filterSort(
-        junctionRowsAllWithPending as unknown as Record<string, unknown>[],
-      ) as unknown as JunctionRow[],
-    [junctionRowsAllWithPending, filterSort],
+      editorVisible
+        ? filterSortRows(
+            junctionRowsAllWithPending,
+            junctionQuery,
+            junctionSortField,
+            sortAsc,
+          )
+        : junctionRowsAllWithPending,
+    [
+      editorVisible,
+      junctionRowsAllWithPending,
+      junctionQuery,
+      junctionSortField,
+      sortAsc,
+    ],
   );
+  const pipeQuery = pipesActive ? debouncedQuery : "";
+  const pipeSortField = pipesActive ? sortField : null;
   const pipeRows = useMemo(
     () =>
-      filterSort(
-        pipeRowsAllWithPending as unknown as Record<string, unknown>[],
-      ) as unknown as PipeRow[],
-    [pipeRowsAllWithPending, filterSort],
+      editorVisible
+        ? filterSortRows(
+            pipeRowsAllWithPending,
+            pipeQuery,
+            pipeSortField,
+            sortAsc,
+          )
+        : pipeRowsAllWithPending,
+    [editorVisible, pipeRowsAllWithPending, pipeQuery, pipeSortField, sortAsc],
   );
+  const pumpQuery = pumpsActive ? debouncedQuery : "";
+  const pumpSortField = pumpsActive ? sortField : null;
   const pumpRows = useMemo(
     () =>
-      filterSort(
-        pumpRowsAllWithPending as unknown as Record<string, unknown>[],
-      ) as unknown as PumpRow[],
-    [pumpRowsAllWithPending, filterSort],
+      editorVisible
+        ? filterSortRows(
+            pumpRowsAllWithPending,
+            pumpQuery,
+            pumpSortField,
+            sortAsc,
+          )
+        : pumpRowsAllWithPending,
+    [editorVisible, pumpRowsAllWithPending, pumpQuery, pumpSortField, sortAsc],
   );
+  const tankQuery = tanksActive ? debouncedQuery : "";
+  const tankSortField = tanksActive ? sortField : null;
   const tankRows = useMemo(
     () =>
-      filterSort(
-        tankRowsAllWithPending as unknown as Record<string, unknown>[],
-      ) as unknown as TankRow[],
-    [tankRowsAllWithPending, filterSort],
+      editorVisible
+        ? filterSortRows(
+            tankRowsAllWithPending,
+            tankQuery,
+            tankSortField,
+            sortAsc,
+          )
+        : tankRowsAllWithPending,
+    [editorVisible, tankRowsAllWithPending, tankQuery, tankSortField, sortAsc],
   );
+  const reservoirQuery = reservoirsActive ? debouncedQuery : "";
+  const reservoirSortField = reservoirsActive ? sortField : null;
   const reservoirRows = useMemo(
     () =>
-      filterSort(
-        reservoirRowsAllWithPending as unknown as Record<string, unknown>[],
-      ) as unknown as ReservoirRow[],
-    [reservoirRowsAllWithPending, filterSort],
+      editorVisible
+        ? filterSortRows(
+            reservoirRowsAllWithPending,
+            reservoirQuery,
+            reservoirSortField,
+            sortAsc,
+          )
+        : reservoirRowsAllWithPending,
+    [
+      editorVisible,
+      reservoirRowsAllWithPending,
+      reservoirQuery,
+      reservoirSortField,
+      sortAsc,
+    ],
   );
+  const valveQuery = valvesActive ? debouncedQuery : "";
+  const valveSortField = valvesActive ? sortField : null;
   const valveRows = useMemo(
     () =>
-      filterSort(
-        valveRowsAllWithPending as unknown as Record<string, unknown>[],
-      ) as unknown as ValveRow[],
-    [valveRowsAllWithPending, filterSort],
+      editorVisible
+        ? filterSortRows(
+            valveRowsAllWithPending,
+            valveQuery,
+            valveSortField,
+            sortAsc,
+          )
+        : valveRowsAllWithPending,
+    [
+      editorVisible,
+      valveRowsAllWithPending,
+      valveQuery,
+      valveSortField,
+      sortAsc,
+    ],
   );
 
   const nodeReferenceOptions = useMemo(() => {
@@ -393,7 +471,9 @@ export function ElementsEditor({
       ids.add(requested);
     }
 
-    return Array.from(ids).sort((a, b) => a.localeCompare(b));
+    // Shared-collator sort: per-comparison localeCompare re-resolves locale
+    // data and is measurably slower over ~46k ids.
+    return Array.from(ids).sort(compareIds);
   }, [
     junctionRowsExisting,
     tankRowsExisting,
@@ -416,7 +496,7 @@ export function ElementsEditor({
     const tempId = `${TEMP_ID_PREFIX}${kind}_${nextTempIndex.current++}`;
     setPendingAdds((prev) => [...prev, { kind, tempId }]);
     setSearchQuery("");
-    setSortField("id");
+    setSortField(null);
     setSortAsc(true);
     setSelectedId(tempId);
   }, [activeKind, nextTempIndex, setPendingAdds]);
@@ -634,7 +714,7 @@ export function ElementsEditor({
         {activeSection === "junctions" && (
           <JunctionTable
             rows={junctionRows}
-            sortField={sortField}
+            sortField={sortField ?? ""}
             sortAsc={sortAsc}
             selectedId={selectedId}
             onSort={handleSort}
@@ -649,7 +729,7 @@ export function ElementsEditor({
         {activeSection === "pipes" && (
           <PipeTable
             rows={pipeRows}
-            sortField={sortField}
+            sortField={sortField ?? ""}
             sortAsc={sortAsc}
             selectedId={selectedId}
             onSort={handleSort}
@@ -665,7 +745,7 @@ export function ElementsEditor({
         {activeSection === "pumps" && (
           <PumpTable
             rows={pumpRows}
-            sortField={sortField}
+            sortField={sortField ?? ""}
             sortAsc={sortAsc}
             selectedId={selectedId}
             onSort={handleSort}
@@ -682,7 +762,7 @@ export function ElementsEditor({
         {activeSection === "tanks" && (
           <TankTable
             rows={tankRows}
-            sortField={sortField}
+            sortField={sortField ?? ""}
             sortAsc={sortAsc}
             selectedId={selectedId}
             onSort={handleSort}
@@ -697,7 +777,7 @@ export function ElementsEditor({
         {activeSection === "reservoirs" && (
           <ReservoirTable
             rows={reservoirRows}
-            sortField={sortField}
+            sortField={sortField ?? ""}
             sortAsc={sortAsc}
             selectedId={selectedId}
             onSort={handleSort}
@@ -712,7 +792,7 @@ export function ElementsEditor({
         {activeSection === "valves" && (
           <ValveTable
             rows={valveRows}
-            sortField={sortField}
+            sortField={sortField ?? ""}
             sortAsc={sortAsc}
             selectedId={selectedId}
             onSort={handleSort}

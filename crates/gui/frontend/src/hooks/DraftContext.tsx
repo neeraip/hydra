@@ -22,6 +22,7 @@ import {
   type ReactNode,
   useCallback,
   useContext,
+  useEffect,
   useMemo,
   useRef,
   useState,
@@ -29,10 +30,15 @@ import {
 import { useActiveProject, useAppState } from "../AppContext";
 import {
   buildPreviewPatches,
+  collectAllElementIds,
   type DraftEntry,
   type ElementKind,
+  junctionRowsFromNodes,
+  linkRefRowsFromLinks,
   type PendingAdd,
   type PendingDelete,
+  reservoirRowsFromNodes,
+  tankRowsFromNodes,
 } from "../pages/project/NetworkEditor/elementsEditorDerivations";
 import { saveStagedElements } from "../pages/project/NetworkEditor/elementsEditorSave";
 import {
@@ -55,12 +61,8 @@ import {
   updateCurvePoints,
   updatePatternMultipliers,
   updateRule,
-  useJunctionRows,
-  usePipeRows,
-  usePumpRows,
-  useReservoirRows,
-  useTankRows,
-  useValveRows,
+  useLinks,
+  useNodes,
 } from "./index";
 import { useNetworkVersion } from "./NetworkVersionContext";
 
@@ -157,33 +159,19 @@ export function DraftProvider({ children }: { children: ReactNode }) {
   const { bumpNetwork, markEdited } = useNetworkVersion();
 
   // Base data needed for save orchestration (element ID pools, cascade
-  // detection).
-  const junctionRowsAll = useJunctionRows();
-  const tankRowsAll = useTankRows();
-  const reservoirRowsAll = useReservoirRows();
-  const pipeRowsAll = usePipeRows();
-  const pumpRowsAll = usePumpRows();
-  const valveRowsAll = useValveRows();
-
-  const allElementIds = useMemo(
-    () =>
-      new Set<string>([
-        ...junctionRowsAll.map((r) => r.id),
-        ...tankRowsAll.map((r) => r.id),
-        ...reservoirRowsAll.map((r) => r.id),
-        ...pipeRowsAll.map((r) => r.id),
-        ...pumpRowsAll.map((r) => r.id),
-        ...valveRowsAll.map((r) => r.id),
-      ]),
-    [
-      junctionRowsAll,
-      tankRowsAll,
-      reservoirRowsAll,
-      pipeRowsAll,
-      pumpRowsAll,
-      valveRowsAll,
-    ],
-  );
+  // detection). The provider deliberately does NOT call the row-model hooks
+  // (`useJunctionRows()` etc.): those materialise a second full ~92k-row copy
+  // plus a 46k-id Set, recomputed on every network mutation and kept alive
+  // even while the editor is hidden with no draft. Instead, `saveAll` derives
+  // exactly what it needs lazily at save time from the raw nodes/links via
+  // the pure mappers in elementsEditorDerivations (the row mappers are pure
+  // functions over network data), read through a ref.
+  const nodes = useNodes();
+  const links = useLinks();
+  const networkRef = useRef({ nodes, links });
+  useEffect(() => {
+    networkRef.current = { nodes, links };
+  });
 
   // Elements
   const [elementsDraft, setElementsDraft] = useState<Map<string, DraftEntry>>(
@@ -260,14 +248,29 @@ export function DraftProvider({ children }: { children: ReactNode }) {
     patternsDirtyCount +
     controlsDirtyCount;
 
-  const dirtyBySection = {
-    elements: elementsDirtyCount,
-    curves: curvesDirtyCount,
-    patterns: patternsDirtyCount,
-    controls: controlsDirtyCount,
-  };
+  const dirtyBySection = useMemo(
+    () => ({
+      elements: elementsDirtyCount,
+      curves: curvesDirtyCount,
+      patterns: patternsDirtyCount,
+      controls: controlsDirtyCount,
+    }),
+    [
+      elementsDirtyCount,
+      curvesDirtyCount,
+      patternsDirtyCount,
+      controlsDirtyCount,
+    ],
+  );
 
   const previewPatches = useMemo<PatchItem[]>(() => {
+    // Link rows are only consulted for rename/delete cascade detection, so
+    // the (comparatively expensive) projection from the live link list is
+    // skipped entirely while no element drafts exist.
+    const hasElementDrafts =
+      elementsDraft.size > 0 ||
+      pendingAdds.length > 0 ||
+      pendingDeletes.length > 0;
     const items: PatchItem[] = buildPreviewPatches({
       draftEntries: Array.from(elementsDraft.values()),
       pendingAdds,
@@ -275,9 +278,11 @@ export function DraftProvider({ children }: { children: ReactNode }) {
       pendingDeleteKeys: new Set(
         pendingDeletes.map((d) => `${d.kind}:${d.id}`),
       ),
-      pipeRowsAll,
-      pumpRowsAll,
-      valveRowsAll,
+      pipeRowsAll: hasElementDrafts ? linkRefRowsFromLinks(links, "pipe") : [],
+      pumpRowsAll: hasElementDrafts ? linkRefRowsFromLinks(links, "pump") : [],
+      valveRowsAll: hasElementDrafts
+        ? linkRefRowsFromLinks(links, "valve")
+        : [],
       tempIdPrefix: ELEMENT_TEMP_ID_PREFIX,
     });
     for (const [id, points] of curveAdds) {
@@ -381,9 +386,7 @@ export function DraftProvider({ children }: { children: ReactNode }) {
     elementsDraft,
     pendingAdds,
     pendingDeletes,
-    pipeRowsAll,
-    pumpRowsAll,
-    valveRowsAll,
+    links,
     curveAdds,
     curveEdits,
     curveDeletes,
@@ -433,6 +436,9 @@ export function DraftProvider({ children }: { children: ReactNode }) {
 
     // ── Elements (creates → field patches → deletes) ──────────────────────
     if (elementsDirtyCount > 0) {
+      // Row models and the ID pool are derived here, lazily, from the
+      // current network snapshot — see the comment on `networkRef` above.
+      const { nodes: nodesNow, links: linksNow } = networkRef.current;
       const result = await saveStagedElements({
         draftEntries: Array.from(elementsDraft.values()),
         pendingAdds,
@@ -440,10 +446,10 @@ export function DraftProvider({ children }: { children: ReactNode }) {
         pendingDeleteKeys: new Set(
           pendingDeletes.map((d) => `${d.kind}:${d.id}`),
         ),
-        junctionRowsAll,
-        tankRowsAll,
-        reservoirRowsAll,
-        allElementIds,
+        junctionRowsAll: junctionRowsFromNodes(nodesNow),
+        tankRowsAll: tankRowsFromNodes(nodesNow),
+        reservoirRowsAll: reservoirRowsFromNodes(nodesNow),
+        allElementIds: collectAllElementIds(nodesNow, linksNow),
         tempIdPrefix: ELEMENT_TEMP_ID_PREFIX,
       });
       applied += result.applied;
@@ -555,10 +561,6 @@ export function DraftProvider({ children }: { children: ReactNode }) {
     elementsDraft,
     pendingAdds,
     pendingDeletes,
-    junctionRowsAll,
-    tankRowsAll,
-    reservoirRowsAll,
-    allElementIds,
     curveAdds,
     curveEdits,
     curveDeletes,
@@ -579,50 +581,80 @@ export function DraftProvider({ children }: { children: ReactNode }) {
     discardAll,
   ]);
 
-  const value: DraftContextValue = {
-    elementsDraft,
-    setElementsDraft,
-    pendingAdds,
-    setPendingAdds,
-    pendingDeletes,
-    setPendingDeletes,
-    nextTempIndex,
+  // Memoised so a provider re-render with unchanged draft state (e.g. a
+  // network mutation or unrelated AppContext change) keeps the same context
+  // value identity and does not re-render every useDraft consumer. useState
+  // setters and the refs are referentially stable; the rest are memoised
+  // above, so the value only changes when actual draft state changes.
+  const value: DraftContextValue = useMemo(
+    () => ({
+      elementsDraft,
+      setElementsDraft,
+      pendingAdds,
+      setPendingAdds,
+      pendingDeletes,
+      setPendingDeletes,
+      nextTempIndex,
 
-    curveAdds,
-    setCurveAdds,
-    curveEdits,
-    setCurveEdits,
-    curveDeletes,
-    setCurveDeletes,
+      curveAdds,
+      setCurveAdds,
+      curveEdits,
+      setCurveEdits,
+      curveDeletes,
+      setCurveDeletes,
 
-    patternAdds,
-    setPatternAdds,
-    patternEdits,
-    setPatternEdits,
-    patternDeletes,
-    setPatternDeletes,
+      patternAdds,
+      setPatternAdds,
+      patternEdits,
+      setPatternEdits,
+      patternDeletes,
+      setPatternDeletes,
 
-    controlAdds,
-    setControlAdds,
-    controlEdits,
-    setControlEdits,
-    controlDeletes,
-    setControlDeletes,
+      controlAdds,
+      setControlAdds,
+      controlEdits,
+      setControlEdits,
+      controlDeletes,
+      setControlDeletes,
 
-    ruleAdds,
-    setRuleAdds,
-    ruleEdits,
-    setRuleEdits,
-    ruleDeletes,
-    setRuleDeletes,
+      ruleAdds,
+      setRuleAdds,
+      ruleEdits,
+      setRuleEdits,
+      ruleDeletes,
+      setRuleDeletes,
 
-    nextTempKey,
-    dirtyCount,
-    dirtyBySection,
-    previewPatches,
-    discardAll,
-    saveAll,
-  };
+      nextTempKey,
+      dirtyCount,
+      dirtyBySection,
+      previewPatches,
+      discardAll,
+      saveAll,
+    }),
+    [
+      elementsDraft,
+      pendingAdds,
+      pendingDeletes,
+      curveAdds,
+      curveEdits,
+      curveDeletes,
+      patternAdds,
+      patternEdits,
+      patternDeletes,
+      controlAdds,
+      controlEdits,
+      controlDeletes,
+      ruleAdds,
+      ruleEdits,
+      ruleDeletes,
+      nextTempKey,
+      dirtyCount,
+      dirtyBySection,
+      previewPatches,
+      discardAll,
+      saveAll,
+    ],
+  );
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

@@ -1,7 +1,8 @@
 import { ChevronDownIcon, ChevronUpIcon } from "@heroicons/react/16/solid";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import type React from "react";
-import { useRef, useState } from "react";
+import { memo, useRef, useState } from "react";
+import { shouldUseRefDatalist } from "./tableSearch";
 
 /* ── Row virtualization ──────────────────────────────────────────────────────── */
 
@@ -220,8 +221,44 @@ export function EditableCell({
 /* ── Reference input cell ───────────────────────────────────────────────────── */
 
 /**
- * A searchable reference input backed by a datalist.
- * Useful for fields that must point at an existing element ID.
+ * The single `<datalist>` shared by every {@link RefInputCell} of a table.
+ *
+ * Each RefInputCell used to render its own copy of the full option list with
+ * a unique per-row list id — at ~46k node ids that meant tens of thousands of
+ * `<option>` elements per cell, recreated on scroll and on every keystroke,
+ * which hangs the tab outright. Options are identical across rows, so one
+ * memoized datalist per table (stable id, referenced by every input) renders
+ * them at most once.
+ *
+ * Decision for very large option lists: above `REF_DATALIST_MAX_OPTIONS`
+ * (5000) we render no datalist at all rather than capping or lazy-filling
+ * it — a truncated list silently hides valid ids while the browser's native
+ * filter still lags at that size. The inputs then behave as plain text
+ * inputs with validation-on-blur (invalid id ⇒ existing error style), which
+ * RefInputCell performs regardless of autocomplete.
+ */
+export const RefOptionsDatalist = memo(function RefOptionsDatalist({
+  id,
+  options,
+}: {
+  id: string;
+  options: string[];
+}) {
+  if (!shouldUseRefDatalist(options.length)) return null;
+  return (
+    <datalist id={id}>
+      {options.map((opt) => (
+        <option key={opt} value={opt} />
+      ))}
+    </datalist>
+  );
+});
+
+/**
+ * A searchable reference input, optionally backed by a shared datalist (see
+ * {@link RefOptionsDatalist}). Useful for fields that must point at an
+ * existing element ID. The typed value is validated against `options` on
+ * blur whether or not a datalist is attached.
  */
 export function RefInputCell({
   value,
@@ -235,7 +272,8 @@ export function RefInputCell({
   value: string;
   placeholder?: string;
   options: string[];
-  listId: string;
+  /** Id of the table's shared datalist; omit to render a plain input. */
+  listId?: string;
   align?: "left" | "right";
   isPending?: boolean;
   onCommit: (value: string) => void;
@@ -338,11 +376,6 @@ export function RefInputCell({
           textAlign: align ?? "left",
         }}
       />
-      <datalist id={listId}>
-        {options.map((opt) => (
-          <option key={opt} value={opt} />
-        ))}
-      </datalist>
     </td>
   );
 }

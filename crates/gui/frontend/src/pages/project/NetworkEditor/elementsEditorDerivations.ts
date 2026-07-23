@@ -1,4 +1,13 @@
-import type { PatchItem, PipeRow, PumpRow, ValveRow } from "../../../hooks";
+import {
+  type JunctionRow,
+  type Link,
+  type LinkType,
+  type Node,
+  type PatchItem,
+  PRESSURE_THRESHOLD,
+  type ReservoirRow,
+  type TankRow,
+} from "../../../hooks";
 
 export type ElementKind =
   | "junction"
@@ -31,14 +40,112 @@ function isNodeKind(kind: string): kind is NodeKind {
   return kind === "junction" || kind === "tank" || kind === "reservoir";
 }
 
+/**
+ * The minimal link shape the preview's rename/delete cascade detection needs.
+ * Full `PipeRow`/`PumpRow`/`ValveRow` objects satisfy it structurally, but
+ * callers can also pass cheap `{ id, from, to }` projections (see
+ * {@link linkRefRowsFromLinks}) instead of materialising full row models.
+ */
+export interface LinkRefRow {
+  id: string;
+  from: string;
+  to: string;
+}
+
+/**
+ * Pure projection of the live link list to {@link LinkRefRow}s for one link
+ * type. Lets DraftContext feed `buildPreviewPatches` straight from network
+ * data instead of holding duplicate full row-model copies alive.
+ */
+export function linkRefRowsFromLinks(
+  links: Link[],
+  type: LinkType,
+): LinkRefRow[] {
+  return links
+    .filter((l) => l.type === type)
+    .map((l) => ({ id: l.id, from: l.fromId, to: l.toId }));
+}
+
+/*
+ * Pure equivalents of the `useJunctionRows` / `useTankRows` /
+ * `useReservoirRows` hooks in `hooks/editors.ts`, for callers that need row
+ * models outside of render — DraftContext.saveAll derives them lazily from
+ * the network snapshot at save time instead of keeping a second ~92k-row
+ * copy mounted for the provider's whole lifetime. Field derivations must be
+ * kept in sync with the hooks so save/validation behaviour is identical.
+ */
+
+/** Pure equivalent of `useJunctionRows` (hooks/editors.ts). */
+export function junctionRowsFromNodes(nodes: Node[]): JunctionRow[] {
+  return nodes
+    .filter((n) => n.type === "junction")
+    .map((n) => ({
+      id: n.id,
+      elevation: Math.round((n.elevation ?? 0) * 100) / 100,
+      baseDemand: Math.round((n.baseDemand ?? 0) * 100) / 100,
+      demand: n.demand ?? 0,
+      pressure: n.pressure !== null ? Math.round(n.pressure * 10) / 10 : null,
+      x: Math.round(n.x * 100) / 100,
+      y: Math.round(n.y * 100) / 100,
+      belowThreshold: n.pressure !== null && n.pressure < PRESSURE_THRESHOLD,
+    }));
+}
+
+/** Pure equivalent of `useTankRows` (hooks/editors.ts). */
+export function tankRowsFromNodes(nodes: Node[]): TankRow[] {
+  return nodes
+    .filter((n) => n.type === "tank")
+    .map((n) => ({
+      id: n.id,
+      elevation: Math.round((n.elevation ?? 0) * 100) / 100,
+      minLevel: Math.round((n.tankMinLevel ?? 0) * 100) / 100,
+      maxLevel: Math.round((n.tankMaxLevel ?? 0) * 100) / 100,
+      initialLevel: Math.round((n.tankInitialLevel ?? 0) * 100) / 100,
+      diameter:
+        n.tankDiameter != null ? Math.round(n.tankDiameter * 100) / 100 : null,
+      volumeCurve: n.tankVolumeCurve ?? null,
+      x: Math.round(n.x * 100) / 100,
+      y: Math.round(n.y * 100) / 100,
+    }));
+}
+
+/** Pure equivalent of `useReservoirRows` (hooks/editors.ts). */
+export function reservoirRowsFromNodes(nodes: Node[]): ReservoirRow[] {
+  return nodes
+    .filter((n) => n.type === "reservoir")
+    .map((n) => ({
+      id: n.id,
+      head: Math.round((n.elevation ?? 0) * 100) / 100,
+      pattern: n.headPattern ?? null,
+      x: Math.round(n.x * 100) / 100,
+      y: Math.round(n.y * 100) / 100,
+    }));
+}
+
+/**
+ * Every element ID in the network (nodes and links of all six kinds) — the
+ * pool `saveStagedElements` uses for new-ID uniqueness checks. Equivalent to
+ * unioning the six per-kind row-model ID sets, since node types are exactly
+ * junction/tank/reservoir and link types exactly pipe/pump/valve.
+ */
+export function collectAllElementIds(
+  nodes: Node[],
+  links: Link[],
+): Set<string> {
+  const ids = new Set<string>();
+  for (const n of nodes) ids.add(n.id);
+  for (const l of links) ids.add(l.id);
+  return ids;
+}
+
 export function buildPreviewPatches(args: {
   draftEntries: DraftEntry[];
   pendingAdds: PendingAdd[];
   pendingDeletes: PendingDelete[];
   pendingDeleteKeys: Set<string>;
-  pipeRowsAll: PipeRow[];
-  pumpRowsAll: PumpRow[];
-  valveRowsAll: ValveRow[];
+  pipeRowsAll: LinkRefRow[];
+  pumpRowsAll: LinkRefRow[];
+  valveRowsAll: LinkRefRow[];
   tempIdPrefix: string;
 }): PatchItem[] {
   const {
