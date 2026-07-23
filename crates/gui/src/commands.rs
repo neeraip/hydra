@@ -25,15 +25,19 @@
 //!
 //! `modified_at` is the mtime of `base/model.inp` (falling back to the project
 //! directory mtime). `last_run_at` is the mtime of `base/results.out` when it
-//! exists. `scenario_count` is the count of subdirectories under `scenarios/`.
+//! exists. `scenario_count` is the count of subdirectories under `scenarios/`
+//! that hold a readable `meta.json` (the same criterion `list_scenarios`
+//! applies). While a simulation is running, results stream to a sibling
+//! `results.out.tmp` that is renamed onto `results.out` only on success, so
+//! `results.out` always holds the last *complete* run.
 //!
 //! # Backend events
 //!
 //! | Event | Payload | Throttle |
 //! |---|---|---|
 //! | `simulation_progress` | `SimulationProgressDto` | ≤1 emit per 125 ms + always on completion/failure |
-//! | `run_queue_update` | `Vec<RunQueueItemDto>` | on every queue state change |
-//! | `network-changed` | `NetworkChangedPayload` or `null` | on every mutating command. Element-scoped edits (`patch_element`, `patch_elements`, `patch_node_position`) carry the updated element DTOs so the frontend can patch in place; structural mutations emit `null`, which triggers a full snapshot refetch. |
+//! | `run_queue_update` | `String` — the affected project's id; the frontend refetches items via `get_run_queue` | on every queue state change |
+//! | `network-changed` | `NetworkChangedPayload` (delta) or `null` | on every mutating command, emitted while the mutator still holds the `NetworkState` lock so event order matches mutation commit order. Element-scoped edits (`patch_element`, `patch_elements`, `patch_node_position`) carry a `NetworkChangedPayload` whose `elements` are the updated element DTOs so the frontend can patch in place; structural mutations emit `null`, which triggers a full snapshot refetch. |
 //!
 //! # Run queue
 //!
@@ -52,6 +56,11 @@ use crate::meta::{self, bundle};
 
 const SIMULATION_PROGRESS_EVENT: &str = "simulation_progress";
 const RUN_QUEUE_UPDATE_EVENT: &str = "run_queue_update";
+/// Mutating commands emit this event *while still holding* the `NetworkState`
+/// lock, so emission order always matches mutation commit order and a window
+/// can never end up applying a stale delta that was emitted after a newer one.
+/// This is safe: `tauri::Emitter::emit` only serialises the payload and posts
+/// it to the webview — it never re-enters managed state, so no deadlock.
 const NETWORK_CHANGED_EVENT: &str = "network-changed";
 const PROGRESS_EMIT_INTERVAL: Duration = Duration::from_millis(125);
 const RUN_QUEUE_TERMINAL_TTL_SECS: i64 = 6 * 60 * 60;
@@ -308,7 +317,9 @@ pub struct RunQueueItemDto {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct SimulationProgressDto {
-    /// The run-queue item UUID, present only for queue-sourced runs.
+    /// The run-queue item UUID for queue-sourced runs; `None` for direct
+    /// `run_simulation` runs (the frontend contract types this as `null`
+    /// for direct runs).
     run_id: Option<String>,
     phase: &'static str,
     simulated_seconds: f64,
@@ -337,9 +348,15 @@ fn progress_percent(simulated_seconds: f64, duration_seconds: f64) -> f64 {
 
 /// Run the hydraulics and (optionally) quality loops on a pre-loaded simulation.
 ///
-/// Streams incremental results to `out_path` (when `Some`) and calls `emit` with
-/// progress updates after each significant step. Returns `(sim, Some(error))`
-/// on failure and `(sim, None)` on success.
+/// Streams incremental results to a sibling `<out_path>.tmp` (when `Some`) and
+/// calls `emit` with progress updates after each significant step. On success
+/// the temp file is atomically renamed onto `out_path`; on failure or
+/// cancellation it is deleted. `out_path` therefore always holds the last
+/// *complete* run: readers that key off its existence (`sim_state_from_results`,
+/// `load_result_meta`, the period/analytics commands) can never observe a
+/// truncated in-progress or failed file, and a previous successful
+/// `results.out` survives a failed or cancelled re-run.
+/// Returns `(sim, Some(error))` on failure and `(sim, None)` on success.
 ///
 /// Designed to be called inside `tauri::async_runtime::spawn_blocking`.
 fn run_sim_loops<F, C>(
@@ -356,7 +373,17 @@ where
 {
     let wall_start = std::time::Instant::now();
     let mut hyd_steps: u32 = 0;
-    let mut out_writer = out_path.as_ref().and_then(|p| {
+    // Never write `out_path` directly: stream to `<name>.tmp` and promote it
+    // only on success so a failed/cancelled run can never leave a truncated
+    // results file behind (see the doc comment above). The `.tmp` suffix is
+    // outside the `results.out` naming every reader uses, so metadata and
+    // result commands never see the in-progress file.
+    let tmp_path = out_path.as_ref().map(|p| {
+        let mut name = p.file_name().map(|n| n.to_os_string()).unwrap_or_default();
+        name.push(".tmp");
+        p.with_file_name(name)
+    });
+    let mut out_writer = tmp_path.as_ref().and_then(|p| {
         if let Some(parent) = p.parent() {
             let _ = std::fs::create_dir_all(parent);
         }
@@ -490,8 +517,29 @@ where
         }
     }
 
+    let streamed = out_writer.is_some();
     if let Some(w) = out_writer {
         let _ = w.finish(&sim);
+    }
+
+    // Promote the finished stream on success; discard it on failure/cancel.
+    if let (true, Some(tmp), Some(final_path)) = (streamed, tmp_path.as_ref(), out_path.as_ref()) {
+        if run_err.is_none() {
+            if let Err(e) = std::fs::rename(tmp, final_path) {
+                let _ = std::fs::remove_file(tmp);
+                let msg = format!("simulation finished but results could not be written: {e}");
+                emit(
+                    "hydraulics",
+                    simulated_seconds,
+                    false,
+                    true,
+                    Some(msg.clone()),
+                );
+                run_err = Some(RunLoopError::Failed(msg));
+            }
+        } else {
+            let _ = std::fs::remove_file(tmp);
+        }
     }
 
     (
@@ -1057,7 +1105,9 @@ fn validate_id(id: &str) -> Result<(), String> {
         .map_err(|_| format!("invalid id: expected UUID, got {:?}", id))
 }
 
-/// Count the number of scenario subdirectories under `<app_data>/projects/<id>/scenarios/`.
+/// Count the scenario subdirectories under `<app_data>/projects/<id>/scenarios/`
+/// that hold a readable `meta.json` — the same criterion `list_scenarios`
+/// applies, so project-card counts always match the scenario list.
 fn count_scenario_dirs(app_data: &std::path::Path, project_id: &str) -> u32 {
     let scenarios_dir = bundle::project_dir(app_data, project_id).join("scenarios");
     if !scenarios_dir.exists() {
@@ -1067,7 +1117,10 @@ fn count_scenario_dirs(app_data: &std::path::Path, project_id: &str) -> u32 {
         .map(|entries| {
             entries
                 .filter_map(|e| e.ok())
-                .filter(|e| e.path().is_dir())
+                .filter(|e| {
+                    let path = e.path();
+                    path.is_dir() && meta::read_scenario_meta(&path).is_ok()
+                })
                 .count() as u32
         })
         .unwrap_or(0)
@@ -1377,7 +1430,9 @@ pub struct NodeDto {
     pub kind: String,
     pub x: f64,
     pub y: f64,
-    /// Elevation in metres (converted from internal feet).
+    /// Elevation in metres (converted from internal feet). For tanks this is
+    /// the tank *bottom* elevation — the same value the tank "elevation"
+    /// patch accepts — not the internal `base.elevation` (bottom + min_level).
     pub elevation: f64,
     /// Base demand in L/s (converted from internal ft³/s); 0 for non-junctions.
     pub base_demand: f64,
@@ -2086,7 +2141,16 @@ fn node_to_dto(network: &hydra::Network, n: &hydra::Node) -> NodeDto {
         .get(&n.base.id)
         .copied()
         .unwrap_or((0.0, 0.0));
-    let elevation = n.base.elevation * FT_TO_M;
+    // For tanks the internal `base.elevation` is bottom + min_level (the
+    // minimum piezometric head); the DTO's `elevation` is consistently the
+    // tank *bottom*, matching the tank "elevation" patch in
+    // `apply_patch_to_network` (and `create_node`'s `elevation` input) so a
+    // DTO → patch round-trip is stable instead of silently raising the tank
+    // by `min_level` on every edit.
+    let elevation = match &n.kind {
+        NodeKind::Tank(t) => (n.base.elevation - t.min_level) * FT_TO_M,
+        _ => n.base.elevation * FT_TO_M,
+    };
     let base_demand = match &n.kind {
         NodeKind::Junction(j) => j.demands.iter().map(|d| d.base_demand).sum::<f64>() * CFS_TO_LPS,
         _ => 0.0,
@@ -3000,7 +3064,6 @@ pub async fn run_simulation(
     sim.load(network).map_err(|e| format!("{e:?}"))?;
 
     // ── Phase 2: stepped loops on a blocking thread ─────────────────────────
-    let direct_run_id = uuid::Uuid::new_v4().to_string();
     let app2 = app.clone();
     let (sim, run_err, _wall_ms, _hyd_steps) = tauri::async_runtime::spawn_blocking(move || {
         run_sim_loops(
@@ -3012,7 +3075,10 @@ pub async fn run_simulation(
                 let _ = app2.emit(
                     SIMULATION_PROGRESS_EVENT,
                     &SimulationProgressDto {
-                        run_id: Some(direct_run_id.clone()),
+                        // Direct runs are not queue items: `None` per the
+                        // frontend contract (simulation.ts types run_id as
+                        // "null for direct runs").
+                        run_id: None,
                         phase,
                         simulated_seconds: ss,
                         duration_seconds,
@@ -3212,10 +3278,13 @@ pub fn cancel_run_queue(
     Ok(n)
 }
 
-/// Cancel a single queued run item by its run ID. Returns `true` when the item
-/// was actually in the `queued` state and has been moved to `cancelled`.
+/// Cancel a single run item by its run ID. A `queued` item is moved straight
+/// to `cancelled`; for a `running` item cancellation is requested (advisory —
+/// the current simulation step completes before the item is marked
+/// cancelled). Returns `true` when the item was cancelled or the cancel
+/// request was newly accepted.
 #[tauri::command]
-/// Cancel a single queue item by ID.
+/// Cancel a queued item, or request cancellation of a running one.
 pub fn cancel_run_item(
     app: tauri::AppHandle,
     run_queue: tauri::State<'_, RunQueue>,
@@ -3443,6 +3512,55 @@ pub fn get_sim_params(
     Ok(Some(options_to_dto(&network.options)))
 }
 
+/// Fast-path sim-params update: when the cached parse holds `project_id`'s
+/// base model with no pending unsaved edits, apply `params` directly to the
+/// cache and return freshly serialised INP bytes for the caller to write to
+/// disk. Returns `Ok(None)` when the cache does not match (slow path applies).
+///
+/// # Why this sets `dirty = true` even though `raw_bytes` is refreshed here
+///
+/// The returned bytes are written to disk *after* the state lock is released,
+/// which races with `save_project`: save also clones bytes under the lock
+/// (clearing `dirty` in `up_to_date_raw_bytes`) and writes after dropping it.
+/// An in-flight save that snapshotted the *old* bytes can land its write
+/// after ours, leaving stale options on disk. Performing our file write while
+/// still holding the lock would NOT close that race — the conflicting save
+/// write happens outside any lock, so it could still land last against a
+/// `dirty == false` state that no longer records the divergence. Setting
+/// `dirty = true` does close it: whatever write order occurs, the state
+/// records that disk may not match the cache, so the next consumer
+/// (save/export/run) re-serialises from the updated cache and repairs disk.
+/// When no save is racing, the only cost is one redundant re-serialisation at
+/// the next consumption point.
+fn apply_sim_params_to_cached_base(
+    state: &mut NetworkStateInner,
+    project_id: &str,
+    params: &SimParamsDto,
+) -> Result<Option<Vec<u8>>, String> {
+    if let NetworkStateInner::Loaded {
+        raw_bytes,
+        dirty,
+        network,
+        owner_project_id: Some(owner),
+        owner_scenario_id: None,
+        ..
+    } = state
+    {
+        if !*dirty && owner == project_id {
+            // Apply to a scratch copy first so a validation error cannot
+            // leave the cached network half-updated.
+            let mut new_options = network.options.clone();
+            apply_dto_to_options(&mut new_options, params)?;
+            network.options = new_options;
+            *raw_bytes = hydra::write_inp(network);
+            // See doc comment: guards against a racing `save_project`.
+            *dirty = true;
+            return Ok(Some(raw_bytes.clone()));
+        }
+    }
+    Ok(None)
+}
+
 /// Persist new sim params for `project_id` by parsing the base INP, applying
 /// the DTO, rewriting the base INP, and propagating to every scenario INP so
 /// they stay in lockstep.
@@ -3466,33 +3584,11 @@ pub fn update_sim_params(
     // 1a) Fast path: the cached parse already holds this project's base model
     // and has no pending unsaved edits (`!dirty`, i.e. memory == disk), so the
     // new bytes can be serialised straight from the cache without re-reading
-    // and re-parsing the base INP.
+    // and re-parsing the base INP. Marks the state dirty to close the write
+    // race with `save_project` — see `apply_sim_params_to_cached_base`.
     let cached_bytes: Option<Vec<u8>> = {
         let mut guard = state.0.lock();
-        if let NetworkStateInner::Loaded {
-            raw_bytes,
-            dirty: false,
-            network,
-            owner_project_id: Some(owner),
-            owner_scenario_id: None,
-            ..
-        } = &mut *guard
-        {
-            if *owner == project_id {
-                // Apply to a scratch copy first so a validation error cannot
-                // leave the cached network half-updated.
-                let mut new_options = network.options.clone();
-                apply_dto_to_options(&mut new_options, &params)?;
-                network.options = new_options;
-                // `dirty` stays false: raw_bytes is refreshed right here.
-                *raw_bytes = hydra::write_inp(network);
-                Some(raw_bytes.clone())
-            } else {
-                None
-            }
-        } else {
-            None
-        }
+        apply_sim_params_to_cached_base(&mut guard, &project_id, &params)?
     };
     match cached_bytes {
         Some(bytes) => {
@@ -3649,7 +3745,6 @@ async fn run_sim_for_queue(
     sim.load(network).map_err(|e| format!("{e:?}"))?;
 
     let run_id_owned = run_id.to_string();
-    let out_path_for_cleanup = out_path.clone();
     let app_emit = app.clone();
     let app_cancel = app.clone();
     let (_, run_err, _wall_ms, _hyd_steps) = tauri::async_runtime::spawn_blocking(move || {
@@ -3691,10 +3786,10 @@ async fn run_sim_for_queue(
     if let Some(err) = run_err {
         return match err {
             RunLoopError::Failed(msg) => Err(msg),
-            RunLoopError::Cancelled => {
-                let _ = std::fs::remove_file(out_path_for_cleanup);
-                Ok(QueueRunResult::Cancelled)
-            }
+            // No results cleanup needed: `run_sim_loops` streams to a temp
+            // file and discards it on cancellation, so `results.out` still
+            // holds the previous successful run (if any).
+            RunLoopError::Cancelled => Ok(QueueRunResult::Cancelled),
         };
     }
 
@@ -4593,8 +4688,9 @@ pub fn patch_element(
     field: String,
     value: serde_json::Value,
 ) -> Result<PatchedElementDto, String> {
+    // Lock held across the emit below (see `NETWORK_CHANGED_EVENT`).
+    let mut guard = state.0.lock();
     let result = {
-        let mut guard = state.0.lock();
         match &mut *guard {
             NetworkStateInner::Loaded {
                 dirty,
@@ -4617,6 +4713,7 @@ pub fn patch_element(
             },
         );
     }
+    drop(guard);
     result
 }
 
@@ -4641,8 +4738,9 @@ pub fn patch_elements(
     state: tauri::State<'_, NetworkState>,
     patches: Vec<PatchItem>,
 ) -> Result<PatchElementsResult, String> {
+    // Lock held across the emit below (see `NETWORK_CHANGED_EVENT`).
+    let mut guard = state.0.lock();
     let (result, elements) = {
-        let mut guard = state.0.lock();
         match &mut *guard {
             NetworkStateInner::Loaded {
                 dirty,
@@ -4690,11 +4788,13 @@ pub fn patch_elements(
     if !elements.is_empty() {
         let _ = app.emit(NETWORK_CHANGED_EVENT, NetworkChangedPayload { elements });
     }
+    drop(guard);
     Ok(result)
 }
 
 /// Move a node to a new coordinate position in a single write (avoids two
-/// serial `patch_element` calls and two INP re-serialisations).
+/// serial `patch_element` calls and two INP re-serialisations). Fails when
+/// `id` names no existing node.
 #[tauri::command(async)]
 pub fn patch_node_position(
     app: tauri::AppHandle,
@@ -4703,8 +4803,9 @@ pub fn patch_node_position(
     x: f64,
     y: f64,
 ) -> Result<(), String> {
+    // Lock held across the emit below (see `NETWORK_CHANGED_EVENT`).
+    let mut guard = state.0.lock();
     let result = {
-        let mut guard = state.0.lock();
         match &mut *guard {
             NetworkStateInner::Loaded {
                 dirty,
@@ -4712,6 +4813,12 @@ pub fn patch_node_position(
                 dto,
                 ..
             } => {
+                // Reject unknown ids instead of silently inserting an orphan
+                // `[COORDINATES]` entry (and dirtying the model) for a node
+                // that does not exist.
+                if !network.nodes.iter().any(|n| n.base.id == id) {
+                    return Err(format!("node '{id}' not found"));
+                }
                 let entry = network.coordinates.entry(id.clone()).or_insert((0.0, 0.0));
                 entry.0 = x;
                 entry.1 = y;
@@ -4729,9 +4836,10 @@ pub fn patch_node_position(
     };
     match result {
         Ok(moved) => {
-            // Known node: emit a delta so the frontend patches in place.
-            // Unknown node (not in the DTO): emit a payload-less event so the
-            // frontend falls back to a full refetch.
+            // Node present in the cached DTO: emit a delta so the frontend
+            // patches in place. Node in the network but missing from the DTO
+            // (cache out of sync — should not happen): emit a payload-less
+            // event so the frontend falls back to a full refetch.
             match moved {
                 Some(node) => {
                     let _ = app.emit(
@@ -4748,6 +4856,7 @@ pub fn patch_node_position(
                     let _ = app.emit(NETWORK_CHANGED_EVENT, ());
                 }
             }
+            drop(guard);
             Ok(())
         }
         Err(e) => Err(e),
@@ -4837,14 +4946,114 @@ fn remap_controls_rules(
     }
 }
 
+/// Remove a node or link from `network` (see [`delete_element`] for the full
+/// contract). Extracted from the command so the deletion/index-remap logic is
+/// unit-testable without an `AppHandle`.
+fn delete_element_from_network(
+    network: &mut hydra::Network,
+    kind: &str,
+    id: &str,
+) -> Result<(), String> {
+    match kind {
+        "junction" | "reservoir" | "tank" => {
+            let pos = network
+                .nodes
+                .iter()
+                .position(|n| n.base.id == id)
+                .ok_or_else(|| format!("node '{}' not found", id))?;
+            let node_1based = pos + 1;
+            // Collect + remove dangling links that reference this node.
+            let dangling: Vec<(String, usize)> = network
+                .links
+                .iter()
+                .filter(|l| l.base.from_node == node_1based || l.base.to_node == node_1based)
+                .map(|l| (l.base.id.clone(), l.base.index))
+                .collect();
+            let dangling_idx: Vec<usize> = dangling.iter().map(|(_, idx)| *idx).collect();
+
+            let refs = control_rule_refs(network, &[node_1based], &dangling_idx);
+            if !refs.is_empty() {
+                return Err(format!(
+                    "node '{}' is still attached to {}; detach it first",
+                    id,
+                    refs.join(", ")
+                ));
+            }
+
+            for (lid, _) in &dangling {
+                network.vertices.remove(lid);
+                network.link_tags.remove(lid);
+            }
+            network
+                .links
+                .retain(|l| l.base.from_node != node_1based && l.base.to_node != node_1based);
+            // Remove the node itself.
+            network.nodes.remove(pos);
+            network.coordinates.remove(id);
+            network.node_tags.remove(id);
+            // Rebuild node indices and fix up link from/to references.
+            for (i, n) in network.nodes.iter_mut().enumerate() {
+                n.base.index = i + 1;
+            }
+            for l in network.links.iter_mut() {
+                // from_node and to_node are 1-based; shift down if they
+                // referred to a node that was after the deleted one.
+                if l.base.from_node > node_1based {
+                    l.base.from_node -= 1;
+                }
+                if l.base.to_node > node_1based {
+                    l.base.to_node -= 1;
+                }
+            }
+            // Rebuild link indices too: the cascade `retain` above leaves
+            // gaps, and a stale `base.index` on a surviving link would
+            // corrupt the next delete's control/rule guard + remap and let
+            // `create_link` (which uses `links.len() + 1`) mint duplicates.
+            for (i, l) in network.links.iter_mut().enumerate() {
+                l.base.index = i + 1;
+            }
+            remap_controls_rules(network, &[node_1based], &dangling_idx);
+        }
+        "pipe" | "pump" | "valve" => {
+            let pos = network
+                .links
+                .iter()
+                .position(|l| l.base.id == id)
+                .ok_or_else(|| format!("link '{}' not found", id))?;
+            let link_1based = pos + 1;
+
+            let refs = control_rule_refs(network, &[], &[link_1based]);
+            if !refs.is_empty() {
+                return Err(format!(
+                    "link '{}' is still attached to {}; detach it first",
+                    id,
+                    refs.join(", ")
+                ));
+            }
+
+            network.links.remove(pos);
+            network.vertices.remove(id);
+            network.link_tags.remove(id);
+            // Rebuild link indices.
+            for (i, l) in network.links.iter_mut().enumerate() {
+                l.base.index = i + 1;
+            }
+            remap_controls_rules(network, &[], &[link_1based]);
+        }
+        other => return Err(format!("unknown element kind '{}'", other)),
+    }
+    Ok(())
+}
+
 /// Remove a node or link from the in-memory network.
 ///
 /// `kind` must be one of `"junction"`, `"reservoir"`, `"tank"`, `"pipe"`,
 /// `"pump"`, or `"valve"`.  The element is removed from the relevant vec and
 /// all ancillary maps (`coordinates`, `vertices`, `node_tags`, `link_tags`).
 /// Any links that reference a deleted node are also removed (dangling links).
-/// All `base.index` values are rebuilt after deletion so the INP writer
-/// produces a valid file.
+/// All node *and* link `base.index` values are rebuilt after deletion so the
+/// INP writer produces a valid file and later index-based operations
+/// (control/rule guards, `create_link`) see contiguous indices.
 ///
 /// Fails without mutating anything if the node/link (or, for nodes, any link
 /// that would be cascade-removed with it) is still referenced by a control
@@ -4858,8 +5067,9 @@ pub fn delete_element(
     kind: String,
     id: String,
 ) -> Result<(), String> {
+    // Lock held across the emit below (see `NETWORK_CHANGED_EVENT`).
+    let mut guard = state.0.lock();
     let result = {
-        let mut guard = state.0.lock();
         match &mut *guard {
             NetworkStateInner::Loaded {
                 dirty,
@@ -4867,90 +5077,7 @@ pub fn delete_element(
                 dto,
                 ..
             } => {
-                match kind.as_str() {
-                    "junction" | "reservoir" | "tank" => {
-                        let pos = network
-                            .nodes
-                            .iter()
-                            .position(|n| n.base.id == id)
-                            .ok_or_else(|| format!("node '{}' not found", id))?;
-                        let node_1based = pos + 1;
-                        // Collect + remove dangling links that reference this node.
-                        let dangling: Vec<(String, usize)> = network
-                            .links
-                            .iter()
-                            .filter(|l| {
-                                l.base.from_node == node_1based || l.base.to_node == node_1based
-                            })
-                            .map(|l| (l.base.id.clone(), l.base.index))
-                            .collect();
-                        let dangling_idx: Vec<usize> =
-                            dangling.iter().map(|(_, idx)| *idx).collect();
-
-                        let refs = control_rule_refs(network, &[node_1based], &dangling_idx);
-                        if !refs.is_empty() {
-                            return Err(format!(
-                                "node '{}' is still attached to {}; detach it first",
-                                id,
-                                refs.join(", ")
-                            ));
-                        }
-
-                        for (lid, _) in &dangling {
-                            network.vertices.remove(lid);
-                            network.link_tags.remove(lid);
-                        }
-                        network.links.retain(|l| {
-                            l.base.from_node != node_1based && l.base.to_node != node_1based
-                        });
-                        // Remove the node itself.
-                        network.nodes.remove(pos);
-                        network.coordinates.remove(&id);
-                        network.node_tags.remove(&id);
-                        // Rebuild node indices and fix up link from/to references.
-                        for (i, n) in network.nodes.iter_mut().enumerate() {
-                            n.base.index = i + 1;
-                        }
-                        for l in network.links.iter_mut() {
-                            // from_node and to_node are 1-based; shift down if they
-                            // referred to a node that was after the deleted one.
-                            if l.base.from_node > node_1based {
-                                l.base.from_node -= 1;
-                            }
-                            if l.base.to_node > node_1based {
-                                l.base.to_node -= 1;
-                            }
-                        }
-                        remap_controls_rules(network, &[node_1based], &dangling_idx);
-                    }
-                    "pipe" | "pump" | "valve" => {
-                        let pos = network
-                            .links
-                            .iter()
-                            .position(|l| l.base.id == id)
-                            .ok_or_else(|| format!("link '{}' not found", id))?;
-                        let link_1based = pos + 1;
-
-                        let refs = control_rule_refs(network, &[], &[link_1based]);
-                        if !refs.is_empty() {
-                            return Err(format!(
-                                "link '{}' is still attached to {}; detach it first",
-                                id,
-                                refs.join(", ")
-                            ));
-                        }
-
-                        network.links.remove(pos);
-                        network.vertices.remove(&id);
-                        network.link_tags.remove(&id);
-                        // Rebuild link indices.
-                        for (i, l) in network.links.iter_mut().enumerate() {
-                            l.base.index = i + 1;
-                        }
-                        remap_controls_rules(network, &[], &[link_1based]);
-                    }
-                    other => return Err(format!("unknown element kind '{}'", other)),
-                }
+                delete_element_from_network(network, &kind, &id)?;
                 *dirty = true;
                 *dto = network_to_dto(network);
                 Ok(())
@@ -4961,6 +5088,7 @@ pub fn delete_element(
     if result.is_ok() {
         let _ = app.emit(NETWORK_CHANGED_EVENT, ());
     }
+    drop(guard);
     result
 }
 
@@ -4986,8 +5114,9 @@ pub fn create_node(
 ) -> Result<(), String> {
     const M_TO_FT: f64 = 1.0 / 0.3048;
     let elev_ft = elevation.unwrap_or(0.0) * M_TO_FT;
+    // Lock held across the emit below (see `NETWORK_CHANGED_EVENT`).
+    let mut guard = state.0.lock();
     let result = {
-        let mut guard = state.0.lock();
         match &mut *guard {
             NetworkStateInner::Loaded {
                 dirty,
@@ -5064,6 +5193,7 @@ pub fn create_node(
     if result.is_ok() {
         let _ = app.emit(NETWORK_CHANGED_EVENT, ());
     }
+    drop(guard);
     result
 }
 
@@ -5081,8 +5211,9 @@ pub fn create_link(
     from_id: String,
     to_id: String,
 ) -> Result<(), String> {
+    // Lock held across the emit below (see `NETWORK_CHANGED_EVENT`).
+    let mut guard = state.0.lock();
     let result = {
-        let mut guard = state.0.lock();
         match &mut *guard {
             NetworkStateInner::Loaded {
                 dirty,
@@ -5169,6 +5300,7 @@ pub fn create_link(
     if result.is_ok() {
         let _ = app.emit(NETWORK_CHANGED_EVENT, ());
     }
+    drop(guard);
     result
 }
 
@@ -5185,8 +5317,9 @@ pub fn create_curve(
 ) -> Result<(), String> {
     const FT_TO_M: f64 = 0.3048;
     const CFS_TO_LS: f64 = 28.316_846_6;
+    // Lock held across the emit below (see `NETWORK_CHANGED_EVENT`).
+    let mut guard = state.0.lock();
     let result = {
-        let mut guard = state.0.lock();
         match &mut *guard {
             NetworkStateInner::Loaded {
                 dirty,
@@ -5222,6 +5355,7 @@ pub fn create_curve(
     if result.is_ok() {
         let _ = app.emit(NETWORK_CHANGED_EVENT, ());
     }
+    drop(guard);
     result
 }
 
@@ -5237,8 +5371,9 @@ pub fn delete_curve(
     state: tauri::State<'_, NetworkState>,
     id: String,
 ) -> Result<(), String> {
+    // Lock held across the emit below (see `NETWORK_CHANGED_EVENT`).
+    let mut guard = state.0.lock();
     let result = {
-        let mut guard = state.0.lock();
         match &mut *guard {
             NetworkStateInner::Loaded {
                 dirty,
@@ -5289,6 +5424,7 @@ pub fn delete_curve(
     if result.is_ok() {
         let _ = app.emit(NETWORK_CHANGED_EVENT, ());
     }
+    drop(guard);
     result
 }
 
@@ -5310,8 +5446,9 @@ pub fn update_curve_points(
     if xs.len() != ys.len() {
         return Err("mismatched point array lengths".into());
     }
+    // Lock held across the emit below (see `NETWORK_CHANGED_EVENT`).
+    let mut guard = state.0.lock();
     let result = {
-        let mut guard = state.0.lock();
         match &mut *guard {
             NetworkStateInner::Loaded {
                 dirty,
@@ -5351,6 +5488,7 @@ pub fn update_curve_points(
     if result.is_ok() {
         let _ = app.emit(NETWORK_CHANGED_EVENT, ());
     }
+    drop(guard);
     result
 }
 
@@ -5363,8 +5501,9 @@ pub fn create_pattern(
     state: tauri::State<'_, NetworkState>,
     id: String,
 ) -> Result<(), String> {
+    // Lock held across the emit below (see `NETWORK_CHANGED_EVENT`).
+    let mut guard = state.0.lock();
     let result = {
-        let mut guard = state.0.lock();
         match &mut *guard {
             NetworkStateInner::Loaded {
                 dirty,
@@ -5389,6 +5528,7 @@ pub fn create_pattern(
     if result.is_ok() {
         let _ = app.emit(NETWORK_CHANGED_EVENT, ());
     }
+    drop(guard);
     result
 }
 
@@ -5405,8 +5545,9 @@ pub fn update_pattern_multipliers(
     if multipliers.is_empty() {
         return Err("pattern must have at least one multiplier".into());
     }
+    // Lock held across the emit below (see `NETWORK_CHANGED_EVENT`).
+    let mut guard = state.0.lock();
     let result = {
-        let mut guard = state.0.lock();
         match &mut *guard {
             NetworkStateInner::Loaded {
                 dirty,
@@ -5430,6 +5571,7 @@ pub fn update_pattern_multipliers(
     if result.is_ok() {
         let _ = app.emit(NETWORK_CHANGED_EVENT, ());
     }
+    drop(guard);
     result
 }
 
@@ -5451,8 +5593,9 @@ pub fn rename_pattern(
     if trimmed.is_empty() {
         return Err("pattern ID must not be empty".into());
     }
+    // Lock held across the emit below (see `NETWORK_CHANGED_EVENT`).
+    let mut guard = state.0.lock();
     let result = {
-        let mut guard = state.0.lock();
         match &mut *guard {
             NetworkStateInner::Loaded {
                 dirty,
@@ -5520,6 +5663,7 @@ pub fn rename_pattern(
     if result.is_ok() {
         let _ = app.emit(NETWORK_CHANGED_EVENT, ());
     }
+    drop(guard);
     result
 }
 
@@ -5536,8 +5680,9 @@ pub fn delete_pattern(
     state: tauri::State<'_, NetworkState>,
     id: String,
 ) -> Result<(), String> {
+    // Lock held across the emit below (see `NETWORK_CHANGED_EVENT`).
+    let mut guard = state.0.lock();
     let result = {
-        let mut guard = state.0.lock();
         match &mut *guard {
             NetworkStateInner::Loaded {
                 dirty,
@@ -5606,6 +5751,7 @@ pub fn delete_pattern(
     if result.is_ok() {
         let _ = app.emit(NETWORK_CHANGED_EVENT, ());
     }
+    drop(guard);
     result
 }
 
@@ -5823,8 +5969,9 @@ pub fn create_control(
     state: tauri::State<'_, NetworkState>,
     control: ControlDto,
 ) -> Result<(), String> {
+    // Lock held across the emit below (see `NETWORK_CHANGED_EVENT`).
+    let mut guard = state.0.lock();
     let result = {
-        let mut guard = state.0.lock();
         match &mut *guard {
             NetworkStateInner::Loaded {
                 dirty,
@@ -5844,6 +5991,7 @@ pub fn create_control(
     if result.is_ok() {
         let _ = app.emit(NETWORK_CHANGED_EVENT, ());
     }
+    drop(guard);
     result
 }
 
@@ -5856,8 +6004,9 @@ pub fn update_control(
     index: usize,
     control: ControlDto,
 ) -> Result<(), String> {
+    // Lock held across the emit below (see `NETWORK_CHANGED_EVENT`).
+    let mut guard = state.0.lock();
     let result = {
-        let mut guard = state.0.lock();
         match &mut *guard {
             NetworkStateInner::Loaded {
                 dirty,
@@ -5881,6 +6030,7 @@ pub fn update_control(
     if result.is_ok() {
         let _ = app.emit(NETWORK_CHANGED_EVENT, ());
     }
+    drop(guard);
     result
 }
 
@@ -5891,8 +6041,9 @@ pub fn delete_control(
     state: tauri::State<'_, NetworkState>,
     index: usize,
 ) -> Result<(), String> {
+    // Lock held across the emit below (see `NETWORK_CHANGED_EVENT`).
+    let mut guard = state.0.lock();
     let result = {
-        let mut guard = state.0.lock();
         match &mut *guard {
             NetworkStateInner::Loaded {
                 dirty,
@@ -5914,6 +6065,7 @@ pub fn delete_control(
     if result.is_ok() {
         let _ = app.emit(NETWORK_CHANGED_EVENT, ());
     }
+    drop(guard);
     result
 }
 
@@ -5924,8 +6076,9 @@ pub fn create_rule(
     state: tauri::State<'_, NetworkState>,
     rule: RuleDto,
 ) -> Result<(), String> {
+    // Lock held across the emit below (see `NETWORK_CHANGED_EVENT`).
+    let mut guard = state.0.lock();
     let result = {
-        let mut guard = state.0.lock();
         match &mut *guard {
             NetworkStateInner::Loaded {
                 dirty,
@@ -5945,6 +6098,7 @@ pub fn create_rule(
     if result.is_ok() {
         let _ = app.emit(NETWORK_CHANGED_EVENT, ());
     }
+    drop(guard);
     result
 }
 
@@ -5956,8 +6110,9 @@ pub fn update_rule(
     index: usize,
     rule: RuleDto,
 ) -> Result<(), String> {
+    // Lock held across the emit below (see `NETWORK_CHANGED_EVENT`).
+    let mut guard = state.0.lock();
     let result = {
-        let mut guard = state.0.lock();
         match &mut *guard {
             NetworkStateInner::Loaded {
                 dirty,
@@ -5981,6 +6136,7 @@ pub fn update_rule(
     if result.is_ok() {
         let _ = app.emit(NETWORK_CHANGED_EVENT, ());
     }
+    drop(guard);
     result
 }
 
@@ -5991,8 +6147,9 @@ pub fn delete_rule(
     state: tauri::State<'_, NetworkState>,
     index: usize,
 ) -> Result<(), String> {
+    // Lock held across the emit below (see `NETWORK_CHANGED_EVENT`).
+    let mut guard = state.0.lock();
     let result = {
-        let mut guard = state.0.lock();
         match &mut *guard {
             NetworkStateInner::Loaded {
                 dirty,
@@ -6014,14 +6171,17 @@ pub fn delete_rule(
     if result.is_ok() {
         let _ = app.emit(NETWORK_CHANGED_EVENT, ());
     }
+    drop(guard);
     result
 }
 
+/// Return the raw INP text of a project's base model (`base/model.inp`).
+/// Scenario INPs are not addressable through this command.
 ///
 /// Used by the "Preview changes" diff dialog so the frontend can compare the
 /// saved file against a prospective patched version.
 #[tauri::command(async)]
-/// Return the raw INP text for a project or scenario.
+/// Return the raw INP text for a project's base model.
 pub fn get_project_inp(app: tauri::AppHandle, project_id: String) -> Result<String, String> {
     validate_id(&project_id)?;
     let app_data = app_data_dir(&app)?;
@@ -6489,6 +6649,268 @@ Duration  0
         } else {
             panic!("state must be loaded");
         }
+    }
+
+    // ── tank elevation DTO ↔ patch round-trip ─────────────────────────────
+
+    #[test]
+    fn tank_elevation_dto_patch_round_trip_is_stable() {
+        let mut state = loaded_state();
+        let NetworkStateInner::Loaded { network, dto, .. } = &mut state else {
+            panic!("state must be loaded");
+        };
+        let t1 = network.nodes.iter().find(|n| n.base.id == "T1").unwrap();
+        let internal_before = t1.base.elevation;
+        let min_level = match &t1.kind {
+            hydra::NodeKind::Tank(t) => t.min_level,
+            _ => unreachable!("T1 is a tank"),
+        };
+        // Internally `base.elevation` = bottom + min_level (minimum
+        // piezometric head). The DTO must report the *bottom* — the same
+        // quantity the tank "elevation" patch accepts — not the raw
+        // `base.elevation`.
+        let dto_elev = node_to_dto(network, t1).elevation;
+        assert!(
+            (dto_elev - (internal_before - min_level) * FT_TO_M).abs() < 1e-9,
+            "DTO must report tank bottom, got {dto_elev}"
+        );
+
+        // Round-tripping the displayed value through the elevation patch must
+        // not move the tank (previously it rose by min_level per edit).
+        apply_patch_to_network(
+            network,
+            "tank",
+            "T1",
+            "elevation",
+            serde_json::json!(dto_elev),
+        )
+        .unwrap();
+        let t1 = network.nodes.iter().find(|n| n.base.id == "T1").unwrap();
+        assert!(
+            (t1.base.elevation - internal_before).abs() < 1e-9,
+            "round-trip drifted: {} -> {}",
+            internal_before,
+            t1.base.elevation
+        );
+
+        // And the refreshed DTO still shows the same bottom.
+        let patched = refresh_element_dto(network, dto, "tank", "T1").unwrap();
+        let elev_after = patched.node.expect("node delta").elevation;
+        assert!((elev_after - dto_elev).abs() < 1e-9);
+    }
+
+    // ── node cascade delete: link index rebuild + control remap ───────────
+
+    /// Like TEST_INP but with a second junction/pipe that survives deleting
+    /// J1, and a control referencing the surviving pipe + tank.
+    const CASCADE_INP: &str = "\
+[JUNCTIONS]
+J1  10  5
+J2  20  0
+
+[RESERVOIRS]
+R1  100
+
+[TANKS]
+T1  50  10  5  20  40  0
+
+[PIPES]
+P1  R1  J1  1000  12  100  0  Open
+P2  J1  T1  800   10  100  0  Open
+P3  R1  J2  500   8   100  0  Open
+
+[CONTROLS]
+LINK P3 CLOSED IF NODE T1 ABOVE 12
+
+[COORDINATES]
+J1  1.0  2.0
+J2  1.5  2.5
+R1  0.0  0.0
+T1  2.0  2.0
+
+[OPTIONS]
+Units  GPM
+
+[TIMES]
+Duration  0
+
+[END]
+";
+
+    #[test]
+    fn delete_node_cascade_rebuilds_link_indices_and_keeps_control_target() {
+        let mut network = hydra::io::parse(CASCADE_INP.as_bytes()).unwrap();
+        // Deleting J1 cascades P1 and P2; P3 (old index 3) survives.
+        delete_element_from_network(&mut network, "junction", "J1").unwrap();
+
+        assert_eq!(network.links.len(), 1);
+        assert_eq!(network.links[0].base.id, "P3");
+        // Surviving link indices must be contiguous 1..=n — a stale gapped
+        // index corrupts the next delete's guard/remap and lets create_link
+        // (links.len() + 1) mint a duplicate.
+        for (i, l) in network.links.iter().enumerate() {
+            assert_eq!(l.base.index, i + 1, "link {} has stale index", l.base.id);
+        }
+
+        // The control must still target P3 and trigger on T1 after the remap.
+        assert_eq!(network.controls.len(), 1);
+        let ctrl = &network.controls[0];
+        assert_eq!(network.links[ctrl.link - 1].base.id, "P3");
+        let trigger = ctrl.trigger_node.expect("level trigger keeps its node");
+        assert_eq!(network.nodes[trigger - 1].base.id, "T1");
+
+        // A follow-up delete of the surviving link must resolve it correctly.
+        delete_element_from_network(&mut network, "pipe", "P3")
+            .expect_err("P3 is still referenced by the control and must be protected");
+        network.controls.clear();
+        delete_element_from_network(&mut network, "pipe", "P3").unwrap();
+        assert!(network.links.is_empty());
+    }
+
+    // ── update_sim_params fast path vs save_project race ──────────────────
+
+    #[test]
+    fn sim_params_fast_path_marks_dirty_so_a_racing_save_cannot_strand_disk() {
+        let mut state = loaded_state();
+        // A concurrent save_project snapshots the raw bytes and clears
+        // `dirty` before writing them to disk...
+        let stale_snapshot = state.up_to_date_raw_bytes().unwrap().clone();
+
+        // ...then the update_sim_params fast path applies new options.
+        let params = {
+            let NetworkStateInner::Loaded { network, .. } = &state else {
+                panic!("state must be loaded");
+            };
+            SimParamsDto {
+                duration: 7200.0,
+                ..options_to_dto(&network.options)
+            }
+        };
+        let written = apply_sim_params_to_cached_base(&mut state, "test-project", &params)
+            .unwrap()
+            .expect("matching non-dirty cache must take the fast path");
+        let reparsed = hydra::io::parse(&written).unwrap();
+        assert!((reparsed.options.duration - 7200.0).abs() < 1e-9);
+
+        // Even though raw_bytes was refreshed in place, the state must be
+        // flagged dirty: if the racing save's (stale) write lands last, the
+        // next consumer re-serialises from the updated cache and repairs disk.
+        let NetworkStateInner::Loaded { dirty, .. } = &state else {
+            panic!("state must be loaded");
+        };
+        assert!(*dirty, "fast path must mark the state dirty");
+        let next_save = state.up_to_date_raw_bytes().unwrap().clone();
+        assert_ne!(next_save, stale_snapshot);
+        let reparsed = hydra::io::parse(&next_save).unwrap();
+        assert!((reparsed.options.duration - 7200.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn sim_params_fast_path_skips_mismatched_or_dirty_cache() {
+        // Different owner: slow path.
+        let mut state = loaded_state();
+        let params = {
+            let NetworkStateInner::Loaded { network, .. } = &state else {
+                panic!("state must be loaded");
+            };
+            options_to_dto(&network.options)
+        };
+        assert!(
+            apply_sim_params_to_cached_base(&mut state, "other-project", &params)
+                .unwrap()
+                .is_none()
+        );
+
+        // Pending unsaved edits (dirty): slow path, cache untouched.
+        if let NetworkStateInner::Loaded { dirty, .. } = &mut state {
+            *dirty = true;
+        }
+        assert!(
+            apply_sim_params_to_cached_base(&mut state, "test-project", &params)
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    // ── run_sim_loops results.out tmp/rename flow ─────────────────────────
+
+    fn loaded_sim() -> hydra::Simulation {
+        let network = hydra::io::parse(TEST_INP.as_bytes()).unwrap();
+        let mut sim = hydra::Simulation::create();
+        sim.load(network).unwrap();
+        sim
+    }
+
+    #[test]
+    fn run_sim_loops_promotes_results_only_on_success() {
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path().join("results.out");
+        let (_sim, err, _wall, _steps) = run_sim_loops(
+            loaded_sim(),
+            Some(out.clone()),
+            0.0,
+            false,
+            |_, _, _, _, _| {},
+            || false,
+        );
+        assert!(err.is_none(), "steady-state run must succeed: {err:?}");
+        assert!(out.exists(), "successful run must publish results.out");
+        assert!(
+            !dir.path().join("results.out.tmp").exists(),
+            "tmp stream must be renamed away on success"
+        );
+        // The published file is a complete, readable .out file.
+        hydra::io::out_reader::read_metadata_checked(&out)
+            .expect("results.out must be well-formed");
+    }
+
+    #[test]
+    fn run_sim_loops_cancel_discards_tmp_and_keeps_previous_results() {
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path().join("results.out");
+        std::fs::write(&out, b"previous successful run").unwrap();
+        let (_sim, err, _wall, _steps) = run_sim_loops(
+            loaded_sim(),
+            Some(out.clone()),
+            0.0,
+            false,
+            |_, _, _, _, _| {},
+            || true, // cancel immediately
+        );
+        assert!(matches!(err, Some(RunLoopError::Cancelled)));
+        // The previous results survive untouched and no tmp is left behind,
+        // so `sim_state_from_results` never reports a truncated file as done.
+        assert_eq!(std::fs::read(&out).unwrap(), b"previous successful run");
+        assert!(!dir.path().join("results.out.tmp").exists());
+    }
+
+    // ── count_scenario_dirs requires readable meta.json ───────────────────
+
+    #[test]
+    fn count_scenario_dirs_counts_only_dirs_with_readable_meta() {
+        let dir = tempfile::tempdir().unwrap();
+        let app_data = dir.path();
+        let scenarios = bundle::project_dir(app_data, "p1").join("scenarios");
+        let with_meta = scenarios.join("with-meta");
+        let no_meta = scenarios.join("no-meta");
+        let bad_meta = scenarios.join("bad-meta");
+        std::fs::create_dir_all(&with_meta).unwrap();
+        std::fs::create_dir_all(&no_meta).unwrap();
+        std::fs::create_dir_all(&bad_meta).unwrap();
+        meta::write_scenario_meta(
+            &with_meta,
+            &meta::ScenarioMeta {
+                name: "s1".into(),
+                description: None,
+                parent_scenario_id: None,
+            },
+        )
+        .unwrap();
+        std::fs::write(bad_meta.join("meta.json"), b"{not json").unwrap();
+        // Only the directory list_scenarios would also return is counted.
+        assert_eq!(count_scenario_dirs(app_data, "p1"), 1);
+        // Missing scenarios dir: zero, not an error.
+        assert_eq!(count_scenario_dirs(app_data, "p2"), 0);
     }
 
     // ── period-results binary encoding ────────────────────────────────────
