@@ -5,11 +5,227 @@
 
 import { listen } from "@tauri-apps/api/event";
 import { useEffect, useMemo, useState } from "react";
-import type { Link, Node, Pattern } from "../types";
+import type { Link, LinkType, Node, NodeType, Pattern } from "../types";
 import { invoke, isTauri, tryInvoke } from "./ipc";
 import type { NetworkSummary } from "./NetworkDataContext";
 import { useNetworkData } from "./NetworkDataContext";
 import { useNetworkVersion } from "./NetworkVersionContext";
+
+// ── Binary network snapshot decoding ───────────────────────────────────────
+//
+// `get_network_snapshot` and `load_project_network` return the full-network
+// snapshot as a compact little-endian columnar binary payload instead of
+// ~15 MB of JSON (~5 MB binary at 46k nodes + 46k links, and no JSON parse
+// on the webview main thread). The layout is produced by the backend's
+// `encode_network_snapshot` (commands.rs) — see its doc comment for the
+// authoritative byte map:
+//
+//   u32 version | u32 flags (bit 0 = present) | u32 nNodes | u32 nLinks |
+//   f64×nNodes x | y |
+//   f32×nNodes elevation | baseDemand | pressure | demand |
+//              tankMinLevel | tankMaxLevel | tankInitialLevel | tankDiameter |
+//   f32×nLinks velocity | diameter | length | roughness |
+//              pumpPowerKw | pumpSpeed | valveSetting |
+//   u8×nNodes nodeKind | u8×nLinks linkKind |
+//   9 string columns (u32 byteLen + newline-joined UTF-8):
+//     node id | tankVolumeCurve | headPattern |
+//     link id | fromId | toId | pumpCurve | valveType | valveCurve
+//
+// Optional numeric columns use NaN for "absent" (preserving null vs 0),
+// optional string columns use the empty string.
+
+const SNAPSHOT_HEADER_BYTES = 16;
+const SNAPSHOT_VERSION = 1;
+const SNAPSHOT_FLAG_PRESENT = 1;
+
+/** Index ↔ kind code mapping; must match the backend's `encode_network_snapshot`. */
+const SNAPSHOT_NODE_TYPES: readonly NodeType[] = [
+  "junction",
+  "tank",
+  "reservoir",
+];
+const SNAPSHOT_LINK_TYPES: readonly LinkType[] = ["pipe", "pump", "valve"];
+
+function snapshotError(detail: string): Error {
+  return new Error(`network snapshot decode failed: ${detail}`);
+}
+
+/**
+ * Decode the binary network snapshot into the exact node/link object shape
+ * the JSON path produced (plain objects; optional fields explicitly `null`
+ * when absent, so `normalizeNodes` finds nothing left to fill in).
+ *
+ * Returns `null` when the payload's "present" flag is clear (the binary
+ * equivalent of `load_project_network`'s old `null` — target INP missing).
+ * Throws on a malformed, truncated, or version-mismatched buffer so callers
+ * surface the error instead of rendering a silently empty network.
+ *
+ * Exported for tests — production callers go through
+ * `fetchNetworkSnapshot` / `loadProjectNetwork`.
+ */
+export function decodeNetworkSnapshot(
+  buf: ArrayBuffer,
+): { nodes: Node[]; links: Link[] } | null {
+  if (buf.byteLength < SNAPSHOT_HEADER_BYTES) {
+    throw snapshotError(`buffer too short (${buf.byteLength} bytes)`);
+  }
+  const view = new DataView(buf);
+  const version = view.getUint32(0, true);
+  if (version !== SNAPSHOT_VERSION) {
+    throw snapshotError(`unsupported version ${version}`);
+  }
+  const flags = view.getUint32(4, true);
+  if ((flags & SNAPSHOT_FLAG_PRESENT) === 0) return null;
+  const nNodes = view.getUint32(8, true);
+  const nLinks = view.getUint32(12, true);
+
+  // Fixed-width section: 16B coords + 32B f32s + 1B kind per node,
+  // 28B f32s + 1B kind per link.
+  const fixedBytes = SNAPSHOT_HEADER_BYTES + 49 * nNodes + 29 * nLinks;
+  if (buf.byteLength < fixedBytes) {
+    throw snapshotError(
+      `truncated buffer (${buf.byteLength} bytes for ${nNodes} nodes + ${nLinks} links)`,
+    );
+  }
+
+  let offset = SNAPSHOT_HEADER_BYTES;
+  const takeF64 = (len: number): Float64Array => {
+    const arr = new Float64Array(buf, offset, len);
+    offset += 8 * len;
+    return arr;
+  };
+  const takeF32 = (len: number): Float32Array => {
+    const arr = new Float32Array(buf, offset, len);
+    offset += 4 * len;
+    return arr;
+  };
+  const takeU8 = (len: number): Uint8Array => {
+    const arr = new Uint8Array(buf, offset, len);
+    offset += len;
+    return arr;
+  };
+  const utf8 = new TextDecoder();
+  const takeStrings = (count: number, label: string): string[] => {
+    if (offset + 4 > buf.byteLength) {
+      throw snapshotError(`truncated ${label} column header`);
+    }
+    const byteLen = view.getUint32(offset, true);
+    offset += 4;
+    if (offset + byteLen > buf.byteLength) {
+      throw snapshotError(`truncated ${label} column`);
+    }
+    const joined = utf8.decode(new Uint8Array(buf, offset, byteLen));
+    offset += byteLen;
+    if (count === 0) return [];
+    // Splitting one big string is fast in JS; empty string = absent.
+    const parts = joined.split("\n");
+    if (parts.length !== count) {
+      throw snapshotError(
+        `${label} column has ${parts.length} values, expected ${count}`,
+      );
+    }
+    return parts;
+  };
+
+  const nodeX = takeF64(nNodes);
+  const nodeY = takeF64(nNodes);
+  const nodeElevation = takeF32(nNodes);
+  const nodeBaseDemand = takeF32(nNodes);
+  const nodePressure = takeF32(nNodes);
+  const nodeDemand = takeF32(nNodes);
+  const tankMinLevel = takeF32(nNodes);
+  const tankMaxLevel = takeF32(nNodes);
+  const tankInitialLevel = takeF32(nNodes);
+  const tankDiameter = takeF32(nNodes);
+  const linkVelocity = takeF32(nLinks);
+  const linkDiameter = takeF32(nLinks);
+  const linkLength = takeF32(nLinks);
+  const linkRoughness = takeF32(nLinks);
+  const pumpPowerKw = takeF32(nLinks);
+  const pumpSpeed = takeF32(nLinks);
+  const valveSetting = takeF32(nLinks);
+  const nodeKind = takeU8(nNodes);
+  const linkKind = takeU8(nLinks);
+  const nodeIds = takeStrings(nNodes, "node id");
+  const tankVolumeCurve = takeStrings(nNodes, "tankVolumeCurve");
+  const headPattern = takeStrings(nNodes, "headPattern");
+  const linkIds = takeStrings(nLinks, "link id");
+  const fromIds = takeStrings(nLinks, "fromId");
+  const toIds = takeStrings(nLinks, "toId");
+  const pumpCurve = takeStrings(nLinks, "pumpCurve");
+  const valveType = takeStrings(nLinks, "valveType");
+  const valveCurve = takeStrings(nLinks, "valveCurve");
+
+  const optNum = (v: number): number | null => (Number.isNaN(v) ? null : v);
+  const optStr = (s: string): string | null => (s.length === 0 ? null : s);
+
+  const nodes: Node[] = new Array(nNodes);
+  for (let i = 0; i < nNodes; i += 1) {
+    const type = SNAPSHOT_NODE_TYPES[nodeKind[i]];
+    if (type === undefined) {
+      throw snapshotError(`unknown node kind code ${nodeKind[i]}`);
+    }
+    nodes[i] = {
+      id: nodeIds[i],
+      type,
+      x: nodeX[i],
+      y: nodeY[i],
+      elevation: nodeElevation[i],
+      baseDemand: nodeBaseDemand[i],
+      pressure: optNum(nodePressure[i]),
+      demand: optNum(nodeDemand[i]),
+      tankMinLevel: optNum(tankMinLevel[i]),
+      tankMaxLevel: optNum(tankMaxLevel[i]),
+      tankInitialLevel: optNum(tankInitialLevel[i]),
+      tankDiameter: optNum(tankDiameter[i]),
+      tankVolumeCurve: optStr(tankVolumeCurve[i]),
+      headPattern: optStr(headPattern[i]),
+    };
+  }
+
+  const links: Link[] = new Array(nLinks);
+  for (let i = 0; i < nLinks; i += 1) {
+    const type = SNAPSHOT_LINK_TYPES[linkKind[i]];
+    if (type === undefined) {
+      throw snapshotError(`unknown link kind code ${linkKind[i]}`);
+    }
+    links[i] = {
+      id: linkIds[i],
+      type,
+      fromId: fromIds[i],
+      toId: toIds[i],
+      velocity: linkVelocity[i],
+      diameter: linkDiameter[i],
+      length: linkLength[i],
+      roughness: linkRoughness[i],
+      pumpCurve: optStr(pumpCurve[i]),
+      pumpPowerKw: optNum(pumpPowerKw[i]),
+      pumpSpeed: optNum(pumpSpeed[i]),
+      valveType: optStr(valveType[i]),
+      valveSetting: optNum(valveSetting[i]),
+      valveCurve: optStr(valveCurve[i]),
+    };
+  }
+
+  return { nodes, links };
+}
+
+/**
+ * Fetch the full nodes+links snapshot of the loaded network as a binary
+ * payload and decode it. Returns `null` outside Tauri (or when the command
+ * itself fails — reported via `onIpcError` like every `tryInvoke`); throws
+ * when the payload cannot be decoded (frontend/backend layout mismatch).
+ */
+export async function fetchNetworkSnapshot(): Promise<{
+  nodes: Node[];
+  links: Link[];
+} | null> {
+  const buf = await tryInvoke<ArrayBuffer>("get_network_snapshot");
+  if (!(buf instanceof ArrayBuffer)) return null;
+  // `get_network_snapshot` always sets the "present" flag, so this only
+  // returns null for the outside-Tauri / failed-invoke cases above.
+  return decodeNetworkSnapshot(buf);
+}
 
 // ── Network model hooks (nodes, links) ─────────────────────────────────────
 
@@ -68,28 +284,38 @@ export function formatInpImportError(err: unknown): string {
  * into the backend `NetworkState` so callers can bump `networkVersion` to
  * trigger a `useNodes` / `useLinks` refetch.
  *
- * Returns a nodes+links snapshot when loaded, or `null` when the target INP
- * does not exist yet.
+ * The backend responds with the compact binary snapshot layout (see
+ * `decodeNetworkSnapshot`). Returns a nodes+links snapshot when loaded, or
+ * `null` when the target INP does not exist yet (encoded as a payload with
+ * the "present" flag clear). Decode failures throw.
  */
 export async function loadProjectNetwork(
   projectId: string,
   scenarioId: string | null,
 ): Promise<{ nodes: Node[]; links: Link[] } | null> {
-  return (
-    (await tryInvoke<{ nodes: Node[]; links: Link[] } | null>(
-      "load_project_network",
-      {
-        projectId,
-        scenarioId,
-      },
-    )) ?? null
-  );
+  const buf = await tryInvoke<ArrayBuffer>("load_project_network", {
+    projectId,
+    scenarioId,
+  });
+  if (!(buf instanceof ArrayBuffer)) return null;
+  return decodeNetworkSnapshot(buf);
 }
 
 /**
- * Apply a single field change to the in-memory network, re-serialise the INP,
- * and update `NetworkState`.  Returns the updated node/link arrays on success,
- * or `null` when running outside a Tauri shell.
+ * A single updated element returned by `patchElement` and carried in the
+ * `network-changed` event's delta payload — exactly one of `node` / `link`
+ * is set.
+ */
+export interface PatchedElement {
+  node?: Node;
+  link?: Link;
+}
+
+/**
+ * Apply a single field change to the in-memory network and update
+ * `NetworkState`. Returns only the patched element's updated DTO — the
+ * matching `network-changed` event carries the same delta, so local
+ * node/link arrays update in place without a full snapshot refetch.
  *
  * `kind`  — `"junction"` | `"reservoir"` | `"tank"` | `"pipe"` | `"pump"`
  * `id`    — element ID as shown in the editor table
@@ -101,13 +327,32 @@ export async function patchElement(
   id: string,
   field: string,
   value: number | string,
-): Promise<{ nodes: Node[]; links: Link[] }> {
-  return invoke<{ nodes: Node[]; links: Link[] }>("patch_element", {
+): Promise<PatchedElement> {
+  return invoke<PatchedElement>("patch_element", {
     kind,
     id,
     field,
     value,
   });
+}
+
+/** Result of a bulk `patchElements` call. */
+export interface PatchElementsResult {
+  /** Number of patches applied successfully. */
+  applied: number;
+  /** Error strings for the patches that failed (batch continues past them). */
+  errors: string[];
+}
+
+/**
+ * Apply a batch of field changes in a single backend call: one IPC round
+ * trip and one `network-changed` event for the whole batch, instead of one
+ * command (and formerly one full INP re-serialisation) per field.
+ */
+export async function patchElements(
+  patches: PatchItem[],
+): Promise<PatchElementsResult> {
+  return invoke<PatchElementsResult>("patch_elements", { patches });
 }
 
 /**
@@ -258,11 +503,32 @@ export async function previewPatches(
 
 export const NETWORK_CHANGED_EVENT = "network-changed";
 
+/**
+ * Delta payload of a `network-changed` event. Element-scoped edits
+ * (`patch_element` / `patch_elements` / `patch_node_position`) list the
+ * updated element DTOs; structural mutations (create/delete/pattern/curve/
+ * control commands) emit a `null` payload, which consumers treat as
+ * "refetch the full snapshot".
+ */
+export interface NetworkChangedPayload {
+  elements: PatchedElement[];
+}
+
 /** Subscribe to network mutation events from the backend.
- *  Fires whenever `patch_element`, `patch_node_position`, or `delete_element`
- *  succeeds.  Returns the unlisten function — call it to unsubscribe. */
+ *  Fires whenever any mutating command succeeds.
+ *  Returns the unlisten function — call it to unsubscribe. */
 export function listenNetworkChanged(cb: () => void): Promise<() => void> {
   return listen(NETWORK_CHANGED_EVENT, () => cb());
+}
+
+/** Like `listenNetworkChanged`, but delivers the event's delta payload
+ *  (`null` when the mutation requires a full snapshot refetch). */
+export function listenNetworkChangedPayload(
+  cb: (payload: NetworkChangedPayload | null) => void,
+): Promise<() => void> {
+  return listen<NetworkChangedPayload | null>(NETWORK_CHANGED_EVENT, (ev) =>
+    cb(ev.payload ?? null),
+  );
 }
 
 // ── Node / link / pattern / curve hooks ────────────────────────────────────

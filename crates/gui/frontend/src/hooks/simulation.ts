@@ -6,7 +6,6 @@
 import { listen } from "@tauri-apps/api/event";
 import { useEffect, useState } from "react";
 import { invoke, tryInvoke } from "./ipc";
-import { useNetworkVersion } from "./NetworkVersionContext";
 import type { PumpEnergyRecord } from "./results";
 
 /** Returned by `run_simulation`. Contains only pump energy. */
@@ -111,17 +110,18 @@ export async function updateSimParams(
 }
 
 /**
- * React hook that tracks simulation parameters for `projectId`, re-fetching
- * whenever `networkVersion` bumps (i.e. a new network was loaded). Returns
+ * React hook that tracks simulation parameters for `projectId`. Returns
  * `null` until the first fetch resolves or when `projectId` is absent.
+ *
+ * Deliberately does *not* re-fetch on `networkVersion` bumps: element edits
+ * never change `[TIMES]`/`[OPTIONS]`, and re-reading them on every edit made
+ * the backend re-parse the whole base INP per mutation.
  */
 export function useSimParams(
   projectId: string | null | undefined,
 ): SimParams | null {
-  const { version: networkVersion } = useNetworkVersion();
   const [params, setParams] = useState<SimParams | null>(null);
   useEffect(() => {
-    void networkVersion;
     if (!projectId) {
       setParams(null);
       return;
@@ -133,6 +133,6 @@ export function useSimParams(
     return () => {
       cancelled = true;
     };
-  }, [projectId, networkVersion]);
+  }, [projectId]);
   return params;
 }

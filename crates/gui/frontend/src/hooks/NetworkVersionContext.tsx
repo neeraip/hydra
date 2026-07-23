@@ -18,6 +18,7 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useMemo,
   useState,
 } from "react";
 import { listenNetworkChanged } from "./index";
@@ -41,26 +42,53 @@ const Ctx = createContext<NetworkVersionCtx>({
   clearEdited: () => {},
 });
 
+/**
+ * Wrap `fn` so that any number of synchronous calls to the returned function
+ * coalesce into a single `fn()` invocation on the next microtask. Calls made
+ * in later tasks (after the microtask has flushed) schedule a fresh
+ * invocation. This is the scheduling primitive behind `bumpNetwork`: bumps
+ * arriving in the same tick (e.g. the backend `network-changed` event landing
+ * alongside a manual bump from a canvas handler) produce one version
+ * increment, so subscribers refetch the network snapshot once per batch.
+ */
+export function makeCoalescedScheduler(fn: () => void): () => void {
+  let pending = false;
+  return () => {
+    if (pending) return;
+    pending = true;
+    queueMicrotask(() => {
+      pending = false;
+      fn();
+    });
+  };
+}
+
 export function NetworkVersionProvider({ children }: { children: ReactNode }) {
   const [version, setVersion] = useState(0);
   const [editedScenarioIds, setEditedScenarioIds] = useState<
     ReadonlySet<string | null>
   >(new Set());
 
-  const bumpNetwork = useCallback(() => setVersion((v) => v + 1), []);
+  // Coalesce bumps arriving in the same tick into a single version increment
+  // (see makeCoalescedScheduler). useMemo keeps the callback identity stable
+  // across renders, like the previous useCallback + ref implementation.
+  const bumpNetwork = useMemo(
+    () => makeCoalescedScheduler(() => setVersion((v) => v + 1)),
+    [],
+  );
 
   // Keep all windows in sync: whenever the backend emits network-changed
   // (from patch_element, patch_node_position, or delete_element), bump the
   // local version so useNodes/useLinks re-fetch automatically.
   useEffect(() => {
     let unlisten: (() => void) | null = null;
-    listenNetworkChanged(() => setVersion((v) => v + 1)).then((fn) => {
+    listenNetworkChanged(() => bumpNetwork()).then((fn) => {
       unlisten = fn;
     });
     return () => {
       unlisten?.();
     };
-  }, []);
+  }, [bumpNetwork]);
 
   const markEdited = useCallback((scenarioId: string | null) => {
     setEditedScenarioIds((prev) => {
@@ -80,19 +108,18 @@ export function NetworkVersionProvider({ children }: { children: ReactNode }) {
     });
   }, []);
 
-  return (
-    <Ctx.Provider
-      value={{
-        version,
-        bumpNetwork,
-        editedScenarioIds,
-        markEdited,
-        clearEdited,
-      }}
-    >
-      {children}
-    </Ctx.Provider>
+  const value = useMemo<NetworkVersionCtx>(
+    () => ({
+      version,
+      bumpNetwork,
+      editedScenarioIds,
+      markEdited,
+      clearEdited,
+    }),
+    [version, bumpNetwork, editedScenarioIds, markEdited, clearEdited],
   );
+
+  return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
 
 export function useNetworkVersion() {

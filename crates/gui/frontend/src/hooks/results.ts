@@ -118,23 +118,80 @@ export interface ResultMeta {
 
 export interface PeriodResults {
   /** Node demand (L/s), one entry per node in network order. */
-  nodeDemand: number[];
+  nodeDemand: Float32Array;
   /** Node hydraulic head (m), one entry per node in network order. */
-  nodeHead: number[];
+  nodeHead: Float32Array;
   /** Node gauge pressure (m), one entry per node in network order. */
-  nodePressure: number[];
+  nodePressure: Float32Array;
   /** Link flow (L/s), one entry per link in network order. */
-  linkFlow: number[];
+  linkFlow: Float32Array;
   /** Link mean velocity (m/s), one entry per link in network order. */
-  linkVelocity: number[];
+  linkVelocity: Float32Array;
   /** Link head loss per unit length (or total for pumps/valves). */
-  linkHeadloss: number[];
+  linkHeadloss: Float32Array;
   /** Link status (0 = closed, 1 = open, etc.) */
-  linkStatus: number[];
+  linkStatus: Float32Array;
   /** Per-node quality values. Present only when quality simulation was run. */
-  nodeQuality?: number[];
+  nodeQuality?: Float32Array;
   /** Per-link quality values. Present only when quality simulation was run. */
-  linkQuality?: number[];
+  linkQuality?: Float32Array;
+}
+
+/** Set in the binary header's flags word when quality arrays are appended. */
+const PERIOD_RESULTS_FLAG_QUALITY = 1;
+
+/**
+ * Decode the compact little-endian binary layout produced by the backend's
+ * `encode_period_results`:
+ *
+ * ```text
+ * u32 nNodes | u32 nLinks | u32 flags |
+ * f32×nNodes nodeDemand | nodeHead | nodePressure |
+ * f32×nLinks linkFlow | linkVelocity | linkHeadloss | linkStatus |
+ * [f32×nNodes nodeQuality | f32×nLinks linkQuality]   (flags bit 0)
+ * ```
+ *
+ * The typed arrays are zero-copy views over the response buffer. Returns
+ * `null` for a malformed / truncated buffer.
+ *
+ * Exported for tests — production callers go through `getPeriodResults`.
+ */
+export function decodePeriodResults(buf: ArrayBuffer): PeriodResults | null {
+  const HEADER_BYTES = 12;
+  if (buf.byteLength < HEADER_BYTES) return null;
+  const view = new DataView(buf);
+  const nNodes = view.getUint32(0, true);
+  const nLinks = view.getUint32(4, true);
+  const flags = view.getUint32(8, true);
+  const hasQuality = (flags & PERIOD_RESULTS_FLAG_QUALITY) !== 0;
+
+  const expected =
+    HEADER_BYTES +
+    4 * (3 * nNodes + 4 * nLinks) +
+    (hasQuality ? 4 * (nNodes + nLinks) : 0);
+  if (buf.byteLength < expected) return null;
+
+  let offset = HEADER_BYTES;
+  const take = (len: number): Float32Array => {
+    const arr = new Float32Array(buf, offset, len);
+    offset += 4 * len;
+    return arr;
+  };
+
+  const result: PeriodResults = {
+    nodeDemand: take(nNodes),
+    nodeHead: take(nNodes),
+    nodePressure: take(nNodes),
+    linkFlow: take(nLinks),
+    linkVelocity: take(nLinks),
+    linkHeadloss: take(nLinks),
+    linkStatus: take(nLinks),
+  };
+  if (hasQuality) {
+    result.nodeQuality = take(nNodes);
+    result.linkQuality = take(nLinks);
+  }
+  return result;
 }
 
 /**
@@ -156,18 +213,22 @@ export async function loadResultMeta(
 
 /**
  * Return flat result arrays for a single reporting period.
- * Values are in SI units (L/s, m, m/s). Returns `null` outside Tauri.
+ *
+ * The backend responds with a compact binary payload (~1.3 MB at 46k nodes +
+ * 46k links vs ~3.2 MB as JSON) that is decoded here into zero-copy
+ * `Float32Array` views. Values are in SI units (L/s, m, m/s). Returns `null`
+ * outside Tauri.
  */
 export async function getPeriodResults(
   projectId: string,
   period: number,
   scenarioId?: string | null,
 ): Promise<PeriodResults | null> {
-  return (
-    (await tryInvoke<PeriodResults | null>("get_period_results", {
-      projectId,
-      period,
-      scenarioId: scenarioId ?? null,
-    })) ?? null
-  );
+  const buf = await tryInvoke<ArrayBuffer>("get_period_results", {
+    projectId,
+    period,
+    scenarioId: scenarioId ?? null,
+  });
+  if (!(buf instanceof ArrayBuffer)) return null;
+  return decodePeriodResults(buf);
 }

@@ -10,8 +10,12 @@ import {
 } from "react";
 import { perfTrace } from "../perfTrace";
 import type { Link, Node } from "../types";
-import { tryInvoke } from "./ipc";
 import { useNetworkVersion } from "./NetworkVersionContext";
+import {
+  fetchNetworkSnapshot,
+  listenNetworkChangedPayload,
+  type PatchedElement,
+} from "./network";
 
 export interface NetworkSummary {
   totalNodes: number;
@@ -38,6 +42,70 @@ interface NetworkDataCtx {
 interface NetworkSnapshotDto {
   nodes: Node[];
   links: Link[];
+}
+
+/**
+ * The backend omits always-null optional DTO fields from its JSON instead of
+ * serialising explicit `null`s (a ~40% snapshot payload cut at 46k nodes).
+ * `Node.pressure` / `Node.demand` are non-optional (`number | null`) in the
+ * frontend type and some consumers compare them with strict `!== null`, so
+ * fill them back in on receipt. Mutates in place — callers pass freshly
+ * fetched, not-yet-shared arrays.
+ */
+export function normalizeNodes(nodes: Node[]): Node[] {
+  for (const n of nodes) {
+    if (n.pressure === undefined) n.pressure = null;
+    if (n.demand === undefined) n.demand = null;
+  }
+  return nodes;
+}
+
+/** Replace the element with the same id, or append when absent (mirrors the
+ *  backend's cache update). Returns a new array for React state identity. */
+export function upsertById<T extends { id: string }>(
+  items: T[],
+  updated: T,
+): T[] {
+  const idx = items.findIndex((el) => el.id === updated.id);
+  if (idx < 0) return [...items, updated];
+  const next = items.slice();
+  next[idx] = updated;
+  return next;
+}
+
+/** Upsert each update in order. Untouched entries keep their object identity
+ *  (the perf contract that lets memoised consumers skip re-render work);
+ *  returns the input array unchanged when `updates` is empty. */
+export function upsertAllById<T extends { id: string }>(
+  items: T[],
+  updates: T[],
+): T[] {
+  let next = items;
+  for (const u of updates) next = upsertById(next, u);
+  return next;
+}
+
+/**
+ * Pure equivalent of the `network-changed` delta path: apply the patched
+ * element DTOs from a delta payload to the current node/link arrays and
+ * return the next arrays. Patched nodes are normalised in place (see
+ * `normalizeNodes`). Arrays with no matching patches are returned by
+ * reference, and untouched entries keep their identity.
+ */
+export function applyElementDeltas(
+  nodes: Node[],
+  links: Link[],
+  elements: PatchedElement[],
+): { nodes: Node[]; links: Link[] } {
+  const patchedNodes = elements.flatMap((el) => (el.node ? [el.node] : []));
+  const patchedLinks = elements.flatMap((el) => (el.link ? [el.link] : []));
+  return {
+    nodes:
+      patchedNodes.length > 0
+        ? upsertAllById(nodes, normalizeNodes(patchedNodes))
+        : nodes,
+    links: upsertAllById(links, patchedLinks),
+  };
 }
 
 function summarizeNetwork(nodes: Node[], links: Link[]): NetworkSummary {
@@ -124,29 +192,78 @@ export function NetworkDataProvider({ children }: { children: ReactNode }) {
   const [links, setLinks] = useState<Link[]>([]);
   const [loading, setLoading] = useState(false);
   const skipNextFetchRef = useRef(false);
+  // Set when a `network-changed` event without a delta payload arrives (a
+  // structural mutation): the next version-triggered fetch must run even if a
+  // delta event in the same batch requested a skip.
+  const fullRefetchNeededRef = useRef(false);
 
   const primeNetworkData = useCallback((snapshot: NetworkSnapshotDto) => {
     skipNextFetchRef.current = true;
-    setNodes(snapshot.nodes);
+    fullRefetchNeededRef.current = false;
+    setNodes(normalizeNodes(snapshot.nodes));
     setLinks(snapshot.links);
     setLoading(false);
   }, []);
 
+  // Apply single-element deltas from `network-changed` events in place.
+  // Element-scoped edits (patch_element / patch_elements /
+  // patch_node_position) carry the updated DTOs, so a 92k-element snapshot
+  // refetch per edit is unnecessary; events without a payload (create /
+  // delete / structural changes) still trigger the full refetch below via
+  // the version bump from NetworkVersionContext.
   useEffect(() => {
-    if (skipNextFetchRef.current) {
+    let unlisten: (() => void) | null = null;
+    let disposed = false;
+    listenNetworkChangedPayload((payload) => {
+      if (!payload || payload.elements.length === 0) {
+        fullRefetchNeededRef.current = true;
+        return;
+      }
+      skipNextFetchRef.current = true;
+      const patchedNodes = payload.elements.flatMap((el) =>
+        el.node ? [el.node] : [],
+      );
+      const patchedLinks = payload.elements.flatMap((el) =>
+        el.link ? [el.link] : [],
+      );
+      if (patchedNodes.length > 0) {
+        normalizeNodes(patchedNodes);
+        setNodes((prev) => upsertAllById(prev, patchedNodes));
+      }
+      if (patchedLinks.length > 0) {
+        setLinks((prev) => upsertAllById(prev, patchedLinks));
+      }
+    }).then((fn) => {
+      if (disposed) fn();
+      else unlisten = fn;
+    });
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (skipNextFetchRef.current && !fullRefetchNeededRef.current) {
       skipNextFetchRef.current = false;
       setLoading(false);
       return;
     }
+    skipNextFetchRef.current = false;
+    fullRefetchNeededRef.current = false;
 
     let cancelled = false;
     setLoading(true);
     const fetchStartedAt = performance.now();
 
-    tryInvoke<NetworkSnapshotDto>("get_network_snapshot")
+    // Binary snapshot fetch + decode (see `decodeNetworkSnapshot`). The
+    // decoder already emits explicit nulls, so `normalizeNodes` finds nothing
+    // left to fill in — kept as the single normalisation seam shared with the
+    // JSON delta path.
+    fetchNetworkSnapshot()
       .then((snapshot) => {
         if (cancelled) return;
-        const nextNodes = snapshot?.nodes ?? [];
+        const nextNodes = normalizeNodes(snapshot?.nodes ?? []);
         const nextLinks = snapshot?.links ?? [];
         const nodeCount = nextNodes.length;
         const linkCount = nextLinks.length;
@@ -159,6 +276,13 @@ export function NetworkDataProvider({ children }: { children: ReactNode }) {
             linkCount,
           });
         }
+      })
+      .catch((err: unknown) => {
+        // A decode failure is a frontend/backend layout mismatch — surface it
+        // loudly and keep the previous data instead of silently rendering an
+        // empty network. (Command failures are already reported to the app
+        // shell via `tryInvoke`'s onIpcError inside fetchNetworkSnapshot.)
+        console.error("[network] get_network_snapshot decode failed:", err);
       })
       .finally(() => {
         if (!cancelled) setLoading(false);

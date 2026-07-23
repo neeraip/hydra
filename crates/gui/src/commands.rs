@@ -33,7 +33,7 @@
 //! |---|---|---|
 //! | `simulation_progress` | `SimulationProgressDto` | ≤1 emit per 125 ms + always on completion/failure |
 //! | `run_queue_update` | `Vec<RunQueueItemDto>` | on every queue state change |
-//! | `network-changed` | `null` | on every mutating command (`patch_element`, `patch_node_position`, `delete_element`) |
+//! | `network-changed` | `NetworkChangedPayload` or `null` | on every mutating command. Element-scoped edits (`patch_element`, `patch_elements`, `patch_node_position`) carry the updated element DTOs so the frontend can patch in place; structural mutations emit `null`, which triggers a full snapshot refetch. |
 //!
 //! # Run queue
 //!
@@ -591,7 +591,7 @@ pub fn list_projects(app: tauri::AppHandle) -> Result<Vec<Project>, String> {
 /// currently held in managed state are copied into the bundle as the
 /// project's canonical base model so the bundle is self-contained on disk
 /// even if the original source file is later moved or deleted.
-#[tauri::command]
+#[tauri::command(async)]
 /// Create a new project directory with `meta.json` and `base/` subdirectories.
 pub fn create_project(
     app: tauri::AppHandle,
@@ -602,14 +602,17 @@ pub fn create_project(
     validate_id(&id)?;
     let app_data = app_data_dir(&app)?;
 
-    // Snapshot the currently loaded network (if any).
-    let (inp_bytes, node_count, link_count) = match &*state.0.lock() {
-        NetworkStateInner::Loaded { raw_bytes, dto, .. } => (
-            Some(raw_bytes.clone()),
-            dto.nodes.len() as u32,
-            dto.links.len() as u32,
-        ),
-        NetworkStateInner::Empty => (None, 0, 0),
+    // Snapshot the currently loaded network (if any). `up_to_date_raw_bytes`
+    // re-serialises first when in-memory edits have not been flushed yet.
+    let (inp_bytes, node_count, link_count) = {
+        let mut guard = state.0.lock();
+        let bytes = guard.up_to_date_raw_bytes().cloned();
+        match &*guard {
+            NetworkStateInner::Loaded { dto, .. } => {
+                (bytes, dto.nodes.len() as u32, dto.links.len() as u32)
+            }
+            NetworkStateInner::Empty => (None, 0, 0),
+        }
     };
 
     let project_dir = bundle::project_dir(&app_data, &id);
@@ -655,14 +658,16 @@ pub fn create_project(
 #[serde(rename_all = "camelCase")]
 pub struct LoadedProject {
     pub project: Project,
-    /// `None` when the bundle has no `base/model.inp` (draft project).
+    /// Always `None` — the frontend fetches the network separately via
+    /// `load_project_network`, so the full DTO is no longer serialised into
+    /// this payload. The field is kept for wire-format compatibility.
     pub network: Option<NetworkDto>,
 }
 
 /// Open an existing project from disk. Reads the metadata, and if a base model
 /// is present, parses it into [`NetworkState`] so the rest of the app can read
 /// nodes/links/results from it.
-#[tauri::command]
+#[tauri::command(async)]
 /// Read project `meta.json` and derive simulation state from `results.out` presence.
 pub fn load_project(
     app: tauri::AppHandle,
@@ -692,22 +697,26 @@ pub fn load_project(
         .unwrap_or_else(meta::now_secs);
 
     // If the bundle has a base model on disk, parse it and populate state.
+    // The parsed network and its DTO are intentionally *not* returned to the
+    // caller: the frontend fetches the snapshot separately via
+    // `load_project_network` / `get_network_snapshot`, so returning the full
+    // network here would serialise tens of MB that are immediately discarded.
     let model_path = bundle::base_model_path(&app_data, &id);
-    let (network, _raw_net) = if model_path.exists() {
+    if model_path.exists() {
         let bytes = std::fs::read(&model_path).map_err(|e| e.to_string())?;
         let net = hydra::io::parse(&bytes).map_err(|e| format!("{e:?}"))?;
         let dto = network_to_dto(&net);
         *state.0.lock() = NetworkStateInner::Loaded {
             raw_bytes: bytes,
-            network: net.clone(),
-            dto: dto.clone(),
+            dirty: false,
+            network: net,
+            dto,
             owner_project_id: Some(id.clone()),
+            owner_scenario_id: None,
         };
-        (Some(dto), Some(net))
     } else {
         *state.0.lock() = NetworkStateInner::Empty;
-        (None, None)
-    };
+    }
 
     Ok(Some(LoadedProject {
         project: project_to_dto(
@@ -719,7 +728,7 @@ pub fn load_project(
             false,
             modified_at,
         ),
-        network,
+        network: None,
     }))
 }
 
@@ -1142,7 +1151,7 @@ pub fn list_scenarios(
 /// `Some`, the parent's model.inp is copied into the new scenario directory
 /// as a starting point; otherwise the base model is used. Returns the new
 /// `ScenarioDto`.
-#[tauri::command]
+#[tauri::command(async)]
 /// Create a new scenario directory with `meta.json`, copying `base/model.inp`.
 pub fn create_scenario(
     app: tauri::AppHandle,
@@ -1372,24 +1381,35 @@ pub struct NodeDto {
     pub elevation: f64,
     /// Base demand in L/s (converted from internal ft³/s); 0 for non-junctions.
     pub base_demand: f64,
-    /// `null` until a simulation result is available.
+    /// Omitted until a simulation result is available.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pressure: Option<f64>,
-    /// `null` until a simulation result is available.
+    /// Omitted until a simulation result is available.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub demand: Option<f64>,
     // ── Tank-only fields ─────────────────────────────────────────────────
-    /// Minimum water level above bottom (m); `null` for non-tanks.
+    // All optional fields are omitted (not serialised as `null`) when absent —
+    // at 46k nodes the explicit nulls dominated the snapshot payload. The
+    // frontend normalises omitted fields back to `null` on receipt.
+    /// Minimum water level above bottom (m); omitted for non-tanks.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tank_min_level: Option<f64>,
-    /// Maximum water level above bottom (m); `null` for non-tanks.
+    /// Maximum water level above bottom (m); omitted for non-tanks.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tank_max_level: Option<f64>,
-    /// Initial water level above bottom (m); `null` for non-tanks.
+    /// Initial water level above bottom (m); omitted for non-tanks.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tank_initial_level: Option<f64>,
-    /// Tank diameter (m); `null` for non-tanks or volume-curve tanks.
+    /// Tank diameter (m); omitted for non-tanks or volume-curve tanks.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tank_diameter: Option<f64>,
-    /// Volume curve ID; `null` when the tank uses a simple cylindrical model.
+    /// Volume curve ID; omitted when the tank uses a simple cylindrical model.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tank_volume_curve: Option<String>,
     // ── Reservoir-only fields ─────────────────────────────────────────────
-    /// Pattern ID modulating head over time; `null` for reservoirs without a
-    /// head pattern, and `null` for junctions / tanks.
+    /// Pattern ID modulating head over time; omitted for reservoirs without a
+    /// head pattern, and omitted for junctions / tanks.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub head_pattern: Option<String>,
 }
 
@@ -1412,22 +1432,30 @@ pub struct LinkDto {
     /// Hazen-Williams roughness coefficient (C); 0 for pumps/valves.
     pub roughness: f64,
     // ── Pump-only fields ──────────────────────────────────────────────────
-    /// Head-flow curve ID; `null` for constant-power pumps and non-pumps.
+    // Optional fields are omitted (not serialised as `null`) when absent —
+    // see the matching note on `NodeDto`.
+    /// Head-flow curve ID; omitted for constant-power pumps and non-pumps.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pump_curve: Option<String>,
-    /// Rated power in kW; `null` for curve-based pumps and non-pumps.
+    /// Rated power in kW; omitted for curve-based pumps and non-pumps.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pump_power_kw: Option<f64>,
-    /// Initial relative speed (1.0 = rated speed); `null` for non-pumps.
+    /// Initial relative speed (1.0 = rated speed); omitted for non-pumps.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pump_speed: Option<f64>,
     // ── Valve-only fields ────────────────────────────────────────────────
     /// Valve type: `"PRV"` | `"PSV"` | `"FCV"` | `"TCV"` | `"GPV"` | `"PBV"` | `"PCV"`;
-    /// `null` for non-valves.
+    /// omitted for non-valves.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub valve_type: Option<String>,
     /// Valve setting in display units: head (m) for PRV/PSV/PBV, flow (L/s) for FCV,
-    /// dimensionless loss coefficient for TCV.  `null` for GPV/PCV (curve-based) and
+    /// dimensionless loss coefficient for TCV.  Omitted for GPV/PCV (curve-based) and
     /// non-valves.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub valve_setting: Option<f64>,
     /// Curve ID for GPV (`GpvHeadloss`) and PCV (`PcvLossRatio`) valve types;
-    /// `null` for all other types.
+    /// omitted for all other types.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub valve_curve: Option<String>,
 }
 
@@ -1540,7 +1568,7 @@ pub struct RuleDto {
 }
 
 /// The full network payload returned to the frontend after parsing.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NetworkDto {
     pub nodes: Vec<NodeDto>,
@@ -1563,7 +1591,15 @@ pub enum NetworkStateInner {
     Empty,
     Loaded {
         /// INP bytes kept for `save_project` / `create_project`.
+        ///
+        /// May be stale when `dirty` is `true` — mutating commands only flag
+        /// the network as dirty instead of re-serialising the whole INP on
+        /// every edit. Always read these bytes through
+        /// [`NetworkStateInner::up_to_date_raw_bytes`].
         raw_bytes: Vec<u8>,
+        /// `true` when `network` has been mutated since `raw_bytes` was last
+        /// serialised from it.
+        dirty: bool,
         /// Parsed network — cached to avoid re-parsing on every `patch_element` call.
         network: hydra::Network,
         dto: NetworkDto,
@@ -1574,7 +1610,39 @@ pub enum NetworkStateInner {
         /// not match, so a stale `activeProjectId` in the frontend can never
         /// silently overwrite another project's `model.inp`.
         owner_project_id: Option<String>,
+        /// Scenario that owns this network — `Some(id)` when the loaded INP is
+        /// a scenario's `model.inp`, `None` for the base model (or a file-picker
+        /// load). Lets read commands decide whether the cached parse matches a
+        /// `(project_id, scenario_id)` target without re-reading from disk.
+        owner_scenario_id: Option<String>,
     },
+}
+
+impl NetworkStateInner {
+    /// Return the INP bytes for the loaded network, re-serialising them from
+    /// the parsed network first when mutations have occurred since the last
+    /// serialisation (`dirty`). Returns `None` when no network is loaded.
+    ///
+    /// Serialisation happens while the caller holds the state lock, but only
+    /// at consumption points (save/export/run) instead of once per mutation —
+    /// mutating commands merely set `dirty`.
+    fn up_to_date_raw_bytes(&mut self) -> Option<&Vec<u8>> {
+        match self {
+            NetworkStateInner::Loaded {
+                raw_bytes,
+                dirty,
+                network,
+                ..
+            } => {
+                if *dirty {
+                    *raw_bytes = hydra::write_inp(network);
+                    *dirty = false;
+                }
+                Some(raw_bytes)
+            }
+            NetworkStateInner::Empty => None,
+        }
+    }
 }
 
 /// Tauri managed state — holds the most recently loaded network (if any).
@@ -1665,9 +1733,11 @@ pub async fn open_and_load_network(
 
     *state.0.lock() = NetworkStateInner::Loaded {
         raw_bytes: bytes,
+        dirty: false,
         network,
         dto: dto.clone(),
         owner_project_id: None,
+        owner_scenario_id: None,
     };
     Ok(Some(dto))
 }
@@ -1780,7 +1850,7 @@ fn summarize_unknown_pattern_refs(errors: &[hydra::ValidationError]) -> Option<S
     Some(summary)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 /// Return the node list for the loaded network.
 pub fn get_nodes(state: tauri::State<'_, NetworkState>) -> Vec<NodeDto> {
     match &*state.0.lock() {
@@ -1789,31 +1859,188 @@ pub fn get_nodes(state: tauri::State<'_, NetworkState>) -> Vec<NodeDto> {
     }
 }
 
-/// Combined snapshot used by the frontend to fetch nodes and links in one IPC call.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct NetworkSnapshotDto {
-    pub nodes: Vec<NodeDto>,
-    pub links: Vec<LinkDto>,
+/// Version stamped into the first header word of the binary network snapshot.
+const NETWORK_SNAPSHOT_VERSION: u32 = 1;
+/// Flag bit set in the header's `flags` word when the payload carries a
+/// snapshot. Clear = "no network for this target" — the binary equivalent of
+/// the old `null` return from `load_project_network`.
+const NETWORK_SNAPSHOT_FLAG_PRESENT: u32 = 1;
+
+/// Encode the cached DTO's nodes + links into the compact little-endian
+/// columnar layout consumed by the frontend's `decodeNetworkSnapshot`
+/// (`hooks/network.ts`), mirroring the `encode_period_results` pattern.
+///
+/// ```text
+/// offset  size        content
+/// 0       4           version   (u32 LE, = NETWORK_SNAPSHOT_VERSION)
+/// 4       4           flags     (u32 LE; bit 0 = snapshot present)
+/// 8       4           n_nodes   (u32 LE)
+/// 12      4           n_links   (u32 LE)
+/// 16      8·n_nodes   node x                  (f64 LE)
+/// …       8·n_nodes   node y                  (f64 LE)
+/// …       4·n_nodes   node elevation          (f32 LE, m)
+/// …       4·n_nodes   node base_demand        (f32 LE, L/s)
+/// …       4·n_nodes   node pressure           (f32 LE; NaN = absent)
+/// …       4·n_nodes   node demand             (f32 LE; NaN = absent)
+/// …       4·n_nodes   node tank_min_level     (f32 LE; NaN = absent)
+/// …       4·n_nodes   node tank_max_level     (f32 LE; NaN = absent)
+/// …       4·n_nodes   node tank_initial_level (f32 LE; NaN = absent)
+/// …       4·n_nodes   node tank_diameter      (f32 LE; NaN = absent)
+/// …       4·n_links   link velocity           (f32 LE)
+/// …       4·n_links   link diameter           (f32 LE, mm)
+/// …       4·n_links   link length             (f32 LE, m)
+/// …       4·n_links   link roughness          (f32 LE)
+/// …       4·n_links   link pump_power_kw      (f32 LE; NaN = absent)
+/// …       4·n_links   link pump_speed         (f32 LE; NaN = absent)
+/// …       4·n_links   link valve_setting      (f32 LE; NaN = absent)
+/// …       1·n_nodes   node kind (u8: 0 junction, 1 tank, 2 reservoir)
+/// …       1·n_links   link kind (u8: 0 pipe, 1 pump, 2 valve)
+/// then 9 string columns, each `u32 LE byte_len` + newline-joined UTF-8:
+///   node id | node tank_volume_curve | node head_pattern |
+///   link id | link from_id | link to_id |
+///   link pump_curve | link valve_type | link valve_curve
+/// ```
+///
+/// Column ordering keeps every f64 column 8-byte-aligned and every f32
+/// column 4-byte-aligned relative to the buffer start, so the decoder can
+/// use zero-copy typed-array views. Optional numeric fields use an NaN
+/// sentinel (`None` ⇔ NaN — real values are never NaN here, see
+/// `node_to_dto` / `link_to_dto`), preserving the null-vs-0 distinction.
+/// Optional string columns encode `None` as an empty string (IDs are never
+/// empty, and INP IDs cannot contain whitespace, so `\n` is a safe joiner).
+///
+/// Compared to the previous JSON `NetworkSnapshotDto` (~15 MB at 46k nodes +
+/// 46k links) this is ~5 MB with no JSON parse on the webview main thread.
+fn encode_network_snapshot(dto: &NetworkDto) -> Vec<u8> {
+    fn push_f32s<T>(buf: &mut Vec<u8>, items: &[T], get: impl Fn(&T) -> f64) {
+        for it in items {
+            buf.extend_from_slice(&(get(it) as f32).to_le_bytes());
+        }
+    }
+    fn push_opt_f32s<T>(buf: &mut Vec<u8>, items: &[T], get: impl Fn(&T) -> Option<f64>) {
+        for it in items {
+            let v = get(it).map_or(f32::NAN, |x| x as f32);
+            buf.extend_from_slice(&v.to_le_bytes());
+        }
+    }
+    /// Write one string column: u32 LE byte length + newline-joined values.
+    fn push_str_col<'a, T>(buf: &mut Vec<u8>, items: &'a [T], get: impl Fn(&'a T) -> &'a str) {
+        let len_pos = buf.len();
+        buf.extend_from_slice(&0u32.to_le_bytes());
+        let start = buf.len();
+        for (i, it) in items.iter().enumerate() {
+            if i > 0 {
+                buf.push(b'\n');
+            }
+            buf.extend_from_slice(get(it).as_bytes());
+        }
+        let byte_len = (buf.len() - start) as u32;
+        buf[len_pos..len_pos + 4].copy_from_slice(&byte_len.to_le_bytes());
+    }
+
+    let nodes = &dto.nodes;
+    let links = &dto.links;
+    let n = nodes.len();
+    let m = links.len();
+
+    // Fixed-width section is exact; string columns get a rough per-ID guess.
+    let mut buf = Vec::with_capacity(16 + 49 * n + 29 * m + 12 * n + 30 * m + 9 * 4);
+    buf.extend_from_slice(&NETWORK_SNAPSHOT_VERSION.to_le_bytes());
+    buf.extend_from_slice(&NETWORK_SNAPSHOT_FLAG_PRESENT.to_le_bytes());
+    buf.extend_from_slice(&(n as u32).to_le_bytes());
+    buf.extend_from_slice(&(m as u32).to_le_bytes());
+
+    for nd in nodes {
+        buf.extend_from_slice(&nd.x.to_le_bytes());
+    }
+    for nd in nodes {
+        buf.extend_from_slice(&nd.y.to_le_bytes());
+    }
+    push_f32s(&mut buf, nodes, |nd| nd.elevation);
+    push_f32s(&mut buf, nodes, |nd| nd.base_demand);
+    push_opt_f32s(&mut buf, nodes, |nd| nd.pressure);
+    push_opt_f32s(&mut buf, nodes, |nd| nd.demand);
+    push_opt_f32s(&mut buf, nodes, |nd| nd.tank_min_level);
+    push_opt_f32s(&mut buf, nodes, |nd| nd.tank_max_level);
+    push_opt_f32s(&mut buf, nodes, |nd| nd.tank_initial_level);
+    push_opt_f32s(&mut buf, nodes, |nd| nd.tank_diameter);
+    push_f32s(&mut buf, links, |l| l.velocity);
+    push_f32s(&mut buf, links, |l| l.diameter);
+    push_f32s(&mut buf, links, |l| l.length);
+    push_f32s(&mut buf, links, |l| l.roughness);
+    push_opt_f32s(&mut buf, links, |l| l.pump_power_kw);
+    push_opt_f32s(&mut buf, links, |l| l.pump_speed);
+    push_opt_f32s(&mut buf, links, |l| l.valve_setting);
+
+    for nd in nodes {
+        // `network_to_dto` is the only producer of these kind strings.
+        let code: u8 = match nd.kind.as_str() {
+            "junction" => 0,
+            "tank" => 1,
+            "reservoir" => 2,
+            other => {
+                debug_assert!(false, "unknown node kind {other:?}");
+                0
+            }
+        };
+        buf.push(code);
+    }
+    for l in links {
+        let code: u8 = match l.kind.as_str() {
+            "pipe" => 0,
+            "pump" => 1,
+            "valve" => 2,
+            other => {
+                debug_assert!(false, "unknown link kind {other:?}");
+                0
+            }
+        };
+        buf.push(code);
+    }
+
+    push_str_col(&mut buf, nodes, |nd| &nd.id);
+    push_str_col(&mut buf, nodes, |nd| {
+        nd.tank_volume_curve.as_deref().unwrap_or("")
+    });
+    push_str_col(&mut buf, nodes, |nd| {
+        nd.head_pattern.as_deref().unwrap_or("")
+    });
+    push_str_col(&mut buf, links, |l| &l.id);
+    push_str_col(&mut buf, links, |l| &l.from_id);
+    push_str_col(&mut buf, links, |l| &l.to_id);
+    push_str_col(&mut buf, links, |l| l.pump_curve.as_deref().unwrap_or(""));
+    push_str_col(&mut buf, links, |l| l.valve_type.as_deref().unwrap_or(""));
+    push_str_col(&mut buf, links, |l| l.valve_curve.as_deref().unwrap_or(""));
+    buf
 }
 
-#[tauri::command]
-/// Return nodes + links in one payload for the loaded network.
-pub fn get_network_snapshot(state: tauri::State<'_, NetworkState>) -> NetworkSnapshotDto {
-    match &*state.0.lock() {
-        NetworkStateInner::Loaded { dto, .. } => NetworkSnapshotDto {
-            nodes: dto.nodes.clone(),
-            links: dto.links.clone(),
-        },
-        NetworkStateInner::Empty => NetworkSnapshotDto {
-            nodes: vec![],
-            links: vec![],
-        },
-    }
+/// Header-only payload with the "present" flag clear — the binary equivalent
+/// of the old `null` return from `load_project_network` (target INP missing).
+fn encode_network_snapshot_absent() -> Vec<u8> {
+    let mut buf = Vec::with_capacity(16);
+    buf.extend_from_slice(&NETWORK_SNAPSHOT_VERSION.to_le_bytes());
+    buf.extend_from_slice(&0u32.to_le_bytes());
+    buf.extend_from_slice(&0u32.to_le_bytes());
+    buf.extend_from_slice(&0u32.to_le_bytes());
+    buf
+}
+
+#[tauri::command(async)]
+/// Return nodes + links in one compact binary payload for the loaded network
+/// (see [`encode_network_snapshot`] for the byte layout). An empty state
+/// encodes as a present-but-empty snapshot.
+pub fn get_network_snapshot(state: tauri::State<'_, NetworkState>) -> tauri::ipc::Response {
+    // Encoding is a single pure read pass over the cached DTO — doing it
+    // under the lock is cheaper than the full nodes+links clone it replaced.
+    let bytes = match &*state.0.lock() {
+        NetworkStateInner::Loaded { dto, .. } => encode_network_snapshot(dto),
+        NetworkStateInner::Empty => encode_network_snapshot(&NetworkDto::default()),
+    };
+    tauri::ipc::Response::new(bytes)
 }
 
 /// Return the links of the currently loaded network, or an empty list.
-#[tauri::command]
+#[tauri::command(async)]
 /// Return the link list for the loaded network.
 pub fn get_links(state: tauri::State<'_, NetworkState>) -> Vec<LinkDto> {
     match &*state.0.lock() {
@@ -1823,7 +2050,7 @@ pub fn get_links(state: tauri::State<'_, NetworkState>) -> Vec<LinkDto> {
 }
 
 /// Return the patterns of the currently loaded network, or an empty list.
-#[tauri::command]
+#[tauri::command(async)]
 /// Return demand/head patterns for the loaded network.
 pub fn get_patterns(state: tauri::State<'_, NetworkState>) -> Vec<PatternDto> {
     match &*state.0.lock() {
@@ -1833,7 +2060,7 @@ pub fn get_patterns(state: tauri::State<'_, NetworkState>) -> Vec<PatternDto> {
 }
 
 /// Return the curves of the currently loaded network, or an empty list.
-#[tauri::command]
+#[tauri::command(async)]
 /// Return pump/GPV/volume curves for the loaded network.
 pub fn get_curves(state: tauri::State<'_, NetworkState>) -> Vec<CurveDto> {
     match &*state.0.lock() {
@@ -1844,9 +2071,123 @@ pub fn get_curves(state: tauri::State<'_, NetworkState>) -> Vec<CurveDto> {
 
 // ── Internal helpers ─────────────────────────────────────────────────────────
 
-fn network_to_dto(network: &hydra::Network) -> NetworkDto {
-    use hydra::{LinkKind, NodeKind};
+/// Build the DTO for a single node. Shared by the full `network_to_dto`
+/// rebuild and the single-element delta path in `patch_element`.
+fn node_to_dto(network: &hydra::Network, n: &hydra::Node) -> NodeDto {
+    use hydra::NodeKind;
 
+    let kind = match &n.kind {
+        NodeKind::Junction(_) => "junction",
+        NodeKind::Reservoir(_) => "reservoir",
+        NodeKind::Tank(_) => "tank",
+    };
+    let (x, y) = network
+        .coordinates
+        .get(&n.base.id)
+        .copied()
+        .unwrap_or((0.0, 0.0));
+    let elevation = n.base.elevation * FT_TO_M;
+    let base_demand = match &n.kind {
+        NodeKind::Junction(j) => j.demands.iter().map(|d| d.base_demand).sum::<f64>() * CFS_TO_LPS,
+        _ => 0.0,
+    };
+    let (tank_min_level, tank_max_level, tank_initial_level, tank_diameter, tank_volume_curve) =
+        if let NodeKind::Tank(t) = &n.kind {
+            (
+                Some(t.min_level * FT_TO_M),
+                Some(t.max_level * FT_TO_M),
+                Some(t.initial_level * FT_TO_M),
+                Some(t.diameter * FT_TO_M),
+                t.volume_curve.clone(),
+            )
+        } else {
+            (None, None, None, None, None)
+        };
+    let head_pattern = if let NodeKind::Reservoir(r) = &n.kind {
+        r.head_pattern.clone()
+    } else {
+        None
+    };
+    NodeDto {
+        id: n.base.id.clone(),
+        kind: kind.into(),
+        x,
+        y,
+        elevation,
+        base_demand,
+        pressure: None,
+        demand: None,
+        tank_min_level,
+        tank_max_level,
+        tank_initial_level,
+        tank_diameter,
+        tank_volume_curve,
+        head_pattern,
+    }
+}
+
+/// Build the DTO for a single link with pre-resolved endpoint IDs. Shared by
+/// the full `network_to_dto` rebuild and the single-element delta path.
+fn link_to_dto(l: &hydra::Link, from_id: String, to_id: String) -> LinkDto {
+    use hydra::LinkKind;
+
+    let (kind, diameter, length, roughness) = match &l.kind {
+        LinkKind::Pipe(p) => ("pipe", p.diameter * 304.8, p.length * FT_TO_M, p.roughness),
+        LinkKind::Pump(_) => ("pump", 0.0, 0.0, 0.0),
+        LinkKind::Valve(v) => ("valve", v.diameter * 304.8, 0.0, 0.0),
+    };
+    let (pump_curve, pump_power_kw, pump_speed) = if let LinkKind::Pump(p) = &l.kind {
+        // power is stored in Watts; convert to kW for the DTO
+        let kw = p.power.map(|pw| pw / 1000.0);
+        // initial_setting on the base is the initial relative speed (ω); default 1.0
+        let speed = l.base.initial_setting.or(Some(1.0));
+        (p.head_curve.clone(), kw, speed)
+    } else {
+        (None, None, None)
+    };
+    let (valve_type, valve_setting, valve_curve) = if let LinkKind::Valve(v) = &l.kind {
+        use hydra::ValveType;
+        let vt = match v.valve_type {
+            ValveType::Prv => "PRV",
+            ValveType::Psv => "PSV",
+            ValveType::Fcv => "FCV",
+            ValveType::Tcv => "TCV",
+            ValveType::Gpv => "GPV",
+            ValveType::Pcv => "PCV",
+            ValveType::Pbv => "PBV",
+        };
+        // Convert setting from internal ft/cfs/dimensionless to display units.
+        let setting = match v.valve_type {
+            ValveType::Prv | ValveType::Psv | ValveType::Pbv => {
+                l.base.initial_setting.map(|s| s * FT_TO_M)
+            }
+            ValveType::Fcv => l.base.initial_setting.map(|s| s * CFS_TO_LPS),
+            ValveType::Tcv => l.base.initial_setting,
+            ValveType::Gpv | ValveType::Pcv => None,
+        };
+        (Some(vt.to_string()), setting, v.curve.clone())
+    } else {
+        (None, None, None)
+    };
+    LinkDto {
+        id: l.base.id.clone(),
+        kind: kind.into(),
+        from_id,
+        to_id,
+        velocity: 0.0,
+        diameter,
+        length,
+        roughness,
+        pump_curve,
+        pump_power_kw,
+        pump_speed,
+        valve_type,
+        valve_setting,
+        valve_curve,
+    }
+}
+
+fn network_to_dto(network: &hydra::Network) -> NetworkDto {
     // Build a node-index → node-id map for resolving link endpoints.
     let node_id_by_index: std::collections::HashMap<usize, &str> = network
         .nodes
@@ -1854,113 +2195,16 @@ fn network_to_dto(network: &hydra::Network) -> NetworkDto {
         .map(|n| (n.base.index, n.base.id.as_str()))
         .collect();
 
-    const FT_TO_M: f64 = 0.3048;
-    const CFS_TO_LPS: f64 = 28.3168;
-
     let nodes = network
         .nodes
         .iter()
-        .map(|n| {
-            let kind = match &n.kind {
-                NodeKind::Junction(_) => "junction",
-                NodeKind::Reservoir(_) => "reservoir",
-                NodeKind::Tank(_) => "tank",
-            };
-            let (x, y) = network
-                .coordinates
-                .get(&n.base.id)
-                .copied()
-                .unwrap_or((0.0, 0.0));
-            let elevation = n.base.elevation * FT_TO_M;
-            let base_demand = match &n.kind {
-                NodeKind::Junction(j) => {
-                    j.demands.iter().map(|d| d.base_demand).sum::<f64>() * CFS_TO_LPS
-                }
-                _ => 0.0,
-            };
-            let (
-                tank_min_level,
-                tank_max_level,
-                tank_initial_level,
-                tank_diameter,
-                tank_volume_curve,
-            ) = if let NodeKind::Tank(t) = &n.kind {
-                (
-                    Some(t.min_level * FT_TO_M),
-                    Some(t.max_level * FT_TO_M),
-                    Some(t.initial_level * FT_TO_M),
-                    Some(t.diameter * FT_TO_M),
-                    t.volume_curve.clone(),
-                )
-            } else {
-                (None, None, None, None, None)
-            };
-            let head_pattern = if let NodeKind::Reservoir(r) = &n.kind {
-                r.head_pattern.clone()
-            } else {
-                None
-            };
-            NodeDto {
-                id: n.base.id.clone(),
-                kind: kind.into(),
-                x,
-                y,
-                elevation,
-                base_demand,
-                pressure: None,
-                demand: None,
-                tank_min_level,
-                tank_max_level,
-                tank_initial_level,
-                tank_diameter,
-                tank_volume_curve,
-                head_pattern,
-            }
-        })
+        .map(|n| node_to_dto(network, n))
         .collect();
 
     let links = network
         .links
         .iter()
         .map(|l| {
-            let (kind, diameter, length, roughness) = match &l.kind {
-                LinkKind::Pipe(p) => ("pipe", p.diameter * 304.8, p.length * FT_TO_M, p.roughness),
-                LinkKind::Pump(_) => ("pump", 0.0, 0.0, 0.0),
-                LinkKind::Valve(v) => ("valve", v.diameter * 304.8, 0.0, 0.0),
-            };
-            let (pump_curve, pump_power_kw, pump_speed) = if let LinkKind::Pump(p) = &l.kind {
-                // power is stored in Watts; convert to kW for the DTO
-                let kw = p.power.map(|pw| pw / 1000.0);
-                // initial_setting on the base is the initial relative speed (ω); default 1.0
-                let speed = l.base.initial_setting.or(Some(1.0));
-                (p.head_curve.clone(), kw, speed)
-            } else {
-                (None, None, None)
-            };
-            let (valve_type, valve_setting, valve_curve) = if let LinkKind::Valve(v) = &l.kind {
-                use hydra::ValveType;
-                let vt = match v.valve_type {
-                    ValveType::Prv => "PRV",
-                    ValveType::Psv => "PSV",
-                    ValveType::Fcv => "FCV",
-                    ValveType::Tcv => "TCV",
-                    ValveType::Gpv => "GPV",
-                    ValveType::Pcv => "PCV",
-                    ValveType::Pbv => "PBV",
-                };
-                // Convert setting from internal ft/cfs/dimensionless to display units.
-                let setting = match v.valve_type {
-                    ValveType::Prv | ValveType::Psv | ValveType::Pbv => {
-                        l.base.initial_setting.map(|s| s * FT_TO_M)
-                    }
-                    ValveType::Fcv => l.base.initial_setting.map(|s| s * CFS_TO_LPS),
-                    ValveType::Tcv => l.base.initial_setting,
-                    ValveType::Gpv | ValveType::Pcv => None,
-                };
-                (Some(vt.to_string()), setting, v.curve.clone())
-            } else {
-                (None, None, None)
-            };
             let from_id = node_id_by_index
                 .get(&l.base.from_node)
                 .map(|s| s.to_string())
@@ -1969,22 +2213,7 @@ fn network_to_dto(network: &hydra::Network) -> NetworkDto {
                 .get(&l.base.to_node)
                 .map(|s| s.to_string())
                 .unwrap_or_default();
-            LinkDto {
-                id: l.base.id.clone(),
-                kind: kind.into(),
-                from_id,
-                to_id,
-                velocity: 0.0,
-                diameter,
-                length,
-                roughness,
-                pump_curve,
-                pump_power_kw,
-                pump_speed,
-                valve_type,
-                valve_setting,
-                valve_curve,
-            }
+            link_to_dto(l, from_id, to_id)
         })
         .collect();
 
@@ -2588,24 +2817,64 @@ pub struct ResultMetaDto {
     pub quality_mode: String,
 }
 
-/// Flat per-period result arrays returned by `get_period_results`.
-/// Values are in SI units (L/s, m, m/s) — the same units the frontend expects.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct PeriodResultsDto {
-    pub node_demand: Vec<f32>,
-    pub node_head: Vec<f32>,
-    pub node_pressure: Vec<f32>,
-    pub link_flow: Vec<f32>,
-    pub link_velocity: Vec<f32>,
-    pub link_headloss: Vec<f32>,
-    pub link_status: Vec<f32>,
-    /// Per-node quality values.  `None` when no quality simulation was run.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub node_quality: Option<Vec<f32>>,
-    /// Per-link quality values.  `None` when no quality simulation was run.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub link_quality: Option<Vec<f32>>,
+/// Flag bit set in the `get_period_results` binary header when the per-node /
+/// per-link quality arrays are present.
+const PERIOD_RESULTS_FLAG_QUALITY: u32 = 1;
+
+/// Encode one period's flat result arrays into the compact little-endian
+/// binary layout consumed by the frontend's `decodePeriodResults`:
+///
+/// ```text
+/// offset  size            content
+/// 0       4               n_nodes  (u32 LE)
+/// 4       4               n_links  (u32 LE)
+/// 8       4               flags    (u32 LE; bit 0 = quality arrays present)
+/// 12      4·n_nodes       node_demand   (f32 LE, L/s)
+/// …       4·n_nodes       node_head     (f32 LE, m)
+/// …       4·n_nodes       node_pressure (f32 LE, m)
+/// …       4·n_links       link_flow     (f32 LE, L/s)
+/// …       4·n_links       link_velocity (f32 LE, m/s)
+/// …       4·n_links       link_headloss (f32 LE)
+/// …       4·n_links       link_status   (f32 LE)
+/// …       4·n_nodes       node_quality  (f32 LE; only when flag bit 0)
+/// …       4·n_links       link_quality  (f32 LE; only when flag bit 0)
+/// ```
+///
+/// Compared to the previous JSON DTO (~3.2 MB per timeline step at 46k nodes +
+/// 46k links) this is ~1.3 MB with no number-to-text round-trip.
+fn encode_period_results(pr: &hydra::io::out_reader::PeriodResult, has_quality: bool) -> Vec<u8> {
+    let n_nodes = pr.node_demand.len();
+    let n_links = pr.link_flow.len();
+    let mut len = 12 + 4 * (3 * n_nodes + 4 * n_links);
+    if has_quality {
+        len += 4 * (n_nodes + n_links);
+    }
+    let mut buf = Vec::with_capacity(len);
+    buf.extend_from_slice(&(n_nodes as u32).to_le_bytes());
+    buf.extend_from_slice(&(n_links as u32).to_le_bytes());
+    let flags: u32 = if has_quality {
+        PERIOD_RESULTS_FLAG_QUALITY
+    } else {
+        0
+    };
+    buf.extend_from_slice(&flags.to_le_bytes());
+    let mut push = |values: &[f32]| {
+        for v in values {
+            buf.extend_from_slice(&v.to_le_bytes());
+        }
+    };
+    push(&pr.node_demand);
+    push(&pr.node_head);
+    push(&pr.node_pressure);
+    push(&pr.link_flow);
+    push(&pr.link_velocity);
+    push(&pr.link_headloss);
+    push(&pr.link_status);
+    if has_quality {
+        push(&pr.node_quality);
+        push(&pr.link_quality);
+    }
+    buf
 }
 
 /// Simulation targets (project/scenario pairs) whose `results.out` is
@@ -2679,10 +2948,10 @@ pub async fn run_simulation(
         std::fs::read(&path).map_err(|e| format!("Cannot read base model '{}': {}", pid, e))?
     } else {
         // Fall back to the in-memory network (opened via file picker).
-        let guard = state.0.lock();
-        match &*guard {
-            NetworkStateInner::Loaded { raw_bytes, .. } => raw_bytes.clone(),
-            NetworkStateInner::Empty => return Ok(None),
+        let mut guard = state.0.lock();
+        match guard.up_to_date_raw_bytes() {
+            Some(bytes) => bytes.clone(),
+            None => return Ok(None),
         }
     };
 
@@ -2801,7 +3070,7 @@ fn check_save_target(owner_project_id: Option<&str>, id: &str) -> Result<(), Str
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 /// Flush in-memory patches to `base/model.inp`; update node/link counts in `meta.json`.
 pub fn save_project(
     id: String,
@@ -2814,20 +3083,22 @@ pub fn save_project(
         validate_id(sid)?;
     }
     let (raw, node_count, link_count) = {
-        let guard = state.0.lock();
+        let mut guard = state.0.lock();
         match &*guard {
             NetworkStateInner::Loaded {
-                raw_bytes,
-                dto,
-                owner_project_id,
-                ..
-            } => {
-                check_save_target(owner_project_id.as_deref(), &id)?;
-                (
-                    raw_bytes.clone(),
-                    dto.nodes.len() as u32,
-                    dto.links.len() as u32,
-                )
+                owner_project_id, ..
+            } => check_save_target(owner_project_id.as_deref(), &id)?,
+            NetworkStateInner::Empty => return Ok(false),
+        }
+        // Serialise pending in-memory edits (dirty flag) exactly once, here at
+        // the save point, instead of on every mutation.
+        let raw = match guard.up_to_date_raw_bytes() {
+            Some(bytes) => bytes.clone(),
+            None => return Ok(false),
+        };
+        match &*guard {
+            NetworkStateInner::Loaded { dto, .. } => {
+                (raw, dto.nodes.len() as u32, dto.links.len() as u32)
             }
             NetworkStateInner::Empty => return Ok(false),
         }
@@ -3136,13 +3407,32 @@ fn apply_dto_to_options(
 
 /// Parse the base `model.inp` for `project_id` and return its \[TIMES\]/\[OPTIONS\]
 /// values. Returns `None` when the project has no base INP yet (draft).
-#[tauri::command]
+#[tauri::command(async)]
 /// Return simulation parameter overrides for a project.
+///
+/// Served from the cached parsed network in `NetworkState` when it holds this
+/// project's base model — avoids re-reading and re-parsing a multi-MB INP on
+/// every call. Falls back to the on-disk base INP otherwise.
 pub fn get_sim_params(
     app: tauri::AppHandle,
+    state: tauri::State<'_, NetworkState>,
     project_id: String,
 ) -> Result<Option<SimParamsDto>, String> {
     validate_id(&project_id)?;
+    {
+        let guard = state.0.lock();
+        if let NetworkStateInner::Loaded {
+            network,
+            owner_project_id: Some(owner),
+            owner_scenario_id: None,
+            ..
+        } = &*guard
+        {
+            if *owner == project_id {
+                return Ok(Some(options_to_dto(&network.options)));
+            }
+        }
+    }
     let app_data = app_data_dir(&app)?;
     let path = bundle::base_model_path(&app_data, &project_id);
     if !path.exists() {
@@ -3156,10 +3446,11 @@ pub fn get_sim_params(
 /// Persist new sim params for `project_id` by parsing the base INP, applying
 /// the DTO, rewriting the base INP, and propagating to every scenario INP so
 /// they stay in lockstep.
-#[tauri::command]
+#[tauri::command(async)]
 /// Persist simulation parameter overrides for a project.
 pub fn update_sim_params(
     app: tauri::AppHandle,
+    state: tauri::State<'_, NetworkState>,
     project_id: String,
     params: SimParamsDto,
 ) -> Result<(), String> {
@@ -3171,12 +3462,70 @@ pub fn update_sim_params(
     if !base_path.exists() {
         return Err("project has no base model".into());
     }
-    {
-        let bytes = std::fs::read(&base_path).map_err(|e| e.to_string())?;
-        let mut network = hydra::io::parse(&bytes).map_err(|e| format!("{e:?}"))?;
-        apply_dto_to_options(&mut network.options, &params)?;
-        let new_bytes = hydra::write_inp(&network);
-        bundle::atomic_write(&base_path, &new_bytes).map_err(|e| e.to_string())?;
+
+    // 1a) Fast path: the cached parse already holds this project's base model
+    // and has no pending unsaved edits (`!dirty`, i.e. memory == disk), so the
+    // new bytes can be serialised straight from the cache without re-reading
+    // and re-parsing the base INP.
+    let cached_bytes: Option<Vec<u8>> = {
+        let mut guard = state.0.lock();
+        if let NetworkStateInner::Loaded {
+            raw_bytes,
+            dirty: false,
+            network,
+            owner_project_id: Some(owner),
+            owner_scenario_id: None,
+            ..
+        } = &mut *guard
+        {
+            if *owner == project_id {
+                // Apply to a scratch copy first so a validation error cannot
+                // leave the cached network half-updated.
+                let mut new_options = network.options.clone();
+                apply_dto_to_options(&mut new_options, &params)?;
+                network.options = new_options;
+                // `dirty` stays false: raw_bytes is refreshed right here.
+                *raw_bytes = hydra::write_inp(network);
+                Some(raw_bytes.clone())
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    };
+    match cached_bytes {
+        Some(bytes) => {
+            bundle::atomic_write(&base_path, &bytes).map_err(|e| e.to_string())?;
+        }
+        None => {
+            let bytes = std::fs::read(&base_path).map_err(|e| e.to_string())?;
+            let mut network = hydra::io::parse(&bytes).map_err(|e| format!("{e:?}"))?;
+            apply_dto_to_options(&mut network.options, &params)?;
+            let new_bytes = hydra::write_inp(&network);
+            bundle::atomic_write(&base_path, &new_bytes).map_err(|e| e.to_string())?;
+
+            // Keep the cached parse (base with unsaved edits, or a loaded
+            // scenario of this project) in lockstep so `get_sim_params` served
+            // from the cache reflects the new options; `dirty` makes the next
+            // raw-bytes consumer re-serialise.
+            let mut guard = state.0.lock();
+            if let NetworkStateInner::Loaded {
+                dirty,
+                network,
+                owner_project_id: Some(owner),
+                ..
+            } = &mut *guard
+            {
+                if *owner == project_id {
+                    let mut new_options = network.options.clone();
+                    if apply_dto_to_options(&mut new_options, &params).is_ok() {
+                        network.options = new_options;
+                        *dirty = true;
+                    }
+                }
+            }
+        }
     }
 
     // 2) Every scenario's INP — best-effort. We skip but log scenarios whose
@@ -3363,14 +3712,15 @@ enum QueueRunResult {
 /// Return snapshot times and global result ranges for a project or scenario.
 ///
 /// Reads the binary `results.out` on disk without loading the full file.
-/// Returns an error when no simulation has been run yet for the target.
-#[tauri::command]
+/// Returns `Ok(None)` when no simulation has been run yet for the target —
+/// an expected state (e.g. a freshly imported project), not an error.
+#[tauri::command(async)]
 /// Parse result metadata (timestep count, reporting period) from `results.out`.
 pub fn load_result_meta(
     app: tauri::AppHandle,
     project_id: String,
     scenario_id: Option<String>,
-) -> Result<ResultMetaDto, String> {
+) -> Result<Option<ResultMetaDto>, String> {
     validate_id(&project_id)?;
     if let Some(sid) = &scenario_id {
         validate_id(sid)?;
@@ -3380,6 +3730,9 @@ pub fn load_result_meta(
         Some(sid) => bundle::scenario_results_path(&app_data, &project_id, sid),
         None => bundle::base_results_path(&app_data, &project_id),
     };
+    if !out_path.exists() {
+        return Ok(None);
+    }
     let meta =
         hydra::io::out_reader::read_metadata_checked(&out_path).map_err(|e| e.to_string())?;
     let times = meta.snapshot_times();
@@ -3390,7 +3743,7 @@ pub fn load_result_meta(
         3 => "trace",
         _ => "none",
     };
-    Ok(ResultMetaDto {
+    Ok(Some(ResultMetaDto {
         times,
         quality_mode: quality_mode.to_string(),
         ranges: ResultRangesDto {
@@ -3407,22 +3760,23 @@ pub fn load_result_meta(
             quality_min: ranges.quality_min,
             quality_max: ranges.quality_max,
         },
-    })
+    }))
 }
 
-/// Return flat result arrays for a single reporting period.
+/// Return flat result arrays for a single reporting period as a compact
+/// binary payload (see [`encode_period_results`] for the byte layout).
 ///
 /// Values are in SI units (L/s, m, m/s) because `results.out` is always
 /// written with `FlowUnits::Lps`. Returns an error when `period` is out of
 /// range or `results.out` does not exist.
-#[tauri::command]
+#[tauri::command(async)]
 /// Return flat arrays for a single reporting period (nodes + links).
 pub fn get_period_results(
     app: tauri::AppHandle,
     project_id: String,
     period: usize,
     scenario_id: Option<String>,
-) -> Result<PeriodResultsDto, String> {
+) -> Result<tauri::ipc::Response, String> {
     validate_id(&project_id)?;
     if let Some(sid) = &scenario_id {
         validate_id(sid)?;
@@ -3436,35 +3790,53 @@ pub fn get_period_results(
         hydra::io::out_reader::read_metadata_checked(&out_path).map_err(|e| e.to_string())?;
     let pr = hydra::io::out_reader::read_period(&out_path, &meta, period)?;
     let has_quality = meta.quality_flag != 0;
-    Ok(PeriodResultsDto {
-        node_demand: pr.node_demand,
-        node_head: pr.node_head,
-        node_pressure: pr.node_pressure,
-        link_flow: pr.link_flow,
-        link_velocity: pr.link_velocity,
-        link_headloss: pr.link_headloss,
-        link_status: pr.link_status,
-        node_quality: if has_quality {
-            Some(pr.node_quality)
-        } else {
-            None
-        },
-        link_quality: if has_quality {
-            Some(pr.link_quality)
-        } else {
-            None
-        },
-    })
+    Ok(tauri::ipc::Response::new(encode_period_results(
+        &pr,
+        has_quality,
+    )))
+}
+
+/// Parsed network for `(project_id, scenario_id)`: cloned from the in-memory
+/// cache when `NetworkState` holds exactly that target, otherwise read and
+/// parsed from the on-disk model — avoids a multi-MB INP re-parse per call
+/// in the common case where the requested target is the loaded one.
+fn network_for_target(
+    app_data: &std::path::Path,
+    state: &NetworkState,
+    project_id: &str,
+    scenario_id: Option<&str>,
+) -> Result<hydra::Network, String> {
+    {
+        let guard = state.0.lock();
+        if let NetworkStateInner::Loaded {
+            network,
+            owner_project_id: Some(owner),
+            owner_scenario_id,
+            ..
+        } = &*guard
+        {
+            if owner == project_id && owner_scenario_id.as_deref() == scenario_id {
+                return Ok(network.clone());
+            }
+        }
+    }
+    let model_path = match scenario_id {
+        Some(sid) => bundle::scenario_model_path(app_data, project_id, sid),
+        None => bundle::base_model_path(app_data, project_id),
+    };
+    let raw = std::fs::read(&model_path).map_err(|e| format!("Cannot read model: {e}"))?;
+    hydra::io::parse(&raw).map_err(|e| format!("{e:?}"))
 }
 
 /// Return the pump energy summary for a project or scenario.
 ///
 /// Reads only the energy section of `results.out` (a few dozen bytes per pump)
 /// without touching the period data.  Safe for any network size.
-#[tauri::command]
+#[tauri::command(async)]
 /// Return pump energy statistics from the binary output file.
 pub fn get_pump_energy(
     app: tauri::AppHandle,
+    state: tauri::State<'_, NetworkState>,
     project_id: String,
     scenario_id: Option<String>,
 ) -> Result<Vec<PumpEnergyDto>, String> {
@@ -3477,12 +3849,11 @@ pub fn get_pump_energy(
         Some(sid) => bundle::scenario_results_path(&app_data, &project_id, sid),
         None => bundle::base_results_path(&app_data, &project_id),
     };
-    let model_path = match &scenario_id {
-        Some(sid) => bundle::scenario_model_path(&app_data, &project_id, sid),
-        None => bundle::base_model_path(&app_data, &project_id),
-    };
-    let raw = std::fs::read(&model_path).map_err(|e| format!("Cannot read model: {e}"))?;
-    let network = hydra::io::parse(&raw).map_err(|e| format!("{e:?}"))?;
+    // No simulation run yet — expected for a fresh project, not an error.
+    if !out_path.exists() {
+        return Ok(Vec::new());
+    }
+    let network = network_for_target(&app_data, &state, &project_id, scenario_id.as_deref())?;
     let meta =
         hydra::io::out_reader::read_metadata_checked(&out_path).map_err(|e| e.to_string())?;
     Ok(pump_energy_from_out(&out_path, &network, &meta))
@@ -3495,13 +3866,14 @@ pub fn get_pump_energy(
 /// Returns histograms, summary statistics, a tank head time series, and a
 /// mass-balance series — everything the Analysis view needs without holding a
 /// full `SimulationResult` in memory.
-#[tauri::command]
+#[tauri::command(async)]
 /// Return post-simulation analytics for a completed run.
 pub fn get_result_analytics(
     app: tauri::AppHandle,
+    state: tauri::State<'_, NetworkState>,
     project_id: String,
     scenario_id: Option<String>,
-) -> Result<ResultAnalyticsDto, String> {
+) -> Result<Option<ResultAnalyticsDto>, String> {
     validate_id(&project_id)?;
     if let Some(sid) = &scenario_id {
         validate_id(sid)?;
@@ -3511,12 +3883,11 @@ pub fn get_result_analytics(
         Some(sid) => bundle::scenario_results_path(&app_data, &project_id, sid),
         None => bundle::base_results_path(&app_data, &project_id),
     };
-    let model_path = match &scenario_id {
-        Some(sid) => bundle::scenario_model_path(&app_data, &project_id, sid),
-        None => bundle::base_model_path(&app_data, &project_id),
-    };
-    let raw = std::fs::read(&model_path).map_err(|e| format!("Cannot read model: {e}"))?;
-    let network = hydra::io::parse(&raw).map_err(|e| format!("{e:?}"))?;
+    // No simulation run yet — expected for a fresh project, not an error.
+    if !out_path.exists() {
+        return Ok(None);
+    }
+    let network = network_for_target(&app_data, &state, &project_id, scenario_id.as_deref())?;
     let meta =
         hydra::io::out_reader::read_metadata_checked(&out_path).map_err(|e| e.to_string())?;
 
@@ -3686,7 +4057,7 @@ pub fn get_result_analytics(
         100.0
     };
 
-    Ok(ResultAnalyticsDto {
+    Ok(Some(ResultAnalyticsDto {
         period_count: n_periods as u32,
         node_count: n_nodes as u32,
         link_count: n_links as u32,
@@ -3705,14 +4076,14 @@ pub fn get_result_analytics(
         velocity_histogram,
         top_pipes,
         tank_series,
-    })
+    }))
 }
 
 /// Return threshold violations by streaming the `.out` file one period at a time.
 ///
 /// Only nodes/links that violate the supplied thresholds are included in the
 /// response, so the payload stays small even for large networks.
-#[tauri::command]
+#[tauri::command(async)]
 /// Return pressure/velocity/quality violations for a completed run.
 pub fn get_violations(
     app: tauri::AppHandle,
@@ -3786,16 +4157,18 @@ pub fn get_violations(
 /// Load the INP for a project's base model or a named scenario into
 /// `NetworkState`, making it available to `get_nodes` / `get_links`.
 ///
-/// Returns a lightweight nodes+links snapshot when loaded, or `null` when the
-/// target INP does not exist on disk yet.
-#[tauri::command]
+/// Returns a compact binary nodes+links snapshot when loaded (see
+/// [`encode_network_snapshot`] for the byte layout). When the target INP does
+/// not exist on disk yet, the payload is a header with the "present" flag
+/// clear, which the frontend decodes as `null`.
+#[tauri::command(async)]
 /// Parse the project bundle's INP and load it into `NetworkState`.
 pub fn load_project_network(
     app: tauri::AppHandle,
     state: tauri::State<'_, NetworkState>,
     project_id: String,
     scenario_id: Option<String>,
-) -> Result<Option<NetworkSnapshotDto>, String> {
+) -> Result<tauri::ipc::Response, String> {
     validate_id(&project_id)?;
     if let Some(sid) = &scenario_id {
         validate_id(sid)?;
@@ -3807,22 +4180,24 @@ pub fn load_project_network(
     };
     if !path.exists() {
         *state.0.lock() = NetworkStateInner::Empty;
-        return Ok(None);
+        return Ok(tauri::ipc::Response::new(encode_network_snapshot_absent()));
     }
     let bytes = std::fs::read(&path).map_err(|e| e.to_string())?;
     let network = hydra::io::parse(&bytes).map_err(|e| format!("{e:?}"))?;
     let dto = network_to_dto(&network);
-    let snapshot = NetworkSnapshotDto {
-        nodes: dto.nodes.clone(),
-        links: dto.links.clone(),
-    };
+    // Encode before taking the state lock — serialisation work happens
+    // outside the mutex, and (unlike the old JSON path) no nodes/links clone
+    // is needed to build the response.
+    let encoded = encode_network_snapshot(&dto);
     *state.0.lock() = NetworkStateInner::Loaded {
         raw_bytes: bytes,
+        dirty: false,
         network,
         dto,
         owner_project_id: Some(project_id.clone()),
+        owner_scenario_id: scenario_id.clone(),
     };
-    Ok(Some(snapshot))
+    Ok(tauri::ipc::Response::new(encoded))
 }
 
 /// Apply a single field change to the in-memory `Network`, re-serialise it to
@@ -3839,8 +4214,8 @@ pub fn load_project_network(
 ///   • status                 : string `"Open"` | `"Closed"`
 ///   • curve / headPattern    : string ID
 ///
-/// Returns the updated `NetworkDto` on success so the frontend can refresh.
-#[tauri::command]
+/// Returns the patched element's updated DTO on success so the frontend can
+/// refresh it in place.
 /// Apply a single field mutation to a `Network` in place.
 ///
 /// All value conversions mirror the ones in `patch_element`; this helper is
@@ -4119,8 +4494,97 @@ fn apply_patch_to_network(
     Ok(())
 }
 
-#[tauri::command]
+/// Updated element DTO returned by `patch_element` — exactly one of `node` /
+/// `link` is set. Also used as the entry type of the `network-changed` event's
+/// delta payload so every window can update the element in place instead of
+/// refetching the full snapshot.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PatchedElementDto {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub node: Option<NodeDto>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub link: Option<LinkDto>,
+}
+
+/// Payload for the `network-changed` event.
+///
+/// `elements` lists the updated element DTOs when the mutation was limited to
+/// known elements (`patch_element` / `patch_elements` /
+/// `patch_node_position`); the frontend patches its local arrays in place.
+/// Structural mutations (create/delete/pattern/curve/control commands) emit a
+/// `null` payload, which the frontend treats as "refetch the full snapshot".
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NetworkChangedPayload {
+    pub elements: Vec<PatchedElementDto>,
+}
+
+/// Rebuild the DTO of the single element identified by `kind`/`id` in place
+/// inside the cached `NetworkDto`, and return a copy of the updated DTO.
+///
+/// O(nodes + links) for the lookup only — no full 2×46k DTO rebuild.
+fn refresh_element_dto(
+    network: &hydra::Network,
+    dto: &mut NetworkDto,
+    kind: &str,
+    id: &str,
+) -> Result<PatchedElementDto, String> {
+    match kind {
+        "junction" | "reservoir" | "tank" => {
+            let node = network
+                .nodes
+                .iter()
+                .find(|n| n.base.id == id)
+                .ok_or_else(|| format!("node '{id}' not found"))?;
+            let updated = node_to_dto(network, node);
+            match dto.nodes.iter_mut().find(|n| n.id == id) {
+                Some(slot) => *slot = updated.clone(),
+                None => dto.nodes.push(updated.clone()),
+            }
+            Ok(PatchedElementDto {
+                node: Some(updated),
+                link: None,
+            })
+        }
+        "pipe" | "pump" | "valve" => {
+            let link = network
+                .links
+                .iter()
+                .find(|l| l.base.id == id)
+                .ok_or_else(|| format!("link '{id}' not found"))?;
+            let node_id_of = |idx: usize| {
+                network
+                    .nodes
+                    .iter()
+                    .find(|n| n.base.index == idx)
+                    .map(|n| n.base.id.clone())
+                    .unwrap_or_default()
+            };
+            let updated = link_to_dto(
+                link,
+                node_id_of(link.base.from_node),
+                node_id_of(link.base.to_node),
+            );
+            match dto.links.iter_mut().find(|l| l.id == id) {
+                Some(slot) => *slot = updated.clone(),
+                None => dto.links.push(updated.clone()),
+            }
+            Ok(PatchedElementDto {
+                node: None,
+                link: Some(updated),
+            })
+        }
+        other => Err(format!("unknown element kind '{other}'")),
+    }
+}
+
+#[tauri::command(async)]
 /// Apply a single property edit to the in-memory network.
+///
+/// Returns only the patched element's updated DTO (not the whole network) and
+/// emits a `network-changed` event carrying the same delta so all windows can
+/// update in place.
 pub fn patch_element(
     app: tauri::AppHandle,
     state: tauri::State<'_, NetworkState>,
@@ -4128,33 +4592,110 @@ pub fn patch_element(
     id: String,
     field: String,
     value: serde_json::Value,
-) -> Result<NetworkDto, String> {
+) -> Result<PatchedElementDto, String> {
     let result = {
         let mut guard = state.0.lock();
         match &mut *guard {
             NetworkStateInner::Loaded {
-                raw_bytes,
+                dirty,
                 network,
                 dto,
                 ..
             } => {
                 apply_patch_to_network(network, &kind, &id, &field, value)?;
-                *raw_bytes = hydra::write_inp(network);
-                *dto = network_to_dto(network);
-                Ok(dto.clone())
+                *dirty = true;
+                refresh_element_dto(network, dto, &kind, &id)
             }
             NetworkStateInner::Empty => Err("no network loaded".into()),
         }
     };
-    if result.is_ok() {
-        let _ = app.emit(NETWORK_CHANGED_EVENT, ());
+    if let Ok(patched) = &result {
+        let _ = app.emit(
+            NETWORK_CHANGED_EVENT,
+            NetworkChangedPayload {
+                elements: vec![patched.clone()],
+            },
+        );
     }
     result
 }
 
+/// Result of a bulk `patch_elements` call: per-item failures are collected
+/// instead of aborting the batch, mirroring the frontend's previous
+/// one-command-per-field error accounting.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PatchElementsResult {
+    /// Number of patches applied successfully.
+    pub applied: u32,
+    /// Human-readable error strings for the patches that failed.
+    pub errors: Vec<String>,
+}
+
+#[tauri::command(async)]
+/// Apply a batch of property edits in one IPC call: one lock acquisition, one
+/// dirty-flag set, one `network-changed` event — instead of one full
+/// command round-trip (and formerly one INP re-serialisation) per field.
+pub fn patch_elements(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, NetworkState>,
+    patches: Vec<PatchItem>,
+) -> Result<PatchElementsResult, String> {
+    let (result, elements) = {
+        let mut guard = state.0.lock();
+        match &mut *guard {
+            NetworkStateInner::Loaded {
+                dirty,
+                network,
+                dto,
+                ..
+            } => {
+                let mut applied = 0u32;
+                let mut errors = Vec::new();
+                // Unique (kind, id) pairs of successfully patched elements,
+                // in first-touched order.
+                let mut touched: Vec<(String, String)> = Vec::new();
+                for patch in patches {
+                    match apply_patch_to_network(
+                        network,
+                        &patch.kind,
+                        &patch.id,
+                        &patch.field,
+                        patch.value,
+                    ) {
+                        Ok(()) => {
+                            applied += 1;
+                            *dirty = true;
+                            if !touched
+                                .iter()
+                                .any(|(k, i)| *k == patch.kind && *i == patch.id)
+                            {
+                                touched.push((patch.kind, patch.id));
+                            }
+                        }
+                        Err(e) => errors.push(e),
+                    }
+                }
+                let mut elements = Vec::with_capacity(touched.len());
+                for (kind, id) in &touched {
+                    if let Ok(el) = refresh_element_dto(network, dto, kind, id) {
+                        elements.push(el);
+                    }
+                }
+                (PatchElementsResult { applied, errors }, elements)
+            }
+            NetworkStateInner::Empty => return Err("no network loaded".into()),
+        }
+    };
+    if !elements.is_empty() {
+        let _ = app.emit(NETWORK_CHANGED_EVENT, NetworkChangedPayload { elements });
+    }
+    Ok(result)
+}
+
 /// Move a node to a new coordinate position in a single write (avoids two
 /// serial `patch_element` calls and two INP re-serialisations).
-#[tauri::command]
+#[tauri::command(async)]
 pub fn patch_node_position(
     app: tauri::AppHandle,
     state: tauri::State<'_, NetworkState>,
@@ -4166,7 +4707,7 @@ pub fn patch_node_position(
         let mut guard = state.0.lock();
         match &mut *guard {
             NetworkStateInner::Loaded {
-                raw_bytes,
+                dirty,
                 network,
                 dto,
                 ..
@@ -4174,20 +4715,43 @@ pub fn patch_node_position(
                 let entry = network.coordinates.entry(id.clone()).or_insert((0.0, 0.0));
                 entry.0 = x;
                 entry.1 = y;
+                let mut moved: Option<NodeDto> = None;
                 if let Some(node) = dto.nodes.iter_mut().find(|n| n.id == id) {
                     node.x = x;
                     node.y = y;
+                    moved = Some(node.clone());
                 }
-                *raw_bytes = hydra::write_inp(network);
-                Ok(())
+                *dirty = true;
+                Ok(moved)
             }
             NetworkStateInner::Empty => Err("no network loaded".into()),
         }
     };
-    if result.is_ok() {
-        let _ = app.emit(NETWORK_CHANGED_EVENT, ());
+    match result {
+        Ok(moved) => {
+            // Known node: emit a delta so the frontend patches in place.
+            // Unknown node (not in the DTO): emit a payload-less event so the
+            // frontend falls back to a full refetch.
+            match moved {
+                Some(node) => {
+                    let _ = app.emit(
+                        NETWORK_CHANGED_EVENT,
+                        NetworkChangedPayload {
+                            elements: vec![PatchedElementDto {
+                                node: Some(node),
+                                link: None,
+                            }],
+                        },
+                    );
+                }
+                None => {
+                    let _ = app.emit(NETWORK_CHANGED_EVENT, ());
+                }
+            }
+            Ok(())
+        }
+        Err(e) => Err(e),
     }
-    result
 }
 
 /// Names of controls/rules that reference any of the given (old, 1-based)
@@ -4287,7 +4851,7 @@ fn remap_controls_rules(
 /// or rule — the reference must be cleared first. Every surviving control's
 /// and rule's node/link index references are remapped afterward so they
 /// keep pointing at the correct element once indices shift.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn delete_element(
     app: tauri::AppHandle,
     state: tauri::State<'_, NetworkState>,
@@ -4298,7 +4862,7 @@ pub fn delete_element(
         let mut guard = state.0.lock();
         match &mut *guard {
             NetworkStateInner::Loaded {
-                raw_bytes,
+                dirty,
                 network,
                 dto,
                 ..
@@ -4387,7 +4951,7 @@ pub fn delete_element(
                     }
                     other => return Err(format!("unknown element kind '{}'", other)),
                 }
-                *raw_bytes = hydra::write_inp(network);
+                *dirty = true;
                 *dto = network_to_dto(network);
                 Ok(())
             }
@@ -4406,7 +4970,7 @@ pub fn delete_element(
 /// coordinates (longitude / latitude in WGS-84) stored directly in
 /// `[COORDINATES]`.  Sensible hydraulic defaults are used for all
 /// type-specific fields so the resulting network is immediately parseable.
-#[tauri::command]
+#[tauri::command(async)]
 #[allow(clippy::too_many_arguments)]
 pub fn create_node(
     app: tauri::AppHandle,
@@ -4426,7 +4990,7 @@ pub fn create_node(
         let mut guard = state.0.lock();
         match &mut *guard {
             NetworkStateInner::Loaded {
-                raw_bytes,
+                dirty,
                 network,
                 dto,
                 ..
@@ -4490,7 +5054,7 @@ pub fn create_node(
                     source: None,
                 });
                 network.coordinates.insert(id, (x, y));
-                *raw_bytes = hydra::write_inp(network);
+                *dirty = true;
                 *dto = network_to_dto(network);
                 Ok(())
             }
@@ -4508,7 +5072,7 @@ pub fn create_node(
 /// `id` must be unique across all nodes and links.  `from_id` / `to_id` must
 /// identify existing nodes.  Pipe defaults: length 100 m, diameter 300 mm,
 /// roughness 100 (Hazen-Williams C).  Pump defaults: constant-power 10 kW.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn create_link(
     app: tauri::AppHandle,
     state: tauri::State<'_, NetworkState>,
@@ -4521,7 +5085,7 @@ pub fn create_link(
         let mut guard = state.0.lock();
         match &mut *guard {
             NetworkStateInner::Loaded {
-                raw_bytes,
+                dirty,
                 network,
                 dto,
                 ..
@@ -4595,7 +5159,7 @@ pub fn create_link(
                     },
                     kind: link_kind,
                 });
-                *raw_bytes = hydra::write_inp(network);
+                *dirty = true;
                 *dto = network_to_dto(network);
                 Ok(())
             }
@@ -4613,7 +5177,7 @@ pub fn create_link(
 /// `id` must be unique within the network. Creates a two-point pump-head curve
 /// at [(0.0, head_m), (flow_ls, 0.0)] in SI units (L/s, m), converted to
 /// internal US-customary (cfs, ft) for storage.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn create_curve(
     app: tauri::AppHandle,
     state: tauri::State<'_, NetworkState>,
@@ -4625,8 +5189,8 @@ pub fn create_curve(
         let mut guard = state.0.lock();
         match &mut *guard {
             NetworkStateInner::Loaded {
+                dirty,
                 network,
-                raw_bytes,
                 dto,
                 ..
             } => {
@@ -4648,7 +5212,7 @@ pub fn create_curve(
                         },
                     ],
                 });
-                *raw_bytes = hydra::write_inp(network);
+                *dirty = true;
                 *dto = network_to_dto(network);
                 Ok(())
             }
@@ -4667,7 +5231,7 @@ pub fn create_curve(
 /// head-curve, valve-curve, or volume-curve respectively) — the reference
 /// must be cleared first so the network never ends up with a dangling curve
 /// ID that would fail to parse on the next INP round-trip.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn delete_curve(
     app: tauri::AppHandle,
     state: tauri::State<'_, NetworkState>,
@@ -4677,8 +5241,8 @@ pub fn delete_curve(
         let mut guard = state.0.lock();
         match &mut *guard {
             NetworkStateInner::Loaded {
+                dirty,
                 network,
-                raw_bytes,
                 dto,
                 ..
             } => {
@@ -4715,7 +5279,7 @@ pub fn delete_curve(
                 }
 
                 network.curves.retain(|c| c.id != id);
-                *raw_bytes = hydra::write_inp(network);
+                *dirty = true;
                 *dto = network_to_dto(network);
                 Ok(())
             }
@@ -4733,7 +5297,7 @@ pub fn delete_curve(
 /// (flow L/s and head m for pump-head curves; raw pass-through units for all
 /// other curve kinds) and have equal length. Pump-head curves require at
 /// least 2 points.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn update_curve_points(
     app: tauri::AppHandle,
     state: tauri::State<'_, NetworkState>,
@@ -4750,8 +5314,8 @@ pub fn update_curve_points(
         let mut guard = state.0.lock();
         match &mut *guard {
             NetworkStateInner::Loaded {
+                dirty,
                 network,
-                raw_bytes,
                 dto,
                 ..
             } => {
@@ -4777,7 +5341,7 @@ pub fn update_curve_points(
                         .map(|(&x, &y)| hydra::CurvePoint { x, y })
                         .collect()
                 };
-                *raw_bytes = hydra::write_inp(network);
+                *dirty = true;
                 *dto = network_to_dto(network);
                 Ok(())
             }
@@ -4793,7 +5357,7 @@ pub fn update_curve_points(
 /// Create a new time pattern with flat multipliers (all 1.0) at 24 hourly steps.
 ///
 /// `id` must be unique within the network.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn create_pattern(
     app: tauri::AppHandle,
     state: tauri::State<'_, NetworkState>,
@@ -4803,8 +5367,8 @@ pub fn create_pattern(
         let mut guard = state.0.lock();
         match &mut *guard {
             NetworkStateInner::Loaded {
+                dirty,
                 network,
-                raw_bytes,
                 dto,
                 ..
             } => {
@@ -4815,7 +5379,7 @@ pub fn create_pattern(
                     id: id.clone(),
                     factors: vec![1.0; 24],
                 });
-                *raw_bytes = hydra::write_inp(network);
+                *dirty = true;
                 *dto = network_to_dto(network);
                 Ok(())
             }
@@ -4831,7 +5395,7 @@ pub fn create_pattern(
 /// Replace all multipliers of an existing time pattern.
 ///
 /// `multipliers` must have at least one entry.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn update_pattern_multipliers(
     app: tauri::AppHandle,
     state: tauri::State<'_, NetworkState>,
@@ -4845,8 +5409,8 @@ pub fn update_pattern_multipliers(
         let mut guard = state.0.lock();
         match &mut *guard {
             NetworkStateInner::Loaded {
+                dirty,
                 network,
-                raw_bytes,
                 dto,
                 ..
             } => {
@@ -4856,7 +5420,7 @@ pub fn update_pattern_multipliers(
                     .find(|p| p.id == id)
                     .ok_or_else(|| format!("pattern '{}' not found", id))?;
                 pattern.factors = multipliers;
-                *raw_bytes = hydra::write_inp(network);
+                *dirty = true;
                 *dto = network_to_dto(network);
                 Ok(())
             }
@@ -4876,7 +5440,7 @@ pub fn update_pattern_multipliers(
 ///
 /// Fails without mutating anything if `new_id` is empty or already in use
 /// by another pattern.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn rename_pattern(
     app: tauri::AppHandle,
     state: tauri::State<'_, NetworkState>,
@@ -4891,8 +5455,8 @@ pub fn rename_pattern(
         let mut guard = state.0.lock();
         match &mut *guard {
             NetworkStateInner::Loaded {
+                dirty,
                 network,
-                raw_bytes,
                 dto,
                 ..
             } => {
@@ -4946,7 +5510,7 @@ pub fn rename_pattern(
                     network.options.energy_price_pattern = Some(trimmed.clone());
                 }
 
-                *raw_bytes = hydra::write_inp(network);
+                *dirty = true;
                 *dto = network_to_dto(network);
                 Ok(())
             }
@@ -4966,7 +5530,7 @@ pub fn rename_pattern(
 /// `[OPTIONS]`) still references it — the reference must be cleared first so
 /// the network never ends up with a dangling pattern ID that would fail to
 /// parse on the next INP round-trip.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn delete_pattern(
     app: tauri::AppHandle,
     state: tauri::State<'_, NetworkState>,
@@ -4976,8 +5540,8 @@ pub fn delete_pattern(
         let mut guard = state.0.lock();
         match &mut *guard {
             NetworkStateInner::Loaded {
+                dirty,
                 network,
-                raw_bytes,
                 dto,
                 ..
             } => {
@@ -5032,7 +5596,7 @@ pub fn delete_pattern(
                 }
 
                 network.patterns.retain(|p| p.id != id);
-                *raw_bytes = hydra::write_inp(network);
+                *dirty = true;
                 *dto = network_to_dto(network);
                 Ok(())
             }
@@ -5235,7 +5799,7 @@ fn rule_from_dto(dto: &RuleDto, network: &hydra::Network) -> Result<hydra::Rule,
 }
 
 /// Return the simple controls (`[CONTROLS]`) of the loaded network, or an empty list.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_controls(state: tauri::State<'_, NetworkState>) -> Vec<ControlDto> {
     match &*state.0.lock() {
         NetworkStateInner::Loaded { dto, .. } => dto.controls.clone(),
@@ -5244,7 +5808,7 @@ pub fn get_controls(state: tauri::State<'_, NetworkState>) -> Vec<ControlDto> {
 }
 
 /// Return the rule-based controls (`[RULES]`) of the loaded network, or an empty list.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_rules(state: tauri::State<'_, NetworkState>) -> Vec<RuleDto> {
     match &*state.0.lock() {
         NetworkStateInner::Loaded { dto, .. } => dto.rules.clone(),
@@ -5253,7 +5817,7 @@ pub fn get_rules(state: tauri::State<'_, NetworkState>) -> Vec<RuleDto> {
 }
 
 /// Append a new simple control to the network.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn create_control(
     app: tauri::AppHandle,
     state: tauri::State<'_, NetworkState>,
@@ -5263,14 +5827,14 @@ pub fn create_control(
         let mut guard = state.0.lock();
         match &mut *guard {
             NetworkStateInner::Loaded {
+                dirty,
                 network,
-                raw_bytes,
                 dto,
                 ..
             } => {
                 let ctrl = control_from_dto(&control, network)?;
                 network.controls.push(ctrl);
-                *raw_bytes = hydra::write_inp(network);
+                *dirty = true;
                 *dto = network_to_dto(network);
                 Ok(())
             }
@@ -5285,7 +5849,7 @@ pub fn create_control(
 
 /// Replace the simple control at `index` (position in `get_controls()`'s
 /// response array).
-#[tauri::command]
+#[tauri::command(async)]
 pub fn update_control(
     app: tauri::AppHandle,
     state: tauri::State<'_, NetworkState>,
@@ -5296,8 +5860,8 @@ pub fn update_control(
         let mut guard = state.0.lock();
         match &mut *guard {
             NetworkStateInner::Loaded {
+                dirty,
                 network,
-                raw_bytes,
                 dto,
                 ..
             } => {
@@ -5307,7 +5871,7 @@ pub fn update_control(
                     .get_mut(index)
                     .ok_or_else(|| format!("control index {} out of range", index))?;
                 *slot = ctrl;
-                *raw_bytes = hydra::write_inp(network);
+                *dirty = true;
                 *dto = network_to_dto(network);
                 Ok(())
             }
@@ -5321,7 +5885,7 @@ pub fn update_control(
 }
 
 /// Delete the simple control at `index`.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn delete_control(
     app: tauri::AppHandle,
     state: tauri::State<'_, NetworkState>,
@@ -5331,8 +5895,8 @@ pub fn delete_control(
         let mut guard = state.0.lock();
         match &mut *guard {
             NetworkStateInner::Loaded {
+                dirty,
                 network,
-                raw_bytes,
                 dto,
                 ..
             } => {
@@ -5340,7 +5904,7 @@ pub fn delete_control(
                     return Err(format!("control index {} out of range", index));
                 }
                 network.controls.remove(index);
-                *raw_bytes = hydra::write_inp(network);
+                *dirty = true;
                 *dto = network_to_dto(network);
                 Ok(())
             }
@@ -5354,7 +5918,7 @@ pub fn delete_control(
 }
 
 /// Append a new rule-based control to the network.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn create_rule(
     app: tauri::AppHandle,
     state: tauri::State<'_, NetworkState>,
@@ -5364,14 +5928,14 @@ pub fn create_rule(
         let mut guard = state.0.lock();
         match &mut *guard {
             NetworkStateInner::Loaded {
+                dirty,
                 network,
-                raw_bytes,
                 dto,
                 ..
             } => {
                 let r = rule_from_dto(&rule, network)?;
                 network.rules.push(r);
-                *raw_bytes = hydra::write_inp(network);
+                *dirty = true;
                 *dto = network_to_dto(network);
                 Ok(())
             }
@@ -5385,7 +5949,7 @@ pub fn create_rule(
 }
 
 /// Replace the rule at `index` (position in `get_rules()`'s response array).
-#[tauri::command]
+#[tauri::command(async)]
 pub fn update_rule(
     app: tauri::AppHandle,
     state: tauri::State<'_, NetworkState>,
@@ -5396,8 +5960,8 @@ pub fn update_rule(
         let mut guard = state.0.lock();
         match &mut *guard {
             NetworkStateInner::Loaded {
+                dirty,
                 network,
-                raw_bytes,
                 dto,
                 ..
             } => {
@@ -5407,7 +5971,7 @@ pub fn update_rule(
                     .get_mut(index)
                     .ok_or_else(|| format!("rule index {} out of range", index))?;
                 *slot = r;
-                *raw_bytes = hydra::write_inp(network);
+                *dirty = true;
                 *dto = network_to_dto(network);
                 Ok(())
             }
@@ -5421,7 +5985,7 @@ pub fn update_rule(
 }
 
 /// Delete the rule at `index`.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn delete_rule(
     app: tauri::AppHandle,
     state: tauri::State<'_, NetworkState>,
@@ -5431,8 +5995,8 @@ pub fn delete_rule(
         let mut guard = state.0.lock();
         match &mut *guard {
             NetworkStateInner::Loaded {
+                dirty,
                 network,
-                raw_bytes,
                 dto,
                 ..
             } => {
@@ -5440,7 +6004,7 @@ pub fn delete_rule(
                     return Err(format!("rule index {} out of range", index));
                 }
                 network.rules.remove(index);
-                *raw_bytes = hydra::write_inp(network);
+                *dirty = true;
                 *dto = network_to_dto(network);
                 Ok(())
             }
@@ -5456,7 +6020,7 @@ pub fn delete_rule(
 ///
 /// Used by the "Preview changes" diff dialog so the frontend can compare the
 /// saved file against a prospective patched version.
-#[tauri::command]
+#[tauri::command(async)]
 /// Return the raw INP text for a project or scenario.
 pub fn get_project_inp(app: tauri::AppHandle, project_id: String) -> Result<String, String> {
     validate_id(&project_id)?;
@@ -5481,7 +6045,7 @@ pub struct PatchItem {
 ///
 /// Used by the "Preview changes" diff dialog so the frontend can show a diff
 /// between the on-disk file and what would be written after saving.
-#[tauri::command]
+#[tauri::command(async)]
 /// Return the INP text that would result from applying pending patches.
 pub fn preview_patches(
     state: tauri::State<'_, NetworkState>,
@@ -5772,5 +6336,430 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let p = dir.path().join("results.out");
         assert_eq!(meta::sim_state_from_results(&p), "not-run");
+    }
+
+    // ── dirty flag / delta patching ───────────────────────────────────────
+
+    /// Minimal parseable network: 1 junction, 1 reservoir, 1 tank, 2 pipes.
+    const TEST_INP: &str = "\
+[JUNCTIONS]
+J1  10  5
+
+[RESERVOIRS]
+R1  100
+
+[TANKS]
+T1  50  10  5  20  40  0
+
+[PIPES]
+P1  R1  J1  1000  12  100  0  Open
+P2  J1  T1  800   10  100  0  Open
+
+[COORDINATES]
+J1  1.0  2.0
+R1  0.0  0.0
+T1  2.0  2.0
+
+[OPTIONS]
+Units  GPM
+
+[TIMES]
+Duration  0
+
+[END]
+";
+
+    fn loaded_state() -> NetworkStateInner {
+        let raw = TEST_INP.as_bytes().to_vec();
+        let network = hydra::io::parse(&raw).expect("test INP must parse");
+        let dto = network_to_dto(&network);
+        NetworkStateInner::Loaded {
+            raw_bytes: raw,
+            dirty: false,
+            network,
+            dto,
+            owner_project_id: Some("test-project".into()),
+            owner_scenario_id: None,
+        }
+    }
+
+    #[test]
+    fn up_to_date_raw_bytes_reserialises_only_when_dirty() {
+        let mut state = loaded_state();
+
+        // Clean state: returns the original bytes untouched.
+        let before = state.up_to_date_raw_bytes().unwrap().clone();
+        assert_eq!(before, TEST_INP.as_bytes());
+
+        // Mutate the network the way `patch_element` does: apply + mark dirty.
+        if let NetworkStateInner::Loaded { network, dirty, .. } = &mut state {
+            apply_patch_to_network(network, "pipe", "P1", "roughness", serde_json::json!(140.0))
+                .unwrap();
+            *dirty = true;
+        }
+
+        // The refreshed bytes must reflect the patch...
+        let after = state.up_to_date_raw_bytes().unwrap().clone();
+        assert_ne!(after, before);
+        let reparsed = hydra::io::parse(&after).unwrap();
+        let p1 = reparsed
+            .links
+            .iter()
+            .find(|l| l.base.id == "P1")
+            .expect("P1 present");
+        match &p1.kind {
+            hydra::LinkKind::Pipe(p) => assert!((p.roughness - 140.0).abs() < 1e-9),
+            other => panic!("expected pipe, got {other:?}"),
+        }
+        // ...and the dirty flag must be cleared so the next read is free.
+        match &state {
+            NetworkStateInner::Loaded { dirty, .. } => assert!(!dirty),
+            NetworkStateInner::Empty => panic!("state must stay loaded"),
+        }
+    }
+
+    #[test]
+    fn up_to_date_raw_bytes_none_when_empty() {
+        let mut state = NetworkStateInner::Empty;
+        assert!(state.up_to_date_raw_bytes().is_none());
+    }
+
+    #[test]
+    fn refresh_element_dto_updates_single_link_in_place() {
+        let mut state = loaded_state();
+        if let NetworkStateInner::Loaded { network, dto, .. } = &mut state {
+            let p2_before = dto.links.iter().find(|l| l.id == "P2").unwrap().clone();
+            apply_patch_to_network(network, "pipe", "P1", "roughness", serde_json::json!(123.0))
+                .unwrap();
+            let patched = refresh_element_dto(network, dto, "pipe", "P1").unwrap();
+
+            // Returned delta is the link, with endpoints resolved.
+            let link = patched.link.expect("link delta");
+            assert!(patched.node.is_none());
+            assert_eq!(link.id, "P1");
+            assert_eq!(link.from_id, "R1");
+            assert_eq!(link.to_id, "J1");
+            assert!((link.roughness - 123.0).abs() < 1e-9);
+
+            // Cached DTO entry updated in place; untouched entries unchanged.
+            let p1 = dto.links.iter().find(|l| l.id == "P1").unwrap();
+            assert!((p1.roughness - 123.0).abs() < 1e-9);
+            let p2_after = dto.links.iter().find(|l| l.id == "P2").unwrap();
+            assert_eq!(p2_after.roughness, p2_before.roughness);
+            assert_eq!(dto.links.len(), 2);
+        } else {
+            panic!("state must be loaded");
+        }
+    }
+
+    #[test]
+    fn refresh_element_dto_updates_single_node_in_place() {
+        let mut state = loaded_state();
+        if let NetworkStateInner::Loaded { network, dto, .. } = &mut state {
+            apply_patch_to_network(
+                network,
+                "junction",
+                "J1",
+                "elevation",
+                serde_json::json!(42.0),
+            )
+            .unwrap();
+            let patched = refresh_element_dto(network, dto, "junction", "J1").unwrap();
+
+            let node = patched.node.expect("node delta");
+            assert!(patched.link.is_none());
+            assert_eq!(node.id, "J1");
+            // Value is in display units (m), round-tripped through internal ft.
+            assert!((node.elevation - 42.0).abs() < 1e-6);
+
+            let j1 = dto.nodes.iter().find(|n| n.id == "J1").unwrap();
+            assert!((j1.elevation - 42.0).abs() < 1e-6);
+            assert_eq!(dto.nodes.len(), 3);
+        } else {
+            panic!("state must be loaded");
+        }
+    }
+
+    #[test]
+    fn refresh_element_dto_unknown_element_errors() {
+        let mut state = loaded_state();
+        if let NetworkStateInner::Loaded { network, dto, .. } = &mut state {
+            assert!(refresh_element_dto(network, dto, "pipe", "NOPE").is_err());
+            assert!(refresh_element_dto(network, dto, "widget", "P1").is_err());
+        } else {
+            panic!("state must be loaded");
+        }
+    }
+
+    // ── period-results binary encoding ────────────────────────────────────
+
+    fn read_f32s(buf: &[u8], offset: usize, count: usize) -> Vec<f32> {
+        (0..count)
+            .map(|i| {
+                let start = offset + 4 * i;
+                f32::from_le_bytes(buf[start..start + 4].try_into().unwrap())
+            })
+            .collect()
+    }
+
+    #[test]
+    fn encode_period_results_layout_roundtrips() {
+        let pr = hydra::io::out_reader::PeriodResult {
+            node_demand: vec![1.0, 2.0],
+            node_head: vec![3.0, 4.0],
+            node_pressure: vec![5.0, 6.0],
+            node_quality: vec![7.0, 8.0],
+            link_flow: vec![9.0, 10.0, 11.0],
+            link_velocity: vec![12.0, 13.0, 14.0],
+            link_headloss: vec![15.0, 16.0, 17.0],
+            link_quality: vec![18.0, 19.0, 20.0],
+            link_status: vec![1.0, 0.0, 1.0],
+            link_setting: vec![0.0, 0.0, 0.0],
+            link_reaction_rate: vec![0.0, 0.0, 0.0],
+            link_friction_factor: vec![0.0, 0.0, 0.0],
+        };
+
+        // Without quality arrays.
+        let buf = encode_period_results(&pr, false);
+        assert_eq!(buf.len(), 12 + 4 * (3 * 2 + 4 * 3));
+        assert_eq!(u32::from_le_bytes(buf[0..4].try_into().unwrap()), 2);
+        assert_eq!(u32::from_le_bytes(buf[4..8].try_into().unwrap()), 3);
+        assert_eq!(u32::from_le_bytes(buf[8..12].try_into().unwrap()), 0);
+        assert_eq!(read_f32s(&buf, 12, 2), vec![1.0, 2.0]); // node_demand
+        assert_eq!(read_f32s(&buf, 12 + 8, 2), vec![3.0, 4.0]); // node_head
+        assert_eq!(read_f32s(&buf, 12 + 16, 2), vec![5.0, 6.0]); // node_pressure
+        assert_eq!(read_f32s(&buf, 12 + 24, 3), vec![9.0, 10.0, 11.0]); // link_flow
+        assert_eq!(read_f32s(&buf, 12 + 36, 3), vec![12.0, 13.0, 14.0]); // link_velocity
+        assert_eq!(read_f32s(&buf, 12 + 48, 3), vec![15.0, 16.0, 17.0]); // link_headloss
+        assert_eq!(read_f32s(&buf, 12 + 60, 3), vec![1.0, 0.0, 1.0]); // link_status
+
+        // With quality arrays appended.
+        let buf = encode_period_results(&pr, true);
+        assert_eq!(buf.len(), 12 + 4 * (3 * 2 + 4 * 3) + 4 * (2 + 3));
+        assert_eq!(
+            u32::from_le_bytes(buf[8..12].try_into().unwrap()),
+            PERIOD_RESULTS_FLAG_QUALITY
+        );
+        assert_eq!(read_f32s(&buf, 12 + 72, 2), vec![7.0, 8.0]); // node_quality
+        assert_eq!(read_f32s(&buf, 12 + 80, 3), vec![18.0, 19.0, 20.0]); // link_quality
+    }
+
+    // ── network-snapshot binary encoding ──────────────────────────────────
+
+    fn read_f64s(buf: &[u8], offset: usize, count: usize) -> Vec<f64> {
+        (0..count)
+            .map(|i| {
+                let start = offset + 8 * i;
+                f64::from_le_bytes(buf[start..start + 8].try_into().unwrap())
+            })
+            .collect()
+    }
+
+    /// Read one string column (u32 LE byte length + newline-joined UTF-8) at
+    /// `offset`; returns the joined string and the offset just past it.
+    fn read_str_col(buf: &[u8], offset: usize) -> (String, usize) {
+        let len = u32::from_le_bytes(buf[offset..offset + 4].try_into().unwrap()) as usize;
+        let start = offset + 4;
+        let s = std::str::from_utf8(&buf[start..start + len]).unwrap();
+        (s.to_string(), start + len)
+    }
+
+    /// One node of each kind + one link of each kind, exercising every
+    /// optional column in both present and absent states.
+    fn snapshot_test_dto() -> NetworkDto {
+        let node = |id: &str, kind: &str, x: f64, y: f64, elevation: f64| NodeDto {
+            id: id.into(),
+            kind: kind.into(),
+            x,
+            y,
+            elevation,
+            base_demand: 0.0,
+            pressure: None,
+            demand: None,
+            tank_min_level: None,
+            tank_max_level: None,
+            tank_initial_level: None,
+            tank_diameter: None,
+            tank_volume_curve: None,
+            head_pattern: None,
+        };
+        let link = |id: &str, kind: &str, from: &str, to: &str| LinkDto {
+            id: id.into(),
+            kind: kind.into(),
+            from_id: from.into(),
+            to_id: to.into(),
+            velocity: 0.0,
+            diameter: 0.0,
+            length: 0.0,
+            roughness: 0.0,
+            pump_curve: None,
+            pump_power_kw: None,
+            pump_speed: None,
+            valve_type: None,
+            valve_setting: None,
+            valve_curve: None,
+        };
+
+        let mut j1 = node("J1", "junction", 1.5, 2.5, 10.5);
+        j1.base_demand = 5.25;
+        // Explicit zero must survive as 0, distinct from the NaN "absent".
+        j1.demand = Some(0.0);
+        let mut t1 = node("T1", "tank", 3.0, 4.0, 50.0);
+        t1.tank_min_level = Some(1.5);
+        t1.tank_max_level = Some(6.5);
+        t1.tank_initial_level = Some(2.25);
+        t1.tank_diameter = Some(20.0);
+        t1.tank_volume_curve = Some("VC1".into());
+        let mut r1 = node("R1", "reservoir", -1.0, 0.0, 100.0);
+        r1.head_pattern = Some("PAT7".into());
+
+        let mut p1 = link("P1", "pipe", "J1", "T1");
+        p1.velocity = 0.5;
+        p1.diameter = 300.0;
+        p1.length = 1200.0;
+        p1.roughness = 100.0;
+        let mut pu1 = link("PU1", "pump", "R1", "J1");
+        pu1.pump_curve = Some("C1".into());
+        pu1.pump_power_kw = Some(15.5);
+        pu1.pump_speed = Some(1.0);
+        let mut v1 = link("V1", "valve", "T1", "J1");
+        v1.valve_type = Some("PRV".into());
+        v1.valve_setting = Some(35.5);
+
+        NetworkDto {
+            nodes: vec![j1, t1, r1],
+            links: vec![p1, pu1, v1],
+            ..NetworkDto::default()
+        }
+    }
+
+    #[test]
+    fn encode_network_snapshot_layout_roundtrips() {
+        let dto = snapshot_test_dto();
+        let buf = encode_network_snapshot(&dto);
+
+        // Header.
+        assert_eq!(
+            u32::from_le_bytes(buf[0..4].try_into().unwrap()),
+            NETWORK_SNAPSHOT_VERSION
+        );
+        assert_eq!(
+            u32::from_le_bytes(buf[4..8].try_into().unwrap()),
+            NETWORK_SNAPSHOT_FLAG_PRESENT
+        );
+        assert_eq!(u32::from_le_bytes(buf[8..12].try_into().unwrap()), 3);
+        assert_eq!(u32::from_le_bytes(buf[12..16].try_into().unwrap()), 3);
+
+        // f64 coordinate columns (8-byte aligned at offset 16).
+        assert_eq!(read_f64s(&buf, 16, 3), vec![1.5, 3.0, -1.0]); // x
+        assert_eq!(read_f64s(&buf, 40, 3), vec![2.5, 4.0, 0.0]); // y
+
+        // f32 node columns.
+        assert_eq!(read_f32s(&buf, 64, 3), vec![10.5, 50.0, 100.0]); // elevation
+        assert_eq!(read_f32s(&buf, 76, 3), vec![5.25, 0.0, 0.0]); // base_demand
+        let pressure = read_f32s(&buf, 88, 3);
+        assert!(pressure.iter().all(|v| v.is_nan()), "pressure all absent");
+        let demand = read_f32s(&buf, 100, 3);
+        assert_eq!(demand[0], 0.0, "explicit Some(0.0) is 0, not NaN");
+        assert!(demand[1].is_nan() && demand[2].is_nan());
+        let tank_min = read_f32s(&buf, 112, 3);
+        assert!(tank_min[0].is_nan() && tank_min[2].is_nan());
+        assert_eq!(tank_min[1], 1.5);
+        assert_eq!(read_f32s(&buf, 124, 3)[1], 6.5); // tank_max_level
+        assert_eq!(read_f32s(&buf, 136, 3)[1], 2.25); // tank_initial_level
+        assert_eq!(read_f32s(&buf, 148, 3)[1], 20.0); // tank_diameter
+
+        // f32 link columns.
+        assert_eq!(read_f32s(&buf, 160, 3), vec![0.5, 0.0, 0.0]); // velocity
+        assert_eq!(read_f32s(&buf, 172, 3), vec![300.0, 0.0, 0.0]); // diameter
+        assert_eq!(read_f32s(&buf, 184, 3), vec![1200.0, 0.0, 0.0]); // length
+        assert_eq!(read_f32s(&buf, 196, 3), vec![100.0, 0.0, 0.0]); // roughness
+        let power = read_f32s(&buf, 208, 3);
+        assert!(power[0].is_nan() && power[2].is_nan());
+        assert_eq!(power[1], 15.5);
+        assert_eq!(read_f32s(&buf, 220, 3)[1], 1.0); // pump_speed
+        let setting = read_f32s(&buf, 232, 3);
+        assert!(setting[0].is_nan() && setting[1].is_nan());
+        assert_eq!(setting[2], 35.5);
+
+        // u8 kind columns.
+        assert_eq!(&buf[244..247], &[0, 1, 2], "junction, tank, reservoir");
+        assert_eq!(&buf[247..250], &[0, 1, 2], "pipe, pump, valve");
+
+        // String columns: newline-joined, empty string = absent.
+        let mut off = 250;
+        for expected in [
+            "J1\nT1\nR1",  // node id
+            "\nVC1\n",     // tank_volume_curve
+            "\n\nPAT7",    // head_pattern
+            "P1\nPU1\nV1", // link id
+            "J1\nR1\nT1",  // from_id
+            "T1\nJ1\nJ1",  // to_id
+            "\nC1\n",      // pump_curve
+            "\n\nPRV",     // valve_type
+            "\n\n",        // valve_curve (all absent)
+        ] {
+            let (col, next) = read_str_col(&buf, off);
+            assert_eq!(col, expected);
+            off = next;
+        }
+        assert_eq!(off, buf.len(), "no trailing bytes");
+    }
+
+    #[test]
+    fn encode_network_snapshot_empty_and_absent() {
+        // Empty-but-present: header + nine zero-length string columns.
+        let buf = encode_network_snapshot(&NetworkDto::default());
+        assert_eq!(buf.len(), 16 + 9 * 4);
+        assert_eq!(
+            u32::from_le_bytes(buf[4..8].try_into().unwrap()),
+            NETWORK_SNAPSHOT_FLAG_PRESENT
+        );
+        assert_eq!(u32::from_le_bytes(buf[8..12].try_into().unwrap()), 0);
+        assert_eq!(u32::from_le_bytes(buf[12..16].try_into().unwrap()), 0);
+        let mut off = 16;
+        for _ in 0..9 {
+            let (col, next) = read_str_col(&buf, off);
+            assert_eq!(col, "");
+            off = next;
+        }
+
+        // Absent: header only, "present" flag clear.
+        let buf = encode_network_snapshot_absent();
+        assert_eq!(buf.len(), 16);
+        assert_eq!(
+            u32::from_le_bytes(buf[0..4].try_into().unwrap()),
+            NETWORK_SNAPSHOT_VERSION
+        );
+        assert_eq!(u32::from_le_bytes(buf[4..8].try_into().unwrap()), 0);
+    }
+
+    // ── optional DTO fields are omitted, not null ─────────────────────────
+
+    #[test]
+    fn node_link_dtos_skip_absent_optional_fields() {
+        let network = hydra::io::parse(TEST_INP.as_bytes()).unwrap();
+        let dto = network_to_dto(&network);
+
+        let j1 = dto.nodes.iter().find(|n| n.id == "J1").unwrap();
+        let json = serde_json::to_string(j1).unwrap();
+        assert!(!json.contains("null"), "junction JSON has nulls: {json}");
+        assert!(!json.contains("tankMinLevel"));
+        assert!(!json.contains("pressure"));
+
+        let t1 = dto.nodes.iter().find(|n| n.id == "T1").unwrap();
+        let json = serde_json::to_string(t1).unwrap();
+        assert!(json.contains("tankMinLevel"), "tank keeps tank fields");
+
+        let p1 = dto.links.iter().find(|l| l.id == "P1").unwrap();
+        let json = serde_json::to_string(p1).unwrap();
+        assert!(!json.contains("null"), "pipe JSON has nulls: {json}");
+        assert!(!json.contains("pumpCurve"));
+        assert!(!json.contains("valveType"));
+
+        // Round-trip: omitted fields deserialise back to `None`.
+        let back: NodeDto = serde_json::from_str(&serde_json::to_string(j1).unwrap()).unwrap();
+        assert!(back.tank_min_level.is_none());
+        assert!(back.pressure.is_none());
     }
 }

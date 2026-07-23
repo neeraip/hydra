@@ -44,6 +44,7 @@ fn main() {
             commands::get_violations,
             commands::load_project_network,
             commands::patch_element,
+            commands::patch_elements,
             commands::get_project_inp,
             commands::patch_node_position,
             commands::delete_element,
