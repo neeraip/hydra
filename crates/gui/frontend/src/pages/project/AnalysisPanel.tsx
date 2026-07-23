@@ -17,6 +17,7 @@ import {
 } from "./AnalysisPanel/Histograms";
 import { PipeCriticality } from "./AnalysisPanel/PipeCriticality";
 import { PumpEnergyPanel } from "./AnalysisPanel/PumpEnergyPanel";
+import { TankLevelsPanel } from "./AnalysisPanel/TankLevelsPanel";
 
 export function AnalysisPanel() {
   const { resultMeta, pumpEnergy } = useSimulation();
@@ -82,7 +83,10 @@ export function AnalysisPanel() {
         periodCount={analytics?.periodCount ?? null}
       />
 
-      {/* Panel 5: Pump Energy */}
+      {/* Panel 5: Tank head trends */}
+      <TankLevelsPanel analytics={analytics} />
+
+      {/* Panel 6: Pump Energy */}
       <PumpEnergyPanel />
     </div>
   );
