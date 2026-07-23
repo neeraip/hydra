@@ -6,7 +6,7 @@ import {
   PauseIcon,
   PlayIcon,
 } from "@heroicons/react/16/solid";
-import { useCallback, useMemo, useRef } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import type { ResultMeta } from "../hooks";
 
 /** Fallback time-axis labels (00:00–24:00) used before resultMeta is loaded. */
@@ -27,8 +27,6 @@ export function Timeline({
   setSpeed,
   loop,
   setLoop,
-  hoverHour,
-  setHoverHour,
   resultMeta,
   maxStep,
   steadyState,
@@ -41,12 +39,13 @@ export function Timeline({
   setSpeed: (v: number) => void;
   loop: boolean;
   setLoop: (v: boolean) => void;
-  hoverHour: number | null;
-  setHoverHour: (h: number | null) => void;
   resultMeta?: ResultMeta | null;
   maxStep?: number;
   steadyState?: boolean;
 }) {
+  // Local: only this component reads the hover marker, and lifting it to
+  // CanvasView made every scrubber mousemove re-render the whole canvas view.
+  const [hoverHour, setHoverHour] = useState<number | null>(null);
   const effectiveMaxStep = maxStep ?? 24;
 
   // Time labels ("HH:MM") derived from resultMeta snapshot times.
@@ -88,7 +87,7 @@ export function Timeline({
       const frac = Math.max(0, Math.min(1, (e.clientX - r.left) / r.width));
       setHoverHour(Math.round(frac * effectiveMaxStep));
     },
-    [effectiveMaxStep, setHoverHour],
+    [effectiveMaxStep],
   );
 
   const playheadFrac =

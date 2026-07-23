@@ -235,3 +235,37 @@ export function reprojectNodes(nodes: Node[], fromEpsg: string): Node[] {
     return { ...n, x: lon, y: lat };
   });
 }
+
+/**
+ * Reproject with a per-node identity cache. When a node's *source object* is
+ * unchanged since the previous call, the previously produced output object is
+ * returned (same identity, no proj4 call, no allocation) — so re-running
+ * after a single-element network patch costs O(changed nodes) proj4 work
+ * instead of O(N). The caller owns `cache` and must reset it when the CRS
+ * changes.
+ *
+ * Throws like {@link reprojectNodes} for unknown CRS codes.
+ */
+export function reprojectNodesCached(
+  nodes: Node[],
+  fromEpsg: string,
+  cache: Map<string, { src: Node; out: Node }>,
+): Node[] {
+  if (fromEpsg === "EPSG:4326") return nodes; // no-op
+
+  if (!ensureEpsgDef(fromEpsg)) {
+    throw new Error(
+      `Unknown CRS: ${fromEpsg}. Provide a proj4 definition string or use a supported EPSG code.`,
+    );
+  }
+
+  const converter = proj4(fromEpsg, "EPSG:4326");
+  return nodes.map((n) => {
+    const hit = cache.get(n.id);
+    if (hit && hit.src === n) return hit.out;
+    const [lon, lat] = converter.forward([n.x, n.y]);
+    const out = { ...n, x: lon, y: lat };
+    cache.set(n.id, { src: n, out });
+    return out;
+  });
+}

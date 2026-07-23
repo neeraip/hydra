@@ -14,6 +14,7 @@ import {
   type ReactNode,
   useCallback,
   useContext,
+  useMemo,
   useState,
 } from "react";
 
@@ -61,11 +62,12 @@ export function CanvasStatusProvider({ children }: { children: ReactNode }) {
     [],
   );
 
-  return (
-    <Ctx.Provider value={{ ...status, setCoordStatus }}>
-      {children}
-    </Ctx.Provider>
+  const value = useMemo<CanvasStatusCtx>(
+    () => ({ ...status, setCoordStatus }),
+    [status, setCoordStatus],
   );
+
+  return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
 
 export function useCanvasStatus() {

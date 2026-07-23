@@ -11,6 +11,7 @@ import {
   type ReactNode,
   useCallback,
   useContext,
+  useMemo,
   useRef,
   useState,
 } from "react";
@@ -140,29 +141,42 @@ export function CanvasSelectionProvider({ children }: { children: ReactNode }) {
     setInspectorView("closed");
   }, []);
 
-  return (
-    <Ctx.Provider
-      value={{
-        selectedNodeId,
-        selectedLinkId,
-        inspectorView,
-        selectNode,
-        selectLink,
-        setInspectorView,
-        setSelectedNodeId,
-        setSelectedLinkId,
-        clearSelection,
-        simNodes,
-        simLinks,
-        setSimData,
-        zoomToNode,
-        zoomToLink,
-        setZoomCallbacks,
-      }}
-    >
-      {children}
-    </Ctx.Provider>
+  // Memoized so provider-parent renders don't hand every consumer a fresh
+  // context value (the sim arrays alone make consumer re-renders expensive).
+  const value = useMemo(
+    () => ({
+      selectedNodeId,
+      selectedLinkId,
+      inspectorView,
+      selectNode,
+      selectLink,
+      setInspectorView,
+      setSelectedNodeId,
+      setSelectedLinkId,
+      clearSelection,
+      simNodes,
+      simLinks,
+      setSimData,
+      zoomToNode,
+      zoomToLink,
+      setZoomCallbacks,
+    }),
+    [
+      selectedNodeId,
+      selectedLinkId,
+      inspectorView,
+      selectNode,
+      selectLink,
+      clearSelection,
+      simNodes,
+      simLinks,
+      setSimData,
+      zoomToNode,
+      zoomToLink,
+      setZoomCallbacks,
+    ],
   );
+  return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
 
 export function useCanvasSelection() {

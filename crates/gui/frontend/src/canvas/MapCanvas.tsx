@@ -12,8 +12,8 @@ import {
 } from "@deck.gl/layers";
 import { MapboxOverlay } from "@deck.gl/mapbox";
 import maplibregl from "maplibre-gl";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { Link, Node } from "../hooks";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { Link, Node, PeriodResults } from "../hooks";
 import { startPerfSpan } from "../perfTrace";
 import type { BasemapStyle } from "./Basemap";
 import { FlowPathLayer } from "./FlowPathLayer";
@@ -54,6 +54,13 @@ const MAP_STYLES: Record<BasemapStyle, string | maplibregl.StyleSpecification> =
     none: BLANK_STYLE,
   };
 
+const EMPTY_SCHEMATIC_COORDS: Map<string, [number, number]> = new Map();
+
+/** Above this many on-screen labels, label layers render nothing — the text
+ * would be unreadable overlap anyway and TextLayer tesselation at 46k ids
+ * freezes the frame. Zoom in (or filter) to see labels on huge networks. */
+const MAX_LABELS = 1500;
+
 type GeoViewState = ReturnType<typeof roughGeoViewState>;
 type SchematicViewState = ReturnType<typeof orthoCenterFromMap>;
 type CanvasViewState = GeoViewState | SchematicViewState;
@@ -64,6 +71,13 @@ interface MapCanvasProps {
   viewMode: ViewMode;
   nodeVar: NodeVariable;
   linkVar: LinkVariable;
+  /** Animate the Flow/Velocity pulse effect. Already accounts for the user
+   * toggle and the "Reduce motion" accessibility setting. */
+  animateLinks?: boolean;
+  /** Flat per-period result arrays (network order). Passed separately from
+   * nodes/links so a timeline scrub changes only this prop — the node/link
+   * arrays keep their identity and deck.gl only re-evaluates colours. */
+  periodResult?: PeriodResults | null;
   basemap: BasemapStyle;
   selectedNodeId: string | null;
   onSelectNode: (id: string | null) => void;
@@ -114,12 +128,18 @@ interface MapCanvasProps {
   isActive?: boolean;
 }
 
-export function MapCanvas({
+// Memoized: CanvasView re-renders on many interactions that don't affect the
+// canvas (toasts, tool state, timeline hover); with ~46k-element data arrays a
+// wasted re-execution here is expensive. All props are primitives, stable
+// useCallback handlers, or memoized arrays, so shallow comparison is safe.
+export const MapCanvas = memo(function MapCanvas({
   nodes,
   links,
   viewMode,
   nodeVar,
   linkVar,
+  animateLinks = true,
+  periodResult = null,
   basemap,
   selectedNodeId,
   onSelectNode,
@@ -217,11 +237,24 @@ export function MapCanvas({
   // In add-link mode: the ID of the first selected node, waiting for the second.
   const pendingLinkFromIdRef = useRef<string | null>(null);
 
-  const schematicCoords = useMemo(
-    () => computeSchematicLayout(nodes, links),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [nodes, links],
-  );
+  // Lazy schematic layout: the BFS layout over 46k+ elements is only needed
+  // in schematic mode, and many sessions never leave map mode. Cached by
+  // nodes/links identity so switching back to schematic is instant.
+  const schematicCacheRef = useRef<{
+    nodes: Node[];
+    links: Link[];
+    coords: Map<string, [number, number]>;
+  } | null>(null);
+  const schematicCoords = useMemo(() => {
+    const cache = schematicCacheRef.current;
+    if (cache && cache.nodes === nodes && cache.links === links) {
+      return cache.coords;
+    }
+    if (viewMode !== "schematic") return EMPTY_SCHEMATIC_COORDS;
+    const coords = computeSchematicLayout(nodes, links);
+    schematicCacheRef.current = { nodes, links, coords };
+    return coords;
+  }, [nodes, links, viewMode]);
 
   const markFirstFrame = useCallback((source: "map" | "schematic") => {
     if (!firstFramePendingRef.current) return;
@@ -450,9 +483,45 @@ export function MapCanvas({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [flyToKey, isActive, viewMode, flyToLinkId, flyToNodeId]);
 
+  // ── deck.gl data arrays ────────────────────────────────────────────────────
+  // Memoized so their identity is stable across renders that don't change the
+  // network or coordinates. This matters at scale: the flow-animation RAF loop
+  // and hover/selection state changes rebuild the *layers* every time, and
+  // deck.gl decides whether to re-run accessors and re-upload attribute
+  // buffers by comparing `data` identity. With ~46k nodes/links, rebuilding
+  // these arrays per frame meant re-tesselating and re-uploading everything at
+  // 60 fps; with stable identity those frames only update a uniform.
+  const { linkData, nodeData, linkDatumById, nodeDatumById } = useMemo(() => {
+    const coordMap = viewMode === "schematic" ? schematicCoords : geoCoords;
+    const linkData = links
+      .map((l, si) => {
+        const from = coordMap.get(l.fromId);
+        const to = coordMap.get(l.toId);
+        if (!from || !to) return null;
+        return { ...l, from, to, si };
+      })
+      .filter(Boolean) as Array<
+      Link & { from: [number, number]; to: [number, number]; si: number }
+    >;
+    const nodeData = nodes
+      .map((n, si) => {
+        const position = coordMap.get(n.id);
+        if (!position) return null;
+        return { ...n, position, si };
+      })
+      .filter(Boolean) as Array<
+      Node & { position: [number, number]; si: number }
+    >;
+    return {
+      linkData,
+      nodeData,
+      linkDatumById: new Map(linkData.map((l) => [l.id, l])),
+      nodeDatumById: new Map(nodeData.map((n) => [n.id, n])),
+    };
+  }, [links, nodes, viewMode, schematicCoords, geoCoords]);
+
   const buildLayers = useCallback((): Layer[] => {
     const isSchematic = viewMode === "schematic";
-    const coordMap = isSchematic ? schematicCoords : geoCoords;
     const coordSystem = isSchematic
       ? COORDINATE_SYSTEM.CARTESIAN
       : COORDINATE_SYSTEM.DEFAULT;
@@ -464,35 +533,61 @@ export function MapCanvas({
     const junctionRadius = 7;
     const specialRadius = 9;
 
-    const linkData = links
-      .map((l) => {
-        const drag = draggingNodePosRef.current;
-        const dragPos: [number, number] | undefined = drag
-          ? [drag.lng, drag.lat]
-          : undefined;
-        const from =
-          (drag && drag.id === l.fromId ? dragPos : undefined) ??
-          coordMap.get(l.fromId);
-        const to =
-          (drag && drag.id === l.toId ? dragPos : undefined) ??
-          coordMap.get(l.toId);
-        if (!from || !to) return null;
-        return { ...l, from, to };
-      })
-      .filter(Boolean) as Array<
-      Link & { from: [number, number]; to: [number, number] }
-    >;
+    // While a node is being dragged (edit tool), patch the dragged node and
+    // its incident links into fresh arrays so deck picks up the new
+    // positions. Only runs during an active drag — the steady-state path
+    // reuses the memoized arrays untouched.
+    const drag = draggingNodePosRef.current;
+    let ld = linkData;
+    let nd = nodeData;
+    if (drag) {
+      const dragPos: [number, number] = [drag.lng, drag.lat];
+      ld = linkData.map((l) =>
+        l.fromId === drag.id || l.toId === drag.id
+          ? {
+              ...l,
+              from: l.fromId === drag.id ? dragPos : l.from,
+              to: l.toId === drag.id ? dragPos : l.to,
+            }
+          : l,
+      );
+      nd = nodeData.map((n) =>
+        n.id === drag.id ? { ...n, position: dragPos } : n,
+      );
+    }
+    const linkDatum = (id: string) =>
+      drag ? ld.find((l) => l.id === id) : linkDatumById.get(id);
+    const nodeDatum = (id: string) =>
+      drag ? nd.find((n) => n.id === id) : nodeDatumById.get(id);
 
-    const nodeData = nodes
-      .map((n) => {
-        // Override position while this node is being dragged.
-        const drag = draggingNodePosRef.current;
-        const position: [number, number] | undefined =
-          drag && drag.id === n.id ? [drag.lng, drag.lat] : coordMap.get(n.id);
-        if (!position) return null;
-        return { ...n, position };
-      })
-      .filter(Boolean) as Array<Node & { position: [number, number] }>;
+    // Period results are flat arrays in network order, looked up by each
+    // datum's `si`. Guard against topology changes racing ahead of results.
+    const pr =
+      periodResult &&
+      periodResult.nodePressure.length === nodes.length &&
+      periodResult.linkFlow.length === links.length
+        ? periodResult
+        : null;
+    const nodeSim = <T extends Node & { si: number }>(d: T): T =>
+      pr
+        ? {
+            ...d,
+            pressure: pr.nodePressure[d.si],
+            demand: pr.nodeDemand[d.si],
+            head: pr.nodeHead[d.si],
+            quality: pr.nodeQuality ? pr.nodeQuality[d.si] : null,
+          }
+        : d;
+    const linkSim = <T extends Link & { si: number }>(d: T): T =>
+      pr
+        ? {
+            ...d,
+            flow: pr.linkFlow[d.si],
+            velocity: pr.linkVelocity[d.si],
+            status: pr.linkStatus[d.si],
+            quality: pr.linkQuality ? pr.linkQuality[d.si] : null,
+          }
+        : d;
 
     const layers: Layer[] = [];
 
@@ -501,8 +596,9 @@ export function MapCanvas({
       layers.push(
         ...(() => {
           if (!hoveredLinkId || hoveredLinkId === selectedLinkId) return [];
-          const hLink = linkData.find((l) => l.id === hoveredLinkId);
-          if (!hLink) return [];
+          const hLinkBase = linkDatum(hoveredLinkId);
+          if (!hLinkBase) return [];
+          const hLink = linkSim(hLinkBase);
           const [r, g, b] = linkRgba(
             hLink,
             linkVar,
@@ -544,8 +640,9 @@ export function MapCanvas({
         })(),
         ...(() => {
           if (!selectedLinkId) return [];
-          const sLink = linkData.find((l) => l.id === selectedLinkId);
-          if (!sLink) return [];
+          const sLinkBase = linkDatum(selectedLinkId);
+          if (!sLinkBase) return [];
+          const sLink = linkSim(sLinkBase);
           const [r, g, b] = linkRgba(
             sLink,
             linkVar,
@@ -587,8 +684,9 @@ export function MapCanvas({
         })(),
         ...(() => {
           if (!hoveredNodeId || hoveredNodeId === selectedNodeId) return [];
-          const hNode = nodeData.find((n) => n.id === hoveredNodeId);
-          if (!hNode) return [];
+          const hNodeBase = nodeDatum(hoveredNodeId);
+          if (!hNodeBase) return [];
+          const hNode = nodeSim(hNodeBase);
           const [r, g, b] = nodeRgba(
             hNode,
             nodeVar,
@@ -634,8 +732,9 @@ export function MapCanvas({
         })(),
         ...(() => {
           if (!selectedNodeId) return [];
-          const sNode = nodeData.find((n) => n.id === selectedNodeId);
-          if (!sNode) return [];
+          const sNodeBase = nodeDatum(selectedNodeId);
+          if (!sNodeBase) return [];
+          const sNode = nodeSim(sNodeBase);
           const [r, g, b] = nodeRgba(
             sNode,
             nodeVar,
@@ -685,14 +784,16 @@ export function MapCanvas({
       layers.push(
         new LineLayer({
           id: "links-hittarget",
-          data: linkData,
+          data: ld,
           coordinateSystem: coordSystem,
           getSourcePosition: (d) => d.from,
           getTargetPosition: (d) => d.to,
           getColor: [0, 0, 0, 0] as unknown as RGBA,
           getWidth: 12,
           widthUnits: "pixels" as const,
-          pickable: true,
+          // Link hover/click is only meaningful in select/edit; skipping the
+          // pick pass for other tools halves per-mousemove GPU picking cost.
+          pickable: tool === "select" || tool === "edit",
           onHover: (info) => {
             const id = info.object ? (info.object as { id: string }).id : null;
             hoveredLinkIdRef.current = id;
@@ -706,80 +807,99 @@ export function MapCanvas({
           },
           updateTriggers: {},
         }),
-        ...(linkVar === "flow"
+        // The animated flow layer and the static line layer must use distinct
+        // ids: deck.gl matches layers by id alone and transfers the old
+        // layer's state (compiled shader model included) into the new
+        // instance without checking the class, so reusing one id across
+        // FlowPathLayer/LineLayer left the old model rendering after a
+        // legend variable switch crossed the flow boundary.
+        ...(animateLinks && (linkVar === "flow" || linkVar === "velocity")
           ? [
               new FlowPathLayer({
-                id: "links",
-                data: linkData,
+                id: "links-flow",
+                data: ld,
                 coordinateSystem: coordSystem,
-                getPath: (d) =>
-                  (d.flow != null && d.flow < 0
-                    ? [d.to, d.from]
-                    : [d.from, d.to]) as [number, number][],
+                // Geometry is static; flow direction is encoded in the sign
+                // of the speed param so reverse flow never re-tesselates.
+                getPath: (d) => [d.from, d.to] as [number, number][],
                 getColor: (d) =>
                   linkRgba(
-                    d,
+                    linkSim(d),
                     linkVar,
                     flowMax,
-                    undefined,
+                    colorMode === "threshold" ? velocityThresholds : undefined,
                     colorMode === "threshold" ? flowThresholds : undefined,
                   ),
                 getWidth: 2,
                 widthUnits: "pixels" as const,
-                rounded: true,
                 capRounded: true,
                 jointRounded: true,
                 pickable: false,
-                getFlowTime: () => flowAnimRef.current,
-                getFlowSpeed: (d) => {
-                  const v = (d as { velocity?: number }).velocity;
-                  if (v != null && v > 0) return Math.min(1, v / 1.5);
-                  const f = (d as { flow?: number | null }).flow;
-                  return f != null
-                    ? Math.min(1, Math.abs(f) / Math.max(0.01, flowMax))
-                    : 0.2;
+                flowTime: flowAnimRef.current,
+                getFlowParams: (d) => {
+                  const l = linkSim(d);
+                  const v = l.velocity;
+                  const f = l.flow;
+                  const speed =
+                    v != null && v > 0
+                      ? Math.min(1, v / 1.5)
+                      : f != null
+                        ? Math.min(1, Math.abs(f) / Math.max(0.01, flowMax))
+                        : 0.2;
+                  const dir = f != null && f < 0 ? -1 : 1;
+                  return [speed * dir, 1.0, hashStr(d.id) * 6.28318];
                 },
-                getFlowFrequency: (_d: unknown) => 1.0,
-                getFlowPhaseOffset: (d: { id: string }) =>
-                  hashStr(d.id) * 6.28318,
                 updateTriggers: {
-                  getColor: [linkVar, flowMax, colorMode, flowThresholds],
-                  getFlowTime: [flowAnimRef.current],
-                  getFlowSpeed: [flowMax],
+                  getColor: [
+                    linkVar,
+                    flowMax,
+                    colorMode,
+                    velocityThresholds,
+                    flowThresholds,
+                    pr,
+                  ],
+                  getFlowParams: [flowMax, pr],
                 },
               }),
             ]
           : [
               new LineLayer({
-                id: "links",
-                data: linkData,
+                id: "links-static",
+                data: ld,
                 coordinateSystem: coordSystem,
                 getSourcePosition: (d) => d.from,
                 getTargetPosition: (d) => d.to,
                 getColor: (d) =>
                   linkRgba(
-                    d,
+                    linkSim(d),
                     linkVar,
                     flowMax,
                     colorMode === "threshold" ? velocityThresholds : undefined,
-                    undefined,
+                    colorMode === "threshold" ? flowThresholds : undefined,
                   ),
                 getWidth: 2,
                 widthUnits: "pixels" as const,
                 pickable: false,
                 updateTriggers: {
-                  getColor: [linkVar, flowMax, colorMode, velocityThresholds],
+                  getColor: [
+                    linkVar,
+                    flowMax,
+                    colorMode,
+                    velocityThresholds,
+                    flowThresholds,
+                    pr,
+                  ],
                 },
               }),
             ]),
         new ScatterplotLayer({
           id: "nodes",
-          data: nodeData,
+          data: nd,
           coordinateSystem: coordSystem,
           getPosition: (d) => d.position,
           getFillColor: (d) =>
             nodeRgba(
-              d,
+              nodeSim(d),
               nodeVar,
               headMin,
               headMax,
@@ -792,7 +912,8 @@ export function MapCanvas({
           getRadius: (d) =>
             d.type === "junction" ? junctionRadius : specialRadius,
           radiusUnits: nodeRadiusUnits,
-          pickable: true,
+          // Measure works on raw map clicks — node picking is dead cost there.
+          pickable: tool !== "measure",
           onHover: (info) => {
             const id = info.object ? (info.object as { id: string }).id : null;
             hoveredNodeIdRef.current = id;
@@ -841,6 +962,7 @@ export function MapCanvas({
               qualityMax,
               colorMode,
               pressureThresholds,
+              pr,
             ],
             getRadius: [isSchematic],
           },
@@ -848,11 +970,52 @@ export function MapCanvas({
       );
     }
 
+    // Labels: cull to the current viewport and cap the count so toggling
+    // labels on a 46k network can't freeze layer building (F2). Rebuilds are
+    // triggered on map moveend / schematic view changes while labels are on.
+    const labelBounds = (() => {
+      if (!canvasLayers.nodeLabels && !canvasLayers.linkLabels) return null;
+      if (isSchematic) {
+        const vs = viewStateRef.current as SchematicViewState;
+        if (!vs || !("target" in vs)) return null;
+        const w = containerRef.current?.clientWidth ?? 1200;
+        const h = containerRef.current?.clientHeight ?? 800;
+        const scale = 2 ** vs.zoom;
+        const hw = w / 2 / scale;
+        const hh = h / 2 / scale;
+        return {
+          minX: vs.target[0] - hw,
+          maxX: vs.target[0] + hw,
+          minY: vs.target[1] - hh,
+          maxY: vs.target[1] + hh,
+        };
+      }
+      const b = mapRef.current?.getBounds();
+      if (!b) return null;
+      return {
+        minX: b.getWest(),
+        maxX: b.getEast(),
+        minY: b.getSouth(),
+        maxY: b.getNorth(),
+      };
+    })();
+    const inBounds = (x: number, y: number) =>
+      labelBounds != null &&
+      x >= labelBounds.minX &&
+      x <= labelBounds.maxX &&
+      y >= labelBounds.minY &&
+      y <= labelBounds.maxY;
+    const capLabels = <T,>(items: T[]): T[] =>
+      items.length > MAX_LABELS ? [] : items;
+
     if (canvasLayers.nodeLabels) {
+      const labelNodes = capLabels(
+        nd.filter((n) => inBounds(n.position[0], n.position[1])),
+      );
       layers.push(
         new TextLayer({
           id: "labels-nodes",
-          data: nodeData,
+          data: labelNodes,
           coordinateSystem: coordSystem,
           getPosition: (d) => d.position,
           getText: (d) => d.id,
@@ -866,10 +1029,15 @@ export function MapCanvas({
     }
 
     if (canvasLayers.linkLabels) {
+      const labelLinks = capLabels(
+        ld.filter(
+          (l) => inBounds(l.from[0], l.from[1]) || inBounds(l.to[0], l.to[1]),
+        ),
+      );
       layers.push(
         new TextLayer({
           id: "labels-links",
-          data: linkData,
+          data: labelLinks,
           coordinateSystem: coordSystem,
           getPosition: (d) =>
             [(d.from[0] + d.to[0]) / 2, (d.from[1] + d.to[1]) / 2] as [
@@ -960,13 +1128,17 @@ export function MapCanvas({
 
     return layers;
   }, [
+    linkData,
+    nodeData,
+    linkDatumById,
+    nodeDatumById,
+    periodResult,
     nodes,
     links,
-    schematicCoords,
-    geoCoords,
     viewMode,
     nodeVar,
     linkVar,
+    animateLinks,
     headMin,
     headMax,
     demandMin,
@@ -981,6 +1153,7 @@ export function MapCanvas({
     onSelectLink,
     hoveredNodeId,
     hoveredLinkId,
+    tool,
     colorMode,
     pressureThresholds,
     velocityThresholds,
@@ -990,6 +1163,23 @@ export function MapCanvas({
   useEffect(() => {
     buildLayersRef.current = buildLayers;
   }, [buildLayers]);
+
+  // Viewport-culled labels need a layer rebuild when the view moves. Tracked
+  // via refs + a rAF so pan/zoom with labels off costs nothing.
+  const labelsOnRef = useRef(false);
+  useEffect(() => {
+    labelsOnRef.current = canvasLayers.nodeLabels || canvasLayers.linkLabels;
+  }, [canvasLayers]);
+  const labelRefreshRafRef = useRef<number | null>(null);
+  const scheduleLabelRefresh = useCallback((mode: "map" | "schematic") => {
+    if (labelRefreshRafRef.current != null) return;
+    labelRefreshRafRef.current = requestAnimationFrame(() => {
+      labelRefreshRafRef.current = null;
+      const layers = buildLayersRef.current();
+      if (mode === "map") overlayRef.current?.setProps({ layers });
+      else deckRef.current?.setProps({ layers });
+    });
+  }, []);
 
   // Clear the drag-position override once geoCoords has been rebuilt with the
   // updated coordinates from the backend.  Keying on geoCoords (not nodes)
@@ -1019,6 +1209,8 @@ export function MapCanvas({
         };
         viewStateRef.current = nextViewState;
         deckRef.current?.setProps({ viewState: nextViewState });
+        // Labels are viewport-culled; refresh them as the view moves.
+        if (labelsOnRef.current) scheduleLabelRefresh("schematic");
       },
       layers: [],
     });
@@ -1030,7 +1222,7 @@ export function MapCanvas({
         viewMode === "schematic" ? "" : "none";
     }
     return deck;
-  }, [viewMode]);
+  }, [viewMode, scheduleLabelRefresh]);
 
   useEffect(() => {
     if (!mapElRef.current) return;
@@ -1044,6 +1236,12 @@ export function MapCanvas({
       attributionControl: false,
     });
     mapRef.current = map;
+
+    map.on("moveend", () => {
+      if (labelsOnRef.current && viewModeRef.current === "map") {
+        scheduleLabelRefresh("map");
+      }
+    });
 
     map.on("style.load", () => {
       // setStyle tears down style-owned layers/sources. Reattach and reapply
@@ -1167,7 +1365,7 @@ export function MapCanvas({
       mapRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [markFirstFrame, basemap]);
+  }, [markFirstFrame, basemap, scheduleLabelRefresh]);
 
   useEffect(() => {
     if (!isActive) return;
@@ -1194,8 +1392,11 @@ export function MapCanvas({
     markFirstFrame("schematic");
   }, [buildLayers, isActive, markFirstFrame, viewMode]);
 
+  const linkAnimationActive =
+    animateLinks && (linkVar === "flow" || linkVar === "velocity");
+
   useEffect(() => {
-    if (!isActive || viewMode !== "schematic" || linkVar !== "flow") {
+    if (!isActive || viewMode !== "schematic" || !linkAnimationActive) {
       flowAnimRef.current = 0;
       return;
     }
@@ -1210,7 +1411,7 @@ export function MapCanvas({
     }
     rafId = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(rafId);
-  }, [isActive, linkVar, viewMode]);
+  }, [isActive, linkAnimationActive, viewMode]);
 
   // Update overlay when data/layers change in map mode.
   useEffect(() => {
@@ -1221,7 +1422,7 @@ export function MapCanvas({
 
   // Map-mode flow animation via overlay.
   useEffect(() => {
-    if (!isActive || viewMode !== "map" || linkVar !== "flow") return;
+    if (!isActive || viewMode !== "map" || !linkAnimationActive) return;
     let rafId: number;
     let lastTs = performance.now();
     function tick(now: number) {
@@ -1233,7 +1434,7 @@ export function MapCanvas({
     }
     rafId = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(rafId);
-  }, [isActive, linkVar, viewMode]);
+  }, [isActive, linkAnimationActive, viewMode]);
 
   // Drop all render layers while inactive so hidden tabs don't keep repainting.
   useEffect(() => {
@@ -1410,4 +1611,4 @@ export function MapCanvas({
       <div ref={deckHostRef} style={{ position: "absolute", inset: 0 }} />
     </div>
   );
-}
+});

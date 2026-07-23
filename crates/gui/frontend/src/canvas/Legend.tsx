@@ -9,7 +9,7 @@
  * colorMode is "threshold".
  */
 
-import { ChevronUpDownIcon } from "@heroicons/react/16/solid";
+import { ChevronUpDownIcon, PlayIcon } from "@heroicons/react/16/solid";
 import React, { type CSSProperties, useEffect, useRef, useState } from "react";
 import {
   FLOW_GRADIENT_CSS,
@@ -34,6 +34,11 @@ interface LegendProps {
   setNodeVar: (v: NodeVariable) => void;
   linkVar: LinkVariable;
   setLinkVar: (v: LinkVariable) => void;
+  /** User preference: animate the Flow/Velocity pulse effect. */
+  linkAnimation: boolean;
+  setLinkAnimation: (v: boolean) => void;
+  /** App "Reduce motion" accessibility setting; forces animation off. */
+  reducedMotion: boolean;
   qualityMode: string;
   headMin: number;
   headMax: number;
@@ -261,6 +266,9 @@ export function Legend({
   setNodeVar,
   linkVar,
   setLinkVar,
+  linkAnimation,
+  setLinkAnimation,
+  reducedMotion,
   qualityMode,
   headMin,
   headMax,
@@ -863,6 +871,47 @@ export function Legend({
             setLinkPickerOpen(false);
           }}
         />
+        {(() => {
+          // Animation applies to Flow and Velocity only; "Reduce motion"
+          // (Settings → Accessibility) always wins over the user toggle.
+          const animatable = linkVar !== "status";
+          const disabled = reducedMotion || !animatable;
+          const tooltip = reducedMotion
+            ? "Animation off — Reduce motion is enabled in Settings"
+            : !animatable
+              ? "Animation applies to Flow and Velocity"
+              : linkAnimation
+                ? "Pause link animation"
+                : "Play link animation";
+          const active = linkAnimation && !disabled;
+          return (
+            <button
+              type="button"
+              className="tool-btn"
+              disabled={disabled}
+              onClick={(e) => {
+                e.stopPropagation();
+                setLinkAnimation(!linkAnimation);
+              }}
+              title={tooltip}
+              data-tooltip={tooltip}
+              data-tooltip-pos="top"
+              style={{
+                ...PICKER_BTN_STYLE,
+                padding: "4px 6px",
+                color: active
+                  ? "var(--accent)"
+                  : disabled
+                    ? "var(--text-tertiary)"
+                    : "var(--text-secondary)",
+                opacity: disabled ? 0.5 : 1,
+                cursor: disabled ? "default" : "pointer",
+              }}
+            >
+              <PlayIcon style={{ width: 12, height: 12 }} />
+            </button>
+          );
+        })()}
       </div>
     </div>
   );

@@ -11,6 +11,7 @@ import {
   type ReactNode,
   useCallback,
   useContext,
+  useMemo,
   useState,
 } from "react";
 
@@ -45,7 +46,11 @@ export function CanvasLayersProvider({ children }: { children: ReactNode }) {
   const setLayer = useCallback((id: keyof CanvasLayers, on: boolean) => {
     setLayers((prev) => ({ ...prev, [id]: on }));
   }, []);
-  return <Ctx.Provider value={{ layers, setLayer }}>{children}</Ctx.Provider>;
+  const value = useMemo<CanvasLayersCtx>(
+    () => ({ layers, setLayer }),
+    [layers, setLayer],
+  );
+  return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
 
 export function useCanvasLayers() {

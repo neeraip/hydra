@@ -15,7 +15,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useActiveProject, useAppState, useSimulation } from "../../AppContext";
 import { AnnotationSummary, MeasureOverlay } from "../../canvas/Annotations";
 import type { BasemapStyle } from "../../canvas/Basemap";
-import { haversineMeters, reprojectNodes } from "../../canvas/coords";
+import { haversineMeters, reprojectNodesCached } from "../../canvas/coords";
 import { Legend, type LegendThresholds } from "../../canvas/Legend";
 import { useCanvasLayers } from "../../canvas/layers-context";
 import { MapCanvas } from "../../canvas/MapCanvas";
@@ -52,6 +52,7 @@ import {
   useSimParams,
 } from "../../hooks";
 import { useNetworkVersion } from "../../hooks/NetworkVersionContext";
+import { useReducedMotion } from "../../hooks/useReducedMotion";
 import { CanvasErrorBoundary } from "./CanvasView/CanvasErrorBoundary";
 import { CoordStatusIndicator } from "./CanvasView/CoordStatusIndicator";
 
@@ -62,10 +63,16 @@ const NODE_KIND_PREFIX: Record<string, string> = {
 };
 
 export function CanvasView({ isActive = true }: { isActive?: boolean }) {
-  const { activeScenarioId, openCrsModal, setProjectView, projectView } =
-    useAppState();
+  const {
+    activeScenarioId,
+    openCrsModal,
+    setProjectView,
+    projectView,
+    railOpen,
+    commandPaletteOpen,
+  } = useAppState();
   const { project } = useActiveProject();
-  const { bumpNetwork, markEdited } = useNetworkVersion();
+  const { markEdited } = useNetworkVersion();
   const simParams = useSimParams(project?.id);
   const { layers: canvasLayers, setLayer } = useCanvasLayers();
   const { setCoordStatus } = useCanvasStatus();
@@ -86,6 +93,17 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
   const [currentHour, setCurrentHour] = useState(0);
   const [nodeVar, setNodeVar] = useState<NodeVariable>("pressure");
   const [linkVar, setLinkVar] = useState<LinkVariable>("velocity");
+  // ── Link animation (Flow/Velocity pulse) — user toggle, persisted, and
+  // forced off entirely while the "Reduce motion" accessibility setting is on.
+  const [linkAnimation, setLinkAnimationRaw] = useState(
+    () => localStorage.getItem("hydra2-link-animation") !== "false",
+  );
+  const setLinkAnimation = useCallback((v: boolean) => {
+    setLinkAnimationRaw(v);
+    localStorage.setItem("hydra2-link-animation", String(v));
+  }, []);
+  const reducedMotion = useReducedMotion();
+  const animateLinks = linkAnimation && !reducedMotion;
   const [showBasemapDropdown, setShowBasemapDropdown] = useState(false);
   // ── Pending delete confirmation ───────────────────────────────────────────
   const [pendingDelete, setPendingDelete] = useState<{
@@ -259,8 +277,14 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
     setCurrentPeriodResult(null);
   }, [project?.id, activeScenarioId]);
 
+  // Keyed on a value-stable digest of resultMeta rather than its object
+  // identity: run completion publishes two fresh (equal) meta objects, which
+  // previously triggered a duplicate 1.3 MB period fetch.
+  const resultMetaKey = resultMeta
+    ? `${resultMeta.times.length}:${resultMeta.times[resultMeta.times.length - 1] ?? 0}:${resultMeta.qualityMode}`
+    : null;
   useEffect(() => {
-    if (!resultMeta || !project?.id) {
+    if (resultMetaKey == null || !project?.id) {
       // No simulation exists for this scenario — discard any stale period result
       // so the canvas and inspector show the "no results" state.
       setCurrentPeriodResult(null);
@@ -275,7 +299,7 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
     return () => {
       cancelled = true;
     };
-  }, [project?.id, currentHour, resultMeta, activeScenarioId]);
+  }, [project?.id, currentHour, resultMetaKey, activeScenarioId]);
 
   // ── Timeline height CSS variable ─────────────────────────────────
   useEffect(() => {
@@ -289,7 +313,6 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
   const [isPlaying, setIsPlaying] = useState(false);
   const [speed, setSpeed] = useState(1); // 0.5 / 1 / 2 / 4 / 8 ×
   const [loop, setLoop] = useState(true);
-  const [hoverHour, setHoverHour] = useState<number | null>(null);
 
   // `maxStep` is the last valid step index: 0..maxStep.
   // Derived from stableResultMeta when available (covers multi-period results),
@@ -459,6 +482,21 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
   // pressure/velocity scrubs (which don't change x/y) don't re-run proj4.
   // proj4 errors are surfaced via `crsError` (set in the effect below, not
   // here — setting state inside useMemo is a React anti-pattern).
+  // Per-node reprojection cache: on a projected CRS every network mutation
+  // delivers a fresh baseNodes array, but almost all coordinates are
+  // unchanged — reuse both the proj4 result and the output object (identity)
+  // for nodes whose source object is identical, so a single-element patch
+  // costs one proj4 call instead of 46k.
+  const reprojCacheRef = useRef<{
+    crs: string;
+    byId: Map<
+      string,
+      {
+        src: (typeof baseNodes)[number];
+        out: (typeof baseNodes)[number];
+      }
+    >;
+  }>({ crs: "", byId: new Map() });
   const reprojection = useMemo(() => {
     if (sourceCrs === "EPSG:4326") {
       // Even with the default CRS, check that the raw coordinates are within
@@ -479,16 +517,22 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
       return { nodes: rawPositionNodes, error: null as string | null };
     }
     try {
-      return {
-        nodes: reprojectNodes(rawPositionNodes, sourceCrs),
-        error: null,
-      };
+      const cache = reprojCacheRef.current;
+      if (cache.crs !== sourceCrs) {
+        cache.crs = sourceCrs;
+        cache.byId = new Map();
+      }
+      const nodes = reprojectNodesCached(
+        rawPositionNodes,
+        sourceCrs,
+        cache.byId,
+      );
+      return { nodes, error: null };
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       return { nodes: rawPositionNodes, error: msg };
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sourceCrs, rawPositionNodes.some, rawPositionNodes]);
+  }, [sourceCrs, rawPositionNodes]);
 
   // Surface reprojection errors to the toolbar without setting state during
   // render.  Runs after every reprojection result.
@@ -502,50 +546,67 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
   // merge reprojected positions without touching pressure/demand.
   const reprojectedXY = useMemo(() => {
     const m = new Map<string, { x: number; y: number }>();
+    // Identity match means coordinates are already WGS84 — posNodes will
+    // return baseNodes untouched, so skip building a 46k-entry Map.
+    if (reprojectedPositionNodes === baseNodes) return m;
     for (const n of reprojectedPositionNodes) m.set(n.id, { x: n.x, y: n.y });
     return m;
-  }, [reprojectedPositionNodes]);
-  const allNodes = useMemo(() => {
-    const base = baseNodes;
-    // Merge reprojected x/y positions into each node.  This is done regardless
-    // of overlayMode so MapCanvas always gets WGS84 coords in map mode.
-    const withPos = base.map((n) => {
+  }, [reprojectedPositionNodes, baseNodes]);
+  // Base nodes with reprojected x/y merged — deliberately independent of
+  // period results so its identity is stable across timeline scrubs. The
+  // canvas reads sim values from the flat arrays (periodResult prop) instead.
+  const posNodes = useMemo(() => {
+    // No reprojection ran (EPSG:4326 in range): reuse baseNodes as-is —
+    // identity stability here keeps MapCanvas's data memos from rebuilding.
+    if (reprojectedXY.size === 0) return baseNodes;
+    return baseNodes.map((n) => {
       const pos = reprojectedXY.get(n.id);
       return pos ? { ...n, x: pos.x, y: pos.y } : n;
     });
-    // Flat-array period result from getPeriodResults (index = network order).
-    if (
-      currentPeriodResult &&
-      currentPeriodResult.nodePressure.length === withPos.length
-    ) {
-      return withPos.map((n, i) => ({
-        ...n,
-        pressure: currentPeriodResult.nodePressure[i],
-        demand: currentPeriodResult.nodeDemand[i],
-        head: currentPeriodResult.nodeHead[i],
-        quality: currentPeriodResult.nodeQuality?.[i] ?? null,
-      }));
-    }
-    return withPos;
-  }, [baseNodes, reprojectedXY, currentPeriodResult]);
+  }, [baseNodes, reprojectedXY]);
+
+  // O(1) enrichment flag (replaces the previous 46k `.some` scans): true when
+  // the current period result matches the network's node order/length.
+  const simMerged =
+    currentPeriodResult != null &&
+    currentPeriodResult.nodePressure.length === baseNodes.length;
+
+  // Merged per-element objects are consumed only by the rail list, command
+  // palette, and inspector. When none of those is visible, skip the ~92k
+  // object spreads per timeline step entirely — the canvas doesn't need them.
+  const needSimObjects =
+    railOpen ||
+    commandPaletteOpen ||
+    selectedNodeId != null ||
+    selectedLinkId != null;
+
+  const allNodes = useMemo(() => {
+    if (!needSimObjects || !simMerged || !currentPeriodResult) return posNodes;
+    return posNodes.map((n, i) => ({
+      ...n,
+      pressure: currentPeriodResult.nodePressure[i],
+      demand: currentPeriodResult.nodeDemand[i],
+      head: currentPeriodResult.nodeHead[i],
+      quality: currentPeriodResult.nodeQuality?.[i] ?? null,
+    }));
+  }, [posNodes, currentPeriodResult, simMerged, needSimObjects]);
 
   const allLinks = useMemo(() => {
-    const base = baseLinks;
-    // Flat-array period result.
     if (
-      currentPeriodResult &&
-      currentPeriodResult.linkFlow.length === base.length
+      !needSimObjects ||
+      !currentPeriodResult ||
+      currentPeriodResult.linkFlow.length !== baseLinks.length
     ) {
-      return base.map((l, i) => ({
-        ...l,
-        velocity: currentPeriodResult.linkVelocity[i],
-        flow: currentPeriodResult.linkFlow[i],
-        status: currentPeriodResult.linkStatus[i],
-        quality: currentPeriodResult.linkQuality?.[i] ?? null,
-      }));
+      return baseLinks;
     }
-    return base;
-  }, [baseLinks, currentPeriodResult]);
+    return baseLinks.map((l, i) => ({
+      ...l,
+      velocity: currentPeriodResult.linkVelocity[i],
+      flow: currentPeriodResult.linkFlow[i],
+      status: currentPeriodResult.linkStatus[i],
+      quality: currentPeriodResult.linkQuality?.[i] ?? null,
+    }));
+  }, [baseLinks, currentPeriodResult, needSimObjects]);
 
   // Keep the selection context's sim data in sync so the rail can display
   // live result values without re-fetching from the backend.
@@ -554,35 +615,18 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
     // or when there is no sim data to expect. This prevents the network list
     // from flashing blank during the window between bumpNetwork() updating
     // baseNodes (null pressure) and getPeriodResults() delivering new results.
-    const enriched =
-      currentPeriodResult == null || allNodes.some((n) => n.pressure != null);
+    const enriched = currentPeriodResult == null || simMerged;
     if (enriched) setSimData(allNodes, allLinks);
-  }, [allNodes, allLinks, setSimData, currentPeriodResult]);
+  }, [allNodes, allLinks, setSimData, currentPeriodResult, simMerged]);
 
-  // For MapCanvas: hold the last enriched arrays so the canvas stays colored
-  // during the bumpNetwork → getPeriodResults window.  Same latch pattern as
-  // stableResultMeta — only update when the data actually carries sim values,
-  // so the deck.gl layers never render a frame with null-pressure grey nodes.
-  // Nodes and links are always enriched together (same getPeriodResults call),
-  // so a single enrichment flag covers both arrays.
-  const stableCanvasNodesRef = useRef<typeof allNodes>(allNodes);
-  const stableCanvasLinksRef = useRef<typeof allLinks>(allLinks);
-  // The stable-latch prevents flicker during the brief window between a
-  // bumpNetwork() call (which delivers new baseNodes without pressure data)
-  // and getPeriodResults() resolving with sim values.  It must NOT apply
-  // when the network topology changed (node/link added or deleted) because
-  // that would keep the deleted element visible on the canvas indefinitely.
-  const topologyChanged =
-    allNodes.length !== stableCanvasNodesRef.current.length ||
-    allLinks.length !== stableCanvasLinksRef.current.length;
-  const canvasEnriched =
-    !stableResultMeta ||
-    allNodes.some((n) => n.pressure != null) ||
-    topologyChanged;
-  if (canvasEnriched) stableCanvasNodesRef.current = allNodes;
-  if (canvasEnriched) stableCanvasLinksRef.current = allLinks;
-  const canvasNodes = canvasEnriched ? allNodes : stableCanvasNodesRef.current;
-  const canvasLinks = canvasEnriched ? allLinks : stableCanvasLinksRef.current;
+  // MapCanvas gets the *stable* position/base arrays plus the flat period
+  // result — colours update via the periodResult prop without new arrays, so
+  // the old flicker-latch over merged arrays is no longer needed. During the
+  // brief window after a non-topology edit the previous period result still
+  // matches by length and keeps the canvas coloured; after a topology change
+  // the length guard in MapCanvas drops stale colours immediately.
+  const canvasNodes = posNodes;
+  const canvasLinks = baseLinks;
 
   const nodeMap = useMemo(
     () => new Map(allNodes.map((n) => [n.id, n])),
@@ -715,9 +759,10 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
       await patchNodePosition(id, x, y);
       await saveProjectOnDisk(project.id, activeScenarioId);
       markEdited(activeScenarioId);
-      bumpNetwork();
+      // No bumpNetwork(): the backend emits `network-changed`, which already
+      // bumps the version — a manual bump doubled the full-snapshot refetch.
     },
-    [project, activeScenarioId, markEdited, bumpNetwork],
+    [project, activeScenarioId, markEdited],
   );
 
   const handleConfirmDelete = useCallback(async () => {
@@ -728,15 +773,8 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
     await deleteElement(kind, id);
     await saveProjectOnDisk(project.id, activeScenarioId);
     markEdited(activeScenarioId);
-    bumpNetwork();
-  }, [
-    pendingDelete,
-    project,
-    activeScenarioId,
-    markEdited,
-    bumpNetwork,
-    clearSelection,
-  ]);
+    // No bumpNetwork(): backend event already bumps (see handleNodeMoved).
+  }, [pendingDelete, project, activeScenarioId, markEdited, clearSelection]);
 
   // ── Node / link ID suggestion ─────────────────────────────────────────────
   // Generates a short unique ID by finding the first gap in the existing IDs.
@@ -798,9 +836,9 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
       setPendingCreateNode(null);
       await saveProjectOnDisk(project.id, activeScenarioId);
       markEdited(activeScenarioId);
-      bumpNetwork();
+      // No bumpNetwork(): backend event already bumps (see handleNodeMoved).
     },
-    [pendingCreateNode, project, activeScenarioId, markEdited, bumpNetwork],
+    [pendingCreateNode, project, activeScenarioId, markEdited],
   );
 
   const handleConfirmCreateLink = useCallback(
@@ -813,9 +851,9 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
       setPendingCreateLink(null);
       await saveProjectOnDisk(project.id, activeScenarioId);
       markEdited(activeScenarioId);
-      bumpNetwork();
+      // No bumpNetwork(): backend event already bumps (see handleNodeMoved).
     },
-    [pendingCreateLink, project, activeScenarioId, markEdited, bumpNetwork],
+    [pendingCreateLink, project, activeScenarioId, markEdited],
   );
 
   // Compute measure distance: geo in map mode, pixel-scaled in schematic.
@@ -916,10 +954,12 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
             <MapCanvas
               nodes={canvasNodes}
               links={canvasLinks}
+              periodResult={currentPeriodResult}
               isActive={canvasIsActive}
               viewMode={viewMode}
               nodeVar={nodeVar}
               linkVar={linkVar}
+              animateLinks={animateLinks}
               basemap={basemap}
               selectedNodeId={selectedNodeId}
               onSelectNode={handleSelectNode}
@@ -958,6 +998,9 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
               setNodeVar={setNodeVar}
               linkVar={linkVar}
               setLinkVar={setLinkVar}
+              linkAnimation={linkAnimation}
+              setLinkAnimation={setLinkAnimation}
+              reducedMotion={reducedMotion}
               qualityMode={stableResultMeta.qualityMode ?? "none"}
               headMin={stableResultMeta.ranges.headMin ?? 0}
               headMax={stableResultMeta.ranges.headMax ?? 100}
@@ -1610,8 +1653,6 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
           setSpeed={setSpeed}
           loop={loop}
           setLoop={setLoop}
-          hoverHour={hoverHour}
-          setHoverHour={setHoverHour}
           resultMeta={stableResultMeta}
           maxStep={maxStep}
           steadyState={isSteadyState}
