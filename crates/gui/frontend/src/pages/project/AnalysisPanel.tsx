@@ -5,9 +5,11 @@ import { WarningRow } from "../../components/ui/WarningRow";
 import {
   getResultAnalytics,
   PRESSURE_THRESHOLD,
+  type PumpEnergyRecord,
   type ResultAnalytics,
 } from "../../hooks";
 import { AuditPanels } from "./AnalysisPanel/AuditPanels";
+import { pressureCompliancePct } from "./AnalysisPanel/compliance";
 import {
   PressureHistogram,
   VelocityHistogram,
@@ -16,9 +18,10 @@ import { PipeCriticality } from "./AnalysisPanel/PipeCriticality";
 import { PumpEnergyPanel } from "./AnalysisPanel/PumpEnergyPanel";
 
 export function AnalysisPanel() {
-  const { resultMeta } = useSimulation();
+  const { resultMeta, pumpEnergy } = useSimulation();
   const { project } = useActiveProject();
-  const { activeScenarioId } = useAppState();
+  const { activeScenarioId, deferredProjectView } = useAppState();
+  const visible = deferredProjectView === "analysis";
 
   // Load analytics from the backend — streams the .out file one period at a
   // time so it is safe for arbitrarily large networks.  Re-fetches whenever
@@ -29,14 +32,26 @@ export function AnalysisPanel() {
       setAnalytics(null);
       return;
     }
+    // Gated on visibility: the panel stays mounted while hidden, and this
+    // fetch streams the whole .out file server-side — running it during a
+    // tab/scenario switch contended with the switch's own IPC. On becoming
+    // visible the effect re-runs and fetches (analytics may be one result
+    // behind while hidden, which is fine — nothing displays it).
+    if (!visible) return;
     let cancelled = false;
-    getResultAnalytics(project.id, activeScenarioId).then((a) => {
-      if (!cancelled) setAnalytics(a);
-    });
+    getResultAnalytics(project.id, activeScenarioId)
+      .then((a) => {
+        if (!cancelled) setAnalytics(a);
+      })
+      .catch((err) => {
+        // Fall back to the empty-state placeholders ("—" metrics).
+        console.error("Failed to load result analytics:", err);
+        if (!cancelled) setAnalytics(null);
+      });
     return () => {
       cancelled = true;
     };
-  }, [project?.id, activeScenarioId, resultMeta]);
+  }, [project?.id, activeScenarioId, resultMeta, visible]);
 
   return (
     <div
@@ -49,7 +64,7 @@ export function AnalysisPanel() {
       }}
     >
       {/* Panel 1: System Summary */}
-      <SystemSummary analytics={analytics} />
+      <SystemSummary analytics={analytics} pumpEnergy={pumpEnergy} />
 
       {/* Panel 2: Two-column histograms */}
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20 }}>
@@ -57,7 +72,7 @@ export function AnalysisPanel() {
         <VelocityHistogram analytics={analytics} />
       </div>
 
-      {/* Panel 3: Pipe Criticality */}
+      {/* Panel 3: Top pipes by max velocity */}
       <PipeCriticality analytics={analytics} />
 
       {/* Panel 4: Mass-balance & energy audit */}
@@ -74,7 +89,31 @@ export function AnalysisPanel() {
 
 /* ── System Summary ──────────────────────────────────────────────────────────── */
 
-function SystemSummary({ analytics }: { analytics: ResultAnalytics | null }) {
+/**
+ * Total pump energy over the run as a chip value, or "—" when pump energy
+ * hasn't loaded (or predates the backend's `totalKwh` field).
+ */
+function pumpEnergyChipValue(pumpEnergy: PumpEnergyRecord[] | null): string {
+  if (!pumpEnergy || pumpEnergy.length === 0) return "—";
+  let total = 0;
+  let hasKwh = false;
+  for (const p of pumpEnergy) {
+    if (typeof p.totalKwh === "number" && Number.isFinite(p.totalKwh)) {
+      total += p.totalKwh;
+      hasKwh = true;
+    }
+  }
+  if (!hasKwh) return "—";
+  return `${total >= 100 ? total.toFixed(0) : total.toFixed(1)} kWh`;
+}
+
+function SystemSummary({
+  analytics,
+  pumpEnergy,
+}: {
+  analytics: ResultAnalytics | null;
+  pumpEnergy: PumpEnergyRecord[] | null;
+}) {
   if (!analytics) {
     return (
       <div>
@@ -89,7 +128,13 @@ function SystemSummary({ analytics }: { analytics: ResultAnalytics | null }) {
     );
   }
 
+  const compliancePct = pressureCompliancePct(analytics);
+
+  // Min-pressure / max-velocity markers are absent when no valid data exists
+  // in the results (e.g. no junctions, or no links with velocity data).
+  const hasMinPressure = analytics.minPressureM != null;
   const minPressureColor =
+    analytics.minPressureM != null &&
     analytics.minPressureM < PRESSURE_THRESHOLD
       ? "var(--status-error)"
       : undefined;
@@ -98,15 +143,44 @@ function SystemSummary({ analytics }: { analytics: ResultAnalytics | null }) {
     <div>
       <div style={{ display: "flex", gap: 12, marginBottom: 12 }}>
         <MetricChip
-          value={`${analytics.minPressureM.toFixed(1)} m`}
-          label={`Min Pressure (${analytics.minPressureNodeId})`}
+          value={
+            analytics.minPressureM != null
+              ? `${analytics.minPressureM.toFixed(1)} m`
+              : "—"
+          }
+          label={
+            hasMinPressure && analytics.minPressureNodeId != null
+              ? `Min Pressure (${analytics.minPressureNodeId})`
+              : "Min Pressure"
+          }
           valueColor={minPressureColor}
         />
         <MetricChip
-          value={`${analytics.maxVelocityMs.toFixed(2)} m/s`}
-          label={`Max Velocity (${analytics.maxVelocityLinkId})`}
+          value={
+            analytics.maxVelocityMs != null
+              ? `${analytics.maxVelocityMs.toFixed(2)} m/s`
+              : "—"
+          }
+          label={
+            analytics.maxVelocityMs != null &&
+            analytics.maxVelocityLinkId != null
+              ? `Max Velocity (${analytics.maxVelocityLinkId})`
+              : "Max Velocity"
+          }
         />
-        <MetricChip value="—" label="Pump Energy" />
+        {compliancePct != null && (
+          <MetricChip
+            value={`${compliancePct.toFixed(1)} %`}
+            label={`Pressure ≥ ${PRESSURE_THRESHOLD} m`}
+            valueColor={
+              compliancePct < 100 ? "var(--status-warning)" : undefined
+            }
+          />
+        )}
+        <MetricChip
+          value={pumpEnergyChipValue(pumpEnergy)}
+          label="Pump Energy"
+        />
         <MetricChip
           value={`${analytics.massBalance.balancePct.toFixed(1)} %`}
           label="Mass Balance"

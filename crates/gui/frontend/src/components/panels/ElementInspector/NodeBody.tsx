@@ -5,6 +5,7 @@ import { SectionLabel } from "../../ui/SectionLabel";
 import { ConnectedLink } from "./ConnectedElements";
 import { PropRow } from "./primitives";
 import { NodeResultsCard } from "./ResultsCards";
+import { TimeSeriesCard } from "./TimeSeriesCard";
 
 // ── Node inspector body ────────────────────────────────────────────────────────
 
@@ -155,6 +156,9 @@ export function NodeBody({
         ranges={ranges}
         hasSimulation={hasSimulation}
       />
+
+      {/* Per-period time series (renders nothing for steady-state runs) */}
+      <TimeSeriesCard kind="node" elementId={node.id} />
     </div>
   );
 }

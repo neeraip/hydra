@@ -92,7 +92,7 @@ function MassBalanceAudit({
 }
 
 function EnergyAudit({ periodCount }: { periodCount: number | null }) {
-  const { pumpEnergy } = useSimulation();
+  const { pumpEnergy, resultMeta } = useSimulation();
   if (!pumpEnergy) {
     return (
       <div>
@@ -101,8 +101,16 @@ function EnergyAudit({ periodCount }: { periodCount: number | null }) {
       </div>
     );
   }
+  // Real reporting-period duration in hours, derived from snapshot-time
+  // spacing (seconds). Falls back to 1 h when times are unavailable.
+  const times = resultMeta?.times;
+  const hoursPerPeriod =
+    times && times.length > 1
+      ? (times[times.length - 1] - times[0]) / (times.length - 1) / 3600
+      : 1;
   const totalKwh = pumpEnergy.reduce(
-    (s, p) => s + p.avgKw * (p.pctOnline / 100) * (periodCount ?? 1),
+    (s, p) =>
+      s + p.avgKw * (p.pctOnline / 100) * (periodCount ?? 1) * hoursPerPeriod,
     0,
   );
   const peakKw = pumpEnergy.reduce((s, p) => Math.max(s, p.peakKw), 0);

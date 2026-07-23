@@ -3,7 +3,7 @@
  * per-period result arrays.
  */
 
-import { tryInvoke } from "./ipc";
+import { tryInvoke, tryInvokeOr } from "./ipc";
 
 // ── Simulation results ────────────────────────────────────────────────
 
@@ -15,6 +15,48 @@ export interface PumpEnergyRecord {
   avgKwhPerFlow: number;
   avgKw: number;
   peakKw: number;
+  /** Total energy consumed over the simulation (kWh). */
+  totalKwh: number;
+  /** Total energy cost over the simulation; `null` when no price data. */
+  totalCost: number | null;
+}
+
+// ── Element time series ─────────────────────────────────────────────────────
+
+/** One named per-period series for an element (SI display units). */
+export interface ElementSeriesField {
+  name: string;
+  values: number[];
+}
+
+/**
+ * Full-simulation time series for a single node or link.
+ * Node field order: pressure, head, demand[, quality].
+ * Link field order: flow, velocity, headloss, status[, quality].
+ */
+export interface ElementSeries {
+  /** Snapshot times in seconds from the start of the simulation. */
+  times: number[];
+  fields: ElementSeriesField[];
+}
+
+/**
+ * Fetch the per-period series for one element by its network-order index.
+ * Returns `null` outside Tauri, when the command is missing/fails, or when
+ * no results exist for the project/scenario.
+ */
+export async function getElementSeries(
+  projectId: string,
+  scenarioId: string | null | undefined,
+  kind: "node" | "link",
+  index: number,
+): Promise<ElementSeries | null> {
+  return tryInvoke<ElementSeries | null>("get_element_series", {
+    projectId,
+    scenarioId: scenarioId ?? null,
+    kind,
+    index,
+  });
 }
 
 // ── Analytics DTOs ──────────────────────────────────────────────────────────
@@ -50,11 +92,15 @@ export interface ResultAnalytics {
   nodeCount: number;
   linkCount: number;
   massBalance: MassBalance;
-  minPressureNodeId: string;
-  minPressureM: number;
+  /** Absent (omitted or null) when no valid pressure data exists. */
+  minPressureNodeId?: string | null;
+  /** Absent (omitted or null) when no valid pressure data exists. */
+  minPressureM?: number | null;
   lowPressureCount: number;
-  maxVelocityLinkId: string;
-  maxVelocityMs: number;
+  /** Absent (omitted or null) when no valid velocity data exists. */
+  maxVelocityLinkId?: string | null;
+  /** Absent (omitted or null) when no valid velocity data exists. */
+  maxVelocityMs?: number | null;
   pressureHistogram: HistogramBucket[];
   velocityHistogram: HistogramBucket[];
   topPipes: TopPipe[];
@@ -65,11 +111,10 @@ export async function getPumpEnergy(
   projectId: string,
   scenarioId?: string | null,
 ): Promise<PumpEnergyRecord[]> {
-  return (
-    (await tryInvoke<PumpEnergyRecord[]>("get_pump_energy", {
-      projectId,
-      scenarioId: scenarioId ?? null,
-    })) ?? []
+  return tryInvokeOr<PumpEnergyRecord[]>(
+    "get_pump_energy",
+    { projectId, scenarioId: scenarioId ?? null },
+    [],
   );
 }
 
@@ -77,11 +122,10 @@ export async function getResultAnalytics(
   projectId: string,
   scenarioId?: string | null,
 ): Promise<ResultAnalytics | null> {
-  return (
-    (await tryInvoke<ResultAnalytics | null>("get_result_analytics", {
-      projectId,
-      scenarioId: scenarioId ?? null,
-    })) ?? null
+  return tryInvokeOr<ResultAnalytics | null>(
+    "get_result_analytics",
+    { projectId, scenarioId: scenarioId ?? null },
+    null,
   );
 }
 
@@ -222,11 +266,10 @@ export async function loadResultMeta(
   projectId: string,
   scenarioId?: string | null,
 ): Promise<ResultMeta | null> {
-  return (
-    (await tryInvoke<ResultMeta | null>("load_result_meta", {
-      projectId,
-      scenarioId: scenarioId ?? null,
-    })) ?? null
+  return tryInvokeOr<ResultMeta | null>(
+    "load_result_meta",
+    { projectId, scenarioId: scenarioId ?? null },
+    null,
   );
 }
 

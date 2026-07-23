@@ -14,12 +14,14 @@ import {
   useNodes,
   useProjects,
 } from "../../hooks";
+import { tryInvoke } from "../../hooks/ipc";
 import {
   formatPrimaryShortcut,
   formatShortcut,
   primaryModifierLabel,
   shiftModifierLabel,
 } from "../../shortcuts";
+import { ModalBackdrop, stopBackdropEvents } from "../ui/ModalBackdrop";
 
 /**
  * Display-only category union — extends the data-layer `CommandCategory`
@@ -139,6 +141,7 @@ export function CommandPalette() {
     page,
     projectView,
     activeProjectId,
+    activeScenarioId,
     projectsVersion,
   } = useAppState();
 
@@ -180,8 +183,9 @@ export function CommandPalette() {
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const modifier = primaryModifierLabel();
-  const nav1Shortcut = formatShortcut([modifier, "1"]);
-  const nav2Shortcut = formatShortcut([modifier, "2"]);
+  const navCanvasShortcut = formatShortcut([modifier, "2"]);
+  const navEditorShortcut = formatShortcut([modifier, "3"]);
+  const navAnalysisShortcut = formatShortcut([modifier, "4"]);
   const runShortcut = formatPrimaryShortcut("R");
   const toggleLayoutShortcut = formatPrimaryShortcut("M");
   const zoomInShortcut = formatPrimaryShortcut("=");
@@ -230,14 +234,13 @@ export function CommandPalette() {
           id: "n1",
           label: "Canvas",
           category: "Navigate",
-          shortcut: nav1Shortcut,
+          shortcut: navCanvasShortcut,
           action: "nav-canvas",
         },
         {
           id: "n2",
           label: "Scenarios",
           category: "Navigate",
-          shortcut: nav2Shortcut,
           action: "nav-scenarios",
         },
         {
@@ -245,6 +248,7 @@ export function CommandPalette() {
           label: "Analysis",
           category: "Navigate",
           description: "Open the analysis view",
+          shortcut: navAnalysisShortcut,
           action: "nav-analysis",
         },
         {
@@ -252,6 +256,7 @@ export function CommandPalette() {
           label: "Network Editor",
           category: "Navigate",
           description: "Open the network editor view",
+          shortcut: navEditorShortcut,
           action: "nav-editor",
         },
       ];
@@ -269,9 +274,27 @@ export function CommandPalette() {
         {
           id: "a2",
           label: "Export results to GeoJSON",
-          description: "Export node/link results as attributed GeoJSON",
+          description:
+            "Export nodes/links with attributes and result values when available",
           category: "Actions",
         },
+        {
+          id: "a-export-inp",
+          label: "Export INP…",
+          description: "Save the current network as an EPANET INP file",
+          category: "Actions",
+        },
+        // Only listed when simulation results exist for the active scenario.
+        ...(resultMeta
+          ? [
+              {
+                id: "a-export-csv",
+                label: "Export results as CSV…",
+                description: "Save the simulation results as a CSV file",
+                category: "Actions",
+              } satisfies DynamicCommand,
+            ]
+          : []),
         {
           id: "a4",
           label: "Import INP file…",
@@ -280,14 +303,6 @@ export function CommandPalette() {
         },
       ];
       const common: DynamicCommand[] = [
-        {
-          id: "p-run",
-          label: "Run simulation",
-          description: "Run hydraulics for the active scenario",
-          category: "Page",
-          shortcut: runShortcut,
-          action: "run-sim",
-        },
         {
           id: "p-layout-toggle",
           label: "Toggle layout (Geographic/Orthogonal)",
@@ -418,8 +433,10 @@ export function CommandPalette() {
     page,
     projectView,
     activeProjectId,
-    nav1Shortcut,
-    nav2Shortcut,
+    resultMeta,
+    navCanvasShortcut,
+    navEditorShortcut,
+    navAnalysisShortcut,
     runShortcut,
     toggleLayoutShortcut,
     zoomInShortcut,
@@ -467,9 +484,10 @@ export function CommandPalette() {
       );
 
   // Reset cursor when results change.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the deps are the inputs the visible result list derives from — the cursor must reset whenever they change.
   useEffect(() => {
     setActiveIdx(0);
-  }, []);
+  }, [query, ALL_COMMANDS, elementMatches]);
 
   const execute = useCallback(
     (cmd: DynamicCommand) => {
@@ -516,8 +534,25 @@ export function CommandPalette() {
         return;
       }
 
+      // ── Export INP / results CSV (native save dialogs in the backend) ───
+      if (cmd.id === "a-export-inp" || cmd.id === "a-export-csv") {
+        if (!activeProjectId) return;
+        const command =
+          cmd.id === "a-export-inp"
+            ? "export_project_inp"
+            : "export_results_csv";
+        void tryInvoke<string | null>(command, {
+          projectId: activeProjectId,
+          scenarioId: activeScenarioId ?? null,
+        }).then((path) => {
+          // `null` = user cancelled the save dialog (or command unavailable).
+          if (path) showToast(`Saved ${path}`, "success");
+        });
+        return;
+      }
+
       // ── Analysis: export GeoJSON ────────────────────────────────────────
-      if (cmd.id === "p-an-export" || cmd.id === "a2") {
+      if (cmd.id === "a2") {
         if (!resultMeta) {
           showToast("Run a simulation first", "warn");
           return;
@@ -531,7 +566,16 @@ export function CommandPalette() {
             ...allNodes.map((n) => ({
               type: "Feature" as const,
               geometry: { type: "Point" as const, coordinates: [n.x, n.y] },
-              properties: { id: n.id, type: n.type },
+              properties: {
+                id: n.id,
+                type: n.type,
+                // Static attributes, then result values when available.
+                ...(n.elevation != null ? { elevation: n.elevation } : {}),
+                ...(n.pressure != null ? { pressure: n.pressure } : {}),
+                ...(n.head != null ? { head: n.head } : {}),
+                ...(n.demand != null ? { demand: n.demand } : {}),
+                ...(n.quality != null ? { quality: n.quality } : {}),
+              },
             })),
             ...allLinks.map((l) => {
               const from = nodeCoords.get(l.fromId) ?? [0, 0];
@@ -542,7 +586,23 @@ export function CommandPalette() {
                   type: "LineString" as const,
                   coordinates: [from, to],
                 },
-                properties: { id: l.id, type: l.type },
+                properties: {
+                  id: l.id,
+                  type: l.type,
+                  diameter: l.diameter,
+                  // Static attributes, then result values when available.
+                  ...(l.length != null && l.length > 0
+                    ? { length: l.length }
+                    : {}),
+                  // `velocity` is only meaningful once sim data is merged in
+                  // (it defaults to 0 pre-run) — gate it on `flow` like the
+                  // other result values.
+                  ...(l.flow != null
+                    ? { flow: l.flow, velocity: l.velocity }
+                    : {}),
+                  ...(l.status != null ? { status: l.status } : {}),
+                  ...(l.quality != null ? { quality: l.quality } : {}),
+                },
               };
             }),
           ],
@@ -686,6 +746,7 @@ export function CommandPalette() {
       openProject,
       closeProject,
       activeProjectId,
+      activeScenarioId,
       setPage,
       setProjectView,
       setTheme,
@@ -777,29 +838,18 @@ export function CommandPalette() {
   let globalIdx = 0;
 
   return (
-    /* Backdrop */
-    // biome-ignore lint/a11y/noStaticElementInteractions: backdrop closes the modal on pointer interaction.
-    // biome-ignore lint/a11y/useKeyWithClickEvents: backdrop closes the modal on pointer interaction.
-    <div
-      onClick={closeCommandPalette}
+    <ModalBackdrop
+      onDismiss={closeCommandPalette}
+      zIndex={200}
       style={{
-        position: "fixed",
-        inset: 0,
-        background: "var(--bg-overlay)",
-        zIndex: 200,
-        display: "flex",
         alignItems: "flex-start",
-        justifyContent: "center",
         paddingTop: 80,
         animation: "fadeIn 120ms ease-out",
       }}
     >
       {/* Panel */}
-      {/* biome-ignore lint/a11y/noStaticElementInteractions: panel only stops backdrop clicks. */}
       <div
-        onMouseDown={(e) => e.stopPropagation()}
-        onKeyDown={(e) => e.stopPropagation()}
-        onClick={(e) => e.stopPropagation()}
+        {...stopBackdropEvents}
         style={{
           width: "100%",
           maxWidth: 560,
@@ -1101,6 +1151,6 @@ export function CommandPalette() {
           ))}
         </div>
       </div>
-    </div>
+    </ModalBackdrop>
   );
 }

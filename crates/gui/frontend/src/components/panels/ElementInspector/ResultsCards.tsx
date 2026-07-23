@@ -216,6 +216,12 @@ export function LinkResultsCard({
         return velocityColor(value);
       case "status":
         return statusColor(value);
+      case "headloss":
+        return accent;
+      case "quality":
+        return ranges
+          ? qualityColor(value, ranges.qualityMin ?? 0, ranges.qualityMax ?? 1)
+          : accent;
     }
   }
 

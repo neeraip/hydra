@@ -38,6 +38,23 @@ export function PumpEnergyPanel() {
 
   const maxEnergy = Math.max(...pumpRows.map((r) => r.energy));
 
+  // Whole-run totals. `totalKwh` may be absent at runtime while the backend
+  // predates the field — the row is shown only when real totals exist.
+  let totalKwh = 0;
+  let hasKwh = false;
+  let totalCost = 0;
+  let hasCost = false;
+  for (const p of pumpEnergy) {
+    if (typeof p.totalKwh === "number" && Number.isFinite(p.totalKwh)) {
+      totalKwh += p.totalKwh;
+      hasKwh = true;
+    }
+    if (typeof p.totalCost === "number" && Number.isFinite(p.totalCost)) {
+      totalCost += p.totalCost;
+      hasCost = true;
+    }
+  }
+
   return (
     <div className="insights-card">
       <SectionHeader>Pump Energy</SectionHeader>
@@ -95,6 +112,45 @@ export function PumpEnergyPanel() {
           </div>
         );
       })}
+      {hasKwh && (
+        <div
+          style={{
+            display: "flex",
+            alignItems: "baseline",
+            justifyContent: "space-between",
+            gap: 12,
+            marginTop: 10,
+            paddingTop: 10,
+            borderTop: "1px solid var(--border)",
+          }}
+        >
+          <span
+            style={{
+              fontSize: 12,
+              fontWeight: 600,
+              color: "var(--text-secondary)",
+            }}
+          >
+            Total
+          </span>
+          <span
+            style={{
+              fontSize: 12,
+              fontFamily: "var(--font-mono)",
+              color: "var(--text-primary)",
+              textAlign: "right",
+            }}
+          >
+            {totalKwh.toFixed(1)} kWh
+            {hasCost && (
+              <span style={{ color: "var(--text-secondary)" }}>
+                {" "}
+                · {totalCost.toFixed(2)} energy cost
+              </span>
+            )}
+          </span>
+        </div>
+      )}
     </div>
   );
 }

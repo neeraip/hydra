@@ -14,7 +14,6 @@ export function PipeCriticality({
       diameter: p.diameterMm > 0 ? Math.round(p.diameterMm) : 0,
       velocity: p.maxVelocityMs,
       segment: `${p.fromId} → ${p.toId}`,
-      score: Math.min(100, Math.round(p.maxVelocityMs * 70)),
     }));
   }, [analytics]);
 
@@ -45,9 +44,9 @@ export function PipeCriticality({
             color: "var(--text-primary)",
           }}
         >
-          Pipe Criticality
+          Top Pipes by Velocity
         </div>
-        <NoDataCard message="Run a simulation to see pipe criticality rankings." />
+        <NoDataCard message="Run a simulation to see the fastest-flowing pipes." />
       </div>
     );
   }
@@ -62,12 +61,12 @@ export function PipeCriticality({
             color: "var(--text-primary)",
           }}
         >
-          Pipe Criticality
+          Top Pipes by Velocity
         </div>
         <div
           style={{ fontSize: 11, color: "var(--text-tertiary)", marginTop: 2 }}
         >
-          Top 5 by peak velocity
+          Top 5 by peak simulated velocity
         </div>
       </div>
       <table style={{ width: "100%", borderCollapse: "collapse" }}>
@@ -77,9 +76,6 @@ export function PipeCriticality({
             <th style={thStyle}>Segment</th>
             <th style={{ ...thStyle, textAlign: "right" }}>Ø (mm)</th>
             <th style={{ ...thStyle, textAlign: "right" }}>Velocity</th>
-            <th style={{ ...thStyle, textAlign: "right", width: 140 }}>
-              Score
-            </th>
           </tr>
         </thead>
         <tbody>
@@ -123,38 +119,6 @@ export function PipeCriticality({
                 }}
               >
                 {row.velocity.toFixed(2)} m/s
-              </td>
-              <td style={{ ...tdStyle, textAlign: "right" }}>
-                <div
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "flex-end",
-                    gap: 8,
-                  }}
-                >
-                  <span style={{ color: "var(--text-primary)" }}>
-                    {row.score}
-                  </span>
-                  <div
-                    style={{
-                      width: 60,
-                      height: 4,
-                      background: "var(--border)",
-                      borderRadius: 2,
-                      overflow: "hidden",
-                    }}
-                  >
-                    <div
-                      style={{
-                        width: `${row.score}%`,
-                        height: "100%",
-                        background: "var(--accent)",
-                        borderRadius: 2,
-                      }}
-                    />
-                  </div>
-                </div>
               </td>
             </tr>
           ))}
