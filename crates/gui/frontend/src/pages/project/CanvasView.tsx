@@ -242,16 +242,17 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
   const linkMapRef = useRef<Map<string, (typeof allLinks)[number]>>(new Map());
 
   // ── Simulation state ─────────────────────────────────────────────
-  const { resultMeta, resultMetaLoading } = useSimulation();
+  const { resultMeta, resultMetaLoading, resultGeneration } = useSimulation();
   // `stableResultMeta` lags behind `resultMeta` while metadata is loading.
   // Once loading settles, it mirrors the active scenario exactly (including
   // null for unsimulated scenarios) so overlays cannot bleed across switches.
   const [stableResultMeta, setStableResultMeta] =
     useState<typeof resultMeta>(null);
   // Reset to null when the project changes (different network, stale ranges invalid).
+  // biome-ignore lint/correctness/useExhaustiveDependencies: project id is the intentional reset trigger.
   useEffect(() => {
     setStableResultMeta(null);
-  }, []);
+  }, [project?.id]);
   // Latch while loading, but clear once a scenario settles with no results.
   useEffect(() => {
     if (resultMeta !== null) {
@@ -280,8 +281,12 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
   // Keyed on a value-stable digest of resultMeta rather than its object
   // identity: run completion publishes two fresh (equal) meta objects, which
   // previously triggered a duplicate 1.3 MB period fetch.
+  // resultGeneration is a freshness token bumped whenever result metadata is
+  // (re)loaded after a run — without it, re-running a simulation whose times
+  // are unchanged (value-only edits) would collide in this digest and the
+  // period data would never refetch.
   const resultMetaKey = resultMeta
-    ? `${resultMeta.times.length}:${resultMeta.times[resultMeta.times.length - 1] ?? 0}:${resultMeta.qualityMode}`
+    ? `${resultGeneration}:${resultMeta.times.length}:${resultMeta.times[resultMeta.times.length - 1] ?? 0}:${resultMeta.qualityMode}`
     : null;
   useEffect(() => {
     if (resultMetaKey == null || !project?.id) {
@@ -291,11 +296,15 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
       return;
     }
     let cancelled = false;
-    getPeriodResults(project.id, currentHour, activeScenarioId).then((r) => {
-      if (!cancelled) {
-        setCurrentPeriodResult(r);
-      }
-    });
+    getPeriodResults(project.id, currentHour, activeScenarioId)
+      .then((r) => {
+        if (!cancelled) {
+          setCurrentPeriodResult(r);
+        }
+      })
+      // Decode failures reject (already console.error'd in getPeriodResults);
+      // keep the previous period visible rather than crashing the effect.
+      .catch(() => {});
     return () => {
       cancelled = true;
     };
@@ -609,15 +618,14 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
   }, [baseLinks, currentPeriodResult, needSimObjects]);
 
   // Keep the selection context's sim data in sync so the rail can display
-  // live result values without re-fetching from the backend.
+  // live result values without re-fetching from the backend. Always push:
+  // when the period result matches the network the arrays are merged with sim
+  // values; after a topology change they are the fresh raw arrays — holding
+  // back in that case left deleted elements listed in the rail forever, since
+  // no period refetch arrives until the next run.
   useEffect(() => {
-    // Only push to the rail when allNodes is actually enriched with sim data,
-    // or when there is no sim data to expect. This prevents the network list
-    // from flashing blank during the window between bumpNetwork() updating
-    // baseNodes (null pressure) and getPeriodResults() delivering new results.
-    const enriched = currentPeriodResult == null || simMerged;
-    if (enriched) setSimData(allNodes, allLinks);
-  }, [allNodes, allLinks, setSimData, currentPeriodResult, simMerged]);
+    setSimData(allNodes, allLinks);
+  }, [allNodes, allLinks, setSimData]);
 
   // MapCanvas gets the *stable* position/base arrays plus the flat period
   // result — colours update via the periodResult prop without new arrays, so

@@ -347,6 +347,16 @@ export const MapCanvas = memo(function MapCanvas({
   }, [onSelectLink]);
   useEffect(() => {
     toolRef.current = tool;
+    // Picking is tool-gated; when a tool disables it, onHover(null) can never
+    // fire, so clear any lingering hover state (stale glow + cursor).
+    if (tool !== "select" && tool !== "edit") {
+      hoveredLinkIdRef.current = null;
+      setHoveredLinkId(null);
+    }
+    if (tool === "measure") {
+      hoveredNodeIdRef.current = null;
+      setHoveredNodeId(null);
+    }
   }, [tool]);
   useEffect(() => {
     viewModeRef.current = viewMode;
@@ -1230,7 +1240,11 @@ export const MapCanvas = memo(function MapCanvas({
     const initialVs = roughGeoViewState(nodesRef.current);
     const map = new maplibregl.Map({
       container: mapElRef.current,
-      style: MAP_STYLES[basemap],
+      // Read the style via the ref, NOT the `basemap` prop: having `basemap`
+      // in this effect's deps tears down and recreates the whole map (losing
+      // the viewport) on every style switch — the setStyle effect below
+      // handles changes in place.
+      style: MAP_STYLES[prevBasemapRef.current],
       center: [initialVs.longitude, initialVs.latitude],
       zoom: initialVs.zoom,
       attributionControl: false,
@@ -1321,7 +1335,28 @@ export const MapCanvas = memo(function MapCanvas({
       map.dragPan.enable();
       map.getCanvas().style.cursor = "";
       onNodeMovedRef.current?.(nodeId, e.lngLat.lng, e.lngLat.lat);
+      // Failed/absent position patches never refresh geoCoords, which is what
+      // normally clears the drag override — without this fallback the drag
+      // branch of buildLayers (fresh 46k arrays per frame) stays pinned on.
+      window.setTimeout(() => {
+        if (!draggingNodeIdRef.current && draggingNodePosRef.current) {
+          draggingNodePosRef.current = null;
+          overlayRef.current?.setProps({ layers: buildLayersRef.current() });
+        }
+      }, 5000);
     });
+    // Releasing the button outside the map canvas (over a panel, outside the
+    // window) never fires map "mouseup" — the drag stayed armed with dragPan
+    // disabled. Cancel it: restore the node and re-enable panning.
+    const onWindowPointerUp = () => {
+      if (!draggingNodeIdRef.current) return;
+      draggingNodeIdRef.current = null;
+      draggingNodePosRef.current = null;
+      map.dragPan.enable();
+      map.getCanvas().style.cursor = "";
+      overlayRef.current?.setProps({ layers: buildLayersRef.current() });
+    };
+    window.addEventListener("pointerup", onWindowPointerUp);
     map.on("click", (e) => {
       const { lng, lat } = e.lngLat;
       if (toolRef.current === "measure") {
@@ -1359,13 +1394,14 @@ export const MapCanvas = memo(function MapCanvas({
       } catch {
         /* ignore */
       }
+      window.removeEventListener("pointerup", onWindowPointerUp);
       overlayRef.current = null;
       deckRef.current = null;
       deckCanvasRef.current = null;
       mapRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [markFirstFrame, basemap, scheduleLabelRefresh]);
+  }, [markFirstFrame, scheduleLabelRefresh]);
 
   useEffect(() => {
     if (!isActive) return;
