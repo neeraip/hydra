@@ -5,6 +5,7 @@ import { useEffect } from "react";
 import { useAppState } from "../../AppContext";
 import { useScenarios } from "../../hooks";
 import { ScenariosPanel } from "../panels/ScenariosPanel";
+import { ModalBackdrop, stopBackdropEvents } from "../ui/ModalBackdrop";
 
 export function ScenariosModal() {
   const {
@@ -28,25 +29,9 @@ export function ScenariosModal() {
   if (!scenariosModalOpen) return null;
 
   return (
-    // biome-ignore lint/a11y/noStaticElementInteractions: backdrop closes the modal on pointer interaction.
-    // biome-ignore lint/a11y/useKeyWithClickEvents: backdrop closes the modal on pointer interaction.
-    <div
-      onClick={closeScenariosModal}
-      style={{
-        position: "fixed",
-        inset: 0,
-        background: "var(--bg-overlay)",
-        zIndex: 200,
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-      }}
-    >
-      {/* biome-ignore lint/a11y/noStaticElementInteractions: panel only stops backdrop clicks. */}
+    <ModalBackdrop onDismiss={closeScenariosModal} zIndex={200}>
       <div
-        onMouseDown={(e) => e.stopPropagation()}
-        onKeyDown={(e) => e.stopPropagation()}
-        onClick={(e) => e.stopPropagation()}
+        {...stopBackdropEvents}
         style={{
           width: "min(860px, 90vw)",
           height: "min(640px, 85vh)",
@@ -131,6 +116,6 @@ export function ScenariosModal() {
         {/* ScenariosPanel fills the rest, header suppressed since modal provides it */}
         <ScenariosPanel showHeader={false} />
       </div>
-    </div>
+    </ModalBackdrop>
   );
 }

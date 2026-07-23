@@ -4,12 +4,12 @@
  * Every UI consumer reads project / network / scenario / task / time-series
  * data through this module. The implementation lives in domain modules
  * (`projects.ts`, `network.ts`, `scenarios.ts`, `queue.ts`, `simulation.ts`,
- * `results.ts`, `editors.ts`, `issues.ts`, `exhibits.ts`); this file only
+ * `results.ts`, `editors.ts`, `issues.ts`); this file only
  * re-exports so existing `import { ... } from "../hooks"` sites keep working.
  *
  * Rules for callers:
- *   - Never import from `../types` or `../engines` directly — always go
- *     through this module so the seam stays in one place.
+ *   - Never import from `../types` or `../projectConfig` directly — always
+ *     go through this module so the seam stays in one place.
  *   - Treat returned arrays as referentially stable across renders for the
  *     same input (see the `useMemo` wrappers in the domain modules).
  */
@@ -25,9 +25,6 @@ export type {
   Node,
   NodeType,
   Pattern,
-  Scenario,
-  ScenarioState,
-  SectionGroup,
   Task,
   TaskStatus,
 } from "../types";
@@ -40,9 +37,12 @@ export {
   pressureColor,
 } from "../types";
 export * from "./editors";
-export * from "./exhibits";
 export * from "./issues";
 export type { NetworkSummary } from "./NetworkDataContext";
+export {
+  NetworkDataProvider,
+  useNetworkData,
+} from "./NetworkDataContext";
 // Re-export so callers only need to import from the data seam.
 export { useNetworkVersion } from "./NetworkVersionContext";
 export * from "./network";

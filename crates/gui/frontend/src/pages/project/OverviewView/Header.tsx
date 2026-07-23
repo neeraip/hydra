@@ -23,7 +23,7 @@ export function Header({
       : project.state === "running"
         ? "var(--accent)"
         : project.state === "failed"
-          ? "var(--status-danger, #d35a5a)"
+          ? "var(--status-error)"
           : "var(--text-tertiary)";
   const stateLabel =
     project.state === "simulated"
@@ -34,7 +34,9 @@ export function Header({
           ? "Failed"
           : project.state === "ready"
             ? "Ready"
-            : "Draft";
+            : project.state === "stale"
+              ? "Edited"
+              : "Draft";
 
   return (
     <div

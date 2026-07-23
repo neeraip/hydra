@@ -115,8 +115,8 @@ export function CreateNodeModal({
   }
 
   const fieldStyle: React.CSSProperties = {
-    background: "var(--bg-surface)",
-    border: "1px solid var(--border-subtle)",
+    background: "var(--bg-input)",
+    border: "1px solid var(--border)",
     borderRadius: 6,
     padding: "6px 10px",
     fontSize: 13,
@@ -151,7 +151,7 @@ export function CreateNodeModal({
       <div
         style={{
           background: "var(--bg-card)",
-          border: "1px solid var(--border-subtle)",
+          border: "1px solid var(--border)",
           borderRadius: 10,
           padding: "20px 24px",
           width: 340,
@@ -189,11 +189,9 @@ export function CreateNodeModal({
                   border:
                     kind === t.value
                       ? "1px solid var(--accent)"
-                      : "1px solid var(--border-subtle)",
+                      : "1px solid var(--border)",
                   background:
-                    kind === t.value
-                      ? "var(--accent-dim)"
-                      : "var(--bg-surface)",
+                    kind === t.value ? "var(--accent-dim)" : "var(--bg-input)",
                   color:
                     kind === t.value
                       ? "var(--accent)"
@@ -223,9 +221,7 @@ export function CreateNodeModal({
             }}
             style={{
               ...fieldStyle,
-              borderColor: errorMsg
-                ? "rgba(220,60,60,0.6)"
-                : "var(--border-subtle)",
+              borderColor: errorMsg ? "rgba(220,60,60,0.6)" : "var(--border)",
             }}
             placeholder="e.g. J1"
           />

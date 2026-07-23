@@ -1,5 +1,40 @@
 import { describe, expect, it } from "vitest";
-import { buildPageNumbers } from ".";
+import { buildPageNumbers, msSortValue } from ".";
+
+describe("msSortValue", () => {
+  it("passes finite epoch-ms numbers through", () => {
+    expect(msSortValue(0)).toBe(0);
+    expect(msSortValue(1721600000000)).toBe(1721600000000);
+  });
+
+  it("maps null/undefined to undefined so sortUndefined:'last' applies", () => {
+    expect(msSortValue(null)).toBeUndefined();
+    expect(msSortValue(undefined)).toBeUndefined();
+  });
+
+  it("maps non-finite numbers to undefined", () => {
+    expect(msSortValue(Number.NaN)).toBeUndefined();
+    expect(msSortValue(Number.POSITIVE_INFINITY)).toBeUndefined();
+  });
+
+  it("orders newest-first under a descending numeric sort with nulls last", () => {
+    // Simulates the table's ordering: numeric desc, undefined always last.
+    const rows: Array<{ name: string; ms: number | null }> = [
+      { name: "never-run", ms: null },
+      { name: "old", ms: 1000 },
+      { name: "new", ms: 2000 },
+    ];
+    const sorted = [...rows].sort((a, b) => {
+      const av = msSortValue(a.ms);
+      const bv = msSortValue(b.ms);
+      if (av === undefined && bv === undefined) return 0;
+      if (av === undefined) return 1;
+      if (bv === undefined) return -1;
+      return bv - av;
+    });
+    expect(sorted.map((r) => r.name)).toEqual(["new", "old", "never-run"]);
+  });
+});
 
 describe("buildPageNumbers", () => {
   it("returns all pages when total ≤ 7", () => {

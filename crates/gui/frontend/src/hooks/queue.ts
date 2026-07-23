@@ -3,10 +3,11 @@
  */
 
 import { listen } from "@tauri-apps/api/event";
-import { invoke, tryInvoke } from "./ipc";
+import { invoke, tryInvokeOr } from "./ipc";
 
 // ── Tasks ──────────────────────────────────────────────────────────────────
-// useTasks() lives in ../state (SimulationProvider). Import from there directly.
+// useTasks() lives in ../AppContext (SimulationProvider). Import from there
+// directly.
 
 // ── Run queue ──────────────────────────────────────────────────────────────
 
@@ -41,9 +42,7 @@ export async function enqueueRuns(
 
 /** Fetch the current run queue for `projectId`. */
 export async function getRunQueue(projectId: string): Promise<RunQueueItem[]> {
-  return (
-    (await tryInvoke<RunQueueItem[]>("get_run_queue", { projectId })) ?? []
-  );
+  return tryInvokeOr<RunQueueItem[]>("get_run_queue", { projectId }, []);
 }
 
 /** Cancel all queued items and request cancellation for any currently running
@@ -57,7 +56,7 @@ export async function cancelRunQueue(projectId: string): Promise<number> {
  *  Queued items are cancelled immediately; running items are cancelled cooperatively.
  *  Returns `true` when the item was queued or running and accepted cancellation. */
 export async function cancelRunItem(runId: string): Promise<boolean> {
-  return (await tryInvoke<boolean>("cancel_run_item", { runId })) ?? false;
+  return tryInvokeOr<boolean>("cancel_run_item", { runId }, false);
 }
 
 /** Subscribe to `run_queue_update` events from the backend.

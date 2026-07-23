@@ -61,7 +61,6 @@ export function SecondaryRail() {
 
   // Refs for direct DOM manipulation during drag — avoids React re-renders.
   const outerRef = useRef<HTMLDivElement>(null);
-  const contentRef = useRef<HTMLDivElement>(null);
   const railWidthRef = useRef(railWidth);
   railWidthRef.current = railWidth;
 
@@ -82,6 +81,10 @@ export function SecondaryRail() {
   const handleResizeMouseDown = useCallback(
     (e: React.MouseEvent) => {
       e.preventDefault();
+      // Dragging the collapsed rail's edge is an open gesture: open it so the
+      // content mounts — otherwise the drag stretched an empty panel that
+      // snapped shut on release.
+      if (!railOpen) toggleRail();
       isDragging.current = true;
       dragStartX.current = e.clientX;
       dragStartWidth.current = railWidthRef.current;
@@ -118,7 +121,7 @@ export function SecondaryRail() {
       document.addEventListener("mousemove", onMouseMove);
       document.addEventListener("mouseup", onMouseUp);
     },
-    [applyWidth],
+    [railOpen, toggleRail, applyWidth],
   );
 
   // Keep --rail-effective-w in sync for non-drag changes (open/close, initial mount).
@@ -176,7 +179,6 @@ export function SecondaryRail() {
             on reopen, which is acceptable for a collapsed panel. */}
         {railOpen && (
           <div
-            ref={contentRef}
             style={{
               width: "100%",
               height: "100%",

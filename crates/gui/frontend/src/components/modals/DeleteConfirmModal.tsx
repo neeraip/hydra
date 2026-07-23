@@ -15,7 +15,8 @@
  */
 
 import { ExclamationTriangleIcon } from "@heroicons/react/16/solid";
-import { useEffect, useRef } from "react";
+import { type ReactNode, useEffect, useRef } from "react";
+import { ModalBackdrop, stopBackdropEvents } from "../ui/ModalBackdrop";
 
 const NODE_KINDS = new Set(["junction", "reservoir", "tank"]);
 
@@ -23,6 +24,12 @@ interface DeleteConfirmModalProps {
   open: boolean;
   elementKind: string;
   elementId: string;
+  /** Overrides the default "Delete {Kind}" heading. */
+  title?: string;
+  /** Overrides the default "Delete {id}?" body text. */
+  message?: ReactNode;
+  /** Overrides the destructive button label (default "Delete"). */
+  confirmLabel?: string;
   onConfirm: () => void;
   onCancel: () => void;
 }
@@ -31,14 +38,18 @@ export function DeleteConfirmModal({
   open,
   elementKind,
   elementId,
+  title,
+  message,
+  confirmLabel = "Delete",
   onConfirm,
   onCancel,
 }: DeleteConfirmModalProps) {
-  const confirmRef = useRef<HTMLButtonElement>(null);
+  const cancelRef = useRef<HTMLButtonElement>(null);
 
-  // Focus the confirm button when the modal opens so Enter/Space confirms.
+  // Focus the Cancel button when the modal opens — a stray Enter must never
+  // instantly confirm a destructive action.
   useEffect(() => {
-    if (open) confirmRef.current?.focus();
+    if (open) cancelRef.current?.focus();
   }, [open]);
 
   // Close on Escape.
@@ -60,27 +71,16 @@ export function DeleteConfirmModal({
   const kindLabel = elementKind.charAt(0).toUpperCase() + elementKind.slice(1);
 
   return (
-    // biome-ignore lint/a11y/noStaticElementInteractions: backdrop closes the modal on pointer interaction.
-    // biome-ignore lint/a11y/useKeyWithClickEvents: backdrop closes the modal on pointer interaction.
-    <div
-      style={{
-        position: "fixed",
-        inset: 0,
-        zIndex: 200,
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        background: "rgba(0,0,0,0.55)",
-      }}
-      onClick={onCancel}
+    <ModalBackdrop
+      onDismiss={onCancel}
+      zIndex={200}
+      background="rgba(0,0,0,0.55)"
     >
       <div
         role="dialog"
         aria-modal="true"
         aria-labelledby="delete-modal-title"
-        onMouseDown={(e) => e.stopPropagation()}
-        onKeyDown={(e) => e.stopPropagation()}
-        onClick={(e) => e.stopPropagation()}
+        {...stopBackdropEvents}
         style={{
           background: "var(--bg-panel)",
           border: "1px solid var(--border)",
@@ -121,7 +121,7 @@ export function DeleteConfirmModal({
                 color: "var(--text-primary)",
               }}
             >
-              Delete {kindLabel}
+              {title ?? `Delete ${kindLabel}`}
             </p>
             <p
               style={{
@@ -131,11 +131,15 @@ export function DeleteConfirmModal({
                 lineHeight: 1.5,
               }}
             >
-              Delete{" "}
-              <strong style={{ color: "var(--text-primary)" }}>
-                {elementId}
-              </strong>
-              ?{isNode && <> All connected links will also be removed.</>}
+              {message ?? (
+                <>
+                  Delete{" "}
+                  <strong style={{ color: "var(--text-primary)" }}>
+                    {elementId}
+                  </strong>
+                  ?{isNode && <> All connected links will also be removed.</>}
+                </>
+              )}
             </p>
           </div>
         </div>
@@ -150,6 +154,7 @@ export function DeleteConfirmModal({
         >
           <button
             type="button"
+            ref={cancelRef}
             onClick={onCancel}
             style={{
               background: "transparent",
@@ -174,7 +179,6 @@ export function DeleteConfirmModal({
           </button>
           <button
             type="button"
-            ref={confirmRef}
             onClick={onConfirm}
             style={{
               background: "#ef4444",
@@ -195,10 +199,10 @@ export function DeleteConfirmModal({
                 "#ef4444";
             }}
           >
-            Delete
+            {confirmLabel}
           </button>
         </div>
       </div>
-    </div>
+    </ModalBackdrop>
   );
 }

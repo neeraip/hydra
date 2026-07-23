@@ -1,5 +1,10 @@
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
-import { type Page, useAppState } from "./AppContext";
+import {
+  getDraftDirtyCount,
+  type Page,
+  saveDraftsViaGuard,
+  useAppState,
+} from "./AppContext";
 import { registerCustomCrsDefinitions } from "./canvas/coords";
 import { ActivityBar } from "./components/layout/ActivityBar";
 import { StatusBar } from "./components/layout/StatusBar";
@@ -9,7 +14,13 @@ import { TaskTray } from "./components/panels/TaskTray";
 import { Toast } from "./components/ui/Toast";
 import { TooltipPortal } from "./components/ui/TooltipPortal";
 import { tryInvoke } from "./hooks/ipc";
-import { primaryModifierPressed } from "./shortcuts";
+import { startMainThreadStallWatch } from "./perfTrace";
+import type { ProjectView } from "./projectConfig";
+import {
+  isEditableEventTarget,
+  PROJECTS_SEARCH_INPUT_ID,
+  primaryModifierPressed,
+} from "./shortcuts";
 
 const CommandPalette = lazy(() =>
   import("./components/modals/CommandPalette").then((m) => ({
@@ -51,6 +62,14 @@ const ProjectsPage = lazy(() =>
 
 const PAGE_ORDER: Page[] = ["home", "projects", "project", "settings"];
 
+// ⌘1–⌘4 project view shortcuts (also advertised in CommandPalette hints).
+const VIEW_SHORTCUTS: Record<string, ProjectView> = {
+  "1": "overview",
+  "2": "canvas",
+  "3": "editor",
+  "4": "analysis",
+};
+
 export function App() {
   const {
     page,
@@ -73,6 +92,10 @@ export function App() {
   const [animDir, setAnimDir] = useState<"right" | "left">("right");
   const prevPageRef = useRef<Page>(page);
   const isFirstRender = useRef(true);
+
+  // Dev-only: log any main-thread stall >250ms so perf regressions on huge
+  // networks show up as `[hydra-perf] main-thread-stall` console lines.
+  useEffect(() => startMainThreadStallWatch(), []);
 
   useEffect(() => {
     let cancelled = false;
@@ -108,66 +131,61 @@ export function App() {
     function onKey(e: KeyboardEvent) {
       const key = e.key.toLowerCase();
       const primary = primaryModifierPressed(e);
+      // Non-modifier single-key shortcuts must not fire while typing in an
+      // input/textarea/select/contentEditable.
+      const inEditable = isEditableEventTarget(e.target);
 
       if (primary && key === "k") {
         e.preventDefault();
         commandPaletteOpen ? closeCommandPalette() : openCommandPalette();
       }
+      const projectOpen = page === "project" && activeProjectId != null;
+      // Focuses the canvas view, then broadcasts a canvas command event.
+      const canvasCommand = (event: string, detail: string) => {
+        e.preventDefault();
+        setProjectView("canvas");
+        window.dispatchEvent(new CustomEvent(event, { detail }));
+      };
+
       // ⌘R / Ctrl-R — open Run modal (only when a project is open)
-      if (primary && key === "r") {
-        if (page === "project" && activeProjectId) {
-          e.preventDefault();
-          runModalOpen ? closeRunModal() : openRunModal();
-        }
+      if (primary && key === "r" && projectOpen) {
+        e.preventDefault();
+        runModalOpen ? closeRunModal() : openRunModal();
       }
       // ⌘M / Ctrl-M — toggle canvas geographic/orthogonal layout
-      if (primary && key === "m") {
-        if (page === "project" && activeProjectId && !e.shiftKey) {
-          e.preventDefault();
-          setProjectView("canvas");
-          window.dispatchEvent(
-            new CustomEvent("hydra:canvas-layout", { detail: "toggle" }),
-          );
-        }
+      if (primary && key === "m" && !e.shiftKey && projectOpen) {
+        canvasCommand("hydra:canvas-layout", "toggle");
       }
-      // ⌘= / Ctrl-= — zoom in on canvas
-      if (primary && (key === "=" || key === "+")) {
-        if (page === "project" && activeProjectId) {
-          e.preventDefault();
-          setProjectView("canvas");
-          window.dispatchEvent(
-            new CustomEvent("hydra:canvas-viewport", { detail: "zoom-in" }),
-          );
-        }
-      }
-      // ⌘- / Ctrl-- — zoom out on canvas
-      if (primary && (key === "-" || key === "_")) {
-        if (page === "project" && activeProjectId) {
-          e.preventDefault();
-          setProjectView("canvas");
-          window.dispatchEvent(
-            new CustomEvent("hydra:canvas-viewport", {
-              detail: "zoom-out",
-            }),
-          );
-        }
-      }
-      // ⌘0 / Ctrl-0 — fit canvas to full network extent
-      if (primary && key === "0") {
-        if (page === "project" && activeProjectId) {
-          e.preventDefault();
-          setProjectView("canvas");
-          window.dispatchEvent(
-            new CustomEvent("hydra:canvas-viewport", { detail: "fit" }),
-          );
-        }
+      // ⌘= zoom in, ⌘- zoom out, ⌘0 fit to network extent
+      const viewportAction =
+        key === "=" || key === "+"
+          ? "zoom-in"
+          : key === "-" || key === "_"
+            ? "zoom-out"
+            : key === "0"
+              ? "fit"
+              : null;
+      if (primary && viewportAction && projectOpen) {
+        canvasCommand("hydra:canvas-viewport", viewportAction);
       }
       if (
         (key === "?" || (e.shiftKey && key === "/")) &&
         !primary &&
-        !e.altKey
+        !e.altKey &&
+        !inEditable
       ) {
         setShortcutCardOpen((prev) => !prev);
+      }
+      // ⌘S / Ctrl-S — save staged editor drafts. preventDefault always on
+      // the project page so the browser save dialog can never appear.
+      if (primary && key === "s" && page === "project") {
+        e.preventDefault();
+        if (getDraftDirtyCount() > 0) void saveDraftsViaGuard();
+      }
+      // ⌘F / Ctrl-F — focus the Projects page search input.
+      if (primary && key === "f" && page === "projects") {
+        e.preventDefault();
+        document.getElementById(PROJECTS_SEARCH_INPUT_ID)?.focus();
       }
       // ⌘⇧M / Ctrl-Shift-M — toggle issues panel
       if (primary && e.shiftKey && key === "m") {
@@ -186,20 +204,12 @@ export function App() {
         }
       }
       // Project-scoped view shortcuts:
-      // ⌘1 Overview, ⌘2 Canvas, ⌘3 Analysis, ⌘4 Editor.
+      // ⌘1 Overview, ⌘2 Canvas, ⌘3 Editor, ⌘4 Analysis.
       if (primary && page === "project") {
-        if (key === "1") {
+        const view = VIEW_SHORTCUTS[key];
+        if (view) {
           e.preventDefault();
-          setProjectView("overview");
-        } else if (key === "2") {
-          e.preventDefault();
-          setProjectView("canvas");
-        } else if (key === "3") {
-          e.preventDefault();
-          setProjectView("editor");
-        } else if (key === "4") {
-          e.preventDefault();
-          setProjectView("analysis");
+          setProjectView(view);
         }
       }
     }
@@ -221,9 +231,12 @@ export function App() {
     closeIssuesPanel,
   ]);
 
+  // Alternate between identical base/-alt keyframe names so the animation
+  // restarts on each navigation WITHOUT remounting the page subtree — the
+  // previous key-based remount mounted the whole ProjectPage twice per open.
   const slideAnim =
     animKey > 0
-      ? `${animDir === "right" ? "slideInRight" : "slideInLeft"} 280ms cubic-bezier(0.25, 0.46, 0.45, 0.94)`
+      ? `${animDir === "right" ? "slideInRight" : "slideInLeft"}${animKey % 2 === 0 ? "Alt" : ""} 280ms cubic-bezier(0.25, 0.46, 0.45, 0.94)`
       : undefined;
 
   return (
@@ -264,7 +277,6 @@ export function App() {
             }}
           >
             <div
-              key={animKey}
               style={{
                 flex: 1,
                 overflow: "hidden",

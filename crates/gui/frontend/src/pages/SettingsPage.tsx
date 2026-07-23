@@ -134,7 +134,12 @@ export function SettingsPage() {
   };
 
   useEffect(() => {
-    getVersions().then(setVersions);
+    getVersions()
+      .then(setVersions)
+      .catch((err) => {
+        // Leave `versions` null — the UI falls back to "—".
+        console.error("Failed to load version info:", err);
+      });
   }, []);
 
   return (
@@ -279,7 +284,7 @@ export function SettingsPage() {
           >
             {isReconciling ? "Scanning\u2026" : "Repair now"}
           </button>
-        </SettingRow>{" "}
+        </SettingRow>
       </div>
     </div>
   );

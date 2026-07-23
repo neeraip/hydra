@@ -169,7 +169,10 @@ describe("collectAllElementIds", () => {
 });
 
 describe("buildPreviewPatches with projected link rows", () => {
-  it("detects rename cascades from linkRefRowsFromLinks projections", () => {
+  it("emits no rename cascades for persisted elements (renames unsupported)", () => {
+    // Persisted-element renames are unsupported: the backend has no
+    // id/from/to patch handler and buildFieldPatches drops such entries, so
+    // the preview must not advertise cascades a save could never apply.
     const items = buildPreviewPatches({
       draftEntries: [{ kind: "junction", id: "J1", field: "id", value: "J9" }],
       pendingAdds: [],
@@ -181,10 +184,7 @@ describe("buildPreviewPatches with projected link rows", () => {
       tempIdPrefix: "__new__:",
     });
     const cascades = items.filter((i) => i.field.endsWith("(cascade)"));
-    expect(cascades).toEqual([
-      { kind: "pipe", id: "P1", field: "from (cascade)", value: "J9" },
-      { kind: "pump", id: "PU1", field: "to (cascade)", value: "J9" },
-    ]);
+    expect(cascades).toEqual([]);
   });
 
   it("detects node-delete cascades against projected link rows", () => {

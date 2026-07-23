@@ -1,6 +1,7 @@
 /**
- * Tests for data/index.ts — exercises functions that have logic independent
- * of the Tauri runtime (fallback paths, default values, etc.).
+ * Tests for the hooks barrel (hooks/index.ts) — exercises functions that
+ * have logic independent of the Tauri runtime (fallback paths, default
+ * values, etc.).
  *
  * The `@tauri-apps/api/core` module is mocked so `tryInvoke` either returns
  * `null` (simulating the non-Tauri browser path) or a controlled value.
@@ -23,7 +24,7 @@ import {
   type SimParams,
   updateSimParams,
 } from "./index";
-import { formatIpcError, onIpcError, tryInvoke } from "./ipc";
+import { formatIpcError, onIpcError, tryInvoke, tryInvokeOr } from "./ipc";
 
 const mockInvoke = vi.mocked(invoke);
 
@@ -106,6 +107,44 @@ describe("tryInvoke error reporting", () => {
     await tryInvoke("list_projects");
     warn.mockRestore();
     expect(handler).not.toHaveBeenCalled();
+  });
+});
+
+describe("tryInvokeOr", () => {
+  it("outside Tauri: resolves the fallback without invoking", async () => {
+    const result = await tryInvokeOr<string[]>("list_scenarios", undefined, []);
+    expect(result).toEqual([]);
+    expect(mockInvoke).not.toHaveBeenCalled();
+  });
+
+  it("inside Tauri: resolves the command's value when it succeeds", async () => {
+    stubTauriShell();
+    mockInvoke.mockResolvedValueOnce(["s1"]);
+    const result = await tryInvokeOr<string[]>(
+      "list_scenarios",
+      { projectId: "p1" },
+      [],
+    );
+    expect(result).toEqual(["s1"]);
+    expect(mockInvoke).toHaveBeenCalledWith("list_scenarios", {
+      projectId: "p1",
+    });
+  });
+
+  it("inside Tauri: a rejected command resolves the fallback", async () => {
+    stubTauriShell();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    mockInvoke.mockRejectedValueOnce("boom");
+    const result = await tryInvokeOr<boolean>("delete_scenario", {}, false);
+    warn.mockRestore();
+    expect(result).toBe(false);
+  });
+
+  it("a null command result maps to the fallback", async () => {
+    stubTauriShell();
+    mockInvoke.mockResolvedValueOnce(null);
+    const result = await tryInvokeOr<number>("get_count", undefined, 7);
+    expect(result).toBe(7);
   });
 });
 

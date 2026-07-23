@@ -72,8 +72,13 @@ export function HomePage() {
   }, [backendProjects, createdProject]);
 
   const [showWizard, setShowWizard] = useState(false);
+  // Busy flag while the INP file dialog + parse + project persist runs, so
+  // the action button can't be double-triggered and shows progress.
+  const [importing, setImporting] = useState(false);
 
   async function handleImportInp() {
+    if (importing) return;
+    setImporting(true);
     try {
       const result = await openAndLoadNetwork();
       if (!result) return;
@@ -96,6 +101,8 @@ export function HomePage() {
       createProject(project);
     } catch (err) {
       showToast(formatInpImportError(err), "error");
+    } finally {
+      setImporting(false);
     }
   }
 
@@ -173,8 +180,9 @@ export function HomePage() {
           </div>
           <div style={{ display: "inline-flex" }}>
             <SplitActionButton
-              label="+ New project"
+              label={importing ? "Importing…" : "+ New project"}
               onClick={() => setShowWizard(true)}
+              disabled={importing}
               menuItems={[
                 { label: "Import INP file…", onClick: handleImportInp },
               ]}
@@ -437,5 +445,3 @@ export function HomePage() {
     </div>
   );
 }
-
-// ── Split action button ───────────────────────────────────────────────────────

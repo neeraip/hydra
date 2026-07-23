@@ -1,16 +1,18 @@
 /**
- * Minimal context that tracks how many times a new network has been loaded
- * into Tauri managed state. `useNodes` and `useLinks` subscribe to this so
- * they re-fetch from `get_nodes` / `get_links` whenever the version bumps.
+ * Minimal context that tracks how many times the network in Tauri managed
+ * state has structurally changed. `NetworkDataProvider` re-fetches the full
+ * snapshot, and version-keyed hooks (`usePatterns` / `useCurves` /
+ * `useControls` / `useRules`) re-fetch their rows, whenever the version
+ * bumps.
  *
  * Also tracks which scenario IDs have had their network edited since the last
  * successful simulation run, so the canvas can show a "stale results" warning.
  * `null` in the set means the base model (no scenario selected).
  *
- * Kept in a standalone file to avoid a circular dependency between
- * `data/index.ts` (which calls `useNetworkVersion`) and `state.tsx` (which
- * imports from `data/index.ts`) — so imports here must come from concrete
- * modules, never the `./index` barrel.
+ * Kept in a standalone file to avoid a circular dependency between the
+ * `./index` barrel (whose modules call `useNetworkVersion`) and
+ * `AppContext.tsx` (which imports from the barrel) — so imports here must
+ * come from concrete modules, never the `./index` barrel.
  */
 
 import {

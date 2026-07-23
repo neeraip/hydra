@@ -27,10 +27,6 @@ export function shiftModifierLabel(): string {
   return isMacLikePlatform() ? "⇧" : "Shift";
 }
 
-export function altModifierLabel(): string {
-  return isMacLikePlatform() ? "⌥" : "Alt";
-}
-
 export function primaryModifierPressed(
   e: Pick<KeyboardEvent, "metaKey" | "ctrlKey">,
 ): boolean {
@@ -39,6 +35,30 @@ export function primaryModifierPressed(
 
 export function formatShortcut(parts: string[]): string {
   return isMacLikePlatform() ? parts.join("") : parts.join("+");
+}
+
+/** DOM id of the Projects page search input, focused by ⌘F / Ctrl-F.
+ *  Lives here (not in ProjectsPage) so App.tsx can reference it without
+ *  statically importing the lazily-loaded ProjectsPage chunk. */
+export const PROJECTS_SEARCH_INPUT_ID = "projects-search-input";
+
+/**
+ * True when a keyboard event originated inside a text-entry control
+ * (input/textarea/select/contentEditable). Single-key shortcuts (like `?`)
+ * must not fire while the user is typing.
+ */
+export function isEditableEventTarget(target: EventTarget | null): boolean {
+  if (typeof HTMLElement === "undefined" || !(target instanceof HTMLElement)) {
+    return false;
+  }
+  if (
+    target instanceof HTMLInputElement ||
+    target instanceof HTMLTextAreaElement ||
+    target instanceof HTMLSelectElement
+  ) {
+    return true;
+  }
+  return target.isContentEditable;
 }
 
 export function formatPrimaryShortcut(key: string): string {

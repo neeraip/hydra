@@ -70,9 +70,13 @@ export function ElementsEditor({
   const valveRowsAll = useValveRows();
   // The editor stays mounted (display:none) while other project views are
   // active so drafts survive tab switches — skip rebuilding the filtered +
-  // sorted row models while it is hidden.
-  const { projectView } = useAppState();
-  const editorVisible = projectView === "editor";
+  // sorted row models and the node-reference option list while it is hidden
+  // (see the gating notes on the row-model memos below for exactly what is
+  // and isn't gated). `projectView` only distinguishes the top-level project
+  // views; it cannot see NetworkEditor.tsx's own Curves/Patterns/Controls
+  // sub-tabs, so while those are shown this still reads as "visible".
+  const { deferredProjectView } = useAppState();
+  const editorVisible = deferredProjectView === "editor";
   const [activeSection, setActiveSection] = useState<Section>("junctions");
   const [searchQuery, setSearchQuery] = useState("");
   // Filtering runs against a debounced copy of the query so fast typing does
@@ -112,10 +116,22 @@ export function ElementsEditor({
   }, [focusPumpToken]);
   const draftValues = useMemo(() => Array.from(draft.values()), [draft]);
   const pendingKeys = useMemo(() => new Set(draft.keys()), [draft]);
-  const pendingRowIds = useMemo(
-    () => new Set(pendingAdds.map((p) => p.tempId)),
-    [pendingAdds],
-  );
+  // Per-kind temp-id sets: each table only receives its own kind's pending
+  // row ids, so e.g. a pending junction no longer makes the Pipes table mount
+  // its node datalist (Pipe/Pump/ValveTable gate the datalist on this set
+  // being non-empty).
+  const pendingRowIdsByKind = useMemo(() => {
+    const byKind: Record<ElementKind, Set<string>> = {
+      junction: new Set(),
+      pipe: new Set(),
+      pump: new Set(),
+      tank: new Set(),
+      reservoir: new Set(),
+      valve: new Set(),
+    };
+    for (const p of pendingAdds) byKind[p.kind].add(p.tempId);
+    return byKind;
+  }, [pendingAdds]);
   const pendingDeleteKeys = useMemo(
     () => new Set(pendingDeletes.map((d) => `${d.kind}:${d.id}`)),
     [pendingDeletes],
@@ -351,8 +367,21 @@ export function ElementsEditor({
     [valveRowsExisting, pendingValveRows],
   );
 
-  // While the editor tab is hidden the query/sort row models are not shown
-  // anywhere, so fall back to the raw arrays and recompute on next reveal.
+  // Row models for the table bodies, gated on `editorVisible && <section
+  // active>`: a section's filtered + sorted rows only feed that section's
+  // table body, which is shown only while the editor is the active project
+  // view AND that section's tab is selected. Everywhere else the memo falls
+  // back to the cheap `...AllWithPending` array (same rows, network order,
+  // pending rows at the end — never painted) and recomputes on next reveal.
+  //
+  // Deliberately NOT gated: the `...Existing` / `...AllWithPending` memos
+  // and `dirtyKinds` above — the section tab badges (row counts + dirty
+  // dots) read them and must stay correct whether or not the editor is
+  // visible. Known limitation: `editorVisible` cannot see NetworkEditor.tsx's
+  // Curves/Patterns/Controls sub-tabs (that state lives there), so while
+  // those are shown the active section still recomputes — with query/sort at
+  // their reset defaults that is filterSortRows' untouched-input fast path.
+  //
   // Per-section query/sort inputs: "" / null for every inactive section, so
   // a keystroke only invalidates the active section's memo.
   //
@@ -364,7 +393,7 @@ export function ElementsEditor({
   const junctionSortField = junctionsActive ? sortField : null;
   const junctionRows = useMemo(
     () =>
-      editorVisible
+      editorVisible && junctionsActive
         ? filterSortRowsWithPinned(
             junctionRowsExisting,
             pendingJunctionRows,
@@ -375,6 +404,7 @@ export function ElementsEditor({
         : junctionRowsAllWithPending,
     [
       editorVisible,
+      junctionsActive,
       junctionRowsExisting,
       pendingJunctionRows,
       junctionRowsAllWithPending,
@@ -387,7 +417,7 @@ export function ElementsEditor({
   const pipeSortField = pipesActive ? sortField : null;
   const pipeRows = useMemo(
     () =>
-      editorVisible
+      editorVisible && pipesActive
         ? filterSortRowsWithPinned(
             pipeRowsExisting,
             pendingPipeRows,
@@ -398,6 +428,7 @@ export function ElementsEditor({
         : pipeRowsAllWithPending,
     [
       editorVisible,
+      pipesActive,
       pipeRowsExisting,
       pendingPipeRows,
       pipeRowsAllWithPending,
@@ -410,7 +441,7 @@ export function ElementsEditor({
   const pumpSortField = pumpsActive ? sortField : null;
   const pumpRows = useMemo(
     () =>
-      editorVisible
+      editorVisible && pumpsActive
         ? filterSortRowsWithPinned(
             pumpRowsExisting,
             pendingPumpRows,
@@ -421,6 +452,7 @@ export function ElementsEditor({
         : pumpRowsAllWithPending,
     [
       editorVisible,
+      pumpsActive,
       pumpRowsExisting,
       pendingPumpRows,
       pumpRowsAllWithPending,
@@ -433,7 +465,7 @@ export function ElementsEditor({
   const tankSortField = tanksActive ? sortField : null;
   const tankRows = useMemo(
     () =>
-      editorVisible
+      editorVisible && tanksActive
         ? filterSortRowsWithPinned(
             tankRowsExisting,
             pendingTankRows,
@@ -444,6 +476,7 @@ export function ElementsEditor({
         : tankRowsAllWithPending,
     [
       editorVisible,
+      tanksActive,
       tankRowsExisting,
       pendingTankRows,
       tankRowsAllWithPending,
@@ -456,7 +489,7 @@ export function ElementsEditor({
   const reservoirSortField = reservoirsActive ? sortField : null;
   const reservoirRows = useMemo(
     () =>
-      editorVisible
+      editorVisible && reservoirsActive
         ? filterSortRowsWithPinned(
             reservoirRowsExisting,
             pendingReservoirRows,
@@ -467,6 +500,7 @@ export function ElementsEditor({
         : reservoirRowsAllWithPending,
     [
       editorVisible,
+      reservoirsActive,
       reservoirRowsExisting,
       pendingReservoirRows,
       reservoirRowsAllWithPending,
@@ -479,7 +513,7 @@ export function ElementsEditor({
   const valveSortField = valvesActive ? sortField : null;
   const valveRows = useMemo(
     () =>
-      editorVisible
+      editorVisible && valvesActive
         ? filterSortRowsWithPinned(
             valveRowsExisting,
             pendingValveRows,
@@ -490,6 +524,7 @@ export function ElementsEditor({
         : valveRowsAllWithPending,
     [
       editorVisible,
+      valvesActive,
       valveRowsExisting,
       pendingValveRows,
       valveRowsAllWithPending,
@@ -499,7 +534,21 @@ export function ElementsEditor({
     ],
   );
 
+  // Node-id options for the from/to reference inputs (shared datalist +
+  // validation-on-blur). Only the Pipes/Pumps/Valves tables consume them, so
+  // the ~46k-id collection + collator sort only runs while the editor is
+  // visible AND a link section is active. While gated off, the previously
+  // computed list is returned (not an empty one): the active link table stays
+  // mounted when the editor is hidden, and its ref inputs blur — and validate
+  // against these options — as hiding steals focus, so swapping in an empty
+  // list mid-hide would wrongly reject a valid mid-edit value. The stale copy
+  // is never painted and the memo recomputes on next reveal.
+  const linkSectionActive = pipesActive || pumpsActive || valvesActive;
+  const nodeReferenceOptionsCache = useRef<string[]>([]);
   const nodeReferenceOptions = useMemo(() => {
+    if (!editorVisible || !linkSectionActive) {
+      return nodeReferenceOptionsCache.current;
+    }
     const ids = new Set<string>();
     junctionRowsExisting.forEach((r) => {
       ids.add(r.id);
@@ -528,8 +577,12 @@ export function ElementsEditor({
 
     // Shared-collator sort: per-comparison localeCompare re-resolves locale
     // data and is measurably slower over ~46k ids.
-    return Array.from(ids).sort(compareIds);
+    const sorted = Array.from(ids).sort(compareIds);
+    nodeReferenceOptionsCache.current = sorted;
+    return sorted;
   }, [
+    editorVisible,
+    linkSectionActive,
     junctionRowsExisting,
     tankRowsExisting,
     reservoirRowsExisting,
@@ -806,7 +859,7 @@ export function ElementsEditor({
             onSelect={setSelectedId}
             onPatch={handleStage}
             pendingKeys={pendingKeys}
-            pendingRowIds={pendingRowIds}
+            pendingRowIds={pendingRowIdsByKind.junction}
             discardGen={discardGen}
             scrollContainerRef={tableScrollRef}
           />
@@ -822,7 +875,7 @@ export function ElementsEditor({
             onPatch={handleStage}
             nodeOptions={nodeReferenceOptions}
             pendingKeys={pendingKeys}
-            pendingRowIds={pendingRowIds}
+            pendingRowIds={pendingRowIdsByKind.pipe}
             discardGen={discardGen}
             scrollContainerRef={tableScrollRef}
           />
@@ -838,7 +891,7 @@ export function ElementsEditor({
             onPatch={handleStage}
             nodeOptions={nodeReferenceOptions}
             pendingKeys={pendingKeys}
-            pendingRowIds={pendingRowIds}
+            pendingRowIds={pendingRowIdsByKind.pump}
             discardGen={discardGen}
             scrollContainerRef={tableScrollRef}
             focusToken={focusPumpToken}
@@ -854,7 +907,7 @@ export function ElementsEditor({
             onSelect={setSelectedId}
             onPatch={handleStage}
             pendingKeys={pendingKeys}
-            pendingRowIds={pendingRowIds}
+            pendingRowIds={pendingRowIdsByKind.tank}
             discardGen={discardGen}
             scrollContainerRef={tableScrollRef}
           />
@@ -869,7 +922,7 @@ export function ElementsEditor({
             onSelect={setSelectedId}
             onPatch={handleStage}
             pendingKeys={pendingKeys}
-            pendingRowIds={pendingRowIds}
+            pendingRowIds={pendingRowIdsByKind.reservoir}
             discardGen={discardGen}
             scrollContainerRef={tableScrollRef}
           />
@@ -885,7 +938,7 @@ export function ElementsEditor({
             onPatch={handleStage}
             nodeOptions={nodeReferenceOptions}
             pendingKeys={pendingKeys}
-            pendingRowIds={pendingRowIds}
+            pendingRowIds={pendingRowIdsByKind.valve}
             discardGen={discardGen}
             scrollContainerRef={tableScrollRef}
           />

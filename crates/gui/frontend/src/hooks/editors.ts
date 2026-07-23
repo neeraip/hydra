@@ -39,9 +39,9 @@ export interface PumpRow {
   id: string;
   from: string;
   to: string;
-  /** Head-flow curve ID; undefined for constant-power pumps. */
+  /** Head-flow curve ID; null for constant-power pumps. */
   curve: string | null;
-  /** Rated power in kW; defined only for constant-power pumps. */
+  /** Rated power in kW; non-null only for constant-power pumps. */
   powerKw: number | null;
   /** Initial relative speed (1.0 = rated). */
   speed: number;
@@ -92,6 +92,11 @@ export interface ValveRow {
   velocity: number;
 }
 
+/** Display rounding for editor rows: 1 / 2 / 3 decimal places. */
+const round1 = (v: number): number => Math.round(v * 10) / 10;
+const round2 = (v: number): number => Math.round(v * 100) / 100;
+const round3 = (v: number): number => Math.round(v * 1000) / 1000;
+
 export function useJunctionRows(): JunctionRow[] {
   const nodes = useNodes();
   return useMemo(
@@ -100,13 +105,12 @@ export function useJunctionRows(): JunctionRow[] {
         .filter((n) => n.type === "junction")
         .map((n) => ({
           id: n.id,
-          elevation: Math.round((n.elevation ?? 0) * 100) / 100,
-          baseDemand: Math.round((n.baseDemand ?? 0) * 100) / 100,
+          elevation: round2(n.elevation ?? 0),
+          baseDemand: round2(n.baseDemand ?? 0),
           demand: n.demand ?? 0,
-          pressure:
-            n.pressure !== null ? Math.round(n.pressure * 10) / 10 : null,
-          x: Math.round(n.x * 100) / 100,
-          y: Math.round(n.y * 100) / 100,
+          pressure: n.pressure !== null ? round1(n.pressure) : null,
+          x: round2(n.x),
+          y: round2(n.y),
           belowThreshold:
             n.pressure !== null && n.pressure < PRESSURE_THRESHOLD,
         })),
@@ -124,7 +128,7 @@ export function usePipeRows(): PipeRow[] {
           id: l.id,
           from: l.fromId,
           to: l.toId,
-          length: Math.round((l.length ?? 0) * 10) / 10,
+          length: round1(l.length ?? 0),
           diameter: l.diameter,
           roughness: l.roughness ?? 0,
           velocity: l.velocity,
@@ -161,17 +165,14 @@ export function useTankRows(): TankRow[] {
         .filter((n) => n.type === "tank")
         .map((n) => ({
           id: n.id,
-          elevation: Math.round((n.elevation ?? 0) * 100) / 100,
-          minLevel: Math.round((n.tankMinLevel ?? 0) * 100) / 100,
-          maxLevel: Math.round((n.tankMaxLevel ?? 0) * 100) / 100,
-          initialLevel: Math.round((n.tankInitialLevel ?? 0) * 100) / 100,
-          diameter:
-            n.tankDiameter != null
-              ? Math.round(n.tankDiameter * 100) / 100
-              : null,
+          elevation: round2(n.elevation ?? 0),
+          minLevel: round2(n.tankMinLevel ?? 0),
+          maxLevel: round2(n.tankMaxLevel ?? 0),
+          initialLevel: round2(n.tankInitialLevel ?? 0),
+          diameter: n.tankDiameter != null ? round2(n.tankDiameter) : null,
           volumeCurve: n.tankVolumeCurve ?? null,
-          x: Math.round(n.x * 100) / 100,
-          y: Math.round(n.y * 100) / 100,
+          x: round2(n.x),
+          y: round2(n.y),
         })),
     [nodes],
   );
@@ -185,10 +186,10 @@ export function useReservoirRows(): ReservoirRow[] {
         .filter((n) => n.type === "reservoir")
         .map((n) => ({
           id: n.id,
-          head: Math.round((n.elevation ?? 0) * 100) / 100,
+          head: round2(n.elevation ?? 0),
           pattern: n.headPattern ?? null,
-          x: Math.round(n.x * 100) / 100,
-          y: Math.round(n.y * 100) / 100,
+          x: round2(n.x),
+          y: round2(n.y),
         })),
     [nodes],
   );
@@ -205,21 +206,13 @@ export function useValveRows(): ValveRow[] {
           from: l.fromId,
           to: l.toId,
           valveType: l.valveType ?? "PRV",
-          diameter: Math.round(l.diameter * 10) / 10,
-          setting:
-            l.valveSetting != null
-              ? Math.round(l.valveSetting * 1000) / 1000
-              : null,
+          diameter: round1(l.diameter),
+          setting: l.valveSetting != null ? round3(l.valveSetting) : null,
           curve: l.valveCurve ?? null,
           velocity: l.velocity,
         })),
     [links],
   );
-}
-
-export function useEditorSections() {
-  // Intentionally empty — EditorView derives its own sections inline.
-  return [] as never[];
 }
 
 // ── Cross-section / subcatchment editor data ───────────────────────────────
@@ -228,29 +221,4 @@ export interface XSStation {
   station: number;
   elev: number;
   manning?: number;
-}
-export interface CrossSection {
-  id: string;
-  reach: string;
-  riverStation: number;
-  description: string;
-  bankLeft: number;
-  bankRight: number;
-  manningChannel: number;
-  manningOverbankL: number;
-  manningOverbankR: number;
-  ineffective?: { left: number; right: number; elevation: number };
-  points: XSStation[];
-}
-export interface Subcatchment {
-  id: string;
-  area: number;
-  imperv: number;
-  width: number;
-  slope: number;
-  manningImp: number;
-  manningPerv: number;
-  outletNode: string;
-  rainGage: string;
-  peakRunoff: number;
 }

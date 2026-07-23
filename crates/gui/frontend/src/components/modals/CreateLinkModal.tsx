@@ -101,7 +101,7 @@ export function CreateLinkModal({
       <div
         style={{
           background: "var(--bg-card)",
-          border: "1px solid var(--border-subtle)",
+          border: "1px solid var(--border)",
           borderRadius: 10,
           padding: "20px 24px",
           width: 320,
@@ -148,11 +148,9 @@ export function CreateLinkModal({
                   border:
                     kind === t.value
                       ? "1px solid var(--accent)"
-                      : "1px solid var(--border-subtle)",
+                      : "1px solid var(--border)",
                   background:
-                    kind === t.value
-                      ? "var(--accent-dim)"
-                      : "var(--bg-surface)",
+                    kind === t.value ? "var(--accent-dim)" : "var(--bg-input)",
                   color:
                     kind === t.value
                       ? "var(--accent)"
@@ -190,8 +188,8 @@ export function CreateLinkModal({
               if (e.key === "Enter") handleSubmit();
             }}
             style={{
-              background: "var(--bg-surface)",
-              border: `1px solid ${errorMsg ? "rgba(220,60,60,0.6)" : "var(--border-subtle)"}`,
+              background: "var(--bg-input)",
+              border: `1px solid ${errorMsg ? "rgba(220,60,60,0.6)" : "var(--border)"}`,
               borderRadius: 6,
               padding: "6px 10px",
               fontSize: 13,
@@ -219,7 +217,7 @@ export function CreateLinkModal({
             display: "grid",
             gridTemplateColumns: "1fr 1fr",
             gap: 8,
-            background: "var(--bg-surface)",
+            background: "var(--bg-input)",
             borderRadius: 6,
             padding: "8px 10px",
           }}

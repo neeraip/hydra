@@ -2,6 +2,7 @@ import {
   ChevronDownIcon,
   ChevronUpDownIcon,
   ChevronUpIcon,
+  EllipsisHorizontalIcon,
   MagnifyingGlassIcon,
 } from "@heroicons/react/16/solid";
 import { ChevronLeftIcon, ChevronRightIcon } from "@heroicons/react/20/solid";
@@ -13,6 +14,7 @@ import {
   getFilteredRowModel,
   getPaginationRowModel,
   getSortedRowModel,
+  type PaginationState,
   type SortingState,
   useReactTable,
 } from "@tanstack/react-table";
@@ -34,6 +36,7 @@ import {
   useNetworkVersion,
   useProjects,
 } from "../../hooks";
+import { PROJECTS_SEARCH_INPUT_ID } from "../../shortcuts";
 import { ContextMenu, type ContextMenuState } from "./ContextMenu";
 
 const STATE_LABELS: Record<ProjectState, string> = {
@@ -70,8 +73,13 @@ export function ProjectsPage() {
   } = useAppState();
   const [showWizard, setShowWizard] = useState(false);
   const { bumpNetwork } = useNetworkVersion();
+  // Busy flag while the INP file dialog + parse + project persist runs, so
+  // the action button can't be double-triggered and shows progress.
+  const [importing, setImporting] = useState(false);
 
   async function handleImportInp() {
+    if (importing) return;
+    setImporting(true);
     try {
       const result = await openAndLoadNetwork();
       if (!result) return;
@@ -95,6 +103,8 @@ export function ProjectsPage() {
       bumpProjects();
     } catch (err) {
       showToast(formatInpImportError(err), "error");
+    } finally {
+      setImporting(false);
     }
   }
   const handleOpenProject = useCallback(
@@ -109,16 +119,18 @@ export function ProjectsPage() {
   // Reconcile DB with filesystem on first mount.
   useEffect(() => {
     reconcileProjects().then(() => bumpProjects());
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bumpProjects]);
 
   const [globalFilter, setGlobalFilter] = useState("");
   const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>([]);
   const [sorting, setSorting] = useState<SortingState>([
-    { id: "modifiedLabel", desc: true },
+    { id: "modified", desc: true },
   ]);
   const [stateFilter, setStateFilter] = useState<string>("all");
-  const [pageSize, setPageSize] = useState(20);
+  const [pagination, setPagination] = useState<PaginationState>({
+    pageIndex: 0,
+    pageSize: 20,
+  });
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
   const [pendingDeleteProject, setPendingDeleteProject] =
     useState<Project | null>(null);
@@ -176,8 +188,8 @@ export function ProjectsPage() {
                     letterSpacing: "0.05em",
                     padding: "1px 5px",
                     borderRadius: 3,
-                    background: "var(--status-warn, #f59e0b)26",
-                    border: "1px solid var(--status-warn, #f59e0b)55",
+                    background: "#f59e0b26",
+                    border: "1px solid #f59e0b55",
                     color: "var(--status-warn, #f59e0b)",
                   }}
                 >
@@ -230,23 +242,57 @@ export function ProjectsPage() {
         ),
         enableSorting: true,
       }),
-      col.accessor("modifiedLabel", {
+      // Modified / Last run sort on the numeric epoch-ms fields (the labels
+      // are human strings — "2 days ago" vs "Just now" sorts alphabetically).
+      // `sortUndefined: "last"` keeps never-run / missing values at the
+      // bottom in both directions; the cell still shows the friendly label.
+      col.accessor((p) => msSortValue(p.modifiedAtMs), {
+        id: "modified",
         header: "Modified",
         cell: (info) => (
           <span style={{ fontSize: 12, color: "var(--text-secondary)" }}>
-            {info.getValue()}
+            {info.row.original.modifiedLabel}
           </span>
         ),
+        sortingFn: "basic",
+        sortUndefined: "last",
         enableSorting: true,
       }),
-      col.accessor("lastRunLabel", {
+      col.accessor((p) => msSortValue(p.lastRunAtMs), {
+        id: "lastRun",
         header: "Last run",
         cell: (info) => (
           <span style={{ fontSize: 12, color: "var(--text-tertiary)" }}>
-            {info.getValue() ?? "—"}
+            {info.row.original.lastRunLabel ?? "—"}
           </span>
         ),
+        sortingFn: "basic",
+        sortUndefined: "last",
         enableSorting: true,
+      }),
+      // Kebab actions column — hover/focus-revealed "…" button that opens
+      // the same context menu as right-click, anchored at the button.
+      col.display({
+        id: "actions",
+        header: "",
+        cell: (info) => (
+          <button
+            type="button"
+            className="row-kebab"
+            aria-label={`Actions for ${info.row.original.name}`}
+            aria-haspopup="menu"
+            onClick={(e) => {
+              const rect = e.currentTarget.getBoundingClientRect();
+              setContextMenu({
+                project: info.row.original,
+                x: rect.left,
+                y: rect.bottom + 4,
+              });
+            }}
+          >
+            <EllipsisHorizontalIcon style={{ width: 15, height: 15 }} />
+          </button>
+        ),
       }),
     ],
     [handleOpenProject],
@@ -259,11 +305,12 @@ export function ProjectsPage() {
       globalFilter,
       columnFilters: effectiveFilters,
       sorting,
-      pagination: { pageIndex: 0, pageSize },
+      pagination,
     },
     onGlobalFilterChange: setGlobalFilter,
     onColumnFiltersChange: setColumnFilters,
     onSortingChange: setSorting,
+    onPaginationChange: setPagination,
     getCoreRowModel: getCoreRowModel(),
     getFilteredRowModel: getFilteredRowModel(),
     getSortedRowModel: getSortedRowModel(),
@@ -284,6 +331,7 @@ export function ProjectsPage() {
     "simulated",
     "running",
     "failed",
+    "stale",
   ];
 
   return (
@@ -324,6 +372,7 @@ export function ProjectsPage() {
             }}
           />
           <input
+            id={PROJECTS_SEARCH_INPUT_ID}
             value={globalFilter}
             onChange={(e) => setGlobalFilter(e.target.value)}
             placeholder="Search projects…"
@@ -371,8 +420,9 @@ export function ProjectsPage() {
         {/* New Project button */}
         <SplitActionButton
           size="sm"
-          label="+ New project"
+          label={importing ? "Importing…" : "+ New project"}
           onClick={() => setShowWizard(true)}
+          disabled={importing}
           menuItems={[{ label: "Import INP file…", onClick: handleImportInp }]}
         />
 
@@ -386,8 +436,8 @@ export function ProjectsPage() {
 
         {/* Page size */}
         <select
-          value={pageSize}
-          onChange={(e) => setPageSize(Number(e.target.value))}
+          value={pagination.pageSize}
+          onChange={(e) => table.setPageSize(Number(e.target.value))}
           style={selectStyle}
         >
           {[10, 20, 50, 100].map((n) => (
@@ -415,10 +465,37 @@ export function ProjectsPage() {
               >
                 {hg.headers.map((header) => {
                   const sorted = header.column.getIsSorted();
+                  const canSort = header.column.getCanSort();
+                  const label = (
+                    <>
+                      {flexRender(
+                        header.column.columnDef.header,
+                        header.getContext(),
+                      )}
+                      {canSort &&
+                        (sorted === "asc" ? (
+                          <ChevronUpIcon style={{ width: 12, height: 12 }} />
+                        ) : sorted === "desc" ? (
+                          <ChevronDownIcon style={{ width: 12, height: 12 }} />
+                        ) : (
+                          <ChevronUpDownIcon
+                            style={{ width: 12, height: 12, opacity: 0.4 }}
+                          />
+                        ))}
+                    </>
+                  );
                   return (
                     <th
                       key={header.id}
-                      onClick={header.column.getToggleSortingHandler()}
+                      aria-sort={
+                        canSort
+                          ? sorted === "asc"
+                            ? "ascending"
+                            : sorted === "desc"
+                              ? "descending"
+                              : "none"
+                          : undefined
+                      }
                       style={{
                         padding: "8px 14px",
                         textAlign: "left",
@@ -432,37 +509,33 @@ export function ProjectsPage() {
                         top: 0,
                         zIndex: 1,
                         borderBottom: "1px solid var(--border)",
-                        cursor: header.column.getCanSort()
-                          ? "pointer"
-                          : "default",
                         userSelect: "none",
                         whiteSpace: "nowrap",
                       }}
                     >
-                      <span
-                        style={{
-                          display: "inline-flex",
-                          alignItems: "center",
-                          gap: 4,
-                        }}
-                      >
-                        {flexRender(
-                          header.column.columnDef.header,
-                          header.getContext(),
-                        )}
-                        {header.column.getCanSort() &&
-                          (sorted === "asc" ? (
-                            <ChevronUpIcon style={{ width: 12, height: 12 }} />
-                          ) : sorted === "desc" ? (
-                            <ChevronDownIcon
-                              style={{ width: 12, height: 12 }}
-                            />
-                          ) : (
-                            <ChevronUpDownIcon
-                              style={{ width: 12, height: 12, opacity: 0.4 }}
-                            />
-                          ))}
-                      </span>
+                      {canSort ? (
+                        // Real <button> so Enter/Space toggle sorting natively;
+                        // .th-sort-btn inherits every font style, so layout is
+                        // identical to the previous bare label.
+                        <button
+                          type="button"
+                          className="th-sort-btn"
+                          style={{ width: "auto" }}
+                          onClick={header.column.getToggleSortingHandler()}
+                        >
+                          {label}
+                        </button>
+                      ) : (
+                        <span
+                          style={{
+                            display: "inline-flex",
+                            alignItems: "center",
+                            gap: 4,
+                          }}
+                        >
+                          {label}
+                        </span>
+                      )}
                     </th>
                   );
                 })}
@@ -490,6 +563,7 @@ export function ProjectsPage() {
               rows.map((row, i) => (
                 <tr
                   key={row.id}
+                  className="projects-row"
                   style={{
                     background:
                       i % 2 === 0 ? "var(--bg-app)" : "var(--bg-panel)",
@@ -635,6 +709,16 @@ export function ProjectsPage() {
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
+
+/**
+ * Numeric sort value for an optional epoch-ms field: finite numbers pass
+ * through, anything else becomes `undefined` so tanstack's
+ * `sortUndefined: "last"` keeps missing values at the bottom in both
+ * directions.
+ */
+export function msSortValue(v: number | null | undefined): number | undefined {
+  return typeof v === "number" && Number.isFinite(v) ? v : undefined;
+}
 
 export function buildPageNumbers(
   current: number,

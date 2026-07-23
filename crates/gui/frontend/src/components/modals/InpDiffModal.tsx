@@ -2,6 +2,7 @@ import { XMarkIcon } from "@heroicons/react/16/solid";
 import type React from "react";
 import { useEffect, useMemo } from "react";
 import type { PatchItem } from "../../hooks";
+import { ModalBackdrop, stopBackdropEvents } from "../ui/ModalBackdrop";
 
 function formatKind(kind: string): string {
   return kind.charAt(0).toUpperCase() + kind.slice(1);
@@ -85,26 +86,13 @@ export function InpDiffModal({ patches, onClose }: InpDiffModalProps) {
   };
 
   return (
-    // biome-ignore lint/a11y/noStaticElementInteractions: backdrop closes the modal on pointer interaction.
-    // biome-ignore lint/a11y/useKeyWithClickEvents: backdrop closes the modal on pointer interaction.
-    <div
-      onClick={onClose}
-      style={{
-        position: "fixed",
-        inset: 0,
-        background: "var(--bg-overlay)",
-        zIndex: 300,
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        animation: "fadeIn 120ms ease-out",
-      }}
+    <ModalBackdrop
+      onDismiss={onClose}
+      zIndex={300}
+      style={{ animation: "fadeIn 120ms ease-out" }}
     >
-      {/* biome-ignore lint/a11y/noStaticElementInteractions: panel only stops backdrop clicks. */}
       <div
-        onMouseDown={(e) => e.stopPropagation()}
-        onKeyDown={(e) => e.stopPropagation()}
-        onClick={(e) => e.stopPropagation()}
+        {...stopBackdropEvents}
         style={{
           width: "min(700px, 92vw)",
           maxHeight: "80vh",
@@ -237,6 +225,6 @@ export function InpDiffModal({ patches, onClose }: InpDiffModalProps) {
           ))}
         </div>
       </div>
-    </div>
+    </ModalBackdrop>
   );
 }

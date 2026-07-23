@@ -1,8 +1,5 @@
-import {
-  altModifierLabel,
-  primaryModifierLabel,
-  shiftModifierLabel,
-} from "../../shortcuts";
+import { primaryModifierLabel, shiftModifierLabel } from "../../shortcuts";
+import { ModalBackdrop, stopBackdropEvents } from "../ui/ModalBackdrop";
 
 interface ShortcutRow {
   action: string;
@@ -16,7 +13,6 @@ interface ShortcutSection {
 
 export function ShortcutCard({ onClose }: { onClose: () => void }) {
   const modifier = primaryModifierLabel();
-  const alt = altModifierLabel();
   const shift = shiftModifierLabel();
 
   const sections: ShortcutSection[] = [
@@ -25,11 +21,13 @@ export function ShortcutCard({ onClose }: { onClose: () => void }) {
       rows: [
         { action: "Command palette", keys: [modifier, "K"] },
         { action: "Run simulation", keys: [modifier, "R"] },
+        { action: "Save editor changes", keys: [modifier, "S"] },
+        { action: "Search projects", keys: [modifier, "F"] },
         { action: "Toggle geographic/orthogonal", keys: [modifier, "M"] },
         { action: "Zoom in", keys: [modifier, "="] },
         { action: "Zoom out", keys: [modifier, "-"] },
         { action: "Fit network", keys: [modifier, "0"] },
-        { action: "Open issues panel", keys: [modifier, shift, "M"] },
+        { action: "Toggle issues panel", keys: [modifier, shift, "M"] },
         { action: "Keyboard shortcuts", keys: ["?"] },
         { action: "Go to Overview", keys: [modifier, "1"] },
         { action: "Go to Canvas", keys: [modifier, "2"] },
@@ -61,34 +59,16 @@ export function ShortcutCard({ onClose }: { onClose: () => void }) {
         { action: "Jump to end", keys: ["End"] },
       ],
     },
-    {
-      title: "Editor",
-      rows: [
-        { action: "Save changes", keys: [modifier, "S"] },
-        { action: "New scenario", keys: [alt, modifier, "N"] },
-        { action: "Run simulation", keys: [modifier, "R"] },
-        { action: "Find element", keys: [modifier, "F"] },
-        { action: "Copy row", keys: [modifier, "C"] },
-        { action: "Undo", keys: [modifier, "Z"] },
-        { action: "Redo", keys: [modifier, shift, "Z"] },
-      ],
-    },
   ];
 
   return (
-    <div
-      style={{
-        position: "fixed",
-        inset: 0,
-        background: "var(--bg-overlay)",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        zIndex: 2000,
-        animation: "fadeIn 120ms ease-out",
-      }}
+    <ModalBackdrop
+      onDismiss={onClose}
+      zIndex={2000}
+      style={{ animation: "fadeIn 120ms ease-out" }}
     >
       <div
+        {...stopBackdropEvents}
         style={{
           background: "var(--bg-panel)",
           border: "1px solid var(--border)",
@@ -129,6 +109,7 @@ export function ShortcutCard({ onClose }: { onClose: () => void }) {
           <button
             type="button"
             onClick={onClose}
+            className="modal-close-btn"
             style={{
               border: "none",
               background: "transparent",
@@ -140,18 +121,6 @@ export function ShortcutCard({ onClose }: { onClose: () => void }) {
               borderRadius: 6,
               fontFamily: "var(--font-ui)",
               transition: "color var(--t-fast), background var(--t-fast)",
-            }}
-            onMouseEnter={(e) => {
-              (e.currentTarget as HTMLButtonElement).style.color =
-                "var(--text-primary)";
-              (e.currentTarget as HTMLButtonElement).style.background =
-                "var(--nav-hover)";
-            }}
-            onMouseLeave={(e) => {
-              (e.currentTarget as HTMLButtonElement).style.color =
-                "var(--text-tertiary)";
-              (e.currentTarget as HTMLButtonElement).style.background =
-                "transparent";
             }}
           >
             ×
@@ -229,6 +198,6 @@ export function ShortcutCard({ onClose }: { onClose: () => void }) {
           ))}
         </div>
       </div>
-    </div>
+    </ModalBackdrop>
   );
 }

@@ -10,7 +10,7 @@ import { useEffect, useState } from "react";
 // hoisted function declaration, so it is callable even while the modules are
 // still mid-evaluation, and it is only invoked at render time.
 import { useAppState } from "../AppContext";
-import { invoke, tryInvoke } from "./ipc";
+import { invoke, tryInvokeOr } from "./ipc";
 import type { PumpEnergyRecord } from "./results";
 
 /** Returned by `run_simulation`. Contains only pump energy. */
@@ -99,9 +99,7 @@ export interface SimParams {
 export async function getSimParams(
   projectId: string,
 ): Promise<SimParams | null> {
-  return (
-    (await tryInvoke<SimParams | null>("get_sim_params", { projectId })) ?? null
-  );
+  return tryInvokeOr<SimParams | null>("get_sim_params", { projectId }, null);
 }
 
 /** Persist new sim params: rewrites base + every scenario INP and marks every

@@ -34,8 +34,3 @@ export interface Command {
     | "compare";
   projectId?: string;
 }
-
-export interface SectionGroup {
-  label: string;
-  sections: { id: string; label: string; count: number }[];
-}

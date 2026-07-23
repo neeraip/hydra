@@ -1,8 +1,9 @@
 import { useState } from "react";
-import { useActiveProject } from "../../AppContext";
+import { useActiveProject, useAppState } from "../../AppContext";
 import { ControlsEditor } from "../../components/editors/ControlsEditor";
 import { CurveEditor } from "../../components/editors/CurveEditor";
 import { PatternEditor } from "../../components/editors/PatternEditor";
+import { DeleteConfirmModal } from "../../components/modals/DeleteConfirmModal";
 import { InpDiffModal } from "../../components/modals/InpDiffModal";
 import {
   useControls,
@@ -46,8 +47,15 @@ function NetworkEditorInner() {
   const controls = useControls();
   const rules = useRules();
   const { accent } = useActiveProject();
-  const { dirtyCount, dirtyBySection, previewPatches, discardAll, saveAll } =
-    useDraft();
+  const { showToast } = useAppState();
+  const {
+    dirtyCount,
+    dirtyBySection,
+    previewPatches,
+    discardAll,
+    saveAll,
+    isSaving,
+  } = useDraft();
   const elementsCount = allNodes.length + allLinks.length;
   const sections = EDITOR_SECTIONS.map((s) => {
     if (s.id === "elements") return { ...s, count: elementsCount };
@@ -62,6 +70,7 @@ function NetworkEditorInner() {
     sections[0].id,
   );
   const [previewOpen, setPreviewOpen] = useState(false);
+  const [confirmDiscardOpen, setConfirmDiscardOpen] = useState(false);
   const [pumpFocus, setPumpFocus] = useState<{
     id: string;
     token: number;
@@ -70,6 +79,21 @@ function NetworkEditorInner() {
   function handleNavigateToPump(pumpId: string) {
     setActiveSectionId("elements");
     setPumpFocus({ id: pumpId, token: Date.now() });
+  }
+
+  /** Threshold above which Discard requires an explicit confirmation. */
+  const DISCARD_CONFIRM_THRESHOLD = 5;
+
+  function performDiscard() {
+    const n = dirtyCount;
+    discardAll();
+    setConfirmDiscardOpen(false);
+    showToast(`${n} change${n === 1 ? "" : "s"} discarded`, "info");
+  }
+
+  function handleDiscardClick() {
+    if (dirtyCount > DISCARD_CONFIRM_THRESHOLD) setConfirmDiscardOpen(true);
+    else performDiscard();
   }
 
   const validSection = sections.find((s) => s.id === activeSectionId)
@@ -289,7 +313,8 @@ function NetworkEditorInner() {
             </button>
             <button
               type="button"
-              onClick={discardAll}
+              onClick={handleDiscardClick}
+              disabled={isSaving}
               onMouseEnter={(e) => {
                 (e.currentTarget as HTMLButtonElement).style.background =
                   "var(--nav-hover)";
@@ -323,8 +348,10 @@ function NetworkEditorInner() {
             </button>
             <button
               type="button"
-              onClick={() => saveAll()}
+              onClick={() => void saveAll()}
+              disabled={isSaving}
               onMouseEnter={(e) => {
+                if (isSaving) return;
                 (e.currentTarget as HTMLButtonElement).style.background =
                   "rgba(220, 160, 40, 0.22)";
                 (e.currentTarget as HTMLButtonElement).style.borderColor =
@@ -345,12 +372,13 @@ function NetworkEditorInner() {
                 fontFamily: "var(--font-ui)",
                 fontSize: 12,
                 fontWeight: 500,
-                cursor: "pointer",
+                cursor: isSaving ? "default" : "pointer",
+                opacity: isSaving ? 0.7 : 1,
                 transition:
                   "background var(--t-fast), border-color var(--t-fast)",
               }}
             >
-              Save changes
+              {isSaving ? "Saving…" : "Save changes"}
             </button>
           </>
         ) : (
@@ -366,6 +394,26 @@ function NetworkEditorInner() {
           onClose={() => setPreviewOpen(false)}
         />
       )}
+
+      {/* Confirm before silently dropping a large batch of staged changes. */}
+      <DeleteConfirmModal
+        open={confirmDiscardOpen}
+        elementKind="changes"
+        elementId=""
+        title="Discard changes"
+        message={
+          <>
+            Discard{" "}
+            <strong style={{ color: "var(--text-primary)" }}>
+              {dirtyCount} staged change{dirtyCount === 1 ? "" : "s"}
+            </strong>
+            ? This cannot be undone.
+          </>
+        }
+        confirmLabel="Discard"
+        onCancel={() => setConfirmDiscardOpen(false)}
+        onConfirm={performDiscard}
+      />
     </div>
   );
 }

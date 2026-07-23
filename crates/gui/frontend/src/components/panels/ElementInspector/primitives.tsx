@@ -124,16 +124,3 @@ export function SecondaryCell({
     </div>
   );
 }
-
-import type React from "react";
-export const btnSecondary: React.CSSProperties = {
-  flex: 1,
-  background: "var(--bg-card)",
-  border: "1px solid var(--border)",
-  color: "var(--text-secondary)",
-  borderRadius: 6,
-  padding: "6px 8px",
-  fontSize: 11,
-  cursor: "pointer",
-  fontFamily: "var(--font-ui)",
-};

@@ -4,31 +4,32 @@ export interface FlatScenario extends ScenarioDto {
   depth: number;
 }
 
-/** BFS flatten preserving parent→child depth for indentation. */
+/**
+ * DFS flatten preserving parent→child adjacency: each scenario is followed
+ * immediately by its descendants (depth tracks indentation). Mirrors the
+ * ordering used by OverviewView's ScenarioList. Orphans whose parent isn't
+ * present are appended at depth 0.
+ */
 export function flattenScenarios(dtos: ScenarioDto[]): FlatScenario[] {
-  const byId = new Map(dtos.map((d) => [d.id, d]));
-  const childrenOf = new Map<string | null, ScenarioDto[]>();
+  const childrenOf = new Map<string, ScenarioDto[]>();
   for (const d of dtos) {
-    const key = d.parentScenarioId ?? null;
-    if (!childrenOf.has(key)) childrenOf.set(key, []);
-    childrenOf.get(key)?.push(d);
+    if (!d.parentScenarioId) continue;
+    const arr = childrenOf.get(d.parentScenarioId) ?? [];
+    arr.push(d);
+    childrenOf.set(d.parentScenarioId, arr);
   }
   const result: FlatScenario[] = [];
-  const queue: Array<{ id: string; depth: number }> = (
-    childrenOf.get(null) ?? []
-  ).map((d) => ({
-    id: d.id,
-    depth: 0,
-  }));
-  while (queue.length > 0) {
-    const next = queue.shift();
-    if (!next) break;
-    const { id, depth } = next;
-    const dto = byId.get(id);
-    if (!dto) continue;
+  const walk = (dto: ScenarioDto, depth: number) => {
     result.push({ ...dto, depth });
-    for (const child of childrenOf.get(id) ?? []) {
-      queue.push({ id: child.id, depth: depth + 1 });
+    for (const child of childrenOf.get(dto.id) ?? []) walk(child, depth + 1);
+  };
+  for (const d of dtos) {
+    if (!d.parentScenarioId) walk(d, 0);
+  }
+  // Append any orphans whose parent wasn't found.
+  for (const d of dtos) {
+    if (d.parentScenarioId && !dtos.some((p) => p.id === d.parentScenarioId)) {
+      result.push({ ...d, depth: 0 });
     }
   }
   return result;

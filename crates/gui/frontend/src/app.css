@@ -16,7 +16,6 @@
 
   /* Layout */
   --activity-w: 56px;
-  --rail-w: 280px;
   --rail-transition: 200ms cubic-bezier(0.4, 0, 0.2, 1);
 
   /* Backgrounds */
@@ -24,7 +23,6 @@
   --bg-activity: #0b0b0e;
   --bg-rail: #101015;
   --bg-panel: rgba(17, 17, 23, 0.94);
-  --bg-panel-hover: rgba(26, 26, 36, 0.97);
   --bg-card: #13131a;
   --bg-card-hover: #1a1a24;
   --bg-elevated: #1c1c26;
@@ -44,7 +42,6 @@
 
   /* Accent */
   --accent: #4a90d9;
-  --accent-hover: #5fa3e8;
   --accent-dim: rgba(74, 144, 217, 0.15);
 
   /* Nav */
@@ -54,20 +51,14 @@
   --status-success: #3daf75;
   --status-warning: #d4a017;
   --status-error: #c94040;
-  --status-neutral: #56566a;
 
   /* Elevation */
-  --shadow-1: 0 1px 4px rgba(0, 0, 0, 0.4);
   --shadow-2: 0 4px 16px rgba(0, 0, 0, 0.5);
   --shadow-3: 0 12px 40px rgba(0, 0, 0, 0.7);
 
   /* Radius scale */
   --radius-xs: 3px;
   --radius-sm: 4px;
-  --radius-md: 6px;
-  --radius-lg: 8px;
-  --radius-xl: 10px;
-  --radius-pill: 14px;
 
   /* Tooltip */
   --tooltip-bg: #1e1e2a;
@@ -76,7 +67,6 @@
   /* Motion */
   --t-fast: 120ms ease-out;
   --t-base: 200ms ease-out;
-  --t-slow: 320ms ease-out;
 }
 
 :root[data-theme="light"] {
@@ -86,7 +76,6 @@
   --bg-activity: #e3e6ef;
   --bg-rail: #e8ebf3;
   --bg-panel: rgba(255, 255, 255, 0.96);
-  --bg-panel-hover: rgba(255, 255, 255, 1);
   --bg-card: #ffffff;
   --bg-card-hover: #f5f7fc;
   --bg-elevated: #f0f2f9;
@@ -103,7 +92,6 @@
   --text-disabled: #aab3c5;
 
   --accent: #2e72c2;
-  --accent-hover: #3a82d4;
   --accent-dim: rgba(46, 114, 194, 0.1);
 
   --nav-hover: rgba(23, 33, 55, 0.06);
@@ -112,7 +100,6 @@
   --status-warning: #b08810;
   --status-error: #b03030;
 
-  --shadow-1: 0 1px 4px rgba(0, 0, 0, 0.1);
   --shadow-2: 0 4px 16px rgba(0, 0, 0, 0.14);
   --shadow-3: 0 12px 40px rgba(0, 0, 0, 0.2);
 
@@ -129,22 +116,31 @@
 }
 
 /* ── Accessibility: reduced motion ──────────────────────────────────────────── */
+/* !important is deliberate here: the reduced-motion reset must also override
+   inline `style={{ animation: … }}` declarations on components. */
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
   *::after {
-    animation-duration: 0.01ms;
-    animation-iteration-count: 1;
-    transition-duration: 0.01ms;
+    /* biome-ignore lint/complexity/noImportantStyles: must beat inline animation styles. */
+    animation-duration: 0.01ms !important;
+    /* biome-ignore lint/complexity/noImportantStyles: must beat inline animation styles. */
+    animation-iteration-count: 1 !important;
+    /* biome-ignore lint/complexity/noImportantStyles: must beat inline animation styles. */
+    transition-duration: 0.01ms !important;
   }
 }
 
 :root[data-reduced-motion="true"],
 :root[data-reduced-motion="true"] * {
-  animation-duration: 1ms;
-  animation-delay: 0ms;
-  transition-duration: 1ms;
-  transition-delay: 0ms;
+  /* biome-ignore lint/complexity/noImportantStyles: must beat inline animation styles. */
+  animation-duration: 1ms !important;
+  /* biome-ignore lint/complexity/noImportantStyles: must beat inline animation styles. */
+  animation-delay: 0ms !important;
+  /* biome-ignore lint/complexity/noImportantStyles: must beat inline animation styles. */
+  transition-duration: 1ms !important;
+  /* biome-ignore lint/complexity/noImportantStyles: must beat inline animation styles. */
+  transition-delay: 0ms !important;
 }
 
 /* ── Accessibility: high contrast ───────────────────────────────────────────── */
@@ -278,6 +274,13 @@ body,
   color: var(--text-primary);
 }
 
+/* ── Modal close button ──────────────────────────────────────────────────────
+   Hover handled via CSS so JS event handlers can be removed.                 */
+.modal-close-btn:hover {
+  color: var(--text-primary);
+  background: var(--nav-hover);
+}
+
 /* Pulse dot — shown when tasks are running, no failed count */
 .nav-pulse-dot {
   position: absolute;
@@ -362,7 +365,32 @@ body,
   }
 }
 
+/* Identical twins of the slide keyframes: the page wrapper alternates between
+   the base and -alt names to restart the animation on navigation without
+   remounting the subtree (a key-based remount paid the full 46k-network mount
+   cost twice per project open). */
+@keyframes slideInRightAlt {
+  from {
+    opacity: 0;
+    transform: translateX(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
 @keyframes slideInLeft {
+  from {
+    opacity: 0;
+    transform: translateX(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+@keyframes slideInLeftAlt {
   from {
     opacity: 0;
     transform: translateX(-10px);
@@ -393,15 +421,6 @@ body,
   50% {
     opacity: 0.45;
     transform: scale(0.85);
-  }
-}
-
-@keyframes spin {
-  from {
-    transform: rotate(0deg);
-  }
-  to {
-    transform: rotate(360deg);
   }
 }
 
@@ -450,9 +469,8 @@ body,
 }
 
 /* ── Badge / chip atoms ─────────────────────────────────────────────────────
-   Small inline labels: engine pill, "Draft", "1,247 nodes", "Simulated",
-   etc. `.badge` is the base; modifiers swap colour + border. Designed for
-   `<span>` content only — never put onClick on a badge.                       */
+   Small inline labels: engine pill, "Draft", "1,247 nodes", etc. Designed
+   for `<span>` content only — never put onClick on a badge.                   */
 .badge {
   display: inline-flex;
   align-items: center;
@@ -466,23 +484,6 @@ body,
   color: var(--text-tertiary);
   font-family: var(--font-ui);
   white-space: nowrap;
-}
-.badge-soft {
-  /* Slightly larger variant with breathing room — used on standalone
-     status pills like "Simulated", "n loggers". */
-  padding: 2px 8px;
-}
-.badge-success {
-  color: var(--status-success);
-  border-color: var(--status-success);
-}
-.badge-warning {
-  color: var(--status-warning);
-  border-color: var(--status-warning);
-}
-.badge-error {
-  color: var(--status-error);
-  border-color: var(--status-error);
 }
 
 /* ── Link-style button ──────────────────────────────────────────────────────
@@ -505,9 +506,6 @@ body,
   outline-offset: 3px;
   border-radius: var(--radius-xs);
 }
-
-/* ── Canvas view ─────────────────────────────────────────────────────────────*/
-/* (canvas-bg defined further below with full depth gradient) */
 
 /* ── Canvas toolbar ──────────────────────────────────────────────────────────*/
 .canvas-toolbar {
@@ -587,7 +585,6 @@ body,
     0 6px 20px rgba(0, 0, 0, 0.7),
     inset 0 1px 0 rgba(255, 255, 255, 0.1);
 }
-.legend-input,
 .legend-glass input {
   border: 1px solid rgba(255, 255, 255, 0.12);
   background: rgba(255, 255, 255, 0.06);
@@ -602,7 +599,9 @@ body,
 
 /* ── Context menu ──────────────────────────────────────────────────────────────*/
 .context-menu-item {
-  display: block;
+  display: flex;
+  align-items: center;
+  gap: 8px;
   width: 100%;
   padding: 7px 14px;
   border: none;
@@ -613,6 +612,7 @@ body,
   color: var(--text-primary);
   cursor: pointer;
   border-radius: 4px;
+  transition: background var(--t-fast);
 }
 .context-menu-item:hover {
   background: var(--nav-hover);
@@ -757,29 +757,6 @@ body,
   color: var(--text-primary);
 }
 
-/* ── Results panel tabs ──────────────────────────────────────────────────────*/
-.result-tab {
-  padding: 6px 12px;
-  border: none;
-  background: transparent;
-  color: var(--text-secondary);
-  cursor: pointer;
-  font-size: 12px;
-  font-family: var(--font-ui);
-  border-bottom: 2px solid transparent;
-  transition:
-    color var(--t-fast),
-    border-color var(--t-fast);
-  white-space: nowrap;
-}
-.result-tab:hover {
-  color: var(--text-primary);
-}
-.result-tab.active {
-  color: var(--accent);
-  border-bottom-color: var(--accent);
-}
-
 /* ── Metric chip ─────────────────────────────────────────────────────────────*/
 .metric-chip {
   display: flex;
@@ -839,7 +816,7 @@ body,
   border-top: none;
 }
 
-/* ── Toast notification ──────────────────────────────────────────────────────*/
+/* ── Toast notifications (stack, newest on top) ─────────────────────────────*/
 .toast-container {
   position: fixed;
   bottom: 72px;
@@ -847,12 +824,20 @@ body,
   transform: translateX(-50%);
   z-index: 9999;
   pointer-events: none;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
 }
 .toast {
+  pointer-events: auto;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
   background: var(--bg-panel);
   border: 1px solid var(--border-hover);
   border-radius: 8px;
-  padding: 8px 16px;
+  padding: 8px 12px 8px 16px;
   max-width: min(92vw, 760px);
   font-size: 13px;
   color: var(--text-primary);
@@ -862,6 +847,26 @@ body,
   word-break: break-word;
   line-height: 1.35;
   animation: slideUp 180ms ease-out;
+}
+.toast-message {
+  flex: 1;
+  min-width: 0;
+}
+.toast-close {
+  flex-shrink: 0;
+  background: transparent;
+  border: none;
+  color: inherit;
+  opacity: 0.65;
+  cursor: pointer;
+  font-size: 15px;
+  line-height: 1.2;
+  padding: 0 2px;
+  font-family: var(--font-ui);
+  transition: opacity var(--t-fast);
+}
+.toast-close:hover {
+  opacity: 1;
 }
 .toast.success {
   border-color: var(--status-success);
@@ -878,19 +883,6 @@ body,
 .toast.info {
   border-color: #4a90d9;
   color: #4a90d9;
-}
-
-/* ── Animated pump flow ──────────────────────────────────────────────────────*/
-@keyframes flowDash {
-  from {
-    stroke-dashoffset: 0;
-  }
-  to {
-    stroke-dashoffset: -18;
-  }
-}
-.pump-flow {
-  animation: flowDash 1.4s linear infinite;
 }
 
 /* ── Gradient run / primary button ──────────────────────────────────────────*/
@@ -1035,7 +1027,6 @@ input[type="range"]::-moz-range-track {
     0 6px 20px rgba(0, 0, 0, 0.14),
     inset 0 1px 0 rgba(255, 255, 255, 0.85);
 }
-[data-theme="light"] .legend-input,
 [data-theme="light"] .legend-glass input {
   border-color: rgba(23, 33, 55, 0.14);
   background: rgba(23, 33, 55, 0.04);
@@ -1093,48 +1084,9 @@ input[type="range"]::-moz-range-track {
   box-shadow: 0 4px 24px rgba(0, 0, 0, 0.3);
 }
 
-/* ── Report preview — printed page look, stays white in dark mode ────────────*/
-.report-preview {
-  background: #fff;
-  color: #1a1a1a;
-  padding: 48px 56px;
-  border-radius: 4px;
-  max-width: 760px;
-  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.2);
-  font-family: Georgia, serif;
-  margin: 0 auto;
-}
-
-/* ── Context menu item ───────────────────────────────────────────────────────*/
-.context-menu-item {
-  width: 100%;
-  text-align: left;
-  border: none;
-  background: transparent;
-  color: var(--text-primary);
-  cursor: pointer;
-  padding: 7px 14px;
-  font-size: 13px;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-family: var(--font-ui);
-  transition: background var(--t-fast);
-}
-.context-menu-item:hover {
-  background: var(--nav-hover);
-}
-.context-menu-item.danger {
-  color: var(--status-error);
-}
-
 /* ── Light-mode overrides for new elements ───────────────────────────────────*/
 [data-theme="light"] .wizard-card {
-  background: var(--bg-panel);
   box-shadow: 0 4px 24px rgba(0, 0, 0, 0.12);
-}
-[data-theme="light"] .report-preview {
-  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.1);
 }
 
 /* ── Global focus-visible ring ───────────────────────────────────────────────
@@ -1241,116 +1193,6 @@ select:focus-visible {
   color: #fff;
 }
 
-/* ── Drag-drop zone ──────────────────────────────────────────────────────────*/
-.drop-zone {
-  border: 2px dashed var(--border-hover);
-  border-radius: 10px;
-  background: var(--bg-input);
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  padding: 32px;
-  cursor: pointer;
-  transition:
-    border-color var(--t-base),
-    background var(--t-base);
-  text-align: center;
-}
-.drop-zone:hover,
-.drop-zone.dragging {
-  border-color: var(--accent);
-  background: var(--accent-dim);
-}
-@keyframes dropZonePulse {
-  0%,
-  100% {
-    border-color: var(--accent);
-    box-shadow: 0 0 0 0 rgba(74, 144, 217, 0.3);
-  }
-  50% {
-    border-color: var(--accent-hover);
-    box-shadow: 0 0 0 6px rgba(74, 144, 217, 0);
-  }
-}
-.drop-zone.dragging {
-  animation: dropZonePulse 1.4s ease-in-out infinite;
-}
-.drop-zone .drop-icon {
-  font-size: 32px;
-  opacity: 0.5;
-}
-.drop-zone .drop-label {
-  font-size: 14px;
-  color: var(--text-secondary);
-}
-.drop-zone .drop-link {
-  font-size: 13px;
-  color: var(--accent);
-  text-decoration: underline;
-  cursor: pointer;
-}
-.drop-zone.detected {
-  border-color: var(--status-success);
-  background: rgba(61, 175, 117, 0.08);
-  border-style: solid;
-}
-
-/* ── Project card lift on hover ──────────────────────────────────────────────*/
-.project-card {
-  transition:
-    transform var(--t-base),
-    border-color var(--t-base),
-    box-shadow var(--t-base);
-}
-.project-card:hover {
-  transform: translateY(-3px);
-  border-color: var(--border-hover);
-  box-shadow:
-    0 8px 28px rgba(0, 0, 0, 0.35),
-    0 0 0 1px rgba(74, 144, 217, 0.12);
-}
-[data-theme="light"] .project-card:hover {
-  box-shadow:
-    0 8px 28px rgba(0, 0, 0, 0.12),
-    0 0 0 1px rgba(46, 114, 194, 0.15);
-}
-
-/* ── Scrollable panel fade mask ──────────────────────────────────────────────
-   Wrap scrollable content in .scroll-fade and the parent gets soft gradient
-   edges indicating more content above/below.                                  */
-.scroll-fade {
-  position: relative;
-}
-.scroll-fade::before,
-.scroll-fade::after {
-  content: "";
-  position: absolute;
-  left: 0;
-  right: 0;
-  height: 24px;
-  pointer-events: none;
-  z-index: 1;
-}
-.scroll-fade::before {
-  top: 0;
-  background: linear-gradient(to bottom, var(--bg-panel) 0%, transparent 100%);
-}
-.scroll-fade::after {
-  bottom: 0;
-  background: linear-gradient(to top, var(--bg-panel) 0%, transparent 100%);
-}
-
-.data-table td,
-.data-table th {
-  transition: background var(--t-fast);
-}
-/* ── Table row hover ─────────────────────────────────────────────────────────*/
-.data-table tr:hover td {
-  background: var(--bg-card-hover);
-}
-
 /* ── Activity bar active glow ────────────────────────────────────────────────*/
 .nav-btn.active::after {
   content: "";
@@ -1366,107 +1208,58 @@ select:focus-visible {
   border-radius: 2px;
 }
 
-/* ── Wizard step progress indicator ─────────────────────────────────────────*/
-.wizard-steps {
-  display: flex;
+/* ── Sortable table-header button ────────────────────────────────────────────*/
+/* Real <button> inside a sortable <th>, styled to be visually identical to
+   the previous bare-th label so table layout does not shift. */
+.th-sort-btn {
+  display: inline-flex;
   align-items: center;
-  gap: 0;
-  margin-bottom: 32px;
-}
-.wizard-step-item {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex: 1;
-}
-.wizard-step-item:last-child {
-  flex: none;
-}
-.wizard-step-dot {
-  width: 24px;
-  height: 24px;
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 11px;
-  font-weight: 600;
-  flex-shrink: 0;
-  transition:
-    background var(--t-base),
-    border-color var(--t-base),
-    color var(--t-base);
-}
-.wizard-step-dot.pending {
+  gap: 4px;
+  width: 100%;
   background: transparent;
-  border: 1.5px solid var(--border-hover);
-  color: var(--text-tertiary);
+  border: none;
+  padding: 0;
+  margin: 0;
+  font: inherit;
+  font-weight: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  color: inherit;
+  text-align: inherit;
+  cursor: pointer;
+  user-select: none;
 }
-.wizard-step-dot.active {
-  background: var(--accent);
-  border: 1.5px solid var(--accent);
-  color: #fff;
-  box-shadow: 0 0 0 4px var(--accent-dim);
-}
-.wizard-step-dot.done {
-  background: var(--status-success);
-  border: 1.5px solid var(--status-success);
-  color: #fff;
-}
-.wizard-step-label {
-  font-size: 12px;
-  color: var(--text-tertiary);
-  white-space: nowrap;
-}
-.wizard-step-label.active {
-  color: var(--text-primary);
-  font-weight: 500;
-}
-.wizard-step-label.done {
-  color: var(--status-success);
-}
-.wizard-step-connector {
-  flex: 1;
-  height: 1px;
-  background: var(--border-hover);
-  margin: 0 8px;
-  min-width: 24px;
-}
-.wizard-step-connector.done {
-  background: var(--status-success);
+.th-sort-btn:focus-visible {
+  outline: 1px solid var(--border-focus);
+  outline-offset: 1px;
+  border-radius: 3px;
 }
 
-/* ── Homepage radial depth gradient ─────────────────────────────────────────*/
-.home-bg {
-  background:
-    radial-gradient(
-      ellipse at 20% 20%,
-      rgba(74, 144, 217, 0.07) 0%,
-      transparent 50%
-    ),
-    radial-gradient(
-      ellipse at 80% 80%,
-      rgba(61, 175, 117, 0.05) 0%,
-      transparent 45%
-    ),
-    radial-gradient(
-      ellipse at 50% 0%,
-      rgba(74, 144, 217, 0.04) 0%,
-      transparent 60%
-    ),
-    var(--bg-app);
+/* ── Projects table row kebab ("…") button ──────────────────────────────────*/
+/* Hidden at rest; revealed on row hover or keyboard focus within the row. */
+.row-kebab {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  opacity: 0;
+  transition:
+    opacity var(--t-fast),
+    background var(--t-fast),
+    color var(--t-fast);
 }
-[data-theme="light"] .home-bg {
-  background:
-    radial-gradient(
-      ellipse at 20% 20%,
-      rgba(46, 114, 194, 0.06) 0%,
-      transparent 50%
-    ),
-    radial-gradient(
-      ellipse at 80% 80%,
-      rgba(30, 154, 95, 0.04) 0%,
-      transparent 45%
-    ),
-    var(--bg-app);
+.row-kebab:hover {
+  background: var(--nav-hover);
+  color: var(--text-primary);
+}
+.projects-row:hover .row-kebab,
+.projects-row:focus-within .row-kebab,
+.row-kebab:focus-visible {
+  opacity: 1;
 }

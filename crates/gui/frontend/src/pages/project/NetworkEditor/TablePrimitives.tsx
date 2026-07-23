@@ -402,7 +402,7 @@ export function SortTh({
   const isActive = sortField === field;
   return (
     <th
-      onClick={() => onSort(field)}
+      aria-sort={isActive ? (sortAsc ? "ascending" : "descending") : "none"}
       style={{
         fontSize: 11,
         fontWeight: 500,
@@ -411,7 +411,6 @@ export function SortTh({
         padding: "8px 10px",
         borderBottom: "1px solid var(--border)",
         whiteSpace: "nowrap",
-        cursor: "pointer",
         userSelect: "none",
         position: "sticky",
         top: 0,
@@ -420,23 +419,34 @@ export function SortTh({
         ...style,
       }}
     >
-      {label}
-      {isActive && (
-        <span
-          style={{
-            marginLeft: 4,
-            fontSize: 10,
-            display: "inline-flex",
-            alignItems: "center",
-          }}
-        >
-          {sortAsc ? (
-            <ChevronUpIcon style={{ width: 12, height: 12 }} />
-          ) : (
-            <ChevronDownIcon style={{ width: 12, height: 12 }} />
-          )}
-        </span>
-      )}
+      {/* Real <button> so the header is keyboard-focusable and Enter/Space
+          toggle sorting natively; .th-sort-btn inherits every font style so
+          the rendered layout is identical to the previous bare label. */}
+      <button
+        type="button"
+        className="th-sort-btn"
+        onClick={() => onSort(field)}
+        style={{
+          justifyContent: align === "right" ? "flex-end" : "flex-start",
+        }}
+      >
+        {label}
+        {isActive && (
+          <span
+            style={{
+              fontSize: 10,
+              display: "inline-flex",
+              alignItems: "center",
+            }}
+          >
+            {sortAsc ? (
+              <ChevronUpIcon style={{ width: 12, height: 12 }} />
+            ) : (
+              <ChevronDownIcon style={{ width: 12, height: 12 }} />
+            )}
+          </span>
+        )}
+      </button>
     </th>
   );
 }

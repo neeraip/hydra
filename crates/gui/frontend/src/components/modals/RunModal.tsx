@@ -17,6 +17,7 @@ import {
   primaryModifierLabel,
   primaryModifierPressed,
 } from "../../shortcuts";
+import { ModalBackdrop, stopBackdropEvents } from "../ui/ModalBackdrop";
 import {
   ActiveBadge,
   Label,
@@ -110,7 +111,7 @@ export function RunModal() {
   const {
     runModalOpen,
     closeRunModal,
-    toggleTaskTray,
+    openTaskTray,
     activeProjectId,
     activeScenarioId,
     setProjectView,
@@ -167,11 +168,13 @@ export function RunModal() {
   const runSimulation = useCallback(() => {
     if (!activeProjectId || checkedIds.length === 0) return;
     closeRunModal();
-    setTimeout(() => toggleTaskTray(), 200);
+    // openTaskTray (not toggle): if the tray is already open, toggling would
+    // close it just as the queued runs start.
+    setTimeout(() => openTaskTray(), 200);
     enqueueRuns(activeProjectId, checkedIds).catch((err) => {
       showToast(`Failed to queue runs: ${formatIpcError(err)}`, "error");
     });
-  }, [activeProjectId, checkedIds, closeRunModal, toggleTaskTray, showToast]);
+  }, [activeProjectId, checkedIds, closeRunModal, openTaskTray, showToast]);
 
   // Esc closes; Cmd/Ctrl+Enter runs.
   useEffect(() => {
@@ -234,26 +237,13 @@ export function RunModal() {
   }
 
   return (
-    // biome-ignore lint/a11y/noStaticElementInteractions: backdrop closes the modal on pointer interaction.
-    // biome-ignore lint/a11y/useKeyWithClickEvents: backdrop closes the modal on pointer interaction.
-    <div
-      onClick={closeRunModal}
-      style={{
-        position: "fixed",
-        inset: 0,
-        background: "var(--bg-overlay)",
-        zIndex: 200,
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        animation: "fadeIn 120ms ease-out",
-      }}
+    <ModalBackdrop
+      onDismiss={closeRunModal}
+      zIndex={200}
+      style={{ animation: "fadeIn 120ms ease-out" }}
     >
-      {/* biome-ignore lint/a11y/noStaticElementInteractions: panel only stops backdrop clicks. */}
       <div
-        onMouseDown={(e) => e.stopPropagation()}
-        onKeyDown={(e) => e.stopPropagation()}
-        onClick={(e) => e.stopPropagation()}
+        {...stopBackdropEvents}
         style={{
           width: "100%",
           maxWidth: 560,
@@ -518,6 +508,6 @@ export function RunModal() {
           </button>
         </div>
       </div>
-    </div>
+    </ModalBackdrop>
   );
 }

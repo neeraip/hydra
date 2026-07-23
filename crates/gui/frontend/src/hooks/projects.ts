@@ -1,11 +1,10 @@
 /**
- * Project hooks + persistence commands (list/create/load/rename/delete),
+ * Project hooks + persistence commands (list/create/rename/delete/save),
  * CRS catalog access, DB/filesystem reconciliation, and app versions.
  */
 
 import { useEffect, useMemo, useState } from "react";
-import type { Link, Node } from "../types";
-import { tryInvoke } from "./ipc";
+import { tryInvoke, tryInvokeOr } from "./ipc";
 
 // ── Project types ────────────────────────────────────────────────────────────
 //
@@ -34,8 +33,12 @@ export interface Project {
   scenarioCount: number;
   state: ProjectState;
   modifiedLabel: string;
+  /** Last-modified time in epoch milliseconds. Absent/null on older backends. */
+  modifiedAtMs?: number | null;
   /** Relative label for the last completed simulation. Absent when never run. */
   lastRunLabel?: string | null;
+  /** Last completed run time in epoch milliseconds. Absent/null when never run. */
+  lastRunAtMs?: number | null;
   nodeCount: number;
   linkCount: number;
   /** EPSG code for the INP [COORDINATES] CRS. Defaults to "EPSG:4326". */
@@ -94,8 +97,9 @@ export function fetchProjectsShared(): Promise<Project[] | null> {
 export function useProjects(_version: number = 0): Project[] {
   const [projects, setProjects] = useState<Project[]>(lastProjects);
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: `_version` is a caller-controlled refetch counter; it is a valid dep.
   useEffect(() => {
+    // `_version` is a caller-controlled refetch counter.
+    void _version;
     let cancelled = false;
     fetchProjectsShared().then((rows) => {
       if (!cancelled && rows !== null) setProjects(rows);
@@ -119,18 +123,6 @@ export function useProject(
   );
 }
 
-/** Open a native file-open dialog filtered to CSV/Excel. Returns the picked
- *  filename + a generated id, or null if the user cancelled. */
-export async function pickCsvFile(): Promise<{
-  id: string;
-  filename: string;
-} | null> {
-  const result = await tryInvoke<{ id: string; filename: string } | null>(
-    "pick_csv_file",
-  );
-  return result ?? null;
-}
-
 /**
  * Persist a new project bundle on disk via the Tauri backend.
  *
@@ -144,29 +136,7 @@ export async function createProjectOnDisk(args: {
   id: string;
   name: string;
 }): Promise<Project | null> {
-  return (await tryInvoke<Project | null>("create_project", args)) ?? null;
-}
-
-/**
- * Result returned by `loadProject`: the manifest, plus the parsed network if
- * the bundle had one. The backend has also populated managed state with the
- * parsed network, so subsequent `useNodes()` / `useLinks()` / `runSimulation()`
- * calls operate on it.
- */
-export interface LoadedProject {
-  project: Project;
-  network: { nodes: Node[]; links: Link[] } | null;
-}
-
-/**
- * Open a persisted project bundle. Returns `null` when the project is not on
- * disk (e.g. in-memory-only projects, or running outside a Tauri shell) so
- * the caller can fall back to in-memory project metadata.
- */
-export async function loadProject(id: string): Promise<LoadedProject | null> {
-  return (
-    (await tryInvoke<LoadedProject | null>("load_project", { id })) ?? null
-  );
+  return tryInvokeOr<Project | null>("create_project", args, null);
 }
 
 /**
@@ -175,7 +145,7 @@ export async function loadProject(id: string): Promise<LoadedProject | null> {
  * non-Tauri).
  */
 export async function deleteProjectOnDisk(id: string): Promise<boolean> {
-  return (await tryInvoke<boolean>("delete_project", { id })) ?? false;
+  return tryInvokeOr<boolean>("delete_project", { id }, false);
 }
 
 /**
@@ -186,9 +156,7 @@ export async function renameProjectOnDisk(
   id: string,
   name: string,
 ): Promise<Project | null> {
-  return (
-    (await tryInvoke<Project | null>("rename_project", { id, name })) ?? null
-  );
+  return tryInvokeOr<Project | null>("rename_project", { id, name }, null);
 }
 
 /**
@@ -198,11 +166,11 @@ export async function updateProjectCrs(
   id: string,
   crs: string,
 ): Promise<boolean> {
-  return (await tryInvoke<boolean>("update_project_crs", { id, crs })) ?? false;
+  return tryInvokeOr<boolean>("update_project_crs", { id, crs }, false);
 }
 
 export async function listCustomCrsDefs(): Promise<CustomCrsDef[]> {
-  return (await tryInvoke<CustomCrsDef[]>("list_custom_crs")) ?? [];
+  return tryInvokeOr<CustomCrsDef[]>("list_custom_crs", undefined, []);
 }
 
 export async function listCrsCatalogPage(params: {
@@ -215,15 +183,13 @@ export async function listCrsCatalogPage(params: {
     page: params.page,
     page_size: params.pageSize,
   };
-  return (
-    (await tryInvoke<CrsCatalogPage>("list_crs_catalog_page", payload)) ?? {
-      items: [],
-      total: 0,
-      page: params.page ?? 0,
-      pageSize: params.pageSize ?? 100,
-      hasMore: false,
-    }
-  );
+  return tryInvokeOr<CrsCatalogPage>("list_crs_catalog_page", payload, {
+    items: [],
+    total: 0,
+    page: params.page ?? 0,
+    pageSize: params.pageSize ?? 100,
+    hasMore: false,
+  });
 }
 
 export async function upsertCustomCrsDef(input: {
@@ -249,11 +215,10 @@ export async function saveProjectOnDisk(
   id: string,
   scenarioId?: string | null,
 ): Promise<boolean> {
-  return (
-    (await tryInvoke<boolean>("save_project", {
-      id,
-      scenarioId: scenarioId ?? null,
-    })) ?? false
+  return tryInvokeOr<boolean>(
+    "save_project",
+    { id, scenarioId: scenarioId ?? null },
+    false,
   );
 }
 
@@ -271,12 +236,10 @@ export interface ReconcileReport {
  * DB. Also returns the IDs of DB rows whose folder no longer exists on disk.
  */
 export async function reconcileProjects(): Promise<ReconcileReport> {
-  return (
-    (await tryInvoke<ReconcileReport>("reconcile_projects")) ?? {
-      recovered: 0,
-      folderMissing: [],
-    }
-  );
+  return tryInvokeOr<ReconcileReport>("reconcile_projects", undefined, {
+    recovered: 0,
+    folderMissing: [],
+  });
 }
 
 // ── App versions ──────────────────────────────────────────────────────────
@@ -287,10 +250,8 @@ export interface Versions {
 }
 
 export async function getVersions(): Promise<Versions> {
-  return (
-    (await tryInvoke<Versions>("get_versions")) ?? {
-      hydra: "0.0.0",
-      app: "0.0.0",
-    }
-  );
+  return tryInvokeOr<Versions>("get_versions", undefined, {
+    hydra: "0.0.0",
+    app: "0.0.0",
+  });
 }

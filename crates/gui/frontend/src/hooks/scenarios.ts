@@ -3,7 +3,7 @@
  */
 
 import { useEffect, useState } from "react";
-import { tryInvoke } from "./ipc";
+import { tryInvoke, tryInvokeOr } from "./ipc";
 
 /** Flat DTO returned by `list_scenarios` / `create_scenario`. */
 export interface ScenarioDto {
@@ -25,8 +25,9 @@ export function useScenarios(
 ): ScenarioDto[] {
   const [scenarios, setScenarios] = useState<ScenarioDto[]>([]);
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: `version` is a caller-controlled refetch counter; it is a valid dep.
   useEffect(() => {
+    // `version` is a caller-controlled refetch counter.
+    void version;
     if (!projectId) {
       setScenarios([]);
       return;
@@ -52,12 +53,14 @@ export async function createScenarioOnDisk(args: {
   name: string;
   parentScenarioId?: string | null;
 }): Promise<ScenarioDto | null> {
-  return (
-    (await tryInvoke<ScenarioDto>("create_scenario", {
+  return tryInvokeOr<ScenarioDto | null>(
+    "create_scenario",
+    {
       projectId: args.projectId,
       name: args.name,
       parentScenarioId: args.parentScenarioId ?? null,
-    })) ?? null
+    },
+    null,
   );
 }
 
@@ -84,9 +87,10 @@ export async function deleteScenario(
   projectId: string,
   scenarioId: string,
 ): Promise<boolean> {
-  return (
-    (await tryInvoke<boolean>("delete_scenario", { projectId, scenarioId })) ??
-    false
+  return tryInvokeOr<boolean>(
+    "delete_scenario",
+    { projectId, scenarioId },
+    false,
   );
 }
 
@@ -95,11 +99,9 @@ export async function renameScenario(
   scenarioId: string,
   name: string,
 ): Promise<boolean> {
-  return (
-    (await tryInvoke<boolean>("rename_scenario", {
-      projectId,
-      scenarioId,
-      name,
-    })) ?? false
+  return tryInvokeOr<boolean>(
+    "rename_scenario",
+    { projectId, scenarioId, name },
+    false,
   );
 }

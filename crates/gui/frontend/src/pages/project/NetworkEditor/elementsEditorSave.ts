@@ -40,9 +40,13 @@ export interface SaveStagedElementsResult {
  * changed field.
  *
  * - Entries for elements staged for deletion are dropped.
+ * - `id` entries (and `from`/`to` entries for links) are dropped for every
+ *   element: for freshly created (temp-id) elements they are create-only and
+ *   were consumed by the create call; for persisted elements renames and
+ *   endpoint changes are unsupported — the backend patch handler has no
+ *   `id`/`from`/`to` case, so emitting them could only fail the save.
  * - Entries for freshly created (temp-id) elements are re-targeted to the
- *   real id assigned at creation; create-only fields (`id`, and `from`/`to`
- *   for links) are dropped since they were consumed by the create call.
+ *   real id assigned at creation.
  * - Temp-id entries whose element failed to create (no real id) are dropped.
  */
 export function buildFieldPatches(args: {
@@ -59,15 +63,17 @@ export function buildFieldPatches(args: {
       continue;
     }
 
-    if (id.startsWith(tempIdPrefix)) {
-      const isCreateOnlyField =
-        ((kind === "junction" || kind === "tank" || kind === "reservoir") &&
-          field === "id") ||
-        ((kind === "pipe" || kind === "pump" || kind === "valve") &&
-          (field === "id" || field === "from" || field === "to"));
-      if (isCreateOnlyField) {
-        continue;
-      }
+    // `id` (and `from`/`to` for links) never patches. For temp-id elements
+    // these fields are create-only — already consumed by the create call.
+    // For persisted elements renames and endpoint changes stay unsupported
+    // until designed properly: the backend has no id/from/to patch handler,
+    // so emitting them could only fail the save.
+    const isUnsupportedField =
+      field === "id" ||
+      ((kind === "pipe" || kind === "pump" || kind === "valve") &&
+        (field === "from" || field === "to"));
+    if (isUnsupportedField) {
+      continue;
     }
 
     if (!targetId) continue;

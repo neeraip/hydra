@@ -257,7 +257,7 @@ export function PatternEditor({ accent }: { accent: string }) {
                 width: "100%",
                 height: 26,
                 background: "var(--bg-input)",
-                border: `1px solid ${createError ? "var(--danger)" : "var(--border-focus)"}`,
+                border: `1px solid ${createError ? "var(--status-error)" : "var(--border-focus)"}`,
                 borderRadius: 4,
                 padding: "0 6px",
                 color: "var(--text-primary)",
@@ -269,7 +269,11 @@ export function PatternEditor({ accent }: { accent: string }) {
             />
             {createError && (
               <div
-                style={{ fontSize: 11, color: "var(--danger)", marginTop: 3 }}
+                style={{
+                  fontSize: 11,
+                  color: "var(--status-error)",
+                  marginTop: 3,
+                }}
               >
                 {createError}
               </div>
@@ -302,7 +306,7 @@ export function PatternEditor({ accent }: { accent: string }) {
                   flex: 1,
                   height: 24,
                   fontSize: 11,
-                  background: "var(--bg-hover)",
+                  background: "var(--nav-hover)",
                   color: "var(--text-secondary)",
                   border: "none",
                   borderRadius: 4,

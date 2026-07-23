@@ -5,7 +5,7 @@
  * registered via `tauri::generate_handler![...]`. In a plain browser dev
  * server (`vite` only, no Tauri shell), `invoke` rejects with a useful
  * error — `tryInvoke` catches that case and returns `null`, allowing each
- * `data/` hook to return null without breaking the dev loop.
+ * `hooks/` data module to return null without breaking the dev loop.
  */
 import { invoke as tauriInvoke } from "@tauri-apps/api/core";
 
@@ -66,6 +66,17 @@ export async function tryInvoke<T>(
     ipcErrorHandler?.(cmd, err);
     return null;
   }
+}
+
+/** Like `tryInvoke`, but resolves `fallback` instead of `null` when the
+ *  command is unavailable (outside Tauri), failed, or returned `null`.
+ *  Use for read-only fetches with a natural empty/default value. */
+export async function tryInvokeOr<T>(
+  cmd: string,
+  args: Record<string, unknown> | undefined,
+  fallback: T,
+): Promise<T> {
+  return (await tryInvoke<T>(cmd, args)) ?? fallback;
 }
 
 /** Throwing variant — propagates backend errors to the caller. Use for

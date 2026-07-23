@@ -1,3 +1,4 @@
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
   createContext,
   type Dispatch,
@@ -5,6 +6,7 @@ import {
   type SetStateAction,
   useCallback,
   useContext,
+  useDeferredValue,
   useEffect,
   useMemo,
   useRef,
@@ -13,13 +15,15 @@ import {
 import { useCanvasStatus } from "./canvas/status-context";
 import {
   ACCENT,
+  fetchValidationFindings,
   loadProjectNetwork,
   type Project,
   type ProjectView,
   useProject,
   useProjects,
+  validationFindingsToIssues,
 } from "./hooks";
-import { formatIpcError, onIpcError } from "./hooks/ipc";
+import { formatIpcError, isTauri, onIpcError } from "./hooks/ipc";
 import { useNetworkData } from "./hooks/NetworkDataContext";
 import { useNetworkVersion } from "./hooks/NetworkVersionContext";
 import { startPerfSpan } from "./perfTrace";
@@ -47,11 +51,12 @@ interface AppState {
   issuesPanelOpen: boolean;
   theme: "dark" | "light" | "system";
   activeProjectId: string | null;
-  toast: {
+  /** Visible toast stack, newest first (capped at MAX_TOASTS). */
+  toasts: {
     id: string;
     message: string;
     type: "info" | "success" | "warn" | "error";
-  } | null;
+  }[];
   /** Project created in-session via the New Project wizard. Cleared on closeProject. */
   createdProject: Project | null;
   /** True when a real INP file has been loaded via the wizard. */
@@ -96,7 +101,7 @@ interface AppActions {
     message: string,
     type?: "info" | "success" | "warn" | "error",
   ) => void;
-  dismissToast: () => void;
+  dismissToast: (id: string) => void;
   /** Create a project from the wizard (sets createdProject, navigates to canvas). */
   createProject: (p: Project) => void;
   /** Open a previously persisted project (sets createdProject, navigates to overview). */
@@ -117,6 +122,11 @@ interface AppActions {
   canNavBack: boolean;
   /** True when there is a next location to navigate forward to. */
   canNavForward: boolean;
+  /** `projectView`, one transition behind: consumers that gate expensive
+   * subtrees (view mounts, editor row models, canvas activation) read this so
+   * a tab click paints the highlight immediately while the heavy subtree flip
+   * happens in an interruptible deferred render. */
+  deferredProjectView: ProjectView;
 }
 
 const Ctx = createContext<(AppState & AppActions) | null>(null);
@@ -143,11 +153,86 @@ function pushNav(
 /** Window within which identical backend-error toasts are suppressed. */
 const IPC_TOAST_DEDUPE_MS = 5000;
 
+/** Maximum number of simultaneously visible toasts (newest wins). */
+const MAX_TOASTS = 4;
+
+// ── Draft guard seam ────────────────────────────────────────────────────────
+//
+// DraftContext lives *below* AppProvider (it is mounted by NetworkEditor and
+// itself consumes useAppState), so AppContext cannot read it through a hook —
+// and importing DraftContext here would create a module cycle. Instead
+// DraftContext registers a tiny imperative API at mount time; navigation
+// handlers and the window-close guard read it on demand.
+
+export interface DraftGuard {
+  /** Total staged (unsaved) editor changes right now. */
+  getDirtyCount: () => number;
+  /** Save every staged change — same path as the editor save bar. */
+  saveAll: () => Promise<{ applied: number; failed: number; errors: string[] }>;
+}
+
+let draftGuard: DraftGuard | null = null;
+
+/** Called by DraftProvider on mount; returns an unregister function. */
+export function registerDraftGuard(guard: DraftGuard): () => void {
+  draftGuard = guard;
+  return () => {
+    if (draftGuard === guard) draftGuard = null;
+  };
+}
+
+/** Current staged editor change count (0 when no editor draft exists). */
+export function getDraftDirtyCount(): number {
+  return draftGuard?.getDirtyCount() ?? 0;
+}
+
+/** Save staged editor drafts via the registered guard (no-op without one). */
+export function saveDraftsViaGuard(): Promise<{
+  applied: number;
+  failed: number;
+  errors: string[];
+}> | null {
+  return draftGuard ? draftGuard.saveAll() : null;
+}
+
+/**
+ * Ask the user to confirm leaving/closing with unsaved editor drafts.
+ * Returns `true` when navigation may proceed. Some webviews don't implement
+ * `window.confirm` (it returns `undefined`); only an explicit `false` blocks
+ * the action so navigation/close can never be wedged.
+ */
+function confirmDiscardDrafts(verb: string): boolean {
+  const n = getDraftDirtyCount();
+  if (n === 0) return true;
+  const res = window.confirm(
+    `You have ${n} unsaved editor change${n === 1 ? "" : "s"}. ${verb} anyway and discard ${n === 1 ? "it" : "them"}?`,
+  );
+  return res !== false;
+}
+
 const STORAGE_THEME = "hydra2-theme";
 const railOpenKey = (id: string) => `hydra2-rail-open:${id}`;
-function readRailOpen(id: string, fallback = true): boolean {
+function readRailOpen(id: string): boolean {
   const v = localStorage.getItem(railOpenKey(id));
-  return v === null ? fallback : v === "1";
+  return v === null ? true : v === "1";
+}
+
+const projectViewKey = (id: string) => `hydra2-project-view:${id}`;
+/** Last-used view for a project, persisted by `setProjectView`. */
+function readProjectView(id: string): ProjectView | null {
+  return localStorage.getItem(projectViewKey(id)) as ProjectView | null;
+}
+
+/** "HH:MM" label used for task and issue timestamps. */
+function formatClockTime(date: Date = new Date()): string {
+  return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
+
+/** "HH:MM" label for a queue item's unix-seconds finish time (now if unset). */
+function finishTimeLabel(finishedAt: number | null): string {
+  return formatClockTime(
+    finishedAt != null ? new Date(finishedAt * 1000) : new Date(),
+  );
 }
 
 export function AppProvider({ children }: { children: ReactNode }) {
@@ -165,7 +250,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       (localStorage.getItem(STORAGE_THEME) as "dark" | "light" | "system") ??
       "system",
     activeProjectId: null,
-    toast: null,
+    toasts: [],
     createdProject: null,
     isNetworkLoaded: false,
     projectsVersion: 0,
@@ -182,6 +267,39 @@ export function AppProvider({ children }: { children: ReactNode }) {
     ],
     navCursor: 0,
   }));
+
+  // Live snapshot of state for imperative reads inside stable callbacks
+  // (navigation guards need the *current* page without re-creating the
+  // callbacks on every state change).
+  const sRef = useRef(s);
+  useEffect(() => {
+    sRef.current = s;
+  });
+
+  // Tauri window-close guard: prompt when editor drafts are dirty. Outside a
+  // Tauri shell (plain vite dev server) this effect is a no-op.
+  useEffect(() => {
+    if (!isTauri()) return;
+    let disposed = false;
+    let unlisten: (() => void) | null = null;
+    getCurrentWindow()
+      .onCloseRequested((event) => {
+        if (!confirmDiscardDrafts("Close")) event.preventDefault();
+      })
+      .then((fn) => {
+        // StrictMode double-mount: dispose a late-resolving listener instead
+        // of leaking it.
+        if (disposed) fn();
+        else unlisten = fn;
+      })
+      .catch((err) => {
+        console.warn("[app] failed to register close guard:", err);
+      });
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, []);
 
   useEffect(() => {
     const resolved =
@@ -216,9 +334,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
         const log = type === "error" ? console.error : console.warn;
         log(`[toast:${type}] ${message}`);
       }
+      // Unique id generated outside the updater (StrictMode double-invokes
+      // updaters, so they must stay pure).
+      const id = `toast-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
       setS((prev) => ({
         ...prev,
-        toast: { id: String(Date.now()), message, type },
+        toasts: [{ id, message, type }, ...prev.toasts].slice(0, MAX_TOASTS),
       }));
     },
     [],
@@ -330,6 +451,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
   ]);
 
   const setPage = useCallback((page: Page) => {
+    // Guard: leaving the project page discards any staged editor drafts
+    // (DraftProvider unmounts with the editor). Confirm before proceeding.
+    if (
+      sRef.current.page === "project" &&
+      page !== "project" &&
+      !confirmDiscardDrafts("Leave")
+    ) {
+      return;
+    }
     setS((prev) => {
       // Leaving the project view must always clear project-scoped state,
       // regardless of which call site triggered the navigation. Enforced
@@ -378,10 +508,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         return { ...prev, railOpen: next };
       }
       if (prev.activeProjectId) {
-        localStorage.setItem(
-          `hydra2-project-view:${prev.activeProjectId}`,
-          view,
-        );
+        localStorage.setItem(projectViewKey(prev.activeProjectId), view);
       }
       const nav = pushNav(prev, {
         page: prev.page,
@@ -389,37 +516,56 @@ export function AppProvider({ children }: { children: ReactNode }) {
         activeProjectId: prev.activeProjectId,
         activeScenarioId: prev.activeScenarioId,
       });
-      return { ...prev, ...nav, projectView: view, railOpen: true };
+      // Restore the persisted per-project rail preference rather than forcing
+      // the rail open: force-opening flipped needSimObjects and rebuilt the
+      // 92k merged sim-object arrays on every view switch.
+      const railOpen = prev.activeProjectId
+        ? readRailOpen(prev.activeProjectId)
+        : prev.railOpen;
+      return { ...prev, ...nav, projectView: view, railOpen };
     });
   }, []);
 
-  const openProject = useCallback((id: string) => {
-    const stored = localStorage.getItem(
-      `hydra2-project-view:${id}`,
-    ) as ProjectView | null;
-    const projectView: ProjectView = stored ?? "canvas";
-    const railOpen = readRailOpen(id);
-    setS((prev) => {
-      const newLoc = {
-        page: "project" as Page,
-        projectView,
-        activeProjectId: id,
-        activeScenarioId: null,
-      };
-      const nav = pushNav(prev, newLoc);
-      return {
-        ...prev,
-        ...nav,
-        page: "project",
-        activeProjectId: id,
-        activeScenarioId: null,
-        projectView,
-        railOpen,
-        commandPaletteOpen: false,
-        taskTrayOpen: false,
-      };
-    });
-  }, []);
+  /** Shared transition for every "enter a project" entry point: navigate to
+   *  the project page, reset scenario/palette/tray state, and apply the
+   *  per-entry-point extras (wizard-created project fields). */
+  const goToProject = useCallback(
+    (
+      id: string,
+      projectView: ProjectView,
+      railOpen: boolean,
+      extra?: Pick<AppState, "createdProject" | "isNetworkLoaded">,
+    ) => {
+      setS((prev) => {
+        const nav = pushNav(prev, {
+          page: "project",
+          projectView,
+          activeProjectId: id,
+          activeScenarioId: null,
+        });
+        return {
+          ...prev,
+          ...nav,
+          page: "project",
+          activeProjectId: id,
+          activeScenarioId: null,
+          projectView,
+          railOpen,
+          commandPaletteOpen: false,
+          taskTrayOpen: false,
+          ...extra,
+        };
+      });
+    },
+    [],
+  );
+
+  const openProject = useCallback(
+    (id: string) => {
+      goToProject(id, readProjectView(id) ?? "canvas", readRailOpen(id));
+    },
+    [goToProject],
+  );
 
   // Just navigates to "projects" — setPage centrally clears all
   // project-scoped state (activeProjectId, isNetworkLoaded, etc.) whenever
@@ -428,60 +574,27 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setPage("projects");
   }, [setPage]);
 
-  const createProject = useCallback((p: Project) => {
-    setS((prev) => {
-      const newLoc = {
-        page: "project" as Page,
-        projectView: "canvas" as ProjectView,
-        activeProjectId: p.id,
-        activeScenarioId: null,
-      };
-      const nav = pushNav(prev, newLoc);
-      return {
-        ...prev,
-        ...nav,
-        page: "project",
-        activeProjectId: p.id,
-        activeScenarioId: null,
-        projectView: "canvas",
-        railOpen: true,
-        commandPaletteOpen: false,
-        taskTrayOpen: false,
+  const createProject = useCallback(
+    (p: Project) => {
+      goToProject(p.id, "canvas", true, {
         createdProject: p,
         isNetworkLoaded: p.nodeCount > 0,
-      };
-    });
-  }, []);
+      });
+    },
+    [goToProject],
+  );
 
-  const enterLoadedProject = useCallback((p: Project) => {
-    const stored = localStorage.getItem(
-      `hydra2-project-view:${p.id}`,
-    ) as ProjectView | null;
-    const projectView: ProjectView = stored ?? "overview";
-    const railOpen = readRailOpen(p.id);
-    setS((prev) => {
-      const newLoc = {
-        page: "project" as Page,
-        projectView,
-        activeProjectId: p.id,
-        activeScenarioId: null,
-      };
-      const nav = pushNav(prev, newLoc);
-      return {
-        ...prev,
-        ...nav,
-        page: "project",
-        activeProjectId: p.id,
-        activeScenarioId: null,
-        projectView,
-        railOpen,
-        commandPaletteOpen: false,
-        taskTrayOpen: false,
-        createdProject: p,
-        isNetworkLoaded: p.nodeCount > 0,
-      };
-    });
-  }, []);
+  const enterLoadedProject = useCallback(
+    (p: Project) => {
+      goToProject(
+        p.id,
+        readProjectView(p.id) ?? "overview",
+        readRailOpen(p.id),
+        { createdProject: p, isNetworkLoaded: p.nodeCount > 0 },
+      );
+    },
+    [goToProject],
+  );
 
   const bumpProjects = useCallback(() => {
     setS((prev) => ({ ...prev, projectsVersion: prev.projectsVersion + 1 }));
@@ -499,10 +612,27 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setS((prev) => ({ ...prev, simParamsVersion: prev.simParamsVersion + 1 }));
   }, []);
 
-  const navBack = useCallback(() => {
+  /** Move the nav cursor by ±1 and restore that history location (no-op at
+   *  either end of the stack). */
+  const navBy = useCallback((delta: -1 | 1) => {
+    // Same unsaved-drafts guard as setPage, applied to back/forward
+    // navigation that would leave the project page.
+    {
+      const cur = sRef.current;
+      const targetCursor = cur.navCursor + delta;
+      if (targetCursor < 0 || targetCursor >= cur.navHistory.length) return;
+      const target = cur.navHistory[targetCursor];
+      if (
+        cur.page === "project" &&
+        target.page !== "project" &&
+        !confirmDiscardDrafts("Leave")
+      ) {
+        return;
+      }
+    }
     setS((prev) => {
-      if (prev.navCursor <= 0) return prev;
-      const newCursor = prev.navCursor - 1;
+      const newCursor = prev.navCursor + delta;
+      if (newCursor < 0 || newCursor >= prev.navHistory.length) return prev;
       const loc = prev.navHistory[newCursor];
       return {
         ...prev,
@@ -516,22 +646,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
     });
   }, []);
 
-  const navForward = useCallback(() => {
-    setS((prev) => {
-      if (prev.navCursor >= prev.navHistory.length - 1) return prev;
-      const newCursor = prev.navCursor + 1;
-      const loc = prev.navHistory[newCursor];
-      return {
-        ...prev,
-        navCursor: newCursor,
-        page: loc.page,
-        projectView: loc.projectView,
-        activeProjectId: loc.activeProjectId,
-        activeScenarioId: loc.activeScenarioId,
-        railOpen: loc.page === "project" ? prev.railOpen : false,
-      };
-    });
-  }, []);
+  const navBack = useCallback(() => navBy(-1), [navBy]);
+  const navForward = useCallback(() => navBy(1), [navBy]);
 
   const toggleRail = useCallback(() => {
     setS((prev) => {
@@ -618,8 +734,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setS((prev) => ({ ...prev, theme }));
   }, []);
 
-  const dismissToast = useCallback(() => {
-    setS((prev) => ({ ...prev, toast: null }));
+  const dismissToast = useCallback((id: string) => {
+    setS((prev) => ({
+      ...prev,
+      toasts: prev.toasts.filter((t) => t.id !== id),
+    }));
   }, []);
 
   // Surface real backend IPC failures from the otherwise-silent `tryInvoke`
@@ -677,44 +796,87 @@ export function AppProvider({ children }: { children: ReactNode }) {
     );
   }, [s.activeProjectId]);
 
+  const deferredProjectView = useDeferredValue(s.projectView);
+
+  // Memoized: this provider re-renders on every piece of app state (toasts,
+  // nav, modals); an inline value object handed every useAppState consumer a
+  // fresh reference each time, re-rendering the whole tree per state change.
+  // All callbacks are stable useCallbacks, so `s` is the only real dependency.
+  const appValue = useMemo(
+    () => ({
+      ...s,
+      setPage,
+      setProjectView,
+      openProject,
+      closeProject,
+      toggleRail,
+      openCommandPalette,
+      closeCommandPalette,
+      openRunModal,
+      closeRunModal,
+      openScenariosModal,
+      closeScenariosModal,
+      openCrsModal,
+      closeCrsModal,
+      toggleTaskTray,
+      openTaskTray,
+      closeTaskTray,
+      toggleIssuesPanel,
+      openIssuesPanel,
+      closeIssuesPanel,
+      setTheme,
+      showToast,
+      dismissToast,
+      createProject,
+      enterLoadedProject,
+      bumpProjects,
+      setActiveScenarioId,
+      bumpScenarios,
+      bumpSimParams,
+      navBack,
+      navForward,
+      canNavBack: s.navCursor > 0,
+      canNavForward: s.navCursor < s.navHistory.length - 1,
+      deferredProjectView,
+    }),
+    [
+      s,
+      deferredProjectView,
+      setPage,
+      setProjectView,
+      openProject,
+      closeProject,
+      toggleRail,
+      openCommandPalette,
+      closeCommandPalette,
+      openRunModal,
+      closeRunModal,
+      openScenariosModal,
+      closeScenariosModal,
+      openCrsModal,
+      closeCrsModal,
+      toggleTaskTray,
+      openTaskTray,
+      closeTaskTray,
+      toggleIssuesPanel,
+      openIssuesPanel,
+      closeIssuesPanel,
+      setTheme,
+      showToast,
+      dismissToast,
+      createProject,
+      enterLoadedProject,
+      bumpProjects,
+      setActiveScenarioId,
+      bumpScenarios,
+      bumpSimParams,
+      navBack,
+      navForward,
+    ],
+  );
+
   return (
-    <Ctx.Provider
-      value={{
-        ...s,
-        setPage,
-        setProjectView,
-        openProject,
-        closeProject,
-        toggleRail,
-        openCommandPalette,
-        closeCommandPalette,
-        openRunModal,
-        closeRunModal,
-        openScenariosModal,
-        closeScenariosModal,
-        openCrsModal,
-        closeCrsModal,
-        toggleTaskTray,
-        openTaskTray,
-        closeTaskTray,
-        toggleIssuesPanel,
-        openIssuesPanel,
-        closeIssuesPanel,
-        setTheme,
-        showToast,
-        dismissToast,
-        createProject,
-        enterLoadedProject,
-        bumpProjects,
-        setActiveScenarioId,
-        bumpScenarios,
-        bumpSimParams,
-        navBack,
-        navForward,
-        canNavBack: s.navCursor > 0,
-        canNavForward: s.navCursor < s.navHistory.length - 1,
-      }}
-    >
+    <Ctx.Provider value={appValue}>
       <SimulationProvider>{children}</SimulationProvider>
     </Ctx.Provider>
   );
@@ -834,7 +996,11 @@ function SimulationProvider({ children }: { children: ReactNode }) {
     activeProjectId,
     activeScenarioId,
   } = useAppState();
-  const { clearEdited, editedScenarioIds } = useNetworkVersion();
+  const {
+    clearEdited,
+    editedScenarioIds,
+    version: networkVersion,
+  } = useNetworkVersion();
   const { coordStatus, coordMissingCount, coordTotalCount } = useCanvasStatus();
   const [pumpEnergy, setPumpEnergy] = useState<PumpEnergyRecord[] | null>(null);
   const [resultMeta, setResultMeta] = useState<ResultMeta | null>(null);
@@ -845,6 +1011,30 @@ function SimulationProvider({ children }: { children: ReactNode }) {
   const [resultGeneration, setResultGeneration] = useState(0);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [issues, setIssues] = useState<Issue[]>([]);
+  // Backend `validate_network` findings, already mapped to Issue shape.
+  const [validationIssues, setValidationIssues] = useState<Issue[]>([]);
+
+  // Fetch validation findings whenever the active project/scenario changes or
+  // the network structurally changes (`networkVersion` is the same retrigger
+  // the version-keyed data hooks use). Command-missing/error resolves to [].
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `networkVersion` is an intentional retrigger — refetch validation after structural network changes.
+  useEffect(() => {
+    if (!activeProjectId) {
+      setValidationIssues([]);
+      return;
+    }
+    let cancelled = false;
+    const firstSeen = formatClockTime();
+    fetchValidationFindings(activeProjectId, activeScenarioId).then(
+      (findings) => {
+        if (cancelled) return;
+        setValidationIssues(validationFindingsToIssues(findings, firstSeen));
+      },
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [activeProjectId, activeScenarioId, networkVersion]);
 
   // Derive live issues from runtime/task/network signals. This keeps the
   // Issues drawer populated without requiring manual seeding.
@@ -854,12 +1044,20 @@ function SimulationProvider({ children }: { children: ReactNode }) {
       return;
     }
 
-    const firstSeenNow = new Date().toLocaleTimeString([], {
-      hour: "2-digit",
-      minute: "2-digit",
-    });
+    const firstSeenNow = formatClockTime();
 
     const next: Issue[] = [];
+    // All derived issues share the same canvas link and freshness fields.
+    const pushIssue = (
+      issue: Omit<Issue, "link" | "firstSeen" | "dismissed">,
+    ) => {
+      next.push({
+        ...issue,
+        link: { view: "canvas", label: "Open canvas" },
+        firstSeen: firstSeenNow,
+        dismissed: false,
+      });
+    };
 
     const runningForProject = tasks.filter(
       (t) => t.projectId === activeProjectId && t.status === "running",
@@ -869,7 +1067,7 @@ function SimulationProvider({ children }: { children: ReactNode }) {
     );
 
     if (runningForProject.length > 0) {
-      next.push({
+      pushIssue({
         id: `runtime-running-${activeProjectId}`,
         severity: "info",
         source: "runtime",
@@ -880,14 +1078,11 @@ function SimulationProvider({ children }: { children: ReactNode }) {
             : `${runningForProject.length} simulations in progress`,
         detail:
           "Hydraulics/quality solve is currently running. Results and status badges will update automatically when complete.",
-        link: { view: "canvas", label: "Open canvas" },
-        firstSeen: firstSeenNow,
-        dismissed: false,
       });
     }
 
     if (queuedForProject.length > 0) {
-      next.push({
+      pushIssue({
         id: `runtime-queued-${activeProjectId}`,
         severity: "info",
         source: "runtime",
@@ -898,9 +1093,6 @@ function SimulationProvider({ children }: { children: ReactNode }) {
             : `${queuedForProject.length} simulations queued`,
         detail:
           "One or more runs are queued and will execute when backend workers are available.",
-        link: { view: "canvas", label: "Open canvas" },
-        firstSeen: firstSeenNow,
-        dismissed: false,
       });
     }
 
@@ -909,7 +1101,7 @@ function SimulationProvider({ children }: { children: ReactNode }) {
       runningForProject.length === 0 &&
       queuedForProject.length === 0
     ) {
-      next.push({
+      pushIssue({
         id: `preflight-no-results-${activeScenarioId ?? "base"}`,
         severity: "info",
         source: "preflight",
@@ -917,14 +1109,11 @@ function SimulationProvider({ children }: { children: ReactNode }) {
         title: "No simulation results for active scenario",
         detail:
           "Run a simulation to populate timeline, analysis summaries, and result overlays for this scenario.",
-        link: { view: "canvas", label: "Open canvas" },
-        firstSeen: firstSeenNow,
-        dismissed: false,
       });
     }
 
     if (coordTotalCount > 0 && coordStatus === "empty") {
-      next.push({
+      pushIssue({
         id: "data-coords-empty",
         severity: "error",
         source: "data",
@@ -932,26 +1121,20 @@ function SimulationProvider({ children }: { children: ReactNode }) {
         title: "No geospatial coordinates available",
         detail:
           "All nodes are missing geographic coordinates. Map mode cannot place the network until coordinates are provided or corrected.",
-        link: { view: "canvas", label: "Open canvas" },
-        firstSeen: firstSeenNow,
-        dismissed: false,
       });
     } else if (coordTotalCount > 0 && coordStatus === "partial") {
-      next.push({
+      pushIssue({
         id: "data-coords-partial",
         severity: "warn",
         source: "data",
         code: "COORDS-PARTIAL",
         title: "Some nodes are missing coordinates",
         detail: `${coordMissingCount} of ${coordTotalCount} nodes are missing map coordinates. Geographic view may be incomplete.`,
-        link: { view: "canvas", label: "Open canvas" },
-        firstSeen: firstSeenNow,
-        dismissed: false,
       });
     }
 
     if (editedScenarioIds.has(activeScenarioId ?? null)) {
-      next.push({
+      pushIssue({
         id: `preflight-stale-${activeScenarioId ?? "base"}`,
         severity: "warn",
         source: "preflight",
@@ -959,27 +1142,25 @@ function SimulationProvider({ children }: { children: ReactNode }) {
         title: "Network changed since the last run",
         detail:
           "Simulation results may be stale for the active scenario because the network was edited after the last successful run.",
-        link: { view: "canvas", label: "Open canvas" },
-        firstSeen: firstSeenNow,
-        dismissed: false,
       });
     }
 
     for (const t of tasks) {
       if (t.status !== "failed") continue;
       if (t.projectId !== activeProjectId) continue;
-      next.push({
+      pushIssue({
         id: `runtime-task-failed-${t.id}`,
         severity: "error",
         source: "runtime",
         code: "SIM-RUN-FAILED",
         title: `Simulation failed: ${t.scenarioName}`,
         detail: t.errorMessage ?? "Simulation failed.",
-        link: { view: "canvas", label: "Open canvas" },
-        firstSeen: firstSeenNow,
-        dismissed: false,
       });
     }
+
+    // Backend validation findings (already Issue-shaped; ids are stable
+    // code+elementId keys so the dismissed-merge below persists dismissals).
+    next.push(...validationIssues);
 
     setIssues((prev) => {
       const prevById = new Map(prev.map((i) => [i.id, i]));
@@ -1002,6 +1183,7 @@ function SimulationProvider({ children }: { children: ReactNode }) {
     editedScenarioIds,
     resultMeta,
     tasks,
+    validationIssues,
   ]);
 
   // When the active *project* changes, immediately clear stale metadata so we
@@ -1204,7 +1386,7 @@ function SimulationProvider({ children }: { children: ReactNode }) {
           ...(ev.done
             ? {
                 status: "completed" as const,
-                timeLabel: `Completed ${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`,
+                timeLabel: `Completed ${formatClockTime()}`,
                 primaryAction: "View results" as const,
               }
             : {}),
@@ -1303,6 +1485,9 @@ function SimulationProvider({ children }: { children: ReactNode }) {
           const failedMap = new Map(
             failedItems.map((i) => [`queue-${i.id}`, i]),
           );
+          const resolvedProjectName =
+            projectsRef.current.find((p) => p.id === projectId)?.name ??
+            projectId;
 
           const fresh: Task[] = liveItems.map((item) => {
             // Preserve live progress fields from an existing task entry so
@@ -1314,9 +1499,7 @@ function SimulationProvider({ children }: { children: ReactNode }) {
               id: `queue-${item.id}`,
               projectId: projectId,
               scenarioId: item.targetId,
-              projectName:
-                projectsRef.current.find((p) => p.id === projectId)?.name ??
-                projectId,
+              projectName: resolvedProjectName,
               scenarioName: item.targetName ?? "Base Model",
               status,
               timeLabel: status === "running" ? "Running…" : "Queued",
@@ -1347,18 +1530,10 @@ function SimulationProvider({ children }: { children: ReactNode }) {
                 doneItem &&
                 (t.status === "running" || t.status === "queued")
               ) {
-                const finishedAt =
-                  doneItem.finishedAt != null
-                    ? new Date(doneItem.finishedAt * 1000)
-                    : new Date();
-                const completedAt = finishedAt.toLocaleTimeString([], {
-                  hour: "2-digit",
-                  minute: "2-digit",
-                });
                 return {
                   ...t,
                   status: "completed" as const,
-                  timeLabel: `Completed ${completedAt}`,
+                  timeLabel: `Completed ${finishTimeLabel(doneItem.finishedAt)}`,
                   progressPercent: 100,
                   progressMessage: undefined,
                   primaryAction: "View results" as const,
@@ -1368,18 +1543,10 @@ function SimulationProvider({ children }: { children: ReactNode }) {
               if (t.status !== "running" && t.status !== "queued") return t;
               const failedItem = failedMap.get(t.id);
               if (!failedItem) return t;
-              const finishedAt =
-                failedItem.finishedAt != null
-                  ? new Date(failedItem.finishedAt * 1000)
-                  : new Date();
-              const failedAt = finishedAt.toLocaleTimeString([], {
-                hour: "2-digit",
-                minute: "2-digit",
-              });
               return {
                 ...t,
                 status: "failed" as const,
-                timeLabel: `Failed ${failedAt}`,
+                timeLabel: `Failed ${finishTimeLabel(failedItem.finishedAt)}`,
                 progressMessage: undefined,
                 errorMessage: failedItem.error ?? "Simulation failed",
               };
@@ -1389,9 +1556,6 @@ function SimulationProvider({ children }: { children: ReactNode }) {
           // run_queue_update arrived (e.g. when the simulation completes so
           // quickly that the item is already "done" when this handler runs,
           // so it was never included in liveItems above).
-          const resolvedProjectName =
-            projectsRef.current.find((p) => p.id === projectId)?.name ??
-            projectId;
           return [...fresh, ...kept].map((t) => {
             if (t.projectName !== "…" && t.scenarioName !== "…") return t;
             const matchingItem = items.find((i) => `queue-${i.id}` === t.id);
@@ -1419,13 +1583,7 @@ function SimulationProvider({ children }: { children: ReactNode }) {
       cancelled = true;
       unlisten?.();
     };
-  }, [
-    clearEdited,
-    bumpScenarios, // run_queue_update always fires after the backend has committed the
-    // new run state (running → done/failed) to the DB, so this is the
-    // correct place to refresh project and scenario state badges.
-    bumpProjects,
-  ]);
+  }, [clearEdited, bumpScenarios, bumpProjects]);
 
   const runSim = useCallback(
     async (
@@ -1439,10 +1597,13 @@ function SimulationProvider({ children }: { children: ReactNode }) {
       },
     ): Promise<void> => {
       const id = `task-${Date.now()}`;
-      const startedAt = new Date().toLocaleTimeString([], {
-        hour: "2-digit",
-        minute: "2-digit",
-      });
+      const startedAt = formatClockTime();
+      /** Merge `patch` into this run's task entry. */
+      const patchTask = (patch: Partial<Task>) => {
+        setTasks((prev) =>
+          prev.map((t) => (t.id === id ? { ...t, ...patch } : t)),
+        );
+      };
       setTasks((prev) => [
         {
           id,
@@ -1460,10 +1621,7 @@ function SimulationProvider({ children }: { children: ReactNode }) {
       ]);
       try {
         const result = await _runSimulation(opts);
-        const elapsed = new Date().toLocaleTimeString([], {
-          hour: "2-digit",
-          minute: "2-digit",
-        });
+        const elapsed = formatClockTime();
         if (result) {
           // Store only pump energy (epilog data — tiny regardless of network size).
           // Cross-period analytics are fetched on-demand by individual views.
@@ -1484,50 +1642,25 @@ function SimulationProvider({ children }: { children: ReactNode }) {
           // Refresh project and scenario rows so state badges update immediately.
           bumpProjects();
           bumpScenarios();
-          setTasks((prev) =>
-            prev.map((t) =>
-              t.id === id
-                ? {
-                    ...t,
-                    status: "completed",
-                    timeLabel: `Completed ${elapsed}`,
-                    primaryAction: "View results",
-                  }
-                : t,
-            ),
-          );
+          patchTask({
+            status: "completed",
+            timeLabel: `Completed ${elapsed}`,
+            primaryAction: "View results",
+          });
         } else {
-          setTasks((prev) =>
-            prev.map((t) =>
-              t.id === id
-                ? {
-                    ...t,
-                    status: "failed",
-                    timeLabel: `Failed ${elapsed}`,
-                    errorMessage:
-                      "Simulation returned no results. Is a network loaded?",
-                  }
-                : t,
-            ),
-          );
+          patchTask({
+            status: "failed",
+            timeLabel: `Failed ${elapsed}`,
+            errorMessage:
+              "Simulation returned no results. Is a network loaded?",
+          });
         }
       } catch (err) {
-        const elapsed = new Date().toLocaleTimeString([], {
-          hour: "2-digit",
-          minute: "2-digit",
+        patchTask({
+          status: "failed",
+          timeLabel: `Failed ${formatClockTime()}`,
+          errorMessage: String(err),
         });
-        setTasks((prev) =>
-          prev.map((t) =>
-            t.id === id
-              ? {
-                  ...t,
-                  status: "failed",
-                  timeLabel: `Failed ${elapsed}`,
-                  errorMessage: String(err),
-                }
-              : t,
-          ),
-        );
       }
     },
     [bumpProjects, bumpScenarios, clearEdited],

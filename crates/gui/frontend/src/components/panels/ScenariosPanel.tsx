@@ -1,7 +1,6 @@
 /* Scenario management page — create, rename, branch, run, and delete scenarios. */
 
 import { PlusIcon } from "@heroicons/react/16/solid";
-/* Scenario management page — create, rename, branch, run, and delete scenarios. */
 import React, {
   useCallback,
   useEffect,
@@ -19,6 +18,7 @@ import {
   useScenarios,
 } from "../../hooks";
 import { formatIpcError } from "../../hooks/ipc";
+import { DeleteConfirmModal } from "../modals/DeleteConfirmModal";
 import { BaseRow, CreateRow, ScenarioRow } from "./ScenariosPanel/Rows";
 import { type FlatScenario, flattenScenarios } from "./ScenariosPanel/shared";
 
@@ -58,6 +58,8 @@ export function ScenariosPanel({
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState("");
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  /** Scenario awaiting delete confirmation (trash click → confirm → delete). */
+  const [pendingDelete, setPendingDelete] = useState<FlatScenario | null>(null);
   const [runningId, setRunningId] = useState<string | null>(null);
   const renameInputRef = useRef<HTMLInputElement>(null);
 
@@ -344,7 +346,7 @@ export function ScenariosPanel({
                 }}
                 onBranch={() => handleBranch(s)}
                 onRun={() => handleRun(s)}
-                onDelete={() => handleDelete(s)}
+                onDelete={() => setPendingDelete(s)}
                 onOpenFolder={() => handleOpenFolder(s)}
               />
 
@@ -368,6 +370,30 @@ export function ScenariosPanel({
           ))}
         </div>
       </div>
+
+      {/* Delete confirmation — deleting a scenario destroys its INP and
+          simulation results, so it must never be a single-click action. */}
+      <DeleteConfirmModal
+        open={!!pendingDelete}
+        elementKind="scenario"
+        elementId={pendingDelete?.name ?? ""}
+        message={
+          <>
+            Delete scenario{" "}
+            <strong style={{ color: "var(--text-primary)" }}>
+              {pendingDelete?.name}
+            </strong>
+            ? Its network changes and simulation results will be permanently
+            removed.
+          </>
+        }
+        onCancel={() => setPendingDelete(null)}
+        onConfirm={() => {
+          const s = pendingDelete;
+          setPendingDelete(null);
+          if (s) void handleDelete(s);
+        }}
+      />
     </div>
   );
 }

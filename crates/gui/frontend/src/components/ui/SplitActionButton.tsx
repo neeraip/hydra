@@ -6,11 +6,14 @@ export function SplitActionButton({
   onClick,
   menuItems,
   size = "md",
+  disabled = false,
 }: {
   label: string;
   onClick: () => void;
   menuItems: { label: string; onClick: () => void }[];
   size?: "sm" | "md";
+  /** Disables both halves (e.g. while an import is in flight). */
+  disabled?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -26,7 +29,8 @@ export function SplitActionButton({
     border: "none",
     background: "var(--accent)",
     color: "#fff",
-    cursor: "pointer",
+    cursor: disabled ? "default" : "pointer",
+    opacity: disabled ? 0.6 : 1,
     fontSize: sm ? 12 : 13,
     fontWeight: sm ? 600 : 500,
     fontFamily: "var(--font-ui)",
@@ -48,6 +52,7 @@ export function SplitActionButton({
       <button
         type="button"
         onClick={onClick}
+        disabled={disabled}
         style={{
           ...btnBase,
           padding: sm ? "0 10px" : "9px 16px",
@@ -55,9 +60,11 @@ export function SplitActionButton({
           borderRadius: `${radius}px 0 0 ${radius}px`,
         }}
         onMouseEnter={(e) => {
+          if (disabled) return;
           (e.currentTarget as HTMLButtonElement).style.opacity = "0.88";
         }}
         onMouseLeave={(e) => {
+          if (disabled) return;
           (e.currentTarget as HTMLButtonElement).style.opacity = "1";
         }}
       >
@@ -76,6 +83,7 @@ export function SplitActionButton({
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
+        disabled={disabled}
         aria-label="More actions"
         style={{
           ...btnBase,
@@ -86,9 +94,11 @@ export function SplitActionButton({
           alignItems: "center",
         }}
         onMouseEnter={(e) => {
+          if (disabled) return;
           (e.currentTarget as HTMLButtonElement).style.opacity = "0.88";
         }}
         onMouseLeave={(e) => {
+          if (disabled) return;
           (e.currentTarget as HTMLButtonElement).style.opacity = "1";
         }}
       >

@@ -13,6 +13,7 @@
 
 import { ExclamationTriangleIcon } from "@heroicons/react/16/solid";
 import { useEffect, useRef } from "react";
+import { ModalBackdrop, stopBackdropEvents } from "../ui/ModalBackdrop";
 
 interface DeleteProjectModalProps {
   open: boolean;
@@ -27,11 +28,12 @@ export function DeleteProjectModal({
   onConfirm,
   onCancel,
 }: DeleteProjectModalProps) {
-  const confirmRef = useRef<HTMLButtonElement>(null);
+  const cancelRef = useRef<HTMLButtonElement>(null);
 
-  // Focus the confirm button when the modal opens so Enter/Space confirms.
+  // Focus the Cancel button when the modal opens — a stray Enter must never
+  // instantly confirm a permanent project deletion.
   useEffect(() => {
-    if (open) confirmRef.current?.focus();
+    if (open) cancelRef.current?.focus();
   }, [open]);
 
   // Close on Escape.
@@ -50,27 +52,16 @@ export function DeleteProjectModal({
   if (!open) return null;
 
   return (
-    // biome-ignore lint/a11y/noStaticElementInteractions: backdrop closes the modal on pointer interaction.
-    // biome-ignore lint/a11y/useKeyWithClickEvents: backdrop closes the modal on pointer interaction.
-    <div
-      style={{
-        position: "fixed",
-        inset: 0,
-        zIndex: 200,
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        background: "rgba(0,0,0,0.55)",
-      }}
-      onClick={onCancel}
+    <ModalBackdrop
+      onDismiss={onCancel}
+      zIndex={200}
+      background="rgba(0,0,0,0.55)"
     >
       <div
         role="dialog"
         aria-modal="true"
         aria-labelledby="delete-project-modal-title"
-        onMouseDown={(e) => e.stopPropagation()}
-        onKeyDown={(e) => e.stopPropagation()}
-        onClick={(e) => e.stopPropagation()}
+        {...stopBackdropEvents}
         style={{
           background: "var(--bg-panel)",
           border: "1px solid var(--border)",
@@ -140,6 +131,7 @@ export function DeleteProjectModal({
         >
           <button
             type="button"
+            ref={cancelRef}
             onClick={onCancel}
             style={{
               background: "transparent",
@@ -164,7 +156,6 @@ export function DeleteProjectModal({
           </button>
           <button
             type="button"
-            ref={confirmRef}
             onClick={onConfirm}
             style={{
               background: "#ef4444",
@@ -189,6 +180,6 @@ export function DeleteProjectModal({
           </button>
         </div>
       </div>
-    </div>
+    </ModalBackdrop>
   );
 }

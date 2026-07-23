@@ -92,7 +92,7 @@ export function useLatestRelease(): ReleaseInfo {
           }
         }
 
-        setInfo({ status: "unavailable" });
+        if (!cancelled) setInfo({ status: "unavailable" });
       } catch {
         if (!cancelled) setInfo({ status: "unavailable" });
       }

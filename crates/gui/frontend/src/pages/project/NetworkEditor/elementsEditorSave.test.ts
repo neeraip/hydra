@@ -103,13 +103,19 @@ describe("buildFieldPatches", () => {
     ]);
   });
 
-  it("keeps an `id` field edit for a persisted (non-temp) element", () => {
-    // Only freshly created elements treat `id` as create-only.
+  it("drops id/from/to edits for persisted (non-temp) elements", () => {
+    // Renames and endpoint changes of persisted elements are unsupported —
+    // the backend has no id/from/to patch handler — so such entries are
+    // dropped instead of being emitted into a batch that could only fail.
     const patches = build([
       { kind: "junction", id: "J1", field: "id", value: "J1-renamed" },
+      { kind: "pipe", id: "P1", field: "id", value: "P1-renamed" },
+      { kind: "pipe", id: "P1", field: "from", value: "J2" },
+      { kind: "pipe", id: "P1", field: "to", value: "J3" },
+      { kind: "junction", id: "J1", field: "elevation", value: 4 },
     ]);
     expect(patches).toEqual([
-      { kind: "junction", id: "J1", field: "id", value: "J1-renamed" },
+      { kind: "junction", id: "J1", field: "elevation", value: 4 },
     ]);
   });
 

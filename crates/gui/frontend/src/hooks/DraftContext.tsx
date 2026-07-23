@@ -27,7 +27,11 @@ import {
   useRef,
   useState,
 } from "react";
-import { useActiveProject, useAppState } from "../AppContext";
+import {
+  registerDraftGuard,
+  useActiveProject,
+  useAppState,
+} from "../AppContext";
 import {
   buildPreviewPatches,
   collectAllElementIds,
@@ -149,6 +153,8 @@ interface DraftContextValue {
 
   discardAll: () => void;
   saveAll: () => Promise<SaveAllResult>;
+  /** True while `saveAll` is running (drives the save bar's busy state). */
+  isSaving: boolean;
 }
 
 const Ctx = createContext<DraftContextValue | null>(null);
@@ -433,149 +439,173 @@ export function DraftProvider({ children }: { children: ReactNode }) {
     setRuleDeletes(new Set());
   }, []);
 
+  // Busy flag for saveAll — ref for synchronous re-entry protection (⌘S can
+  // race the save-bar button), state for UI.
+  const isSavingRef = useRef(false);
+  const [isSaving, setIsSaving] = useState(false);
+
   const saveAll = useCallback(async (): Promise<SaveAllResult> => {
-    let applied = 0;
-    let failed = 0;
-    const errors: string[] = [];
+    if (isSavingRef.current) return { applied: 0, failed: 0, errors: [] };
+    isSavingRef.current = true;
+    setIsSaving(true);
+    try {
+      return await doSaveAll();
+    } finally {
+      isSavingRef.current = false;
+      setIsSaving(false);
+    }
+    // Inner function keeps the original body's early-return structure intact.
+    async function doSaveAll(): Promise<SaveAllResult> {
+      let applied = 0;
+      let failed = 0;
+      const errors: string[] = [];
 
-    const record = async (label: string, fn: () => Promise<void>) => {
-      try {
-        await fn();
-        applied++;
-      } catch (err) {
-        failed++;
-        errors.push(typeof err === "string" ? err : `Could not ${label}`);
-      }
-    };
-
-    // ── Elements (creates → field patches → deletes) ──────────────────────
-    if (elementsDirtyCount > 0) {
-      // Row models and the ID pool are derived here, lazily, from the
-      // current network snapshot — see the comment on `networkRef` above.
-      const { nodes: nodesNow, links: linksNow } = networkRef.current;
-      const result = await saveStagedElements({
-        draftEntries: Array.from(elementsDraft.values()),
-        pendingAdds,
-        pendingDeletes,
-        pendingDeleteKeys: new Set(
-          pendingDeletes.map((d) => `${d.kind}:${d.id}`),
-        ),
-        junctionRowsAll: junctionRowsFromNodes(nodesNow),
-        tankRowsAll: tankRowsFromNodes(nodesNow),
-        reservoirRowsAll: reservoirRowsFromNodes(nodesNow),
-        allElementIds: collectAllElementIds(nodesNow, linksNow),
-        tempIdPrefix: ELEMENT_TEMP_ID_PREFIX,
-      });
-      applied += result.applied;
-      failed += result.failed;
-      errors.push(...result.errors);
-    }
-
-    // ── Curves: edits → deletes → creates ─────────────────────────────────
-    for (const [id, points] of curveEdits) {
-      await record(`update curve '${id}'`, () =>
-        updateCurvePoints(
-          id,
-          points.map((p) => p.flow),
-          points.map((p) => p.head),
-        ),
-      );
-    }
-    for (const id of curveDeletes) {
-      await record(`delete curve '${id}'`, () => deleteCurve(id));
-    }
-    for (const [id, points] of curveAdds) {
-      await record(`create curve '${id}'`, async () => {
-        await createCurve(id);
-        await updateCurvePoints(
-          id,
-          points.map((p) => p.flow),
-          points.map((p) => p.head),
-        );
-      });
-    }
-
-    // ── Patterns: edits → deletes → creates ───────────────────────────────
-    for (const [id, m] of patternEdits) {
-      await record(`update pattern '${id}'`, () =>
-        updatePatternMultipliers(id, m),
-      );
-    }
-    for (const id of patternDeletes) {
-      await record(`delete pattern '${id}'`, () => deletePattern(id));
-    }
-    for (const [id, m] of patternAdds) {
-      await record(`create pattern '${id}'`, async () => {
-        await createPattern(id);
-        await updatePatternMultipliers(id, m);
-      });
-    }
-
-    // ── Controls: edits → deletes (descending index) → creates ───────────
-    for (const [key, dto] of controlEdits) {
-      const idx = parseInt(key.replace("idx-", ""), 10);
-      await record(`update control ${idx}`, () => updateControl(idx, dto));
-    }
-    const controlDeleteIndices = Array.from(controlDeletes)
-      .map((k) => parseInt(k.replace("idx-", ""), 10))
-      .sort((a, b) => b - a);
-    for (const idx of controlDeleteIndices) {
-      await record(`delete control ${idx}`, () => deleteControl(idx));
-    }
-    for (const [, dto] of controlAdds) {
-      await record("create control", () => createControl(dto));
-    }
-
-    // ── Rules: edits → deletes (descending index) → creates ──────────────
-    for (const [key, dto] of ruleEdits) {
-      const idx = parseInt(key.replace("idx-", ""), 10);
-      await record(`update rule ${idx}`, () => updateRule(idx, dto));
-    }
-    const ruleDeleteIndices = Array.from(ruleDeletes)
-      .map((k) => parseInt(k.replace("idx-", ""), 10))
-      .sort((a, b) => b - a);
-    for (const idx of ruleDeleteIndices) {
-      await record(`delete rule ${idx}`, () => deleteRule(idx));
-    }
-    for (const [, dto] of ruleAdds) {
-      await record("create rule", () => createRule(dto));
-    }
-
-    if (applied > 0) {
-      // No manual bumpNetwork() here: every mutating command this function
-      // invokes (patch_elements, create_node/create_link, delete_element,
-      // and all curve/pattern/control/rule commands) emits a
-      // `network-changed` event on success — field patches carry deltas the
-      // data layer applies in place, structural mutations emit a null
-      // payload that triggers a full refetch. A manual bump would only add
-      // a redundant second refetch on top of the event-driven one.
-      if (project?.id) {
+      const record = async (label: string, fn: () => Promise<void>) => {
         try {
-          await saveProjectOnDisk(project.id, activeScenarioId);
-          markEdited(activeScenarioId ?? null);
-        } catch {
-          // Non-fatal: in-memory network state is already correct; the next
-          // successful save (or app action that persists) will catch up.
+          await fn();
+          applied++;
+        } catch (err) {
+          failed++;
+          errors.push(typeof err === "string" ? err : `Could not ${label}`);
+        }
+      };
+
+      // ── Elements (creates → field patches → deletes) ──────────────────────
+      if (elementsDirtyCount > 0) {
+        // Row models and the ID pool are derived here, lazily, from the
+        // current network snapshot — see the comment on `networkRef` above.
+        const { nodes: nodesNow, links: linksNow } = networkRef.current;
+        const result = await saveStagedElements({
+          draftEntries: Array.from(elementsDraft.values()),
+          pendingAdds,
+          pendingDeletes,
+          pendingDeleteKeys: new Set(
+            pendingDeletes.map((d) => `${d.kind}:${d.id}`),
+          ),
+          junctionRowsAll: junctionRowsFromNodes(nodesNow),
+          tankRowsAll: tankRowsFromNodes(nodesNow),
+          reservoirRowsAll: reservoirRowsFromNodes(nodesNow),
+          allElementIds: collectAllElementIds(nodesNow, linksNow),
+          tempIdPrefix: ELEMENT_TEMP_ID_PREFIX,
+        });
+        applied += result.applied;
+        failed += result.failed;
+        errors.push(...result.errors);
+      }
+
+      // ── Curves: edits → deletes → creates ─────────────────────────────────
+      for (const [id, points] of curveEdits) {
+        await record(`update curve '${id}'`, () =>
+          updateCurvePoints(
+            id,
+            points.map((p) => p.flow),
+            points.map((p) => p.head),
+          ),
+        );
+      }
+      for (const id of curveDeletes) {
+        await record(`delete curve '${id}'`, () => deleteCurve(id));
+      }
+      for (const [id, points] of curveAdds) {
+        await record(`create curve '${id}'`, async () => {
+          await createCurve(id);
+          await updateCurvePoints(
+            id,
+            points.map((p) => p.flow),
+            points.map((p) => p.head),
+          );
+        });
+      }
+
+      // ── Patterns: edits → deletes → creates ───────────────────────────────
+      for (const [id, m] of patternEdits) {
+        await record(`update pattern '${id}'`, () =>
+          updatePatternMultipliers(id, m),
+        );
+      }
+      for (const id of patternDeletes) {
+        await record(`delete pattern '${id}'`, () => deletePattern(id));
+      }
+      for (const [id, m] of patternAdds) {
+        await record(`create pattern '${id}'`, async () => {
+          await createPattern(id);
+          await updatePatternMultipliers(id, m);
+        });
+      }
+
+      // ── Controls: edits → deletes (descending index) → creates ───────────
+      for (const [key, dto] of controlEdits) {
+        const idx = parseInt(key.replace("idx-", ""), 10);
+        await record(`update control ${idx}`, () => updateControl(idx, dto));
+      }
+      const controlDeleteIndices = Array.from(controlDeletes)
+        .map((k) => parseInt(k.replace("idx-", ""), 10))
+        .sort((a, b) => b - a);
+      for (const idx of controlDeleteIndices) {
+        await record(`delete control ${idx}`, () => deleteControl(idx));
+      }
+      for (const [, dto] of controlAdds) {
+        await record("create control", () => createControl(dto));
+      }
+
+      // ── Rules: edits → deletes (descending index) → creates ──────────────
+      for (const [key, dto] of ruleEdits) {
+        const idx = parseInt(key.replace("idx-", ""), 10);
+        await record(`update rule ${idx}`, () => updateRule(idx, dto));
+      }
+      const ruleDeleteIndices = Array.from(ruleDeletes)
+        .map((k) => parseInt(k.replace("idx-", ""), 10))
+        .sort((a, b) => b - a);
+      for (const idx of ruleDeleteIndices) {
+        await record(`delete rule ${idx}`, () => deleteRule(idx));
+      }
+      for (const [, dto] of ruleAdds) {
+        await record("create rule", () => createRule(dto));
+      }
+
+      if (applied > 0) {
+        // No manual bumpNetwork() here: every mutating command this function
+        // invokes (patch_elements, create_node/create_link, delete_element,
+        // and all curve/pattern/control/rule commands) emits a
+        // `network-changed` event on success — field patches carry deltas the
+        // data layer applies in place, structural mutations emit a null
+        // payload that triggers a full refetch. A manual bump would only add
+        // a redundant second refetch on top of the event-driven one.
+        if (project?.id) {
+          try {
+            await saveProjectOnDisk(project.id, activeScenarioId);
+            markEdited(activeScenarioId ?? null);
+          } catch {
+            // Non-fatal: in-memory network state is already correct; the next
+            // successful save (or app action that persists) will catch up.
+          }
         }
       }
-    }
 
-    if (failed > 0) {
-      const detail = errors.length > 0 ? `: ${errors[0]}` : "";
-      showToast(
-        `${failed} change${failed > 1 ? "s" : ""} could not be saved${detail}`,
-        "error",
-      );
-    }
+      if (failed > 0) {
+        const detail = errors.length > 0 ? `: ${errors[0]}` : "";
+        showToast(
+          `${failed} change${failed > 1 ? "s" : ""} could not be saved${detail}`,
+          "error",
+        );
+      } else if (applied > 0) {
+        // Success feedback for both the save-bar button and the ⌘S shortcut.
+        // Failures are toasted above — never double-toast errors.
+        showToast(
+          `${applied} change${applied === 1 ? "" : "s"} saved`,
+          "success",
+        );
+      }
 
-    // Clear whatever succeeded. On partial failure we clear everything
-    // rather than retry, since retrying against already-applied mutations
-    // (e.g. renamed/created IDs) can no longer be addressed the same way.
-    if (applied > 0 || failed === 0) {
-      discardAll();
-    }
+      // Clear whatever succeeded. On partial failure we clear everything
+      // rather than retry, since retrying against already-applied mutations
+      // (e.g. renamed/created IDs) can no longer be addressed the same way.
+      if (applied > 0 || failed === 0) {
+        discardAll();
+      }
 
-    return { applied, failed, errors };
+      return { applied, failed, errors };
+    }
   }, [
     elementsDirtyCount,
     elementsDraft,
@@ -599,6 +629,27 @@ export function DraftProvider({ children }: { children: ReactNode }) {
     showToast,
     discardAll,
   ]);
+
+  // Register the imperative draft guard that AppContext reads at
+  // navigation / window-close / ⌘S time (AppContext cannot consume this
+  // context — it sits above it). Refs keep the registration mount-only and
+  // StrictMode-safe (double mount re-registers, cleanup unregisters).
+  const dirtyCountRef = useRef(dirtyCount);
+  useEffect(() => {
+    dirtyCountRef.current = dirtyCount;
+  });
+  const saveAllRef = useRef(saveAll);
+  useEffect(() => {
+    saveAllRef.current = saveAll;
+  });
+  useEffect(
+    () =>
+      registerDraftGuard({
+        getDirtyCount: () => dirtyCountRef.current,
+        saveAll: () => saveAllRef.current(),
+      }),
+    [],
+  );
 
   // Memoised so a provider re-render with unchanged draft state (e.g. a
   // network mutation or unrelated AppContext change) keeps the same context
@@ -649,6 +700,7 @@ export function DraftProvider({ children }: { children: ReactNode }) {
       previewPatches,
       discardAll,
       saveAll,
+      isSaving,
     }),
     [
       elementsDraft,
@@ -672,6 +724,7 @@ export function DraftProvider({ children }: { children: ReactNode }) {
       previewPatches,
       discardAll,
       saveAll,
+      isSaving,
     ],
   );
 

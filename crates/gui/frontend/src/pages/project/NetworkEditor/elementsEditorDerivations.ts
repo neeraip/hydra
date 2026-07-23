@@ -41,7 +41,7 @@ function isNodeKind(kind: string): kind is NodeKind {
 }
 
 /**
- * The minimal link shape the preview's rename/delete cascade detection needs.
+ * The minimal link shape the preview's delete-cascade detection needs.
  * Full `PipeRow`/`PumpRow`/`ValveRow` objects satisfy it structurally, but
  * callers can also pass cheap `{ id, from, to }` projections (see
  * {@link linkRefRowsFromLinks}) instead of materialising full row models.
@@ -146,6 +146,8 @@ export function buildPreviewPatches(args: {
   pipeRowsAll: LinkRefRow[];
   pumpRowsAll: LinkRefRow[];
   valveRowsAll: LinkRefRow[];
+  /** Accepted for call-site compatibility; no longer consulted now that
+   *  persisted-element renames (the only user of it here) are unsupported. */
   tempIdPrefix: string;
 }): PatchItem[] {
   const {
@@ -156,7 +158,6 @@ export function buildPreviewPatches(args: {
     pipeRowsAll,
     pumpRowsAll,
     valveRowsAll,
-    tempIdPrefix,
   } = args;
 
   const staged = draftEntries.filter(
@@ -206,55 +207,19 @@ export function buildPreviewPatches(args: {
   const cascade: PatchItem[] = [];
   const cascadeSeen = new Set<string>();
   const pushCascade = (item: PatchItem) => {
-    const sig =
-      item.field === "delete (cascade)"
-        ? `${item.kind}:${item.id}:${item.field}`
-        : `${item.kind}:${item.id}:${item.field}:${String(item.value)}`;
+    // Only delete cascades exist (see the rename note below), so one entry
+    // per element regardless of the human-readable `value` text.
+    const sig = `${item.kind}:${item.id}:${item.field}`;
     if (cascadeSeen.has(sig)) return;
     cascadeSeen.add(sig);
     cascade.push(item);
   };
 
-  const renamedNodes = draftEntries
-    .filter(
-      (e) =>
-        e.field === "id" &&
-        !e.id.startsWith(tempIdPrefix) &&
-        isNodeKind(e.kind) &&
-        !pendingDeleteKeys.has(`${e.kind}:${e.id}`),
-    )
-    .map((e) => ({ oldId: e.id, newId: String(e.value).trim() }))
-    .filter((e) => e.newId.length > 0 && e.newId !== e.oldId);
-
-  for (const rename of renamedNodes) {
-    for (const link of linkRows) {
-      const explicitFrom = draftValueMap.has(`${link.kind}:${link.id}:from`);
-      const explicitTo = draftValueMap.has(`${link.kind}:${link.id}:to`);
-      const effectiveFrom = String(
-        draftValueMap.get(`${link.kind}:${link.id}:from`) ?? link.from,
-      );
-      const effectiveTo = String(
-        draftValueMap.get(`${link.kind}:${link.id}:to`) ?? link.to,
-      );
-
-      if (!explicitFrom && effectiveFrom === rename.oldId) {
-        pushCascade({
-          kind: link.kind,
-          id: link.id,
-          field: "from (cascade)",
-          value: rename.newId,
-        });
-      }
-      if (!explicitTo && effectiveTo === rename.oldId) {
-        pushCascade({
-          kind: link.kind,
-          id: link.id,
-          field: "to (cascade)",
-          value: rename.newId,
-        });
-      }
-    }
-  }
+  // No rename cascades: renaming a persisted element is unsupported (the
+  // backend has no id/from/to patch handler and buildFieldPatches drops such
+  // entries — see elementsEditorSave.ts), and the six tables only make the ID
+  // cell editable on pending (temp-id) rows, whose id is consumed by the
+  // create call rather than patched.
 
   for (const del of pendingDeletes) {
     if (!isNodeKind(del.kind)) continue;

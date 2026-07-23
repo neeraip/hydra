@@ -5,9 +5,13 @@ import {
 } from "@heroicons/react/16/solid";
 import { useEffect } from "react";
 import { useActiveProject, useAppState } from "../../AppContext";
-import { type ScenarioDto, useScenarios } from "../../hooks";
+import { useScenarios } from "../../hooks";
 import { useNetworkVersion } from "../../hooks/NetworkVersionContext";
 import { formatPrimaryShortcut } from "../../shortcuts";
+import {
+  type FlatScenario,
+  flattenScenarios,
+} from "../panels/ScenariosPanel/shared";
 import { PrimaryButton } from "../ui/PrimaryButton";
 
 /* ─── ScenarioStrip ─────────────────────────────────────────────────────────
@@ -30,10 +34,6 @@ type ScenarioState =
   | "calibrated"
   | "failed";
 
-interface FlatScenario extends ScenarioDto {
-  depth: number;
-}
-
 // ── Constants ─────────────────────────────────────────────────────────────────
 
 const STATE_COLOR: Record<ScenarioState, string> = {
@@ -55,37 +55,6 @@ const STATE_LABEL: Record<ScenarioState, string> = {
   calibrated: "calibrated",
   failed: "failed",
 };
-
-// ── Flatten scenario tree (BFS by depth) ─────────────────────────────────────
-
-function flattenScenarios(dtos: ScenarioDto[]): FlatScenario[] {
-  const byId = new Map(dtos.map((d) => [d.id, d]));
-  const childrenOf = new Map<string | null, ScenarioDto[]>();
-  for (const d of dtos) {
-    const key = d.parentScenarioId ?? null;
-    if (!childrenOf.has(key)) childrenOf.set(key, []);
-    childrenOf.get(key)?.push(d);
-  }
-  const result: FlatScenario[] = [];
-  const queue: Array<{ id: string; depth: number }> = (
-    childrenOf.get(null) ?? []
-  ).map((d) => ({
-    id: d.id,
-    depth: 0,
-  }));
-  while (queue.length > 0) {
-    const next = queue.shift();
-    if (!next) break;
-    const { id, depth } = next;
-    const dto = byId.get(id);
-    if (!dto) continue;
-    result.push({ ...dto, depth });
-    for (const child of childrenOf.get(id) ?? []) {
-      queue.push({ id: child.id, depth: depth + 1 });
-    }
-  }
-  return result;
-}
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
@@ -423,7 +392,7 @@ function ScenarioChip({
       <button
         type="button"
         onClick={onClick}
-        data-tooltip={`${scenario.name} · ${STATE_LABEL[state]}${titleSuffix}`}
+        data-tooltip={`${scenario.name} · ${STATE_LABEL[state] ?? state}${titleSuffix}`}
         data-tooltip-pos="bottom"
         onMouseEnter={(e) => {
           if (!isActive) {

@@ -115,7 +115,7 @@ export function TopBar() {
       />
 
       {page === "project" ? (
-        // ── Project breadcrumb: Projects / [engine] / [name] / [view] ─────
+        // ── Project breadcrumb: Projects / [name] / [view] ────────────────
         <>
           <button
             type="button"

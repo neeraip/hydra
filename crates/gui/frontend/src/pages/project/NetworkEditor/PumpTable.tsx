@@ -71,9 +71,11 @@ export function PumpTable({
     }
   }, [focusToken, selectedId, rows, virtualizer]);
   // Ref inputs only exist on pending (unsaved) rows, so the shared datalist
-  // is only mounted while at least one pending row exists. Past the datalist
-  // size threshold no list id is attached and inputs fall back to plain text
-  // + validation-on-blur (see RefOptionsDatalist).
+  // is only mounted while at least one pending row exists. `pendingRowIds` is
+  // scoped to this table's element kind (see ElementsEditor), so pending rows
+  // of other kinds do not mount it. Past the datalist size threshold no list
+  // id is attached and inputs fall back to plain text + validation-on-blur
+  // (see RefOptionsDatalist).
   const hasPendingRows = (pendingRowIds?.size ?? 0) > 0;
   const nodeListId = shouldUseRefDatalist(nodeOptions.length)
     ? NODE_LIST_ID
@@ -249,7 +251,7 @@ export function PumpTable({
                     isPendingRow
                       ? ""
                       : row.powerKw != null
-                        ? String(row.powerKw.toFixed(1))
+                        ? row.powerKw.toFixed(1)
                         : ""
                   }
                   placeholder={isPendingRow || row.powerKw == null}
