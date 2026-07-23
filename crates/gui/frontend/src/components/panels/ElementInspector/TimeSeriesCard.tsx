@@ -11,10 +11,10 @@
  * Self-sourcing by design: project / scenario / result identity come from
  * AppContext hooks and the element's network-order index is derived from
  * the NetworkDataContext arrays, because the inspector body receives none
- * of these as props. The currently scrubbed period is CanvasView-local
- * state that is not reachable from here without new plumbing through
- * un-owned files, so no current-period marker is drawn (the Sparkline
- * supports one via `markerIndex` should that state become shareable).
+ * of these as props. The currently scrubbed period arrives through the
+ * minimal `period-context` (provided by CanvasView) and is drawn as a
+ * Sparkline `markerIndex`, clamped to each series' length; outside a
+ * timeline context the hook returns `null` and no marker is drawn.
  *
  * Steady-state runs (a single period) render nothing — there is no trend
  * to plot. Fetched series are cached per element id + resultGeneration so
@@ -27,6 +27,7 @@ import {
   useAppState,
   useSimulation,
 } from "../../../AppContext";
+import { useCurrentPeriod } from "../../../canvas/period-context";
 import {
   type ElementSeries,
   type ElementSeriesField,
@@ -89,10 +90,13 @@ function FieldChart({
   field,
   times,
   sys,
+  markerIndex,
 }: {
   field: ElementSeriesField;
   times: number[];
   sys: UnitSystem;
+  /** Current scrub period, or null when no timeline context exists. */
+  markerIndex: number | null;
 }) {
   const quantity = FIELD_QUANTITIES[field.name.toLowerCase()];
   // Convert at the render boundary only — the cached series stays SI.
@@ -105,6 +109,12 @@ function FieldChart({
   );
   const { min, max } = fieldRange(values);
   const unit = quantity ? unitLabel(quantity, sys) : "";
+  // Clamp the scrub marker to this series' length (a shorter series holds
+  // its last point rather than dropping the marker).
+  const marker =
+    markerIndex == null || values.length === 0
+      ? null
+      : Math.max(0, Math.min(markerIndex, values.length - 1));
   return (
     <div>
       <div
@@ -125,6 +135,7 @@ function FieldChart({
         max={max}
         stroke="var(--accent)"
         times={times}
+        markerIndex={marker}
         unit={unit}
         decimals={fieldDecimals(field.name)}
         height={40}
@@ -145,6 +156,8 @@ export function TimeSeriesCard({
   const { resultMeta, resultGeneration } = useSimulation();
   const { nodes, links } = useNetworkData();
   const sys = useUnitSystem();
+  // Scrub position from CanvasView's provider; null outside a timeline.
+  const currentPeriod = useCurrentPeriod();
 
   const [series, setSeries] = useState<ElementSeries | null>(null);
   const [loading, setLoading] = useState(false);
@@ -259,6 +272,7 @@ export function TimeSeriesCard({
                 field={f}
                 times={series?.times ?? []}
                 sys={sys}
+                markerIndex={currentPeriod}
               />
             ))}
             {extraFields.length > 0 && (

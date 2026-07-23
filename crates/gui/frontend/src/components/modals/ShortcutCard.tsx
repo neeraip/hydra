@@ -22,6 +22,8 @@ export function ShortcutCard({ onClose }: { onClose: () => void }) {
         { action: "Command palette", keys: [modifier, "K"] },
         { action: "Run simulation", keys: [modifier, "R"] },
         { action: "Save editor changes", keys: [modifier, "S"] },
+        { action: "Undo network edit", keys: [modifier, "Z"] },
+        { action: "Redo network edit", keys: [modifier, shift, "Z"] },
         { action: "Search projects", keys: [modifier, "F"] },
         { action: "Toggle geographic/orthogonal", keys: [modifier, "M"] },
         { action: "Zoom in", keys: [modifier, "="] },

@@ -33,6 +33,7 @@ import {
 import { Legend, type LegendThresholds } from "../../canvas/Legend";
 import { useCanvasLayers } from "../../canvas/layers-context";
 import { MapCanvas } from "../../canvas/MapCanvas";
+import { CurrentPeriodProvider } from "../../canvas/period-context";
 import { useCanvasSelection } from "../../canvas/selection-context";
 import { useCanvasStatus } from "../../canvas/status-context";
 import { Timeline } from "../../canvas/Timeline";
@@ -69,6 +70,11 @@ import {
   useSimParams,
 } from "../../hooks";
 import { useNetworkVersion } from "../../hooks/NetworkVersionContext";
+import {
+  pushUndoEntry,
+  recreateSpecsForDelete,
+  stackKey,
+} from "../../hooks/undoStack";
 import { useReducedMotion } from "../../hooks/useReducedMotion";
 import { CanvasErrorBoundary } from "./CanvasView/CanvasErrorBoundary";
 import { CoordStatusIndicator } from "./CanvasView/CoordStatusIndicator";
@@ -631,6 +637,13 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
   const baseNodes = useNodes();
   const baseLinks = useLinks();
 
+  // Raw committed snapshot (source-CRS coords) for undo capture inside
+  // stable callbacks — same render-time-ref pattern as the selection refs
+  // below. Never use nodeMap/allNodes for capture: those carry *reprojected*
+  // coordinates and merged sim values.
+  const rawNetworkRef = useRef({ nodes: baseNodes, links: baseLinks });
+  rawNetworkRef.current = { nodes: baseNodes, links: baseLinks };
+
   // ── Scenario comparison (Δ overlay) ──────────────────────────────────────
   // The user picks a baseline; the canvas colours by (active − baseline) for
   // the selected variables on a diverging ramp centred at zero.
@@ -1167,7 +1180,28 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
   const handleNodeMoved = useCallback(
     async (id: string, x: number, y: number) => {
       if (!project) return;
+      // Undo capture: previous raw coordinates, read BEFORE the patch.
+      const prev = rawNetworkRef.current.nodes.find((n) => n.id === id);
       await patchNodePosition(id, x, y);
+      if (prev) {
+        // Position inverses travel as x/y field patches (same coordinate
+        // store as patch_node_position) — see undoStack's RecreateSpec doc.
+        pushUndoEntry(stackKey(project.id, activeScenarioId ?? null), {
+          label: `Moved ${id}`,
+          undo: {
+            patches: [
+              { kind: prev.type, id, field: "x", value: prev.x },
+              { kind: prev.type, id, field: "y", value: prev.y },
+            ],
+          },
+          redo: {
+            patches: [
+              { kind: prev.type, id, field: "x", value: x },
+              { kind: prev.type, id, field: "y", value: y },
+            ],
+          },
+        });
+      }
       await saveProjectOnDisk(project.id, activeScenarioId);
       markEdited(activeScenarioId);
       // No bumpNetwork(): the backend emits `network-changed`, which already
@@ -1181,7 +1215,18 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
     const { kind, id } = pendingDelete;
     setPendingDelete(null);
     clearSelection();
+    // Undo capture: the element plus any links that cascade-delete with a
+    // node, from the raw snapshot BEFORE the delete.
+    const { nodes: rawNodes, links: rawLinks } = rawNetworkRef.current;
+    const recreates = recreateSpecsForDelete(kind, id, rawNodes, rawLinks);
     await deleteElement(kind, id);
+    if (recreates) {
+      pushUndoEntry(stackKey(project.id, activeScenarioId ?? null), {
+        label: `Deleted ${id}`,
+        undo: { recreates },
+        redo: { deletes: [{ kind, id }] },
+      });
+    }
     await saveProjectOnDisk(project.id, activeScenarioId);
     markEdited(activeScenarioId);
     // No bumpNetwork(): backend event already bumps (see handleNodeMoved).
@@ -1245,6 +1290,30 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
       );
       // Only runs on success:
       setPendingCreateNode(null);
+      pushUndoEntry(stackKey(project.id, activeScenarioId ?? null), {
+        label: `Added ${payload.id}`,
+        undo: { deletes: [{ kind: payload.kind, id: payload.id }] },
+        redo: {
+          recreates: [
+            {
+              elementType: "node",
+              kind: payload.kind,
+              id: payload.id,
+              x: lng,
+              y: lat,
+              elevation: payload.elevation,
+              ...(payload.kind === "tank"
+                ? {
+                    minLevel: payload.minLevel,
+                    maxLevel: payload.maxLevel,
+                    initialLevel: payload.initialLevel,
+                  }
+                : null),
+              patches: [],
+            },
+          ],
+        },
+      });
       await saveProjectOnDisk(project.id, activeScenarioId);
       markEdited(activeScenarioId);
       // No bumpNetwork(): backend event already bumps (see handleNodeMoved).
@@ -1260,6 +1329,15 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
       await createLink(kind, id, fromId, toId);
       // Only runs on success:
       setPendingCreateLink(null);
+      pushUndoEntry(stackKey(project.id, activeScenarioId ?? null), {
+        label: `Added ${id}`,
+        undo: { deletes: [{ kind, id }] },
+        redo: {
+          recreates: [
+            { elementType: "link", kind, id, fromId, toId, patches: [] },
+          ],
+        },
+      });
       await saveProjectOnDisk(project.id, activeScenarioId);
       markEdited(activeScenarioId);
       // No bumpNetwork(): backend event already bumps (see handleNodeMoved).
@@ -1333,880 +1411,894 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
   }, [showBasemapDropdown, showCompareDropdown]);
 
   return (
-    <div
-      style={{
-        flex: 1,
-        display: "flex",
-        flexDirection: "column",
-        overflow: "hidden",
-        minHeight: 0,
-        position: "relative",
-      }}
-    >
-      {/* Main row: canvas + optional results panel */}
+    // Scrub-position plumbing for the inspector's TimeSeriesCard markers.
+    // The provider value is a primitive, and CanvasView already re-renders
+    // wholly per scrub (currentHour is local state), so this adds no extra
+    // re-render surface beyond the card that consumes it.
+    <CurrentPeriodProvider period={currentHour}>
       <div
         style={{
           flex: 1,
           display: "flex",
+          flexDirection: "column",
           overflow: "hidden",
           minHeight: 0,
           position: "relative",
         }}
       >
-        {/* Canvas area */}
+        {/* Main row: canvas + optional results panel */}
         <div
-          className="canvas-bg"
-          style={{ flex: 1, position: "relative", overflow: "hidden" }}
+          style={{
+            flex: 1,
+            display: "flex",
+            overflow: "hidden",
+            minHeight: 0,
+            position: "relative",
+          }}
         >
-          {/* Map + Schematic — MapLibre GL JS + deck.gl */}
-          <CanvasErrorBoundary>
-            <MapCanvas
-              nodes={canvasNodes}
-              links={canvasLinks}
-              periodResult={currentPeriodResult}
-              compare={compareDeltas}
-              isActive={canvasIsActive}
-              viewMode={viewMode}
-              nodeVar={nodeVar}
-              linkVar={linkVar}
-              animateLinks={animateLinks}
-              basemap={basemap}
-              selectedNodeId={selectedNodeId}
-              onSelectNode={handleSelectNode}
-              selectedLinkId={selectedLinkId}
-              onSelectLink={handleSelectLink}
-              headMin={stableResultMeta?.ranges.headMin ?? 0}
-              headMax={stableResultMeta?.ranges.headMax ?? 100}
-              demandMin={stableResultMeta?.ranges.demandMin ?? 0}
-              demandMax={stableResultMeta?.ranges.demandMax ?? 1}
-              flowMax={stableResultMeta?.ranges.flowMax ?? 1}
-              qualityMin={stableResultMeta?.ranges.qualityMin ?? 0}
-              qualityMax={stableResultMeta?.ranges.qualityMax ?? 1}
-              colorMode={colorMode}
-              pressureThresholds={thresholds.pressure}
-              velocityThresholds={thresholds.velocity}
-              flowThresholds={thresholds.flow}
-              tool={activeTool}
-              onNodeMoved={handleNodeMoved}
-              onCreateNodeRequest={handleCreateNodeRequest}
-              onCreateLinkRequest={handleCreateLinkRequest}
-              onMeasurePoint={handleMeasurePoint}
-              flyToNodeId={flyToState.nodeId}
-              flyToLinkId={flyToState.linkId}
-              flyToKey={flyToState.key}
-              fitKey={mapFitKey}
-              zoomInKey={zoomInKey}
-              zoomOutKey={zoomOutKey}
-              resetNorthKey={resetNorthKey}
-            />
-          </CanvasErrorBoundary>
+          {/* Canvas area */}
+          <div
+            className="canvas-bg"
+            style={{ flex: 1, position: "relative", overflow: "hidden" }}
+          >
+            {/* Map + Schematic — MapLibre GL JS + deck.gl */}
+            <CanvasErrorBoundary>
+              <MapCanvas
+                nodes={canvasNodes}
+                links={canvasLinks}
+                periodResult={currentPeriodResult}
+                compare={compareDeltas}
+                isActive={canvasIsActive}
+                viewMode={viewMode}
+                nodeVar={nodeVar}
+                linkVar={linkVar}
+                animateLinks={animateLinks}
+                basemap={basemap}
+                selectedNodeId={selectedNodeId}
+                onSelectNode={handleSelectNode}
+                selectedLinkId={selectedLinkId}
+                onSelectLink={handleSelectLink}
+                headMin={stableResultMeta?.ranges.headMin ?? 0}
+                headMax={stableResultMeta?.ranges.headMax ?? 100}
+                demandMin={stableResultMeta?.ranges.demandMin ?? 0}
+                demandMax={stableResultMeta?.ranges.demandMax ?? 1}
+                flowMax={stableResultMeta?.ranges.flowMax ?? 1}
+                qualityMin={stableResultMeta?.ranges.qualityMin ?? 0}
+                qualityMax={stableResultMeta?.ranges.qualityMax ?? 1}
+                colorMode={colorMode}
+                pressureThresholds={thresholds.pressure}
+                velocityThresholds={thresholds.velocity}
+                flowThresholds={thresholds.flow}
+                tool={activeTool}
+                onNodeMoved={handleNodeMoved}
+                onCreateNodeRequest={handleCreateNodeRequest}
+                onCreateLinkRequest={handleCreateLinkRequest}
+                onMeasurePoint={handleMeasurePoint}
+                flyToNodeId={flyToState.nodeId}
+                flyToLinkId={flyToState.linkId}
+                flyToKey={flyToState.key}
+                fitKey={mapFitKey}
+                zoomInKey={zoomInKey}
+                zoomOutKey={zoomOutKey}
+                resetNorthKey={resetNorthKey}
+              />
+            </CanvasErrorBoundary>
 
-          {/* Legend — visible only when simulation results exist */}
-          {!!stableResultMeta && (
-            <Legend
-              nodeVar={nodeVar}
-              setNodeVar={setNodeVar}
-              linkVar={linkVar}
-              setLinkVar={setLinkVar}
-              linkAnimation={linkAnimation}
-              setLinkAnimation={setLinkAnimation}
-              reducedMotion={reducedMotion}
-              qualityMode={stableResultMeta.qualityMode ?? "none"}
-              headMin={stableResultMeta.ranges.headMin ?? 0}
-              headMax={stableResultMeta.ranges.headMax ?? 100}
-              demandMin={stableResultMeta.ranges.demandMin ?? 0}
-              demandMax={stableResultMeta.ranges.demandMax ?? 1}
-              flowMax={stableResultMeta.ranges.flowMax ?? 1}
-              qualityMin={stableResultMeta.ranges.qualityMin ?? 0}
-              qualityMax={stableResultMeta.ranges.qualityMax ?? 1}
-              colorMode={colorMode}
-              thresholds={thresholds}
-              onColorModeChange={setColorMode}
-              onThresholdsChange={setThresholds}
-              compare={legendCompare}
-            />
-          )}
+            {/* Legend — visible only when simulation results exist */}
+            {!!stableResultMeta && (
+              <Legend
+                nodeVar={nodeVar}
+                setNodeVar={setNodeVar}
+                linkVar={linkVar}
+                setLinkVar={setLinkVar}
+                linkAnimation={linkAnimation}
+                setLinkAnimation={setLinkAnimation}
+                reducedMotion={reducedMotion}
+                qualityMode={stableResultMeta.qualityMode ?? "none"}
+                headMin={stableResultMeta.ranges.headMin ?? 0}
+                headMax={stableResultMeta.ranges.headMax ?? 100}
+                demandMin={stableResultMeta.ranges.demandMin ?? 0}
+                demandMax={stableResultMeta.ranges.demandMax ?? 1}
+                flowMax={stableResultMeta.ranges.flowMax ?? 1}
+                qualityMin={stableResultMeta.ranges.qualityMin ?? 0}
+                qualityMax={stableResultMeta.ranges.qualityMax ?? 1}
+                colorMode={colorMode}
+                thresholds={thresholds}
+                onColorModeChange={setColorMode}
+                onThresholdsChange={setThresholds}
+                compare={legendCompare}
+              />
+            )}
 
-          {/* Comparison notice — baseline missing results / topology drift */}
-          {comparing &&
-            !!stableResultMeta &&
-            compareNotice &&
-            !compareNoticeDismissed && (
+            {/* Comparison notice — baseline missing results / topology drift */}
+            {comparing &&
+              !!stableResultMeta &&
+              compareNotice &&
+              !compareNoticeDismissed && (
+                <div
+                  style={{
+                    position: "absolute",
+                    top: 60,
+                    left: "50%",
+                    transform: "translateX(-50%)",
+                    zIndex: 25,
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 8,
+                    padding: "6px 10px",
+                    background: "var(--bg-card)",
+                    border: "1px solid var(--border)",
+                    borderRadius: 8,
+                    boxShadow: "var(--shadow-2)",
+                  }}
+                >
+                  <span
+                    style={{
+                      fontSize: 12,
+                      color: "var(--text-secondary)",
+                      fontFamily: "var(--font-ui)",
+                    }}
+                  >
+                    {compareNotice}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setCompareNoticeDismissed(true)}
+                    aria-label="Dismiss comparison notice"
+                    style={{
+                      border: "none",
+                      background: "transparent",
+                      cursor: "pointer",
+                      display: "inline-flex",
+                      padding: 2,
+                      color: "var(--text-tertiary)",
+                    }}
+                  >
+                    <XMarkIcon style={{ width: 12, height: 12 }} />
+                  </button>
+                </div>
+              )}
+
+            {/* CRS alert — map mode only, shown when coordinates can't be reprojected */}
+            {viewMode === "map" && crsError && (
               <div
                 style={{
                   position: "absolute",
-                  top: 60,
-                  left: "50%",
-                  transform: "translateX(-50%)",
-                  zIndex: 25,
+                  inset: 0,
                   display: "flex",
                   alignItems: "center",
-                  gap: 8,
-                  padding: "6px 10px",
-                  background: "var(--bg-card)",
-                  border: "1px solid var(--border)",
-                  borderRadius: 8,
-                  boxShadow: "var(--shadow-2)",
+                  justifyContent: "center",
+                  pointerEvents: "none",
                 }}
               >
-                <span
+                <div
                   style={{
-                    fontSize: 12,
-                    color: "var(--text-secondary)",
-                    fontFamily: "var(--font-ui)",
+                    display: "flex",
+                    flexDirection: "column",
+                    alignItems: "center",
+                    gap: 10,
+                    padding: "24px 28px",
+                    background: "var(--bg-card)",
+                    border: "1px solid var(--border)",
+                    borderRadius: 10,
+                    boxShadow: "0 4px 24px rgba(0,0,0,0.18)",
+                    maxWidth: 360,
+                    textAlign: "center",
                   }}
                 >
-                  {compareNotice}
-                </span>
-                <button
-                  type="button"
-                  onClick={() => setCompareNoticeDismissed(true)}
-                  aria-label="Dismiss comparison notice"
-                  style={{
-                    border: "none",
-                    background: "transparent",
-                    cursor: "pointer",
-                    display: "inline-flex",
-                    padding: 2,
-                    color: "var(--text-tertiary)",
-                  }}
-                >
-                  <XMarkIcon style={{ width: 12, height: 12 }} />
-                </button>
-              </div>
-            )}
-
-          {/* CRS alert — map mode only, shown when coordinates can't be reprojected */}
-          {viewMode === "map" && crsError && (
-            <div
-              style={{
-                position: "absolute",
-                inset: 0,
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                pointerEvents: "none",
-              }}
-            >
-              <div
-                style={{
-                  display: "flex",
-                  flexDirection: "column",
-                  alignItems: "center",
-                  gap: 10,
-                  padding: "24px 28px",
-                  background: "var(--bg-card)",
-                  border: "1px solid var(--border)",
-                  borderRadius: 10,
-                  boxShadow: "0 4px 24px rgba(0,0,0,0.18)",
-                  maxWidth: 360,
-                  textAlign: "center",
-                }}
-              >
-                <span style={{ fontSize: 28 }}>🗺️</span>
-                <span
-                  style={{
-                    fontSize: 14,
-                    fontWeight: 600,
-                    color: "var(--text-primary)",
-                    fontFamily: "var(--font-ui)",
-                  }}
-                >
-                  Invalid coordinate reference system
-                </span>
-                <span
-                  style={{
-                    fontSize: 12,
-                    color: "var(--text-secondary)",
-                    fontFamily: "var(--font-ui)",
-                    lineHeight: 1.6,
-                  }}
-                >
-                  Map view requires valid WGS84 coordinates. Set the correct
-                  source CRS to reproject the network, or switch to Schematic
-                  view.
-                </span>
-                <div style={{ display: "flex", gap: 8 }}>
-                  <button
-                    type="button"
-                    className="tool-btn"
-                    onClick={openCrsModal}
+                  <span style={{ fontSize: 28 }}>🗺️</span>
+                  <span
                     style={{
-                      pointerEvents: "auto",
-                      padding: "0 10px",
-                      fontSize: 12,
+                      fontSize: 14,
+                      fontWeight: 600,
+                      color: "var(--text-primary)",
+                      fontFamily: "var(--font-ui)",
                     }}
                   >
-                    Set source CRS
-                  </button>
-                  {/* Auto-suggestion only makes sense for the out-of-range
-                      case (coords look projected while CRS is the EPSG:4326
-                      default) — with a non-default CRS the error is a proj4
-                      failure, not a wrong-guess situation. */}
-                  {sourceCrs === "EPSG:4326" && (
+                    Invalid coordinate reference system
+                  </span>
+                  <span
+                    style={{
+                      fontSize: 12,
+                      color: "var(--text-secondary)",
+                      fontFamily: "var(--font-ui)",
+                      lineHeight: 1.6,
+                    }}
+                  >
+                    Map view requires valid WGS84 coordinates. Set the correct
+                    source CRS to reproject the network, or switch to Schematic
+                    view.
+                  </span>
+                  <div style={{ display: "flex", gap: 8 }}>
                     <button
                       type="button"
                       className="tool-btn"
-                      onClick={() => {
-                        setPendingCrsSuggestionSample(
-                          pickCoordSample(rawPositionNodes),
-                        );
-                        openCrsModal();
-                      }}
+                      onClick={openCrsModal}
                       style={{
                         pointerEvents: "auto",
                         padding: "0 10px",
                         fontSize: 12,
                       }}
                     >
-                      Suggest CRS…
+                      Set source CRS
                     </button>
-                  )}
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* Legacy SVG annotation overlays (schematic mode only).
-               pointer-events: none — deck.gl handles all interaction. */}
-          {viewMode === "schematic" && (
-            // biome-ignore lint/a11y/useKeyWithClickEvents: SVG overlay handles pointer measurement gestures.
-            <svg
-              ref={svgRef}
-              width="100%"
-              height="100%"
-              viewBox="0 0 800 560"
-              preserveAspectRatio="xMidYMid meet"
-              style={{
-                position: "absolute",
-                inset: 0,
-                pointerEvents: activeTool === "measure" ? "all" : "none",
-                cursor: svgCursor,
-              }}
-              onClick={handleSvgClick}
-            >
-              <title>Schematic annotations overlay</title>
-              {/* Annotation overlays */}
-              <MeasureOverlay points={measurePts} />
-            </svg>
-          )}
-
-          {/* Toolbar overlay — left offset tracks the floating rail width */}
-          <div
-            style={{
-              position: "absolute",
-              top: 12,
-              left: "calc(var(--rail-effective-w, 0px) + 12px)",
-              zIndex: 10,
-              transition: "left var(--rail-transition)",
-            }}
-          >
-            <div className="canvas-toolbar">
-              {/* ── VIEW MODE TOGGLE ─────────────────────────────────────────── */}
-              <div
-                style={{
-                  display: "flex",
-                  background: "var(--bg-card)",
-                  border: "1px solid var(--border)",
-                  borderRadius: 6,
-                  padding: 2,
-                  gap: 2,
-                  flexShrink: 0,
-                }}
-              >
-                {(["map", "schematic"] as ViewMode[]).map((m) => (
-                  <button
-                    type="button"
-                    key={m}
-                    onClick={() => setViewMode(m)}
-                    style={{
-                      border: "none",
-                      background:
-                        viewMode === m ? "var(--accent-dim)" : "transparent",
-                      color:
-                        viewMode === m
-                          ? "var(--accent)"
-                          : "var(--text-secondary)",
-                      padding: "3px 10px",
-                      borderRadius: 4,
-                      fontSize: 11,
-                      fontWeight: 600,
-                      cursor: "pointer",
-                      fontFamily: "var(--font-ui)",
-                      letterSpacing: "0.02em",
-                      whiteSpace: "nowrap",
-                      flexShrink: 0,
-                    }}
-                    data-tooltip={
-                      m === "map"
-                        ? "Geographic layout"
-                        : "Idealised orthogonal layout"
-                    }
-                    data-tooltip-pos="bottom"
-                  >
-                    {m === "map" ? "Map" : "Schematic"}
-                  </button>
-                ))}
-              </div>
-
-              {/* Coordinate-coverage indicator — only shown when coords are missing */}
-              {viewMode === "map" &&
-                coordStatus !== "complete" &&
-                rawPositionNodes.length > 0 && (
-                  <CoordStatusIndicator
-                    status={coordStatus}
-                    missingCount={coordMissingCount}
-                    totalCount={rawPositionNodes.length}
-                  />
-                )}
-
-              {/* Basemap dropdown */}
-              <div
-                data-toolbar-dropdown
-                style={{ position: "relative", opacity: mapOnlyDim.opacity }}
-              >
-                <button
-                  type="button"
-                  className="tool-btn"
-                  disabled={mapOnly}
-                  style={{
-                    width: "auto",
-                    padding: "0 8px",
-                    fontSize: 12,
-                    gap: 4,
-                    display: "flex",
-                    alignItems: "center",
-                    cursor: mapOnlyDim.cursor,
-                  }}
-                  onClick={(e) => {
-                    if (mapOnly) return;
-                    e.stopPropagation();
-                    setShowBasemapDropdown((v) => !v);
-                  }}
-                  data-tooltip={mapOnlyTooltip("Basemap")}
-                  data-tooltip-pos="bottom"
-                >
-                  {basemapLabel(basemap)}{" "}
-                  <ChevronUpDownIcon
-                    style={{ width: 12, height: 12, verticalAlign: "middle" }}
-                  />
-                </button>
-                {showBasemapDropdown && viewMode === "map" && (
-                  <div
-                    style={{
-                      position: "absolute",
-                      top: "calc(100% + 4px)",
-                      left: 0,
-                      background: "var(--bg-panel)",
-                      border: "1px solid var(--border)",
-                      borderRadius: 7,
-                      boxShadow: "var(--shadow-2)",
-                      overflow: "hidden",
-                      minWidth: 140,
-                      zIndex: 20,
-                    }}
-                  >
-                    {(
-                      ["streets", "light", "dark", "none"] as BasemapStyle[]
-                    ).map((b) => (
+                    {/* Auto-suggestion only makes sense for the out-of-range
+                      case (coords look projected while CRS is the EPSG:4326
+                      default) — with a non-default CRS the error is a proj4
+                      failure, not a wrong-guess situation. */}
+                    {sourceCrs === "EPSG:4326" && (
                       <button
                         type="button"
-                        key={b}
+                        className="tool-btn"
                         onClick={() => {
-                          setBasemap(b);
-                          setShowBasemapDropdown(false);
+                          setPendingCrsSuggestionSample(
+                            pickCoordSample(rawPositionNodes),
+                          );
+                          openCrsModal();
                         }}
                         style={{
-                          display: "block",
-                          width: "100%",
-                          padding: "7px 12px",
-                          border: "none",
-                          background:
-                            basemap === b ? "var(--accent-dim)" : "transparent",
-                          color:
-                            basemap === b
-                              ? "var(--accent)"
-                              : "var(--text-secondary)",
-                          cursor: "pointer",
+                          pointerEvents: "auto",
+                          padding: "0 10px",
                           fontSize: 12,
-                          textAlign: "left",
-                          fontFamily: "var(--font-ui)",
                         }}
                       >
-                        {basemapLabel(b)}
+                        Suggest CRS…
                       </button>
-                    ))}
+                    )}
                   </div>
+                </div>
+              </div>
+            )}
+
+            {/* Legacy SVG annotation overlays (schematic mode only).
+               pointer-events: none — deck.gl handles all interaction. */}
+            {viewMode === "schematic" && (
+              // biome-ignore lint/a11y/useKeyWithClickEvents: SVG overlay handles pointer measurement gestures.
+              <svg
+                ref={svgRef}
+                width="100%"
+                height="100%"
+                viewBox="0 0 800 560"
+                preserveAspectRatio="xMidYMid meet"
+                style={{
+                  position: "absolute",
+                  inset: 0,
+                  pointerEvents: activeTool === "measure" ? "all" : "none",
+                  cursor: svgCursor,
+                }}
+                onClick={handleSvgClick}
+              >
+                <title>Schematic annotations overlay</title>
+                {/* Annotation overlays */}
+                <MeasureOverlay points={measurePts} />
+              </svg>
+            )}
+
+            {/* Toolbar overlay — left offset tracks the floating rail width */}
+            <div
+              style={{
+                position: "absolute",
+                top: 12,
+                left: "calc(var(--rail-effective-w, 0px) + 12px)",
+                zIndex: 10,
+                transition: "left var(--rail-transition)",
+              }}
+            >
+              <div className="canvas-toolbar">
+                {/* ── VIEW MODE TOGGLE ─────────────────────────────────────────── */}
+                <div
+                  style={{
+                    display: "flex",
+                    background: "var(--bg-card)",
+                    border: "1px solid var(--border)",
+                    borderRadius: 6,
+                    padding: 2,
+                    gap: 2,
+                    flexShrink: 0,
+                  }}
+                >
+                  {(["map", "schematic"] as ViewMode[]).map((m) => (
+                    <button
+                      type="button"
+                      key={m}
+                      onClick={() => setViewMode(m)}
+                      style={{
+                        border: "none",
+                        background:
+                          viewMode === m ? "var(--accent-dim)" : "transparent",
+                        color:
+                          viewMode === m
+                            ? "var(--accent)"
+                            : "var(--text-secondary)",
+                        padding: "3px 10px",
+                        borderRadius: 4,
+                        fontSize: 11,
+                        fontWeight: 600,
+                        cursor: "pointer",
+                        fontFamily: "var(--font-ui)",
+                        letterSpacing: "0.02em",
+                        whiteSpace: "nowrap",
+                        flexShrink: 0,
+                      }}
+                      data-tooltip={
+                        m === "map"
+                          ? "Geographic layout"
+                          : "Idealised orthogonal layout"
+                      }
+                      data-tooltip-pos="bottom"
+                    >
+                      {m === "map" ? "Map" : "Schematic"}
+                    </button>
+                  ))}
+                </div>
+
+                {/* Coordinate-coverage indicator — only shown when coords are missing */}
+                {viewMode === "map" &&
+                  coordStatus !== "complete" &&
+                  rawPositionNodes.length > 0 && (
+                    <CoordStatusIndicator
+                      status={coordStatus}
+                      missingCount={coordMissingCount}
+                      totalCount={rawPositionNodes.length}
+                    />
+                  )}
+
+                {/* Basemap dropdown */}
+                <div
+                  data-toolbar-dropdown
+                  style={{ position: "relative", opacity: mapOnlyDim.opacity }}
+                >
+                  <button
+                    type="button"
+                    className="tool-btn"
+                    disabled={mapOnly}
+                    style={{
+                      width: "auto",
+                      padding: "0 8px",
+                      fontSize: 12,
+                      gap: 4,
+                      display: "flex",
+                      alignItems: "center",
+                      cursor: mapOnlyDim.cursor,
+                    }}
+                    onClick={(e) => {
+                      if (mapOnly) return;
+                      e.stopPropagation();
+                      setShowBasemapDropdown((v) => !v);
+                    }}
+                    data-tooltip={mapOnlyTooltip("Basemap")}
+                    data-tooltip-pos="bottom"
+                  >
+                    {basemapLabel(basemap)}{" "}
+                    <ChevronUpDownIcon
+                      style={{ width: 12, height: 12, verticalAlign: "middle" }}
+                    />
+                  </button>
+                  {showBasemapDropdown && viewMode === "map" && (
+                    <div
+                      style={{
+                        position: "absolute",
+                        top: "calc(100% + 4px)",
+                        left: 0,
+                        background: "var(--bg-panel)",
+                        border: "1px solid var(--border)",
+                        borderRadius: 7,
+                        boxShadow: "var(--shadow-2)",
+                        overflow: "hidden",
+                        minWidth: 140,
+                        zIndex: 20,
+                      }}
+                    >
+                      {(
+                        ["streets", "light", "dark", "none"] as BasemapStyle[]
+                      ).map((b) => (
+                        <button
+                          type="button"
+                          key={b}
+                          onClick={() => {
+                            setBasemap(b);
+                            setShowBasemapDropdown(false);
+                          }}
+                          style={{
+                            display: "block",
+                            width: "100%",
+                            padding: "7px 12px",
+                            border: "none",
+                            background:
+                              basemap === b
+                                ? "var(--accent-dim)"
+                                : "transparent",
+                            color:
+                              basemap === b
+                                ? "var(--accent)"
+                                : "var(--text-secondary)",
+                            cursor: "pointer",
+                            fontSize: 12,
+                            textAlign: "left",
+                            fontFamily: "var(--font-ui)",
+                          }}
+                        >
+                          {basemapLabel(b)}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* CRS status + modal launcher */}
+                <div
+                  data-toolbar-dropdown
+                  style={{ position: "relative", opacity: mapOnlyDim.opacity }}
+                >
+                  <button
+                    type="button"
+                    className="tool-btn"
+                    disabled={mapOnly}
+                    style={{
+                      width: "auto",
+                      padding: "0 8px",
+                      fontSize: 12,
+                      gap: 4,
+                      display: "flex",
+                      alignItems: "center",
+                      cursor: mapOnlyDim.cursor,
+                      borderColor:
+                        !mapOnly && crsError
+                          ? "var(--status-error)"
+                          : undefined,
+                    }}
+                    onClick={(e) => {
+                      if (mapOnly) return;
+                      e.stopPropagation();
+                      setShowBasemapDropdown(false);
+                      openCrsModal();
+                    }}
+                    data-tooltip={mapOnlyTooltip(
+                      crsError ?? "Set source coordinate reference system",
+                    )}
+                    data-tooltip-pos="bottom"
+                  >
+                    {sourceCrs}{" "}
+                    <ChevronUpDownIcon
+                      style={{ width: 12, height: 12, verticalAlign: "middle" }}
+                    />
+                  </button>
+                </div>
+
+                <div className="tool-divider" />
+
+                {/* ── BOTH MODES ───────────────────────────────────────────────── */}
+
+                <button
+                  type="button"
+                  className={`tool-btn${activeTool === "select" ? " active" : ""}`}
+                  onClick={() => setActiveTool("select")}
+                  data-tooltip="Select (S)"
+                  data-tooltip-pos="bottom"
+                  aria-label="Select"
+                  style={ICON_BTN_STYLE}
+                >
+                  <CursorArrowRaysIcon style={ICON_14} />
+                </button>
+
+                <button
+                  type="button"
+                  className={`tool-btn${activeTool === "edit" ? " active" : ""}`}
+                  onClick={() => setActiveTool("edit")}
+                  disabled={mapOnly}
+                  data-tooltip={mapOnlyTooltip("Edit / move nodes (E)")}
+                  data-tooltip-pos="bottom"
+                  aria-label="Edit"
+                  style={{ ...ICON_BTN_STYLE, ...mapOnlyDim }}
+                >
+                  <PencilSquareIcon style={ICON_14} />
+                </button>
+
+                <button
+                  type="button"
+                  className={`tool-btn${activeTool === "add-node" ? " active" : ""}`}
+                  disabled={mapOnly}
+                  onClick={() => setActiveTool("add-node")}
+                  data-tooltip={mapOnlyTooltip("Add node (N)")}
+                  data-tooltip-pos="bottom"
+                  aria-label="Add node"
+                  style={{ ...ICON_BTN_STYLE, ...mapOnlyDim }}
+                >
+                  <MapPinIcon style={ICON_14} />
+                </button>
+
+                <button
+                  type="button"
+                  className={`tool-btn${activeTool === "add-link" ? " active" : ""}`}
+                  disabled={mapOnly}
+                  onClick={() => setActiveTool("add-link")}
+                  data-tooltip={mapOnlyTooltip("Add link (L)")}
+                  data-tooltip-pos="bottom"
+                  aria-label="Add link"
+                  style={{ ...ICON_BTN_STYLE, ...mapOnlyDim }}
+                >
+                  <LinkIcon style={ICON_14} />
+                </button>
+
+                {/* Measure distance */}
+                <button
+                  type="button"
+                  className={`tool-btn${activeTool === "measure" ? " active" : ""}`}
+                  disabled={mapOnly}
+                  onClick={() => {
+                    setActiveTool("measure");
+                    clearAnnotations();
+                  }}
+                  data-tooltip={mapOnlyTooltip("Measure distance (D)")}
+                  data-tooltip-pos="bottom"
+                  aria-label="Measure distance"
+                  style={{
+                    fontSize: 12,
+                    fontWeight: 600,
+                    ...ICON_BTN_STYLE,
+                    ...mapOnlyDim,
+                  }}
+                >
+                  <ArrowsRightLeftIcon style={ICON_14} />
+                </button>
+
+                {(measureGeoPts.length > 0 || measurePts.length > 0) &&
+                  viewMode === "map" && (
+                    <button
+                      type="button"
+                      className="tool-btn"
+                      onClick={clearAnnotations}
+                      data-tooltip="Clear annotations"
+                      data-tooltip-pos="bottom"
+                      aria-label="Clear annotations"
+                      style={{
+                        fontSize: 11,
+                        color: "var(--text-tertiary)",
+                        ...ICON_BTN_STYLE,
+                      }}
+                    >
+                      <XMarkIcon style={ICON_14} />
+                    </button>
+                  )}
+
+                <div className="tool-divider" />
+
+                {/* Layer visibility toggles */}
+                <button
+                  type="button"
+                  className={`tool-btn${canvasLayers.model ? " active" : ""}`}
+                  onClick={() => setLayer("model", !canvasLayers.model)}
+                  data-tooltip="Toggle base model"
+                  data-tooltip-pos="bottom"
+                  aria-label="Toggle base model"
+                  style={ICON_BTN_STYLE}
+                >
+                  <EyeIcon style={ICON_14} />
+                </button>
+
+                <button
+                  type="button"
+                  className={`tool-btn${canvasLayers.nodeLabels ? " active" : ""}`}
+                  onClick={() =>
+                    setLayer("nodeLabels", !canvasLayers.nodeLabels)
+                  }
+                  data-tooltip="Toggle node labels"
+                  data-tooltip-pos="bottom"
+                  style={{ fontSize: 11, fontWeight: 600 }}
+                >
+                  Aa
+                </button>
+
+                <button
+                  type="button"
+                  className={`tool-btn${canvasLayers.linkLabels ? " active" : ""}`}
+                  onClick={() =>
+                    setLayer("linkLabels", !canvasLayers.linkLabels)
+                  }
+                  data-tooltip="Toggle link labels"
+                  data-tooltip-pos="bottom"
+                  style={{ fontSize: 11, fontWeight: 600 }}
+                >
+                  Ll
+                </button>
+
+                {/* Scenario comparison baseline picker — only when the active
+                  scenario has results to compare from (same gate as Legend) */}
+                {!!stableResultMeta && (
+                  <>
+                    <div className="tool-divider" />
+                    <div data-toolbar-dropdown style={{ position: "relative" }}>
+                      <button
+                        type="button"
+                        className={`tool-btn${comparing ? " active" : ""}`}
+                        style={{
+                          width: "auto",
+                          padding: "0 8px",
+                          fontSize: 12,
+                          gap: 4,
+                          display: "flex",
+                          alignItems: "center",
+                          whiteSpace: "nowrap",
+                        }}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setShowBasemapDropdown(false);
+                          setShowCompareDropdown((v) => !v);
+                        }}
+                        data-tooltip="Colour by difference vs a baseline scenario"
+                        data-tooltip-pos="bottom"
+                      >
+                        {comparing ? `Δ vs ${baselineName}` : "Compare"}{" "}
+                        <ChevronUpDownIcon
+                          style={{
+                            width: 12,
+                            height: 12,
+                            verticalAlign: "middle",
+                          }}
+                        />
+                      </button>
+                      {showCompareDropdown && (
+                        <div
+                          style={{
+                            position: "absolute",
+                            top: "calc(100% + 4px)",
+                            left: 0,
+                            background: "var(--bg-panel)",
+                            border: "1px solid var(--border)",
+                            borderRadius: 7,
+                            boxShadow: "var(--shadow-2)",
+                            overflow: "hidden auto",
+                            minWidth: 140,
+                            maxHeight: 280,
+                            zIndex: 20,
+                          }}
+                        >
+                          {compareOptions.map((o) => (
+                            <button
+                              type="button"
+                              key={o.value ?? "__off__"}
+                              onClick={() => {
+                                setCompareScenarioId(o.value);
+                                setShowCompareDropdown(false);
+                              }}
+                              style={{
+                                display: "block",
+                                width: "100%",
+                                padding: "7px 12px",
+                                border: "none",
+                                background:
+                                  o.value === effectiveCompareId
+                                    ? "var(--accent-dim)"
+                                    : "transparent",
+                                color:
+                                  o.value === effectiveCompareId
+                                    ? "var(--accent)"
+                                    : "var(--text-secondary)",
+                                cursor: "pointer",
+                                fontSize: 12,
+                                textAlign: "left",
+                                fontFamily: "var(--font-ui)",
+                                whiteSpace: "nowrap",
+                              }}
+                            >
+                              {o.label}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </>
                 )}
               </div>
+            </div>
 
-              {/* CRS status + modal launcher */}
-              <div
-                data-toolbar-dropdown
-                style={{ position: "relative", opacity: mapOnlyDim.opacity }}
-              >
+            {/* Annotation summary (measure) */}
+            {(activeTool === "measure" ||
+              measureGeoPts.length > 0 ||
+              measurePts.length > 0) && (
+              <AnnotationSummary
+                tool={activeTool}
+                measurePts={measurePts}
+                measureGeoPts={measureGeoPts}
+                measureDistanceM={measureDistanceM}
+                viewMode={viewMode}
+                onClear={clearAnnotations}
+              />
+            )}
+
+            {/* Floating viewport controls */}
+            <div
+              className="canvas-toolbar"
+              style={{
+                position: "absolute",
+                right: 12,
+                bottom: 12,
+                zIndex: 11,
+                flexDirection: "column",
+                gap: 8,
+              }}
+            >
+              <div style={{ display: "flex", flexDirection: "column", gap: 0 }}>
                 <button
                   type="button"
                   className="tool-btn"
-                  disabled={mapOnly}
+                  onClick={() => setZoomInKey((k) => k + 1)}
+                  data-tooltip="Zoom in"
+                  data-tooltip-pos="left"
+                  aria-label="Zoom in"
                   style={{
-                    width: "auto",
-                    padding: "0 8px",
-                    fontSize: 12,
-                    gap: 4,
-                    display: "flex",
-                    alignItems: "center",
-                    cursor: mapOnlyDim.cursor,
-                    borderColor:
-                      !mapOnly && crsError ? "var(--status-error)" : undefined,
+                    borderBottomLeftRadius: 0,
+                    borderBottomRightRadius: 0,
                   }}
-                  onClick={(e) => {
-                    if (mapOnly) return;
-                    e.stopPropagation();
-                    setShowBasemapDropdown(false);
-                    openCrsModal();
-                  }}
-                  data-tooltip={mapOnlyTooltip(
-                    crsError ?? "Set source coordinate reference system",
-                  )}
-                  data-tooltip-pos="bottom"
                 >
-                  {sourceCrs}{" "}
-                  <ChevronUpDownIcon
-                    style={{ width: 12, height: 12, verticalAlign: "middle" }}
-                  />
+                  <PlusIcon style={ICON_14} />
+                </button>
+
+                <button
+                  type="button"
+                  className="tool-btn"
+                  onClick={() => setZoomOutKey((k) => k + 1)}
+                  data-tooltip="Zoom out"
+                  data-tooltip-pos="left"
+                  aria-label="Zoom out"
+                  style={{
+                    borderTopLeftRadius: 0,
+                    borderTopRightRadius: 0,
+                    marginTop: -1,
+                  }}
+                >
+                  <MinusIcon style={ICON_14} />
                 </button>
               </div>
 
-              <div className="tool-divider" />
-
-              {/* ── BOTH MODES ───────────────────────────────────────────────── */}
-
               <button
                 type="button"
-                className={`tool-btn${activeTool === "select" ? " active" : ""}`}
-                onClick={() => setActiveTool("select")}
-                data-tooltip="Select (S)"
-                data-tooltip-pos="bottom"
-                aria-label="Select"
-                style={ICON_BTN_STYLE}
-              >
-                <CursorArrowRaysIcon style={ICON_14} />
-              </button>
-
-              <button
-                type="button"
-                className={`tool-btn${activeTool === "edit" ? " active" : ""}`}
-                onClick={() => setActiveTool("edit")}
+                className="tool-btn"
+                onClick={() => setResetNorthKey((k) => k + 1)}
                 disabled={mapOnly}
-                data-tooltip={mapOnlyTooltip("Edit / move nodes (E)")}
-                data-tooltip-pos="bottom"
-                aria-label="Edit"
-                style={{ ...ICON_BTN_STYLE, ...mapOnlyDim }}
-              >
-                <PencilSquareIcon style={ICON_14} />
-              </button>
-
-              <button
-                type="button"
-                className={`tool-btn${activeTool === "add-node" ? " active" : ""}`}
-                disabled={mapOnly}
-                onClick={() => setActiveTool("add-node")}
-                data-tooltip={mapOnlyTooltip("Add node (N)")}
-                data-tooltip-pos="bottom"
-                aria-label="Add node"
-                style={{ ...ICON_BTN_STYLE, ...mapOnlyDim }}
-              >
-                <MapPinIcon style={ICON_14} />
-              </button>
-
-              <button
-                type="button"
-                className={`tool-btn${activeTool === "add-link" ? " active" : ""}`}
-                disabled={mapOnly}
-                onClick={() => setActiveTool("add-link")}
-                data-tooltip={mapOnlyTooltip("Add link (L)")}
-                data-tooltip-pos="bottom"
-                aria-label="Add link"
-                style={{ ...ICON_BTN_STYLE, ...mapOnlyDim }}
-              >
-                <LinkIcon style={ICON_14} />
-              </button>
-
-              {/* Measure distance */}
-              <button
-                type="button"
-                className={`tool-btn${activeTool === "measure" ? " active" : ""}`}
-                disabled={mapOnly}
-                onClick={() => {
-                  setActiveTool("measure");
-                  clearAnnotations();
-                }}
-                data-tooltip={mapOnlyTooltip("Measure distance (D)")}
-                data-tooltip-pos="bottom"
-                aria-label="Measure distance"
-                style={{
-                  fontSize: 12,
-                  fontWeight: 600,
-                  ...ICON_BTN_STYLE,
-                  ...mapOnlyDim,
-                }}
+                data-tooltip={mapOnlyTooltip("Reset north")}
+                data-tooltip-pos="left"
+                aria-label="Reset north"
+                style={mapOnlyDim}
               >
                 <ArrowsRightLeftIcon style={ICON_14} />
               </button>
 
-              {(measureGeoPts.length > 0 || measurePts.length > 0) &&
-                viewMode === "map" && (
-                  <button
-                    type="button"
-                    className="tool-btn"
-                    onClick={clearAnnotations}
-                    data-tooltip="Clear annotations"
-                    data-tooltip-pos="bottom"
-                    aria-label="Clear annotations"
-                    style={{
-                      fontSize: 11,
-                      color: "var(--text-tertiary)",
-                      ...ICON_BTN_STYLE,
-                    }}
-                  >
-                    <XMarkIcon style={ICON_14} />
-                  </button>
-                )}
-
-              <div className="tool-divider" />
-
-              {/* Layer visibility toggles */}
               <button
                 type="button"
-                className={`tool-btn${canvasLayers.model ? " active" : ""}`}
-                onClick={() => setLayer("model", !canvasLayers.model)}
-                data-tooltip="Toggle base model"
-                data-tooltip-pos="bottom"
-                aria-label="Toggle base model"
-                style={ICON_BTN_STYLE}
+                className="tool-btn"
+                onClick={() => setMapFitKey((k) => k + 1)}
+                data-tooltip="Fit network"
+                data-tooltip-pos="left"
+                aria-label="Fit network"
               >
-                <EyeIcon style={ICON_14} />
+                <ArrowsPointingOutIcon style={ICON_14} />
               </button>
-
-              <button
-                type="button"
-                className={`tool-btn${canvasLayers.nodeLabels ? " active" : ""}`}
-                onClick={() => setLayer("nodeLabels", !canvasLayers.nodeLabels)}
-                data-tooltip="Toggle node labels"
-                data-tooltip-pos="bottom"
-                style={{ fontSize: 11, fontWeight: 600 }}
-              >
-                Aa
-              </button>
-
-              <button
-                type="button"
-                className={`tool-btn${canvasLayers.linkLabels ? " active" : ""}`}
-                onClick={() => setLayer("linkLabels", !canvasLayers.linkLabels)}
-                data-tooltip="Toggle link labels"
-                data-tooltip-pos="bottom"
-                style={{ fontSize: 11, fontWeight: 600 }}
-              >
-                Ll
-              </button>
-
-              {/* Scenario comparison baseline picker — only when the active
-                  scenario has results to compare from (same gate as Legend) */}
-              {!!stableResultMeta && (
-                <>
-                  <div className="tool-divider" />
-                  <div data-toolbar-dropdown style={{ position: "relative" }}>
-                    <button
-                      type="button"
-                      className={`tool-btn${comparing ? " active" : ""}`}
-                      style={{
-                        width: "auto",
-                        padding: "0 8px",
-                        fontSize: 12,
-                        gap: 4,
-                        display: "flex",
-                        alignItems: "center",
-                        whiteSpace: "nowrap",
-                      }}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setShowBasemapDropdown(false);
-                        setShowCompareDropdown((v) => !v);
-                      }}
-                      data-tooltip="Colour by difference vs a baseline scenario"
-                      data-tooltip-pos="bottom"
-                    >
-                      {comparing ? `Δ vs ${baselineName}` : "Compare"}{" "}
-                      <ChevronUpDownIcon
-                        style={{
-                          width: 12,
-                          height: 12,
-                          verticalAlign: "middle",
-                        }}
-                      />
-                    </button>
-                    {showCompareDropdown && (
-                      <div
-                        style={{
-                          position: "absolute",
-                          top: "calc(100% + 4px)",
-                          left: 0,
-                          background: "var(--bg-panel)",
-                          border: "1px solid var(--border)",
-                          borderRadius: 7,
-                          boxShadow: "var(--shadow-2)",
-                          overflow: "hidden auto",
-                          minWidth: 140,
-                          maxHeight: 280,
-                          zIndex: 20,
-                        }}
-                      >
-                        {compareOptions.map((o) => (
-                          <button
-                            type="button"
-                            key={o.value ?? "__off__"}
-                            onClick={() => {
-                              setCompareScenarioId(o.value);
-                              setShowCompareDropdown(false);
-                            }}
-                            style={{
-                              display: "block",
-                              width: "100%",
-                              padding: "7px 12px",
-                              border: "none",
-                              background:
-                                o.value === effectiveCompareId
-                                  ? "var(--accent-dim)"
-                                  : "transparent",
-                              color:
-                                o.value === effectiveCompareId
-                                  ? "var(--accent)"
-                                  : "var(--text-secondary)",
-                              cursor: "pointer",
-                              fontSize: 12,
-                              textAlign: "left",
-                              fontFamily: "var(--font-ui)",
-                              whiteSpace: "nowrap",
-                            }}
-                          >
-                            {o.label}
-                          </button>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                </>
-              )}
             </div>
+
+            {/* Inspector panel — node or link detail view */}
+            {inspectorView === "node" && stableSelectedNode && (
+              <NodeInspector
+                node={stableSelectedNode}
+                onClose={clearSelection}
+                onOpenInEditor={() => {
+                  setProjectView("editor");
+                }}
+                onZoomTo={() =>
+                  setFlyToState((s) => ({
+                    nodeId: selectedNodeId,
+                    linkId: null,
+                    key: s.key + 1,
+                  }))
+                }
+                disableZoomTo={!selectedNodeHasCoordinates}
+                onDelete={() =>
+                  setPendingDelete({
+                    kind: stableSelectedNode.type,
+                    id: stableSelectedNode.id,
+                  })
+                }
+                onOpenPattern={() => {
+                  setProjectView("editor");
+                }}
+                onLocateRelated={(id) => {
+                  if (linkMap.has(id)) selectLink(id);
+                }}
+                nodeVar={nodeVar}
+                ranges={stableResultMeta?.ranges}
+                hasSimulation={!!stableResultMeta}
+                isTransitioning={!!stableResultMeta && !nodeIsEnriched}
+              />
+            )}
+            {inspectorView === "link" && stableSelectedLink && (
+              <LinkInspector
+                link={stableSelectedLink}
+                onClose={clearSelection}
+                onOpenInEditor={() => {
+                  setProjectView("editor");
+                }}
+                onZoomTo={() =>
+                  setFlyToState((s) => ({
+                    nodeId: null,
+                    linkId: selectedLinkId,
+                    key: s.key + 1,
+                  }))
+                }
+                disableZoomTo={!selectedLinkHasCoordinates}
+                onDelete={() =>
+                  setPendingDelete({
+                    kind: stableSelectedLink.type,
+                    id: stableSelectedLink.id,
+                  })
+                }
+                onLocateNode={(id) => {
+                  if (nodeMap.has(id)) selectNode(id);
+                }}
+                linkVar={linkVar}
+                ranges={stableResultMeta?.ranges}
+                hasSimulation={!!stableResultMeta}
+                isTransitioning={!!stableResultMeta && !linkIsEnriched}
+              />
+            )}
           </div>
 
-          {/* Annotation summary (measure) */}
-          {(activeTool === "measure" ||
-            measureGeoPts.length > 0 ||
-            measurePts.length > 0) && (
-            <AnnotationSummary
-              tool={activeTool}
-              measurePts={measurePts}
-              measureGeoPts={measureGeoPts}
-              measureDistanceM={measureDistanceM}
-              viewMode={viewMode}
-              onClear={clearAnnotations}
-            />
-          )}
+          {/* Results panel — moved to Results top-level tab */}
+        </div>
 
-          {/* Floating viewport controls */}
+        {/* Timeline bar — always shown in canvas mode. */}
+        {stableResultMeta ? (
+          <Timeline
+            currentHour={currentHour}
+            setCurrentHour={setCurrentHour}
+            isPlaying={isPlaying}
+            setIsPlaying={setIsPlaying}
+            speed={speed}
+            setSpeed={setSpeed}
+            loop={loop}
+            setLoop={setLoop}
+            resultMeta={stableResultMeta}
+            maxStep={maxStep}
+            steadyState={isSteadyState}
+          />
+        ) : (
           <div
-            className="canvas-toolbar"
-            style={{
-              position: "absolute",
-              right: 12,
-              bottom: 12,
-              zIndex: 11,
-              flexDirection: "column",
-              gap: 8,
-            }}
+            className="timeline-bar"
+            style={{ justifyContent: "center", gap: 8 }}
           >
-            <div style={{ display: "flex", flexDirection: "column", gap: 0 }}>
-              <button
-                type="button"
-                className="tool-btn"
-                onClick={() => setZoomInKey((k) => k + 1)}
-                data-tooltip="Zoom in"
-                data-tooltip-pos="left"
-                aria-label="Zoom in"
-                style={{
-                  borderBottomLeftRadius: 0,
-                  borderBottomRightRadius: 0,
-                }}
-              >
-                <PlusIcon style={ICON_14} />
-              </button>
-
-              <button
-                type="button"
-                className="tool-btn"
-                onClick={() => setZoomOutKey((k) => k + 1)}
-                data-tooltip="Zoom out"
-                data-tooltip-pos="left"
-                aria-label="Zoom out"
-                style={{
-                  borderTopLeftRadius: 0,
-                  borderTopRightRadius: 0,
-                  marginTop: -1,
-                }}
-              >
-                <MinusIcon style={ICON_14} />
-              </button>
-            </div>
-
-            <button
-              type="button"
-              className="tool-btn"
-              onClick={() => setResetNorthKey((k) => k + 1)}
-              disabled={mapOnly}
-              data-tooltip={mapOnlyTooltip("Reset north")}
-              data-tooltip-pos="left"
-              aria-label="Reset north"
-              style={mapOnlyDim}
-            >
-              <ArrowsRightLeftIcon style={ICON_14} />
-            </button>
-
-            <button
-              type="button"
-              className="tool-btn"
-              onClick={() => setMapFitKey((k) => k + 1)}
-              data-tooltip="Fit network"
-              data-tooltip-pos="left"
-              aria-label="Fit network"
-            >
-              <ArrowsPointingOutIcon style={ICON_14} />
-            </button>
+            <span style={{ color: "var(--text-tertiary)", fontSize: 12 }}>
+              {resultMetaLoading
+                ? "Loading simulation state..."
+                : isSteadyState
+                  ? "This scenario has no steady-state result yet. Run a simulation to generate the snapshot."
+                  : "This scenario is not simulated yet. Run a simulation to enable timeline stepping."}
+            </span>
           </div>
+        )}
 
-          {/* Inspector panel — node or link detail view */}
-          {inspectorView === "node" && stableSelectedNode && (
-            <NodeInspector
-              node={stableSelectedNode}
-              onClose={clearSelection}
-              onOpenInEditor={() => {
-                setProjectView("editor");
-              }}
-              onZoomTo={() =>
-                setFlyToState((s) => ({
-                  nodeId: selectedNodeId,
-                  linkId: null,
-                  key: s.key + 1,
-                }))
-              }
-              disableZoomTo={!selectedNodeHasCoordinates}
-              onDelete={() =>
-                setPendingDelete({
-                  kind: stableSelectedNode.type,
-                  id: stableSelectedNode.id,
-                })
-              }
-              onOpenPattern={() => {
-                setProjectView("editor");
-              }}
-              onLocateRelated={(id) => {
-                if (linkMap.has(id)) selectLink(id);
-              }}
-              nodeVar={nodeVar}
-              ranges={stableResultMeta?.ranges}
-              hasSimulation={!!stableResultMeta}
-              isTransitioning={!!stableResultMeta && !nodeIsEnriched}
-            />
-          )}
-          {inspectorView === "link" && stableSelectedLink && (
-            <LinkInspector
-              link={stableSelectedLink}
-              onClose={clearSelection}
-              onOpenInEditor={() => {
-                setProjectView("editor");
-              }}
-              onZoomTo={() =>
-                setFlyToState((s) => ({
-                  nodeId: null,
-                  linkId: selectedLinkId,
-                  key: s.key + 1,
-                }))
-              }
-              disableZoomTo={!selectedLinkHasCoordinates}
-              onDelete={() =>
-                setPendingDelete({
-                  kind: stableSelectedLink.type,
-                  id: stableSelectedLink.id,
-                })
-              }
-              onLocateNode={(id) => {
-                if (nodeMap.has(id)) selectNode(id);
-              }}
-              linkVar={linkVar}
-              ranges={stableResultMeta?.ranges}
-              hasSimulation={!!stableResultMeta}
-              isTransitioning={!!stableResultMeta && !linkIsEnriched}
-            />
-          )}
-        </div>
-
-        {/* Results panel — moved to Results top-level tab */}
-      </div>
-
-      {/* Timeline bar — always shown in canvas mode. */}
-      {stableResultMeta ? (
-        <Timeline
-          currentHour={currentHour}
-          setCurrentHour={setCurrentHour}
-          isPlaying={isPlaying}
-          setIsPlaying={setIsPlaying}
-          speed={speed}
-          setSpeed={setSpeed}
-          loop={loop}
-          setLoop={setLoop}
-          resultMeta={stableResultMeta}
-          maxStep={maxStep}
-          steadyState={isSteadyState}
+        <DeleteConfirmModal
+          open={!!pendingDelete}
+          elementKind={pendingDelete?.kind ?? ""}
+          elementId={pendingDelete?.id ?? ""}
+          onConfirm={handleConfirmDelete}
+          onCancel={() => setPendingDelete(null)}
         />
-      ) : (
-        <div
-          className="timeline-bar"
-          style={{ justifyContent: "center", gap: 8 }}
-        >
-          <span style={{ color: "var(--text-tertiary)", fontSize: 12 }}>
-            {resultMetaLoading
-              ? "Loading simulation state..."
-              : isSteadyState
-                ? "This scenario has no steady-state result yet. Run a simulation to generate the snapshot."
-                : "This scenario is not simulated yet. Run a simulation to enable timeline stepping."}
-          </span>
-        </div>
-      )}
-
-      <DeleteConfirmModal
-        open={!!pendingDelete}
-        elementKind={pendingDelete?.kind ?? ""}
-        elementId={pendingDelete?.id ?? ""}
-        onConfirm={handleConfirmDelete}
-        onCancel={() => setPendingDelete(null)}
-      />
-      <CreateNodeModal
-        open={!!pendingCreateNode}
-        suggestId={suggestNodeId}
-        lng={pendingCreateNode?.lng ?? 0}
-        lat={pendingCreateNode?.lat ?? 0}
-        onConfirm={handleConfirmCreateNode}
-        onCancel={() => setPendingCreateNode(null)}
-      />
-      <CreateLinkModal
-        open={!!pendingCreateLink}
-        suggestId={suggestLinkId}
-        fromNodeId={pendingCreateLink?.fromId ?? ""}
-        toNodeId={pendingCreateLink?.toId ?? ""}
-        onConfirm={handleConfirmCreateLink}
-        onCancel={() => setPendingCreateLink(null)}
-      />
-    </div>
+        <CreateNodeModal
+          open={!!pendingCreateNode}
+          suggestId={suggestNodeId}
+          lng={pendingCreateNode?.lng ?? 0}
+          lat={pendingCreateNode?.lat ?? 0}
+          onConfirm={handleConfirmCreateNode}
+          onCancel={() => setPendingCreateNode(null)}
+        />
+        <CreateLinkModal
+          open={!!pendingCreateLink}
+          suggestId={suggestLinkId}
+          fromNodeId={pendingCreateLink?.fromId ?? ""}
+          toNodeId={pendingCreateLink?.toId ?? ""}
+          onConfirm={handleConfirmCreateLink}
+          onCancel={() => setPendingCreateLink(null)}
+        />
+      </div>
+    </CurrentPeriodProvider>
   );
 }

@@ -69,6 +69,12 @@ import {
   useNodes,
 } from "./index";
 import { useNetworkVersion } from "./NetworkVersionContext";
+import {
+  buildSaveUndoEntry,
+  clearRedo,
+  pushUndoEntry,
+  stackKey,
+} from "./undoStack";
 
 // ── Elements (types re-exported from elementsEditorDerivations) ──────────────
 
@@ -475,8 +481,28 @@ export function DraftProvider({ children }: { children: ReactNode }) {
         // Row models and the ID pool are derived here, lazily, from the
         // current network snapshot — see the comment on `networkRef` above.
         const { nodes: nodesNow, links: linksNow } = networkRef.current;
+        const draftEntriesNow = Array.from(elementsDraft.values());
+        // Undo capture — built BEFORE the save commits, from the current
+        // committed snapshot: inverse patches for staged field edits, undo
+        // deletes for pending adds, undo recreates (incl. cascade links) for
+        // pending deletes. Pushed only for fully successful saves — after a
+        // partial failure the applied/failed split is ambiguous, so the redo
+        // branch is dropped instead (the network did change).
+        const undoKey = project?.id
+          ? stackKey(project.id, activeScenarioId ?? null)
+          : null;
+        const undoCapture = undoKey
+          ? buildSaveUndoEntry({
+              draftEntries: draftEntriesNow,
+              pendingAdds,
+              pendingDeletes,
+              nodes: nodesNow,
+              links: linksNow,
+              tempIdPrefix: ELEMENT_TEMP_ID_PREFIX,
+            })
+          : null;
         const result = await saveStagedElements({
-          draftEntries: Array.from(elementsDraft.values()),
+          draftEntries: draftEntriesNow,
           pendingAdds,
           pendingDeletes,
           pendingDeleteKeys: new Set(
@@ -491,6 +517,13 @@ export function DraftProvider({ children }: { children: ReactNode }) {
         applied += result.applied;
         failed += result.failed;
         errors.push(...result.errors);
+        if (undoKey && result.applied > 0) {
+          if (undoCapture && result.failed === 0) {
+            pushUndoEntry(undoKey, undoCapture);
+          } else {
+            clearRedo(undoKey);
+          }
+        }
       }
 
       // ── Curves: edits → deletes → creates ─────────────────────────────────

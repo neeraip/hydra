@@ -14,6 +14,7 @@ import { TaskTray } from "./components/panels/TaskTray";
 import { Toast } from "./components/ui/Toast";
 import { TooltipPortal } from "./components/ui/TooltipPortal";
 import { tryInvoke } from "./hooks/ipc";
+import { useUndoRedo } from "./hooks/useUndoRedo";
 import { startMainThreadStallWatch } from "./perfTrace";
 import type { ProjectView } from "./projectConfig";
 import {
@@ -87,6 +88,7 @@ export function App() {
     closeIssuesPanel,
   } = useAppState();
 
+  const { undo, redo } = useUndoRedo();
   const [shortcutCardOpen, setShortcutCardOpen] = useState(false);
   const [animKey, setAnimKey] = useState(0);
   const [animDir, setAnimDir] = useState<"right" | "left">("right");
@@ -176,6 +178,21 @@ export function App() {
       ) {
         setShortcutCardOpen((prev) => !prev);
       }
+      // ⌘Z undo / ⌘⇧Z redo — committed network edits, project page only.
+      // Skipped while typing (text fields have their own undo) and while the
+      // command palette or run modal is open (their own undo semantics).
+      if (
+        primary &&
+        key === "z" &&
+        page === "project" &&
+        !inEditable &&
+        !commandPaletteOpen &&
+        !runModalOpen
+      ) {
+        e.preventDefault();
+        if (e.shiftKey) redo();
+        else undo();
+      }
       // ⌘S / Ctrl-S — save staged editor drafts. preventDefault always on
       // the project page so the browser save dialog can never appear.
       if (primary && key === "s" && page === "project") {
@@ -229,6 +246,8 @@ export function App() {
     issuesPanelOpen,
     toggleIssuesPanel,
     closeIssuesPanel,
+    undo,
+    redo,
   ]);
 
   // Alternate between identical base/-alt keyframe names so the animation
