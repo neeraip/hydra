@@ -3856,4 +3856,827 @@ Headloss    H-W
         assert_eq!(network.nodes.len(), 4);
         assert_eq!(network.links.len(), 3);
     }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Syntactic robustness — separators, casing, ordering, line endings
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /// A minimal valid network in SI (CMS) units so that most internal values
+    /// equal their user-facing values (all length/flow factors are 1.0).
+    const MINIMAL_CMS: &str = "\
+[JUNCTIONS]
+J1    0    0.5
+
+[RESERVOIRS]
+R1    100
+
+[PIPES]
+P1    R1    J1    1000    300    100    0    Open
+
+[OPTIONS]
+Units    CMS
+Headloss    H-W
+";
+
+    #[test]
+    fn crlf_line_endings_parse_identically() {
+        let unix = MINIMAL_CMS.as_bytes().to_vec();
+        let dos = MINIMAL_CMS.replace('\n', "\r\n").into_bytes();
+
+        let net_unix = parse_inp(&unix).expect("LF input parses");
+        let net_dos = parse_inp(&dos).expect("CRLF input parses");
+
+        assert_eq!(net_unix.nodes.len(), net_dos.nodes.len());
+        assert_eq!(net_unix.links.len(), net_dos.links.len());
+        assert_eq!(
+            net_unix.nodes[0].base.elevation,
+            net_dos.nodes[0].base.elevation
+        );
+    }
+
+    #[test]
+    fn crlf_error_line_numbers_match_lf_input() {
+        // The same malformed junction line must be reported at the same
+        // 1-based line number regardless of the line-ending convention.
+        let bad = "[JUNCTIONS]\nJ1    zero    10\n";
+        let err_lf = parse_inp(bad.as_bytes()).expect_err("bad elev");
+        let err_crlf =
+            parse_inp(bad.replace('\n', "\r\n").as_bytes()).expect_err("bad elev (CRLF)");
+        let (sec_lf, line_lf, _) = unwrap_at_line(err_lf);
+        let (sec_crlf, line_crlf, _) = unwrap_at_line(err_crlf);
+        assert_eq!((sec_lf.as_str(), line_lf), ("JUNCTIONS", 2));
+        assert_eq!((sec_crlf.as_str(), line_crlf), ("JUNCTIONS", 2));
+    }
+
+    #[test]
+    fn tab_separated_fields_parse() {
+        let inp = "[JUNCTIONS]\nJ1\t0\t0.25\n\n[RESERVOIRS]\nR1\t100\n\n\
+                   [PIPES]\nP1\tR1\tJ1\t1000\t300\t100\t0\tOpen\n\n\
+                   [OPTIONS]\nUnits\tCMS\nHeadloss\tH-W\n";
+        let network = parse_inp(inp.as_bytes()).expect("tab-separated input parses");
+        assert_eq!(network.nodes.len(), 2);
+        assert_eq!(network.links.len(), 1);
+    }
+
+    #[test]
+    fn mixed_case_section_headers_and_keywords_parse() {
+        let inp = "[Junctions]\nJ1    0    0.5\n\n[reservoirs]\nR1    100\n\n\
+                   [PiPeS]\nP1    R1    J1    1000    300    100    0    open\n\n\
+                   [options]\nunits    cms\nheadloss    h-w\n";
+        let network = parse_inp(inp.as_bytes()).expect("mixed-case input parses");
+        assert_eq!(network.nodes.len(), 2);
+        assert_eq!(network.options.flow_units, FlowUnits::Cms);
+        assert_eq!(
+            network.options.head_loss_formula,
+            HeadLossFormula::HazenWilliams
+        );
+    }
+
+    #[test]
+    fn indented_section_headers_and_data_lines_parse() {
+        let inp = "   [JUNCTIONS]\n   J1    0    0.5   \n\n\t[RESERVOIRS]\n\tR1    100\n\n\
+                   [PIPES]\n  P1    R1    J1    1000    300    100    0    Open  \n\n\
+                   [OPTIONS]\n  Units    CMS\n  Headloss    H-W\n";
+        let network = parse_inp(inp.as_bytes()).expect("indented input parses");
+        assert_eq!(network.nodes.len(), 2);
+        assert_eq!(network.links.len(), 1);
+    }
+
+    #[test]
+    fn duplicated_section_headers_merge_contents() {
+        // EPANET files sometimes repeat a section; lines accumulate.
+        let inp = "[JUNCTIONS]\nJ1    0    0.5\n\n[RESERVOIRS]\nR1    100\n\n\
+                   [JUNCTIONS]\nJ2    0    0.25\n\n\
+                   [PIPES]\nP1    R1    J1    1000    300    100    0    Open\n\n\
+                   [PIPES]\nP2    J1    J2    500    300    100    0    Open\n\n\
+                   [OPTIONS]\nUnits    CMS\nHeadloss    H-W\n";
+        let network = parse_inp(inp.as_bytes()).expect("duplicated sections parse");
+        assert_eq!(network.nodes.len(), 3);
+        assert_eq!(network.links.len(), 2);
+    }
+
+    #[test]
+    fn sections_in_unusual_order_parse() {
+        // Links physically before the nodes they reference; OPTIONS first.
+        let inp = "[OPTIONS]\nUnits    CMS\nHeadloss    H-W\n\n\
+                   [PIPES]\nP1    R1    J1    1000    300    100    0    Open\n\n\
+                   [JUNCTIONS]\nJ1    0    0.5\n\n[RESERVOIRS]\nR1    100\n";
+        let network = parse_inp(inp.as_bytes()).expect("out-of-order sections parse");
+        assert_eq!(network.nodes.len(), 2);
+        assert_eq!(network.links.len(), 1);
+    }
+
+    #[test]
+    fn blank_sections_are_ok() {
+        let inp = "[JUNCTIONS]\nJ1    0    0.5\n\n[RESERVOIRS]\nR1    100\n\n\
+                   [TANKS]\n\n[PUMPS]\n\n[VALVES]\n\n[DEMANDS]\n\n[STATUS]\n\n\
+                   [PATTERNS]\n\n[CURVES]\n\n[CONTROLS]\n\n[RULES]\n\n\
+                   [PIPES]\nP1    R1    J1    1000    300    100    0    Open\n\n\
+                   [OPTIONS]\nUnits    CMS\nHeadloss    H-W\n";
+        let network = parse_inp(inp.as_bytes()).expect("blank sections parse");
+        assert_eq!(network.nodes.len(), 2);
+        assert!(network.controls.is_empty());
+        assert!(network.rules.is_empty());
+    }
+
+    #[test]
+    fn content_after_end_marker_is_ignored() {
+        let inp = format!("{MINIMAL_CMS}\n[END]\nthis is not INP data ]][[\nJ9 xx yy\n");
+        let network = parse_inp(inp.as_bytes()).expect("content after [END] ignored");
+        assert_eq!(network.nodes.len(), 2);
+    }
+
+    #[test]
+    fn ids_with_special_characters_parse() {
+        let inp = "[JUNCTIONS]\nJ-1.a_b/2    0    0.5\n\n[RESERVOIRS]\nR&1    100\n\n\
+                   [PIPES]\nP#1@x    R&1    J-1.a_b/2    1000    300    100    0    Open\n\n\
+                   [OPTIONS]\nUnits    CMS\nHeadloss    H-W\n";
+        let network = parse_inp(inp.as_bytes()).expect("special-char IDs parse");
+        assert!(network.nodes.iter().any(|n| n.base.id == "J-1.a_b/2"));
+        assert!(network.nodes.iter().any(|n| n.base.id == "R&1"));
+        assert!(network.links.iter().any(|l| l.base.id == "P#1@x"));
+    }
+
+    #[test]
+    fn very_long_pattern_line_parses() {
+        let factors: Vec<String> = (0..120).map(|i| format!("{}.5", i % 3)).collect();
+        let inp = format!(
+            "[JUNCTIONS]\nJ1    0    0.5    PAT1\n\n[RESERVOIRS]\nR1    100\n\n\
+             [PIPES]\nP1    R1    J1    1000    300    100    0    Open\n\n\
+             [PATTERNS]\nPAT1    {}\n\n[OPTIONS]\nUnits    CMS\nHeadloss    H-W\n",
+            factors.join("    ")
+        );
+        let network = parse_inp(inp.as_bytes()).expect("long pattern line parses");
+        let pat = network
+            .patterns
+            .iter()
+            .find(|p| p.id == "PAT1")
+            .expect("PAT1 present");
+        assert_eq!(pat.factors.len(), 120);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Section semantics — [DEMANDS], [SOURCES], [QUALITY], valves, tanks, pumps
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn first_demands_entry_replaces_junction_demand_then_appends() {
+        // EPANET semantics: the first [DEMANDS] entry for a junction REPLACES
+        // the [JUNCTIONS] demand; subsequent entries append.
+        let inp = "[JUNCTIONS]\nJ1    0    10\n\n[RESERVOIRS]\nR1    100\n\n\
+                   [PIPES]\nP1    R1    J1    1000    300    100    0    Open\n\n\
+                   [DEMANDS]\nJ1    5\nJ1    3\n\n\
+                   [OPTIONS]\nUnits    CMS\nHeadloss    H-W\n";
+        let network = parse_inp(inp.as_bytes()).unwrap();
+        let junction = network
+            .nodes
+            .iter()
+            .find_map(|n| match &n.kind {
+                NodeKind::Junction(j) if n.base.id == "J1" => Some(j),
+                _ => None,
+            })
+            .expect("J1 exists");
+        assert_eq!(junction.demands.len(), 2, "replace-then-append semantics");
+        assert!((junction.demands[0].base_demand - 5.0).abs() < 1e-12);
+        assert!((junction.demands[1].base_demand - 3.0).abs() < 1e-12);
+    }
+
+    #[test]
+    fn demand_category_name_is_captured() {
+        let inp = "[JUNCTIONS]\nJ1    0    10\n\n[RESERVOIRS]\nR1    100\n\n\
+                   [PIPES]\nP1    R1    J1    1000    300    100    0    Open\n\n\
+                   [PATTERNS]\nPAT1    1.0    0.5\n\n\
+                   [DEMANDS]\nJ1    5    PAT1    Domestic use\n\n\
+                   [OPTIONS]\nUnits    CMS\nHeadloss    H-W\n";
+        let network = parse_inp(inp.as_bytes()).unwrap();
+        let junction = network
+            .nodes
+            .iter()
+            .find_map(|n| match &n.kind {
+                NodeKind::Junction(j) if n.base.id == "J1" => Some(j),
+                _ => None,
+            })
+            .expect("J1 exists");
+        assert_eq!(junction.demands.len(), 1);
+        assert_eq!(junction.demands[0].pattern.as_deref(), Some("PAT1"));
+        assert_eq!(junction.demands[0].name.as_deref(), Some("Domestic use"));
+    }
+
+    #[test]
+    fn source_type_omitted_defaults_to_concentration() {
+        let inp = "[JUNCTIONS]\nJ1    0    0.5\n\n[RESERVOIRS]\nR1    100\n\n\
+                   [PIPES]\nP1    R1    J1    1000    300    100    0    Open\n\n\
+                   [SOURCES]\nR1    2.5\n\n\
+                   [OPTIONS]\nUnits    CMS\nHeadloss    H-W\nQuality    Chlorine mg/L\n";
+        let network = parse_inp(inp.as_bytes()).unwrap();
+        let src = network
+            .nodes
+            .iter()
+            .find(|n| n.base.id == "R1")
+            .and_then(|n| n.source.as_ref())
+            .expect("R1 has a source");
+        assert_eq!(src.kind, SourceType::Concentration);
+        assert!((src.base_value - 2.5).abs() < 1e-12);
+        assert!(src.pattern.is_none());
+    }
+
+    #[test]
+    fn source_unknown_type_is_a_parse_error() {
+        let inp = "[JUNCTIONS]\nJ1    0    0.5\n\n[RESERVOIRS]\nR1    100\n\n\
+                   [PIPES]\nP1    R1    J1    1000    300    100    0    Open\n\n\
+                   [SOURCES]\nR1    BOGUS    2.5\n\n\
+                   [OPTIONS]\nUnits    CMS\nHeadloss    H-W\n";
+        let err = parse_inp(inp.as_bytes()).expect_err("unknown source type rejected");
+        let (section, _line, inner) = unwrap_at_line(err);
+        assert_eq!(section, "SOURCES");
+        assert!(
+            inner.to_string().contains("unknown source type"),
+            "got: {inner}"
+        );
+    }
+
+    #[test]
+    fn quality_numeric_range_assigns_nodes_in_range() {
+        let inp = "[JUNCTIONS]\n1    0    0.5\n2    0    0.25\n\n[RESERVOIRS]\n7    100\n\n\
+                   [PIPES]\nP1    7    1    1000    300    100    0    Open\n\
+                   P2    1    2    500    300    100    0    Open\n\n\
+                   [QUALITY]\n1    2    0.8\n\n\
+                   [OPTIONS]\nUnits    CMS\nHeadloss    H-W\nQuality    Chlorine mg/L\n";
+        let network = parse_inp(inp.as_bytes()).unwrap();
+        let quality_of = |id: &str| {
+            network
+                .nodes
+                .iter()
+                .find(|n| n.base.id == id)
+                .map(|n| n.base.initial_quality)
+                .unwrap()
+        };
+        assert_eq!(quality_of("1"), 0.8);
+        assert_eq!(quality_of("2"), 0.8);
+        assert_eq!(quality_of("7"), 0.0, "node outside the range is untouched");
+    }
+
+    #[test]
+    fn quality_lexicographic_range_assigns_nodes_in_range() {
+        let inp = "[JUNCTIONS]\nNA    0    0.5\nNB    0    0.25\n\n[RESERVOIRS]\nNZ    100\n\n\
+                   [PIPES]\nP1    NZ    NA    1000    300    100    0    Open\n\
+                   P2    NA    NB    500    300    100    0    Open\n\n\
+                   [QUALITY]\nNA    NB    0.6\n\n\
+                   [OPTIONS]\nUnits    CMS\nHeadloss    H-W\nQuality    Chlorine mg/L\n";
+        let network = parse_inp(inp.as_bytes()).unwrap();
+        let quality_of = |id: &str| {
+            network
+                .nodes
+                .iter()
+                .find(|n| n.base.id == id)
+                .map(|n| n.base.initial_quality)
+                .unwrap()
+        };
+        assert_eq!(quality_of("NA"), 0.6);
+        assert_eq!(quality_of("NB"), 0.6);
+        assert_eq!(quality_of("NZ"), 0.0);
+    }
+
+    #[test]
+    fn gpv_setting_field_is_a_curve_id() {
+        let inp = "[JUNCTIONS]\nJ1    0    0\nJ2    0    0.5\n\n[RESERVOIRS]\nR1    100\n\n\
+                   [PIPES]\nP1    R1    J1    300    300    100    0    Open\n\
+                   P2    J2    R1    300    300    100    0    Open\n\n\
+                   [VALVES]\nV1    J1    J2    300    GPV    HC1    0\n\n\
+                   [CURVES]\nHC1    0    0\nHC1    0.5    5\nHC1    1.0    5\n\n\
+                   [OPTIONS]\nUnits    CMS\nHeadloss    H-W\n";
+        let network = parse_inp(inp.as_bytes()).unwrap();
+        let (base, valve) = network
+            .links
+            .iter()
+            .find_map(|l| match &l.kind {
+                LinkKind::Valve(v) if l.base.id == "V1" => Some((&l.base, v)),
+                _ => None,
+            })
+            .expect("V1 exists");
+        assert_eq!(valve.valve_type, ValveType::Gpv);
+        assert_eq!(valve.curve.as_deref(), Some("HC1"));
+        assert_eq!(base.initial_status, LinkStatus::Active);
+        let curve = network.curves.iter().find(|c| c.id == "HC1").unwrap();
+        assert_eq!(curve.kind, CurveKind::GpvHeadloss);
+    }
+
+    #[test]
+    fn pcv_eighth_field_is_a_loss_ratio_curve_id() {
+        let inp = "[JUNCTIONS]\nJ1    0    0.2\nJ2    0    0.2\n\n\
+                   [RESERVOIRS]\nR1    200\nR2    50\n\n\
+                   [PIPES]\nP1    R1    J1    1000    300    100    0    Open\n\
+                   P2    J2    R2    1000    300    100    0    Open\n\n\
+                   [VALVES]\nV1    J1    J2    300    PCV    50    5    LC1\n\n\
+                   [CURVES]\nLC1    0    0\nLC1    50    40\nLC1    100    100\n\n\
+                   [OPTIONS]\nUnits    CMS\nHeadloss    H-W\n";
+        let network = parse_inp(inp.as_bytes()).unwrap();
+        let (base, valve) = network
+            .links
+            .iter()
+            .find_map(|l| match &l.kind {
+                LinkKind::Valve(v) if l.base.id == "V1" => Some((&l.base, v)),
+                _ => None,
+            })
+            .expect("V1 exists");
+        assert_eq!(valve.valve_type, ValveType::Pcv);
+        assert_eq!(valve.curve.as_deref(), Some("LC1"));
+        assert_eq!(base.initial_setting, Some(50.0), "percent-open setting");
+        let curve = network.curves.iter().find(|c| c.id == "LC1").unwrap();
+        assert_eq!(curve.kind, CurveKind::PcvLossRatio);
+    }
+
+    #[test]
+    fn pipe_seven_field_form_status_keyword_or_minor_loss() {
+        // With exactly 7 fields, field 7 may be a status keyword (CV/OPEN/
+        // CLOSED) or a numeric minor-loss value.
+        let inp = "[JUNCTIONS]\nJ1    0    0.2\nJ2    0    0.2\nJ3    0    0.1\n\n\
+                   [RESERVOIRS]\nR1    100\n\n\
+                   [PIPES]\n\
+                   PCV1    R1    J1    1000    300    100    CV\n\
+                   PCLS    J1    J2    1000    300    100    Closed\n\
+                   PNUM    J2    J3    1000    300    100    2.5\n\n\
+                   [OPTIONS]\nUnits    CMS\nHeadloss    H-W\n";
+        let network = parse_inp(inp.as_bytes()).unwrap();
+        let pipe = |id: &str| {
+            network
+                .links
+                .iter()
+                .find_map(|l| match &l.kind {
+                    LinkKind::Pipe(p) if l.base.id == id => Some((&l.base, p)),
+                    _ => None,
+                })
+                .unwrap_or_else(|| panic!("{id} exists"))
+        };
+        let (cv_base, cv) = pipe("PCV1");
+        assert!(cv.check_valve);
+        assert_eq!(cv_base.initial_status, LinkStatus::Open);
+        assert_eq!(cv.minor_loss, 0.0);
+
+        let (cls_base, cls) = pipe("PCLS");
+        assert!(!cls.check_valve);
+        assert_eq!(cls_base.initial_status, LinkStatus::Closed);
+        assert_eq!(cls.minor_loss, 0.0);
+
+        let (num_base, num) = pipe("PNUM");
+        assert!(!num.check_valve);
+        assert_eq!(num_base.initial_status, LinkStatus::Open);
+        assert!(num.minor_loss > 0.0, "numeric field is a minor loss");
+    }
+
+    #[test]
+    fn tank_star_volume_curve_placeholder_means_no_curve() {
+        let inp = "[RESERVOIRS]\nR1    200\n\n\
+                   [TANKS]\nT1    50    5    0    10    20    0    *    YES\n\n\
+                   [PIPES]\nP1    R1    T1    500    300    100    0    Open\n\n\
+                   [OPTIONS]\nUnits    CMS\nHeadloss    H-W\n";
+        let network = parse_inp(inp.as_bytes()).unwrap();
+        let tank = network
+            .nodes
+            .iter()
+            .find_map(|n| match &n.kind {
+                NodeKind::Tank(t) if n.base.id == "T1" => Some(t),
+                _ => None,
+            })
+            .expect("T1 exists");
+        assert!(tank.volume_curve.is_none(), "'*' is an empty placeholder");
+        assert!(tank.overflow, "9th field YES enables overflow");
+    }
+
+    #[test]
+    fn pump_head_speed_and_pattern_keywords_combine() {
+        let inp = "[JUNCTIONS]\nJ1    0    0.5\n\n[RESERVOIRS]\nR1    10\n\n\
+                   [PUMPS]\nPU1    R1    J1    HEAD    C1    SPEED    0.8    PATTERN    SPAT\n\n\
+                   [PATTERNS]\nSPAT    1.0    0.5    0.0\n\n\
+                   [CURVES]\nC1    0    30\nC1    0.5    20\nC1    1.0    5\n\n\
+                   [OPTIONS]\nUnits    CMS\nHeadloss    H-W\n";
+        let network = parse_inp(inp.as_bytes()).unwrap();
+        let (base, pump) = network
+            .links
+            .iter()
+            .find_map(|l| match &l.kind {
+                LinkKind::Pump(p) if l.base.id == "PU1" => Some((&l.base, p)),
+                _ => None,
+            })
+            .expect("PU1 exists");
+        assert_eq!(pump.head_curve.as_deref(), Some("C1"));
+        assert_eq!(pump.speed_pattern.as_deref(), Some("SPAT"));
+        assert_eq!(base.initial_setting, Some(0.8));
+        assert_eq!(pump.curve_type, PumpCurveType::PowerFunction);
+    }
+
+    #[test]
+    fn single_point_pump_curve_expands_to_three_points() {
+        // EPANET expands (Q1, H1) to (0, 1.33334·H1), (Q1, H1), (2·Q1, 0).
+        let inp = "[JUNCTIONS]\nJ1    0    0.3\n\n[RESERVOIRS]\nR1    10\n\n\
+                   [PUMPS]\nPU1    R1    J1    HEAD    C1\n\n\
+                   [CURVES]\nC1    0.5    20\n\n\
+                   [OPTIONS]\nUnits    CMS\nHeadloss    H-W\n";
+        let network = parse_inp(inp.as_bytes()).unwrap();
+        let curve = network.curves.iter().find(|c| c.id == "C1").unwrap();
+        assert_eq!(curve.points.len(), 3);
+        assert!((curve.points[0].x - 0.0).abs() < 1e-12);
+        assert!((curve.points[0].y - PUMP_SHUTOFF_HEAD_FACTOR * 20.0).abs() < 1e-9);
+        assert!((curve.points[1].x - 0.5).abs() < 1e-12);
+        assert!((curve.points[1].y - 20.0).abs() < 1e-12);
+        assert!((curve.points[2].x - 1.0).abs() < 1e-12);
+        assert!((curve.points[2].y - 0.0).abs() < 1e-12);
+    }
+
+    #[test]
+    fn status_section_sets_pump_speed_and_valve_status() {
+        let inp = "[JUNCTIONS]\nJ1    0    0.2\nJ2    0    0.2\n\n\
+                   [RESERVOIRS]\nR1    10\nR2    50\n\n\
+                   [PUMPS]\nPU1    R1    J1    HEAD    C1\n\n\
+                   [VALVES]\nV1    J1    J2    300    TCV    4    0\n\n\
+                   [PIPES]\nP2    J2    R2    500    300    100    0    Open\n\n\
+                   [CURVES]\nC1    0    60\nC1    0.5    40\nC1    1.0    10\n\n\
+                   [STATUS]\nPU1    0.5\nV1    CLOSED\n\n\
+                   [OPTIONS]\nUnits    CMS\nHeadloss    H-W\n";
+        let network = parse_inp(inp.as_bytes()).unwrap();
+        let link = |id: &str| {
+            network
+                .links
+                .iter()
+                .find(|l| l.base.id == id)
+                .unwrap_or_else(|| panic!("{id} exists"))
+        };
+        assert_eq!(link("PU1").base.initial_setting, Some(0.5));
+        assert_eq!(link("V1").base.initial_status, LinkStatus::Closed);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // [OPTIONS] / [TIMES] matrix
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /// Minimal CMS-units network with extra [OPTIONS] lines, so option values
+    /// that pass through unit conversion keep their user-facing magnitudes.
+    fn minimal_cms_with_options(options: &str) -> Vec<u8> {
+        format!(
+            "[JUNCTIONS]\nJ1    0    0.5\n\n[RESERVOIRS]\nR1    100\n\n\
+             [PIPES]\nP1    R1    J1    1000    300    100    0    Open\n\n\
+             [OPTIONS]\nUnits    CMS\nHeadloss    H-W\n{options}\n"
+        )
+        .into_bytes()
+    }
+
+    /// Same, but with extra [TIMES] lines.
+    fn minimal_cms_with_times(times: &str) -> Vec<u8> {
+        format!(
+            "[JUNCTIONS]\nJ1    0    0.5\n\n[RESERVOIRS]\nR1    100\n\n\
+             [PIPES]\nP1    R1    J1    1000    300    100    0    Open\n\n\
+             [OPTIONS]\nUnits    CMS\nHeadloss    H-W\n\n[TIMES]\n{times}\n"
+        )
+        .into_bytes()
+    }
+
+    #[test]
+    fn unbalanced_stop_and_continue_forms() {
+        let net = parse_inp(&minimal_cms_with_options("Unbalanced    STOP")).unwrap();
+        assert_eq!(net.options.extra_iter, -1);
+
+        let net = parse_inp(&minimal_cms_with_options("Unbalanced    CONTINUE    5")).unwrap();
+        assert_eq!(net.options.extra_iter, 5);
+
+        let net = parse_inp(&minimal_cms_with_options("Unbalanced    CONTINUE")).unwrap();
+        assert_eq!(net.options.extra_iter, 0);
+    }
+
+    #[test]
+    fn htol_and_qtol_are_stored_in_internal_units() {
+        // CMS: elevation and flow factors are 1.0, so values pass through.
+        let net = parse_inp(&minimal_cms_with_options("HTOL    0.005\nQTOL    0.002")).unwrap();
+        assert!((net.options.head_tol - 0.005).abs() < 1e-12);
+        assert!((net.options.flow_change_tol - 0.002).abs() < 1e-12);
+    }
+
+    #[test]
+    fn solver_tuning_options_parse() {
+        let net = parse_inp(&minimal_cms_with_options(
+            "RQTOL    1e-5\nDAMPLIMIT    0.01\nFLOWCHANGE    0.001\nHEADERROR    0.002\nAccuracy    0.005",
+        ))
+        .unwrap();
+        assert!((net.options.rq_tol - 1e-5).abs() < 1e-18);
+        assert!((net.options.damp_limit - 0.01).abs() < 1e-12);
+        assert!((net.options.flow_change_limit - 0.001).abs() < 1e-12);
+        assert!((net.options.head_error_limit - 0.002).abs() < 1e-12);
+        assert!((net.options.flow_tol - 0.005).abs() < 1e-12);
+    }
+
+    #[test]
+    fn tolerance_option_sets_quality_tolerance() {
+        let net = parse_inp(&minimal_cms_with_options("Tolerance    0.05")).unwrap();
+        assert!((net.options.quality_tolerance - 0.05).abs() < 1e-12);
+    }
+
+    #[test]
+    fn backflow_allowed_yes_no_and_invalid() {
+        let net = parse_inp(&minimal_cms_with_options("Backflow Allowed    YES")).unwrap();
+        assert!(net.options.emitter_backflow);
+
+        let net = parse_inp(&minimal_cms_with_options("Backflow Allowed    NO")).unwrap();
+        assert!(!net.options.emitter_backflow);
+
+        let err = parse_inp(&minimal_cms_with_options("Backflow Allowed    MAYBE"))
+            .expect_err("invalid BACKFLOW ALLOWED value rejected");
+        assert!(err.to_string().contains("BACKFLOW ALLOWED"), "got: {err}");
+    }
+
+    #[test]
+    fn demand_multiplier_and_specific_gravity_options_parse() {
+        let net = parse_inp(&minimal_cms_with_options(
+            "Demand Multiplier    1.5\nSpecific Gravity    0.9",
+        ))
+        .unwrap();
+        assert!((net.options.demand_multiplier - 1.5).abs() < 1e-12);
+        assert!((net.options.specific_gravity - 0.9).abs() < 1e-12);
+    }
+
+    #[test]
+    fn emitter_exponent_option_applies_to_all_junctions() {
+        let net = parse_inp(&minimal_cms_with_options("Emitter Exponent    0.75")).unwrap();
+        for node in &net.nodes {
+            if let NodeKind::Junction(ref j) = node.kind {
+                assert!((j.emitter_exp - 0.75).abs() < 1e-12);
+            }
+        }
+    }
+
+    #[test]
+    fn default_pattern_option_and_implicit_pattern_one() {
+        // With an explicit PATTERN option referencing a defined pattern, no
+        // implicit pattern "1" is created.
+        let inp = "[JUNCTIONS]\nJ1    0    0.5\n\n[RESERVOIRS]\nR1    100\n\n\
+                   [PIPES]\nP1    R1    J1    1000    300    100    0    Open\n\n\
+                   [PATTERNS]\nPAT1    1.0    0.5\n\n\
+                   [OPTIONS]\nUnits    CMS\nHeadloss    H-W\nPattern    PAT1\n";
+        let net = parse_inp(inp.as_bytes()).unwrap();
+        assert_eq!(net.options.default_pattern.as_deref(), Some("PAT1"));
+        assert!(!net.patterns.iter().any(|p| p.id == "1"));
+
+        // Without a PATTERN option, EPANET defaults to pattern "1" and
+        // implicitly creates an all-1.0 pattern of that name.
+        let net = parse_inp(MINIMAL_CMS.as_bytes()).unwrap();
+        assert_eq!(net.options.default_pattern.as_deref(), Some("1"));
+        let implicit = net.patterns.iter().find(|p| p.id == "1").unwrap();
+        assert_eq!(implicit.factors, vec![1.0]);
+    }
+
+    #[test]
+    fn unknown_option_keyword_is_ignored() {
+        // Deliberate deviation (spec.md §4.3): unknown [OPTIONS] keywords are
+        // skipped for forward compatibility.
+        let net = parse_inp(&minimal_cms_with_options(
+            "FROBNICATE    42\nMAP    city.map",
+        ))
+        .unwrap();
+        assert_eq!(net.nodes.len(), 2);
+    }
+
+    #[test]
+    fn times_plain_numbers_and_unit_suffixes() {
+        let net = parse_inp(&minimal_cms_with_times(
+            "Duration    30    MINUTES\nHydraulic Timestep    600    SECONDS",
+        ))
+        .unwrap();
+        assert_eq!(net.options.duration, 1800.0);
+        assert_eq!(net.options.hyd_step, 600.0);
+
+        // A bare number is hours.
+        let net = parse_inp(&minimal_cms_with_times("Duration    2")).unwrap();
+        assert_eq!(net.options.duration, 7200.0);
+
+        let net = parse_inp(&minimal_cms_with_times("Duration    1    DAYS")).unwrap();
+        assert_eq!(net.options.duration, 86400.0);
+    }
+
+    #[test]
+    fn times_hms_form_parses_seconds() {
+        let net = parse_inp(&minimal_cms_with_times("Duration    1:30:30")).unwrap();
+        assert_eq!(net.options.duration, 5430.0);
+    }
+
+    #[test]
+    fn times_start_clocktime_am_pm() {
+        let net = parse_inp(&minimal_cms_with_times("Start Clocktime    2:30 PM")).unwrap();
+        assert_eq!(net.options.start_clocktime, 14.5 * 3600.0);
+
+        let net = parse_inp(&minimal_cms_with_times("Start Clocktime    12 AM")).unwrap();
+        assert_eq!(net.options.start_clocktime, 0.0);
+
+        let net = parse_inp(&minimal_cms_with_times("Start Clocktime    12 PM")).unwrap();
+        assert_eq!(net.options.start_clocktime, 12.0 * 3600.0);
+    }
+
+    #[test]
+    fn times_pattern_and_report_start_parse() {
+        let net = parse_inp(&minimal_cms_with_times(
+            "Duration    24:00\nPattern Start    2:00\nReport Start    1:00\nRule Timestep    0:05",
+        ))
+        .unwrap();
+        assert_eq!(net.options.pattern_start, 7200.0);
+        assert_eq!(net.options.report_start, 3600.0);
+        assert_eq!(net.options.rule_timestep, 300.0);
+    }
+
+    #[test]
+    fn hydraulic_step_is_capped_to_pattern_and_report_steps() {
+        // Mirrors EPANET adjustdata(): Hstep = min(Hstep, Pstep, Rstep).
+        let net = parse_inp(&minimal_cms_with_times(
+            "Duration    24:00\nHydraulic Timestep    2:00\nPattern Timestep    1:00\nReport Timestep    1:00",
+        ))
+        .unwrap();
+        assert_eq!(net.options.hyd_step, 3600.0);
+    }
+
+    #[test]
+    fn quality_and_rule_timesteps_default_to_tenth_of_hydraulic_step() {
+        let net = parse_inp(&minimal_cms_with_times(
+            "Duration    24:00\nHydraulic Timestep    1:00\nPattern Timestep    1:00\nReport Timestep    1:00",
+        ))
+        .unwrap();
+        assert_eq!(net.options.qual_step, 360.0);
+        assert_eq!(net.options.rule_timestep, 360.0);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Error paths — undefined references, malformed values, validation failures
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn pipe_referencing_unknown_node_is_a_parse_error() {
+        let inp = "[JUNCTIONS]\nJ1    0    0.5\n\n[RESERVOIRS]\nR1    100\n\n\
+                   [PIPES]\nP1    R1    NOPE    1000    300    100    0    Open\n\n\
+                   [OPTIONS]\nUnits    CMS\nHeadloss    H-W\n";
+        let err = parse_inp(inp.as_bytes()).expect_err("unknown node ref rejected");
+        let (section, _line, inner) = unwrap_at_line(err);
+        assert_eq!(section, "PIPES");
+        assert!(
+            inner.to_string().contains("unknown node ID 'NOPE'"),
+            "got: {inner}"
+        );
+    }
+
+    #[test]
+    fn status_referencing_unknown_link_is_a_parse_error() {
+        let inp = "[JUNCTIONS]\nJ1    0    0.5\n\n[RESERVOIRS]\nR1    100\n\n\
+                   [PIPES]\nP1    R1    J1    1000    300    100    0    Open\n\n\
+                   [STATUS]\nNOPE    CLOSED\n\n\
+                   [OPTIONS]\nUnits    CMS\nHeadloss    H-W\n";
+        let err = parse_inp(inp.as_bytes()).expect_err("unknown link ref rejected");
+        let (section, _line, inner) = unwrap_at_line(err);
+        assert_eq!(section, "STATUS");
+        assert!(
+            inner.to_string().contains("unknown link ID 'NOPE'"),
+            "got: {inner}"
+        );
+    }
+
+    #[test]
+    fn demands_referencing_unknown_junction_is_a_parse_error() {
+        let inp = "[JUNCTIONS]\nJ1    0    0.5\n\n[RESERVOIRS]\nR1    100\n\n\
+                   [PIPES]\nP1    R1    J1    1000    300    100    0    Open\n\n\
+                   [DEMANDS]\nNOPE    5\n\n\
+                   [OPTIONS]\nUnits    CMS\nHeadloss    H-W\n";
+        let err = parse_inp(inp.as_bytes()).expect_err("unknown junction ref rejected");
+        let (section, _line, inner) = unwrap_at_line(err);
+        assert_eq!(section, "DEMANDS");
+        assert!(
+            inner.to_string().contains("unknown node ID 'NOPE'"),
+            "got: {inner}"
+        );
+    }
+
+    #[test]
+    fn junction_elevation_not_numeric_is_a_parse_error() {
+        let inp = "[JUNCTIONS]\nJ1    zero    0.5\n\n[RESERVOIRS]\nR1    100\n\n\
+                   [PIPES]\nP1    R1    J1    1000    300    100    0    Open\n\n\
+                   [OPTIONS]\nUnits    CMS\nHeadloss    H-W\n";
+        let err = parse_inp(inp.as_bytes()).expect_err("non-numeric elevation rejected");
+        let (section, line, inner) = unwrap_at_line(err);
+        assert_eq!(section, "JUNCTIONS");
+        assert_eq!(line, 2);
+        let msg = inner.to_string();
+        assert!(
+            msg.contains("JUNCTIONS.Elev") && msg.contains("'zero'"),
+            "got: {msg}"
+        );
+    }
+
+    #[test]
+    fn unknown_valve_type_is_a_parse_error() {
+        let inp = "[JUNCTIONS]\nJ1    0    0.2\nJ2    0    0.2\n\n[RESERVOIRS]\nR1    100\n\n\
+                   [PIPES]\nP1    R1    J1    1000    300    100    0    Open\n\n\
+                   [VALVES]\nV1    J1    J2    300    XYZ    50    0\n\n\
+                   [OPTIONS]\nUnits    CMS\nHeadloss    H-W\n";
+        let err = parse_inp(inp.as_bytes()).expect_err("unknown valve type rejected");
+        let (section, _line, inner) = unwrap_at_line(err);
+        assert_eq!(section, "VALVES");
+        assert!(
+            inner.to_string().contains("unknown valve type 'XYZ'"),
+            "got: {inner}"
+        );
+    }
+
+    #[test]
+    fn unknown_flow_units_is_a_parse_error() {
+        let err = parse_inp(&minimal_net_with_options("Units    FURLONGS"))
+            .expect_err("unknown units rejected");
+        assert!(
+            err.to_string().contains("unknown flow unit 'FURLONGS'"),
+            "got: {err}"
+        );
+    }
+
+    #[test]
+    fn unknown_headloss_formula_is_a_parse_error() {
+        let err = parse_inp(&minimal_net_with_options("Headloss    X-Y"))
+            .expect_err("unknown headloss formula rejected");
+        assert!(
+            err.to_string().contains("unknown formula 'X-Y'"),
+            "got: {err}"
+        );
+    }
+
+    #[test]
+    fn junction_only_network_fails_validation_with_no_reservoir() {
+        let inp = "[JUNCTIONS]\nJ1    0    0.5\nJ2    0    0.25\n\n\
+                   [PIPES]\nP1    J1    J2    1000    300    100    0    Open\n\n\
+                   [OPTIONS]\nUnits    CMS\nHeadloss    H-W\n";
+        let err = parse_inp(inp.as_bytes()).expect_err("no fixed-grade node rejected");
+        match err {
+            ParseError::ValidationFailed(errors) => {
+                assert!(
+                    errors
+                        .iter()
+                        .any(|e| matches!(e, crate::ValidationError::NoReservoir)),
+                    "expected NoReservoir, got: {errors:?}"
+                );
+            }
+            other => panic!("expected ValidationFailed, got: {other}"),
+        }
+    }
+
+    #[test]
+    fn self_loop_pipe_fails_validation() {
+        let inp = "[JUNCTIONS]\nJ1    0    0.5\n\n[RESERVOIRS]\nR1    100\n\n\
+                   [PIPES]\nP1    R1    J1    1000    300    100    0    Open\n\
+                   P2    J1    J1    500    300    100    0    Open\n\n\
+                   [OPTIONS]\nUnits    CMS\nHeadloss    H-W\n";
+        let err = parse_inp(inp.as_bytes()).expect_err("self-loop rejected");
+        match err {
+            ParseError::ValidationFailed(errors) => {
+                assert!(
+                    errors
+                        .iter()
+                        .any(|e| matches!(e, crate::ValidationError::LinkSelfLoop { .. })),
+                    "expected LinkSelfLoop, got: {errors:?}"
+                );
+            }
+            other => panic!("expected ValidationFailed, got: {other}"),
+        }
+    }
+
+    #[test]
+    fn undefined_demand_pattern_fails_validation() {
+        let inp = "[JUNCTIONS]\nJ1    0    0.5    PAT9\n\n[RESERVOIRS]\nR1    100\n\n\
+                   [PIPES]\nP1    R1    J1    1000    300    100    0    Open\n\n\
+                   [OPTIONS]\nUnits    CMS\nHeadloss    H-W\n";
+        let err = parse_inp(inp.as_bytes()).expect_err("undefined pattern rejected");
+        match err {
+            ParseError::ValidationFailed(errors) => {
+                assert!(
+                    errors.iter().any(|e| matches!(
+                        e,
+                        crate::ValidationError::UnknownPatternRef { pattern_id, .. }
+                            if pattern_id == "PAT9"
+                    )),
+                    "expected UnknownPatternRef for PAT9, got: {errors:?}"
+                );
+            }
+            other => panic!("expected ValidationFailed, got: {other}"),
+        }
+    }
+
+    #[test]
+    fn undefined_tank_volume_curve_fails_validation() {
+        let inp = "[RESERVOIRS]\nR1    200\n\n\
+                   [TANKS]\nT1    50    5    0    10    20    0    VC9\n\n\
+                   [PIPES]\nP1    R1    T1    500    300    100    0    Open\n\n\
+                   [OPTIONS]\nUnits    CMS\nHeadloss    H-W\n";
+        let err = parse_inp(inp.as_bytes()).expect_err("undefined volume curve rejected");
+        match err {
+            ParseError::ValidationFailed(errors) => {
+                assert!(
+                    errors.iter().any(|e| matches!(
+                        e,
+                        crate::ValidationError::UnknownCurveRef { curve_id, .. }
+                            if curve_id == "VC9"
+                    )),
+                    "expected UnknownCurveRef for VC9, got: {errors:?}"
+                );
+            }
+            other => panic!("expected ValidationFailed, got: {other}"),
+        }
+    }
 }

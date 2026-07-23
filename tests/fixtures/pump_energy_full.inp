@@ -1,0 +1,54 @@
+[TITLE]
+Pump with head + efficiency curves, speed pattern, and full energy pricing
+
+[JUNCTIONS]
+J1    50    120
+
+[RESERVOIRS]
+R1    10
+
+[PUMPS]
+;Head curve + relative speed + speed pattern
+PU1    R1    J1    HEAD    HC1    SPEED    0.9    PATTERN    SPAT
+
+[PIPES]
+P1    J1    R1    1500    10    100    0    Open
+
+[PATTERNS]
+;Pump speed schedule
+SPAT    1.0    0.8    0.6    0.8
+;Per-pump energy price schedule
+EPAT    1.0    1.5    2.0    1.5
+;Global energy price schedule
+GPAT    1.0    1.2    1.4    1.2
+
+[CURVES]
+;PUMP: three-point head curve (power-function form)
+HC1    0      200
+HC1    600    150
+HC1    1200   60
+;EFFICIENCY: flow vs efficiency %
+EC1    200    55
+EC1    600    78
+EC1    1000   65
+
+[ENERGY]
+Global Efficiency    80
+Global Price         0.09
+Global Pattern       GPAT
+Demand Charge        12.5
+Pump    PU1    Efficiency    EC1
+Pump    PU1    Price         0.11
+Pump    PU1    Pattern       EPAT
+
+[TIMES]
+Duration              24:00
+Hydraulic Timestep     1:00
+Pattern Timestep       6:00
+Report Timestep        1:00
+
+[OPTIONS]
+Units       GPM
+Headloss    H-W
+
+[END]

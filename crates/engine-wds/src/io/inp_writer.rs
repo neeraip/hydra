@@ -1265,6 +1265,467 @@ mod tests {
         }
     }
 
+    // ── Universal round-trip harness ─────────────────────────────────────────
+
+    /// Relative-or-absolute closeness for values that pass through a
+    /// user-unit conversion and a `{:.4}` text format.
+    fn close(a: f64, b: f64) -> bool {
+        let diff = (a - b).abs();
+        diff <= 1e-4 || diff <= 1e-3 * a.abs().max(b.abs())
+    }
+
+    /// Stricter structural equivalence between an original parse and its
+    /// re-parse after `write_inp`. Extends `round_trip_fixture` with checks
+    /// on topology, patterns, curves, controls, rules, title, and key options.
+    fn assert_round_trip_equivalent(name: &str, net1: &Network, net2: &Network) {
+        // ID → node-ID lookup helpers (1-based indices).
+        let node_id_of = |net: &Network, idx: usize| -> String {
+            net.nodes
+                .iter()
+                .find(|n| n.base.index == idx)
+                .map(|n| n.base.id.clone())
+                .unwrap_or_default()
+        };
+
+        // Title must be preserved verbatim.
+        assert_eq!(net1.title, net2.title, "{name}: title changed");
+
+        // Links: endpoints (by node ID), status, and setting must survive.
+        for l1 in &net1.links {
+            let l2 = net2
+                .links
+                .iter()
+                .find(|l| l.base.id == l1.base.id)
+                .unwrap_or_else(|| panic!("{name}: link '{}' missing", l1.base.id));
+            assert_eq!(
+                node_id_of(net1, l1.base.from_node),
+                node_id_of(net2, l2.base.from_node),
+                "{name}: link '{}' from-node changed",
+                l1.base.id
+            );
+            assert_eq!(
+                node_id_of(net1, l1.base.to_node),
+                node_id_of(net2, l2.base.to_node),
+                "{name}: link '{}' to-node changed",
+                l1.base.id
+            );
+            assert_eq!(
+                l1.base.initial_status, l2.base.initial_status,
+                "{name}: link '{}' initial status changed",
+                l1.base.id
+            );
+            if let (Some(s1), Some(s2)) = (l1.base.initial_setting, l2.base.initial_setting) {
+                assert!(
+                    close(s1, s2),
+                    "{name}: link '{}' setting drifted: {s1} → {s2}",
+                    l1.base.id
+                );
+            }
+            // Pump-specific references and values must survive.
+            if let (LinkKind::Pump(p1), LinkKind::Pump(p2)) = (&l1.kind, &l2.kind) {
+                assert_eq!(
+                    p1.head_curve, p2.head_curve,
+                    "{name}: pump '{}' head curve changed",
+                    l1.base.id
+                );
+                assert_eq!(
+                    p1.efficiency_curve, p2.efficiency_curve,
+                    "{name}: pump '{}' efficiency curve changed",
+                    l1.base.id
+                );
+                assert_eq!(
+                    p1.speed_pattern, p2.speed_pattern,
+                    "{name}: pump '{}' speed pattern changed",
+                    l1.base.id
+                );
+                assert_eq!(
+                    p1.price_pattern, p2.price_pattern,
+                    "{name}: pump '{}' price pattern changed",
+                    l1.base.id
+                );
+                match (p1.energy_price, p2.energy_price) {
+                    (Some(e1), Some(e2)) => assert!(
+                        close(e1, e2),
+                        "{name}: pump '{}' energy price drifted",
+                        l1.base.id
+                    ),
+                    (e1, e2) => assert_eq!(
+                        e1.is_some(),
+                        e2.is_some(),
+                        "{name}: pump '{}' energy price presence changed",
+                        l1.base.id
+                    ),
+                }
+                match (p1.power, p2.power) {
+                    (Some(w1), Some(w2)) => assert!(
+                        close(w1, w2),
+                        "{name}: pump '{}' rated power drifted",
+                        l1.base.id
+                    ),
+                    (w1, w2) => assert_eq!(
+                        w1.is_some(),
+                        w2.is_some(),
+                        "{name}: pump '{}' rated power presence changed",
+                        l1.base.id
+                    ),
+                }
+            }
+            // Valve type must survive.
+            if let (LinkKind::Valve(v1), LinkKind::Valve(v2)) = (&l1.kind, &l2.kind) {
+                assert_eq!(
+                    v1.valve_type, v2.valve_type,
+                    "{name}: valve '{}' type changed",
+                    l1.base.id
+                );
+            }
+        }
+
+        // Patterns: identical ID sets with equivalent factors.
+        assert_eq!(
+            net1.patterns.len(),
+            net2.patterns.len(),
+            "{name}: pattern count changed"
+        );
+        for p1 in &net1.patterns {
+            let p2 = net2
+                .patterns
+                .iter()
+                .find(|p| p.id == p1.id)
+                .unwrap_or_else(|| panic!("{name}: pattern '{}' missing", p1.id));
+            assert_eq!(
+                p1.factors.len(),
+                p2.factors.len(),
+                "{name}: pattern '{}' length changed",
+                p1.id
+            );
+            for (f1, f2) in p1.factors.iter().zip(&p2.factors) {
+                assert!(
+                    close(*f1, *f2),
+                    "{name}: pattern '{}' factor drifted: {f1} → {f2}",
+                    p1.id
+                );
+            }
+        }
+
+        // Curves: identical ID sets with equivalent points.
+        assert_eq!(
+            net1.curves.len(),
+            net2.curves.len(),
+            "{name}: curve count changed"
+        );
+        for c1 in &net1.curves {
+            let c2 = net2
+                .curves
+                .iter()
+                .find(|c| c.id == c1.id)
+                .unwrap_or_else(|| panic!("{name}: curve '{}' missing", c1.id));
+            assert_eq!(
+                c1.points.len(),
+                c2.points.len(),
+                "{name}: curve '{}' point count changed",
+                c1.id
+            );
+            for (pt1, pt2) in c1.points.iter().zip(&c2.points) {
+                assert!(
+                    close(pt1.x, pt2.x) && close(pt1.y, pt2.y),
+                    "{name}: curve '{}' point drifted: ({}, {}) → ({}, {})",
+                    c1.id,
+                    pt1.x,
+                    pt1.y,
+                    pt2.x,
+                    pt2.y
+                );
+            }
+        }
+
+        // Controls and rules survive with the same shape.
+        assert_eq!(
+            net1.controls.len(),
+            net2.controls.len(),
+            "{name}: control count changed"
+        );
+        assert_eq!(
+            net1.rules.len(),
+            net2.rules.len(),
+            "{name}: rule count changed"
+        );
+        for (r1, r2) in net1.rules.iter().zip(&net2.rules) {
+            assert_eq!(
+                r1.premises.len(),
+                r2.premises.len(),
+                "{name}: rule premise count changed"
+            );
+            assert_eq!(
+                r1.then_actions.len(),
+                r2.then_actions.len(),
+                "{name}: rule THEN action count changed"
+            );
+            assert_eq!(
+                r1.else_actions.len(),
+                r2.else_actions.len(),
+                "{name}: rule ELSE action count changed"
+            );
+        }
+
+        // Junction demand totals (per node) survive.
+        for n1 in &net1.nodes {
+            if let crate::NodeKind::Junction(ref j1) = n1.kind {
+                let n2 = net2
+                    .nodes
+                    .iter()
+                    .find(|n| n.base.id == n1.base.id)
+                    .expect("node checked above");
+                if let crate::NodeKind::Junction(ref j2) = n2.kind {
+                    assert_eq!(
+                        j1.demands.len(),
+                        j2.demands.len(),
+                        "{name}: junction '{}' demand category count changed",
+                        n1.base.id
+                    );
+                    let d1: f64 = j1.demands.iter().map(|d| d.base_demand).sum();
+                    let d2: f64 = j2.demands.iter().map(|d| d.base_demand).sum();
+                    assert!(
+                        close(d1, d2),
+                        "{name}: junction '{}' total demand drifted: {d1} → {d2}",
+                        n1.base.id
+                    );
+                    assert!(
+                        close(j1.emitter_coeff, j2.emitter_coeff),
+                        "{name}: junction '{}' emitter coefficient drifted: {} → {}",
+                        n1.base.id,
+                        j1.emitter_coeff,
+                        j2.emitter_coeff
+                    );
+                }
+            }
+            // Initial quality survives.
+            let n2 = net2
+                .nodes
+                .iter()
+                .find(|n| n.base.id == n1.base.id)
+                .expect("node checked above");
+            assert!(
+                close(n1.base.initial_quality, n2.base.initial_quality),
+                "{name}: node '{}' initial quality drifted",
+                n1.base.id
+            );
+        }
+
+        // Key simulation options survive. Durations are written at 1-minute
+        // granularity (fmt_duration_hm), so allow up to 60 s of rounding.
+        let o1 = &net1.options;
+        let o2 = &net2.options;
+        assert_eq!(o1.flow_units, o2.flow_units, "{name}: flow units changed");
+        assert_eq!(
+            o1.head_loss_formula, o2.head_loss_formula,
+            "{name}: headloss formula changed"
+        );
+        assert_eq!(
+            o1.demand_model, o2.demand_model,
+            "{name}: demand model changed"
+        );
+        assert_eq!(
+            o1.quality_mode, o2.quality_mode,
+            "{name}: quality mode changed"
+        );
+        assert_eq!(o1.trace_node, o2.trace_node, "{name}: trace node changed");
+        assert!(
+            (o1.duration - o2.duration).abs() <= 60.0,
+            "{name}: duration drifted: {} → {}",
+            o1.duration,
+            o2.duration
+        );
+        assert!(
+            (o1.hyd_step - o2.hyd_step).abs() <= 60.0,
+            "{name}: hydraulic timestep drifted: {} → {}",
+            o1.hyd_step,
+            o2.hyd_step
+        );
+        assert!(
+            close(o1.specific_gravity, o2.specific_gravity),
+            "{name}: specific gravity drifted"
+        );
+        assert!(
+            close(o1.demand_multiplier, o2.demand_multiplier),
+            "{name}: demand multiplier drifted"
+        );
+
+        // Display metadata survives.
+        assert_eq!(
+            net1.coordinates.len(),
+            net2.coordinates.len(),
+            "{name}: coordinate count changed"
+        );
+        assert_eq!(net1.node_tags, net2.node_tags, "{name}: node tags changed");
+        assert_eq!(net1.link_tags, net2.link_tags, "{name}: link tags changed");
+        assert_eq!(net1.vertices, net2.vertices, "{name}: vertices changed");
+    }
+
+    /// Parse a fixture, write, re-parse, and apply both the baseline and the
+    /// strict equivalence checks.
+    fn round_trip_fixture_strict(name: &str) {
+        let path = fixture(name);
+        let original_bytes =
+            std::fs::read(&path).unwrap_or_else(|e| panic!("could not read {name}: {e}"));
+        let net1 = parse(&original_bytes)
+            .unwrap_or_else(|e| panic!("first parse of {name} failed: {e:?}"));
+        let written = write_inp(&net1);
+        let net2 = parse(&written).unwrap_or_else(|e| {
+            let s = String::from_utf8_lossy(&written);
+            panic!("second parse of {name} failed: {e:?}\n\nwritten INP:\n{s}");
+        });
+
+        round_trip_fixture(name); // baseline checks (counts, IDs, kinds, elevations)
+        assert_round_trip_equivalent(name, &net1, &net2);
+
+        // Writer idempotence: a second write of the re-parsed network must be
+        // byte-identical to the first write. Any drift here means repeated
+        // open/save cycles would keep mutating the file.
+        let net2_written = write_inp(&net2);
+        assert_eq!(
+            String::from_utf8_lossy(&written),
+            String::from_utf8_lossy(&net2_written),
+            "{name}: write → parse → write is not idempotent"
+        );
+    }
+
+    /// Fixtures whose `write_inp` output currently fails to re-parse at all.
+    /// These are writer defects (documented in the INP coverage audit); the
+    /// harness only asserts that the fixture itself parses. Remove an entry
+    /// once the corresponding writer defect is fixed.
+    const ROUND_TRIP_REPARSE_SKIP: &[(&str, &str)] = &[
+        (
+            "gpv_valve.inp",
+            "writer emits the GPV setting as a number (0.0000) instead of the \
+             head-loss curve ID, so the re-parse fails with UnknownCurveRef",
+        ),
+        (
+            "pcv_valve.inp",
+            "writer never emits the PCV loss-ratio curve ID (optional 8th \
+             [VALVES] field), so the re-parse fails with MissingRequiredCurve",
+        ),
+        (
+            "tank_overflow.inp",
+            "writer leaves the VolCurve column blank before the Overflow flag; \
+             whitespace splitting shifts YES into the VolCurve field and the \
+             re-parse fails with UnknownCurveRef('YES')",
+        ),
+    ];
+
+    /// Fixtures whose written form re-parses but loses or mutates data, so
+    /// only the baseline (counts / IDs / kinds / elevations) checks run.
+    /// Each entry documents the writer defect that blocks the strict checks.
+    /// Remove an entry once the corresponding defect is fixed.
+    const ROUND_TRIP_STRICT_SKIP: &[(&str, &str)] = &[
+        // Writer emits `Default Pattern <id>` but the reader only recognises
+        // the EPANET keyword `PATTERN <id>`, so the default pattern is lost on
+        // re-parse and an implicit all-1.0 pattern "1" is added (count drift).
+        (
+            "control_flow.inp",
+            "Default Pattern keyword not re-readable",
+        ),
+        (
+            "demand_categories.inp",
+            "Default Pattern keyword not re-readable",
+        ),
+        (
+            "demand_charge.inp",
+            "Default Pattern keyword not re-readable",
+        ),
+        (
+            "long_duration_stress.inp",
+            "Default Pattern keyword not re-readable",
+        ),
+        (
+            "pattern_timestep.inp",
+            "Default Pattern keyword not re-readable",
+        ),
+        (
+            "source_pattern.inp",
+            "Default Pattern keyword not re-readable",
+        ),
+        (
+            "start_clocktime.inp",
+            "Default Pattern keyword not re-readable",
+        ),
+        // Wall reaction coefficients are converted on read with a ucf.elev
+        // factor (order 1: /86400/ucf.elev; order 0: /86400*ucf.elev²,
+        // units.rs) but written back as coeff*86400 only, so each
+        // write→parse cycle scales the coefficient by ~0.3048 (US units).
+        ("initial_quality.inp", "wall coeff conversion asymmetry"),
+        ("pipe_reactions.inp", "wall coeff conversion asymmetry"),
+        ("quality_chemical.inp", "wall coeff conversion asymmetry"),
+        ("reaction_bulk_wall.inp", "wall coeff conversion asymmetry"),
+        ("reaction_wall.inp", "wall coeff conversion asymmetry"),
+        (
+            "roughness_correlation.inp",
+            "wall coeff / roughness-correlation conversion asymmetry",
+        ),
+        (
+            "zero_order_wall_reaction.inp",
+            "wall coeff conversion asymmetry",
+        ),
+    ];
+
+    /// Every fixture in tests/fixtures/ must survive parse → write → parse
+    /// with structure intact, and the writer must be idempotent. Fixtures on
+    /// the two skip lists run reduced checks (see the list docs above).
+    #[test]
+    fn round_trip_every_fixture() {
+        let dir = fixture("");
+        let mut names: Vec<String> = std::fs::read_dir(&dir)
+            .expect("fixtures dir")
+            .filter_map(|e| {
+                let e = e.ok()?;
+                if !e.file_type().ok()?.is_file() {
+                    return None;
+                }
+                let name = e.file_name().to_string_lossy().into_owned();
+                name.ends_with(".inp").then_some(name)
+            })
+            .collect();
+        names.sort();
+        assert!(
+            names.len() >= 90,
+            "expected the full fixture corpus, found {} files",
+            names.len()
+        );
+
+        let mut failures: Vec<String> = Vec::new();
+        for name in &names {
+            let reparse_skipped = ROUND_TRIP_REPARSE_SKIP.iter().any(|(skip, _)| skip == name);
+            let strict_skipped = ROUND_TRIP_STRICT_SKIP.iter().any(|(skip, _)| skip == name);
+            let check = std::panic::AssertUnwindSafe(|| {
+                if reparse_skipped {
+                    // Writer output is known not to re-parse: only require
+                    // that the fixture itself parses.
+                    let bytes = std::fs::read(fixture(name)).expect("read fixture");
+                    parse(&bytes).expect("fixture must parse");
+                } else if strict_skipped {
+                    round_trip_fixture(name);
+                } else {
+                    round_trip_fixture_strict(name);
+                }
+            });
+            if let Err(panic) = std::panic::catch_unwind(check) {
+                let msg = panic
+                    .downcast_ref::<String>()
+                    .cloned()
+                    .or_else(|| panic.downcast_ref::<&str>().map(|s| s.to_string()))
+                    .unwrap_or_else(|| "unknown panic".to_string());
+                // Keep only the first line of long messages (written INP dumps).
+                let first_line = msg.lines().next().unwrap_or("").to_string();
+                failures.push(format!("{name}: {first_line}"));
+            }
+        }
+        assert!(
+            failures.is_empty(),
+            "{} fixture(s) failed the round-trip harness:\n{}",
+            failures.len(),
+            failures.join("\n")
+        );
+    }
+
     // ── Round-trip fixtures ──────────────────────────────────────────────────
 
     #[test]
@@ -1325,6 +1786,16 @@ mod tests {
     #[test]
     fn round_trip_dead_end() {
         round_trip_fixture("dead_end.inp");
+    }
+
+    #[test]
+    fn round_trip_pump_energy_full() {
+        round_trip_fixture_strict("pump_energy_full.inp");
+    }
+
+    #[test]
+    fn round_trip_metadata_display() {
+        round_trip_fixture_strict("metadata_display.inp");
     }
 
     // ── Unit conversion spot-checks ──────────────────────────────────────────

@@ -1,0 +1,59 @@
+[TITLE]
+Display metadata round-trip: tags, vertices, partial coordinates
+Second title line with details ; semicolons kept verbatim in titles
+Third and final title line
+
+[JUNCTIONS]
+J1    0    40
+J2    0    20
+
+[RESERVOIRS]
+R1    100
+
+[PIPES]
+P1    R1    J1    1000    12    100    0    Open
+P2    J1    J2    800     10    100    0    Open
+
+[TAGS]
+NODE    J1    residential
+NODE    R1    source
+LINK    P1    transmission
+LINK    P2    distribution
+
+[COORDINATES]
+;J2 deliberately has no coordinates; values are huge projected metres
+R1    1234567.8901    9876543.2109
+J1    1234890.0123    9876321.7654
+
+[VERTICES]
+;Polyline bend points for P2 (three vertices)
+P2    1234900.1000    9876400.2000
+P2    1234950.3000    9876450.4000
+P2    1235000.5000    9876500.6000
+
+[LABELS]
+1234567.0    9876543.0    "Pump station"
+
+[BACKDROP]
+DIMENSIONS    1230000    9870000    1240000    9880000
+UNITS         METERS
+FILE          basemap.png
+
+[REPORT]
+Pagesize    64
+Status      Yes
+Summary     No
+Energy      Yes
+Nodes       ALL
+Links       ALL
+
+[TIMES]
+Duration              6:00
+Hydraulic Timestep    1:00
+Report Timestep       1:00
+
+[OPTIONS]
+Units       GPM
+Headloss    H-W
+
+[END]

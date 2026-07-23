@@ -155,6 +155,50 @@ fn too_many_positional_args_exits_1() {
 }
 
 #[test]
+fn validation_failing_inp_exits_1() {
+    // Syntactically valid INP whose network fails §2.9 validation (no
+    // reservoir or tank) must be reported as an input/parse error (exit 1).
+    let dir = tempfile::tempdir().expect("tempdir");
+    let bad = dir.path().join("junctions_only.inp");
+    std::fs::write(
+        &bad,
+        b"[JUNCTIONS]\nJ1    0    10\nJ2    0    5\n\n\
+          [PIPES]\nP1    J1    J2    1000    12    100    0    Open\n\n\
+          [OPTIONS]\nUnits    GPM\nHeadloss    H-W\n",
+    )
+    .expect("write INP");
+
+    hydra()
+        .arg(&bad)
+        .assert()
+        .code(1)
+        .stderr(predicate::str::contains("\"level\":\"error\""))
+        .stderr(predicate::str::contains("validation/network"))
+        .stderr(predicate::str::contains("network has no reservoir"));
+}
+
+#[test]
+fn duplicate_id_inp_exits_1_and_names_the_id() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let bad = dir.path().join("dup_id.inp");
+    std::fs::write(
+        &bad,
+        b"[JUNCTIONS]\nJ1    0    10\nJ1    0    5\n\n\
+          [RESERVOIRS]\nR1    100\n\n\
+          [PIPES]\nP1    R1    J1    1000    12    100    0    Open\n\n\
+          [OPTIONS]\nUnits    GPM\nHeadloss    H-W\n",
+    )
+    .expect("write INP");
+
+    hydra()
+        .arg(&bad)
+        .assert()
+        .code(1)
+        .stderr(predicate::str::contains("input/parse"))
+        .stderr(predicate::str::contains("duplicate node ID 'J1'"));
+}
+
+#[test]
 fn unparseable_inp_exits_1() {
     let dir = tempfile::tempdir().expect("tempdir");
     let bad = dir.path().join("garbage.inp");
