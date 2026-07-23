@@ -144,6 +144,7 @@ export function PumpTable({
             return (
               <tr
                 key={row.id}
+                data-row-id={row.id}
                 onClick={() => onSelect(row.id)}
                 style={{
                   cursor: "pointer",

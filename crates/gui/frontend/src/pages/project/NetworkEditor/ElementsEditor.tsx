@@ -24,8 +24,13 @@ import { JunctionTable } from "./JunctionTable";
 import { PipeTable } from "./PipeTable";
 import { PumpTable } from "./PumpTable";
 import { ReservoirTable } from "./ReservoirTable";
+import { EDITOR_ROW_HEIGHT } from "./TablePrimitives";
 import { TankTable } from "./TankTable";
-import { compareIds, filterSortRows, SEARCH_DEBOUNCE_MS } from "./tableSearch";
+import {
+  compareIds,
+  filterSortRowsWithPinned,
+  SEARCH_DEBOUNCE_MS,
+} from "./tableSearch";
 import { ValveTable } from "./ValveTable";
 
 type Section =
@@ -99,6 +104,11 @@ export function ElementsEditor({
     setActiveSection("pumps");
     setSelectedId(focusPumpId);
     setSearchQuery("");
+    // Also clear the debounced copy synchronously: the deferred clear in the
+    // effect above would let the pump table paint one frame filtered by the
+    // previous tab's query (a wasted ~46k-row filter pass, and the target
+    // pump may not even be in the stale result set).
+    setDebouncedQuery("");
   }, [focusPumpToken]);
   const draftValues = useMemo(() => Array.from(draft.values()), [draft]);
   const pendingKeys = useMemo(() => new Set(draft.keys()), [draft]);
@@ -163,6 +173,10 @@ export function ElementsEditor({
   const handleTabClick = (section: Section) => {
     setActiveSection(section);
     setSearchQuery("");
+    // Clear the debounced copy in the same handler (not just via the
+    // debounce effect) so the newly shown section never paints one frame
+    // filtered by the previous section's query.
+    setDebouncedQuery("");
     setSortField(null);
     setSortAsc(true);
     setSelectedId(null);
@@ -341,13 +355,19 @@ export function ElementsEditor({
   // anywhere, so fall back to the raw arrays and recompute on next reveal.
   // Per-section query/sort inputs: "" / null for every inactive section, so
   // a keystroke only invalidates the active section's memo.
+  //
+  // Pending (unsaved) rows are pinned at the TOP of each table, exempt from
+  // the query filter and the active sort — see filterSortRowsWithPinned.
+  // Without pinning, an added row lands at the end of network order (index
+  // ~46k at scale) with nothing scrolling to it.
   const junctionQuery = junctionsActive ? debouncedQuery : "";
   const junctionSortField = junctionsActive ? sortField : null;
   const junctionRows = useMemo(
     () =>
       editorVisible
-        ? filterSortRows(
-            junctionRowsAllWithPending,
+        ? filterSortRowsWithPinned(
+            junctionRowsExisting,
+            pendingJunctionRows,
             junctionQuery,
             junctionSortField,
             sortAsc,
@@ -355,6 +375,8 @@ export function ElementsEditor({
         : junctionRowsAllWithPending,
     [
       editorVisible,
+      junctionRowsExisting,
+      pendingJunctionRows,
       junctionRowsAllWithPending,
       junctionQuery,
       junctionSortField,
@@ -366,50 +388,78 @@ export function ElementsEditor({
   const pipeRows = useMemo(
     () =>
       editorVisible
-        ? filterSortRows(
-            pipeRowsAllWithPending,
+        ? filterSortRowsWithPinned(
+            pipeRowsExisting,
+            pendingPipeRows,
             pipeQuery,
             pipeSortField,
             sortAsc,
           )
         : pipeRowsAllWithPending,
-    [editorVisible, pipeRowsAllWithPending, pipeQuery, pipeSortField, sortAsc],
+    [
+      editorVisible,
+      pipeRowsExisting,
+      pendingPipeRows,
+      pipeRowsAllWithPending,
+      pipeQuery,
+      pipeSortField,
+      sortAsc,
+    ],
   );
   const pumpQuery = pumpsActive ? debouncedQuery : "";
   const pumpSortField = pumpsActive ? sortField : null;
   const pumpRows = useMemo(
     () =>
       editorVisible
-        ? filterSortRows(
-            pumpRowsAllWithPending,
+        ? filterSortRowsWithPinned(
+            pumpRowsExisting,
+            pendingPumpRows,
             pumpQuery,
             pumpSortField,
             sortAsc,
           )
         : pumpRowsAllWithPending,
-    [editorVisible, pumpRowsAllWithPending, pumpQuery, pumpSortField, sortAsc],
+    [
+      editorVisible,
+      pumpRowsExisting,
+      pendingPumpRows,
+      pumpRowsAllWithPending,
+      pumpQuery,
+      pumpSortField,
+      sortAsc,
+    ],
   );
   const tankQuery = tanksActive ? debouncedQuery : "";
   const tankSortField = tanksActive ? sortField : null;
   const tankRows = useMemo(
     () =>
       editorVisible
-        ? filterSortRows(
-            tankRowsAllWithPending,
+        ? filterSortRowsWithPinned(
+            tankRowsExisting,
+            pendingTankRows,
             tankQuery,
             tankSortField,
             sortAsc,
           )
         : tankRowsAllWithPending,
-    [editorVisible, tankRowsAllWithPending, tankQuery, tankSortField, sortAsc],
+    [
+      editorVisible,
+      tankRowsExisting,
+      pendingTankRows,
+      tankRowsAllWithPending,
+      tankQuery,
+      tankSortField,
+      sortAsc,
+    ],
   );
   const reservoirQuery = reservoirsActive ? debouncedQuery : "";
   const reservoirSortField = reservoirsActive ? sortField : null;
   const reservoirRows = useMemo(
     () =>
       editorVisible
-        ? filterSortRows(
-            reservoirRowsAllWithPending,
+        ? filterSortRowsWithPinned(
+            reservoirRowsExisting,
+            pendingReservoirRows,
             reservoirQuery,
             reservoirSortField,
             sortAsc,
@@ -417,6 +467,8 @@ export function ElementsEditor({
         : reservoirRowsAllWithPending,
     [
       editorVisible,
+      reservoirRowsExisting,
+      pendingReservoirRows,
       reservoirRowsAllWithPending,
       reservoirQuery,
       reservoirSortField,
@@ -428,8 +480,9 @@ export function ElementsEditor({
   const valveRows = useMemo(
     () =>
       editorVisible
-        ? filterSortRows(
-            valveRowsAllWithPending,
+        ? filterSortRowsWithPinned(
+            valveRowsExisting,
+            pendingValveRows,
             valveQuery,
             valveSortField,
             sortAsc,
@@ -437,6 +490,8 @@ export function ElementsEditor({
         : valveRowsAllWithPending,
     [
       editorVisible,
+      valveRowsExisting,
+      pendingValveRows,
       valveRowsAllWithPending,
       valveQuery,
       valveSortField,
@@ -491,15 +546,45 @@ export function ElementsEditor({
     return "reservoir";
   }, [activeSection]);
 
+  // Temp id of a row added this render cycle, consumed by the effect below
+  // to scroll the pinned row into view and focus its first (ID) input.
+  const pendingFocusIdRef = useRef<string | null>(null);
+
   const handleAddElement = useCallback(() => {
     const kind: ElementKind = activeKind;
     const tempId = `${TEMP_ID_PREFIX}${kind}_${nextTempIndex.current++}`;
     setPendingAdds((prev) => [...prev, { kind, tempId }]);
-    setSearchQuery("");
-    setSortField(null);
-    setSortAsc(true);
+    // Pending rows are pinned at the top of the table regardless of the
+    // active search/sort (see filterSortRowsWithPinned), so neither needs to
+    // be reset here — the new row is visible in any view state.
     setSelectedId(tempId);
+    pendingFocusIdRef.current = tempId;
   }, [activeKind, nextTempIndex, setPendingAdds]);
+
+  // After "+ Add element": pending rows are pinned at the top, so scroll to
+  // the new row's slot in the pinned block and focus its ID input once the
+  // virtualizer has mounted it.
+  useEffect(() => {
+    const tempId = pendingFocusIdRef.current;
+    if (tempId == null) return;
+    pendingFocusIdRef.current = null;
+    const container = tableScrollRef.current;
+    const added = pendingAdds.find((p) => p.tempId === tempId);
+    if (!container || !added) return;
+    const pinnedIndex = pendingAdds
+      .filter((p) => p.kind === added.kind)
+      .findIndex((p) => p.tempId === tempId);
+    container.scrollTop = Math.max(0, pinnedIndex) * EDITOR_ROW_HEIGHT;
+    requestAnimationFrame(() => {
+      const input = container.querySelector<HTMLInputElement>(
+        `tr[data-row-id="${CSS.escape(tempId)}"] input`,
+      );
+      if (input) {
+        input.scrollIntoView({ block: "nearest" });
+        input.focus();
+      }
+    });
+  }, [pendingAdds]);
 
   const handleDeleteSelected = useCallback(() => {
     if (!selectedId) return;

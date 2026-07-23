@@ -9,6 +9,7 @@ import {
   buildRowHaystack,
   compareIds,
   filterSortRows,
+  filterSortRowsWithPinned,
   getRowHaystack,
   idCollator,
   REF_DATALIST_MAX_OPTIONS,
@@ -106,6 +107,88 @@ describe("filterSortRows", () => {
   it("filters then sorts when both are requested", () => {
     const out = filterSortRows(rows, "main", "elevation", true);
     expect(out.map((r) => r.id)).toEqual(["T1", "J10"]);
+  });
+});
+
+describe("filterSortRowsWithPinned", () => {
+  const existing = [
+    { id: "J10", elevation: 5, note: "Main" },
+    { id: "J2", elevation: 12, note: "spur" },
+    { id: "T1", elevation: 3, note: "tank MAIN" },
+  ];
+  const pinned = [
+    { id: "__new__:junction_1", elevation: 0, note: "" },
+    { id: "__new__:junction_2", elevation: 0, note: "" },
+  ];
+
+  it("pins pending rows at the top ahead of existing rows", () => {
+    const out = filterSortRowsWithPinned(existing, pinned, "", null, true);
+    expect(out.map((r) => r.id)).toEqual([
+      "__new__:junction_1",
+      "__new__:junction_2",
+      "J10",
+      "J2",
+      "T1",
+    ]);
+  });
+
+  it("keeps pinned rows on top regardless of the active sort", () => {
+    // Ascending elevation would place the (elevation 0) pending rows first
+    // anyway; descending would sort them to the very end without pinning.
+    const out = filterSortRowsWithPinned(
+      existing,
+      pinned,
+      "",
+      "elevation",
+      false,
+    );
+    expect(out.map((r) => r.id)).toEqual([
+      "__new__:junction_1",
+      "__new__:junction_2",
+      "J2",
+      "J10",
+      "T1",
+    ]);
+  });
+
+  it("exempts pinned rows from the query filter", () => {
+    // Mostly-empty pending rows match almost no query — they must stay
+    // visible while the user has a search active.
+    const out = filterSortRowsWithPinned(existing, pinned, "main", null, true);
+    expect(out.map((r) => r.id)).toEqual([
+      "__new__:junction_1",
+      "__new__:junction_2",
+      "J10",
+      "T1",
+    ]);
+  });
+
+  it("preserves the pinned rows' add order", () => {
+    const reversed = [...pinned].reverse();
+    const out = filterSortRowsWithPinned(existing, reversed, "", "id", true);
+    expect(out.slice(0, 2).map((r) => r.id)).toEqual([
+      "__new__:junction_2",
+      "__new__:junction_1",
+    ]);
+  });
+
+  it("matches filterSortRows exactly when there are no pinned rows", () => {
+    expect(
+      filterSortRowsWithPinned(existing, [], "main", "elevation", true),
+    ).toEqual(filterSortRows(existing, "main", "elevation", true));
+    // Referential stability: empty query + no sort + no pinned rows returns
+    // the input array itself, like filterSortRows.
+    expect(filterSortRowsWithPinned(existing, [], "", null, true)).toBe(
+      existing,
+    );
+  });
+
+  it("does not mutate its inputs", () => {
+    const existingBefore = [...existing];
+    const pinnedBefore = [...pinned];
+    filterSortRowsWithPinned(existing, pinned, "main", "elevation", false);
+    expect(existing).toEqual(existingBefore);
+    expect(pinned).toEqual(pinnedBefore);
   });
 });
 

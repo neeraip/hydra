@@ -153,10 +153,19 @@ interface DraftContextValue {
 
 const Ctx = createContext<DraftContextValue | null>(null);
 
+/**
+ * Shared result for `previewPatches` when nothing is staged. A module-level
+ * constant keeps the array's identity stable across renders, so the provider
+ * value memo (and every `useDraft` consumer) is not invalidated by unrelated
+ * re-runs — e.g. `links` changing identity on a structural network mutation
+ * while no draft exists.
+ */
+const EMPTY_PREVIEW_PATCHES: PatchItem[] = [];
+
 export function DraftProvider({ children }: { children: ReactNode }) {
   const { showToast, activeScenarioId } = useAppState();
   const { project } = useActiveProject();
-  const { bumpNetwork, markEdited } = useNetworkVersion();
+  const { markEdited } = useNetworkVersion();
 
   // Base data needed for save orchestration (element ID pools, cascade
   // detection). The provider deliberately does NOT call the row-model hooks
@@ -264,6 +273,10 @@ export function DraftProvider({ children }: { children: ReactNode }) {
   );
 
   const previewPatches = useMemo<PatchItem[]>(() => {
+    // Nothing staged anywhere → return the shared constant so the array
+    // identity is stable and the derivation loops are skipped entirely
+    // (dirtyCount is derived from the same state this memo depends on).
+    if (dirtyCount === 0) return EMPTY_PREVIEW_PATCHES;
     // Link rows are only consulted for rename/delete cascade detection, so
     // the (comparatively expensive) projection from the live link list is
     // skipped entirely while no element drafts exist.
@@ -383,6 +396,7 @@ export function DraftProvider({ children }: { children: ReactNode }) {
     }
     return items;
   }, [
+    dirtyCount,
     elementsDraft,
     pendingAdds,
     pendingDeletes,
@@ -528,7 +542,13 @@ export function DraftProvider({ children }: { children: ReactNode }) {
     }
 
     if (applied > 0) {
-      bumpNetwork();
+      // No manual bumpNetwork() here: every mutating command this function
+      // invokes (patch_elements, create_node/create_link, delete_element,
+      // and all curve/pattern/control/rule commands) emits a
+      // `network-changed` event on success — field patches carry deltas the
+      // data layer applies in place, structural mutations emit a null
+      // payload that triggers a full refetch. A manual bump would only add
+      // a redundant second refetch on top of the event-driven one.
       if (project?.id) {
         try {
           await saveProjectOnDisk(project.id, activeScenarioId);
@@ -573,7 +593,6 @@ export function DraftProvider({ children }: { children: ReactNode }) {
     ruleAdds,
     ruleEdits,
     ruleDeletes,
-    bumpNetwork,
     markEdited,
     project,
     activeScenarioId,

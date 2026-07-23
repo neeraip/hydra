@@ -85,6 +85,34 @@ export function filterSortRows<T extends object>(
 }
 
 /**
+ * Variant of {@link filterSortRows} that pins `pinnedRows` (pending, unsaved
+ * rows) at the top of the result, ahead of the filtered + sorted existing
+ * rows.
+ *
+ * Pinned rows are exempt from both the query filter and the active sort:
+ * a freshly added row is mostly empty (it would match almost no query) and
+ * has a placeholder temp id (it would sort to an arbitrary position — at
+ * ~46k rows that means landing thousands of rows off-screen). Keeping new
+ * rows grouped at the top makes them immediately visible regardless of the
+ * user's current search/sort state.
+ *
+ * With no pinned rows this returns exactly what {@link filterSortRows}
+ * returns (including the untouched input array for empty query + no sort),
+ * so memoized consumers keep referential stability.
+ */
+export function filterSortRowsWithPinned<T extends object>(
+  existingRows: T[],
+  pinnedRows: T[],
+  query: string,
+  sortField: string | null,
+  sortAsc: boolean,
+): T[] {
+  const body = filterSortRows(existingRows, query, sortField, sortAsc);
+  if (pinnedRows.length === 0) return body;
+  return [...pinnedRows, ...body];
+}
+
+/**
  * Above this option count the reference-input `<datalist>` is dropped
  * entirely. A single shared datalist is fine at moderate sizes (it is ~N DOM
  * nodes rendered once per table), but at tens of thousands of options the
