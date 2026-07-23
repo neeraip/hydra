@@ -12,7 +12,9 @@ export default defineConfig({
       ignored: ["**/src-tauri/**"],
     },
   },
-  envPrefix: ["VITE_", "TAURI_ENV_*"],
+  // Vite env prefixes are literal startsWith strings (no globs): this
+  // exposes TAURI_ENV_PLATFORM etc. to client code via import.meta.env.
+  envPrefix: ["VITE_", "TAURI_ENV_"],
   build: {
     target: ["chrome120", "safari16"],
     minify: !process.env.TAURI_ENV_DEBUG ? "esbuild" : false,
