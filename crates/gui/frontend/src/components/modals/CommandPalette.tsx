@@ -21,6 +21,7 @@ import {
   primaryModifierLabel,
   shiftModifierLabel,
 } from "../../shortcuts";
+import { formatQtyRaw, type UnitSystem, useUnitSystem } from "../../units";
 import { ModalBackdrop, stopBackdropEvents } from "../ui/ModalBackdrop";
 
 /**
@@ -65,6 +66,7 @@ export function searchElements(
   allLinks: readonly Link[],
   findQuery: string,
   maxPerKind: number = FIND_MAX_PER_KIND,
+  sys: UnitSystem = "si",
 ): ElementMatch[] {
   const matches: ElementMatch[] = [];
   let found = 0;
@@ -87,7 +89,7 @@ export function searchElements(
       id: l.id,
       kind: "link",
       subtype: l.type,
-      description: `${l.type} · ${l.fromId} → ${l.toId} · ⌀${l.diameter} mm`,
+      description: `${l.type} · ${l.fromId} → ${l.toId} · ⌀${formatQtyRaw(l.diameter, "diameter", sys)}`,
     });
     found += 1;
   }
@@ -126,6 +128,7 @@ const STATIC_COMMANDS: DynamicCommand[] = [
 ];
 
 export function CommandPalette() {
+  const sys = useUnitSystem();
   const {
     closeCommandPalette,
     openProject,
@@ -450,8 +453,11 @@ export function CommandPalette() {
   const findQuery = findMode ? query.slice(1).trim().toLowerCase() : "";
 
   const elementMatches = useMemo<ElementMatch[]>(
-    () => (findMode ? searchElements(allNodes, allLinks, findQuery) : []),
-    [findMode, findQuery, allNodes, allLinks],
+    () =>
+      findMode
+        ? searchElements(allNodes, allLinks, findQuery, undefined, sys)
+        : [],
+    [findMode, findQuery, allNodes, allLinks, sys],
   );
 
   // Auto-focus the input when the palette opens.

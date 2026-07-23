@@ -1,5 +1,6 @@
 import type React from "react";
 import type { ReservoirRow } from "../../../hooks";
+import { formatQtyRaw, fromDisplay, useUnitSystem } from "../../../units";
 import {
   EditableCell,
   SortTh,
@@ -39,6 +40,7 @@ export function ReservoirTable({
   discardGen: number;
   scrollContainerRef: React.RefObject<HTMLDivElement | null>;
 }) {
+  const sys = useUnitSystem();
   const tdStyle: React.CSSProperties = {
     padding: "7px 10px",
     fontSize: 12,
@@ -149,14 +151,21 @@ export function ReservoirTable({
               )}
               <EditableCell
                 key={`${discardGen}-${row.id}-head`}
-                display={isPendingRow ? "" : `${row.head} m`}
+                display={
+                  isPendingRow ? "" : formatQtyRaw(row.head, "head", sys)
+                }
                 placeholder={isPendingRow}
                 align="right"
                 style={{ color: "var(--text-primary)" }}
                 isPending={pendingKeys.has(`reservoir:${row.id}:head`)}
                 inputType="number"
                 onCommit={(v) =>
-                  onPatch("reservoir", row.id, "head", parseFloat(v))
+                  onPatch(
+                    "reservoir",
+                    row.id,
+                    "head",
+                    fromDisplay(parseFloat(v), "head", sys),
+                  )
                 }
               />
               <EditableCell

@@ -1,6 +1,7 @@
 import { ArrowsRightLeftIcon } from "@heroicons/react/16/solid";
 import type React from "react";
-import { formatMeters, pixelDistance } from "./coords";
+import { formatDistance, useUnitSystem } from "../units";
+import { pixelDistance } from "./coords";
 import type { CanvasTool, ClickPoint, ViewMode } from "./types";
 
 export function MeasureOverlay({ points }: { points: ClickPoint[] }) {
@@ -59,9 +60,10 @@ function DistanceLabel({
   bx: number;
   by: number;
 }) {
+  const sys = useUnitSystem();
   const mx = (ax + bx) / 2;
   const my = (ay + by) / 2;
-  const label = formatMeters(pixelDistance(ax, ay, bx, by));
+  const label = formatDistance(pixelDistance(ax, ay, bx, by), sys);
   // Approximate label width — keeps the chip from overflowing for short text.
   const w = Math.max(label.length * 7 + 14, 60);
   return (
@@ -105,6 +107,7 @@ export function AnnotationSummary({
   viewMode?: ViewMode;
   onClear: () => void;
 }) {
+  const sys = useUnitSystem();
   const measuring = tool === "measure";
   const isMap = viewMode === "map";
 
@@ -148,7 +151,7 @@ export function AnnotationSummary({
             fontWeight: 600,
           }}
         >
-          {formatMeters(distM)}
+          {formatDistance(distM, sys)}
         </span>
       </span>
     );

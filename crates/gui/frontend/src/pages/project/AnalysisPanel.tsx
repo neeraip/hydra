@@ -8,6 +8,7 @@ import {
   type PumpEnergyRecord,
   type ResultAnalytics,
 } from "../../hooks";
+import { formatQty, useUnitSystem } from "../../units";
 import { AuditPanels } from "./AnalysisPanel/AuditPanels";
 import { pressureCompliancePct } from "./AnalysisPanel/compliance";
 import {
@@ -114,6 +115,7 @@ function SystemSummary({
   analytics: ResultAnalytics | null;
   pumpEnergy: PumpEnergyRecord[] | null;
 }) {
+  const sys = useUnitSystem();
   if (!analytics) {
     return (
       <div>
@@ -145,7 +147,7 @@ function SystemSummary({
         <MetricChip
           value={
             analytics.minPressureM != null
-              ? `${analytics.minPressureM.toFixed(1)} m`
+              ? formatQty(analytics.minPressureM, "pressure", sys, 1)
               : "—"
           }
           label={
@@ -158,7 +160,7 @@ function SystemSummary({
         <MetricChip
           value={
             analytics.maxVelocityMs != null
-              ? `${analytics.maxVelocityMs.toFixed(2)} m/s`
+              ? formatQty(analytics.maxVelocityMs, "velocity", sys, 2)
               : "—"
           }
           label={
@@ -171,7 +173,7 @@ function SystemSummary({
         {compliancePct != null && (
           <MetricChip
             value={`${compliancePct.toFixed(1)} %`}
-            label={`Pressure ≥ ${PRESSURE_THRESHOLD} m`}
+            label={`Pressure ≥ ${formatQty(PRESSURE_THRESHOLD, "pressure", sys, sys === "si" ? 0 : 1)}`}
             valueColor={
               compliancePct < 100 ? "var(--status-warning)" : undefined
             }
@@ -190,7 +192,9 @@ function SystemSummary({
         <WarningRow>
           {analytics.lowPressureCount} junction
           {analytics.lowPressureCount > 1 ? "s" : ""} below the minimum pressure
-          threshold of {PRESSURE_THRESHOLD} m at peak demand.
+          threshold of{" "}
+          {formatQty(PRESSURE_THRESHOLD, "pressure", sys, sys === "si" ? 0 : 1)}{" "}
+          at peak demand.
         </WarningRow>
       )}
     </div>

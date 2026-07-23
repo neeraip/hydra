@@ -1,5 +1,6 @@
 import type React from "react";
 import type { TankRow } from "../../../hooks";
+import { formatQtyRaw, fromDisplay, useUnitSystem } from "../../../units";
 import {
   EditableCell,
   SortTh,
@@ -39,6 +40,7 @@ export function TankTable({
   discardGen: number;
   scrollContainerRef: React.RefObject<HTMLDivElement | null>;
 }) {
+  const sys = useUnitSystem();
   const tdStyle: React.CSSProperties = {
     padding: "7px 10px",
     fontSize: 12,
@@ -181,19 +183,30 @@ export function TankTable({
               )}
               <EditableCell
                 key={`${discardGen}-${row.id}-elevation`}
-                display={isPendingRow ? "" : `${row.elevation} m`}
+                display={
+                  isPendingRow
+                    ? ""
+                    : formatQtyRaw(row.elevation, "elevation", sys)
+                }
                 placeholder={isPendingRow}
                 align="right"
                 style={{ color: "var(--text-primary)" }}
                 isPending={pendingKeys.has(`tank:${row.id}:elevation`)}
                 inputType="number"
                 onCommit={(v) =>
-                  onPatch("tank", row.id, "elevation", parseFloat(v))
+                  onPatch(
+                    "tank",
+                    row.id,
+                    "elevation",
+                    fromDisplay(parseFloat(v), "elevation", sys),
+                  )
                 }
               />
               <EditableCell
                 key={`${discardGen}-${row.id}-minLevel`}
-                display={isPendingRow ? "" : `${row.minLevel} m`}
+                display={
+                  isPendingRow ? "" : formatQtyRaw(row.minLevel, "length", sys)
+                }
                 placeholder={isPendingRow}
                 align="right"
                 style={{ color: "var(--text-secondary)" }}
@@ -201,12 +214,21 @@ export function TankTable({
                 inputType="number"
                 min={0}
                 onCommit={(v) =>
-                  onPatch("tank", row.id, "minLevel", parseFloat(v))
+                  onPatch(
+                    "tank",
+                    row.id,
+                    "minLevel",
+                    fromDisplay(parseFloat(v), "length", sys),
+                  )
                 }
               />
               <EditableCell
                 key={`${discardGen}-${row.id}-initialLevel`}
-                display={isPendingRow ? "" : `${row.initialLevel} m`}
+                display={
+                  isPendingRow
+                    ? ""
+                    : formatQtyRaw(row.initialLevel, "length", sys)
+                }
                 placeholder={isPendingRow}
                 align="right"
                 style={{ color: "var(--text-primary)" }}
@@ -214,12 +236,19 @@ export function TankTable({
                 inputType="number"
                 min={0}
                 onCommit={(v) =>
-                  onPatch("tank", row.id, "initialLevel", parseFloat(v))
+                  onPatch(
+                    "tank",
+                    row.id,
+                    "initialLevel",
+                    fromDisplay(parseFloat(v), "length", sys),
+                  )
                 }
               />
               <EditableCell
                 key={`${discardGen}-${row.id}-maxLevel`}
-                display={isPendingRow ? "" : `${row.maxLevel} m`}
+                display={
+                  isPendingRow ? "" : formatQtyRaw(row.maxLevel, "length", sys)
+                }
                 placeholder={isPendingRow}
                 align="right"
                 style={{ color: "var(--text-secondary)" }}
@@ -227,7 +256,12 @@ export function TankTable({
                 inputType="number"
                 min={0}
                 onCommit={(v) =>
-                  onPatch("tank", row.id, "maxLevel", parseFloat(v))
+                  onPatch(
+                    "tank",
+                    row.id,
+                    "maxLevel",
+                    fromDisplay(parseFloat(v), "length", sys),
+                  )
                 }
               />
               <EditableCell
@@ -236,7 +270,7 @@ export function TankTable({
                   isPendingRow
                     ? ""
                     : row.diameter != null
-                      ? `${row.diameter} m`
+                      ? formatQtyRaw(row.diameter, "length", sys)
                       : "—"
                 }
                 placeholder={isPendingRow || row.diameter == null}
@@ -247,7 +281,13 @@ export function TankTable({
                 min={0}
                 onCommit={(v) => {
                   const n = parseFloat(v);
-                  if (!Number.isNaN(n)) onPatch("tank", row.id, "diameter", n);
+                  if (!Number.isNaN(n))
+                    onPatch(
+                      "tank",
+                      row.id,
+                      "diameter",
+                      fromDisplay(n, "length", sys),
+                    );
                 }}
               />
               <EditableCell

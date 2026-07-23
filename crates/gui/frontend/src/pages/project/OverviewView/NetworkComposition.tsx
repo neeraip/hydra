@@ -1,4 +1,5 @@
 import type { NetworkSummary } from "../../../hooks";
+import { toDisplay, useUnitSystem } from "../../../units";
 import { Kpi, KpiGrid } from "./primitives";
 
 export function NetworkComposition({
@@ -12,6 +13,7 @@ export function NetworkComposition({
   fallbackNodeCount: number;
   fallbackLinkCount: number;
 }) {
+  const sys = useUnitSystem();
   if (!networkLoaded) {
     return (
       <KpiGrid>
@@ -34,12 +36,18 @@ export function NetworkComposition({
   }
 
   const lengthLabel =
-    summary.totalLengthM >= 10000
-      ? `${(summary.totalLengthM / 1000).toFixed(1)} km total`
-      : `${Math.round(summary.totalLengthM).toLocaleString()} m total`;
+    sys === "us"
+      ? summary.totalLengthM >= 10000
+        ? `${(summary.totalLengthM / 1609.344).toFixed(1)} mi total`
+        : `${Math.round(toDisplay(summary.totalLengthM, "length", sys)).toLocaleString()} ft total`
+      : summary.totalLengthM >= 10000
+        ? `${(summary.totalLengthM / 1000).toFixed(1)} km total`
+        : `${Math.round(summary.totalLengthM).toLocaleString()} m total`;
   const diaLabel =
     summary.meanDiaMm !== null
-      ? `Ø ${Math.round(summary.meanDiaMm)} mm avg`
+      ? sys === "us"
+        ? `Ø ${toDisplay(summary.meanDiaMm, "diameter", sys).toFixed(1)} in avg`
+        : `Ø ${Math.round(summary.meanDiaMm)} mm avg`
       : "Ø —";
   const storageValue = `${summary.tanks + summary.reservoirs}`;
   const storageSub =

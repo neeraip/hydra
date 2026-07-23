@@ -9,6 +9,13 @@ import { useAppState } from "../../AppContext";
 import { type CurvePoint, type PumpCurve, useCurves } from "../../hooks";
 import { useDraft } from "../../hooks/DraftContext";
 import { EditableCell } from "../../pages/project/NetworkEditor/TablePrimitives";
+import {
+  formatQtyRaw,
+  fromDisplay,
+  toDisplay,
+  unitLabel,
+  useUnitSystem,
+} from "../../units";
 import { DeleteConfirmModal } from "../modals/DeleteConfirmModal";
 
 const DEFAULT_CURVE_POINTS: CurvePoint[] = [
@@ -29,6 +36,7 @@ export function CurveEditor({
    *  navigates to that pump in the Elements tab. */
   onNavigateToPump?: (pumpId: string) => void;
 }) {
+  const sys = useUnitSystem();
   const { showToast } = useAppState();
   const curves = useCurves();
   const {
@@ -134,8 +142,10 @@ export function CurveEditor({
     raw: string,
   ) {
     if (!curve) return;
-    const v = parseFloat(raw);
-    if (!Number.isFinite(v)) return;
+    const parsed = parseFloat(raw);
+    if (!Number.isFinite(parsed)) return;
+    // Entered in display units — store SI.
+    const v = fromDisplay(parsed, field, sys);
     commitPoints(
       curve.points.map((p, i) => (i === index ? { ...p, [field]: v } : p)),
     );
@@ -417,7 +427,7 @@ export function CurveEditor({
               >
                 BEP{" "}
                 <span style={{ color: "var(--text-secondary)" }}>
-                  {curve.bep} L/s
+                  {formatQtyRaw(curve.bep, "flow", sys)}
                 </span>
               </div>
             )}
@@ -534,6 +544,7 @@ function CurveChart({
   hoverIdx: number | null;
   setHoverIdx: (n: number | null) => void;
 }) {
+  const sys = useUnitSystem();
   const wrapRef = useRef<HTMLDivElement | null>(null);
   const [size, setSize] = useState({ w: 600, h: 360 });
   useEffect(() => {
@@ -556,8 +567,14 @@ function CurveChart({
   const innerW = W - padL - padR,
     innerH = H - padT - padB;
 
-  const flows = curve.points.map((p) => p.flow);
-  const heads = curve.points.map((p) => p.head);
+  // The whole chart works in display units so axis ticks land on nice
+  // numbers in either system; the stored points stay SI.
+  const dispPoints = curve.points.map((p) => ({
+    flow: toDisplay(p.flow, "flow", sys),
+    head: toDisplay(p.head, "head", sys),
+  }));
+  const flows = dispPoints.map((p) => p.flow);
+  const heads = dispPoints.map((p) => p.head);
   const fMax = Math.max(...flows, 1);
   const hMax = Math.max(...heads, 1);
   const fNice = niceMax(fMax);
@@ -566,10 +583,10 @@ function CurveChart({
   const sx = (f: number) => padL + (f / fNice) * innerW;
   const sy = (h: number) => padT + innerH - (h / hNice) * innerH;
 
-  const polyline = curve.points
+  const polyline = dispPoints
     .map((p) => `${sx(p.flow).toFixed(2)},${sy(p.head).toFixed(2)}`)
     .join(" ");
-  const areaPath = `M ${sx(curve.points[0].flow)} ${sy(0)} L ${curve.points.map((p) => `${sx(p.flow)} ${sy(p.head)}`).join(" L ")} L ${sx(curve.points[curve.points.length - 1].flow)} ${sy(0)} Z`;
+  const areaPath = `M ${sx(dispPoints[0].flow)} ${sy(0)} L ${dispPoints.map((p) => `${sx(p.flow)} ${sy(p.head)}`).join(" L ")} L ${sx(dispPoints[dispPoints.length - 1].flow)} ${sy(0)} Z`;
 
   const xTicks = ticks(0, fNice, 5);
   const yTicks = ticks(0, hNice, 5);
@@ -639,7 +656,7 @@ function CurveChart({
             textAnchor="end"
             dominantBaseline="middle"
           >
-            {t}
+            {Number(t.toFixed(2))}
           </text>
         ))}
         {xTicks.map((t) => (
@@ -651,7 +668,7 @@ function CurveChart({
             fill="var(--text-tertiary)"
             textAnchor="middle"
           >
-            {t}
+            {Number(t.toFixed(2))}
           </text>
         ))}
         <text
@@ -662,7 +679,7 @@ function CurveChart({
           textAnchor="middle"
           transform={`rotate(-90 ${padL - 40} ${padT + innerH / 2})`}
         >
-          Head (m)
+          Head ({unitLabel("head", sys)})
         </text>
         <text
           x={padL + innerW / 2}
@@ -671,7 +688,7 @@ function CurveChart({
           fill="var(--text-tertiary)"
           textAnchor="middle"
         >
-          Flow (L/s)
+          Flow ({unitLabel("flow", sys)})
         </text>
 
         {/* fill */}
@@ -689,8 +706,8 @@ function CurveChart({
         {/* BEP */}
         {curve.bep != null && (
           <line
-            x1={sx(curve.bep)}
-            x2={sx(curve.bep)}
+            x1={sx(toDisplay(curve.bep, "flow", sys))}
+            x2={sx(toDisplay(curve.bep, "flow", sys))}
             y1={padT}
             y2={H - padB}
             stroke={accent}
@@ -701,7 +718,7 @@ function CurveChart({
         )}
 
         {/* points */}
-        {curve.points.map((p, i) => {
+        {dispPoints.map((p, i) => {
           const r = hoverIdx === i ? 5 : 3.5;
           return (
             // biome-ignore lint/a11y/noStaticElementInteractions: SVG points only expose hover feedback.
@@ -741,6 +758,7 @@ function PointsTable({
   onAddPoint: () => void;
   onRemovePoint: (index: number) => void;
 }) {
+  const sys = useUnitSystem();
   const total = useMemo(() => curve.points.length, [curve]);
   return (
     <div>
@@ -789,8 +807,12 @@ function PointsTable({
         <thead>
           <tr>
             <th style={thStyle}>#</th>
-            <th style={{ ...thStyle, textAlign: "right" }}>Flow</th>
-            <th style={{ ...thStyle, textAlign: "right" }}>Head</th>
+            <th style={{ ...thStyle, textAlign: "right" }}>
+              Flow ({unitLabel("flow", sys)})
+            </th>
+            <th style={{ ...thStyle, textAlign: "right" }}>
+              Head ({unitLabel("head", sys)})
+            </th>
             <th style={thStyle} />
           </tr>
         </thead>
@@ -814,14 +836,14 @@ function PointsTable({
                   {i + 1}
                 </td>
                 <EditableCell
-                  display={p.flow.toFixed(1)}
+                  display={toDisplay(p.flow, "flow", sys).toFixed(1)}
                   align="right"
                   inputType="number"
                   min={0}
                   onCommit={(v) => onCommitPoint(i, "flow", v)}
                 />
                 <EditableCell
-                  display={p.head.toFixed(1)}
+                  display={toDisplay(p.head, "head", sys).toFixed(1)}
                   align="right"
                   inputType="number"
                   min={0}

@@ -1,6 +1,7 @@
 import { useSimulation } from "../../../AppContext";
 import { SectionHeader } from "../../../components/ui/SectionHeader";
 import type { ResultAnalytics } from "../../../hooks";
+import { formatQty, useUnitSystem } from "../../../units";
 import { AuditMetric, NoDataCard, Sparkline } from "./charts";
 
 export function AuditPanels({
@@ -23,6 +24,7 @@ function MassBalanceAudit({
 }: {
   analytics: ResultAnalytics | null;
 }) {
+  const sys = useUnitSystem();
   if (!analytics) {
     return (
       <div>
@@ -53,11 +55,11 @@ function MassBalanceAudit({
           }}
         >
           <AuditMetric
-            value={`${massBalance.inflowM3.toFixed(0)} m³`}
+            value={formatQty(massBalance.inflowM3, "volume", sys, 0)}
             label="Cumulative inflow"
           />
           <AuditMetric
-            value={`${massBalance.outflowM3.toFixed(0)} m³`}
+            value={formatQty(massBalance.outflowM3, "volume", sys, 0)}
             label="Cumulative outflow"
           />
           <AuditMetric value={`${periodCount} steps`} label="Timesteps" />
@@ -92,6 +94,7 @@ function MassBalanceAudit({
 }
 
 function EnergyAudit({ periodCount }: { periodCount: number | null }) {
+  const sys = useUnitSystem();
   const { pumpEnergy, resultMeta } = useSimulation();
   if (!pumpEnergy) {
     return (
@@ -149,7 +152,10 @@ function EnergyAudit({ periodCount }: { periodCount: number | null }) {
           <AuditMetric
             value={
               specificEnergy != null
-                ? `${specificEnergy.toFixed(3)} kWh/m³`
+                ? sys === "us"
+                  ? // kWh/m³ → kWh per 1000 US gal (customary specific energy).
+                    `${((specificEnergy / 264.172) * 1000).toFixed(3)} kWh/kgal`
+                  : `${specificEnergy.toFixed(3)} kWh/m³`
                 : "—"
             }
             label="Specific energy"

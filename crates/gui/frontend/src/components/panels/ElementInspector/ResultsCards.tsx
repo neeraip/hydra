@@ -8,6 +8,7 @@ import {
 } from "../../../canvas/colors";
 import type { LinkVariable, NodeVariable } from "../../../canvas/types";
 import type { Link, Node, ResultRanges } from "../../../hooks";
+import { formatQty, useUnitSystem } from "../../../units";
 import { BigValue, SecondaryCell } from "./primitives";
 
 // ── Empty state (no simulation run yet) ─────────────────────────────────────
@@ -75,6 +76,7 @@ export function NodeResultsCard({
   ranges?: ResultRanges;
   hasSimulation?: boolean;
 }) {
+  const sys = useUnitSystem();
   const hasSim =
     node.pressure != null ||
     node.demand != null ||
@@ -108,17 +110,32 @@ export function NodeResultsCard({
   let primaryColor = accent;
   if (node.pressure != null) {
     primaryLabel = "Pressure";
-    primaryValue = `${node.pressure.toFixed(2)} m`;
+    primaryValue = formatQty(
+      node.pressure,
+      "pressure",
+      sys,
+      sys === "si" ? 2 : undefined,
+    );
     primaryColor = valueColor("pressure", node.pressure);
   }
   if (nodeVar === "head" && node.head != null) {
     primaryLabel = "Head";
-    primaryValue = `${node.head.toFixed(2)} m`;
+    primaryValue = formatQty(
+      node.head,
+      "head",
+      sys,
+      sys === "si" ? 2 : undefined,
+    );
     primaryColor = valueColor("head", node.head);
   }
   if (nodeVar === "demand" && node.demand != null) {
     primaryLabel = "Demand";
-    primaryValue = `${node.demand.toFixed(4)} L/s`;
+    primaryValue = formatQty(
+      node.demand,
+      "demand",
+      sys,
+      sys === "si" ? 4 : undefined,
+    );
     primaryColor = valueColor("demand", node.demand);
   }
   if (nodeVar === "quality" && node.quality != null) {
@@ -132,19 +149,29 @@ export function NodeResultsCard({
   if (nodeVar !== "pressure" && node.pressure != null)
     secondaries.push({
       label: "Pressure",
-      value: `${node.pressure.toFixed(2)} m`,
+      value: formatQty(
+        node.pressure,
+        "pressure",
+        sys,
+        sys === "si" ? 2 : undefined,
+      ),
       color: valueColor("pressure", node.pressure),
     });
   if (nodeVar !== "head" && node.head != null)
     secondaries.push({
       label: "Head",
-      value: `${node.head.toFixed(2)} m`,
+      value: formatQty(node.head, "head", sys, sys === "si" ? 2 : undefined),
       color: valueColor("head", node.head),
     });
   if (nodeVar !== "demand" && node.demand != null)
     secondaries.push({
       label: "Demand",
-      value: `${node.demand.toFixed(4)} L/s`,
+      value: formatQty(
+        node.demand,
+        "demand",
+        sys,
+        sys === "si" ? 4 : undefined,
+      ),
       color: valueColor("demand", node.demand),
     });
   if (nodeVar !== "quality" && node.quality != null)
@@ -203,6 +230,7 @@ export function LinkResultsCard({
   ranges?: ResultRanges;
   hasSimulation?: boolean;
 }) {
+  const sys = useUnitSystem();
   const hasSim =
     link.flow != null || link.status != null || link.quality != null;
   if (!hasSim && !hasSimulation) return <EmptyStateCard />;
@@ -230,12 +258,22 @@ export function LinkResultsCard({
   let primaryColor = accent;
   if (link.flow != null) {
     primaryLabel = "Flow";
-    primaryValue = `${link.flow.toFixed(2)} L/s`;
+    primaryValue = formatQty(
+      link.flow,
+      "flow",
+      sys,
+      sys === "si" ? 2 : undefined,
+    );
     primaryColor = valueColor("flow", link.flow);
   }
   if (linkVar === "velocity" && link.velocity != null) {
     primaryLabel = "Velocity";
-    primaryValue = `${link.velocity.toFixed(3)} m/s`;
+    primaryValue = formatQty(
+      link.velocity,
+      "velocity",
+      sys,
+      sys === "si" ? 3 : undefined,
+    );
     primaryColor = valueColor("velocity", link.velocity);
   }
   if (linkVar === "status" && link.status != null) {
@@ -249,13 +287,18 @@ export function LinkResultsCard({
   if (linkVar !== "flow" && link.flow != null)
     secondaries.push({
       label: "Flow",
-      value: `${link.flow.toFixed(2)} L/s`,
+      value: formatQty(link.flow, "flow", sys, sys === "si" ? 2 : undefined),
       color: valueColor("flow", link.flow),
     });
   if (linkVar !== "velocity" && link.velocity != null)
     secondaries.push({
       label: "Velocity",
-      value: `${link.velocity.toFixed(3)} m/s`,
+      value: formatQty(
+        link.velocity,
+        "velocity",
+        sys,
+        sys === "si" ? 3 : undefined,
+      ),
       color: valueColor("velocity", link.velocity),
     });
   if (linkVar !== "status")

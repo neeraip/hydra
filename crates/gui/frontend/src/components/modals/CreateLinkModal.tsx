@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { formatQtyRaw, useUnitSystem } from "../../units";
 
 interface Props {
   open: boolean;
@@ -24,6 +25,7 @@ export function CreateLinkModal({
   onConfirm,
   onCancel,
 }: Props) {
+  const sys = useUnitSystem();
   const [kind, setKind] = useState("pipe");
   const [id, setId] = useState(() => suggestId("pipe"));
   const [submitting, setSubmitting] = useState(false);
@@ -271,7 +273,7 @@ export function CreateLinkModal({
         {/* Default params reminder */}
         <div style={{ fontSize: 11, color: "var(--text-tertiary)" }}>
           {kind === "pipe"
-            ? "Defaults: 100 m · 300 mm · C 100"
+            ? `Defaults: ${formatQtyRaw(100, "length", sys)} · ${formatQtyRaw(300, "diameter", sys)} · C 100`
             : "Defaults: 10 kW constant-power"}
         </div>
 

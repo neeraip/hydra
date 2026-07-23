@@ -1,6 +1,12 @@
 import type React from "react";
 import type { JunctionRow } from "../../../hooks";
 import {
+  formatQty,
+  formatQtyRaw,
+  fromDisplay,
+  useUnitSystem,
+} from "../../../units";
+import {
   EditableCell,
   SortTh,
   useVirtualRows,
@@ -39,6 +45,7 @@ export function JunctionTable({
   discardGen: number;
   scrollContainerRef: React.RefObject<HTMLDivElement | null>;
 }) {
+  const sys = useUnitSystem();
   const tdStyle: React.CSSProperties = {
     padding: "7px 10px",
     fontSize: 12,
@@ -150,19 +157,37 @@ export function JunctionTable({
               )}
               <EditableCell
                 key={`${discardGen}-${row.id}-elevation`}
-                display={isPendingRow ? "" : `${row.elevation} m`}
+                display={
+                  isPendingRow
+                    ? ""
+                    : formatQtyRaw(row.elevation, "elevation", sys)
+                }
                 placeholder={isPendingRow}
                 align="right"
                 style={{ color: "var(--text-primary)" }}
                 isPending={pendingKeys.has(`junction:${row.id}:elevation`)}
                 inputType="number"
                 onCommit={(v) =>
-                  onPatch("junction", row.id, "elevation", parseFloat(v))
+                  onPatch(
+                    "junction",
+                    row.id,
+                    "elevation",
+                    fromDisplay(parseFloat(v), "elevation", sys),
+                  )
                 }
               />
               <EditableCell
                 key={`${discardGen}-${row.id}-baseDemand`}
-                display={isPendingRow ? "" : `${row.baseDemand.toFixed(2)} L/s`}
+                display={
+                  isPendingRow
+                    ? ""
+                    : formatQty(
+                        row.baseDemand,
+                        "demand",
+                        sys,
+                        sys === "si" ? 2 : undefined,
+                      )
+                }
                 placeholder={isPendingRow}
                 align="right"
                 style={{ color: "var(--text-primary)" }}
@@ -170,7 +195,12 @@ export function JunctionTable({
                 inputType="number"
                 min={0}
                 onCommit={(v) =>
-                  onPatch("junction", row.id, "baseDemand", parseFloat(v))
+                  onPatch(
+                    "junction",
+                    row.id,
+                    "baseDemand",
+                    fromDisplay(parseFloat(v), "demand", sys),
+                  )
                 }
               />
               <EditableCell

@@ -1,5 +1,6 @@
 import type React from "react";
 import type { PipeRow } from "../../../hooks";
+import { formatQtyRaw, fromDisplay, useUnitSystem } from "../../../units";
 import {
   EditableCell,
   RefInputCell,
@@ -47,6 +48,7 @@ export function PipeTable({
   discardGen: number;
   scrollContainerRef: React.RefObject<HTMLDivElement | null>;
 }) {
+  const sys = useUnitSystem();
   const tdStyle: React.CSSProperties = {
     padding: "7px 10px",
     fontSize: 12,
@@ -220,7 +222,9 @@ export function PipeTable({
                 )}
                 <EditableCell
                   key={`${discardGen}-${row.id}-length`}
-                  display={isPendingRow ? "" : `${row.length} m`}
+                  display={
+                    isPendingRow ? "" : formatQtyRaw(row.length, "length", sys)
+                  }
                   placeholder={isPendingRow}
                   align="right"
                   style={{ color: "var(--text-primary)" }}
@@ -228,12 +232,21 @@ export function PipeTable({
                   inputType="number"
                   min={0}
                   onCommit={(v) =>
-                    onPatch("pipe", row.id, "length", parseFloat(v))
+                    onPatch(
+                      "pipe",
+                      row.id,
+                      "length",
+                      fromDisplay(parseFloat(v), "length", sys),
+                    )
                   }
                 />
                 <EditableCell
                   key={`${discardGen}-${row.id}-diameter`}
-                  display={isPendingRow ? "" : `${row.diameter} mm`}
+                  display={
+                    isPendingRow
+                      ? ""
+                      : formatQtyRaw(row.diameter, "diameter", sys)
+                  }
                   placeholder={isPendingRow}
                   align="right"
                   style={{ color: "var(--text-primary)" }}
@@ -241,7 +254,12 @@ export function PipeTable({
                   inputType="number"
                   min={0}
                   onCommit={(v) =>
-                    onPatch("pipe", row.id, "diameter", parseFloat(v))
+                    onPatch(
+                      "pipe",
+                      row.id,
+                      "diameter",
+                      fromDisplay(parseFloat(v), "diameter", sys),
+                    )
                   }
                 />
                 <EditableCell

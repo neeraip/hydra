@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useAppState } from "../AppContext";
 import { Toggle } from "../components/ui/Toggle";
 import { getVersions, reconcileProjects, type Versions } from "../hooks";
+import { setUnitSystem, type UnitSystem, useUnitSystem } from "../units";
 
 const SK = {
   reducedMotion: "hydra2-reduced-motion",
@@ -110,6 +111,46 @@ function ThemeToggle() {
   );
 }
 
+const UNIT_OPTIONS: Array<{ value: UnitSystem; label: string }> = [
+  { value: "si", label: "SI (metric)" },
+  { value: "us", label: "US customary" },
+];
+
+function UnitSystemToggle() {
+  const unitSystem = useUnitSystem();
+  return (
+    <div style={{ display: "flex", gap: 6 }}>
+      {UNIT_OPTIONS.map((o) => (
+        <button
+          type="button"
+          key={o.value}
+          onClick={() => setUnitSystem(o.value)}
+          style={{
+            padding: "5px 14px",
+            border: "1px solid",
+            borderColor:
+              unitSystem === o.value ? "var(--accent)" : "var(--border-hover)",
+            borderRadius: 6,
+            background:
+              unitSystem === o.value ? "var(--accent-dim)" : "transparent",
+            color:
+              unitSystem === o.value
+                ? "var(--accent)"
+                : "var(--text-secondary)",
+            cursor: "pointer",
+            fontSize: 13,
+            fontFamily: "var(--font-ui)",
+            fontWeight: unitSystem === o.value ? 500 : 400,
+            transition: "all var(--t-fast)",
+          }}
+        >
+          {o.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 export function SettingsPage() {
   const { showToast } = useAppState();
   const [reducedMotion, setReducedMotionRaw] = useState(() =>
@@ -180,6 +221,14 @@ export function SettingsPage() {
         <Section>Appearance</Section>
         <SettingRow label="Theme" description="Choose dark or light mode.">
           <ThemeToggle />
+        </SettingRow>
+        {/* Units */}
+        <Section>Units</Section>
+        <SettingRow
+          label="Display units"
+          description="How values are shown and entered throughout the app. Files and exports (INP, CSV, GeoJSON) always remain in the model's native/SI units."
+        >
+          <UnitSystemToggle />
         </SettingRow>
         {/* Accessibility */}
         <Section>Accessibility</Section>

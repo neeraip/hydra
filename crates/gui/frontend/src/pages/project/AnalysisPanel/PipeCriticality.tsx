@@ -1,5 +1,6 @@
 import { useMemo } from "react";
 import type { ResultAnalytics } from "../../../hooks";
+import { formatQty, toDisplay, unitLabel, useUnitSystem } from "../../../units";
 import { NoDataCard } from "./charts";
 
 export function PipeCriticality({
@@ -7,11 +8,13 @@ export function PipeCriticality({
 }: {
   analytics: ResultAnalytics | null;
 }) {
+  const sys = useUnitSystem();
+  // Rows keep SI values; conversion happens at render time only.
   const rows = useMemo(() => {
     if (!analytics) return null;
     return analytics.topPipes.map((p) => ({
       id: p.id,
-      diameter: p.diameterMm > 0 ? Math.round(p.diameterMm) : 0,
+      diameterMm: p.diameterMm > 0 ? p.diameterMm : 0,
       velocity: p.maxVelocityMs,
       segment: `${p.fromId} → ${p.toId}`,
     }));
@@ -74,7 +77,9 @@ export function PipeCriticality({
           <tr>
             <th style={thStyle}>ID</th>
             <th style={thStyle}>Segment</th>
-            <th style={{ ...thStyle, textAlign: "right" }}>Ø (mm)</th>
+            <th style={{ ...thStyle, textAlign: "right" }}>
+              Ø ({unitLabel("diameter", sys)})
+            </th>
             <th style={{ ...thStyle, textAlign: "right" }}>Velocity</th>
           </tr>
         </thead>
@@ -105,7 +110,11 @@ export function PipeCriticality({
               >
                 {row.segment}
               </td>
-              <td style={{ ...tdStyle, textAlign: "right" }}>{row.diameter}</td>
+              <td style={{ ...tdStyle, textAlign: "right" }}>
+                {sys === "si"
+                  ? Math.round(row.diameterMm)
+                  : toDisplay(row.diameterMm, "diameter", sys).toFixed(2)}
+              </td>
               <td
                 style={{
                   ...tdStyle,
@@ -118,7 +127,7 @@ export function PipeCriticality({
                         : "var(--text-secondary)",
                 }}
               >
-                {row.velocity.toFixed(2)} m/s
+                {formatQty(row.velocity, "velocity", sys, 2)}
               </td>
             </tr>
           ))}

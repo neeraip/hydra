@@ -13,6 +13,7 @@ import {
 } from "../../hooks";
 import { formatIpcError } from "../../hooks/ipc";
 import { useNetworkVersion } from "../../hooks/NetworkVersionContext";
+import { fromDisplay, toDisplay, unitLabel, useUnitSystem } from "../../units";
 import {
   Empty,
   Field,
@@ -41,6 +42,7 @@ import {
 // ─────────────────────────────────────────────────────────────────────────────
 
 export function SimulationSettings({ projectId }: { projectId: string }) {
+  const sys = useUnitSystem();
   const { showToast, bumpSimParams } = useAppState();
   const { markEdited } = useNetworkVersion();
   const scenarios = useScenarios(projectId);
@@ -339,30 +341,57 @@ export function SimulationSettings({ projectId }: { projectId: string }) {
         {draft.demandModel === "PDA" && (
           <>
             <Field
-              label="PDA min pressure"
+              label={`PDA min pressure (${unitLabel("pressure", sys)})`}
               editing={editing}
               control={
                 <NumberInput
-                  value={draft.pdaMinPressure}
-                  onChange={(v) => update("pdaMinPressure", v)}
+                  value={Number(
+                    toDisplay(draft.pdaMinPressure, "pressure", sys).toFixed(2),
+                  )}
+                  onChange={(v) =>
+                    update("pdaMinPressure", fromDisplay(v, "pressure", sys))
+                  }
                   step={1}
                   min={0}
                 />
               }
-              display={draft.pdaMinPressure.toString()}
+              display={
+                sys === "si"
+                  ? draft.pdaMinPressure.toString()
+                  : toDisplay(draft.pdaMinPressure, "pressure", sys).toFixed(1)
+              }
             />
             <Field
-              label="PDA req. pressure"
+              label={`PDA req. pressure (${unitLabel("pressure", sys)})`}
               editing={editing}
               control={
                 <NumberInput
-                  value={draft.pdaRequiredPressure}
-                  onChange={(v) => update("pdaRequiredPressure", v)}
+                  value={Number(
+                    toDisplay(
+                      draft.pdaRequiredPressure,
+                      "pressure",
+                      sys,
+                    ).toFixed(2),
+                  )}
+                  onChange={(v) =>
+                    update(
+                      "pdaRequiredPressure",
+                      fromDisplay(v, "pressure", sys),
+                    )
+                  }
                   step={1}
                   min={0}
                 />
               }
-              display={draft.pdaRequiredPressure.toString()}
+              display={
+                sys === "si"
+                  ? draft.pdaRequiredPressure.toString()
+                  : toDisplay(
+                      draft.pdaRequiredPressure,
+                      "pressure",
+                      sys,
+                    ).toFixed(1)
+              }
             />
             <Field
               label="PDA exponent"

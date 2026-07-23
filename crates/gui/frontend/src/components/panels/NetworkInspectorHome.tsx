@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { Link, Node, Pattern } from "../../hooks";
 import { useLinks, useNodes, usePatterns } from "../../hooks";
 import { perfTrace } from "../../perfTrace";
+import { toDisplay, useUnitSystem } from "../../units";
 
 // ── Sort / filter hook ────────────────────────────────────────────────────────
 
@@ -154,6 +155,7 @@ function NodesTab({
   onZoomTo?: (id: string) => void;
   activeId?: string | null;
 }) {
+  const sys = useUnitSystem();
   const hasResults = nodes.some((n) => n.pressure != null);
   const [rows, sortCol, sortDir, toggleSort] = useSortedFiltered(
     nodes,
@@ -278,14 +280,22 @@ function NodesTab({
                   {node.type}
                 </td>
                 <td style={{ ...TD, fontFamily: "var(--font-mono)" }}>
-                  {node.elevation?.toFixed(1) ?? "—"}
+                  {node.elevation != null
+                    ? toDisplay(node.elevation, "elevation", sys).toFixed(1)
+                    : "—"}
                 </td>
                 <td style={{ ...TD, fontFamily: "var(--font-mono)" }}>
-                  {node.baseDemand?.toFixed(2) ?? "—"}
+                  {node.baseDemand != null
+                    ? toDisplay(node.baseDemand, "demand", sys).toFixed(
+                        sys === "si" ? 2 : 1,
+                      )
+                    : "—"}
                 </td>
                 {hasResults && (
                   <td style={{ ...TD, fontFamily: "var(--font-mono)" }}>
-                    {node.pressure?.toFixed(1) ?? "—"}
+                    {node.pressure != null
+                      ? toDisplay(node.pressure, "pressure", sys).toFixed(1)
+                      : "—"}
                   </td>
                 )}
                 {onZoomTo && (
@@ -400,6 +410,7 @@ function LinksTab({
   onZoomTo?: (id: string) => void;
   activeId?: string | null;
 }) {
+  const sys = useUnitSystem();
   const hasResults = links.some((l) => l.flow != null);
   const [rows, sortCol, sortDir, toggleSort] = useSortedFiltered(
     links,
@@ -532,11 +543,19 @@ function LinksTab({
                   )}
                 </td>
                 <td style={{ ...TD, fontFamily: "var(--font-mono)" }}>
-                  {link.diameter?.toFixed(0) ?? "—"}
+                  {link.diameter != null
+                    ? toDisplay(link.diameter, "diameter", sys).toFixed(
+                        sys === "si" ? 0 : 1,
+                      )
+                    : "—"}
                 </td>
                 {hasResults && (
                   <td style={{ ...TD, fontFamily: "var(--font-mono)" }}>
-                    {link.flow != null ? link.flow.toFixed(2) : "—"}
+                    {link.flow != null
+                      ? toDisplay(link.flow, "flow", sys).toFixed(
+                          sys === "si" ? 2 : 1,
+                        )
+                      : "—"}
                   </td>
                 )}
                 {onZoomTo && (

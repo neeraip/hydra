@@ -1,6 +1,7 @@
 import type { LinkVariable } from "../../../canvas/types";
 import type { Link, ResultRanges } from "../../../hooks";
 import { useNodes } from "../../../hooks";
+import { formatQty, formatQtyRaw, useUnitSystem } from "../../../units";
 import { SectionLabel } from "../../ui/SectionLabel";
 import { ConnectedNodeChip } from "./ConnectedElements";
 import { PropRow } from "./primitives";
@@ -26,6 +27,7 @@ export function LinkBody({
   isTransitioning?: boolean;
   onLocateNode: (id: string) => void;
 }) {
+  const sys = useUnitSystem();
   const allNodes = useNodes();
 
   return (
@@ -46,10 +48,16 @@ export function LinkBody({
         <tbody>
           <PropRow label="Type" value={link.type} />
           {link.length != null && link.length > 0 && (
-            <PropRow label="Length" value={`${link.length.toFixed(1)} m`} />
+            <PropRow
+              label="Length"
+              value={formatQty(link.length, "length", sys, 1)}
+            />
           )}
           {link.diameter > 0 && (
-            <PropRow label="Diameter" value={`${link.diameter} mm`} />
+            <PropRow
+              label="Diameter"
+              value={formatQtyRaw(link.diameter, "diameter", sys)}
+            />
           )}
           {link.roughness != null && link.roughness > 0 && (
             <PropRow label="Roughness" value={String(link.roughness)} />
@@ -73,9 +81,19 @@ export function LinkBody({
                 link.valveType === "PRV" ||
                 link.valveType === "PSV" ||
                 link.valveType === "PBV"
-                  ? `${link.valveSetting.toFixed(2)} m`
+                  ? formatQty(
+                      link.valveSetting,
+                      "pressure",
+                      sys,
+                      sys === "si" ? 2 : undefined,
+                    )
                   : link.valveType === "FCV"
-                    ? `${link.valveSetting.toFixed(3)} L/s`
+                    ? formatQty(
+                        link.valveSetting,
+                        "flow",
+                        sys,
+                        sys === "si" ? 3 : undefined,
+                      )
                     : link.valveType === "TCV"
                       ? `K = ${link.valveSetting.toFixed(3)}`
                       : String(link.valveSetting)

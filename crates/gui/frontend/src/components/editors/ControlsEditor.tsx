@@ -21,6 +21,14 @@ import {
   useRules,
 } from "../../hooks";
 import { useDraft } from "../../hooks/DraftContext";
+import {
+  fromDisplay,
+  type Quantity,
+  toDisplay,
+  type UnitSystem,
+  unitLabel,
+  useUnitSystem,
+} from "../../units";
 import { DeleteConfirmModal } from "../modals/DeleteConfirmModal";
 
 type ControlFilter = "all" | "simple" | "rule";
@@ -37,18 +45,29 @@ const inputStyle: React.CSSProperties = {
   outline: "none",
 };
 
-function settingUnitLabel(link: Link | undefined): string {
-  if (link?.type !== "valve") return "";
+/** Quantity of a valve's setting value (null = dimensionless / not a valve). */
+function settingQuantity(link: Link | undefined): Quantity | null {
+  if (link?.type !== "valve") return null;
   switch (link.valveType) {
     case "PRV":
     case "PSV":
     case "PBV":
-      return "m";
+      return "pressure";
     case "FCV":
-      return "L/s";
+      return "flow";
     default:
-      return "";
+      return null;
   }
+}
+
+function settingUnitLabel(link: Link | undefined, sys: UnitSystem): string {
+  const q = settingQuantity(link);
+  return q ? unitLabel(q, sys) : "";
+}
+
+/** SI → display for a numeric input, rounded so typing doesn't jitter. */
+function dispNum(v: number, q: Quantity | null, sys: UnitSystem): number {
+  return q ? Number(toDisplay(v, q, sys).toFixed(4)) : v;
 }
 
 function secondsToHhmm(s: number | null): string {
@@ -101,6 +120,7 @@ function defaultRule(): RuleDto {
 }
 
 export function ControlsEditor({ accent }: { accent: string }) {
+  const sys = useUnitSystem();
   const controls = useControls();
   const rules = useRules();
   const nodes = useNodes();
@@ -166,9 +186,12 @@ export function ControlsEditor({ accent }: { accent: string }) {
   const controlSummaries = useMemo(
     () =>
       new Map(
-        mergedControls.map(({ key, data }) => [key, summarizeControl(data)]),
+        mergedControls.map(({ key, data }) => [
+          key,
+          summarizeControl(data, sys),
+        ]),
       ),
-    [mergedControls],
+    [mergedControls, sys],
   );
   const ruleSummaries = useMemo(
     () =>
@@ -411,19 +434,21 @@ export function ControlsEditor({ accent }: { accent: string }) {
   );
 }
 
-function summarizeControl(c: SimpleControlDto): string {
+function summarizeControl(c: SimpleControlDto, sys: UnitSystem): string {
   const action =
     c.actionStatus != null
       ? c.actionStatus.toUpperCase()
       : `SETTING ${c.actionSetting ?? ""}`;
+  const lvl = (v: number | null) =>
+    `${v != null ? dispNum(v, "length", sys) : "?"} ${unitLabel("length", sys)}`;
   const trigger =
     c.triggerKind === "timer"
       ? `AT TIME ${secondsToHhmm(c.triggerSeconds)}`
       : c.triggerKind === "clocktime"
         ? `AT CLOCKTIME ${secondsToHhmm(c.triggerSeconds)}`
         : c.triggerKind === "hiLevel"
-          ? `IF ${c.triggerNodeId ?? "?"} ABOVE ${c.triggerValue ?? "?"} m`
-          : `IF ${c.triggerNodeId ?? "?"} BELOW ${c.triggerValue ?? "?"} m`;
+          ? `IF ${c.triggerNodeId ?? "?"} ABOVE ${lvl(c.triggerValue)}`
+          : `IF ${c.triggerNodeId ?? "?"} BELOW ${lvl(c.triggerValue)}`;
   return `LINK ${c.linkId} ${action} ${trigger}`;
 }
 
@@ -638,10 +663,12 @@ function ControlCard({
   onSave: (next: SimpleControlDto) => void;
   onDelete: () => void;
 }) {
+  const sys = useUnitSystem();
   const [draft, setDraft] = useState<SimpleControlDto>(control);
 
   const link = links.find((l) => l.id === draft.linkId);
-  const unit = settingUnitLabel(link);
+  const unit = settingUnitLabel(link, sys);
+  const settingQty = settingQuantity(link);
 
   // Stage every change into the shared draft immediately (matching
   // Curves/Patterns) — no separate per-card Save button. `onSave` is called
@@ -719,10 +746,15 @@ function ControlCard({
           <Field label={`Setting${unit ? ` (${unit})` : ""}`}>
             <input
               type="number"
-              value={draft.actionSetting ?? 0}
-              onChange={(e) =>
-                sync({ actionSetting: parseFloat(e.target.value) })
-              }
+              value={dispNum(draft.actionSetting ?? 0, settingQty, sys)}
+              onChange={(e) => {
+                const n = parseFloat(e.target.value);
+                sync({
+                  actionSetting: settingQty
+                    ? fromDisplay(n, settingQty, sys)
+                    : n,
+                });
+              }}
               style={inputStyle}
             />
           </Field>
@@ -783,12 +815,18 @@ function ControlCard({
                 ))}
               </select>
             </Field>
-            <Field label="Threshold (m)">
+            <Field label={`Threshold (${unitLabel("length", sys)})`}>
               <input
                 type="number"
-                value={draft.triggerValue ?? 0}
+                value={dispNum(draft.triggerValue ?? 0, "length", sys)}
                 onChange={(e) =>
-                  sync({ triggerValue: parseFloat(e.target.value) })
+                  sync({
+                    triggerValue: fromDisplay(
+                      parseFloat(e.target.value),
+                      "length",
+                      sys,
+                    ),
+                  })
                 }
                 style={inputStyle}
               />
@@ -995,8 +1033,10 @@ function ActionRow({
   onChange: (next: RuleActionDto) => void;
   onRemove: () => void;
 }) {
+  const sys = useUnitSystem();
   const link = links.find((l) => l.id === action.linkId);
-  const unit = settingUnitLabel(link);
+  const unit = settingUnitLabel(link, sys);
+  const settingQty = settingQuantity(link);
   return (
     <div
       style={{
@@ -1047,10 +1087,14 @@ function ActionRow({
       ) : (
         <input
           type="number"
-          value={action.setting ?? 0}
-          onChange={(e) =>
-            onChange({ ...action, setting: parseFloat(e.target.value) })
-          }
+          value={dispNum(action.setting ?? 0, settingQty, sys)}
+          onChange={(e) => {
+            const n = parseFloat(e.target.value);
+            onChange({
+              ...action,
+              setting: settingQty ? fromDisplay(n, settingQty, sys) : n,
+            });
+          }}
           style={{ ...inputStyle, width: 80 }}
           placeholder={unit || undefined}
         />

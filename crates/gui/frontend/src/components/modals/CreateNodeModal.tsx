@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { fromDisplay, toDisplay, unitLabel, useUnitSystem } from "../../units";
 
 export interface NodeCreatePayload {
   kind: string;
@@ -27,6 +28,11 @@ const NODE_TYPES = [
   { value: "tank", label: "Tank" },
 ];
 
+/** SI defaults for the tank level fields (metres). */
+const DEFAULT_MIN_LEVEL_M = 0;
+const DEFAULT_MAX_LEVEL_M = 3;
+const DEFAULT_INITIAL_LEVEL_M = 1.5;
+
 export function CreateNodeModal({
   open,
   suggestId,
@@ -35,12 +41,18 @@ export function CreateNodeModal({
   onConfirm,
   onCancel,
 }: Props) {
+  const sys = useUnitSystem();
+  // Level defaults are stored SI and presented in the display system.
+  const dispStr = (siValue: number) =>
+    String(Number(toDisplay(siValue, "length", sys).toFixed(2)));
   const [kind, setKind] = useState("junction");
   const [id, setId] = useState(() => suggestId("junction"));
   const [elevation, setElevation] = useState("0");
-  const [minLevel, setMinLevel] = useState("0");
-  const [maxLevel, setMaxLevel] = useState("3");
-  const [initialLevel, setInitialLevel] = useState("1.5");
+  const [minLevel, setMinLevel] = useState(() => dispStr(DEFAULT_MIN_LEVEL_M));
+  const [maxLevel, setMaxLevel] = useState(() => dispStr(DEFAULT_MAX_LEVEL_M));
+  const [initialLevel, setInitialLevel] = useState(() =>
+    dispStr(DEFAULT_INITIAL_LEVEL_M),
+  );
   const [submitting, setSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const idRef = useRef<HTMLInputElement>(null);
@@ -48,15 +60,16 @@ export function CreateNodeModal({
   const userEditedRef = useRef(false);
 
   // Reset fields and focus ID when modal opens.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: dispStr derives only from `sys`; resetting on unit-system change while open is intended.
   useEffect(() => {
     if (!open) return;
     userEditedRef.current = false;
     setKind("junction");
     setId(suggestId("junction"));
     setElevation("0");
-    setMinLevel("0");
-    setMaxLevel("3");
-    setInitialLevel("1.5");
+    setMinLevel(dispStr(DEFAULT_MIN_LEVEL_M));
+    setMaxLevel(dispStr(DEFAULT_MAX_LEVEL_M));
+    setInitialLevel(dispStr(DEFAULT_INITIAL_LEVEL_M));
     setErrorMsg(null);
     requestAnimationFrame(() => {
       idRef.current?.select();
@@ -64,7 +77,7 @@ export function CreateNodeModal({
     });
     // suggestId is stable (useCallback in parent), safe to omit from deps.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, suggestId]);
+  }, [open, suggestId, sys]);
 
   // Update the suggested ID when the user switches type — unless they've customised it.
   function handleKindChange(newKind: string) {
@@ -92,7 +105,17 @@ export function CreateNodeModal({
   const trimmedId = id.trim();
   const canSubmit = !!trimmedId && !submitting;
 
-  const elevLabel = kind === "reservoir" ? "Head (m)" : "Elevation (m)";
+  const elevLabel =
+    kind === "reservoir"
+      ? `Head (${unitLabel("head", sys)})`
+      : `Elevation (${unitLabel("elevation", sys)})`;
+
+  /** Parse a display-unit field back to SI, falling back to an SI default.
+   * Mirrors the previous `parseFloat(x) || default` semantics (NaN/0 → default). */
+  function parseSi(raw: string, fallbackSi: number): number {
+    const n = parseFloat(raw);
+    return n ? fromDisplay(n, "length", sys) : fallbackSi;
+  }
 
   async function handleSubmit() {
     if (!canSubmit) return;
@@ -102,10 +125,10 @@ export function CreateNodeModal({
       await onConfirm({
         kind,
         id: trimmedId,
-        elevation: parseFloat(elevation) || 0,
-        minLevel: parseFloat(minLevel) || 0,
-        maxLevel: parseFloat(maxLevel) || 3,
-        initialLevel: parseFloat(initialLevel) || 1.5,
+        elevation: parseSi(elevation, 0),
+        minLevel: parseSi(minLevel, DEFAULT_MIN_LEVEL_M),
+        maxLevel: parseSi(maxLevel, DEFAULT_MAX_LEVEL_M),
+        initialLevel: parseSi(initialLevel, DEFAULT_INITIAL_LEVEL_M),
       });
     } catch (err) {
       setErrorMsg(err instanceof Error ? err.message : String(err));
@@ -262,7 +285,9 @@ export function CreateNodeModal({
             }}
           >
             <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-              <span style={labelStyle}>Min lvl (m)</span>
+              <span style={labelStyle}>
+                Min lvl ({unitLabel("length", sys)})
+              </span>
               <input
                 type="number"
                 value={minLevel}
@@ -271,7 +296,9 @@ export function CreateNodeModal({
               />
             </label>
             <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-              <span style={labelStyle}>Max lvl (m)</span>
+              <span style={labelStyle}>
+                Max lvl ({unitLabel("length", sys)})
+              </span>
               <input
                 type="number"
                 value={maxLevel}
@@ -280,7 +307,9 @@ export function CreateNodeModal({
               />
             </label>
             <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-              <span style={labelStyle}>Init lvl (m)</span>
+              <span style={labelStyle}>
+                Init lvl ({unitLabel("length", sys)})
+              </span>
               <input
                 type="number"
                 value={initialLevel}

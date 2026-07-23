@@ -1,5 +1,6 @@
 import { flowColor, pressureColor } from "../../../canvas/colors";
 import type { Link, Node } from "../../../hooks";
+import { toDisplay, unitLabel, useUnitSystem } from "../../../units";
 import { LINK_TYPE_COLOR } from "./ResultsCards";
 
 // ── Connected-elements section ─────────────────────────────────────────────────
@@ -11,6 +12,7 @@ export function ConnectedLink({
   link: Link;
   onLocate: (id: string) => void;
 }) {
+  const sys = useUnitSystem();
   const hasFlow = link.flow != null;
   const flow = link.flow ?? 0;
   return (
@@ -78,7 +80,11 @@ export function ConnectedLink({
             color: "var(--text-secondary)",
           }}
         >
-          Ø{link.diameter}mm
+          Ø
+          {sys === "si"
+            ? `${link.diameter}`
+            : toDisplay(link.diameter, "diameter", sys).toFixed(2)}
+          {unitLabel("diameter", sys)}
         </span>
       )}
       {hasFlow && (
@@ -89,7 +95,8 @@ export function ConnectedLink({
             color: flowColor(flow, 0),
           }}
         >
-          {flow.toFixed(2)}&thinsp;L/s
+          {toDisplay(flow, "flow", sys).toFixed(sys === "si" ? 2 : 1)}&thinsp;
+          {unitLabel("flow", sys)}
         </span>
       )}
     </button>

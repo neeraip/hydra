@@ -34,6 +34,13 @@ import {
   useNetworkData,
 } from "../../../hooks";
 import { Sparkline } from "../../../pages/project/AnalysisPanel/charts";
+import {
+  type Quantity,
+  toDisplay,
+  type UnitSystem,
+  unitLabel,
+  useUnitSystem,
+} from "../../../units";
 import { SectionLabel } from "../../ui/SectionLabel";
 import { elementSeriesCacheKey, LruCache } from "./seriesCache";
 
@@ -48,16 +55,16 @@ const PRIMARY_FIELDS: Record<"node" | "link", string[]> = {
   link: ["flow", "velocity", "quality"],
 };
 
-/** SI display units per backend field name ("" = unitless / mode-dependent). */
-const FIELD_UNITS: Record<string, string> = {
-  pressure: "m",
-  head: "m",
-  demand: "L/s",
-  flow: "L/s",
-  velocity: "m/s",
-  headloss: "m",
-  status: "",
-  quality: "",
+/** Display quantity per backend field name — all series arrive in SI.
+ * `headloss` in an element series is total headloss in metres (a length),
+ * not per-unit m/km. Absent fields (status, quality) are unitless. */
+const FIELD_QUANTITIES: Record<string, Quantity> = {
+  pressure: "pressure",
+  head: "head",
+  demand: "demand",
+  flow: "flow",
+  velocity: "velocity",
+  headloss: "length",
 };
 
 function fieldDecimals(name: string): number {
@@ -81,12 +88,23 @@ function fieldRange(values: number[]): { min: number; max: number } {
 function FieldChart({
   field,
   times,
+  sys,
 }: {
   field: ElementSeriesField;
   times: number[];
+  sys: UnitSystem;
 }) {
-  const { min, max } = fieldRange(field.values);
-  const unit = FIELD_UNITS[field.name] ?? "";
+  const quantity = FIELD_QUANTITIES[field.name.toLowerCase()];
+  // Convert at the render boundary only — the cached series stays SI.
+  const values = useMemo(
+    () =>
+      quantity && sys === "us"
+        ? field.values.map((v) => toDisplay(v, quantity, sys))
+        : field.values,
+    [field.values, quantity, sys],
+  );
+  const { min, max } = fieldRange(values);
+  const unit = quantity ? unitLabel(quantity, sys) : "";
   return (
     <div>
       <div
@@ -102,7 +120,7 @@ function FieldChart({
         {unit ? ` (${unit})` : ""}
       </div>
       <Sparkline
-        values={field.values}
+        values={values}
         min={min}
         max={max}
         stroke="var(--accent)"
@@ -126,6 +144,7 @@ export function TimeSeriesCard({
   const { activeScenarioId } = useAppState();
   const { resultMeta, resultGeneration } = useSimulation();
   const { nodes, links } = useNetworkData();
+  const sys = useUnitSystem();
 
   const [series, setSeries] = useState<ElementSeries | null>(null);
   const [loading, setLoading] = useState(false);
@@ -235,7 +254,12 @@ export function TimeSeriesCard({
         ) : (
           <>
             {shown.map((f) => (
-              <FieldChart key={f.name} field={f} times={series?.times ?? []} />
+              <FieldChart
+                key={f.name}
+                field={f}
+                times={series?.times ?? []}
+                sys={sys}
+              />
             ))}
             {extraFields.length > 0 && (
               <button

@@ -1,6 +1,14 @@
 import type React from "react";
 import type { ValveRow } from "../../../hooks";
 import {
+  formatQtyRaw,
+  fromDisplay,
+  type Quantity,
+  toDisplay,
+  unitLabel,
+  useUnitSystem,
+} from "../../../units";
+import {
   EditableCell,
   RefInputCell,
   RefOptionsDatalist,
@@ -49,6 +57,7 @@ export function ValveTable({
   discardGen: number;
   scrollContainerRef: React.RefObject<HTMLDivElement | null>;
 }) {
+  const sys = useUnitSystem();
   const tdStyle: React.CSSProperties = {
     padding: "7px 10px",
     fontSize: 12,
@@ -110,7 +119,7 @@ export function ValveTable({
             />
             <SortTh
               field="diameter"
-              label="Ø (mm)"
+              label={`Ø (${unitLabel("diameter", sys)})`}
               sortField={sortField}
               sortAsc={sortAsc}
               onSort={onSort}
@@ -132,19 +141,36 @@ export function ValveTable({
             const row = rows[vi.index];
             const isSelected = selectedId === row.id;
             const isPendingRow = pendingRowIds?.has(row.id) ?? false;
-            const settingUnit =
+            // Quantity of the setting value: pressure head for PRV/PSV/PBV,
+            // flow for FCV; TCV is a dimensionless loss coefficient (K).
+            const settingQty: Quantity | null =
               row.valveType === "FCV"
-                ? "L/s"
+                ? "flow"
                 : row.valveType === "PRV" ||
                     row.valveType === "PSV" ||
                     row.valveType === "PBV"
-                  ? "m"
-                  : row.valveType === "TCV"
-                    ? "K"
-                    : null;
+                  ? "pressure"
+                  : null;
+            const settingUnit = settingQty
+              ? unitLabel(settingQty, sys)
+              : row.valveType === "TCV"
+                ? "K"
+                : null;
+            const settingDisplayValue =
+              row.setting != null && settingQty
+                ? sys === "si"
+                  ? String(row.setting)
+                  : String(
+                      Number(
+                        toDisplay(row.setting, settingQty, sys).toFixed(3),
+                      ),
+                    )
+                : row.setting != null
+                  ? String(row.setting)
+                  : "";
             const settingDisplay =
               row.setting != null
-                ? `${row.setting}${settingUnit ? ` ${settingUnit}` : ""}`
+                ? `${settingDisplayValue}${settingUnit ? ` ${settingUnit}` : ""}`
                 : row.curve
                   ? row.curve
                   : "—";
@@ -270,15 +296,24 @@ export function ValveTable({
                 </td>
                 <EditableCell
                   key={`${discardGen}-${row.id}-diameter`}
-                  display={isPendingRow ? "" : `${row.diameter} mm`}
+                  display={
+                    isPendingRow
+                      ? ""
+                      : formatQtyRaw(row.diameter, "diameter", sys)
+                  }
                   placeholder={isPendingRow}
                   align="right"
                   style={{ color: "var(--text-primary)" }}
                   isPending={pendingKeys.has(`valve:${row.id}:diameter`)}
                   inputType="number"
-                  min={0.1}
+                  min={sys === "si" ? 0.1 : 0.01}
                   onCommit={(v) =>
-                    onPatch("valve", row.id, "diameter", parseFloat(v))
+                    onPatch(
+                      "valve",
+                      row.id,
+                      "diameter",
+                      fromDisplay(parseFloat(v), "diameter", sys),
+                    )
                   }
                 />
                 {hasCurve ? (
@@ -298,7 +333,7 @@ export function ValveTable({
                       isPendingRow
                         ? ""
                         : row.setting != null
-                          ? String(row.setting)
+                          ? settingDisplayValue
                           : ""
                     }
                     placeholder={isPendingRow || row.setting == null}
@@ -308,7 +343,14 @@ export function ValveTable({
                     inputType="number"
                     min={0}
                     onCommit={(v) =>
-                      onPatch("valve", row.id, "valveSetting", parseFloat(v))
+                      onPatch(
+                        "valve",
+                        row.id,
+                        "valveSetting",
+                        settingQty
+                          ? fromDisplay(parseFloat(v), settingQty, sys)
+                          : parseFloat(v),
+                      )
                     }
                   />
                 )}
