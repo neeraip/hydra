@@ -32,7 +32,8 @@ const NETWORK_CHANGED_EVENT: &str = "network-changed";
 ///   • flows / demands        : litres per second  (L/s)
 ///   • pipe/valve diameters   : millimetres  (mm)
 ///   • roughness / speed      : dimensionless number
-///   • status                 : string `"Open"` | `"Closed"`
+///   • status                 : string `"Open"` | `"Closed"` | `"CV"` (pipes;
+///     case-insensitive — CV marks the pipe as a check valve)
 ///   • curve / headPattern    : string ID
 /// Set one axis of a node's `[COORDINATES]` entry, inserting a `(0, 0)`
 /// entry first when the node has none yet. Shared by the junction /
@@ -191,11 +192,19 @@ pub(crate) fn apply_patch_to_network(
                         let s = value
                             .as_str()
                             .ok_or_else(|| format!("expected string status, got {value}"))?;
-                        link.base.initial_status = match s.to_ascii_lowercase().as_str() {
-                            "open" => hydra::LinkStatus::Open,
-                            "closed" => hydra::LinkStatus::Closed,
+                        // CV is modelled as `Pipe::check_valve` with an Open
+                        // initial status (mirroring the INP reader); plain
+                        // open/closed clears the CV flag so the INP writer —
+                        // which emits "CV" for any check-valve pipe — round-
+                        // trips whichever status was last patched.
+                        let (status, check_valve) = match s.to_ascii_lowercase().as_str() {
+                            "open" => (hydra::LinkStatus::Open, false),
+                            "closed" => (hydra::LinkStatus::Closed, false),
+                            "cv" => (hydra::LinkStatus::Open, true),
                             _ => return Err(format!("unknown pipe status '{s}'")),
                         };
+                        link.base.initial_status = status;
+                        p.check_valve = check_valve;
                     }
                     other => return Err(format!("unknown pipe field '{other}'")),
                 }
@@ -361,9 +370,22 @@ fn refresh_element_dto(
                 node_id_of(link.base.from_node),
                 node_id_of(link.base.to_node),
             );
-            match dto.links.iter_mut().find(|l| l.id == id) {
-                Some(slot) => *slot = updated.clone(),
-                None => dto.links.push(updated.clone()),
+            let status_code = super::network_dto::link_initial_status_code(link);
+            match dto.links.iter().position(|l| l.id == id) {
+                Some(pos) => {
+                    dto.links[pos] = updated.clone();
+                    // Keep the snapshot's parallel initial-status column in
+                    // sync — a pipe "status" patch changes it without a full
+                    // DTO rebuild. Missing entries are tolerated (the encoder
+                    // defaults them to 0), matching `link_vertices`.
+                    if let Some(slot) = dto.link_initial_status.get_mut(pos) {
+                        *slot = status_code;
+                    }
+                }
+                None => {
+                    dto.links.push(updated.clone());
+                    dto.link_initial_status.push(status_code);
+                }
             }
             Ok(PatchedElementDto {
                 node: None,
@@ -2078,5 +2100,64 @@ Duration  0
         // The failed patches must not have changed the status.
         let p1 = network.links.iter().find(|l| l.base.id == "P1").unwrap();
         assert_eq!(p1.base.initial_status, hydra::LinkStatus::Open);
+    }
+
+    #[test]
+    fn pipe_status_patch_accepts_cv_and_round_trips() {
+        let pipe = |network: &hydra::Network, id: &str| {
+            let l = network.links.iter().find(|l| l.base.id == id).unwrap();
+            let hydra::LinkKind::Pipe(p) = &l.kind else {
+                panic!("{id} is a pipe");
+            };
+            (l.base.initial_status, p.check_valve)
+        };
+        let mut network = hydra::io::parse(TEST_INP.as_bytes()).unwrap();
+
+        // "CV" (case-insensitive) sets the check-valve flag with Open status,
+        // matching how the INP reader represents a [PIPES] CV column.
+        apply_patch_to_network(
+            &mut network,
+            "pipe",
+            "P1",
+            "status",
+            serde_json::json!("CV"),
+        )
+        .unwrap();
+        assert_eq!(pipe(&network, "P1"), (hydra::LinkStatus::Open, true));
+
+        // The CV survives an INP write → parse round trip.
+        let bytes = hydra::write_inp(&network);
+        let reparsed = hydra::io::parse(&bytes).unwrap();
+        assert_eq!(pipe(&reparsed, "P1"), (hydra::LinkStatus::Open, true));
+
+        // Patching back to closed/open clears the check-valve flag — the INP
+        // writer emits "CV" for any check-valve pipe, so a stale flag would
+        // silently override the new status on the next round trip.
+        apply_patch_to_network(
+            &mut network,
+            "pipe",
+            "P1",
+            "status",
+            serde_json::json!("closed"),
+        )
+        .unwrap();
+        assert_eq!(pipe(&network, "P1"), (hydra::LinkStatus::Closed, false));
+        apply_patch_to_network(
+            &mut network,
+            "pipe",
+            "P1",
+            "status",
+            serde_json::json!("cv"),
+        )
+        .unwrap();
+        apply_patch_to_network(
+            &mut network,
+            "pipe",
+            "P1",
+            "status",
+            serde_json::json!("open"),
+        )
+        .unwrap();
+        assert_eq!(pipe(&network, "P1"), (hydra::LinkStatus::Open, false));
     }
 }

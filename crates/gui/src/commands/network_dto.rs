@@ -241,6 +241,12 @@ pub struct NetworkDto {
     /// binary snapshot encoder ([`encode_network_snapshot`]).
     #[serde(skip)]
     pub link_vertices: Vec<Vec<(f64, f64)>>,
+    /// Per-link initial-status codes (0 = open, 1 = closed, 2 = check valve;
+    /// pumps/valves always 0), parallel to `links`. Never serialised to JSON —
+    /// consumed only by the binary snapshot encoder
+    /// ([`encode_network_snapshot`], layout v3).
+    #[serde(skip)]
+    pub link_initial_status: Vec<u8>,
 }
 
 /// Inner state for `NetworkState`.
@@ -590,6 +596,18 @@ pub(crate) fn link_to_dto(l: &hydra::Link, from_id: String, to_id: String) -> Li
     }
 }
 
+/// Snapshot initial-status code for one link: `0` = open, `1` = closed,
+/// `2` = check valve (a pipe with `check_valve` set — CV pipes always parse
+/// with `initial_status == Open`, so the CV bit takes precedence).
+/// Pumps and valves are always `0`.
+pub(crate) fn link_initial_status_code(l: &hydra::Link) -> u8 {
+    match &l.kind {
+        hydra::LinkKind::Pipe(p) if p.check_valve => 2,
+        hydra::LinkKind::Pipe(_) if l.base.initial_status == hydra::LinkStatus::Closed => 1,
+        _ => 0,
+    }
+}
+
 pub(crate) fn network_to_dto(network: &hydra::Network) -> NetworkDto {
     // Build a node-index → node-id map for resolving link endpoints.
     let node_id_by_index: std::collections::HashMap<usize, &str> = network
@@ -694,6 +712,7 @@ pub(crate) fn network_to_dto(network: &hydra::Network) -> NetworkDto {
             .collect(),
         file_stem: String::new(),
         link_vertices,
+        link_initial_status: network.links.iter().map(link_initial_status_code).collect(),
     }
 }
 
@@ -1469,5 +1488,28 @@ Duration  0
             "got: {msg}"
         );
         assert!(msg.ends_with("and 1 more"), "got: {msg}");
+    }
+
+    #[test]
+    fn format_inp_parse_error_renders_section_and_line_for_reader_errors() {
+        // A real reader error (malformed junction elevation) must surface the
+        // section name, the 1-based line number, and the offending value.
+        let inp = b"[JUNCTIONS]\nJ1    not-a-number    10\n\n[RESERVOIRS]\nR1    100\n\n\
+                    [PIPES]\nP1    R1    J1    1000    12    100    0    Open\n\n\
+                    [OPTIONS]\nUnits    GPM\nHeadloss    H-W\n";
+        let err = hydra::io::parse(inp).expect_err("malformed elevation must fail");
+        let msg = format_inp_parse_error(err);
+        assert!(msg.contains("[JUNCTIONS] line 2"), "got: {msg}");
+        assert!(msg.contains("not-a-number"), "got: {msg}");
+    }
+
+    #[test]
+    fn format_inp_parse_error_renders_duplicate_id() {
+        let inp = b"[JUNCTIONS]\nJ1    0    10\nJ1    0    20\n\n[RESERVOIRS]\nR1    100\n\n\
+                    [PIPES]\nP1    R1    J1    1000    12    100    0    Open\n\n\
+                    [OPTIONS]\nUnits    GPM\nHeadloss    H-W\n";
+        let err = hydra::io::parse(inp).expect_err("duplicate node ID must fail");
+        let msg = format_inp_parse_error(err);
+        assert!(msg.contains("duplicate node ID 'J1'"), "got: {msg}");
     }
 }

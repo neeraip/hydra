@@ -246,6 +246,7 @@ export function ElementsEditor({
           length: 0,
           diameter: 0,
           roughness: 100,
+          initialStatus: "open" as const,
           velocity: 0,
           highVelocity: false,
         })),

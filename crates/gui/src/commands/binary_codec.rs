@@ -1,10 +1,11 @@
-//! Compact little-endian binary encodings for the network snapshot (layout v2
-//! with vertices) and per-period results, plus the snapshot read command.
+//! Compact little-endian binary encodings for the network snapshot (layout v3
+//! with vertices and pipe initial status) and per-period results, plus the
+//! snapshot read command.
 
 use super::network_dto::{NetworkDto, NetworkState, NetworkStateInner};
 
 /// Version stamped into the first header word of the binary network snapshot.
-const NETWORK_SNAPSHOT_VERSION: u32 = 2;
+const NETWORK_SNAPSHOT_VERSION: u32 = 3;
 /// Flag bit set in the header's `flags` word when the payload carries a
 /// snapshot. Clear = "no network for this target" — the binary equivalent of
 /// the old `null` return from `load_project_network`.
@@ -14,11 +15,12 @@ const NETWORK_SNAPSHOT_FLAG_PRESENT: u32 = 1;
 /// columnar layout consumed by the frontend's `decodeNetworkSnapshot`
 /// (`hooks/network.ts`), mirroring the `encode_period_results` pattern.
 ///
-/// Layout version 2 (adds `[VERTICES]` link polylines to version 1):
+/// Layout version 3 (adds the per-link `initialStatus` u8 column to
+/// version 2, which added `[VERTICES]` link polylines to version 1):
 ///
 /// ```text
 /// offset  size          content
-/// 0       4             version     (u32 LE, = NETWORK_SNAPSHOT_VERSION = 2)
+/// 0       4             version     (u32 LE, = NETWORK_SNAPSHOT_VERSION = 3)
 /// 4       4             flags       (u32 LE; bit 0 = snapshot present)
 /// 8       4             n_nodes     (u32 LE)
 /// 12      4             n_links     (u32 LE)
@@ -45,6 +47,8 @@ const NETWORK_SNAPSHOT_FLAG_PRESENT: u32 = 1;
 /// …       4·n_links     link valve_setting      (f32 LE; NaN = absent)
 /// …       1·n_nodes     node kind (u8: 0 junction, 1 tank, 2 reservoir)
 /// …       1·n_links     link kind (u8: 0 pipe, 1 pump, 2 valve)
+/// …       1·n_links     link initial status (u8: 0 open, 1 closed, 2 cv;
+///                       pumps/valves always 0)
 /// …       4·n_links     link vertex count (u32 LE; may be unaligned)
 /// then 9 string columns, each `u32 LE byte_len` + newline-joined UTF-8:
 ///   node id | node tank_volume_curve | node head_pattern |
@@ -174,6 +178,14 @@ pub(crate) fn encode_network_snapshot(dto: &NetworkDto) -> Vec<u8> {
         buf.push(code);
     }
 
+    // Per-link initial status (0 open, 1 closed, 2 cv). `link_initial_status`
+    // is parallel to `links`, but a DTO built without that context (e.g.
+    // `NetworkDto::default()`) may carry an empty vec — missing entries
+    // default to 0 (open), mirroring `verts_for` above.
+    for i in 0..m {
+        buf.push(dto.link_initial_status.get(i).copied().unwrap_or(0));
+    }
+
     // Per-link vertex counts (u32 LE; may be unaligned after the u8 columns).
     for i in 0..m {
         buf.extend_from_slice(&(verts_for(i).len() as u32).to_le_bytes());
@@ -197,7 +209,7 @@ pub(crate) fn encode_network_snapshot(dto: &NetworkDto) -> Vec<u8> {
 
 /// Header-only payload with the "present" flag clear — the binary equivalent
 /// of the old `null` return from `load_project_network` (target INP missing).
-/// Uses the full 32-byte v2 header (flags / counts / reserved words all 0).
+/// Uses the full 32-byte v3 header (flags / counts / reserved words all 0).
 pub(crate) fn encode_network_snapshot_absent() -> Vec<u8> {
     let mut buf = Vec::with_capacity(32);
     buf.extend_from_slice(&NETWORK_SNAPSHOT_VERSION.to_le_bytes());
@@ -427,6 +439,8 @@ mod tests {
             links: vec![p1, pu1, v1],
             // Vertices on some links only: P1 has 2, PU1 none, V1 one.
             link_vertices: vec![vec![(10.0, 11.0), (12.0, 13.0)], vec![], vec![(20.5, 21.5)]],
+            // P1 is a closed pipe; pump/valve are always 0.
+            link_initial_status: vec![1, 0, 0],
             ..NetworkDto::default()
         }
     }
@@ -436,7 +450,7 @@ mod tests {
         let dto = snapshot_test_dto();
         let buf = encode_network_snapshot(&dto);
 
-        // Header (32 bytes in v2).
+        // Header (32 bytes in v3).
         assert_eq!(
             u32::from_le_bytes(buf[0..4].try_into().unwrap()),
             NETWORK_SNAPSHOT_VERSION
@@ -494,14 +508,17 @@ mod tests {
         assert_eq!(&buf[308..311], &[0, 1, 2], "junction, tank, reservoir");
         assert_eq!(&buf[311..314], &[0, 1, 2], "pipe, pump, valve");
 
+        // u8 initial-status column (v3): closed pipe, open pump, open valve.
+        assert_eq!(&buf[314..317], &[1, 0, 0], "closed pipe = 1; pump/valve 0");
+
         // u32 per-link vertex counts (unaligned after the u8 columns).
         let counts: Vec<u32> = (0..3)
-            .map(|i| u32::from_le_bytes(buf[314 + 4 * i..318 + 4 * i].try_into().unwrap()))
+            .map(|i| u32::from_le_bytes(buf[317 + 4 * i..321 + 4 * i].try_into().unwrap()))
             .collect();
         assert_eq!(counts, vec![2, 0, 1]);
 
         // String columns: newline-joined, empty string = absent.
-        let mut off = 326;
+        let mut off = 329;
         for expected in [
             "J1\nT1\nR1",  // node id
             "\nVC1\n",     // tank_volume_curve
@@ -518,6 +535,56 @@ mod tests {
             off = next;
         }
         assert_eq!(off, buf.len(), "no trailing bytes");
+    }
+
+    /// v3 end-to-end: a closed pipe and a CV pipe parsed from INP surface as
+    /// codes 1 and 2 in the initial-status column (engine model: `Closed` on
+    /// `LinkBase::initial_status`, CV as `Pipe::check_valve`).
+    #[test]
+    fn encode_network_snapshot_carries_pipe_initial_status_from_inp() {
+        const STATUS_INP: &str = "\
+[JUNCTIONS]
+J1  10  5
+
+[RESERVOIRS]
+R1  100
+
+[PIPES]
+P1  R1  J1  1000  12  100  0  Open
+P2  J1  R1  800   10  100  0  Closed
+P3  R1  J1  900   10  100  0  CV
+
+[COORDINATES]
+J1  1.0  2.0
+R1  0.0  0.0
+
+[OPTIONS]
+Units  GPM
+
+[TIMES]
+Duration  0
+
+[END]
+";
+        let network = hydra::io::parse(STATUS_INP.as_bytes()).unwrap();
+        let dto = crate::commands::network_dto::network_to_dto(&network);
+        assert_eq!(dto.link_initial_status, vec![0, 1, 2], "open, closed, cv");
+
+        let buf = encode_network_snapshot(&dto);
+        let (n, m) = (dto.nodes.len(), dto.links.len());
+        assert_eq!(
+            u32::from_le_bytes(buf[0..4].try_into().unwrap()),
+            3,
+            "snapshot layout v3"
+        );
+        // Fixed-width section: header + f64 coords (no vertices here) +
+        // 8 f32 node columns + 7 f32 link columns + node/link kind u8s.
+        let status_off = 32 + 16 * n + 4 * 8 * n + 4 * 7 * m + n + m;
+        assert_eq!(
+            &buf[status_off..status_off + m],
+            &[0, 1, 2],
+            "initialStatus column sits between linkKind and vertexCount"
+        );
     }
 
     #[test]

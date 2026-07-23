@@ -1,17 +1,19 @@
 import type React from "react";
-import type { PipeRow } from "../../../hooks";
+import type { PipeInitialStatus, PipeRow } from "../../../hooks";
 import { formatQtyRaw, fromDisplay, useUnitSystem } from "../../../units";
+import { PIPE_STATUS_OPTIONS, pipeStatusPatchValue } from "./pipeStatus";
 import {
   EditableCell,
   RefInputCell,
   RefOptionsDatalist,
+  SelectCell,
   SortTh,
   useVirtualRows,
   VirtualSpacerRow,
 } from "./TablePrimitives";
 import { shouldUseRefDatalist } from "./tableSearch";
 
-const COL_COUNT = 6;
+const COL_COUNT = 7;
 
 /** Single shared datalist id for every node-reference input in this table. */
 const NODE_LIST_ID = "pipe-node-options";
@@ -124,6 +126,13 @@ export function PipeTable({
               sortAsc={sortAsc}
               onSort={onSort}
               align="right"
+            />
+            <SortTh
+              field="initialStatus"
+              label="Status"
+              sortField={sortField}
+              sortAsc={sortAsc}
+              onSort={onSort}
             />
           </tr>
         </thead>
@@ -273,6 +282,20 @@ export function PipeTable({
                   min={0}
                   onCommit={(v) =>
                     onPatch("pipe", row.id, "roughness", parseFloat(v))
+                  }
+                />
+                <SelectCell
+                  key={`${discardGen}-${row.id}-status`}
+                  value={row.initialStatus}
+                  options={PIPE_STATUS_OPTIONS}
+                  isPending={pendingKeys.has(`pipe:${row.id}:status`)}
+                  onCommit={(v) =>
+                    onPatch(
+                      "pipe",
+                      row.id,
+                      "status",
+                      pipeStatusPatchValue(v as PipeInitialStatus),
+                    )
                   }
                 />
               </tr>

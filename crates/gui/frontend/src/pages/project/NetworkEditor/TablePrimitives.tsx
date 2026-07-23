@@ -218,6 +218,104 @@ export function EditableCell({
   );
 }
 
+/* ── SelectCell ─────────────────────────────────────────────────────────────── */
+
+/**
+ * A `<td>` wrapping a compact `<select>` styled like {@link EditableCell}:
+ * no visible chrome at rest, a subtle focus ring while open, and the same
+ * amber pending marker for staged (unsaved) changes.
+ *
+ * Mirrors EditableCell's draft handling: the picked value is held locally so
+ * the cell keeps showing it while the change is only staged, and re-syncs
+ * when the committed value changes from outside (e.g. after a save
+ * round-trip). Remount via a `discardGen`-keyed `key` resets the draft on
+ * discard, exactly like the input cells.
+ */
+export function SelectCell({
+  value,
+  options,
+  onCommit,
+  isPending,
+  align,
+  style,
+}: {
+  /** Committed value (must match one option's `value`). */
+  value: string;
+  options: ReadonlyArray<{ value: string; label: string }>;
+  onCommit: (value: string) => void;
+  /** When true, renders an amber left-border to mark an unsaved draft change. */
+  isPending?: boolean;
+  align?: "left" | "right";
+  style?: React.CSSProperties;
+}) {
+  const [draft, setDraft] = useState(value);
+  const [focused, setFocused] = useState(false);
+
+  // Re-sync when the committed value changes from outside.
+  const prevValue = useRef(value);
+  if (value !== prevValue.current) {
+    prevValue.current = value;
+    setDraft(value);
+  }
+
+  return (
+    <td
+      style={{
+        padding: 0,
+        fontSize: 12,
+        fontFamily: "var(--font-mono)",
+        borderBottom: "1px solid var(--border)",
+        textAlign: align ?? "left",
+        borderLeft: isPending
+          ? "2px solid rgba(220, 160, 40, 0.65)"
+          : undefined,
+        position: "relative",
+        ...style,
+      }}
+    >
+      <select
+        value={isPending || focused ? draft : value}
+        onChange={(e) => {
+          const next = e.target.value;
+          setDraft(next);
+          if (next !== value) onCommit(next);
+        }}
+        onFocus={() => setFocused(true)}
+        onBlur={() => setFocused(false)}
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          display: "block",
+          width: "100%",
+          boxSizing: "border-box",
+          padding: "6px 7px",
+          background: focused
+            ? "var(--bg-input, rgba(255,255,255,0.05))"
+            : isPending
+              ? "rgba(220, 160, 40, 0.05)"
+              : "transparent",
+          border: "none",
+          outline: focused
+            ? "1px solid var(--border-focus, rgba(100,160,255,0.5))"
+            : "none",
+          outlineOffset: "-1px",
+          borderRadius: 0,
+          color: "var(--text-primary)",
+          fontFamily: "var(--font-mono)",
+          fontSize: 12,
+          textAlign: align ?? "left",
+          cursor: "pointer",
+        }}
+      >
+        {options.map((opt) => (
+          <option key={opt.value} value={opt.value}>
+            {opt.label}
+          </option>
+        ))}
+      </select>
+    </td>
+  );
+}
+
 /* ── Reference input cell ───────────────────────────────────────────────────── */
 
 /**

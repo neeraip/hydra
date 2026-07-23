@@ -24,6 +24,19 @@ export interface JunctionRow {
   belowThreshold: boolean;
 }
 
+/** Pipe initial [STATUS] as carried on the network snapshot. */
+export type PipeInitialStatus = "open" | "closed" | "cv";
+
+/**
+ * Default a link's optional initial status for display: absent (old
+ * snapshots, or non-pipe links which never carry it) means "open".
+ */
+export function defaultPipeInitialStatus(
+  s: PipeInitialStatus | undefined,
+): PipeInitialStatus {
+  return s ?? "open";
+}
+
 export interface PipeRow {
   id: string;
   from: string;
@@ -31,6 +44,8 @@ export interface PipeRow {
   length: number;
   diameter: number;
   roughness: number;
+  /** Initial [STATUS]; "open" when the snapshot doesn't carry one. */
+  initialStatus: PipeInitialStatus;
   velocity: number;
   highVelocity: boolean;
 }
@@ -131,6 +146,7 @@ export function usePipeRows(): PipeRow[] {
           length: round1(l.length ?? 0),
           diameter: l.diameter,
           roughness: l.roughness ?? 0,
+          initialStatus: defaultPipeInitialStatus(l.initialStatus),
           velocity: l.velocity,
           highVelocity: l.velocity > 1.0,
         })),

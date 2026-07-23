@@ -29,6 +29,7 @@ import { useNetworkVersion } from "./NetworkVersionContext";
 //   f32×nLinks velocity | diameter | length | roughness |
 //              pumpPowerKw | pumpSpeed | valveSetting |
 //   u8×nNodes nodeKind | u8×nLinks linkKind |
+//   u8×nLinks initialStatus   (0 = open, 1 = closed, 2 = cv; non-pipes 0) |
 //   u32×nLinks vertexCount   (LE, possibly unaligned) |
 //   9 string columns (u32 byteLen + newline-joined UTF-8):
 //     node id | tankVolumeCurve | headPattern |
@@ -38,7 +39,7 @@ import { useNetworkVersion } from "./NetworkVersionContext";
 // optional string columns use the empty string.
 
 const SNAPSHOT_HEADER_BYTES = 32;
-const SNAPSHOT_VERSION = 2;
+const SNAPSHOT_VERSION = 3;
 const SNAPSHOT_FLAG_PRESENT = 1;
 
 // Canvas-facing fields carried on Link beyond the backend DTO baseline:
@@ -64,6 +65,9 @@ const SNAPSHOT_NODE_TYPES: readonly NodeType[] = [
   "reservoir",
 ];
 const SNAPSHOT_LINK_TYPES: readonly LinkType[] = ["pipe", "pump", "valve"];
+
+/** v3 `initialStatus` code → `Link.initialStatus` value (pipes only). */
+const SNAPSHOT_LINK_STATUSES = ["open", "closed", "cv"] as const;
 
 function snapshotError(detail: string): Error {
   return new Error(`network snapshot decode failed: ${detail}`);
@@ -101,9 +105,10 @@ export function decodeNetworkSnapshot(
   // Bytes 20..32 are reserved.
 
   // Fixed-width section: 16B coords + 32B f32s + 1B kind per node,
-  // 28B f32s + 1B kind + 4B vertexCount per link, 16B per link vertex.
+  // 28B f32s + 1B kind + 1B initialStatus + 4B vertexCount per link,
+  // 16B per link vertex.
   const fixedBytes =
-    SNAPSHOT_HEADER_BYTES + 49 * nNodes + 33 * nLinks + 16 * totalVerts;
+    SNAPSHOT_HEADER_BYTES + 49 * nNodes + 34 * nLinks + 16 * totalVerts;
   if (buf.byteLength < fixedBytes) {
     throw snapshotError(
       `truncated buffer (${buf.byteLength} bytes for ${nNodes} nodes + ${nLinks} links + ${totalVerts} vertices)`,
@@ -170,6 +175,7 @@ export function decodeNetworkSnapshot(
   const valveSetting = takeF32(nLinks);
   const nodeKind = takeU8(nNodes);
   const linkKind = takeU8(nLinks);
+  const linkInitialStatus = takeU8(nLinks);
   // Per-link vertex counts. This column follows the u8 kind columns so its
   // start offset is not necessarily 4-byte aligned — a Uint32Array view would
   // throw, so read each value through the DataView instead.
@@ -239,8 +245,17 @@ export function decodeNetworkSnapshot(
       }
       vertCursor += nVerts;
     }
+    // Initial [STATUS] is only meaningful for pipes; pumps/valves always
+    // carry code 0 and omit the field so their object shape is unchanged.
+    const initialStatus = SNAPSHOT_LINK_STATUSES[linkInitialStatus[i]];
+    if (initialStatus === undefined) {
+      throw snapshotError(
+        `unknown link initialStatus code ${linkInitialStatus[i]}`,
+      );
+    }
     links[i] = {
       ...(vertices !== undefined ? { vertices } : null),
+      ...(type === "pipe" ? { initialStatus } : null),
       id: linkIds[i],
       type,
       fromId: fromIds[i],

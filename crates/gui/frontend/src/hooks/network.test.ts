@@ -14,6 +14,7 @@
  *   f32×nLinks velocity | diameter | length | roughness |
  *              pumpPowerKw | pumpSpeed | valveSetting |
  *   u8×nNodes nodeKind | u8×nLinks linkKind |
+ *   u8×nLinks initialStatus (0 = open, 1 = closed, 2 = cv; non-pipes 0) |
  *   u32×nLinks vertexCount (possibly unaligned) |
  *   9 string columns (u32 byteLen + newline-joined UTF-8):
  *     node id | tankVolumeCurve | headPattern |
@@ -55,7 +56,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-const VERSION = 2;
+const VERSION = 3;
 const FLAG_PRESENT = 1;
 
 /** Incremental little-endian byte writer for hand-building test payloads. */
@@ -107,7 +108,7 @@ class ByteWriter {
   }
 }
 
-/** 32-byte v2 header: version, flags, counts, totalVerts, 3 reserved words. */
+/** 32-byte v3 header: version, flags, counts, totalVerts, 3 reserved words. */
 function header(
   w: ByteWriter,
   nNodes: number,
@@ -131,6 +132,7 @@ function header(
  * reservoir R1; pipe P1, pump PU1, valve V1. All numeric values are exactly
  * representable in f32 so assertions can compare without rounding.
  * Pipe P1 carries two intermediate polyline vertices; PU1/V1 carry none.
+ * P1's v3 initialStatus is "closed" (code 1); non-pipes carry code 0.
  */
 function buildFullSnapshot(): ArrayBuffer {
   return header(new ByteWriter(), 3, 3, 2)
@@ -155,6 +157,7 @@ function buildFullSnapshot(): ArrayBuffer {
     .f32s([NaN, NaN, 35.5]) // valveSetting
     .u8s([0, 1, 2]) // node kinds: junction, tank, reservoir
     .u8s([0, 1, 2]) // link kinds: pipe, pump, valve
+    .u8s([1, 0, 0]) // initialStatus: P1 closed; non-pipes always 0
     .u32(2) // vertexCount: P1 has 2 vertices
     .u32(0) // PU1
     .u32(0) // V1
@@ -243,6 +246,7 @@ describe("decodeNetworkSnapshot", () => {
         type: "pipe",
         fromId: "J1",
         toId: "T1",
+        initialStatus: "closed",
         vertices: [
           [1.75, 2.75],
           [2.0, 3.5],
@@ -295,6 +299,64 @@ describe("decodeNetworkSnapshot", () => {
     // `undefined`) so pre-v2 consumers see the exact same object shape.
     expect("vertices" in res.links[1]).toBe(false);
     expect("vertices" in res.links[2]).toBe(false);
+    // v3 initialStatus is pipe-only: pumps/valves omit the field entirely.
+    expect("initialStatus" in res.links[0]).toBe(true);
+    expect("initialStatus" in res.links[1]).toBe(false);
+    expect("initialStatus" in res.links[2]).toBe(false);
+  });
+
+  it("decodes the full initialStatus code range on pipes", () => {
+    // Three pipes carrying codes 0/1/2 → open/closed/cv.
+    const w = header(new ByteWriter(), 2, 3)
+      .f64s([0, 1]) // x
+      .f64s([0, 1]) // y
+      .f32s([0, 0]) // elevation
+      .f32s([0, 0]) // baseDemand
+      .f32s([NaN, NaN]) // pressure
+      .f32s([NaN, NaN]) // demand
+      .f32s([NaN, NaN]) // tankMinLevel
+      .f32s([NaN, NaN]) // tankMaxLevel
+      .f32s([NaN, NaN]) // tankInitialLevel
+      .f32s([NaN, NaN]) // tankDiameter
+      .f32s([0, 0, 0]) // velocity
+      .f32s([100, 100, 100]) // diameter
+      .f32s([10, 10, 10]) // length
+      .f32s([100, 100, 100]) // roughness
+      .f32s([NaN, NaN, NaN]) // pumpPowerKw
+      .f32s([NaN, NaN, NaN]) // pumpSpeed
+      .f32s([NaN, NaN, NaN]) // valveSetting
+      .u8s([0, 0]) // node kinds
+      .u8s([0, 0, 0]) // link kinds: all pipes
+      .u8s([0, 1, 2]) // initialStatus: open, closed, cv
+      .u32(0)
+      .u32(0)
+      .u32(0)
+      .strCol(["N1", "N2"])
+      .strCol(["", ""])
+      .strCol(["", ""])
+      .strCol(["PA", "PB", "PC"])
+      .strCol(["N1", "N1", "N1"])
+      .strCol(["N2", "N2", "N2"])
+      .strCol(["", "", ""])
+      .strCol(["", "", ""])
+      .strCol(["", "", ""]);
+    const res = decodeNetworkSnapshot(w.build());
+    if (!res) throw new Error("expected decode to succeed");
+    expect(res.links.map((l) => l.initialStatus)).toEqual([
+      "open",
+      "closed",
+      "cv",
+    ]);
+  });
+
+  it("throws on an unknown initialStatus code", () => {
+    const full = new Uint8Array(buildFullSnapshot().slice(0));
+    // initialStatus column offset: 32 header + 48 x/y + 32 verts +
+    // 96 node f32 + 84 link f32 + 3 nodeKind + 3 linkKind = 298.
+    full[298] = 9;
+    expect(() => decodeNetworkSnapshot(full.buffer)).toThrow(
+      /unknown link initialStatus code 9/,
+    );
   });
 
   it("composes with normalizeNodes as a no-op (nulls already explicit)", () => {
@@ -325,18 +387,22 @@ describe("decodeNetworkSnapshot", () => {
     );
   });
 
-  it("throws on an unsupported version (v1 payloads are rejected)", () => {
-    const buf = new ByteWriter()
-      .u32(1)
-      .u32(FLAG_PRESENT)
-      .u32(0)
-      .u32(0)
-      .u32(0)
-      .u32(0)
-      .u32(0)
-      .u32(0)
-      .build();
-    expect(() => decodeNetworkSnapshot(buf)).toThrow(/unsupported version 1/);
+  it("throws on unsupported versions (v1 and v2 payloads are rejected)", () => {
+    for (const version of [1, 2]) {
+      const buf = new ByteWriter()
+        .u32(version)
+        .u32(FLAG_PRESENT)
+        .u32(0)
+        .u32(0)
+        .u32(0)
+        .u32(0)
+        .u32(0)
+        .u32(0)
+        .build();
+      expect(() => decodeNetworkSnapshot(buf)).toThrow(
+        new RegExp(`unsupported version ${version}`),
+      );
+    }
   });
 
   it("throws when the fixed-width section is truncated", () => {
@@ -349,10 +415,10 @@ describe("decodeNetworkSnapshot", () => {
     // Rebuild the full snapshot but claim only 1 vertex on P1 (of 2 encoded).
     const full = new Uint8Array(buildFullSnapshot().slice(0));
     // vertexCount column offset: 32 header + 48 x/y + 32 verts + 96 node f32
-    // + 84 link f32 + 6 kinds = 298.
+    // + 84 link f32 + 6 kinds + 3 initialStatus = 301.
     const view = new DataView(full.buffer);
-    expect(view.getUint32(298, true)).toBe(2); // sanity: P1's count
-    view.setUint32(298, 1, true);
+    expect(view.getUint32(301, true)).toBe(2); // sanity: P1's count
+    view.setUint32(301, 1, true);
     expect(() => decodeNetworkSnapshot(full.buffer)).toThrow(
       /vertexCount sum 1 does not match totalVerts 2/,
     );

@@ -40,6 +40,8 @@ export interface Link {
    * `null` when no simulation has run.
    */
   status?: number | null;
+  /** Initial [STATUS] from the INP (pipes only): open, closed, or check valve. */
+  initialStatus?: "open" | "closed" | "cv";
   diameter: number;
   /** Water quality value along the link. `null` when no quality simulation was run. */
   quality?: number | null;
