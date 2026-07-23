@@ -48,42 +48,40 @@ pub struct ScenarioMeta {
 
 // ── I/O helpers ───────────────────────────────────────────────────────────────
 
-pub fn read_project_meta(dir: &Path) -> Result<ProjectMeta, String> {
+/// Read and parse `<dir>/meta.json`.
+fn read_meta<T: serde::de::DeserializeOwned>(dir: &Path) -> Result<T, String> {
     let path = dir.join("meta.json");
     let bytes =
         std::fs::read(&path).map_err(|e| format!("cannot read {}: {}", path.display(), e))?;
     serde_json::from_slice(&bytes).map_err(|e| format!("cannot parse {}: {}", path.display(), e))
+}
+
+/// Serialise `meta` and write it to `<dir>/meta.json`, creating `dir` as needed.
+///
+/// Written atomically (temp file + rename via [`bundle::atomic_write`]) so a
+/// crash mid-write can never leave a truncated `meta.json` behind.
+fn write_meta<T: Serialize>(dir: &Path, meta: &T) -> Result<(), String> {
+    let path = dir.join("meta.json");
+    let json =
+        serde_json::to_string_pretty(meta).map_err(|e| format!("cannot serialise meta: {e}"))?;
+    bundle::atomic_write(&path, json.as_bytes())
+        .map_err(|e| format!("cannot write {}: {}", path.display(), e))
+}
+
+pub fn read_project_meta(dir: &Path) -> Result<ProjectMeta, String> {
+    read_meta(dir)
 }
 
 pub fn write_project_meta(dir: &Path, meta: &ProjectMeta) -> Result<(), String> {
-    let path = dir.join("meta.json");
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)
-            .map_err(|e| format!("cannot create dir {}: {}", parent.display(), e))?;
-    }
-    let json =
-        serde_json::to_string_pretty(meta).map_err(|e| format!("cannot serialise meta: {e}"))?;
-    std::fs::write(&path, json.as_bytes())
-        .map_err(|e| format!("cannot write {}: {}", path.display(), e))
+    write_meta(dir, meta)
 }
 
 pub fn read_scenario_meta(dir: &Path) -> Result<ScenarioMeta, String> {
-    let path = dir.join("meta.json");
-    let bytes =
-        std::fs::read(&path).map_err(|e| format!("cannot read {}: {}", path.display(), e))?;
-    serde_json::from_slice(&bytes).map_err(|e| format!("cannot parse {}: {}", path.display(), e))
+    read_meta(dir)
 }
 
 pub fn write_scenario_meta(dir: &Path, meta: &ScenarioMeta) -> Result<(), String> {
-    let path = dir.join("meta.json");
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)
-            .map_err(|e| format!("cannot create dir {}: {}", parent.display(), e))?;
-    }
-    let json =
-        serde_json::to_string_pretty(meta).map_err(|e| format!("cannot serialise meta: {e}"))?;
-    std::fs::write(&path, json.as_bytes())
-        .map_err(|e| format!("cannot write {}: {}", path.display(), e))
+    write_meta(dir, meta)
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -159,12 +157,13 @@ pub mod bundle {
         scenario_dir(app_data, project_id, scenario_id).join("results.out")
     }
 
-    #[allow(dead_code)]
+    // Note: the reports helpers are currently unused (covered by the
+    // module-level `allow(dead_code)`); they document the bundle layout for
+    // the upcoming reports feature.
     pub fn base_reports_dir(app_data: &Path, project_id: &str) -> PathBuf {
         base_dir(app_data, project_id).join("reports")
     }
 
-    #[allow(dead_code)]
     pub fn scenario_reports_dir(app_data: &Path, project_id: &str, scenario_id: &str) -> PathBuf {
         scenario_dir(app_data, project_id, scenario_id).join("reports")
     }

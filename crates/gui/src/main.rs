@@ -4,6 +4,13 @@ mod commands;
 mod meta;
 
 fn main() {
+    // Log to stderr; default level `warn` unless RUST_LOG overrides it.
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn")),
+        )
+        .init();
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
@@ -41,7 +48,6 @@ fn main() {
             commands::get_period_results,
             commands::get_pump_energy,
             commands::get_result_analytics,
-            commands::get_violations,
             commands::load_project_network,
             commands::patch_element,
             commands::patch_elements,
@@ -72,6 +78,10 @@ fn main() {
             commands::cancel_run_item,
             commands::get_sim_params,
             commands::update_sim_params,
+            commands::get_element_series,
+            commands::validate_network,
+            commands::export_project_inp,
+            commands::export_results_csv,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

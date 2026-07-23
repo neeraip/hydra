@@ -35,7 +35,7 @@
 //!
 //! | Event | Payload | Throttle |
 //! |---|---|---|
-//! | `simulation_progress` | `SimulationProgressDto` | ≤1 emit per 125 ms + always on completion/failure |
+//! | `simulation_progress` | `SimulationProgressDto` | on each whole-percent progress bucket or ≥125 ms since the last emit + always on completion/failure |
 //! | `run_queue_update` | `String` — the affected project's id; the frontend refetches items via `get_run_queue` | on every queue state change |
 //! | `network-changed` | `NetworkChangedPayload` (delta) or `null` | on every mutating command, emitted while the mutator still holds the `NetworkState` lock so event order matches mutation commit order. Element-scoped edits (`patch_element`, `patch_elements`, `patch_node_position`) carry a `NetworkChangedPayload` whose `elements` are the updated element DTOs so the frontend can patch in place; structural mutations emit `null`, which triggers a full snapshot refetch. |
 //!
@@ -64,14 +64,19 @@ const RUN_QUEUE_UPDATE_EVENT: &str = "run_queue_update";
 const NETWORK_CHANGED_EVENT: &str = "network-changed";
 const PROGRESS_EMIT_INTERVAL: Duration = Duration::from_millis(125);
 const RUN_QUEUE_TERMINAL_TTL_SECS: i64 = 6 * 60 * 60;
-/// Shared unit-conversion factors for the controls/rules DTO layer (see
-/// `link_setting_internal_to_display` and friends). Other functions in this
-/// module define their own local copies of these same factors; this pair is
-/// module-level purely because the controls/rules helpers are numerous and
-/// all need them.
-const FT_TO_M: f64 = 0.3048;
-const CFS_TO_LPS: f64 = 28.3168;
 const RUN_QUEUE_TERMINAL_MAX_PER_PROJECT: usize = 100;
+/// Shared unit-conversion factors between the engine's internal US-customary
+/// units and the GUI's display units (see `link_setting_internal_to_display`
+/// and friends). Inverse factors used by the mutation helpers are defined
+/// locally in terms of these.
+const FT_TO_M: f64 = 0.3048;
+const FT_TO_MM: f64 = 304.8;
+/// 1 ft³ = 28.316 846 6 litres — the single ft³↔litre basis used everywhere
+/// in this module (flow cfs↔L/s and volume ft³↔m³ below), so display↔internal
+/// round-trips through different commands can never drift.
+const CFS_TO_LPS: f64 = 28.316_846_6;
+/// ft³ → m³, derived from the same litre basis (1 m³ = 1000 L).
+const FT3_TO_M3: f64 = CFS_TO_LPS / 1000.0;
 
 fn is_terminal_queue_status(status: &str) -> bool {
     status == "done" || status == "failed" || status == "cancelled"
@@ -338,6 +343,28 @@ enum RunLoopError {
     Cancelled,
 }
 
+/// Emit `event` to all windows, logging a warning instead of silently
+/// swallowing a failed emit (delivery is best-effort; the frontend recovers
+/// via refetch, but the failure should not be invisible).
+fn emit_or_warn<S: Serialize + Clone>(app: &tauri::AppHandle, event: &str, payload: S) {
+    if let Err(e) = app.emit(event, payload) {
+        tracing::warn!(event, error = %e, "failed to emit event");
+    }
+}
+
+/// Best-effort removal of a temporary results stream, warning on failure —
+/// a leftover `.tmp` is harmless (outside every reader's naming) but should
+/// not disappear silently.
+fn remove_tmp_or_warn(tmp: &std::path::Path) {
+    if let Err(e) = std::fs::remove_file(tmp) {
+        tracing::warn!(
+            path = %tmp.display(),
+            error = %e,
+            "failed to remove temporary results file"
+        );
+    }
+}
+
 fn progress_percent(simulated_seconds: f64, duration_seconds: f64) -> f64 {
     if duration_seconds > 0.0 {
         (100.0 * simulated_seconds / duration_seconds).clamp(0.0, 100.0)
@@ -385,25 +412,65 @@ where
     });
     let mut out_writer = tmp_path.as_ref().and_then(|p| {
         if let Some(parent) = p.parent() {
-            let _ = std::fs::create_dir_all(parent);
+            if let Err(e) = std::fs::create_dir_all(parent) {
+                tracing::warn!(
+                    path = %parent.display(),
+                    error = %e,
+                    "could not create results directory; run will not be persisted"
+                );
+            }
         }
-        let file = std::fs::File::create(p).ok()?;
-        hydra::io::out_writer::OutStreamWriter::begin(file, &sim, "", "", hydra::FlowUnits::Lps)
-            .ok()
+        let file = match std::fs::File::create(p) {
+            Ok(f) => f,
+            Err(e) => {
+                tracing::warn!(
+                    path = %p.display(),
+                    error = %e,
+                    "could not create results stream; run will not be persisted"
+                );
+                return None;
+            }
+        };
+        match hydra::io::out_writer::OutStreamWriter::begin(
+            file,
+            &sim,
+            "",
+            "",
+            hydra::FlowUnits::Lps,
+        ) {
+            Ok(w) => Some(w),
+            Err(e) => {
+                tracing::warn!(
+                    path = %p.display(),
+                    error = %e,
+                    "could not start results stream; run will not be persisted"
+                );
+                None
+            }
+        }
     });
-
-    if let Some(w) = out_writer.as_mut() {
-        let _ = w.append_available(&sim);
-    }
 
     let mut simulated_seconds = 0.0_f64;
     let mut last_emit_at = Instant::now();
     let mut last_percent_bucket = -1_i64;
     let mut run_err: Option<RunLoopError> = None;
 
-    emit("hydraulics", 0.0, false, false, None);
+    // A failed write to the results stream aborts the run as Failed: silently
+    // continuing would report success for a run whose results.out is missing
+    // periods (the tmp-file flow below then discards the partial stream).
+    if let Some(w) = out_writer.as_mut() {
+        if let Err(e) = w.append_available(&sim) {
+            let msg = format!("simulation results could not be written: {e}");
+            emit("hydraulics", 0.0, false, true, Some(msg.clone()));
+            run_err = Some(RunLoopError::Failed(msg));
+        }
+    }
 
-    loop {
+    if run_err.is_none() {
+        emit("hydraulics", 0.0, false, false, None);
+    }
+
+    while run_err.is_none() {
         if should_cancel() {
             let msg = "Cancelled by user".to_string();
             emit("hydraulics", simulated_seconds, false, true, Some(msg));
@@ -418,7 +485,18 @@ where
                 simulated_seconds += dt;
                 hyd_steps += 1;
                 if let Some(w) = out_writer.as_mut() {
-                    let _ = w.append_available(&sim);
+                    if let Err(e) = w.append_available(&sim) {
+                        let msg = format!("simulation results could not be written: {e}");
+                        emit(
+                            "hydraulics",
+                            simulated_seconds,
+                            false,
+                            true,
+                            Some(msg.clone()),
+                        );
+                        run_err = Some(RunLoopError::Failed(msg));
+                        break;
+                    }
                 }
                 let pct = progress_percent(simulated_seconds, duration_seconds);
                 let bucket = pct.floor() as i64;
@@ -447,8 +525,20 @@ where
     // Flush the final hydraulic snapshot (dt == 0.0 break path).
     if run_err.is_none() {
         if let Some(w) = out_writer.as_mut() {
-            let _ = w.append_available(&sim);
+            if let Err(e) = w.append_available(&sim) {
+                let msg = format!("simulation results could not be written: {e}");
+                emit(
+                    "hydraulics",
+                    simulated_seconds,
+                    false,
+                    true,
+                    Some(msg.clone()),
+                );
+                run_err = Some(RunLoopError::Failed(msg));
+            }
         }
+    }
+    if run_err.is_none() {
         emit(
             "hydraulics",
             duration_seconds.max(simulated_seconds),
@@ -519,14 +609,30 @@ where
 
     let streamed = out_writer.is_some();
     if let Some(w) = out_writer {
-        let _ = w.finish(&sim);
+        if let Err(e) = w.finish(&sim) {
+            if run_err.is_none() {
+                // Promoting a stream missing its epilogue would publish a
+                // corrupt results.out — abort as Failed instead.
+                let msg = format!("simulation finished but results could not be written: {e}");
+                emit(
+                    "hydraulics",
+                    simulated_seconds,
+                    false,
+                    true,
+                    Some(msg.clone()),
+                );
+                run_err = Some(RunLoopError::Failed(msg));
+            } else {
+                tracing::warn!(error = %e, "could not finalise discarded results stream");
+            }
+        }
     }
 
     // Promote the finished stream on success; discard it on failure/cancel.
     if let (true, Some(tmp), Some(final_path)) = (streamed, tmp_path.as_ref(), out_path.as_ref()) {
         if run_err.is_none() {
             if let Err(e) = std::fs::rename(tmp, final_path) {
-                let _ = std::fs::remove_file(tmp);
+                remove_tmp_or_warn(tmp);
                 let msg = format!("simulation finished but results could not be written: {e}");
                 emit(
                     "hydraulics",
@@ -538,7 +644,7 @@ where
                 run_err = Some(RunLoopError::Failed(msg));
             }
         } else {
-            let _ = std::fs::remove_file(tmp);
+            remove_tmp_or_warn(tmp);
         }
     }
 
@@ -571,17 +677,26 @@ pub struct Project {
     /// Epoch seconds of the last modification (mtime of `base/model.inp`,
     /// falling back to the project directory mtime). Used for sorting.
     pub modified_at: i64,
+    /// Epoch milliseconds of the last modification — derived from the same
+    /// mtime as `modified_at` / `modified_label`. `None` only when the
+    /// timestamp is not representable (negative epoch seconds).
+    pub modified_at_ms: Option<u64>,
     /// Relative label for the last completed simulation, e.g. "2h ago".
     /// `None` when the project has never been simulated.
     pub last_run_label: Option<String>,
+    /// Epoch milliseconds of the last completed simulation (mtime of
+    /// `results.out`) — derived from the same timestamp as `last_run_label`.
+    /// `None` when the project has never been simulated.
+    pub last_run_at_ms: Option<u64>,
     pub node_count: u32,
     pub link_count: u32,
     /// EPSG code for the coordinate reference system of the INP \[COORDINATES\].
     pub source_crs: String,
     pub insights: Option<ProjectInsights>,
-    /// `true` when the DB row exists but the on-disk bundle directory is absent.
-    /// The frontend renders these rows muted and offers "Remove from list"
-    /// instead of "Open folder".
+    /// `true` when the project's on-disk bundle directory is absent. Always
+    /// `false` now that projects are discovered by scanning the filesystem;
+    /// kept for wire-format compatibility. The frontend renders such rows
+    /// muted and offers "Remove from list" instead of "Open folder".
     pub folder_missing: bool,
 }
 
@@ -609,26 +724,7 @@ pub fn list_projects(app: tauri::AppHandle) -> Result<Vec<Project>, String> {
             Ok(m) => m,
             Err(_) => continue,
         };
-        let scenario_count = count_scenario_dirs(&app_data, &id);
-        let results_path = bundle::base_results_path(&app_data, &id);
-        let sim_state = meta::sim_state_from_results(&results_path);
-        let last_run_at = if results_path.exists() {
-            meta::mtime_secs(&results_path)
-        } else {
-            None
-        };
-        let modified_at = meta::mtime_secs(&bundle::base_model_path(&app_data, &id))
-            .or_else(|| meta::mtime_secs(&path))
-            .unwrap_or_else(meta::now_secs);
-        projects.push(project_to_dto(
-            &id,
-            &meta,
-            scenario_count,
-            last_run_at,
-            sim_state,
-            false,
-            modified_at,
-        ));
+        projects.push(project_dto_from_disk(&app_data, &path, &id, &meta));
     }
     sort_projects_most_recent_first(&mut projects);
     Ok(projects)
@@ -732,17 +828,7 @@ pub fn load_project(
         Ok(m) => m,
         Err(_) => return Ok(None),
     };
-    let scenario_count = count_scenario_dirs(&app_data, &id);
-    let results_path = bundle::base_results_path(&app_data, &id);
-    let sim_state = meta::sim_state_from_results(&results_path);
-    let last_run_at = if results_path.exists() {
-        meta::mtime_secs(&results_path)
-    } else {
-        None
-    };
-    let modified_at = meta::mtime_secs(&bundle::base_model_path(&app_data, &id))
-        .or_else(|| meta::mtime_secs(&project_dir))
-        .unwrap_or_else(meta::now_secs);
+    let project = project_dto_from_disk(&app_data, &project_dir, &id, &meta);
 
     // If the bundle has a base model on disk, parse it and populate state.
     // The parsed network and its DTO are intentionally *not* returned to the
@@ -752,7 +838,7 @@ pub fn load_project(
     let model_path = bundle::base_model_path(&app_data, &id);
     if model_path.exists() {
         let bytes = std::fs::read(&model_path).map_err(|e| e.to_string())?;
-        let net = hydra::io::parse(&bytes).map_err(|e| format!("{e:?}"))?;
+        let net = hydra::io::parse(&bytes).map_err(format_inp_parse_error)?;
         let dto = network_to_dto(&net);
         *state.0.lock() = NetworkStateInner::Loaded {
             raw_bytes: bytes,
@@ -767,15 +853,7 @@ pub fn load_project(
     }
 
     Ok(Some(LoadedProject {
-        project: project_to_dto(
-            &id,
-            &meta,
-            scenario_count,
-            last_run_at,
-            sim_state,
-            false,
-            modified_at,
-        ),
+        project,
         network: None,
     }))
 }
@@ -813,25 +891,11 @@ pub fn rename_project(
     let mut project_meta = meta::read_project_meta(&project_dir)?;
     project_meta.name = name;
     meta::write_project_meta(&project_dir, &project_meta)?;
-    let scenario_count = count_scenario_dirs(&app_data, &id);
-    let results_path = bundle::base_results_path(&app_data, &id);
-    let sim_state = meta::sim_state_from_results(&results_path);
-    let last_run_at = if results_path.exists() {
-        meta::mtime_secs(&results_path)
-    } else {
-        None
-    };
-    let modified_at = meta::mtime_secs(&bundle::base_model_path(&app_data, &id))
-        .or_else(|| meta::mtime_secs(&project_dir))
-        .unwrap_or_else(meta::now_secs);
-    Ok(Some(project_to_dto(
+    Ok(Some(project_dto_from_disk(
+        &app_data,
+        &project_dir,
         &id,
         &project_meta,
-        scenario_count,
-        last_run_at,
-        sim_state,
-        false,
-        modified_at,
     )))
 }
 
@@ -858,6 +922,11 @@ pub fn update_project_crs(app: tauri::AppHandle, id: String, crs: String) -> Res
 pub struct CustomCrsDef {
     pub label: String,
     pub epsg: String,
+    /// CRS definition string. Despite the name, this usually holds a **WKT**
+    /// definition rather than a proj4 string: the curated catalog
+    /// (`resources/crs-catalog.json`) ships WKT, and proj4js on the frontend
+    /// accepts both formats interchangeably. Kept as `proj4` for wire-format
+    /// compatibility — do not rename.
     pub proj4: String,
 }
 
@@ -873,6 +942,10 @@ struct CuratedCrsDef {
 pub struct CrsCatalogEntry {
     pub label: String,
     pub epsg: String,
+    /// CRS definition string. Despite the name, curated entries carry **WKT**
+    /// from `resources/crs-catalog.json` (proj4js accepts WKT as well as
+    /// proj4 strings). Kept as `proj4` for wire-format compatibility — do not
+    /// rename.
     pub proj4: String,
     pub custom: bool,
 }
@@ -1105,6 +1178,42 @@ fn validate_id(id: &str) -> Result<(), String> {
         .map_err(|_| format!("invalid id: expected UUID, got {:?}", id))
 }
 
+/// Validate the `(project_id, optional scenario_id)` pair that every
+/// project/scenario-target command receives — both must be UUIDs.
+fn validate_target_ids(project_id: &str, scenario_id: Option<&str>) -> Result<(), String> {
+    validate_id(project_id)?;
+    if let Some(sid) = scenario_id {
+        validate_id(sid)?;
+    }
+    Ok(())
+}
+
+/// `results.out` path for a project's base model (`scenario_id == None`) or
+/// one of its scenarios.
+fn results_path_for(
+    app_data: &std::path::Path,
+    project_id: &str,
+    scenario_id: Option<&str>,
+) -> std::path::PathBuf {
+    match scenario_id {
+        Some(sid) => bundle::scenario_results_path(app_data, project_id, sid),
+        None => bundle::base_results_path(app_data, project_id),
+    }
+}
+
+/// `model.inp` path for a project's base model (`scenario_id == None`) or
+/// one of its scenarios.
+fn model_path_for(
+    app_data: &std::path::Path,
+    project_id: &str,
+    scenario_id: Option<&str>,
+) -> std::path::PathBuf {
+    match scenario_id {
+        Some(sid) => bundle::scenario_model_path(app_data, project_id, sid),
+        None => bundle::base_model_path(app_data, project_id),
+    }
+}
+
 /// Count the scenario subdirectories under `<app_data>/projects/<id>/scenarios/`
 /// that hold a readable `meta.json` — the same criterion `list_scenarios`
 /// applies, so project-card counts always match the scenario list.
@@ -1196,8 +1305,19 @@ pub fn list_scenarios(
             sim_state,
         ));
     }
-    result.sort_by_key(|s| s.id.clone());
+    sort_scenarios_by_name(&mut result);
     Ok(result)
+}
+
+/// Order scenarios by name, case-insensitively, with the (unique) id as a
+/// deterministic tie-breaker for equal names.
+fn sort_scenarios_by_name(scenarios: &mut [ScenarioDto]) {
+    scenarios.sort_by(|a, b| {
+        a.name
+            .to_lowercase()
+            .cmp(&b.name.to_lowercase())
+            .then_with(|| a.id.cmp(&b.id))
+    });
 }
 
 /// Create a new scenario under `project_id`. If `parent_scenario_id` is
@@ -1343,6 +1463,39 @@ pub fn open_scenario_folder(
         .map_err(|e| e.to_string())
 }
 
+/// Build a [`Project`] DTO from a project's on-disk bundle state: scenario
+/// count, sim state + last-run time derived from `base/results.out`, and
+/// `modified_at` from `base/model.inp` (falling back to the project directory
+/// mtime, then to "now"). Shared by `list_projects` / `load_project` /
+/// `rename_project` so the three always derive identical rows.
+fn project_dto_from_disk(
+    app_data: &std::path::Path,
+    project_dir: &std::path::Path,
+    id: &str,
+    meta: &meta::ProjectMeta,
+) -> Project {
+    let scenario_count = count_scenario_dirs(app_data, id);
+    let results_path = bundle::base_results_path(app_data, id);
+    let sim_state = meta::sim_state_from_results(&results_path);
+    let last_run_at = if results_path.exists() {
+        meta::mtime_secs(&results_path)
+    } else {
+        None
+    };
+    let modified_at = meta::mtime_secs(&bundle::base_model_path(app_data, id))
+        .or_else(|| meta::mtime_secs(project_dir))
+        .unwrap_or_else(meta::now_secs);
+    project_to_dto(
+        id,
+        meta,
+        scenario_count,
+        last_run_at,
+        sim_state,
+        false,
+        modified_at,
+    )
+}
+
 fn project_to_dto(
     id: &str,
     meta: &meta::ProjectMeta,
@@ -1361,7 +1514,9 @@ fn project_to_dto(
     Project {
         modified_label: format_modified(modified_at),
         modified_at,
+        modified_at_ms: epoch_secs_to_ms(modified_at),
         last_run_label,
+        last_run_at_ms: last_run_at.and_then(epoch_secs_to_ms),
         id: id.to_string(),
         name: meta.name.clone(),
         scenario_count,
@@ -1379,8 +1534,11 @@ fn project_to_dto(
 #[serde(rename_all = "camelCase")]
 pub struct ReconcileReport {
     /// Number of orphaned on-disk project folders that were re-imported.
+    /// Always 0 — the filesystem is the source of truth, so nothing can be
+    /// orphaned; kept for wire-format compatibility.
     pub recovered: u32,
-    /// Project IDs present in the DB whose on-disk folder is missing.
+    /// Project IDs whose on-disk folder is missing. Always empty; kept for
+    /// wire-format compatibility.
     pub folder_missing: Vec<String>,
 }
 
@@ -1401,6 +1559,12 @@ fn sort_projects_most_recent_first(projects: &mut [Project]) {
     projects.sort_by_key(|p| std::cmp::Reverse(p.modified_at));
 }
 
+/// Epoch seconds → epoch milliseconds; `None` for negative (pre-1970) values,
+/// which cannot be represented in the frontend's unsigned-ms contract.
+fn epoch_secs_to_ms(secs: i64) -> Option<u64> {
+    u64::try_from(secs).ok()?.checked_mul(1000)
+}
+
 fn format_modified(modified_at: i64) -> String {
     let now = meta::now_secs();
     let delta = (now - modified_at).max(0);
@@ -1419,8 +1583,7 @@ fn format_modified(modified_at: i64) -> String {
 
 // ── Network load commands ─────────────────────────────────────────────────────
 
-/// Serialisable node sent to the frontend. Mirrors `MockNode` in the
-/// frontend's `data/mock/data.ts` so existing consumers need no changes.
+/// Serialisable node sent to the frontend.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NodeDto {
@@ -1468,7 +1631,7 @@ pub struct NodeDto {
     pub head_pattern: Option<String>,
 }
 
-/// Serialisable link sent to the frontend. Mirrors `MockLink`.
+/// Serialisable link sent to the frontend.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LinkDto {
@@ -1636,6 +1799,12 @@ pub struct NetworkDto {
     /// Empty string when the DTO was constructed without a file context.
     #[serde(default)]
     pub file_stem: String,
+    /// Per-link polyline vertices from the `[VERTICES]` INP section, parallel
+    /// to `links` (same order, same length; an entry is empty when the link
+    /// has no vertices). Never serialised to JSON — consumed only by the
+    /// binary snapshot encoder ([`encode_network_snapshot`]).
+    #[serde(skip)]
+    pub link_vertices: Vec<Vec<(f64, f64)>>,
 }
 
 /// Inner state for `NetworkState`.
@@ -1721,11 +1890,18 @@ pub struct PickedCsvFile {
 pub async fn pick_csv_file(app: tauri::AppHandle) -> Result<Option<PickedCsvFile>, String> {
     use tauri_plugin_dialog::DialogExt;
 
-    let path = app
-        .dialog()
-        .file()
-        .add_filter("Field data (CSV, Excel)", &["csv", "xlsx", "xls"])
-        .blocking_pick_file();
+    // The dialog call blocks until the user answers — run it on the blocking
+    // pool so it does not tie up an async runtime worker for that whole time.
+    let dialog_app = app.clone();
+    let path = tauri::async_runtime::spawn_blocking(move || {
+        dialog_app
+            .dialog()
+            .file()
+            .add_filter("Field data (CSV, Excel)", &["csv", "xlsx", "xls"])
+            .blocking_pick_file()
+    })
+    .await
+    .map_err(|e| format!("file dialog task panicked: {e}"))?;
 
     let file_path = match path {
         Some(p) => p,
@@ -1762,12 +1938,18 @@ pub async fn open_and_load_network(
 ) -> Result<Option<NetworkDto>, String> {
     use tauri_plugin_dialog::DialogExt;
 
-    // Show a synchronous file-open dialog (blocks the async task, not the UI).
-    let path = app
-        .dialog()
-        .file()
-        .add_filter("EPANET Input File", &["inp"])
-        .blocking_pick_file();
+    // The dialog call blocks until the user answers — run it on the blocking
+    // pool so it does not tie up an async runtime worker for that whole time.
+    let dialog_app = app.clone();
+    let path = tauri::async_runtime::spawn_blocking(move || {
+        dialog_app
+            .dialog()
+            .file()
+            .add_filter("EPANET Input File", &["inp"])
+            .blocking_pick_file()
+    })
+    .await
+    .map_err(|e| format!("file dialog task panicked: {e}"))?;
 
     let file_path = match path {
         Some(p) => p,
@@ -1905,17 +2087,28 @@ fn summarize_unknown_pattern_refs(errors: &[hydra::ValidationError]) -> Option<S
     Some(summary)
 }
 
-#[tauri::command(async)]
-/// Return the node list for the loaded network.
-pub fn get_nodes(state: tauri::State<'_, NetworkState>) -> Vec<NodeDto> {
+/// Clone one collection out of the cached `NetworkDto` under the state lock,
+/// returning an empty vec when no network is loaded. Shared by the read-only
+/// `get_nodes` / `get_links` / `get_patterns` / `get_curves` / `get_controls`
+/// / `get_rules` commands.
+fn cloned_from_dto<T: Clone>(
+    state: &NetworkState,
+    get: impl FnOnce(&NetworkDto) -> &[T],
+) -> Vec<T> {
     match &*state.0.lock() {
-        NetworkStateInner::Loaded { dto, .. } => dto.nodes.clone(),
+        NetworkStateInner::Loaded { dto, .. } => get(dto).to_vec(),
         NetworkStateInner::Empty => vec![],
     }
 }
 
+#[tauri::command(async)]
+/// Return the node list for the loaded network.
+pub fn get_nodes(state: tauri::State<'_, NetworkState>) -> Vec<NodeDto> {
+    cloned_from_dto(&state, |dto| &dto.nodes)
+}
+
 /// Version stamped into the first header word of the binary network snapshot.
-const NETWORK_SNAPSHOT_VERSION: u32 = 1;
+const NETWORK_SNAPSHOT_VERSION: u32 = 2;
 /// Flag bit set in the header's `flags` word when the payload carries a
 /// snapshot. Clear = "no network for this target" — the binary equivalent of
 /// the old `null` return from `load_project_network`.
@@ -1925,40 +2118,52 @@ const NETWORK_SNAPSHOT_FLAG_PRESENT: u32 = 1;
 /// columnar layout consumed by the frontend's `decodeNetworkSnapshot`
 /// (`hooks/network.ts`), mirroring the `encode_period_results` pattern.
 ///
+/// Layout version 2 (adds `[VERTICES]` link polylines to version 1):
+///
 /// ```text
-/// offset  size        content
-/// 0       4           version   (u32 LE, = NETWORK_SNAPSHOT_VERSION)
-/// 4       4           flags     (u32 LE; bit 0 = snapshot present)
-/// 8       4           n_nodes   (u32 LE)
-/// 12      4           n_links   (u32 LE)
-/// 16      8·n_nodes   node x                  (f64 LE)
-/// …       8·n_nodes   node y                  (f64 LE)
-/// …       4·n_nodes   node elevation          (f32 LE, m)
-/// …       4·n_nodes   node base_demand        (f32 LE, L/s)
-/// …       4·n_nodes   node pressure           (f32 LE; NaN = absent)
-/// …       4·n_nodes   node demand             (f32 LE; NaN = absent)
-/// …       4·n_nodes   node tank_min_level     (f32 LE; NaN = absent)
-/// …       4·n_nodes   node tank_max_level     (f32 LE; NaN = absent)
-/// …       4·n_nodes   node tank_initial_level (f32 LE; NaN = absent)
-/// …       4·n_nodes   node tank_diameter      (f32 LE; NaN = absent)
-/// …       4·n_links   link velocity           (f32 LE)
-/// …       4·n_links   link diameter           (f32 LE, mm)
-/// …       4·n_links   link length             (f32 LE, m)
-/// …       4·n_links   link roughness          (f32 LE)
-/// …       4·n_links   link pump_power_kw      (f32 LE; NaN = absent)
-/// …       4·n_links   link pump_speed         (f32 LE; NaN = absent)
-/// …       4·n_links   link valve_setting      (f32 LE; NaN = absent)
-/// …       1·n_nodes   node kind (u8: 0 junction, 1 tank, 2 reservoir)
-/// …       1·n_links   link kind (u8: 0 pipe, 1 pump, 2 valve)
+/// offset  size          content
+/// 0       4             version     (u32 LE, = NETWORK_SNAPSHOT_VERSION = 2)
+/// 4       4             flags       (u32 LE; bit 0 = snapshot present)
+/// 8       4             n_nodes     (u32 LE)
+/// 12      4             n_links     (u32 LE)
+/// 16      4             total_verts (u32 LE; Σ vertices over all links)
+/// 20      12            reserved    (u32 LE × 3, all 0)
+/// 32      8·n_nodes     node x                  (f64 LE)
+/// …       8·n_nodes     node y                  (f64 LE)
+/// …       8·total_verts vertex x                (f64 LE; link order)
+/// …       8·total_verts vertex y                (f64 LE; link order)
+/// …       4·n_nodes     node elevation          (f32 LE, m)
+/// …       4·n_nodes     node base_demand        (f32 LE, L/s)
+/// …       4·n_nodes     node pressure           (f32 LE; NaN = absent)
+/// …       4·n_nodes     node demand             (f32 LE; NaN = absent)
+/// …       4·n_nodes     node tank_min_level     (f32 LE; NaN = absent)
+/// …       4·n_nodes     node tank_max_level     (f32 LE; NaN = absent)
+/// …       4·n_nodes     node tank_initial_level (f32 LE; NaN = absent)
+/// …       4·n_nodes     node tank_diameter      (f32 LE; NaN = absent)
+/// …       4·n_links     link velocity           (f32 LE)
+/// …       4·n_links     link diameter           (f32 LE, mm)
+/// …       4·n_links     link length             (f32 LE, m)
+/// …       4·n_links     link roughness          (f32 LE)
+/// …       4·n_links     link pump_power_kw      (f32 LE; NaN = absent)
+/// …       4·n_links     link pump_speed         (f32 LE; NaN = absent)
+/// …       4·n_links     link valve_setting      (f32 LE; NaN = absent)
+/// …       1·n_nodes     node kind (u8: 0 junction, 1 tank, 2 reservoir)
+/// …       1·n_links     link kind (u8: 0 pipe, 1 pump, 2 valve)
+/// …       4·n_links     link vertex count (u32 LE; may be unaligned)
 /// then 9 string columns, each `u32 LE byte_len` + newline-joined UTF-8:
 ///   node id | node tank_volume_curve | node head_pattern |
 ///   link id | link from_id | link to_id |
 ///   link pump_curve | link valve_type | link valve_curve
 /// ```
 ///
+/// The per-link vertex arrays are concatenated in link order — the same
+/// order the link columns are emitted — so link *i*'s vertices are the
+/// `vertex_count[i]` entries starting at `Σ vertex_count[0..i]`.
+///
 /// Column ordering keeps every f64 column 8-byte-aligned and every f32
 /// column 4-byte-aligned relative to the buffer start, so the decoder can
-/// use zero-copy typed-array views. Optional numeric fields use an NaN
+/// use zero-copy typed-array views (the trailing u32 vertex-count column may
+/// be unaligned; the decoder copies it). Optional numeric fields use an NaN
 /// sentinel (`None` ⇔ NaN — real values are never NaN here, see
 /// `node_to_dto` / `link_to_dto`), preserving the null-vs-0 distinction.
 /// Optional string columns encode `None` as an empty string (IDs are never
@@ -1997,19 +2202,39 @@ fn encode_network_snapshot(dto: &NetworkDto) -> Vec<u8> {
     let links = &dto.links;
     let n = nodes.len();
     let m = links.len();
+    // Vertices for link `i`; `link_vertices` is parallel to `links`, but a
+    // DTO built without vertex context (e.g. `NetworkDto::default()`) may
+    // carry an empty vec — treat missing entries as "no vertices".
+    const NO_VERTS: &[(f64, f64)] = &[];
+    let verts_for =
+        |i: usize| -> &[(f64, f64)] { dto.link_vertices.get(i).map_or(NO_VERTS, |v| v.as_slice()) };
+    let total_verts: usize = (0..m).map(|i| verts_for(i).len()).sum();
 
     // Fixed-width section is exact; string columns get a rough per-ID guess.
-    let mut buf = Vec::with_capacity(16 + 49 * n + 29 * m + 12 * n + 30 * m + 9 * 4);
+    let mut buf =
+        Vec::with_capacity(32 + 49 * n + 33 * m + 16 * total_verts + 12 * n + 30 * m + 9 * 4);
     buf.extend_from_slice(&NETWORK_SNAPSHOT_VERSION.to_le_bytes());
     buf.extend_from_slice(&NETWORK_SNAPSHOT_FLAG_PRESENT.to_le_bytes());
     buf.extend_from_slice(&(n as u32).to_le_bytes());
     buf.extend_from_slice(&(m as u32).to_le_bytes());
+    buf.extend_from_slice(&(total_verts as u32).to_le_bytes());
+    buf.extend_from_slice(&[0u8; 12]); // reserved (u32 × 3)
 
     for nd in nodes {
         buf.extend_from_slice(&nd.x.to_le_bytes());
     }
     for nd in nodes {
         buf.extend_from_slice(&nd.y.to_le_bytes());
+    }
+    for i in 0..m {
+        for (vx, _) in verts_for(i) {
+            buf.extend_from_slice(&vx.to_le_bytes());
+        }
+    }
+    for i in 0..m {
+        for (_, vy) in verts_for(i) {
+            buf.extend_from_slice(&vy.to_le_bytes());
+        }
     }
     push_f32s(&mut buf, nodes, |nd| nd.elevation);
     push_f32s(&mut buf, nodes, |nd| nd.base_demand);
@@ -2053,6 +2278,11 @@ fn encode_network_snapshot(dto: &NetworkDto) -> Vec<u8> {
         buf.push(code);
     }
 
+    // Per-link vertex counts (u32 LE; may be unaligned after the u8 columns).
+    for i in 0..m {
+        buf.extend_from_slice(&(verts_for(i).len() as u32).to_le_bytes());
+    }
+
     push_str_col(&mut buf, nodes, |nd| &nd.id);
     push_str_col(&mut buf, nodes, |nd| {
         nd.tank_volume_curve.as_deref().unwrap_or("")
@@ -2071,12 +2301,11 @@ fn encode_network_snapshot(dto: &NetworkDto) -> Vec<u8> {
 
 /// Header-only payload with the "present" flag clear — the binary equivalent
 /// of the old `null` return from `load_project_network` (target INP missing).
+/// Uses the full 32-byte v2 header (flags / counts / reserved words all 0).
 fn encode_network_snapshot_absent() -> Vec<u8> {
-    let mut buf = Vec::with_capacity(16);
+    let mut buf = Vec::with_capacity(32);
     buf.extend_from_slice(&NETWORK_SNAPSHOT_VERSION.to_le_bytes());
-    buf.extend_from_slice(&0u32.to_le_bytes());
-    buf.extend_from_slice(&0u32.to_le_bytes());
-    buf.extend_from_slice(&0u32.to_le_bytes());
+    buf.extend_from_slice(&[0u8; 28]); // flags, n_nodes, n_links, total_verts, reserved × 3
     buf
 }
 
@@ -2098,30 +2327,21 @@ pub fn get_network_snapshot(state: tauri::State<'_, NetworkState>) -> tauri::ipc
 #[tauri::command(async)]
 /// Return the link list for the loaded network.
 pub fn get_links(state: tauri::State<'_, NetworkState>) -> Vec<LinkDto> {
-    match &*state.0.lock() {
-        NetworkStateInner::Loaded { dto, .. } => dto.links.clone(),
-        NetworkStateInner::Empty => vec![],
-    }
+    cloned_from_dto(&state, |dto| &dto.links)
 }
 
 /// Return the patterns of the currently loaded network, or an empty list.
 #[tauri::command(async)]
 /// Return demand/head patterns for the loaded network.
 pub fn get_patterns(state: tauri::State<'_, NetworkState>) -> Vec<PatternDto> {
-    match &*state.0.lock() {
-        NetworkStateInner::Loaded { dto, .. } => dto.patterns.clone(),
-        NetworkStateInner::Empty => vec![],
-    }
+    cloned_from_dto(&state, |dto| &dto.patterns)
 }
 
 /// Return the curves of the currently loaded network, or an empty list.
 #[tauri::command(async)]
 /// Return pump/GPV/volume curves for the loaded network.
 pub fn get_curves(state: tauri::State<'_, NetworkState>) -> Vec<CurveDto> {
-    match &*state.0.lock() {
-        NetworkStateInner::Loaded { dto, .. } => dto.curves.clone(),
-        NetworkStateInner::Empty => vec![],
-    }
+    cloned_from_dto(&state, |dto| &dto.curves)
 }
 
 // ── Internal helpers ─────────────────────────────────────────────────────────
@@ -2196,9 +2416,14 @@ fn link_to_dto(l: &hydra::Link, from_id: String, to_id: String) -> LinkDto {
     use hydra::LinkKind;
 
     let (kind, diameter, length, roughness) = match &l.kind {
-        LinkKind::Pipe(p) => ("pipe", p.diameter * 304.8, p.length * FT_TO_M, p.roughness),
+        LinkKind::Pipe(p) => (
+            "pipe",
+            p.diameter * FT_TO_MM,
+            p.length * FT_TO_M,
+            p.roughness,
+        ),
         LinkKind::Pump(_) => ("pump", 0.0, 0.0, 0.0),
-        LinkKind::Valve(v) => ("valve", v.diameter * 304.8, 0.0, 0.0),
+        LinkKind::Valve(v) => ("valve", v.diameter * FT_TO_MM, 0.0, 0.0),
     };
     let (pump_curve, pump_power_kw, pump_speed) = if let LinkKind::Pump(p) = &l.kind {
         // power is stored in Watts; convert to kW for the DTO
@@ -2281,6 +2506,19 @@ fn network_to_dto(network: &hydra::Network) -> NetworkDto {
         })
         .collect();
 
+    // `[VERTICES]` polylines in link order, parallel to `links`.
+    let link_vertices = network
+        .links
+        .iter()
+        .map(|l| {
+            network
+                .vertices
+                .get(&l.base.id)
+                .cloned()
+                .unwrap_or_default()
+        })
+        .collect();
+
     let patterns = network
         .patterns
         .iter()
@@ -2341,6 +2579,7 @@ fn network_to_dto(network: &hydra::Network) -> NetworkDto {
             .map(|(i, r)| rule_to_dto(i, r, network))
             .collect(),
         file_stem: String::new(),
+        link_vertices,
     }
 }
 
@@ -2660,8 +2899,79 @@ fn rule_to_dto(index: usize, rule: &hydra::Rule, network: &hydra::Network) -> Ru
 
 // ── Simulation helpers ───────────────────────────────────────────────────────
 
+/// `true` when the network carries any energy-price information the engine's
+/// accounting could have used: a positive global `[ENERGY]` price or a
+/// positive per-pump price. Price patterns are only multipliers, so a pattern
+/// without a base price still yields zero cost — pattern presence alone does
+/// not count as price information.
+fn network_has_energy_price(network: &hydra::Network) -> bool {
+    network.options.energy_price > 0.0
+        || network.links.iter().any(|l| match &l.kind {
+            hydra::LinkKind::Pump(p) => p.energy_price.is_some_and(|v| v > 0.0),
+            _ => false,
+        })
+}
+
+/// Recover a pump's total kWh and total cost from a `.out` energy record.
+///
+/// The `.out` file stores per-day / per-hour normalisations (see the engine's
+/// `out_writer::write_energy`), so the totals are re-derived by inverting the
+/// writer's formulas:
+/// - `time_online = pct_online / 100 × duration` (with EPANET's synthetic
+///   1-hour horizon when `duration == 0`, i.e. a steady-state run);
+/// - `total_kwh = avg_kw × time_online / 3600`;
+/// - `total_cost = avg_cost_per_day × duration / 86400` (or `/ 24` of the
+///   ×24 steady-state figure).
+///
+/// The cost stored in the file was accumulated by the engine period-by-period
+/// with the effective price (per-pump/global price × price-pattern
+/// multiplier), so patterns are already respected.
+fn energy_totals_from_record(
+    avg_kw: f64,
+    pct_online: f64,
+    avg_cost_per_day: f64,
+    duration_secs: f64,
+) -> (f64, f64) {
+    let horizon = if duration_secs > 0.0 {
+        duration_secs
+    } else {
+        3600.0
+    };
+    let time_online_secs = pct_online / 100.0 * horizon;
+    let total_kwh = avg_kw * time_online_secs / 3600.0;
+    let total_cost = if duration_secs > 0.0 {
+        avg_cost_per_day * duration_secs / 86_400.0
+    } else {
+        avg_cost_per_day / 24.0
+    };
+    (total_kwh, total_cost)
+}
+
+/// Read the total simulation duration (seconds) from a `.out` prolog header.
+///
+/// `OutMetadata` does not expose the prolog's duration field, so read the
+/// INT4 at byte offset 56 directly (the header layout is fixed; see
+/// `OutProlog`). Callers should have validated the file via
+/// `read_metadata_checked` first.
+fn out_duration_secs(out_path: &std::path::Path) -> Result<f64, String> {
+    use std::io::{Read, Seek, SeekFrom};
+    let mut f = std::fs::File::open(out_path).map_err(|e| e.to_string())?;
+    f.seek(SeekFrom::Start(56)).map_err(|e| e.to_string())?;
+    let mut buf = [0u8; 4];
+    f.read_exact(&mut buf).map_err(|e| e.to_string())?;
+    Ok(i32::from_le_bytes(buf) as f64)
+}
+
 /// Collect per-pump energy from a completed simulation session.
-fn collect_pump_energy(sim: &hydra::Simulation, duration_seconds: f64) -> Vec<PumpEnergyDto> {
+///
+/// `has_price_info` must be computed from the network *before* it is moved
+/// into the simulation (see [`network_has_energy_price`]); when `false`,
+/// `total_cost` is `None` for every pump.
+fn collect_pump_energy(
+    sim: &hydra::Simulation,
+    duration_seconds: f64,
+    has_price_info: bool,
+) -> Vec<PumpEnergyDto> {
     sim.pump_ids()
         .into_iter()
         .filter_map(|id| {
@@ -2683,6 +2993,8 @@ fn collect_pump_energy(sim: &hydra::Simulation, duration_seconds: f64) -> Vec<Pu
                 avg_kwh_per_flow: pe.kwh_per_flow,
                 avg_kw,
                 peak_kw: pe.max_kw,
+                total_kwh: pe.kwh,
+                total_cost: has_price_info.then_some(pe.total_cost),
             })
         })
         .collect()
@@ -2699,6 +3011,8 @@ fn pump_energy_from_out(
         Ok(e) => e,
         Err(_) => return Vec::new(),
     };
+    let duration_secs = out_duration_secs(out_path).unwrap_or(0.0);
+    let has_price_info = network_has_energy_price(network);
     energy
         .pumps
         .iter()
@@ -2706,6 +3020,12 @@ fn pump_energy_from_out(
             // `link_index` is 1-based.
             let idx = (rec.link_index as usize).checked_sub(1)?;
             let link = network.links.get(idx)?;
+            let (total_kwh, total_cost) = energy_totals_from_record(
+                rec.avg_kw as f64,
+                rec.pct_online as f64,
+                rec.avg_cost_per_day as f64,
+                duration_secs,
+            );
             Some(PumpEnergyDto {
                 id: link.base.id.clone(),
                 pct_online: rec.pct_online as f64,
@@ -2713,6 +3033,8 @@ fn pump_energy_from_out(
                 avg_kwh_per_flow: rec.avg_kwh_per_flow as f64,
                 avg_kw: rec.avg_kw as f64,
                 peak_kw: rec.peak_kw as f64,
+                total_kwh,
+                total_cost: has_price_info.then_some(total_cost),
             })
         })
         .collect()
@@ -2735,6 +3057,17 @@ pub struct PumpEnergyDto {
     pub avg_kw: f64,
     /// Peak electrical power observed (kW).
     pub peak_kw: f64,
+    /// Total electrical energy consumed over the simulation horizon (kWh).
+    #[serde(default)]
+    pub total_kwh: f64,
+    /// Total energy cost over the simulation horizon, in the model's currency
+    /// units. The engine's accounting derives the effective price per period
+    /// as `(pump price | global [ENERGY] price) × price-pattern multiplier`
+    /// (see the engine's `effective_price`), so price patterns are respected.
+    /// `None` when the model carries no price information at all (no global
+    /// `[ENERGY]` price and no per-pump price).
+    #[serde(default)]
+    pub total_cost: Option<f64>,
 }
 
 /// Result returned by `run_simulation`.
@@ -2807,15 +3140,25 @@ pub struct ResultAnalyticsDto {
     pub link_count: u32,
     pub mass_balance: MassBalanceDto,
     /// Node ID with the lowest minimum pressure across all periods.
-    pub min_pressure_node_id: String,
+    /// Absent (omitted from the JSON) when no node has a finite pressure
+    /// value — the frontend renders "—" for missing fields.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub min_pressure_node_id: Option<String>,
     /// Lowest minimum-pressure value (m) across all nodes and periods.
-    pub min_pressure_m: f64,
+    /// Absent together with `min_pressure_node_id`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub min_pressure_m: Option<f64>,
     /// Number of nodes whose worst-case pressure is below 14 m.
     pub low_pressure_count: u32,
     /// Link ID with the highest peak velocity across all periods.
-    pub max_velocity_link_id: String,
+    /// Absent when every link's peak velocity is zero or NaN (the scan's
+    /// "no data" default), i.e. there is no meaningful maximum.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_velocity_link_id: Option<String>,
     /// Highest peak velocity (m/s) across all links and periods.
-    pub max_velocity_ms: f64,
+    /// Absent together with `max_velocity_link_id`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_velocity_ms: Option<f64>,
     /// Histogram of per-node minimum pressure (7 fixed bins, m).
     pub pressure_histogram: Vec<HistogramBucketDto>,
     /// Histogram of per-link maximum velocity (5 fixed bins, m/s).
@@ -2824,30 +3167,6 @@ pub struct ResultAnalyticsDto {
     pub top_pipes: Vec<TopPipeDto>,
     /// Head-over-time series for every tank node.
     pub tank_series: Vec<TankHeadSeriesDto>,
-}
-
-/// A node whose minimum pressure (across all periods) is below the threshold.
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct NodeViolationDto {
-    pub id: String,
-    pub min_pressure_m: f64,
-}
-
-/// A link whose peak velocity (across all periods) is above the threshold.
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct LinkViolationDto {
-    pub id: String,
-    pub max_velocity_ms: f64,
-}
-
-/// Threshold violations returned by `get_violations`.
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ViolationsDto {
-    pub pressure_violations: Vec<NodeViolationDto>,
-    pub velocity_violations: Vec<LinkViolationDto>,
 }
 
 /// Global min/max ranges for the common result variables across all periods.
@@ -2998,6 +3317,15 @@ pub async fn run_simulation(
     if let Some(sid) = &scenario_id {
         validate_id(sid)?;
     }
+    // A scenario can only be resolved within its project — silently falling
+    // back to the in-memory network would run the wrong model.
+    if scenario_id.is_some() && project_id.is_none() {
+        return Err(
+            "scenario_id requires project_id: a scenario model can only be \
+             located inside its project bundle"
+                .into(),
+        );
+    }
 
     // Load model bytes.  When IDs are supplied we read directly from the
     // bundle on disk so the correct model.inp is always used, regardless of
@@ -3019,7 +3347,7 @@ pub async fn run_simulation(
         }
     };
 
-    let mut network = hydra::io::parse(&raw_bytes).map_err(|e| format!("{e:?}"))?;
+    let mut network = hydra::io::parse(&raw_bytes).map_err(format_inp_parse_error)?;
 
     // Apply quality mode override from the caller. When `None` is passed,
     // honour whatever the INP `[OPTIONS]` declares — the INP is the canonical
@@ -3039,16 +3367,15 @@ pub async fn run_simulation(
     let resolved_quality = network.options.quality_mode;
     let run_quality = resolved_quality != QualityMode::None;
     let duration_seconds = network.options.duration;
+    // Captured before `sim.load(network)` consumes the network — decides
+    // whether pump `total_cost` is meaningful (`None` when no price info).
+    let has_price_info = network_has_energy_price(&network);
 
-    // Resolve the .out path before moving into spawn_blocking.
-    let out_path: Option<std::path::PathBuf> = if let Ok(app_data) = app.path().app_data_dir() {
-        match (&project_id, &scenario_id) {
-            (Some(pid), Some(sid)) => Some(bundle::scenario_results_path(&app_data, pid, sid)),
-            (Some(pid), None) => Some(bundle::base_results_path(&app_data, pid)),
-            _ => None,
-        }
-    } else {
-        None
+    // Resolve the .out path before moving into spawn_blocking. In-memory runs
+    // (no project id) write no results file.
+    let out_path: Option<std::path::PathBuf> = match (app.path().app_data_dir(), &project_id) {
+        (Ok(app_data), Some(pid)) => Some(results_path_for(&app_data, pid, scenario_id.as_deref())),
+        _ => None,
     };
 
     // Claim exclusive write access to this target's results.out so a direct
@@ -3065,14 +3392,15 @@ pub async fn run_simulation(
 
     // ── Phase 2: stepped loops on a blocking thread ─────────────────────────
     let app2 = app.clone();
-    let (sim, run_err, _wall_ms, _hyd_steps) = tauri::async_runtime::spawn_blocking(move || {
+    let (sim, run_err, wall_ms, hyd_steps) = tauri::async_runtime::spawn_blocking(move || {
         run_sim_loops(
             sim,
             out_path,
             duration_seconds,
             run_quality,
             |phase, ss, done, failed, msg| {
-                let _ = app2.emit(
+                emit_or_warn(
+                    &app2,
                     SIMULATION_PROGRESS_EVENT,
                     &SimulationProgressDto {
                         // Direct runs are not queue items: `None` per the
@@ -3100,6 +3428,15 @@ pub async fn run_simulation(
     .await
     .map_err(|e| format!("Simulation task panicked: {e:?}"))?;
 
+    tracing::info!(
+        project_id = project_id.as_deref().unwrap_or("-"),
+        scenario_id = scenario_id.as_deref().unwrap_or("-"),
+        wall_ms,
+        hyd_steps,
+        outcome = run_loop_outcome(&run_err),
+        "direct simulation run finished"
+    );
+
     if let Some(err) = run_err {
         return Err(match err {
             RunLoopError::Failed(msg) => msg,
@@ -3108,10 +3445,19 @@ pub async fn run_simulation(
     }
 
     let result = SimulationResultDto {
-        pump_energy: collect_pump_energy(&sim, duration_seconds),
+        pump_energy: collect_pump_energy(&sim, duration_seconds, has_price_info),
     };
 
     Ok(Some(result))
+}
+
+/// Terse outcome label for run-summary log lines.
+fn run_loop_outcome(run_err: &Option<RunLoopError>) -> &'static str {
+    match run_err {
+        None => "done",
+        Some(RunLoopError::Failed(_)) => "failed",
+        Some(RunLoopError::Cancelled) => "cancelled",
+    }
 }
 
 /// Persist the currently loaded network (`NetworkState`) back into the named
@@ -3144,10 +3490,7 @@ pub fn save_project(
     state: tauri::State<'_, NetworkState>,
     app: tauri::AppHandle,
 ) -> Result<bool, String> {
-    validate_id(&id)?;
-    if let Some(sid) = &scenario_id {
-        validate_id(sid)?;
-    }
+    validate_target_ids(&id, scenario_id.as_deref())?;
     let (raw, node_count, link_count) = {
         let mut guard = state.0.lock();
         match &*guard {
@@ -3170,21 +3513,18 @@ pub fn save_project(
         }
     };
     let app_data = app_data_dir(&app)?;
-    match scenario_id {
-        Some(ref sid) => {
-            bundle::atomic_write(&bundle::scenario_model_path(&app_data, &id, sid), &raw)
-                .map_err(|e| e.to_string())?;
-        }
-        None => {
-            bundle::atomic_write(&bundle::base_model_path(&app_data, &id), &raw)
-                .map_err(|e| e.to_string())?;
-            // Update cached node/link counts in meta.json.
-            let project_dir = bundle::project_dir(&app_data, &id);
-            if let Ok(mut project_meta) = meta::read_project_meta(&project_dir) {
-                project_meta.node_count = node_count;
-                project_meta.link_count = link_count;
-                let _ = meta::write_project_meta(&project_dir, &project_meta);
-            }
+    bundle::atomic_write(
+        &model_path_for(&app_data, &id, scenario_id.as_deref()),
+        &raw,
+    )
+    .map_err(|e| e.to_string())?;
+    if scenario_id.is_none() {
+        // Update cached node/link counts in meta.json (base model only).
+        let project_dir = bundle::project_dir(&app_data, &id);
+        if let Ok(mut project_meta) = meta::read_project_meta(&project_dir) {
+            project_meta.node_count = node_count;
+            project_meta.link_count = link_count;
+            let _ = meta::write_project_meta(&project_dir, &project_meta);
         }
     }
     Ok(true)
@@ -3246,7 +3586,7 @@ pub async fn enqueue_runs(
 
     // Notify the frontend immediately so newly-queued items appear in the
     // task tray before the queue processor picks them up.
-    let _ = app.emit(RUN_QUEUE_UPDATE_EVENT, &project_id);
+    emit_or_warn(&app, RUN_QUEUE_UPDATE_EVENT, &project_id);
 
     // Kick the queue processor if it is not already running.
     if run_queue.try_claim_processor() {
@@ -3274,7 +3614,7 @@ pub fn cancel_run_queue(
 ) -> Result<u32, String> {
     validate_id(&project_id)?;
     let n = run_queue.cancel_for_project(&project_id);
-    let _ = app.emit(RUN_QUEUE_UPDATE_EVENT, &project_id);
+    emit_or_warn(&app, RUN_QUEUE_UPDATE_EVENT, &project_id);
     Ok(n)
 }
 
@@ -3294,7 +3634,7 @@ pub fn cancel_run_item(
     let (cancelled, project_id) = run_queue.cancel_item(&run_id);
     if cancelled {
         if let Some(pid) = project_id {
-            let _ = app.emit(RUN_QUEUE_UPDATE_EVENT, &pid);
+            emit_or_warn(&app, RUN_QUEUE_UPDATE_EVENT, &pid);
         }
     }
     Ok(cancelled)
@@ -3397,8 +3737,8 @@ fn options_to_dto(o: &hydra::SimulationOptions) -> SimParamsDto {
         head_loss_formula,
         demand_model,
         demand_multiplier: o.demand_multiplier,
-        pda_min_pressure: o.pda_min_pressure * 0.3048,
-        pda_required_pressure: o.pda_required_pressure * 0.3048,
+        pda_min_pressure: o.pda_min_pressure * FT_TO_M,
+        pda_required_pressure: o.pda_required_pressure * FT_TO_M,
         pda_pressure_exponent: o.pda_pressure_exponent,
         quality_mode,
         trace_node: o.trace_node.clone(),
@@ -3450,8 +3790,8 @@ fn apply_dto_to_options(
         s => return Err(format!("unknown demand model '{s}'")),
     };
     o.demand_multiplier = dto.demand_multiplier;
-    o.pda_min_pressure = dto.pda_min_pressure / 0.3048;
-    o.pda_required_pressure = dto.pda_required_pressure / 0.3048;
+    o.pda_min_pressure = dto.pda_min_pressure / FT_TO_M;
+    o.pda_required_pressure = dto.pda_required_pressure / FT_TO_M;
     o.pda_pressure_exponent = dto.pda_pressure_exponent;
     o.quality_mode = match dto.quality_mode.as_str() {
         "none" => QualityMode::None,
@@ -3477,7 +3817,7 @@ fn apply_dto_to_options(
 /// Parse the base `model.inp` for `project_id` and return its \[TIMES\]/\[OPTIONS\]
 /// values. Returns `None` when the project has no base INP yet (draft).
 #[tauri::command(async)]
-/// Return simulation parameter overrides for a project.
+/// Return a project's simulation parameters (\[TIMES\]/\[OPTIONS\]).
 ///
 /// Served from the cached parsed network in `NetworkState` when it holds this
 /// project's base model — avoids re-reading and re-parsing a multi-MB INP on
@@ -3508,7 +3848,7 @@ pub fn get_sim_params(
         return Ok(None);
     }
     let bytes = std::fs::read(&path).map_err(|e| e.to_string())?;
-    let network = hydra::io::parse(&bytes).map_err(|e| format!("{e:?}"))?;
+    let network = hydra::io::parse(&bytes).map_err(format_inp_parse_error)?;
     Ok(Some(options_to_dto(&network.options)))
 }
 
@@ -3565,7 +3905,7 @@ fn apply_sim_params_to_cached_base(
 /// the DTO, rewriting the base INP, and propagating to every scenario INP so
 /// they stay in lockstep.
 #[tauri::command(async)]
-/// Persist simulation parameter overrides for a project.
+/// Persist a project's simulation parameters to its base and scenario INPs.
 pub fn update_sim_params(
     app: tauri::AppHandle,
     state: tauri::State<'_, NetworkState>,
@@ -3596,7 +3936,7 @@ pub fn update_sim_params(
         }
         None => {
             let bytes = std::fs::read(&base_path).map_err(|e| e.to_string())?;
-            let mut network = hydra::io::parse(&bytes).map_err(|e| format!("{e:?}"))?;
+            let mut network = hydra::io::parse(&bytes).map_err(format_inp_parse_error)?;
             apply_dto_to_options(&mut network.options, &params)?;
             let new_bytes = hydra::write_inp(&network);
             bundle::atomic_write(&base_path, &new_bytes).map_err(|e| e.to_string())?;
@@ -3624,9 +3964,9 @@ pub fn update_sim_params(
         }
     }
 
-    // 2) Every scenario's INP — best-effort. We skip but log scenarios whose
-    //    INP fails to parse so a single bad scenario doesn't block the user
-    //    from updating the base.
+    // 2) Every scenario's INP — best-effort. Scenarios whose INP fails to
+    //    read, parse, or rewrite are skipped (with a warning) so a single bad
+    //    scenario doesn't block the user from updating the base.
     let scenario_ids = list_scenario_ids(&app_data, &project_id);
     for sc_id in scenario_ids {
         let path = bundle::scenario_model_path(&app_data, &project_id, &sc_id);
@@ -3635,17 +3975,42 @@ pub fn update_sim_params(
         }
         let bytes = match std::fs::read(&path) {
             Ok(b) => b,
-            Err(_) => continue,
+            Err(e) => {
+                tracing::warn!(
+                    scenario_id = %sc_id,
+                    error = %e,
+                    "sim-params propagation skipped scenario: cannot read model"
+                );
+                continue;
+            }
         };
         let mut network = match hydra::io::parse(&bytes) {
             Ok(n) => n,
-            Err(_) => continue,
+            Err(e) => {
+                tracing::warn!(
+                    scenario_id = %sc_id,
+                    error = %format_inp_parse_error(e),
+                    "sim-params propagation skipped scenario: cannot parse model"
+                );
+                continue;
+            }
         };
-        if apply_dto_to_options(&mut network.options, &params).is_err() {
+        if let Err(e) = apply_dto_to_options(&mut network.options, &params) {
+            tracing::warn!(
+                scenario_id = %sc_id,
+                error = %e,
+                "sim-params propagation skipped scenario: params rejected"
+            );
             continue;
         }
         let new_bytes = hydra::write_inp(&network);
-        let _ = bundle::atomic_write(&path, &new_bytes);
+        if let Err(e) = bundle::atomic_write(&path, &new_bytes) {
+            tracing::warn!(
+                scenario_id = %sc_id,
+                error = %e,
+                "sim-params propagation skipped scenario: cannot write model"
+            );
+        }
     }
 
     Ok(())
@@ -3680,7 +4045,7 @@ async fn process_queue(app: tauri::AppHandle) {
     while let Some(item) = rq.next_queued_or_release() {
         let now = meta::now_secs();
         rq.mark_running(&item.id, now);
-        let _ = app.emit(RUN_QUEUE_UPDATE_EVENT, &item.project_id);
+        emit_or_warn(&app, RUN_QUEUE_UPDATE_EVENT, &item.project_id);
 
         let result =
             run_sim_for_queue(&app, &item.id, &item.project_id, item.target_id.as_deref()).await;
@@ -3697,7 +4062,7 @@ async fn process_queue(app: tauri::AppHandle) {
                 rq.mark_failed(&item.id, now, &e);
             }
         }
-        let _ = app.emit(RUN_QUEUE_UPDATE_EVENT, &item.project_id);
+        emit_or_warn(&app, RUN_QUEUE_UPDATE_EVENT, &item.project_id);
     }
 }
 
@@ -3728,14 +4093,11 @@ async fn run_sim_for_queue(
         }
     };
 
-    let network = hydra::io::parse(&raw_bytes).map_err(|e| format!("{e:?}"))?;
+    let network = hydra::io::parse(&raw_bytes).map_err(format_inp_parse_error)?;
     let run_quality = network.options.quality_mode != QualityMode::None;
     let duration_seconds = network.options.duration;
 
-    let out_path = match scenario_id {
-        Some(sid) => bundle::scenario_results_path(&app_data, project_id, sid),
-        None => bundle::base_results_path(&app_data, project_id),
-    };
+    let out_path = results_path_for(&app_data, project_id, scenario_id);
 
     // Exclusive write access to this target's results.out — fails the queue
     // item with a clear error if a direct run is currently writing it.
@@ -3747,14 +4109,15 @@ async fn run_sim_for_queue(
     let run_id_owned = run_id.to_string();
     let app_emit = app.clone();
     let app_cancel = app.clone();
-    let (_, run_err, _wall_ms, _hyd_steps) = tauri::async_runtime::spawn_blocking(move || {
+    let (_, run_err, wall_ms, hyd_steps) = tauri::async_runtime::spawn_blocking(move || {
         run_sim_loops(
             sim,
             Some(out_path),
             duration_seconds,
             run_quality,
             |phase, ss, done, failed, msg| {
-                let _ = app_emit.emit(
+                emit_or_warn(
+                    &app_emit,
                     SIMULATION_PROGRESS_EVENT,
                     &SimulationProgressDto {
                         run_id: Some(run_id_owned.clone()),
@@ -3783,6 +4146,16 @@ async fn run_sim_for_queue(
     .await
     .map_err(|e| format!("Simulation task panicked: {e:?}"))?;
 
+    tracing::info!(
+        run_id,
+        project_id,
+        scenario_id = scenario_id.unwrap_or("-"),
+        wall_ms,
+        hyd_steps,
+        outcome = run_loop_outcome(&run_err),
+        "queued simulation run finished"
+    );
+
     if let Some(err) = run_err {
         return match err {
             RunLoopError::Failed(msg) => Err(msg),
@@ -3804,6 +4177,11 @@ enum QueueRunResult {
 
 // ── Result metadata + period commands ────────────────────────────────────────
 
+/// Maximum number of evenly-spaced reporting periods `scan_ranges` samples
+/// when computing global result ranges — keeps the scan fast (~50 ms) even
+/// for very long simulations.
+const RANGE_SCAN_MAX_SAMPLES: usize = 2048;
+
 /// Return snapshot times and global result ranges for a project or scenario.
 ///
 /// Reads the binary `results.out` on disk without loading the full file.
@@ -3816,22 +4194,16 @@ pub fn load_result_meta(
     project_id: String,
     scenario_id: Option<String>,
 ) -> Result<Option<ResultMetaDto>, String> {
-    validate_id(&project_id)?;
-    if let Some(sid) = &scenario_id {
-        validate_id(sid)?;
-    }
+    validate_target_ids(&project_id, scenario_id.as_deref())?;
     let app_data = app_data_dir(&app)?;
-    let out_path = match &scenario_id {
-        Some(sid) => bundle::scenario_results_path(&app_data, &project_id, sid),
-        None => bundle::base_results_path(&app_data, &project_id),
-    };
+    let out_path = results_path_for(&app_data, &project_id, scenario_id.as_deref());
     if !out_path.exists() {
         return Ok(None);
     }
     let meta =
         hydra::io::out_reader::read_metadata_checked(&out_path).map_err(|e| e.to_string())?;
     let times = meta.snapshot_times();
-    let ranges = hydra::io::out_reader::scan_ranges(&out_path, &meta, 2048)?;
+    let ranges = hydra::io::out_reader::scan_ranges(&out_path, &meta, RANGE_SCAN_MAX_SAMPLES)?;
     let quality_mode = match meta.quality_flag {
         1 => "chemical",
         2 => "age",
@@ -3872,15 +4244,9 @@ pub fn get_period_results(
     period: usize,
     scenario_id: Option<String>,
 ) -> Result<tauri::ipc::Response, String> {
-    validate_id(&project_id)?;
-    if let Some(sid) = &scenario_id {
-        validate_id(sid)?;
-    }
+    validate_target_ids(&project_id, scenario_id.as_deref())?;
     let app_data = app_data_dir(&app)?;
-    let out_path = match &scenario_id {
-        Some(sid) => bundle::scenario_results_path(&app_data, &project_id, sid),
-        None => bundle::base_results_path(&app_data, &project_id),
-    };
+    let out_path = results_path_for(&app_data, &project_id, scenario_id.as_deref());
     let meta =
         hydra::io::out_reader::read_metadata_checked(&out_path).map_err(|e| e.to_string())?;
     let pr = hydra::io::out_reader::read_period(&out_path, &meta, period)?;
@@ -3892,35 +4258,42 @@ pub fn get_period_results(
 }
 
 /// Parsed network for `(project_id, scenario_id)`: cloned from the in-memory
-/// cache when `NetworkState` holds exactly that target, otherwise read and
-/// parsed from the on-disk model — avoids a multi-MB INP re-parse per call
-/// in the common case where the requested target is the loaded one.
+/// cache when `NetworkState` holds exactly that target **and has no unsaved
+/// edits**, otherwise read and parsed from the on-disk model — avoids a
+/// multi-MB INP re-parse per call in the common case where the requested
+/// target is the loaded one.
+///
+/// The `dirty` check matters for correctness, not just freshness: callers
+/// index `results.out` arrays positionally against the returned network, and
+/// the `.out` file was produced from the on-disk model. A dirty cache may
+/// contain structural edits (added/deleted elements) the results know nothing
+/// about, which would silently attach results to the wrong elements — so a
+/// dirty cache is treated exactly like a non-matching target.
 fn network_for_target(
     app_data: &std::path::Path,
     state: &NetworkState,
     project_id: &str,
     scenario_id: Option<&str>,
 ) -> Result<hydra::Network, String> {
+    // Decide (and clone) under the lock; all file IO happens after release.
     {
         let guard = state.0.lock();
         if let NetworkStateInner::Loaded {
             network,
+            dirty,
             owner_project_id: Some(owner),
             owner_scenario_id,
             ..
         } = &*guard
         {
-            if owner == project_id && owner_scenario_id.as_deref() == scenario_id {
+            if !*dirty && owner == project_id && owner_scenario_id.as_deref() == scenario_id {
                 return Ok(network.clone());
             }
         }
     }
-    let model_path = match scenario_id {
-        Some(sid) => bundle::scenario_model_path(app_data, project_id, sid),
-        None => bundle::base_model_path(app_data, project_id),
-    };
+    let model_path = model_path_for(app_data, project_id, scenario_id);
     let raw = std::fs::read(&model_path).map_err(|e| format!("Cannot read model: {e}"))?;
-    hydra::io::parse(&raw).map_err(|e| format!("{e:?}"))
+    hydra::io::parse(&raw).map_err(format_inp_parse_error)
 }
 
 /// Return the pump energy summary for a project or scenario.
@@ -3935,15 +4308,9 @@ pub fn get_pump_energy(
     project_id: String,
     scenario_id: Option<String>,
 ) -> Result<Vec<PumpEnergyDto>, String> {
-    validate_id(&project_id)?;
-    if let Some(sid) = &scenario_id {
-        validate_id(sid)?;
-    }
+    validate_target_ids(&project_id, scenario_id.as_deref())?;
     let app_data = app_data_dir(&app)?;
-    let out_path = match &scenario_id {
-        Some(sid) => bundle::scenario_results_path(&app_data, &project_id, sid),
-        None => bundle::base_results_path(&app_data, &project_id),
-    };
+    let out_path = results_path_for(&app_data, &project_id, scenario_id.as_deref());
     // No simulation run yet — expected for a fresh project, not an error.
     if !out_path.exists() {
         return Ok(Vec::new());
@@ -3952,6 +4319,176 @@ pub fn get_pump_energy(
     let meta =
         hydra::io::out_reader::read_metadata_checked(&out_path).map_err(|e| e.to_string())?;
     Ok(pump_energy_from_out(&out_path, &network, &meta))
+}
+
+/// One named value series within a [`SeriesDto`].
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SeriesFieldDto {
+    pub name: String,
+    pub values: Vec<f64>,
+}
+
+/// Full time series for a single element returned by `get_element_series`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SeriesDto {
+    /// Snapshot times in seconds since simulation start, one per period.
+    pub times: Vec<u32>,
+    /// Value series, one entry per field; every `values` vec is parallel to
+    /// `times`.
+    pub fields: Vec<SeriesFieldDto>,
+}
+
+/// Build the per-element time series by streaming the `.out` file one period
+/// at a time (`read_period` seeks; the file is never loaded whole).
+///
+/// `kind` is `"node"` or `"link"`; `index` is the element's network-order
+/// index (0-based), bounds-checked against the result file's counts. Values
+/// are returned exactly as stored in `results.out` — the same SI display
+/// units (m, L/s, m/s) the `get_period_results` path returns, because the
+/// file is always written with `FlowUnits::Lps` (no conversion needed).
+fn element_series_from_out(
+    out_path: &std::path::Path,
+    kind: &str,
+    index: u32,
+) -> Result<SeriesDto, String> {
+    let meta = hydra::io::out_reader::read_metadata_checked(out_path).map_err(|e| e.to_string())?;
+    let idx = index as usize;
+    let has_quality = meta.quality_flag != 0;
+
+    // Field names in wire order, checked against the result's counts.
+    let field_names: Vec<&str> = match kind {
+        "node" => {
+            if idx >= meta.n_nodes {
+                return Err(format!(
+                    "node index {idx} out of range: results hold {} nodes",
+                    meta.n_nodes
+                ));
+            }
+            let mut f = vec!["pressure", "head", "demand"];
+            if has_quality {
+                f.push("quality");
+            }
+            f
+        }
+        "link" => {
+            if idx >= meta.n_links {
+                return Err(format!(
+                    "link index {idx} out of range: results hold {} links",
+                    meta.n_links
+                ));
+            }
+            let mut f = vec!["flow", "velocity", "headloss", "status"];
+            if has_quality {
+                f.push("quality");
+            }
+            f
+        }
+        other => {
+            return Err(format!(
+                "unknown element kind {other:?}: expected \"node\" or \"link\""
+            ))
+        }
+    };
+
+    let mut columns: Vec<Vec<f64>> = field_names
+        .iter()
+        .map(|_| Vec::with_capacity(meta.n_periods))
+        .collect();
+    for period in 0..meta.n_periods {
+        let pr = hydra::io::out_reader::read_period(out_path, &meta, period)?;
+        let values: Vec<f64> = if kind == "node" {
+            let mut v = vec![
+                pr.node_pressure[idx] as f64,
+                pr.node_head[idx] as f64,
+                pr.node_demand[idx] as f64,
+            ];
+            if has_quality {
+                v.push(pr.node_quality[idx] as f64);
+            }
+            v
+        } else {
+            let mut v = vec![
+                pr.link_flow[idx] as f64,
+                pr.link_velocity[idx] as f64,
+                pr.link_headloss[idx] as f64,
+                pr.link_status[idx] as f64,
+            ];
+            if has_quality {
+                v.push(pr.link_quality[idx] as f64);
+            }
+            v
+        };
+        for (col, v) in columns.iter_mut().zip(values) {
+            col.push(v);
+        }
+    }
+
+    Ok(SeriesDto {
+        times: meta.snapshot_times().iter().map(|&t| t as u32).collect(),
+        fields: field_names
+            .into_iter()
+            .zip(columns)
+            .map(|(name, values)| SeriesFieldDto {
+                name: name.to_string(),
+                values,
+            })
+            .collect(),
+    })
+}
+
+/// Return the full time series of every result field for one element.
+///
+/// `kind` is `"node"` or `"link"`; `index` is the element's network-order
+/// index (the same positional index the binary snapshot / period-results
+/// arrays use). Returns `Ok(None)` when no `results.out` exists for the
+/// target (no simulation run yet). See [`element_series_from_out`] for the
+/// payload shape and units.
+#[tauri::command(async)]
+/// Return per-period result series for a single node or link.
+pub fn get_element_series(
+    app: tauri::AppHandle,
+    project_id: String,
+    scenario_id: Option<String>,
+    kind: String,
+    index: u32,
+) -> Result<Option<SeriesDto>, String> {
+    validate_target_ids(&project_id, scenario_id.as_deref())?;
+    let app_data = app_data_dir(&app)?;
+    let out_path = results_path_for(&app_data, &project_id, scenario_id.as_deref());
+    // No simulation run yet — expected for a fresh project, not an error.
+    if !out_path.exists() {
+        return Ok(None);
+    }
+    element_series_from_out(&out_path, &kind, index).map(Some)
+}
+
+/// Index and value of the smallest **finite** entry in `values`; `None` when
+/// no entry is finite (the analytics scan initialises per-node minimum
+/// pressure to `f64::INFINITY`, so an untouched array means "no data").
+fn min_finite_with_index(values: &[f64]) -> Option<(usize, f64)> {
+    let mut best: Option<(usize, f64)> = None;
+    for (i, &v) in values.iter().enumerate() {
+        if v.is_finite() && best.is_none_or(|(_, bv)| v < bv) {
+            best = Some((i, v));
+        }
+    }
+    best
+}
+
+/// Index and value of the largest **strictly positive** entry in `values`;
+/// `None` when every entry is zero, negative, or NaN (the analytics scan
+/// initialises per-link maximum velocity to `0.0`, so an all-zero array means
+/// "no data").
+fn max_positive_with_index(values: &[f64]) -> Option<(usize, f64)> {
+    let mut best: Option<(usize, f64)> = None;
+    for (i, &v) in values.iter().enumerate() {
+        if v > 0.0 && best.is_none_or(|(_, bv)| v > bv) {
+            best = Some((i, v));
+        }
+    }
+    best
 }
 
 /// Compute cross-period analytics by streaming the `.out` file one period at a
@@ -3969,15 +4506,9 @@ pub fn get_result_analytics(
     project_id: String,
     scenario_id: Option<String>,
 ) -> Result<Option<ResultAnalyticsDto>, String> {
-    validate_id(&project_id)?;
-    if let Some(sid) = &scenario_id {
-        validate_id(sid)?;
-    }
+    validate_target_ids(&project_id, scenario_id.as_deref())?;
     let app_data = app_data_dir(&app)?;
-    let out_path = match &scenario_id {
-        Some(sid) => bundle::scenario_results_path(&app_data, &project_id, sid),
-        None => bundle::base_results_path(&app_data, &project_id),
-    };
+    let out_path = results_path_for(&app_data, &project_id, scenario_id.as_deref());
     // No simulation run yet — expected for a fresh project, not an error.
     if !out_path.exists() {
         return Ok(None);
@@ -4017,17 +4548,11 @@ pub fn get_result_analytics(
 
     const LOW_PRESSURE_THRESHOLD: f64 = 14.0; // m
     let mut low_pressure_count = 0u32;
-    let mut min_pressure_val = f64::INFINITY;
-    let mut min_pressure_idx = 0usize;
 
-    for (i, &p) in node_min_pressure.iter().enumerate() {
+    for &p in node_min_pressure.iter() {
         if p.is_finite() {
             if p < LOW_PRESSURE_THRESHOLD {
                 low_pressure_count += 1;
-            }
-            if p < min_pressure_val {
-                min_pressure_val = p;
-                min_pressure_idx = i;
             }
             for bin in &mut pressure_histogram {
                 if p >= bin.lo && p < bin.hi {
@@ -4037,6 +4562,7 @@ pub fn get_result_analytics(
             }
         }
     }
+    let min_pressure = min_finite_with_index(&node_min_pressure);
 
     // ── Velocity histogram (same 5 bins as the frontend) ─────────────────────
     const VELOCITY_BINS: &[(f64, f64)] = &[
@@ -4051,14 +4577,7 @@ pub fn get_result_analytics(
         .map(|&(lo, hi)| HistogramBucketDto { lo, hi, count: 0 })
         .collect();
 
-    let mut max_velocity_val = 0.0_f64;
-    let mut max_velocity_idx = 0usize;
-
-    for (i, &v) in link_max_velocity.iter().enumerate() {
-        if v > max_velocity_val {
-            max_velocity_val = v;
-            max_velocity_idx = i;
-        }
+    for &v in link_max_velocity.iter() {
         for bin in &mut velocity_histogram {
             if v >= bin.lo && v < bin.hi {
                 bin.count += 1;
@@ -4066,6 +4585,7 @@ pub fn get_result_analytics(
             }
         }
     }
+    let max_velocity = max_positive_with_index(&link_max_velocity);
 
     // ── Top 5 links by peak velocity ─────────────────────────────────────────
     let mut sorted_link_idxs: Vec<usize> = (0..n_links).collect();
@@ -4091,7 +4611,7 @@ pub fn get_result_analytics(
                 .map(|n| n.base.id.clone())
                 .unwrap_or_default();
             let diameter_mm = match &link.kind {
-                hydra::LinkKind::Pipe(p) => p.diameter * 304.8,
+                hydra::LinkKind::Pipe(p) => p.diameter * FT_TO_MM,
                 _ => 0.0,
             };
             Some(TopPipeDto {
@@ -4123,26 +4643,18 @@ pub fn get_result_analytics(
         })
         .collect();
 
-    // ── Summary strings ───────────────────────────────────────────────────────
-    let min_pressure_node_id = network
-        .nodes
-        .get(min_pressure_idx)
-        .map(|n| n.base.id.clone())
-        .unwrap_or_default();
-    let min_pressure_m = if min_pressure_val.is_finite() {
-        min_pressure_val
-    } else {
-        0.0
-    };
-    let max_velocity_link_id = network
-        .links
-        .get(max_velocity_idx)
-        .map(|l| l.base.id.clone())
-        .unwrap_or_default();
+    // ── Summary values — absent (`None`) when no valid data exists ───────────
+    let min_pressure_node_id = min_pressure
+        .and_then(|(idx, _)| network.nodes.get(idx))
+        .map(|n| n.base.id.clone());
+    let min_pressure_m = min_pressure.map(|(_, v)| v);
+    let max_velocity_link_id = max_velocity
+        .and_then(|(idx, _)| network.links.get(idx))
+        .map(|l| l.base.id.clone());
+    let max_velocity_ms = max_velocity.map(|(_, v)| v);
 
     // Convert demand accumulations from ft³/s·period to m³ (multiply by
-    // period duration in seconds then by ft³→m³).
-    const FT3_TO_M3: f64 = 0.028_316_847;
+    // period duration in seconds then by the module-level ft³→m³ factor).
     let report_step_s = meta.report_step;
     let inflow_m3 = total_inflow * report_step_s * FT3_TO_M3;
     let outflow_m3 = total_outflow * report_step_s * FT3_TO_M3;
@@ -4166,87 +4678,12 @@ pub fn get_result_analytics(
         min_pressure_m,
         low_pressure_count,
         max_velocity_link_id,
-        max_velocity_ms: max_velocity_val,
+        max_velocity_ms,
         pressure_histogram,
         velocity_histogram,
         top_pipes,
         tank_series,
     }))
-}
-
-/// Return threshold violations by streaming the `.out` file one period at a time.
-///
-/// Only nodes/links that violate the supplied thresholds are included in the
-/// response, so the payload stays small even for large networks.
-#[tauri::command(async)]
-/// Return pressure/velocity/quality violations for a completed run.
-pub fn get_violations(
-    app: tauri::AppHandle,
-    project_id: String,
-    scenario_id: Option<String>,
-    pressure_min_m: f64,
-    velocity_max_ms: f64,
-) -> Result<ViolationsDto, String> {
-    validate_id(&project_id)?;
-    if let Some(sid) = &scenario_id {
-        validate_id(sid)?;
-    }
-    let app_data = app_data_dir(&app)?;
-    let out_path = match &scenario_id {
-        Some(sid) => bundle::scenario_results_path(&app_data, &project_id, sid),
-        None => bundle::base_results_path(&app_data, &project_id),
-    };
-    let model_path = match &scenario_id {
-        Some(sid) => bundle::scenario_model_path(&app_data, &project_id, sid),
-        None => bundle::base_model_path(&app_data, &project_id),
-    };
-    let raw = std::fs::read(&model_path).map_err(|e| format!("Cannot read model: {e}"))?;
-    let network = hydra::io::parse(&raw).map_err(|e| format!("{e:?}"))?;
-    let meta =
-        hydra::io::out_reader::read_metadata_checked(&out_path).map_err(|e| e.to_string())?;
-
-    let scan = hydra::io::out_reader::scan_analytics(&out_path, &meta)?;
-    let node_min_pressure = scan.node_min_pressure;
-    let link_max_velocity = scan.link_max_velocity;
-
-    let pressure_violations: Vec<NodeViolationDto> = network
-        .nodes
-        .iter()
-        .enumerate()
-        .filter_map(|(i, n)| {
-            let min_p = node_min_pressure[i];
-            if min_p.is_finite() && min_p < pressure_min_m {
-                Some(NodeViolationDto {
-                    id: n.base.id.clone(),
-                    min_pressure_m: min_p,
-                })
-            } else {
-                None
-            }
-        })
-        .collect();
-
-    let velocity_violations: Vec<LinkViolationDto> = network
-        .links
-        .iter()
-        .enumerate()
-        .filter_map(|(i, l)| {
-            let max_v = link_max_velocity[i];
-            if max_v > velocity_max_ms {
-                Some(LinkViolationDto {
-                    id: l.base.id.clone(),
-                    max_velocity_ms: max_v,
-                })
-            } else {
-                None
-            }
-        })
-        .collect();
-
-    Ok(ViolationsDto {
-        pressure_violations,
-        velocity_violations,
-    })
 }
 
 /// Load the INP for a project's base model or a named scenario into
@@ -4264,21 +4701,15 @@ pub fn load_project_network(
     project_id: String,
     scenario_id: Option<String>,
 ) -> Result<tauri::ipc::Response, String> {
-    validate_id(&project_id)?;
-    if let Some(sid) = &scenario_id {
-        validate_id(sid)?;
-    }
+    validate_target_ids(&project_id, scenario_id.as_deref())?;
     let app_data = app_data_dir(&app)?;
-    let path = match &scenario_id {
-        Some(sid) => bundle::scenario_model_path(&app_data, &project_id, sid),
-        None => bundle::base_model_path(&app_data, &project_id),
-    };
+    let path = model_path_for(&app_data, &project_id, scenario_id.as_deref());
     if !path.exists() {
         *state.0.lock() = NetworkStateInner::Empty;
         return Ok(tauri::ipc::Response::new(encode_network_snapshot_absent()));
     }
     let bytes = std::fs::read(&path).map_err(|e| e.to_string())?;
-    let network = hydra::io::parse(&bytes).map_err(|e| format!("{e:?}"))?;
+    let network = hydra::io::parse(&bytes).map_err(format_inp_parse_error)?;
     let dto = network_to_dto(&network);
     // Encode before taking the state lock — serialisation work happens
     // outside the mutex, and (unlike the old JSON path) no nodes/links clone
@@ -4295,27 +4726,35 @@ pub fn load_project_network(
     Ok(tauri::ipc::Response::new(encoded))
 }
 
-/// Apply a single field change to the in-memory `Network`, re-serialise it to
-/// INP bytes, and update `NetworkState`.
+/// Apply a single field mutation to a `Network` in place. Shared between
+/// `patch_element` / `patch_elements` (which commit to state) and
+/// `preview_patches` (dry-run, never touches state).
 ///
-/// `kind`  — `"junction"` | `"reservoir"` | `"tank"` | `"pipe"` | `"pump"`
+/// `kind`  — `"junction"` | `"reservoir"` | `"tank"` | `"pipe"` | `"pump"` | `"valve"`
 /// `id`    — element ID as it appears in the INP
 /// `field` — camelCase field name matching the frontend's display label
 /// `value` — new value **in the same display units the frontend uses**:
 ///   • distances / elevations : metres  (m)
 ///   • flows / demands        : litres per second  (L/s)
-///   • pipe diameters         : millimetres  (mm)
+///   • pipe/valve diameters   : millimetres  (mm)
 ///   • roughness / speed      : dimensionless number
 ///   • status                 : string `"Open"` | `"Closed"`
 ///   • curve / headPattern    : string ID
-///
-/// Returns the patched element's updated DTO on success so the frontend can
-/// refresh it in place.
-/// Apply a single field mutation to a `Network` in place.
-///
-/// All value conversions mirror the ones in `patch_element`; this helper is
-/// shared between `patch_element` (commits to state) and `preview_patches`
-/// (dry-run, never touches state).
+/// Set one axis of a node's `[COORDINATES]` entry, inserting a `(0, 0)`
+/// entry first when the node has none yet. Shared by the junction /
+/// reservoir / tank `"x"` / `"y"` arms of [`apply_patch_to_network`].
+fn set_node_coordinate(network: &mut hydra::Network, id: &str, set_x: bool, value: f64) {
+    let entry = network
+        .coordinates
+        .entry(id.to_string())
+        .or_insert((0.0, 0.0));
+    if set_x {
+        entry.0 = value;
+    } else {
+        entry.1 = value;
+    }
+}
+
 fn apply_patch_to_network(
     network: &mut hydra::Network,
     kind: &str,
@@ -4323,9 +4762,9 @@ fn apply_patch_to_network(
     field: &str,
     value: serde_json::Value,
 ) -> Result<(), String> {
-    const M_TO_FT: f64 = 1.0 / 0.3048;
-    const LPS_TO_CFS: f64 = 1.0 / 28.3168;
-    const MM_TO_FT: f64 = 1.0 / 304.8;
+    const M_TO_FT: f64 = 1.0 / FT_TO_M;
+    const LPS_TO_CFS: f64 = 1.0 / CFS_TO_LPS;
+    const MM_TO_FT: f64 = 1.0 / FT_TO_MM;
 
     let as_f64 = |v: &serde_json::Value| -> Result<f64, String> {
         v.as_f64()
@@ -4357,20 +4796,8 @@ fn apply_patch_to_network(
                         }
                     }
                 }
-                "x" => {
-                    let entry = network
-                        .coordinates
-                        .entry(id.to_string())
-                        .or_insert((0.0, 0.0));
-                    entry.0 = as_f64(&value)?;
-                }
-                "y" => {
-                    let entry = network
-                        .coordinates
-                        .entry(id.to_string())
-                        .or_insert((0.0, 0.0));
-                    entry.1 = as_f64(&value)?;
-                }
+                "x" => set_node_coordinate(network, id, true, as_f64(&value)?),
+                "y" => set_node_coordinate(network, id, false, as_f64(&value)?),
                 other => return Err(format!("unknown junction field '{other}'")),
             }
         }
@@ -4390,20 +4817,8 @@ fn apply_patch_to_network(
                         r.head_pattern = if s.is_empty() { None } else { Some(s) };
                     }
                 }
-                "x" => {
-                    let entry = network
-                        .coordinates
-                        .entry(id.to_string())
-                        .or_insert((0.0, 0.0));
-                    entry.0 = as_f64(&value)?;
-                }
-                "y" => {
-                    let entry = network
-                        .coordinates
-                        .entry(id.to_string())
-                        .or_insert((0.0, 0.0));
-                    entry.1 = as_f64(&value)?;
-                }
+                "x" => set_node_coordinate(network, id, true, as_f64(&value)?),
+                "y" => set_node_coordinate(network, id, false, as_f64(&value)?),
                 other => return Err(format!("unknown reservoir field '{other}'")),
             }
         }
@@ -4449,20 +4864,8 @@ fn apply_patch_to_network(
                         t.volume_curve = if s.is_empty() { None } else { Some(s) };
                     }
                 }
-                "x" => {
-                    let entry = network
-                        .coordinates
-                        .entry(id.to_string())
-                        .or_insert((0.0, 0.0));
-                    entry.0 = as_f64(&value)?;
-                }
-                "y" => {
-                    let entry = network
-                        .coordinates
-                        .entry(id.to_string())
-                        .or_insert((0.0, 0.0));
-                    entry.1 = as_f64(&value)?;
-                }
+                "x" => set_node_coordinate(network, id, true, as_f64(&value)?),
+                "y" => set_node_coordinate(network, id, false, as_f64(&value)?),
                 other => return Err(format!("unknown tank field '{other}'")),
             }
         }
@@ -4491,10 +4894,13 @@ fn apply_patch_to_network(
                         p.roughness = as_f64(&value)?;
                     }
                     "status" => {
-                        let s = value.as_str().unwrap_or("Open");
+                        let s = value
+                            .as_str()
+                            .ok_or_else(|| format!("expected string status, got {value}"))?;
                         link.base.initial_status = match s.to_ascii_lowercase().as_str() {
+                            "open" => hydra::LinkStatus::Open,
                             "closed" => hydra::LinkStatus::Closed,
-                            _ => hydra::LinkStatus::Open,
+                            _ => return Err(format!("unknown pipe status '{s}'")),
                         };
                     }
                     other => return Err(format!("unknown pipe field '{other}'")),
@@ -4674,6 +5080,52 @@ fn refresh_element_dto(
     }
 }
 
+/// Apply a structural mutation to the loaded network: run `f` on it, then
+/// mark the state dirty and rebuild the full cached `NetworkDto`.
+///
+/// Returns `Err("no network loaded")` when the state is empty, and `f`'s
+/// error — with nothing marked dirty and the DTO untouched — when the
+/// mutation fails. Kept free of Tauri types so it is unit-testable; commands
+/// go through [`mutate_structural`], which adds the lock + event emission.
+fn apply_structural_mutation<F>(inner: &mut NetworkStateInner, f: F) -> Result<(), String>
+where
+    F: FnOnce(&mut hydra::Network) -> Result<(), String>,
+{
+    match inner {
+        NetworkStateInner::Loaded {
+            dirty,
+            network,
+            dto,
+            ..
+        } => {
+            f(network)?;
+            *dirty = true;
+            *dto = network_to_dto(network);
+            Ok(())
+        }
+        NetworkStateInner::Empty => Err("no network loaded".into()),
+    }
+}
+
+/// Command wrapper for structural mutations (create/delete/pattern/curve/
+/// control/rule commands): applies [`apply_structural_mutation`] and, on
+/// success, emits the structural `network-changed` event (payload-less →
+/// `null` on the frontend, triggering a full snapshot refetch). The state
+/// lock is held across the emit (see `NETWORK_CHANGED_EVENT`) so event order
+/// always matches mutation commit order.
+fn mutate_structural<F>(app: &tauri::AppHandle, state: &NetworkState, f: F) -> Result<(), String>
+where
+    F: FnOnce(&mut hydra::Network) -> Result<(), String>,
+{
+    let mut guard = state.0.lock();
+    let result = apply_structural_mutation(&mut guard, f);
+    if result.is_ok() {
+        emit_or_warn(app, NETWORK_CHANGED_EVENT, ());
+    }
+    drop(guard);
+    result
+}
+
 #[tauri::command(async)]
 /// Apply a single property edit to the in-memory network.
 ///
@@ -4706,7 +5158,8 @@ pub fn patch_element(
         }
     };
     if let Ok(patched) = &result {
-        let _ = app.emit(
+        emit_or_warn(
+            &app,
             NETWORK_CHANGED_EVENT,
             NetworkChangedPayload {
                 elements: vec![patched.clone()],
@@ -4786,7 +5239,11 @@ pub fn patch_elements(
         }
     };
     if !elements.is_empty() {
-        let _ = app.emit(NETWORK_CHANGED_EVENT, NetworkChangedPayload { elements });
+        emit_or_warn(
+            &app,
+            NETWORK_CHANGED_EVENT,
+            NetworkChangedPayload { elements },
+        );
     }
     drop(guard);
     Ok(result)
@@ -4842,7 +5299,8 @@ pub fn patch_node_position(
             // event so the frontend falls back to a full refetch.
             match moved {
                 Some(node) => {
-                    let _ = app.emit(
+                    emit_or_warn(
+                        &app,
                         NETWORK_CHANGED_EVENT,
                         NetworkChangedPayload {
                             elements: vec![PatchedElementDto {
@@ -4853,7 +5311,7 @@ pub fn patch_node_position(
                     );
                 }
                 None => {
-                    let _ = app.emit(NETWORK_CHANGED_EVENT, ());
+                    emit_or_warn(&app, NETWORK_CHANGED_EVENT, ());
                 }
             }
             drop(guard);
@@ -5067,29 +5525,9 @@ pub fn delete_element(
     kind: String,
     id: String,
 ) -> Result<(), String> {
-    // Lock held across the emit below (see `NETWORK_CHANGED_EVENT`).
-    let mut guard = state.0.lock();
-    let result = {
-        match &mut *guard {
-            NetworkStateInner::Loaded {
-                dirty,
-                network,
-                dto,
-                ..
-            } => {
-                delete_element_from_network(network, &kind, &id)?;
-                *dirty = true;
-                *dto = network_to_dto(network);
-                Ok(())
-            }
-            NetworkStateInner::Empty => Err("no network loaded".into()),
-        }
-    };
-    if result.is_ok() {
-        let _ = app.emit(NETWORK_CHANGED_EVENT, ());
-    }
-    drop(guard);
-    result
+    mutate_structural(&app, &state, |network| {
+        delete_element_from_network(network, &kind, &id)
+    })
 }
 
 /// Add a new node (junction, tank, or reservoir) to the in-memory network.
@@ -5112,89 +5550,105 @@ pub fn create_node(
     max_level: Option<f64>,
     initial_level: Option<f64>,
 ) -> Result<(), String> {
-    const M_TO_FT: f64 = 1.0 / 0.3048;
+    const M_TO_FT: f64 = 1.0 / FT_TO_M;
     let elev_ft = elevation.unwrap_or(0.0) * M_TO_FT;
-    // Lock held across the emit below (see `NETWORK_CHANGED_EVENT`).
-    let mut guard = state.0.lock();
-    let result = {
-        match &mut *guard {
-            NetworkStateInner::Loaded {
-                dirty,
-                network,
-                dto,
-                ..
-            } => {
-                if id.trim().is_empty() {
-                    return Err("ID must not be empty".into());
-                }
-                if network.nodes.iter().any(|n| n.base.id == id)
-                    || network.links.iter().any(|l| l.base.id == id)
-                {
-                    return Err(format!("ID '{}' is already in use", id));
-                }
-                let index = network.nodes.len() + 1;
-                // Tank level defaults: ~3 m min gap, ~1.5 m initial (matching original 10 ft / 5 ft).
-                let min_ft = min_level.unwrap_or(0.0) * M_TO_FT;
-                let max_ft = max_level.map(|v| v * M_TO_FT).unwrap_or(10.0);
-                let init_ft = initial_level.map(|v| v * M_TO_FT).unwrap_or(5.0);
-                let node_kind = match kind.as_str() {
-                    "junction" => hydra::NodeKind::Junction(hydra::Junction {
-                        demands: vec![hydra::DemandCategory {
-                            base_demand: 0.0,
-                            pattern: None,
-                            name: None,
-                        }],
-                        emitter_coeff: 0.0,
-                        emitter_exp: 0.5,
-                    }),
-                    "reservoir" => {
-                        hydra::NodeKind::Reservoir(hydra::Reservoir { head_pattern: None })
-                    }
-                    "tank" => hydra::NodeKind::Tank(hydra::Tank {
-                        min_level: min_ft,
-                        max_level: max_ft,
-                        initial_level: init_ft,
-                        diameter: 10.0,
-                        min_volume: 0.0,
-                        volume_curve: None,
-                        mix_model: hydra::MixModel::Cstr,
-                        mix_fraction: 1.0,
-                        bulk_coeff: 0.0,
-                        overflow: false,
-                        head_pattern: None,
-                    }),
-                    other => return Err(format!("unknown node kind '{}'", other)),
-                };
-                // For tanks: EPANET stores base.elevation = bottom + min_level (the minimum
-                // piezometric head).  For junctions / reservoirs: base.elevation = elevation.
-                let base_elev = if matches!(node_kind, hydra::NodeKind::Tank(_)) {
-                    elev_ft + min_ft
-                } else {
-                    elev_ft
-                };
-                network.nodes.push(hydra::Node {
-                    base: hydra::NodeBase {
-                        id: id.clone(),
-                        index,
-                        elevation: base_elev,
-                        initial_quality: 0.0,
-                    },
-                    kind: node_kind,
-                    source: None,
-                });
-                network.coordinates.insert(id, (x, y));
-                *dirty = true;
-                *dto = network_to_dto(network);
-                Ok(())
-            }
-            NetworkStateInner::Empty => Err("no network loaded".into()),
+    mutate_structural(&app, &state, |network| {
+        if id.trim().is_empty() {
+            return Err("ID must not be empty".into());
         }
-    };
-    if result.is_ok() {
-        let _ = app.emit(NETWORK_CHANGED_EVENT, ());
+        if network.nodes.iter().any(|n| n.base.id == id)
+            || network.links.iter().any(|l| l.base.id == id)
+        {
+            return Err(format!("ID '{}' is already in use", id));
+        }
+        let index = network.nodes.len() + 1;
+        // Tank level defaults: ~3 m min gap, ~1.5 m initial (matching original 10 ft / 5 ft).
+        let min_ft = min_level.unwrap_or(0.0) * M_TO_FT;
+        let max_ft = max_level.map(|v| v * M_TO_FT).unwrap_or(10.0);
+        let init_ft = initial_level.map(|v| v * M_TO_FT).unwrap_or(5.0);
+        let node_kind = match kind.as_str() {
+            "junction" => hydra::NodeKind::Junction(hydra::Junction {
+                demands: vec![hydra::DemandCategory {
+                    base_demand: 0.0,
+                    pattern: None,
+                    name: None,
+                }],
+                emitter_coeff: 0.0,
+                emitter_exp: 0.5,
+            }),
+            "reservoir" => hydra::NodeKind::Reservoir(hydra::Reservoir { head_pattern: None }),
+            "tank" => hydra::NodeKind::Tank(hydra::Tank {
+                min_level: min_ft,
+                max_level: max_ft,
+                initial_level: init_ft,
+                diameter: 10.0,
+                min_volume: 0.0,
+                volume_curve: None,
+                mix_model: hydra::MixModel::Cstr,
+                mix_fraction: 1.0,
+                bulk_coeff: 0.0,
+                overflow: false,
+                head_pattern: None,
+            }),
+            other => return Err(format!("unknown node kind '{}'", other)),
+        };
+        // For tanks: EPANET stores base.elevation = bottom + min_level (the minimum
+        // piezometric head).  For junctions / reservoirs: base.elevation = elevation.
+        let base_elev = if matches!(node_kind, hydra::NodeKind::Tank(_)) {
+            elev_ft + min_ft
+        } else {
+            elev_ft
+        };
+        network.nodes.push(hydra::Node {
+            base: hydra::NodeBase {
+                id: id.clone(),
+                index,
+                elevation: base_elev,
+                initial_quality: 0.0,
+            },
+            kind: node_kind,
+            source: None,
+        });
+        network.coordinates.insert(id.clone(), (x, y));
+        Ok(())
+    })
+}
+
+/// Default attributes for a link created by `create_link`, in **internal
+/// US-customary units** (feet / cfs / Watts). Pipe: length 100 m, diameter
+/// 300 mm, roughness 100 (Hazen-Williams C). Pump: constant-power 10 kW.
+/// Valve: PRV, diameter 300 mm.
+fn default_link_kind(kind: &str) -> Result<hydra::LinkKind, String> {
+    match kind {
+        "pipe" => Ok(hydra::LinkKind::Pipe(hydra::Pipe {
+            length: 100.0 / FT_TO_M, // 100 m in ft
+            diameter: 0.3 / FT_TO_M, // 300 mm in ft
+            roughness: 100.0,
+            minor_loss: 0.0,
+            check_valve: false,
+            bulk_coeff: None,
+            wall_coeff: None,
+            leak_coeff_1: 0.0,
+            leak_coeff_2: 0.0,
+        })),
+        "pump" => Ok(hydra::LinkKind::Pump(hydra::Pump {
+            curve_type: hydra::PumpCurveType::ConstHp,
+            head_curve: None,
+            power: Some(10_000.0), // 10 kW in Watts
+            efficiency_curve: None,
+            default_efficiency: 0.75,
+            speed_pattern: None,
+            energy_price: None,
+            price_pattern: None,
+        })),
+        "valve" => Ok(hydra::LinkKind::Valve(hydra::Valve {
+            valve_type: hydra::ValveType::Prv,
+            diameter: 0.3 / FT_TO_M, // 300 mm in ft
+            minor_loss: 0.0,
+            curve: None,
+        })),
+        other => Err(format!("unknown link kind '{}'", other)),
     }
-    drop(guard);
-    result
 }
 
 /// Add a new link (pipe or pump) between two existing nodes.
@@ -5211,152 +5665,83 @@ pub fn create_link(
     from_id: String,
     to_id: String,
 ) -> Result<(), String> {
-    // Lock held across the emit below (see `NETWORK_CHANGED_EVENT`).
-    let mut guard = state.0.lock();
-    let result = {
-        match &mut *guard {
-            NetworkStateInner::Loaded {
-                dirty,
-                network,
-                dto,
-                ..
-            } => {
-                if id.trim().is_empty() {
-                    return Err("ID must not be empty".into());
-                }
-                if network.nodes.iter().any(|n| n.base.id == id)
-                    || network.links.iter().any(|l| l.base.id == id)
-                {
-                    return Err(format!("ID '{}' is already in use", id));
-                }
-                let from_node = network
-                    .nodes
-                    .iter()
-                    .find(|n| n.base.id == from_id)
-                    .map(|n| n.base.index)
-                    .ok_or_else(|| format!("node '{}' not found", from_id))?;
-                let to_node = network
-                    .nodes
-                    .iter()
-                    .find(|n| n.base.id == to_id)
-                    .map(|n| n.base.index)
-                    .ok_or_else(|| format!("node '{}' not found", to_id))?;
-                if from_node == to_node {
-                    return Err("from and to nodes must be different".into());
-                }
-                let index = network.links.len() + 1;
-                let link_kind = match kind.as_str() {
-                    "pipe" => hydra::LinkKind::Pipe(hydra::Pipe {
-                        length: 100.0,
-                        diameter: 0.3,
-                        roughness: 100.0,
-                        minor_loss: 0.0,
-                        check_valve: false,
-                        bulk_coeff: None,
-                        wall_coeff: None,
-                        leak_coeff_1: 0.0,
-                        leak_coeff_2: 0.0,
-                    }),
-                    "pump" => hydra::LinkKind::Pump(hydra::Pump {
-                        curve_type: hydra::PumpCurveType::ConstHp,
-                        head_curve: None,
-                        power: Some(10_000.0), // 10 kW in Watts
-                        efficiency_curve: None,
-                        default_efficiency: 0.75,
-                        speed_pattern: None,
-                        energy_price: None,
-                        price_pattern: None,
-                    }),
-                    "valve" => hydra::LinkKind::Valve(hydra::Valve {
-                        valve_type: hydra::ValveType::Prv,
-                        diameter: 0.3, // 300 mm in metres
-                        minor_loss: 0.0,
-                        curve: None,
-                    }),
-                    other => return Err(format!("unknown link kind '{}'", other)),
-                };
-                let initial_setting = match &link_kind {
-                    hydra::LinkKind::Valve(_) => Some(0.0),
-                    _ => None,
-                };
-                network.links.push(hydra::Link {
-                    base: hydra::LinkBase {
-                        id,
-                        index,
-                        from_node,
-                        to_node,
-                        initial_status: hydra::LinkStatus::Open,
-                        initial_setting,
-                    },
-                    kind: link_kind,
-                });
-                *dirty = true;
-                *dto = network_to_dto(network);
-                Ok(())
-            }
-            NetworkStateInner::Empty => Err("no network loaded".into()),
+    mutate_structural(&app, &state, |network| {
+        if id.trim().is_empty() {
+            return Err("ID must not be empty".into());
         }
-    };
-    if result.is_ok() {
-        let _ = app.emit(NETWORK_CHANGED_EVENT, ());
-    }
-    drop(guard);
-    result
+        if network.nodes.iter().any(|n| n.base.id == id)
+            || network.links.iter().any(|l| l.base.id == id)
+        {
+            return Err(format!("ID '{}' is already in use", id));
+        }
+        let from_node = network
+            .nodes
+            .iter()
+            .find(|n| n.base.id == from_id)
+            .map(|n| n.base.index)
+            .ok_or_else(|| format!("node '{}' not found", from_id))?;
+        let to_node = network
+            .nodes
+            .iter()
+            .find(|n| n.base.id == to_id)
+            .map(|n| n.base.index)
+            .ok_or_else(|| format!("node '{}' not found", to_id))?;
+        if from_node == to_node {
+            return Err("from and to nodes must be different".into());
+        }
+        let index = network.links.len() + 1;
+        let link_kind = default_link_kind(&kind)?;
+        let initial_setting = match &link_kind {
+            hydra::LinkKind::Valve(_) => Some(0.0),
+            _ => None,
+        };
+        network.links.push(hydra::Link {
+            base: hydra::LinkBase {
+                id,
+                index,
+                from_node,
+                to_node,
+                initial_status: hydra::LinkStatus::Open,
+                initial_setting,
+            },
+            kind: link_kind,
+        });
+        Ok(())
+    })
 }
 
-/// Create a new pump-head curve with default single-point data.
+/// Create a new pump-head curve with default two-point data.
 ///
-/// `id` must be unique within the network. Creates a two-point pump-head curve
-/// at [(0.0, head_m), (flow_ls, 0.0)] in SI units (L/s, m), converted to
-/// internal US-customary (cfs, ft) for storage.
+/// `id` must be unique within the network. The default points span
+/// (0 L/s, 50 m) → (5 L/s, 0 m) in display units, converted to internal
+/// US-customary (cfs, ft) for storage.
 #[tauri::command(async)]
 pub fn create_curve(
     app: tauri::AppHandle,
     state: tauri::State<'_, NetworkState>,
     id: String,
 ) -> Result<(), String> {
-    const FT_TO_M: f64 = 0.3048;
-    const CFS_TO_LS: f64 = 28.316_846_6;
-    // Lock held across the emit below (see `NETWORK_CHANGED_EVENT`).
-    let mut guard = state.0.lock();
-    let result = {
-        match &mut *guard {
-            NetworkStateInner::Loaded {
-                dirty,
-                network,
-                dto,
-                ..
-            } => {
-                if network.curves.iter().any(|c| c.id == id) {
-                    return Err(format!("curve '{}' already exists", id));
-                }
-                // Default: two-point pump-head curve spanning ~(0 L/s, 50 m) to (5 L/s, 0 m)
-                network.curves.push(hydra::Curve {
-                    id: id.clone(),
-                    kind: hydra::CurveKind::PumpHead,
-                    points: vec![
-                        hydra::CurvePoint {
-                            x: 0.0,
-                            y: 50.0 / FT_TO_M,
-                        },
-                        hydra::CurvePoint {
-                            x: 5.0 / CFS_TO_LS,
-                            y: 0.0,
-                        },
-                    ],
-                });
-                *dirty = true;
-                *dto = network_to_dto(network);
-                Ok(())
-            }
-            NetworkStateInner::Empty => Err("no network loaded".into()),
+    mutate_structural(&app, &state, |network| {
+        if network.curves.iter().any(|c| c.id == id) {
+            return Err(format!("curve '{}' already exists", id));
         }
-    };
-    if result.is_ok() {
-        let _ = app.emit(NETWORK_CHANGED_EVENT, ());
-    }
-    drop(guard);
-    result
+        // Default: two-point pump-head curve spanning ~(0 L/s, 50 m) to (5 L/s, 0 m)
+        network.curves.push(hydra::Curve {
+            id: id.clone(),
+            kind: hydra::CurveKind::PumpHead,
+            points: vec![
+                hydra::CurvePoint {
+                    x: 0.0,
+                    y: 50.0 / FT_TO_M,
+                },
+                hydra::CurvePoint {
+                    x: 5.0 / CFS_TO_LPS,
+                    y: 0.0,
+                },
+            ],
+        });
+        Ok(())
+    })
 }
 
 /// Delete a curve from the network.
@@ -5371,63 +5756,71 @@ pub fn delete_curve(
     state: tauri::State<'_, NetworkState>,
     id: String,
 ) -> Result<(), String> {
-    // Lock held across the emit below (see `NETWORK_CHANGED_EVENT`).
-    let mut guard = state.0.lock();
-    let result = {
-        match &mut *guard {
-            NetworkStateInner::Loaded {
-                dirty,
-                network,
-                dto,
-                ..
-            } => {
-                if !network.curves.iter().any(|c| c.id == id) {
-                    return Err(format!("curve '{}' not found", id));
-                }
-
-                let mut referenced_by: Vec<String> = Vec::new();
-                for l in &network.links {
-                    if let hydra::LinkKind::Pump(p) = &l.kind {
-                        if p.head_curve.as_deref() == Some(id.as_str()) {
-                            referenced_by.push(l.base.id.clone());
-                        }
-                    }
-                    if let hydra::LinkKind::Valve(v) = &l.kind {
-                        if v.curve.as_deref() == Some(id.as_str()) {
-                            referenced_by.push(l.base.id.clone());
-                        }
-                    }
-                }
-                for n in &network.nodes {
-                    if let hydra::NodeKind::Tank(t) = &n.kind {
-                        if t.volume_curve.as_deref() == Some(id.as_str()) {
-                            referenced_by.push(n.base.id.clone());
-                        }
-                    }
-                }
-                if !referenced_by.is_empty() {
-                    return Err(format!(
-                        "curve '{}' is still attached to {}; detach it first",
-                        id,
-                        referenced_by.join(", ")
-                    ));
-                }
-
-                network.curves.retain(|c| c.id != id);
-                *dirty = true;
-                *dto = network_to_dto(network);
-                Ok(())
-            }
-            NetworkStateInner::Empty => Err("no network loaded".into()),
+    mutate_structural(&app, &state, |network| {
+        if !network.curves.iter().any(|c| c.id == id) {
+            return Err(format!("curve '{}' not found", id));
         }
-    };
-    if result.is_ok() {
-        let _ = app.emit(NETWORK_CHANGED_EVENT, ());
-    }
-    drop(guard);
-    result
+
+        let mut referenced_by: Vec<String> = Vec::new();
+        for l in &network.links {
+            if let hydra::LinkKind::Pump(p) = &l.kind {
+                if p.head_curve.as_deref() == Some(id.as_str()) {
+                    referenced_by.push(l.base.id.clone());
+                }
+            }
+            if let hydra::LinkKind::Valve(v) = &l.kind {
+                if v.curve.as_deref() == Some(id.as_str()) {
+                    referenced_by.push(l.base.id.clone());
+                }
+            }
+        }
+        for n in &network.nodes {
+            if let hydra::NodeKind::Tank(t) = &n.kind {
+                if t.volume_curve.as_deref() == Some(id.as_str()) {
+                    referenced_by.push(n.base.id.clone());
+                }
+            }
+        }
+        if !referenced_by.is_empty() {
+            return Err(format!(
+                "curve '{}' is still attached to {}; detach it first",
+                id,
+                referenced_by.join(", ")
+            ));
+        }
+
+        network.curves.retain(|c| c.id != id);
+        Ok(())
+    })
 }
 
+/// Convert curve points from the display units used by `get_curves` back to
+/// internal US-customary storage units. Pump-head curves: x = flow (L/s →
+/// cfs), y = head (m → ft); all other kinds pass through unchanged. Exact
+/// inverse of the conversion in `network_to_dto`, sharing the same module
+/// constants so a get → update round-trip is value-stable.
+fn curve_points_display_to_internal(
+    kind: hydra::CurveKind,
+    xs: &[f64],
+    ys: &[f64],
+) -> Vec<hydra::CurvePoint> {
+    if kind == hydra::CurveKind::PumpHead {
+        xs.iter()
+            .zip(ys.iter())
+            .map(|(&x, &y)| hydra::CurvePoint {
+                x: x / CFS_TO_LPS,
+                y: y / FT_TO_M,
+            })
+            .collect()
+    } else {
+        xs.iter()
+            .zip(ys.iter())
+            .map(|(&x, &y)| hydra::CurvePoint { x, y })
+            .collect()
+    }
+}
+
+/// Replace all points of an existing curve.
 ///
 /// `xs`/`ys` must be in the same display units returned by `get_curves`
 /// (flow L/s and head m for pump-head curves; raw pass-through units for all
@@ -5441,55 +5834,21 @@ pub fn update_curve_points(
     xs: Vec<f64>,
     ys: Vec<f64>,
 ) -> Result<(), String> {
-    const FT_TO_M: f64 = 0.3048;
-    const CFS_TO_LS: f64 = 28.316_846_6;
     if xs.len() != ys.len() {
         return Err("mismatched point array lengths".into());
     }
-    // Lock held across the emit below (see `NETWORK_CHANGED_EVENT`).
-    let mut guard = state.0.lock();
-    let result = {
-        match &mut *guard {
-            NetworkStateInner::Loaded {
-                dirty,
-                network,
-                dto,
-                ..
-            } => {
-                let curve = network
-                    .curves
-                    .iter_mut()
-                    .find(|c| c.id == id)
-                    .ok_or_else(|| format!("curve '{}' not found", id))?;
-                if curve.kind == hydra::CurveKind::PumpHead && xs.len() < 2 {
-                    return Err("pump-head curves require at least 2 points".into());
-                }
-                curve.points = if curve.kind == hydra::CurveKind::PumpHead {
-                    xs.iter()
-                        .zip(ys.iter())
-                        .map(|(&x, &y)| hydra::CurvePoint {
-                            x: x / CFS_TO_LS,
-                            y: y / FT_TO_M,
-                        })
-                        .collect()
-                } else {
-                    xs.iter()
-                        .zip(ys.iter())
-                        .map(|(&x, &y)| hydra::CurvePoint { x, y })
-                        .collect()
-                };
-                *dirty = true;
-                *dto = network_to_dto(network);
-                Ok(())
-            }
-            NetworkStateInner::Empty => Err("no network loaded".into()),
+    mutate_structural(&app, &state, |network| {
+        let curve = network
+            .curves
+            .iter_mut()
+            .find(|c| c.id == id)
+            .ok_or_else(|| format!("curve '{}' not found", id))?;
+        if curve.kind == hydra::CurveKind::PumpHead && xs.len() < 2 {
+            return Err("pump-head curves require at least 2 points".into());
         }
-    };
-    if result.is_ok() {
-        let _ = app.emit(NETWORK_CHANGED_EVENT, ());
-    }
-    drop(guard);
-    result
+        curve.points = curve_points_display_to_internal(curve.kind, &xs, &ys);
+        Ok(())
+    })
 }
 
 /// Create a new time pattern with flat multipliers (all 1.0) at 24 hourly steps.
@@ -5501,35 +5860,16 @@ pub fn create_pattern(
     state: tauri::State<'_, NetworkState>,
     id: String,
 ) -> Result<(), String> {
-    // Lock held across the emit below (see `NETWORK_CHANGED_EVENT`).
-    let mut guard = state.0.lock();
-    let result = {
-        match &mut *guard {
-            NetworkStateInner::Loaded {
-                dirty,
-                network,
-                dto,
-                ..
-            } => {
-                if network.patterns.iter().any(|p| p.id == id) {
-                    return Err(format!("pattern '{}' already exists", id));
-                }
-                network.patterns.push(hydra::Pattern {
-                    id: id.clone(),
-                    factors: vec![1.0; 24],
-                });
-                *dirty = true;
-                *dto = network_to_dto(network);
-                Ok(())
-            }
-            NetworkStateInner::Empty => Err("no network loaded".into()),
+    mutate_structural(&app, &state, |network| {
+        if network.patterns.iter().any(|p| p.id == id) {
+            return Err(format!("pattern '{}' already exists", id));
         }
-    };
-    if result.is_ok() {
-        let _ = app.emit(NETWORK_CHANGED_EVENT, ());
-    }
-    drop(guard);
-    result
+        network.patterns.push(hydra::Pattern {
+            id: id.clone(),
+            factors: vec![1.0; 24],
+        });
+        Ok(())
+    })
 }
 
 /// Replace all multipliers of an existing time pattern.
@@ -5545,34 +5885,15 @@ pub fn update_pattern_multipliers(
     if multipliers.is_empty() {
         return Err("pattern must have at least one multiplier".into());
     }
-    // Lock held across the emit below (see `NETWORK_CHANGED_EVENT`).
-    let mut guard = state.0.lock();
-    let result = {
-        match &mut *guard {
-            NetworkStateInner::Loaded {
-                dirty,
-                network,
-                dto,
-                ..
-            } => {
-                let pattern = network
-                    .patterns
-                    .iter_mut()
-                    .find(|p| p.id == id)
-                    .ok_or_else(|| format!("pattern '{}' not found", id))?;
-                pattern.factors = multipliers;
-                *dirty = true;
-                *dto = network_to_dto(network);
-                Ok(())
-            }
-            NetworkStateInner::Empty => Err("no network loaded".into()),
-        }
-    };
-    if result.is_ok() {
-        let _ = app.emit(NETWORK_CHANGED_EVENT, ());
-    }
-    drop(guard);
-    result
+    mutate_structural(&app, &state, |network| {
+        let pattern = network
+            .patterns
+            .iter_mut()
+            .find(|p| p.id == id)
+            .ok_or_else(|| format!("pattern '{}' not found", id))?;
+        pattern.factors = multipliers;
+        Ok(())
+    })
 }
 
 /// Rename a time pattern, cascading the new ID to every reference:
@@ -5593,78 +5914,58 @@ pub fn rename_pattern(
     if trimmed.is_empty() {
         return Err("pattern ID must not be empty".into());
     }
-    // Lock held across the emit below (see `NETWORK_CHANGED_EVENT`).
-    let mut guard = state.0.lock();
-    let result = {
-        match &mut *guard {
-            NetworkStateInner::Loaded {
-                dirty,
-                network,
-                dto,
-                ..
-            } => {
-                if !network.patterns.iter().any(|p| p.id == old_id) {
-                    return Err(format!("pattern '{}' not found", old_id));
-                }
-                if trimmed != old_id && network.patterns.iter().any(|p| p.id == trimmed) {
-                    return Err(format!("pattern '{}' already exists", trimmed));
-                }
-
-                for p in network.patterns.iter_mut() {
-                    if p.id == old_id {
-                        p.id = trimmed.clone();
-                    }
-                }
-                for n in network.nodes.iter_mut() {
-                    match &mut n.kind {
-                        hydra::NodeKind::Junction(j) => {
-                            for d in j.demands.iter_mut() {
-                                if d.pattern.as_deref() == Some(old_id.as_str()) {
-                                    d.pattern = Some(trimmed.clone());
-                                }
-                            }
-                        }
-                        hydra::NodeKind::Reservoir(r) => {
-                            if r.head_pattern.as_deref() == Some(old_id.as_str()) {
-                                r.head_pattern = Some(trimmed.clone());
-                            }
-                        }
-                        hydra::NodeKind::Tank(t) => {
-                            if t.head_pattern.as_deref() == Some(old_id.as_str()) {
-                                t.head_pattern = Some(trimmed.clone());
-                            }
-                        }
-                    }
-                }
-                for l in network.links.iter_mut() {
-                    if let hydra::LinkKind::Pump(p) = &mut l.kind {
-                        if p.speed_pattern.as_deref() == Some(old_id.as_str()) {
-                            p.speed_pattern = Some(trimmed.clone());
-                        }
-                        if p.price_pattern.as_deref() == Some(old_id.as_str()) {
-                            p.price_pattern = Some(trimmed.clone());
-                        }
-                    }
-                }
-                if network.options.default_pattern.as_deref() == Some(old_id.as_str()) {
-                    network.options.default_pattern = Some(trimmed.clone());
-                }
-                if network.options.energy_price_pattern.as_deref() == Some(old_id.as_str()) {
-                    network.options.energy_price_pattern = Some(trimmed.clone());
-                }
-
-                *dirty = true;
-                *dto = network_to_dto(network);
-                Ok(())
-            }
-            NetworkStateInner::Empty => Err("no network loaded".into()),
+    mutate_structural(&app, &state, |network| {
+        if !network.patterns.iter().any(|p| p.id == old_id) {
+            return Err(format!("pattern '{}' not found", old_id));
         }
-    };
-    if result.is_ok() {
-        let _ = app.emit(NETWORK_CHANGED_EVENT, ());
-    }
-    drop(guard);
-    result
+        if trimmed != old_id && network.patterns.iter().any(|p| p.id == trimmed) {
+            return Err(format!("pattern '{}' already exists", trimmed));
+        }
+
+        for p in network.patterns.iter_mut() {
+            if p.id == old_id {
+                p.id = trimmed.clone();
+            }
+        }
+        for n in network.nodes.iter_mut() {
+            match &mut n.kind {
+                hydra::NodeKind::Junction(j) => {
+                    for d in j.demands.iter_mut() {
+                        if d.pattern.as_deref() == Some(old_id.as_str()) {
+                            d.pattern = Some(trimmed.clone());
+                        }
+                    }
+                }
+                hydra::NodeKind::Reservoir(r) => {
+                    if r.head_pattern.as_deref() == Some(old_id.as_str()) {
+                        r.head_pattern = Some(trimmed.clone());
+                    }
+                }
+                hydra::NodeKind::Tank(t) => {
+                    if t.head_pattern.as_deref() == Some(old_id.as_str()) {
+                        t.head_pattern = Some(trimmed.clone());
+                    }
+                }
+            }
+        }
+        for l in network.links.iter_mut() {
+            if let hydra::LinkKind::Pump(p) = &mut l.kind {
+                if p.speed_pattern.as_deref() == Some(old_id.as_str()) {
+                    p.speed_pattern = Some(trimmed.clone());
+                }
+                if p.price_pattern.as_deref() == Some(old_id.as_str()) {
+                    p.price_pattern = Some(trimmed.clone());
+                }
+            }
+        }
+        if network.options.default_pattern.as_deref() == Some(old_id.as_str()) {
+            network.options.default_pattern = Some(trimmed.clone());
+        }
+        if network.options.energy_price_pattern.as_deref() == Some(old_id.as_str()) {
+            network.options.energy_price_pattern = Some(trimmed.clone());
+        }
+        Ok(())
+    })
 }
 
 /// Delete a time pattern from the network.
@@ -5680,79 +5981,60 @@ pub fn delete_pattern(
     state: tauri::State<'_, NetworkState>,
     id: String,
 ) -> Result<(), String> {
-    // Lock held across the emit below (see `NETWORK_CHANGED_EVENT`).
-    let mut guard = state.0.lock();
-    let result = {
-        match &mut *guard {
-            NetworkStateInner::Loaded {
-                dirty,
-                network,
-                dto,
-                ..
-            } => {
-                if !network.patterns.iter().any(|p| p.id == id) {
-                    return Err(format!("pattern '{}' not found", id));
-                }
-
-                let mut referenced_by: Vec<String> = Vec::new();
-                for n in &network.nodes {
-                    match &n.kind {
-                        hydra::NodeKind::Junction(j) => {
-                            if j.demands
-                                .iter()
-                                .any(|d| d.pattern.as_deref() == Some(id.as_str()))
-                            {
-                                referenced_by.push(n.base.id.clone());
-                            }
-                        }
-                        hydra::NodeKind::Reservoir(r) => {
-                            if r.head_pattern.as_deref() == Some(id.as_str()) {
-                                referenced_by.push(n.base.id.clone());
-                            }
-                        }
-                        hydra::NodeKind::Tank(t) => {
-                            if t.head_pattern.as_deref() == Some(id.as_str()) {
-                                referenced_by.push(n.base.id.clone());
-                            }
-                        }
-                    }
-                }
-                for l in &network.links {
-                    if let hydra::LinkKind::Pump(p) = &l.kind {
-                        if p.speed_pattern.as_deref() == Some(id.as_str())
-                            || p.price_pattern.as_deref() == Some(id.as_str())
-                        {
-                            referenced_by.push(l.base.id.clone());
-                        }
-                    }
-                }
-                if network.options.default_pattern.as_deref() == Some(id.as_str()) {
-                    referenced_by.push("global default pattern (Options)".into());
-                }
-                if network.options.energy_price_pattern.as_deref() == Some(id.as_str()) {
-                    referenced_by.push("global energy price pattern (Options)".into());
-                }
-                if !referenced_by.is_empty() {
-                    return Err(format!(
-                        "pattern '{}' is still attached to {}; detach it first",
-                        id,
-                        referenced_by.join(", ")
-                    ));
-                }
-
-                network.patterns.retain(|p| p.id != id);
-                *dirty = true;
-                *dto = network_to_dto(network);
-                Ok(())
-            }
-            NetworkStateInner::Empty => Err("no network loaded".into()),
+    mutate_structural(&app, &state, |network| {
+        if !network.patterns.iter().any(|p| p.id == id) {
+            return Err(format!("pattern '{}' not found", id));
         }
-    };
-    if result.is_ok() {
-        let _ = app.emit(NETWORK_CHANGED_EVENT, ());
-    }
-    drop(guard);
-    result
+
+        let mut referenced_by: Vec<String> = Vec::new();
+        for n in &network.nodes {
+            match &n.kind {
+                hydra::NodeKind::Junction(j) => {
+                    if j.demands
+                        .iter()
+                        .any(|d| d.pattern.as_deref() == Some(id.as_str()))
+                    {
+                        referenced_by.push(n.base.id.clone());
+                    }
+                }
+                hydra::NodeKind::Reservoir(r) => {
+                    if r.head_pattern.as_deref() == Some(id.as_str()) {
+                        referenced_by.push(n.base.id.clone());
+                    }
+                }
+                hydra::NodeKind::Tank(t) => {
+                    if t.head_pattern.as_deref() == Some(id.as_str()) {
+                        referenced_by.push(n.base.id.clone());
+                    }
+                }
+            }
+        }
+        for l in &network.links {
+            if let hydra::LinkKind::Pump(p) = &l.kind {
+                if p.speed_pattern.as_deref() == Some(id.as_str())
+                    || p.price_pattern.as_deref() == Some(id.as_str())
+                {
+                    referenced_by.push(l.base.id.clone());
+                }
+            }
+        }
+        if network.options.default_pattern.as_deref() == Some(id.as_str()) {
+            referenced_by.push("global default pattern (Options)".into());
+        }
+        if network.options.energy_price_pattern.as_deref() == Some(id.as_str()) {
+            referenced_by.push("global energy price pattern (Options)".into());
+        }
+        if !referenced_by.is_empty() {
+            return Err(format!(
+                "pattern '{}' is still attached to {}; detach it first",
+                id,
+                referenced_by.join(", ")
+            ));
+        }
+
+        network.patterns.retain(|p| p.id != id);
+        Ok(())
+    })
 }
 
 // ── Controls & rules ──────────────────────────────────────────────────────────
@@ -5947,19 +6229,13 @@ fn rule_from_dto(dto: &RuleDto, network: &hydra::Network) -> Result<hydra::Rule,
 /// Return the simple controls (`[CONTROLS]`) of the loaded network, or an empty list.
 #[tauri::command(async)]
 pub fn get_controls(state: tauri::State<'_, NetworkState>) -> Vec<ControlDto> {
-    match &*state.0.lock() {
-        NetworkStateInner::Loaded { dto, .. } => dto.controls.clone(),
-        NetworkStateInner::Empty => vec![],
-    }
+    cloned_from_dto(&state, |dto| &dto.controls)
 }
 
 /// Return the rule-based controls (`[RULES]`) of the loaded network, or an empty list.
 #[tauri::command(async)]
 pub fn get_rules(state: tauri::State<'_, NetworkState>) -> Vec<RuleDto> {
-    match &*state.0.lock() {
-        NetworkStateInner::Loaded { dto, .. } => dto.rules.clone(),
-        NetworkStateInner::Empty => vec![],
-    }
+    cloned_from_dto(&state, |dto| &dto.rules)
 }
 
 /// Append a new simple control to the network.
@@ -5969,30 +6245,11 @@ pub fn create_control(
     state: tauri::State<'_, NetworkState>,
     control: ControlDto,
 ) -> Result<(), String> {
-    // Lock held across the emit below (see `NETWORK_CHANGED_EVENT`).
-    let mut guard = state.0.lock();
-    let result = {
-        match &mut *guard {
-            NetworkStateInner::Loaded {
-                dirty,
-                network,
-                dto,
-                ..
-            } => {
-                let ctrl = control_from_dto(&control, network)?;
-                network.controls.push(ctrl);
-                *dirty = true;
-                *dto = network_to_dto(network);
-                Ok(())
-            }
-            NetworkStateInner::Empty => Err("no network loaded".into()),
-        }
-    };
-    if result.is_ok() {
-        let _ = app.emit(NETWORK_CHANGED_EVENT, ());
-    }
-    drop(guard);
-    result
+    mutate_structural(&app, &state, |network| {
+        let ctrl = control_from_dto(&control, network)?;
+        network.controls.push(ctrl);
+        Ok(())
+    })
 }
 
 /// Replace the simple control at `index` (position in `get_controls()`'s
@@ -6004,34 +6261,15 @@ pub fn update_control(
     index: usize,
     control: ControlDto,
 ) -> Result<(), String> {
-    // Lock held across the emit below (see `NETWORK_CHANGED_EVENT`).
-    let mut guard = state.0.lock();
-    let result = {
-        match &mut *guard {
-            NetworkStateInner::Loaded {
-                dirty,
-                network,
-                dto,
-                ..
-            } => {
-                let ctrl = control_from_dto(&control, network)?;
-                let slot = network
-                    .controls
-                    .get_mut(index)
-                    .ok_or_else(|| format!("control index {} out of range", index))?;
-                *slot = ctrl;
-                *dirty = true;
-                *dto = network_to_dto(network);
-                Ok(())
-            }
-            NetworkStateInner::Empty => Err("no network loaded".into()),
-        }
-    };
-    if result.is_ok() {
-        let _ = app.emit(NETWORK_CHANGED_EVENT, ());
-    }
-    drop(guard);
-    result
+    mutate_structural(&app, &state, |network| {
+        let ctrl = control_from_dto(&control, network)?;
+        let slot = network
+            .controls
+            .get_mut(index)
+            .ok_or_else(|| format!("control index {} out of range", index))?;
+        *slot = ctrl;
+        Ok(())
+    })
 }
 
 /// Delete the simple control at `index`.
@@ -6041,32 +6279,13 @@ pub fn delete_control(
     state: tauri::State<'_, NetworkState>,
     index: usize,
 ) -> Result<(), String> {
-    // Lock held across the emit below (see `NETWORK_CHANGED_EVENT`).
-    let mut guard = state.0.lock();
-    let result = {
-        match &mut *guard {
-            NetworkStateInner::Loaded {
-                dirty,
-                network,
-                dto,
-                ..
-            } => {
-                if index >= network.controls.len() {
-                    return Err(format!("control index {} out of range", index));
-                }
-                network.controls.remove(index);
-                *dirty = true;
-                *dto = network_to_dto(network);
-                Ok(())
-            }
-            NetworkStateInner::Empty => Err("no network loaded".into()),
+    mutate_structural(&app, &state, |network| {
+        if index >= network.controls.len() {
+            return Err(format!("control index {} out of range", index));
         }
-    };
-    if result.is_ok() {
-        let _ = app.emit(NETWORK_CHANGED_EVENT, ());
-    }
-    drop(guard);
-    result
+        network.controls.remove(index);
+        Ok(())
+    })
 }
 
 /// Append a new rule-based control to the network.
@@ -6076,30 +6295,11 @@ pub fn create_rule(
     state: tauri::State<'_, NetworkState>,
     rule: RuleDto,
 ) -> Result<(), String> {
-    // Lock held across the emit below (see `NETWORK_CHANGED_EVENT`).
-    let mut guard = state.0.lock();
-    let result = {
-        match &mut *guard {
-            NetworkStateInner::Loaded {
-                dirty,
-                network,
-                dto,
-                ..
-            } => {
-                let r = rule_from_dto(&rule, network)?;
-                network.rules.push(r);
-                *dirty = true;
-                *dto = network_to_dto(network);
-                Ok(())
-            }
-            NetworkStateInner::Empty => Err("no network loaded".into()),
-        }
-    };
-    if result.is_ok() {
-        let _ = app.emit(NETWORK_CHANGED_EVENT, ());
-    }
-    drop(guard);
-    result
+    mutate_structural(&app, &state, |network| {
+        let r = rule_from_dto(&rule, network)?;
+        network.rules.push(r);
+        Ok(())
+    })
 }
 
 /// Replace the rule at `index` (position in `get_rules()`'s response array).
@@ -6110,34 +6310,15 @@ pub fn update_rule(
     index: usize,
     rule: RuleDto,
 ) -> Result<(), String> {
-    // Lock held across the emit below (see `NETWORK_CHANGED_EVENT`).
-    let mut guard = state.0.lock();
-    let result = {
-        match &mut *guard {
-            NetworkStateInner::Loaded {
-                dirty,
-                network,
-                dto,
-                ..
-            } => {
-                let r = rule_from_dto(&rule, network)?;
-                let slot = network
-                    .rules
-                    .get_mut(index)
-                    .ok_or_else(|| format!("rule index {} out of range", index))?;
-                *slot = r;
-                *dirty = true;
-                *dto = network_to_dto(network);
-                Ok(())
-            }
-            NetworkStateInner::Empty => Err("no network loaded".into()),
-        }
-    };
-    if result.is_ok() {
-        let _ = app.emit(NETWORK_CHANGED_EVENT, ());
-    }
-    drop(guard);
-    result
+    mutate_structural(&app, &state, |network| {
+        let r = rule_from_dto(&rule, network)?;
+        let slot = network
+            .rules
+            .get_mut(index)
+            .ok_or_else(|| format!("rule index {} out of range", index))?;
+        *slot = r;
+        Ok(())
+    })
 }
 
 /// Delete the rule at `index`.
@@ -6147,32 +6328,13 @@ pub fn delete_rule(
     state: tauri::State<'_, NetworkState>,
     index: usize,
 ) -> Result<(), String> {
-    // Lock held across the emit below (see `NETWORK_CHANGED_EVENT`).
-    let mut guard = state.0.lock();
-    let result = {
-        match &mut *guard {
-            NetworkStateInner::Loaded {
-                dirty,
-                network,
-                dto,
-                ..
-            } => {
-                if index >= network.rules.len() {
-                    return Err(format!("rule index {} out of range", index));
-                }
-                network.rules.remove(index);
-                *dirty = true;
-                *dto = network_to_dto(network);
-                Ok(())
-            }
-            NetworkStateInner::Empty => Err("no network loaded".into()),
+    mutate_structural(&app, &state, |network| {
+        if index >= network.rules.len() {
+            return Err(format!("rule index {} out of range", index));
         }
-    };
-    if result.is_ok() {
-        let _ = app.emit(NETWORK_CHANGED_EVENT, ());
-    }
-    drop(guard);
-    result
+        network.rules.remove(index);
+        Ok(())
+    })
 }
 
 /// Return the raw INP text of a project's base model (`base/model.inp`).
@@ -6233,6 +6395,412 @@ pub fn preview_patches(
     String::from_utf8(new_bytes).map_err(|e| e.to_string())
 }
 
+/// One finding returned by `validate_network`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ValidationFindingDto {
+    /// `"error"` | `"warning"`. Every constraint the engine's `validate`
+    /// checks is fatal for simulation, so all current findings are errors;
+    /// the field exists so future advisory checks can be surfaced without a
+    /// wire change.
+    pub severity: String,
+    /// Stable kebab-case code identifying the violated constraint, one per
+    /// engine `ValidationError` variant (e.g. `"link-self-loop"`).
+    pub code: String,
+    /// Human-readable description (the engine's `Display` rendering).
+    pub message: String,
+    /// ID of the offending element, when the finding names one.
+    pub element_id: Option<String>,
+    /// `"node"` | `"link"` | `"curve"` | `"pattern"`; `None` when the
+    /// offending object's kind is ambiguous (e.g. a cross-reference held by
+    /// an arbitrary object) or the finding is network-wide.
+    pub element_kind: Option<String>,
+}
+
+/// Map one engine [`hydra::ValidationError`] to its wire DTO. The `code`
+/// mapping is exhaustive and must stay stable — the frontend keys on it.
+fn validation_finding(err: &hydra::ValidationError) -> ValidationFindingDto {
+    use hydra::ValidationError as V;
+    let (code, element_id, element_kind): (&str, Option<String>, Option<&str>) = match err {
+        V::LinkUnknownFromNode { link_id, .. } => (
+            "link-unknown-from-node",
+            Some(link_id.clone()),
+            Some("link"),
+        ),
+        V::LinkUnknownToNode { link_id, .. } => {
+            ("link-unknown-to-node", Some(link_id.clone()), Some("link"))
+        }
+        V::UnknownPatternRef { object_id, .. } => {
+            ("unknown-pattern-ref", Some(object_id.clone()), None)
+        }
+        V::UnknownCurveRef { object_id, .. } => {
+            ("unknown-curve-ref", Some(object_id.clone()), None)
+        }
+        V::WrongCurveKind { object_id, .. } => ("wrong-curve-kind", Some(object_id.clone()), None),
+        V::MissingRequiredCurve { object_id, .. } => {
+            // Only pumps and GPV/PCV valves require a curve — always a link.
+            (
+                "missing-required-curve",
+                Some(object_id.clone()),
+                Some("link"),
+            )
+        }
+        V::UnknownNodeIdRef { object_id, .. } => {
+            ("unknown-node-ref", Some(object_id.clone()), None)
+        }
+        V::UnknownNodeIndexRef { object_id, .. } => {
+            ("unknown-node-index-ref", Some(object_id.clone()), None)
+        }
+        V::UnknownLinkIndexRef { object_id, .. } => {
+            ("unknown-link-index-ref", Some(object_id.clone()), None)
+        }
+        V::LinkSelfLoop { link_id } => ("link-self-loop", Some(link_id.clone()), Some("link")),
+        V::NoReservoir => ("no-reservoir", None, None),
+        V::NodeNotReachable { node_id } => {
+            ("node-not-reachable", Some(node_id.clone()), Some("node"))
+        }
+        V::TankLevelOutOfRange { node_id, .. } => (
+            "tank-level-out-of-range",
+            Some(node_id.clone()),
+            Some("node"),
+        ),
+        V::PumpCurveNotDecreasing { curve_id } => (
+            "pump-curve-not-decreasing",
+            Some(curve_id.clone()),
+            Some("curve"),
+        ),
+        V::EfficiencyCurveYOutOfRange { curve_id } => (
+            "efficiency-curve-y-out-of-range",
+            Some(curve_id.clone()),
+            Some("curve"),
+        ),
+        V::TankVolumeCurveYNotIncreasing { curve_id } => (
+            "tank-volume-curve-y-not-increasing",
+            Some(curve_id.clone()),
+            Some("curve"),
+        ),
+        V::GpvHeadlossCurveYDecreasing { curve_id } => (
+            "gpv-headloss-curve-y-decreasing",
+            Some(curve_id.clone()),
+            Some("curve"),
+        ),
+        V::CurveXNotIncreasing { curve_id } => (
+            "curve-x-not-increasing",
+            Some(curve_id.clone()),
+            Some("curve"),
+        ),
+        V::PatternEmpty { pattern_id } => {
+            ("pattern-empty", Some(pattern_id.clone()), Some("pattern"))
+        }
+        V::RuleActionUnknownLink { .. } => ("rule-action-unknown-link", None, None),
+        V::CurveTooFewPoints { curve_id, .. } => (
+            "curve-too-few-points",
+            Some(curve_id.clone()),
+            Some("curve"),
+        ),
+        V::ControlUnknownLink { .. } => ("control-unknown-link", None, None),
+    };
+    ValidationFindingDto {
+        severity: "error".to_string(),
+        code: code.to_string(),
+        message: err.to_string(),
+        element_id,
+        element_kind: element_kind.map(str::to_string),
+    }
+}
+
+/// Run the engine's network validation and map every finding to its wire DTO.
+fn validation_findings(network: &hydra::Network) -> Vec<ValidationFindingDto> {
+    match network.validate() {
+        Ok(()) => Vec::new(),
+        Err(errors) => errors.iter().map(validation_finding).collect(),
+    }
+}
+
+/// Validate the model for `(project_id, scenario_id)` and return all findings.
+///
+/// Unlike [`network_for_target`], a *dirty* matching cache is used as-is
+/// (cloned — the cached state is never disturbed): validating the current
+/// unsaved edits is exactly the point of this command, and no `results.out`
+/// positional indexing is involved. When the cache does not hold the target,
+/// the model is read and parsed from disk (a model that fails INP parsing —
+/// which itself runs validation — surfaces as `Err`).
+#[tauri::command(async)]
+/// Run engine validation for a project/scenario model and return the findings.
+pub fn validate_network(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, NetworkState>,
+    project_id: String,
+    scenario_id: Option<String>,
+) -> Result<Vec<ValidationFindingDto>, String> {
+    validate_target_ids(&project_id, scenario_id.as_deref())?;
+
+    // Clone from the cache when it holds exactly this target (dirty allowed —
+    // see the doc comment); otherwise fall back to the on-disk model.
+    let cached: Option<hydra::Network> = {
+        let guard = state.0.lock();
+        match &*guard {
+            NetworkStateInner::Loaded {
+                network,
+                owner_project_id: Some(owner),
+                owner_scenario_id,
+                ..
+            } if owner == &project_id && owner_scenario_id.as_deref() == scenario_id.as_deref() => {
+                Some(network.clone())
+            }
+            _ => None,
+        }
+    };
+    let network = match cached {
+        Some(n) => n,
+        None => {
+            let app_data = app_data_dir(&app)?;
+            let model_path = model_path_for(&app_data, &project_id, scenario_id.as_deref());
+            let raw = std::fs::read(&model_path).map_err(|e| format!("Cannot read model: {e}"))?;
+            hydra::io::parse(&raw).map_err(format_inp_parse_error)?
+        }
+    };
+    Ok(validation_findings(&network))
+}
+
+/// Export the current INP for a project's base model or a scenario via a
+/// native save dialog (default filename `<project-name>.inp`).
+///
+/// When `NetworkState` holds exactly this target, the exported bytes come
+/// from the in-memory network — `up_to_date_raw_bytes` re-serialises first
+/// when unsaved edits are pending (`dirty`), the same dirtiness handling
+/// `save_project` uses — so the export always reflects the current editor
+/// state. Otherwise the on-disk `model.inp` is exported as-is.
+///
+/// Returns `Ok(Some(path))` with the written file's path, or `Ok(None)` when
+/// the user cancels the dialog.
+#[tauri::command]
+/// Save the target's INP to a user-chosen path via a native save dialog.
+pub async fn export_project_inp(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, NetworkState>,
+    project_id: String,
+    scenario_id: Option<String>,
+) -> Result<Option<String>, String> {
+    use tauri_plugin_dialog::DialogExt;
+
+    validate_target_ids(&project_id, scenario_id.as_deref())?;
+    let app_data = app_data_dir(&app)?;
+
+    // Resolve the INP bytes up front so a missing model errors before any
+    // dialog is shown. Cache path: only when the loaded network is exactly
+    // this (project, scenario) target.
+    let cached: Option<Vec<u8>> = {
+        let mut guard = state.0.lock();
+        let matches_target = matches!(
+            &*guard,
+            NetworkStateInner::Loaded {
+                owner_project_id: Some(owner),
+                owner_scenario_id,
+                ..
+            } if *owner == project_id && owner_scenario_id.as_deref() == scenario_id.as_deref()
+        );
+        if matches_target {
+            guard.up_to_date_raw_bytes().cloned()
+        } else {
+            None
+        }
+    };
+    let bytes = match cached {
+        Some(b) => b,
+        None => {
+            let path = model_path_for(&app_data, &project_id, scenario_id.as_deref());
+            std::fs::read(&path).map_err(|e| format!("Cannot read model: {e}"))?
+        }
+    };
+
+    let default_name = meta::read_project_meta(&bundle::project_dir(&app_data, &project_id))
+        .map(|m| m.name)
+        .unwrap_or_else(|_| "model".to_string());
+
+    // The dialog call blocks until the user answers — run it on the blocking
+    // pool so it does not tie up an async runtime worker for that whole time.
+    let dialog_app = app.clone();
+    let picked = tauri::async_runtime::spawn_blocking(move || {
+        dialog_app
+            .dialog()
+            .file()
+            .add_filter("EPANET Input File", &["inp"])
+            .set_file_name(format!("{default_name}.inp"))
+            .blocking_save_file()
+    })
+    .await
+    .map_err(|e| format!("file dialog task panicked: {e}"))?;
+
+    let file_path = match picked {
+        Some(p) => p,
+        None => return Ok(None), // user cancelled
+    };
+    let path_buf = file_path.into_path().map_err(|e| e.to_string())?;
+    std::fs::write(&path_buf, &bytes).map_err(|e| format!("Cannot write INP: {e}"))?;
+    Ok(Some(path_buf.to_string_lossy().into_owned()))
+}
+
+/// Sibling CSV paths for `export_results_csv`: `<base>-nodes.csv` and
+/// `<base>-links.csv` next to the user-chosen path (its extension, if any,
+/// is replaced).
+fn csv_sibling_paths(base: &std::path::Path) -> (std::path::PathBuf, std::path::PathBuf) {
+    let stem = base
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .filter(|s| !s.is_empty())
+        .unwrap_or("results");
+    (
+        base.with_file_name(format!("{stem}-nodes.csv")),
+        base.with_file_name(format!("{stem}-links.csv")),
+    )
+}
+
+/// Stream every reporting period of `out_path` into two CSV files.
+///
+/// Node rows: `id,time_s,pressure,head,demand[,quality]`; link rows:
+/// `id,time_s,flow,velocity,headloss,status[,quality]` — one row per
+/// (element, period), ordered period-major. The quality column is present
+/// exactly when the results carry quality data. Values are written in the
+/// same SI display units the period-results path returns (the `.out` file is
+/// always written with `FlowUnits::Lps`).
+///
+/// The `.out` file is read one period at a time via the seeking reader and
+/// rows go through `BufWriter`s, so memory stays flat regardless of network
+/// size or period count.
+fn stream_results_csv(
+    out_path: &std::path::Path,
+    out_meta: &hydra::io::out_reader::OutMetadata,
+    node_ids: &[String],
+    link_ids: &[String],
+    nodes_csv: &std::path::Path,
+    links_csv: &std::path::Path,
+) -> Result<(), String> {
+    use std::io::Write;
+
+    let has_quality = out_meta.quality_flag != 0;
+    let open = |p: &std::path::Path| {
+        std::fs::File::create(p)
+            .map(std::io::BufWriter::new)
+            .map_err(|e| format!("Cannot create {}: {e}", p.display()))
+    };
+    let werr = |e: std::io::Error| format!("Cannot write CSV: {e}");
+    let mut nw = open(nodes_csv)?;
+    let mut lw = open(links_csv)?;
+    let quality_col = if has_quality { ",quality" } else { "" };
+    writeln!(nw, "id,time_s,pressure,head,demand{quality_col}").map_err(werr)?;
+    writeln!(lw, "id,time_s,flow,velocity,headloss,status{quality_col}").map_err(werr)?;
+
+    let times = out_meta.snapshot_times();
+    for (period, &time) in times.iter().enumerate() {
+        let pr = hydra::io::out_reader::read_period(out_path, out_meta, period)?;
+        let t = time as u64;
+        for (i, id) in node_ids.iter().enumerate() {
+            write!(
+                nw,
+                "{id},{t},{},{},{}",
+                pr.node_pressure[i], pr.node_head[i], pr.node_demand[i]
+            )
+            .map_err(werr)?;
+            if has_quality {
+                write!(nw, ",{}", pr.node_quality[i]).map_err(werr)?;
+            }
+            writeln!(nw).map_err(werr)?;
+        }
+        for (i, id) in link_ids.iter().enumerate() {
+            write!(
+                lw,
+                "{id},{t},{},{},{},{}",
+                pr.link_flow[i], pr.link_velocity[i], pr.link_headloss[i], pr.link_status[i]
+            )
+            .map_err(werr)?;
+            if has_quality {
+                write!(lw, ",{}", pr.link_quality[i]).map_err(werr)?;
+            }
+            writeln!(lw).map_err(werr)?;
+        }
+    }
+    nw.flush().map_err(werr)?;
+    lw.flush().map_err(werr)?;
+    Ok(())
+}
+
+/// Export the target's simulation results as CSV files via a native save
+/// dialog. The chosen path is used as a base name: `<base>-nodes.csv` and
+/// `<base>-links.csv` are written next to it (see [`stream_results_csv`] for
+/// the row layout). Returns `Ok(Some(base-path))` on success, `Ok(None)` when
+/// the user cancels, and an error when no results exist for the target.
+#[tauri::command]
+/// Export node and link result series to two CSV files via a save dialog.
+pub async fn export_results_csv(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, NetworkState>,
+    project_id: String,
+    scenario_id: Option<String>,
+) -> Result<Option<String>, String> {
+    use tauri_plugin_dialog::DialogExt;
+
+    validate_target_ids(&project_id, scenario_id.as_deref())?;
+    let app_data = app_data_dir(&app)?;
+    let out_path = results_path_for(&app_data, &project_id, scenario_id.as_deref());
+    if !out_path.exists() {
+        return Err(
+            "No simulation results exist for this target — run a simulation first".to_string(),
+        );
+    }
+    let out_meta =
+        hydra::io::out_reader::read_metadata_checked(&out_path).map_err(|e| e.to_string())?;
+    let network = network_for_target(&app_data, &state, &project_id, scenario_id.as_deref())?;
+    if network.nodes.len() != out_meta.n_nodes || network.links.len() != out_meta.n_links {
+        return Err(format!(
+            "results.out does not match the current model ({} nodes / {} links in results, \
+             {} / {} in the model) — re-run the simulation before exporting",
+            out_meta.n_nodes,
+            out_meta.n_links,
+            network.nodes.len(),
+            network.links.len(),
+        ));
+    }
+    let node_ids: Vec<String> = network.nodes.iter().map(|n| n.base.id.clone()).collect();
+    let link_ids: Vec<String> = network.links.iter().map(|l| l.base.id.clone()).collect();
+
+    let default_name = meta::read_project_meta(&bundle::project_dir(&app_data, &project_id))
+        .map(|m| format!("{}-results.csv", m.name))
+        .unwrap_or_else(|_| "results.csv".to_string());
+
+    // The dialog call blocks until the user answers — run it on the blocking
+    // pool so it does not tie up an async runtime worker for that whole time.
+    let dialog_app = app.clone();
+    let picked = tauri::async_runtime::spawn_blocking(move || {
+        dialog_app
+            .dialog()
+            .file()
+            .add_filter("CSV", &["csv"])
+            .set_file_name(default_name)
+            .blocking_save_file()
+    })
+    .await
+    .map_err(|e| format!("file dialog task panicked: {e}"))?;
+
+    let file_path = match picked {
+        Some(p) => p,
+        None => return Ok(None), // user cancelled
+    };
+    let base_path = file_path.into_path().map_err(|e| e.to_string())?;
+    let (nodes_csv, links_csv) = csv_sibling_paths(&base_path);
+
+    // Streaming a large result set is heavy IO — keep it off the async pool.
+    tauri::async_runtime::spawn_blocking(move || {
+        stream_results_csv(
+            &out_path, &out_meta, &node_ids, &link_ids, &nodes_csv, &links_csv,
+        )
+    })
+    .await
+    .map_err(|e| format!("CSV export task panicked: {e}"))??;
+
+    Ok(Some(base_path.to_string_lossy().into_owned()))
+}
+
 /// Compile-time version string for the Hydra engine library.
 const HYDRA_VERSION: &str = hydra::HYDRA_VERSION;
 
@@ -6246,7 +6814,7 @@ pub struct Versions {
 }
 
 #[tauri::command]
-/// Return available scenario versions (result timestamps).
+/// Return the hydra engine and application version strings.
 pub fn get_versions() -> Versions {
     Versions {
         hydra: HYDRA_VERSION,
@@ -6584,6 +7152,195 @@ Duration  0
         assert!(state.up_to_date_raw_bytes().is_none());
     }
 
+    // ── structural-mutation helper ────────────────────────────────────────
+
+    #[test]
+    fn apply_structural_mutation_marks_dirty_and_rebuilds_dto() {
+        let mut state = loaded_state();
+        apply_structural_mutation(&mut state, |network| {
+            network.patterns.push(hydra::Pattern {
+                id: "NEW".into(),
+                factors: vec![1.0; 4],
+            });
+            Ok(())
+        })
+        .unwrap();
+        let NetworkStateInner::Loaded { dirty, dto, .. } = &state else {
+            panic!("state must stay loaded");
+        };
+        assert!(*dirty, "successful mutation must mark the state dirty");
+        assert!(
+            dto.patterns.iter().any(|p| p.id == "NEW"),
+            "cached DTO must be rebuilt after the mutation"
+        );
+    }
+
+    #[test]
+    fn apply_structural_mutation_error_paths() {
+        // Failing mutation: the error propagates, nothing is marked dirty,
+        // and the cached DTO is not rebuilt (the mutation added a pattern,
+        // but the stale DTO must not pick it up).
+        let mut state = loaded_state();
+        let err = apply_structural_mutation(&mut state, |network| {
+            network.patterns.push(hydra::Pattern {
+                id: "HALF-DONE".into(),
+                factors: vec![1.0],
+            });
+            Err("boom".into())
+        })
+        .unwrap_err();
+        assert_eq!(err, "boom");
+        let NetworkStateInner::Loaded { dirty, dto, .. } = &state else {
+            panic!("state must stay loaded");
+        };
+        assert!(!*dirty, "failed mutation must not mark the state dirty");
+        assert!(
+            !dto.patterns.iter().any(|p| p.id == "HALF-DONE"),
+            "DTO must not be rebuilt on failure"
+        );
+
+        // Empty state: the canonical error, and the closure never runs.
+        let mut empty = NetworkStateInner::Empty;
+        let err = apply_structural_mutation(&mut empty, |_| {
+            panic!("mutation must not run without a loaded network")
+        })
+        .unwrap_err();
+        assert_eq!(err, "no network loaded");
+    }
+
+    // ── target path helpers ───────────────────────────────────────────────
+
+    #[test]
+    fn target_path_helpers_resolve_base_and_scenario() {
+        let app_data = std::path::Path::new("/app-data");
+        assert_eq!(
+            results_path_for(app_data, "p1", None),
+            bundle::base_results_path(app_data, "p1")
+        );
+        assert_eq!(
+            results_path_for(app_data, "p1", Some("s1")),
+            bundle::scenario_results_path(app_data, "p1", "s1")
+        );
+        assert_eq!(
+            model_path_for(app_data, "p1", None),
+            bundle::base_model_path(app_data, "p1")
+        );
+        assert_eq!(
+            model_path_for(app_data, "p1", Some("s1")),
+            bundle::scenario_model_path(app_data, "p1", "s1")
+        );
+    }
+
+    #[test]
+    fn validate_target_ids_rejects_non_uuid_parts() {
+        let pid = uuid::Uuid::new_v4().to_string();
+        let sid = uuid::Uuid::new_v4().to_string();
+        assert!(validate_target_ids(&pid, None).is_ok());
+        assert!(validate_target_ids(&pid, Some(&sid)).is_ok());
+        assert!(validate_target_ids("../escape", None).is_err());
+        assert!(validate_target_ids(&pid, Some("../escape")).is_err());
+    }
+
+    // ── network_for_target cache/dirty decision ───────────────────────────
+
+    /// TEST_INP plus one extra junction (`J2`) — distinguishable from the
+    /// cached parse (3 nodes) by node count, so tests can tell whether the
+    /// returned network came from the cache or from disk.
+    const DISK_INP: &str = "\
+[JUNCTIONS]
+J1  10  5
+J2  12  3
+
+[RESERVOIRS]
+R1  100
+
+[TANKS]
+T1  50  10  5  20  40  0
+
+[PIPES]
+P1  R1  J1  1000  12  100  0  Open
+P2  J1  T1  800   10  100  0  Open
+P3  J1  J2  500   8   100  0  Open
+
+[COORDINATES]
+J1  1.0  2.0
+J2  3.0  2.0
+R1  0.0  0.0
+T1  2.0  2.0
+
+[OPTIONS]
+Units  GPM
+
+[TIMES]
+Duration  0
+
+[END]
+";
+
+    #[test]
+    fn network_for_target_uses_cache_when_clean_and_matching() {
+        // No model.inp on disk at all: a cache hit is the only way this
+        // call can succeed, so success proves the cache was used.
+        let dir = tempfile::tempdir().unwrap();
+        let state = NetworkState(parking_lot::Mutex::new(loaded_state()));
+        let net = network_for_target(dir.path(), &state, "test-project", None)
+            .expect("clean matching cache must be served without disk IO");
+        assert_eq!(net.nodes.len(), 3);
+    }
+
+    #[test]
+    fn network_for_target_refuses_dirty_cache_and_reparses_disk() {
+        let dir = tempfile::tempdir().unwrap();
+        bundle::atomic_write(
+            &bundle::base_model_path(dir.path(), "test-project"),
+            DISK_INP.as_bytes(),
+        )
+        .unwrap();
+
+        let mut inner = loaded_state();
+        if let NetworkStateInner::Loaded { dirty, .. } = &mut inner {
+            *dirty = true;
+        }
+        let state = NetworkState(parking_lot::Mutex::new(inner));
+
+        // Same (project, scenario) target as the cache — but the cache is
+        // dirty, so the on-disk model (4 nodes) must be parsed instead of
+        // returning the 3-node cached network.
+        let net = network_for_target(dir.path(), &state, "test-project", None).unwrap();
+        assert_eq!(net.nodes.len(), 4);
+        assert!(net.nodes.iter().any(|n| n.base.id == "J2"));
+    }
+
+    #[test]
+    fn network_for_target_ignores_cache_for_non_matching_target() {
+        let dir = tempfile::tempdir().unwrap();
+        bundle::atomic_write(
+            &bundle::scenario_model_path(dir.path(), "test-project", "s1"),
+            DISK_INP.as_bytes(),
+        )
+        .unwrap();
+
+        // Cache owner is (test-project, base); requesting scenario "s1" must
+        // hit the scenario model on disk even though the cache is clean.
+        let state = NetworkState(parking_lot::Mutex::new(loaded_state()));
+        let net = network_for_target(dir.path(), &state, "test-project", Some("s1")).unwrap();
+        assert_eq!(net.nodes.len(), 4);
+    }
+
+    #[test]
+    fn network_for_target_dirty_cache_with_missing_disk_model_errors() {
+        // A dirty cache must never be served, even when the disk fallback
+        // fails — otherwise results would be indexed against unsaved edits.
+        let dir = tempfile::tempdir().unwrap();
+        let mut inner = loaded_state();
+        if let NetworkStateInner::Loaded { dirty, .. } = &mut inner {
+            *dirty = true;
+        }
+        let state = NetworkState(parking_lot::Mutex::new(inner));
+        let err = network_for_target(dir.path(), &state, "test-project", None).unwrap_err();
+        assert!(err.contains("Cannot read model"));
+    }
+
     #[test]
     fn refresh_element_dto_updates_single_link_in_place() {
         let mut state = loaded_state();
@@ -6884,6 +7641,224 @@ Duration  0
         assert!(!dir.path().join("results.out.tmp").exists());
     }
 
+    // ── get_element_series / element_series_from_out ──────────────────────
+
+    /// Generate a real `results.out` from `TEST_INP` via the same streaming
+    /// path production uses.
+    fn generated_results_out(dir: &std::path::Path) -> std::path::PathBuf {
+        let out = dir.join("results.out");
+        let (_sim, err, _wall, _steps) = run_sim_loops(
+            loaded_sim(),
+            Some(out.clone()),
+            0.0,
+            false,
+            |_, _, _, _, _| {},
+            || false,
+        );
+        assert!(err.is_none(), "fixture run must succeed: {err:?}");
+        out
+    }
+
+    #[test]
+    fn element_series_from_out_matches_period_reader() {
+        let dir = tempfile::tempdir().unwrap();
+        let out = generated_results_out(dir.path());
+        let out_meta = hydra::io::out_reader::read_metadata_checked(&out).unwrap();
+        assert!(out_meta.n_periods >= 1);
+
+        // Node series: fields in wire order, one value per period, values
+        // identical to what the period reader returns.
+        let series = element_series_from_out(&out, "node", 0).unwrap();
+        let names: Vec<&str> = series.fields.iter().map(|f| f.name.as_str()).collect();
+        assert_eq!(names, vec!["pressure", "head", "demand"], "no quality run");
+        assert_eq!(series.times.len(), out_meta.n_periods);
+        for f in &series.fields {
+            assert_eq!(f.values.len(), out_meta.n_periods);
+        }
+        let pr0 = hydra::io::out_reader::read_period(&out, &out_meta, 0).unwrap();
+        assert_eq!(series.fields[0].values[0], pr0.node_pressure[0] as f64);
+        assert_eq!(series.fields[1].values[0], pr0.node_head[0] as f64);
+        assert_eq!(series.fields[2].values[0], pr0.node_demand[0] as f64);
+        assert_eq!(series.times[0], out_meta.report_start as u32);
+
+        // Link series.
+        let series = element_series_from_out(&out, "link", 1).unwrap();
+        let names: Vec<&str> = series.fields.iter().map(|f| f.name.as_str()).collect();
+        assert_eq!(names, vec!["flow", "velocity", "headloss", "status"]);
+        assert_eq!(series.fields[0].values[0], pr0.link_flow[1] as f64);
+        assert_eq!(series.fields[3].values[0], pr0.link_status[1] as f64);
+    }
+
+    #[test]
+    fn element_series_from_out_bounds_and_kind_errors() {
+        let dir = tempfile::tempdir().unwrap();
+        let out = generated_results_out(dir.path());
+        let out_meta = hydra::io::out_reader::read_metadata_checked(&out).unwrap();
+
+        let err = element_series_from_out(&out, "node", out_meta.n_nodes as u32).unwrap_err();
+        assert!(err.contains("out of range"), "unexpected error: {err}");
+        let err = element_series_from_out(&out, "link", out_meta.n_links as u32).unwrap_err();
+        assert!(err.contains("out of range"), "unexpected error: {err}");
+        let err = element_series_from_out(&out, "pipe", 0).unwrap_err();
+        assert!(err.contains("unknown element kind"), "unexpected: {err}");
+    }
+
+    // ── validate_network mapping ──────────────────────────────────────────
+
+    #[test]
+    fn validation_findings_map_engine_errors_to_stable_codes() {
+        let mut network = hydra::io::parse(TEST_INP.as_bytes()).unwrap();
+        // Parse-time validation passed, so a fresh model has no findings.
+        assert!(validation_findings(&network).is_empty());
+
+        // Introduce two findings: an empty pattern and a self-loop.
+        network.patterns.push(hydra::Pattern {
+            id: "EMPTY".into(),
+            factors: vec![],
+        });
+        network.build_pattern_index();
+        let to = network.links[0].base.to_node;
+        network.links[0].base.from_node = to;
+
+        let findings = validation_findings(&network);
+        let empty = findings.iter().find(|f| f.code == "pattern-empty").unwrap();
+        assert_eq!(empty.severity, "error");
+        assert_eq!(empty.element_id.as_deref(), Some("EMPTY"));
+        assert_eq!(empty.element_kind.as_deref(), Some("pattern"));
+        assert!(empty.message.contains("EMPTY"));
+
+        let self_loop = findings
+            .iter()
+            .find(|f| f.code == "link-self-loop")
+            .unwrap();
+        assert_eq!(self_loop.element_id.as_deref(), Some("P1"));
+        assert_eq!(self_loop.element_kind.as_deref(), Some("link"));
+
+        // Wire shape: camelCase keys, explicit nulls for absent element info.
+        let json = serde_json::to_string(&ValidationFindingDto {
+            severity: "error".into(),
+            code: "no-reservoir".into(),
+            message: "network has no reservoir".into(),
+            element_id: None,
+            element_kind: None,
+        })
+        .unwrap();
+        assert!(json.contains("\"elementId\":null"));
+        assert!(json.contains("\"elementKind\":null"));
+    }
+
+    // ── export_results_csv streaming ──────────────────────────────────────
+
+    #[test]
+    fn stream_results_csv_writes_wide_per_field_rows() {
+        let dir = tempfile::tempdir().unwrap();
+        let out = generated_results_out(dir.path());
+        let out_meta = hydra::io::out_reader::read_metadata_checked(&out).unwrap();
+
+        let network = hydra::io::parse(TEST_INP.as_bytes()).unwrap();
+        let node_ids: Vec<String> = network.nodes.iter().map(|n| n.base.id.clone()).collect();
+        let link_ids: Vec<String> = network.links.iter().map(|l| l.base.id.clone()).collect();
+        assert_eq!(node_ids.len(), out_meta.n_nodes);
+        assert_eq!(link_ids.len(), out_meta.n_links);
+
+        let (nodes_csv, links_csv) = csv_sibling_paths(&dir.path().join("export.csv"));
+        assert!(nodes_csv.ends_with("export-nodes.csv"));
+        assert!(links_csv.ends_with("export-links.csv"));
+        stream_results_csv(
+            &out, &out_meta, &node_ids, &link_ids, &nodes_csv, &links_csv,
+        )
+        .unwrap();
+
+        let nodes = std::fs::read_to_string(&nodes_csv).unwrap();
+        let mut lines = nodes.lines();
+        assert_eq!(lines.next().unwrap(), "id,time_s,pressure,head,demand");
+        // One row per (node, period).
+        assert_eq!(lines.count(), out_meta.n_nodes * out_meta.n_periods);
+        let pr0 = hydra::io::out_reader::read_period(&out, &out_meta, 0).unwrap();
+        let first = nodes.lines().nth(1).unwrap();
+        assert_eq!(
+            first,
+            format!(
+                "{},0,{},{},{}",
+                node_ids[0], pr0.node_pressure[0], pr0.node_head[0], pr0.node_demand[0]
+            )
+        );
+
+        let links = std::fs::read_to_string(&links_csv).unwrap();
+        let mut lines = links.lines();
+        assert_eq!(
+            lines.next().unwrap(),
+            "id,time_s,flow,velocity,headloss,status"
+        );
+        assert_eq!(lines.count(), out_meta.n_links * out_meta.n_periods);
+        let first = links.lines().nth(1).unwrap();
+        assert_eq!(
+            first,
+            format!(
+                "{},0,{},{},{},{}",
+                link_ids[0],
+                pr0.link_flow[0],
+                pr0.link_velocity[0],
+                pr0.link_headloss[0],
+                pr0.link_status[0]
+            )
+        );
+    }
+
+    // ── pump energy totals ────────────────────────────────────────────────
+
+    #[test]
+    fn energy_totals_invert_out_writer_normalisations() {
+        // 24 h run: pump online 50% of the time at an average 10 kW.
+        let (kwh, cost) = energy_totals_from_record(10.0, 50.0, 3.6, 86_400.0);
+        assert!((kwh - 120.0).abs() < 1e-9, "10 kW × 12 h, got {kwh}");
+        assert!((cost - 3.6).abs() < 1e-9, "one day at 3.6/day, got {cost}");
+
+        // 12 h run: avg_cost_per_day is normalised per day, so half a day
+        // of it is charged.
+        let (kwh, cost) = energy_totals_from_record(10.0, 100.0, 4.8, 43_200.0);
+        assert!((kwh - 120.0).abs() < 1e-9);
+        assert!((cost - 2.4).abs() < 1e-9);
+
+        // Steady state (duration 0): EPANET's synthetic 1-hour horizon.
+        let (kwh, cost) = energy_totals_from_record(10.0, 100.0, 24.0, 0.0);
+        assert!((kwh - 10.0).abs() < 1e-9, "1 h at 10 kW, got {kwh}");
+        assert!((cost - 1.0).abs() < 1e-9, "avg_cost/24, got {cost}");
+    }
+
+    #[test]
+    fn network_has_energy_price_checks_global_and_per_pump() {
+        let mut network = hydra::io::parse(TEST_INP.as_bytes()).unwrap();
+        assert!(!network_has_energy_price(&network));
+        network.options.energy_price = 0.12;
+        assert!(network_has_energy_price(&network));
+    }
+
+    // ── numeric project timestamps ────────────────────────────────────────
+
+    #[test]
+    fn project_dto_carries_epoch_ms_alongside_labels() {
+        let now = meta::now_secs();
+        let dto = project_to_dto(
+            "p",
+            &sample_meta(1, 1),
+            0,
+            Some(now - 60),
+            "done",
+            false,
+            now,
+        );
+        assert_eq!(dto.modified_at_ms, Some(now as u64 * 1000));
+        assert_eq!(dto.last_run_at_ms, Some((now - 60) as u64 * 1000));
+        // Labels are unchanged by the numeric fields.
+        assert_eq!(dto.modified_label, "just now");
+        assert_eq!(dto.last_run_label.as_deref(), Some("1m ago"));
+
+        let dto = project_to_dto("p", &sample_meta(1, 1), 0, None, "not-run", false, now);
+        assert_eq!(dto.last_run_at_ms, None);
+        assert_eq!(epoch_secs_to_ms(-1), None);
+    }
+
     // ── count_scenario_dirs requires readable meta.json ───────────────────
 
     #[test]
@@ -7051,6 +8026,8 @@ Duration  0
         NetworkDto {
             nodes: vec![j1, t1, r1],
             links: vec![p1, pu1, v1],
+            // Vertices on some links only: P1 has 2, PU1 none, V1 one.
+            link_vertices: vec![vec![(10.0, 11.0), (12.0, 13.0)], vec![], vec![(20.5, 21.5)]],
             ..NetworkDto::default()
         }
     }
@@ -7060,7 +8037,7 @@ Duration  0
         let dto = snapshot_test_dto();
         let buf = encode_network_snapshot(&dto);
 
-        // Header.
+        // Header (32 bytes in v2).
         assert_eq!(
             u32::from_le_bytes(buf[0..4].try_into().unwrap()),
             NETWORK_SNAPSHOT_VERSION
@@ -7071,45 +8048,61 @@ Duration  0
         );
         assert_eq!(u32::from_le_bytes(buf[8..12].try_into().unwrap()), 3);
         assert_eq!(u32::from_le_bytes(buf[12..16].try_into().unwrap()), 3);
+        assert_eq!(
+            u32::from_le_bytes(buf[16..20].try_into().unwrap()),
+            3,
+            "total_verts = 2 (P1) + 0 (PU1) + 1 (V1)"
+        );
+        assert_eq!(&buf[20..32], &[0u8; 12], "reserved words are zero");
 
-        // f64 coordinate columns (8-byte aligned at offset 16).
-        assert_eq!(read_f64s(&buf, 16, 3), vec![1.5, 3.0, -1.0]); // x
-        assert_eq!(read_f64s(&buf, 40, 3), vec![2.5, 4.0, 0.0]); // y
+        // f64 coordinate columns (8-byte aligned at offset 32).
+        assert_eq!(read_f64s(&buf, 32, 3), vec![1.5, 3.0, -1.0]); // x
+        assert_eq!(read_f64s(&buf, 56, 3), vec![2.5, 4.0, 0.0]); // y
+
+        // f64 vertex columns, concatenated in link order.
+        assert_eq!(read_f64s(&buf, 80, 3), vec![10.0, 12.0, 20.5]); // vertex x
+        assert_eq!(read_f64s(&buf, 104, 3), vec![11.0, 13.0, 21.5]); // vertex y
 
         // f32 node columns.
-        assert_eq!(read_f32s(&buf, 64, 3), vec![10.5, 50.0, 100.0]); // elevation
-        assert_eq!(read_f32s(&buf, 76, 3), vec![5.25, 0.0, 0.0]); // base_demand
-        let pressure = read_f32s(&buf, 88, 3);
+        assert_eq!(read_f32s(&buf, 128, 3), vec![10.5, 50.0, 100.0]); // elevation
+        assert_eq!(read_f32s(&buf, 140, 3), vec![5.25, 0.0, 0.0]); // base_demand
+        let pressure = read_f32s(&buf, 152, 3);
         assert!(pressure.iter().all(|v| v.is_nan()), "pressure all absent");
-        let demand = read_f32s(&buf, 100, 3);
+        let demand = read_f32s(&buf, 164, 3);
         assert_eq!(demand[0], 0.0, "explicit Some(0.0) is 0, not NaN");
         assert!(demand[1].is_nan() && demand[2].is_nan());
-        let tank_min = read_f32s(&buf, 112, 3);
+        let tank_min = read_f32s(&buf, 176, 3);
         assert!(tank_min[0].is_nan() && tank_min[2].is_nan());
         assert_eq!(tank_min[1], 1.5);
-        assert_eq!(read_f32s(&buf, 124, 3)[1], 6.5); // tank_max_level
-        assert_eq!(read_f32s(&buf, 136, 3)[1], 2.25); // tank_initial_level
-        assert_eq!(read_f32s(&buf, 148, 3)[1], 20.0); // tank_diameter
+        assert_eq!(read_f32s(&buf, 188, 3)[1], 6.5); // tank_max_level
+        assert_eq!(read_f32s(&buf, 200, 3)[1], 2.25); // tank_initial_level
+        assert_eq!(read_f32s(&buf, 212, 3)[1], 20.0); // tank_diameter
 
         // f32 link columns.
-        assert_eq!(read_f32s(&buf, 160, 3), vec![0.5, 0.0, 0.0]); // velocity
-        assert_eq!(read_f32s(&buf, 172, 3), vec![300.0, 0.0, 0.0]); // diameter
-        assert_eq!(read_f32s(&buf, 184, 3), vec![1200.0, 0.0, 0.0]); // length
-        assert_eq!(read_f32s(&buf, 196, 3), vec![100.0, 0.0, 0.0]); // roughness
-        let power = read_f32s(&buf, 208, 3);
+        assert_eq!(read_f32s(&buf, 224, 3), vec![0.5, 0.0, 0.0]); // velocity
+        assert_eq!(read_f32s(&buf, 236, 3), vec![300.0, 0.0, 0.0]); // diameter
+        assert_eq!(read_f32s(&buf, 248, 3), vec![1200.0, 0.0, 0.0]); // length
+        assert_eq!(read_f32s(&buf, 260, 3), vec![100.0, 0.0, 0.0]); // roughness
+        let power = read_f32s(&buf, 272, 3);
         assert!(power[0].is_nan() && power[2].is_nan());
         assert_eq!(power[1], 15.5);
-        assert_eq!(read_f32s(&buf, 220, 3)[1], 1.0); // pump_speed
-        let setting = read_f32s(&buf, 232, 3);
+        assert_eq!(read_f32s(&buf, 284, 3)[1], 1.0); // pump_speed
+        let setting = read_f32s(&buf, 296, 3);
         assert!(setting[0].is_nan() && setting[1].is_nan());
         assert_eq!(setting[2], 35.5);
 
         // u8 kind columns.
-        assert_eq!(&buf[244..247], &[0, 1, 2], "junction, tank, reservoir");
-        assert_eq!(&buf[247..250], &[0, 1, 2], "pipe, pump, valve");
+        assert_eq!(&buf[308..311], &[0, 1, 2], "junction, tank, reservoir");
+        assert_eq!(&buf[311..314], &[0, 1, 2], "pipe, pump, valve");
+
+        // u32 per-link vertex counts (unaligned after the u8 columns).
+        let counts: Vec<u32> = (0..3)
+            .map(|i| u32::from_le_bytes(buf[314 + 4 * i..318 + 4 * i].try_into().unwrap()))
+            .collect();
+        assert_eq!(counts, vec![2, 0, 1]);
 
         // String columns: newline-joined, empty string = absent.
-        let mut off = 250;
+        let mut off = 326;
         for expected in [
             "J1\nT1\nR1",  // node id
             "\nVC1\n",     // tank_volume_curve
@@ -7130,30 +8123,77 @@ Duration  0
 
     #[test]
     fn encode_network_snapshot_empty_and_absent() {
-        // Empty-but-present: header + nine zero-length string columns.
+        // Empty-but-present: 32-byte header + nine zero-length string columns.
         let buf = encode_network_snapshot(&NetworkDto::default());
-        assert_eq!(buf.len(), 16 + 9 * 4);
+        assert_eq!(buf.len(), 32 + 9 * 4);
         assert_eq!(
             u32::from_le_bytes(buf[4..8].try_into().unwrap()),
             NETWORK_SNAPSHOT_FLAG_PRESENT
         );
         assert_eq!(u32::from_le_bytes(buf[8..12].try_into().unwrap()), 0);
         assert_eq!(u32::from_le_bytes(buf[12..16].try_into().unwrap()), 0);
-        let mut off = 16;
+        assert_eq!(u32::from_le_bytes(buf[16..20].try_into().unwrap()), 0);
+        let mut off = 32;
         for _ in 0..9 {
             let (col, next) = read_str_col(&buf, off);
             assert_eq!(col, "");
             off = next;
         }
 
-        // Absent: header only, "present" flag clear.
+        // Absent: 32-byte header only, "present" flag clear.
         let buf = encode_network_snapshot_absent();
-        assert_eq!(buf.len(), 16);
+        assert_eq!(buf.len(), 32);
         assert_eq!(
             u32::from_le_bytes(buf[0..4].try_into().unwrap()),
             NETWORK_SNAPSHOT_VERSION
         );
-        assert_eq!(u32::from_le_bytes(buf[4..8].try_into().unwrap()), 0);
+        assert_eq!(&buf[4..32], &[0u8; 28]);
+    }
+
+    #[test]
+    fn network_to_dto_carries_link_vertices_in_link_order() {
+        const VERTS_INP: &str = "\
+[JUNCTIONS]
+J1  10  5
+
+[RESERVOIRS]
+R1  100
+
+[PIPES]
+P1  R1  J1  1000  12  100  0  Open
+P2  J1  R1  800   10  100  0  Open
+
+[COORDINATES]
+J1  1.0  2.0
+R1  0.0  0.0
+
+[VERTICES]
+P2  5.5  6.5
+P2  7.5  8.5
+
+[OPTIONS]
+Units  GPM
+
+[TIMES]
+Duration  0
+
+[END]
+";
+        let network = hydra::io::parse(VERTS_INP.as_bytes()).unwrap();
+        let dto = network_to_dto(&network);
+        assert_eq!(dto.link_vertices.len(), dto.links.len());
+        let p1 = dto.links.iter().position(|l| l.id == "P1").unwrap();
+        let p2 = dto.links.iter().position(|l| l.id == "P2").unwrap();
+        assert!(dto.link_vertices[p1].is_empty(), "P1 has no vertices");
+        assert_eq!(dto.link_vertices[p2], vec![(5.5, 6.5), (7.5, 8.5)]);
+
+        // The encoded snapshot totals match.
+        let buf = encode_network_snapshot(&dto);
+        assert_eq!(
+            u32::from_le_bytes(buf[16..20].try_into().unwrap()),
+            2,
+            "total_verts"
+        );
     }
 
     // ── optional DTO fields are omitted, not null ─────────────────────────
@@ -7183,5 +8223,463 @@ Duration  0
         let back: NodeDto = serde_json::from_str(&serde_json::to_string(j1).unwrap()).unwrap();
         assert!(back.tank_min_level.is_none());
         assert!(back.pressure.is_none());
+    }
+
+    // ── progress_percent ──────────────────────────────────────────────────
+
+    #[test]
+    fn progress_percent_clamps_and_handles_zero_duration() {
+        assert_eq!(progress_percent(0.0, 0.0), 100.0);
+        assert_eq!(progress_percent(50.0, 200.0), 25.0);
+        assert_eq!(progress_percent(300.0, 200.0), 100.0);
+        assert_eq!(progress_percent(-10.0, 200.0), 0.0);
+    }
+
+    // ── normalize_epsg ────────────────────────────────────────────────────
+
+    #[test]
+    fn normalize_epsg_handles_bare_codes_prefixes_and_case() {
+        assert_eq!(normalize_epsg("4326"), "EPSG:4326");
+        assert_eq!(normalize_epsg(" epsg:27700 "), "EPSG:27700");
+        assert_eq!(normalize_epsg("EPSG:3857"), "EPSG:3857");
+        // Non-EPSG authorities are upper-cased but not prefixed.
+        assert_eq!(normalize_epsg("esri:102100"), "ESRI:102100");
+        assert_eq!(normalize_epsg("   "), "");
+    }
+
+    // ── parse_wkt_label ───────────────────────────────────────────────────
+
+    #[test]
+    fn parse_wkt_label_extracts_first_quoted_name_or_falls_back() {
+        assert_eq!(
+            parse_wkt_label("GEOGCS[\"WGS 84\",DATUM[\"WGS_1984\"]]", "EPSG:4326"),
+            "WGS 84 (EPSG:4326)"
+        );
+        // No quoted name: falls back to the EPSG code.
+        assert_eq!(parse_wkt_label("+proj=longlat", "EPSG:9999"), "EPSG:9999");
+        assert_eq!(parse_wkt_label("PROJCS[\"\"]", "EPSG:9998"), "EPSG:9998");
+    }
+
+    // ── remap_index ───────────────────────────────────────────────────────
+
+    #[test]
+    fn remap_index_shifts_past_removed_entries() {
+        // Removing old 1-based indices 2 and 5 from the vec they address.
+        assert_eq!(remap_index(1, &[2, 5]), 1);
+        assert_eq!(remap_index(3, &[2, 5]), 2);
+        assert_eq!(remap_index(4, &[2, 5]), 3);
+        assert_eq!(remap_index(6, &[2, 5]), 4);
+        assert_eq!(remap_index(3, &[]), 3);
+    }
+
+    // ── display-unit conversions ──────────────────────────────────────────
+
+    fn valve_link(vt: hydra::ValveType) -> hydra::Link {
+        hydra::Link {
+            base: hydra::LinkBase {
+                id: "V1".into(),
+                index: 1,
+                from_node: 1,
+                to_node: 2,
+                initial_status: hydra::LinkStatus::Open,
+                initial_setting: None,
+            },
+            kind: hydra::LinkKind::Valve(hydra::Valve {
+                valve_type: vt,
+                diameter: 1.0,
+                minor_loss: 0.0,
+                curve: None,
+            }),
+        }
+    }
+
+    #[test]
+    fn link_setting_conversion_round_trips_per_valve_type() {
+        for (vt, internal, display) in [
+            (hydra::ValveType::Prv, 100.0, 100.0 * FT_TO_M),
+            (hydra::ValveType::Psv, 50.0, 50.0 * FT_TO_M),
+            (hydra::ValveType::Pbv, 25.0, 25.0 * FT_TO_M),
+            (hydra::ValveType::Fcv, 2.0, 2.0 * CFS_TO_LPS),
+            (hydra::ValveType::Tcv, 7.5, 7.5), // dimensionless: identity
+        ] {
+            let link = valve_link(vt);
+            let d = link_setting_internal_to_display(&link, internal);
+            assert!((d - display).abs() < 1e-9, "{vt:?} to display");
+            let back = link_setting_display_to_internal(&link, d);
+            assert!((back - internal).abs() < 1e-9, "{vt:?} round-trip");
+        }
+        // Non-valve links: identity in both directions.
+        let network = hydra::io::parse(TEST_INP.as_bytes()).unwrap();
+        let pipe = network.links.iter().find(|l| l.base.id == "P1").unwrap();
+        assert_eq!(link_setting_internal_to_display(pipe, 3.5), 3.5);
+        assert_eq!(link_setting_display_to_internal(pipe, 3.5), 3.5);
+    }
+
+    #[test]
+    fn node_grade_conversion_round_trips_for_tank_and_junction() {
+        let network = hydra::io::parse(TEST_INP.as_bytes()).unwrap();
+        for id in ["T1", "J1", "R1"] {
+            let node = network.nodes.iter().find(|n| n.base.id == id).unwrap();
+            let internal = node.base.elevation + 12.0;
+            let display = node_grade_internal_to_display(node, internal);
+            let back = node_grade_display_to_internal(node, display);
+            assert!((back - internal).abs() < 1e-9, "{id} round-trip");
+        }
+        // Tank display value is the level above the tank *bottom* in metres.
+        let tank = network.nodes.iter().find(|n| n.base.id == "T1").unwrap();
+        let hydra::NodeKind::Tank(t) = &tank.kind else {
+            unreachable!("T1 is a tank");
+        };
+        let bottom = tank.base.elevation - t.min_level;
+        let display = node_grade_internal_to_display(tank, bottom + 10.0);
+        assert!((display - 10.0 * FT_TO_M).abs() < 1e-9);
+        // Junction display value is head above the node elevation in metres.
+        let j1 = network.nodes.iter().find(|n| n.base.id == "J1").unwrap();
+        let display = node_grade_internal_to_display(j1, j1.base.elevation + 10.0);
+        assert!((display - 10.0 * FT_TO_M).abs() < 1e-9);
+    }
+
+    // ── INP parse-error summarisation ─────────────────────────────────────
+
+    fn unknown_pattern_err(object_id: &str, pattern_id: &str) -> hydra::ValidationError {
+        hydra::ValidationError::UnknownPatternRef {
+            object_id: object_id.into(),
+            pattern_id: pattern_id.into(),
+        }
+    }
+
+    #[test]
+    fn summarize_unknown_pattern_refs_single_and_grouped() {
+        // Single reference: no counts, just the pair.
+        let errors = vec![unknown_pattern_err("J1", "PAT1")];
+        assert_eq!(
+            summarize_unknown_pattern_refs(&errors).unwrap(),
+            "missing pattern 'PAT1' referenced by J1"
+        );
+
+        // Largest group is summarised with a 2-element preview + "+N more",
+        // and leftover errors (other patterns) are counted separately.
+        let errors = vec![
+            unknown_pattern_err("J1", "PAT1"),
+            unknown_pattern_err("J2", "PAT1"),
+            unknown_pattern_err("J3", "PAT1"),
+            unknown_pattern_err("J9", "PAT2"),
+        ];
+        assert_eq!(
+            summarize_unknown_pattern_refs(&errors).unwrap(),
+            "missing pattern 'PAT1' referenced by 3 network elements (J1, J2, +1 more); \
+             plus 1 additional validation issue"
+        );
+
+        // No unknown-pattern errors: no summary.
+        assert!(summarize_unknown_pattern_refs(&[]).is_none());
+    }
+
+    #[test]
+    fn format_inp_parse_error_previews_generic_validation_errors() {
+        assert_eq!(
+            format_inp_parse_error(hydra::io::ParseError::ValidationFailed(vec![])),
+            "validation failed"
+        );
+
+        let errs = vec![
+            hydra::ValidationError::LinkUnknownFromNode {
+                link_id: "P1".into(),
+                node_index: 9,
+            },
+            hydra::ValidationError::LinkUnknownFromNode {
+                link_id: "P2".into(),
+                node_index: 9,
+            },
+            hydra::ValidationError::LinkUnknownFromNode {
+                link_id: "P3".into(),
+                node_index: 9,
+            },
+        ];
+        let msg = format_inp_parse_error(hydra::io::ParseError::ValidationFailed(errs));
+        assert!(
+            msg.starts_with("validation failed (3 errors):"),
+            "got: {msg}"
+        );
+        assert!(msg.ends_with("and 1 more"), "got: {msg}");
+    }
+
+    // ── create_link defaults (internal ft ↔ display m/mm) ─────────────────
+
+    #[test]
+    fn create_link_pipe_defaults_display_as_100m_300mm() {
+        let kind = default_link_kind("pipe").unwrap();
+        let link = hydra::Link {
+            base: hydra::LinkBase {
+                id: "P9".into(),
+                index: 1,
+                from_node: 1,
+                to_node: 2,
+                initial_status: hydra::LinkStatus::Open,
+                initial_setting: None,
+            },
+            kind,
+        };
+        let dto = link_to_dto(&link, "A".into(), "B".into());
+        // The documented defaults are 100 m / 300 mm — the DTO (display
+        // units: m and mm) must reflect them, not 100 ft / 0.3 ft.
+        assert!((dto.length - 100.0).abs() < 1e-9, "length {}", dto.length);
+        assert!(
+            (dto.diameter - 300.0).abs() < 1e-9,
+            "diameter {}",
+            dto.diameter
+        );
+        assert!((dto.roughness - 100.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn create_link_valve_default_diameter_displays_as_300mm() {
+        let kind = default_link_kind("valve").unwrap();
+        let link = hydra::Link {
+            base: hydra::LinkBase {
+                id: "V9".into(),
+                index: 1,
+                from_node: 1,
+                to_node: 2,
+                initial_status: hydra::LinkStatus::Open,
+                initial_setting: Some(0.0),
+            },
+            kind,
+        };
+        let dto = link_to_dto(&link, "A".into(), "B".into());
+        assert!(
+            (dto.diameter - 300.0).abs() < 1e-9,
+            "diameter {}",
+            dto.diameter
+        );
+    }
+
+    #[test]
+    fn create_link_unknown_kind_errors() {
+        assert!(default_link_kind("widget").is_err());
+    }
+
+    // ── curve unit round-trip (get_curves ↔ update_curve_points) ──────────
+
+    #[test]
+    fn pump_head_curve_display_round_trip_is_value_stable() {
+        // Internal points (cfs, ft) → DTO display units (L/s, m) via
+        // network_to_dto's conversion, then back through the
+        // update_curve_points conversion. The same CFS_TO_LPS/FT_TO_M basis
+        // is used in both directions, so the round-trip must be stable.
+        let mut network = hydra::io::parse(TEST_INP.as_bytes()).unwrap();
+        let internal = vec![
+            hydra::CurvePoint { x: 0.0, y: 164.0 },
+            hydra::CurvePoint { x: 0.177, y: 82.0 },
+            hydra::CurvePoint { x: 0.354, y: 0.0 },
+        ];
+        network.curves.push(hydra::Curve {
+            id: "C1".into(),
+            kind: hydra::CurveKind::PumpHead,
+            points: internal.clone(),
+        });
+
+        let dto = network_to_dto(&network);
+        let curve = dto.curves.iter().find(|c| c.id == "C1").unwrap();
+        let back = curve_points_display_to_internal(hydra::CurveKind::PumpHead, &curve.x, &curve.y);
+
+        assert_eq!(back.len(), internal.len());
+        for (b, i) in back.iter().zip(internal.iter()) {
+            assert!((b.x - i.x).abs() < 1e-12, "x drifted: {} -> {}", i.x, b.x);
+            assert!((b.y - i.y).abs() < 1e-12, "y drifted: {} -> {}", i.y, b.y);
+        }
+
+        // Non-pump-head kinds pass through untouched.
+        let raw = curve_points_display_to_internal(hydra::CurveKind::Generic, &[1.5], &[2.5]);
+        assert_eq!(raw[0].x, 1.5);
+        assert_eq!(raw[0].y, 2.5);
+    }
+
+    // ── pipe status patch validation ──────────────────────────────────────
+
+    #[test]
+    fn pipe_status_patch_rejects_unknown_values() {
+        let mut network = hydra::io::parse(TEST_INP.as_bytes()).unwrap();
+
+        // Valid values, case-insensitive.
+        apply_patch_to_network(
+            &mut network,
+            "pipe",
+            "P1",
+            "status",
+            serde_json::json!("Closed"),
+        )
+        .unwrap();
+        let p1 = network.links.iter().find(|l| l.base.id == "P1").unwrap();
+        assert_eq!(p1.base.initial_status, hydra::LinkStatus::Closed);
+        apply_patch_to_network(
+            &mut network,
+            "pipe",
+            "P1",
+            "status",
+            serde_json::json!("open"),
+        )
+        .unwrap();
+        let p1 = network.links.iter().find(|l| l.base.id == "P1").unwrap();
+        assert_eq!(p1.base.initial_status, hydra::LinkStatus::Open);
+
+        // Unknown string: an error naming the bad value, not silently Open.
+        let err = apply_patch_to_network(
+            &mut network,
+            "pipe",
+            "P1",
+            "status",
+            serde_json::json!("Ajar"),
+        )
+        .unwrap_err();
+        assert!(err.contains("Ajar"), "error must name the value: {err}");
+        // Non-string: also an error, not silently Open.
+        let err =
+            apply_patch_to_network(&mut network, "pipe", "P1", "status", serde_json::json!(1))
+                .unwrap_err();
+        assert!(err.contains("expected string"), "got: {err}");
+        // The failed patches must not have changed the status.
+        let p1 = network.links.iter().find(|l| l.base.id == "P1").unwrap();
+        assert_eq!(p1.base.initial_status, hydra::LinkStatus::Open);
+    }
+
+    // ── analytics absent markers ──────────────────────────────────────────
+
+    #[test]
+    fn min_finite_with_index_ignores_non_finite_and_keeps_first_tie() {
+        assert_eq!(min_finite_with_index(&[]), None);
+        assert_eq!(
+            min_finite_with_index(&[f64::INFINITY, f64::NAN, f64::NEG_INFINITY]),
+            None
+        );
+        assert_eq!(
+            min_finite_with_index(&[f64::INFINITY, 3.0, -2.0, f64::NAN]),
+            Some((2, -2.0))
+        );
+        // Equal minima: the first index wins (matches the previous loop).
+        assert_eq!(min_finite_with_index(&[5.0, 1.0, 1.0]), Some((1, 1.0)));
+    }
+
+    #[test]
+    fn max_positive_with_index_treats_all_zero_as_absent() {
+        assert_eq!(max_positive_with_index(&[]), None);
+        // 0.0 is the scan's "no data" default — an all-zero array means no
+        // link ever had a valid velocity.
+        assert_eq!(max_positive_with_index(&[0.0, 0.0]), None);
+        assert_eq!(max_positive_with_index(&[f64::NAN, -1.0]), None);
+        assert_eq!(max_positive_with_index(&[0.0, 2.5, 1.0]), Some((1, 2.5)));
+        // Equal maxima: the first index wins.
+        assert_eq!(max_positive_with_index(&[3.0, 3.0]), Some((0, 3.0)));
+    }
+
+    fn analytics_dto_with_summary(
+        min_pressure: Option<(String, f64)>,
+        max_velocity: Option<(String, f64)>,
+    ) -> ResultAnalyticsDto {
+        let (min_pressure_node_id, min_pressure_m) = match min_pressure {
+            Some((id, v)) => (Some(id), Some(v)),
+            None => (None, None),
+        };
+        let (max_velocity_link_id, max_velocity_ms) = match max_velocity {
+            Some((id, v)) => (Some(id), Some(v)),
+            None => (None, None),
+        };
+        ResultAnalyticsDto {
+            period_count: 0,
+            node_count: 0,
+            link_count: 0,
+            mass_balance: MassBalanceDto {
+                inflow_m3: 0.0,
+                outflow_m3: 0.0,
+                balance_pct: 100.0,
+                series: vec![],
+            },
+            min_pressure_node_id,
+            min_pressure_m,
+            low_pressure_count: 0,
+            max_velocity_link_id,
+            max_velocity_ms,
+            pressure_histogram: vec![],
+            velocity_histogram: vec![],
+            top_pipes: vec![],
+            tank_series: vec![],
+        }
+    }
+
+    #[test]
+    fn analytics_dto_omits_summary_fields_when_no_valid_data() {
+        // Wire contract with the frontend: absent field = no data (render "—").
+        let json = serde_json::to_string(&analytics_dto_with_summary(None, None)).unwrap();
+        assert!(!json.contains("minPressureNodeId"), "got: {json}");
+        assert!(!json.contains("minPressureM"), "got: {json}");
+        assert!(!json.contains("maxVelocityLinkId"), "got: {json}");
+        assert!(!json.contains("maxVelocityMs"), "got: {json}");
+        assert!(!json.contains("null"), "no null placeholders: {json}");
+
+        let json = serde_json::to_string(&analytics_dto_with_summary(
+            Some(("J1".into(), 12.5)),
+            Some(("P1".into(), 1.75)),
+        ))
+        .unwrap();
+        assert!(json.contains("\"minPressureNodeId\":\"J1\""), "got: {json}");
+        assert!(json.contains("\"minPressureM\":12.5"), "got: {json}");
+        assert!(json.contains("\"maxVelocityLinkId\":\"P1\""), "got: {json}");
+        assert!(json.contains("\"maxVelocityMs\":1.75"), "got: {json}");
+    }
+
+    // ── scenario ordering ─────────────────────────────────────────────────
+
+    #[test]
+    fn scenarios_sort_by_name_case_insensitively_not_by_id() {
+        let sc = |id: &str, name: &str| ScenarioDto {
+            id: id.into(),
+            project_id: "p1".into(),
+            parent_scenario_id: None,
+            name: name.into(),
+            state: "not-run".into(),
+        };
+        // Ids deliberately ordered against the names.
+        let mut items = vec![
+            sc("aaa", "zeta"),
+            sc("zzz", "Alpha"),
+            sc("mmm", "beta"),
+            sc("bbb", "alpha"),
+        ];
+        sort_scenarios_by_name(&mut items);
+        let names: Vec<&str> = items.iter().map(|s| s.name.as_str()).collect();
+        assert_eq!(names, vec!["alpha", "Alpha", "beta", "zeta"]);
+        // Case-insensitive equal names tie-break deterministically by id.
+        assert_eq!(items[0].id, "bbb");
+        assert_eq!(items[1].id, "zzz");
+    }
+
+    // ── meta.json atomic writes ───────────────────────────────────────────
+
+    #[test]
+    fn write_project_meta_is_atomic_and_round_trips() {
+        let dir = tempfile::tempdir().unwrap();
+        let project_dir = dir.path().join("proj");
+        let m = sample_meta(7, 6);
+        // Creates the directory as needed, like the previous implementation.
+        meta::write_project_meta(&project_dir, &m).unwrap();
+        let back = meta::read_project_meta(&project_dir).unwrap();
+        assert_eq!(back.node_count, 7);
+        assert_eq!(back.link_count, 6);
+        // No temp file left behind by the atomic write.
+        let leftovers: Vec<_> = std::fs::read_dir(&project_dir)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .filter(|n| n != "meta.json")
+            .collect();
+        assert!(leftovers.is_empty(), "unexpected files: {leftovers:?}");
+
+        // Overwrite in place.
+        let mut m2 = sample_meta(1, 1);
+        m2.name = "renamed".into();
+        meta::write_project_meta(&project_dir, &m2).unwrap();
+        assert_eq!(
+            meta::read_project_meta(&project_dir).unwrap().name,
+            "renamed"
+        );
     }
 }
