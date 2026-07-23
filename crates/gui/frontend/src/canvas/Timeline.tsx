@@ -6,7 +6,14 @@ import {
   PauseIcon,
   PlayIcon,
 } from "@heroicons/react/16/solid";
-import { useCallback, useMemo, useRef, useState } from "react";
+import {
+  type CSSProperties,
+  type ReactNode,
+  useCallback,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import type { ResultMeta } from "../hooks";
 
 /** Fallback time-axis labels (00:00–24:00) used before resultMeta is loaded. */
@@ -17,6 +24,39 @@ const EMPTY_LABELS: string[] = Array.from(
 
 /** Height of the scrubber track rail in pixels. */
 const TRACK_H = 8;
+
+const TRANSPORT_BTN_STYLE: CSSProperties = {
+  display: "inline-flex",
+  alignItems: "center",
+  justifyContent: "center",
+};
+
+const TRANSPORT_ICON_STYLE: CSSProperties = { width: 14, height: 14 };
+
+/** Icon button in the transport cluster — same DOM as a plain `.tl-btn`. */
+function TransportButton({
+  className = "tl-btn",
+  onClick,
+  tooltip,
+  children,
+}: {
+  className?: string;
+  onClick: () => void;
+  tooltip: string;
+  children: ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      className={className}
+      onClick={onClick}
+      data-tooltip={tooltip}
+      style={TRANSPORT_BTN_STYLE}
+    >
+      {children}
+    </button>
+  );
+}
 
 export function Timeline({
   currentHour,
@@ -46,7 +86,9 @@ export function Timeline({
   // Local: only this component reads the hover marker, and lifting it to
   // CanvasView made every scrubber mousemove re-render the whole canvas view.
   const [hoverHour, setHoverHour] = useState<number | null>(null);
-  const effectiveMaxStep = maxStep ?? 24;
+  // Floor at 1 for percentage math: a single-period result has maxStep 0 and
+  // dividing by it produced NaN% marker offsets.
+  const effectiveMaxStep = Math.max(1, maxStep ?? 24);
 
   // Time labels ("HH:MM") derived from resultMeta snapshot times.
   const liveLabels = useMemo(() => {
@@ -60,6 +102,10 @@ export function Timeline({
 
   const timeLabels = liveLabels ?? EMPTY_LABELS;
 
+  /** Label for a step index; clamps out-of-range indices to the last label. */
+  const labelAt = (i: number) =>
+    timeLabels[i] ?? timeLabels[timeLabels.length - 1];
+
   const trackRef = useRef<HTMLDivElement | null>(null);
 
   const step = useCallback(
@@ -70,25 +116,72 @@ export function Timeline({
     [effectiveMaxStep, currentHour, setCurrentHour],
   );
 
+  /** Clamped 0–1 fraction along the track for a mouse position, or null when
+   * the track isn't measurable yet. */
+  const trackFrac = useCallback((clientX: number): number | null => {
+    const r = trackRef.current?.getBoundingClientRect();
+    if (!r) return null;
+    return Math.max(0, Math.min(1, (clientX - r.left) / r.width));
+  }, []);
+
   const onTrackClick = useCallback(
     (e: React.MouseEvent<HTMLDivElement>) => {
-      const r = trackRef.current?.getBoundingClientRect();
-      if (!r) return;
-      const frac = Math.max(0, Math.min(1, (e.clientX - r.left) / r.width));
+      const frac = trackFrac(e.clientX);
+      if (frac == null) return;
       setCurrentHour(Math.round(frac * effectiveMaxStep));
     },
-    [effectiveMaxStep, setCurrentHour],
+    [effectiveMaxStep, setCurrentHour, trackFrac],
   );
 
   const onTrackMove = useCallback(
     (e: React.MouseEvent<HTMLDivElement>) => {
-      const r = trackRef.current?.getBoundingClientRect();
-      if (!r) return;
-      const frac = Math.max(0, Math.min(1, (e.clientX - r.left) / r.width));
+      const frac = trackFrac(e.clientX);
+      if (frac == null) return;
       setHoverHour(Math.round(frac * effectiveMaxStep));
     },
-    [effectiveMaxStep],
+    [effectiveMaxStep, trackFrac],
   );
+
+  // ── Drag-scrubbing ────────────────────────────────────────────────────────
+  // pointerdown on the track starts a scrub (pointer capture keeps move/up
+  // events flowing even when the cursor leaves the track), pointermove
+  // updates the playhead live, pointerup ends the scrub. Plain clicks still
+  // work via onClick (it fires after pointerup with the same value — a
+  // harmless no-op set), and keyboard handling is untouched.
+  const scrubbingRef = useRef(false);
+  const scrubTo = useCallback(
+    (clientX: number) => {
+      const frac = trackFrac(clientX);
+      if (frac == null) return;
+      setCurrentHour(Math.round(frac * effectiveMaxStep));
+    },
+    [effectiveMaxStep, setCurrentHour, trackFrac],
+  );
+  const onTrackPointerDown = useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      // Primary button / touch / pen only — don't scrub on right-click.
+      if (e.pointerType === "mouse" && e.button !== 0) return;
+      scrubbingRef.current = true;
+      e.currentTarget.setPointerCapture(e.pointerId);
+      scrubTo(e.clientX);
+    },
+    [scrubTo],
+  );
+  const onTrackPointerMove = useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      if (!scrubbingRef.current) return;
+      scrubTo(e.clientX);
+      setHoverHour(null);
+    },
+    [scrubTo],
+  );
+  const endScrub = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    if (!scrubbingRef.current) return;
+    scrubbingRef.current = false;
+    if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+      e.currentTarget.releasePointerCapture(e.pointerId);
+    }
+  }, []);
 
   const playheadFrac =
     effectiveMaxStep > 0 ? currentHour / effectiveMaxStep : 0;
@@ -136,75 +229,35 @@ export function Timeline({
       <div
         style={{ display: "flex", alignItems: "center", gap: 4, flexShrink: 0 }}
       >
-        <button
-          type="button"
-          className="tl-btn"
+        <TransportButton
           onClick={() => setCurrentHour(0)}
-          data-tooltip="Jump to start (Home)"
-          style={{
-            display: "inline-flex",
-            alignItems: "center",
-            justifyContent: "center",
-          }}
+          tooltip="Jump to start (Home)"
         >
-          <BackwardIcon style={{ width: 14, height: 14 }} />
-        </button>
-        <button
-          type="button"
-          className="tl-btn"
-          onClick={() => step(-1)}
-          data-tooltip="Step back (←)"
-          style={{
-            display: "inline-flex",
-            alignItems: "center",
-            justifyContent: "center",
-          }}
-        >
-          <ChevronDoubleLeftIcon style={{ width: 14, height: 14 }} />
-        </button>
-        <button
-          type="button"
+          <BackwardIcon style={TRANSPORT_ICON_STYLE} />
+        </TransportButton>
+        <TransportButton onClick={() => step(-1)} tooltip="Step back (←)">
+          <ChevronDoubleLeftIcon style={TRANSPORT_ICON_STYLE} />
+        </TransportButton>
+        <TransportButton
           className="tl-btn tl-play"
           onClick={() => setIsPlaying(!isPlaying)}
-          data-tooltip={isPlaying ? "Pause (Space)" : "Play (Space)"}
-          style={{
-            display: "inline-flex",
-            alignItems: "center",
-            justifyContent: "center",
-          }}
+          tooltip={isPlaying ? "Pause (Space)" : "Play (Space)"}
         >
           {isPlaying ? (
-            <PauseIcon style={{ width: 14, height: 14 }} />
+            <PauseIcon style={TRANSPORT_ICON_STYLE} />
           ) : (
-            <PlayIcon style={{ width: 14, height: 14 }} />
+            <PlayIcon style={TRANSPORT_ICON_STYLE} />
           )}
-        </button>
-        <button
-          type="button"
-          className="tl-btn"
-          onClick={() => step(1)}
-          data-tooltip="Step forward (→)"
-          style={{
-            display: "inline-flex",
-            alignItems: "center",
-            justifyContent: "center",
-          }}
-        >
-          <ChevronDoubleRightIcon style={{ width: 14, height: 14 }} />
-        </button>
-        <button
-          type="button"
-          className="tl-btn"
+        </TransportButton>
+        <TransportButton onClick={() => step(1)} tooltip="Step forward (→)">
+          <ChevronDoubleRightIcon style={TRANSPORT_ICON_STYLE} />
+        </TransportButton>
+        <TransportButton
           onClick={() => setCurrentHour(effectiveMaxStep)}
-          data-tooltip="Jump to end (End)"
-          style={{
-            display: "inline-flex",
-            alignItems: "center",
-            justifyContent: "center",
-          }}
+          tooltip="Jump to end (End)"
         >
-          <ForwardIcon style={{ width: 14, height: 14 }} />
-        </button>
+          <ForwardIcon style={TRANSPORT_ICON_STYLE} />
+        </TransportButton>
       </div>
 
       {/* Speed + loop */}
@@ -252,7 +305,7 @@ export function Timeline({
             lineHeight: 1,
           }}
         >
-          {timeLabels[currentHour] ?? timeLabels[timeLabels.length - 1]}
+          {labelAt(currentHour)}
         </span>
         <span
           style={{
@@ -278,6 +331,10 @@ export function Timeline({
         onKeyDown={handleTrackKeyDown}
         onMouseMove={onTrackMove}
         onMouseLeave={() => setHoverHour(null)}
+        onPointerDown={onTrackPointerDown}
+        onPointerMove={onTrackPointerMove}
+        onPointerUp={endScrub}
+        onPointerCancel={endScrub}
         style={{
           flex: 1,
           height: TRACK_H + 16,
@@ -376,8 +433,7 @@ export function Timeline({
           }}
         >
           {tickFracs.map((frac) => {
-            const idx = Math.round(frac * effectiveMaxStep);
-            const label = timeLabels[idx] ?? timeLabels[timeLabels.length - 1];
+            const label = labelAt(Math.round(frac * effectiveMaxStep));
             return <span key={`${label}-${frac}`}>{label}</span>;
           })}
         </div>

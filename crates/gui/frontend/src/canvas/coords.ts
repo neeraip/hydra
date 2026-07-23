@@ -33,7 +33,7 @@
  */
 
 import proj4 from "proj4";
-import type { Node } from "../types";
+import type { Link, Node } from "../types";
 
 export interface CustomCrsDefinition {
   label: string;
@@ -141,9 +141,9 @@ export function sniffCoordCrs(nodes: Node[]): "wgs84" | "projected" {
 /**
  * Canonical list of CRS options shown in the toolbar picker.
  *
- * Each entry has a human label, an EPSG code, and an optional proj4 definition
- * string for codes not bundled by default. UTM zones follow a naming pattern
- * and are generated on-demand by `ensureEpsgDef`.
+ * Each entry has a human label and an EPSG code. Definitions for codes not
+ * bundled by default (UTM/MGA zones follow a naming pattern) are generated
+ * on-demand by `ensureEpsgDef`.
  */
 export const COMMON_CRS: Array<{ label: string; epsg: string }> = [
   { label: "WGS 84 (EPSG:4326)", epsg: "EPSG:4326" },
@@ -260,7 +260,7 @@ export function reprojectNodesCached(
   }
 
   const converter = proj4(fromEpsg, "EPSG:4326");
-  return nodes.map((n) => {
+  const result = nodes.map((n) => {
     const hit = cache.get(n.id);
     if (hit && hit.src === n) return hit.out;
     const [lon, lat] = converter.forward([n.x, n.y]);
@@ -268,4 +268,194 @@ export function reprojectNodesCached(
     cache.set(n.id, { src: n, out });
     return out;
   });
+  // Evict entries for deleted nodes so long editing sessions don't grow the
+  // cache unboundedly. Only runs when deletions have actually happened.
+  if (cache.size > nodes.length) {
+    const live = new Set(nodes.map((n) => n.id));
+    for (const id of cache.keys()) {
+      if (!live.has(id)) cache.delete(id);
+    }
+  }
+  return result;
+}
+
+/**
+ * Reproject link polyline vertices from `fromEpsg` to WGS84, mirroring
+ * {@link reprojectNodesCached}: links whose *source object* is unchanged since
+ * the previous call reuse the previously produced output object (identity, no
+ * proj4 work), and links without vertices pass through untouched. When no
+ * link in the array carries vertices (or the CRS is already WGS84) the input
+ * array itself is returned so downstream identity-keyed memos stay stable.
+ *
+ * Throws like {@link reprojectNodes} for unknown CRS codes.
+ */
+export function reprojectLinkVerticesCached(
+  links: Link[],
+  fromEpsg: string,
+  cache: Map<string, { src: Link; out: Link }>,
+): Link[] {
+  if (fromEpsg === "EPSG:4326") return links; // no-op
+
+  if (!ensureEpsgDef(fromEpsg)) {
+    throw new Error(
+      `Unknown CRS: ${fromEpsg}. Provide a proj4 definition string or use a supported EPSG code.`,
+    );
+  }
+
+  const converter = proj4(fromEpsg, "EPSG:4326");
+  let anyVertices = false;
+  const result = links.map((l) => {
+    if (!l.vertices || l.vertices.length === 0) return l;
+    anyVertices = true;
+    const hit = cache.get(l.id);
+    if (hit && hit.src === l) return hit.out;
+    const vertices = l.vertices.map(
+      ([x, y]) => converter.forward([x, y]) as [number, number],
+    );
+    const out = { ...l, vertices };
+    cache.set(l.id, { src: l, out });
+    return out;
+  });
+  if (!anyVertices) return links;
+  if (cache.size > links.length) {
+    const live = new Set(links.map((l) => l.id));
+    for (const id of cache.keys()) {
+      if (!live.has(id)) cache.delete(id);
+    }
+  }
+  return result;
+}
+
+// ── CRS auto-suggestion ─────────────────────────────────────────────────────
+//
+// When coordinates look projected while the CRS is still the EPSG:4326
+// default, the canvas offers to scan the CRS catalog for plausible source
+// systems: each candidate inverse-projects a small sample of node coordinates
+// to WGS84 and is scored on validity + clustering. The scoring is pure logic
+// (no proj4, no DOM) so it can be unit-tested with synthetic transforms.
+
+/**
+ * Pick up to `count` spread-out sample coordinates from the node array.
+ * Skips the (0, 0) "missing coordinates" sentinel and takes evenly spaced
+ * indices so the sample covers the network's full extent rather than one
+ * corner of it.
+ */
+export function pickCoordSample(
+  nodes: Node[],
+  count = 20,
+): Array<[number, number]> {
+  const pts: Array<[number, number]> = [];
+  for (const n of nodes) {
+    if (n.x === 0 && n.y === 0) continue;
+    pts.push([n.x, n.y]);
+  }
+  if (pts.length <= count) return pts;
+  const step = pts.length / count;
+  const sample: Array<[number, number]> = new Array(count);
+  for (let i = 0; i < count; i += 1) {
+    sample[i] = pts[Math.floor(i * step)];
+  }
+  return sample;
+}
+
+/** Cluster-span (degrees) above which a candidate starts losing score. */
+const CRS_SUGGEST_TIGHT_SPAN_DEG = 5;
+
+/**
+ * Score a candidate CRS by inverse-projecting `points` (source-CRS x/y)
+ * through `transform` (candidate → WGS84 [lon, lat]).
+ *
+ * Returns a score in [0, 1]:
+ *   • 0 when no point projects to a finite, in-range lat/lon (or on empty
+ *     input) — the candidate is implausible.
+ *   • Otherwise `validFraction × clusterFactor`, where clusterFactor is 1 for
+ *     samples spanning ≤ ~5° (a plausibly network-sized footprint) and decays
+ *     linearly towards 0 as the span approaches the whole globe.
+ *
+ * Transform exceptions for individual points count as invalid rather than
+ * aborting — proj4 defs for exotic entries can throw on specific inputs.
+ */
+export function scoreCrsCandidate(
+  points: Array<[number, number]>,
+  transform: (pt: [number, number]) => [number, number],
+): number {
+  if (points.length === 0) return 0;
+  let valid = 0;
+  let minLon = Infinity;
+  let maxLon = -Infinity;
+  let minLat = Infinity;
+  let maxLat = -Infinity;
+  for (const pt of points) {
+    let lon: number;
+    let lat: number;
+    try {
+      [lon, lat] = transform(pt);
+    } catch {
+      continue;
+    }
+    if (!Number.isFinite(lon) || !Number.isFinite(lat)) continue;
+    if (lon < -180 || lon > 180 || lat < -90 || lat > 90) continue;
+    valid += 1;
+    if (lon < minLon) minLon = lon;
+    if (lon > maxLon) maxLon = lon;
+    if (lat < minLat) minLat = lat;
+    if (lat > maxLat) maxLat = lat;
+  }
+  if (valid === 0) return 0;
+  const validFraction = valid / points.length;
+  const span = Math.max(maxLon - minLon, maxLat - minLat);
+  const clusterFactor =
+    span <= CRS_SUGGEST_TIGHT_SPAN_DEG
+      ? 1
+      : Math.max(
+          0,
+          1 -
+            (span - CRS_SUGGEST_TIGHT_SPAN_DEG) /
+              (360 - CRS_SUGGEST_TIGHT_SPAN_DEG),
+        );
+  return validFraction * clusterFactor;
+}
+
+/**
+ * Build a candidate→WGS84 transform for a catalog entry, registering its
+ * proj4 definition when supplied. Returns `null` (never throws) when the
+ * definition is missing, unparsable, or the converter cannot be constructed —
+ * suggestion scanning skips such entries silently.
+ */
+export function getCrsToWgs84Transform(
+  epsgRaw: string,
+  proj4Def?: string,
+): ((pt: [number, number]) => [number, number]) | null {
+  const epsg = normalizeEpsgCode(epsgRaw);
+  if (!epsg) return null;
+  try {
+    if (!proj4.defs(epsg) && proj4Def?.trim()) {
+      proj4.defs(epsg, proj4Def.trim());
+    }
+    if (!ensureEpsgDef(epsg)) return null;
+    const converter = proj4(epsg, "EPSG:4326");
+    return (pt) => converter.forward(pt) as [number, number];
+  } catch {
+    return null;
+  }
+}
+
+// One-shot handoff of the coordinate sample from CanvasView's "Suggest CRS…"
+// action to CrsModal (which is opened through AppContext and receives no
+// props). Module-level rather than context state so neither side needs new
+// plumbing; `take` clears it so a plain modal open never re-triggers a scan.
+let pendingCrsSuggestionSample: Array<[number, number]> | null = null;
+
+export function setPendingCrsSuggestionSample(
+  sample: Array<[number, number]>,
+): void {
+  pendingCrsSuggestionSample = sample;
+}
+
+export function takePendingCrsSuggestionSample(): Array<
+  [number, number]
+> | null {
+  const sample = pendingCrsSuggestionSample;
+  pendingCrsSuggestionSample = null;
+  return sample;
 }

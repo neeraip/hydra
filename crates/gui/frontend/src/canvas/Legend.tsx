@@ -13,12 +13,13 @@ import { ChevronUpDownIcon, PlayIcon } from "@heroicons/react/16/solid";
 import React, { type CSSProperties, useEffect, useRef, useState } from "react";
 import {
   FLOW_GRADIENT_CSS,
+  LINK_RISK_GRADIENT_CSS,
   PRESSURE_GRADIENT_CSS,
   QUALITY_GRADIENT_CSS,
-  RISK_GRADIENT_CSS,
   SEQ_GRADIENT_CSS,
   VELOCITY_GRADIENT_CSS,
 } from "./colors";
+import { LINK_HEADLOSS_MAX } from "./MapCanvas/colorUtils";
 import type { LinkVariable, NodeVariable } from "./types";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -55,11 +56,11 @@ interface LegendProps {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-function nodeGradient(
-  nodeVar: NodeVariable,
-  colorMode: "relative" | "threshold",
-): string {
-  if (colorMode === "threshold") return RISK_GRADIENT_CSS;
+// The node gradient does not depend on colorMode: the map colours pressure
+// with the same red/amber/green/blue bands in both modes (pressureRgba — only
+// the cutoff values change in threshold mode), and head/demand/quality keep
+// their sequential ramps regardless of mode.
+function nodeGradient(nodeVar: NodeVariable): string {
   if (nodeVar === "pressure") return PRESSURE_GRADIENT_CSS;
   if (nodeVar === "quality") return QUALITY_GRADIENT_CSS;
   return SEQ_GRADIENT_CSS;
@@ -70,7 +71,13 @@ function linkGradient(
   colorMode: "relative" | "threshold",
 ): string | null {
   if (linkVar === "status") return null;
-  if (colorMode === "threshold") return RISK_GRADIENT_CSS;
+  // Headloss and quality have no threshold bands — their ramps are the same
+  // in both colour modes (headlossRgba / linkQualityRgba on the map).
+  if (linkVar === "headloss") return SEQ_GRADIENT_CSS;
+  if (linkVar === "quality") return QUALITY_GRADIENT_CSS;
+  // Threshold mode renders four discrete bands on the map
+  // (velocityRgba / flowMagnitudeRgba): green → amber → orange → red.
+  if (colorMode === "threshold") return LINK_RISK_GRADIENT_CSS;
   if (linkVar === "flow") return FLOW_GRADIENT_CSS;
   if (linkVar === "velocity") return VELOCITY_GRADIENT_CSS;
   return SEQ_GRADIENT_CSS;
@@ -83,11 +90,9 @@ function Ramp({
   min,
   max,
 }: {
-  label: string;
   gradient: string;
   min: number;
   max: number;
-  dot: boolean;
 }) {
   return (
     <div>
@@ -117,15 +122,19 @@ function Ramp({
   );
 }
 
+/** Discrete link-status legend colours — must match `statusRgba` in
+ * MapCanvas/colorUtils. */
+const STATUS_LEGEND = [
+  { color: "#78a0b9", label: "Open" },
+  { color: "#d4a017", label: "Active" },
+  { color: "#c94040", label: "Closed" },
+];
+
 function StatusSwatches() {
   return (
     <div>
       <div style={{ display: "flex", gap: 10 }}>
-        {[
-          { color: "#78a0b9", label: "Open" },
-          { color: "#d4a017", label: "Active" },
-          { color: "#c94040", label: "Closed" },
-        ].map(({ color, label }) => (
+        {STATUS_LEGEND.map(({ color, label }) => (
           <div
             key={label}
             style={{ display: "flex", alignItems: "center", gap: 5 }}
@@ -155,6 +164,14 @@ const inputStyle: CSSProperties = {
   color: "var(--text-primary)",
   fontSize: 10,
   boxSizing: "border-box",
+};
+
+/** Style for the "< low · target · > high" annotation under a ramp. */
+const THRESHOLD_ANNOTATION_STYLE: CSSProperties = {
+  marginTop: 5,
+  fontSize: 10,
+  color: "var(--text-tertiary)",
+  lineHeight: 1.5,
 };
 
 // ── Legend component ──────────────────────────────────────────────────────────
@@ -261,6 +278,58 @@ function PickerButton<T extends string>({
   );
 }
 
+/** One titled row of the threshold editor: three inputs + footer labels.
+ * `fields` are both the value keys and the input placeholders. */
+function ThresholdEditorSection<K extends string>({
+  title,
+  fields,
+  footLabels,
+  values,
+  onChange,
+}: {
+  title: string;
+  fields: readonly K[];
+  footLabels: readonly string[];
+  values: Record<K, string>;
+  onChange: (key: K, value: string) => void;
+}) {
+  return (
+    <div>
+      <div style={SECTION_LABEL_STYLE}>{title}</div>
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(3, 1fr)",
+          gap: 4,
+        }}
+      >
+        {fields.map((f) => (
+          <input
+            key={f}
+            value={values[f]}
+            onChange={(e) => onChange(f, e.target.value)}
+            placeholder={f}
+            style={inputStyle}
+          />
+        ))}
+      </div>
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          marginTop: 2,
+        }}
+      >
+        {footLabels.map((l) => (
+          <span key={l} style={{ fontSize: 9, color: "var(--text-disabled)" }}>
+            {l}
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export function Legend({
   nodeVar,
   setNodeVar,
@@ -347,7 +416,7 @@ export function Legend({
   }
 
   // Colour ramps
-  const ng = nodeGradient(nodeVar, colorMode);
+  const ng = nodeGradient(nodeVar);
   const lg = linkGradient(linkVar, colorMode);
 
   // Label range for node variable
@@ -373,6 +442,9 @@ export function Legend({
     }
     if (linkVar === "flow") return [0, flowMax];
     if (linkVar === "velocity") return [0, 1.5];
+    // Fixed cap matching headlossRgba's scale on the map.
+    if (linkVar === "headloss") return [0, LINK_HEADLOSS_MAX];
+    if (linkVar === "quality") return [qualityMin, qualityMax];
     return [0, 1];
   })();
 
@@ -394,7 +466,13 @@ export function Legend({
   const linkOptions: PickerOption<LinkVariable>[] = [
     { value: "flow", label: "Flow (L/s)" },
     { value: "velocity", label: "Velocity (m/s)" },
+    { value: "headloss", label: "Headloss (m/km)" },
     { value: "status", label: "Status" },
+    // Mirrors the node quality gating: only offered when the loaded result
+    // actually has quality data.
+    ...(qualityMode !== "none"
+      ? [{ value: "quality" as const, label: "Quality" }]
+      : []),
   ];
 
   return (
@@ -432,16 +510,9 @@ export function Legend({
             <div style={SECTION_LABEL_STYLE}>
               {nodeOptions.find((o) => o.value === nodeVar)?.label}
             </div>
-            <Ramp label="" gradient={ng} min={nMin} max={nMax} dot={false} />
+            <Ramp gradient={ng} min={nMin} max={nMax} />
             {showPressureAnnotations && (
-              <div
-                style={{
-                  marginTop: 5,
-                  fontSize: 10,
-                  color: "var(--text-tertiary)",
-                  lineHeight: 1.5,
-                }}
-              >
+              <div style={THRESHOLD_ANNOTATION_STYLE}>
                 {`< ${thresholds.pressure.low} low · ${thresholds.pressure.required} required · > ${thresholds.pressure.high} high`}
               </div>
             )}
@@ -456,13 +527,7 @@ export function Legend({
               <StatusSwatches />
             ) : (
               <>
-                <Ramp
-                  label=""
-                  gradient={lg ?? SEQ_GRADIENT_CSS}
-                  min={lMin}
-                  max={lMax}
-                  dot={false}
-                />
+                <Ramp gradient={lg ?? SEQ_GRADIENT_CSS} min={lMin} max={lMax} />
                 {(showVelAnnotations || showFlowAnnotations) &&
                   (() => {
                     const t =
@@ -470,14 +535,7 @@ export function Legend({
                         ? thresholds.velocity
                         : thresholds.flow;
                     return (
-                      <div
-                        style={{
-                          marginTop: 5,
-                          fontSize: 10,
-                          color: "var(--text-tertiary)",
-                          lineHeight: 1.5,
-                        }}
-                      >
+                      <div style={THRESHOLD_ANNOTATION_STYLE}>
                         {`< ${t.low} low · ${t.target} target · > ${t.high} high`}
                       </div>
                     );
@@ -510,194 +568,27 @@ export function Legend({
                 <div
                   style={{ display: "flex", flexDirection: "column", gap: 10 }}
                 >
-                  {/* Pressure */}
-                  <div>
-                    <div
-                      style={{
-                        fontSize: 10,
-                        color: "var(--text-secondary)",
-                        fontWeight: 600,
-                        marginBottom: 5,
-                      }}
-                    >
-                      Pressure (m)
-                    </div>
-                    <div
-                      style={{
-                        display: "grid",
-                        gridTemplateColumns: "repeat(3, 1fr)",
-                        gap: 4,
-                      }}
-                    >
-                      <input
-                        value={pressEd.low}
-                        onChange={(e) =>
-                          setPressEd((p) => ({ ...p, low: e.target.value }))
-                        }
-                        placeholder="low"
-                        style={inputStyle}
-                      />
-                      <input
-                        value={pressEd.required}
-                        onChange={(e) =>
-                          setPressEd((p) => ({
-                            ...p,
-                            required: e.target.value,
-                          }))
-                        }
-                        placeholder="required"
-                        style={inputStyle}
-                      />
-                      <input
-                        value={pressEd.high}
-                        onChange={(e) =>
-                          setPressEd((p) => ({ ...p, high: e.target.value }))
-                        }
-                        placeholder="high"
-                        style={inputStyle}
-                      />
-                    </div>
-                    <div
-                      style={{
-                        display: "flex",
-                        justifyContent: "space-between",
-                        marginTop: 2,
-                      }}
-                    >
-                      {["low", "req'd", "high"].map((l) => (
-                        <span
-                          key={l}
-                          style={{ fontSize: 9, color: "var(--text-disabled)" }}
-                        >
-                          {l}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-
-                  {/* Velocity */}
-                  <div>
-                    <div
-                      style={{
-                        fontSize: 10,
-                        color: "var(--text-secondary)",
-                        fontWeight: 600,
-                        marginBottom: 5,
-                      }}
-                    >
-                      Velocity (m/s)
-                    </div>
-                    <div
-                      style={{
-                        display: "grid",
-                        gridTemplateColumns: "repeat(3, 1fr)",
-                        gap: 4,
-                      }}
-                    >
-                      <input
-                        value={velEd.low}
-                        onChange={(e) =>
-                          setVelEd((p) => ({ ...p, low: e.target.value }))
-                        }
-                        placeholder="low"
-                        style={inputStyle}
-                      />
-                      <input
-                        value={velEd.target}
-                        onChange={(e) =>
-                          setVelEd((p) => ({ ...p, target: e.target.value }))
-                        }
-                        placeholder="target"
-                        style={inputStyle}
-                      />
-                      <input
-                        value={velEd.high}
-                        onChange={(e) =>
-                          setVelEd((p) => ({ ...p, high: e.target.value }))
-                        }
-                        placeholder="high"
-                        style={inputStyle}
-                      />
-                    </div>
-                    <div
-                      style={{
-                        display: "flex",
-                        justifyContent: "space-between",
-                        marginTop: 2,
-                      }}
-                    >
-                      {["low", "target", "high"].map((l) => (
-                        <span
-                          key={l}
-                          style={{ fontSize: 9, color: "var(--text-disabled)" }}
-                        >
-                          {l}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-
-                  {/* Flow */}
-                  <div>
-                    <div
-                      style={{
-                        fontSize: 10,
-                        color: "var(--text-secondary)",
-                        fontWeight: 600,
-                        marginBottom: 5,
-                      }}
-                    >
-                      Flow (L/s)
-                    </div>
-                    <div
-                      style={{
-                        display: "grid",
-                        gridTemplateColumns: "repeat(3, 1fr)",
-                        gap: 4,
-                      }}
-                    >
-                      <input
-                        value={flowEd.low}
-                        onChange={(e) =>
-                          setFlowEd((p) => ({ ...p, low: e.target.value }))
-                        }
-                        placeholder="low"
-                        style={inputStyle}
-                      />
-                      <input
-                        value={flowEd.target}
-                        onChange={(e) =>
-                          setFlowEd((p) => ({ ...p, target: e.target.value }))
-                        }
-                        placeholder="target"
-                        style={inputStyle}
-                      />
-                      <input
-                        value={flowEd.high}
-                        onChange={(e) =>
-                          setFlowEd((p) => ({ ...p, high: e.target.value }))
-                        }
-                        placeholder="high"
-                        style={inputStyle}
-                      />
-                    </div>
-                    <div
-                      style={{
-                        display: "flex",
-                        justifyContent: "space-between",
-                        marginTop: 2,
-                      }}
-                    >
-                      {["low", "target", "high"].map((l) => (
-                        <span
-                          key={l}
-                          style={{ fontSize: 9, color: "var(--text-disabled)" }}
-                        >
-                          {l}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
+                  <ThresholdEditorSection
+                    title="Pressure (m)"
+                    fields={["low", "required", "high"]}
+                    footLabels={["low", "req'd", "high"]}
+                    values={pressEd}
+                    onChange={(k, v) => setPressEd((p) => ({ ...p, [k]: v }))}
+                  />
+                  <ThresholdEditorSection
+                    title="Velocity (m/s)"
+                    fields={["low", "target", "high"]}
+                    footLabels={["low", "target", "high"]}
+                    values={velEd}
+                    onChange={(k, v) => setVelEd((p) => ({ ...p, [k]: v }))}
+                  />
+                  <ThresholdEditorSection
+                    title="Flow (L/s)"
+                    fields={["low", "target", "high"]}
+                    footLabels={["low", "target", "high"]}
+                    values={flowEd}
+                    onChange={(k, v) => setFlowEd((p) => ({ ...p, [k]: v }))}
+                  />
 
                   <button
                     type="button"
@@ -802,30 +693,17 @@ export function Legend({
             {/* Link ramp swatch (or discrete status swatches) */}
             {linkVar === "status" ? (
               <div style={{ display: "flex", gap: 2 }}>
-                <div
-                  style={{
-                    width: 8,
-                    height: 5,
-                    borderRadius: 3,
-                    background: "#78a0b9",
-                  }}
-                />
-                <div
-                  style={{
-                    width: 8,
-                    height: 5,
-                    borderRadius: 3,
-                    background: "#d4a017",
-                  }}
-                />
-                <div
-                  style={{
-                    width: 8,
-                    height: 5,
-                    borderRadius: 3,
-                    background: "#c94040",
-                  }}
-                />
+                {STATUS_LEGEND.map(({ color }) => (
+                  <div
+                    key={color}
+                    style={{
+                      width: 8,
+                      height: 5,
+                      borderRadius: 3,
+                      background: color,
+                    }}
+                  />
+                ))}
               </div>
             ) : (
               <div
@@ -874,7 +752,7 @@ export function Legend({
         {(() => {
           // Animation applies to Flow and Velocity only; "Reduce motion"
           // (Settings → Accessibility) always wins over the user toggle.
-          const animatable = linkVar !== "status";
+          const animatable = linkVar === "flow" || linkVar === "velocity";
           const disabled = reducedMotion || !animatable;
           const tooltip = reducedMotion
             ? "Animation off — Reduce motion is enabled in Settings"

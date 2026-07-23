@@ -7,9 +7,14 @@ import { describe, expect, it } from "vitest";
 import type { Link, Node } from "../../hooks";
 import {
   flowMagnitudeRgba,
+  headlossRgba,
+  LINK_HEADLOSS_MAX,
+  linkQualityRgba,
   linkRgba,
   nodeRgba,
   nodeTypeRgba,
+  qualityRgba,
+  sequentialRgba,
   statusRgba,
   velocityRgba,
 } from "./colorUtils";
@@ -96,6 +101,43 @@ describe("velocityRgba", () => {
   });
 });
 
+describe("headlossRgba", () => {
+  it("returns grey for missing data", () => {
+    expect(headlossRgba(null)).toEqual([100, 100, 100, 200]);
+    expect(headlossRgba(undefined)).toEqual([100, 100, 100, 200]);
+  });
+
+  it("ramps the sequential scale over the fixed 0..LINK_HEADLOSS_MAX range", () => {
+    expect(headlossRgba(0)).toEqual(sequentialRgba(0, 0, LINK_HEADLOSS_MAX));
+    expect(headlossRgba(0)).toEqual([0, 0, 255, 220]); // t=0 → blue end
+    expect(headlossRgba(5)).toEqual(sequentialRgba(5, 0, LINK_HEADLOSS_MAX));
+    expect(headlossRgba(LINK_HEADLOSS_MAX)).toEqual([255, 0, 0, 220]); // t=1
+    // Values above the cap clamp to the red end.
+    expect(headlossRgba(99)).toEqual([255, 0, 0, 220]);
+  });
+
+  it("colours by magnitude (reverse-flow headloss sign is ignored)", () => {
+    expect(headlossRgba(-5)).toEqual(headlossRgba(5));
+  });
+});
+
+describe("linkQualityRgba", () => {
+  it("returns grey for missing data", () => {
+    expect(linkQualityRgba(null, 0, 1)).toEqual([100, 100, 100, 200]);
+    expect(linkQualityRgba(undefined, 0, 1)).toEqual([100, 100, 100, 200]);
+  });
+
+  it("reuses the node quality ramp normalised to the result range", () => {
+    expect(linkQualityRgba(0, 0, 1)).toEqual(qualityRgba(0));
+    expect(linkQualityRgba(0.5, 0, 1)).toEqual(qualityRgba(0.5));
+    expect(linkQualityRgba(1, 0, 1)).toEqual(qualityRgba(1));
+    // Non-trivial range: 15 of [10, 20] → t = 0.5.
+    expect(linkQualityRgba(15, 10, 20)).toEqual(qualityRgba(0.5));
+    // Degenerate range guards against divide-by-zero.
+    expect(linkQualityRgba(5, 5, 5)).toEqual(qualityRgba(0));
+  });
+});
+
 // ── linkRgba dispatch ────────────────────────────────────────────────────────
 
 function makeLink(extra: Partial<Link> = {}): Link {
@@ -144,6 +186,36 @@ describe("linkRgba", () => {
     expect(linkRgba(makeLink({ status: 2 }), "status", 0)).toEqual(RED);
     expect(linkRgba(makeLink({ status: 3 }), "status", 0)).toEqual(BLUE_GREY);
     expect(linkRgba(makeLink(), "status", 0)).toEqual(BLUE_GREY); // no result
+  });
+
+  it("dispatches to headlossRgba for the headloss variable", () => {
+    expect(linkRgba(makeLink({ headloss: 5 }), "headloss", 0)).toEqual(
+      headlossRgba(5),
+    );
+    expect(linkRgba(makeLink(), "headloss", 0)).toEqual([100, 100, 100, 200]);
+    // Pumps stay amber even for headloss.
+    expect(
+      linkRgba(makeLink({ type: "pump", headloss: 5 }), "headloss", 0),
+    ).toEqual([212, 160, 23, 220]);
+  });
+
+  it("dispatches to linkQualityRgba for the quality variable", () => {
+    expect(
+      linkRgba(
+        makeLink({ quality: 15 }),
+        "quality",
+        0,
+        undefined,
+        undefined,
+        10,
+        20,
+      ),
+    ).toEqual(linkQualityRgba(15, 10, 20));
+    // Range defaults to [0, 1] when not supplied.
+    expect(linkRgba(makeLink({ quality: 0.5 }), "quality", 0)).toEqual(
+      linkQualityRgba(0.5, 0, 1),
+    );
+    expect(linkRgba(makeLink(), "quality", 0)).toEqual([100, 100, 100, 200]);
   });
 });
 

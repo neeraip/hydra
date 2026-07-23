@@ -6,12 +6,15 @@
  * `encode_network_snapshot_layout_roundtrips` test):
  *
  *   u32 version | u32 flags (bit 0 = present) | u32 nNodes | u32 nLinks |
+ *   u32 totalVerts | u32×3 reserved |
  *   f64×nNodes x | y |
+ *   f64×totalVerts vertexX | f64×totalVerts vertexY (link order) |
  *   f32×nNodes elevation | baseDemand | pressure | demand |
  *              tankMinLevel | tankMaxLevel | tankInitialLevel | tankDiameter |
  *   f32×nLinks velocity | diameter | length | roughness |
  *              pumpPowerKw | pumpSpeed | valveSetting |
  *   u8×nNodes nodeKind | u8×nLinks linkKind |
+ *   u32×nLinks vertexCount (possibly unaligned) |
  *   9 string columns (u32 byteLen + newline-joined UTF-8):
  *     node id | tankVolumeCurve | headPattern |
  *     link id | fromId | toId | pumpCurve | valveType | valveCurve
@@ -52,7 +55,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-const VERSION = 1;
+const VERSION = 2;
 const FLAG_PRESENT = 1;
 
 /** Incremental little-endian byte writer for hand-building test payloads. */
@@ -104,19 +107,37 @@ class ByteWriter {
   }
 }
 
+/** 32-byte v2 header: version, flags, counts, totalVerts, 3 reserved words. */
+function header(
+  w: ByteWriter,
+  nNodes: number,
+  nLinks: number,
+  totalVerts = 0,
+  flags = FLAG_PRESENT,
+): ByteWriter {
+  return w
+    .u32(VERSION)
+    .u32(flags)
+    .u32(nNodes)
+    .u32(nLinks)
+    .u32(totalVerts)
+    .u32(0)
+    .u32(0)
+    .u32(0);
+}
+
 /**
  * Mirrors the Rust `snapshot_test_dto` fixture: junction J1, tank T1,
  * reservoir R1; pipe P1, pump PU1, valve V1. All numeric values are exactly
  * representable in f32 so assertions can compare without rounding.
+ * Pipe P1 carries two intermediate polyline vertices; PU1/V1 carry none.
  */
 function buildFullSnapshot(): ArrayBuffer {
-  return new ByteWriter()
-    .u32(VERSION)
-    .u32(FLAG_PRESENT)
-    .u32(3) // nNodes
-    .u32(3) // nLinks
+  return header(new ByteWriter(), 3, 3, 2)
     .f64s([1.5, 3.0, -1.0]) // x
     .f64s([2.5, 4.0, 0.0]) // y
+    .f64s([1.75, 2.0]) // vertexX (P1's run)
+    .f64s([2.75, 3.5]) // vertexY
     .f32s([10.5, 50.0, 100.0]) // elevation
     .f32s([5.25, 0.0, 0.0]) // baseDemand
     .f32s([NaN, NaN, NaN]) // pressure (all absent)
@@ -134,6 +155,9 @@ function buildFullSnapshot(): ArrayBuffer {
     .f32s([NaN, NaN, 35.5]) // valveSetting
     .u8s([0, 1, 2]) // node kinds: junction, tank, reservoir
     .u8s([0, 1, 2]) // link kinds: pipe, pump, valve
+    .u32(2) // vertexCount: P1 has 2 vertices
+    .u32(0) // PU1
+    .u32(0) // V1
     .strCol(["J1", "T1", "R1"])
     .strCol(["", "VC1", ""]) // tankVolumeCurve
     .strCol(["", "", "PAT7"]) // headPattern
@@ -148,7 +172,7 @@ function buildFullSnapshot(): ArrayBuffer {
 
 /** Present-but-empty snapshot: header + nine zero-length string columns. */
 function buildEmptySnapshot(): ArrayBuffer {
-  const w = new ByteWriter().u32(VERSION).u32(FLAG_PRESENT).u32(0).u32(0);
+  const w = header(new ByteWriter(), 0, 0);
   for (let i = 0; i < 9; i += 1) w.strCol([]);
   return w.build();
 }
@@ -219,6 +243,10 @@ describe("decodeNetworkSnapshot", () => {
         type: "pipe",
         fromId: "J1",
         toId: "T1",
+        vertices: [
+          [1.75, 2.75],
+          [2.0, 3.5],
+        ],
         velocity: 0.5,
         diameter: 300,
         length: 1200,
@@ -263,6 +291,10 @@ describe("decodeNetworkSnapshot", () => {
         valveCurve: null,
       },
     ]);
+    // Links without vertices omit the field entirely (not `vertices: []` /
+    // `undefined`) so pre-v2 consumers see the exact same object shape.
+    expect("vertices" in res.links[1]).toBe(false);
+    expect("vertices" in res.links[2]).toBe(false);
   });
 
   it("composes with normalizeNodes as a no-op (nulls already explicit)", () => {
@@ -280,28 +312,50 @@ describe("decodeNetworkSnapshot", () => {
   });
 
   it("returns null when the present flag is clear (no network loaded)", () => {
-    const buf = new ByteWriter().u32(VERSION).u32(0).u32(0).u32(0).build();
+    const buf = header(new ByteWriter(), 0, 0, 0, 0).build();
     expect(decodeNetworkSnapshot(buf)).toBeNull();
   });
 
-  it("throws on a buffer shorter than the 16-byte header", () => {
+  it("throws on a buffer shorter than the 32-byte header", () => {
     expect(() => decodeNetworkSnapshot(new ArrayBuffer(0))).toThrow(
       /too short/,
     );
-    expect(() => decodeNetworkSnapshot(new ArrayBuffer(15))).toThrow(
+    expect(() => decodeNetworkSnapshot(new ArrayBuffer(31))).toThrow(
       /too short/,
     );
   });
 
-  it("throws on an unsupported version", () => {
-    const buf = new ByteWriter().u32(2).u32(FLAG_PRESENT).u32(0).u32(0).build();
-    expect(() => decodeNetworkSnapshot(buf)).toThrow(/unsupported version 2/);
+  it("throws on an unsupported version (v1 payloads are rejected)", () => {
+    const buf = new ByteWriter()
+      .u32(1)
+      .u32(FLAG_PRESENT)
+      .u32(0)
+      .u32(0)
+      .u32(0)
+      .u32(0)
+      .u32(0)
+      .u32(0)
+      .build();
+    expect(() => decodeNetworkSnapshot(buf)).toThrow(/unsupported version 1/);
   });
 
   it("throws when the fixed-width section is truncated", () => {
     const full = buildFullSnapshot();
-    const truncated = full.slice(0, 40); // header + part of the x column
+    const truncated = full.slice(0, 56); // header + part of the x column
     expect(() => decodeNetworkSnapshot(truncated)).toThrow(/truncated/);
+  });
+
+  it("throws when vertexCount does not sum to totalVerts", () => {
+    // Rebuild the full snapshot but claim only 1 vertex on P1 (of 2 encoded).
+    const full = new Uint8Array(buildFullSnapshot().slice(0));
+    // vertexCount column offset: 32 header + 48 x/y + 32 verts + 96 node f32
+    // + 84 link f32 + 6 kinds = 298.
+    const view = new DataView(full.buffer);
+    expect(view.getUint32(298, true)).toBe(2); // sanity: P1's count
+    view.setUint32(298, 1, true);
+    expect(() => decodeNetworkSnapshot(full.buffer)).toThrow(
+      /vertexCount sum 1 does not match totalVerts 2/,
+    );
   });
 
   it("throws when a string column is truncated", () => {
@@ -314,11 +368,7 @@ describe("decodeNetworkSnapshot", () => {
 
   it("throws when a string column has the wrong value count", () => {
     // Rebuild with a node-id column holding 2 values instead of 3.
-    const w = new ByteWriter()
-      .u32(VERSION)
-      .u32(FLAG_PRESENT)
-      .u32(3)
-      .u32(0)
+    const w = header(new ByteWriter(), 3, 0)
       .f64s([0, 0, 0])
       .f64s([0, 0, 0])
       .f32s([0, 0, 0])
@@ -337,11 +387,7 @@ describe("decodeNetworkSnapshot", () => {
   });
 
   it("throws on an unknown kind code", () => {
-    const w = new ByteWriter()
-      .u32(VERSION)
-      .u32(FLAG_PRESENT)
-      .u32(1)
-      .u32(0)
+    const w = header(new ByteWriter(), 1, 0)
       .f64(0)
       .f64(0)
       .f32s([0, 0, NaN, NaN, NaN, NaN, NaN, NaN])
@@ -380,7 +426,7 @@ describe("loadProjectNetwork", () => {
   it("returns null for a present-flag-clear payload (target INP missing)", async () => {
     stubTauriShell();
     mockInvoke.mockResolvedValueOnce(
-      new ByteWriter().u32(VERSION).u32(0).u32(0).u32(0).build(),
+      header(new ByteWriter(), 0, 0, 0, 0).build(),
     );
     await expect(loadProjectNetwork("p1", "s1")).resolves.toBeNull();
   });

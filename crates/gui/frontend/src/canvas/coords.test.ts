@@ -3,8 +3,10 @@ import type { Node } from "../types";
 import {
   COMMON_CRS,
   formatMeters,
+  pickCoordSample,
   pixelDistance,
   reprojectNodes,
+  scoreCrsCandidate,
   sniffCoordCrs,
 } from "./coords";
 
@@ -128,6 +130,95 @@ describe("reprojectNodes", () => {
 
   it("throws for an unknown non-UTM EPSG code", () => {
     expect(() => reprojectNodes([node("n1", 0, 0)], "EPSG:99999")).toThrow();
+  });
+});
+
+// ── scoreCrsCandidate ─────────────────────────────────────────────────────────
+
+describe("scoreCrsCandidate", () => {
+  const pts: Array<[number, number]> = [
+    [0, 0],
+    [1000, 1000],
+    [2000, 500],
+    [500, 2000],
+  ];
+  /** Synthetic transform: metres-ish → a tight lon/lat cluster near Sydney. */
+  const tight = ([x, y]: [number, number]): [number, number] => [
+    151 + x / 100_000,
+    -33.8 + y / 100_000,
+  ];
+
+  it("returns 0 for an empty sample", () => {
+    expect(scoreCrsCandidate([], tight)).toBe(0);
+  });
+
+  it("scores 1 when every point is valid and tightly clustered (span < 5°)", () => {
+    expect(scoreCrsCandidate(pts, tight)).toBe(1);
+  });
+
+  it("returns 0 when every point lands outside valid lat/lon", () => {
+    const wild = ([x, y]: [number, number]): [number, number] => [
+      x + 500,
+      y + 500,
+    ];
+    expect(scoreCrsCandidate(pts, wild)).toBe(0);
+  });
+
+  it("returns 0 when the transform throws or produces non-finite output", () => {
+    const throwing = (): [number, number] => {
+      throw new Error("bad def");
+    };
+    expect(scoreCrsCandidate(pts, throwing)).toBe(0);
+    const nan = (): [number, number] => [Number.NaN, 0];
+    expect(scoreCrsCandidate(pts, nan)).toBe(0);
+  });
+
+  it("scales by the fraction of valid points", () => {
+    // Half the points project out of range → score halves.
+    const half = ([x, y]: [number, number]): [number, number] =>
+      x >= 1000 ? [999, 999] : tight([x, y]);
+    expect(scoreCrsCandidate(pts, half)).toBeCloseTo(0.5, 5);
+  });
+
+  it("penalises loosely clustered results (span > 5°)", () => {
+    // Spread points across ~180° of longitude — valid but implausible.
+    const loose = ([x, y]: [number, number]): [number, number] => [
+      -90 + (x / 2000) * 180,
+      y / 1000,
+    ];
+    const score = scoreCrsCandidate(pts, loose);
+    expect(score).toBeGreaterThan(0);
+    expect(score).toBeLessThan(0.6);
+    // A tighter cluster always outranks a looser one at equal validity.
+    expect(scoreCrsCandidate(pts, tight)).toBeGreaterThan(score);
+  });
+});
+
+// ── pickCoordSample ───────────────────────────────────────────────────────────
+
+describe("pickCoordSample", () => {
+  it("skips (0, 0) missing-coordinate sentinels", () => {
+    const nodes = [node("a", 0, 0), node("b", 3, 4), node("c", 0, 0)];
+    expect(pickCoordSample(nodes)).toEqual([[3, 4]]);
+  });
+
+  it("returns all points when fewer than the requested count", () => {
+    const nodes = [node("a", 1, 2), node("b", 3, 4)];
+    expect(pickCoordSample(nodes, 20)).toEqual([
+      [1, 2],
+      [3, 4],
+    ]);
+  });
+
+  it("returns evenly spread points capped at the requested count", () => {
+    const nodes = Array.from({ length: 100 }, (_, i) =>
+      node(`n${i}`, i + 1, i + 1),
+    );
+    const sample = pickCoordSample(nodes, 20);
+    expect(sample).toHaveLength(20);
+    expect(sample[0]).toEqual([1, 1]);
+    // Spread: consecutive picks are ~5 indices apart, covering the range.
+    expect(sample[19][0]).toBeGreaterThanOrEqual(90);
   });
 });
 

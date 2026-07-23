@@ -56,6 +56,31 @@ const MAP_STYLES: Record<BasemapStyle, string | maplibregl.StyleSpecification> =
 
 const EMPTY_SCHEMATIC_COORDS: Map<string, [number, number]> = new Map();
 
+// Glow/halo ring tables (outer → inner) for the hover/selection highlight
+// layers built in buildLayers. Alphas/widths/radius pads are visual tuning —
+// the layer ids derived from these suffixes must stay stable (deck.gl matches
+// layers by id).
+const LINK_HOVER_GLOW = [
+  { suffix: "outer", alpha: 20, width: 18 },
+  { suffix: "mid", alpha: 50, width: 9 },
+  { suffix: "inner", alpha: 90, width: 4 },
+];
+const LINK_SELECTION_GLOW = [
+  { suffix: "outer", alpha: 40, width: 22 },
+  { suffix: "mid", alpha: 90, width: 10 },
+  { suffix: "inner", alpha: 170, width: 5 },
+];
+const NODE_HOVER_GLOW = [
+  { suffix: "outer", alpha: 18, radiusPad: 14 },
+  { suffix: "mid", alpha: 40, radiusPad: 8 },
+  { suffix: "inner", alpha: 70, radiusPad: 4 },
+];
+const NODE_SELECTION_GLOW = [
+  { suffix: "outer", alpha: 35, radiusPad: 18 },
+  { suffix: "mid", alpha: 80, radiusPad: 11 },
+  { suffix: "inner", alpha: 140, radiusPad: 5 },
+];
+
 /** Above this many on-screen labels, label layers render nothing — the text
  * would be unreadable overlap anyway and TextLayer tesselation at 46k ids
  * freezes the frame. Zoom in (or filter) to see labels on huge networks. */
@@ -181,7 +206,6 @@ export const MapCanvas = memo(function MapCanvas({
   const selectedNodeIdRef = useRef<string | null>(selectedNodeId);
   const selectedLinkIdRef = useRef<string | null>(selectedLinkId);
   const onSelectNodeRef = useRef(onSelectNode);
-  const onSelectLinkRef = useRef(onSelectLink);
   const mapRef = useRef<maplibregl.Map | null>(null);
   const overlayRef = useRef<MapboxOverlay | null>(null);
   const deckRef = useRef<Deck<OrthographicView> | null>(null);
@@ -198,7 +222,14 @@ export const MapCanvas = memo(function MapCanvas({
   // Measure tool: point A anchor + live cursor position for rubber-band line.
   const measureAnchorRef = useRef<[number, number] | null>(null);
   const measureCursorRef = useRef<[number, number] | null>(null);
-  const viewStateRef = useRef<CanvasViewState>(roughGeoViewState(nodes));
+  // Seeded lazily on first render: roughGeoViewState scans every node, so it
+  // must not run as a useRef initializer argument (those are evaluated on
+  // every render even though only the first value is kept).
+  const viewStateLazyRef = useRef<CanvasViewState | null>(null);
+  if (viewStateLazyRef.current === null) {
+    viewStateLazyRef.current = roughGeoViewState(nodes);
+  }
+  const viewStateRef = viewStateLazyRef as { current: CanvasViewState };
   const prevViewModeRef = useRef<ViewMode | null>(null);
   const prevBasemapRef = useRef<BasemapStyle>(basemap);
   const orthoViewRef = useRef(
@@ -232,6 +263,8 @@ export const MapCanvas = memo(function MapCanvas({
   // Initialised empty; kept current by useEffect once geoCoords is available.
   const geoCoordsRef = useRef<Map<string, [number, number]>>(new Map());
   const draggingNodeIdRef = useRef<string | null>(null);
+  // Pending 5 s drag-override fallback timer (armed on drop, see map mouseup).
+  const dragFallbackTimerRef = useRef<number | null>(null);
   // Tracks whether the current mousedown actually moved — suppresses deck.gl onClick.
   const didDragRef = useRef(false);
   // In add-link mode: the ID of the first selected node, waiting for the second.
@@ -250,7 +283,12 @@ export const MapCanvas = memo(function MapCanvas({
     if (cache && cache.nodes === nodes && cache.links === links) {
       return cache.coords;
     }
-    if (viewMode !== "schematic") return EMPTY_SCHEMATIC_COORDS;
+    if (viewMode !== "schematic") {
+      // Drop a stale cache rather than pinning an obsolete full generation
+      // of nodes/links/coords in memory until schematic is next opened.
+      schematicCacheRef.current = null;
+      return EMPTY_SCHEMATIC_COORDS;
+    }
     const coords = computeSchematicLayout(nodes, links);
     schematicCacheRef.current = { nodes, links, coords };
     return coords;
@@ -330,7 +368,6 @@ export const MapCanvas = memo(function MapCanvas({
       m.set(n.id, [n.x, n.y]);
     }
     return m;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [nodes]);
 
   useEffect(() => {
@@ -342,9 +379,6 @@ export const MapCanvas = memo(function MapCanvas({
   useEffect(() => {
     onSelectNodeRef.current = onSelectNode;
   }, [onSelectNode]);
-  useEffect(() => {
-    onSelectLinkRef.current = onSelectLink;
-  }, [onSelectLink]);
   useEffect(() => {
     toolRef.current = tool;
     // Picking is tool-gated; when a tool disables it, onHover(null) can never
@@ -433,7 +467,10 @@ export const MapCanvas = memo(function MapCanvas({
       if (nodeId) {
         const center = geoCoordsRef.current.get(nodeId);
         if (!center) return;
-        const currentZoom = Number(viewStateRef.current.zoom ?? 12);
+        // viewStateRef only tracks schematic view changes — MapLibre pans and
+        // zooms never write it — so read the live zoom from the map itself.
+        const mapZoom = map.getZoom();
+        const currentZoom = Number.isFinite(mapZoom) ? mapZoom : 12;
         const zoom = Math.max(currentZoom, 14);
         map.flyTo({ center, zoom, curve: 1, duration: 800 });
       } else if (linkId) {
@@ -490,7 +527,6 @@ export const MapCanvas = memo(function MapCanvas({
         deck.setProps({ viewState: vs });
       }
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [flyToKey, isActive, viewMode, flyToLinkId, flyToNodeId]);
 
   // ── deck.gl data arrays ────────────────────────────────────────────────────
@@ -501,34 +537,54 @@ export const MapCanvas = memo(function MapCanvas({
   // buffers by comparing `data` identity. With ~46k nodes/links, rebuilding
   // these arrays per frame meant re-tesselating and re-uploading everything at
   // 60 fps; with stable identity those frames only update a uniform.
-  const { linkData, nodeData, linkDatumById, nodeDatumById } = useMemo(() => {
-    const coordMap = viewMode === "schematic" ? schematicCoords : geoCoords;
-    const linkData = links
-      .map((l, si) => {
-        const from = coordMap.get(l.fromId);
-        const to = coordMap.get(l.toId);
-        if (!from || !to) return null;
-        return { ...l, from, to, si };
-      })
-      .filter(Boolean) as Array<
-      Link & { from: [number, number]; to: [number, number]; si: number }
-    >;
-    const nodeData = nodes
-      .map((n, si) => {
-        const position = coordMap.get(n.id);
-        if (!position) return null;
-        return { ...n, position, si };
-      })
-      .filter(Boolean) as Array<
-      Node & { position: [number, number]; si: number }
-    >;
-    return {
-      linkData,
-      nodeData,
-      linkDatumById: new Map(linkData.map((l) => [l.id, l])),
-      nodeDatumById: new Map(nodeData.map((n) => [n.id, n])),
-    };
-  }, [links, nodes, viewMode, schematicCoords, geoCoords]);
+  const { linkData, nodeData, linkDatumById, nodeDatumById, anyLinkVertices } =
+    useMemo(() => {
+      const isSchematic = viewMode === "schematic";
+      const coordMap = isSchematic ? schematicCoords : geoCoords;
+      // Display path precomputed once per network/viewMode change (not per
+      // accessor call over 46k links). Schematic mode ignores vertices — the
+      // BFS layout has no vertex positions, so links stay straight there.
+      let anyLinkVertices = false;
+      const linkData = links
+        .map((l, si) => {
+          const from = coordMap.get(l.fromId);
+          const to = coordMap.get(l.toId);
+          if (!from || !to) return null;
+          const verts =
+            !isSchematic && l.vertices && l.vertices.length > 0
+              ? l.vertices
+              : null;
+          if (verts) anyLinkVertices = true;
+          const path: [number, number][] = verts
+            ? [from, ...verts, to]
+            : [from, to];
+          return { ...l, from, to, path, si };
+        })
+        .filter(Boolean) as Array<
+        Link & {
+          from: [number, number];
+          to: [number, number];
+          path: [number, number][];
+          si: number;
+        }
+      >;
+      const nodeData = nodes
+        .map((n, si) => {
+          const position = coordMap.get(n.id);
+          if (!position) return null;
+          return { ...n, position, si };
+        })
+        .filter(Boolean) as Array<
+        Node & { position: [number, number]; si: number }
+      >;
+      return {
+        linkData,
+        nodeData,
+        linkDatumById: new Map(linkData.map((l) => [l.id, l])),
+        nodeDatumById: new Map(nodeData.map((n) => [n.id, n])),
+        anyLinkVertices,
+      };
+    }, [links, nodes, viewMode, schematicCoords, geoCoords]);
 
   const buildLayers = useCallback((): Layer[] => {
     const isSchematic = viewMode === "schematic";
@@ -543,6 +599,13 @@ export const MapCanvas = memo(function MapCanvas({
     const junctionRadius = 7;
     const specialRadius = 9;
 
+    // Threshold bands only apply in "threshold" colour mode.
+    const velThresh =
+      colorMode === "threshold" ? velocityThresholds : undefined;
+    const flowThresh = colorMode === "threshold" ? flowThresholds : undefined;
+    const pressThresh =
+      colorMode === "threshold" ? pressureThresholds : undefined;
+
     // While a node is being dragged (edit tool), patch the dragged node and
     // its incident links into fresh arrays so deck picks up the new
     // positions. Only runs during an active drag — the steady-state path
@@ -552,15 +615,13 @@ export const MapCanvas = memo(function MapCanvas({
     let nd = nodeData;
     if (drag) {
       const dragPos: [number, number] = [drag.lng, drag.lat];
-      ld = linkData.map((l) =>
-        l.fromId === drag.id || l.toId === drag.id
-          ? {
-              ...l,
-              from: l.fromId === drag.id ? dragPos : l.from,
-              to: l.toId === drag.id ? dragPos : l.to,
-            }
-          : l,
-      );
+      ld = linkData.map((l) => {
+        if (l.fromId !== drag.id && l.toId !== drag.id) return l;
+        const from = l.fromId === drag.id ? dragPos : l.from;
+        const to = l.toId === drag.id ? dragPos : l.to;
+        // Only the dragged endpoint moves; intermediate vertices stay fixed.
+        return { ...l, from, to, path: [from, ...l.path.slice(1, -1), to] };
+      });
       nd = nodeData.map((n) =>
         n.id === drag.id ? { ...n, position: dragPos } : n,
       );
@@ -595,234 +656,202 @@ export const MapCanvas = memo(function MapCanvas({
             flow: pr.linkFlow[d.si],
             velocity: pr.linkVelocity[d.si],
             status: pr.linkStatus[d.si],
+            headloss: pr.linkHeadloss[d.si],
             quality: pr.linkQuality ? pr.linkQuality[d.si] : null,
           }
         : d;
+
+    // Three concentric glow rings beneath a hovered/selected link. Returns []
+    // when the id is null or has no drawable datum.
+    const linkGlowLayers = (
+      linkId: string | null,
+      idPrefix: string,
+      rings: typeof LINK_HOVER_GLOW,
+    ): Layer[] => {
+      if (!linkId) return [];
+      const glowDatum = linkDatum(linkId);
+      if (!glowDatum) return [];
+      const link = linkSim(glowDatum);
+      const [r, g, b] = linkRgba(
+        link,
+        linkVar,
+        flowMax,
+        velThresh,
+        flowThresh,
+        qualityMin,
+        qualityMax,
+      );
+      const base = {
+        coordinateSystem: coordSystem,
+        // Same polyline path as the main link layers.
+        getPath: (d: typeof link) => d.path,
+        widthUnits: "pixels" as const,
+        capRounded: true as const,
+        jointRounded: true as const,
+        pickable: false as const,
+        updateTriggers: {},
+        data: [link],
+      };
+      return rings.map(
+        ({ suffix, alpha, width }) =>
+          new PathLayer({
+            ...base,
+            id: `${idPrefix}-${suffix}`,
+            getColor: [r, g, b, alpha] as unknown as RGBA,
+            getWidth: width,
+          }),
+      );
+    };
+
+    // Three concentric glow rings beneath a hovered/selected node.
+    const nodeGlowLayers = (
+      nodeId: string | null,
+      idPrefix: string,
+      rings: typeof NODE_HOVER_GLOW,
+    ): Layer[] => {
+      if (!nodeId) return [];
+      const glowDatum = nodeDatum(nodeId);
+      if (!glowDatum) return [];
+      const node = nodeSim(glowDatum);
+      const [r, g, b] = nodeRgba(
+        node,
+        nodeVar,
+        headMin,
+        headMax,
+        demandMin,
+        demandMax,
+        qualityMin,
+        qualityMax,
+        pressThresh,
+      );
+      const baseR = node.type === "junction" ? junctionRadius : specialRadius;
+      const base = {
+        coordinateSystem: coordSystem,
+        getPosition: (d: typeof node) => d.position,
+        radiusUnits: nodeRadiusUnits,
+        stroked: false,
+        pickable: false as const,
+        updateTriggers: {},
+        data: [node],
+      };
+      return rings.map(
+        ({ suffix, alpha, radiusPad }) =>
+          new ScatterplotLayer({
+            ...base,
+            id: `${idPrefix}-${suffix}`,
+            getRadius: baseR + radiusPad,
+            getFillColor: [r, g, b, alpha] as unknown as RGBA,
+          }),
+      );
+    };
 
     const layers: Layer[] = [];
 
     if (canvasLayers.model) {
       // ── Glow / halo layers — pushed FIRST so they render beneath links and nodes ──
+      // Hover halos are suppressed while the same element is selected.
       layers.push(
-        ...(() => {
-          if (!hoveredLinkId || hoveredLinkId === selectedLinkId) return [];
-          const hLinkBase = linkDatum(hoveredLinkId);
-          if (!hLinkBase) return [];
-          const hLink = linkSim(hLinkBase);
-          const [r, g, b] = linkRgba(
-            hLink,
-            linkVar,
-            flowMax,
-            colorMode === "threshold" ? velocityThresholds : undefined,
-            colorMode === "threshold" ? flowThresholds : undefined,
-          );
-          const base = {
-            coordinateSystem: coordSystem,
-            getPath: (d: typeof hLink) =>
-              [d.from, d.to] as [[number, number], [number, number]],
-            widthUnits: "pixels" as const,
-            capRounded: true as const,
-            jointRounded: true as const,
-            pickable: false as const,
-            updateTriggers: {},
-            data: [hLink],
-          };
-          return [
-            new PathLayer({
-              ...base,
-              id: "hover-link-glow-outer",
-              getColor: [r, g, b, 20] as unknown as RGBA,
-              getWidth: 18,
-            }),
-            new PathLayer({
-              ...base,
-              id: "hover-link-glow-mid",
-              getColor: [r, g, b, 50] as unknown as RGBA,
-              getWidth: 9,
-            }),
-            new PathLayer({
-              ...base,
-              id: "hover-link-glow-inner",
-              getColor: [r, g, b, 90] as unknown as RGBA,
-              getWidth: 4,
-            }),
-          ];
-        })(),
-        ...(() => {
-          if (!selectedLinkId) return [];
-          const sLinkBase = linkDatum(selectedLinkId);
-          if (!sLinkBase) return [];
-          const sLink = linkSim(sLinkBase);
-          const [r, g, b] = linkRgba(
-            sLink,
-            linkVar,
-            flowMax,
-            colorMode === "threshold" ? velocityThresholds : undefined,
-            colorMode === "threshold" ? flowThresholds : undefined,
-          );
-          const base = {
-            coordinateSystem: coordSystem,
-            getPath: (d: typeof sLink) =>
-              [d.from, d.to] as [[number, number], [number, number]],
-            widthUnits: "pixels" as const,
-            capRounded: true as const,
-            jointRounded: true as const,
-            pickable: false as const,
-            updateTriggers: {},
-            data: [sLink],
-          };
-          return [
-            new PathLayer({
-              ...base,
-              id: "selection-link-glow-outer",
-              getColor: [r, g, b, 40] as unknown as RGBA,
-              getWidth: 22,
-            }),
-            new PathLayer({
-              ...base,
-              id: "selection-link-glow-mid",
-              getColor: [r, g, b, 90] as unknown as RGBA,
-              getWidth: 10,
-            }),
-            new PathLayer({
-              ...base,
-              id: "selection-link-glow-inner",
-              getColor: [r, g, b, 170] as unknown as RGBA,
-              getWidth: 5,
-            }),
-          ];
-        })(),
-        ...(() => {
-          if (!hoveredNodeId || hoveredNodeId === selectedNodeId) return [];
-          const hNodeBase = nodeDatum(hoveredNodeId);
-          if (!hNodeBase) return [];
-          const hNode = nodeSim(hNodeBase);
-          const [r, g, b] = nodeRgba(
-            hNode,
-            nodeVar,
-            headMin,
-            headMax,
-            demandMin,
-            demandMax,
-            qualityMin,
-            qualityMax,
-            colorMode === "threshold" ? pressureThresholds : undefined,
-          );
-          const baseR =
-            hNode.type === "junction" ? junctionRadius : specialRadius;
-          const base = {
-            coordinateSystem: coordSystem,
-            getPosition: (d: typeof hNode) => d.position,
-            radiusUnits: nodeRadiusUnits,
-            stroked: false,
-            pickable: false as const,
-            updateTriggers: {},
-            data: [hNode],
-          };
-          return [
-            new ScatterplotLayer({
-              ...base,
-              id: "hover-glow-outer",
-              getRadius: baseR + 14,
-              getFillColor: [r, g, b, 18] as unknown as RGBA,
-            }),
-            new ScatterplotLayer({
-              ...base,
-              id: "hover-glow-mid",
-              getRadius: baseR + 8,
-              getFillColor: [r, g, b, 40] as unknown as RGBA,
-            }),
-            new ScatterplotLayer({
-              ...base,
-              id: "hover-glow-inner",
-              getRadius: baseR + 4,
-              getFillColor: [r, g, b, 70] as unknown as RGBA,
-            }),
-          ];
-        })(),
-        ...(() => {
-          if (!selectedNodeId) return [];
-          const sNodeBase = nodeDatum(selectedNodeId);
-          if (!sNodeBase) return [];
-          const sNode = nodeSim(sNodeBase);
-          const [r, g, b] = nodeRgba(
-            sNode,
-            nodeVar,
-            headMin,
-            headMax,
-            demandMin,
-            demandMax,
-            qualityMin,
-            qualityMax,
-            colorMode === "threshold" ? pressureThresholds : undefined,
-          );
-          const baseR =
-            sNode.type === "junction" ? junctionRadius : specialRadius;
-          const base = {
-            coordinateSystem: coordSystem,
-            getPosition: (d: typeof sNode) => d.position,
-            radiusUnits: nodeRadiusUnits,
-            stroked: false,
-            pickable: false as const,
-            updateTriggers: {},
-            data: [sNode],
-          };
-          return [
-            new ScatterplotLayer({
-              ...base,
-              id: "selection-glow-outer",
-              getRadius: baseR + 18,
-              getFillColor: [r, g, b, 35] as unknown as RGBA,
-            }),
-            new ScatterplotLayer({
-              ...base,
-              id: "selection-glow-mid",
-              getRadius: baseR + 11,
-              getFillColor: [r, g, b, 80] as unknown as RGBA,
-            }),
-            new ScatterplotLayer({
-              ...base,
-              id: "selection-glow-inner",
-              getRadius: baseR + 5,
-              getFillColor: [r, g, b, 140] as unknown as RGBA,
-            }),
-          ];
-        })(),
+        ...linkGlowLayers(
+          hoveredLinkId !== selectedLinkId ? hoveredLinkId : null,
+          "hover-link-glow",
+          LINK_HOVER_GLOW,
+        ),
+        ...linkGlowLayers(
+          selectedLinkId,
+          "selection-link-glow",
+          LINK_SELECTION_GLOW,
+        ),
+        ...nodeGlowLayers(
+          hoveredNodeId !== selectedNodeId ? hoveredNodeId : null,
+          "hover-glow",
+          NODE_HOVER_GLOW,
+        ),
+        ...nodeGlowLayers(
+          selectedNodeId,
+          "selection-glow",
+          NODE_SELECTION_GLOW,
+        ),
       );
 
       // ── Links and nodes — rendered on top of all halos ──
+      const onLinkHover = (info: { object?: unknown }) => {
+        const id = info.object ? (info.object as { id: string }).id : null;
+        hoveredLinkIdRef.current = id;
+        setHoveredLinkId(id);
+      };
+      const onLinkClick = (info: { object?: unknown }) => {
+        if (info.object) {
+          const id = (info.object as { id: string }).id;
+          onSelectLink(id === selectedLinkId ? null : id);
+        }
+      };
+      const linkColor = (d: (typeof ld)[number]) =>
+        linkRgba(
+          linkSim(d),
+          linkVar,
+          flowMax,
+          velThresh,
+          flowThresh,
+          qualityMin,
+          qualityMax,
+        );
+      const linkColorTriggers = [
+        linkVar,
+        flowMax,
+        colorMode,
+        velocityThresholds,
+        flowThresholds,
+        qualityMin,
+        qualityMax,
+        pr,
+      ];
+      // Link hover/click is only meaningful in select/edit; skipping the
+      // pick pass for other tools halves per-mousemove GPU picking cost.
+      const linksPickable = tool === "select" || tool === "edit";
       layers.push(
-        new LineLayer({
-          id: "links-hittarget",
-          data: ld,
-          coordinateSystem: coordSystem,
-          getSourcePosition: (d) => d.from,
-          getTargetPosition: (d) => d.to,
-          getColor: [0, 0, 0, 0] as unknown as RGBA,
-          getWidth: 12,
-          widthUnits: "pixels" as const,
-          // Link hover/click is only meaningful in select/edit; skipping the
-          // pick pass for other tools halves per-mousemove GPU picking cost.
-          pickable: tool === "select" || tool === "edit",
-          onHover: (info) => {
-            const id = info.object ? (info.object as { id: string }).id : null;
-            hoveredLinkIdRef.current = id;
-            setHoveredLinkId(id);
-          },
-          onClick: (info) => {
-            if (info.object) {
-              const id = (info.object as { id: string }).id;
-              onSelectLink(id === selectedLinkId ? null : id);
-            }
-          },
-          updateTriggers: {},
-        }),
-        // The animated flow layer and the static line layer must use distinct
-        // ids: deck.gl matches layers by id alone and transfers the old
-        // layer's state (compiled shader model included) into the new
-        // instance without checking the class, so reusing one id across
-        // FlowPathLayer/LineLayer left the old model rendering after a
-        // legend variable switch crossed the flow boundary.
+        // LineLayer cannot render polylines, so networks with link vertices
+        // use PathLayer-based variants. Those get their OWN ids
+        // ("…-path"): deck.gl matches layers by id alone and transfers the
+        // old layer's state (compiled shader model included) into the new
+        // instance without checking the class, so a layer class must never
+        // change under a reused id. Vertex-free networks keep the cheaper
+        // LineLayer fast path under the original ids.
+        ...(anyLinkVertices
+          ? [
+              new PathLayer({
+                id: "links-hittarget-path",
+                data: ld,
+                coordinateSystem: coordSystem,
+                getPath: (d) => d.path,
+                getColor: [0, 0, 0, 0] as unknown as RGBA,
+                getWidth: 12,
+                widthUnits: "pixels" as const,
+                pickable: linksPickable,
+                onHover: onLinkHover,
+                onClick: onLinkClick,
+                updateTriggers: {},
+              }),
+            ]
+          : [
+              new LineLayer({
+                id: "links-hittarget",
+                data: ld,
+                coordinateSystem: coordSystem,
+                getSourcePosition: (d) => d.from,
+                getTargetPosition: (d) => d.to,
+                getColor: [0, 0, 0, 0] as unknown as RGBA,
+                getWidth: 12,
+                widthUnits: "pixels" as const,
+                pickable: linksPickable,
+                onHover: onLinkHover,
+                onClick: onLinkClick,
+                updateTriggers: {},
+              }),
+            ]),
+        // The animated flow layer and the static layers must use distinct
+        // ids for the same class-transfer reason as above. FlowPathLayer is
+        // already a PathLayer, so it renders the full polyline in both the
+        // straight and vertex cases under its single id.
         ...(animateLinks && (linkVar === "flow" || linkVar === "velocity")
           ? [
               new FlowPathLayer({
@@ -831,15 +860,8 @@ export const MapCanvas = memo(function MapCanvas({
                 coordinateSystem: coordSystem,
                 // Geometry is static; flow direction is encoded in the sign
                 // of the speed param so reverse flow never re-tesselates.
-                getPath: (d) => [d.from, d.to] as [number, number][],
-                getColor: (d) =>
-                  linkRgba(
-                    linkSim(d),
-                    linkVar,
-                    flowMax,
-                    colorMode === "threshold" ? velocityThresholds : undefined,
-                    colorMode === "threshold" ? flowThresholds : undefined,
-                  ),
+                getPath: (d) => d.path,
+                getColor: linkColor,
                 getWidth: 2,
                 widthUnits: "pixels" as const,
                 capRounded: true,
@@ -860,48 +882,45 @@ export const MapCanvas = memo(function MapCanvas({
                   return [speed * dir, 1.0, hashStr(d.id) * 6.28318];
                 },
                 updateTriggers: {
-                  getColor: [
-                    linkVar,
-                    flowMax,
-                    colorMode,
-                    velocityThresholds,
-                    flowThresholds,
-                    pr,
-                  ],
+                  getColor: linkColorTriggers,
                   getFlowParams: [flowMax, pr],
                 },
               }),
             ]
-          : [
-              new LineLayer({
-                id: "links-static",
-                data: ld,
-                coordinateSystem: coordSystem,
-                getSourcePosition: (d) => d.from,
-                getTargetPosition: (d) => d.to,
-                getColor: (d) =>
-                  linkRgba(
-                    linkSim(d),
-                    linkVar,
-                    flowMax,
-                    colorMode === "threshold" ? velocityThresholds : undefined,
-                    colorMode === "threshold" ? flowThresholds : undefined,
-                  ),
-                getWidth: 2,
-                widthUnits: "pixels" as const,
-                pickable: false,
-                updateTriggers: {
-                  getColor: [
-                    linkVar,
-                    flowMax,
-                    colorMode,
-                    velocityThresholds,
-                    flowThresholds,
-                    pr,
-                  ],
-                },
-              }),
-            ]),
+          : anyLinkVertices
+            ? [
+                new PathLayer({
+                  id: "links-static-path",
+                  data: ld,
+                  coordinateSystem: coordSystem,
+                  getPath: (d) => d.path,
+                  getColor: linkColor,
+                  getWidth: 2,
+                  widthUnits: "pixels" as const,
+                  capRounded: true,
+                  jointRounded: true,
+                  pickable: false,
+                  updateTriggers: {
+                    getColor: linkColorTriggers,
+                  },
+                }),
+              ]
+            : [
+                new LineLayer({
+                  id: "links-static",
+                  data: ld,
+                  coordinateSystem: coordSystem,
+                  getSourcePosition: (d) => d.from,
+                  getTargetPosition: (d) => d.to,
+                  getColor: linkColor,
+                  getWidth: 2,
+                  widthUnits: "pixels" as const,
+                  pickable: false,
+                  updateTriggers: {
+                    getColor: linkColorTriggers,
+                  },
+                }),
+              ]),
         new ScatterplotLayer({
           id: "nodes",
           data: nd,
@@ -917,7 +936,7 @@ export const MapCanvas = memo(function MapCanvas({
               demandMax,
               qualityMin,
               qualityMax,
-              colorMode === "threshold" ? pressureThresholds : undefined,
+              pressThresh,
             ),
           getRadius: (d) =>
             d.type === "junction" ? junctionRadius : specialRadius,
@@ -1049,6 +1068,9 @@ export const MapCanvas = memo(function MapCanvas({
           id: "labels-links",
           data: labelLinks,
           coordinateSystem: coordSystem,
+          // Deliberately the from/to chord midpoint (not the polyline
+          // midpoint): cheap, stable across vertex edits, and close enough
+          // for a floating id label.
           getPosition: (d) =>
             [(d.from[0] + d.to[0]) / 2, (d.from[1] + d.to[1]) / 2] as [
               number,
@@ -1142,6 +1164,7 @@ export const MapCanvas = memo(function MapCanvas({
     nodeData,
     linkDatumById,
     nodeDatumById,
+    anyLinkVertices,
     periodResult,
     nodes,
     links,
@@ -1289,6 +1312,12 @@ export const MapCanvas = memo(function MapCanvas({
       const nodeId = hoveredNodeIdRef.current;
       if (!nodeId) return;
       didDragRef.current = false;
+      // A previous drop's fallback timer would clear this new drag's position
+      // override mid-drag — cancel it.
+      if (dragFallbackTimerRef.current != null) {
+        window.clearTimeout(dragFallbackTimerRef.current);
+        dragFallbackTimerRef.current = null;
+      }
       draggingNodeIdRef.current = nodeId;
       draggingNodePosRef.current = {
         id: nodeId,
@@ -1338,7 +1367,8 @@ export const MapCanvas = memo(function MapCanvas({
       // Failed/absent position patches never refresh geoCoords, which is what
       // normally clears the drag override — without this fallback the drag
       // branch of buildLayers (fresh 46k arrays per frame) stays pinned on.
-      window.setTimeout(() => {
+      dragFallbackTimerRef.current = window.setTimeout(() => {
+        dragFallbackTimerRef.current = null;
         if (!draggingNodeIdRef.current && draggingNodePosRef.current) {
           draggingNodePosRef.current = null;
           overlayRef.current?.setProps({ layers: buildLayersRef.current() });
@@ -1379,6 +1409,10 @@ export const MapCanvas = memo(function MapCanvas({
     });
 
     return () => {
+      if (dragFallbackTimerRef.current != null) {
+        window.clearTimeout(dragFallbackTimerRef.current);
+        dragFallbackTimerRef.current = null;
+      }
       try {
         map.removeControl(overlay);
       } catch {
@@ -1400,7 +1434,6 @@ export const MapCanvas = memo(function MapCanvas({
       deckCanvasRef.current = null;
       mapRef.current = null;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [markFirstFrame, scheduleLabelRefresh]);
 
   useEffect(() => {
@@ -1418,7 +1451,6 @@ export const MapCanvas = memo(function MapCanvas({
     });
     markFirstFrame("schematic");
     if (deckCanvasRef.current) deckCanvasRef.current.style.display = "";
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ensureDeck, isActive, markFirstFrame, schematicCoords, viewMode]);
 
   useEffect(() => {
@@ -1431,18 +1463,27 @@ export const MapCanvas = memo(function MapCanvas({
   const linkAnimationActive =
     animateLinks && (linkVar === "flow" || linkVar === "velocity");
 
+  // Flow-animation loop — one RAF effect drives both view modes, pushing
+  // fresh layers to the schematic deck or the map overlay. The clock resets
+  // whenever the schematic loop is not running (inactive tab, animation off,
+  // or map mode); this matches the previous per-mode effects, where the
+  // schematic effect reset the clock in exactly those states and the map loop
+  // then advanced it from zero.
   useEffect(() => {
-    if (!isActive || viewMode !== "schematic" || !linkAnimationActive) {
+    if (!isActive || !linkAnimationActive || viewMode !== "schematic") {
       flowAnimRef.current = 0;
-      return;
     }
+    if (!isActive || !linkAnimationActive) return;
+    const isSchematic = viewMode === "schematic";
     let rafId: number;
     let lastTs = performance.now();
     function tick(now: number) {
       const dt = Math.min(now - lastTs, 50);
       lastTs = now;
-      flowAnimRef.current += dt * 0.001;
-      deckRef.current?.setProps({ layers: buildLayersRef.current() });
+      flowAnimRef.current = (flowAnimRef.current + dt * 0.001) % 3600;
+      const layers = buildLayersRef.current();
+      if (isSchematic) deckRef.current?.setProps({ layers });
+      else overlayRef.current?.setProps({ layers });
       rafId = requestAnimationFrame(tick);
     }
     rafId = requestAnimationFrame(tick);
@@ -1456,28 +1497,13 @@ export const MapCanvas = memo(function MapCanvas({
     markFirstFrame("map");
   }, [buildLayers, isActive, markFirstFrame, viewMode]);
 
-  // Map-mode flow animation via overlay.
-  useEffect(() => {
-    if (!isActive || viewMode !== "map" || !linkAnimationActive) return;
-    let rafId: number;
-    let lastTs = performance.now();
-    function tick(now: number) {
-      const dt = Math.min(now - lastTs, 50);
-      lastTs = now;
-      flowAnimRef.current += dt * 0.001;
-      overlayRef.current?.setProps({ layers: buildLayersRef.current() });
-      rafId = requestAnimationFrame(tick);
-    }
-    rafId = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(rafId);
-  }, [isActive, linkAnimationActive, viewMode]);
-
-  // Drop all render layers while inactive so hidden tabs don't keep repainting.
-  useEffect(() => {
-    if (isActive) return;
-    overlayRef.current?.setProps({ layers: [] });
-    deckRef.current?.setProps({ layers: [] });
-  }, [isActive]);
+  // Deliberately KEEP layers mounted while inactive: every setProps path and
+  // the flow-animation RAF loop are isActive-gated, so a hidden canvas does zero work, and
+  // retaining deck's attribute buffers makes switching back to the Canvas tab
+  // near-instant. Dropping layers here previously forced a full accessor +
+  // tesselation + GPU upload rebuild (~100-400ms at 46k) per re-activation.
+  // (If the network changed while hidden, the re-activation effects push the
+  // updated layers as usual.)
 
   // Basemap style change — MapboxOverlay re-attaches automatically as IControl.
   useEffect(() => {
@@ -1576,49 +1602,40 @@ export const MapCanvas = memo(function MapCanvas({
     prevZoomOutKeyRef.current = zoomOutKey;
     prevResetNorthKeyRef.current = resetNorthKey;
 
-    if (zoomInChanged) {
+    // Zoom one step in the active view. Map clamps to [0, 22]; schematic
+    // (log2 orthographic zoom) clamps to [-6, 12]. Returns false only when
+    // the schematic deck is unavailable.
+    const zoomStep = (dir: 1 | -1): boolean => {
       if (viewMode === "map") {
         const map = mapRef.current;
         if (map) {
           map.easeTo({
-            zoom: Math.min(22, map.getZoom() + 1),
+            zoom:
+              dir === 1
+                ? Math.min(22, map.getZoom() + 1)
+                : Math.max(0, map.getZoom() - 1),
             duration: 220,
           });
         }
-      } else {
-        const deck = ensureDeck();
-        if (!deck) return;
-        const current = viewStateRef.current as SchematicViewState;
-        const vs = {
-          target: current.target,
-          zoom: Math.min(12, Number(current.zoom ?? 0) + 1),
-        };
-        viewStateRef.current = vs;
-        deck.setProps({ viewState: vs });
+        return true;
       }
-    }
+      const deck = ensureDeck();
+      if (!deck) return false;
+      const current = viewStateRef.current as SchematicViewState;
+      const vs = {
+        target: current.target,
+        zoom:
+          dir === 1
+            ? Math.min(12, Number(current.zoom ?? 0) + 1)
+            : Math.max(-6, Number(current.zoom ?? 0) - 1),
+      };
+      viewStateRef.current = vs;
+      deck.setProps({ viewState: vs });
+      return true;
+    };
 
-    if (zoomOutChanged) {
-      if (viewMode === "map") {
-        const map = mapRef.current;
-        if (map) {
-          map.easeTo({
-            zoom: Math.max(0, map.getZoom() - 1),
-            duration: 220,
-          });
-        }
-      } else {
-        const deck = ensureDeck();
-        if (!deck) return;
-        const current = viewStateRef.current as SchematicViewState;
-        const vs = {
-          target: current.target,
-          zoom: Math.max(-6, Number(current.zoom ?? 0) - 1),
-        };
-        viewStateRef.current = vs;
-        deck.setProps({ viewState: vs });
-      }
-    }
+    if (zoomInChanged && !zoomStep(1)) return;
+    if (zoomOutChanged && !zoomStep(-1)) return;
 
     if (resetNorthChanged && viewMode === "map") {
       mapRef.current?.easeTo({ bearing: 0, pitch: 0, duration: 260 });

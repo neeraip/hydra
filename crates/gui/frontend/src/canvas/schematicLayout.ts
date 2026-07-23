@@ -3,8 +3,6 @@ import type { Link, Node } from "../hooks";
 /**
  * Compute a schematic (topological) layout for a network graph.
  *
- * Ported directly from crates/gui/frontend/src/schematicLayout.ts.
- *
  * Uses BFS from source nodes (reservoirs, tanks) to arrange nodes in
  * depth-based layers with equidistant spacing. Nodes at the same BFS
  * depth are placed vertically; layers advance horizontally.

@@ -2,8 +2,11 @@ import { XMarkIcon } from "@heroicons/react/16/solid";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useActiveProject, useAppState } from "../../AppContext";
 import {
+  getCrsToWgs84Transform,
   normalizeEpsgCode,
   registerCustomCrsDefinitions,
+  scoreCrsCandidate,
+  takePendingCrsSuggestionSample,
   validateCustomCrsDefinition,
 } from "../../canvas/coords";
 import {
@@ -16,6 +19,20 @@ import {
   updateProjectCrs,
   upsertCustomCrsDef,
 } from "../../hooks";
+import { ModalBackdrop, stopBackdropEvents } from "../ui/ModalBackdrop";
+
+interface CrsSuggestState {
+  status: "scanning" | "done" | "cancelled";
+  scanned: number;
+  total: number;
+  /** Running top candidates, best first. */
+  results: Array<{ entry: CrsCatalogEntry; score: number }>;
+}
+
+/** Catalog page size while scanning for suggestions (larger than the picker's
+ * 80 to cut IPC round trips; each chunk still yields between pages). */
+const SUGGEST_SCAN_PAGE_SIZE = 200;
+const SUGGEST_MAX_RESULTS = 10;
 
 export function CrsModal() {
   const PAGE_SIZE = 80;
@@ -48,6 +65,9 @@ export function CrsModal() {
   const [panelView, setPanelView] = useState<"select" | "custom">("select");
   const [projectSaving, setProjectSaving] = useState(false);
   const resultButtonRefs = useRef<Array<HTMLButtonElement | null>>([]);
+  // ── CRS auto-suggestion (armed by CanvasView via the pending sample) ──────
+  const [suggest, setSuggest] = useState<CrsSuggestState | null>(null);
+  const suggestCancelRef = useRef(false);
 
   const dismissModal = useCallback(() => {
     setDraftCrs(project?.sourceCrs ?? "");
@@ -88,14 +108,28 @@ export function CrsModal() {
     let cancelled = false;
     setCatalogLoading(true);
     void (async () => {
-      const page = await listCrsCatalogPage({
-        query,
-        page: pageIndex,
-        pageSize: PAGE_SIZE,
-      });
-      if (cancelled) return;
-      setCatalogPage(page);
-      setCatalogLoading(false);
+      try {
+        const page = await listCrsCatalogPage({
+          query,
+          page: pageIndex,
+          pageSize: PAGE_SIZE,
+        });
+        if (cancelled) return;
+        setCatalogPage(page);
+      } catch (err) {
+        // Fall back to an empty page — the list renders its no-matches state.
+        console.error("Failed to load CRS catalog page:", err);
+        if (cancelled) return;
+        setCatalogPage({
+          items: [],
+          total: 0,
+          page: 0,
+          pageSize: PAGE_SIZE,
+          hasMore: false,
+        });
+      } finally {
+        if (!cancelled) setCatalogLoading(false);
+      }
     })();
     return () => {
       cancelled = true;
@@ -132,6 +166,81 @@ export function CrsModal() {
     return () => window.removeEventListener("keydown", onKey);
   }, [crsModalOpen, dismissModal]);
 
+  // Best-effort background scan of the CRS catalog: inverse-project the
+  // sample through every candidate and keep a running top-N by plausibility.
+  // Processed page-by-page (the catalog IPC is paged) with a yield between
+  // chunks so the modal stays responsive; entries whose proj4 defs fail to
+  // parse are skipped silently.
+  useEffect(() => {
+    if (!crsModalOpen) {
+      setSuggest(null);
+      return;
+    }
+    const sample = takePendingCrsSuggestionSample();
+    if (!sample || sample.length === 0) return;
+    suggestCancelRef.current = false;
+    let disposed = false;
+    setSuggest({ status: "scanning", scanned: 0, total: 0, results: [] });
+    void (async () => {
+      const scored: CrsSuggestState["results"] = [];
+      let scanned = 0;
+      let pageIdx = 0;
+      let interrupted = false;
+      for (;;) {
+        if (disposed) return;
+        if (suggestCancelRef.current) {
+          interrupted = true;
+          break;
+        }
+        let page: CrsCatalogPage;
+        try {
+          page = await listCrsCatalogPage({
+            query: "",
+            page: pageIdx,
+            pageSize: SUGGEST_SCAN_PAGE_SIZE,
+          });
+        } catch {
+          break;
+        }
+        if (disposed) return;
+        for (const entry of page.items) {
+          // The failing default itself is never a useful suggestion.
+          if (normalizeEpsgCode(entry.epsg) === "EPSG:4326") continue;
+          const transform = getCrsToWgs84Transform(entry.epsg, entry.proj4);
+          if (!transform) continue;
+          const score = scoreCrsCandidate(sample, transform);
+          if (score > 0) scored.push({ entry, score });
+        }
+        // Keeping only the running top-N is lossless: an evicted candidate
+        // can never re-enter a top list it already lost to.
+        scored.sort((a, b) => b.score - a.score);
+        if (scored.length > SUGGEST_MAX_RESULTS) {
+          scored.length = SUGGEST_MAX_RESULTS;
+        }
+        scanned += page.items.length;
+        if (!suggestCancelRef.current) {
+          setSuggest({
+            status: "scanning",
+            scanned,
+            total: page.total,
+            results: [...scored],
+          });
+        }
+        if (!page.hasMore || page.items.length === 0) break;
+        pageIdx += 1;
+        // Yield to the event loop between catalog chunks.
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+      if (disposed) return;
+      setSuggest((s) =>
+        s ? { ...s, status: interrupted ? "cancelled" : "done" } : s,
+      );
+    })();
+    return () => {
+      disposed = true;
+    };
+  }, [crsModalOpen]);
+
   const normalizedSaved = normalizeEpsgCode(project?.sourceCrs ?? "");
   const normalizedDraft = normalizeEpsgCode(draftCrs);
   const dirty = normalizedDraft !== normalizedSaved;
@@ -152,41 +261,57 @@ export function CrsModal() {
     setDraftCrs(code);
   }
 
-  const saveProjectCrs = useCallback(async () => {
-    if (!activeProjectId || !project) return;
+  // Shared persist path: used by the Save button (with the draft code) and by
+  // the suggestion list's one-click Apply (with the candidate's code).
+  const persistCrs = useCallback(
+    async (code: string) => {
+      if (!activeProjectId || !project) return;
 
-    if (!normalizedDraft) {
-      showToast("Select a CRS code before saving.", "warn");
-      return;
-    }
-
-    if (!dirty) {
-      closeCrsModal();
-      return;
-    }
-
-    setProjectSaving(true);
-    try {
-      const ok = await updateProjectCrs(activeProjectId, normalizedDraft);
-      if (!ok) {
-        showToast("Could not update source CRS.", "error");
+      if (!code) {
+        showToast("Select a CRS code before saving.", "warn");
         return;
       }
-      bumpProjects();
-      showToast(`Source CRS updated to ${normalizedDraft}.`, "success");
-      closeCrsModal();
-    } finally {
-      setProjectSaving(false);
-    }
-  }, [
-    activeProjectId,
-    bumpProjects,
-    closeCrsModal,
-    dirty,
-    normalizedDraft,
-    project,
-    showToast,
-  ]);
+
+      if (code === normalizedSaved) {
+        closeCrsModal();
+        return;
+      }
+
+      setProjectSaving(true);
+      try {
+        const ok = await updateProjectCrs(activeProjectId, code);
+        if (!ok) {
+          showToast("Could not update source CRS.", "error");
+          return;
+        }
+        bumpProjects();
+        showToast(`Source CRS updated to ${code}.`, "success");
+        closeCrsModal();
+      } finally {
+        setProjectSaving(false);
+      }
+    },
+    [
+      activeProjectId,
+      bumpProjects,
+      closeCrsModal,
+      normalizedSaved,
+      project,
+      showToast,
+    ],
+  );
+
+  const saveProjectCrs = useCallback(
+    () => persistCrs(normalizedDraft),
+    [persistCrs, normalizedDraft],
+  );
+
+  function applySuggestion(entry: CrsCatalogEntry) {
+    suggestCancelRef.current = true;
+    // Registers custom proj4 defs and reflects the pick in the draft UI.
+    selectDraft(entry);
+    void persistCrs(normalizeEpsgCode(entry.epsg));
+  }
 
   useEffect(() => {
     if (!crsModalOpen || panelView !== "select") return;
@@ -252,25 +377,9 @@ export function CrsModal() {
   if (!crsModalOpen || !project) return null;
 
   return (
-    // biome-ignore lint/a11y/noStaticElementInteractions: backdrop closes the modal on pointer interaction.
-    // biome-ignore lint/a11y/useKeyWithClickEvents: backdrop closes the modal on pointer interaction.
-    <div
-      onClick={dismissModal}
-      style={{
-        position: "fixed",
-        inset: 0,
-        background: "var(--bg-overlay)",
-        zIndex: 205,
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-      }}
-    >
-      {/* biome-ignore lint/a11y/noStaticElementInteractions: panel only stops backdrop clicks. */}
+    <ModalBackdrop onDismiss={dismissModal} zIndex={205}>
       <div
-        onMouseDown={(e) => e.stopPropagation()}
-        onKeyDown={(e) => e.stopPropagation()}
-        onClick={(e) => e.stopPropagation()}
+        {...stopBackdropEvents}
         style={{
           width: "min(740px, 92vw)",
           maxHeight: "min(680px, 86vh)",
@@ -479,6 +588,173 @@ export function CrsModal() {
                   : `${catalogPage.total} matches · ↑↓ navigate · Enter select · Cmd/Ctrl+Enter save`}
               </div>
             </div>
+
+            {suggest && (
+              <div
+                style={{
+                  padding: "10px 14px",
+                  borderBottom: "1px solid var(--border)",
+                  background: "var(--bg-panel)",
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: 8,
+                }}
+              >
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <span
+                    style={{
+                      fontSize: 12,
+                      fontWeight: 600,
+                      color: "var(--text-primary)",
+                      fontFamily: "var(--font-ui)",
+                    }}
+                  >
+                    Suggested CRS
+                  </span>
+                  <span
+                    style={{
+                      fontSize: 11,
+                      color: "var(--text-tertiary)",
+                      fontFamily: "var(--font-ui)",
+                    }}
+                  >
+                    {suggest.status === "scanning"
+                      ? `Scanning catalog… ${suggest.scanned}${
+                          suggest.total > 0 ? ` / ${suggest.total}` : ""
+                        }`
+                      : suggest.status === "cancelled"
+                        ? "Scan cancelled"
+                        : suggest.results.length === 0
+                          ? "No plausible candidate found"
+                          : "Ranked by how plausibly each maps your coordinates"}
+                  </span>
+                  <div style={{ flex: 1 }} />
+                  {suggest.status === "scanning" ? (
+                    <button
+                      type="button"
+                      className="tool-btn"
+                      onClick={() => {
+                        suggestCancelRef.current = true;
+                      }}
+                      style={{
+                        width: "auto",
+                        height: 22,
+                        padding: "0 8px",
+                        fontSize: 11,
+                      }}
+                    >
+                      Cancel
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      className="tool-btn"
+                      onClick={() => setSuggest(null)}
+                      style={{
+                        width: "auto",
+                        height: 22,
+                        padding: "0 8px",
+                        fontSize: 11,
+                      }}
+                    >
+                      Dismiss
+                    </button>
+                  )}
+                </div>
+                {suggest.status === "scanning" && (
+                  <div
+                    style={{
+                      height: 3,
+                      borderRadius: 2,
+                      background: "var(--bg-input, rgba(0,0,0,0.25))",
+                      overflow: "hidden",
+                    }}
+                  >
+                    <div
+                      style={{
+                        height: "100%",
+                        width: `${
+                          suggest.total > 0
+                            ? Math.min(
+                                100,
+                                (suggest.scanned / suggest.total) * 100,
+                              )
+                            : 0
+                        }%`,
+                        background: "var(--accent)",
+                        transition: "width 120ms linear",
+                      }}
+                    />
+                  </div>
+                )}
+                {suggest.results.length > 0 && (
+                  <div
+                    style={{
+                      display: "flex",
+                      flexDirection: "column",
+                      maxHeight: 180,
+                      overflowY: "auto",
+                      border: "1px solid var(--border)",
+                      borderRadius: 6,
+                    }}
+                  >
+                    {suggest.results.map(({ entry, score }, idx) => (
+                      <div
+                        key={entry.epsg}
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 8,
+                          padding: "5px 8px",
+                          borderTop:
+                            idx === 0 ? "none" : "1px solid var(--border)",
+                        }}
+                      >
+                        <span
+                          style={{
+                            fontSize: 12,
+                            color: "var(--text-primary)",
+                            fontFamily: "var(--font-ui)",
+                            whiteSpace: "nowrap",
+                            overflow: "hidden",
+                            textOverflow: "ellipsis",
+                            flex: 1,
+                            minWidth: 0,
+                          }}
+                        >
+                          {entry.label}
+                        </span>
+                        <span
+                          style={{
+                            fontSize: 10,
+                            color: "var(--text-tertiary)",
+                            fontFamily: "var(--font-mono)",
+                            flexShrink: 0,
+                          }}
+                        >
+                          {entry.epsg} · {(score * 100).toFixed(0)}%
+                        </span>
+                        <button
+                          type="button"
+                          className="tool-btn"
+                          disabled={projectSaving}
+                          onClick={() => applySuggestion(entry)}
+                          style={{
+                            width: "auto",
+                            height: 22,
+                            padding: "0 8px",
+                            fontSize: 11,
+                            flexShrink: 0,
+                          }}
+                        >
+                          Apply
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
 
             <div
               style={{
@@ -904,6 +1180,6 @@ export function CrsModal() {
           </>
         )}
       </div>
-    </div>
+    </ModalBackdrop>
   );
 }

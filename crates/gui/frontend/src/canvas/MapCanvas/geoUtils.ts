@@ -37,13 +37,13 @@ export function geoBounds(
  * Rough initial geo viewState derived from node bounding-box extents.
  *
  * Used to seed both the deck.gl viewState ref and the MapLibre `center`/`zoom`
- * options so the map never renders at an arbitrary default before `doFit` runs.
- * The formula is intentionally simple — `fitGeoExtents` will refine it via
- * `map.cameraForBounds` once the style is loaded, but since we're already
- * roughly centered the user won't see any perceivable movement.
+ * options so the map never renders at an arbitrary default before the initial
+ * fit runs. The formula is intentionally simple — `fitMapExtents` will refine
+ * it via `map.cameraForBounds` once the style is loaded, but since we're
+ * already roughly centered the user won't see any perceivable movement.
  *
  * When no real coordinates exist (all-sentinel network) falls back to a
- * world-level view at zoom 1 centered on 0°N / 20°N.
+ * world-level view at zoom 1 centered on 0°E / 20°N.
  */
 export function roughGeoViewState(nodes: Node[]): {
   longitude: number;

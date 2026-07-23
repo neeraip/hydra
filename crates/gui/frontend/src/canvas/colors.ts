@@ -1,6 +1,7 @@
 /**
  * Colour utilities shared between MapCanvas layers and inspector panels.
- * All functions return a CSS `rgb(...)` string.
+ * All functions return a CSS colour string (an `rgb(...)` value, or a
+ * `var(...)` fallback for missing data).
  */
 
 /** Threshold-based pressure colour (matches pressureRgba in MapCanvas/colorUtils). */
@@ -142,8 +143,18 @@ export const PRESSURE_GRADIENT_CSS =
   "linear-gradient(to right, #c94040 0%, #c94040 25%, #d4a017 25%, #d4a017 50%, #3daf75 50%, #3daf75 75%, #4a90d9 75%, #4a90d9 100%)";
 
 /**
- * Risk ramp: green (below low / acceptable) → amber (caution) → red (excessive).
- * Used in threshold mode for velocity and flow.
+ * Generic smooth risk ramp: green (acceptable) → amber (caution) → red
+ * (excessive). Note: the canvas legend uses `LINK_RISK_GRADIENT_CSS` for
+ * threshold-mode velocity/flow because the map renders four discrete bands.
  */
 export const RISK_GRADIENT_CSS =
   "linear-gradient(to right, #3daf75 0%, #d4a017 55%, #c94040 100%)";
+
+/**
+ * 4-band link risk gradient: green (below low) → amber (low–target) →
+ * orange (target–high) → red (above high). Matches the threshold branches of
+ * `velocityRgba()` / `flowMagnitudeRgba()` in MapCanvas/colorUtils:
+ *   rgb(61,175,117) → rgb(212,160,23) → rgb(201,120,64) → rgb(201,64,64)
+ */
+export const LINK_RISK_GRADIENT_CSS =
+  "linear-gradient(to right, #3daf75 0%, #3daf75 25%, #d4a017 25%, #d4a017 50%, #c97840 50%, #c97840 75%, #c94040 75%, #c94040 100%)";

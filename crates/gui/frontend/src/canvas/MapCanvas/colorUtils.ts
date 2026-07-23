@@ -1,9 +1,8 @@
 import type { Link, Node } from "../../hooks";
+import { PRESSURE_THRESHOLD } from "../../types";
 import type { LinkVariable, NodeVariable } from "../types";
 
 export type RGBA = [number, number, number, number];
-
-export const PRESSURE_THRESHOLD = 24;
 
 /** Stable hash of a string → float in [0, 1). Used for per-link phase offsets. */
 export function hashStr(s: string): number {
@@ -171,6 +170,33 @@ export function statusRgba(status: number | null | undefined): RGBA {
   return [120, 150, 185, 180]; // open (3) / unknown — blue-grey
 }
 
+/**
+ * Fixed upper bound (per-unit headloss, m/km) for the link headloss ramp.
+ * Mirrors velocity's fixed 1.5 m/s cap rather than a per-period rescale so
+ * colours stay comparable while scrubbing the timeline; typical design
+ * guidance treats ≥ 10 m/km as excessive.
+ */
+export const LINK_HEADLOSS_MAX = 10;
+
+/** Headloss: grey (no data) → sequential blue → red ramp capped at
+ * {@link LINK_HEADLOSS_MAX}. */
+export function headlossRgba(headloss: number | null | undefined): RGBA {
+  if (headloss == null) return [100, 100, 100, 200];
+  return sequentialRgba(Math.abs(headloss), 0, LINK_HEADLOSS_MAX);
+}
+
+/** Link quality: grey (no data) → the node quality ramp normalised to the
+ * result's quality range. */
+export function linkQualityRgba(
+  quality: number | null | undefined,
+  qualityMin: number,
+  qualityMax: number,
+): RGBA {
+  if (quality == null) return [100, 100, 100, 200];
+  const range = qualityMax - qualityMin || 1;
+  return qualityRgba((quality - qualityMin) / range);
+}
+
 /** Pick link RGBA based on the active link variable. Pumps always use their fixed colour. */
 export function linkRgba(
   link: Link,
@@ -178,6 +204,8 @@ export function linkRgba(
   flowMax: number,
   velocityThresh?: { low: number; target: number; high: number },
   flowThresh?: { low: number; target: number; high: number },
+  qualityMin = 0,
+  qualityMax = 1,
 ): RGBA {
   if (link.type === "pump") return [212, 160, 23, 220];
   switch (linkVar) {
@@ -187,5 +215,9 @@ export function linkRgba(
       return velocityRgba(link.velocity, velocityThresh);
     case "status":
       return statusRgba(link.status);
+    case "headloss":
+      return headlossRgba(link.headloss);
+    case "quality":
+      return linkQualityRgba(link.quality, qualityMin, qualityMax);
   }
 }

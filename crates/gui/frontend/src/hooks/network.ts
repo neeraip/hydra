@@ -6,7 +6,7 @@
 import { listen } from "@tauri-apps/api/event";
 import { useEffect, useMemo, useState } from "react";
 import type { Link, LinkType, Node, NodeType, Pattern } from "../types";
-import { invoke, isTauri, tryInvoke } from "./ipc";
+import { invoke, isTauri, tryInvoke, tryInvokeOr } from "./ipc";
 import type { NetworkSummary } from "./NetworkDataContext";
 import { useNetworkData } from "./NetworkDataContext";
 import { useNetworkVersion } from "./NetworkVersionContext";
@@ -21,12 +21,15 @@ import { useNetworkVersion } from "./NetworkVersionContext";
 // authoritative byte map:
 //
 //   u32 version | u32 flags (bit 0 = present) | u32 nNodes | u32 nLinks |
+//   u32 totalVerts | u32×3 reserved |
 //   f64×nNodes x | y |
+//   f64×totalVerts vertexX | f64×totalVerts vertexY   (concatenated in link order) |
 //   f32×nNodes elevation | baseDemand | pressure | demand |
 //              tankMinLevel | tankMaxLevel | tankInitialLevel | tankDiameter |
 //   f32×nLinks velocity | diameter | length | roughness |
 //              pumpPowerKw | pumpSpeed | valveSetting |
 //   u8×nNodes nodeKind | u8×nLinks linkKind |
+//   u32×nLinks vertexCount   (LE, possibly unaligned) |
 //   9 string columns (u32 byteLen + newline-joined UTF-8):
 //     node id | tankVolumeCurve | headPattern |
 //     link id | fromId | toId | pumpCurve | valveType | valveCurve
@@ -34,9 +37,25 @@ import { useNetworkVersion } from "./NetworkVersionContext";
 // Optional numeric columns use NaN for "absent" (preserving null vs 0),
 // optional string columns use the empty string.
 
-const SNAPSHOT_HEADER_BYTES = 16;
-const SNAPSHOT_VERSION = 1;
+const SNAPSHOT_HEADER_BYTES = 32;
+const SNAPSHOT_VERSION = 2;
 const SNAPSHOT_FLAG_PRESENT = 1;
+
+// Canvas-facing fields carried on Link beyond the backend DTO baseline:
+// `vertices` is decoded from the v2 snapshot (intermediate polyline points in
+// the source CRS, exclusive of the endpoints); `headloss` is merged per
+// reporting period by the canvas from PeriodResults.linkHeadloss. Both are
+// optional, so every existing Link consumer keeps compiling untouched.
+declare module "../types/network" {
+  interface Link {
+    /** Intermediate polyline vertices [x, y] in source-CRS coordinates
+     * (endpoints excluded). Omitted for straight links. */
+    vertices?: Array<[number, number]>;
+    /** Head loss for the current reporting period (per unit length for
+     * pipes). `null`/absent when no simulation has run. */
+    headloss?: number | null;
+  }
+}
 
 /** Index ↔ kind code mapping; must match the backend's `encode_network_snapshot`. */
 const SNAPSHOT_NODE_TYPES: readonly NodeType[] = [
@@ -78,13 +97,16 @@ export function decodeNetworkSnapshot(
   if ((flags & SNAPSHOT_FLAG_PRESENT) === 0) return null;
   const nNodes = view.getUint32(8, true);
   const nLinks = view.getUint32(12, true);
+  const totalVerts = view.getUint32(16, true);
+  // Bytes 20..32 are reserved.
 
   // Fixed-width section: 16B coords + 32B f32s + 1B kind per node,
-  // 28B f32s + 1B kind per link.
-  const fixedBytes = SNAPSHOT_HEADER_BYTES + 49 * nNodes + 29 * nLinks;
+  // 28B f32s + 1B kind + 4B vertexCount per link, 16B per link vertex.
+  const fixedBytes =
+    SNAPSHOT_HEADER_BYTES + 49 * nNodes + 33 * nLinks + 16 * totalVerts;
   if (buf.byteLength < fixedBytes) {
     throw snapshotError(
-      `truncated buffer (${buf.byteLength} bytes for ${nNodes} nodes + ${nLinks} links)`,
+      `truncated buffer (${buf.byteLength} bytes for ${nNodes} nodes + ${nLinks} links + ${totalVerts} vertices)`,
     );
   }
 
@@ -129,6 +151,8 @@ export function decodeNetworkSnapshot(
 
   const nodeX = takeF64(nNodes);
   const nodeY = takeF64(nNodes);
+  const vertexX = takeF64(totalVerts);
+  const vertexY = takeF64(totalVerts);
   const nodeElevation = takeF32(nNodes);
   const nodeBaseDemand = takeF32(nNodes);
   const nodePressure = takeF32(nNodes);
@@ -146,6 +170,14 @@ export function decodeNetworkSnapshot(
   const valveSetting = takeF32(nLinks);
   const nodeKind = takeU8(nNodes);
   const linkKind = takeU8(nLinks);
+  // Per-link vertex counts. This column follows the u8 kind columns so its
+  // start offset is not necessarily 4-byte aligned — a Uint32Array view would
+  // throw, so read each value through the DataView instead.
+  const vertexCount = new Uint32Array(nLinks);
+  for (let i = 0; i < nLinks; i += 1) {
+    vertexCount[i] = view.getUint32(offset + 4 * i, true);
+  }
+  offset += 4 * nLinks;
   const nodeIds = takeStrings(nNodes, "node id");
   const tankVolumeCurve = takeStrings(nNodes, "tankVolumeCurve");
   const headPattern = takeStrings(nNodes, "headPattern");
@@ -184,12 +216,31 @@ export function decodeNetworkSnapshot(
   }
 
   const links: Link[] = new Array(nLinks);
+  let vertCursor = 0;
   for (let i = 0; i < nLinks; i += 1) {
     const type = SNAPSHOT_LINK_TYPES[linkKind[i]];
     if (type === undefined) {
       throw snapshotError(`unknown link kind code ${linkKind[i]}`);
     }
+    // Slice this link's vertex run out of the concatenated columns. Links
+    // without vertices omit the field entirely so existing Link consumers
+    // (and object-shape assertions) see the exact pre-v2 shape.
+    const nVerts = vertexCount[i];
+    let vertices: Array<[number, number]> | undefined;
+    if (nVerts > 0) {
+      if (vertCursor + nVerts > totalVerts) {
+        throw snapshotError(
+          `vertexCount sum exceeds totalVerts (${totalVerts})`,
+        );
+      }
+      vertices = new Array(nVerts);
+      for (let v = 0; v < nVerts; v += 1) {
+        vertices[v] = [vertexX[vertCursor + v], vertexY[vertCursor + v]];
+      }
+      vertCursor += nVerts;
+    }
     links[i] = {
+      ...(vertices !== undefined ? { vertices } : null),
       id: linkIds[i],
       type,
       fromId: fromIds[i],
@@ -205,6 +256,11 @@ export function decodeNetworkSnapshot(
       valveSetting: optNum(valveSetting[i]),
       valveCurve: optStr(valveCurve[i]),
     };
+  }
+  if (vertCursor !== totalVerts) {
+    throw snapshotError(
+      `vertexCount sum ${vertCursor} does not match totalVerts ${totalVerts}`,
+    );
   }
 
   return { nodes, links };
@@ -321,38 +377,14 @@ export async function loadProjectNetwork(
 }
 
 /**
- * A single updated element returned by `patchElement` and carried in the
- * `network-changed` event's delta payload — exactly one of `node` / `link`
+ * A single updated element carried in the `network-changed` event's delta
+ * payload (one entry per element updated by `patch_element` /
+ * `patch_elements` / `patch_node_position`) — exactly one of `node` / `link`
  * is set.
  */
 export interface PatchedElement {
   node?: Node;
   link?: Link;
-}
-
-/**
- * Apply a single field change to the in-memory network and update
- * `NetworkState`. Returns only the patched element's updated DTO — the
- * matching `network-changed` event carries the same delta, so local
- * node/link arrays update in place without a full snapshot refetch.
- *
- * `kind`  — `"junction"` | `"reservoir"` | `"tank"` | `"pipe"` | `"pump"`
- * `id`    — element ID as shown in the editor table
- * `field` — camelCase field name (e.g. `"elevation"`, `"diameter"`, `"speed"`)
- * `value` — new value in display units (metres, L/s, mm, or a status string)
- */
-export async function patchElement(
-  kind: string,
-  id: string,
-  field: string,
-  value: number | string,
-): Promise<PatchedElement> {
-  return invoke<PatchedElement>("patch_element", {
-    kind,
-    id,
-    field,
-    value,
-  });
 }
 
 /** Result of a bulk `patchElements` call. */
@@ -492,14 +524,6 @@ export async function deletePattern(id: string): Promise<void> {
   await invoke<void>("delete_pattern", { id });
 }
 
-/**
- * Return the on-disk INP text for the base model of a project.
- * Used by the diff preview dialog.
- */
-export async function getProjectInp(projectId: string): Promise<string | null> {
-  return (await tryInvoke<string>("get_project_inp", { projectId })) ?? null;
-}
-
 export interface PatchItem {
   kind: string;
   id: string;
@@ -515,7 +539,7 @@ export interface PatchItem {
 export async function previewPatches(
   patches: PatchItem[],
 ): Promise<string | null> {
-  return (await tryInvoke<string>("preview_patches", { patches })) ?? null;
+  return tryInvokeOr<string | null>("preview_patches", { patches }, null);
 }
 
 // ── Network change events ──────────────────────────────────────────────────
@@ -533,15 +557,10 @@ export interface NetworkChangedPayload {
   elements: PatchedElement[];
 }
 
-/** Subscribe to network mutation events from the backend.
- *  Fires whenever any mutating command succeeds.
+/** Subscribe to network mutation events from the backend (fired whenever any
+ *  mutating command succeeds), delivering the event's delta payload (`null`
+ *  when the mutation requires a full snapshot refetch).
  *  Returns the unlisten function — call it to unsubscribe. */
-export function listenNetworkChanged(cb: () => void): Promise<() => void> {
-  return listen(NETWORK_CHANGED_EVENT, () => cb());
-}
-
-/** Like `listenNetworkChanged`, but delivers the event's delta payload
- *  (`null` when the mutation requires a full snapshot refetch). */
 export function listenNetworkChangedPayload(
   cb: (payload: NetworkChangedPayload | null) => void,
 ): Promise<() => void> {
@@ -585,21 +604,33 @@ export function useNetworkSummary(): NetworkSummary {
   return summary;
 }
 
-export function usePatterns(_version = 0): Pattern[] {
+/**
+ * Shared fetch-effect for the version-keyed row hooks (patterns / curves /
+ * controls / rules): re-fetch `cmd` whenever the network version from
+ * `NetworkVersionContext` or the caller-supplied refetch counter bumps.
+ * Keeps the previous rows when the fetch resolves `null` (outside Tauri or
+ * command failure) and ignores results that land after unmount or a re-run.
+ */
+function useVersionedRows<T>(cmd: string, version: number): T[] {
   const { version: ctxVersion } = useNetworkVersion();
-  const [patterns, setPatterns] = useState<Pattern[]>([]);
+  const [rows, setRows] = useState<T[]>([]);
   useEffect(() => {
+    // Both versions are pure refetch triggers.
     void ctxVersion;
-    void _version;
+    void version;
     let cancelled = false;
-    tryInvoke<Pattern[]>("get_patterns").then((rows) => {
-      if (!cancelled && rows !== null) setPatterns(rows);
+    tryInvoke<T[]>(cmd).then((next) => {
+      if (!cancelled && next !== null) setRows(next);
     });
     return () => {
       cancelled = true;
     };
-  }, [ctxVersion, _version]);
-  return patterns;
+  }, [cmd, ctxVersion, version]);
+  return rows;
+}
+
+export function usePatterns(_version = 0): Pattern[] {
+  return useVersionedRows<Pattern>("get_patterns", _version);
 }
 
 // ── Curve / pattern editor types ───────────────────────────────────────────
@@ -638,20 +669,8 @@ interface NetworkCurveDto {
  * are included with `pumpId = ""`.
  */
 export function useCurves(version = 0): PumpCurve[] {
-  const { version: ctxVersion } = useNetworkVersion();
-  const [dtos, setDtos] = useState<NetworkCurveDto[]>([]);
+  const dtos = useVersionedRows<NetworkCurveDto>("get_curves", version);
   const links = useLinks(version);
-  useEffect(() => {
-    void ctxVersion;
-    void version;
-    let cancelled = false;
-    tryInvoke<NetworkCurveDto[]>("get_curves").then((rows) => {
-      if (!cancelled && rows !== null) setDtos(rows);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [ctxVersion, version]);
 
   return useMemo<PumpCurve[]>(() => {
     const pumpByCurveId = new Map<string, string>();
@@ -677,11 +696,6 @@ export function useCurves(version = 0): PumpCurve[] {
       };
     });
   }, [dtos, links]);
-}
-
-export function useNode(id: string | null | undefined) {
-  const nodes = useNodes();
-  return useMemo(() => nodes.find((n) => n.id === id) ?? null, [id, nodes]);
 }
 
 export function useLinksConnectedTo(nodeId: string | null | undefined) {
@@ -763,37 +777,11 @@ export interface RuleDto {
 }
 
 export function useControls(version = 0): SimpleControlDto[] {
-  const { version: ctxVersion } = useNetworkVersion();
-  const [controls, setControls] = useState<SimpleControlDto[]>([]);
-  useEffect(() => {
-    void ctxVersion;
-    void version;
-    let cancelled = false;
-    tryInvoke<SimpleControlDto[]>("get_controls").then((rows) => {
-      if (!cancelled && rows !== null) setControls(rows);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [ctxVersion, version]);
-  return controls;
+  return useVersionedRows<SimpleControlDto>("get_controls", version);
 }
 
 export function useRules(version = 0): RuleDto[] {
-  const { version: ctxVersion } = useNetworkVersion();
-  const [rules, setRules] = useState<RuleDto[]>([]);
-  useEffect(() => {
-    void ctxVersion;
-    void version;
-    let cancelled = false;
-    tryInvoke<RuleDto[]>("get_rules").then((rows) => {
-      if (!cancelled && rows !== null) setRules(rows);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [ctxVersion, version]);
-  return rules;
+  return useVersionedRows<RuleDto>("get_rules", version);
 }
 
 export async function createControl(control: SimpleControlDto): Promise<void> {

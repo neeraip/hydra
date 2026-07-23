@@ -11,11 +11,24 @@ import {
   PlusIcon,
   XMarkIcon,
 } from "@heroicons/react/16/solid";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  type CSSProperties,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { useActiveProject, useAppState, useSimulation } from "../../AppContext";
 import { AnnotationSummary, MeasureOverlay } from "../../canvas/Annotations";
 import type { BasemapStyle } from "../../canvas/Basemap";
-import { haversineMeters, reprojectNodesCached } from "../../canvas/coords";
+import {
+  haversineMeters,
+  pickCoordSample,
+  reprojectLinkVerticesCached,
+  reprojectNodesCached,
+  setPendingCrsSuggestionSample,
+} from "../../canvas/coords";
 import { Legend, type LegendThresholds } from "../../canvas/Legend";
 import { useCanvasLayers } from "../../canvas/layers-context";
 import { MapCanvas } from "../../canvas/MapCanvas";
@@ -61,6 +74,71 @@ const NODE_KIND_PREFIX: Record<string, string> = {
   reservoir: "R",
   tank: "T",
 };
+
+/** Centred inline-flex layout shared by all icon toolbar buttons. */
+const ICON_BTN_STYLE: CSSProperties = {
+  display: "inline-flex",
+  alignItems: "center",
+  justifyContent: "center",
+};
+
+/** Standard 14px toolbar icon size. */
+const ICON_14: CSSProperties = { width: 14, height: 14 };
+
+/** Display label for a basemap style value. */
+const basemapLabel = (b: BasemapStyle) =>
+  b === "none" ? "No basemap" : b.charAt(0).toUpperCase() + b.slice(1);
+
+// ── Per-project canvas prefs ────────────────────────────────────────────────
+// Persisted under one JSON key per project (unlike hydra2-link-animation,
+// which is deliberately a global preference and stays untouched).
+const canvasPrefsKey = (projectId: string) =>
+  `hydra2-canvas-prefs:${projectId}`;
+
+interface CanvasPrefs {
+  viewMode: ViewMode;
+  basemap: BasemapStyle;
+  nodeVar: NodeVariable;
+  linkVar: LinkVariable;
+  colorMode: "relative" | "threshold";
+}
+
+// Allowlists so corrupt/stale localStorage can never inject invalid state.
+const PREF_VIEW_MODES: readonly ViewMode[] = ["map", "schematic"];
+const PREF_BASEMAPS: readonly BasemapStyle[] = [
+  "streets",
+  "light",
+  "dark",
+  "none",
+];
+const PREF_NODE_VARS: readonly NodeVariable[] = [
+  "pressure",
+  "head",
+  "demand",
+  "quality",
+];
+const PREF_LINK_VARS: readonly LinkVariable[] = [
+  "flow",
+  "velocity",
+  "status",
+  "headloss",
+  "quality",
+];
+const PREF_COLOR_MODES: readonly CanvasPrefs["colorMode"][] = [
+  "relative",
+  "threshold",
+];
+
+function readCanvasPrefs(projectId: string): Partial<CanvasPrefs> | null {
+  try {
+    const raw = localStorage.getItem(canvasPrefsKey(projectId));
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<CanvasPrefs>;
+    return typeof parsed === "object" && parsed !== null ? parsed : null;
+  } catch {
+    return null;
+  }
+}
 
 export function CanvasView({ isActive = true }: { isActive?: boolean }) {
   const {
@@ -165,6 +243,59 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
   const [viewMode, setViewMode] = useState<ViewMode>("map");
   const [basemap, setBasemap] = useState<BasemapStyle>("streets");
 
+  // ── Per-project canvas prefs: restore on project switch, persist on change.
+  // `prefsLoadedFor` gates persisting so the write effect (which also re-runs
+  // on project switch) can never store the previous project's values under
+  // the new project's key before the restore has been applied.
+  const [prefsLoadedFor, setPrefsLoadedFor] = useState<string | null>(null);
+  useEffect(() => {
+    const id = project?.id;
+    if (!id) return;
+    const prefs = readCanvasPrefs(id);
+    if (prefs) {
+      if (prefs.viewMode && PREF_VIEW_MODES.includes(prefs.viewMode)) {
+        setViewMode(prefs.viewMode);
+      }
+      if (prefs.basemap && PREF_BASEMAPS.includes(prefs.basemap)) {
+        setBasemap(prefs.basemap);
+      }
+      if (prefs.nodeVar && PREF_NODE_VARS.includes(prefs.nodeVar)) {
+        setNodeVar(prefs.nodeVar);
+      }
+      if (prefs.linkVar && PREF_LINK_VARS.includes(prefs.linkVar)) {
+        setLinkVar(prefs.linkVar);
+      }
+      if (prefs.colorMode && PREF_COLOR_MODES.includes(prefs.colorMode)) {
+        setColorMode(prefs.colorMode);
+      }
+    }
+    setPrefsLoadedFor(id);
+  }, [project?.id]);
+  useEffect(() => {
+    const id = project?.id;
+    if (!id || prefsLoadedFor !== id) return;
+    const prefs: CanvasPrefs = {
+      viewMode,
+      basemap,
+      nodeVar,
+      linkVar,
+      colorMode,
+    };
+    try {
+      localStorage.setItem(canvasPrefsKey(id), JSON.stringify(prefs));
+    } catch {
+      // Quota/private-mode failures are non-fatal — prefs just don't persist.
+    }
+  }, [
+    project?.id,
+    prefsLoadedFor,
+    viewMode,
+    basemap,
+    nodeVar,
+    linkVar,
+    colorMode,
+  ]);
+
   useEffect(() => {
     function onLayoutCommand(e: Event) {
       const mode = (e as CustomEvent<"toggle" | "map" | "schematic">).detail;
@@ -190,18 +321,29 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
   const [zoomOutKey, setZoomOutKey] = useState(0);
   const [resetNorthKey, setResetNorthKey] = useState(0);
 
+  // ── Measure clicks ──────────────────────────────────────────
+  // In map mode: geo points { lng, lat }. In schematic mode: SVG ClickPoints.
+  const [measureGeoPts, setMeasureGeoPts] = useState<
+    { lng: number; lat: number }[]
+  >([]);
+  const [measurePts, setMeasurePts] = useState<ClickPoint[]>([]);
+  const svgRef = useRef<SVGSVGElement | null>(null);
+
+  /** Discard measure points in both coordinate spaces. */
+  const clearAnnotations = useCallback(() => {
+    setMeasurePts([]);
+    setMeasureGeoPts([]);
+  }, []);
+
   useEffect(() => {
     function onToolCommand(e: Event) {
       const tool = (e as CustomEvent<CanvasTool>).detail;
-      if (tool === "measure") {
-        setMeasurePts([]);
-        setMeasureGeoPts([]);
-      }
+      if (tool === "measure") clearAnnotations();
       setActiveTool(tool);
     }
     window.addEventListener("hydra:canvas-tool", onToolCommand);
     return () => window.removeEventListener("hydra:canvas-tool", onToolCommand);
-  }, []);
+  }, [clearAnnotations]);
 
   useEffect(() => {
     function onViewportCommand(e: Event) {
@@ -226,14 +368,6 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
   useEffect(() => {
     setMapFitKey((k) => k + 1);
   }, [project?.id]);
-
-  // ── Measure clicks ──────────────────────────────────────────
-  // In map mode: geo points { lng, lat }. In schematic mode: SVG ClickPoints.
-  const [measureGeoPts, setMeasureGeoPts] = useState<
-    { lng: number; lat: number }[]
-  >([]);
-  const [measurePts, setMeasurePts] = useState<ClickPoint[]>([]);
-  const svgRef = useRef<SVGSVGElement | null>(null);
 
   // Stable refs for keyboard handler so it never goes stale on selection changes.
   const selectedNodeIdRef = useRef<string | null>(null);
@@ -296,7 +430,14 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
       return;
     }
     let cancelled = false;
-    getPeriodResults(project.id, currentHour, activeScenarioId)
+    // Clamp: on switching to a shorter result set this effect can run before
+    // the playhead-clamp effect corrects currentHour, and an out-of-range
+    // period would surface a spurious backend error.
+    const period = Math.max(
+      0,
+      Math.min(currentHour, (resultMeta?.times.length ?? 1) - 1),
+    );
+    getPeriodResults(project.id, period, activeScenarioId)
       .then((r) => {
         if (!cancelled) {
           setCurrentPeriodResult(r);
@@ -308,7 +449,13 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
     return () => {
       cancelled = true;
     };
-  }, [project?.id, currentHour, resultMetaKey, activeScenarioId]);
+  }, [
+    project?.id,
+    currentHour,
+    resultMetaKey,
+    activeScenarioId,
+    resultMeta?.times.length,
+  ]);
 
   // ── Timeline height CSS variable ─────────────────────────────────
   useEffect(() => {
@@ -327,7 +474,24 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
   // Derived from stableResultMeta when available (covers multi-period results),
   // with a fallback for when no simulation has run yet.
   const maxStep = stableResultMeta ? stableResultMeta.times.length - 1 : 24;
-  const isSteadyState = simParams != null && simParams.duration <= 0;
+
+  // The "quality" node variable is only offered when the loaded result has
+  // quality data; switching to a scenario without it left the picker stuck on
+  // a removed option and every junction rendered the null-quality grey.
+  const qualityMode = stableResultMeta?.qualityMode ?? "none";
+  useEffect(() => {
+    if (qualityMode === "none") {
+      setNodeVar((v) => (v === "quality" ? "pressure" : v));
+      // Same gating for the link quality variable.
+      setLinkVar((v) => (v === "quality" ? "velocity" : v));
+    }
+  }, [qualityMode]);
+  // Derived from the *loaded result*, not current simParams: editing the
+  // duration without re-running must not flip the banner/scrubber for a
+  // result that was produced under the old settings.
+  const isSteadyState = stableResultMeta
+    ? stableResultMeta.times.length <= 1
+    : simParams != null && simParams.duration <= 0;
 
   // Clamp the playhead when switching between result sets with different lengths
   // (e.g. transient -> steady-state) so period fetches stay in range.
@@ -366,6 +530,10 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
           target.isContentEditable)
       )
         return;
+      // Never hijack OS/app shortcuts: with Cmd/Ctrl/Alt held these keys are
+      // chords (Cmd+S save, Cmd+L, Alt-composed characters…), not tool
+      // hotkeys or transport controls.
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
       switch (e.key) {
         case " ":
           e.preventDefault();
@@ -394,8 +562,7 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
         case "d":
         case "D":
           setActiveTool("measure");
-          setMeasurePts([]);
-          setMeasureGeoPts([]);
+          clearAnnotations();
           break;
         case "e":
         case "E":
@@ -429,7 +596,7 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [maxStep, projectView]);
+  }, [clearAnnotations, maxStep, projectView]);
 
   const baseNodes = useNodes();
   const baseLinks = useLinks();
@@ -449,22 +616,17 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
   // while the canvas is already open).
   useEffect(() => {
     setSourceCrs(project?.sourceCrs ?? "EPSG:4326");
-    // Only re-sync when the project identity itself changes, not on every render.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [project?.sourceCrs]);
 
   // Raw positional nodes (no pressure/demand merged yet) used for CRS sniffing
   // and reprojection. Stable across timeline scrubs.
   const rawPositionNodes = baseNodes;
 
-  // Auto-detect CRS when the network identity changes (new load or project switch).
-  // Warns the user if coordinates look projected so they know to pick a CRS,
-  // but never forces a view-mode switch — the user stays in control.
+  // Clear any prior reprojection error when the network identity changes
+  // (new load or project switch); the reprojection memo below re-derives it.
   useEffect(() => {
     if (rawPositionNodes.length === 0) return;
-    // Reset dismissible warnings and any prior reprojection error on new network.
     setCrsError(null);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rawPositionNodes.length]);
 
   // Classify how many nodes have real map coordinates.
@@ -634,7 +796,31 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
   // matches by length and keeps the canvas coloured; after a topology change
   // the length guard in MapCanvas drops stale colours immediately.
   const canvasNodes = posNodes;
-  const canvasLinks = baseLinks;
+  // Link polyline vertices are stored in the source CRS exactly like node
+  // coords, so they go through the same proj4 transform (with the same
+  // EPSG:4326 identity fast-path and a per-link identity cache). Errors are
+  // already surfaced by the node reprojection above — fall back to the raw
+  // links so map+schematic keep rendering.
+  const linkReprojCacheRef = useRef<{
+    crs: string;
+    byId: Map<
+      string,
+      { src: (typeof baseLinks)[number]; out: (typeof baseLinks)[number] }
+    >;
+  }>({ crs: "", byId: new Map() });
+  const canvasLinks = useMemo(() => {
+    if (sourceCrs === "EPSG:4326") return baseLinks;
+    try {
+      const cache = linkReprojCacheRef.current;
+      if (cache.crs !== sourceCrs) {
+        cache.crs = sourceCrs;
+        cache.byId = new Map();
+      }
+      return reprojectLinkVerticesCached(baseLinks, sourceCrs, cache.byId);
+    } catch {
+      return baseLinks;
+    }
+  }, [sourceCrs, baseLinks]);
 
   const nodeMap = useMemo(
     () => new Map(allNodes.map((n) => [n.id, n])),
@@ -756,10 +942,18 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
     ) {
       setActiveTool("select");
     }
-  }, [viewMode, activeTool]); // intentionally omit activeTool — only re-evaluate on mode switch
+  }, [viewMode, activeTool]);
 
   const svgCursor = activeTool === "measure" ? "crosshair" : "default";
   const canvasIsActive = isActive && projectView === "canvas";
+
+  // Shared styling for toolbar controls that only work in map mode.
+  const mapOnly = viewMode !== "map";
+  const mapOnlyDim: CSSProperties = {
+    opacity: mapOnly ? 0.38 : undefined,
+    cursor: mapOnly ? "not-allowed" : undefined,
+  };
+  const mapOnlyTooltip = (label: string) => (mapOnly ? "Map mode only" : label);
 
   const handleNodeMoved = useCallback(
     async (id: string, x: number, y: number) => {
@@ -884,7 +1078,8 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
       return [{ lng, lat }];
     });
   }, []);
-  // profile points stay anchored to the network even when the SVG is scaled.
+  // Convert a mouse event to SVG user-space coordinates (via the screen CTM)
+  // so measure points stay anchored to the network even when the SVG is scaled.
   const eventToSvgPoint = useCallback(
     (e: React.MouseEvent<SVGSVGElement>): ClickPoint | null => {
       const svg = svgRef.current;
@@ -925,11 +1120,6 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
     window.addEventListener("pointerdown", onDown);
     return () => window.removeEventListener("pointerdown", onDown);
   }, [showBasemapDropdown]);
-
-  function clearAnnotations() {
-    setMeasurePts([]);
-    setMeasureGeoPts([]);
-  }
 
   return (
     <div
@@ -1074,18 +1264,43 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
                   source CRS to reproject the network, or switch to Schematic
                   view.
                 </span>
-                <button
-                  type="button"
-                  className="tool-btn"
-                  onClick={openCrsModal}
-                  style={{
-                    pointerEvents: "auto",
-                    padding: "0 10px",
-                    fontSize: 12,
-                  }}
-                >
-                  Set source CRS
-                </button>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <button
+                    type="button"
+                    className="tool-btn"
+                    onClick={openCrsModal}
+                    style={{
+                      pointerEvents: "auto",
+                      padding: "0 10px",
+                      fontSize: 12,
+                    }}
+                  >
+                    Set source CRS
+                  </button>
+                  {/* Auto-suggestion only makes sense for the out-of-range
+                      case (coords look projected while CRS is the EPSG:4326
+                      default) — with a non-default CRS the error is a proj4
+                      failure, not a wrong-guess situation. */}
+                  {sourceCrs === "EPSG:4326" && (
+                    <button
+                      type="button"
+                      className="tool-btn"
+                      onClick={() => {
+                        setPendingCrsSuggestionSample(
+                          pickCoordSample(rawPositionNodes),
+                        );
+                        openCrsModal();
+                      }}
+                      style={{
+                        pointerEvents: "auto",
+                        padding: "0 10px",
+                        fontSize: 12,
+                      }}
+                    >
+                      Suggest CRS…
+                    </button>
+                  )}
+                </div>
               </div>
             </div>
           )}
@@ -1186,15 +1401,12 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
               {/* Basemap dropdown */}
               <div
                 data-toolbar-dropdown
-                style={{
-                  position: "relative",
-                  opacity: viewMode !== "map" ? 0.38 : undefined,
-                }}
+                style={{ position: "relative", opacity: mapOnlyDim.opacity }}
               >
                 <button
                   type="button"
                   className="tool-btn"
-                  disabled={viewMode !== "map"}
+                  disabled={mapOnly}
                   style={{
                     width: "auto",
                     padding: "0 8px",
@@ -1202,21 +1414,17 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
                     gap: 4,
                     display: "flex",
                     alignItems: "center",
-                    cursor: viewMode !== "map" ? "not-allowed" : undefined,
+                    cursor: mapOnlyDim.cursor,
                   }}
                   onClick={(e) => {
-                    if (viewMode !== "map") return;
+                    if (mapOnly) return;
                     e.stopPropagation();
                     setShowBasemapDropdown((v) => !v);
                   }}
-                  data-tooltip={
-                    viewMode !== "map" ? "Map mode only" : "Basemap"
-                  }
+                  data-tooltip={mapOnlyTooltip("Basemap")}
                   data-tooltip-pos="bottom"
                 >
-                  {basemap === "none"
-                    ? "No basemap"
-                    : basemap.charAt(0).toUpperCase() + basemap.slice(1)}{" "}
+                  {basemapLabel(basemap)}{" "}
                   <ChevronUpDownIcon
                     style={{ width: 12, height: 12, verticalAlign: "middle" }}
                   />
@@ -1263,9 +1471,7 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
                           fontFamily: "var(--font-ui)",
                         }}
                       >
-                        {b === "none"
-                          ? "No basemap"
-                          : b.charAt(0).toUpperCase() + b.slice(1)}
+                        {basemapLabel(b)}
                       </button>
                     ))}
                   </div>
@@ -1275,15 +1481,12 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
               {/* CRS status + modal launcher */}
               <div
                 data-toolbar-dropdown
-                style={{
-                  position: "relative",
-                  opacity: viewMode !== "map" ? 0.38 : undefined,
-                }}
+                style={{ position: "relative", opacity: mapOnlyDim.opacity }}
               >
                 <button
                   type="button"
                   className="tool-btn"
-                  disabled={viewMode !== "map"}
+                  disabled={mapOnly}
                   style={{
                     width: "auto",
                     padding: "0 8px",
@@ -1291,23 +1494,19 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
                     gap: 4,
                     display: "flex",
                     alignItems: "center",
-                    cursor: viewMode !== "map" ? "not-allowed" : undefined,
+                    cursor: mapOnlyDim.cursor,
                     borderColor:
-                      viewMode === "map" && crsError
-                        ? "var(--status-error)"
-                        : undefined,
+                      !mapOnly && crsError ? "var(--status-error)" : undefined,
                   }}
                   onClick={(e) => {
-                    if (viewMode !== "map") return;
+                    if (mapOnly) return;
                     e.stopPropagation();
                     setShowBasemapDropdown(false);
                     openCrsModal();
                   }}
-                  data-tooltip={
-                    viewMode !== "map"
-                      ? "Map mode only"
-                      : (crsError ?? "Set source coordinate reference system")
-                  }
+                  data-tooltip={mapOnlyTooltip(
+                    crsError ?? "Set source coordinate reference system",
+                  )}
                   data-tooltip-pos="bottom"
                 >
                   {sourceCrs}{" "}
@@ -1328,104 +1527,70 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
                 data-tooltip="Select (S)"
                 data-tooltip-pos="bottom"
                 aria-label="Select"
-                style={{
-                  display: "inline-flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                }}
+                style={ICON_BTN_STYLE}
               >
-                <CursorArrowRaysIcon style={{ width: 14, height: 14 }} />
+                <CursorArrowRaysIcon style={ICON_14} />
               </button>
 
               <button
                 type="button"
                 className={`tool-btn${activeTool === "edit" ? " active" : ""}`}
                 onClick={() => setActiveTool("edit")}
-                disabled={viewMode !== "map"}
-                data-tooltip={
-                  viewMode !== "map" ? "Map mode only" : "Edit / move nodes (E)"
-                }
+                disabled={mapOnly}
+                data-tooltip={mapOnlyTooltip("Edit / move nodes (E)")}
                 data-tooltip-pos="bottom"
                 aria-label="Edit"
-                style={{
-                  display: "inline-flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  opacity: viewMode !== "map" ? 0.38 : undefined,
-                  cursor: viewMode !== "map" ? "not-allowed" : undefined,
-                }}
+                style={{ ...ICON_BTN_STYLE, ...mapOnlyDim }}
               >
-                <PencilSquareIcon style={{ width: 14, height: 14 }} />
+                <PencilSquareIcon style={ICON_14} />
               </button>
 
               <button
                 type="button"
                 className={`tool-btn${activeTool === "add-node" ? " active" : ""}`}
-                disabled={viewMode !== "map"}
+                disabled={mapOnly}
                 onClick={() => setActiveTool("add-node")}
-                data-tooltip={
-                  viewMode !== "map" ? "Map mode only" : "Add node (N)"
-                }
+                data-tooltip={mapOnlyTooltip("Add node (N)")}
                 data-tooltip-pos="bottom"
                 aria-label="Add node"
-                style={{
-                  display: "inline-flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  opacity: viewMode !== "map" ? 0.38 : undefined,
-                  cursor: viewMode !== "map" ? "not-allowed" : undefined,
-                }}
+                style={{ ...ICON_BTN_STYLE, ...mapOnlyDim }}
               >
-                <MapPinIcon style={{ width: 14, height: 14 }} />
+                <MapPinIcon style={ICON_14} />
               </button>
 
               <button
                 type="button"
                 className={`tool-btn${activeTool === "add-link" ? " active" : ""}`}
-                disabled={viewMode !== "map"}
+                disabled={mapOnly}
                 onClick={() => setActiveTool("add-link")}
-                data-tooltip={
-                  viewMode !== "map" ? "Map mode only" : "Add link (L)"
-                }
+                data-tooltip={mapOnlyTooltip("Add link (L)")}
                 data-tooltip-pos="bottom"
                 aria-label="Add link"
-                style={{
-                  display: "inline-flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  opacity: viewMode !== "map" ? 0.38 : undefined,
-                  cursor: viewMode !== "map" ? "not-allowed" : undefined,
-                }}
+                style={{ ...ICON_BTN_STYLE, ...mapOnlyDim }}
               >
-                <LinkIcon style={{ width: 14, height: 14 }} />
+                <LinkIcon style={ICON_14} />
               </button>
 
               {/* Measure distance */}
               <button
                 type="button"
                 className={`tool-btn${activeTool === "measure" ? " active" : ""}`}
-                disabled={viewMode !== "map"}
+                disabled={mapOnly}
                 onClick={() => {
                   setActiveTool("measure");
-                  setMeasurePts([]);
-                  setMeasureGeoPts([]);
+                  clearAnnotations();
                 }}
-                data-tooltip={
-                  viewMode !== "map" ? "Map mode only" : "Measure distance (D)"
-                }
+                data-tooltip={mapOnlyTooltip("Measure distance (D)")}
                 data-tooltip-pos="bottom"
                 aria-label="Measure distance"
                 style={{
                   fontSize: 12,
                   fontWeight: 600,
-                  display: "inline-flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  opacity: viewMode !== "map" ? 0.38 : undefined,
-                  cursor: viewMode !== "map" ? "not-allowed" : undefined,
+                  ...ICON_BTN_STYLE,
+                  ...mapOnlyDim,
                 }}
               >
-                <ArrowsRightLeftIcon style={{ width: 14, height: 14 }} />
+                <ArrowsRightLeftIcon style={ICON_14} />
               </button>
 
               {(measureGeoPts.length > 0 || measurePts.length > 0) &&
@@ -1440,12 +1605,10 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
                     style={{
                       fontSize: 11,
                       color: "var(--text-tertiary)",
-                      display: "inline-flex",
-                      alignItems: "center",
-                      justifyContent: "center",
+                      ...ICON_BTN_STYLE,
                     }}
                   >
-                    <XMarkIcon style={{ width: 14, height: 14 }} />
+                    <XMarkIcon style={ICON_14} />
                   </button>
                 )}
 
@@ -1459,13 +1622,9 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
                 data-tooltip="Toggle base model"
                 data-tooltip-pos="bottom"
                 aria-label="Toggle base model"
-                style={{
-                  display: "inline-flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                }}
+                style={ICON_BTN_STYLE}
               >
-                <EyeIcon style={{ width: 14, height: 14 }} />
+                <EyeIcon style={ICON_14} />
               </button>
 
               <button
@@ -1531,7 +1690,7 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
                   borderBottomRightRadius: 0,
                 }}
               >
-                <PlusIcon style={{ width: 14, height: 14 }} />
+                <PlusIcon style={ICON_14} />
               </button>
 
               <button
@@ -1547,7 +1706,7 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
                   marginTop: -1,
                 }}
               >
-                <MinusIcon style={{ width: 14, height: 14 }} />
+                <MinusIcon style={ICON_14} />
               </button>
             </div>
 
@@ -1555,18 +1714,13 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
               type="button"
               className="tool-btn"
               onClick={() => setResetNorthKey((k) => k + 1)}
-              disabled={viewMode !== "map"}
-              data-tooltip={
-                viewMode !== "map" ? "Map mode only" : "Reset north"
-              }
+              disabled={mapOnly}
+              data-tooltip={mapOnlyTooltip("Reset north")}
               data-tooltip-pos="left"
               aria-label="Reset north"
-              style={{
-                opacity: viewMode !== "map" ? 0.38 : undefined,
-                cursor: viewMode !== "map" ? "not-allowed" : undefined,
-              }}
+              style={mapOnlyDim}
             >
-              <ArrowsRightLeftIcon style={{ width: 14, height: 14 }} />
+              <ArrowsRightLeftIcon style={ICON_14} />
             </button>
 
             <button
@@ -1577,7 +1731,7 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
               data-tooltip-pos="left"
               aria-label="Fit network"
             >
-              <ArrowsPointingOutIcon style={{ width: 14, height: 14 }} />
+              <ArrowsPointingOutIcon style={ICON_14} />
             </button>
           </div>
 
