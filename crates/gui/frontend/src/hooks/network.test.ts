@@ -19,9 +19,38 @@
  * All values little-endian. NaN = absent for optional f32 columns; empty
  * string = absent for optional string columns.
  */
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+// Mock the Tauri IPC seam so `loadProjectNetwork` / `fetchNetworkSnapshot`
+// can be exercised with controlled payloads. Established before importing
+// ./network (which pulls ./ipc).
+vi.mock("@tauri-apps/api/core", () => ({
+  invoke: vi.fn(),
+}));
+
+import { invoke } from "@tauri-apps/api/core";
 import { normalizeNodes } from "./NetworkDataContext";
-import { decodeNetworkSnapshot } from "./network";
+import {
+  decodeNetworkSnapshot,
+  fetchNetworkSnapshot,
+  isStructuralNetworkChange,
+  loadProjectNetwork,
+} from "./network";
+
+const mockInvoke = vi.mocked(invoke);
+
+/** Make `isTauri()` return true for the current test. */
+function stubTauriShell() {
+  vi.stubGlobal("window", { __TAURI_INTERNALS__: {} });
+}
+
+beforeEach(() => {
+  mockInvoke.mockReset();
+});
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
 
 const VERSION = 1;
 const FLAG_PRESENT = 1;
@@ -324,5 +353,83 @@ describe("decodeNetworkSnapshot", () => {
     expect(() => decodeNetworkSnapshot(w.build())).toThrow(
       /unknown node kind code 7/,
     );
+  });
+});
+
+describe("loadProjectNetwork", () => {
+  it("returns null outside a Tauri shell (tryInvoke null)", async () => {
+    // `window` is undefined in the Node test env → isTauri() false.
+    await expect(loadProjectNetwork("p1", null)).resolves.toBeNull();
+    expect(mockInvoke).not.toHaveBeenCalled();
+  });
+
+  it("returns null when the command fails (tryInvoke swallows + reports)", async () => {
+    stubTauriShell();
+    mockInvoke.mockRejectedValueOnce("boom");
+    await expect(loadProjectNetwork("p1", null)).resolves.toBeNull();
+  });
+
+  it("decodes an ArrayBuffer payload into nodes+links", async () => {
+    stubTauriShell();
+    mockInvoke.mockResolvedValueOnce(buildFullSnapshot());
+    const res = await loadProjectNetwork("p1", "s1");
+    expect(res?.nodes).toHaveLength(3);
+    expect(res?.links).toHaveLength(3);
+  });
+
+  it("returns null for a present-flag-clear payload (target INP missing)", async () => {
+    stubTauriShell();
+    mockInvoke.mockResolvedValueOnce(
+      new ByteWriter().u32(VERSION).u32(0).u32(0).u32(0).build(),
+    );
+    await expect(loadProjectNetwork("p1", "s1")).resolves.toBeNull();
+  });
+
+  it("throws (not null) on an unexpected payload type", async () => {
+    // Distinguishes a frontend/backend contract break from the legitimate
+    // "INP missing" null — conflating them hid decode-path regressions.
+    stubTauriShell();
+    mockInvoke.mockResolvedValueOnce({ nodes: [], links: [] });
+    await expect(loadProjectNetwork("p1", null)).rejects.toThrow(
+      /unexpected payload type/,
+    );
+  });
+
+  it("propagates decode failures for malformed buffers", async () => {
+    stubTauriShell();
+    mockInvoke.mockResolvedValueOnce(new ArrayBuffer(4));
+    await expect(loadProjectNetwork("p1", null)).rejects.toThrow(/too short/);
+  });
+});
+
+describe("fetchNetworkSnapshot", () => {
+  it("returns null outside a Tauri shell", async () => {
+    await expect(fetchNetworkSnapshot()).resolves.toBeNull();
+  });
+
+  it("throws on an unexpected payload type", async () => {
+    stubTauriShell();
+    mockInvoke.mockResolvedValueOnce("nope");
+    await expect(fetchNetworkSnapshot()).rejects.toThrow(
+      /unexpected payload type/,
+    );
+  });
+});
+
+describe("isStructuralNetworkChange", () => {
+  it("is true for a null payload (create/delete/pattern/curve/control)", () => {
+    expect(isStructuralNetworkChange(null)).toBe(true);
+  });
+
+  it("is true for an empty elements list", () => {
+    expect(isStructuralNetworkChange({ elements: [] })).toBe(true);
+  });
+
+  it("is false for an element-scoped delta", () => {
+    expect(
+      isStructuralNetworkChange({
+        elements: [{ node: { id: "J1" } as never }],
+      }),
+    ).toBe(false);
   });
 });

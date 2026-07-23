@@ -63,6 +63,8 @@ interface AppState {
   activeScenarioId: string | null;
   /** Bumped whenever the scenario list mutates so `useScenarios` refetches. */
   scenariosVersion: number;
+  /** Bumped whenever `update_sim_params` succeeds so `useSimParams` refetches. */
+  simParamsVersion: number;
   /** In-app navigation history stack (browser-style back/forward). */
   navHistory: NavLocation[];
   /** Index of the currently visible location in navHistory. */
@@ -105,6 +107,8 @@ interface AppActions {
   setActiveScenarioId: (id: string | null) => void;
   /** Trigger a re-fetch of the scenario list. */
   bumpScenarios: () => void;
+  /** Trigger a re-fetch of simulation parameters (after update_sim_params). */
+  bumpSimParams: () => void;
   /** Navigate to the previous location (like a browser back button). */
   navBack: () => void;
   /** Navigate to the next location (like a browser forward button). */
@@ -136,6 +140,9 @@ function pushNav(
   return { navHistory: [...history, newLoc], navCursor: history.length };
 }
 
+/** Window within which identical backend-error toasts are suppressed. */
+const IPC_TOAST_DEDUPE_MS = 5000;
+
 const STORAGE_THEME = "hydra2-theme";
 const railOpenKey = (id: string) => `hydra2-rail-open:${id}`;
 function readRailOpen(id: string, fallback = true): boolean {
@@ -164,6 +171,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     projectsVersion: 0,
     activeScenarioId: null,
     scenariosVersion: 0,
+    simParamsVersion: 0,
     navHistory: [
       {
         page: "home",
@@ -200,6 +208,22 @@ export function AppProvider({ children }: { children: ReactNode }) {
     return () => mq.removeEventListener("change", handler);
   }, [s.theme]);
 
+  const showToast = useCallback(
+    (message: string, type: "info" | "success" | "warn" | "error" = "info") => {
+      // Toasts auto-dismiss, so in dev keep a durable copy of error/warn
+      // messages in the console for inspection after the toast is gone.
+      if (import.meta.env.DEV && (type === "error" || type === "warn")) {
+        const log = type === "error" ? console.error : console.warn;
+        log(`[toast:${type}] ${message}`);
+      }
+      setS((prev) => ({
+        ...prev,
+        toast: { id: String(Date.now()), message, type },
+      }));
+    },
+    [],
+  );
+
   // Reload NetworkState whenever the active project or scenario changes so that
   // `useNodes()` / `useLinks()` and the canvas automatically pick up the right INP.
   const { bumpNetwork } = useNetworkVersion();
@@ -224,59 +248,86 @@ export function AppProvider({ children }: { children: ReactNode }) {
         scenarioId: targetScenarioId ?? "base",
         maxAttempts: attempts,
       });
-      for (let i = 0; i < attempts; i += 1) {
-        const attemptSpan = startPerfSpan("network-load-attempt", {
-          projectId,
-          scenarioId: targetScenarioId ?? "base",
-          attempt: i + 1,
-        });
-        const snapshot = await loadProjectNetwork(projectId, targetScenarioId);
-        attemptSpan.end({ loaded: snapshot !== null });
-        if (cancelled) return null;
-        if (snapshot !== null) {
-          loadSpan.end({ loaded: true, attempt: i + 1 });
-          return snapshot;
-        }
-        if (i < attempts - 1) {
-          await delay(120 * (i + 1));
+      try {
+        for (let i = 0; i < attempts; i += 1) {
+          const attemptSpan = startPerfSpan("network-load-attempt", {
+            projectId,
+            scenarioId: targetScenarioId ?? "base",
+            attempt: i + 1,
+          });
+          let snapshot: Awaited<ReturnType<typeof loadProjectNetwork>>;
+          try {
+            snapshot = await loadProjectNetwork(projectId, targetScenarioId);
+          } catch (err) {
+            // Decode failure (frontend/backend layout mismatch) — not
+            // retryable; end the span and let the outer catch surface it.
+            attemptSpan.end({ loaded: false, error: true });
+            throw err;
+          }
+          attemptSpan.end({ loaded: snapshot !== null });
           if (cancelled) return null;
+          if (snapshot !== null) {
+            loadSpan.end({ loaded: true, attempt: i + 1 });
+            return snapshot;
+          }
+          if (i < attempts - 1) {
+            await delay(120 * (i + 1));
+            if (cancelled) return null;
+          }
         }
+        loadSpan.end({ loaded: false });
+        return null;
+      } catch (err) {
+        loadSpan.end({ loaded: false, error: true });
+        throw err;
       }
-      loadSpan.end({ loaded: false });
-      return null;
     };
 
     void (async () => {
-      const net = await loadWithRetry(scenarioId);
-      if (cancelled) return;
-      if (net !== null) {
-        primeNetworkData(net);
-        bumpNetwork();
-        return;
-      }
-
-      // Recover to base model if a scenario-specific load fails.
-      if (scenarioId !== null) {
-        const baseNet = await loadWithRetry(null);
+      try {
+        const net = await loadWithRetry(scenarioId);
         if (cancelled) return;
-        if (baseNet !== null) {
-          primeNetworkData(baseNet);
-          setS((prev) => {
-            if (
-              prev.activeProjectId !== projectId ||
-              prev.activeScenarioId !== scenarioId
-            )
-              return prev;
-            return { ...prev, activeScenarioId: null };
-          });
+        if (net !== null) {
+          primeNetworkData(net);
           bumpNetwork();
+          return;
         }
+
+        // Recover to base model if a scenario-specific load fails.
+        if (scenarioId !== null) {
+          const baseNet = await loadWithRetry(null);
+          if (cancelled) return;
+          if (baseNet !== null) {
+            primeNetworkData(baseNet);
+            setS((prev) => {
+              if (
+                prev.activeProjectId !== projectId ||
+                prev.activeScenarioId !== scenarioId
+              )
+                return prev;
+              return { ...prev, activeScenarioId: null };
+            });
+            bumpNetwork();
+          }
+        }
+      } catch (err) {
+        // `loadProjectNetwork` throws on snapshot decode failures — without
+        // this catch the async IIFE turned them into unhandled rejections.
+        if (cancelled) return;
+        console.error("[network] load_project_network failed:", err);
+        showToast(`Failed to load network: ${formatIpcError(err)}`, "error");
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [s.activeProjectId, s.activeScenarioId, bumpNetwork, primeNetworkData]);
+  }, [
+    s.activeProjectId,
+    s.activeScenarioId,
+    bumpNetwork,
+    primeNetworkData,
+    showToast,
+  ]);
 
   const setPage = useCallback((page: Page) => {
     setS((prev) => {
@@ -444,6 +495,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setS((prev) => ({ ...prev, scenariosVersion: prev.scenariosVersion + 1 }));
   }, []);
 
+  const bumpSimParams = useCallback(() => {
+    setS((prev) => ({ ...prev, simParamsVersion: prev.simParamsVersion + 1 }));
+  }, []);
+
   const navBack = useCallback(() => {
     setS((prev) => {
       if (prev.navCursor <= 0) return prev;
@@ -563,22 +618,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setS((prev) => ({ ...prev, theme }));
   }, []);
 
-  const showToast = useCallback(
-    (message: string, type: "info" | "success" | "warn" | "error" = "info") => {
-      // Toasts auto-dismiss, so in dev keep a durable copy of error/warn
-      // messages in the console for inspection after the toast is gone.
-      if (import.meta.env.DEV && (type === "error" || type === "warn")) {
-        const log = type === "error" ? console.error : console.warn;
-        log(`[toast:${type}] ${message}`);
-      }
-      setS((prev) => ({
-        ...prev,
-        toast: { id: String(Date.now()), message, type },
-      }));
-    },
-    [],
-  );
-
   const dismissToast = useCallback(() => {
     setS((prev) => ({ ...prev, toast: null }));
   }, []);
@@ -586,10 +625,30 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // Surface real backend IPC failures from the otherwise-silent `tryInvoke`
   // reads (e.g. a corrupted app-data DB making `list_projects` fail) so they
   // don't masquerade as empty data. Only fires inside a Tauri shell.
+  //
+  // Deduped: the network-load retry loop can hit the same failing command up
+  // to six times in a row (3 scenario attempts + 3 base-fallback attempts),
+  // which previously stacked six identical error toasts. One toast per
+  // identical message within the window is enough; a persistent failure
+  // resurfaces once the window elapses.
+  const recentIpcToastRef = useRef<{ message: string; at: number } | null>(
+    null,
+  );
   useEffect(
     () =>
       onIpcError((cmd, err) => {
-        showToast(`Backend error (${cmd}): ${formatIpcError(err)}`, "error");
+        const message = `Backend error (${cmd}): ${formatIpcError(err)}`;
+        const now = Date.now();
+        const recent = recentIpcToastRef.current;
+        if (
+          recent &&
+          recent.message === message &&
+          now - recent.at < IPC_TOAST_DEDUPE_MS
+        ) {
+          return;
+        }
+        recentIpcToastRef.current = { message, at: now };
+        showToast(message, "error");
       }),
     [showToast],
   );
@@ -649,6 +708,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         bumpProjects,
         setActiveScenarioId,
         bumpScenarios,
+        bumpSimParams,
         navBack,
         navForward,
         canNavBack: s.navCursor > 0,
@@ -725,6 +785,15 @@ interface SimulationCtxValue {
   /** True while loading result metadata for the active project/scenario. */
   resultMetaLoading: boolean;
   setResultMeta: (meta: ResultMeta | null) => void;
+  /**
+   * Opaque freshness token for `resultMeta`: incremented every time result
+   * metadata is (re)loaded from disk via `loadResultMeta` — on project/
+   * scenario switch and again when a run completes. Consumers caching
+   * derived or per-period data keyed on result identity include this in
+   * their keys so a re-run that produces value-equal metadata still
+   * invalidates the cache.
+   */
+  resultGeneration: number;
   tasks: Task[];
   issues: Issue[];
   setIssues: Dispatch<SetStateAction<Issue[]>>;
@@ -749,6 +818,7 @@ const SimCtx = createContext<SimulationCtxValue>({
   resultMeta: null,
   resultMetaLoading: false,
   setResultMeta: () => {},
+  resultGeneration: 0,
   tasks: [],
   issues: [],
   setIssues: () => {},
@@ -769,6 +839,10 @@ function SimulationProvider({ children }: { children: ReactNode }) {
   const [pumpEnergy, setPumpEnergy] = useState<PumpEnergyRecord[] | null>(null);
   const [resultMeta, setResultMeta] = useState<ResultMeta | null>(null);
   const [resultMetaLoading, setResultMetaLoading] = useState(false);
+  // Incremented on every completed `loadResultMeta` whose result is
+  // committed via setResultMeta (the simple, consistent rule — consumers
+  // treat it as an opaque freshness token; see SimulationCtxValue).
+  const [resultGeneration, setResultGeneration] = useState(0);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [issues, setIssues] = useState<Issue[]>([]);
 
@@ -953,7 +1027,10 @@ function SimulationProvider({ children }: { children: ReactNode }) {
     setResultMetaLoading(true);
     loadResultMeta(activeProjectId, activeScenarioId)
       .then((meta) => {
-        if (!cancelled) setResultMeta(meta);
+        if (!cancelled) {
+          setResultMeta(meta);
+          setResultGeneration((g) => g + 1);
+        }
       })
       .finally(() => {
         if (!cancelled) setResultMetaLoading(false);
@@ -1155,7 +1232,10 @@ function SimulationProvider({ children }: { children: ReactNode }) {
         const pid = activeProjectIdRef.current;
         const sid = activeScenarioIdRef.current;
         loadResultMeta(pid, sid).then((meta) => {
-          if (!cancelled && meta) setResultMeta(meta);
+          if (!cancelled && meta) {
+            setResultMeta(meta);
+            setResultGeneration((g) => g + 1);
+          }
         });
         getPumpEnergy(pid, sid).then((energy) => {
           if (!cancelled && energy) setPumpEnergy(energy);
@@ -1395,7 +1475,10 @@ function SimulationProvider({ children }: { children: ReactNode }) {
           // all periods into memory.
           if (opts?.projectId) {
             loadResultMeta(opts.projectId, opts.scenarioId).then((meta) => {
-              if (meta) setResultMeta(meta);
+              if (meta) {
+                setResultMeta(meta);
+                setResultGeneration((g) => g + 1);
+              }
             });
           }
           // Refresh project and scenario rows so state badges update immediately.
@@ -1463,6 +1546,7 @@ function SimulationProvider({ children }: { children: ReactNode }) {
       resultMeta,
       resultMetaLoading,
       setResultMeta,
+      resultGeneration,
       tasks,
       issues,
       setIssues,
@@ -1473,6 +1557,7 @@ function SimulationProvider({ children }: { children: ReactNode }) {
       pumpEnergy,
       resultMeta,
       resultMetaLoading,
+      resultGeneration,
       tasks,
       issues,
       runSim,

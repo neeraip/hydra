@@ -5,6 +5,11 @@
 
 import { listen } from "@tauri-apps/api/event";
 import { useEffect, useState } from "react";
+// Concrete-module import (not the `./index` barrel) to keep the existing
+// AppContext → hooks barrel → simulation cycle benign: `useAppState` is a
+// hoisted function declaration, so it is callable even while the modules are
+// still mid-evaluation, and it is only invoked at render time.
+import { useAppState } from "../AppContext";
 import { invoke, tryInvoke } from "./ipc";
 import type { PumpEnergyRecord } from "./results";
 
@@ -113,15 +118,22 @@ export async function updateSimParams(
  * React hook that tracks simulation parameters for `projectId`. Returns
  * `null` until the first fetch resolves or when `projectId` is absent.
  *
- * Deliberately does *not* re-fetch on `networkVersion` bumps: element edits
- * never change `[TIMES]`/`[OPTIONS]`, and re-reading them on every edit made
- * the backend re-parse the whole base INP per mutation.
+ * Re-fetches when `simParamsVersion` (AppContext) bumps — i.e. after
+ * `update_sim_params` succeeds via the Simulation Settings save flow — so
+ * consumers like the canvas timeline pick up new [TIMES]/[OPTIONS] values
+ * without a reload. Deliberately does *not* re-fetch on `networkVersion`
+ * bumps: element edits never change `[TIMES]`/`[OPTIONS]`, and re-reading
+ * them on every edit made the backend re-parse the whole base INP per
+ * mutation.
  */
 export function useSimParams(
   projectId: string | null | undefined,
 ): SimParams | null {
+  const { simParamsVersion } = useAppState();
   const [params, setParams] = useState<SimParams | null>(null);
   useEffect(() => {
+    // `simParamsVersion` is a pure refetch trigger.
+    void simParamsVersion;
     if (!projectId) {
       setParams(null);
       return;
@@ -133,6 +145,6 @@ export function useSimParams(
     return () => {
       cancelled = true;
     };
-  }, [projectId]);
+  }, [projectId, simParamsVersion]);
   return params;
 }

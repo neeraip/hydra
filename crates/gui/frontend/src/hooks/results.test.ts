@@ -12,8 +12,33 @@
  *
  * All values little-endian.
  */
-import { describe, expect, it } from "vitest";
-import { decodePeriodResults } from "./results";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+// Mock the Tauri IPC seam so `getPeriodResults` can be exercised with
+// controlled payloads. Established before importing ./results (which pulls
+// ./ipc).
+vi.mock("@tauri-apps/api/core", () => ({
+  invoke: vi.fn(),
+}));
+
+import { invoke } from "@tauri-apps/api/core";
+import { decodePeriodResults, getPeriodResults } from "./results";
+
+const mockInvoke = vi.mocked(invoke);
+
+/** Make `isTauri()` return true for the current test. */
+function stubTauriShell() {
+  vi.stubGlobal("window", { __TAURI_INTERNALS__: {} });
+}
+
+beforeEach(() => {
+  mockInvoke.mockReset();
+});
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+  vi.restoreAllMocks();
+});
 
 const HEADER_BYTES = 12;
 const FLAG_QUALITY = 1;
@@ -145,12 +170,18 @@ describe("decodePeriodResults", () => {
     expect(resQ?.linkQuality?.length).toBe(0);
   });
 
-  it("returns null for a buffer shorter than the 12-byte header", () => {
+  it("returns null only for a zero-byte buffer (the 'no data' representation)", () => {
     expect(decodePeriodResults(new ArrayBuffer(0))).toBeNull();
-    expect(decodePeriodResults(new ArrayBuffer(11))).toBeNull();
   });
 
-  it("returns null when the buffer is truncated vs the declared counts", () => {
+  it("throws for a non-empty buffer shorter than the 12-byte header", () => {
+    // Malformed is not the same as absent — silently returning null here
+    // made a frontend/backend layout mismatch look like "no results".
+    expect(() => decodePeriodResults(new ArrayBuffer(1))).toThrow(/too short/);
+    expect(() => decodePeriodResults(new ArrayBuffer(11))).toThrow(/too short/);
+  });
+
+  it("throws when the buffer is truncated vs the declared counts", () => {
     const full = buildBuffer(2, 3, 0, [
       nodeDemand,
       nodeHead,
@@ -161,7 +192,7 @@ describe("decodePeriodResults", () => {
       linkStatus,
     ]);
     const truncated = full.slice(0, full.byteLength - 4);
-    expect(decodePeriodResults(truncated)).toBeNull();
+    expect(() => decodePeriodResults(truncated)).toThrow(/truncated/);
 
     // Quality flag set but quality arrays missing → also truncated.
     const noQuality = buildBuffer(2, 3, FLAG_QUALITY, [
@@ -173,7 +204,7 @@ describe("decodePeriodResults", () => {
       linkHeadloss,
       linkStatus,
     ]);
-    expect(decodePeriodResults(noQuality)).toBeNull();
+    expect(() => decodePeriodResults(noQuality)).toThrow(/truncated/);
   });
 
   it("tolerates trailing bytes beyond the expected payload", () => {
@@ -183,5 +214,45 @@ describe("decodePeriodResults", () => {
     const res = decodePeriodResults(padded);
     expect(res).not.toBeNull();
     expect(Array.from(res?.linkStatus ?? [])).toEqual([7]);
+  });
+});
+
+describe("getPeriodResults", () => {
+  it("returns null outside a Tauri shell", async () => {
+    // `window` is undefined in the Node test env → isTauri() false.
+    await expect(getPeriodResults("p1", 0)).resolves.toBeNull();
+    expect(mockInvoke).not.toHaveBeenCalled();
+  });
+
+  it("returns null when the command fails (tryInvoke swallows + reports)", async () => {
+    stubTauriShell();
+    mockInvoke.mockRejectedValueOnce("No results for project");
+    await expect(getPeriodResults("p1", 0)).resolves.toBeNull();
+  });
+
+  it("decodes a valid binary payload", async () => {
+    stubTauriShell();
+    mockInvoke.mockResolvedValueOnce(
+      buildBuffer(1, 1, 0, [[1], [2], [3], [4], [5], [6], [7]]),
+    );
+    const res = await getPeriodResults("p1", 0, "s1");
+    expect(Array.from(res?.nodeDemand ?? [])).toEqual([1]);
+    expect(Array.from(res?.linkStatus ?? [])).toEqual([7]);
+  });
+
+  it("rejects (not null) on an unexpected payload type", async () => {
+    stubTauriShell();
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    mockInvoke.mockResolvedValueOnce({ nodeDemand: [] });
+    await expect(getPeriodResults("p1", 0)).rejects.toThrow(
+      /unexpected payload type/,
+    );
+  });
+
+  it("rejects (not null) on a malformed buffer so failures stay visible", async () => {
+    stubTauriShell();
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    mockInvoke.mockResolvedValueOnce(new ArrayBuffer(4));
+    await expect(getPeriodResults("p1", 0)).rejects.toThrow(/too short/);
   });
 });

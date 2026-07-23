@@ -60,28 +60,38 @@ export function normalizeNodes(nodes: Node[]): Node[] {
   return nodes;
 }
 
-/** Replace the element with the same id, or append when absent (mirrors the
- *  backend's cache update). Returns a new array for React state identity. */
-export function upsertById<T extends { id: string }>(
+/**
+ * Replace the element with the same id, returning a new array for React
+ * state identity. An id not present in `items` is deliberately **dropped**,
+ * never appended: creates and deletes always emit payload-less
+ * `network-changed` events (a full-refetch signal), and Tauri delivers
+ * events in order, so a delta referencing an unknown id can only be a stale
+ * patch arriving in the window between such a structural event and its
+ * refetch completing. Appending it would resurrect a just-deleted element
+ * or insert a half-initialised one ("ghost elements"); dropping is safe
+ * because the already-scheduled refetch supersedes it.
+ */
+export function patchById<T extends { id: string }>(
   items: T[],
   updated: T,
 ): T[] {
   const idx = items.findIndex((el) => el.id === updated.id);
-  if (idx < 0) return [...items, updated];
+  if (idx < 0) return items;
   const next = items.slice();
   next[idx] = updated;
   return next;
 }
 
-/** Upsert each update in order. Untouched entries keep their object identity
- *  (the perf contract that lets memoised consumers skip re-render work);
- *  returns the input array unchanged when `updates` is empty. */
-export function upsertAllById<T extends { id: string }>(
+/** Apply each patch in order (unknown ids are dropped — see `patchById`).
+ *  Untouched entries keep their object identity (the perf contract that lets
+ *  memoised consumers skip re-render work); returns the input array unchanged
+ *  when `updates` is empty or nothing matches. */
+export function patchAllById<T extends { id: string }>(
   items: T[],
   updates: T[],
 ): T[] {
   let next = items;
-  for (const u of updates) next = upsertById(next, u);
+  for (const u of updates) next = patchById(next, u);
   return next;
 }
 
@@ -89,8 +99,9 @@ export function upsertAllById<T extends { id: string }>(
  * Pure equivalent of the `network-changed` delta path: apply the patched
  * element DTOs from a delta payload to the current node/link arrays and
  * return the next arrays. Patched nodes are normalised in place (see
- * `normalizeNodes`). Arrays with no matching patches are returned by
- * reference, and untouched entries keep their identity.
+ * `normalizeNodes`). Patches for ids not present are dropped (see
+ * `patchById`). Arrays with no matching patches are returned by reference,
+ * and untouched entries keep their identity.
  */
 export function applyElementDeltas(
   nodes: Node[],
@@ -102,9 +113,9 @@ export function applyElementDeltas(
   return {
     nodes:
       patchedNodes.length > 0
-        ? upsertAllById(nodes, normalizeNodes(patchedNodes))
+        ? patchAllById(nodes, normalizeNodes(patchedNodes))
         : nodes,
-    links: upsertAllById(links, patchedLinks),
+    links: patchAllById(links, patchedLinks),
   };
 }
 
@@ -187,15 +198,23 @@ const Ctx = createContext<NetworkDataCtx>({
 });
 
 export function NetworkDataProvider({ children }: { children: ReactNode }) {
-  const { version } = useNetworkVersion();
+  const { version, bumpNetwork } = useNetworkVersion();
   const [nodes, setNodes] = useState<Node[]>([]);
   const [links, setLinks] = useState<Link[]>([]);
   const [loading, setLoading] = useState(false);
+  // Set only by `primeNetworkData`: the snapshot was just loaded via
+  // `load_project_network`, so the version bump that follows a prime must
+  // not trigger a redundant `get_network_snapshot` fetch.
   const skipNextFetchRef = useRef(false);
   // Set when a `network-changed` event without a delta payload arrives (a
-  // structural mutation): the next version-triggered fetch must run even if a
-  // delta event in the same batch requested a skip.
+  // structural mutation) or when an in-flight fetch is cancelled before it
+  // could deliver: the next version-triggered fetch must run even if a prime
+  // in the same batch requested a skip.
   const fullRefetchNeededRef = useRef(false);
+  // True while a `get_network_snapshot` fetch is outstanding — lets the
+  // delta listener detect that a snapshot response (possibly encoded before
+  // the delta's mutation) could land after the delta and silently revert it.
+  const fetchInFlightRef = useRef(false);
 
   const primeNetworkData = useCallback((snapshot: NetworkSnapshotDto) => {
     skipNextFetchRef.current = true;
@@ -210,16 +229,27 @@ export function NetworkDataProvider({ children }: { children: ReactNode }) {
   // patch_node_position) carry the updated DTOs, so a 92k-element snapshot
   // refetch per edit is unnecessary; events without a payload (create /
   // delete / structural changes) still trigger the full refetch below via
-  // the version bump from NetworkVersionContext.
+  // the version bump from NetworkVersionContext (which bumps only for such
+  // structural events — deltas are fully self-applied here).
   useEffect(() => {
     let unlisten: (() => void) | null = null;
     let disposed = false;
     listenNetworkChangedPayload((payload) => {
+      // Inline equivalent of `isStructuralNetworkChange` (kept inline so TS
+      // narrows `payload` to non-null below).
       if (!payload || payload.elements.length === 0) {
         fullRefetchNeededRef.current = true;
         return;
       }
-      skipNextFetchRef.current = true;
+      if (fetchInFlightRef.current) {
+        // A snapshot fetch is outstanding. Its response may have been
+        // encoded before this delta's mutation, so letting it land after we
+        // apply the delta locally would silently revert the edit. Force a
+        // fresh fetch instead (the bump cancels the in-flight one, and the
+        // cleanup below marks it as needing a refetch).
+        fullRefetchNeededRef.current = true;
+        bumpNetwork();
+      }
       const patchedNodes = payload.elements.flatMap((el) =>
         el.node ? [el.node] : [],
       );
@@ -228,10 +258,10 @@ export function NetworkDataProvider({ children }: { children: ReactNode }) {
       );
       if (patchedNodes.length > 0) {
         normalizeNodes(patchedNodes);
-        setNodes((prev) => upsertAllById(prev, patchedNodes));
+        setNodes((prev) => patchAllById(prev, patchedNodes));
       }
       if (patchedLinks.length > 0) {
-        setLinks((prev) => upsertAllById(prev, patchedLinks));
+        setLinks((prev) => patchAllById(prev, patchedLinks));
       }
     }).then((fn) => {
       if (disposed) fn();
@@ -241,7 +271,7 @@ export function NetworkDataProvider({ children }: { children: ReactNode }) {
       disposed = true;
       unlisten?.();
     };
-  }, []);
+  }, [bumpNetwork]);
 
   useEffect(() => {
     if (skipNextFetchRef.current && !fullRefetchNeededRef.current) {
@@ -253,7 +283,9 @@ export function NetworkDataProvider({ children }: { children: ReactNode }) {
     fullRefetchNeededRef.current = false;
 
     let cancelled = false;
+    let settled = false;
     setLoading(true);
+    fetchInFlightRef.current = true;
     const fetchStartedAt = performance.now();
 
     // Binary snapshot fetch + decode (see `decodeNetworkSnapshot`). The
@@ -285,11 +317,26 @@ export function NetworkDataProvider({ children }: { children: ReactNode }) {
         console.error("[network] get_network_snapshot decode failed:", err);
       })
       .finally(() => {
-        if (!cancelled) setLoading(false);
+        settled = true;
+        if (!cancelled) {
+          fetchInFlightRef.current = false;
+          setLoading(false);
+        }
       });
 
     return () => {
       cancelled = true;
+      if (!settled) {
+        // The fetch was cancelled mid-flight, so its snapshot is discarded.
+        // Unless the cancelling run was primed with fresh data
+        // (primeNetworkData → skipNextFetchRef), whatever change triggered
+        // this fetch never reached state — make the next run refetch instead
+        // of skipping. (Before this guard, a delta landing during an
+        // in-flight fetch discarded the fetch AND skipped the next run,
+        // losing the structural change the fetch was carrying.)
+        fetchInFlightRef.current = false;
+        if (!skipNextFetchRef.current) fullRefetchNeededRef.current = true;
+      }
     };
   }, [version]);
 

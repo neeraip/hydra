@@ -41,7 +41,7 @@ import {
 // ─────────────────────────────────────────────────────────────────────────────
 
 export function SimulationSettings({ projectId }: { projectId: string }) {
-  const { showToast } = useAppState();
+  const { showToast, bumpSimParams } = useAppState();
   const { markEdited } = useNetworkVersion();
   const scenarios = useScenarios(projectId);
   const scenariosRef = useRef(scenarios);
@@ -110,6 +110,10 @@ export function SimulationSettings({ projectId }: { projectId: string }) {
       await updateSimParams(projectId, draft);
       setOriginal(draft);
       setEditing(false);
+      // Tell every `useSimParams` consumer (e.g. the canvas timeline) to
+      // re-read [TIMES]/[OPTIONS] — this panel keeps its own local copy, but
+      // without the bump other views kept the stale params until reload.
+      bumpSimParams();
       // Mark base model and every scenario as stale so the Run button turns amber.
       markEdited(null);
       for (const s of scenariosRef.current) markEdited(s.id);

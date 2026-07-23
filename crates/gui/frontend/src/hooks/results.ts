@@ -140,6 +140,10 @@ export interface PeriodResults {
 /** Set in the binary header's flags word when quality arrays are appended. */
 const PERIOD_RESULTS_FLAG_QUALITY = 1;
 
+function periodResultsError(detail: string): Error {
+  return new Error(`period results decode failed: ${detail}`);
+}
+
 /**
  * Decode the compact little-endian binary layout produced by the backend's
  * `encode_period_results`:
@@ -151,14 +155,23 @@ const PERIOD_RESULTS_FLAG_QUALITY = 1;
  * [f32×nNodes nodeQuality | f32×nLinks linkQuality]   (flags bit 0)
  * ```
  *
- * The typed arrays are zero-copy views over the response buffer. Returns
- * `null` for a malformed / truncated buffer.
+ * The typed arrays are zero-copy views over the response buffer.
+ *
+ * Returns `null` only for a zero-byte buffer — the "no data" representation.
+ * (In practice absent results never reach this decoder: `get_period_results`
+ * errors when `results.out` is missing, and callers pre-check result
+ * metadata.) Any non-empty malformed or truncated buffer throws a
+ * descriptive error so a frontend/backend layout mismatch surfaces loudly
+ * instead of masquerading as "no results".
  *
  * Exported for tests — production callers go through `getPeriodResults`.
  */
 export function decodePeriodResults(buf: ArrayBuffer): PeriodResults | null {
   const HEADER_BYTES = 12;
-  if (buf.byteLength < HEADER_BYTES) return null;
+  if (buf.byteLength === 0) return null;
+  if (buf.byteLength < HEADER_BYTES) {
+    throw periodResultsError(`buffer too short (${buf.byteLength} bytes)`);
+  }
   const view = new DataView(buf);
   const nNodes = view.getUint32(0, true);
   const nLinks = view.getUint32(4, true);
@@ -169,7 +182,13 @@ export function decodePeriodResults(buf: ArrayBuffer): PeriodResults | null {
     HEADER_BYTES +
     4 * (3 * nNodes + 4 * nLinks) +
     (hasQuality ? 4 * (nNodes + nLinks) : 0);
-  if (buf.byteLength < expected) return null;
+  if (buf.byteLength < expected) {
+    throw periodResultsError(
+      `truncated buffer (${buf.byteLength} bytes for ${nNodes} nodes + ${nLinks} links${
+        hasQuality ? " + quality" : ""
+      }, expected ${expected})`,
+    );
+  }
 
   let offset = HEADER_BYTES;
   const take = (len: number): Float32Array => {
@@ -216,8 +235,13 @@ export async function loadResultMeta(
  *
  * The backend responds with a compact binary payload (~1.3 MB at 46k nodes +
  * 46k links vs ~3.2 MB as JSON) that is decoded here into zero-copy
- * `Float32Array` views. Values are in SI units (L/s, m, m/s). Returns `null`
- * outside Tauri.
+ * `Float32Array` views. Values are in SI units (L/s, m, m/s).
+ *
+ * Returns `null` outside Tauri or when the command itself fails (reported
+ * via `onIpcError`). Throws when the payload cannot be decoded or has an
+ * unexpected type (frontend/backend contract break); the error is also
+ * logged here so a caller that drops the rejection still leaves a
+ * diagnosable trail.
  */
 export async function getPeriodResults(
   projectId: string,
@@ -229,6 +253,19 @@ export async function getPeriodResults(
     period,
     scenarioId: scenarioId ?? null,
   });
-  if (!(buf instanceof ArrayBuffer)) return null;
-  return decodePeriodResults(buf);
+  // `null` = outside Tauri or the command failed (reported via onIpcError).
+  if (buf === null) return null;
+  if (!(buf instanceof ArrayBuffer)) {
+    const err = periodResultsError(
+      `get_period_results returned unexpected payload type ${typeof buf} (expected ArrayBuffer)`,
+    );
+    console.error("[results]", err);
+    throw err;
+  }
+  try {
+    return decodePeriodResults(buf);
+  } catch (err) {
+    console.error("[results] get_period_results decode failed:", err);
+    throw err;
+  }
 }

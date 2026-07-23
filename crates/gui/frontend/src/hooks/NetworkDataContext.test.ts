@@ -1,17 +1,18 @@
 /**
  * Tests for the pure `network-changed` delta path in NetworkDataContext:
- * patched element DTOs are upserted into the node/link arrays in place of a
- * full snapshot refetch. The perf contract under test: untouched entries
- * keep their object identity, and arrays with no matching patches are
- * returned by reference.
+ * patched element DTOs replace matching entries in the node/link arrays in
+ * place of a full snapshot refetch; patches for unknown ids are stale by
+ * construction and dropped (never appended). The perf contract under test:
+ * untouched entries keep their object identity, and arrays with no matching
+ * patches are returned by reference.
  */
 import { describe, expect, it } from "vitest";
 import type { Link, Node } from "../types";
 import {
   applyElementDeltas,
   normalizeNodes,
-  upsertAllById,
-  upsertById,
+  patchAllById,
+  patchById,
 } from "./NetworkDataContext";
 
 function makeNode(id: string, extra: Partial<Node> = {}): Node {
@@ -67,19 +68,41 @@ describe("applyElementDeltas", () => {
     expect(next.nodes).toBe(nodes);
   });
 
-  it("appends elements with unknown ids (mirrors backend cache upsert)", () => {
+  it("drops elements with unknown ids instead of appending them", () => {
+    // Creates/deletes always emit payload-less events (full-refetch signal),
+    // so a delta for an id we don't hold is necessarily stale — appending it
+    // used to create "ghost" elements (e.g. resurrecting a deleted node).
     const nodes = [makeNode("J1")];
     const links = [makeLink("P1")];
-    const newNode = makeNode("J9");
-    const newLink = makeLink("P9");
+    const staleNode = makeNode("J9");
+    const staleLink = makeLink("P9");
 
     const next = applyElementDeltas(nodes, links, [
-      { node: newNode },
-      { link: newLink },
+      { node: staleNode },
+      { link: staleLink },
     ]);
 
-    expect(next.nodes.map((n) => n.id)).toEqual(["J1", "J9"]);
-    expect(next.links.map((l) => l.id)).toEqual(["P1", "P9"]);
+    expect(next.nodes.map((n) => n.id)).toEqual(["J1"]);
+    expect(next.links.map((l) => l.id)).toEqual(["P1"]);
+    // Nothing matched → input arrays are returned by reference.
+    expect(next.nodes).toBe(nodes);
+    expect(next.links).toBe(links);
+  });
+
+  it("applies known-id patches while dropping unknown-id ones in the same payload", () => {
+    const nodes = [makeNode("J1"), makeNode("J2")];
+    const updated = makeNode("J2", { x: 9 });
+    const stale = makeNode("J9");
+
+    const next = applyElementDeltas(
+      nodes,
+      [],
+      [{ node: updated }, { node: stale }],
+    );
+
+    expect(next.nodes.map((n) => n.id)).toEqual(["J1", "J2"]);
+    expect(next.nodes[1]).toBe(updated);
+    expect(next.nodes[0]).toBe(nodes[0]);
   });
 
   it("applies multiple patches from one payload in order", () => {
@@ -101,8 +124,10 @@ describe("applyElementDeltas", () => {
   it("normalises omitted pressure/demand on patched nodes to null", () => {
     // The backend omits always-null optionals from DTO JSON; consumers use
     // strict `!== null` comparisons, so the delta path must fill them in.
-    const bare = { id: "J1", type: "junction", x: 0, y: 0 } as Node;
-    const next = applyElementDeltas([], [], [{ node: bare }]);
+    const existing = { id: "J1", type: "junction", x: 0, y: 0 } as Node;
+    const bare = { id: "J1", type: "junction", x: 5, y: 0 } as Node;
+    const next = applyElementDeltas([existing], [], [{ node: bare }]);
+    expect(next.nodes[0].x).toBe(5);
     expect(next.nodes[0].pressure).toBeNull();
     expect(next.nodes[0].demand).toBeNull();
   });
@@ -116,18 +141,29 @@ describe("applyElementDeltas", () => {
   });
 });
 
-describe("upsertById / upsertAllById", () => {
-  it("upsertById replaces by id without mutating the input array", () => {
+describe("patchById / patchAllById", () => {
+  it("patchById replaces by id without mutating the input array", () => {
     const items = [makeNode("A"), makeNode("B")];
     const replacement = makeNode("B", { x: 7 });
-    const next = upsertById(items, replacement);
+    const next = patchById(items, replacement);
     expect(next[1]).toBe(replacement);
     expect(items[1]).not.toBe(replacement); // input untouched
   });
 
-  it("upsertAllById returns the input array unchanged for no updates", () => {
+  it("patchById returns the input array unchanged for an unknown id", () => {
     const items = [makeNode("A")];
-    expect(upsertAllById(items, [])).toBe(items);
+    expect(patchById(items, makeNode("Z"))).toBe(items);
+    expect(items).toHaveLength(1);
+  });
+
+  it("patchAllById returns the input array unchanged for no updates", () => {
+    const items = [makeNode("A")];
+    expect(patchAllById(items, [])).toBe(items);
+  });
+
+  it("patchAllById returns the input array unchanged when nothing matches", () => {
+    const items = [makeNode("A")];
+    expect(patchAllById(items, [makeNode("X"), makeNode("Y")])).toBe(items);
   });
 });
 

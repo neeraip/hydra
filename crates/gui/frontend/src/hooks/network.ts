@@ -221,9 +221,17 @@ export async function fetchNetworkSnapshot(): Promise<{
   links: Link[];
 } | null> {
   const buf = await tryInvoke<ArrayBuffer>("get_network_snapshot");
-  if (!(buf instanceof ArrayBuffer)) return null;
-  // `get_network_snapshot` always sets the "present" flag, so this only
-  // returns null for the outside-Tauri / failed-invoke cases above.
+  // `null` = outside Tauri or the command failed (reported via onIpcError).
+  if (buf === null) return null;
+  // Any other non-ArrayBuffer payload is a frontend/backend contract break —
+  // throw instead of conflating it with "no data".
+  if (!(buf instanceof ArrayBuffer)) {
+    throw snapshotError(
+      `get_network_snapshot returned unexpected payload type ${typeof buf} (expected ArrayBuffer)`,
+    );
+  }
+  // `get_network_snapshot` always sets the "present" flag, so decode only
+  // returns null in the (never-hit) flag-clear case.
   return decodeNetworkSnapshot(buf);
 }
 
@@ -287,7 +295,9 @@ export function formatInpImportError(err: unknown): string {
  * The backend responds with the compact binary snapshot layout (see
  * `decodeNetworkSnapshot`). Returns a nodes+links snapshot when loaded, or
  * `null` when the target INP does not exist yet (encoded as a payload with
- * the "present" flag clear). Decode failures throw.
+ * the "present" flag clear) or when running outside Tauri / the command
+ * failed (reported via onIpcError). Decode failures and unexpected payload
+ * types throw.
  */
 export async function loadProjectNetwork(
   projectId: string,
@@ -297,7 +307,16 @@ export async function loadProjectNetwork(
     projectId,
     scenarioId,
   });
-  if (!(buf instanceof ArrayBuffer)) return null;
+  // `null` = outside Tauri or the command failed (reported via onIpcError).
+  if (buf === null) return null;
+  // An unexpected payload type is a frontend/backend contract break, not
+  // the "target INP missing" case — that one is a real ArrayBuffer with the
+  // "present" flag clear, which decodeNetworkSnapshot maps to null.
+  if (!(buf instanceof ArrayBuffer)) {
+    throw snapshotError(
+      `load_project_network returned unexpected payload type ${typeof buf} (expected ArrayBuffer)`,
+    );
+  }
   return decodeNetworkSnapshot(buf);
 }
 
@@ -529,6 +548,20 @@ export function listenNetworkChangedPayload(
   return listen<NetworkChangedPayload | null>(NETWORK_CHANGED_EVENT, (ev) =>
     cb(ev.payload ?? null),
   );
+}
+
+/**
+ * True when a `network-changed` payload denotes a structural mutation
+ * (create / delete / pattern / curve / control commands — no element DTOs):
+ * consumers must refetch from the backend. Element-scoped deltas (non-empty
+ * `elements`) are self-applied by NetworkDataContext's own listener and
+ * carry everything the frontend needs, so they must NOT trigger the
+ * version-keyed refetch machinery.
+ */
+export function isStructuralNetworkChange(
+  payload: NetworkChangedPayload | null,
+): boolean {
+  return !payload || payload.elements.length === 0;
 }
 
 // ── Node / link / pattern / curve hooks ────────────────────────────────────

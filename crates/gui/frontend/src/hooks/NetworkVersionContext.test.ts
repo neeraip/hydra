@@ -6,11 +6,17 @@
  */
 import { describe, expect, it, vi } from "vitest";
 
-// NetworkVersionContext imports the hooks barrel for listenNetworkChanged;
-// stub it so this pure-logic test doesn't pull the Tauri event plumbing.
-vi.mock("./index", () => ({
-  listenNetworkChanged: vi.fn(async () => () => {}),
-}));
+// NetworkVersionContext imports listenNetworkChangedPayload from the
+// concrete ./network module (never the ./index barrel — see its header);
+// stub the listener so this pure-logic test doesn't pull the Tauri event
+// plumbing, keeping the real isStructuralNetworkChange.
+vi.mock("./network", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./network")>();
+  return {
+    ...actual,
+    listenNetworkChangedPayload: vi.fn(async () => () => {}),
+  };
+});
 
 import { makeCoalescedScheduler } from "./NetworkVersionContext";
 

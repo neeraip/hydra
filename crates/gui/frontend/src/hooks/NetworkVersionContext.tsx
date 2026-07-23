@@ -9,7 +9,8 @@
  *
  * Kept in a standalone file to avoid a circular dependency between
  * `data/index.ts` (which calls `useNetworkVersion`) and `state.tsx` (which
- * imports from `data/index.ts`).
+ * imports from `data/index.ts`) — so imports here must come from concrete
+ * modules, never the `./index` barrel.
  */
 
 import {
@@ -21,7 +22,10 @@ import {
   useMemo,
   useState,
 } from "react";
-import { listenNetworkChanged } from "./index";
+import {
+  isStructuralNetworkChange,
+  listenNetworkChangedPayload,
+} from "./network";
 
 interface NetworkVersionCtx {
   version: number;
@@ -77,15 +81,27 @@ export function NetworkVersionProvider({ children }: { children: ReactNode }) {
     [],
   );
 
-  // Keep all windows in sync: whenever the backend emits network-changed
-  // (from patch_element, patch_node_position, or delete_element), bump the
-  // local version so useNodes/useLinks re-fetch automatically.
+  // Keep all windows in sync: whenever the backend emits a *structural*
+  // network-changed event (create/delete/pattern/curve/control — no element
+  // payload), bump the local version so version-keyed hooks re-fetch.
+  // Element-scoped deltas carry the updated DTOs and are self-applied by
+  // NetworkDataContext's own listener; bumping on them made every
+  // version-keyed hook (patterns/curves/controls/rules) refetch data the
+  // delta already contained.
   useEffect(() => {
     let unlisten: (() => void) | null = null;
-    listenNetworkChanged(() => bumpNetwork()).then((fn) => {
-      unlisten = fn;
+    let disposed = false;
+    listenNetworkChangedPayload((payload) => {
+      if (isStructuralNetworkChange(payload)) bumpNetwork();
+    }).then((fn) => {
+      // StrictMode double-mount: the first effect's cleanup can run before
+      // this promise resolves — dispose the late listener instead of
+      // leaking it (which doubled every bump).
+      if (disposed) fn();
+      else unlisten = fn;
     });
     return () => {
+      disposed = true;
       unlisten?.();
     };
   }, [bumpNetwork]);
