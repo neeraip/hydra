@@ -6,6 +6,7 @@
 import { describe, expect, it } from "vitest";
 import type { Link, Node } from "../../hooks";
 import {
+  divergingRgba,
   flowMagnitudeRgba,
   headlossRgba,
   LINK_HEADLOSS_MAX,
@@ -135,6 +136,49 @@ describe("linkQualityRgba", () => {
     expect(linkQualityRgba(15, 10, 20)).toEqual(qualityRgba(0.5));
     // Degenerate range guards against divide-by-zero.
     expect(linkQualityRgba(5, 5, 5)).toEqual(qualityRgba(0));
+  });
+});
+
+describe("divergingRgba", () => {
+  it("returns neutral grey at zero delta", () => {
+    expect(divergingRgba(0, 10)).toEqual([150, 150, 150, 230]);
+  });
+
+  it("reaches the palette blue at -maxAbs and red at +maxAbs", () => {
+    expect(divergingRgba(-10, 10)).toEqual([74, 144, 217, 230]); // #4a90d9
+    expect(divergingRgba(10, 10)).toEqual([201, 64, 64, 230]); // #c94040
+  });
+
+  it("clamps deltas beyond ±maxAbs to the ramp endpoints", () => {
+    expect(divergingRgba(-999, 10)).toEqual(divergingRgba(-10, 10));
+    expect(divergingRgba(999, 10)).toEqual(divergingRgba(10, 10));
+  });
+
+  it("interpolates linearly between the centre and each endpoint", () => {
+    // Halfway to red: 150 + 0.5·(201−150) etc.
+    expect(divergingRgba(5, 10)).toEqual([176, 107, 107, 230]);
+    // Halfway to blue: 150 + 0.5·(74−150) etc.
+    expect(divergingRgba(-5, 10)).toEqual([112, 147, 184, 230]);
+  });
+
+  it("renders missing/non-finite deltas as the no-data grey", () => {
+    expect(divergingRgba(null, 10)).toEqual([100, 100, 100, 230]);
+    expect(divergingRgba(undefined, 10)).toEqual([100, 100, 100, 230]);
+    expect(divergingRgba(Number.NaN, 10)).toEqual([100, 100, 100, 230]);
+    expect(divergingRgba(Number.POSITIVE_INFINITY, 10)).toEqual([
+      100, 100, 100, 230,
+    ]);
+  });
+
+  it("guards a non-positive maxAbs instead of dividing by zero", () => {
+    // Falls back to dividing by 1 — delta 0.5 behaves like maxAbs 1.
+    expect(divergingRgba(0.5, 0)).toEqual(divergingRgba(0.5, 1));
+    expect(divergingRgba(0, 0)).toEqual([150, 150, 150, 230]);
+  });
+
+  it("honours a custom alpha", () => {
+    expect(divergingRgba(0, 10, 128)).toEqual([150, 150, 150, 128]);
+    expect(divergingRgba(null, 10, 128)).toEqual([100, 100, 100, 128]);
   });
 });
 

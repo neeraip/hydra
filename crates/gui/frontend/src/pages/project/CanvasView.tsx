@@ -22,6 +22,7 @@ import {
 import { useActiveProject, useAppState, useSimulation } from "../../AppContext";
 import { AnnotationSummary, MeasureOverlay } from "../../canvas/Annotations";
 import type { BasemapStyle } from "../../canvas/Basemap";
+import { computeDeltas } from "../../canvas/compare";
 import {
   haversineMeters,
   pickCoordSample,
@@ -57,11 +58,14 @@ import {
   createNode,
   deleteElement,
   getPeriodResults,
+  loadResultMeta,
   type PeriodResults,
   patchNodePosition,
+  type ResultMeta,
   saveProjectOnDisk,
   useLinks,
   useNodes,
+  useScenarios,
   useSimParams,
 } from "../../hooks";
 import { useNetworkVersion } from "../../hooks/NetworkVersionContext";
@@ -95,12 +99,20 @@ const basemapLabel = (b: BasemapStyle) =>
 const canvasPrefsKey = (projectId: string) =>
   `hydra2-canvas-prefs:${projectId}`;
 
+/** Sentinel baseline id meaning "compare against the base model" (only
+ * meaningful while a scenario is active). Distinct from `null` = off. */
+const BASE_COMPARE_ID = "__base__";
+
 interface CanvasPrefs {
   viewMode: ViewMode;
   basemap: BasemapStyle;
   nodeVar: NodeVariable;
   linkVar: LinkVariable;
   colorMode: "relative" | "threshold";
+  /** Scenario-comparison baseline: null = off, BASE_COMPARE_ID = base model,
+   * otherwise a scenario id. Optional for backward compat with stored prefs
+   * that predate comparison. */
+  compareScenarioId?: string | null;
 }
 
 // Allowlists so corrupt/stale localStorage can never inject invalid state.
@@ -242,6 +254,14 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
   // schematic mode (idealised orthogonal layout).
   const [viewMode, setViewMode] = useState<ViewMode>("map");
   const [basemap, setBasemap] = useState<BasemapStyle>("streets");
+  // ── Scenario comparison baseline ─────────────────────────────────────
+  // null = off, BASE_COMPARE_ID = base model, otherwise a scenario id.
+  // Validity against the current project/scenario is derived below
+  // (effectiveCompareId) so stale persisted ids are inert, never crashing.
+  const [compareScenarioId, setCompareScenarioId] = useState<string | null>(
+    null,
+  );
+  const [showCompareDropdown, setShowCompareDropdown] = useState(false);
 
   // ── Per-project canvas prefs: restore on project switch, persist on change.
   // `prefsLoadedFor` gates persisting so the write effect (which also re-runs
@@ -269,6 +289,14 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
         setColorMode(prefs.colorMode);
       }
     }
+    // Unlike the other prefs (global vocabularies), the compare baseline is
+    // project-scoped (a scenario id) — always reset it on project switch,
+    // falling back to "off" when the stored prefs predate comparison.
+    setCompareScenarioId(
+      typeof prefs?.compareScenarioId === "string"
+        ? prefs.compareScenarioId
+        : null,
+    );
     setPrefsLoadedFor(id);
   }, [project?.id]);
   useEffect(() => {
@@ -280,6 +308,7 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
       nodeVar,
       linkVar,
       colorMode,
+      compareScenarioId,
     };
     try {
       localStorage.setItem(canvasPrefsKey(id), JSON.stringify(prefs));
@@ -294,6 +323,7 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
     nodeVar,
     linkVar,
     colorMode,
+    compareScenarioId,
   ]);
 
   useEffect(() => {
@@ -600,6 +630,185 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
 
   const baseNodes = useNodes();
   const baseLinks = useLinks();
+
+  // ── Scenario comparison (Δ overlay) ──────────────────────────────────────
+  // The user picks a baseline; the canvas colours by (active − baseline) for
+  // the selected variables on a diverging ramp centred at zero.
+  const scenarios = useScenarios(project?.id ?? null);
+
+  // Resolve the persisted selection against current reality: "base model" is
+  // only a valid baseline while a scenario is active, a scenario baseline
+  // must exist and must not be the active scenario itself. Invalid selections
+  // are inert (treated as off) rather than destructively reset.
+  const effectiveCompareId = useMemo(() => {
+    if (!compareScenarioId) return null;
+    if (compareScenarioId === BASE_COMPARE_ID) {
+      return activeScenarioId != null ? BASE_COMPARE_ID : null;
+    }
+    if (compareScenarioId === activeScenarioId) return null;
+    return scenarios.some((s) => s.id === compareScenarioId)
+      ? compareScenarioId
+      : null;
+  }, [compareScenarioId, activeScenarioId, scenarios]);
+  const comparing = effectiveCompareId != null;
+  /** Baseline id in backend terms (null = base model) — only meaningful
+   * while `comparing`. */
+  const baselineScenarioId =
+    effectiveCompareId === BASE_COMPARE_ID ? null : effectiveCompareId;
+  const baselineName =
+    effectiveCompareId === BASE_COMPARE_ID
+      ? "Base model"
+      : (scenarios.find((s) => s.id === effectiveCompareId)?.name ??
+        "Baseline");
+
+  // Baseline result metadata — fetched once per (project, baseline,
+  // resultGeneration) and cached so toggling between baselines doesn't
+  // refetch. resultGeneration invalidates after any run completes.
+  const [baselineMeta, setBaselineMeta] = useState<ResultMeta | null>(null);
+  const [baselineMetaLoaded, setBaselineMetaLoaded] = useState(false);
+  const baselineMetaCacheRef = useRef(new Map<string, ResultMeta | null>());
+  useEffect(() => {
+    if (!comparing || !project?.id) {
+      setBaselineMeta(null);
+      setBaselineMetaLoaded(false);
+      return;
+    }
+    const cache = baselineMetaCacheRef.current;
+    const key = `${project.id}:${baselineScenarioId ?? BASE_COMPARE_ID}:${resultGeneration}`;
+    if (cache.has(key)) {
+      setBaselineMeta(cache.get(key) ?? null);
+      setBaselineMetaLoaded(true);
+      return;
+    }
+    let cancelled = false;
+    setBaselineMetaLoaded(false);
+    loadResultMeta(project.id, baselineScenarioId).then((m) => {
+      // Bound the cache: old generations/projects are never read again.
+      if (cache.size > 32) cache.clear();
+      cache.set(key, m);
+      if (!cancelled) {
+        setBaselineMeta(m);
+        setBaselineMetaLoaded(true);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [comparing, project?.id, baselineScenarioId, resultGeneration]);
+
+  // Baseline per-period results — refetched on every scrub, mirroring the
+  // active-period fetch pattern above (cancellation included). The period is
+  // clamped to the baseline's own result length so a shorter baseline stays
+  // comparable while scrubbing beyond its end (holds its last period).
+  const [baselinePeriodResult, setBaselinePeriodResult] =
+    useState<PeriodResults | null>(null);
+  // Discard stale baseline data immediately when the baseline changes.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `project?.id` and `effectiveCompareId` are intentional triggers to discard stale baseline data on switch.
+  useEffect(() => {
+    setBaselinePeriodResult(null);
+  }, [project?.id, effectiveCompareId]);
+  useEffect(() => {
+    if (!comparing || !project?.id || !baselineMeta) {
+      setBaselinePeriodResult(null);
+      return;
+    }
+    let cancelled = false;
+    const period = Math.max(
+      0,
+      Math.min(currentHour, baselineMeta.times.length - 1),
+    );
+    getPeriodResults(project.id, period, baselineScenarioId)
+      .then((r) => {
+        if (!cancelled) setBaselinePeriodResult(r);
+      })
+      // Decode failures reject (already logged); keep the previous baseline
+      // period visible rather than crashing the effect.
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [comparing, project?.id, baselineScenarioId, baselineMeta, currentHour]);
+
+  // Delta arrays (active − baseline) — identity-stable; null while either
+  // side is missing or when the element counts don't match the network
+  // (topology drift → comparison unavailable).
+  const compareDeltas = useMemo(() => {
+    if (!comparing || !currentPeriodResult || !baselinePeriodResult) {
+      return null;
+    }
+    return computeDeltas(
+      currentPeriodResult,
+      baselinePeriodResult,
+      baseNodes.length,
+      baseLinks.length,
+    );
+  }, [
+    comparing,
+    currentPeriodResult,
+    baselinePeriodResult,
+    baseNodes.length,
+    baseLinks.length,
+  ]);
+
+  // Small dismissible notice when comparison can't run; reset on baseline switch.
+  const [compareNoticeDismissed, setCompareNoticeDismissed] = useState(false);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `effectiveCompareId` is the intentional reset trigger for the dismissal.
+  useEffect(() => {
+    setCompareNoticeDismissed(false);
+  }, [effectiveCompareId]);
+  const compareNotice = !comparing
+    ? null
+    : baselineMetaLoaded && !baselineMeta
+      ? "Baseline has no results"
+      : currentPeriodResult && baselinePeriodResult && !compareDeltas
+        ? "Baseline network differs — comparison unavailable"
+        : null;
+
+  // Legend inputs: max |Δ| for the active variables (SI; Legend converts to
+  // display units) plus the baseline caption. Null while not comparing or
+  // while deltas are unavailable — the Legend then renders normally.
+  const legendCompare = compareDeltas
+    ? {
+        baselineName,
+        nodeMaxAbs:
+          compareDeltas.maxAbs[
+            nodeVar === "pressure"
+              ? "nodePressure"
+              : nodeVar === "head"
+                ? "nodeHead"
+                : nodeVar === "demand"
+                  ? "nodeDemand"
+                  : "nodeQuality"
+          ],
+        linkMaxAbs:
+          linkVar === "status"
+            ? null
+            : compareDeltas.maxAbs[
+                linkVar === "flow"
+                  ? "linkFlow"
+                  : linkVar === "velocity"
+                    ? "linkVelocity"
+                    : linkVar === "headloss"
+                      ? "linkHeadloss"
+                      : "linkQuality"
+              ],
+      }
+    : null;
+
+  // Baseline picker options: Off / Base model (while a scenario is active) /
+  // every scenario except the active one.
+  const compareOptions = useMemo(() => {
+    const opts: { value: string | null; label: string }[] = [
+      { value: null, label: "Off" },
+    ];
+    if (activeScenarioId != null) {
+      opts.push({ value: BASE_COMPARE_ID, label: "Base model" });
+    }
+    for (const s of scenarios) {
+      if (s.id !== activeScenarioId) opts.push({ value: s.id, label: s.name });
+    }
+    return opts;
+  }, [scenarios, activeScenarioId]);
   // ── CRS reprojection ────────────────────────────────────────────────────
   // EPANET [COORDINATES] carry no CRS tag. We default to WGS84 (pass-through).
   // When the user sets a different source CRS we reproject the raw x/y to
@@ -1098,6 +1307,7 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
   const handleSvgClick = useCallback(
     (e: React.MouseEvent<SVGSVGElement>) => {
       setShowBasemapDropdown(false);
+      setShowCompareDropdown(false);
       if (activeTool === "measure") {
         const p = eventToSvgPoint(e);
         if (!p) return;
@@ -1111,15 +1321,16 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
   // Global click-outside: close any open toolbar dropdown when the user clicks
   // anywhere outside the toolbar.
   useEffect(() => {
-    if (!showBasemapDropdown) return;
+    if (!showBasemapDropdown && !showCompareDropdown) return;
     function onDown(e: PointerEvent) {
       const target = e.target as HTMLElement | null;
       if (target?.closest("[data-toolbar-dropdown]")) return;
       setShowBasemapDropdown(false);
+      setShowCompareDropdown(false);
     }
     window.addEventListener("pointerdown", onDown);
     return () => window.removeEventListener("pointerdown", onDown);
-  }, [showBasemapDropdown]);
+  }, [showBasemapDropdown, showCompareDropdown]);
 
   return (
     <div
@@ -1153,6 +1364,7 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
               nodes={canvasNodes}
               links={canvasLinks}
               periodResult={currentPeriodResult}
+              compare={compareDeltas}
               isActive={canvasIsActive}
               viewMode={viewMode}
               nodeVar={nodeVar}
@@ -1211,8 +1423,58 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
               thresholds={thresholds}
               onColorModeChange={setColorMode}
               onThresholdsChange={setThresholds}
+              compare={legendCompare}
             />
           )}
+
+          {/* Comparison notice — baseline missing results / topology drift */}
+          {comparing &&
+            !!stableResultMeta &&
+            compareNotice &&
+            !compareNoticeDismissed && (
+              <div
+                style={{
+                  position: "absolute",
+                  top: 60,
+                  left: "50%",
+                  transform: "translateX(-50%)",
+                  zIndex: 25,
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 8,
+                  padding: "6px 10px",
+                  background: "var(--bg-card)",
+                  border: "1px solid var(--border)",
+                  borderRadius: 8,
+                  boxShadow: "var(--shadow-2)",
+                }}
+              >
+                <span
+                  style={{
+                    fontSize: 12,
+                    color: "var(--text-secondary)",
+                    fontFamily: "var(--font-ui)",
+                  }}
+                >
+                  {compareNotice}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setCompareNoticeDismissed(true)}
+                  aria-label="Dismiss comparison notice"
+                  style={{
+                    border: "none",
+                    background: "transparent",
+                    cursor: "pointer",
+                    display: "inline-flex",
+                    padding: 2,
+                    color: "var(--text-tertiary)",
+                  }}
+                >
+                  <XMarkIcon style={{ width: 12, height: 12 }} />
+                </button>
+              </div>
+            )}
 
           {/* CRS alert — map mode only, shown when coordinates can't be reprojected */}
           {viewMode === "map" && crsError && (
@@ -1648,6 +1910,94 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
               >
                 Ll
               </button>
+
+              {/* Scenario comparison baseline picker — only when the active
+                  scenario has results to compare from (same gate as Legend) */}
+              {!!stableResultMeta && (
+                <>
+                  <div className="tool-divider" />
+                  <div data-toolbar-dropdown style={{ position: "relative" }}>
+                    <button
+                      type="button"
+                      className={`tool-btn${comparing ? " active" : ""}`}
+                      style={{
+                        width: "auto",
+                        padding: "0 8px",
+                        fontSize: 12,
+                        gap: 4,
+                        display: "flex",
+                        alignItems: "center",
+                        whiteSpace: "nowrap",
+                      }}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setShowBasemapDropdown(false);
+                        setShowCompareDropdown((v) => !v);
+                      }}
+                      data-tooltip="Colour by difference vs a baseline scenario"
+                      data-tooltip-pos="bottom"
+                    >
+                      {comparing ? `Δ vs ${baselineName}` : "Compare"}{" "}
+                      <ChevronUpDownIcon
+                        style={{
+                          width: 12,
+                          height: 12,
+                          verticalAlign: "middle",
+                        }}
+                      />
+                    </button>
+                    {showCompareDropdown && (
+                      <div
+                        style={{
+                          position: "absolute",
+                          top: "calc(100% + 4px)",
+                          left: 0,
+                          background: "var(--bg-panel)",
+                          border: "1px solid var(--border)",
+                          borderRadius: 7,
+                          boxShadow: "var(--shadow-2)",
+                          overflow: "hidden auto",
+                          minWidth: 140,
+                          maxHeight: 280,
+                          zIndex: 20,
+                        }}
+                      >
+                        {compareOptions.map((o) => (
+                          <button
+                            type="button"
+                            key={o.value ?? "__off__"}
+                            onClick={() => {
+                              setCompareScenarioId(o.value);
+                              setShowCompareDropdown(false);
+                            }}
+                            style={{
+                              display: "block",
+                              width: "100%",
+                              padding: "7px 12px",
+                              border: "none",
+                              background:
+                                o.value === effectiveCompareId
+                                  ? "var(--accent-dim)"
+                                  : "transparent",
+                              color:
+                                o.value === effectiveCompareId
+                                  ? "var(--accent)"
+                                  : "var(--text-secondary)",
+                              cursor: "pointer",
+                              fontSize: 12,
+                              textAlign: "left",
+                              fontFamily: "var(--font-ui)",
+                              whiteSpace: "nowrap",
+                            }}
+                          >
+                            {o.label}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </>
+              )}
             </div>
           </div>
 

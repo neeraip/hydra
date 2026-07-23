@@ -143,6 +143,14 @@ export const PRESSURE_GRADIENT_CSS =
   "linear-gradient(to right, #c94040 0%, #c94040 25%, #d4a017 25%, #d4a017 50%, #3daf75 50%, #3daf75 75%, #4a90d9 75%, #4a90d9 100%)";
 
 /**
+ * Diverging comparison gradient: blue (below baseline) → neutral grey (no
+ * change) → red (above baseline). Matches `divergingRgba()` in
+ * MapCanvas/colorUtils (grey centre rgb(150,150,150), palette endpoints).
+ */
+export const DIVERGING_GRADIENT_CSS =
+  "linear-gradient(to right, #4a90d9 0%, #969696 50%, #c94040 100%)";
+
+/**
  * Generic smooth risk ramp: green (acceptable) → amber (caution) → red
  * (excessive). Note: the canvas legend uses `LINK_RISK_GRADIENT_CSS` for
  * threshold-mode velocity/flow because the map renders four discrete bands.

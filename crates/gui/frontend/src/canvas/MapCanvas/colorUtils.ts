@@ -40,6 +40,33 @@ export function qualityRgba(normalised: number): RGBA {
   ];
 }
 
+// ── Diverging comparison ramp (scenario Δ overlay) ────────────────────────────
+
+/**
+ * Diverging ramp for scenario-comparison deltas: blue (below baseline) →
+ * neutral grey at 0 → red (above baseline). `delta / maxAbs` is clamped to
+ * [-1, 1]; non-finite / missing deltas render the "no data" grey used by the
+ * other link ramps. Callers floor `maxAbs` (see compare.ts MIN_MAX_ABS) —
+ * a non-positive value here falls back to 1 rather than dividing by zero.
+ */
+export function divergingRgba(
+  delta: number | null | undefined,
+  maxAbs: number,
+  alpha = 230,
+): RGBA {
+  if (delta == null || !Number.isFinite(delta)) return [100, 100, 100, alpha];
+  const t = Math.max(-1, Math.min(1, delta / (maxAbs > 0 ? maxAbs : 1)));
+  // Endpoints match the app palette: blue #4a90d9, red #c94040; grey centre.
+  const end: [number, number, number] = t < 0 ? [74, 144, 217] : [201, 64, 64];
+  const s = Math.abs(t);
+  return [
+    Math.round(150 + s * (end[0] - 150)),
+    Math.round(150 + s * (end[1] - 150)),
+    Math.round(150 + s * (end[2] - 150)),
+    alpha,
+  ];
+}
+
 // ── Node variable colour functions ────────────────────────────────────────────
 
 export function pressureRgba(
