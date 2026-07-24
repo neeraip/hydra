@@ -52,8 +52,9 @@ Operations safe to parallelise are marked **∥** in the solver specs. These are
 **only** operations the implementation may parallelise.
 
 CLI and GUI behaviour (argument parsing, file layout, Tauri command surface, run queue)
-is documented in the source code itself — `hydra-cli/src/main.rs` and
-`hydra-gui/src/commands.rs`. No separate spec files exist for those crates.
+is documented in the source code itself — `crates/cli/src/main.rs` and
+`crates/gui/src/commands/` (`commands.rs` is a thin re-export façade; the command
+implementations live in its submodules). No separate spec files exist for those crates.
 
 ---
 
@@ -123,7 +124,7 @@ into separate commits (`refactor(engine)!: …` + a plain `refactor(gui): …`).
 
 ---
 
-
+## Communication
 
 Be concise. Responses should communicate what was done and any decisions or blockers — nothing more. Avoid preamble, summaries of what you are about to do, and closing affirmations ("I've successfully…", "Let me know if…").
 
@@ -137,4 +138,4 @@ Brief inline progress notes during multi-step work are fine (e.g. "running cargo
 - **Numeric precision:** All hydraulic and quality quantities use `f64`. Never narrow to `f32` for intermediate values.
 - **Parallelism:** Only parallelise operations marked **∥** in the owning spec. Do not introduce parallelism for anything else without updating the spec first.
 - **Error handling:** Solver and model crates return `Result` with domain-specific error types. No `unwrap()` or `expect()` outside test code. Every `unsafe` block requires a `// SAFETY:` comment.
-- **Testing:** Run `cargo check` after every edit. Run `cargo test` before considering any task complete.
+- **Testing:** Use fast, targeted commands during iteration (`cargo check`, `cargo test -p <crate> <name>`, and in `crates/gui/frontend` `npx tsc --noEmit` / `npx biome check <file>` for pinpoint checks). But the check that declares a task **complete** must be a `just` recipe, because only the recipes carry the exact flags and whole-tree scope CI enforces (`clippy -D warnings`, `--locked`, `RUSTDOCFLAGS=-D warnings`, frozen lockfile, whole-tree Biome, the `tauri/custom-protocol` feature): `just lint` (all static checks), `just verify` (adds the full Rust + frontend test suites), or `just ci` (the complete CI gate). A green targeted run is not proof CI is green — note that `cargo test` never exercises the React/TypeScript frontend at all.
