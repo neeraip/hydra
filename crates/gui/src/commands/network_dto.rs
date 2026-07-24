@@ -238,13 +238,15 @@ pub struct NetworkDto {
     /// Per-link polyline vertices from the `[VERTICES]` INP section, parallel
     /// to `links` (same order, same length; an entry is empty when the link
     /// has no vertices). Never serialised to JSON — consumed only by the
-    /// binary snapshot encoder ([`encode_network_snapshot`]).
+    /// binary snapshot encoder
+    /// ([`encode_network_snapshot`](super::encode_network_snapshot)).
     #[serde(skip)]
     pub link_vertices: Vec<Vec<(f64, f64)>>,
     /// Per-link initial-status codes (0 = open, 1 = closed, 2 = check valve;
     /// pumps/valves always 0), parallel to `links`. Never serialised to JSON —
     /// consumed only by the binary snapshot encoder
-    /// ([`encode_network_snapshot`], layout v3).
+    /// ([`encode_network_snapshot`](super::encode_network_snapshot),
+    /// layout v3).
     #[serde(skip)]
     pub link_initial_status: Vec<u8>,
 }

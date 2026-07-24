@@ -1619,7 +1619,7 @@ fn validation_findings(network: &hydra::Network) -> Vec<ValidationFindingDto> {
 
 /// Validate the model for `(project_id, scenario_id)` and return all findings.
 ///
-/// Unlike [`network_for_target`], a *dirty* matching cache is used as-is
+/// Unlike `network_for_target`, a *dirty* matching cache is used as-is
 /// (cloned — the cached state is never disturbed): validating the current
 /// unsaved edits is exactly the point of this command, and no `results.out`
 /// positional indexing is involved. When the cache does not hold the target,
