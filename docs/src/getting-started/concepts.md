@@ -22,7 +22,7 @@ A water distribution network in Hydra is made up of **nodes** (points) and **lin
 |---|---|
 | **Pipe** | A passive conduit between two nodes. Carries flow and produces headloss due to friction. |
 | **Pump** | An active link that adds energy to the flow. Defined by a head-flow curve or a constant power rating. |
-| **Valve** | A control device that regulates flow or pressure. Types include PRV (pressure-reducing), PSV (pressure-sustaining), FCV (flow-control), TCV (throttle-control), and GPV (general-purpose). |
+| **Valve** | A control device that regulates flow or pressure. Types are PRV (pressure-reducing), PSV (pressure-sustaining), FCV (flow-control), TCV (throttle-control), GPV (general-purpose), PBV (pressure-breaker), and PCV (positional-control). |
 
 ---
 

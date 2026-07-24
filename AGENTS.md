@@ -17,7 +17,7 @@ Hydra is a water distribution network simulator written in Rust. It implements t
 
 **`hydra-cli` and `hydra-gui` are downstream consumers of Hydra** — they depend on the umbrella crate and never import from `hydra-engine-wds` directly. This is the same contract any third-party integrator has.
 
-**`hydra` contains no logic** — only re-exports. Never add functions, structs, or trait implementations to it.
+**`hydra-sdk` contains no logic** — only re-exports. Never add functions, structs, or trait implementations to it. (Downstream crates import it under the alias `hydra`.)
 
 **Serialisation and output formatting** belong in `hydra-engine-wds`. Acquiring model bytes (reading INP files from disk, making HTTP calls) does not — that belongs in `hydra-cli` or `hydra-gui`. The one filesystem carve-out inside the engine is the explicit path-based streaming of `.out` result files and analysis artifacts (`io::out_reader`, `io::analysis_io`), which exists so large results never have to be loaded whole.
 
@@ -76,7 +76,7 @@ is documented in the source code itself — `hydra-cli/src/main.rs` and
 1. Update `crates/engine-wds/src/analysis/spec.md`.
 2. Only then write or change implementation code.
 
-### Facade (hydra)
+### Facade (hydra-sdk)
 
 Update the re-export list and `README.md` examples when the public API changes. No spec document needed.
 
@@ -90,7 +90,7 @@ If the change also requires a session API change, follow the solver workflow fir
 
 ## Version Management
 
-See [RELEASING.md](../RELEASING.md) for the release process and version bump commands.
+See [RELEASING.md](RELEASING.md) for the release process and version bump commands.
 
 ---
 

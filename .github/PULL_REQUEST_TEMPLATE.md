@@ -17,7 +17,7 @@
 
 <!-- After merging, does this change warrant a semver bump? -->
 <!-- Run the appropriate command once merged: -->
-<!--   just bump [patch|minor|major]        — library stack (common, engine, sdk) -->
+<!--   just bump [patch|minor|major]        — library stack (hydra-engine-wds, hydra-sdk) -->
 <!--   just bump-cli [patch|minor|major]    — CLI application -->
 <!--   just bump-gui [patch|minor|major]    — GUI application -->
 <!-- If no bump is needed (e.g. docs, tests, internal refactor), write "none". -->

@@ -72,7 +72,7 @@ hydra https://example.com/network.inp report.rpt output.out
 | `--input <PATH>` | Path to the `.inp` model file (alternative to positional) |
 | `--report <PATH>` | Report output path (`.rpt` or `.json`); defaults to stdout |
 | `--output <PATH>` | Binary output path (`.out`); omit to skip |
-| `-q`, `--quiet` | Suppress progress output (auto-enabled when stdout/stderr are not a terminal) |
+| `-q`, `--quiet` | Suppress progress output (auto-suppressed when stderr is not a terminal, e.g. when piping or redirecting) |
 | `-v`, `--version` | Print version and exit |
 | `-h`, `--help` | Print help and exit |
 

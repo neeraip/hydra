@@ -65,7 +65,7 @@ See the [SDK documentation](https://neeraip.github.io/hydra/sdk/overview.html) f
 ## Build from source
 
 Prerequisites: Rust ≥ 1.95, [`just`](https://just.systems/).  
-GUI only: Node.js 22, pnpm 10, Tauri CLI.
+GUI only: Node.js 24, pnpm 11, Tauri CLI.
 
 ```sh
 git clone https://github.com/neeraip/hydra.git

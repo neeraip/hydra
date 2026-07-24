@@ -5,7 +5,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        Spec files live in `crates/engine/src/*/spec.md`. Use this template when a spec section
+        Spec files live in `crates/engine-wds/src/*/spec.md`. Use this template when a spec section
         is missing, under-specified, or the implementation and spec disagree.
 
   - type: dropdown
@@ -13,11 +13,11 @@ body:
     attributes:
       label: Affected spec
       options:
-        - crates/engine/src/model/spec.md
-        - crates/engine/src/hydraulics/spec.md
-        - crates/engine/src/quality/spec.md
-        - crates/engine/src/simulation/spec.md
-        - crates/engine/src/analysis/spec.md
+        - crates/engine-wds/src/model/spec.md
+        - crates/engine-wds/src/hydraulics/spec.md
+        - crates/engine-wds/src/quality/spec.md
+        - crates/engine-wds/src/simulation/spec.md
+        - crates/engine-wds/src/analysis/spec.md
         - Not sure / multiple
     validations:
       required: true

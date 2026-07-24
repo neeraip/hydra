@@ -28,8 +28,8 @@ A CLA process will be linked here before the first external PR is merged. If you
 |---|---|---|
 | Rust ≥ 1.95 | Compiler | [rustup.rs](https://rustup.rs) |
 | `just` | Task runner | `cargo install just` or `brew install just` |
-| Node.js 22 | GUI frontend | [nodejs.org](https://nodejs.org) |
-| pnpm 10 | Frontend package manager | `npm install -g pnpm` |
+| Node.js 24 | GUI frontend | [nodejs.org](https://nodejs.org) |
+| pnpm 11 | Frontend package manager | `npm install -g pnpm` |
 | Tauri CLI | GUI builds | `cargo install tauri-cli` |
 | Tauri system deps | GUI builds on Linux | [tauri.app/start/prerequisites](https://tauri.app/start/prerequisites/) |
 
@@ -40,6 +40,7 @@ Node.js, pnpm, and Tauri are only required if you are working on the GUI (`crate
 ```sh
 git clone https://github.com/neeraip/hydra.git
 cd hydra
+just setup    # optional: install Cargo deps, frontend deps, and CLI tools in one step
 just build
 just test
 ```
@@ -62,7 +63,7 @@ Analysis → Spec → Implementation
 | Data model or parser | 1. Update `crates/engine-wds/src/model/spec.md`. 2. Write/change implementation. |
 | Post-simulation analytics | 1. Update `crates/engine-wds/src/analysis/spec.md`. 2. Write/change implementation. |
 | CLI or GUI | Make changes directly — no spec document needed. |
-| Public API (`hydra` facade) | Update re-exports and `README.md` examples. No spec document needed. |
+| Public API (`hydra-sdk` facade) | Update re-exports and `README.md` examples. No spec document needed. |
 
 ### Spec files
 

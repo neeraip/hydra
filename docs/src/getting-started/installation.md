@@ -47,12 +47,13 @@ If you want to build Hydra yourself (e.g. to contribute or run the test suite):
 
 - Rust stable ≥ 1.95 — [rustup.rs](https://rustup.rs)
 - [just](https://just.systems) — `cargo install just` or `brew install just`
-- **GUI only:** Node.js 22, [pnpm](https://pnpm.io) 10, [Tauri CLI](https://tauri.app/reference/cli/) (`cargo install tauri-cli`), and the [Tauri system prerequisites](https://tauri.app/start/prerequisites/) for your platform
+- **GUI only:** Node.js 24, [pnpm](https://pnpm.io) 11, [Tauri CLI](https://tauri.app/reference/cli/) (`cargo install tauri-cli`), and the [Tauri system prerequisites](https://tauri.app/start/prerequisites/) for your platform
 
 ```sh
 git clone https://github.com/neeraip/hydra
 cd hydra
+just setup          # optional: install Cargo deps, frontend deps, and CLI tools (needs pnpm)
 just build          # debug build
-just release        # optimised release build (fat LTO)
+just release        # optimised release build (fat LTO, embeds the GUI frontend — needs Node/pnpm)
 just test           # run the full test suite
 ```

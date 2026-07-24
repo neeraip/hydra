@@ -39,7 +39,7 @@ Work through every changed file against each of these criteria. Report every vio
 - Conversely, flag any sequential implementation of a **∥**-marked operation if there is a comment indicating the parallelism was intentionally skipped without a documented reason.
 
 ### 5. Crate boundaries
-- `hydra-engine-wds` must not perform filesystem I/O or network calls. Flag any `std::fs`, `std::net`, or HTTP client usage in `crates/engine-wds/src/`.
+- `hydra-engine-wds` must not perform filesystem I/O or network calls, with one carve-out: the explicit path-based streaming of `.out` result files and analysis artifacts in `io::out_reader` and `io::analysis_io` (see AGENTS.md). Flag any `std::fs`, `std::net`, or HTTP client usage in `crates/engine-wds/src/` outside those two modules.
 - `hydra-sdk` must contain only re-exports. Flag any function, struct, trait implementation, or logic added directly to `crates/sdk/src/`.
 - `hydra-cli` and `hydra-gui` must not contain simulation logic. Flag any solver algorithm, data model definition, or quality computation added to those crates.
 
