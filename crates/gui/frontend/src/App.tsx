@@ -31,6 +31,11 @@ const CommandPalette = lazy(() =>
 const RunModal = lazy(() =>
   import("./components/modals/RunModal").then((m) => ({ default: m.RunModal })),
 );
+const SimSettingsModal = lazy(() =>
+  import("./components/modals/SimSettingsModal").then((m) => ({
+    default: m.SimSettingsModal,
+  })),
+);
 const ScenariosModal = lazy(() =>
   import("./components/modals/ScenariosModal").then((m) => ({
     default: m.ScenariosModal,
@@ -80,6 +85,7 @@ export function App() {
     runModalOpen,
     openRunModal,
     closeRunModal,
+    simSettingsModalOpen,
     activeProjectId,
     taskTrayOpen,
     setProjectView,
@@ -323,6 +329,11 @@ export function App() {
       {runModalOpen && (
         <Suspense fallback={null}>
           <RunModal />
+        </Suspense>
+      )}
+      {simSettingsModalOpen && (
+        <Suspense fallback={null}>
+          <SimSettingsModal />
         </Suspense>
       )}
       <Suspense fallback={null}>

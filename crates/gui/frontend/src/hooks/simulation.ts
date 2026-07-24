@@ -85,6 +85,15 @@ export interface SimParams {
   chemName: string;
   chemUnits: string;
 
+  /** Global default pump efficiency, as a percentage (INP-native units). */
+  energyEfficiency: number;
+  /** Global unit energy price ($/kWh). */
+  energyPrice: number;
+  /** Pattern ID modulating the energy price over time (null → none). */
+  energyPricePattern: string | null;
+  /** Peak demand charge ($/kW). */
+  peakDemandCharge: number;
+
   maxIter: number;
   flowTol: number;
   headTol: number;

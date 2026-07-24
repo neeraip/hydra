@@ -1,5 +1,4 @@
 import { useActiveProject, useAppState } from "../../AppContext";
-import { SimulationSettings } from "../../components/editors/SimulationSettings";
 import {
   LABEL,
   openBaseFolder,
@@ -91,11 +90,6 @@ export function OverviewView() {
           />
         </Section>
       </div>
-
-      {/* ── Tier 2: Simulation configuration ─────────────────────────── */}
-      <Section title="Simulation settings">
-        <SimulationSettings projectId={project.id} />
-      </Section>
     </div>
   );
 }

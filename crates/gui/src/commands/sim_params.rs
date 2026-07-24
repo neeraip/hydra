@@ -54,6 +54,16 @@ pub struct SimParamsDto {
     pub chem_name: String,
     pub chem_units: String,
 
+    // ── [ENERGY] global ──
+    /// Global default pump efficiency, as a percentage (INP-native units).
+    pub energy_efficiency: f64,
+    /// Global unit energy price ($/kWh).
+    pub energy_price: f64,
+    /// Pattern ID modulating the energy price over time (empty → none).
+    pub energy_price_pattern: Option<String>,
+    /// Peak demand charge ($/kW).
+    pub peak_demand_charge: f64,
+
     // ── Advanced (numerical) ──
     pub max_iter: u32,
     /// Relative flow accuracy.
@@ -112,6 +122,11 @@ fn options_to_dto(o: &hydra::SimulationOptions) -> SimParamsDto {
         trace_node: o.trace_node.clone(),
         chem_name: o.chem_name.clone(),
         chem_units: o.chem_units.clone(),
+        // Engine stores efficiency as a fraction; INP/UI use percent.
+        energy_efficiency: o.energy_efficiency * 100.0,
+        energy_price: o.energy_price,
+        energy_price_pattern: o.energy_price_pattern.clone(),
+        peak_demand_charge: o.peak_demand_charge,
         max_iter: o.max_iter,
         flow_tol: o.flow_tol,
         head_tol: o.head_tol,
@@ -171,6 +186,11 @@ fn apply_dto_to_options(
     o.trace_node = dto.trace_node.clone().filter(|s| !s.is_empty());
     o.chem_name = dto.chem_name.clone();
     o.chem_units = dto.chem_units.clone();
+    // UI/INP use percent; engine stores a fraction.
+    o.energy_efficiency = dto.energy_efficiency / 100.0;
+    o.energy_price = dto.energy_price;
+    o.energy_price_pattern = dto.energy_price_pattern.clone().filter(|s| !s.is_empty());
+    o.peak_demand_charge = dto.peak_demand_charge;
     o.max_iter = dto.max_iter;
     o.flow_tol = dto.flow_tol;
     o.head_tol = dto.head_tol;
@@ -425,6 +445,38 @@ mod tests {
         assert_ne!(next_save, stale_snapshot);
         let reparsed = hydra::io::parse(&next_save).unwrap();
         assert!((reparsed.options.duration - 7200.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn energy_options_round_trip_through_dto_with_percent_conversion() {
+        let opts = hydra::SimulationOptions {
+            energy_efficiency: 0.82, // fraction internally
+            energy_price: 0.14,
+            energy_price_pattern: Some("EPRICE".to_string()),
+            peak_demand_charge: 12.5,
+            ..Default::default()
+        };
+
+        let dto = options_to_dto(&opts);
+        // DTO surfaces efficiency as a percent for the UI.
+        assert!((dto.energy_efficiency - 82.0).abs() < 1e-9);
+        assert!((dto.energy_price - 0.14).abs() < 1e-9);
+        assert_eq!(dto.energy_price_pattern.as_deref(), Some("EPRICE"));
+        assert!((dto.peak_demand_charge - 12.5).abs() < 1e-9);
+
+        let mut back = hydra::SimulationOptions::default();
+        apply_dto_to_options(&mut back, &dto).unwrap();
+        assert!((back.energy_efficiency - 0.82).abs() < 1e-9);
+        assert!((back.energy_price - 0.14).abs() < 1e-9);
+        assert_eq!(back.energy_price_pattern.as_deref(), Some("EPRICE"));
+        assert!((back.peak_demand_charge - 12.5).abs() < 1e-9);
+
+        // An empty price-pattern string is normalised to None.
+        let mut dto_empty = dto.clone();
+        dto_empty.energy_price_pattern = Some(String::new());
+        let mut back_empty = hydra::SimulationOptions::default();
+        apply_dto_to_options(&mut back_empty, &dto_empty).unwrap();
+        assert_eq!(back_empty.energy_price_pattern, None);
     }
 
     #[test]

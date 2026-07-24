@@ -1,6 +1,6 @@
 import { lazy, Suspense, useEffect, useRef } from "react";
 import { useActiveProject, useAppState } from "../../AppContext";
-import { ScenarioStrip } from "../../components/layout/ScenarioStrip";
+import { ProjectToolbar } from "../../components/layout/ProjectToolbar";
 import { SecondaryRail } from "../../components/layout/SecondaryRail";
 import { startPerfSpan } from "../../perfTrace";
 
@@ -53,7 +53,7 @@ export function ProjectPage() {
         animation: "fadeIn 150ms ease-out",
       }}
     >
-      <ScenarioStrip />
+      <ProjectToolbar />
       <div
         style={{
           flex: 1,

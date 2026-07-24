@@ -28,10 +28,11 @@ import {
 // ─────────────────────────────────────────────────────────────────────────────
 // Run modal — read-only.
 //
-// Simulation parameters are owned by the Project Overview page (which writes
+// Simulation parameters are owned by the Simulation Settings modal (which writes
 // them back to the base/model.inp). This modal just displays the resolved
 // settings, lets the engineer pick which scenario to run against, and runs.
-// To change duration/timesteps/quality mode, click "Edit settings" → Overview.
+// To change duration/timesteps/quality mode, click "Edit settings" → opens the
+// Simulation Settings modal.
 // ─────────────────────────────────────────────────────────────────────────────
 
 interface ScenarioOption {
@@ -114,7 +115,7 @@ export function RunModal() {
     openTaskTray,
     activeProjectId,
     activeScenarioId,
-    setProjectView,
+    openSimSettingsModal,
     scenariosVersion,
     showToast,
   } = useAppState();
@@ -232,8 +233,8 @@ export function RunModal() {
           : `Run ${checkedIds.length}`;
 
   function goEditSettings() {
-    closeRunModal();
-    setProjectView("overview");
+    // openSimSettingsModal closes this run modal as part of its state update.
+    openSimSettingsModal();
   }
 
   return (
@@ -425,10 +426,10 @@ export function RunModal() {
                 alignItems: "center",
                 gap: 3,
               }}
-              data-tooltip="Open project overview to edit"
+              data-tooltip="Open simulation settings"
             >
               <Cog6ToothIcon style={{ width: 11, height: 11 }} />
-              Edit on Overview
+              Edit settings
             </button>
           </div>
           {params ? (

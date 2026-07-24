@@ -13,7 +13,7 @@ import { PROJECT_VIEWS, renameProjectOnDisk } from "../../hooks";
 // shows a full breadcrumb (Projects / [project name] / [view]).
 // On all other pages it shows the plain page name.
 //
-// The Run button lives in ScenarioStrip — TopBar is purely navigational.
+// The Run button lives in ProjectToolbar — TopBar is purely navigational.
 
 const PAGE_LABELS: Partial<Record<string, string>> = {
   home: "Home",

@@ -47,6 +47,7 @@ interface AppState {
   railOpen: boolean;
   commandPaletteOpen: boolean;
   runModalOpen: boolean;
+  simSettingsModalOpen: boolean;
   scenariosModalOpen: boolean;
   crsModalOpen: boolean;
   taskTrayOpen: boolean;
@@ -92,6 +93,8 @@ interface AppActions {
   closeCommandPalette: () => void;
   openRunModal: () => void;
   closeRunModal: () => void;
+  openSimSettingsModal: () => void;
+  closeSimSettingsModal: () => void;
   openScenariosModal: () => void;
   closeScenariosModal: () => void;
   openCrsModal: () => void;
@@ -248,6 +251,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     railOpen: false,
     commandPaletteOpen: false,
     runModalOpen: false,
+    simSettingsModalOpen: false,
     scenariosModalOpen: false,
     crsModalOpen: false,
     taskTrayOpen: false,
@@ -694,6 +698,19 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setS((prev) => ({ ...prev, runModalOpen: false }));
   }, []);
 
+  const openSimSettingsModal = useCallback(() => {
+    setS((prev) => ({
+      ...prev,
+      simSettingsModalOpen: true,
+      runModalOpen: false,
+      commandPaletteOpen: false,
+    }));
+  }, []);
+
+  const closeSimSettingsModal = useCallback(() => {
+    setS((prev) => ({ ...prev, simSettingsModalOpen: false }));
+  }, []);
+
   const openScenariosModal = useCallback(() => {
     setS((prev) => ({
       ...prev,
@@ -832,6 +849,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
       closeCommandPalette,
       openRunModal,
       closeRunModal,
+      openSimSettingsModal,
+      closeSimSettingsModal,
       openScenariosModal,
       closeScenariosModal,
       openCrsModal,
@@ -870,6 +889,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
       closeCommandPalette,
       openRunModal,
       closeRunModal,
+      openSimSettingsModal,
+      closeSimSettingsModal,
       openScenariosModal,
       closeScenariosModal,
       openCrsModal,

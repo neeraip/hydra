@@ -78,13 +78,14 @@ export function Field({
   help,
   editing,
   control,
-  display,
+  display = "",
 }: {
   label: string;
   help?: string;
   editing: boolean;
   control: React.ReactNode;
-  display: string;
+  /** Read-only rendering; unused (and optional) when `editing` is true. */
+  display?: string;
 }) {
   return (
     <div

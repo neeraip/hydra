@@ -14,13 +14,14 @@ import {
 } from "../panels/ScenariosPanel/shared";
 import { PrimaryButton } from "../ui/PrimaryButton";
 
-/* ─── ScenarioStrip ─────────────────────────────────────────────────────────
-   Horizontal strip across the top of the canvas. A "Base" pill is always
-   present and selected by default (activeScenarioId === null). Selecting a
-   scenario pill deselects Base and vice-versa — only one can be active.
+/* ─── ProjectToolbar ────────────────────────────────────────────────────────
+   Persistent toolbar across the top of every project view. Holds scenario
+   selection (a "Base" pill always present and selected by default when
+   activeScenarioId === null; selecting a scenario pill deselects Base and
+   vice-versa — only one can be active) plus the run controls.
 
    Layout (left → right):
-     [Base pill] | [scenario chip · …] · Manage
+     [Base pill] | [scenario chip · …] · Manage  |  [Simulate ▸ ⚙]
 */
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -58,9 +59,10 @@ const STATE_LABEL: Record<ScenarioState, string> = {
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
-export function ScenarioStrip() {
+export function ProjectToolbar() {
   const {
     openRunModal,
+    openSimSettingsModal,
     openScenariosModal,
     activeScenarioId,
     setActiveScenarioId,
@@ -131,7 +133,7 @@ export function ScenarioStrip() {
   const runShortcut = formatPrimaryShortcut("R");
   const runBtnTitle = activeIsStale
     ? "Network edited since last run. Rerun simulation."
-    : `Configure & run simulation (${runShortcut})`;
+    : `Run simulation (${runShortcut})`;
 
   return (
     <div
@@ -149,7 +151,24 @@ export function ScenarioStrip() {
         fontFamily: "var(--font-ui)",
       }}
     >
-      {/* Base pill — always present, active when no scenario is selected */}
+      {/* Section label — names the whole selector (Base model + scenarios) */}
+      <span
+        style={{
+          fontSize: 10,
+          fontWeight: 600,
+          letterSpacing: "0.07em",
+          textTransform: "uppercase",
+          color: "var(--text-disabled)",
+          flexShrink: 0,
+          userSelect: "none",
+        }}
+      >
+        Scenarios
+      </span>
+
+      {/* Base pill — the base model itself; always present and rendered bold so
+          it reads as *the* base model, not a scenario named "Base". Active when
+          no scenario is selected. */}
       <button
         type="button"
         onClick={() => setActiveScenarioId(null)}
@@ -184,7 +203,7 @@ export function ScenarioStrip() {
           background: baseActive ? `${accent}22` : "var(--bg-card)",
           color: baseActive ? accent : "var(--text-secondary)",
           fontSize: 11,
-          fontWeight: baseActive ? 700 : 500,
+          fontWeight: 700,
           cursor: "pointer",
           fontFamily: "var(--font-ui)",
           transition: "background var(--t-fast), border-color var(--t-fast)",
@@ -206,7 +225,7 @@ export function ScenarioStrip() {
               : "none",
           }}
         />
-        Base model
+        Base
       </button>
 
       <span
@@ -217,21 +236,6 @@ export function ScenarioStrip() {
           flexShrink: 0,
         }}
       />
-
-      {/* Section label */}
-      <span
-        style={{
-          fontSize: 10,
-          fontWeight: 600,
-          letterSpacing: "0.07em",
-          textTransform: "uppercase",
-          color: "var(--text-disabled)",
-          flexShrink: 0,
-          userSelect: "none",
-        }}
-      >
-        Scenarios
-      </span>
 
       {/* Scrollable scenario chip list with right-edge fade */}
       {scenarios.length > 0 && (
@@ -327,24 +331,64 @@ export function ScenarioStrip() {
         Manage
       </button>
 
-      {/* Run button — marginLeft: auto pushes it to the far right */}
-      <PrimaryButton
-        size="sm"
-        onClick={openRunModal}
-        className={runBtnClass}
-        data-tooltip={runBtnTitle}
-        data-tooltip-pos="bottom"
+      {/* Divider separating scenario controls from the run controls.
+          marginLeft: auto pushes this + the split button to the far right. */}
+      <span
         style={{
+          width: 1,
+          height: 22,
+          background: "var(--border)",
+          flexShrink: 0,
           marginLeft: "auto",
+        }}
+      />
+
+      {/* Split Simulate button — left segment runs; right (gear) segment opens
+          the simulation-settings modal. */}
+      <div
+        style={{
           flexShrink: 0,
           display: "inline-flex",
-          alignItems: "center",
-          gap: 5,
+          alignItems: "stretch",
         }}
       >
-        <PlayIcon style={{ width: 12, height: 12 }} />
-        {runBtnLabel}
-      </PrimaryButton>
+        <PrimaryButton
+          size="sm"
+          onClick={openRunModal}
+          className={runBtnClass}
+          data-tooltip={runBtnTitle}
+          data-tooltip-pos="bottom"
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 5,
+            borderTopRightRadius: 0,
+            borderBottomRightRadius: 0,
+          }}
+        >
+          <PlayIcon style={{ width: 12, height: 12 }} />
+          {runBtnLabel}
+        </PrimaryButton>
+        <PrimaryButton
+          size="sm"
+          onClick={openSimSettingsModal}
+          className={runBtnClass}
+          aria-label="Simulation settings"
+          data-tooltip="Simulation settings"
+          data-tooltip-pos="bottom"
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: "0 8px",
+            borderTopLeftRadius: 0,
+            borderBottomLeftRadius: 0,
+            borderLeft: "1px solid rgba(255,255,255,0.28)",
+          }}
+        >
+          <Cog6ToothIcon style={{ width: 13, height: 13 }} />
+        </PrimaryButton>
+      </div>
     </div>
   );
 }
