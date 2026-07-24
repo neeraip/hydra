@@ -205,15 +205,21 @@ docs:
 
 # ── CI ────────────────────────────────────────────────────────────────────────
 
-# Skips the slower CI-only steps (deny, docs-api, catalog drift, python
-# scripts); run `just ci` for the full set.
+# Skips the slower CI-only steps (deny, docs-api, catalog drift, lockfile
+# check, python scripts); run `just ci` for the full set.
 # Fast local gate: every static check plus the Rust and frontend test suites
 verify: lint test test-frontend
+
+# Fails when package.json and pnpm-lock.yaml have drifted (e.g. a hand-edited
+# dependency without a corresponding install); fast no-op when in sync.
+# Mirror CI's `pnpm install --frozen-lockfile` consistency check
+check-frontend-lockfile:
+    cd crates/gui/frontend && pnpm install --frozen-lockfile
 
 # `test` already covers every workspace crate with CI's exact flags, so the
 # per-crate test recipes are not repeated here.
 # Run all checks that CI runs (mirrors cargo-ci + pnpm-ci + scripts-ci)
-ci: deny lint docs-api test check-crs-catalog build-frontend test-frontend test-scripts
+ci: deny check-frontend-lockfile lint docs-api test check-crs-catalog build-frontend test-frontend test-scripts
 
 # ── Release ───────────────────────────────────────────────────────────────────
 
