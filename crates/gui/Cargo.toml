@@ -11,6 +11,14 @@ description = "Hydra GUI — desktop application"
 name = "hydra-gui"
 path = "src/main.rs"
 
+[features]
+# Selects embedded production assets instead of the dev-server URL: tauri
+# sets `dev = !custom-protocol` at compile time, so a release binary built
+# WITHOUT this feature renders a white window trying to load devUrl.
+# `cargo tauri build` enables it automatically; `just release` passes it
+# explicitly. DO NOT REMOVE.
+custom-protocol = ["tauri/custom-protocol"]
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
