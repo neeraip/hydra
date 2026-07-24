@@ -8,6 +8,8 @@
 //! - 1 — usage/input error (bad arguments, bad INP, missing input file)
 //! - 2 — solver error
 //! - 3 — I/O error
+//! - 4 — internal error (unexpected engine state; not cheaply triggerable
+//!   end-to-end, so the mapping is pinned by unit tests in `src/main.rs`)
 //!
 //! The HTTP input path is tested against a one-shot localhost server spun up
 //! inside the test itself — no external network access is required.
@@ -141,6 +143,29 @@ fn version_exits_0() {
         .success()
         .stdout(predicate::str::contains("Hydra version"))
         .stdout(predicate::str::contains("CLI version"));
+}
+
+#[test]
+fn short_upper_v_prints_version_and_exits_0() {
+    hydra()
+        .arg("-V")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Hydra version"))
+        .stdout(predicate::str::contains("CLI version"));
+}
+
+#[test]
+fn short_lower_v_is_an_error_with_hint() {
+    // -v used to mean --version; it is now rejected with a hint pointing at
+    // -V (version) and -q/--quiet, and must NOT print version info.
+    hydra()
+        .arg("-v")
+        .assert()
+        .code(1)
+        .stdout(predicate::str::contains("Hydra version").not())
+        .stderr(predicate::str::contains("-V"))
+        .stderr(predicate::str::contains("--quiet"));
 }
 
 // ── Usage/input errors (exit 1) ──────────────────────────────────────────────

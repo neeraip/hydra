@@ -9,6 +9,7 @@
 //   1 — usage/input error (bad arguments, bad INP, HTTP 4xx, missing input file)
 //   2 — solver error (non-convergence or singularity)
 //   3 — I/O error (permission denied, HTTP 5xx, network failure)
+//   4 — internal error (unexpected engine state; please report a bug)
 
 use std::io::{IsTerminal, Write};
 use std::process;
@@ -22,6 +23,18 @@ use hydra::QualityMode;
 use hydra::{SessionError, Simulation};
 
 type CliOutWriter = OutStreamWriter<std::io::BufWriter<std::fs::File>>;
+
+// Exit-code contract (see module doc above and `docs/src/getting-started/cli.md`).
+/// Simulation completed (warnings may appear in the report).
+const EXIT_OK: i32 = 0;
+/// Usage/input error (bad arguments, bad INP, HTTP 4xx, missing input file).
+const EXIT_INPUT: i32 = 1;
+/// Solver error (non-convergence or singularity).
+const EXIT_SOLVER: i32 = 2;
+/// I/O error (permission denied, HTTP 5xx, network failure).
+const EXIT_IO: i32 = 3;
+/// Internal error (unexpected engine state; please report a bug).
+const EXIT_INTERNAL: i32 = 4;
 
 enum CliRunError {
     Session(SessionError),
@@ -65,8 +78,14 @@ struct Cli {
     quiet: bool,
 
     /// Print Hydra and CLI version information and exit.
-    #[arg(short = 'v', long = "version")]
+    #[arg(short = 'V', long = "version")]
     version: bool,
+
+    /// Removed flag: `-v` used to mean `--version` but no longer does.
+    /// Kept as a hidden flag so we can reject it with a targeted hint
+    /// instead of clap's generic "unexpected argument" error.
+    #[arg(short = 'v', hide = true)]
+    v_removed: bool,
 }
 
 impl Cli {
@@ -105,13 +124,24 @@ fn main() {
             process::exit(code);
         }
     };
+    if cli.v_removed {
+        emit_usage_error(V_REMOVED_HINT);
+        process::exit(EXIT_INPUT);
+    }
     if cli.version {
         print_version_info();
-        process::exit(0);
+        process::exit(EXIT_OK);
     }
     let exit_code = run(&cli);
     process::exit(exit_code);
 }
+
+/// Error message for the removed `-v` short flag. `-v` used to mean
+/// `--version`; the version flag is now `-V`, matching GNU/clap convention.
+/// `-v` is rejected (rather than silently repurposed) so scripts that relied
+/// on the old meaning fail loudly.
+const V_REMOVED_HINT: &str =
+    "unexpected argument '-v': did you mean '-V' (--version) or '-q' (--quiet)?";
 
 /// Exit code for a clap parse error: 0 for help/version display, 1 for
 /// genuine usage errors (never clap's default 2, which is reserved for
@@ -119,8 +149,8 @@ fn main() {
 fn clap_error_exit_code(e: &clap::Error) -> i32 {
     use clap::error::ErrorKind;
     match e.kind() {
-        ErrorKind::DisplayHelp | ErrorKind::DisplayVersion => 0,
-        _ => 1,
+        ErrorKind::DisplayHelp | ErrorKind::DisplayVersion => EXIT_OK,
+        _ => EXIT_INPUT,
     }
 }
 
@@ -156,7 +186,8 @@ fn print_version_info() {
 /// write_report(sim)             // plain text or JSON
 /// ```
 ///
-/// Returns an exit code (0=ok, 1=input error, 2=solver error, 3=I/O error).
+/// Returns an exit code (0=ok, 1=input error, 2=solver error, 3=I/O error,
+/// 4=internal error).
 fn run(cli: &Cli) -> i32 {
     // ── Validate positional arg count ──────────────────────────────────────────
     if cli.positional.len() > 3 {
@@ -164,7 +195,7 @@ fn run(cli: &Cli) -> i32 {
             "expected at most 3 positional arguments, got {}",
             cli.positional.len()
         ));
-        return 1;
+        return EXIT_INPUT;
     }
 
     // ── Resolve input path ────────────────────────────────────────────────────
@@ -172,7 +203,7 @@ fn run(cli: &Cli) -> i32 {
         Some(p) => p,
         None => {
             emit_usage_error("no input file specified");
-            return 1;
+            return EXIT_INPUT;
         }
     };
 
@@ -181,11 +212,11 @@ fn run(cli: &Cli) -> i32 {
         Ok(b) => b,
         Err(FetchError::Input(msg)) => {
             emit_error("io/fetch", &msg, None, None);
-            return 1;
+            return EXIT_INPUT;
         }
         Err(FetchError::Io(msg)) => {
             emit_error("io/fetch", &msg, None, None);
-            return 3;
+            return EXIT_IO;
         }
     };
 
@@ -195,15 +226,15 @@ fn run(cli: &Cli) -> i32 {
             for e in &errs {
                 emit_error("validation/network", &e.to_string(), None, None);
             }
-            return 1;
+            return EXIT_INPUT;
         }
         Err(io::ParseError::UnrecognisedFormat) => {
             emit_error("input/format", "unrecognised file format", None, None);
-            return 1;
+            return EXIT_INPUT;
         }
         Err(e) => {
             emit_error("input/parse", &e.to_string(), None, None);
-            return 1;
+            return EXIT_INPUT;
         }
     };
 
@@ -224,7 +255,7 @@ fn run(cli: &Cli) -> i32 {
         Some(u) => u,
         None => {
             emit_error("internal", "flow units unavailable after load", None, None);
-            return 2;
+            return EXIT_INTERNAL;
         }
     };
 
@@ -242,7 +273,7 @@ fn run(cli: &Cli) -> i32 {
             Ok(stream) => Some(stream),
             Err(e) => {
                 emit_error("io/output", &e.to_string(), None, None);
-                return 3;
+                return EXIT_IO;
             }
         }
     } else {
@@ -261,7 +292,7 @@ fn run(cli: &Cli) -> i32 {
             }
             CliRunError::Io(io_error) => {
                 emit_error("io/output", &io_error.to_string(), None, None);
-                return 3;
+                return EXIT_IO;
             }
         }
     }
@@ -287,7 +318,7 @@ fn run(cli: &Cli) -> i32 {
             }
             CliRunError::Io(io_error) => {
                 emit_error("io/output", &io_error.to_string(), None, None);
-                return 3;
+                return EXIT_IO;
             }
         }
     }
@@ -300,7 +331,7 @@ fn run(cli: &Cli) -> i32 {
     if let Some(out_writer) = out_stream.take() {
         if let Err(e) = out_writer.finish(&session) {
             emit_error("io/output", &e.to_string(), None, None);
-            return 3;
+            return EXIT_IO;
         }
     }
 
@@ -312,10 +343,10 @@ fn run(cli: &Cli) -> i32 {
     }
     if let Err(e) = write_report(&session, cli.report()) {
         emit_error("io/report", &e.to_string(), None, None);
-        return 3;
+        return EXIT_IO;
     }
 
-    0
+    EXIT_OK
 }
 
 fn run_hydraulics_with_progress(
@@ -514,9 +545,9 @@ fn format_wall(s: f64) -> String {
 
 /// Error from fetching an input source, with exit code classification.
 enum FetchError {
-    /// Input error (exit 1): file not found, HTTP 4xx.
+    /// Input error ([`EXIT_INPUT`]): file not found, HTTP 4xx.
     Input(String),
-    /// I/O error (exit 3): network failure, HTTP 5xx, local I/O.
+    /// I/O error ([`EXIT_IO`]): network failure, HTTP 5xx, local I/O.
     Io(String),
 }
 
@@ -671,9 +702,9 @@ fn emit_session_error(e: &SessionError) {
 
 fn session_error_code(e: &SessionError) -> i32 {
     match e {
-        SessionError::ValidationFailed(_) => 1,
-        SessionError::HydraulicSolve(_) | SessionError::QualityEngine(_) => 2,
-        _ => 1,
+        SessionError::ValidationFailed(_) => EXIT_INPUT,
+        SessionError::HydraulicSolve(_) | SessionError::QualityEngine(_) => EXIT_SOLVER,
+        _ => EXIT_INPUT,
     }
 }
 
@@ -793,6 +824,63 @@ mod tests {
     fn help_display_maps_to_exit_0() {
         let err = Cli::try_parse_from(["hydra", "--help"]).expect_err("--help renders as Err");
         assert_eq!(clap_error_exit_code(&err), 0);
+    }
+
+    // ── Version flag (-V) and removed -v ─────────────────────────────────
+
+    #[test]
+    fn short_upper_v_sets_version() {
+        let cli = parse(&["hydra", "-V"]);
+        assert!(cli.version);
+        assert!(!cli.v_removed);
+    }
+
+    #[test]
+    fn long_version_sets_version() {
+        let cli = parse(&["hydra", "--version"]);
+        assert!(cli.version);
+    }
+
+    #[test]
+    fn short_lower_v_parses_as_removed_flag() {
+        // -v must still parse (so main() can reject it with a targeted hint
+        // instead of clap's generic unknown-argument error), but it must not
+        // mean --version any more.
+        let cli = parse(&["hydra", "-v"]);
+        assert!(cli.v_removed);
+        assert!(!cli.version);
+    }
+
+    #[test]
+    fn v_removed_hint_mentions_both_replacements() {
+        assert!(V_REMOVED_HINT.contains("-V"), "hint: {V_REMOVED_HINT}");
+        assert!(V_REMOVED_HINT.contains("--quiet"), "hint: {V_REMOVED_HINT}");
+    }
+
+    // ── Exit-code contract ───────────────────────────────────────────────
+
+    /// The documented exit-code contract (module doc, cli.md, README):
+    /// 0=ok, 1=usage/input, 2=solver, 3=I/O, 4=internal. Internal errors
+    /// cannot be triggered cheaply end-to-end, so the mapping is pinned here.
+    #[test]
+    fn exit_code_contract_is_stable() {
+        assert_eq!(EXIT_OK, 0);
+        assert_eq!(EXIT_INPUT, 1);
+        assert_eq!(EXIT_SOLVER, 2);
+        assert_eq!(EXIT_IO, 3);
+        assert_eq!(EXIT_INTERNAL, 4);
+    }
+
+    #[test]
+    fn session_error_codes_never_use_internal_code() {
+        assert_eq!(
+            session_error_code(&SessionError::ValidationFailed(Vec::new())),
+            EXIT_INPUT
+        );
+        assert_eq!(
+            session_error_code(&SessionError::UnknownId("X".into())),
+            EXIT_INPUT
+        );
     }
 
     #[test]

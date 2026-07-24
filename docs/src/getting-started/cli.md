@@ -22,7 +22,7 @@ cargo install hydra-cli
 Verify the installation:
 
 ```sh
-hydra -v
+hydra -V
 ```
 
 ## Basic Usage
@@ -73,8 +73,14 @@ hydra https://example.com/network.inp report.rpt output.out
 | `--report <PATH>` | Report output path (`.rpt` or `.json`); defaults to stdout |
 | `--output <PATH>` | Binary output path (`.out`); omit to skip |
 | `-q`, `--quiet` | Suppress progress output (auto-suppressed when stderr is not a terminal, e.g. when piping or redirecting) |
-| `-v`, `--version` | Print version and exit |
+| `-V`, `--version` | Print version and exit |
 | `-h`, `--help` | Print help and exit |
+
+> **Breaking change** — `-v` previously meant `--version`. The short version
+> flag is now `-V` (GNU/clap convention). `-v` is no longer accepted: it exits
+> with code `1` and a hint suggesting `-V` (version) or `-q`/`--quiet`, rather
+> than being silently repurposed, so scripts that relied on the old meaning
+> fail loudly.
 
 ## Exit Codes
 
@@ -84,6 +90,11 @@ hydra https://example.com/network.inp report.rpt output.out
 | `1` | Input error — bad `.inp` file, missing file, HTTP 4xx |
 | `2` | Solver error — hydraulics did not converge |
 | `3` | I/O error — write failed, permission denied, HTTP 5xx |
+| `4` | Internal error — unexpected engine state; please report a bug |
+
+> **Breaking change** — internal errors previously exited with code `2` (the
+> solver-error code). They now exit with the dedicated code `4`; codes
+> `0`–`3` are unchanged.
 
 ## Reading the Report
 

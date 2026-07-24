@@ -7,6 +7,17 @@ Command-line interface for [Hydra](https://github.com/neeraip/hydra) — reads E
 
 **[→ Full documentation](https://neeraip.github.io/hydra/getting-started/cli.html)**
 
+## Breaking changes (next release)
+
+The next published version contains two breaking CLI changes:
+
+- **`-v` no longer means `--version`.** The short version flag is now `-V`
+  (GNU/clap convention). `-v` is rejected with exit code `1` and a hint
+  suggesting `-V` (version) or `-q`/`--quiet` — it is not silently
+  repurposed, so scripts using the old flag fail loudly.
+- **Internal errors now exit with code `4`.** They previously reused exit
+  code `2`, the solver-error code. Codes `0`–`3` are unchanged.
+
 ## Install
 
 For most users, **Cargo install is the recommended path**.
@@ -50,7 +61,7 @@ hydra network.inp --report report.json
 hydra -q network.inp
 
 # Print version
-hydra -v
+hydra -V
 ```
 
 ## Exit codes
@@ -61,6 +72,7 @@ hydra -v
 | `1` | Usage/input error (bad arguments, bad INP, HTTP 4xx, missing input file) |
 | `2` | Solver error (non-convergence or singularity) |
 | `3` | I/O error (permission denied, HTTP 5xx, network failure) |
+| `4` | Internal error (unexpected engine state; please report a bug) |
 
 ## License
 
