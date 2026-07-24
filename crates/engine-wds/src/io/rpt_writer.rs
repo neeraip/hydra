@@ -1,4 +1,4 @@
-// rpt_writer — simulation report serialization (crates/interface/cli/spec.md §4.3).
+// rpt_writer — simulation report serialization.
 //
 // Produces JSON or plain-text report strings from a completed simulation.
 // No file I/O — callers write the returned strings to their destination.
@@ -192,7 +192,7 @@ pub fn build_json_report(session: &impl WritableSimulation) -> Result<String, se
 
 // ── Plain-text report ─────────────────────────────────────────────────────────
 
-/// Build a plain-text report string from a completed simulation (crates/interface/cli/spec.md §4.3).
+/// Build a plain-text report string from a completed simulation.
 pub fn build_text_report(session: &impl WritableSimulation) -> Result<String, std::fmt::Error> {
     let mut report = String::new();
     let network = session.net();

@@ -1,4 +1,7 @@
-//! out_reader — EPANET binary output file reader (`crates/cli/spec.md` §4.1).
+//! out_reader — EPANET binary output file reader.
+//!
+//! The binary file layout is documented in `out_writer.rs` (this module's
+//! writer counterpart).
 //!
 //! Parses an EPANET-compatible `.out` binary file (produced by either EPANET
 //! 2.3 or Hydra) and returns a fully structured `OutFile`.  The parsed form

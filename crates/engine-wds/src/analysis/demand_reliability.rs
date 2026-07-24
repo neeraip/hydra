@@ -8,10 +8,12 @@ use std::io::Read;
 /// Options that control the demand-reliability computation.
 #[derive(Debug, Clone, Copy)]
 pub struct DemandReliabilityOptions {
-    /// Absolute flow volume (m³) below which a per-period shortfall is ignored.
+    /// Absolute deficit flow rate (m³/s) below which a per-period shortfall is
+    /// not counted as a deficit period.
     ///
     /// Prevents floating-point noise from counting sub-threshold rounding errors
-    /// as real deficits. Default: `1e-9`.
+    /// as real deficits. Volumes (`unmet_volume` etc.) still accumulate
+    /// sub-threshold shortfalls. Default: `1e-9`.
     pub deficit_tolerance: f64,
 }
 

@@ -20,7 +20,7 @@ This crate owns:
 | `simulation` | Session API, controls, timestep orchestration, accounting |
 | `analysis` | Post-simulation analytics |
 
-This crate does **not** own interface logic (CLI, GUI) or filesystem/network I/O — callers supply bytes.
+This crate does **not** own interface logic (CLI, GUI) or network I/O — simulation inputs (INP model bytes) are supplied in memory by callers. The one filesystem carve-out is the explicit path-based streaming of binary `.out` result files and analysis artifacts (`io::out_reader`, `io::analysis_io`), so large results never have to be loaded whole.
 
 ## License
 

@@ -1,4 +1,4 @@
-//! `hydra-engine` — complete water distribution simulation engine.
+//! `hydra-engine-wds` — complete water distribution simulation engine.
 //!
 //! Hydra simulates the hydraulic behaviour and water quality dynamics of
 //! pressurised water distribution networks over time. Its output is the complete
@@ -48,8 +48,8 @@
 //! |---|---|
 //! | `model` | Network data model, state types, validation |
 //! | `io` | Unit conversion, INP/OUT/RPT/analysis parsers and writers |
-//! | `hydraulics` | GGA Newton-Raphson solver (see `../hydraulics/spec.md`) |
-//! | `quality` | Lagrangian transport engine (see `../quality/spec.md`) |
+//! | `hydraulics` | GGA Newton-Raphson solver (see `hydraulics/spec.md`) |
+//! | `quality` | Lagrangian transport engine (see `quality/spec.md`) |
 //! | `simulation` | Session API, controls, timestep, accounting |
 //! | `analysis` | Post-simulation analytics |
 //!

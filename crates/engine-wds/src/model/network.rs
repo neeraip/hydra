@@ -410,7 +410,7 @@ pub enum CurveKind {
     TankVolume,
     /// General Purpose Valve headloss vs. flow curve.
     GpvHeadloss,
-    /// Positional Control Valve loss ratio vs. flow curve.
+    /// Positional Control Valve loss ratio (%) vs. percent-open position curve.
     PcvLossRatio,
 }
 
@@ -810,7 +810,7 @@ pub struct Node {
 /// Operational status of a link (§2.6.1 and §3.9).
 ///
 /// `XPressure` and `XFcv` are computed states (per-step only);
-/// they are not valid as `init_status` values.
+/// they are not valid as `initial_status` values.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LinkStatus {
     /// Fully open.
@@ -944,7 +944,7 @@ pub enum ValveType {
 /// For GPV, `curve` holds the head-loss curve ID (kind = `GpvHeadloss`).
 /// For PCV, `curve` holds the loss-ratio curve ID (kind = `PcvLossRatio`).
 /// For all other valve types it is `None` and the setpoint is encoded in
-/// `LinkBase::init_setting`.
+/// `LinkBase::initial_setting`.
 #[derive(Debug, Clone)]
 pub struct Valve {
     /// The type of this valve.
@@ -1048,9 +1048,9 @@ pub enum PremiseAttribute {
     FillTime,
     /// Time to drain a tank (hours).
     DrainTime,
-    /// Time of day (hours from midnight).
+    /// Time of day (seconds from midnight).
     ClockTime,
-    /// Elapsed simulation time (hours).
+    /// Elapsed simulation time (seconds).
     Time,
 }
 
@@ -1118,7 +1118,8 @@ pub struct RuleAction {
 /// A rule-based control (§2.8.2).
 #[derive(Debug, Clone)]
 pub struct Rule {
-    /// Numeric priority; lower value wins when rules conflict.
+    /// Numeric priority; the numerically higher value wins when rules conflict
+    /// (§2.8.2).
     pub priority: f64,
     /// Ordered list of predicate clauses forming the rule condition.
     pub premises: Vec<Premise>,

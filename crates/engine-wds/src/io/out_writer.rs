@@ -186,7 +186,7 @@ pub fn write_binary_output<W: Write + Seek>(
     Ok(())
 }
 
-// ── Prolog (crates/interface/cli/spec.md §4.1.1) ──────────────────────────────────────────────
+// ── Prolog ────────────────────────────────────────────────────────────────────
 
 fn write_prolog<W: Write>(
     w: &mut W,
@@ -368,7 +368,7 @@ fn write_prolog<W: Write>(
     Ok(())
 }
 
-// ── Energy (crates/interface/cli/spec.md §4.1.2) ──────────────────────────────────────────────
+// ── Energy ────────────────────────────────────────────────────────────────────
 
 fn write_energy<W: Write>(
     w: &mut W,
@@ -465,48 +465,7 @@ fn write_energy_placeholder<W: Write>(w: &mut W, network: &crate::Network) -> st
     Ok(())
 }
 
-// ── Dynamic Results (crates/interface/cli/spec.md §4.1.3) ─────────────────────────────────────
-
-#[allow(dead_code)]
-fn write_dynamic_results<W: Write + Seek>(
-    w: &mut W,
-    session: &impl WritableSimulation,
-    ucf: &Ucf,
-) -> std::io::Result<i32> {
-    let network = session.net();
-    let options = &network.options;
-    let snapshots = session.snapshots();
-
-    // Filter snapshots to report boundaries using integer time tracking
-    // (matches EPANET's approach: Rtime starts at Rstart, advances by Rstep).
-    let report_start = options.report_start.round() as i64;
-    let report_step = options.report_step.round() as i64;
-    let mut next_rtime: i64 = report_start;
-
-    let mut n_periods: i32 = 0;
-
-    for snapshot in snapshots {
-        let snapshot_time = snapshot.t.round() as i64;
-
-        // Only emit snapshots at or past the next report boundary.
-        if snapshot_time < next_rtime {
-            continue;
-        }
-        // Advance report boundary past current snapshot time.
-        while snapshot_time >= next_rtime + report_step && report_step > 0 {
-            next_rtime += report_step;
-        }
-
-        write_dynamic_snapshot(w, network, snapshot, ucf)?;
-
-        n_periods += 1;
-        if report_step > 0 {
-            next_rtime += report_step;
-        }
-    }
-
-    Ok(n_periods)
-}
+// ── Dynamic Results ───────────────────────────────────────────────────────────
 
 fn write_dynamic_snapshot<W: Write>(
     w: &mut W,
@@ -707,7 +666,7 @@ fn write_dynamic_snapshot<W: Write>(
     w.write_all(&buf)
 }
 
-// ── Network Reactions (crates/interface/cli/spec.md §4.1.4) ───────────────────────────────────
+// ── Network Reactions ─────────────────────────────────────────────────────────
 
 fn write_network_reactions<W: Write>(
     w: &mut W,
@@ -742,7 +701,7 @@ fn write_network_reactions<W: Write>(
     Ok(())
 }
 
-// ── Epilog (crates/interface/cli/spec.md §4.1.5) ──────────────────────────────────────────────
+// ── Epilog ────────────────────────────────────────────────────────────────────
 
 fn write_epilog<W: Write>(w: &mut W, n_periods: i32, warn_flag: i32) -> std::io::Result<()> {
     write_i32(w, n_periods)?;

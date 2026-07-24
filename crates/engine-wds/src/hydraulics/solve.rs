@@ -16,18 +16,7 @@ use super::{
     update_emitter_flows, update_leakage_flows, update_pda_demand_flows, SparseSolver,
 };
 
-/// Updates link flows from the new head vector (§3.7).
-///
-/// EPANET GGA flow update:
-///   dq = Y[k] − P[k]·(H₁ − H₂)
-///   Q[k] = Q[k] − dq
-///
-/// Equivalently: Q_new = Q_old − Y[k] + P[k]·(H₁ − H₂)
-/// Updates link flows after solving the linear system (§3.7).
-/// Fused flow update + convergence metrics in a single link pass.
-/// Replaces the separate update_flows, convergence fold, head_error_ok, and
-/// flow_change_ok passes — matching EPANET's newlinkflows which also fuses
-/// flow updates with convergence metric accumulation.
+/// Aggregated flow-update convergence metrics from a single link pass.
 struct FlowUpdateResult {
     link_sq: f64,
     link_dsq: f64,
@@ -35,6 +24,19 @@ struct FlowUpdateResult {
     flow_ok: bool,
 }
 
+/// Updates link flows from the new head vector after solving the linear
+/// system (§3.7), fusing the flow update with convergence metric accumulation
+/// in a single link pass.
+///
+/// EPANET GGA flow update:
+///   dq = Y[k] − P[k]·(H₁ − H₂)
+///   Q[k] = Q[k] − dq
+///
+/// Equivalently: Q_new = Q_old − Y[k] + P[k]·(H₁ − H₂)
+///
+/// Replaces the separate update_flows, convergence fold, head_error_ok, and
+/// flow_change_ok passes — matching EPANET's newlinkflows which also fuses
+/// flow updates with convergence metric accumulation.
 fn update_flows_and_check(
     p: &[f64],
     y: &[f64],

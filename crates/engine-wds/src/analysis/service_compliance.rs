@@ -42,13 +42,15 @@ pub struct ServiceComplianceNode {
     pub above_max_count: usize,
     /// Length of the longest consecutive run of out-of-limit samples.
     pub longest_violation_streak: usize,
-    /// Integral of pressure deficit over time (m · periods).
+    /// Integral of pressure deficit over time (m · s).
     ///
-    /// Accumulated as `sum(max(min_pressure − pressure, 0))` across all samples.
+    /// Accumulated as `sum(max(min_pressure − pressure, 0) · Δt)` across all
+    /// samples, where `Δt` is the reporting-period duration in seconds.
     pub pressure_deficit_integral: f64,
-    /// Integral of pressure excess over time (m · periods).
+    /// Integral of pressure excess over time (m · s).
     ///
-    /// Accumulated as `sum(max(pressure − max_pressure, 0))` across all samples.
+    /// Accumulated as `sum(max(pressure − max_pressure, 0) · Δt)` across all
+    /// samples, where `Δt` is the reporting-period duration in seconds.
     pub pressure_excess_integral: f64,
     /// Worst (largest) observed pressure deficit: `max(min_pressure − pressure)` (m).
     pub worst_below_min: f64,
