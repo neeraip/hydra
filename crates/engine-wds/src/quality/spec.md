@@ -177,6 +177,10 @@ where $k_f$ is the same mass-transfer coefficient from step 3, and $c$ is the cu
 | First-order ($n_w = 1$) | m/day | ft/day | $\div 86400 \div u_\ell$ where $u_\ell$ = user length per m |
 | Zero-order ($n_w = 0$) | mg/(m²·day) | mg/(ft²·day) | $\div 86400 \times u_\ell^2$ (area in denominator inverts the factor) |
 
+This conversion applies identically to the per-pipe `wall_coeff`, the global `wall_coeff`, and the roughness–reaction correlation factor `roughness_reaction_factor` (§6.5.4), which shares $k_w$'s dimensions. Bulk coefficients (global, per-pipe, and per-tank `bulk_coeff`) carry no length factor: on-disk units are per day, internal per second ($\div 86400$).
+
+**Serialisation (INP writing)** applies the exact inverse: $\times 86400 \times u_\ell$ (first-order wall), $\times 86400 \div u_\ell^2$ (zero-order wall), $\times 86400$ (bulk) — so coefficient values are stable across repeated load/save cycles.
+
 Concentration change over sub-step $\delta t$:
 
 $$\Delta c_w = k_{\text{eff}} \cdot c \cdot \delta t \quad (n_w = 1), \qquad \Delta c_w = r_w^{(0)} \cdot \delta t \quad (n_w = 0)$$

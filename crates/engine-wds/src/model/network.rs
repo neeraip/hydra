@@ -140,7 +140,7 @@ pub enum ReportSelection {
 }
 
 /// Per-field reporting options from the `[REPORT]` section.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ReportFieldOption {
     /// Whether this field is included in the `.rpt` output.
     pub enabled: bool,
@@ -154,7 +154,7 @@ pub struct ReportFieldOption {
 
 /// Options from the `[REPORT]` INP section. Controls `.rpt` file output
 /// formatting; does not affect simulation results.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ReportOptions {
     /// Lines per report page (0 = no page breaks); default 0.
     pub page_size: u32,

@@ -141,7 +141,14 @@ pub fn write_inp(network: &Network) -> Vec<u8> {
                     // Tank diameter uses length conversion, not pipe-diameter conv.
                     let diam = t.diameter * ucf.elev;
                     let min_v = t.min_volume * ucf.vol;
-                    let vol_curve = t.volume_curve.as_deref().unwrap_or("");
+                    // When the overflow flag must be emitted but there is no
+                    // volume curve, fill the VolCurve column with the `*`
+                    // placeholder (spec §4.3) so whitespace splitting keeps
+                    // YES in the 9th (Overflow) field on re-parse.
+                    let vol_curve =
+                        t.volume_curve
+                            .as_deref()
+                            .unwrap_or(if t.overflow { "*" } else { "" });
                     let overflow = if t.overflow { "YES" } else { "" };
                     let _ =
                         writeln!(out,
@@ -269,6 +276,12 @@ pub fn write_inp(network: &Network) -> Vec<u8> {
                             }
                         })
                         .unwrap_or(0.0);
+                    // GPV: the Setting column holds the head-loss curve ID, not
+                    // a number (spec §4.3); the reader parses it as a curve ref.
+                    let setting_str = match (v.valve_type, v.curve.as_deref()) {
+                        (ValveType::Gpv, Some(curve_id)) => curve_id.to_string(),
+                        _ => format!("{:.4}", setting_user),
+                    };
                     // Minor loss reverse.
                     let minor = if v.minor_loss > 0.0 {
                         let d4 = v.diameter.powi(4);
@@ -276,10 +289,15 @@ pub fn write_inp(network: &Network) -> Vec<u8> {
                     } else {
                         0.0
                     };
+                    // PCV: the loss-ratio curve ID is the optional 8th column.
+                    let pcv_curve = match (v.valve_type, v.curve.as_deref()) {
+                        (ValveType::Pcv, Some(curve_id)) => format!("  {}", curve_id),
+                        _ => String::new(),
+                    };
                     let _ = writeln!(
                         out,
-                        " {:<16} {:<14} {:<14} {:>12.4} {:<8} {:>12.4} {:>12.4}",
-                        l.base.id, from, to, diam, vtype, setting_user, minor
+                        " {:<16} {:<14} {:<14} {:>12.4} {:<8} {:>12} {:>12.4}{}",
+                        l.base.id, from, to, diam, vtype, setting_str, minor, pcv_curve
                     );
                 }
             }
@@ -304,7 +322,12 @@ pub fn write_inp(network: &Network) -> Vec<u8> {
     }
 
     // ── [DEMANDS] ────────────────────────────────────────────────────────────
-    // Emit additional demand categories (index ≥ 1) for junctions.
+    // Junctions with ≥ 2 demand categories emit ALL categories here, including
+    // the first (which also lives in [JUNCTIONS]). The reader's EPANET
+    // semantics make the first [DEMANDS] line REPLACE the [JUNCTIONS]-derived
+    // category and subsequent lines APPEND, so the same category list is
+    // reconstructed (spec §4.3). Single-category junctions stay
+    // [JUNCTIONS]-only.
     {
         let mut any = false;
         for n in &network.nodes {
@@ -320,11 +343,21 @@ pub fn write_inp(network: &Network) -> Vec<u8> {
             out.push_str(";Junction        Demand        Pattern       Category\n");
             for n in &network.nodes {
                 if let NodeKind::Junction(ref j) = n.kind {
-                    // Skip first demand (it lives in [JUNCTIONS]).
-                    for d in j.demands.iter().skip(1) {
+                    if j.demands.len() < 2 {
+                        continue;
+                    }
+                    for d in &j.demands {
                         let demand = d.base_demand * ucf.flow;
                         let pattern = d.pattern.as_deref().unwrap_or("");
-                        let name = d.name.as_deref().unwrap_or("");
+                        // The category name is the 4th whitespace-delimited
+                        // field; with an empty Pattern column it would shift
+                        // into the pattern position, so it is only written
+                        // when a pattern is present (spec §4.3).
+                        let name = if pattern.is_empty() {
+                            ""
+                        } else {
+                            d.name.as_deref().unwrap_or("")
+                        };
                         let _ = writeln!(
                             out,
                             " {:<16} {:>12.4}   {:<14}{}",
@@ -598,6 +631,14 @@ pub fn write_inp(network: &Network) -> Vec<u8> {
     {
         let opts = &network.options;
         let mut rxn_lines: Vec<String> = Vec::new();
+        // Wall-type coefficients carry a wall-order-dependent length factor on
+        // disk (quality spec §6.5.2). Apply the exact inverse of the read
+        // conversion in units.rs (order 1: /86400/ucf.elev; order 0:
+        // /86400*ucf.elev²) so values are stable across save/load cycles.
+        let wall_to_user = |kw: f64| match opts.wall_order {
+            WallOrder::One => kw * 86400.0 * ucf.elev,
+            WallOrder::Zero => kw * 86400.0 / (ucf.elev * ucf.elev),
+        };
         if opts.bulk_order != 1.0 {
             rxn_lines.push(format!(" Order Bulk   {:.4}", opts.bulk_order));
         }
@@ -617,15 +658,19 @@ pub fn write_inp(network: &Network) -> Vec<u8> {
             rxn_lines.push(format!(" Global Bulk  {:.4}", opts.bulk_coeff * 86400.0));
         }
         if opts.wall_coeff != 0.0 {
-            rxn_lines.push(format!(" Global Wall  {:.4}", opts.wall_coeff * 86400.0));
+            rxn_lines.push(format!(
+                " Global Wall  {:.4}",
+                wall_to_user(opts.wall_coeff)
+            ));
         }
         if opts.conc_limit != 0.0 {
             rxn_lines.push(format!(" Limiting Potential  {:.4}", opts.conc_limit));
         }
         if opts.roughness_reaction_factor != 0.0 {
+            // Shares kw's dimensions, so the same inverse conversion applies.
             rxn_lines.push(format!(
                 " Roughness Correlation  {:.4}",
-                opts.roughness_reaction_factor
+                wall_to_user(opts.roughness_reaction_factor)
             ));
         }
         // Per-pipe reactions.
@@ -635,7 +680,7 @@ pub fn write_inp(network: &Network) -> Vec<u8> {
                     rxn_lines.push(format!(" Bulk  {:<16} {:.4}", l.base.id, kb * 86400.0));
                 }
                 if let Some(kw) = p.wall_coeff {
-                    rxn_lines.push(format!(" Wall  {:<16} {:.4}", l.base.id, kw * 86400.0));
+                    rxn_lines.push(format!(" Wall  {:<16} {:.4}", l.base.id, wall_to_user(kw)));
                 }
             }
         }
@@ -760,6 +805,36 @@ pub fn write_inp(network: &Network) -> Vec<u8> {
         }
     }
 
+    // ── [LEAKAGE] ────────────────────────────────────────────────────────────
+    // FAVAD coefficients are stored internally as per-pipe discharge
+    // coefficients K1/K2; write back the on-disk C1 (mm²) / C2 (mm) values by
+    // inverting the load conversion (spec §4.3, units.rs):
+    //   K1 = Cd·sqrt(2g) · 1e-6 · C1 · (L/100)
+    //   K2 = Cd·sqrt(2g) · 1e-3 · C2 · (L/100)
+    {
+        let mut leak_lines: Vec<String> = Vec::new();
+        for l in &network.links {
+            if let LinkKind::Pipe(ref p) = l.kind {
+                if (p.leak_coeff_1 > 0.0 || p.leak_coeff_2 > 0.0) && p.length > 0.0 {
+                    const CD_SQRT2G: f64 = 2.65734; // Cd·sqrt(2g), Cd = 0.6 (SI)
+                    let len_100 = p.length / 100.0; // p.length is internal (m)
+                    let c1 = p.leak_coeff_1 / (CD_SQRT2G * 1e-6 * len_100);
+                    let c2 = p.leak_coeff_2 / (CD_SQRT2G * 1e-3 * len_100);
+                    leak_lines.push(format!(" {:<16} {:>12.4} {:>12.4}", l.base.id, c1, c2));
+                }
+            }
+        }
+        if !leak_lines.is_empty() {
+            out.push_str("[LEAKAGE]\n");
+            out.push_str(";Pipe             Coeff1        Coeff2\n");
+            for line in leak_lines {
+                out.push_str(&line);
+                out.push('\n');
+            }
+            out.push('\n');
+        }
+    }
+
     // ── [QUALITY] ────────────────────────────────────────────────────────────
     {
         let non_zero: Vec<_> = network
@@ -844,7 +919,9 @@ pub fn write_inp(network: &Network) -> Vec<u8> {
             let _ = writeln!(out, " Demand Multiplier {:.4}", opts.demand_multiplier);
         }
         if let Some(ref pat) = opts.default_pattern {
-            let _ = writeln!(out, " Default Pattern {}", pat);
+            // EPANET keyword is `PATTERN <id>` (spec §4.3); the reader does not
+            // recognise a "Default Pattern" spelling.
+            let _ = writeln!(out, " Pattern         {}", pat);
         }
         if opts.demand_model == crate::DemandModel::PressureDriven {
             let _ = writeln!(
@@ -886,8 +963,21 @@ pub fn write_inp(network: &Network) -> Vec<u8> {
         if opts.quality_tolerance != 0.01 {
             let _ = writeln!(out, " Tolerance       {:.6}", opts.quality_tolerance);
         }
+        // Emitter exponent: a single global value in INP, applied to every
+        // junction at load time. Emit it (from the junctions' shared value)
+        // when it differs from the default 0.5.
+        let emitter_exp = network.nodes.iter().find_map(|n| match &n.kind {
+            NodeKind::Junction(j) => Some(j.emitter_exp),
+            _ => None,
+        });
+        if let Some(exp) = emitter_exp {
+            if (exp - 0.5).abs() > 1e-12 {
+                let _ = writeln!(out, " Emitter Exponent {:.4}", exp);
+            }
+        }
+        // Emitter backflow: reader default is YES; only NO needs writing.
         if !opts.emitter_backflow {
-            let _ = writeln!(out, " Emitter Exponent {:.4}", 0.5); // default
+            let _ = writeln!(out, " BACKFLOW ALLOWED NO");
         }
         if opts.check_freq != 2 {
             let _ = writeln!(out, " CHECKFREQ       {}", opts.check_freq);
@@ -981,6 +1071,9 @@ pub fn write_inp(network: &Network) -> Vec<u8> {
         if !rep.summary {
             rep_lines.push(" Summary    No".to_string());
         }
+        if !rep.messages {
+            rep_lines.push(" Messages   No".to_string());
+        }
         if rep.energy {
             rep_lines.push(" Energy     Yes".to_string());
         }
@@ -1002,6 +1095,27 @@ pub fn write_inp(network: &Network) -> Vec<u8> {
         }
         if let Some(ref file) = rep.file {
             rep_lines.push(format!(" File       {}", file));
+        }
+        // Per-field options (spec §4.3), in sorted field-name order so the
+        // output is deterministic (the map has no iteration order).
+        let mut field_names: Vec<&String> = rep.fields.keys().collect();
+        field_names.sort();
+        for fname in field_names {
+            let f = &rep.fields[fname];
+            rep_lines.push(format!(
+                " {:<10} {}",
+                fname,
+                if f.enabled { "Yes" } else { "No" }
+            ));
+            if let Some(p) = f.precision {
+                rep_lines.push(format!(" {:<10} Precision {}", fname, p));
+            }
+            if let Some(v) = f.below {
+                rep_lines.push(format!(" {:<10} Below {:.4}", fname, v));
+            }
+            if let Some(v) = f.above {
+                rep_lines.push(format!(" {:<10} Above {:.4}", fname, v));
+            }
         }
         if !rep_lines.is_empty() {
             out.push_str("[REPORT]\n");
@@ -1274,6 +1388,14 @@ mod tests {
         diff <= 1e-4 || diff <= 1e-3 * a.abs().max(b.abs())
     }
 
+    /// Relative closeness for small-magnitude internal coefficients (reaction
+    /// and leakage coefficients are O(1e-6) internally, so the 1e-4 absolute
+    /// floor of `close` would hide even large relative drift).
+    fn close_rel(a: f64, b: f64) -> bool {
+        let diff = (a - b).abs();
+        diff <= 1e-12 || diff <= 1e-3 * a.abs().max(b.abs())
+    }
+
     /// Stricter structural equivalence between an original parse and its
     /// re-parse after `write_inp`. Extends `round_trip_fixture` with checks
     /// on topology, patterns, curves, controls, rules, title, and key options.
@@ -1370,12 +1492,57 @@ mod tests {
                     ),
                 }
             }
-            // Valve type must survive.
+            // Valve type and curve reference (GPV headloss / PCV loss ratio)
+            // must survive.
             if let (LinkKind::Valve(v1), LinkKind::Valve(v2)) = (&l1.kind, &l2.kind) {
                 assert_eq!(
                     v1.valve_type, v2.valve_type,
                     "{name}: valve '{}' type changed",
                     l1.base.id
+                );
+                assert_eq!(
+                    v1.curve, v2.curve,
+                    "{name}: valve '{}' curve reference changed",
+                    l1.base.id
+                );
+            }
+            // Pipe reaction and FAVAD leakage coefficients must survive.
+            if let (LinkKind::Pipe(p1), LinkKind::Pipe(p2)) = (&l1.kind, &l2.kind) {
+                match (p1.bulk_coeff, p2.bulk_coeff) {
+                    (Some(k1), Some(k2)) => assert!(
+                        close_rel(k1, k2),
+                        "{name}: pipe '{}' bulk coeff drifted: {k1} → {k2}",
+                        l1.base.id
+                    ),
+                    (k1, k2) => assert_eq!(
+                        k1.is_some(),
+                        k2.is_some(),
+                        "{name}: pipe '{}' bulk coeff presence changed",
+                        l1.base.id
+                    ),
+                }
+                match (p1.wall_coeff, p2.wall_coeff) {
+                    (Some(k1), Some(k2)) => assert!(
+                        close_rel(k1, k2),
+                        "{name}: pipe '{}' wall coeff drifted: {k1} → {k2}",
+                        l1.base.id
+                    ),
+                    (k1, k2) => assert_eq!(
+                        k1.is_some(),
+                        k2.is_some(),
+                        "{name}: pipe '{}' wall coeff presence changed",
+                        l1.base.id
+                    ),
+                }
+                assert!(
+                    close_rel(p1.leak_coeff_1, p2.leak_coeff_1)
+                        && close_rel(p1.leak_coeff_2, p2.leak_coeff_2),
+                    "{name}: pipe '{}' FAVAD leak coefficients drifted: ({}, {}) → ({}, {})",
+                    l1.base.id,
+                    p1.leak_coeff_1,
+                    p1.leak_coeff_2,
+                    p2.leak_coeff_1,
+                    p2.leak_coeff_2
                 );
             }
         }
@@ -1489,12 +1656,60 @@ mod tests {
                         "{name}: junction '{}' total demand drifted: {d1} → {d2}",
                         n1.base.id
                     );
+                    // Per-category base demand, pattern, and name must survive
+                    // in order.
+                    for (ci, (c1, c2)) in j1.demands.iter().zip(&j2.demands).enumerate() {
+                        assert!(
+                            close(c1.base_demand, c2.base_demand),
+                            "{name}: junction '{}' demand category {ci} drifted: {} → {}",
+                            n1.base.id,
+                            c1.base_demand,
+                            c2.base_demand
+                        );
+                        assert_eq!(
+                            c1.pattern, c2.pattern,
+                            "{name}: junction '{}' demand category {ci} pattern changed",
+                            n1.base.id
+                        );
+                        assert_eq!(
+                            c1.name, c2.name,
+                            "{name}: junction '{}' demand category {ci} name changed",
+                            n1.base.id
+                        );
+                    }
                     assert!(
                         close(j1.emitter_coeff, j2.emitter_coeff),
                         "{name}: junction '{}' emitter coefficient drifted: {} → {}",
                         n1.base.id,
                         j1.emitter_coeff,
                         j2.emitter_coeff
+                    );
+                    assert!(
+                        close(j1.emitter_exp, j2.emitter_exp),
+                        "{name}: junction '{}' emitter exponent drifted: {} → {}",
+                        n1.base.id,
+                        j1.emitter_exp,
+                        j2.emitter_exp
+                    );
+                }
+            }
+            // Tank overflow flag and volume-curve reference must survive.
+            if let crate::NodeKind::Tank(ref t1) = n1.kind {
+                let n2 = net2
+                    .nodes
+                    .iter()
+                    .find(|n| n.base.id == n1.base.id)
+                    .expect("node checked above");
+                if let crate::NodeKind::Tank(ref t2) = n2.kind {
+                    assert_eq!(
+                        t1.overflow, t2.overflow,
+                        "{name}: tank '{}' overflow flag changed",
+                        n1.base.id
+                    );
+                    assert_eq!(
+                        t1.volume_curve, t2.volume_curve,
+                        "{name}: tank '{}' volume curve changed",
+                        n1.base.id
                     );
                 }
             }
@@ -1549,6 +1764,36 @@ mod tests {
             close(o1.demand_multiplier, o2.demand_multiplier),
             "{name}: demand multiplier drifted"
         );
+        assert_eq!(
+            o1.default_pattern, o2.default_pattern,
+            "{name}: default pattern changed"
+        );
+        assert_eq!(
+            o1.emitter_backflow, o2.emitter_backflow,
+            "{name}: emitter backflow flag changed"
+        );
+        assert!(
+            close_rel(o1.bulk_coeff, o2.bulk_coeff),
+            "{name}: global bulk coeff drifted: {} → {}",
+            o1.bulk_coeff,
+            o2.bulk_coeff
+        );
+        assert!(
+            close_rel(o1.wall_coeff, o2.wall_coeff),
+            "{name}: global wall coeff drifted: {} → {}",
+            o1.wall_coeff,
+            o2.wall_coeff
+        );
+        assert!(
+            close_rel(o1.roughness_reaction_factor, o2.roughness_reaction_factor),
+            "{name}: roughness correlation factor drifted: {} → {}",
+            o1.roughness_reaction_factor,
+            o2.roughness_reaction_factor
+        );
+        assert_eq!(o1.wall_order, o2.wall_order, "{name}: wall order changed");
+
+        // [REPORT] options survive verbatim.
+        assert_eq!(net1.report, net2.report, "{name}: report options changed");
 
         // Display metadata survives.
         assert_eq!(
@@ -1590,82 +1835,18 @@ mod tests {
     }
 
     /// Fixtures whose `write_inp` output currently fails to re-parse at all.
-    /// These are writer defects (documented in the INP coverage audit); the
-    /// harness only asserts that the fixture itself parses. Remove an entry
-    /// once the corresponding writer defect is fixed.
-    const ROUND_TRIP_REPARSE_SKIP: &[(&str, &str)] = &[
-        (
-            "gpv_valve.inp",
-            "writer emits the GPV setting as a number (0.0000) instead of the \
-             head-loss curve ID, so the re-parse fails with UnknownCurveRef",
-        ),
-        (
-            "pcv_valve.inp",
-            "writer never emits the PCV loss-ratio curve ID (optional 8th \
-             [VALVES] field), so the re-parse fails with MissingRequiredCurve",
-        ),
-        (
-            "tank_overflow.inp",
-            "writer leaves the VolCurve column blank before the Overflow flag; \
-             whitespace splitting shifts YES into the VolCurve field and the \
-             re-parse fails with UnknownCurveRef('YES')",
-        ),
-    ];
+    /// For a listed fixture the harness only asserts that the fixture itself
+    /// parses. Add an entry (with a comment naming the writer defect) only to
+    /// quarantine a known defect; remove it once the defect is fixed.
+    /// Currently empty: every fixture's written form re-parses.
+    const ROUND_TRIP_REPARSE_SKIP: &[(&str, &str)] = &[];
 
     /// Fixtures whose written form re-parses but loses or mutates data, so
     /// only the baseline (counts / IDs / kinds / elevations) checks run.
-    /// Each entry documents the writer defect that blocks the strict checks.
-    /// Remove an entry once the corresponding defect is fixed.
-    const ROUND_TRIP_STRICT_SKIP: &[(&str, &str)] = &[
-        // Writer emits `Default Pattern <id>` but the reader only recognises
-        // the EPANET keyword `PATTERN <id>`, so the default pattern is lost on
-        // re-parse and an implicit all-1.0 pattern "1" is added (count drift).
-        (
-            "control_flow.inp",
-            "Default Pattern keyword not re-readable",
-        ),
-        (
-            "demand_categories.inp",
-            "Default Pattern keyword not re-readable",
-        ),
-        (
-            "demand_charge.inp",
-            "Default Pattern keyword not re-readable",
-        ),
-        (
-            "long_duration_stress.inp",
-            "Default Pattern keyword not re-readable",
-        ),
-        (
-            "pattern_timestep.inp",
-            "Default Pattern keyword not re-readable",
-        ),
-        (
-            "source_pattern.inp",
-            "Default Pattern keyword not re-readable",
-        ),
-        (
-            "start_clocktime.inp",
-            "Default Pattern keyword not re-readable",
-        ),
-        // Wall reaction coefficients are converted on read with a ucf.elev
-        // factor (order 1: /86400/ucf.elev; order 0: /86400*ucf.elev²,
-        // units.rs) but written back as coeff*86400 only, so each
-        // write→parse cycle scales the coefficient by ~0.3048 (US units).
-        ("initial_quality.inp", "wall coeff conversion asymmetry"),
-        ("pipe_reactions.inp", "wall coeff conversion asymmetry"),
-        ("quality_chemical.inp", "wall coeff conversion asymmetry"),
-        ("reaction_bulk_wall.inp", "wall coeff conversion asymmetry"),
-        ("reaction_wall.inp", "wall coeff conversion asymmetry"),
-        (
-            "roughness_correlation.inp",
-            "wall coeff / roughness-correlation conversion asymmetry",
-        ),
-        (
-            "zero_order_wall_reaction.inp",
-            "wall coeff conversion asymmetry",
-        ),
-    ];
+    /// Add an entry (with a comment naming the writer defect) only to
+    /// quarantine a known defect; remove it once the defect is fixed.
+    /// Currently empty: every fixture passes the strict checks.
+    const ROUND_TRIP_STRICT_SKIP: &[(&str, &str)] = &[];
 
     /// Every fixture in tests/fixtures/ must survive parse → write → parse
     /// with structure intact, and the writer must be idempotent. Fixtures on
@@ -1796,6 +1977,339 @@ mod tests {
     #[test]
     fn round_trip_metadata_display() {
         round_trip_fixture_strict("metadata_display.inp");
+    }
+
+    // ── Writer defect regressions ────────────────────────────────────────────
+
+    /// Parse `inp`, then run two write→parse cycles, returning the three
+    /// parsed networks (original, after one cycle, after two cycles).
+    fn two_cycles(inp: &str) -> (Network, Network, Network) {
+        let n1 = parse(inp.as_bytes()).expect("initial parse");
+        let n2 = parse(&write_inp(&n1)).unwrap_or_else(|e| {
+            panic!(
+                "re-parse after first write failed: {e:?}\n{}",
+                String::from_utf8_lossy(&write_inp(&n1))
+            )
+        });
+        let n3 = parse(&write_inp(&n2)).expect("re-parse after second write");
+        (n1, n2, n3)
+    }
+
+    /// Assert `a` and `b` are equal to within 1e-9 relative tolerance.
+    fn assert_rel_eq(a: f64, b: f64, what: &str) {
+        let tol = 1e-9 * a.abs().max(b.abs()).max(1e-30);
+        assert!(
+            (a - b).abs() <= tol,
+            "{what}: {a} != {b} (diff {})",
+            (a - b).abs()
+        );
+    }
+
+    fn reaction_stability_inp(units: &str, order_wall: u32) -> String {
+        format!(
+            "[TITLE]\nreaction coefficient stability\n\n\
+             [JUNCTIONS]\nJ1  0  10\nJ2  0  10\n\n\
+             [RESERVOIRS]\nR1  100\n\n\
+             [PIPES]\nP1  R1  J1  1000  12  100  0  Open\nP2  J1  J2  800  10  100  0  Open\n\n\
+             [REACTIONS]\n\
+             Order Wall  {order_wall}\n\
+             Global Bulk  -0.5\n\
+             Global Wall  -1.25\n\
+             Roughness Correlation  0.75\n\
+             Bulk  P1  -0.3\n\
+             Wall  P1  -0.8\n\n\
+             [OPTIONS]\nUnits  {units}\nHeadloss  H-W\nQuality  Chemical mg/L\n\n[END]\n"
+        )
+    }
+
+    /// Reaction coefficients (bulk, first-order wall, roughness correlation,
+    /// per-pipe overrides) must be numerically unchanged (~1e-9) across two
+    /// save/load cycles. Exercises the length-dimension inverse (quality spec
+    /// §6.5.2) that the writer previously omitted, scaling wall values by
+    /// ~0.3048 per cycle in US units.
+    fn assert_reaction_coeffs_stable(units: &str, order_wall: u32) {
+        let inp = reaction_stability_inp(units, order_wall);
+        let (n1, n2, n3) = two_cycles(&inp);
+        for (label, net) in [("one cycle", &n2), ("two cycles", &n3)] {
+            let o1 = &n1.options;
+            let o = &net.options;
+            assert_rel_eq(
+                o1.bulk_coeff,
+                o.bulk_coeff,
+                &format!("{units} global bulk after {label}"),
+            );
+            assert_rel_eq(
+                o1.wall_coeff,
+                o.wall_coeff,
+                &format!("{units} global wall after {label}"),
+            );
+            assert_rel_eq(
+                o1.roughness_reaction_factor,
+                o.roughness_reaction_factor,
+                &format!("{units} roughness correlation after {label}"),
+            );
+            let pipe = |n: &Network| {
+                n.links
+                    .iter()
+                    .find(|l| l.base.id == "P1")
+                    .map(|l| match &l.kind {
+                        LinkKind::Pipe(p) => (p.bulk_coeff.unwrap(), p.wall_coeff.unwrap()),
+                        _ => unreachable!(),
+                    })
+                    .unwrap()
+            };
+            let (kb1, kw1) = pipe(&n1);
+            let (kb, kw) = pipe(net);
+            assert_rel_eq(kb1, kb, &format!("{units} pipe bulk after {label}"));
+            assert_rel_eq(kw1, kw, &format!("{units} pipe wall after {label}"));
+        }
+    }
+
+    #[test]
+    fn reaction_coeffs_stable_us_units_first_order_wall() {
+        assert_reaction_coeffs_stable("GPM", 1);
+    }
+
+    #[test]
+    fn reaction_coeffs_stable_us_units_zero_order_wall() {
+        assert_reaction_coeffs_stable("GPM", 0);
+    }
+
+    #[test]
+    fn reaction_coeffs_stable_si_units_first_order_wall() {
+        assert_reaction_coeffs_stable("LPS", 1);
+    }
+
+    #[test]
+    fn reaction_coeffs_stable_si_units_zero_order_wall() {
+        assert_reaction_coeffs_stable("LPS", 0);
+    }
+
+    /// `BACKFLOW ALLOWED NO` must be serialised as itself — not as the
+    /// unrelated `Emitter Exponent` option — and survive a round-trip.
+    #[test]
+    fn backflow_allowed_no_round_trips() {
+        let inp = "[JUNCTIONS]\nJ1  0  0\nJ2  0  0\n\n\
+                   [RESERVOIRS]\nR1  100\n\n\
+                   [PIPES]\nP1  R1  J1  500  12  100  0  Open\nP2  J1  J2  500  12  100  0  Open\n\n\
+                   [EMITTERS]\nJ2  5.0\n\n\
+                   [OPTIONS]\nUnits  GPM\nHeadloss  H-W\nBackflow Allowed  NO\n\n[END]\n";
+        let n1 = parse(inp.as_bytes()).expect("parse");
+        assert!(
+            !n1.options.emitter_backflow,
+            "fixture sets BACKFLOW ALLOWED NO"
+        );
+        let written = write_inp(&n1);
+        let text = String::from_utf8_lossy(&written);
+        assert!(
+            text.contains("BACKFLOW ALLOWED NO"),
+            "writer must emit BACKFLOW ALLOWED NO:\n{text}"
+        );
+        assert!(
+            !text.contains("Emitter Exponent"),
+            "default emitter exponent must not be emitted for the backflow option:\n{text}"
+        );
+        let n2 = parse(&written).expect("re-parse");
+        assert!(
+            !n2.options.emitter_backflow,
+            "backflow flag lost on round-trip"
+        );
+    }
+
+    /// A non-default global emitter exponent must be written (as the
+    /// `EMITTER EXPONENT` option) so emitter coefficients survive re-parse.
+    #[test]
+    fn emitter_exponent_round_trips() {
+        let inp = "[JUNCTIONS]\nJ1  0  0\nJ2  0  0\n\n\
+                   [RESERVOIRS]\nR1  100\n\n\
+                   [PIPES]\nP1  R1  J1  500  12  100  0  Open\nP2  J1  J2  500  12  100  0  Open\n\n\
+                   [EMITTERS]\nJ2  5.0\n\n\
+                   [OPTIONS]\nUnits  GPM\nHeadloss  H-W\nEmitter Exponent  0.8\n\n[END]\n";
+        let (n1, _n2, n3) = two_cycles(inp);
+        let emitter = |n: &Network| {
+            n.nodes
+                .iter()
+                .find(|nd| nd.base.id == "J2")
+                .map(|nd| match &nd.kind {
+                    NodeKind::Junction(j) => (j.emitter_exp, j.emitter_coeff),
+                    _ => unreachable!(),
+                })
+                .unwrap()
+        };
+        let (exp1, coeff1) = emitter(&n1);
+        let (exp3, coeff3) = emitter(&n3);
+        assert!((exp1 - 0.8).abs() < 1e-12, "exponent parsed");
+        assert!((exp3 - 0.8).abs() < 1e-12, "exponent survived round-trips");
+        assert_rel_eq(coeff1, coeff3, "emitter coefficient over two cycles");
+    }
+
+    /// [REPORT] per-field options (YES/NO, PRECISION, ABOVE, BELOW) and the
+    /// MESSAGES flag must be serialised and re-parsed verbatim.
+    #[test]
+    fn report_field_options_round_trip() {
+        let inp = "[JUNCTIONS]\nJ1  0  10\n\n\
+                   [RESERVOIRS]\nR1  100\n\n\
+                   [PIPES]\nP1  R1  J1  1000  12  100  0  Open\n\n\
+                   [REPORT]\n\
+                   Messages  No\n\
+                   Pressure  Precision  4\n\
+                   Flow  No\n\
+                   Velocity  Below  0.1\n\
+                   Head  Above  10\n\n\
+                   [OPTIONS]\nUnits  GPM\nHeadloss  H-W\n\n[END]\n";
+        let n1 = parse(inp.as_bytes()).expect("parse");
+        assert!(!n1.report.messages);
+        assert_eq!(n1.report.fields.len(), 4);
+        let n2 = parse(&write_inp(&n1)).expect("re-parse");
+        assert_eq!(n1.report, n2.report, "report options changed on round-trip");
+        // A second write must be byte-identical (deterministic field order).
+        assert_eq!(
+            String::from_utf8_lossy(&write_inp(&n1)),
+            String::from_utf8_lossy(&write_inp(&n2)),
+            "report serialisation not idempotent"
+        );
+    }
+
+    /// [LEAKAGE] coefficients must be written back (inverting the FAVAD load
+    /// conversion) and survive two save/load cycles.
+    #[test]
+    fn leakage_coefficients_round_trip() {
+        let inp = std::fs::read(fixture("leakage_favad.inp")).expect("read fixture");
+        let n1 = parse(&inp).expect("parse");
+        let written = write_inp(&n1);
+        let text = String::from_utf8_lossy(&written);
+        assert!(
+            text.contains("[LEAKAGE]"),
+            "writer must emit [LEAKAGE]:\n{text}"
+        );
+        let n3 = parse(&write_inp(&parse(&written).expect("re-parse"))).expect("second cycle");
+        let leak = |n: &Network| {
+            n.links
+                .iter()
+                .find(|l| l.base.id == "P1")
+                .map(|l| match &l.kind {
+                    LinkKind::Pipe(p) => (p.leak_coeff_1, p.leak_coeff_2),
+                    _ => unreachable!(),
+                })
+                .unwrap()
+        };
+        let (k1a, k2a) = leak(&n1);
+        let (k1b, k2b) = leak(&n3);
+        assert!(
+            k1a > 0.0 && k2a > 0.0,
+            "fixture has non-zero FAVAD coefficients"
+        );
+        // First cycle rounds pipe length to 4 decimals in user units; the
+        // internal coefficients must still match to formatting noise, and be
+        // exactly stable afterwards.
+        assert_rel_eq(k1a, k1b, "leak_coeff_1 over two cycles");
+        assert_rel_eq(k2a, k2b, "leak_coeff_2 over two cycles");
+    }
+
+    /// The default pattern must be written with the EPANET `PATTERN` keyword
+    /// (the reader does not recognise `Default Pattern`).
+    #[test]
+    fn default_pattern_written_with_epanet_keyword() {
+        let inp = std::fs::read(fixture("demand_categories.inp")).expect("read fixture");
+        let n1 = parse(&inp).expect("parse");
+        assert_eq!(n1.options.default_pattern.as_deref(), Some("PAT1"));
+        let written = write_inp(&n1);
+        let text = String::from_utf8_lossy(&written);
+        assert!(
+            !text.contains("Default Pattern"),
+            "non-EPANET keyword:\n{text}"
+        );
+        let n2 = parse(&written).expect("re-parse");
+        assert_eq!(n2.options.default_pattern.as_deref(), Some("PAT1"));
+        assert_eq!(n1.patterns.len(), n2.patterns.len());
+    }
+
+    /// GPV: the [VALVES] Setting column must hold the head-loss curve ID.
+    #[test]
+    fn gpv_setting_written_as_curve_id() {
+        let inp = std::fs::read(fixture("gpv_valve.inp")).expect("read fixture");
+        let n1 = parse(&inp).expect("parse");
+        let n2 = parse(&write_inp(&n1)).expect("re-parse");
+        let valve = n2
+            .links
+            .iter()
+            .find_map(|l| match &l.kind {
+                LinkKind::Valve(v) => Some(v),
+                _ => None,
+            })
+            .expect("valve present");
+        assert_eq!(valve.valve_type, ValveType::Gpv);
+        assert_eq!(valve.curve.as_deref(), Some("HC1"));
+    }
+
+    /// PCV: the optional 8th [VALVES] field must carry the loss-ratio curve.
+    #[test]
+    fn pcv_loss_ratio_curve_written() {
+        let inp = std::fs::read(fixture("pcv_valve.inp")).expect("read fixture");
+        let n1 = parse(&inp).expect("parse");
+        let n2 = parse(&write_inp(&n1)).expect("re-parse");
+        let (setting, valve) = n2
+            .links
+            .iter()
+            .find_map(|l| match &l.kind {
+                LinkKind::Valve(v) => Some((l.base.initial_setting, v)),
+                _ => None,
+            })
+            .expect("valve present");
+        assert_eq!(valve.valve_type, ValveType::Pcv);
+        assert_eq!(valve.curve.as_deref(), Some("LC1"));
+        assert!(
+            (setting.unwrap() - 50.0).abs() < 1e-6,
+            "percent-open setting kept"
+        );
+    }
+
+    /// Overflow tank without a volume curve: the VolCurve column must hold
+    /// the `*` placeholder so YES stays in the Overflow field.
+    #[test]
+    fn tank_overflow_written_with_star_placeholder() {
+        let inp = std::fs::read(fixture("tank_overflow.inp")).expect("read fixture");
+        let n1 = parse(&inp).expect("parse");
+        let n2 = parse(&write_inp(&n1)).expect("re-parse");
+        let tank = n2
+            .nodes
+            .iter()
+            .find_map(|n| match &n.kind {
+                NodeKind::Tank(t) => Some(t),
+                _ => None,
+            })
+            .expect("tank present");
+        assert!(tank.overflow, "overflow flag survived");
+        assert!(tank.volume_curve.is_none(), "no spurious volume curve");
+    }
+
+    /// A junction with three named demand categories keeps all of them —
+    /// including the first — through a save/load cycle.
+    #[test]
+    fn multi_category_named_demands_round_trip() {
+        let inp = std::fs::read(fixture("demand_categories_named.inp")).expect("read fixture");
+        let n1 = parse(&inp).expect("parse");
+        let n2 = parse(&write_inp(&n1)).expect("re-parse");
+        for net in [&n1, &n2] {
+            let j = net
+                .nodes
+                .iter()
+                .find(|n| n.base.id == "J1")
+                .map(|n| match &n.kind {
+                    NodeKind::Junction(j) => j,
+                    _ => unreachable!(),
+                })
+                .expect("J1 present");
+            assert_eq!(j.demands.len(), 3, "three categories expected");
+            let names: Vec<_> = j.demands.iter().map(|d| d.name.as_deref()).collect();
+            assert_eq!(
+                names,
+                vec![Some("Residential"), Some("Commercial"), Some("Irrigation")]
+            );
+            let patterns: Vec<_> = j.demands.iter().map(|d| d.pattern.as_deref()).collect();
+            assert_eq!(patterns, vec![Some("PAT1"), Some("PAT2"), Some("PAT1")]);
+        }
+        round_trip_fixture_strict("demand_categories_named.inp");
     }
 
     // ── Unit conversion spot-checks ──────────────────────────────────────────

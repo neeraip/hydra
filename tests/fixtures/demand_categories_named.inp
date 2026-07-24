@@ -1,0 +1,36 @@
+[TITLE]
+Three named demand categories on one junction survive save/load cycles
+
+[JUNCTIONS]
+;ID    Elev    Demand    Pattern
+J1     0       40        PAT1
+J2     0       25
+
+[RESERVOIRS]
+R1    100
+
+[PIPES]
+;ID    Node1  Node2  Length  Diam  Rough  MLoss  Status
+P1     R1     J1     1000    12    100    0      Open
+P2     J1     J2     800     10    100    0      Open
+
+[DEMANDS]
+;Junction  Demand  Pattern  Category
+J1         40      PAT1     Residential
+J1         15      PAT2     Commercial
+J1         5       PAT1     Irrigation
+
+[PATTERNS]
+PAT1    0.6    1.2    1.4    0.8
+PAT2    0.3    1.0    1.6    1.1
+
+[TIMES]
+Duration           4:00
+Hydraulic Timestep 1:00
+Report Timestep    1:00
+
+[OPTIONS]
+Units      GPM
+Headloss   H-W
+
+[END]
