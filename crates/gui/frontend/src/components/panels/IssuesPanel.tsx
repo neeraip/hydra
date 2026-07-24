@@ -11,7 +11,8 @@ import {
   InformationCircleIcon,
   XMarkIcon,
 } from "@heroicons/react/24/outline";
-import { useEffect, useMemo, useState } from "react";
+import { useVirtualizer } from "@tanstack/react-virtual";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useAppState, useSimulation } from "../../AppContext";
 import {
   countIssues,
@@ -99,6 +100,18 @@ export function IssuesPanel() {
   const counts = countIssues(issues);
   const selected =
     visible.find((i) => i.id === selectedId) ?? visible[0] ?? null;
+
+  // Virtualized list: run warnings alone can produce thousands of issues
+  // (e.g. negative-pressure per node), and mounting one card each froze the
+  // drawer. Rows are single-line (ellipsized) so the estimate is stable;
+  // measureElement corrects for font-metric drift.
+  const listScrollRef = useRef<HTMLDivElement | null>(null);
+  const rowVirtualizer = useVirtualizer({
+    count: visible.length,
+    getScrollElement: () => listScrollRef.current,
+    estimateSize: () => 50,
+    overscan: 10,
+  });
 
   function toggleSeverity(s: IssueSeverity) {
     setActiveSeverity((prev) => {
@@ -348,18 +361,43 @@ export function IssuesPanel() {
             </div>
           ) : (
             <>
-              <div style={{ flex: "1 1 50%", overflowY: "auto" }}>
-                {visible.map((issue) => (
-                  <IssueRow
-                    key={issue.id}
-                    issue={issue}
-                    selected={issue.id === selected?.id}
-                    onSelect={() => setSelectedId(issue.id)}
-                    onDismiss={() => dismiss(issue.id)}
-                    onRestore={() => restore(issue.id)}
-                    showRestore={tab === "dismissed"}
-                  />
-                ))}
+              <div
+                ref={listScrollRef}
+                style={{ flex: "1 1 50%", overflowY: "auto" }}
+              >
+                <div
+                  style={{
+                    height: rowVirtualizer.getTotalSize(),
+                    position: "relative",
+                  }}
+                >
+                  {rowVirtualizer.getVirtualItems().map((vi) => {
+                    const issue = visible[vi.index];
+                    return (
+                      <div
+                        key={issue.id}
+                        ref={rowVirtualizer.measureElement}
+                        data-index={vi.index}
+                        style={{
+                          position: "absolute",
+                          top: 0,
+                          left: 0,
+                          width: "100%",
+                          transform: `translateY(${vi.start}px)`,
+                        }}
+                      >
+                        <IssueRow
+                          issue={issue}
+                          selected={issue.id === selected?.id}
+                          onSelect={() => setSelectedId(issue.id)}
+                          onDismiss={() => dismiss(issue.id)}
+                          onRestore={() => restore(issue.id)}
+                          showRestore={tab === "dismissed"}
+                        />
+                      </div>
+                    );
+                  })}
+                </div>
               </div>
 
               {selected && (
