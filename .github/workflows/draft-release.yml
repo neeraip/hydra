@@ -184,11 +184,11 @@ jobs:
           path: |
             ~/.cargo/bin/cargo-tauri
             ~/.cargo/bin/cargo-tauri.exe
-          key: tauri-cli-2.11.2-${{ runner.os }}
+          key: tauri-cli-2.11.4-${{ runner.os }}
 
       - name: Install Tauri CLI
         if: steps.cache-tauri-cli.outputs.cache-hit != 'true'
-        run: cargo binstall tauri-cli --version "=2.11.2" --no-confirm
+        run: cargo binstall tauri-cli --version "=2.11.4" --no-confirm
 
       - name: Regenerate CRS catalog
         run: node scripts/update-crs-catalog.mjs
