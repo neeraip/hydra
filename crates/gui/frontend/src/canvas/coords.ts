@@ -168,7 +168,7 @@ export const COMMON_CRS: Array<{ label: string; epsg: string }> = [
  *
  * Returns true if the definition is available, false if unknown.
  */
-function ensureEpsgDef(epsg: string): boolean {
+export function ensureEpsgDef(epsg: string): boolean {
   if (proj4.defs(epsg)) return true;
 
   // Auto-generate WGS84 UTM zone definitions.

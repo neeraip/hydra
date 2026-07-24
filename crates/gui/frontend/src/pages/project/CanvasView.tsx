@@ -24,8 +24,11 @@ import { AnnotationSummary, MeasureOverlay } from "../../canvas/Annotations";
 import type { BasemapStyle } from "../../canvas/Basemap";
 import { computeDeltas } from "../../canvas/compare";
 import {
+  ensureEpsgDef,
   haversineMeters,
+  normalizeEpsgCode,
   pickCoordSample,
+  registerCustomCrsDefinitions,
   reprojectLinkVerticesCached,
   reprojectNodesCached,
   setPendingCrsSuggestionSample,
@@ -61,6 +64,7 @@ import {
   createNode,
   deleteElement,
   getPeriodResults,
+  listCrsCatalogPage,
   loadResultMeta,
   type PeriodResults,
   patchNodePosition,
@@ -887,6 +891,49 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
     setSourceCrs(project?.sourceCrs ?? "EPSG:4326");
   }, [project?.sourceCrs]);
 
+  // Ensure a proj4 definition exists for a projected source CRS before the
+  // reprojection memo runs. On a cold start only baseline (4326/3857) and
+  // auto-generatable (UTM/MGA) codes are known up front; a catalog EPSG like a
+  // state-plane zone has no def until the CRS modal fetches it. Without this, a
+  // persisted non-WGS84 CRS would fail to reproject after a restart and surface
+  // a spurious "Invalid coordinate reference system" popup. Look the code up in
+  // the catalog, register it, and bump a version so the memo re-runs.
+  const [crsDefsVersion, setCrsDefsVersion] = useState(0);
+  const [crsResolving, setCrsResolving] = useState(false);
+  useEffect(() => {
+    // ensureEpsgDef registers baseline/UTM/MGA defs as a side effect and
+    // returns true when the code is (now) usable — nothing more to do.
+    if (sourceCrs === "EPSG:4326" || ensureEpsgDef(sourceCrs)) {
+      setCrsResolving(false);
+      return;
+    }
+    let cancelled = false;
+    setCrsResolving(true);
+    void (async () => {
+      try {
+        const page = await listCrsCatalogPage({
+          query: sourceCrs,
+          page: 0,
+          pageSize: 100,
+        });
+        if (cancelled) return;
+        const entry = page.items.find(
+          (e) => normalizeEpsgCode(e.epsg) === sourceCrs,
+        );
+        if (entry?.proj4?.trim()) {
+          registerCustomCrsDefinitions([entry]);
+          // Re-run the reprojection memo now that the def is registered.
+          setCrsDefsVersion((v) => v + 1);
+        }
+      } finally {
+        if (!cancelled) setCrsResolving(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [sourceCrs]);
+
   // Raw positional nodes (no pressure/demand merged yet) used for CRS sniffing
   // and reprojection. Stable across timeline scrubs.
   const rawPositionNodes = baseNodes;
@@ -937,6 +984,10 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
       }
     >;
   }>({ crs: "", byId: new Map() });
+  // crsDefsVersion is a deliberate re-run token — the memo reads global proj4
+  // defs registered by the CRS-resolution effect, a side effect biome cannot
+  // see as a dependency.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: re-run token, see above
   const reprojection = useMemo(() => {
     if (sourceCrs === "EPSG:4326") {
       // Even with the default CRS, check that the raw coordinates are within
@@ -972,7 +1023,9 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
       const msg = e instanceof Error ? e.message : String(e);
       return { nodes: rawPositionNodes, error: msg };
     }
-  }, [sourceCrs, rawPositionNodes]);
+    // crsDefsVersion re-runs this once a lazily-fetched catalog proj4 def is
+    // registered (see the CRS-resolution effect above).
+  }, [sourceCrs, rawPositionNodes, crsDefsVersion]);
 
   // Surface reprojection errors to the toolbar without setting state during
   // render.  Runs after every reprojection result.
@@ -1689,8 +1742,10 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
                 </div>
               )}
 
-            {/* CRS alert — map mode only, shown when coordinates can't be reprojected */}
-            {viewMode === "map" && crsError && (
+            {/* CRS alert — map mode only, shown when coordinates can't be
+                reprojected. Suppressed while a catalog proj4 def is still being
+                fetched for a persisted CRS (avoids a spurious cold-start flash). */}
+            {viewMode === "map" && crsError && !crsResolving && (
               <div
                 style={{
                   position: "absolute",
@@ -1746,7 +1801,11 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
                       onClick={openCrsModal}
                       style={{
                         pointerEvents: "auto",
-                        padding: "0 10px",
+                        // .tool-btn is a fixed 30×30 icon button; these are text
+                        // CTAs, so size to content and give them a border.
+                        width: "auto",
+                        border: "1px solid var(--border)",
+                        padding: "0 12px",
                         fontSize: 12,
                       }}
                     >
@@ -1768,7 +1827,10 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
                         }}
                         style={{
                           pointerEvents: "auto",
-                          padding: "0 10px",
+                          // See "Set source CRS" — size to content, not 30×30.
+                          width: "auto",
+                          border: "1px solid var(--border)",
+                          padding: "0 12px",
                           fontSize: 12,
                         }}
                       >
