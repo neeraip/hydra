@@ -1,4 +1,4 @@
-import { CheckIcon, PencilIcon, XMarkIcon } from "@heroicons/react/16/solid";
+import { CheckIcon, XMarkIcon } from "@heroicons/react/16/solid";
 import { useEffect, useRef, useState } from "react";
 import { useAppState } from "../../../AppContext";
 import { getNetworkTitle, updateNetworkTitle } from "../../../hooks/network";
@@ -11,7 +11,8 @@ import {
 
 /**
  * The model's INP `[TITLE]` as dim inline text under the header pills.
- * Click the pencil to edit in a free-height textarea (no line cap — EPANET's
+ * Click anywhere on the text (whole block highlights on hover) to edit in a
+ * free-height textarea (no line cap — EPANET's
  * three lines is convention, so display clamps at three with "View more").
  */
 export function ModelTitleBlock() {
@@ -82,7 +83,6 @@ export function ModelTitleBlock() {
           rows={Math.max(2, Math.min(8, draft.split("\n").length + 1))}
           style={{
             flex: 1,
-            maxWidth: 560,
             background: "var(--bg-input, rgba(255,255,255,0.05))",
             border: "1px solid var(--border)",
             borderRadius: 6,
@@ -120,65 +120,47 @@ export function ModelTitleBlock() {
   const shown = expanded ? lines : lines.slice(0, TITLE_DISPLAY_LINES);
 
   return (
-    <div
-      style={{
-        marginTop: 8,
-        display: "flex",
-        gap: 6,
-        alignItems: "flex-start",
-        maxWidth: 620,
-      }}
-    >
-      {lines.length === 0 ? (
+    <div style={{ marginTop: 8 }}>
+      <button
+        type="button"
+        onClick={beginEdit}
+        className="model-title-edit-target"
+        data-tooltip="Click to edit — stored in the INP [TITLE]"
+        style={{
+          display: "block",
+          width: "100%",
+          textAlign: "left",
+          background: "transparent",
+          border: "none",
+          borderRadius: 6,
+          padding: "4px 6px",
+          margin: "0 -6px",
+          cursor: "text",
+          fontSize: 12,
+          color: "var(--text-tertiary)",
+          lineHeight: 1.5,
+          fontFamily: "var(--font-ui)",
+          whiteSpace: "pre-wrap",
+          overflowWrap: "anywhere",
+          fontStyle: lines.length === 0 ? "italic" : undefined,
+        }}
+      >
+        {lines.length === 0 ? "Add a model description…" : shown.join("\n")}
+      </button>
+      {hasMore && (
         <button
           type="button"
-          onClick={beginEdit}
+          onClick={() => setExpanded((v) => !v)}
           style={{
             ...iconBtn,
-            fontSize: 12,
-            fontStyle: "italic",
+            fontSize: 11,
+            color: "var(--accent)",
             padding: 0,
+            marginTop: 2,
           }}
         >
-          Add a model description…
+          {expanded ? "View less" : "View more"}
         </button>
-      ) : (
-        <>
-          <div
-            style={{
-              fontSize: 12,
-              color: "var(--text-tertiary)",
-              lineHeight: 1.5,
-              whiteSpace: "pre-wrap",
-              overflowWrap: "anywhere",
-            }}
-          >
-            {shown.join("\n")}
-            {hasMore && (
-              <button
-                type="button"
-                onClick={() => setExpanded((v) => !v)}
-                style={{
-                  ...iconBtn,
-                  fontSize: 11,
-                  color: "var(--accent)",
-                  marginLeft: 6,
-                  padding: 0,
-                }}
-              >
-                {expanded ? "View less" : "View more"}
-              </button>
-            )}
-          </div>
-          <button
-            type="button"
-            onClick={beginEdit}
-            data-tooltip="Edit model description (stored in the INP [TITLE])"
-            style={iconBtn}
-          >
-            <PencilIcon style={{ width: 13, height: 13 }} />
-          </button>
-        </>
       )}
     </div>
   );

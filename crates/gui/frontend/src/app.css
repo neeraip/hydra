@@ -1263,3 +1263,9 @@ select:focus-visible {
 .row-kebab:focus-visible {
   opacity: 1;
 }
+
+/* Overview model-description block: the whole text area is the edit target —
+   highlight on hover instead of showing a separate edit icon. */
+.model-title-edit-target:hover {
+  background: var(--nav-hover) !important;
+}
