@@ -371,8 +371,10 @@ pub fn load_result_meta(
 /// binary payload (see [`encode_period_results`] for the byte layout).
 ///
 /// Values are in SI units (L/s, m, m/s) because `results.out` is always
-/// written with `FlowUnits::Lps`. Returns an error when `period` is out of
-/// range or `results.out` does not exist.
+/// written with `FlowUnits::Lps`. Returns an **empty** payload when
+/// `results.out` does not exist (the target has not been simulated) — the
+/// frontend reads a zero-length buffer as "no results". Returns an error only
+/// when a present `.out` is unreadable or `period` is out of range.
 #[tauri::command(async)]
 /// Return flat arrays for a single reporting period (nodes + links).
 pub fn get_period_results(
@@ -384,6 +386,14 @@ pub fn get_period_results(
     validate_target_ids(&project_id, scenario_id.as_deref())?;
     let app_data = app_data_dir(&app)?;
     let out_path = results_path_for(&app_data, &project_id, scenario_id.as_deref());
+    if !out_path.exists() {
+        // Not simulated yet — return an empty payload rather than a hard error
+        // (mirrors `load_result_meta`'s `Ok(None)`). A view can legitimately
+        // fetch during the window where the active scenario switched but its
+        // result metadata has not yet been reloaded; that must not raise a
+        // scary "missing .out" backend-error toast.
+        return Ok(tauri::ipc::Response::new(Vec::new()));
+    }
     let meta =
         hydra::io::out_reader::read_metadata_checked(&out_path).map_err(|e| e.to_string())?;
     let pr = hydra::io::out_reader::read_period(&out_path, &meta, period)?;

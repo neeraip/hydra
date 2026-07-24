@@ -349,6 +349,9 @@ export async function getPeriodResults(
     console.error("[results]", err);
     throw err;
   }
+  // Empty payload = `results.out` does not exist yet (target not simulated).
+  // The backend returns this instead of erroring, so treat it as "no results".
+  if (buf.byteLength === 0) return null;
   try {
     return decodePeriodResults(buf);
   } catch (err) {

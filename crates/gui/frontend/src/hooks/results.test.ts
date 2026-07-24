@@ -234,6 +234,14 @@ describe("getPeriodResults", () => {
     await expect(getPeriodResults("p1", 0)).resolves.toBeNull();
   });
 
+  it("returns null on an empty payload (target not simulated)", async () => {
+    // The backend returns a zero-length buffer when results.out is absent,
+    // rather than erroring — must decode as "no results", not throw.
+    stubTauriShell();
+    mockInvoke.mockResolvedValueOnce(new ArrayBuffer(0));
+    await expect(getPeriodResults("p1", 0, "unsimulated")).resolves.toBeNull();
+  });
+
   it("decodes a valid binary payload", async () => {
     stubTauriShell();
     mockInvoke.mockResolvedValueOnce(
