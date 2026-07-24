@@ -821,3 +821,15 @@ export async function updateRule(index: number, rule: RuleDto): Promise<void> {
 export async function deleteRule(index: number): Promise<void> {
   await invoke<void>("delete_rule", { index });
 }
+
+/** Return the loaded network's `[TITLE]` lines (empty outside Tauri or when
+ * no network/title exists). */
+export async function getNetworkTitle(): Promise<string[]> {
+  return tryInvokeOr<string[]>("get_network_title", undefined, []);
+}
+
+/** Replace the network's `[TITLE]` lines (≤3, line 1 = title). Throws on
+ * validation failure so callers can surface the message. */
+export async function updateNetworkTitle(lines: string[]): Promise<void> {
+  await invoke<void>("update_network_title", { lines });
+}

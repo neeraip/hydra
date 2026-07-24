@@ -18,8 +18,6 @@ use std::time::{SystemTime, UNIX_EPOCH};
 #[serde(rename_all = "camelCase")]
 pub struct ProjectMeta {
     pub name: String,
-    #[serde(default)]
-    pub description: Option<String>,
     #[serde(default = "default_crs")]
     pub source_crs: String,
     #[serde(default)]
@@ -40,8 +38,6 @@ fn default_crs() -> String {
 #[serde(rename_all = "camelCase")]
 pub struct ScenarioMeta {
     pub name: String,
-    #[serde(default)]
-    pub description: Option<String>,
     #[serde(default)]
     pub parent_scenario_id: Option<String>,
 }

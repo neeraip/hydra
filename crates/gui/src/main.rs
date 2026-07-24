@@ -41,6 +41,7 @@ fn main() {
             commands::get_links,
             commands::get_patterns,
             commands::get_curves,
+            commands::get_network_title,
             commands::get_controls,
             commands::get_rules,
             commands::run_simulation,
@@ -82,6 +83,7 @@ fn main() {
             commands::update_sim_params,
             commands::get_element_series,
             commands::validate_network,
+            commands::update_network_title,
             commands::export_project_inp,
             commands::export_results_csv,
         ])

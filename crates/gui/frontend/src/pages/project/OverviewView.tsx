@@ -8,6 +8,7 @@ import {
 } from "../../hooks";
 import { Header } from "./OverviewView/Header";
 import { NetworkComposition } from "./OverviewView/NetworkComposition";
+import { ModelTitleCard } from "./OverviewView/ModelTitleCard";
 import { ProjectInfo } from "./OverviewView/ProjectInfo";
 import { Section } from "./OverviewView/primitives";
 import { ScenarioList } from "./OverviewView/ScenarioList";
@@ -79,6 +80,9 @@ export function OverviewView() {
             scenarios={scenarios}
             onOpen={() => openScenariosModal()}
           />
+        </Section>
+        <Section title="Model title">
+          <ModelTitleCard />
         </Section>
         <Section title="Project info">
           <ProjectInfo

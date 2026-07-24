@@ -122,7 +122,6 @@ pub fn create_project(
 
     let meta = meta::ProjectMeta {
         name,
-        description: None,
         source_crs: "EPSG:4326".into(),
         node_count,
         link_count,
@@ -702,7 +701,6 @@ pub fn create_scenario(
 
     let sc_meta = meta::ScenarioMeta {
         name,
-        description: None,
         parent_scenario_id: parent_scenario_id.clone(),
     };
     meta::write_scenario_meta(&sc_dir, &sc_meta)?;
@@ -1271,6 +1269,19 @@ pub fn get_versions() -> Versions {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn meta_with_removed_description_field_still_parses() {
+        // Older meta.json files carried a (never-displayed) description
+        // field; serde ignores unknown fields, so they must keep loading.
+        let json = r#"{"name":"Legacy","description":"old text","sourceCrs":"EPSG:4326","nodeCount":1,"linkCount":2,"analysisOptions":null}"#;
+        let m: meta::ProjectMeta = serde_json::from_str(json).unwrap();
+        assert_eq!(m.name, "Legacy");
+        assert_eq!(m.node_count, 1);
+        let scenario = r#"{"name":"S1","description":"old","parentScenarioId":null}"#;
+        let sm: meta::ScenarioMeta = serde_json::from_str(scenario).unwrap();
+        assert_eq!(sm.name, "S1");
+    }
     use super::*;
 
     // ── format_modified ───────────────────────────────────────────────────
@@ -1316,7 +1327,6 @@ mod tests {
     fn sample_meta(nodes: u32, links: u32) -> meta::ProjectMeta {
         meta::ProjectMeta {
             name: "test".into(),
-            description: None,
             source_crs: "EPSG:4326".into(),
             node_count: nodes,
             link_count: links,
@@ -1515,7 +1525,6 @@ mod tests {
             &with_meta,
             &meta::ScenarioMeta {
                 name: "s1".into(),
-                description: None,
                 parent_scenario_id: None,
             },
         )

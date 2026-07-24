@@ -483,6 +483,16 @@ pub fn get_curves(state: tauri::State<'_, NetworkState>) -> Vec<CurveDto> {
     cloned_from_dto(&state, |dto| &dto.curves)
 }
 
+#[tauri::command(async)]
+/// Return the loaded network's `[TITLE]` lines (empty when no network is
+/// loaded or the model has no title).
+pub fn get_network_title(state: tauri::State<'_, NetworkState>) -> Vec<String> {
+    match &*state.0.lock() {
+        NetworkStateInner::Loaded { network, .. } => network.title.clone(),
+        NetworkStateInner::Empty => Vec::new(),
+    }
+}
+
 // ── Internal helpers ─────────────────────────────────────────────────────────
 
 /// Build the DTO for a single node. Shared by the full `network_to_dto`
