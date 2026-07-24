@@ -24,6 +24,20 @@ documentation = "https://neeraip.github.io/hydra/"
 [profile.dev.package.hydra-engine-wds]
 opt-level = 2
 
+# Optimise all dependencies in dev (serde, tauri IPC, etc.): they rebuild only
+# on cold builds or lockfile changes, and unoptimized serialization made the
+# dev GUI crawl on large (46k-element) networks.
+[profile.dev.package."*"]
+opt-level = 2
+
+# Optimise the GUI data plane (DTO conversion, binary snapshot and
+# period-result encoding) in dev too. Measured on an M-series laptop:
+# incremental rebuilds ~3s at opt-level 2 vs ~1s at 0/1 — worth it for
+# near-release IPC speed on 46k-element networks. Drop to 0 temporarily if
+# you need clean debugger stepping through hydra-gui.
+[profile.dev.package.hydra-gui]
+opt-level = 2
+
 [profile.release]
 lto = "fat"
 codegen-units = 1
