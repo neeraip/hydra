@@ -13,7 +13,7 @@ import sys
 import urllib.error
 import urllib.request
 
-from _release import commit_and_tag, fail, maybe_push, next_version, parse_level, parse_push_pref, read_version, require_clean_main, set_version
+from _release import commit_and_tag, fail, maybe_push, next_version, parse_level_arg, parse_push_pref, read_version, require_clean_main, set_version
 
 
 def ensure_sdk_published(cli_toml: pathlib.Path):
@@ -25,16 +25,20 @@ def ensure_sdk_published(cli_toml: pathlib.Path):
     req = urllib.request.Request(url, headers={"User-Agent": "hydra-release"})
     try:
         urllib.request.urlopen(req, timeout=10)
-    except urllib.error.HTTPError:
-        fail(
-            f"hydra-sdk {sdk_version} is not yet on crates.io.\n"
-            "       Wait for the publish-crates workflow to finish before bumping the CLI."
-        )
+    except urllib.error.HTTPError as e:
+        if e.code == 404:
+            fail(
+                f"hydra-sdk {sdk_version} is not yet on crates.io.\n"
+                "       Wait for the publish-crates workflow to finish before bumping the CLI."
+            )
+        fail(f"could not verify hydra-sdk {sdk_version} on crates.io (HTTP {e.code}) — retry later")
+    except urllib.error.URLError as e:
+        fail(f"could not reach crates.io to verify hydra-sdk {sdk_version}: {e.reason}")
 
 
 def main():
     args, push_pref = parse_push_pref(sys.argv[1:])
-    level = parse_level(args[0] if args else "")
+    level = parse_level_arg(args)
     require_clean_main()
 
     cli = pathlib.Path("crates/cli/Cargo.toml")

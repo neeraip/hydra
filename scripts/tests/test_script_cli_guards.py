@@ -44,6 +44,16 @@ class TestScriptCliGuards(unittest.TestCase):
         self.assertNotEqual(cp.returncode, 0)
         self.assertIn("cannot pass both --push and --no-push", cp.stderr)
 
+    def test_bump_rejects_extra_positional_args(self):
+        cp = self.run_script("bump.py", "patch", "stray-arg")
+        self.assertNotEqual(cp.returncode, 0)
+        self.assertIn("unexpected extra argument(s): stray-arg", cp.stderr)
+
+    def test_bump_rejects_missing_level(self):
+        cp = self.run_script("bump.py")
+        self.assertNotEqual(cp.returncode, 0)
+        self.assertIn("invalid bump level", cp.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -29,6 +29,11 @@ class TestReleaseStatusSignal(unittest.TestCase):
         msgs = ["chore: cleanup\n\nBREAKING CHANGE: incompatible output format"]
         self.assertEqual(release_status.signal(msgs), "major")
 
+    def test_signal_major_from_hyphenated_breaking_change_footer(self):
+        # Conventional Commits: BREAKING-CHANGE is a synonym of BREAKING CHANGE.
+        msgs = ["chore: cleanup\n\nBREAKING-CHANGE: incompatible output format"]
+        self.assertEqual(release_status.signal(msgs), "major")
+
     def test_signal_minor_from_feat(self):
         msgs = ["feat(cli): add new switch"]
         self.assertEqual(release_status.signal(msgs), "minor")

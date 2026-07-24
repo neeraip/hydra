@@ -97,6 +97,34 @@ fn json_report_is_valid_json() {
 }
 
 #[test]
+fn positional_json_report_is_valid_json() {
+    // The `.json` suffix must select JSON output through the positional
+    // report path too, not just the --report flag.
+    let dir = tempfile::tempdir().expect("tempdir");
+    let json_path = dir.path().join("net.json");
+
+    hydra()
+        .arg(fixture_path("four_node_loop.inp"))
+        .arg(&json_path)
+        .assert()
+        .success();
+
+    let text = std::fs::read_to_string(&json_path).expect("json report written");
+    let value: serde_json::Value = serde_json::from_str(&text).expect("report is valid JSON");
+    assert!(value.is_object(), "JSON report root must be an object");
+}
+
+#[test]
+fn quiet_flag_is_accepted() {
+    hydra()
+        .arg("-q")
+        .arg(fixture_path("four_node_loop.inp"))
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("H Y D R A"));
+}
+
+#[test]
 fn help_exits_0() {
     hydra()
         .arg("--help")
@@ -211,6 +239,36 @@ fn unparseable_inp_exits_1() {
         .stderr(predicate::str::contains("\"level\":\"error\""));
 }
 
+// ── I/O errors (exit 3) ──────────────────────────────────────────────────────
+
+#[test]
+fn report_to_missing_directory_exits_3() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let rpt = dir.path().join("no/such/dir/net.rpt");
+
+    hydra()
+        .arg(fixture_path("four_node_loop.inp"))
+        .arg(&rpt)
+        .assert()
+        .code(3)
+        .stderr(predicate::str::contains("io/report"));
+}
+
+#[test]
+fn output_to_missing_directory_exits_3() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let out = dir.path().join("no/such/dir/net.out");
+
+    hydra()
+        .arg("--input")
+        .arg(fixture_path("four_node_loop.inp"))
+        .arg("--output")
+        .arg(&out)
+        .assert()
+        .code(3)
+        .stderr(predicate::str::contains("io/output"));
+}
+
 // ── HTTP input path (localhost only) ─────────────────────────────────────────
 
 /// Spawn a one-shot HTTP server on an ephemeral localhost port that answers
@@ -272,6 +330,20 @@ fn http_404_exits_1() {
         .assert()
         .code(1)
         .stderr(predicate::str::contains("HTTP 404"));
+
+    server.join().expect("server thread");
+}
+
+#[test]
+fn http_500_exits_3() {
+    // 5xx is a server-side failure, classified as I/O (exit 3), not input.
+    let (url, server) = one_shot_http_server("500 Internal Server Error", Vec::new());
+
+    hydra()
+        .arg(&url)
+        .assert()
+        .code(3)
+        .stderr(predicate::str::contains("HTTP 500"));
 
     server.join().expect("server thread");
 }

@@ -11,12 +11,12 @@ import pathlib
 import re
 import sys
 
-from _release import commit_and_tag, maybe_push, next_version, parse_level, parse_push_pref, read_version, require_clean_main, set_version
+from _release import commit_and_tag, maybe_push, next_version, parse_level_arg, parse_push_pref, read_version, require_clean_main, set_version
 
 
 def main():
     args, push_pref = parse_push_pref(sys.argv[1:])
-    level = parse_level(args[0] if args else "")
+    level = parse_level_arg(args)
     require_clean_main()
 
     cargo = pathlib.Path("Cargo.toml")

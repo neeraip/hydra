@@ -268,22 +268,7 @@ fn run(cli: &Cli) -> i32 {
     progress.finish_phase(duration);
 
     // Emit hydraulic warnings to stderr.
-    {
-        use std::io::Write;
-        let stderr = std::io::stderr();
-        let mut buf = std::io::BufWriter::new(stderr.lock());
-        for w in session.warnings() {
-            let (code, msg, oid) = rpt::describe_warning(w, &session);
-            let line = serde_json::json!({
-                "level": "warning",
-                "code": code,
-                "message": msg,
-                "object_id": oid,
-                "time_step": w.t,
-            });
-            let _ = writeln!(buf, "{line}");
-        }
-    }
+    emit_warnings(&session, 0);
 
     // ── Run quality ───────────────────────────────────────────────────────────
     let n_warnings_before_quality = session.warnings().len();
@@ -309,22 +294,7 @@ fn run(cli: &Cli) -> i32 {
     progress.finish_phase(duration);
 
     // Emit any new warnings generated during the quality phase.
-    {
-        use std::io::Write;
-        let stderr = std::io::stderr();
-        let mut buf = std::io::BufWriter::new(stderr.lock());
-        for w in &session.warnings()[n_warnings_before_quality..] {
-            let (code, msg, oid) = rpt::describe_warning(w, &session);
-            let line = serde_json::json!({
-                "level": "warning",
-                "code": code,
-                "message": msg,
-                "object_id": oid,
-                "time_step": w.t,
-            });
-            let _ = writeln!(buf, "{line}");
-        }
-    }
+    emit_warnings(&session, n_warnings_before_quality);
 
     // ── Finalize binary output stream (§4.1) ─────────────────────────────────
     if let Some(out_writer) = out_stream.take() {
@@ -620,7 +590,6 @@ fn fetch_http(url: &str) -> Result<Vec<u8>, FetchError> {
 
 /// Write the simulation report to `path` (None → stdout).
 fn write_report(session: &Simulation, path: Option<&str>) -> anyhow::Result<()> {
-    use std::io::Write;
     match path {
         None => {
             let text = rpt::build_text_report(session)?;
@@ -668,6 +637,26 @@ fn emit_error(code: &str, message: &str, object_id: Option<&str>, time_step: Opt
         "time_step": time_step,
     });
     eprintln!("{line}");
+}
+
+/// Emit session warnings `[from..]` as JSON-line diagnostics on stderr.
+///
+/// `from` lets the quality phase emit only the warnings it added, without
+/// repeating the hydraulic-phase warnings already printed.
+fn emit_warnings(session: &Simulation, from: usize) {
+    let stderr = std::io::stderr();
+    let mut buf = std::io::BufWriter::new(stderr.lock());
+    for w in &session.warnings()[from..] {
+        let (code, msg, oid) = rpt::describe_warning(w, session);
+        let line = serde_json::json!({
+            "level": "warning",
+            "code": code,
+            "message": msg,
+            "object_id": oid,
+            "time_step": w.t,
+        });
+        let _ = writeln!(buf, "{line}");
+    }
 }
 
 fn emit_session_error(e: &SessionError) {

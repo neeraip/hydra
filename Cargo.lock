@@ -1866,7 +1866,6 @@ dependencies = [
  "clap",
  "hydra-sdk",
  "predicates",
- "serde",
  "serde_json",
  "tempfile",
  "ureq",

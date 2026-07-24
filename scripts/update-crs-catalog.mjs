@@ -17,7 +17,7 @@
  */
 
 import { createRequire } from "module";
-import { createWriteStream } from "fs";
+import { createWriteStream, existsSync } from "fs";
 import { resolve, dirname } from "path";
 import { fileURLToPath } from "url";
 import zlib from "zlib";
@@ -36,6 +36,21 @@ const frontendModules = resolve(
   repoRoot,
   "crates/gui/frontend/node_modules",
 );
+
+// Fail loudly (with actionable guidance) if the source packages are missing —
+// a silent or cryptic failure here risks shipping a stale/empty catalog.
+const missing = ["proj4", "@esri/proj-codes"].filter(
+  (pkg) => !existsSync(resolve(frontendModules, pkg)),
+);
+if (missing.length > 0) {
+  console.error(
+    `error: required package(s) not installed: ${missing.join(", ")}\n` +
+      `       Looked in: ${frontendModules}\n` +
+      "       Run `npm install` in crates/gui/frontend first " +
+      "(both are declared in crates/gui/frontend/package.json).",
+  );
+  process.exit(1);
+}
 
 const proj4 = require(resolve(frontendModules, "proj4/dist/proj4.js"));
 

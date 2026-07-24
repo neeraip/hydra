@@ -129,7 +129,8 @@ def signal(messages):
     result = "none"
     for msg in messages:
         subject = msg.splitlines()[0] if msg else ""
-        if re.search(r"(^|\n)BREAKING CHANGE:\s", msg) or re.match(r"^[a-z]+(\([^)]*\))?!:", subject):
+        # Conventional Commits: "BREAKING-CHANGE" is a synonym of "BREAKING CHANGE".
+        if re.search(r"(^|\n)BREAKING[ -]CHANGE:\s", msg) or re.match(r"^[a-z]+(\([^)]*\))?!:", subject):
             return "major"
         if re.match(r"^feat(\([^)]*\))?:", subject):
             result = "minor"

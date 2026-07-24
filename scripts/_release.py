@@ -26,6 +26,13 @@ def parse_level(arg):
     return arg
 
 
+def parse_level_arg(positionals):
+    """Parse the single <patch|minor|major> positional, rejecting extras."""
+    if len(positionals) > 1:
+        fail(f"unexpected extra argument(s): {' '.join(positionals[1:])}")
+    return parse_level(positionals[0] if positionals else "")
+
+
 def parse_push_pref(args):
     push_pref = None
     positionals = []
