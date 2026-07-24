@@ -29,6 +29,7 @@ import {
   reprojectLinkVerticesCached,
   reprojectNodesCached,
   setPendingCrsSuggestionSample,
+  wgs84ToSourceCrs,
 } from "../../canvas/coords";
 import { Legend, type LegendThresholds } from "../../canvas/Legend";
 import { useCanvasLayers } from "../../canvas/layers-context";
@@ -55,6 +56,7 @@ import {
   NodeInspector,
 } from "../../components/panels/ElementInspector";
 import {
+  compareTopologyDigests,
   createLink,
   createNode,
   deleteElement,
@@ -166,6 +168,7 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
     projectView,
     railOpen,
     commandPaletteOpen,
+    showToast,
   } = useAppState();
   const { project } = useActiveProject();
   const { markEdited } = useNetworkVersion();
@@ -412,7 +415,13 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
   const linkMapRef = useRef<Map<string, (typeof allLinks)[number]>>(new Map());
 
   // ── Simulation state ─────────────────────────────────────────────
-  const { resultMeta, resultMetaLoading, resultGeneration } = useSimulation();
+  const {
+    resultMeta,
+    resultMetaLoading,
+    resultGeneration,
+    resultsTopologyStale,
+    liveNetworkDigest,
+  } = useSimulation();
   // `stableResultMeta` lags behind `resultMeta` while metadata is loading.
   // Once loading settles, it mirrors the active scenario exactly (including
   // null for unsimulated scenarios) so overlays cannot bleed across switches.
@@ -438,14 +447,22 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
   // `currentPeriodResult` holds the flat arrays for exactly one reporting
   // period.  This is the only result data held in component memory — we
   // never load all periods at once.
-  const [currentPeriodResult, setCurrentPeriodResult] =
+  const [fetchedPeriodResult, setFetchedPeriodResult] =
     useState<PeriodResults | null>(null);
+
+  // Topology-stale gate: the loaded results' digest no longer matches the
+  // live model (nodes/links added, removed, or renamed), so the flat arrays
+  // are index-misaligned with the network. Treat them as absent exactly like
+  // a length mismatch — every consumer below (colour overlays, merged sim
+  // objects, comparison deltas) reads this gated value. Unknown digests
+  // (pre-digest .out files) pass through ungated.
+  const currentPeriodResult = resultsTopologyStale ? null : fetchedPeriodResult;
 
   // On project or scenario change, discard stale period results immediately.
   // This guarantees overlays never show data from a previously active scenario.
   // biome-ignore lint/correctness/useExhaustiveDependencies: `project?.id` and `activeScenarioId` are intentional triggers to discard stale period data on switch.
   useEffect(() => {
-    setCurrentPeriodResult(null);
+    setFetchedPeriodResult(null);
   }, [project?.id, activeScenarioId]);
 
   // Keyed on a value-stable digest of resultMeta rather than its object
@@ -462,7 +479,7 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
     if (resultMetaKey == null || !project?.id) {
       // No simulation exists for this scenario — discard any stale period result
       // so the canvas and inspector show the "no results" state.
-      setCurrentPeriodResult(null);
+      setFetchedPeriodResult(null);
       return;
     }
     let cancelled = false;
@@ -476,7 +493,7 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
     getPeriodResults(project.id, period, activeScenarioId)
       .then((r) => {
         if (!cancelled) {
-          setCurrentPeriodResult(r);
+          setFetchedPeriodResult(r);
         }
       })
       // Decode failures reject (already console.error'd in getPeriodResults);
@@ -713,8 +730,20 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
   // active-period fetch pattern above (cancellation included). The period is
   // clamped to the baseline's own result length so a shorter baseline stays
   // comparable while scrubbing beyond its end (holds its last period).
-  const [baselinePeriodResult, setBaselinePeriodResult] =
+  const [fetchedBaselinePeriodResult, setBaselinePeriodResult] =
     useState<PeriodResults | null>(null);
+
+  // Same topology-stale gate as the active period result: baseline arrays are
+  // also index-addressed against the live network, so baseline results whose
+  // digest differs from the live model's are treated as absent (unknown
+  // digests pass through ungated, matching the pre-digest behaviour).
+  const baselineTopologyStale =
+    compareTopologyDigests(baselineMeta?.networkDigest, liveNetworkDigest) ===
+    "stale";
+  const baselinePeriodResult = baselineTopologyStale
+    ? null
+    : fetchedBaselinePeriodResult;
+
   // Discard stale baseline data immediately when the baseline changes.
   // biome-ignore lint/correctness/useExhaustiveDependencies: `project?.id` and `effectiveCompareId` are intentional triggers to discard stale baseline data on switch.
   useEffect(() => {
@@ -770,6 +799,14 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
     qualityComparable,
   ]);
 
+  // Dismissible notice explaining why result overlays vanished after a
+  // structural edit (topology digest mismatch); re-arms when staleness
+  // clears (fresh run, or the edit is undone) so a later drift re-notifies.
+  const [staleNoticeDismissed, setStaleNoticeDismissed] = useState(false);
+  useEffect(() => {
+    if (!resultsTopologyStale) setStaleNoticeDismissed(false);
+  }, [resultsTopologyStale]);
+
   // Small dismissible notice when comparison can't run; reset on baseline switch.
   const [compareNoticeDismissed, setCompareNoticeDismissed] = useState(false);
   // biome-ignore lint/correctness/useExhaustiveDependencies: `effectiveCompareId` is the intentional reset trigger for the dismissal.
@@ -780,9 +817,12 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
     ? null
     : baselineMetaLoaded && !baselineMeta
       ? "Baseline has no results"
-      : currentPeriodResult && baselinePeriodResult && !compareDeltas
-        ? "Baseline network differs — comparison unavailable"
-        : null;
+      : baselineTopologyStale
+        ? // Digest gate above nulled the baseline arrays — explain why.
+          "Baseline results predate the current network topology — re-run"
+        : currentPeriodResult && baselinePeriodResult && !compareDeltas
+          ? "Baseline network differs — comparison unavailable"
+          : null;
 
   // Legend inputs: max |Δ| for the active variables (SI; Legend converts to
   // display units) plus the baseline caption. Null while not comparing or
@@ -967,6 +1007,9 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
 
   // O(1) enrichment flag (replaces the previous 46k `.some` scans): true when
   // the current period result matches the network's node order/length.
+  // `currentPeriodResult` is already null when the topology digest says the
+  // results are stale (see the gate above), so this guard covers both the
+  // length mismatch and the digest mismatch.
   const simMerged =
     currentPeriodResult != null &&
     currentPeriodResult.nodePressure.length === baseNodes.length;
@@ -1185,9 +1228,29 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
   const mapOnlyTooltip = (label: string) => (mapOnly ? "Map mode only" : label);
 
   const handleNodeMoved = useCallback(
-    async (id: string, x: number, y: number) => {
+    async (
+      id: string,
+      lng: number,
+      lat: number,
+    ): Promise<undefined | false> => {
       if (!project) return;
-      // Undo capture: previous raw coordinates, read BEFORE the patch.
+      // MapLibre hands us the drop point in WGS84 — the backend coordinate
+      // store holds SOURCE-CRS values, so inverse-project before patching.
+      // (Identity when sourceCrs is EPSG:4326.) Committing raw lng/lat into
+      // a projected store corrupts the coordinate.
+      let x: number;
+      let y: number;
+      try {
+        [x, y] = wgs84ToSourceCrs([lng, lat], sourceCrs);
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        showToast(`Move cancelled — ${msg}`, "error");
+        // `false` tells MapCanvas the move was not committed: it clears the
+        // drag preview so the node snaps back to its stored position.
+        return false;
+      }
+      // Undo capture: previous raw (source-CRS) coordinates, read BEFORE the
+      // patch — same coordinate space as the converted values patched below.
       const prev = rawNetworkRef.current.nodes.find((n) => n.id === id);
       await patchNodePosition(id, x, y);
       if (prev) {
@@ -1214,7 +1277,7 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
       // No bumpNetwork(): the backend emits `network-changed`, which already
       // bumps the version — a manual bump doubled the full-snapshot refetch.
     },
-    [project, activeScenarioId, markEdited],
+    [project, activeScenarioId, markEdited, sourceCrs, showToast],
   );
 
   const handleConfirmDelete = useCallback(async () => {
@@ -1284,12 +1347,17 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
     async (payload: NodeCreatePayload) => {
       if (!pendingCreateNode || !project) return;
       const { lng, lat } = pendingCreateNode;
+      // The map click arrives in WGS84 but the backend coordinate store holds
+      // SOURCE-CRS values — inverse-project before creating (identity for
+      // EPSG:4326). Throws on failure, which the modal catches and displays,
+      // so an unconvertible point never commits a corrupt coordinate.
+      const [x, y] = wgs84ToSourceCrs([lng, lat], sourceCrs);
       // Throws on backend error — the modal catches and stays open with the error message.
       await createNode(
         payload.kind,
         payload.id,
-        lng,
-        lat,
+        x,
+        y,
         payload.elevation,
         payload.minLevel,
         payload.maxLevel,
@@ -1306,8 +1374,10 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
               elementType: "node",
               kind: payload.kind,
               id: payload.id,
-              x: lng,
-              y: lat,
+              // Redo recreates through the same source-CRS coordinate store,
+              // so it records the converted values, not raw WGS84.
+              x,
+              y,
               elevation: payload.elevation,
               ...(payload.kind === "tank"
                 ? {
@@ -1325,7 +1395,7 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
       markEdited(activeScenarioId);
       // No bumpNetwork(): backend event already bumps (see handleNodeMoved).
     },
-    [pendingCreateNode, project, activeScenarioId, markEdited],
+    [pendingCreateNode, project, activeScenarioId, markEdited, sourceCrs],
   );
 
   const handleConfirmCreateLink = useCallback(
@@ -1517,8 +1587,61 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
               />
             )}
 
-            {/* Comparison notice — baseline missing results / topology drift */}
+            {/* Topology-stale notice — results exist but are hidden because
+                the network's structure changed since they were produced. */}
+            {resultsTopologyStale &&
+              !!stableResultMeta &&
+              !staleNoticeDismissed && (
+                <div
+                  style={{
+                    position: "absolute",
+                    top: 60,
+                    left: "50%",
+                    transform: "translateX(-50%)",
+                    zIndex: 25,
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 8,
+                    padding: "6px 10px",
+                    background: "var(--bg-card)",
+                    border: "1px solid var(--border)",
+                    borderRadius: 8,
+                    boxShadow: "var(--shadow-2)",
+                  }}
+                >
+                  <span
+                    style={{
+                      fontSize: 12,
+                      color: "var(--text-secondary)",
+                      fontFamily: "var(--font-ui)",
+                    }}
+                  >
+                    Results predate the current network topology — re-run the
+                    simulation
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setStaleNoticeDismissed(true)}
+                    aria-label="Dismiss stale-results notice"
+                    style={{
+                      border: "none",
+                      background: "transparent",
+                      cursor: "pointer",
+                      display: "inline-flex",
+                      padding: 2,
+                      color: "var(--text-tertiary)",
+                    }}
+                  >
+                    <XMarkIcon style={{ width: 12, height: 12 }} />
+                  </button>
+                </div>
+              )}
+
+            {/* Comparison notice — baseline missing results / topology drift.
+                Suppressed while the topology-stale notice occupies the same
+                slot (that notice already explains the hidden results). */}
             {comparing &&
+              !resultsTopologyStale &&
               !!stableResultMeta &&
               compareNotice &&
               !compareNoticeDismissed && (

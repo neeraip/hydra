@@ -140,8 +140,15 @@ interface MapCanvasProps {
   /** Active canvas tool; affects cursor and interaction mode. */
   tool?: CanvasTool;
   /** Called (after mouseup) when the user drags a node to a new position.
-   * `x` and `y` are geographic coordinates (longitude and latitude). */
-  onNodeMoved?: (id: string, x: number, y: number) => void;
+   * `x` and `y` are geographic coordinates (longitude and latitude).
+   * Return (or resolve) `false` to signal the move was NOT committed — the
+   * canvas immediately clears the drag preview so the node snaps back to its
+   * stored position instead of waiting for the 5 s fallback timer. */
+  onNodeMoved?: (
+    id: string,
+    x: number,
+    y: number,
+  ) => undefined | boolean | Promise<undefined | boolean>;
   /** Called when the user clicks a point in measure mode. */
   onMeasurePoint?: (lng: number, lat: number) => void;
   /** Called when the user clicks empty canvas in add-node mode. */
@@ -1409,7 +1416,28 @@ export const MapCanvas = memo(function MapCanvas({
       // position until the parent re-renders with updated coordinates from the backend.
       map.dragPan.enable();
       map.getCanvas().style.cursor = "";
-      onNodeMovedRef.current?.(nodeId, e.lngLat.lng, e.lngLat.lat);
+      const moveResult = onNodeMovedRef.current?.(
+        nodeId,
+        e.lngLat.lng,
+        e.lngLat.lat,
+      );
+      // A handler that returns/resolves `false` declined the commit (e.g. the
+      // drop point can't be converted to the source CRS) — snap the node back
+      // to its stored position right away rather than leaving the preview
+      // pinned until the fallback timer below fires.
+      Promise.resolve(moveResult)
+        // A rejected handler also means "not committed" (backend patch threw).
+        .catch(() => false as const)
+        .then((committed) => {
+          if (
+            committed === false &&
+            !draggingNodeIdRef.current &&
+            draggingNodePosRef.current?.id === nodeId
+          ) {
+            draggingNodePosRef.current = null;
+            overlayRef.current?.setProps({ layers: buildLayersRef.current() });
+          }
+        });
       // Failed/absent position patches never refresh geoCoords, which is what
       // normally clears the drag override — without this fallback the drag
       // branch of buildLayers (fresh 46k arrays per frame) stays pinned on.

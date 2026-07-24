@@ -237,6 +237,46 @@ export function reprojectNodes(nodes: Node[], fromEpsg: string): Node[] {
 }
 
 /**
+ * Inverse-project a single WGS84 [lon, lat] point back to the network's
+ * source CRS — the exact inverse of the {@link reprojectNodes} forward path,
+ * built from the same proj4 converter so a drag round-trips losslessly.
+ *
+ * Used when committing map-space edits (node drag drop, add-node click) to
+ * the backend coordinate store, which holds source-CRS values.
+ *
+ * Identity fast-path: when `toEpsg` is EPSG:4326 the input point is returned
+ * unchanged (the store is already WGS84).
+ *
+ * Throws when the CRS is unknown/unregistered or when the inverse transform
+ * fails or produces a non-finite coordinate (out-of-domain point). Callers
+ * must NOT commit on throw — a raw WGS84 value in a projected store corrupts
+ * the coordinate.
+ */
+export function wgs84ToSourceCrs(
+  point: [number, number],
+  toEpsg: string,
+): [number, number] {
+  if (toEpsg === "EPSG:4326") return point; // identity — store is WGS84
+
+  if (!ensureEpsgDef(toEpsg)) {
+    throw new Error(
+      `Unknown CRS: ${toEpsg}. Provide a proj4 definition string or use a supported EPSG code.`,
+    );
+  }
+
+  // Same converter construction as the forward path; .inverse runs
+  // WGS84 → source CRS.
+  const converter = proj4(toEpsg, "EPSG:4326");
+  const [x, y] = converter.inverse(point);
+  if (!Number.isFinite(x) || !Number.isFinite(y)) {
+    throw new Error(
+      `Coordinate (${point[0]}, ${point[1]}) cannot be projected to ${toEpsg}.`,
+    );
+  }
+  return [x, y];
+}
+
+/**
  * Reproject with a per-node identity cache. When a node's *source object* is
  * unchanged since the previous call, the previously produced output object is
  * returned (same identity, no proj4 call, no allocation) — so re-running

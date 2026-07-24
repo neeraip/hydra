@@ -8,6 +8,7 @@ import {
   reprojectNodes,
   scoreCrsCandidate,
   sniffCoordCrs,
+  wgs84ToSourceCrs,
 } from "./coords";
 
 // ── helpers ────────────────────────────────────────────────────────────────────
@@ -130,6 +131,61 @@ describe("reprojectNodes", () => {
 
   it("throws for an unknown non-UTM EPSG code", () => {
     expect(() => reprojectNodes([node("n1", 0, 0)], "EPSG:99999")).toThrow();
+  });
+});
+
+// ── wgs84ToSourceCrs ──────────────────────────────────────────────────────────
+
+describe("wgs84ToSourceCrs", () => {
+  it("is an identity for EPSG:4326 (returns the same point reference)", () => {
+    const pt: [number, number] = [151.2, -33.8];
+    expect(wgs84ToSourceCrs(pt, "EPSG:4326")).toBe(pt);
+  });
+
+  it("round-trips a UTM 56S coordinate through the forward path", () => {
+    // Forward: source CRS → WGS84 (the map-display path); inverse must land
+    // back on the original easting/northing (the drag-commit path).
+    const easting = 334_000;
+    const northing = 6_252_000;
+    const [wgs] = reprojectNodes(
+      [node("syd", easting, northing)],
+      "EPSG:32756",
+    );
+    const [x, y] = wgs84ToSourceCrs([wgs.x, wgs.y], "EPSG:32756");
+    expect(x).toBeCloseTo(easting, 2); // sub-cm round-trip error
+    expect(y).toBeCloseTo(northing, 2);
+  });
+
+  it("inverse-projects WGS84 to Web Mercator (known value)", () => {
+    // Longitude 180° at the equator → x = πR = 20 037 508.34 m, y = 0.
+    const [x, y] = wgs84ToSourceCrs([180, 0], "EPSG:3857");
+    expect(x).toBeCloseTo(20_037_508.34, 0);
+    expect(y).toBeCloseTo(0, 6);
+  });
+
+  it("does NOT store raw lng/lat into a projected CRS (values change)", () => {
+    // The bug this guards against: a drag drop near Los Angeles committed
+    // lng=-118 into a store expecting metres/feet-scale values.
+    const [x, y] = wgs84ToSourceCrs([-118.24, 34.05], "EPSG:32611");
+    expect(Math.abs(x)).toBeGreaterThan(1000);
+    expect(Math.abs(y)).toBeGreaterThan(1000);
+  });
+
+  it("throws for an unknown non-UTM EPSG code", () => {
+    expect(() => wgs84ToSourceCrs([1, 2], "EPSG:99999")).toThrow(/Unknown CRS/);
+  });
+
+  it("throws when the inverse produces a non-finite coordinate", () => {
+    // The pole is out of Mercator's domain: proj4 returns [NaN, NaN] without
+    // throwing, so the finite-output guard must reject it rather than let a
+    // corrupt coordinate reach the store.
+    expect(() => wgs84ToSourceCrs([0, 90], "EPSG:3857")).toThrow(
+      /cannot be projected/,
+    );
+  });
+
+  it("throws when proj4 itself rejects the input (NaN point)", () => {
+    expect(() => wgs84ToSourceCrs([Number.NaN, 0], "EPSG:3857")).toThrow();
   });
 });
 
