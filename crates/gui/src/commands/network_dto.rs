@@ -111,6 +111,23 @@ pub struct LinkDto {
     /// omitted for all other types.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub valve_curve: Option<String>,
+    // ── Delta-event-only fields ───────────────────────────────────────────
+    // The full snapshot ships these through dedicated binary columns
+    // (`NetworkDto::link_vertices` / `link_initial_status`), so `link_to_dto`
+    // leaves them `None`. They are populated only by `refresh_element_dto`
+    // (mutations.rs) so the JSON delta carried by `network-changed` events is
+    // shape-complete: the frontend replaces its link object wholesale with
+    // this DTO, and omitting them silently stripped a patched pipe's polyline
+    // vertices and initial status from frontend state until the next full
+    // snapshot refetch.
+    /// Intermediate polyline vertices `[x, y]` (source CRS, endpoints
+    /// excluded). Omitted for straight links and outside delta payloads.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vertices: Option<Vec<(f64, f64)>>,
+    /// Initial `[STATUS]`: `"open"` | `"closed"` | `"cv"`. Pipes only;
+    /// omitted for pumps/valves and outside delta payloads.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub initial_status: Option<String>,
 }
 
 /// Serialisable pattern sent to the frontend.
@@ -595,6 +612,22 @@ pub(crate) fn link_to_dto(l: &hydra::Link, from_id: String, to_id: String) -> Li
         valve_type,
         valve_setting,
         valve_curve,
+        // Delta-event-only — see the field docs; populated by
+        // `refresh_element_dto`, never here (the snapshot carries these in
+        // its dedicated binary columns instead).
+        vertices: None,
+        initial_status: None,
+    }
+}
+
+/// Human-readable initial-status value for one snapshot status code —
+/// the string form the frontend `Link.initialStatus` field and the pipe
+/// "status" patch arm use.
+pub(crate) fn link_initial_status_str(code: u8) -> &'static str {
+    match code {
+        1 => "closed",
+        2 => "cv",
+        _ => "open",
     }
 }
 

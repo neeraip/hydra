@@ -365,12 +365,22 @@ fn refresh_element_dto(
                     .map(|n| n.base.id.clone())
                     .unwrap_or_default()
             };
-            let updated = link_to_dto(
+            let mut updated = link_to_dto(
                 link,
                 node_id_of(link.base.from_node),
                 node_id_of(link.base.to_node),
             );
             let status_code = super::network_dto::link_initial_status_code(link);
+            // The frontend replaces its link object wholesale with this DTO,
+            // so the delta must be shape-complete: attach the fields the full
+            // snapshot ships through its dedicated binary columns (vertices,
+            // pipe initial status), mirroring `decodeNetworkSnapshot`'s
+            // object shape (vertices omitted when empty; status pipes-only).
+            updated.vertices = network.vertices.get(id).filter(|v| !v.is_empty()).cloned();
+            if matches!(link.kind, hydra::LinkKind::Pipe(_)) {
+                updated.initial_status =
+                    Some(super::network_dto::link_initial_status_str(status_code).to_string());
+            }
             match dto.links.iter().position(|l| l.id == id) {
                 Some(pos) => {
                     dto.links[pos] = updated.clone();
@@ -1778,6 +1788,52 @@ mod tests {
         } else {
             panic!("state must be loaded");
         }
+    }
+
+    /// The frontend replaces its link object wholesale with the delta DTO, so
+    /// a delta must carry the fields the full snapshot ships through binary
+    /// columns — a pipe's polyline vertices and its initial status. Before
+    /// this was enforced, patching any pipe field silently stripped both from
+    /// frontend state until the next full snapshot refetch (a "closed" pipe
+    /// snapped back to showing "open" in the editor, and a polyline pipe
+    /// rendered as a straight line on the canvas).
+    #[test]
+    fn refresh_element_dto_link_delta_carries_vertices_and_initial_status() {
+        let mut state = loaded_state();
+        let NetworkStateInner::Loaded { network, dto, .. } = &mut state else {
+            panic!("state must be loaded");
+        };
+
+        // Give P1 a polyline and a closed status, then patch a scalar field.
+        network
+            .vertices
+            .insert("P1".into(), vec![(10.0, 11.0), (12.0, 13.0)]);
+        apply_patch_to_network(network, "pipe", "P1", "status", serde_json::json!("Closed"))
+            .unwrap();
+        apply_patch_to_network(network, "pipe", "P1", "roughness", serde_json::json!(111.0))
+            .unwrap();
+        let patched = refresh_element_dto(network, dto, "pipe", "P1").unwrap();
+        let link = patched.link.expect("link delta");
+        assert_eq!(
+            link.vertices.as_deref(),
+            Some(&[(10.0, 11.0), (12.0, 13.0)][..])
+        );
+        assert_eq!(link.initial_status.as_deref(), Some("closed"));
+
+        // CV surfaces as "cv" (check-valve flag wins over the Open status).
+        apply_patch_to_network(network, "pipe", "P1", "status", serde_json::json!("CV")).unwrap();
+        let patched = refresh_element_dto(network, dto, "pipe", "P1").unwrap();
+        assert_eq!(patched.link.unwrap().initial_status.as_deref(), Some("cv"));
+
+        // A vertex-less open pipe omits both optional fields (`None`), so the
+        // JSON shape matches the snapshot decoder's (fields absent, not null).
+        let patched = refresh_element_dto(network, dto, "pipe", "P2").unwrap();
+        let link = patched.link.unwrap();
+        assert_eq!(link.vertices, None);
+        assert_eq!(link.initial_status.as_deref(), Some("open"));
+        let json =
+            serde_json::to_value(refresh_element_dto(network, dto, "pipe", "P2").unwrap()).unwrap();
+        assert!(json["link"].get("vertices").is_none());
     }
 
     #[test]

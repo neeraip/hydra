@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 import {
   type ElementSeriesKeyParts,
   elementSeriesCacheKey,
+  headlossQuantity,
   LruCache,
 } from "./seriesCache";
 
@@ -106,5 +107,23 @@ describe("LruCache", () => {
 
   it("rejects a non-positive capacity", () => {
     expect(() => new LruCache(0)).toThrow(/positive integer/);
+  });
+});
+
+describe("headlossQuantity", () => {
+  // The out-writer stores pipe headloss per-1000 (m/km ≡ ft/kft, factor 1)
+  // but pump/valve headloss as the total head drop in metres — formatting a
+  // pipe's m/km series as a length multiplied it by 3.28 in US mode.
+  it("maps pipes to the per-mille headloss quantity", () => {
+    expect(headlossQuantity("pipe")).toBe("headloss");
+  });
+
+  it("maps pumps and valves to a plain length (total head drop)", () => {
+    expect(headlossQuantity("pump")).toBe("length");
+    expect(headlossQuantity("valve")).toBe("length");
+  });
+
+  it("returns undefined (unitless passthrough) for an unknown type", () => {
+    expect(headlossQuantity(undefined)).toBeUndefined();
   });
 });

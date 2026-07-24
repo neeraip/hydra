@@ -123,9 +123,12 @@ fn run_warnings_path(results_path: &std::path::Path) -> std::path::PathBuf {
 
 /// Persist or clear the `warnings.json` sibling of `results_path`:
 /// `Some(warnings)` (successful published run) writes the JSON array
-/// atomically; `None` (failed run) removes any stale file so warnings can
-/// never describe a run whose results were discarded. Both directions are
-/// best-effort — warnings are diagnostics and must never fail a finished run.
+/// atomically; `None` (failed run with no surviving `results.out`) removes
+/// any stale file so warnings can never exist without results. Callers keep
+/// the file when a failed run leaves a previous run's `results.out` in place
+/// — those warnings still describe the results being served. Both directions
+/// are best-effort — warnings are diagnostics and must never fail a finished
+/// run.
 pub(crate) fn sync_run_warnings_file(
     results_path: &std::path::Path,
     warnings: Option<&[RunWarningDto]>,
@@ -159,6 +162,38 @@ pub(crate) fn sync_run_warnings_file(
                 }
             }
         }
+    }
+}
+
+/// What to do with `warnings.json` after a run finishes (pure decision seam,
+/// unit-tested below):
+///
+///   - a successful streamed run publishes fresh results → **write** its
+///     warnings beside them;
+///   - a failed run discards its own stream, so an existing `results.out`
+///     still belongs to the previous successful run — as do its warnings,
+///     which must be **kept** (clearing them made the Issues panel show
+///     "no warnings" for results that were still being served);
+///   - a failed run with no surviving results file **clears** any orphaned
+///     `warnings.json`, keeping the invariant "warnings never exist without
+///     results";
+///   - cancellation and never-streamed runs **keep** both files untouched.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum WarningsSync {
+    Write,
+    Clear,
+    Keep,
+}
+
+pub(crate) fn warnings_sync_after_run(
+    run_err: Option<&RunLoopError>,
+    streamed: bool,
+    results_file_exists: bool,
+) -> WarningsSync {
+    match run_err {
+        None if streamed => WarningsSync::Write,
+        Some(RunLoopError::Failed(_)) if !results_file_exists => WarningsSync::Clear,
+        _ => WarningsSync::Keep,
     }
 }
 
@@ -497,18 +532,15 @@ where
         }
     }
 
-    // Persist the run's non-fatal warnings beside results.out: written when a
-    // run publishes results, removed when a run fails (stale warnings must
-    // not outlive discarded results), and left untouched on cancellation or
-    // when no stream was ever opened — in both of those cases results.out
-    // still holds the previous successful run, and so does warnings.json.
+    // Persist the run's non-fatal warnings beside results.out (see
+    // `warnings_sync_after_run` for the full decision rationale).
     if let Some(final_path) = out_path.as_ref() {
-        match &run_err {
-            None if streamed => {
+        match warnings_sync_after_run(run_err.as_ref(), streamed, final_path.is_file()) {
+            WarningsSync::Write => {
                 sync_run_warnings_file(final_path, Some(&collect_run_warnings(&sim)));
             }
-            Some(RunLoopError::Failed(_)) => sync_run_warnings_file(final_path, None),
-            _ => {}
+            WarningsSync::Clear => sync_run_warnings_file(final_path, None),
+            WarningsSync::Keep => {}
         }
     }
 
@@ -958,9 +990,58 @@ Duration  0
             || false,
         );
         assert!(matches!(err, Some(RunLoopError::Failed(_))), "{err:?}");
+        // No results *file* survives (the path is a directory), so the
+        // orphaned warnings.json must go — warnings never without results.
         assert!(
             !dir.path().join("warnings.json").exists(),
-            "stale warnings.json must be removed on a failed run"
+            "stale warnings.json must be removed on a failed run without results"
+        );
+    }
+
+    /// Full decision matrix for [`warnings_sync_after_run`] — most
+    /// importantly: a failed run whose previous `results.out` survives must
+    /// KEEP that file's warnings paired with it, not clear them.
+    #[test]
+    fn warnings_sync_after_run_decision_matrix() {
+        let failed = RunLoopError::Failed("boom".into());
+        // Success + streamed publishes fresh warnings, with or without a
+        // pre-existing results file (rename already replaced it).
+        assert_eq!(
+            warnings_sync_after_run(None, true, true),
+            WarningsSync::Write
+        );
+        assert_eq!(
+            warnings_sync_after_run(None, true, false),
+            WarningsSync::Write
+        );
+        // Success without a stream (results dir unavailable): nothing was
+        // published, so the previous pairing is left alone.
+        assert_eq!(
+            warnings_sync_after_run(None, false, true),
+            WarningsSync::Keep
+        );
+        // Failure with surviving previous results: keep their warnings.
+        assert_eq!(
+            warnings_sync_after_run(Some(&failed), true, true),
+            WarningsSync::Keep
+        );
+        // Failure with no surviving results file: clear orphaned warnings.
+        assert_eq!(
+            warnings_sync_after_run(Some(&failed), true, false),
+            WarningsSync::Clear
+        );
+        assert_eq!(
+            warnings_sync_after_run(Some(&failed), false, false),
+            WarningsSync::Clear
+        );
+        // Cancellation never touches the files.
+        assert_eq!(
+            warnings_sync_after_run(Some(&RunLoopError::Cancelled), true, true),
+            WarningsSync::Keep
+        );
+        assert_eq!(
+            warnings_sync_after_run(Some(&RunLoopError::Cancelled), true, false),
+            WarningsSync::Keep
         );
     }
 

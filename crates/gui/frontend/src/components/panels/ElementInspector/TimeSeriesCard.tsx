@@ -43,7 +43,11 @@ import {
   useUnitSystem,
 } from "../../../units";
 import { SectionLabel } from "../../ui/SectionLabel";
-import { elementSeriesCacheKey, LruCache } from "./seriesCache";
+import {
+  elementSeriesCacheKey,
+  headlossQuantity,
+  LruCache,
+} from "./seriesCache";
 
 /** Module-level cache: survives element re-selection and inspector remounts.
  *  `null` entries record a definitive "no series" backend answer. */
@@ -57,15 +61,16 @@ const PRIMARY_FIELDS: Record<"node" | "link", string[]> = {
 };
 
 /** Display quantity per backend field name — all series arrive in SI.
- * `headloss` in an element series is total headloss in metres (a length),
- * not per-unit m/km. Absent fields (status, quality) are unitless. */
+ * Absent fields (status, quality) are unitless. `headloss` is resolved via
+ * {@link headlossQuantity} instead: the results file stores it per-1000
+ * (m/km) for pipes but as total metres for pumps/valves, so its quantity
+ * depends on the link type. */
 const FIELD_QUANTITIES: Record<string, Quantity> = {
   pressure: "pressure",
   head: "head",
   demand: "demand",
   flow: "flow",
   velocity: "velocity",
-  headloss: "length",
 };
 
 function fieldDecimals(name: string): number {
@@ -91,14 +96,19 @@ function FieldChart({
   times,
   sys,
   markerIndex,
+  linkType,
 }: {
   field: ElementSeriesField;
   times: number[];
   sys: UnitSystem;
   /** Current scrub period, or null when no timeline context exists. */
   markerIndex: number | null;
+  /** "pipe" | "pump" | "valve" for link series; undefined for node series. */
+  linkType?: string;
 }) {
-  const quantity = FIELD_QUANTITIES[field.name.toLowerCase()];
+  const name = field.name.toLowerCase();
+  const quantity =
+    name === "headloss" ? headlossQuantity(linkType) : FIELD_QUANTITIES[name];
   // Convert at the render boundary only — the cached series stays SI.
   const values = useMemo(
     () =>
@@ -172,6 +182,10 @@ export function TimeSeriesCard({
     const arr: Array<{ id: string }> = kind === "node" ? nodes : links;
     return arr.findIndex((el) => el.id === elementId);
   }, [kind, nodes, links, elementId]);
+  // Link type disambiguates the headloss quantity (m/km for pipes, total m
+  // for pumps/valves) — see `headlossQuantity`.
+  const linkType =
+    kind === "link" && index >= 0 ? links[index]?.type : undefined;
 
   // Steady-state (≤ 1 period), no project, or unknown element: no card.
   const enabled = projectId != null && periods > 1 && index >= 0;
@@ -273,6 +287,7 @@ export function TimeSeriesCard({
                 times={series?.times ?? []}
                 sys={sys}
                 markerIndex={currentPeriod}
+                linkType={linkType}
               />
             ))}
             {extraFields.length > 0 && (

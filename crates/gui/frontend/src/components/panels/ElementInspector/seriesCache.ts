@@ -1,11 +1,28 @@
 /**
- * Small LRU cache for element time series keyed on result identity.
+ * Pure logic for the element time-series card: the LRU cache keyed on result
+ * identity, and the headloss-quantity resolution.
  *
- * The key includes `resultGeneration` (AppContext's freshness token for
+ * The cache key includes `resultGeneration` (AppContext's freshness token for
  * result metadata) so a re-run that produces value-equal metadata still
  * invalidates cached series, while re-selecting the same element between
  * runs is a hit and never refetches.
  */
+
+import type { Quantity } from "../../../units";
+
+/**
+ * Quantity of the `headloss` series for a link of the given type. Mirrors
+ * the engine's out-writer: pipes store `1000 · Δh / L` — per-mille, i.e.
+ * m/km, numerically identical in ft/kft (conversion factor 1) — while
+ * pumps/valves store the total head drop in metres (a plain length).
+ * `undefined` (unknown type) renders the series unconverted and unitless.
+ */
+export function headlossQuantity(
+  linkType: string | undefined,
+): Quantity | undefined {
+  if (linkType === undefined) return undefined;
+  return linkType === "pipe" ? "headloss" : "length";
+}
 
 export interface ElementSeriesKeyParts {
   projectId: string;

@@ -74,12 +74,19 @@ function diff(
  * counts (topology drift between the active model and the baseline — the
  * flat arrays are keyed by network order, so element-wise subtraction would
  * silently pair unrelated elements).
+ *
+ * `qualityComparable` (default `true`) must be `false` when the two runs used
+ * different quality modes (e.g. chemical mg/L vs water age hours): both sides
+ * then carry quality arrays of the right length, but subtracting them would
+ * silently mix physical quantities — quality deltas are omitted instead
+ * (rendered as "no data", like a run without quality).
  */
 export function computeDeltas(
   active: PeriodResults,
   baseline: PeriodResults,
   nodeCount: number,
   linkCount: number,
+  qualityComparable = true,
 ): CompareDeltas | null {
   if (
     active.nodePressure.length !== nodeCount ||
@@ -97,10 +104,12 @@ export function computeDeltas(
   const linkVelocity = diff(active.linkVelocity, baseline.linkVelocity);
   const linkHeadloss = diff(active.linkHeadloss, baseline.linkHeadloss);
 
-  // Quality deltas only when both result sets have quality data of the right
-  // length (quality is optional per run; comparing "chemical" against a run
-  // without quality would just render all-grey noise).
+  // Quality deltas only when the modes match (see `qualityComparable`) and
+  // both result sets have quality data of the right length (quality is
+  // optional per run; comparing "chemical" against a run without quality
+  // would just render all-grey noise).
   const nodeQuality =
+    qualityComparable &&
     active.nodeQuality &&
     baseline.nodeQuality &&
     active.nodeQuality.length === nodeCount &&
@@ -108,6 +117,7 @@ export function computeDeltas(
       ? diff(active.nodeQuality, baseline.nodeQuality)
       : null;
   const linkQuality =
+    qualityComparable &&
     active.linkQuality &&
     baseline.linkQuality &&
     active.linkQuality.length === linkCount &&

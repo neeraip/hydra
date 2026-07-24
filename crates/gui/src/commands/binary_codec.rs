@@ -406,6 +406,8 @@ mod tests {
             valve_type: None,
             valve_setting: None,
             valve_curve: None,
+            vertices: None,
+            initial_status: None,
         };
 
         let mut j1 = node("J1", "junction", 1.5, 2.5, 10.5);

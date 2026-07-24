@@ -150,9 +150,34 @@ export function runWarningToIssue(w: RunWarning, firstSeen: string): Issue {
   };
 }
 
+/**
+ * Map a run's warnings to Issues, collapsing duplicates.
+ *
+ * The engine emits some warnings once per affected timestep — a pump running
+ * outside its curve or unbalanced hydraulics can repeat hundreds of times in
+ * one EPS run — and every repeat maps to the SAME issue id
+ * (`simwarn-<code>-<elementId|network>`). Passing duplicates through broke
+ * the panel: duplicate React keys, inflated counts, and a single dismissal
+ * hiding all copies. Collapse to the first occurrence (earliest sim time in
+ * its message) and record the repeat count in the detail instead.
+ */
 export function runWarningsToIssues(
   warnings: RunWarning[],
   firstSeen: string,
 ): Issue[] {
-  return warnings.map((w) => runWarningToIssue(w, firstSeen));
+  const byId = new Map<string, { issue: Issue; occurrences: number }>();
+  for (const w of warnings) {
+    const issue = runWarningToIssue(w, firstSeen);
+    const existing = byId.get(issue.id);
+    if (existing) existing.occurrences += 1;
+    else byId.set(issue.id, { issue, occurrences: 1 });
+  }
+  return [...byId.values()].map(({ issue, occurrences }) =>
+    occurrences === 1
+      ? issue
+      : {
+          ...issue,
+          detail: `${issue.detail} — repeated at ${occurrences} report times`,
+        },
+  );
 }

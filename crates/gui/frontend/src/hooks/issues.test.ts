@@ -181,4 +181,65 @@ describe("runWarningsToIssues", () => {
   it("returns [] for an empty warnings list", () => {
     expect(runWarningsToIssues([], FIRST_SEEN)).toEqual([]);
   });
+
+  // The engine emits pump-x-head / unbalanced-hydraulics once per affected
+  // timestep — every repeat maps to the same issue id, which used to produce
+  // duplicate React keys and inflated counts in the panel.
+  it("collapses repeated warnings for the same code+element into one issue", () => {
+    const issues = runWarningsToIssues(
+      [
+        {
+          code: "pump-x-head",
+          message: "Pump PU1 … at 0:00:00",
+          elementId: "PU1",
+        },
+        {
+          code: "pump-x-head",
+          message: "Pump PU1 … at 1:00:00",
+          elementId: "PU1",
+        },
+        {
+          code: "pump-x-head",
+          message: "Pump PU1 … at 2:00:00",
+          elementId: "PU1",
+        },
+        {
+          code: "pump-x-head",
+          message: "Pump PU2 … at 1:00:00",
+          elementId: "PU2",
+        },
+      ],
+      FIRST_SEEN,
+    );
+    expect(issues).toHaveLength(2);
+    expect(countIssues(issues).warn).toBe(2);
+    const pu1 = issues.find((i) => i.id === "simwarn-pump-x-head-PU1");
+    // Keeps the FIRST occurrence (earliest sim time) and records the repeats.
+    expect(pu1?.title).toBe("Pump PU1 … at 0:00:00");
+    expect(pu1?.detail).toContain("repeated at 3 report times");
+    // Unrepeated warnings keep their plain detail.
+    const pu2 = issues.find((i) => i.id === "simwarn-pump-x-head-PU2");
+    expect(pu2?.detail).toBe("Pump PU2 … at 1:00:00 (element PU2)");
+  });
+
+  it("collapses repeated network-scoped warnings (null elementId)", () => {
+    const issues = runWarningsToIssues(
+      [
+        {
+          code: "unbalanced-hydraulics",
+          message: "… at 0:00:00",
+          elementId: null,
+        },
+        {
+          code: "unbalanced-hydraulics",
+          message: "… at 3:00:00",
+          elementId: null,
+        },
+      ],
+      FIRST_SEEN,
+    );
+    expect(issues).toHaveLength(1);
+    expect(issues[0].id).toBe("simwarn-unbalanced-hydraulics-network");
+    expect(issues[0].detail).toContain("repeated at 2 report times");
+  });
 });

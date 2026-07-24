@@ -134,4 +134,38 @@ describe("computeDeltas", () => {
     expect(noQ2.deltas.nodeQuality).toBeUndefined();
     expect(noQ2.deltas.linkQuality).toBeUndefined();
   });
+
+  // Two runs with different quality modes (chemical mg/L vs age hours) carry
+  // same-length quality arrays of DIFFERENT physical quantities — the caller
+  // flags that via `qualityComparable=false` and quality deltas are omitted,
+  // while every hydraulic field still compares normally.
+  it("omits quality deltas when qualityComparable is false", () => {
+    const q = (vals: number[]) => Float32Array.from(vals);
+    const active = makePeriod(2, 1, {
+      nodeQuality: q([0.4, 0.2]), // mg/L
+      linkQuality: q([0.3]),
+      nodePressure: q([35, 30]),
+    });
+    const baseline = makePeriod(2, 1, {
+      nodeQuality: q([6, 12]), // hours
+      linkQuality: q([9]),
+      nodePressure: q([30, 30]),
+    });
+    const result = computeDeltas(active, baseline, 2, 1, false);
+    expect(result).not.toBeNull();
+    if (!result) throw new Error("unreachable");
+    expect(result.deltas.nodeQuality).toBeUndefined();
+    expect(result.deltas.linkQuality).toBeUndefined();
+    expect(result.maxAbs.nodeQuality).toBe(MIN_MAX_ABS);
+    expect(result.maxAbs.linkQuality).toBe(MIN_MAX_ABS);
+    // Hydraulic deltas are unaffected.
+    expect(Array.from(result.deltas.nodePressure)).toEqual([5, 0]);
+
+    // Explicit `true` matches the default (quality compared).
+    const comparable = computeDeltas(active, baseline, 2, 1, true);
+    expect(Array.from(comparable?.deltas.nodeQuality ?? [])).toEqual([
+      Float32Array.from([0.4 - 6])[0],
+      Float32Array.from([0.2 - 12])[0],
+    ]);
+  });
 });

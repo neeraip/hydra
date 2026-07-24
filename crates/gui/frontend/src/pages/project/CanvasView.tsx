@@ -744,7 +744,12 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
 
   // Delta arrays (active − baseline) — identity-stable; null while either
   // side is missing or when the element counts don't match the network
-  // (topology drift → comparison unavailable).
+  // (topology drift → comparison unavailable). Quality deltas are dropped
+  // when the two runs used different quality modes (chemical vs age vs
+  // trace) — same-length arrays would otherwise subtract mg/L from hours.
+  const qualityComparable =
+    resultMeta?.qualityMode != null &&
+    resultMeta.qualityMode === baselineMeta?.qualityMode;
   const compareDeltas = useMemo(() => {
     if (!comparing || !currentPeriodResult || !baselinePeriodResult) {
       return null;
@@ -754,6 +759,7 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
       baselinePeriodResult,
       baseNodes.length,
       baseLinks.length,
+      qualityComparable,
     );
   }, [
     comparing,
@@ -761,6 +767,7 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
     baselinePeriodResult,
     baseNodes.length,
     baseLinks.length,
+    qualityComparable,
   ]);
 
   // Small dismissible notice when comparison can't run; reset on baseline switch.

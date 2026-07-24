@@ -217,12 +217,22 @@ describe("inverseFieldPatch", () => {
     expect(inv("pipe", "P1", "status")?.value).toBe("closed");
   });
 
-  it("cannot invert a cv pipe status (patch API is open/closed only)", () => {
+  it("inverts a cv pipe status (the patch API accepts open/closed/cv)", () => {
     const cvPipe: Link = { ...pipe, id: "P2", initialStatus: "cv" };
     const withCv = new Map(linksById);
     withCv.set("P2", cvPipe);
     expect(
       inverseFieldPatch("pipe", "P2", "status", nodesById, withCv),
+    ).toEqual({ kind: "pipe", id: "P2", field: "status", value: "cv" });
+  });
+
+  it("cannot invert an unknown/pre-v3 pipe status (field absent)", () => {
+    const bare: Link = { ...pipe, id: "P3" };
+    delete bare.initialStatus;
+    const withBare = new Map(linksById);
+    withBare.set("P3", bare);
+    expect(
+      inverseFieldPatch("pipe", "P3", "status", nodesById, withBare),
     ).toBeNull();
   });
 
@@ -302,7 +312,7 @@ describe("recreateSpecsForDelete", () => {
     );
   });
 
-  it("restores a closed pipe via a status patch and skips cv", () => {
+  it("restores a closed or cv pipe via a status patch; open needs none", () => {
     const spec = recreateSpecForLink(pipe);
     expect(spec.patches).toContainEqual({
       kind: "pipe",
@@ -311,7 +321,15 @@ describe("recreateSpecsForDelete", () => {
       value: "closed",
     });
     const cvSpec = recreateSpecForLink({ ...pipe, initialStatus: "cv" });
-    expect(cvSpec.patches.some((p) => p.field === "status")).toBe(false);
+    expect(cvSpec.patches).toContainEqual({
+      kind: "pipe",
+      id: "P1",
+      field: "status",
+      value: "cv",
+    });
+    // create_link already defaults to open — no redundant patch.
+    const openSpec = recreateSpecForLink({ ...pipe, initialStatus: "open" });
+    expect(openSpec.patches.some((p) => p.field === "status")).toBe(false);
   });
 });
 
