@@ -123,12 +123,10 @@ Breaking changes: append `!` after the type — e.g. `feat!: rename Simulation::
 ## Running Checks Locally
 
 ```sh
-just fmt          # format Rust code
-just lint         # cargo fmt --check + clippy
-just test         # full test suite
-
-just lint-frontend   # Biome check (frontend)
-just fmt-frontend    # Biome format (frontend)
+just fmt      # format everything (Rust + frontend)
+just lint     # every static check: rustfmt, clippy, tsc, Biome — no tests
+just verify   # lint + the full Rust and frontend test suites
+just ci       # everything CI runs (adds deny, docs, catalog drift, scripts)
 ```
 
 Run `just` with no arguments to see all available recipes.
