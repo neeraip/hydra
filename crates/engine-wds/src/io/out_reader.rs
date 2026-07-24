@@ -15,7 +15,8 @@
 pub struct OutProlog {
     /// EPANET magic number (must be 516114521).
     pub magic: i32,
-    /// EPANET file format version (must be 20012).
+    /// File format version: 20012 (EPANET 2.3 baseline, no digest) or 20013
+    /// (Hydra extension with an epilog network digest). Model spec §4.5.1.
     pub version: i32,
     /// Number of nodes (junctions + reservoirs + tanks).
     pub n_nodes: usize,
@@ -31,7 +32,7 @@ pub struct OutProlog {
     pub quality_flag: i32,
     /// 1-based node index used as trace source (meaningful only when `quality_flag == 3`).
     pub trace_node: i32,
-    /// Flow unit code (see EPANET spec table §4.1).
+    /// Flow unit code (model spec §3.1 table order: CFS = 0 … CMS = 10).
     pub flow_units: i32,
     /// Pressure unit code (0=psi, 1=kPa, 2=m) — EPANET `PressUnitsType` order,
     /// as written by `out_writer` (2 for SI files, 0 for US-customary files).
@@ -127,13 +128,17 @@ pub struct OutReactions {
     pub source_rate: f32,
 }
 
-/// The epilog section: three INT4 values.
+/// The epilog section (model spec §4.5.6): period count, warning flag,
+/// network digest (format version ≥ 20013), and closing magic number.
 #[derive(Debug, Clone, Copy)]
 pub struct OutEpilog {
     /// Number of reporting periods actually written.
     pub n_periods: i32,
     /// Non-zero if the solver issued warnings during the run.
     pub warning_flag: i32,
+    /// FNV-1a 64-bit network topology digest (model spec §4.5.7).
+    /// `None` for files written in the pre-digest format version 20012.
+    pub network_digest: Option<u64>,
     /// Magic number used to validate file integrity (must equal the prolog magic).
     pub magic: i32,
 }
@@ -159,8 +164,9 @@ pub struct OutFile {
 // (and any other consumer) to work with `.out` files without loading the entire
 // file into memory.
 
-/// Lightweight metadata extracted from the `.out` prolog header (first 60 bytes)
-/// and epilog (last 12 bytes).  Total I/O: 72 bytes regardless of file size.
+/// Lightweight metadata extracted from the `.out` prolog header (first 60
+/// bytes) and epilog (last 12 or 20 bytes, by format version).  Total I/O is
+/// at most 80 bytes regardless of file size.
 #[derive(Debug, Clone)]
 pub struct OutMetadata {
     /// Number of nodes (junctions + reservoirs + tanks) in the network.
@@ -180,6 +186,10 @@ pub struct OutMetadata {
     pub report_step: f64,
     /// Number of reporting periods written to the file.
     pub n_periods: usize,
+    /// FNV-1a 64-bit network topology digest (model spec §4.5.7) from the
+    /// epilog.  `None` for files written in the pre-digest format version
+    /// 20012 — old files remain fully readable.
+    pub network_digest: Option<u64>,
 }
 
 /// Category for invalid or unreadable `.out` files.
@@ -306,13 +316,17 @@ pub fn read_metadata_checked(path: &std::path::Path) -> Result<OutMetadata, OutV
         });
     }
 
+    // Version 20012 = EPANET 2.3 baseline (12-byte epilog, no digest);
+    // version 20013 = Hydra extension (20-byte epilog with a 64-bit network
+    // digest). Model spec §4.5.1.
     let version = i32_at(4);
-    if version != 20_012 {
+    if version != 20_012 && version != 20_013 {
         return Err(OutValidityError {
             kind: OutValidityKind::Unsupported,
             detail: format!("unsupported .out version: {version}"),
         });
     }
+    let epilog_len: u64 = if version == 20_013 { 20 } else { 12 };
 
     let n_nodes_i = i32_at(8);
     let n_tanks_i = i32_at(12);
@@ -356,14 +370,24 @@ pub fn read_metadata_checked(path: &std::path::Path) -> Result<OutMetadata, OutV
     let report_start = i32_at(48) as f64;
     let report_step = i32_at(52) as f64;
 
-    if let Err(e) = f.seek(SeekFrom::End(-12)) {
+    if file_len < 60 + epilog_len {
+        return Err(OutValidityError {
+            kind: OutValidityKind::Incomplete,
+            detail: format!(
+                "file too short: {file_len} bytes (minimum {} for header+epilog)",
+                60 + epilog_len
+            ),
+        });
+    }
+    if let Err(e) = f.seek(SeekFrom::End(-(epilog_len as i64))) {
         return Err(OutValidityError {
             kind: OutValidityKind::Io,
             detail: format!("failed to seek epilog: {e}"),
         });
     }
-    let mut epi = [0u8; 12];
-    if let Err(e) = f.read_exact(&mut epi) {
+    let mut epi = [0u8; 20];
+    let epi = &mut epi[..epilog_len as usize];
+    if let Err(e) = f.read_exact(epi) {
         return Err(OutValidityError {
             kind: if e.kind() == std::io::ErrorKind::UnexpectedEof {
                 OutValidityKind::Incomplete
@@ -383,7 +407,15 @@ pub fn read_metadata_checked(path: &std::path::Path) -> Result<OutMetadata, OutV
     }
     let n_periods = n_periods_i as usize;
 
-    let magic_end = i32::from_le_bytes(epi[8..12].try_into().unwrap());
+    // Version ≥ 20013: 64-bit network digest between warn flag and magic.
+    let network_digest = if version == 20_013 {
+        Some(u64::from_le_bytes(epi[8..16].try_into().unwrap()))
+    } else {
+        None
+    };
+
+    let magic_off = epilog_len as usize - 4;
+    let magic_end = i32::from_le_bytes(epi[magic_off..magic_off + 4].try_into().unwrap());
     if magic_end != 516_114_521 {
         return Err(OutValidityError {
             kind: OutValidityKind::Incomplete,
@@ -420,9 +452,10 @@ pub fn read_metadata_checked(path: &std::path::Path) -> Result<OutMetadata, OutV
         )?,
     )?;
     let dynamic_bytes = checked_mul(period_bytes, n_periods as u64)?;
+    // 16 bytes of network reactions + the version-dependent epilog.
     let expected_total = checked_add(
         checked_add(checked_add(prolog_bytes, energy_bytes)?, dynamic_bytes)?,
-        28,
+        16 + epilog_len,
     )?;
 
     if file_len < expected_total {
@@ -443,7 +476,54 @@ pub fn read_metadata_checked(path: &std::path::Path) -> Result<OutMetadata, OutV
         report_start,
         report_step,
         n_periods,
+        network_digest,
     })
+}
+
+/// Read the 1-based tank/reservoir node indices from the `.out` prolog.
+///
+/// Seeks directly to the tank-index array (model spec §4.5.2) and reads
+/// `n_tanks` INT4 values; total I/O is `4 × n_tanks` bytes regardless of file
+/// size. Junction nodes are exactly those whose 1-based index does **not**
+/// appear in the returned list.
+pub fn read_tank_node_indices(
+    path: &std::path::Path,
+    meta: &OutMetadata,
+) -> Result<Vec<usize>, String> {
+    use std::io::{Read, Seek, SeekFrom};
+
+    // Prolog layout before the tank-index array: 60-byte header, 824 bytes of
+    // string fields, node IDs (32 × n_nodes), link IDs (32 × n_links), and
+    // three INT4 link arrays (from, to, type: 12 × n_links).
+    let offset = (884 + 32 * meta.n_nodes + 44 * meta.n_links) as u64;
+
+    let mut f = std::fs::File::open(path)
+        .map_err(|e| format!("Invalid .out (io): failed to open file: {e}"))?;
+    f.seek(SeekFrom::Start(offset))
+        .map_err(|e| format!("Invalid .out (io): failed to seek tank indices: {e}"))?;
+
+    let mut buf = vec![0u8; 4 * meta.n_tanks];
+    f.read_exact(&mut buf).map_err(|e| {
+        let kind = if e.kind() == std::io::ErrorKind::UnexpectedEof {
+            "incomplete"
+        } else {
+            "io"
+        };
+        format!("Invalid .out ({kind}): failed to read tank indices: {e}")
+    })?;
+
+    let mut indices = Vec::with_capacity(meta.n_tanks);
+    for i in 0..meta.n_tanks {
+        let v = i32::from_le_bytes(buf[4 * i..4 * i + 4].try_into().unwrap());
+        if v < 1 || v as usize > meta.n_nodes {
+            return Err(format!(
+                "Invalid .out (corrupt): tank node index {v} out of range 1..={}",
+                meta.n_nodes
+            ));
+        }
+        indices.push(v as usize);
+    }
+    Ok(indices)
 }
 
 /// Read the energy section from a `.out` file without loading any period data.
@@ -961,9 +1041,22 @@ pub fn parse(data: &[u8]) -> Result<OutFile, String> {
         return Err(format!("too short: {} bytes (minimum 12)", data.len()));
     }
 
-    // Read n_periods from the epilog (last 12 bytes) before parsing the dynamic
-    // section, so the number of periods is known without a seek.
-    let epi_off = data.len() - 12;
+    // Peek the format version to learn the epilog length: 12 bytes for the
+    // 20012 baseline, 20 bytes for ≥ 20013 (which inserts a 64-bit network
+    // digest; model spec §4.5.6).
+    let version_peek = i32::from_le_bytes(data[4..8].try_into().unwrap());
+    let has_digest = version_peek == 20_013;
+    let epilog_len = if has_digest { 20 } else { 12 };
+    if data.len() < epilog_len {
+        return Err(format!(
+            "too short: {} bytes (minimum {epilog_len} for a version {version_peek} epilog)",
+            data.len()
+        ));
+    }
+
+    // Read n_periods from the epilog before parsing the dynamic section, so
+    // the number of periods is known without a seek.
+    let epi_off = data.len() - epilog_len;
     let n_periods_i = i32::from_le_bytes(data[epi_off..epi_off + 4].try_into().unwrap());
     if n_periods_i < 0 {
         return Err(format!("negative period count in epilog: {n_periods_i}"));
@@ -972,7 +1065,7 @@ pub fn parse(data: &[u8]) -> Result<OutFile, String> {
 
     let mut cur = Cursor::new(data);
 
-    // ── Prolog (§4.1.1) ───────────────────────────────────────────────────────
+    // ── Prolog (model spec §4.5.2) ───────────────────────────────────────────────────────
 
     let magic_start = cur.read_i32()?;
     if magic_start != 516_114_521 {
@@ -1056,7 +1149,7 @@ pub fn parse(data: &[u8]) -> Result<OutFile, String> {
         diameters,
     };
 
-    // ── Energy (§4.1.2) ───────────────────────────────────────────────────────
+    // ── Energy (model spec §4.5.3) ───────────────────────────────────────────────────────
 
     let mut pump_records = Vec::with_capacity(n_pumps);
     for _ in 0..n_pumps {
@@ -1083,7 +1176,7 @@ pub fn parse(data: &[u8]) -> Result<OutFile, String> {
         demand_charge,
     };
 
-    // ── Dynamic results (§4.1.3) ──────────────────────────────────────────────
+    // ── Dynamic results (model spec §4.5.4) ──────────────────────────────────────────────
 
     // Bound the epilog's period count against the bytes actually remaining in
     // the buffer before allocating: a crafted epilog on a tiny file could
@@ -1141,7 +1234,7 @@ pub fn parse(data: &[u8]) -> Result<OutFile, String> {
         });
     }
 
-    // ── Network reactions (§4.1.4) ────────────────────────────────────────────
+    // ── Network reactions (model spec §4.5.5) ────────────────────────────────────────────
 
     let bulk_rate = cur.read_f32()?;
     let wall_rate = cur.read_f32()?;
@@ -1154,10 +1247,15 @@ pub fn parse(data: &[u8]) -> Result<OutFile, String> {
         source_rate,
     };
 
-    // ── Epilog (§4.1.5) ───────────────────────────────────────────────────────
+    // ── Epilog (model spec §4.5.6) ───────────────────────────────────────────────────────
 
     let n_periods_check = cur.read_i32()?;
     let warning_flag = cur.read_i32()?;
+    let network_digest = if has_digest {
+        Some(cur.read_u64()?)
+    } else {
+        None
+    };
     let magic_end = cur.read_i32()?;
     if magic_end != 516_114_521 {
         return Err(format!("unexpected magic at end: {magic_end}"));
@@ -1165,6 +1263,7 @@ pub fn parse(data: &[u8]) -> Result<OutFile, String> {
     let epilog = OutEpilog {
         n_periods: n_periods_check,
         warning_flag,
+        network_digest,
         magic: magic_end,
     };
 
@@ -1208,6 +1307,13 @@ impl<'a> Cursor<'a> {
     fn read_f32(&mut self) -> Result<f32, String> {
         let end = self.checked_end(4, "reading f32")?;
         let v = f32::from_le_bytes(self.data[self.pos..end].try_into().unwrap());
+        self.pos = end;
+        Ok(v)
+    }
+
+    fn read_u64(&mut self) -> Result<u64, String> {
+        let end = self.checked_end(8, "reading u64")?;
+        let v = u64::from_le_bytes(self.data[self.pos..end].try_into().unwrap());
         self.pos = end;
         Ok(v)
     }
@@ -1540,6 +1646,97 @@ mod tests {
         assert_eq!(meta.n_periods, 1);
     }
 
+    /// Legacy (version 20012) files have no digest field: metadata reports
+    /// `None`, and the file remains fully readable.
+    #[test]
+    fn read_metadata_digest_is_none_for_legacy_20012_files() {
+        let data = make_minimal_out(3, 1, 2, 0);
+        let path = write_temp_bytes(&data);
+        let meta = read_metadata_checked(&path).expect("legacy file should parse");
+        let _ = std::fs::remove_file(&path);
+        assert_eq!(meta.network_digest, None);
+        // The full parser also reports no digest.
+        let out = parse(&data).expect("full parse of legacy file");
+        assert_eq!(out.epilog.network_digest, None);
+    }
+
+    /// Upgrade a minimal 20012 file to the 20013 layout: bump the version and
+    /// insert the 8-byte digest between the warning flag and the end magic.
+    fn upgrade_to_v20013(mut data: Vec<u8>, digest: u64) -> Vec<u8> {
+        data[4..8].copy_from_slice(&20013_i32.to_le_bytes());
+        let magic_off = data.len() - 4;
+        let mut upgraded = data[..magic_off].to_vec();
+        upgraded.extend_from_slice(&digest.to_le_bytes());
+        upgraded.extend_from_slice(&data[magic_off..]);
+        upgraded
+    }
+
+    /// Version 20013 files carry the digest in the epilog; both the metadata
+    /// path and the full parser must surface it.
+    #[test]
+    fn read_metadata_digest_is_read_from_v20013_epilog() {
+        let digest: u64 = 0xDEAD_BEEF_0123_4567;
+        let data = upgrade_to_v20013(make_minimal_out(3, 1, 2, 0), digest);
+        let path = write_temp_bytes(&data);
+        let meta = read_metadata_checked(&path).expect("v20013 file should parse");
+        let _ = std::fs::remove_file(&path);
+        assert_eq!(meta.network_digest, Some(digest));
+        assert_eq!(meta.n_nodes, 3);
+        assert_eq!(meta.n_periods, 1);
+
+        let out = parse(&data).expect("full parse of v20013 file");
+        assert_eq!(out.epilog.network_digest, Some(digest));
+        assert_eq!(out.prolog.version, 20013);
+    }
+
+    /// A truncated v20013 file (digest bytes cut off) is classified as
+    /// incomplete, not silently misread.
+    #[test]
+    fn read_metadata_v20013_truncated_digest_is_incomplete() {
+        let digest: u64 = 42;
+        let data = upgrade_to_v20013(make_minimal_out(3, 1, 2, 0), digest);
+        let truncated = &data[..data.len() - 8];
+        let path = write_temp_bytes(truncated);
+        let err = read_metadata_checked(&path).expect_err("expected incomplete classification");
+        let _ = std::fs::remove_file(&path);
+        assert_eq!(err.kind, OutValidityKind::Incomplete);
+    }
+
+    /// The tank/reservoir node index list is readable directly from the
+    /// prolog via `read_tank_node_indices`.
+    #[test]
+    fn read_tank_node_indices_returns_prolog_list() {
+        let n_nodes = 4;
+        let n_tanks = 2;
+        let n_links = 3;
+        let mut data = make_minimal_out(n_nodes, n_tanks, n_links, 0);
+        // Tank index array offset (spec §4.5.2).
+        let off = 884 + 32 * n_nodes + 44 * n_links;
+        data[off..off + 4].copy_from_slice(&2_i32.to_le_bytes());
+        data[off + 4..off + 8].copy_from_slice(&4_i32.to_le_bytes());
+        let path = write_temp_bytes(&data);
+        let meta = read_metadata_checked(&path).expect("valid file");
+        let indices = read_tank_node_indices(&path, &meta).expect("tank indices");
+        let _ = std::fs::remove_file(&path);
+        assert_eq!(indices, vec![2, 4]);
+    }
+
+    /// Out-of-range tank indices are rejected as corrupt.
+    #[test]
+    fn read_tank_node_indices_rejects_out_of_range() {
+        let n_nodes = 4;
+        let n_tanks = 1;
+        let n_links = 3;
+        let mut data = make_minimal_out(n_nodes, n_tanks, n_links, 0);
+        let off = 884 + 32 * n_nodes + 44 * n_links;
+        data[off..off + 4].copy_from_slice(&9_i32.to_le_bytes()); // > n_nodes
+        let path = write_temp_bytes(&data);
+        let meta = read_metadata_checked(&path).expect("valid file");
+        let err = read_tank_node_indices(&path, &meta).expect_err("out-of-range index");
+        let _ = std::fs::remove_file(&path);
+        assert!(err.contains("out of range"), "got: {err}");
+    }
+
     #[test]
     fn out_metadata_byte_size_calculations() {
         let meta = OutMetadata {
@@ -1551,6 +1748,7 @@ mod tests {
             report_start: 0.0,
             report_step: 3600.0,
             n_periods: 5,
+            network_digest: None,
         };
         assert_eq!(meta.prolog_bytes(), (884 + 36 * 4 + 52 * 3 + 8 * 2) as u64);
         assert_eq!(meta.energy_bytes(), (28 + 4) as u64);
@@ -1572,6 +1770,7 @@ mod tests {
             report_start: 0.0,
             report_step: 3600.0,
             n_periods: 3,
+            network_digest: None,
         };
         assert_eq!(meta.snapshot_times(), vec![0.0, 3600.0, 7200.0]);
     }

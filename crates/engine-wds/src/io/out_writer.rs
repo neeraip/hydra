@@ -1,6 +1,7 @@
 // out_writer — EPANET-compatible binary output file writer.
 //
-// Produces a `.out` file byte-for-byte compatible with EPANET 2.3.
+// Produces a `.out` file whose layout extends the EPANET 2.3 binary output
+// format (authoritative layout + version history: model spec §4.5).
 // All values are little-endian. Floating-point values are REAL4 (f32).
 // Integers are INT4 (i32). String fields are fixed-width, zero-padded:
 //   IDs: 32 bytes (MAXID)   title lines: 80 bytes   filenames: 260 bytes
@@ -10,7 +11,7 @@
 //  ┌───────────────────────────────────────────────────────────────────────────┐
 //  │ 1. PROLOG                                                                 │
 //  │   15 × INT4 header (60 bytes):                                            │
-//  │     magic (516114521), version (20012), n_nodes, n_tanks, n_links,        │
+//  │     magic (516114521), version (20013), n_nodes, n_tanks, n_links,        │
 //  │     n_pumps, n_valves, quality_flag (0-3), trace_node (1-based),          │
 //  │     flow_units (0-10), pressure_units (0=PSI,1=kPa,2=m),                 │
 //  │     report_statistic (0=Series), report_start, report_step, duration      │
@@ -46,8 +47,10 @@
 //  │ 4. NETWORK REACTIONS   (16 bytes)                                          │
 //  │   4 × REAL4: avg bulk rate, wall rate, tank rate, source rate (mass/hr)   │
 //  ├───────────────────────────────────────────────────────────────────────────┤
-//  │ 5. EPILOG   (12 bytes)                                                     │
-//  │   3 × INT4: n_periods, warn_flag (0=no warnings), magic (516114521)        │
+//  │ 5. EPILOG   (20 bytes since version 20013; 12 bytes in 20012)              │
+//  │   INT4 n_periods, INT4 warn_flag (0=no warnings),                          │
+//  │   u64 network digest (spec §4.5.7; absent in 20012),                       │
+//  │   INT4 magic (516114521)                                                   │
 //  └───────────────────────────────────────────────────────────────────────────┘
 
 use std::io::{Seek, Write};
@@ -59,7 +62,10 @@ use crate::{FlowUnits, HeadLossFormula, LinkKind, LinkStatus, NodeKind, QualityM
 // ── Constants ─────────────────────────────────────────────────────────────────
 
 const MAGIC: i32 = 516114521;
-const VERSION: i32 = 20012;
+/// Current `.out` format version (model spec §4.5.1): the EPANET 2.3 layout
+/// plus a 64-bit network digest in the epilog. Version 20012 (no digest) is
+/// still accepted by the reader.
+const VERSION: i32 = 20013;
 const MAXID: usize = 32; // MAXID+1 = 32 bytes per ID
 const TITLELEN: usize = 80; // TITLELEN+1 = 80 bytes per title line
 const MAXFNAME: usize = 260; // MAXFNAME+1 = 260 bytes per filename
@@ -78,6 +84,8 @@ pub struct OutStreamWriter<W: Write + Seek> {
     next_rtime: i64,
     next_snapshot_index: usize,
     n_periods: i32,
+    /// Network topology digest written into the epilog (model spec §4.5.7).
+    network_digest: u64,
 }
 
 impl<W: Write + Seek> OutStreamWriter<W> {
@@ -114,6 +122,7 @@ impl<W: Write + Seek> OutStreamWriter<W> {
             next_rtime: options.report_start.round() as i64,
             next_snapshot_index: 0,
             n_periods: 0,
+            network_digest: super::compute_network_digest(network),
         })
     }
 
@@ -155,7 +164,12 @@ impl<W: Write + Seek> OutStreamWriter<W> {
 
         self.writer.seek(std::io::SeekFrom::Start(dynamic_end))?;
         write_network_reactions(&mut self.writer, session)?;
-        write_epilog(&mut self.writer, self.n_periods, epanet_warn_flag(session))?;
+        write_epilog(
+            &mut self.writer,
+            self.n_periods,
+            epanet_warn_flag(session),
+            self.network_digest,
+        )?;
 
         Ok(self.writer)
     }
@@ -703,9 +717,17 @@ fn write_network_reactions<W: Write>(
 
 // ── Epilog ────────────────────────────────────────────────────────────────────
 
-fn write_epilog<W: Write>(w: &mut W, n_periods: i32, warn_flag: i32) -> std::io::Result<()> {
+fn write_epilog<W: Write>(
+    w: &mut W,
+    n_periods: i32,
+    warn_flag: i32,
+    network_digest: u64,
+) -> std::io::Result<()> {
     write_i32(w, n_periods)?;
     write_i32(w, warn_flag)?;
+    // Version ≥ 20013: 64-bit network digest between warn flag and magic
+    // (model spec §4.5.6).
+    w.write_all(&network_digest.to_le_bytes())?;
     write_i32(w, MAGIC)?;
     Ok(())
 }
@@ -1013,6 +1035,20 @@ mod tests {
             i32::from_le_bytes(data[data.len() - 4..].try_into().unwrap()),
             MAGIC
         );
+    }
+
+    /// Written files carry the network topology digest in the epilog
+    /// (spec §4.5.6/§4.5.7), matching `compute_network_digest` exactly.
+    #[test]
+    fn out_file_epilog_carries_network_digest() {
+        let session = mock_session("single_pipe_hw.inp");
+        let expected = crate::io::compute_network_digest(&session.network);
+        let mut buf = Cursor::new(Vec::new());
+        write_binary_output(&mut buf, &session, "test.inp", "test.rpt", FlowUnits::Gpm)
+            .expect("write binary output");
+        let out = crate::io::out_reader::parse(&buf.into_inner()).expect("parse .out");
+        assert_eq!(out.prolog.version, 20013);
+        assert_eq!(out.epilog.network_digest, Some(expected));
     }
 
     /// Verifies that `write_network_reactions` converts accumulators using 1000

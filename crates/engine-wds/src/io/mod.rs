@@ -6,6 +6,8 @@
 
 /// Analysis artifact I/O — the persisted `analysis.json` schema.
 pub mod analysis_io;
+/// Network topology digest (model spec §4.5.7).
+pub mod digest;
 /// INP (EPANET input file) reader — public entry point is [`parse`].
 pub mod inp_reader;
 /// INP (EPANET input file) writer — public entry point is [`write_inp`].
@@ -19,6 +21,7 @@ pub mod rpt_writer;
 /// EPANET unit conversion factors.
 pub mod units;
 
+pub use digest::compute_network_digest;
 pub use inp_writer::write_inp;
 
 use std::fmt;

@@ -154,7 +154,8 @@ pub use hydra_engine_wds::{
 /// - [`io::out_writer`] / [`io::rpt_writer`] — write binary `.out` and text `.rpt` output.
 pub mod io {
     pub use hydra_engine_wds::io::{
-        analysis_io, out_reader, out_writer, parse, rpt_writer, write_inp, ParseError,
+        analysis_io, compute_network_digest, out_reader, out_writer, parse, rpt_writer, write_inp,
+        ParseError,
     };
 }
 
@@ -163,6 +164,11 @@ pub mod io {
 /// The inverse of [`io::parse`]: all values are converted from the internal
 /// unit system back to the user-declared unit system.
 pub use hydra_engine_wds::write_inp;
+
+/// Compute the FNV-1a 64-bit network topology digest stored in `.out` result
+/// files (model spec §4.5.7). Lets consumers detect results that are stale
+/// relative to an edited network topology.
+pub use hydra_engine_wds::compute_network_digest;
 
 #[cfg(test)]
 mod tests {

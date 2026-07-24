@@ -114,3 +114,9 @@ pub use analysis::{
 pub fn write_inp(network: &Network) -> Vec<u8> {
     io::write_inp(network)
 }
+
+/// Compute the FNV-1a 64-bit network topology digest (model spec §4.5.7).
+///
+/// Stored in `.out` result files so consumers can detect results that are
+/// stale relative to an edited network topology.
+pub use io::compute_network_digest;
