@@ -78,3 +78,18 @@ export function envelopePath(
     .join(" L ");
   return `M ${top} L ${bottom} Z`;
 }
+
+/**
+ * Resize a multiplier sequence to `n` steps. Truncates from the end when
+ * shrinking; when growing, repeats the existing sequence cyclically (so a
+ * 24-step daily pattern extended to 8,760 steps tiles into a year of
+ * identical days). An empty source fills with 1.0.
+ */
+export function resizePattern(multipliers: number[], n: number): number[] {
+  const count = Math.max(1, Math.floor(n));
+  if (multipliers.length === 0) return new Array(count).fill(1);
+  if (count <= multipliers.length) return multipliers.slice(0, count);
+  const out = new Array<number>(count);
+  for (let i = 0; i < count; i++) out[i] = multipliers[i % multipliers.length];
+  return out;
+}

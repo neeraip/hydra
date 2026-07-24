@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { downsampleMinMax, envelopePath } from "./patternDownsample";
+import {
+  downsampleMinMax,
+  envelopePath,
+  resizePattern,
+} from "./patternDownsample";
 
 describe("downsampleMinMax", () => {
   it("returns empty output for empty input or non-positive bucket counts", () => {
@@ -91,5 +95,26 @@ describe("envelopePath", () => {
     // max clamps to yMax → y 0; min clamps to 0 → y = height.
     expect(path).toContain("50.00,0.00");
     expect(path).toContain("50.00,40.00");
+  });
+});
+
+describe("resizePattern", () => {
+  it("truncates from the end when shrinking", () => {
+    expect(resizePattern([1, 2, 3, 4], 2)).toEqual([1, 2]);
+  });
+
+  it("cycle-repeats the sequence when growing", () => {
+    expect(resizePattern([1, 2, 3], 7)).toEqual([1, 2, 3, 1, 2, 3, 1]);
+  });
+
+  it("returns a copy at equal length and clamps to at least one step", () => {
+    const src = [5, 6];
+    expect(resizePattern(src, 2)).toEqual([5, 6]);
+    expect(resizePattern(src, 0)).toEqual([5]);
+    expect(resizePattern(src, -3)).toEqual([5]);
+  });
+
+  it("fills with 1.0 from an empty source", () => {
+    expect(resizePattern([], 3)).toEqual([1, 1, 1]);
   });
 });

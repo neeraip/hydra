@@ -12,7 +12,11 @@ import { useDraft } from "../../hooks/DraftContext";
 import { useNetworkVersion } from "../../hooks/NetworkVersionContext";
 import { DeleteConfirmModal } from "../modals/DeleteConfirmModal";
 import { EditorSidebarList } from "./EditorSidebarList";
-import { downsampleMinMax, envelopePath } from "./patternDownsample";
+import {
+  downsampleMinMax,
+  envelopePath,
+  resizePattern,
+} from "./patternDownsample";
 
 const DEFAULT_PATTERN_MULTIPLIERS: number[] = new Array(24).fill(1.0);
 
@@ -392,6 +396,20 @@ export function PatternEditor({ accent }: { accent: string }) {
                 next[idx] = val;
                 stageMultipliers(next);
               }}
+            />
+            <PatternStepControls
+              count={multipliers.length}
+              onAdd={() =>
+                stageMultipliers([
+                  ...multipliers,
+                  multipliers[multipliers.length - 1] ?? 1,
+                ])
+              }
+              onRemoveLast={() =>
+                multipliers.length > 1 &&
+                stageMultipliers(multipliers.slice(0, -1))
+              }
+              onResize={(n) => stageMultipliers(resizePattern(multipliers, n))}
             />
             <PatternRow
               multipliers={multipliers}
@@ -1023,6 +1041,103 @@ function VirtualizedGrid({
           );
         })}
       </div>
+    </div>
+  );
+}
+
+/** Step-count controls: append (copies the last value), remove-last, and a
+ * resize field. Growing cycle-repeats the existing sequence so a daily
+ * pattern tiles cleanly into longer horizons. */
+function PatternStepControls({
+  count,
+  onAdd,
+  onRemoveLast,
+  onResize,
+}: {
+  count: number;
+  onAdd: () => void;
+  onRemoveLast: () => void;
+  onResize: (n: number) => void;
+}) {
+  const [resizeDraft, setResizeDraft] = useState("");
+  const btnStyle: React.CSSProperties = {
+    background: "var(--bg-card)",
+    border: "1px solid var(--border)",
+    borderRadius: 4,
+    color: "var(--text-secondary)",
+    fontSize: 11,
+    padding: "3px 8px",
+    cursor: "pointer",
+  };
+  function applyResize() {
+    const n = Number(resizeDraft.trim());
+    if (!Number.isFinite(n) || n < 1) return;
+    onResize(Math.min(8784, Math.floor(n)));
+    setResizeDraft("");
+  }
+  return (
+    <div
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 8,
+        fontSize: 11,
+        color: "var(--text-tertiary)",
+      }}
+    >
+      <span>
+        {count} step{count === 1 ? "" : "s"}
+      </span>
+      <button
+        type="button"
+        style={btnStyle}
+        onClick={onAdd}
+        data-tooltip="Append a step (copies the last multiplier)"
+      >
+        + Add step
+      </button>
+      <button
+        type="button"
+        style={{
+          ...btnStyle,
+          opacity: count <= 1 ? 0.4 : 1,
+          cursor: count <= 1 ? "default" : "pointer",
+        }}
+        onClick={onRemoveLast}
+        disabled={count <= 1}
+        data-tooltip="Remove the last step"
+      >
+        − Remove last
+      </button>
+      <span style={{ marginLeft: 8 }}>Resize to</span>
+      <input
+        value={resizeDraft}
+        onChange={(e) => setResizeDraft(e.target.value.replace(/[^0-9]/g, ""))}
+        onKeyDown={(e) => e.key === "Enter" && applyResize()}
+        placeholder={String(count)}
+        style={{
+          width: 56,
+          background: "var(--bg-input, rgba(255,255,255,0.05))",
+          border: "1px solid var(--border)",
+          borderRadius: 4,
+          color: "var(--text-primary)",
+          fontSize: 11,
+          fontFamily: "var(--font-mono)",
+          padding: "3px 6px",
+        }}
+        data-tooltip="Growing repeats the existing sequence cyclically; shrinking truncates from the end"
+      />
+      <button
+        type="button"
+        style={{
+          ...btnStyle,
+          opacity: resizeDraft.trim() === "" ? 0.4 : 1,
+        }}
+        onClick={applyResize}
+        disabled={resizeDraft.trim() === ""}
+      >
+        Apply
+      </button>
     </div>
   );
 }
