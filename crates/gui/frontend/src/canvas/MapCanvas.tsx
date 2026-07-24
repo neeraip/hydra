@@ -88,6 +88,23 @@ const NODE_SELECTION_GLOW = [
   { suffix: "inner", alpha: 140, radiusPad: 5 },
 ];
 
+// ── Element sizing: world-space, zoom-scaled, pixel-clamped ──────────────────
+//
+// Node radius and link width are expressed in world units (metres on the geo
+// map, "common" units in the orthographic schematic) so the GPU scales them
+// with zoom for free — no per-frame relayout on large networks. These pixel
+// clamps keep elements visible when zoomed out and stop them ballooning when
+// zoomed in. Base sizes are the literals at each layer (junction/special
+// radius, link/hit width); tune these bounds to taste.
+const NODE_RADIUS_MIN_PX = 2.5;
+const NODE_RADIUS_MAX_PX = 13;
+const NODE_GLOW_MAX_PX = 26;
+const LINK_WIDTH_MIN_PX = 2.5;
+const LINK_WIDTH_MAX_PX = 9;
+const LINK_GLOW_MAX_PX = 28;
+const LINK_HIT_MIN_PX = 8;
+const LINK_HIT_MAX_PX = 28;
+
 /** Above this many on-screen labels, label layers render nothing — the text
  * would be unreadable overlap anyway and TextLayer tesselation at 46k ids
  * freezes the frame. Zoom in (or filter) to see labels on huge networks. */
@@ -613,9 +630,14 @@ export const MapCanvas = memo(function MapCanvas({
       ? COORDINATE_SYSTEM.CARTESIAN
       : COORDINATE_SYSTEM.DEFAULT;
 
+    // World-space units so sizes scale with zoom (metres on the geo map,
+    // "common" units in the schematic). Per-layer pixel clamps bound them.
     const nodeRadiusUnits = isSchematic
       ? ("common" as const)
-      : ("pixels" as const);
+      : ("meters" as const);
+    const linkWidthUnits = isSchematic
+      ? ("common" as const)
+      : ("meters" as const);
 
     const junctionRadius = 7;
     const specialRadius = 9;
@@ -762,7 +784,9 @@ export const MapCanvas = memo(function MapCanvas({
         coordinateSystem: coordSystem,
         // Same polyline path as the main link layers.
         getPath: (d: typeof link) => d.path,
-        widthUnits: "pixels" as const,
+        widthUnits: linkWidthUnits,
+        widthMinPixels: LINK_WIDTH_MIN_PX,
+        widthMaxPixels: LINK_GLOW_MAX_PX,
         capRounded: true as const,
         jointRounded: true as const,
         pickable: false as const,
@@ -796,6 +820,8 @@ export const MapCanvas = memo(function MapCanvas({
         coordinateSystem: coordSystem,
         getPosition: (d: typeof node) => d.position,
         radiusUnits: nodeRadiusUnits,
+        radiusMinPixels: NODE_RADIUS_MIN_PX,
+        radiusMaxPixels: NODE_GLOW_MAX_PX,
         stroked: false,
         pickable: false as const,
         updateTriggers: {},
@@ -883,7 +909,9 @@ export const MapCanvas = memo(function MapCanvas({
                 getPath: (d) => d.path,
                 getColor: [0, 0, 0, 0] as unknown as RGBA,
                 getWidth: 12,
-                widthUnits: "pixels" as const,
+                widthUnits: linkWidthUnits,
+                widthMinPixels: LINK_HIT_MIN_PX,
+                widthMaxPixels: LINK_HIT_MAX_PX,
                 pickable: linksPickable,
                 onHover: onLinkHover,
                 onClick: onLinkClick,
@@ -899,7 +927,9 @@ export const MapCanvas = memo(function MapCanvas({
                 getTargetPosition: (d) => d.to,
                 getColor: [0, 0, 0, 0] as unknown as RGBA,
                 getWidth: 12,
-                widthUnits: "pixels" as const,
+                widthUnits: linkWidthUnits,
+                widthMinPixels: LINK_HIT_MIN_PX,
+                widthMaxPixels: LINK_HIT_MAX_PX,
                 pickable: linksPickable,
                 onHover: onLinkHover,
                 onClick: onLinkClick,
@@ -924,8 +954,10 @@ export const MapCanvas = memo(function MapCanvas({
                 // of the speed param so reverse flow never re-tesselates.
                 getPath: (d) => d.path,
                 getColor: linkColor,
-                getWidth: 2,
-                widthUnits: "pixels" as const,
+                getWidth: 4,
+                widthUnits: linkWidthUnits,
+                widthMinPixels: LINK_WIDTH_MIN_PX,
+                widthMaxPixels: LINK_WIDTH_MAX_PX,
                 capRounded: true,
                 jointRounded: true,
                 pickable: false,
@@ -957,8 +989,10 @@ export const MapCanvas = memo(function MapCanvas({
                   coordinateSystem: coordSystem,
                   getPath: (d) => d.path,
                   getColor: linkColor,
-                  getWidth: 2,
-                  widthUnits: "pixels" as const,
+                  getWidth: 4,
+                  widthUnits: linkWidthUnits,
+                  widthMinPixels: LINK_WIDTH_MIN_PX,
+                  widthMaxPixels: LINK_WIDTH_MAX_PX,
                   capRounded: true,
                   jointRounded: true,
                   pickable: false,
@@ -975,8 +1009,10 @@ export const MapCanvas = memo(function MapCanvas({
                   getSourcePosition: (d) => d.from,
                   getTargetPosition: (d) => d.to,
                   getColor: linkColor,
-                  getWidth: 2,
-                  widthUnits: "pixels" as const,
+                  getWidth: 4,
+                  widthUnits: linkWidthUnits,
+                  widthMinPixels: LINK_WIDTH_MIN_PX,
+                  widthMaxPixels: LINK_WIDTH_MAX_PX,
                   pickable: false,
                   updateTriggers: {
                     getColor: linkColorTriggers,
@@ -992,6 +1028,8 @@ export const MapCanvas = memo(function MapCanvas({
           getRadius: (d) =>
             d.type === "junction" ? junctionRadius : specialRadius,
           radiusUnits: nodeRadiusUnits,
+          radiusMinPixels: NODE_RADIUS_MIN_PX,
+          radiusMaxPixels: NODE_RADIUS_MAX_PX,
           // Measure works on raw map clicks — node picking is dead cost there.
           pickable: tool !== "measure",
           onHover: (info) => {
