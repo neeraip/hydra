@@ -297,6 +297,18 @@ pub struct ResultMetaDto {
     pub ranges: ResultRangesDto,
     /// Quality mode used in the simulation: `"none"`, `"chemical"`, `"age"`, or `"trace"`.
     pub quality_mode: String,
+    /// Topology digest of the network the results were produced from, as
+    /// 16 lowercase hex chars (see the engine's `compute_network_digest`).
+    /// `None` for pre-digest `.out` files — the frontend must then treat the
+    /// topology match as unknown and apply no staleness gating.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub network_digest: Option<String>,
+}
+
+/// Format a topology digest as the wire representation shared with the
+/// frontend: 16 lowercase hex characters, zero-padded.
+fn digest_hex(digest: u64) -> String {
+    format!("{digest:016x}")
 }
 
 // ── Result metadata + period commands ────────────────────────────────────────
@@ -337,6 +349,7 @@ pub fn load_result_meta(
     Ok(Some(ResultMetaDto {
         times,
         quality_mode: quality_mode.to_string(),
+        network_digest: meta.network_digest.map(digest_hex),
         ranges: ResultRangesDto {
             pressure_min: ranges.pressure_min,
             pressure_max: ranges.pressure_max,
@@ -418,6 +431,59 @@ fn network_for_target(
     let model_path = model_path_for(app_data, project_id, scenario_id);
     let raw = std::fs::read(&model_path).map_err(|e| format!("Cannot read model: {e}"))?;
     hydra::io::parse(&raw).map_err(format_inp_parse_error)
+}
+
+/// Topology digest of the CURRENT model for `(project_id, scenario_id)`.
+///
+/// Deliberately the opposite cache policy of [`network_for_target`]: a
+/// **dirty** cache owning the target is *preferred*, because the whole point
+/// is to fingerprint the live in-memory topology (including unsaved edits) so
+/// the frontend can detect that loaded results no longer match it. The digest
+/// is computed under the lock without cloning — FNV-1a over element IDs is
+/// cheap even at 46k nodes. Falls back to parsing the on-disk model when the
+/// cache holds a different target.
+fn live_network_digest(
+    app_data: &std::path::Path,
+    state: &NetworkState,
+    project_id: &str,
+    scenario_id: Option<&str>,
+) -> Result<u64, String> {
+    {
+        let guard = state.0.lock();
+        if let NetworkStateInner::Loaded {
+            network,
+            owner_project_id: Some(owner),
+            owner_scenario_id,
+            ..
+        } = &*guard
+        {
+            if owner == project_id && owner_scenario_id.as_deref() == scenario_id {
+                return Ok(hydra::compute_network_digest(network));
+            }
+        }
+    }
+    let model_path = model_path_for(app_data, project_id, scenario_id);
+    let raw = std::fs::read(&model_path).map_err(|e| format!("Cannot read model: {e}"))?;
+    let network = hydra::io::parse(&raw).map_err(format_inp_parse_error)?;
+    Ok(hydra::compute_network_digest(&network))
+}
+
+/// Return the topology digest of the current model for a project or scenario
+/// as 16 lowercase hex chars — including unsaved in-memory edits when the
+/// managed network cache holds that target (see [`live_network_digest`]).
+/// The frontend compares this against `ResultMetaDto::network_digest` to
+/// detect results that predate the live topology.
+#[tauri::command(async)]
+/// Return the current model's topology digest (hex) for a project/scenario.
+pub fn get_network_digest(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, NetworkState>,
+    project_id: String,
+    scenario_id: Option<String>,
+) -> Result<String, String> {
+    validate_target_ids(&project_id, scenario_id.as_deref())?;
+    let app_data = app_data_dir(&app)?;
+    live_network_digest(&app_data, &state, &project_id, scenario_id.as_deref()).map(digest_hex)
 }
 
 /// Return the pump energy summary for a project or scenario.
@@ -1074,6 +1140,121 @@ Duration  0
         let state = NetworkState(parking_lot::Mutex::new(inner));
         let err = network_for_target(dir.path(), &state, "test-project", None).unwrap_err();
         assert!(err.contains("Cannot read model"));
+    }
+
+    // ── network digest (get_network_digest / load_result_meta wiring) ─────
+
+    #[test]
+    fn digest_hex_is_16_lowercase_zero_padded_chars() {
+        assert_eq!(digest_hex(0), "0000000000000000");
+        assert_eq!(digest_hex(0xABC), "0000000000000abc");
+        assert_eq!(digest_hex(u64::MAX), "ffffffffffffffff");
+        assert_eq!(digest_hex(0x451f_672d_2d21_a3c4).len(), 16);
+    }
+
+    #[test]
+    fn live_network_digest_uses_clean_matching_cache() {
+        // No model.inp on disk: success proves the cache was served.
+        let dir = tempfile::tempdir().unwrap();
+        let state = NetworkState(parking_lot::Mutex::new(loaded_state()));
+        let digest = live_network_digest(dir.path(), &state, "test-project", None)
+            .expect("matching cache must be served without disk IO");
+        let expected =
+            hydra::compute_network_digest(&hydra::io::parse(TEST_INP.as_bytes()).unwrap());
+        assert_eq!(digest, expected);
+    }
+
+    #[test]
+    fn live_network_digest_prefers_dirty_cache_and_reflects_added_node() {
+        // Opposite policy to network_for_target: the dirty in-memory network
+        // IS the digest source (unsaved topology edits must be detectable).
+        // No model.inp on disk, so any disk fallback would error.
+        let dir = tempfile::tempdir().unwrap();
+        let baseline =
+            hydra::compute_network_digest(&hydra::io::parse(TEST_INP.as_bytes()).unwrap());
+
+        let mut inner = loaded_state();
+        if let NetworkStateInner::Loaded { network, dirty, .. } = &mut inner {
+            // Add a junction the way create_node does (id + topology change).
+            let mut node = network.nodes[0].clone();
+            node.base.id = "J-NEW".into();
+            node.base.index = network.nodes.len() + 1;
+            network.nodes.push(node);
+            *dirty = true;
+        }
+        let state = NetworkState(parking_lot::Mutex::new(inner));
+
+        let digest = live_network_digest(dir.path(), &state, "test-project", None)
+            .expect("dirty matching cache must be served without disk IO");
+        assert_ne!(
+            digest, baseline,
+            "digest must reflect the unsaved added node"
+        );
+    }
+
+    #[test]
+    fn live_network_digest_falls_back_to_disk_for_other_target() {
+        let dir = tempfile::tempdir().unwrap();
+        bundle::atomic_write(
+            &bundle::scenario_model_path(dir.path(), "test-project", "s1"),
+            DISK_INP.as_bytes(),
+        )
+        .unwrap();
+        let state = NetworkState(parking_lot::Mutex::new(loaded_state()));
+        let digest = live_network_digest(dir.path(), &state, "test-project", Some("s1")).unwrap();
+        let expected =
+            hydra::compute_network_digest(&hydra::io::parse(DISK_INP.as_bytes()).unwrap());
+        assert_eq!(digest, expected);
+    }
+
+    #[test]
+    fn result_meta_dto_network_digest_wire_contract() {
+        // None (pre-digest .out file) must serialise with the field absent —
+        // the frontend then treats the topology match as unknown (no gating).
+        let dto = |d: Option<String>| ResultMetaDto {
+            times: vec![],
+            quality_mode: "none".into(),
+            network_digest: d,
+            ranges: ResultRangesDto {
+                pressure_min: 0.0,
+                pressure_max: 0.0,
+                head_min: 0.0,
+                head_max: 0.0,
+                demand_min: 0.0,
+                demand_max: 0.0,
+                flow_min: 0.0,
+                flow_max: 0.0,
+                velocity_min: 0.0,
+                velocity_max: 0.0,
+                quality_min: None,
+                quality_max: None,
+            },
+        };
+        let json = serde_json::to_string(&dto(None)).unwrap();
+        assert!(!json.contains("networkDigest"), "got: {json}");
+        let json = serde_json::to_string(&dto(Some(digest_hex(0xABC)))).unwrap();
+        assert!(
+            json.contains("\"networkDigest\":\"0000000000000abc\""),
+            "got: {json}"
+        );
+    }
+
+    #[test]
+    fn generated_results_carry_the_fixture_network_digest() {
+        // End-to-end: a results.out produced by the streaming run path stores
+        // the digest of the network it was run from, and load_result_meta's
+        // mapping (meta.network_digest → hex) matches get_network_digest's
+        // view of the same unedited model.
+        let dir = tempfile::tempdir().unwrap();
+        let out = generated_results_out(dir.path());
+        let meta = hydra::io::out_reader::read_metadata_checked(&out).unwrap();
+        let expected =
+            hydra::compute_network_digest(&hydra::io::parse(TEST_INP.as_bytes()).unwrap());
+        assert_eq!(meta.network_digest, Some(expected));
+        assert_eq!(
+            meta.network_digest.map(digest_hex),
+            Some(digest_hex(expected))
+        );
     }
 
     // ── get_element_series / element_series_from_out ──────────────────────

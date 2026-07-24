@@ -46,6 +46,7 @@ fn main() {
             commands::run_simulation,
             commands::get_run_warnings,
             commands::load_result_meta,
+            commands::get_network_digest,
             commands::get_period_results,
             commands::get_pump_energy,
             commands::get_result_analytics,

@@ -22,7 +22,11 @@ vi.mock("@tauri-apps/api/core", () => ({
 }));
 
 import { invoke } from "@tauri-apps/api/core";
-import { decodePeriodResults, getPeriodResults } from "./results";
+import {
+  compareTopologyDigests,
+  decodePeriodResults,
+  getPeriodResults,
+} from "./results";
 
 const mockInvoke = vi.mocked(invoke);
 
@@ -254,5 +258,31 @@ describe("getPeriodResults", () => {
     vi.spyOn(console, "error").mockImplementation(() => {});
     mockInvoke.mockResolvedValueOnce(new ArrayBuffer(4));
     await expect(getPeriodResults("p1", 0)).rejects.toThrow(/too short/);
+  });
+});
+
+describe("compareTopologyDigests", () => {
+  const A = "451f672d2d21a3c4";
+  const B = "03ff3fc15f20a264";
+
+  it("matches only when both digests are known and equal", () => {
+    expect(compareTopologyDigests(A, A)).toBe("match");
+  });
+
+  it("is stale only when both digests are known and differ", () => {
+    expect(compareTopologyDigests(A, B)).toBe("stale");
+    expect(compareTopologyDigests(B, A)).toBe("stale");
+  });
+
+  it("is unknown when either side is missing — pre-digest files stay ungated", () => {
+    // Results side missing: old .out file with no stored digest.
+    expect(compareTopologyDigests(null, A)).toBe("unknown");
+    expect(compareTopologyDigests(undefined, A)).toBe("unknown");
+    expect(compareTopologyDigests("", A)).toBe("unknown");
+    // Live side missing: get_network_digest unavailable or still loading.
+    expect(compareTopologyDigests(A, null)).toBe("unknown");
+    expect(compareTopologyDigests(A, undefined)).toBe("unknown");
+    // Both missing.
+    expect(compareTopologyDigests(null, null)).toBe("unknown");
   });
 });

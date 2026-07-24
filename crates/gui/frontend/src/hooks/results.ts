@@ -158,6 +158,32 @@ export interface ResultMeta {
   ranges: ResultRanges;
   /** Quality mode used: `"none"` | `"chemical"` | `"age"` | `"trace"`. */
   qualityMode: string;
+  /**
+   * Topology digest (16 lowercase hex chars) of the network the results were
+   * produced from. Absent for pre-digest `.out` files — the topology match is
+   * then unknown and no staleness gating applies.
+   */
+  networkDigest?: string | null;
+}
+
+/** Result of comparing the results' stored topology digest against the live
+ * model's digest — see {@link compareTopologyDigests}. */
+export type TopologyDigestMatch = "match" | "stale" | "unknown";
+
+/**
+ * Pure staleness decision for topology-addressed results.
+ *
+ * `"stale"` only when BOTH digests are known and differ; any missing side
+ * (pre-digest `.out` file, digest fetch unavailable) yields `"unknown"`,
+ * which callers must treat exactly like today's ungated behaviour — old
+ * results are never punished for lacking a digest.
+ */
+export function compareTopologyDigests(
+  metaDigest: string | null | undefined,
+  liveDigest: string | null | undefined,
+): TopologyDigestMatch {
+  if (!metaDigest || !liveDigest) return "unknown";
+  return metaDigest === liveDigest ? "match" : "stale";
 }
 
 export interface PeriodResults {
@@ -268,6 +294,24 @@ export async function loadResultMeta(
 ): Promise<ResultMeta | null> {
   return tryInvokeOr<ResultMeta | null>(
     "load_result_meta",
+    { projectId, scenarioId: scenarioId ?? null },
+    null,
+  );
+}
+
+/**
+ * Return the topology digest (16 lowercase hex chars) of the CURRENT model
+ * for a project/scenario — including unsaved in-memory edits when the backend
+ * cache holds that target. Compared against `ResultMeta.networkDigest` to
+ * detect results that predate the live topology. Returns `null` outside
+ * Tauri or when the command is unavailable/fails (treated as "unknown").
+ */
+export async function getNetworkDigest(
+  projectId: string,
+  scenarioId?: string | null,
+): Promise<string | null> {
+  return tryInvokeOr<string | null>(
+    "get_network_digest",
     { projectId, scenarioId: scenarioId ?? null },
     null,
   );

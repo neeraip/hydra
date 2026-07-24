@@ -928,6 +928,8 @@ import type {
 } from "./hooks";
 import {
   runSimulation as _runSimulation,
+  compareTopologyDigests,
+  getNetworkDigest,
   getPumpEnergy,
   getRunQueue,
   listenRunQueueUpdate,
@@ -958,6 +960,22 @@ interface SimulationCtxValue {
    * invalidates the cache.
    */
   resultGeneration: number;
+  /**
+   * True when the loaded results' topology digest and the live model's digest
+   * are BOTH known and differ — i.e. the network's node/link structure changed
+   * (including unsaved edits) since the results were produced, so any
+   * index-addressed read of them would attach values to the wrong elements.
+   * Always false when either digest is unknown (pre-digest `.out` files keep
+   * today's ungated behaviour).
+   */
+  resultsTopologyStale: boolean;
+  /**
+   * Topology digest (16 hex chars) of the CURRENT model — including unsaved
+   * in-memory edits — or `null` while unknown. Consumers holding *other*
+   * result metadata (e.g. the comparison baseline's) compare against this via
+   * `compareTopologyDigests` to apply the same staleness gating.
+   */
+  liveNetworkDigest: string | null;
   tasks: Task[];
   issues: Issue[];
   setIssues: Dispatch<SetStateAction<Issue[]>>;
@@ -983,6 +1001,8 @@ const SimCtx = createContext<SimulationCtxValue>({
   resultMetaLoading: false,
   setResultMeta: () => {},
   resultGeneration: 0,
+  resultsTopologyStale: false,
+  liveNetworkDigest: null,
   tasks: [],
   issues: [],
   setIssues: () => {},
@@ -1011,6 +1031,11 @@ function SimulationProvider({ children }: { children: ReactNode }) {
   // committed via setResultMeta (the simple, consistent rule — consumers
   // treat it as an opaque freshness token; see SimulationCtxValue).
   const [resultGeneration, setResultGeneration] = useState(0);
+  // Topology digest of the CURRENT model (16 hex chars), fetched from the
+  // backend; null = unknown (no project, command unavailable, fetch pending).
+  const [liveNetworkDigest, setLiveNetworkDigest] = useState<string | null>(
+    null,
+  );
   const [tasks, setTasks] = useState<Task[]>([]);
   const [issues, setIssues] = useState<Issue[]>([]);
   // Backend `validate_network` findings, already mapped to Issue shape.
@@ -1039,6 +1064,34 @@ function SimulationProvider({ children }: { children: ReactNode }) {
       cancelled = true;
     };
   }, [activeProjectId, activeScenarioId, networkVersion]);
+
+  // Refresh the live model's topology digest whenever the target changes,
+  // the network structurally changes (`networkVersion` bumps on create/
+  // delete — the digest is invariant to property edits, so a refetch after
+  // one is a cheap no-op), or fresh results land (`resultGeneration` bumps —
+  // a run may follow a save, and comparing a fresh result digest against a
+  // stale live digest would misreport). Failure/unavailable resolves to null
+  // = unknown → no gating.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `networkVersion` and `resultGeneration` are intentional retriggers — see comment above.
+  useEffect(() => {
+    if (!activeProjectId) {
+      setLiveNetworkDigest(null);
+      return;
+    }
+    let cancelled = false;
+    getNetworkDigest(activeProjectId, activeScenarioId).then((digest) => {
+      if (!cancelled) setLiveNetworkDigest(digest);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [activeProjectId, activeScenarioId, networkVersion, resultGeneration]);
+
+  // Stale exactly when both digests are known and differ; unknown (either
+  // side missing) keeps today's ungated behaviour for pre-digest results.
+  const resultsTopologyStale =
+    compareTopologyDigests(resultMeta?.networkDigest, liveNetworkDigest) ===
+    "stale";
 
   // Fetch the last run's solver warnings whenever the active project/scenario
   // changes or fresh results land (`resultGeneration` bumps on every
@@ -1157,6 +1210,22 @@ function SimulationProvider({ children }: { children: ReactNode }) {
       });
     }
 
+    // Topology drift: results exist but their node/link structure no longer
+    // matches the live model, so result overlays/series are gated off until
+    // a re-run. Stable id — the issue disappears when the digests match
+    // again (re-run, or the edit is undone).
+    if (resultsTopologyStale) {
+      pushIssue({
+        id: "results-topology-stale",
+        severity: "warn",
+        source: "data",
+        code: "RESULTS-TOPOLOGY-STALE",
+        title: "Results predate the current network topology",
+        detail:
+          "Nodes or links were added, removed, or renamed since the loaded results were produced, so result overlays and time series are hidden. Re-run the simulation to refresh them.",
+      });
+    }
+
     if (editedScenarioIds.has(activeScenarioId ?? null)) {
       pushIssue({
         id: `preflight-stale-${activeScenarioId ?? "base"}`,
@@ -1210,6 +1279,7 @@ function SimulationProvider({ children }: { children: ReactNode }) {
     coordTotalCount,
     editedScenarioIds,
     resultMeta,
+    resultsTopologyStale,
     runWarningIssues,
     tasks,
     validationIssues,
@@ -1709,6 +1779,8 @@ function SimulationProvider({ children }: { children: ReactNode }) {
       resultMetaLoading,
       setResultMeta,
       resultGeneration,
+      resultsTopologyStale,
+      liveNetworkDigest,
       tasks,
       issues,
       setIssues,
@@ -1720,6 +1792,8 @@ function SimulationProvider({ children }: { children: ReactNode }) {
       resultMeta,
       resultMetaLoading,
       resultGeneration,
+      resultsTopologyStale,
+      liveNetworkDigest,
       tasks,
       issues,
       runSim,

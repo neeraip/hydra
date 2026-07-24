@@ -163,7 +163,8 @@ export function TimeSeriesCard({
 }) {
   const { project } = useActiveProject();
   const { activeScenarioId } = useAppState();
-  const { resultMeta, resultGeneration } = useSimulation();
+  const { resultMeta, resultGeneration, resultsTopologyStale } =
+    useSimulation();
   const { nodes, links } = useNetworkData();
   const sys = useUnitSystem();
   // Scrub position from CanvasView's provider; null outside a timeline.
@@ -188,7 +189,11 @@ export function TimeSeriesCard({
     kind === "link" && index >= 0 ? links[index]?.type : undefined;
 
   // Steady-state (≤ 1 period), no project, or unknown element: no card.
-  const enabled = projectId != null && periods > 1 && index >= 0;
+  // Topology-stale results are treated as absent too: the series is fetched
+  // by network-order index, which no longer addresses the same element after
+  // a structural edit (unknown digests pass through ungated).
+  const enabled =
+    projectId != null && periods > 1 && index >= 0 && !resultsTopologyStale;
 
   useEffect(() => {
     if (!enabled || projectId == null) {
