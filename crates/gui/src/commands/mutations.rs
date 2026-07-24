@@ -1671,10 +1671,11 @@ pub fn validate_network(
 #[tauri::command(async)]
 /// Replace the network's `[TITLE]` lines.
 ///
-/// EPANET convention caps the title at three lines (line 1 = title, lines
-/// 2-3 = description). Trailing empty lines are trimmed before validation so
-/// clearing the card writes an empty `[TITLE]`; embedded newlines are
-/// rejected since each entry must serialise as one INP line.
+/// EPANET's three-line title is convention, not a format rule, so any line
+/// count is accepted (the GUI clamps the *display* to three lines). Trailing
+/// empty lines are trimmed so clearing the editor writes an empty `[TITLE]`;
+/// embedded newlines are rejected since each entry must serialise as one INP
+/// line.
 pub fn update_network_title(
     app: tauri::AppHandle,
     state: tauri::State<'_, NetworkState>,
@@ -1688,7 +1689,7 @@ pub fn update_network_title(
 }
 
 /// Trim trailing whitespace per line, drop trailing empty lines, and enforce
-/// the EPANET three-line cap and single-line entries.
+/// single-line entries.
 fn normalize_title_lines(lines: Vec<String>) -> Result<Vec<String>, String> {
     let mut trimmed: Vec<String> = lines
         .into_iter()
@@ -1696,12 +1697,6 @@ fn normalize_title_lines(lines: Vec<String>) -> Result<Vec<String>, String> {
         .collect();
     while trimmed.last().is_some_and(|l| l.is_empty()) {
         trimmed.pop();
-    }
-    if trimmed.len() > 3 {
-        return Err(format!(
-            "title supports at most 3 lines (got {})",
-            trimmed.len()
-        ));
     }
     if trimmed.iter().any(|l| l.contains('\n') || l.contains('\r')) {
         return Err("title lines must not contain newlines".into());
@@ -1717,7 +1712,7 @@ mod tests {
     // ── structural-mutation helper ────────────────────────────────────────
 
     #[test]
-    fn normalize_title_lines_trims_caps_and_rejects_newlines() {
+    fn normalize_title_lines_trims_and_rejects_newlines() {
         assert_eq!(
             normalize_title_lines(vec!["A  ".into(), "".into(), "".into()]).unwrap(),
             vec!["A"]
@@ -1727,16 +1722,20 @@ mod tests {
             normalize_title_lines(vec!["A".into(), "".into(), "C".into()]).unwrap(),
             vec!["A", "", "C"]
         );
-        assert!(
-            normalize_title_lines(vec!["1".into(), "2".into(), "3".into(), "4".into()]).is_err()
+        // More than three lines is allowed — EPANET treats three as
+        // convention, not a format rule.
+        assert_eq!(
+            normalize_title_lines(vec!["1".into(), "2".into(), "3".into(), "4".into()])
+                .unwrap()
+                .len(),
+            4
         );
         assert!(normalize_title_lines(vec!["bad\nline".into()]).is_err());
         assert!(normalize_title_lines(Vec::new()).unwrap().is_empty());
     }
 
     #[test]
-    fn network_title_lines_trim_cap_and_round_trip() {
-        // Trailing empty lines trim away; embedded newlines and >3 lines reject.
+    fn network_title_lines_trim_and_round_trip() {
         let mut state = loaded_state();
         apply_structural_mutation(&mut state, |network| {
             network.title = vec!["Main title".into(), "Detail line".into()];

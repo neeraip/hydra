@@ -1,47 +1,26 @@
 import { describe, expect, it } from "vitest";
-import { partsToTitleLines, titleLinesToParts } from "./modelTitle";
+import { textToTitleLines, titleLinesToText } from "./modelTitle";
 
-describe("titleLinesToParts", () => {
-  it("splits first line from description lines", () => {
-    expect(titleLinesToParts(["Main", "d1", "d2"])).toEqual({
-      title: "Main",
-      description: "d1\nd2",
-    });
+describe("titleLinesToText / textToTitleLines", () => {
+  it("round-trips multi-line titles", () => {
+    const lines = ["Main title", "detail one", "", "detail three"];
+    expect(textToTitleLines(titleLinesToText(lines))).toEqual(lines);
   });
 
-  it("handles empty and single-line titles", () => {
-    expect(titleLinesToParts([])).toEqual({ title: "", description: "" });
-    expect(titleLinesToParts(["Only"])).toEqual({
-      title: "Only",
-      description: "",
-    });
-  });
-});
-
-describe("partsToTitleLines", () => {
-  it("joins title and description into at most three lines", () => {
-    expect(partsToTitleLines({ title: "Main", description: "d1\nd2" })).toEqual(
-      ["Main", "d1", "d2"],
-    );
+  it("drops trailing empties and per-line trailing whitespace", () => {
+    expect(textToTitleLines("A  \nB\n\n\n")).toEqual(["A", "B"]);
   });
 
-  it("collapses overflow description lines into line three", () => {
-    expect(
-      partsToTitleLines({ title: "T", description: "a\nb\nc\nd" }),
-    ).toEqual(["T", "a", "b c d"]);
+  it("keeps interior empty lines", () => {
+    expect(textToTitleLines("A\n\nC")).toEqual(["A", "", "C"]);
   });
 
-  it("drops trailing empties; empty card yields empty title", () => {
-    expect(partsToTitleLines({ title: "T", description: "" })).toEqual(["T"]);
-    expect(partsToTitleLines({ title: "", description: "" })).toEqual([]);
-    expect(partsToTitleLines({ title: "", description: "only desc" })).toEqual([
-      "",
-      "only desc",
-    ]);
+  it("empty text yields no lines", () => {
+    expect(textToTitleLines("")).toEqual([]);
+    expect(textToTitleLines("   \n ")).toEqual([]);
   });
 
-  it("round-trips with titleLinesToParts", () => {
-    const lines = ["Main title", "line two", "line three"];
-    expect(partsToTitleLines(titleLinesToParts(lines))).toEqual(lines);
+  it("does not cap line count (EPANET 3 lines is convention only)", () => {
+    expect(textToTitleLines("1\n2\n3\n4\n5")).toHaveLength(5);
   });
 });
