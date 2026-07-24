@@ -2,6 +2,7 @@ import { ChevronDownIcon, ChevronUpIcon } from "@heroicons/react/16/solid";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import type React from "react";
 import { memo, useRef, useState } from "react";
+import { parseNumericInput } from "../../../units";
 import { shouldUseRefDatalist } from "./tableSearch";
 
 /* ── Row virtualization ──────────────────────────────────────────────────────── */
@@ -113,13 +114,19 @@ export function EditableCell({
     setDraft(editValue);
   }
 
-  function validate(raw: string): string | null {
-    if (inputType !== "number") return null;
-    const n = parseFloat(raw);
-    if (!Number.isFinite(n)) return "Must be a number";
-    if (min !== undefined && n < min) return `Min ${min}`;
-    if (max !== undefined && n > max) return `Max ${max}`;
-    return null;
+  // Strict parse via parseNumericInput: rejects interleaved garbage that
+  // parseFloat would prefix-salvage ("8F.6G2Y" → 8), while tolerating a
+  // pasted display unit ("8.62 m" → 8.62).
+  function validate(raw: string): { err: string | null; normalized: string } {
+    if (inputType !== "number") return { err: null, normalized: raw };
+    const parsed = parseNumericInput(raw);
+    if (parsed.kind !== "number")
+      return { err: "Must be a number", normalized: raw };
+    if (min !== undefined && parsed.value < min)
+      return { err: `Min ${min}`, normalized: raw };
+    if (max !== undefined && parsed.value > max)
+      return { err: `Max ${max}`, normalized: raw };
+    return { err: null, normalized: String(parsed.value) };
   }
 
   function handleFocus() {
@@ -131,7 +138,13 @@ export function EditableCell({
   function commit() {
     setFocused(false);
     const trimmed = draft.trim();
-    const err = validate(trimmed);
+    // Cleared number cell = abandoned edit: revert silently, commit nothing.
+    if (inputType === "number" && trimmed === "") {
+      setError(null);
+      setDraft(focusSnapshot.current);
+      return;
+    }
+    const { err, normalized } = validate(trimmed);
     if (err) {
       // Invalid: show error and revert to last committed value.
       setError(err);
@@ -139,7 +152,19 @@ export function EditableCell({
       return;
     }
     setError(null);
-    if (trimmed !== focusSnapshot.current.trim()) onCommit(trimmed);
+    // Commit the normalized value (unit suffix stripped) so downstream
+    // parseFloat consumers always receive a clean number string.
+    if (normalized !== focusSnapshot.current.trim()) onCommit(normalized);
+  }
+
+  // Block letter keystrokes in number cells for immediate feedback; paste is
+  // deliberately allowed through so unit-suffixed values ("8.62 m") can be
+  // normalised at commit time.
+  function onBeforeInput(e: React.FormEvent<HTMLInputElement>) {
+    if (inputType !== "number") return;
+    const native = e.nativeEvent as InputEvent;
+    if (native.inputType !== "insertText" || native.data == null) return;
+    if (/[^0-9.eE+\-]/.test(native.data)) e.preventDefault();
   }
 
   function onKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
@@ -183,6 +208,7 @@ export function EditableCell({
         onFocus={handleFocus}
         onBlur={commit}
         onKeyDown={onKeyDown}
+        onBeforeInput={onBeforeInput}
         onClick={(e) => e.stopPropagation()}
         style={{
           display: "block",

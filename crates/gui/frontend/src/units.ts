@@ -229,3 +229,34 @@ export function formatDistance(m: number, sys: UnitSystem): string {
   if (m < 1000) return `${m.toFixed(0)} m`;
   return `${(m / 1000).toFixed(2)} km`;
 }
+
+// ── Numeric input parsing ───────────────────────────────────────────────────
+
+/** Result of parsing user-typed numeric input. */
+export type NumericInput =
+  | { kind: "number"; value: number }
+  | { kind: "empty" }
+  | { kind: "invalid" };
+
+/** Strict number with an optional trailing unit token: the numeric part must
+ * be a complete well-formed number, and the suffix (if any) must be a plain
+ * unit-ish run with no digits — so "8.62 m" and "1e3" parse, while prefix
+ * salvage like "8F.6G2Y" (which parseFloat happily reads as 8) is rejected. */
+const NUMERIC_WITH_UNIT =
+  /^([+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?)\s*([a-zA-Zµ°%²³/·]*)$/;
+
+/**
+ * Parse user input for a numeric field. Values pasted with a display unit
+ * ("8.62 m", "300mm") normalise to their number; interleaved garbage is
+ * `invalid` rather than prefix-parsed; whitespace-only input is `empty`
+ * (callers treat it as an abandoned edit, not a zero).
+ */
+export function parseNumericInput(raw: string): NumericInput {
+  const trimmed = raw.trim();
+  if (trimmed === "") return { kind: "empty" };
+  const m = NUMERIC_WITH_UNIT.exec(trimmed);
+  if (!m) return { kind: "invalid" };
+  const value = Number(m[1]);
+  if (!Number.isFinite(value)) return { kind: "invalid" };
+  return { kind: "number", value };
+}

@@ -79,6 +79,10 @@ interface AppState {
 }
 
 interface AppActions {
+  /** Formatted error from the last failed model load (e.g. the INP was
+   * hand-edited outside Hydra and no longer parses); null once a load
+   * succeeds. Feeds a persistent Issues-panel entry. */
+  networkLoadFailure: string | null;
   setPage: (page: Page) => void;
   setProjectView: (view: ProjectView) => void;
   openProject: (id: string) => void;
@@ -412,6 +416,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         if (cancelled) return;
         if (net !== null) {
           primeNetworkData(net);
+          setNetworkLoadFailure(null);
           bumpNetwork();
           return;
         }
@@ -422,6 +427,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
           if (cancelled) return;
           if (baseNet !== null) {
             primeNetworkData(baseNet);
+            setNetworkLoadFailure(null);
             setS((prev) => {
               if (
                 prev.activeProjectId !== projectId ||
@@ -755,10 +761,19 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const recentIpcToastRef = useRef<{ message: string; at: number } | null>(
     null,
   );
+  // Persistent record of a failed model load (e.g. the INP was hand-edited
+  // outside Hydra and no longer parses). Toasts vanish; this feeds a durable
+  // issue in the Issues panel until the next successful load clears it.
+  const [networkLoadFailure, setNetworkLoadFailure] = useState<string | null>(
+    null,
+  );
   useEffect(
     () =>
       onIpcError((cmd, err) => {
         const message = `Backend error (${cmd}): ${formatIpcError(err)}`;
+        if (cmd === "load_project_network" || cmd === "get_network_snapshot") {
+          setNetworkLoadFailure(formatIpcError(err));
+        }
         const now = Date.now();
         const recent = recentIpcToastRef.current;
         if (
@@ -807,6 +822,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const appValue = useMemo(
     () => ({
       ...s,
+      networkLoadFailure,
       setPage,
       setProjectView,
       openProject,
@@ -844,6 +860,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     [
       s,
       deferredProjectView,
+      networkLoadFailure,
       setPage,
       setProjectView,
       openProject,
@@ -1017,6 +1034,7 @@ function SimulationProvider({ children }: { children: ReactNode }) {
     projectsVersion,
     activeProjectId,
     activeScenarioId,
+    networkLoadFailure,
   } = useAppState();
   const {
     clearEdited,
@@ -1210,6 +1228,20 @@ function SimulationProvider({ children }: { children: ReactNode }) {
       });
     }
 
+    // The model failed to load — most commonly an INP hand-edited outside
+    // Hydra that no longer parses. The parser error is line-anchored;
+    // persists (unlike the toast) until the next successful load clears it.
+    if (networkLoadFailure) {
+      pushIssue({
+        id: "model-load-failed",
+        severity: "error",
+        source: "data",
+        code: "MODEL-LOAD-FAILED",
+        title: "Model failed to load",
+        detail: `${networkLoadFailure} — the INP may have been edited outside Hydra. Fix the reported line (Open folder shows the file), or re-import the model.`,
+      });
+    }
+
     // Topology drift: results exist but their node/link structure no longer
     // matches the live model, so result overlays/series are gated off until
     // a re-run. Stable id — the issue disappears when the digests match
@@ -1278,6 +1310,7 @@ function SimulationProvider({ children }: { children: ReactNode }) {
     coordStatus,
     coordTotalCount,
     editedScenarioIds,
+    networkLoadFailure,
     resultMeta,
     resultsTopologyStale,
     runWarningIssues,

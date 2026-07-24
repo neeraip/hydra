@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  parseNumericInput,
   defaultDecimals,
   formatDistance,
   formatQty,
@@ -190,5 +191,43 @@ describe("unit-system store", () => {
     expect(getUnitSystem()).toBe("us");
     setUnitSystem("si");
     expect(getUnitSystem()).toBe("si");
+  });
+});
+
+describe("parseNumericInput", () => {
+  it("parses plain and signed numbers", () => {
+    expect(parseNumericInput("8.62")).toEqual({ kind: "number", value: 8.62 });
+    expect(parseNumericInput("-.5")).toEqual({ kind: "number", value: -0.5 });
+    expect(parseNumericInput("+3")).toEqual({ kind: "number", value: 3 });
+    expect(parseNumericInput("1e3")).toEqual({ kind: "number", value: 1000 });
+  });
+
+  it("tolerates a trailing display unit, with or without a space", () => {
+    expect(parseNumericInput("8.62 m")).toEqual({
+      kind: "number",
+      value: 8.62,
+    });
+    expect(parseNumericInput("300mm")).toEqual({ kind: "number", value: 300 });
+    expect(parseNumericInput("4.2 L/s")).toEqual({
+      kind: "number",
+      value: 4.2,
+    });
+    expect(parseNumericInput("12.5 ft")).toEqual({
+      kind: "number",
+      value: 12.5,
+    });
+  });
+
+  it("rejects interleaved garbage instead of prefix-parsing", () => {
+    expect(parseNumericInput("8F.6G2Y")).toEqual({ kind: "invalid" });
+    expect(parseNumericInput("1.2.3")).toEqual({ kind: "invalid" });
+    expect(parseNumericInput("m 8")).toEqual({ kind: "invalid" });
+    expect(parseNumericInput("8 m 9")).toEqual({ kind: "invalid" });
+    expect(parseNumericInput("--5")).toEqual({ kind: "invalid" });
+  });
+
+  it("treats whitespace-only input as empty, not zero", () => {
+    expect(parseNumericInput("")).toEqual({ kind: "empty" });
+    expect(parseNumericInput("   ")).toEqual({ kind: "empty" });
   });
 });
