@@ -89,6 +89,16 @@ fixed input.
 
 ### 4.1 Service Compliance Module
 
+Service compliance is computed over **junction nodes only**. Reservoirs and
+tanks are fixed- or storage-grade nodes whose gauge pressure is not a
+service-delivery metric — a reservoir sits at ≈ 0 gauge pressure in every
+period, so including it would count a permanent violation and deflate the
+network compliance ratio on every model. Junction membership is derived from
+the persisted output's tank/reservoir node index list (model spec §4.5.2), so
+no separate network load is required. Per-node results, node counts, and all
+summary sample totals therefore cover junctions exclusively, matching the
+demand-reliability module's junction-only scope (§4.2).
+
 See `compute_service_compliance_from_out` in `analysis/service_compliance.rs`
 for inputs, outputs, and the streaming-pass memory contract.
 

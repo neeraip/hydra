@@ -27,7 +27,10 @@ impl ServiceComplianceThresholds {
     }
 }
 
-/// Per-node service-compliance metrics for a single simulation run.
+/// Per-junction service-compliance metrics for a single simulation run.
+///
+/// Only junction nodes are analysed (analysis spec §4.1) — reservoirs and
+/// tanks are excluded, so `node_index` values are not necessarily contiguous.
 #[derive(Debug, Clone, Default)]
 pub struct ServiceComplianceNode {
     /// Zero-based index of this node in [`crate::Network::nodes`].
@@ -74,14 +77,15 @@ impl ServiceComplianceNode {
     }
 }
 
-/// Network-level service-compliance summary aggregated across all nodes.
+/// Network-level service-compliance summary aggregated across all junctions.
 #[derive(Debug, Clone, Default)]
 pub struct ServiceComplianceSummary {
     /// Number of reporting periods in the simulation.
     pub period_count: usize,
-    /// Number of nodes included in the analysis.
+    /// Number of junction nodes included in the analysis (reservoirs and
+    /// tanks are excluded; analysis spec §4.1).
     pub node_count: usize,
-    /// Total number of (node, period) pressure samples.
+    /// Total number of (junction, period) pressure samples.
     pub total_samples: usize,
     /// Number of samples within the acceptable pressure range.
     pub within_limits_samples: usize,
@@ -128,26 +132,33 @@ pub struct ServiceComplianceReport {
     pub report_step_seconds: f64,
     /// Total number of reporting periods in the `.out` file.
     pub period_count: usize,
-    /// Per-node metrics, ordered to match [`crate::Network::nodes`].
+    /// Per-junction metrics, ordered by node index in [`crate::Network::nodes`]
+    /// (reservoir/tank indices are skipped).
     pub nodes: Vec<ServiceComplianceNode>,
-    /// Network-level summary aggregated from all nodes.
+    /// Network-level summary aggregated from all junctions.
     pub summary: ServiceComplianceSummary,
 }
 
-/// Compute node-pressure service compliance metrics from a persisted `.out` file.
+/// Compute junction-pressure service compliance metrics from a persisted `.out` file.
 ///
 /// **Inputs** (via [`ServiceComplianceThresholds`]):
-/// - pressure samples by node and reporting period (read from `.out`)
+/// - pressure samples by junction and reporting period (read from `.out`)
 /// - reporting period duration
 /// - minimum pressure threshold
 /// - optional maximum pressure threshold
+///
+/// Only **junction** nodes are analysed (analysis spec §4.1): reservoirs sit
+/// at ≈ 0 gauge pressure by construction and tanks are storage nodes, so
+/// counting them would register permanent violations and deflate the
+/// compliance ratio on every network. Junction membership is derived from the
+/// `.out` prolog's tank/reservoir node index list — no network load required.
 ///
 /// Pressure thresholds are interpreted in the same pressure units stored in the
 /// `.out` file. Uses a streaming pass over periods — all node pressures are
 /// never held in memory simultaneously.
 ///
 /// **Outputs** (in [`ServiceComplianceReport`]):
-/// - per-node: in-limit sample count/ratio, below-minimum and above-maximum
+/// - per-junction: in-limit sample count/ratio, below-minimum and above-maximum
 ///   counts, longest continuous violation streak, pressure deficit/excess
 ///   integrals over time
 /// - network-level summary statistics
@@ -170,21 +181,34 @@ pub fn compute_service_compliance_from_out(
         1.0
     };
 
-    let mut nodes = vec![ServiceComplianceNode::default(); meta.n_nodes];
-    for (i, node) in nodes.iter_mut().enumerate() {
-        node.node_index = i;
+    // Junctions = all nodes minus the prolog's tank/reservoir index list
+    // (analysis spec §4.1).
+    let tank_indices = out_reader::read_tank_node_indices(out_path, &meta)
+        .map_err(AnalysisComputeError::OutRead)?;
+    let mut is_junction = vec![true; meta.n_nodes];
+    for idx in tank_indices {
+        is_junction[idx - 1] = false; // 1-based, validated by the reader
     }
-    let mut current_streaks = vec![0usize; meta.n_nodes];
+    let junction_indices: Vec<usize> = (0..meta.n_nodes).filter(|&i| is_junction[i]).collect();
+
+    let mut nodes: Vec<ServiceComplianceNode> = junction_indices
+        .iter()
+        .map(|&node_index| ServiceComplianceNode {
+            node_index,
+            ..ServiceComplianceNode::default()
+        })
+        .collect();
+    let mut current_streaks = vec![0usize; nodes.len()];
 
     for period in 0..meta.n_periods {
         let period_results = out_reader::read_period(out_path, &meta, period)
             .map_err(AnalysisComputeError::OutRead)?;
 
-        for (i, pressure) in period_results.node_pressure.iter().enumerate() {
+        for (j, (node, &node_index)) in nodes.iter_mut().zip(&junction_indices).enumerate() {
             observe_pressure_sample(
-                &mut nodes[i],
-                &mut current_streaks[i],
-                *pressure as f64,
+                node,
+                &mut current_streaks[j],
+                period_results.node_pressure[node_index] as f64,
                 thresholds,
                 dt,
             );
@@ -193,8 +217,8 @@ pub fn compute_service_compliance_from_out(
 
     let mut summary = ServiceComplianceSummary {
         period_count: meta.n_periods,
-        node_count: meta.n_nodes,
-        total_samples: meta.n_nodes.saturating_mul(meta.n_periods),
+        node_count: junction_indices.len(),
+        total_samples: junction_indices.len().saturating_mul(meta.n_periods),
         ..ServiceComplianceSummary::default()
     };
 
@@ -330,5 +354,121 @@ mod tests {
         };
         let err = validate_thresholds(bad).expect_err("expected invalid threshold error");
         assert!(matches!(err, AnalysisComputeError::InvalidInput(_)));
+    }
+
+    struct MockSession {
+        network: crate::Network,
+        snapshots: Vec<crate::io::HydSnapshot>,
+    }
+
+    impl crate::io::WritableSimulation for MockSession {
+        fn net(&self) -> &crate::Network {
+            &self.network
+        }
+        fn snapshots(&self) -> &[crate::io::HydSnapshot] {
+            &self.snapshots
+        }
+        fn pump_energy_at(&self, _: usize) -> Option<&crate::io::PumpEnergy> {
+            None
+        }
+        fn peak_demand_kw(&self) -> f64 {
+            0.0
+        }
+        fn mass_balance(&self) -> Option<&crate::io::MassBalance> {
+            None
+        }
+        fn warnings(&self) -> &[crate::io::SimWarning] {
+            &[]
+        }
+        fn pump_energy_by_id(&self, _: &str) -> Option<&crate::io::PumpEnergy> {
+            None
+        }
+        fn analysis_times(&self) -> (Option<std::time::SystemTime>, Option<std::time::SystemTime>) {
+            (None, None)
+        }
+        fn flow_balance(&self) -> Option<&crate::io::FlowBalance> {
+            None
+        }
+        fn flow_balance_summary(&self) -> Option<crate::io::FlowBalanceSummary> {
+            None
+        }
+    }
+
+    /// A reservoir sits at ≈ 0 gauge pressure permanently; it must not count
+    /// as a violating "node" (analysis spec §4.1: junctions only).
+    #[test]
+    fn compliance_excludes_reservoirs_from_samples_and_counts() {
+        // R1 (head 100 m, gauge pressure 0) feeding J1 and J2 (pressures
+        // 50 m and 45 m — comfortably above the 10 m threshold).
+        let inp = "[JUNCTIONS]\nJ1  0  10\nJ2  0  10\n\n\
+                   [RESERVOIRS]\nR1  100\n\n\
+                   [PIPES]\nP1  R1  J1  1000  300  100  0  Open\nP2  J1  J2  800  250  100  0  Open\n\n\
+                   [OPTIONS]\nUnits  LPS\nHeadloss  H-W\n\n[END]\n";
+        let network = crate::io::parse(inp.as_bytes()).expect("parse network");
+        // Node order: J1, J2, R1.
+        assert!(matches!(
+            network.nodes[2].kind,
+            crate::NodeKind::Reservoir(_)
+        ));
+
+        let mut node_states: Vec<crate::NodeState> = network
+            .nodes
+            .iter()
+            .map(|n| crate::NodeState {
+                head: n.base.elevation, // reservoir: gauge pressure 0
+                ..crate::NodeState::default()
+            })
+            .collect();
+        node_states[0].head = 50.0; // J1: 50 m gauge
+        node_states[1].head = 45.0; // J2: 45 m gauge
+        let link_states = network
+            .links
+            .iter()
+            .map(|_| crate::LinkState::default())
+            .collect();
+
+        let session = MockSession {
+            network,
+            snapshots: vec![crate::io::HydSnapshot {
+                t: 0.0,
+                node_states,
+                link_states,
+            }],
+        };
+
+        let mut buf = std::io::Cursor::new(Vec::new());
+        crate::io::out_writer::write_binary_output(
+            &mut buf,
+            &session,
+            "test.inp",
+            "",
+            crate::FlowUnits::Lps,
+        )
+        .expect("write .out");
+
+        let mut path = std::env::temp_dir();
+        path.push(format!(
+            "hydra-service-compliance-junctions-{}-{:?}.out",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        std::fs::write(&path, buf.into_inner()).expect("persist .out");
+
+        let report =
+            compute_service_compliance_from_out(&path, ServiceComplianceThresholds::min_only(10.0))
+                .expect("compute compliance");
+        let _ = std::fs::remove_file(&path);
+
+        // Junctions only: the reservoir contributes no samples and no node.
+        assert_eq!(report.summary.node_count, 2);
+        assert_eq!(report.summary.total_samples, 2);
+        assert_eq!(report.summary.below_min_samples, 0);
+        assert!(
+            (report.summary.compliance_ratio() - 1.0).abs() < 1e-12,
+            "reservoir must not deflate the compliance ratio (got {})",
+            report.summary.compliance_ratio()
+        );
+        let indices: Vec<usize> = report.nodes.iter().map(|n| n.node_index).collect();
+        assert_eq!(indices, vec![0, 1], "reservoir index 2 must be excluded");
     }
 }
