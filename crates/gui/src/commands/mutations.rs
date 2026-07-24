@@ -914,7 +914,6 @@ pub fn create_node(
                 mix_fraction: 1.0,
                 bulk_coeff: 0.0,
                 overflow: false,
-                head_pattern: None,
             }),
             other => return Err(format!("unknown node kind '{}'", other)),
         };
@@ -1267,11 +1266,9 @@ pub fn rename_pattern(
                         r.head_pattern = Some(trimmed.clone());
                     }
                 }
-                hydra::NodeKind::Tank(t) => {
-                    if t.head_pattern.as_deref() == Some(old_id.as_str()) {
-                        t.head_pattern = Some(trimmed.clone());
-                    }
-                }
+                // Tanks carry no pattern references (head patterns are
+                // reservoir-only).
+                hydra::NodeKind::Tank(_) => {}
             }
         }
         for l in network.links.iter_mut() {
@@ -1296,7 +1293,7 @@ pub fn rename_pattern(
 
 /// Delete a time pattern from the network.
 ///
-/// Fails if any junction demand, reservoir/tank head pattern, pump
+/// Fails if any junction demand, reservoir head pattern, pump
 /// speed/price pattern, or the global default/energy-price pattern (from
 /// `[OPTIONS]`) still references it — the reference must be cleared first so
 /// the network never ends up with a dangling pattern ID that would fail to
@@ -1328,11 +1325,9 @@ pub fn delete_pattern(
                         referenced_by.push(n.base.id.clone());
                     }
                 }
-                hydra::NodeKind::Tank(t) => {
-                    if t.head_pattern.as_deref() == Some(id.as_str()) {
-                        referenced_by.push(n.base.id.clone());
-                    }
-                }
+                // Tanks carry no pattern references (head patterns are
+                // reservoir-only).
+                hydra::NodeKind::Tank(_) => {}
             }
         }
         for l in &network.links {

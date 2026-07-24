@@ -331,7 +331,6 @@ mod tests {
                 mix_fraction: 0.5,
                 bulk_coeff: 0.0,
                 overflow: false,
-                head_pattern: None,
             }),
             source: None,
         });
@@ -365,7 +364,6 @@ mod tests {
                 mix_fraction: 0.5,
                 bulk_coeff: 0.0,
                 overflow: false,
-                head_pattern: None,
             }),
             source: None,
         });
@@ -849,7 +847,6 @@ mod tests {
             mix_fraction: 0.5,
             bulk_coeff: 0.0,
             overflow: false,
-            head_pattern: None,
         }
     }
 
@@ -916,7 +913,6 @@ mod tests {
             mix_fraction: 0.5,
             bulk_coeff: 0.0,
             overflow: false,
-            head_pattern: None,
         };
         let curves = vec![curve];
         // Area at any interior level = dV/dh = 50/10 = 5.

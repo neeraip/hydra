@@ -557,7 +557,6 @@ impl TestNetworkBuilder {
                         mix_fraction: *mix_fraction,
                         bulk_coeff: *bulk_coeff,
                         overflow: *overflow,
-                        head_pattern: None,
                     }),
                 };
                 Node {

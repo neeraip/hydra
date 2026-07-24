@@ -666,8 +666,6 @@ pub struct Tank {
     pub bulk_coeff: f64,
     /// Whether tank can overflow (spill above `max_level`).
     pub overflow: bool,
-    /// Optional pattern ID modulating head over time for fixed-head operation.
-    pub head_pattern: Option<String>,
 }
 
 impl Tank {
@@ -1378,7 +1376,6 @@ mod tests {
             mix_fraction: 1.0,
             bulk_coeff: 0.0,
             overflow: false,
-            head_pattern: None,
         };
         // elevation=50, min_level=2 → bottom=48; head = 48 + level=5 = 53.
         assert!((t.head_from_level(50.0, 5.0) - 53.0).abs() < 1e-12);
@@ -1399,7 +1396,6 @@ mod tests {
             mix_fraction: 1.0,
             bulk_coeff: 0.0,
             overflow: false,
-            head_pattern: None,
         };
         // V = π * (4/2)² * level = π * 4 * 3 = 12π.
         let expected = std::f64::consts::PI * 4.0 * 3.0;

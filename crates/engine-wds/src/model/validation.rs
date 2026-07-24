@@ -407,9 +407,6 @@ impl Network {
                     }
                 }
                 NodeKind::Tank(t) => {
-                    if let Some(ref pat_id) = t.head_pattern {
-                        chk_pattern!(oid, pat_id);
-                    }
                     if let Some(ref curve_id) = t.volume_curve {
                         chk_curve!(oid, curve_id, CurveKind::TankVolume);
                     }
@@ -950,7 +947,6 @@ mod tests {
             mix_fraction: 1.0,
             bulk_coeff: 0.0,
             overflow: false,
-            head_pattern: None,
         });
         let errs = net.validate().unwrap_err();
         assert!(
