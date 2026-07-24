@@ -8,7 +8,11 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useAppState } from "../../AppContext";
 import { type CurvePoint, type PumpCurve, useCurves } from "../../hooks";
 import { useDraft } from "../../hooks/DraftContext";
-import { EditableCell } from "../../pages/project/NetworkEditor/TablePrimitives";
+import {
+  EditableCell,
+  useVirtualRows,
+  VirtualSpacerRow,
+} from "../../pages/project/NetworkEditor/TablePrimitives";
 import {
   formatQtyRaw,
   fromDisplay,
@@ -17,11 +21,17 @@ import {
   useUnitSystem,
 } from "../../units";
 import { DeleteConfirmModal } from "../modals/DeleteConfirmModal";
+import { EditorSidebarList } from "./EditorSidebarList";
 
 const DEFAULT_CURVE_POINTS: CurvePoint[] = [
   { flow: 0, head: 50 },
   { flow: 5, head: 0 },
 ];
+
+/** Above this many points the chart skips per-point hover markers (the
+ * polyline itself is a single element at any size). Curves this long come
+ * from imported files, not hand editing. */
+const MAX_CHART_POINT_MARKERS = 500;
 
 function classifyCurveType(n: number): PumpCurve["curveType"] {
   return n === 1 ? "single-point" : n === 3 ? "three-point" : "multi-point";
@@ -54,6 +64,10 @@ export function CurveEditor({
   const [createError, setCreateError] = useState<string | null>(null);
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
   const newIdRef = useRef<HTMLInputElement | null>(null);
+  // Scroll container of the points column — owned here so PointsTable can
+  // virtualize its rows against it (imported curves can carry thousands of
+  // points).
+  const pointsScrollRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     if (creating) newIdRef.current?.focus();
@@ -171,16 +185,11 @@ export function CurveEditor({
 
   return (
     <div style={{ flex: 1, display: "flex", overflow: "hidden", minHeight: 0 }}>
-      {/* Curve list */}
-      <div
-        style={{
-          width: 220,
-          borderRight: "1px solid var(--border)",
-          overflow: "auto",
-          flexShrink: 0,
-        }}
-      >
-        {mergedCurves.map((c) => {
+      {/* Curve list (virtualized — large models can carry many curves) */}
+      <EditorSidebarList
+        items={mergedCurves}
+        getKey={(c) => c.id}
+        renderItem={(c) => {
           const active = c.id === (activeId ?? mergedCurves[0]?.id);
           const isDirty =
             curveAdds.has(c.id) ||
@@ -189,7 +198,6 @@ export function CurveEditor({
           return (
             <button
               type="button"
-              key={c.id}
               onClick={() => setActiveId(c.id)}
               style={{
                 display: "block",
@@ -243,114 +251,116 @@ export function CurveEditor({
               </div>
             </button>
           );
-        })}
-        {creating ? (
-          <div
-            style={{
-              padding: "8px 12px",
-              borderBottom: "1px solid var(--border)",
-            }}
-          >
-            <input
-              ref={newIdRef}
-              value={newId}
-              onChange={(e) => {
-                setNewId(e.target.value);
-                setCreateError(null);
+        }}
+        footer={
+          creating ? (
+            <div
+              style={{
+                padding: "8px 12px",
+                borderBottom: "1px solid var(--border)",
               }}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") handleCreate();
-                if (e.key === "Escape") {
-                  setCreating(false);
-                  setNewId("");
+            >
+              <input
+                ref={newIdRef}
+                value={newId}
+                onChange={(e) => {
+                  setNewId(e.target.value);
                   setCreateError(null);
-                }
-              }}
-              placeholder="Curve ID…"
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") handleCreate();
+                  if (e.key === "Escape") {
+                    setCreating(false);
+                    setNewId("");
+                    setCreateError(null);
+                  }
+                }}
+                placeholder="Curve ID…"
+                style={{
+                  width: "100%",
+                  height: 26,
+                  background: "var(--bg-input)",
+                  border: `1px solid ${createError ? "var(--status-error)" : "var(--border-focus)"}`,
+                  borderRadius: 4,
+                  padding: "0 6px",
+                  color: "var(--text-primary)",
+                  fontFamily: "var(--font-mono)",
+                  fontSize: 12,
+                  outline: "none",
+                  boxSizing: "border-box",
+                }}
+              />
+              {createError && (
+                <div
+                  style={{
+                    fontSize: 11,
+                    color: "var(--status-error)",
+                    marginTop: 3,
+                  }}
+                >
+                  {createError}
+                </div>
+              )}
+              <div style={{ display: "flex", gap: 4, marginTop: 6 }}>
+                <button
+                  type="button"
+                  onClick={handleCreate}
+                  style={{
+                    flex: 1,
+                    height: 24,
+                    fontSize: 11,
+                    background: "var(--accent)",
+                    color: "#fff",
+                    border: "none",
+                    borderRadius: 4,
+                    cursor: "pointer",
+                  }}
+                >
+                  Add
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCreating(false);
+                    setNewId("");
+                    setCreateError(null);
+                  }}
+                  style={{
+                    flex: 1,
+                    height: 24,
+                    fontSize: 11,
+                    background: "var(--nav-hover)",
+                    color: "var(--text-secondary)",
+                    border: "none",
+                    borderRadius: 4,
+                    cursor: "pointer",
+                  }}
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          ) : (
+            <button
+              type="button"
+              onClick={() => setCreating(true)}
               style={{
                 width: "100%",
-                height: 26,
-                background: "var(--bg-input)",
-                border: `1px solid ${createError ? "var(--status-error)" : "var(--border-focus)"}`,
-                borderRadius: 4,
-                padding: "0 6px",
-                color: "var(--text-primary)",
-                fontFamily: "var(--font-mono)",
+                padding: "10px 12px",
+                border: "none",
+                background: "transparent",
+                color: "var(--text-tertiary)",
+                cursor: "pointer",
                 fontSize: 12,
-                outline: "none",
-                boxSizing: "border-box",
+                fontFamily: "var(--font-ui)",
+                textAlign: "left",
               }}
-            />
-            {createError && (
-              <div
-                style={{
-                  fontSize: 11,
-                  color: "var(--status-error)",
-                  marginTop: 3,
-                }}
-              >
-                {createError}
-              </div>
-            )}
-            <div style={{ display: "flex", gap: 4, marginTop: 6 }}>
-              <button
-                type="button"
-                onClick={handleCreate}
-                style={{
-                  flex: 1,
-                  height: 24,
-                  fontSize: 11,
-                  background: "var(--accent)",
-                  color: "#fff",
-                  border: "none",
-                  borderRadius: 4,
-                  cursor: "pointer",
-                }}
-              >
-                Add
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setCreating(false);
-                  setNewId("");
-                  setCreateError(null);
-                }}
-                style={{
-                  flex: 1,
-                  height: 24,
-                  fontSize: 11,
-                  background: "var(--nav-hover)",
-                  color: "var(--text-secondary)",
-                  border: "none",
-                  borderRadius: 4,
-                  cursor: "pointer",
-                }}
-              >
-                Cancel
-              </button>
-            </div>
-          </div>
-        ) : (
-          <button
-            type="button"
-            onClick={() => setCreating(true)}
-            style={{
-              width: "100%",
-              padding: "10px 12px",
-              border: "none",
-              background: "transparent",
-              color: "var(--text-tertiary)",
-              cursor: "pointer",
-              fontSize: 12,
-              fontFamily: "var(--font-ui)",
-              textAlign: "left",
-            }}
-          >
-            + New curve
-          </button>
-        )}
-      </div>
+            >
+              + New curve
+            </button>
+          )
+        }
+      />
 
       {/* Right pane */}
       {curve ? (
@@ -476,6 +486,7 @@ export function CurveEditor({
             </div>
 
             <div
+              ref={pointsScrollRef}
               style={{
                 width: 280,
                 borderLeft: "1px solid var(--border)",
@@ -484,6 +495,7 @@ export function CurveEditor({
               }}
             >
               <PointsTable
+                scrollRef={pointsScrollRef}
                 curve={curve}
                 accent={accent}
                 hoverIdx={hoverIdx}
@@ -717,25 +729,27 @@ function CurveChart({
           />
         )}
 
-        {/* points */}
-        {dispPoints.map((p, i) => {
-          const r = hoverIdx === i ? 5 : 3.5;
-          return (
-            // biome-ignore lint/a11y/noStaticElementInteractions: SVG points only expose hover feedback.
-            <circle
-              key={`${p.flow}-${p.head}`}
-              cx={sx(p.flow)}
-              cy={sy(p.head)}
-              r={r}
-              fill={hoverIdx === i ? accent : "var(--bg-app)"}
-              stroke={accent}
-              strokeWidth={1.5}
-              onMouseEnter={() => setHoverIdx(i)}
-              onMouseLeave={() => setHoverIdx(null)}
-              style={{ cursor: "pointer" }}
-            />
-          );
-        })}
+        {/* points — markers are skipped for very long imported curves; the
+            polyline above stays a single element at any size */}
+        {dispPoints.length <= MAX_CHART_POINT_MARKERS &&
+          dispPoints.map((p, i) => {
+            const r = hoverIdx === i ? 5 : 3.5;
+            return (
+              // biome-ignore lint/a11y/noStaticElementInteractions: SVG points only expose hover feedback.
+              <circle
+                key={`${p.flow}-${p.head}`}
+                cx={sx(p.flow)}
+                cy={sy(p.head)}
+                r={r}
+                fill={hoverIdx === i ? accent : "var(--bg-app)"}
+                stroke={accent}
+                strokeWidth={1.5}
+                onMouseEnter={() => setHoverIdx(i)}
+                onMouseLeave={() => setHoverIdx(null)}
+                style={{ cursor: "pointer" }}
+              />
+            );
+          })}
       </svg>
     </div>
   );
@@ -749,6 +763,7 @@ function PointsTable({
   onCommitPoint,
   onAddPoint,
   onRemovePoint,
+  scrollRef,
 }: {
   curve: PumpCurve;
   accent: string;
@@ -757,9 +772,20 @@ function PointsTable({
   onCommitPoint: (index: number, field: "flow" | "head", raw: string) => void;
   onAddPoint: () => void;
   onRemovePoint: (index: number) => void;
+  /** The points column's scrolling ancestor (owned by CurveEditor). */
+  scrollRef: React.RefObject<HTMLDivElement | null>;
 }) {
   const sys = useUnitSystem();
   const total = useMemo(() => curve.points.length, [curve]);
+  // Row virtualization (same spacer-row pattern as the Editor element
+  // tables): imported curves can hold thousands of points, and mounting a
+  // row of editable cells per point is the Issues-panel freeze class. The
+  // ~37px header above the table only shifts the window by ~1 row, which
+  // the overscan absorbs.
+  const { virtualItems, paddingTop, paddingBottom } = useVirtualRows(
+    curve.points,
+    scrollRef,
+  );
   return (
     <div>
       <div
@@ -817,11 +843,16 @@ function PointsTable({
           </tr>
         </thead>
         <tbody>
-          {curve.points.map((p: CurvePoint, i: number) => {
+          <VirtualSpacerRow height={paddingTop} colSpan={4} />
+          {virtualItems.map((vi) => {
+            const i = vi.index;
+            const p: CurvePoint = curve.points[i];
             const isHover = hoverIdx === i;
             return (
               <tr
-                // biome-ignore lint/suspicious/noArrayIndexKey: points have no stable id; edits append/remove/edit in place rather than reordering.
+                // Points have no stable id; edits append/remove/edit in
+                // place rather than reordering, so the index-derived key is
+                // stable enough.
                 key={`${p.flow}-${p.head}-${i}`}
                 onMouseEnter={() => setHoverIdx(i)}
                 onMouseLeave={() => setHoverIdx(null)}
@@ -871,6 +902,7 @@ function PointsTable({
               </tr>
             );
           })}
+          <VirtualSpacerRow height={paddingBottom} colSpan={4} />
         </tbody>
       </table>
     </div>

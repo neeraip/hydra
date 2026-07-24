@@ -5,6 +5,12 @@ import type { Link, Node, Pattern } from "../../hooks";
 import { useLinks, useNodes, usePatterns } from "../../hooks";
 import { perfTrace } from "../../perfTrace";
 import { toDisplay, useUnitSystem } from "../../units";
+import { downsampleMinMax } from "../editors/patternDownsample";
+
+/** Preview strip is 220 units wide; more bars than half that cannot render
+ * visibly distinct, so longer patterns are bucket-max downsampled — an
+ * hourly-for-a-year pattern would otherwise mount 8,760 `<rect>`s per card. */
+const MAX_PREVIEW_BARS = 110;
 
 // ── Sort / filter hook ────────────────────────────────────────────────────────
 
@@ -639,6 +645,18 @@ function PatternsTab({
   patterns: Pattern[];
   onSelect?: (id: string) => void;
 }) {
+  // Virtualized like the nodes/links tabs: networks can carry thousands of
+  // patterns (e.g. per-junction demand patterns), and one card each — with
+  // an SVG preview inside — is the Issues-panel freeze class.
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+  const virtualizer = useVirtualizer({
+    count: patterns.length,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: () => 104,
+    overscan: 8,
+    getItemKey: (index) => patterns[index].id,
+  });
+
   if (patterns.length === 0) {
     return (
       <div
@@ -656,103 +674,131 @@ function PatternsTab({
 
   return (
     <div
+      ref={scrollRef}
       style={{
         padding: "10px 12px",
-        display: "flex",
-        flexDirection: "column",
-        gap: 16,
         overflowY: "auto",
         flex: 1,
       }}
     >
-      {patterns.map((pattern) => {
-        const max = Math.max(...pattern.multipliers, 1);
-        const peak = Math.max(...pattern.multipliers);
-        const VW = 220;
-        const H = 44;
-        const barW = Math.max(1, VW / pattern.multipliers.length - 1);
-
-        return (
-          <button
-            type="button"
-            key={pattern.id}
-            onClick={() => onSelect?.(pattern.id)}
-            onKeyDown={(e) => {
-              if (!onSelect) return;
-              if (e.key === "Enter" || e.key === " ") {
-                e.preventDefault();
-                onSelect(pattern.id);
-              }
-            }}
+      <div style={{ height: virtualizer.getTotalSize(), position: "relative" }}>
+        {virtualizer.getVirtualItems().map((vi) => (
+          <div
+            key={vi.key}
+            ref={virtualizer.measureElement}
+            data-index={vi.index}
             style={{
-              cursor: onSelect ? "pointer" : undefined,
-              border: "none",
-              textAlign: "left",
-              background: "transparent",
-              borderRadius: 4,
-              padding: "4px 6px",
-              margin: "-4px -6px",
-              transition: "background 0.1s",
-            }}
-            onMouseEnter={(e) => {
-              if (onSelect)
-                (e.currentTarget as HTMLButtonElement).style.background =
-                  "var(--bg-hover, rgba(255,255,255,0.06))";
-            }}
-            onMouseLeave={(e) => {
-              (e.currentTarget as HTMLButtonElement).style.background = "";
+              position: "absolute",
+              top: 0,
+              left: 0,
+              width: "100%",
+              transform: `translateY(${vi.start}px)`,
+              paddingBottom: 16,
             }}
           >
-            <div
-              style={{
-                fontSize: 11,
-                color: "var(--text-secondary)",
-                marginBottom: 6,
-              }}
-            >
-              {pattern.id}
-            </div>
-            <svg
-              width="100%"
-              height={H}
-              viewBox={`0 0 ${VW} ${H}`}
-              preserveAspectRatio="none"
-              style={{ display: "block" }}
-            >
-              <title>
-                {pattern.id ? `${pattern.id} preview` : "Pattern preview"}
-              </title>
-              {pattern.multipliers.map((value, i) => {
-                const x = i * (barW + 1);
-                const bh = (value / max) * H;
-                return (
-                  <rect
-                    key={`${pattern.id}-${x}`}
-                    x={x}
-                    y={H - bh}
-                    width={barW}
-                    height={bh}
-                    fill="var(--accent)"
-                    opacity={0.75}
-                  />
-                );
-              })}
-            </svg>
-            <div
-              style={{
-                fontSize: 10,
-                color: "var(--text-tertiary)",
-                marginTop: 4,
-              }}
-            >
-              {pattern.multipliers.length} step
-              {pattern.multipliers.length === 1 ? "" : "s"} · peak{" "}
-              {peak.toFixed(2)}
-            </div>
-          </button>
-        );
-      })}
+            <PatternCard pattern={patterns[vi.index]} onSelect={onSelect} />
+          </div>
+        ))}
+      </div>
     </div>
+  );
+}
+
+function PatternCard({
+  pattern,
+  onSelect,
+}: {
+  pattern: Pattern;
+  onSelect?: (id: string) => void;
+}) {
+  const VW = 220;
+  const H = 44;
+  // Bucket-max downsampling caps the `<rect>` count per preview while
+  // preserving every peak (see downsampleMinMax).
+  const bars = useMemo(
+    () => downsampleMinMax(pattern.multipliers, MAX_PREVIEW_BARS),
+    [pattern.multipliers],
+  );
+  const peak = bars.reduce((acc, b) => Math.max(acc, b.max), 0);
+  const max = Math.max(peak, 1);
+  const barW = Math.max(1, VW / bars.length - 1);
+
+  return (
+    <button
+      type="button"
+      onClick={() => onSelect?.(pattern.id)}
+      onKeyDown={(e) => {
+        if (!onSelect) return;
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onSelect(pattern.id);
+        }
+      }}
+      style={{
+        cursor: onSelect ? "pointer" : undefined,
+        border: "none",
+        textAlign: "left",
+        background: "transparent",
+        borderRadius: 4,
+        padding: "4px 6px",
+        width: "100%",
+        transition: "background 0.1s",
+      }}
+      onMouseEnter={(e) => {
+        if (onSelect)
+          (e.currentTarget as HTMLButtonElement).style.background =
+            "var(--bg-hover, rgba(255,255,255,0.06))";
+      }}
+      onMouseLeave={(e) => {
+        (e.currentTarget as HTMLButtonElement).style.background = "";
+      }}
+    >
+      <div
+        style={{
+          fontSize: 11,
+          color: "var(--text-secondary)",
+          marginBottom: 6,
+        }}
+      >
+        {pattern.id}
+      </div>
+      <svg
+        width="100%"
+        height={H}
+        viewBox={`0 0 ${VW} ${H}`}
+        preserveAspectRatio="none"
+        style={{ display: "block" }}
+      >
+        <title>
+          {pattern.id ? `${pattern.id} preview` : "Pattern preview"}
+        </title>
+        {bars.map((bucket, i) => {
+          const x = i * (barW + 1);
+          const bh = (bucket.max / max) * H;
+          return (
+            <rect
+              key={`${pattern.id}-${x}`}
+              x={x}
+              y={H - bh}
+              width={barW}
+              height={bh}
+              fill="var(--accent)"
+              opacity={0.75}
+            />
+          );
+        })}
+      </svg>
+      <div
+        style={{
+          fontSize: 10,
+          color: "var(--text-tertiary)",
+          marginTop: 4,
+        }}
+      >
+        {pattern.multipliers.length} step
+        {pattern.multipliers.length === 1 ? "" : "s"} · peak {peak.toFixed(2)}
+      </div>
+    </button>
   );
 }
 

@@ -2,6 +2,11 @@ import { useSimulation } from "../../../AppContext";
 import { SectionHeader } from "../../../components/ui/SectionHeader";
 import { NoDataCard } from "./charts";
 
+/** Bars shown in this display-only summary. Large models can carry hundreds
+ * of pumps; the list is sorted by average power, so the cap keeps the
+ * heaviest consumers and a footer reports the remainder. */
+const MAX_PUMP_ROWS = 15;
+
 export function PumpEnergyPanel() {
   const { pumpEnergy } = useSimulation();
 
@@ -36,6 +41,8 @@ export function PumpEnergyPanel() {
     );
   }
 
+  const shownRows = pumpRows.slice(0, MAX_PUMP_ROWS);
+  const hiddenCount = pumpRows.length - shownRows.length;
   const maxEnergy = Math.max(...pumpRows.map((r) => r.energy));
 
   // Whole-run totals. `totalKwh` may be absent at runtime while the backend
@@ -58,7 +65,7 @@ export function PumpEnergyPanel() {
   return (
     <div className="insights-card">
       <SectionHeader>Pump Energy</SectionHeader>
-      {pumpRows.map((row) => {
+      {shownRows.map((row) => {
         const pct = (row.energy / maxEnergy) * 100;
         return (
           <div
@@ -112,6 +119,19 @@ export function PumpEnergyPanel() {
           </div>
         );
       })}
+      {hiddenCount > 0 && (
+        <div
+          style={{
+            fontSize: 11,
+            fontStyle: "italic",
+            color: "var(--text-tertiary)",
+            marginBottom: 8,
+          }}
+        >
+          …and {hiddenCount} more pump{hiddenCount === 1 ? "" : "s"} (totals
+          below include all pumps)
+        </div>
+      )}
       {hasKwh && (
         <div
           style={{

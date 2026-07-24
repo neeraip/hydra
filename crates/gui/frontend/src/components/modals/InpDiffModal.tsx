@@ -21,6 +21,11 @@ function formatValue(value: number | string): string {
   return String(value);
 }
 
+/** Rows rendered per kind section. Bulk edits can stage tens of thousands of
+ * patches; this is a display-only preview, so beyond the cap a summary row
+ * reports the remainder instead of mounting a `<tr>` per patch. */
+const MAX_ROWS_PER_GROUP = 150;
+
 // ── Component ─────────────────────────────────────────────────────────────────
 
 interface InpDiffModalProps {
@@ -200,7 +205,7 @@ export function InpDiffModal({ patches, onClose }: InpDiffModalProps) {
                   </tr>
                 </thead>
                 <tbody>
-                  {items.map((item) => (
+                  {items.slice(0, MAX_ROWS_PER_GROUP).map((item) => (
                     <tr
                       key={`${item.id}-${item.field}-${String(item.value)}`}
                       onMouseEnter={(e) => {
@@ -219,6 +224,25 @@ export function InpDiffModal({ patches, onClose }: InpDiffModalProps) {
                       <td style={COL_VALUE}>{formatValue(item.value)}</td>
                     </tr>
                   ))}
+                  {items.length > MAX_ROWS_PER_GROUP && (
+                    <tr>
+                      <td
+                        colSpan={3}
+                        style={{
+                          padding: "8px 12px",
+                          fontSize: 12,
+                          fontStyle: "italic",
+                          color: "var(--text-tertiary)",
+                          borderBottom: "1px solid var(--border)",
+                        }}
+                      >
+                        …and {items.length - MAX_ROWS_PER_GROUP} more{" "}
+                        {formatKind(kind).toLowerCase()} change
+                        {items.length - MAX_ROWS_PER_GROUP === 1 ? "" : "s"}{" "}
+                        (all included in the save)
+                      </td>
+                    </tr>
+                  )}
                 </tbody>
               </table>
             </div>

@@ -13,6 +13,12 @@ import { CompletedRow, FailedRow, QueuedRow } from "./TaskTray/SettledRows";
 // actually render instead of being replaced in the same paint it appears in.
 const HOLD_MS = 700;
 
+// Settled rows accumulate for the whole session (they persist until
+// dismissed), so a long batch-run session could otherwise mount an
+// unbounded row list. Newest-first, so the cap keeps the most recent
+// finishes and a footer reports the remainder.
+const MAX_SETTLED_ROWS = 50;
+
 // ── Main component ────────────────────────────────────────────────────────────
 
 export function TaskTray() {
@@ -453,21 +459,39 @@ export function TaskTray() {
                 Finished: {settledTasks.length}
               </div>
             )}
-            {settledTasks.map((task) =>
-              task.status === "completed" ? (
-                <CompletedRow
-                  key={task.id}
-                  task={task}
-                  onViewResults={() => handleViewResults(task)}
-                  onDismiss={() => dismissTask(task.id)}
-                />
-              ) : (
-                <FailedRow
-                  key={task.id}
-                  task={task}
-                  onDismiss={() => dismissTask(task.id)}
-                />
-              ),
+            {settledTasks
+              .slice(0, MAX_SETTLED_ROWS)
+              .map((task) =>
+                task.status === "completed" ? (
+                  <CompletedRow
+                    key={task.id}
+                    task={task}
+                    onViewResults={() => handleViewResults(task)}
+                    onDismiss={() => dismissTask(task.id)}
+                  />
+                ) : (
+                  <FailedRow
+                    key={task.id}
+                    task={task}
+                    onDismiss={() => dismissTask(task.id)}
+                  />
+                ),
+              )}
+            {settledTasks.length > MAX_SETTLED_ROWS && (
+              <div
+                style={{
+                  padding: "8px 14px",
+                  fontSize: 11,
+                  fontStyle: "italic",
+                  color: "var(--text-tertiary)",
+                  borderTop: "1px solid var(--border)",
+                }}
+              >
+                …and {settledTasks.length - MAX_SETTLED_ROWS} older finished
+                task
+                {settledTasks.length - MAX_SETTLED_ROWS === 1 ? "" : "s"} — use
+                "Clear all" to reset the list
+              </div>
             )}
           </>
         )}

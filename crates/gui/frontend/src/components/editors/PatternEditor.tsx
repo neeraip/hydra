@@ -4,14 +4,34 @@
    draft alongside Elements/Curves/Controls, saved or discarded together. */
 
 import { TrashIcon } from "@heroicons/react/16/solid";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useAppState } from "../../AppContext";
 import { renamePattern, type TimePattern, usePatterns } from "../../hooks";
 import { useDraft } from "../../hooks/DraftContext";
 import { useNetworkVersion } from "../../hooks/NetworkVersionContext";
 import { DeleteConfirmModal } from "../modals/DeleteConfirmModal";
+import { EditorSidebarList } from "./EditorSidebarList";
+import { downsampleMinMax, envelopePath } from "./patternDownsample";
 
 const DEFAULT_PATTERN_MULTIPLIERS: number[] = new Array(24).fill(1.0);
+
+/** Above this many multipliers the interactive per-bar strip (one DOM
+ * element per step) switches to a downsampled SVG envelope — an
+ * hourly-for-a-year pattern has 8,760 steps and per-bar DOM at that size
+ * is the Issues-panel freeze class. Editing stays available through the
+ * numeric grid, which virtualizes at the same scale. */
+const MAX_INTERACTIVE_BARS = 168;
+
+/** SVG envelope resolution (buckets) for long patterns. */
+const ENVELOPE_BUCKETS = 200;
+
+/** Numeric-grid inputs per row (mirrors the 12-column grid layout). */
+const GRID_COLS = 12;
+
+/** Above this many multipliers the numeric grid virtualizes its rows inside
+ * a fixed-height scroller instead of mounting one input per step. */
+const MAX_UNVIRTUALIZED_GRID_VALUES = 192;
 
 export function PatternEditor({ accent }: { accent: string }) {
   const { showToast } = useAppState();
@@ -157,16 +177,11 @@ export function PatternEditor({ accent }: { accent: string }) {
 
   return (
     <div style={{ flex: 1, display: "flex", overflow: "hidden", minHeight: 0 }}>
-      {/* Pattern list */}
-      <div
-        style={{
-          width: 220,
-          borderRight: "1px solid var(--border)",
-          overflow: "auto",
-          flexShrink: 0,
-        }}
-      >
-        {patterns.map((p) => {
+      {/* Pattern list (virtualized — networks can carry thousands of patterns) */}
+      <EditorSidebarList
+        items={patterns}
+        getKey={(p) => p.id}
+        renderItem={(p) => {
           const active = p.id === effectiveId;
           const isDirty =
             patternAdds.has(p.id) ||
@@ -175,7 +190,6 @@ export function PatternEditor({ accent }: { accent: string }) {
           return (
             <button
               type="button"
-              key={p.id}
               onClick={() => setActiveId(p.id)}
               style={{
                 display: "block",
@@ -229,114 +243,116 @@ export function PatternEditor({ accent }: { accent: string }) {
               </div>
             </button>
           );
-        })}
-        {creating ? (
-          <div
-            style={{
-              padding: "8px 12px",
-              borderBottom: "1px solid var(--border)",
-            }}
-          >
-            <input
-              ref={newIdRef}
-              value={newId}
-              onChange={(e) => {
-                setNewId(e.target.value);
-                setCreateError(null);
+        }}
+        footer={
+          creating ? (
+            <div
+              style={{
+                padding: "8px 12px",
+                borderBottom: "1px solid var(--border)",
               }}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") handleCreate();
-                if (e.key === "Escape") {
-                  setCreating(false);
-                  setNewId("");
+            >
+              <input
+                ref={newIdRef}
+                value={newId}
+                onChange={(e) => {
+                  setNewId(e.target.value);
                   setCreateError(null);
-                }
-              }}
-              placeholder="Pattern ID…"
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") handleCreate();
+                  if (e.key === "Escape") {
+                    setCreating(false);
+                    setNewId("");
+                    setCreateError(null);
+                  }
+                }}
+                placeholder="Pattern ID…"
+                style={{
+                  width: "100%",
+                  height: 26,
+                  background: "var(--bg-input)",
+                  border: `1px solid ${createError ? "var(--status-error)" : "var(--border-focus)"}`,
+                  borderRadius: 4,
+                  padding: "0 6px",
+                  color: "var(--text-primary)",
+                  fontFamily: "var(--font-mono)",
+                  fontSize: 12,
+                  outline: "none",
+                  boxSizing: "border-box",
+                }}
+              />
+              {createError && (
+                <div
+                  style={{
+                    fontSize: 11,
+                    color: "var(--status-error)",
+                    marginTop: 3,
+                  }}
+                >
+                  {createError}
+                </div>
+              )}
+              <div style={{ display: "flex", gap: 4, marginTop: 6 }}>
+                <button
+                  type="button"
+                  onClick={handleCreate}
+                  style={{
+                    flex: 1,
+                    height: 24,
+                    fontSize: 11,
+                    background: "var(--accent)",
+                    color: "#fff",
+                    border: "none",
+                    borderRadius: 4,
+                    cursor: "pointer",
+                  }}
+                >
+                  Add
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCreating(false);
+                    setNewId("");
+                    setCreateError(null);
+                  }}
+                  style={{
+                    flex: 1,
+                    height: 24,
+                    fontSize: 11,
+                    background: "var(--nav-hover)",
+                    color: "var(--text-secondary)",
+                    border: "none",
+                    borderRadius: 4,
+                    cursor: "pointer",
+                  }}
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          ) : (
+            <button
+              type="button"
+              onClick={() => setCreating(true)}
               style={{
                 width: "100%",
-                height: 26,
-                background: "var(--bg-input)",
-                border: `1px solid ${createError ? "var(--status-error)" : "var(--border-focus)"}`,
-                borderRadius: 4,
-                padding: "0 6px",
-                color: "var(--text-primary)",
-                fontFamily: "var(--font-mono)",
+                padding: "10px 12px",
+                border: "none",
+                background: "transparent",
+                color: "var(--text-tertiary)",
+                cursor: "pointer",
                 fontSize: 12,
-                outline: "none",
-                boxSizing: "border-box",
+                fontFamily: "var(--font-ui)",
+                textAlign: "left",
               }}
-            />
-            {createError && (
-              <div
-                style={{
-                  fontSize: 11,
-                  color: "var(--status-error)",
-                  marginTop: 3,
-                }}
-              >
-                {createError}
-              </div>
-            )}
-            <div style={{ display: "flex", gap: 4, marginTop: 6 }}>
-              <button
-                type="button"
-                onClick={handleCreate}
-                style={{
-                  flex: 1,
-                  height: 24,
-                  fontSize: 11,
-                  background: "var(--accent)",
-                  color: "#fff",
-                  border: "none",
-                  borderRadius: 4,
-                  cursor: "pointer",
-                }}
-              >
-                Add
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setCreating(false);
-                  setNewId("");
-                  setCreateError(null);
-                }}
-                style={{
-                  flex: 1,
-                  height: 24,
-                  fontSize: 11,
-                  background: "var(--nav-hover)",
-                  color: "var(--text-secondary)",
-                  border: "none",
-                  borderRadius: 4,
-                  cursor: "pointer",
-                }}
-              >
-                Cancel
-              </button>
-            </div>
-          </div>
-        ) : (
-          <button
-            type="button"
-            onClick={() => setCreating(true)}
-            style={{
-              width: "100%",
-              padding: "10px 12px",
-              border: "none",
-              background: "transparent",
-              color: "var(--text-tertiary)",
-              cursor: "pointer",
-              fontSize: 12,
-              fontFamily: "var(--font-ui)",
-              textAlign: "left",
-            }}
-          >
-            + New pattern
-          </button>
-        )}
-      </div>
+            >
+              + New pattern
+            </button>
+          )
+        }
+      />
 
       {/* Right pane */}
       {pattern ? (
@@ -586,6 +602,21 @@ function PatternBars({
   const [dragIdx, setDragIdx] = useState<number | null>(null);
   const [hoverIdx, setHoverIdx] = useState<number | null>(null);
 
+  // Long patterns (e.g. 8,760 hourly steps for a year): per-bar DOM would
+  // freeze the tab, so render a downsampled SVG envelope instead. Values
+  // remain editable through the numeric grid below.
+  if (multipliers.length > MAX_INTERACTIVE_BARS) {
+    return (
+      <PatternEnvelope
+        multipliers={multipliers}
+        accent={accent}
+        stepHours={stepHours}
+        height={H}
+        yMax={yMax}
+      />
+    );
+  }
+
   function handleMove(e: React.MouseEvent, idx: number) {
     if (dragIdx !== idx || !containerRef.current) return;
     const cell = (e.currentTarget as HTMLElement).getBoundingClientRect();
@@ -694,6 +725,87 @@ function PatternBars({
   );
 }
 
+/** Downsampled min/max envelope for patterns too long to edit per-bar.
+ * Fixed DOM cost (a handful of SVG elements) regardless of pattern length. */
+function PatternEnvelope({
+  multipliers,
+  accent,
+  stepHours,
+  height,
+  yMax,
+}: {
+  multipliers: number[];
+  accent: string;
+  stepHours: number;
+  height: number;
+  yMax: number;
+}) {
+  const VW = 1000;
+  const innerH = height - 30;
+  const buckets = useMemo(
+    () => downsampleMinMax(multipliers, ENVELOPE_BUCKETS),
+    [multipliers],
+  );
+  const band = useMemo(
+    () => envelopePath(buckets, VW, innerH, yMax),
+    [buckets, innerH, yMax],
+  );
+  const refY = innerH - (1.0 / yMax) * innerH;
+  const totalHours = multipliers.length * stepHours;
+  return (
+    <div
+      style={{
+        height,
+        background: "var(--bg-app)",
+        border: "1px solid var(--border)",
+        borderRadius: 4,
+        padding: "8px 8px 22px",
+        position: "relative",
+        boxSizing: "border-box",
+      }}
+    >
+      <svg
+        width="100%"
+        height={innerH}
+        viewBox={`0 0 ${VW} ${innerH}`}
+        preserveAspectRatio="none"
+        style={{ display: "block" }}
+      >
+        <title>Pattern preview (downsampled)</title>
+        <path d={band} fill={`${accent}66`} stroke={accent} strokeWidth={1} />
+        <line
+          x1={0}
+          x2={VW}
+          y1={refY}
+          y2={refY}
+          stroke="var(--border-hover)"
+          strokeDasharray="4 6"
+        />
+      </svg>
+      <div
+        style={{
+          position: "absolute",
+          bottom: 4,
+          left: 8,
+          right: 8,
+          display: "flex",
+          justifyContent: "space-between",
+          fontSize: 9,
+          color: "var(--text-tertiary)",
+          fontFamily: "var(--font-mono)",
+        }}
+      >
+        <span>00h</span>
+        <span style={{ fontFamily: "var(--font-ui)", fontStyle: "italic" }}>
+          {multipliers.length} steps — downsampled preview; edit values in the
+          numeric grid below
+        </span>
+        <span>{totalHours}h</span>
+      </div>
+    </div>
+  );
+}
+
 function PatternRow({
   multipliers,
   stepHours,
@@ -760,51 +872,154 @@ function PatternRow({
           Reset
         </button>
       </div>
-      <div
+      {multipliers.length <= MAX_UNVIRTUALIZED_GRID_VALUES ? (
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: `repeat(${Math.min(GRID_COLS, multipliers.length)}, minmax(60px, 1fr))`,
+            gap: 6,
+          }}
+        >
+          {multipliers.map((m, i) => (
+            <GridCell
+              key={`${hours[i]}`}
+              hour={hours[i]}
+              value={m}
+              index={i}
+              onChange={onChange}
+            />
+          ))}
+        </div>
+      ) : (
+        <VirtualizedGrid
+          multipliers={multipliers}
+          hours={hours}
+          onChange={onChange}
+        />
+      )}
+    </div>
+  );
+}
+
+/** One labelled number input of the numeric grid. */
+function GridCell({
+  hour,
+  value,
+  index,
+  onChange,
+}: {
+  hour: number;
+  value: number;
+  index: number;
+  onChange: (idx: number, val: number) => void;
+}) {
+  return (
+    <label style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+      <span
         style={{
-          display: "grid",
-          gridTemplateColumns: `repeat(${Math.min(12, multipliers.length)}, minmax(60px, 1fr))`,
-          gap: 6,
+          fontSize: 9,
+          color: "var(--text-tertiary)",
+          fontFamily: "var(--font-mono)",
         }}
       >
-        {multipliers.map((m, i) => {
-          const hour = hours[i];
+        {hour.toString().padStart(2, "0")}:00
+      </span>
+      <input
+        type="number"
+        step="0.05"
+        value={value}
+        onChange={(e) => {
+          const v = parseFloat(e.target.value);
+          if (!Number.isNaN(v)) onChange(index, v);
+        }}
+        style={{
+          width: "100%",
+          height: 26,
+          background: "var(--bg-input, var(--bg-card))",
+          border: "1px solid var(--border)",
+          borderRadius: 4,
+          color: "var(--text-primary)",
+          fontSize: 12,
+          fontFamily: "var(--font-mono)",
+          padding: "0 6px",
+          outline: "none",
+        }}
+      />
+    </label>
+  );
+}
+
+/** Estimated height of one virtualized grid row: 9px label + 2px gap +
+ * 26px input + 6px row gap. */
+const GRID_ROW_ESTIMATE = 50;
+
+/** Windowed variant of the numeric grid for very long patterns: rows of
+ * {@link GRID_COLS} inputs are virtualized inside a fixed-height scroller so
+ * an 8,760-step pattern mounts ~dozens of inputs instead of thousands.
+ * Per-cell editing semantics are identical to the plain grid. */
+function VirtualizedGrid({
+  multipliers,
+  hours,
+  onChange,
+}: {
+  multipliers: number[];
+  hours: number[];
+  onChange: (idx: number, val: number) => void;
+}) {
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+  const rowCount = Math.ceil(multipliers.length / GRID_COLS);
+  const virtualizer = useVirtualizer({
+    count: rowCount,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: () => GRID_ROW_ESTIMATE,
+    overscan: 6,
+  });
+  return (
+    <div
+      ref={scrollRef}
+      style={{
+        height: 320,
+        overflowY: "auto",
+        border: "1px solid var(--border)",
+        borderRadius: 4,
+        padding: "6px 8px",
+      }}
+    >
+      <div style={{ height: virtualizer.getTotalSize(), position: "relative" }}>
+        {virtualizer.getVirtualItems().map((vi) => {
+          const start = vi.index * GRID_COLS;
+          const end = Math.min(multipliers.length, start + GRID_COLS);
+          const cells = [];
+          for (let i = start; i < end; i++) {
+            cells.push(
+              <GridCell
+                key={`${hours[i]}`}
+                hour={hours[i]}
+                value={multipliers[i]}
+                index={i}
+                onChange={onChange}
+              />,
+            );
+          }
           return (
-            <label
-              key={`${hour}`}
-              style={{ display: "flex", flexDirection: "column", gap: 2 }}
+            <div
+              key={vi.key}
+              ref={virtualizer.measureElement}
+              data-index={vi.index}
+              style={{
+                position: "absolute",
+                top: 0,
+                left: 0,
+                width: "100%",
+                transform: `translateY(${vi.start}px)`,
+                display: "grid",
+                gridTemplateColumns: `repeat(${GRID_COLS}, minmax(60px, 1fr))`,
+                gap: 6,
+                paddingBottom: 6,
+              }}
             >
-              <span
-                style={{
-                  fontSize: 9,
-                  color: "var(--text-tertiary)",
-                  fontFamily: "var(--font-mono)",
-                }}
-              >
-                {hour.toString().padStart(2, "0")}:00
-              </span>
-              <input
-                type="number"
-                step="0.05"
-                value={m}
-                onChange={(e) => {
-                  const v = parseFloat(e.target.value);
-                  if (!Number.isNaN(v)) onChange(i, v);
-                }}
-                style={{
-                  width: "100%",
-                  height: 26,
-                  background: "var(--bg-input, var(--bg-card))",
-                  border: "1px solid var(--border)",
-                  borderRadius: 4,
-                  color: "var(--text-primary)",
-                  fontSize: 12,
-                  fontFamily: "var(--font-mono)",
-                  padding: "0 6px",
-                  outline: "none",
-                }}
-              />
-            </label>
+              {cells}
+            </div>
           );
         })}
       </div>

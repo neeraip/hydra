@@ -6,7 +6,8 @@
    data is structured. */
 
 import { TrashIcon } from "@heroicons/react/16/solid";
-import { useMemo, useState } from "react";
+import { useVirtualizer } from "@tanstack/react-virtual";
+import { useMemo, useRef, useState } from "react";
 import {
   type Link,
   type Node,
@@ -21,6 +22,8 @@ import {
   useRules,
 } from "../../hooks";
 import { useDraft } from "../../hooks/DraftContext";
+import { RefOptionsDatalist } from "../../pages/project/NetworkEditor/TablePrimitives";
+import { shouldUseRefDatalist } from "../../pages/project/NetworkEditor/tableSearch";
 import {
   fromDisplay,
   type Quantity,
@@ -32,6 +35,26 @@ import {
 import { DeleteConfirmModal } from "../modals/DeleteConfirmModal";
 
 type ControlFilter = "all" | "simple" | "rule";
+
+/** Shared datalist ids for the element-ID pickers (one datalist per editor
+ * instance, referenced by every picker — see {@link RefOptionsDatalist}). */
+const CONTROLS_NODE_LIST_ID = "controls-node-ref-options";
+const CONTROLS_LINK_LIST_ID = "controls-link-ref-options";
+
+/** One row of the virtualized card list. */
+type VisibleEntry =
+  | { kind: "control"; key: string; data: SimpleControlDto }
+  | { kind: "rule"; key: string; data: RuleDto };
+
+/** Everything an element-ID picker needs, threaded down to the card rows so
+ * pickers share the editor's two datalists instead of each mounting a
+ * 46k-option `<select>`. */
+interface PickerContext {
+  nodeIds: string[];
+  linkIds: string[];
+  nodeListId?: string;
+  linkListId?: string;
+}
 
 const inputStyle: React.CSSProperties = {
   height: 26,
@@ -200,16 +223,66 @@ export function ControlsEditor({ accent }: { accent: string }) {
   );
 
   const q = search.toLowerCase();
-  const visibleControls = mergedControls.filter(
-    ({ key }) =>
-      !q || (controlSummaries.get(key) ?? "").toLowerCase().includes(q),
-  );
-  const visibleRules = mergedRules.filter(
-    ({ key }) => !q || (ruleSummaries.get(key) ?? "").toLowerCase().includes(q),
-  );
-
   const showControls = filter === "all" || filter === "simple";
   const showRules = filter === "all" || filter === "rule";
+
+  // Flat display list (controls first, then rules) driving the virtualizer.
+  const visibleItems = useMemo<VisibleEntry[]>(() => {
+    const out: VisibleEntry[] = [];
+    if (showControls) {
+      for (const { key, data } of mergedControls) {
+        if (!q || (controlSummaries.get(key) ?? "").toLowerCase().includes(q))
+          out.push({ kind: "control", key, data });
+      }
+    }
+    if (showRules) {
+      for (const { key, data } of mergedRules) {
+        if (!q || (ruleSummaries.get(key) ?? "").toLowerCase().includes(q))
+          out.push({ kind: "rule", key, data });
+      }
+    }
+    return out;
+  }, [
+    showControls,
+    showRules,
+    mergedControls,
+    mergedRules,
+    controlSummaries,
+    ruleSummaries,
+    q,
+  ]);
+
+  // Virtualized card list — real models carry hundreds-to-thousands of
+  // [CONTROLS]/[RULES] entries; mounting one card each is the Issues-panel
+  // freeze class. Collapsed cards are ~40px; measureElement handles the
+  // expanded card's much larger height.
+  const listScrollRef = useRef<HTMLDivElement | null>(null);
+  const rowVirtualizer = useVirtualizer({
+    count: visibleItems.length,
+    getScrollElement: () => listScrollRef.current,
+    estimateSize: () => 48,
+    overscan: 8,
+    // Controls and rules both use `idx-N` keys, so the list key must be
+    // namespaced by kind to stay unique across the combined list.
+    getItemKey: (index) =>
+      `${visibleItems[index].kind}-${visibleItems[index].key}`,
+  });
+
+  // Element-ID pickers: shared datalists, gated exactly like the editor
+  // tables' reference cells — above REF_DATALIST_MAX_OPTIONS no datalist is
+  // rendered at all and the pickers act as validated text inputs.
+  const nodeIds = useMemo(() => nodes.map((n) => n.id), [nodes]);
+  const linkIds = useMemo(() => links.map((l) => l.id), [links]);
+  const nodeListId = shouldUseRefDatalist(nodeIds.length)
+    ? CONTROLS_NODE_LIST_ID
+    : undefined;
+  const linkListId = shouldUseRefDatalist(linkIds.length)
+    ? CONTROLS_LINK_LIST_ID
+    : undefined;
+  const pickers: PickerContext = useMemo(
+    () => ({ nodeIds, linkIds, nodeListId, linkListId }),
+    [nodeIds, linkIds, nodeListId, linkListId],
+  );
 
   function handleAddControl() {
     const key = nextTempKey("tmp-control-");
@@ -344,71 +417,108 @@ export function ControlsEditor({ accent }: { accent: string }) {
         </button>
       </div>
 
-      {/* Entry list */}
+      {/* Shared element-ID datalists (render nothing above the option cap) */}
+      <RefOptionsDatalist id={CONTROLS_NODE_LIST_ID} options={nodeIds} />
+      <RefOptionsDatalist id={CONTROLS_LINK_LIST_ID} options={linkIds} />
+
+      {/* Entry list (virtualized) */}
       <div
-        style={{
-          flex: 1,
-          overflow: "auto",
-          padding: 12,
-          display: "flex",
-          flexDirection: "column",
-          gap: 8,
-        }}
+        ref={listScrollRef}
+        style={{ flex: 1, overflow: "auto", padding: 12 }}
       >
-        {showControls &&
-          visibleControls.map(({ key, data }) => (
-            <ControlCard
-              key={key}
-              control={data}
-              summary={controlSummaries.get(key) ?? ""}
-              accent={accent}
-              links={links}
-              nodes={nodes}
-              expanded={expandedControl === key}
-              onToggleExpand={() =>
-                setExpandedControl(expandedControl === key ? null : key)
-              }
-              onSave={(next) => {
-                if (key.startsWith("tmp-")) {
-                  setControlAdds((prev) => new Map(prev).set(key, next));
-                } else {
-                  setControlEdits((prev) => new Map(prev).set(key, next));
-                }
-              }}
-              onDelete={() =>
-                setPendingDelete({
-                  kind: "control",
-                  key,
-                  label: `Control (${data.linkId})`,
-                })
-              }
-            />
-          ))}
-        {showRules &&
-          visibleRules.map(({ key, data }) => (
-            <RuleCard
-              key={key}
-              rule={data}
-              summary={ruleSummaries.get(key) ?? ""}
-              accent={accent}
-              links={links}
-              nodes={nodes}
-              expanded={expandedRule === key}
-              onToggleExpand={() =>
-                setExpandedRule(expandedRule === key ? null : key)
-              }
-              onSave={(next) => {
-                if (key.startsWith("tmp-")) {
-                  setRuleAdds((prev) => new Map(prev).set(key, next));
-                } else {
-                  setRuleEdits((prev) => new Map(prev).set(key, next));
-                }
-              }}
-              onDelete={() =>
-                setPendingDelete({ kind: "rule", key, label: data.name || key })
-              }
-            />
-          ))}
+        <div
+          style={{
+            height: rowVirtualizer.getTotalSize(),
+            position: "relative",
+          }}
+        >
+          {rowVirtualizer.getVirtualItems().map((vi) => {
+            const entry = visibleItems[vi.index];
+            return (
+              <div
+                key={`${entry.kind}-${entry.key}`}
+                ref={rowVirtualizer.measureElement}
+                data-index={vi.index}
+                style={{
+                  position: "absolute",
+                  top: 0,
+                  left: 0,
+                  width: "100%",
+                  transform: `translateY(${vi.start}px)`,
+                  paddingBottom: 8,
+                }}
+              >
+                {entry.kind === "control" ? (
+                  <ControlCard
+                    control={entry.data}
+                    summary={controlSummaries.get(entry.key) ?? ""}
+                    accent={accent}
+                    links={links}
+                    nodes={nodes}
+                    pickers={pickers}
+                    expanded={expandedControl === entry.key}
+                    onToggleExpand={() =>
+                      setExpandedControl(
+                        expandedControl === entry.key ? null : entry.key,
+                      )
+                    }
+                    onSave={(next) => {
+                      if (entry.key.startsWith("tmp-")) {
+                        setControlAdds((prev) =>
+                          new Map(prev).set(entry.key, next),
+                        );
+                      } else {
+                        setControlEdits((prev) =>
+                          new Map(prev).set(entry.key, next),
+                        );
+                      }
+                    }}
+                    onDelete={() =>
+                      setPendingDelete({
+                        kind: "control",
+                        key: entry.key,
+                        label: `Control (${entry.data.linkId})`,
+                      })
+                    }
+                  />
+                ) : (
+                  <RuleCard
+                    rule={entry.data}
+                    summary={ruleSummaries.get(entry.key) ?? ""}
+                    accent={accent}
+                    links={links}
+                    nodes={nodes}
+                    pickers={pickers}
+                    expanded={expandedRule === entry.key}
+                    onToggleExpand={() =>
+                      setExpandedRule(
+                        expandedRule === entry.key ? null : entry.key,
+                      )
+                    }
+                    onSave={(next) => {
+                      if (entry.key.startsWith("tmp-")) {
+                        setRuleAdds((prev) =>
+                          new Map(prev).set(entry.key, next),
+                        );
+                      } else {
+                        setRuleEdits((prev) =>
+                          new Map(prev).set(entry.key, next),
+                        );
+                      }
+                    }}
+                    onDelete={() =>
+                      setPendingDelete({
+                        kind: "rule",
+                        key: entry.key,
+                        label: entry.data.name || entry.key,
+                      })
+                    }
+                  />
+                )}
+              </div>
+            );
+          })}
+        </div>
         {mergedControls.length === 0 && mergedRules.length === 0 && (
           <div
             style={{
@@ -640,6 +750,87 @@ function Field({
   );
 }
 
+/**
+ * Element-ID picker backed by the editor's shared datalist. Replaces the
+ * previous `<select>` over every node/link — which mounted one `<option>`
+ * per element (46k+ each) for every picker on screen. Mirrors
+ * RefInputCell's semantics: free typing with datalist suggestions (when
+ * under the option cap), validated against `validIds` on commit; an unknown
+ * id reverts to the last valid value and shows the error style.
+ */
+function RefIdInput({
+  value,
+  validIds,
+  listId,
+  onCommit,
+  width,
+}: {
+  value: string;
+  validIds: readonly string[];
+  /** Shared datalist id; undefined above the option cap (plain input). */
+  listId?: string;
+  onCommit: (id: string) => void;
+  width?: number | string;
+}) {
+  const [draft, setDraft] = useState(value);
+  const [error, setError] = useState(false);
+
+  // Re-sync when the committed value changes from outside.
+  const prevValue = useRef(value);
+  if (value !== prevValue.current) {
+    prevValue.current = value;
+    setDraft(value);
+  }
+
+  function commit() {
+    const trimmed = draft.trim();
+    if (trimmed === value) {
+      setDraft(value);
+      return;
+    }
+    if (!validIds.includes(trimmed)) {
+      setError(true);
+      setDraft(value);
+      return;
+    }
+    setError(false);
+    onCommit(trimmed);
+  }
+
+  return (
+    <input
+      list={listId}
+      value={draft}
+      onChange={(e) => {
+        setDraft(e.target.value);
+        setError(false);
+      }}
+      onBlur={commit}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          (e.target as HTMLInputElement).blur();
+        }
+        if (e.key === "Escape") {
+          setDraft(value);
+          setError(false);
+          (e.target as HTMLInputElement).blur();
+        }
+      }}
+      title={error ? "Unknown element ID" : undefined}
+      style={{
+        ...inputStyle,
+        fontFamily: "var(--font-mono)",
+        width: width ?? "100%",
+        boxSizing: "border-box",
+        border: error
+          ? "1px solid var(--status-error)"
+          : "1px solid var(--border)",
+      }}
+    />
+  );
+}
+
 // ── Simple control card ─────────────────────────────────────────────────────
 
 function ControlCard({
@@ -648,6 +839,7 @@ function ControlCard({
   accent,
   links,
   nodes,
+  pickers,
   expanded,
   onToggleExpand,
   onSave,
@@ -658,6 +850,7 @@ function ControlCard({
   accent: string;
   links: Link[];
   nodes: Node[];
+  pickers: PickerContext;
   expanded: boolean;
   onToggleExpand: () => void;
   onSave: (next: SimpleControlDto) => void;
@@ -701,17 +894,12 @@ function ControlCard({
         }}
       >
         <Field label="Link">
-          <select
+          <RefIdInput
             value={draft.linkId}
-            onChange={(e) => sync({ linkId: e.target.value })}
-            style={inputStyle}
-          >
-            {links.map((l) => (
-              <option key={l.id} value={l.id}>
-                {l.id}
-              </option>
-            ))}
-          </select>
+            validIds={pickers.linkIds}
+            listId={pickers.linkListId}
+            onCommit={(id) => sync({ linkId: id })}
+          />
         </Field>
         <Field label="Action">
           <select
@@ -803,17 +991,12 @@ function ControlCard({
         ) : (
           <>
             <Field label="Node">
-              <select
+              <RefIdInput
                 value={draft.triggerNodeId ?? ""}
-                onChange={(e) => sync({ triggerNodeId: e.target.value })}
-                style={inputStyle}
-              >
-                {nodes.map((n) => (
-                  <option key={n.id} value={n.id}>
-                    {n.id}
-                  </option>
-                ))}
-              </select>
+                validIds={pickers.nodeIds}
+                listId={pickers.nodeListId}
+                onCommit={(id) => sync({ triggerNodeId: id })}
+              />
             </Field>
             <Field label={`Threshold (${unitLabel("length", sys)})`}>
               <input
@@ -869,6 +1052,7 @@ function PremiseRow({
   isLast,
   nodes,
   links,
+  pickers,
   onChange,
   onRemove,
 }: {
@@ -876,6 +1060,7 @@ function PremiseRow({
   isLast: boolean;
   nodes: Node[];
   links: Link[];
+  pickers: PickerContext;
   onChange: (next: RulePremiseDto) => void;
   onRemove: () => void;
 }) {
@@ -910,30 +1095,22 @@ function PremiseRow({
         <option value="clock">Clock</option>
       </select>
       {premise.object === "node" && (
-        <select
+        <RefIdInput
           value={premise.nodeId ?? ""}
-          onChange={(e) => onChange({ ...premise, nodeId: e.target.value })}
-          style={inputStyle}
-        >
-          {nodes.map((n) => (
-            <option key={n.id} value={n.id}>
-              {n.id}
-            </option>
-          ))}
-        </select>
+          validIds={pickers.nodeIds}
+          listId={pickers.nodeListId}
+          width={130}
+          onCommit={(id) => onChange({ ...premise, nodeId: id })}
+        />
       )}
       {premise.object === "link" && (
-        <select
+        <RefIdInput
           value={premise.linkId ?? ""}
-          onChange={(e) => onChange({ ...premise, linkId: e.target.value })}
-          style={inputStyle}
-        >
-          {links.map((l) => (
-            <option key={l.id} value={l.id}>
-              {l.id}
-            </option>
-          ))}
-        </select>
+          validIds={pickers.linkIds}
+          listId={pickers.linkListId}
+          width={130}
+          onCommit={(id) => onChange({ ...premise, linkId: id })}
+        />
       )}
       <select
         value={premise.attribute}
@@ -1025,11 +1202,13 @@ function PremiseRow({
 function ActionRow({
   action,
   links,
+  pickers,
   onChange,
   onRemove,
 }: {
   action: RuleActionDto;
   links: Link[];
+  pickers: PickerContext;
   onChange: (next: RuleActionDto) => void;
   onRemove: () => void;
 }) {
@@ -1048,17 +1227,13 @@ function ActionRow({
         borderBottom: "1px solid var(--border)",
       }}
     >
-      <select
+      <RefIdInput
         value={action.linkId}
-        onChange={(e) => onChange({ ...action, linkId: e.target.value })}
-        style={inputStyle}
-      >
-        {links.map((l) => (
-          <option key={l.id} value={l.id}>
-            {l.id}
-          </option>
-        ))}
-      </select>
+        validIds={pickers.linkIds}
+        listId={pickers.linkListId}
+        width={130}
+        onCommit={(id) => onChange({ ...action, linkId: id })}
+      />
       <select
         value={action.status != null ? "status" : "setting"}
         onChange={(e) =>
@@ -1127,6 +1302,7 @@ function RuleCard({
   accent,
   links,
   nodes,
+  pickers,
   expanded,
   onToggleExpand,
   onSave,
@@ -1137,6 +1313,7 @@ function RuleCard({
   accent: string;
   links: Link[];
   nodes: Node[];
+  pickers: PickerContext;
   expanded: boolean;
   onToggleExpand: () => void;
   onSave: (next: RuleDto) => void;
@@ -1236,6 +1413,7 @@ function RuleCard({
           isLast={i === draft.premises.length - 1}
           nodes={nodes}
           links={links}
+          pickers={pickers}
           onChange={(next) =>
             update((d) => ({
               ...d,
@@ -1280,6 +1458,7 @@ function RuleCard({
           key={i}
           action={a}
           links={links}
+          pickers={pickers}
           onChange={(next) =>
             update((d) => ({
               ...d,
@@ -1326,6 +1505,7 @@ function RuleCard({
           key={i}
           action={a}
           links={links}
+          pickers={pickers}
           onChange={(next) =>
             update((d) => ({
               ...d,
