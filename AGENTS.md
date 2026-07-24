@@ -111,6 +111,16 @@ Use the imperative mood in the description ("add", "fix", "remove", not "added",
 Keep the subject line under 72 characters. Add a body if the change needs more context.
 PR titles follow the same format (see `.github/copilot-instructions.md`).
 
+**Scope breaking changes to a single release track.** `just release-status`
+assigns commits to release tracks (Library / CLI / GUI) by the *files they
+touch*, not by the commit scope — then reads the `!`/`BREAKING CHANGE` marker to
+suggest a bump level. A cross-cutting break like `refactor(engine,gui)!: …` that
+edits both `crates/engine-wds` and `crates/gui` therefore double-counts the
+breaking signal into **both** tracks, pushing the GUI to a MAJOR suggestion even
+though the GUI is an application with no public API to break. To keep the break
+scoped to the library, split the engine-API change and its GUI follow-on edits
+into separate commits (`refactor(engine)!: …` + a plain `refactor(gui): …`).
+
 ---
 
 
