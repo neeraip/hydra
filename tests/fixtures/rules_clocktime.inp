@@ -1,0 +1,42 @@
+[TITLE]
+Rule premises on SYSTEM CLOCKTIME and SYSTEM TIME (writer must emit H:MM:SS)
+
+[JUNCTIONS]
+J1    0    50
+
+[RESERVOIRS]
+R1    0
+
+[PIPES]
+P1    R1    J1    1000    12    100    0    Open
+
+[PUMPS]
+PMP1    R1    J1    HEAD C1
+
+[CURVES]
+C1    0       300
+C1    1000    200
+
+[RULES]
+RULE 1
+IF SYSTEM CLOCKTIME >= 6:30:00
+AND SYSTEM CLOCKTIME < 22:00
+THEN LINK PMP1 STATUS IS OPEN
+PRIORITY 2
+
+RULE 2
+IF SYSTEM TIME > 2:00
+THEN LINK PMP1 STATUS IS CLOSED
+PRIORITY 1
+
+[OPTIONS]
+Units    GPM
+Headloss    H-W
+
+[TIMES]
+Duration    24:00
+Hydraulic Timestep    1:00
+Report Timestep    1:00
+Start Clocktime    12 AM
+
+[END]

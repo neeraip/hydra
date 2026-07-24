@@ -81,13 +81,13 @@ Supported `(object, attribute)` combinations:
 | Pump | `FLOW`, `STATUS`, `SETTING`, `POWER` |
 | Simulation | `TIME`, `CLOCKTIME` |
 
-`FILLTIME` and `DRAINTIME` are computed from current tank state:
+`FILLTIME` and `DRAINTIME` are computed from current tank state and expressed in **hours** (the EPANET convention for these attributes):
 
-$$\text{FILLTIME} = \begin{cases} (V_{\max} - V) / Q_{\text{net}} & Q_{\text{net}} > 0 \\ \infty & \text{otherwise} \end{cases}, \qquad \text{DRAINTIME} = \begin{cases} (V - V_{\min}) / (-Q_{\text{net}}) & Q_{\text{net}} < 0 \\ \infty & \text{otherwise} \end{cases}$$
+$$\text{FILLTIME} = \begin{cases} \dfrac{V_{\max} - V}{3600\,Q_{\text{net}}} & Q_{\text{net}} > 0 \\ \infty & \text{otherwise} \end{cases}, \qquad \text{DRAINTIME} = \begin{cases} \dfrac{V - V_{\min}}{3600\,(-Q_{\text{net}})} & Q_{\text{net}} < 0 \\ \infty & \text{otherwise} \end{cases}$$
 
-where $Q_{\text{net}}$ is the net inflow (positive = filling) and $V$, $V_{\min}$, $V_{\max}$ are the current, minimum, and maximum tank volumes respectively. These attributes are evaluated at the time the premise is checked during the rule sub-step.
+where $Q_{\text{net}}$ is the net inflow (positive = filling, m³/s) and $V$, $V_{\min}$, $V_{\max}$ are the current, minimum, and maximum tank volumes (m³) respectively; the factor 3600 converts the seconds-valued volume/flow quotient into hours. These attributes are evaluated at the time the premise is checked during the rule sub-step.
 
-**Units**: all premise threshold values are stored in the internal unit system (see data model spec §3). The input layer converts user-unit thresholds to internal units at load time so that premise evaluation operates entirely in internal units with no per-evaluation conversion.
+**Units**: premise threshold values are stored in the internal unit system (see data model spec §3), with two exceptions kept in their on-disk units: `TIME`/`CLOCKTIME` thresholds are seconds, and `FILLTIME`/`DRAINTIME` thresholds are **hours** — they are stored exactly as written in the input (which keeps input round-trips lossless), and the evaluator produces an hours-valued left-hand side as defined above so the comparison is hours-to-hours. All other thresholds are converted to internal units at load time so that premise evaluation operates with no per-evaluation conversion.
 
 **Logical combination**: consecutive premises within a rule are joined by `AND` or `OR`. `AND` binds more tightly than `OR`. A rule's overall truth value is the evaluation of this expression.
 

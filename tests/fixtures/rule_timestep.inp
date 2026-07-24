@@ -1,0 +1,39 @@
+[TITLE]
+Explicit rule timestep (2 min 30 s) must survive serialisation
+
+[JUNCTIONS]
+J1    0    50
+
+[RESERVOIRS]
+R1    0
+
+[TANKS]
+T1    100   5     0    10   50    0
+
+[PIPES]
+P1    R1    J1    1000    12    100    0    Open
+P2    J1    T1    500     12    100    0    Open
+
+[PUMPS]
+PMP1    R1    J1    HEAD C1
+
+[CURVES]
+C1    0       300
+C1    1000    200
+
+[RULES]
+RULE 1
+IF NODE T1 LEVEL BELOW 3.0
+THEN LINK PMP1 STATUS IS OPEN
+
+[OPTIONS]
+Units    GPM
+Headloss    H-W
+
+[TIMES]
+Duration    12:00
+Hydraulic Timestep    1:00
+Report Timestep    1:00
+Rule Timestep    0:02:30
+
+[END]

@@ -558,11 +558,20 @@ pub fn write_inp(network: &Network) -> Vec<u8> {
                 };
                 let attr_str = premise_attr_str(prem.attribute);
                 let op_str = premise_op_str(prem.operator);
-                let value_user = convert_premise_value(prem, &ucf);
+                // TIME/CLOCKTIME premise values are stored in seconds and must
+                // be written as H:MM(:SS) literals — the reader parses a bare
+                // number as HOURS, which would multiply the value by 3600 on
+                // every save/load cycle (spec §4.3).
+                let value_str = match prem.attribute {
+                    PremiseAttribute::Time | PremiseAttribute::ClockTime => {
+                        fmt_duration_hm(prem.value)
+                    }
+                    _ => format!("{:.4}", convert_premise_value(prem, &ucf)),
+                };
                 let _ = writeln!(
                     out,
-                    " {} {} {} {} {:.4}",
-                    connective, obj_str, attr_str, op_str, value_user
+                    " {} {} {} {} {}",
+                    connective, obj_str, attr_str, op_str, value_str
                 );
             }
             for action in &rule.then_actions {
@@ -738,12 +747,15 @@ pub fn write_inp(network: &Network) -> Vec<u8> {
 
     // ── [MIXING] ─────────────────────────────────────────────────────────────
     {
+        // Only non-default entries are written (spec §4.3): the default is
+        // CSTR with mix_fraction 1.0 — the PARSER's default fraction when the
+        // column is absent (not 0.0, which made this filter match every tank).
         let non_default: Vec<_> = network
             .nodes
             .iter()
             .filter(|n| {
                 if let NodeKind::Tank(ref t) = n.kind {
-                    t.mix_model != MixModel::Cstr || t.mix_fraction != 0.0
+                    t.mix_model != MixModel::Cstr || t.mix_fraction != 1.0
                 } else {
                     false
                 }
@@ -760,7 +772,10 @@ pub fn write_inp(network: &Network) -> Vec<u8> {
                         MixModel::Fifo => "FIFO",
                         MixModel::Lifo => "LIFO",
                     };
-                    if t.mix_model == MixModel::TwoCompartment {
+                    // Fraction column: always for 2COMP, and for any other
+                    // model whenever it differs from the parser default 1.0
+                    // so an explicitly-parsed fraction survives (spec §4.3).
+                    if t.mix_model == MixModel::TwoCompartment || t.mix_fraction != 1.0 {
                         let _ = writeln!(
                             out,
                             " {:<16} {:<14} {:.4}",
@@ -869,21 +884,35 @@ pub fn write_inp(network: &Network) -> Vec<u8> {
         if opts.specific_gravity != 1.0 {
             let _ = writeln!(out, " Specific Gravity {:.4}", opts.specific_gravity);
         }
-        // Viscosity / diffusivity: write as EPANET multipliers if non-default.
-        const VISCOS: f64 = 1.022e-6; // m²/s
-        const DIFFUS: f64 = 1.208e-9; // m²/s
+        // Viscosity / diffusivity: write as EPANET relative multipliers of the
+        // reference constants when non-default (spec §4.3). The absolute form
+        // (~1e-9 m²/s) is destroyed by fixed-precision decimal formatting and
+        // must never be emitted; the reader treats values above its magnitude
+        // thresholds as multipliers of these same constants.
+        const VISCOS: f64 = 1.022e-6; // m²/s (reader reference, units.rs)
+        const DIFFUS: f64 = 1.208e-9; // m²/s (reader reference, units.rs)
         if (opts.viscosity - VISCOS).abs() > 1e-20 {
-            let len2 = ucf.elev * ucf.elev;
-            let v_user = opts.viscosity * len2;
-            let _ = writeln!(out, " Viscosity       {:.6}", v_user);
+            let _ = writeln!(out, " Viscosity       {:.6}", opts.viscosity / VISCOS);
         }
         if (opts.diffusivity - DIFFUS).abs() > 1e-20 {
-            let len2 = ucf.elev * ucf.elev;
-            let d_user = opts.diffusivity * len2;
-            let _ = writeln!(out, " Diffusivity     {:.6}", d_user);
+            let _ = writeln!(out, " Diffusivity     {:.6}", opts.diffusivity / DIFFUS);
         }
         let _ = writeln!(out, " Trials          {}", opts.max_iter);
         let _ = writeln!(out, " Accuracy        {:.6}", opts.flow_tol);
+        // Status-transition tolerances: written when non-default with the
+        // exact inverse of the reader's unit conversion (HTOL/QTOL are divided
+        // by the elevation/flow factor at load; RQTOL is stored raw). Shortest
+        // round-trip decimal form — these can be far below any fixed decimal
+        // precision (spec §4.3).
+        if opts.head_tol != 1.524e-4 {
+            let _ = writeln!(out, " HTOL            {}", opts.head_tol * ucf.elev);
+        }
+        if opts.flow_change_tol != 2.832e-6 {
+            let _ = writeln!(out, " QTOL            {}", opts.flow_change_tol * ucf.flow);
+        }
+        if opts.rq_tol != 1.0e-7 {
+            let _ = writeln!(out, " RQTOL           {}", opts.rq_tol);
+        }
         if opts.head_error_limit > 0.0 {
             let _ = writeln!(
                 out,
@@ -1019,7 +1048,10 @@ pub fn write_inp(network: &Network) -> Vec<u8> {
                 fmt_duration_hm(opts.report_start)
             );
         }
-        if opts.pattern_step != opts.hyd_step {
+        // Compare against the READER default (3600 s), not the hydraulic
+        // step: a non-default pattern step equal to the hydraulic step would
+        // otherwise be dropped and revert to 3600 s on re-parse (spec §4.3).
+        if opts.pattern_step != 3600.0 {
             let _ = writeln!(
                 out,
                 " Pattern Timestep   {}",
@@ -1033,6 +1065,13 @@ pub fn write_inp(network: &Network) -> Vec<u8> {
                 fmt_duration_hm(opts.pattern_start)
             );
         }
+        // Always written: the reader default is derived from the hydraulic
+        // timestep and cannot be reconstructed reliably (spec §4.3).
+        let _ = writeln!(
+            out,
+            " Rule Timestep      {}",
+            fmt_duration_hm(opts.rule_timestep)
+        );
         if opts.start_clocktime > 0.0 {
             let _ = writeln!(
                 out,
@@ -1159,15 +1198,22 @@ pub fn write_inp(network: &Network) -> Vec<u8> {
 
 // ── Formatting helpers ────────────────────────────────────────────────────────
 
-/// Format seconds as `H:MM` (no sub-minute precision needed for INP).
+/// Format seconds as `H:MM`, or `H:MM:SS` when the value does not fall on a
+/// whole minute (spec §4.3: whole-minute rounding would destroy sub-minute
+/// timesteps, and the reader accepts both forms).
 fn fmt_duration_hm(secs: f64) -> String {
     if secs == 0.0 {
         return "0:00".to_string();
     }
-    let total_min = (secs / 60.0).round() as u64;
-    let h = total_min / 60;
-    let m = total_min % 60;
-    format!("{}:{:02}", h, m)
+    let total = secs.round() as u64;
+    let h = total / 3600;
+    let m = (total % 3600) / 60;
+    let s = total % 60;
+    if s == 0 {
+        format!("{}:{:02}", h, m)
+    } else {
+        format!("{}:{:02}:{:02}", h, m, s)
+    }
 }
 
 /// Format clock-time seconds-from-midnight as `H AM/PM`.
@@ -2312,6 +2358,199 @@ mod tests {
         round_trip_fixture_strict("demand_categories_named.inp");
     }
 
+    /// Rule TIME/CLOCKTIME premise values must be written as H:MM(:SS) — a
+    /// bare number is re-parsed as HOURS, multiplying the stored seconds by
+    /// 3600 on every save/load cycle.
+    #[test]
+    fn rule_clocktime_premises_stable_across_cycles() {
+        let inp = std::fs::read(fixture("rules_clocktime.inp")).expect("read fixture");
+        let n1 = parse(&inp).expect("parse");
+        let premise_values = |n: &Network| -> Vec<f64> {
+            n.rules
+                .iter()
+                .flat_map(|r| r.premises.iter().map(|p| p.value))
+                .collect()
+        };
+        // 6:30:00 = 23 400 s, 22:00 = 79 200 s, 2:00 = 7 200 s.
+        assert_eq!(premise_values(&n1), vec![23_400.0, 79_200.0, 7_200.0]);
+
+        let n2 = parse(&write_inp(&n1)).expect("re-parse");
+        let n3 = parse(&write_inp(&n2)).expect("second cycle");
+        assert_eq!(
+            premise_values(&n1),
+            premise_values(&n3),
+            "TIME/CLOCKTIME premise values corrupted across save/load cycles"
+        );
+    }
+
+    /// Viscosity/diffusivity must be written in relative-multiplier form:
+    /// the absolute form (~1e-9 m²/s) collapses to 0.000000 under {:.6},
+    /// silently disabling wall-reaction mass transfer on reload.
+    #[test]
+    fn viscosity_diffusivity_stable_across_cycles() {
+        let inp = std::fs::read(fixture("viscosity_diffusivity.inp")).expect("read fixture");
+        let n1 = parse(&inp).expect("parse");
+        assert_rel_eq(n1.options.viscosity, 1.5 * 1.022e-6, "parsed viscosity");
+        assert_rel_eq(n1.options.diffusivity, 2.0 * 1.208e-9, "parsed diffusivity");
+
+        let written = write_inp(&n1);
+        let text = String::from_utf8_lossy(&written);
+        assert!(
+            !text.contains("Diffusivity     0.000000"),
+            "diffusivity collapsed to zero:\n{text}"
+        );
+
+        let n2 = parse(&written).expect("re-parse");
+        let n3 = parse(&write_inp(&n2)).expect("second cycle");
+        assert_rel_eq(
+            n1.options.viscosity,
+            n3.options.viscosity,
+            "viscosity over two cycles",
+        );
+        assert_rel_eq(
+            n1.options.diffusivity,
+            n3.options.diffusivity,
+            "diffusivity over two cycles",
+        );
+    }
+
+    /// HTOL/QTOL/RQTOL are parsed but were never written; they must now
+    /// survive two save/load cycles with the exact inverse unit conversion.
+    #[test]
+    fn solver_tolerances_stable_across_cycles() {
+        let inp = std::fs::read(fixture("solver_tolerances.inp")).expect("read fixture");
+        let (n1, n2, n3) = two_cycles(std::str::from_utf8(&inp).expect("utf8"));
+        assert_rel_eq(n1.options.head_tol, 0.005 / 3.2808, "parsed HTOL (GPM)");
+        assert_rel_eq(
+            n1.options.flow_change_tol,
+            0.002 / 15850.3,
+            "parsed QTOL (GPM)",
+        );
+        assert_rel_eq(n1.options.rq_tol, 1e-5, "parsed RQTOL");
+        for (label, net) in [("one cycle", &n2), ("two cycles", &n3)] {
+            assert_rel_eq(
+                n1.options.head_tol,
+                net.options.head_tol,
+                &format!("HTOL after {label}"),
+            );
+            assert_rel_eq(
+                n1.options.flow_change_tol,
+                net.options.flow_change_tol,
+                &format!("QTOL after {label}"),
+            );
+            assert_rel_eq(
+                n1.options.rq_tol,
+                net.options.rq_tol,
+                &format!("RQTOL after {label}"),
+            );
+        }
+    }
+
+    /// A non-default rule timestep must be written back (H:MM:SS).
+    #[test]
+    fn rule_timestep_round_trips() {
+        let inp = std::fs::read(fixture("rule_timestep.inp")).expect("read fixture");
+        let n1 = parse(&inp).expect("parse");
+        assert_eq!(n1.options.rule_timestep, 150.0, "2 min 30 s parsed");
+        let written = write_inp(&n1);
+        let text = String::from_utf8_lossy(&written);
+        assert!(
+            text.contains("Rule Timestep      0:02:30"),
+            "rule timestep must be serialised:\n{text}"
+        );
+        let n2 = parse(&written).expect("re-parse");
+        assert_eq!(n2.options.rule_timestep, 150.0, "survived round-trip");
+    }
+
+    /// Pattern timestep equal to the hydraulic timestep (but ≠ the 3600 s
+    /// reader default) must still be written — the old writer compared
+    /// against the hydraulic step and silently dropped it.
+    #[test]
+    fn pattern_timestep_equal_to_hydraulic_round_trips() {
+        let inp = std::fs::read(fixture("pattern_equals_hydraulic.inp")).expect("read fixture");
+        let n1 = parse(&inp).expect("parse");
+        assert_eq!(n1.options.pattern_step, 1800.0);
+        assert_eq!(n1.options.hyd_step, 1800.0);
+        let n2 = parse(&write_inp(&n1)).expect("re-parse");
+        assert_eq!(
+            n2.options.pattern_step, 1800.0,
+            "pattern timestep reverted to the 3600 s default"
+        );
+    }
+
+    /// Sub-minute timesteps (20 s quality step) must survive via H:MM:SS.
+    #[test]
+    fn sub_minute_quality_timestep_round_trips() {
+        let inp = std::fs::read(fixture("sub_minute_times.inp")).expect("read fixture");
+        let n1 = parse(&inp).expect("parse");
+        assert_eq!(n1.options.qual_step, 20.0);
+        let n2 = parse(&write_inp(&n1)).expect("re-parse");
+        assert_eq!(
+            n2.options.qual_step, 20.0,
+            "20 s quality timestep destroyed by whole-minute rounding"
+        );
+    }
+
+    /// FILLTIME/DRAINTIME premise thresholds are stored in hours and must be
+    /// written back unchanged (no unit conversion in either direction).
+    #[test]
+    fn filltime_premise_values_round_trip_unchanged() {
+        let inp = std::fs::read(fixture("rules_filltime.inp")).expect("read fixture");
+        let n1 = parse(&inp).expect("parse");
+        let values = |n: &Network| -> Vec<f64> {
+            n.rules
+                .iter()
+                .flat_map(|r| r.premises.iter().map(|p| p.value))
+                .collect()
+        };
+        assert_eq!(values(&n1), vec![2.0, 0.5], "hours thresholds parsed raw");
+        let n2 = parse(&write_inp(&n1)).expect("re-parse");
+        assert_eq!(values(&n2), vec![2.0, 0.5], "hours thresholds survive");
+    }
+
+    /// Default-mixing tanks (CSTR, fraction 1.0) must not produce a [MIXING]
+    /// section — the old filter compared the fraction against 0.0, which is
+    /// always true, and re-emitted every tank.
+    #[test]
+    fn default_mixing_not_written() {
+        let inp = std::fs::read(fixture("mixing_cstr.inp")).expect("read fixture");
+        let n1 = parse(&inp).expect("parse");
+        let text = String::from_utf8_lossy(&write_inp(&n1)).into_owned();
+        assert!(
+            !text.contains("[MIXING]"),
+            "default CSTR mixing must not be serialised:\n{text}"
+        );
+    }
+
+    /// Non-default mixing still round-trips: model and fraction survive, and
+    /// an explicit CSTR fraction is preserved rather than dropped.
+    #[test]
+    fn non_default_mixing_round_trips() {
+        let inp = "[JUNCTIONS]\nJ1  0  10\n\n\
+                   [RESERVOIRS]\nR1  100\n\n\
+                   [TANKS]\nT1  50  10  0  20  30  0\nT2  50  10  0  20  30  0\n\n\
+                   [PIPES]\nP1  R1  J1  1000  12  100  0  Open\n\
+                   P2  J1  T1  500  12  100  0  Open\nP3  J1  T2  500  12  100  0  Open\n\n\
+                   [MIXING]\nT1  2COMP  0.35\nT2  MIXED  0.5\n\n\
+                   [OPTIONS]\nUnits  GPM\nHeadloss  H-W\n\n[END]\n";
+        let (n1, _n2, n3) = two_cycles(inp);
+        let mixing = |n: &Network, id: &str| {
+            n.nodes
+                .iter()
+                .find(|nd| nd.base.id == id)
+                .map(|nd| match &nd.kind {
+                    NodeKind::Tank(t) => (t.mix_model, t.mix_fraction),
+                    _ => unreachable!(),
+                })
+                .unwrap()
+        };
+        assert_eq!(mixing(&n1, "T1"), (MixModel::TwoCompartment, 0.35));
+        assert_eq!(mixing(&n3, "T1"), (MixModel::TwoCompartment, 0.35));
+        // Explicit CSTR fraction 0.5 (non-default) is preserved verbatim.
+        assert_eq!(mixing(&n1, "T2"), (MixModel::Cstr, 0.5));
+        assert_eq!(mixing(&n3, "T2"), (MixModel::Cstr, 0.5));
+    }
+
     // ── Unit conversion spot-checks ──────────────────────────────────────────
 
     /// Pipe diameter (ft → mm) and back (mm → ft) must cancel exactly.
@@ -2396,6 +2635,14 @@ mod tests {
     #[test]
     fn fmt_duration_hm_24_hours() {
         assert_eq!(fmt_duration_hm(86400.0), "24:00");
+    }
+
+    #[test]
+    fn fmt_duration_hm_emits_seconds_when_sub_minute() {
+        assert_eq!(fmt_duration_hm(20.0), "0:00:20");
+        assert_eq!(fmt_duration_hm(150.0), "0:02:30");
+        assert_eq!(fmt_duration_hm(5430.0), "1:30:30");
+        assert_eq!(fmt_duration_hm(23_400.0), "6:30");
     }
 
     #[test]

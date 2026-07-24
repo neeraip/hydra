@@ -6,6 +6,10 @@ use crate::{
 /// Specific weight of water at standard conditions (N/m³).
 const GAMMA_WATER: f64 = 9810.0;
 
+/// FILLTIME/DRAINTIME premises are expressed in HOURS (§4.2.2, EPANET
+/// convention); the volume/flow quotient below is in seconds.
+const SECONDS_PER_HOUR: f64 = 3600.0;
+
 /// Power unit conversion: 1 kW = 1000 W.
 const KW_PER_W: f64 = 1.0e-3;
 
@@ -91,11 +95,13 @@ fn premise_lhs(
                 PremiseAttribute::Demand => node_state.demand_flow,
                 PremiseAttribute::Level => node_state.level,
                 PremiseAttribute::FillTime => {
+                    // Hours, not seconds: the premise threshold is stored in
+                    // hours (EPANET convention, §4.2.2).
                     if let NodeKind::Tank(tank) = &node.kind {
                         let v_max = tank.volume_from_level(tank.max_level, &network.curves);
                         let q_net = node_state.net_flow;
                         if q_net > 0.0 {
-                            (v_max - node_state.volume) / q_net
+                            (v_max - node_state.volume) / (SECONDS_PER_HOUR * q_net)
                         } else {
                             f64::INFINITY
                         }
@@ -104,11 +110,12 @@ fn premise_lhs(
                     }
                 }
                 PremiseAttribute::DrainTime => {
+                    // Hours, not seconds (§4.2.2).
                     if let NodeKind::Tank(tank) = &node.kind {
                         let v_min = tank.volume_from_level(tank.min_level, &network.curves);
                         let q_net = node_state.net_flow;
                         if q_net < 0.0 {
-                            (node_state.volume - v_min) / (-q_net)
+                            (node_state.volume - v_min) / (SECONDS_PER_HOUR * -q_net)
                         } else {
                             f64::INFINITY
                         }
@@ -191,6 +198,111 @@ fn link_status_as_f64(s: LinkStatus) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{MixModel, Node, NodeBase, SimulationOptions, Tank};
+    use std::collections::HashMap;
+
+    /// A single-tank network with a 1 m² cross-section (levels 0–10 m, so the
+    /// full volume is 10 m³) for FILLTIME/DRAINTIME evaluation tests.
+    fn tank_network() -> Network {
+        let unit_area_diameter = (4.0 / std::f64::consts::PI).sqrt(); // A = 1 m²
+        Network {
+            title: vec![],
+            options: SimulationOptions::default(),
+            patterns: vec![],
+            curves: vec![],
+            nodes: vec![Node {
+                base: NodeBase {
+                    id: "T1".to_string(),
+                    index: 1,
+                    elevation: 10.0,
+                    initial_quality: 0.0,
+                },
+                kind: NodeKind::Tank(Tank {
+                    min_level: 0.0,
+                    max_level: 10.0,
+                    initial_level: 5.0,
+                    diameter: unit_area_diameter,
+                    min_volume: 0.0,
+                    volume_curve: None,
+                    mix_model: MixModel::Cstr,
+                    mix_fraction: 1.0,
+                    bulk_coeff: 0.0,
+                    overflow: false,
+                }),
+                source: None,
+            }],
+            links: vec![],
+            controls: vec![],
+            rules: vec![],
+            pattern_index: HashMap::new(),
+            report: crate::ReportOptions::default(),
+            coordinates: HashMap::new(),
+            vertices: HashMap::new(),
+            node_tags: HashMap::new(),
+            link_tags: HashMap::new(),
+        }
+    }
+
+    fn tank_premise(attribute: PremiseAttribute, operator: PremiseOperator, value: f64) -> Premise {
+        Premise {
+            object: PremiseObject::Node(1),
+            attribute,
+            operator,
+            value,
+            connective: None,
+        }
+    }
+
+    fn eval_with_state(premise: Premise, volume: f64, net_flow: f64) -> bool {
+        let network = tank_network();
+        let node_states = vec![NodeState {
+            volume,
+            net_flow,
+            ..NodeState::default()
+        }];
+        evaluate_premises(&[premise], &network, &node_states, &[], 0.0)
+    }
+
+    /// FILLTIME compares in HOURS (§4.2.2): a tank 1.8 m³ from full filling at
+    /// 0.001 m³/s needs 1800 s = 0.5 h. `FILLTIME > 2` must NOT fire — the
+    /// old seconds-valued comparison (1800 > 2) fired the moment fill time
+    /// crossed 2 *seconds*.
+    #[test]
+    fn filltime_premise_compares_in_hours_not_seconds() {
+        let premise = tank_premise(PremiseAttribute::FillTime, PremiseOperator::Gt, 2.0);
+        assert!(
+            !eval_with_state(premise, 8.2, 0.001),
+            "0.5 h fill time must not satisfy FILLTIME > 2 (hours)"
+        );
+    }
+
+    /// The same threshold fires once the fill time genuinely exceeds 2 hours
+    /// (1.8 m³ remaining at 1e-4 m³/s = 5 h).
+    #[test]
+    fn filltime_premise_fires_when_fill_time_exceeds_threshold_hours() {
+        let premise = tank_premise(PremiseAttribute::FillTime, PremiseOperator::Gt, 2.0);
+        assert!(eval_with_state(premise, 8.2, 1.0e-4));
+    }
+
+    /// DRAINTIME mirrors FILLTIME: 7.2 m³ draining at 0.001 m³/s is 2 h, so
+    /// `DRAINTIME < 1` is false; 1.8 m³ (0.5 h) satisfies it.
+    #[test]
+    fn draintime_premise_compares_in_hours_not_seconds() {
+        let premise = tank_premise(PremiseAttribute::DrainTime, PremiseOperator::Lt, 1.0);
+        assert!(!eval_with_state(premise, 7.2, -0.001));
+
+        let premise = tank_premise(PremiseAttribute::DrainTime, PremiseOperator::Lt, 1.0);
+        assert!(eval_with_state(premise, 1.8, -0.001));
+    }
+
+    /// A non-filling tank still reports an infinite fill time.
+    #[test]
+    fn filltime_premise_is_infinite_when_not_filling() {
+        let premise = tank_premise(PremiseAttribute::FillTime, PremiseOperator::Gt, 2.0);
+        assert!(eval_with_state(premise, 5.0, -0.001), "∞ > 2 h");
+        let premise = tank_premise(PremiseAttribute::FillTime, PremiseOperator::Lt, 2.0);
+        assert!(!eval_with_state(premise, 5.0, -0.001), "∞ < 2 h is false");
+    }
 
     #[test]
     fn apply_operator_uses_tolerance_by_relation() {

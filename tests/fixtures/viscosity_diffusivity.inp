@@ -1,0 +1,35 @@
+[TITLE]
+Non-default viscosity and diffusivity (EPANET relative-multiplier form)
+
+[JUNCTIONS]
+J1    0    50
+J2    0    30
+
+[RESERVOIRS]
+R1    100
+
+[PIPES]
+P1    R1    J1    1000    12    100    0    Open
+P2    J1    J2    800     10    100    0    Open
+
+[SOURCES]
+R1    CONCEN    1.0
+
+[REACTIONS]
+Order Wall    1
+Global Wall   -1.0
+
+[OPTIONS]
+Units       GPM
+Headloss    D-W
+Quality     Chlorine mg/L
+Viscosity   1.5
+Diffusivity 2.0
+
+[TIMES]
+Duration    6:00
+Hydraulic Timestep    1:00
+Quality Timestep    0:05
+Report Timestep    1:00
+
+[END]

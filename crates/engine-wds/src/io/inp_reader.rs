@@ -1260,7 +1260,6 @@ fn parse_tanks(
                 mix_fraction: 1.0,
                 bulk_coeff: 0.0,
                 overflow,
-                head_pattern: None,
             }),
             source: None,
         });

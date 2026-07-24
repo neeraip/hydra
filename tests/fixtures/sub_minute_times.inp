@@ -1,0 +1,29 @@
+[TITLE]
+Sub-minute timesteps (20 s quality step) must survive serialisation
+
+[JUNCTIONS]
+J1    0    50
+J2    0    30
+
+[RESERVOIRS]
+R1    100
+
+[PIPES]
+P1    R1    J1    1000    12    100    0    Open
+P2    J1    J2    800     10    100    0    Open
+
+[SOURCES]
+R1    CONCEN    1.0
+
+[OPTIONS]
+Units       GPM
+Headloss    H-W
+Quality     Chlorine mg/L
+
+[TIMES]
+Duration    2:00
+Hydraulic Timestep    0:05
+Quality Timestep    0:00:20
+Report Timestep    0:05
+
+[END]

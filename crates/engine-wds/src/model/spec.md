@@ -161,7 +161,8 @@ A tank is a storage node whose head evolves over time.
 | `mix_fraction` | Inlet-zone volume fraction for `TWO_COMPARTMENT` | (0, 1); ignored for other models |
 | `bulk_coeff` | Bulk reaction rate coefficient (overrides global) | any real |
 | `overflow` | Whether overflow is permitted when full | boolean |
-| `head_pattern` | Optional pattern ID (for scheduled level modelling) | nullable |
+
+Tanks have **no** head pattern: their head is always derived from the simulated water level (EPANET's `[TANKS]` section has no pattern column). Head patterns exist only on reservoirs (§2.4.3), which are unaffected.
 
 **Derived**: `bottom_elevation` = `elevation` − `min_level`. `Head` = `bottom_elevation` + current level. `Cross-section area` $A$ = $\pi d^2/4$ for cylindrical tanks; for `vol_curve` tanks, $A(h) = dV/dh$ evaluated from the curve.
 
@@ -295,6 +296,8 @@ A rule is evaluated at each rule time step (which subdivides the hydraulic step)
 - `attribute` is head, pressure, demand, flow, status, setting, power, fill-time, drain-time, or clocktime/time
 - `operator` is `=`, `≠`, `<`, `>`, `≤`, `≥`
 - `value` is a numeric threshold
+
+**Premise value units**: `TIME` and `CLOCKTIME` thresholds are stored in seconds. `FILLTIME` and `DRAINTIME` thresholds are stored in **hours** — the EPANET convention for these attributes — and are *not* converted at the input boundary; the rule evaluator converts the tank's computed fill/drain time into hours before comparison (see [simulation spec](../simulation/spec.md) §4.2.2). All other premise thresholds are converted to internal SI units at load time (§3).
 
 Consecutive premises are joined by `AND` or `OR`. `AND` binds more tightly than `OR` (standard precedence).
 
@@ -442,7 +445,7 @@ The INP format is the plain-text network description format used by EPANET. Supp
 **Section-to-core mapping notes:**
 
 - `[TAGS]`, `[COORDINATES]`, `[VERTICES]`, `[LABELS]`, `[BACKDROP]`: display/annotation data only — not passed to the core session. Components may preserve these for their own output.
-- `[TITLE]`: stored in the data model (`Network.title`) and written to the binary output prolog (§4.1). Up to three title lines are preserved.
+- `[TITLE]`: stored in the data model (`Network.title`) and written to the binary output prolog (§4.5.2). Up to three title lines are preserved.
 - `[REPORT]`: controls output filtering and verbosity. These are component-level settings, not simulation parameters.
 - `[TIMES] Statistic`: the `STATISTIC` keyword within `[TIMES]` (values: `NONE`, `AVERAGED`, `MINIMUM`, `MAXIMUM`, `RANGE`) controls how per-timestep results are post-processed before output. `NONE` writes every reporting step individually. The other modes aggregate across all reporting steps (time-weighted average, element-wise minimum/maximum, or max−min range). This is a post-processing mode; the core always delivers all per-step results regardless of this setting.
 
@@ -455,6 +458,11 @@ The INP format is the plain-text network description format used by EPANET. Supp
 - `[REACTIONS]`: coefficients are stored per-second internally and written per-day. Wall coefficients and the roughness–reaction correlation factor additionally carry the wall-order-dependent length-dimension factor documented in the [quality spec](../quality/spec.md) §6.5.2; the writer applies the exact inverse of the load conversion.
 - `[REPORT]`: `PAGESIZE`, `STATUS`, `SUMMARY`, `MESSAGES`, `ENERGY`, `NODES`, `LINKS`, `FILE`, and the per-field options (`<FIELD> YES|NO`, `<FIELD> PRECISION n`, `<FIELD> BELOW v`, `<FIELD> ABOVE v`) are all re-serialised; field entries are written in sorted field-name order so output is deterministic.
 - `[LEAKAGE]`: the on-disk values are the FAVAD coefficients C₁ (mm² of fixed leak area per 100 length units of pipe) and C₂ (mm of leak-area expansion per metre of head, per 100 length units of pipe). At load they become the per-pipe discharge coefficients $K_1 = C_d\sqrt{2g} \cdot 10^{-6} \cdot C_1 \cdot L/100$ and $K_2 = C_d\sqrt{2g} \cdot 10^{-3} \cdot C_2 \cdot L/100$ (with $C_d = 0.6$, $L$ in metres; §2.6.2, §2.10); the writer inverts these formulas.
+- `[TIMES]`: duration values are written as `H:MM` when they fall on a whole minute and as `H:MM:SS` otherwise (the parser accepts both; whole-minute rounding would destroy sub-minute steps such as a 20 s quality timestep, and a bare number would be re-read as decimal **hours**). `Pattern Timestep` is written whenever it differs from the parser's default of 3600 s — comparing against the hydraulic timestep instead would silently drop a non-default pattern step that happens to equal the hydraulic step. `Rule Timestep` is always written, since its parser default is derived from the hydraulic timestep and cannot be reconstructed reliably.
+- `[OPTIONS]` `VISCOSITY` / `DIFFUSIVITY`: written in EPANET's **relative-multiplier** form — the stored SI value divided by the reference constants 1.022×10⁻⁶ m²/s (viscosity) and 1.208×10⁻⁹ m²/s (diffusivity). The parser interprets values above 10⁻³ (viscosity) resp. 10⁻⁴ (diffusivity) as multipliers of these references and smaller values as absolute; absolute magnitudes (≈10⁻⁹) are destroyed by fixed-precision decimal formatting, so the writer must never emit the absolute form. Omitted when equal to the reference default.
+- `[OPTIONS]` `HTOL` / `QTOL` / `RQTOL`: written when they differ from the §2.1 defaults (`head_tol` = 1.524×10⁻⁴ m, `flow_change_tol` = 2.832×10⁻⁶ m³/s, `rq_tol` = 10⁻⁷), applying the exact inverse of the load conversion: `HTOL` = `head_tol` × elevation factor, `QTOL` = `flow_change_tol` × flow factor, `RQTOL` unconverted. Values are written in shortest round-trip decimal form (no fixed precision) because these tolerances can be far smaller than any fixed decimal precision.
+- `[RULES]`: premise values for `TIME` and `CLOCKTIME` are always written as `H:MM(:SS)` literals. A bare numeric value would be re-parsed as **hours**, multiplying the stored seconds by 3600 on every save/load cycle. `FILLTIME`/`DRAINTIME` premise values are stored in hours (§2.8.2) and written back unchanged.
+- `[MIXING]`: only tanks with a **non-default** mixing configuration are written. The default is `MIXED` (CSTR) with `mix_fraction` = 1.0 (the parser's default fraction when the column is absent); a tank is written when its model is not CSTR or its fraction is not 1.0. The Fraction column is written for `2COMP` always, and for any other model whenever the fraction differs from 1.0 (so an explicitly-parsed fraction survives).
 - `[LABELS]` and `[BACKDROP]` are display no-ops: parsed leniently, never written.
 
 **Malformed data lines:** a data line in a recognised section that has fewer fields than the section's required columns, or a field that fails numeric conversion or range validation, must produce a parse error identifying the section, the 1-based source line number, and the offending field or value. This applies uniformly to the object-defining sections (`[JUNCTIONS]`, `[RESERVOIRS]`, `[TANKS]`, `[PIPES]`, `[PUMPS]`, `[VALVES]`) and the node/link property sections (`[DEMANDS]`, `[EMITTERS]`, `[QUALITY]`, `[MIXING]`, `[SOURCES]`, `[STATUS]`, `[LEAKAGE]`). Display/annotation sections (`[COORDINATES]`, `[VERTICES]`, `[TAGS]`, `[REPORT]`) remain lenient: under-length lines and unknown IDs there are skipped, matching EPANET.
@@ -476,6 +484,92 @@ The INP parser uses the two-pass strategy described in §4.2.
 See `encode_analysis_artifact` / `decode_analysis_artifact` in
 `analysis/artifact.rs` for the file schema and lifecycle (including
 stale-on-edit invalidation).
+
+### 4.5 Binary Results Format (`.out`)
+
+The binary results file persists the full time series of a completed simulation. It is an extension of the EPANET 2.3 binary output format: all integers are 4-byte little-endian (`INT4`), all reals are 4-byte little-endian IEEE 754 (`REAL4`), and string fields are fixed-width, zero-padded byte arrays (IDs: 32 bytes; title lines: 80 bytes; filenames: 260 bytes).
+
+#### 4.5.1 Version History
+
+| Version code | Meaning |
+|---|---|
+| `20012` | EPANET 2.3-compatible baseline layout. No network digest — readers report the digest as *absent*. |
+| `20013` | Hydra extension: identical to `20012` except the epilog (§4.5.6) grows from 12 to 20 bytes, inserting a 64-bit network digest (§4.5.7) between the warning flag and the closing magic number. |
+
+Writers always produce the newest version. Readers must accept **both** versions; the only layout difference is the epilog length. Any other version code is rejected as unsupported.
+
+#### 4.5.2 Prolog
+
+| Field | Type / size |
+|---|---|
+| magic number = 516114521 | INT4 |
+| format version (§4.5.1) | INT4 |
+| node count $N_n$ (junctions + reservoirs + tanks) | INT4 |
+| tank count $N_t$ (reservoirs + tanks) | INT4 |
+| link count $N_l$ (pipes + pumps + valves) | INT4 |
+| pump count $N_p$ | INT4 |
+| valve count | INT4 |
+| quality flag (0 = none, 1 = chemical, 2 = age, 3 = trace) | INT4 |
+| trace node index (1-based; 0 when not tracing) | INT4 |
+| flow-unit code (§3.1 table order: CFS = 0 … CMS = 10) | INT4 |
+| pressure-unit code (0 = psi, 1 = kPa, 2 = m) | INT4 |
+| report statistic code (0 = series) | INT4 |
+| report start time (s) | INT4 |
+| report step (s) | INT4 |
+| duration (s) | INT4 |
+| 3 title lines | 3 × 80 bytes |
+| input filename, report filename | 2 × 260 bytes |
+| chemical name, chemical units | 2 × 32 bytes |
+| node IDs | $N_n$ × 32 bytes |
+| link IDs | $N_l$ × 32 bytes |
+| link from-node indices (1-based) | $N_l$ × INT4 |
+| link to-node indices (1-based) | $N_l$ × INT4 |
+| link type codes (0 = CV, 1 = pipe, 2 = pump, 3 = PRV, 4 = PSV, 5 = PBV, 6 = FCV, 7 = TCV, 8 = GPV) | $N_l$ × INT4 |
+| tank/reservoir node indices (1-based) | $N_t$ × INT4 |
+| tank cross-section areas (m², internal units; 0 for reservoirs) | $N_t$ × REAL4 |
+| node elevations (output length units) | $N_n$ × REAL4 |
+| link lengths (output length units; 0 for pumps/valves) | $N_l$ × REAL4 |
+| link diameters (output diameter units; 0 for pumps) | $N_l$ × REAL4 |
+
+Prolog size: $884 + 36 N_n + 52 N_l + 8 N_t$ bytes.
+
+#### 4.5.3 Energy Section
+
+One 28-byte record per pump — INT4 link index (1-based), then six REAL4 values: percent of time online, average efficiency (%), average energy intensity (kWh per flow unit), average kW, peak kW, average cost per day — followed by a single trailing REAL4 demand charge. Size: $28 N_p + 4$ bytes.
+
+#### 4.5.4 Dynamic Results
+
+One block per reporting period, laid out column-major (all values of one variable, then the next):
+
+- node variables ($4 N_n$ REAL4): demand, head, pressure, quality
+- link variables ($8 N_l$ REAL4): flow, velocity, unit headloss, quality, status (status code cast to REAL4), setting, reaction rate, friction factor
+
+Block size: $4(4 N_n + 8 N_l)$ bytes per period.
+
+#### 4.5.5 Network Reactions
+
+Four REAL4 values: average bulk, wall, tank, and source reaction rates (mass/hour). Size: 16 bytes.
+
+#### 4.5.6 Epilog
+
+| Field | Type / size | Versions |
+|---|---|---|
+| number of reporting periods written | INT4 | all |
+| warning flag (0 = no warnings) | INT4 | all |
+| network digest (§4.5.7), unsigned 64-bit little-endian | 8 bytes | ≥ 20013 only |
+| magic number = 516114521 (integrity check) | INT4 | all |
+
+Epilog size: 12 bytes (version 20012), 20 bytes (version 20013). The magic number is always the final 4 bytes of the file.
+
+#### 4.5.7 Network Digest
+
+The network digest binds a results file to the topology of the network that produced it, so a consumer can detect that results are stale after the model has been edited. It is the **FNV-1a 64-bit** hash (offset basis 14695981039346656037, prime 1099511628211) of the following byte stream:
+
+1. For each node, in network order: the node ID's UTF-8 bytes, then one `0x0A` byte.
+2. A single `0x00` byte (node/link separator).
+3. For each link, in network order: the link ID's UTF-8 bytes, `0x1F`, the from-node ID's UTF-8 bytes, `0x1F`, the to-node ID's UTF-8 bytes, then `0x0A`.
+
+The digest is deterministic and **order-sensitive**: reordering nodes or links, renaming any element, or rewiring a link's endpoints all change the digest. It intentionally covers identity and connectivity only — property edits (demands, diameters, options) do not change it.
 
 ## 5. Runtime Estimation Types
 

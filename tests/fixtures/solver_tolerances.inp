@@ -1,0 +1,27 @@
+[TITLE]
+Non-default HTOL / QTOL / RQTOL solver tolerances
+
+[JUNCTIONS]
+J1    0    50
+J2    0    30
+
+[RESERVOIRS]
+R1    100
+
+[PIPES]
+P1    R1    J1    1000    12    100    0    Open
+P2    J1    J2    800     10    100    0    Open
+
+[OPTIONS]
+Units       GPM
+Headloss    H-W
+HTOL        0.005
+QTOL        0.002
+RQTOL       1e-5
+
+[TIMES]
+Duration    6:00
+Hydraulic Timestep    1:00
+Report Timestep    1:00
+
+[END]
