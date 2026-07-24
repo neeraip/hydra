@@ -121,7 +121,7 @@ export function PumpTable({
             />
             <SortTh
               field="powerKw"
-              label="Power"
+              label="Power (kW)"
               sortField={sortField}
               sortAsc={sortAsc}
               onSort={onSort}
@@ -244,7 +244,7 @@ export function PumpTable({
                     isPendingRow
                       ? ""
                       : row.powerKw != null
-                        ? `${row.powerKw.toFixed(1)} kW`
+                        ? row.powerKw.toFixed(1)
                         : "—"
                   }
                   value={

@@ -1,7 +1,7 @@
 import type React from "react";
 import type { ValveRow } from "../../../hooks";
 import {
-  formatQtyRaw,
+  formatQtyValue,
   fromDisplay,
   type Quantity,
   toDisplay,
@@ -125,6 +125,10 @@ export function ValveTable({
               onSort={onSort}
               align="right"
             />
+            {/* Setting is the one column that keeps its unit in the cell:
+                the unit varies per row with the valve type (PRV/PSV/PBV =
+                pressure, FCV = flow, TCV = dimensionless K, GPV/PCV = curve
+                ref), so a single header unit is impossible. */}
             <SortTh
               field="setting"
               label="Setting"
@@ -299,7 +303,7 @@ export function ValveTable({
                   display={
                     isPendingRow
                       ? ""
-                      : formatQtyRaw(row.diameter, "diameter", sys)
+                      : formatQtyValue(row.diameter, "diameter", sys)
                   }
                   placeholder={isPendingRow}
                   align="right"

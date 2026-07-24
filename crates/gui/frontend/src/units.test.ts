@@ -4,6 +4,7 @@ import {
   formatDistance,
   formatQty,
   formatQtyRaw,
+  formatQtyValue,
   fromDisplay,
   getUnitSystem,
   type Quantity,
@@ -123,6 +124,39 @@ describe("formatQtyRaw", () => {
 
   it("converts and rounds in US", () => {
     expect(formatQtyRaw(100, "length", "us")).toBe("328.1 ft");
+  });
+});
+
+describe("formatQtyValue", () => {
+  it("passes the raw value through in SI with no label", () => {
+    expect(formatQtyValue(216.408, "elevation", "si")).toBe("216.408");
+    expect(formatQtyValue(300, "diameter", "si")).toBe("300");
+    expect(formatQtyValue(0.5, "flow", "si")).toBe("0.5");
+  });
+
+  it("matches formatQtyRaw's SI rendering minus the unit label", () => {
+    for (const q of QUANTITIES) {
+      for (const v of [0, 0.001, 24, 967.25]) {
+        expect(`${formatQtyValue(v, q, "si")} ${unitLabel(q, "si")}`).toBe(
+          formatQtyRaw(v, q, "si"),
+        );
+      }
+    }
+  });
+
+  it("honours explicit decimals in SI", () => {
+    expect(formatQtyValue(1.234, "demand", "si", 2)).toBe("1.23");
+  });
+
+  it("converts and rounds in US with formatQty's default decimals", () => {
+    expect(formatQtyValue(100, "length", "us")).toBe("328.1");
+    expect(formatQtyValue(300, "diameter", "us")).toBe("11.81");
+    expect(formatQtyValue(20, "pressure", "us")).toBe("28.4");
+    expect(formatQtyValue(1, "flow", "us")).toBe("15.9");
+  });
+
+  it("honours explicit decimals in US", () => {
+    expect(formatQtyValue(1, "velocity", "us", 3)).toBe("3.281");
   });
 });
 

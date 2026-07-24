@@ -1,6 +1,11 @@
 import type React from "react";
 import type { ReservoirRow } from "../../../hooks";
-import { formatQtyRaw, fromDisplay, useUnitSystem } from "../../../units";
+import {
+  formatQtyValue,
+  fromDisplay,
+  unitLabel,
+  useUnitSystem,
+} from "../../../units";
 import {
   EditableCell,
   SortTh,
@@ -65,7 +70,7 @@ export function ReservoirTable({
           />
           <SortTh
             field="head"
-            label="Head"
+            label={`Head (${unitLabel("head", sys)})`}
             sortField={sortField}
             sortAsc={sortAsc}
             onSort={onSort}
@@ -152,7 +157,7 @@ export function ReservoirTable({
               <EditableCell
                 key={`${discardGen}-${row.id}-head`}
                 display={
-                  isPendingRow ? "" : formatQtyRaw(row.head, "head", sys)
+                  isPendingRow ? "" : formatQtyValue(row.head, "head", sys)
                 }
                 placeholder={isPendingRow}
                 align="right"

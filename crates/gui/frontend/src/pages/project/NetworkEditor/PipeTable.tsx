@@ -1,6 +1,11 @@
 import type React from "react";
 import type { PipeInitialStatus, PipeRow } from "../../../hooks";
-import { formatQtyRaw, fromDisplay, useUnitSystem } from "../../../units";
+import {
+  formatQtyValue,
+  fromDisplay,
+  unitLabel,
+  useUnitSystem,
+} from "../../../units";
 import { PIPE_STATUS_OPTIONS, pipeStatusPatchValue } from "./pipeStatus";
 import {
   EditableCell,
@@ -105,7 +110,7 @@ export function PipeTable({
             />
             <SortTh
               field="length"
-              label="Length"
+              label={`Length (${unitLabel("length", sys)})`}
               sortField={sortField}
               sortAsc={sortAsc}
               onSort={onSort}
@@ -113,7 +118,7 @@ export function PipeTable({
             />
             <SortTh
               field="diameter"
-              label="Ø"
+              label={`Ø (${unitLabel("diameter", sys)})`}
               sortField={sortField}
               sortAsc={sortAsc}
               onSort={onSort}
@@ -232,7 +237,9 @@ export function PipeTable({
                 <EditableCell
                   key={`${discardGen}-${row.id}-length`}
                   display={
-                    isPendingRow ? "" : formatQtyRaw(row.length, "length", sys)
+                    isPendingRow
+                      ? ""
+                      : formatQtyValue(row.length, "length", sys)
                   }
                   placeholder={isPendingRow}
                   align="right"
@@ -254,7 +261,7 @@ export function PipeTable({
                   display={
                     isPendingRow
                       ? ""
-                      : formatQtyRaw(row.diameter, "diameter", sys)
+                      : formatQtyValue(row.diameter, "diameter", sys)
                   }
                   placeholder={isPendingRow}
                   align="right"

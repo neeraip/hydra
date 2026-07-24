@@ -197,6 +197,26 @@ export function formatQtyRaw(v: number, q: Quantity, sys: UnitSystem): string {
 }
 
 /**
+ * Convert + format an SI value as a bare number string — no unit label.
+ *
+ * Used by table cells whose column header already carries the unit (via
+ * {@link unitLabel}), so the cell shows just the number and the edit pre-fill
+ * is directly parseable. In SI the raw value is passed through unrounded
+ * (exactly {@link formatQtyRaw}'s SI behavior minus the label) unless
+ * `decimals` is given explicitly; in US the value is converted and rounded
+ * with the same decimals policy as {@link formatQty}.
+ */
+export function formatQtyValue(
+  v: number,
+  q: Quantity,
+  sys: UnitSystem,
+  decimals?: number,
+): string {
+  if (sys === "si") return decimals != null ? v.toFixed(decimals) : `${v}`;
+  return toDisplay(v, q, sys).toFixed(decimals ?? defaultDecimals(q, sys));
+}
+
+/**
  * Measure-tool distance readout: m/km in SI, ft/mi in US customary.
  * Input is always metres.
  */

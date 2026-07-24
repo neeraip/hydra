@@ -1,6 +1,11 @@
 import type React from "react";
 import type { TankRow } from "../../../hooks";
-import { formatQtyRaw, fromDisplay, useUnitSystem } from "../../../units";
+import {
+  formatQtyValue,
+  fromDisplay,
+  unitLabel,
+  useUnitSystem,
+} from "../../../units";
 import {
   EditableCell,
   SortTh,
@@ -65,7 +70,7 @@ export function TankTable({
           />
           <SortTh
             field="elevation"
-            label="Elevation"
+            label={`Elevation (${unitLabel("elevation", sys)})`}
             sortField={sortField}
             sortAsc={sortAsc}
             onSort={onSort}
@@ -73,7 +78,7 @@ export function TankTable({
           />
           <SortTh
             field="minLevel"
-            label="Min level"
+            label={`Min level (${unitLabel("length", sys)})`}
             sortField={sortField}
             sortAsc={sortAsc}
             onSort={onSort}
@@ -81,7 +86,7 @@ export function TankTable({
           />
           <SortTh
             field="initialLevel"
-            label="Init level"
+            label={`Init level (${unitLabel("length", sys)})`}
             sortField={sortField}
             sortAsc={sortAsc}
             onSort={onSort}
@@ -89,7 +94,7 @@ export function TankTable({
           />
           <SortTh
             field="maxLevel"
-            label="Max level"
+            label={`Max level (${unitLabel("length", sys)})`}
             sortField={sortField}
             sortAsc={sortAsc}
             onSort={onSort}
@@ -97,7 +102,10 @@ export function TankTable({
           />
           <SortTh
             field="diameter"
-            label="Diameter"
+            // Tank diameter is stored/converted as the `length` quantity
+            // (m/ft), unlike pipe/valve diameters (mm/in) — keep the header
+            // unit consistent with the cell conversion below.
+            label={`Diameter (${unitLabel("length", sys)})`}
             sortField={sortField}
             sortAsc={sortAsc}
             onSort={onSort}
@@ -186,7 +194,7 @@ export function TankTable({
                 display={
                   isPendingRow
                     ? ""
-                    : formatQtyRaw(row.elevation, "elevation", sys)
+                    : formatQtyValue(row.elevation, "elevation", sys)
                 }
                 placeholder={isPendingRow}
                 align="right"
@@ -205,7 +213,9 @@ export function TankTable({
               <EditableCell
                 key={`${discardGen}-${row.id}-minLevel`}
                 display={
-                  isPendingRow ? "" : formatQtyRaw(row.minLevel, "length", sys)
+                  isPendingRow
+                    ? ""
+                    : formatQtyValue(row.minLevel, "length", sys)
                 }
                 placeholder={isPendingRow}
                 align="right"
@@ -227,7 +237,7 @@ export function TankTable({
                 display={
                   isPendingRow
                     ? ""
-                    : formatQtyRaw(row.initialLevel, "length", sys)
+                    : formatQtyValue(row.initialLevel, "length", sys)
                 }
                 placeholder={isPendingRow}
                 align="right"
@@ -247,7 +257,9 @@ export function TankTable({
               <EditableCell
                 key={`${discardGen}-${row.id}-maxLevel`}
                 display={
-                  isPendingRow ? "" : formatQtyRaw(row.maxLevel, "length", sys)
+                  isPendingRow
+                    ? ""
+                    : formatQtyValue(row.maxLevel, "length", sys)
                 }
                 placeholder={isPendingRow}
                 align="right"
@@ -270,7 +282,7 @@ export function TankTable({
                   isPendingRow
                     ? ""
                     : row.diameter != null
-                      ? formatQtyRaw(row.diameter, "length", sys)
+                      ? formatQtyValue(row.diameter, "length", sys)
                       : "—"
                 }
                 placeholder={isPendingRow || row.diameter == null}

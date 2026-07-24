@@ -1,9 +1,9 @@
 import type React from "react";
 import type { JunctionRow } from "../../../hooks";
 import {
-  formatQty,
-  formatQtyRaw,
+  formatQtyValue,
   fromDisplay,
+  unitLabel,
   useUnitSystem,
 } from "../../../units";
 import {
@@ -70,7 +70,7 @@ export function JunctionTable({
           />
           <SortTh
             field="elevation"
-            label="Elevation"
+            label={`Elevation (${unitLabel("elevation", sys)})`}
             sortField={sortField}
             sortAsc={sortAsc}
             onSort={onSort}
@@ -78,7 +78,7 @@ export function JunctionTable({
           />
           <SortTh
             field="baseDemand"
-            label="Demand"
+            label={`Demand (${unitLabel("demand", sys)})`}
             sortField={sortField}
             sortAsc={sortAsc}
             onSort={onSort}
@@ -160,7 +160,7 @@ export function JunctionTable({
                 display={
                   isPendingRow
                     ? ""
-                    : formatQtyRaw(row.elevation, "elevation", sys)
+                    : formatQtyValue(row.elevation, "elevation", sys)
                 }
                 placeholder={isPendingRow}
                 align="right"
@@ -181,7 +181,7 @@ export function JunctionTable({
                 display={
                   isPendingRow
                     ? ""
-                    : formatQty(
+                    : formatQtyValue(
                         row.baseDemand,
                         "demand",
                         sys,
