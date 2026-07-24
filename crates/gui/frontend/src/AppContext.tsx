@@ -86,7 +86,10 @@ interface AppActions {
   networkLoadFailure: string | null;
   setPage: (page: Page) => void;
   setProjectView: (view: ProjectView) => void;
-  openProject: (id: string) => void;
+  /** Open/switch to a project. Pass `view` to land on a specific tab (the
+   *  ProjectSwitcher passes the current view to preserve it across a switch);
+   *  omit it to resume the project's last-active tab. */
+  openProject: (id: string, view?: ProjectView) => void;
   closeProject: () => void;
   toggleRail: () => void;
   openCommandPalette: () => void;
@@ -573,8 +576,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
   );
 
   const openProject = useCallback(
-    (id: string) => {
-      goToProject(id, readProjectView(id) ?? "canvas", readRailOpen(id));
+    (id: string, view?: ProjectView) => {
+      goToProject(
+        id,
+        view ?? readProjectView(id) ?? "canvas",
+        readRailOpen(id),
+      );
     },
     [goToProject],
   );
