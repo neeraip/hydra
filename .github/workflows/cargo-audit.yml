@@ -6,6 +6,10 @@ on:
     - cron: '0 6 * * 1'  # Every Monday at 06:00 UTC
   workflow_dispatch:
 
+concurrency:
+  group: cargo-audit-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
@@ -26,7 +30,8 @@ jobs:
           BASE: ${{ github.event.pull_request.base.sha }}
         run: |
           git fetch --depth=1 origin "$BASE"
-          if git diff --name-only "$BASE" HEAD | grep -qE '^Cargo\.lock$'; then
+          if git diff --name-only "$BASE" HEAD \
+            | grep -qE '^Cargo\.lock$|^\.github/workflows/cargo-audit\.yml$'; then
             echo "lockfile=true" >> "$GITHUB_OUTPUT"
           else
             echo "lockfile=false" >> "$GITHUB_OUTPUT"

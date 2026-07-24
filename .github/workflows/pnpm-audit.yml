@@ -4,6 +4,10 @@ on:
   pull_request:
   workflow_dispatch:
 
+concurrency:
+  group: pnpm-audit-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
@@ -24,7 +28,8 @@ jobs:
           BASE: ${{ github.event.pull_request.base.sha }}
         run: |
           git fetch --depth=1 origin "$BASE"
-          if git diff --name-only "$BASE" HEAD | grep -qE '^crates/gui/frontend/'; then
+          if git diff --name-only "$BASE" HEAD \
+            | grep -qE '^crates/gui/frontend/|^\.github/workflows/pnpm-audit\.yml$'; then
             echo "frontend=true" >> "$GITHUB_OUTPUT"
           else
             echo "frontend=false" >> "$GITHUB_OUTPUT"

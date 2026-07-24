@@ -1,6 +1,8 @@
 name: PNPM CI
 
 on:
+  push:
+    branches: [main]
   pull_request:
   workflow_dispatch:
 
@@ -28,7 +30,10 @@ jobs:
           BASE: ${{ github.event.pull_request.base.sha }}
         run: |
           git fetch --depth=1 origin "$BASE"
-          if git diff --name-only "$BASE" HEAD | grep -qE '^crates/gui/frontend/'; then
+          # The CRS drift check depends on the generator script and the
+          # committed catalog, not just the frontend tree — include both.
+          if git diff --name-only "$BASE" HEAD \
+            | grep -qE '^crates/gui/frontend/|^scripts/update-crs-catalog\.mjs$|^crates/gui/resources/crs-catalog\.json$|^\.github/workflows/pnpm-ci\.yml$'; then
             echo "frontend=true" >> "$GITHUB_OUTPUT"
           else
             echo "frontend=false" >> "$GITHUB_OUTPUT"
@@ -37,9 +42,12 @@ jobs:
   check:
     name: PNPM CI
     needs: changes
+    # Pushes to main and manual dispatches always run the full suite; the
+    # change filter only gates pull requests.
     if: |
       always() && (
         needs.changes.outputs.frontend == 'true' ||
+        github.event_name == 'push' ||
         github.event_name == 'workflow_dispatch'
       )
     runs-on: ubuntu-latest

@@ -30,8 +30,11 @@ jobs:
           BASE: ${{ github.event.pull_request.base.sha }}
         run: |
           git fetch --depth=1 origin "$BASE"
+          # Beyond Rust sources: tauri.conf.json/capabilities are validated by
+          # tauri-build's build script, and crs-catalog.json is embedded via
+          # include_str! — changes to any of them can break a cargo build.
           if git diff --name-only "$BASE" HEAD \
-            | grep -qE '\.rs$|Cargo\.toml$|^Cargo\.lock$|^deny\.toml$|^rust-toolchain\.toml$'; then
+            | grep -qE '\.rs$|Cargo\.toml$|^Cargo\.lock$|^deny\.toml$|^rust-toolchain\.toml$|^crates/gui/tauri\.conf\.json$|^crates/gui/capabilities/|^crates/gui/resources/|^\.github/workflows/cargo-ci\.yml$'; then
             echo "cargo=true" >> "$GITHUB_OUTPUT"
           else
             echo "cargo=false" >> "$GITHUB_OUTPUT"
