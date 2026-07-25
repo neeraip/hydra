@@ -14,6 +14,7 @@ import {
   useSimulation,
   useTasks,
 } from "../../AppContext";
+import { useCanvasSelection } from "../../canvas/selection-context";
 import { countIssues, LABEL, PILL } from "../../hooks";
 import {
   formatShortcut,
@@ -27,6 +28,7 @@ export function StatusBar() {
   const { toggleIssuesPanel } = useAppState();
   const { project, accent } = useActiveProject();
   const { resultMeta, resultMetaLoading, issues } = useSimulation();
+  const { selectedNodeId, selectedLinkId } = useCanvasSelection();
   const tasks = useTasks();
 
   // Derive solver state from simulation context.
@@ -124,6 +126,22 @@ export function StatusBar() {
           n={issueCounts.info}
         />
       </button>
+
+      {/* Selected element — a quick read-out of the current canvas selection */}
+      {project && (selectedNodeId || selectedLinkId) && (
+        <Pill title={`Selected ${selectedNodeId ? "node" : "link"}`}>
+          <span style={{ color: "var(--text-tertiary)" }}>Selected</span>
+          <span
+            style={{
+              marginLeft: 6,
+              color: "var(--text-secondary)",
+              fontFamily: "var(--font-mono)",
+            }}
+          >
+            {selectedNodeId ?? selectedLinkId}
+          </span>
+        </Pill>
+      )}
 
       <div style={{ flex: 1 }} />
 
