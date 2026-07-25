@@ -270,6 +270,8 @@ Let $v_{\text{in}}$ = inflow volume during the sub-step, $w_{\text{in}}$ = inflo
 
 **No net flow** ($v_{\text{net}} = 0$): inflow mass still mixes into the mixing zone (step 1 of filling); no volume transfer occurs.
 
+> **Deliberate divergence from EPANET**: at exactly zero net flow, EPANET discards the inflow mass (its two-compartment update only blends inflow inside the strict filling/emptying branches). Hydra instead mixes the inflow into the mixing zone even when $v_{\text{net}} = 0$, which is more physically correct — at zero net flow the inflow and an equal outflow are both passing through the mixing zone, so the incoming constituent should participate in the mix. This is an intentional accuracy improvement, not an oversight.
+
 Outflow concentration = $c_m$ (mixing zone concentration).
 
 Bulk reactions are applied to each zone independently after the mixing/transfer step: $c_m \leftarrow c_m + r_b \cdot \delta t$, $c_s \leftarrow c_s + r_b \cdot \delta t$.
