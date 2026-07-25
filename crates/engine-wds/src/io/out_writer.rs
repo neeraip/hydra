@@ -57,7 +57,10 @@ use std::io::{Seek, Write};
 
 use super::units::{is_si, make_ucf, Ucf};
 use super::WritableSimulation;
-use crate::{FlowUnits, HeadLossFormula, LinkKind, LinkStatus, NodeKind, QualityMode, ValveType};
+use crate::{
+    FlowUnits, HeadLossFormula, LinkKind, LinkStatus, NodeKind, QualityMode, StatisticType,
+    ValveType,
+};
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -86,6 +89,9 @@ pub struct OutStreamWriter<W: Write + Seek> {
     n_periods: i32,
     /// Network topology digest written into the epilog (model spec §4.5.7).
     network_digest: u64,
+    /// `Some` when `STATISTIC != NONE`: report periods are folded into a single
+    /// aggregated period on `finish` rather than streamed individually (§4.3).
+    stats: Option<PeriodStats>,
 }
 
 impl<W: Write + Seek> OutStreamWriter<W> {
@@ -123,6 +129,12 @@ impl<W: Write + Seek> OutStreamWriter<W> {
             next_snapshot_index: 0,
             n_periods: 0,
             network_digest: super::compute_network_digest(network),
+            stats: if options.statistic == StatisticType::Series {
+                None
+            } else {
+                let n_values = network.nodes.len() * 4 + network.links.len() * 8;
+                Some(PeriodStats::new(options.statistic, n_values))
+            },
         })
     }
 
@@ -143,8 +155,15 @@ impl<W: Write + Seek> OutStreamWriter<W> {
                 self.next_rtime += self.report_step;
             }
 
-            write_dynamic_snapshot(&mut self.writer, network, snapshot, &self.ucf)?;
-            self.n_periods += 1;
+            let period_bytes = dynamic_snapshot_bytes(network, snapshot, &self.ucf);
+            if let Some(stats) = &mut self.stats {
+                // STATISTIC aggregation: fold this period in; the single
+                // aggregated period is emitted on finish().
+                stats.accumulate(&period_bytes);
+            } else {
+                self.writer.write_all(&period_bytes)?;
+                self.n_periods += 1;
+            }
 
             if self.report_step > 0 {
                 self.next_rtime += self.report_step;
@@ -156,6 +175,15 @@ impl<W: Write + Seek> OutStreamWriter<W> {
 
     /// Finalize the file by patching energy and appending reactions+epilog.
     pub fn finish(mut self, session: &impl WritableSimulation) -> std::io::Result<W> {
+        // STATISTIC aggregation: emit the single aggregated period now (nothing
+        // was written to the dynamic-results region during streaming).
+        if let Some(stats) = self.stats.take() {
+            if stats.count > 0 {
+                self.writer.write_all(&stats.finalize())?;
+                self.n_periods = 1;
+            }
+        }
+
         let dynamic_end = self.writer.stream_position()?;
 
         self.writer
@@ -253,7 +281,7 @@ fn write_prolog<W: Write>(
 
     let flow_units_code: i32 = flow_units_to_code(output_units);
     let pressure_units_code: i32 = if is_si(output_units) { 2 } else { 0 };
-    let report_statistic: i32 = 0; // Series (always)
+    let report_statistic: i32 = statistic_to_code(options.statistic);
 
     // 15 × INT4 header
     write_i32(w, MAGIC)?;
@@ -481,12 +509,77 @@ fn write_energy_placeholder<W: Write>(w: &mut W, network: &crate::Network) -> st
 
 // ── Dynamic Results ───────────────────────────────────────────────────────────
 
-fn write_dynamic_snapshot<W: Write>(
-    w: &mut W,
+/// Report-statistic code written into the prolog (model spec §4.5.2 / EPANET
+/// StatisticType): 0=Series, 1=Average, 2=Minimum, 3=Maximum, 4=Range.
+fn statistic_to_code(s: StatisticType) -> i32 {
+    match s {
+        StatisticType::Series => 0,
+        StatisticType::Average => 1,
+        StatisticType::Minimum => 2,
+        StatisticType::Maximum => 3,
+        StatisticType::Range => 4,
+    }
+}
+
+/// Per-element running accumulator for `STATISTIC` aggregation (§4.3). Folds each
+/// report-period's dynamic-results block (little-endian f32 values, in file order)
+/// into running sum/min/max, then collapses the whole run into one aggregated
+/// period. Streaming — never buffers all periods.
+struct PeriodStats {
+    statistic: StatisticType,
+    sum: Vec<f64>,
+    min: Vec<f32>,
+    max: Vec<f32>,
+    count: u32,
+}
+
+impl PeriodStats {
+    fn new(statistic: StatisticType, n_values: usize) -> Self {
+        Self {
+            statistic,
+            sum: vec![0.0; n_values],
+            min: vec![f32::INFINITY; n_values],
+            max: vec![f32::NEG_INFINITY; n_values],
+            count: 0,
+        }
+    }
+
+    fn accumulate(&mut self, period_bytes: &[u8]) {
+        for (i, chunk) in period_bytes.chunks_exact(4).enumerate() {
+            let v = f32::from_le_bytes(chunk.try_into().unwrap());
+            self.sum[i] += v as f64;
+            self.min[i] = self.min[i].min(v);
+            self.max[i] = self.max[i].max(v);
+        }
+        self.count += 1;
+    }
+
+    /// Collapse to a single period's little-endian f32 bytes. Average is an
+    /// arithmetic mean over the reporting periods (equal to time-weighted for the
+    /// uniform report-step spacing Hydra emits).
+    fn finalize(&self) -> Vec<u8> {
+        let mut buf: Vec<u8> = Vec::with_capacity(self.sum.len() * 4);
+        for i in 0..self.sum.len() {
+            let v: f32 = match self.statistic {
+                StatisticType::Average => (self.sum[i] / f64::from(self.count)) as f32,
+                StatisticType::Minimum => self.min[i],
+                StatisticType::Maximum => self.max[i],
+                StatisticType::Range => self.max[i] - self.min[i],
+                StatisticType::Series => unreachable!("Series is not aggregated"),
+            };
+            buf.extend_from_slice(&v.to_le_bytes());
+        }
+        buf
+    }
+}
+
+/// Build one reporting period's dynamic-results block as little-endian f32 bytes,
+/// in file order (4 node variables then 8 link variables).
+fn dynamic_snapshot_bytes(
     network: &crate::Network,
     snapshot: &crate::io::HydSnapshot,
     ucf: &Ucf,
-) -> std::io::Result<()> {
+) -> Vec<u8> {
     let n_nodes = network.nodes.len();
     let n_links = network.links.len();
     // 4 node variables + 8 link variables, 4 bytes each (see file layout above).
@@ -677,7 +770,7 @@ fn write_dynamic_snapshot<W: Write>(
         buf.extend_from_slice(&(friction_factor as f32).to_le_bytes());
     }
 
-    w.write_all(&buf)
+    buf
 }
 
 // ── Network Reactions ─────────────────────────────────────────────────────────
@@ -999,6 +1092,62 @@ mod tests {
         assert_eq!(status_to_f32(LinkStatus::Open), 3.0);
         assert_eq!(status_to_f32(LinkStatus::Active), 4.0);
         assert_eq!(status_to_f32(LinkStatus::XPressure), 7.0);
+    }
+
+    #[test]
+    fn period_stats_aggregations() {
+        let block = |vals: &[f32]| -> Vec<u8> {
+            vals.iter().flat_map(|v| v.to_le_bytes()).collect()
+        };
+        let finalize = |stat: StatisticType| -> Vec<f32> {
+            let mut s = PeriodStats::new(stat, 2);
+            s.accumulate(&block(&[1.0, 4.0]));
+            s.accumulate(&block(&[3.0, 10.0]));
+            s.finalize()
+                .chunks_exact(4)
+                .map(|c| f32::from_le_bytes(c.try_into().unwrap()))
+                .collect()
+        };
+        assert_eq!(finalize(StatisticType::Average), vec![2.0, 7.0]);
+        assert_eq!(finalize(StatisticType::Minimum), vec![1.0, 4.0]);
+        assert_eq!(finalize(StatisticType::Maximum), vec![3.0, 10.0]);
+        assert_eq!(finalize(StatisticType::Range), vec![2.0, 6.0]);
+    }
+
+    #[test]
+    fn statistic_average_collapses_to_one_aggregated_period() {
+        // Two report periods with `STATISTIC AVERAGE` must collapse into a single
+        // aggregated output period, and the prolog must carry the statistic code.
+        let mut session = mock_session("single_pipe_hw.inp");
+        session.network.options.statistic = StatisticType::Average;
+        session.network.options.report_start = 0.0;
+        session.network.options.report_step = 3600.0;
+        let mut snap2 = session.snapshots[0].clone();
+        snap2.t = 3600.0;
+        for ns in &mut snap2.node_states {
+            ns.head += 10.0;
+        }
+        session.snapshots.push(snap2);
+
+        let mut buf = Cursor::new(Vec::new());
+        write_binary_output(&mut buf, &session, "a.inp", "b.rpt", FlowUnits::Gpm)
+            .expect("write output");
+        let data = buf.into_inner();
+
+        // Prolog report-statistic code (offset 44) = 1 (Average).
+        assert_eq!(i32::from_le_bytes(data[44..48].try_into().unwrap()), 1);
+        // Epilog n_periods (20-byte epilog since v20013) collapsed to 1.
+        let n = i32::from_le_bytes(data[data.len() - 20..data.len() - 16].try_into().unwrap());
+        assert_eq!(n, 1, "two periods should aggregate to one");
+
+        // Series (default) keeps both periods, for contrast.
+        session.network.options.statistic = StatisticType::Series;
+        let mut buf = Cursor::new(Vec::new());
+        write_binary_output(&mut buf, &session, "a.inp", "b.rpt", FlowUnits::Gpm)
+            .expect("write output");
+        let data = buf.into_inner();
+        let n = i32::from_le_bytes(data[data.len() - 20..data.len() - 16].try_into().unwrap());
+        assert_eq!(n, 2, "series mode keeps both periods");
     }
 
     #[test]

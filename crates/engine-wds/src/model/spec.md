@@ -447,7 +447,7 @@ The INP format is the plain-text network description format used by EPANET. Supp
 - `[TAGS]`, `[COORDINATES]`, `[VERTICES]`, `[LABELS]`, `[BACKDROP]`: display/annotation data only — not passed to the core session. Components may preserve these for their own output.
 - `[TITLE]`: stored in the data model (`Network.title`) and written to the binary output prolog (§4.5.2). Up to three title lines are preserved.
 - `[REPORT]`: controls output filtering and verbosity. These are component-level settings, not simulation parameters.
-- `[TIMES] Statistic`: the `STATISTIC` keyword within `[TIMES]` (values: `NONE`, `AVERAGED`, `MINIMUM`, `MAXIMUM`, `RANGE`) controls how per-timestep results are post-processed before output. `NONE` writes every reporting step individually. The other modes aggregate across all reporting steps (time-weighted average, element-wise minimum/maximum, or max−min range). This is a post-processing mode; the core always delivers all per-step results regardless of this setting.
+- `[TIMES] Statistic`: the `STATISTIC` keyword within `[TIMES]` (values: `NONE`, `AVERAGED`, `MINIMUM`, `MAXIMUM`, `RANGE`) controls how per-timestep results are post-processed before output. `NONE` writes every reporting step individually. The other modes aggregate across all reporting periods into a **single** output period — arithmetic mean over the periods (equal to time-weighted for Hydra's uniform report-step spacing), element-wise minimum/maximum, or max−min range — and the mode is recorded in the prolog report-statistic field (§4.5.2). The binary output writer applies this aggregation with a single streaming accumulator pass (no buffering of all periods). It remains a pure output-boundary transform: the core session still delivers every per-step result regardless of this setting.
 
 **INP serialisation:** the writer re-serialises a `Network` to INP text, converting every stored SI value back to the user unit system declared by `flow_units` with the **exact inverse** of the load-time conversion (§3), so that a parse → write → parse cycle reproduces the same internal values and a second write is byte-identical (writer idempotence). Conventions that are not obvious from the section column layouts:
 
@@ -513,7 +513,7 @@ Writers always produce the newest version. Readers must accept **both** versions
 | trace node index (1-based; 0 when not tracing) | INT4 |
 | flow-unit code (§3.1 table order: CFS = 0 … CMS = 10) | INT4 |
 | pressure-unit code (0 = psi, 1 = kPa, 2 = m) | INT4 |
-| report statistic code (0 = series) | INT4 |
+| report statistic code (0 = series, 1 = average, 2 = minimum, 3 = maximum, 4 = range) | INT4 |
 | report start time (s) | INT4 |
 | report step (s) | INT4 |
 | duration (s) | INT4 |
