@@ -240,6 +240,8 @@ $$c \leftarrow c + r_b(c)\,\delta t$$
 
 Outflow concentration = the post-mixing, post-reaction concentration.
 
+**Overflow**: when `overflow = true` and the mixing update would push the stored volume above $V_{\max}$, the volume is clamped at $V_{\max}$ and the spilled volume — carrying the mixed concentration — is charged to the outflow mass balance ($M_{\text{demand}}$, §6.9) rather than accumulating in storage.
+
 #### 6.7.2 Two-Compartment Mix
 
 The tank is represented as two segments: a **mixing zone** with maximum capacity $V_{\text{mz}} = f \cdot V_{\max}$ (user fraction $f$, applied to the tank's *maximum* volume) and a **stagnant zone** with maximum capacity $V_{\text{sz}} = V_{\max} - V_{\text{mz}}$. All inflow enters and all outflow exits from the mixing zone. Transfers between zones are **directional and discrete** — there is no continuous bidirectional exchange.
@@ -310,7 +312,7 @@ $$\rho_m = \frac{M_{\text{demand}} + \max(M_{\text{reacted}},\, 0) + M_{\text{fi
 
 where $M_{\text{reacted}} > 0$ represents net decay (mass removed from the water) and $M_{\text{reacted}} < 0$ represents net growth (mass added to the water). Decay contributes to the output side of the ledger; growth contributes to the input side. A value of $\rho_m \approx 1$ confirms conservation. A significant deviation indicates a numerical error or inconsistent reaction parameterisation.
 
-> **Known limitation**: mass leaving via **tank overflow** is not yet charged to $M_{\text{demand}}$. The quality engine's per-model tank-volume handling differs (the CSTR volume retains overflow water in $M_{\text{final}}$, while the two-compartment model discards its stagnant-zone surplus), so correctly attributing overflow mass requires first reconciling the quality tank volume with the hydraulic overflow clamp. Until then, a network that loses mass through tank overflow may show a small residual in $\rho_m$.
+> **Tank overflow**: for **CSTR** and **two-compartment** tanks, water spilled by an overflowing tank is charged to $M_{\text{demand}}$ — the CSTR stored volume is clamped at $V_{\max}$ and its spill priced at the mixed concentration; the two-compartment model charges its stagnant-zone surplus at the stagnant concentration — so the balance closes. For **FIFO** and **LIFO** plug-flow tanks this is not yet done: their overflow is folded into the pass-through outflow, so a network that loses mass through a FIFO/LIFO overflow may still show a small residual in $\rho_m$.
 
 #### 6.9.1 Disaggregated Reaction Rate Accumulators
 

@@ -28,6 +28,9 @@ pub(super) fn update_tank_mix(
         None => return 0.0,
     };
 
+    // Maximum stored volume; used to clamp overflow across the mixing models.
+    let v_max = tank.volume_from_level(tank.max_level, &network.curves);
+
     match tq {
         // ── §6.7.1 CSTR ──────────────────────────────────────────────────────
         // Match EPANET's tankmix1: volume-weighted mixing of current tank
@@ -41,9 +44,19 @@ pub(super) fn update_tank_mix(
             } else {
                 c_in
             };
-            let v_new = (v + v_net).max(0.0);
             *conc = c_new;
-            *volume = v_new;
+            // Clamp the stored volume at v_max on overflow. The clamped-off water
+            // spills out of the tank carrying c_new, so charge it to the outflow
+            // ledger (§6.9) instead of letting the quality volume grow past
+            // capacity (which would keep the overflow mass in final storage and
+            // wrongly dilute the tank).
+            let v_uncapped = (v + v_net).max(0.0);
+            if tank.overflow && v_uncapped > v_max {
+                mb.demand += (v_uncapped - v_max) * c_new;
+                *volume = v_max;
+            } else {
+                *volume = v_uncapped;
+            }
             c_new
         }
 
@@ -54,7 +67,6 @@ pub(super) fn update_tank_mix(
             stag_vol,
             stag_conc,
         } => {
-            let v_max = tank.volume_from_level(tank.max_level, &network.curves);
             let v_mz = tank.mix_fraction * v_max;
             let v_sz = v_max - v_mz;
 
@@ -75,7 +87,11 @@ pub(super) fn update_tank_mix(
                     *mix_vol = v_mz;
                     *stag_vol += v_t;
                     if *stag_vol > v_sz {
-                        *stag_vol = v_sz; // surplus exits; volume discarded
+                        // Surplus spills out of the tank carrying the stagnant-zone
+                        // concentration — charge the departing mass to the outflow
+                        // ledger (§6.9) rather than silently discarding it.
+                        mb.demand += (*stag_vol - v_sz) * *stag_conc;
+                        *stag_vol = v_sz;
                     }
                 } else {
                     // Step 4: no overflow.

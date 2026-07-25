@@ -299,6 +299,75 @@ fn mass_balance_charges_reservoir_sink_outflow() {
     assert_abs_diff_eq!(state.mass_balance.ratio(), 1.0, epsilon = 1e-9);
 }
 
+/// Shared setup: reservoir (quality 0) → pipe → a full tank that overflows under
+/// sustained inflow. Returns the quality state after one hydraulic period and the
+/// tank's v_max. `mix` selects the tank mixing model.
+fn overflowing_tank_state(mix: MixModel, frac: f64) -> (crate::quality::QualityState, f64) {
+    let builder = TestNetworkBuilder::new()
+        .with_options(SimulationOptions {
+            quality_mode: QualityMode::Chemical,
+            qual_step: 60.0,
+            duration: 3600.0,
+            ..SimulationOptions::default()
+        })
+        .reservoir("R1", 100.0)
+        .node_quality("R1", 0.0)
+        .tank_with_mixing("T1", 0.0, 10.0, 0.0, 10.0, 20.0, mix, frac)
+        .node_quality("T1", 10.0)
+        .hw_pipe("P1", "R1", "T1", 100.0, 12.0, 100.0);
+
+    let (mut net, mut ns, mut ls, _) = builder.build_with_favad();
+    let t_idx = 1;
+    let v_max = match &net.nodes[t_idx].kind {
+        crate::NodeKind::Tank(t) => t.volume_from_level(t.max_level, &net.curves),
+        _ => unreachable!(),
+    };
+    if let crate::NodeKind::Tank(t) = &mut net.nodes[t_idx].kind {
+        t.overflow = true;
+    }
+    ns[t_idx].volume = v_max; // start full
+    ns[t_idx].net_flow = 0.02; // sustained net inflow → overflow
+    ls[0].flow = 0.02; // R1 → T1
+
+    let mut state = init_quality(&net, &ns, &ls).unwrap();
+    state.mass_balance.init = crate::quality::shared::total_mass(&state);
+    advance_quality(&mut state, &net, &ns, &ls, 3600.0, 0.0);
+    (state, v_max)
+}
+
+/// A full CSTR tank with `overflow = true` and sustained net inflow must keep its
+/// stored volume clamped at v_max — before the fix the quality volume grew
+/// unbounded (retaining the spilled water and wrongly diluting the tank). Mass
+/// stays conserved with the spill charged to the outflow ledger.
+#[test]
+fn cstr_tank_overflow_clamps_volume_and_conserves_mass() {
+    let (state, v_max) = overflowing_tank_state(MixModel::Cstr, 1.0);
+    match &state.tank_quality[1] {
+        Some(crate::quality::shared::TankQuality::Cstr { volume, .. }) => assert!(
+            *volume <= v_max + 1e-9,
+            "CSTR volume {volume} must stay clamped at v_max {v_max}"
+        ),
+        _ => panic!("expected a CSTR tank"),
+    }
+    assert!(
+        state.mass_balance.demand > 0.0,
+        "spill must be charged to the outflow ledger"
+    );
+    assert_abs_diff_eq!(state.mass_balance.ratio(), 1.0, epsilon = 1e-6);
+}
+
+/// A full two-compartment tank with `overflow = true` leaked its stagnant-zone
+/// surplus before the fix (ρ_m < 1). Charging the spill closes the balance.
+#[test]
+fn two_compartment_tank_overflow_conserves_mass() {
+    let (state, _v_max) = overflowing_tank_state(MixModel::TwoCompartment, 0.5);
+    assert!(
+        state.mass_balance.demand > 0.0,
+        "spill must be charged to the outflow ledger"
+    );
+    assert_abs_diff_eq!(state.mass_balance.ratio(), 1.0, epsilon = 1e-6);
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // Trace mode — source node propagation
 // ═══════════════════════════════════════════════════════════════════════════════
