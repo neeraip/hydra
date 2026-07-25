@@ -48,9 +48,9 @@ EPANET halts the simulation when a hydraulic step does not converge within the c
 
 In practice this rarely matters, because Hydra's solver is more robust than EPANET's and typically converges for steps where EPANET cannot. On the Richmond network, EPANET halts after 28 of 49 reporting periods; Hydra converges all 49 because it finds valid equilibria for those steps.
 
-### Quality timestep minimum
+### Quality timestep handling
 
-EPANET's quality timestep can reach 0 seconds via integer truncation when hydraulic timesteps are very short. Hydra enforces a 1-second minimum to prevent zero-length sub-steps.
+EPANET's quality timestep can reach 0 seconds via integer truncation when hydraulic timesteps are very short. Hydra keeps the quality timestep as a real number and, when it is 0 or unset, defaults it to one-tenth of the hydraulic timestep, so it never truncates to zero. An explicitly set sub-second step is used as given.
 
 This only matters for networks with very short hydraulic timesteps (well under 60 seconds), which is unusual in practice.
 

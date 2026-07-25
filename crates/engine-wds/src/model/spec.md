@@ -24,7 +24,7 @@ Global simulation parameters. All are static after loading.
 |---|---|---|
 | `duration` | Total simulation duration (s) | > 0 |
 | `hyd_step` | Nominal hydraulic time step (s) | > 0 |
-| `qual_step` | Quality time step (s); default = `hyd_step` / 10, clamped to [`1`, `hyd_step`] | > 0; ≤ `hyd_step` |
+| `qual_step` | Quality time step (s); when 0 or unset, defaults to `hyd_step` / 10, then capped at `hyd_step` | > 0; ≤ `hyd_step` |
 | `report_step` | Reporting interval (s) | > 0; ≤ `duration` |
 | `report_start` | Time at which reporting begins (s) | ≥ 0 |
 | `pattern_step` | Global pattern time step (s) | > 0 |
@@ -69,7 +69,7 @@ Global simulation parameters. All are static after loading.
 | `rule_timestep` | Rule evaluation sub-step duration (seconds); default = `hydraulic_timestep` / 10, clamped to `hydraulic_timestep` | > 0 |
 | `quality_tolerance` | Segment merge tolerance $C_{\text{tol}}$ (same units as quality constituent); default 0.01 | ≥ 0 |
 
-> **DEVIATION from EPANET:** EPANET has no lower floor on the quality time step; for very small hydraulic steps the quality step can be 0 (from integer division). Hydra enforces a minimum of 1 second to avoid zero-length sub-steps.
+> **DEVIATION from EPANET:** EPANET computes the quality time step with integer arithmetic, so for very small hydraulic steps it can truncate to 0. Hydra keeps the quality time step as a real number and, when it is 0 or unset, defaults it to `hyd_step` / 10, so it never becomes zero. An explicitly set sub-second step is used as given (there is no 1-second floor).
 
 ### 2.2 Patterns
 

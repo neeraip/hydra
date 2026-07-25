@@ -115,6 +115,6 @@ Where `C1` is the fixed-area discharge coefficient and `C2` is the variable-area
 
 | Area | EPANET 2.3 behaviour | Hydra behaviour |
 |---|---|---|
-| Quality timestep minimum | Can become 0 s (integer division truncation) when hydraulic step is very small | Enforced minimum of 1 s to prevent zero-length sub-steps |
+| Quality timestep handling | Can become 0 s (integer division truncation) when hydraulic step is very small | Kept as a real number; a 0 or unset step defaults to `hyd_step` / 10, so it never truncates to zero |
 | `UNBALANCED STOP` | Halts the EPS on the first step that does not converge within `TRIALS` iterations | Halts with a warning and returns a partial result; simulation terminates at that step |
 | GGA numerical path | Specific convergence trajectory tied to EPANET's C implementation | Independent GGA path: per-step hydraulic solutions are close but not byte-identical; differences can cascade into larger deviations over long quality runs or in networks with many demand periods |
