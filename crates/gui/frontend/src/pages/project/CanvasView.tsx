@@ -4,6 +4,7 @@ import {
   ChevronUpDownIcon,
   CursorArrowRaysIcon,
   EyeIcon,
+  GlobeAltIcon,
   LinkIcon,
   MapPinIcon,
   MinusIcon,
@@ -823,9 +824,9 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
       ? "Baseline has no results"
       : baselineTopologyStale
         ? // Digest gate above nulled the baseline arrays — explain why.
-          "Baseline results predate the current network topology — re-run"
+          "Baseline results predate the current network topology; re-run to compare"
         : currentPeriodResult && baselinePeriodResult && !compareDeltas
-          ? "Baseline network differs — comparison unavailable"
+          ? "Baseline network differs; comparison unavailable"
           : null;
 
   // Legend inputs: max |Δ| for the active variables (SI; Legend converts to
@@ -1841,7 +1842,13 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
                     textAlign: "center",
                   }}
                 >
-                  <span style={{ fontSize: 28 }}>🗺️</span>
+                  <GlobeAltIcon
+                    style={{
+                      width: 30,
+                      height: 30,
+                      color: "var(--text-tertiary)",
+                    }}
+                  />
                   <span
                     style={{
                       fontSize: 14,

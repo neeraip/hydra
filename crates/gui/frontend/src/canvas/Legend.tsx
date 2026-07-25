@@ -960,7 +960,7 @@ export function Legend({
           const animatable = linkVar === "flow" || linkVar === "velocity";
           const disabled = reducedMotion || !animatable || !!compare;
           const tooltip = reducedMotion
-            ? "Animation off — Reduce motion is enabled in Settings"
+            ? "Animation off (Reduce motion is enabled in Settings)"
             : compare
               ? "Animation off while comparing scenarios"
               : !animatable

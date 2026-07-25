@@ -125,7 +125,7 @@ export function ModelTitleBlock() {
         type="button"
         onClick={beginEdit}
         className="model-title-edit-target"
-        data-tooltip="Click to edit — stored in the INP [TITLE]"
+        data-tooltip="Click to edit (stored in the INP [TITLE])"
         style={{
           display: "block",
           width: "100%",

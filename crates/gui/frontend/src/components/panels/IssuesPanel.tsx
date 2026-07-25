@@ -406,7 +406,7 @@ export function IssuesPanel() {
               }}
             >
               {counts.total === 0
-                ? "All clear — no issues in the current scenario."
+                ? "All clear. No issues in the current scenario."
                 : "No issues match your search and filters."}
               {counts.total > 0 && filtersActive && (
                 <button
