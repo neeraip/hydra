@@ -14,11 +14,14 @@ import {
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useAppState, useSimulation } from "../../AppContext";
+import { useCanvasSelection } from "../../canvas/selection-context";
 import {
   countIssues,
   type Issue,
   type IssueSeverity,
   type IssueSource,
+  useLinks,
+  useNodes,
 } from "../../hooks";
 
 const SEVERITY_META: Record<
@@ -58,6 +61,10 @@ export function IssuesPanel() {
   } = useAppState();
   const { issues: contextIssues, setIssues: setContextIssues } =
     useSimulation();
+  const { selectNode, selectLink, zoomToNode, zoomToLink } =
+    useCanvasSelection();
+  const nodes = useNodes();
+  const links = useLinks();
   // Mirror context issues into local state so dismiss/restore works without
   // lifting every mutation back up.
   const [issues, setIssues] = useState<Issue[]>(contextIssues);
@@ -149,7 +156,19 @@ export function IssuesPanel() {
     }
     setProjectView(issue.link.view);
     closeIssuesPanel();
-    showToast(`Navigated to ${issue.link.label ?? issue.link.view}`, "info");
+    // Select + fly to the element the issue is about, so clicking an issue
+    // takes you to the problem instead of just switching tabs. Run warnings
+    // carry no element kind, so discriminate node vs link by lookup. Deferred
+    // so the canvas view has activated and its map is ready before the fly-to.
+    const assetId = issue.link.assetId;
+    if (!assetId) return;
+    if (nodes.some((n) => n.id === assetId)) {
+      selectNode(assetId);
+      window.setTimeout(() => zoomToNode(assetId), 220);
+    } else if (links.some((l) => l.id === assetId)) {
+      selectLink(assetId);
+      window.setTimeout(() => zoomToLink(assetId), 220);
+    }
   }
 
   if (!issuesPanelOpen || !activeProjectId) return null;

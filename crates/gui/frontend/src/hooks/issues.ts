@@ -88,7 +88,11 @@ export function validationFindingToIssue(
     detail: f.elementId
       ? `${f.message} (${f.elementKind ?? "element"} ${f.elementId})`
       : f.message,
-    link: { view: "canvas", label: "Open canvas" },
+    link: {
+      view: "canvas",
+      assetId: f.elementId ?? undefined,
+      label: f.elementId ? `Show ${f.elementId}` : "Open canvas",
+    },
     firstSeen,
     dismissed: false,
   };
@@ -144,7 +148,11 @@ export function runWarningToIssue(w: RunWarning, firstSeen: string): Issue {
     code: w.code,
     title: w.message,
     detail: w.elementId ? `${w.message} (element ${w.elementId})` : w.message,
-    link: { view: "canvas", label: "Open canvas" },
+    link: {
+      view: "canvas",
+      assetId: w.elementId ?? undefined,
+      label: w.elementId ? `Show ${w.elementId}` : "Open canvas",
+    },
     firstSeen,
     dismissed: false,
   };
