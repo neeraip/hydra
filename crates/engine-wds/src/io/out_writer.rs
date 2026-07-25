@@ -866,7 +866,7 @@ fn link_type_code(link: &crate::Link) -> i32 {
             ValveType::Fcv => 6,
             ValveType::Tcv => 7,
             ValveType::Gpv => 8,
-            ValveType::Pcv => 1, // PCV treated as pipe-like for output
+            ValveType::Pcv => 9,
         },
     }
 }

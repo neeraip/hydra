@@ -524,7 +524,7 @@ Writers always produce the newest version. Readers must accept **both** versions
 | link IDs | $N_l$ × 32 bytes |
 | link from-node indices (1-based) | $N_l$ × INT4 |
 | link to-node indices (1-based) | $N_l$ × INT4 |
-| link type codes (0 = CV, 1 = pipe, 2 = pump, 3 = PRV, 4 = PSV, 5 = PBV, 6 = FCV, 7 = TCV, 8 = GPV) | $N_l$ × INT4 |
+| link type codes (0 = CV, 1 = pipe, 2 = pump, 3 = PRV, 4 = PSV, 5 = PBV, 6 = FCV, 7 = TCV, 8 = GPV, 9 = PCV) | $N_l$ × INT4 |
 | tank/reservoir node indices (1-based) | $N_t$ × INT4 |
 | tank cross-section areas (m², internal units; 0 for reservoirs) | $N_t$ × REAL4 |
 | node elevations (output length units) | $N_n$ × REAL4 |
