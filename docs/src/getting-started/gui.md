@@ -32,7 +32,7 @@ Press **⌘K** (macOS) or **Ctrl+K** (Windows/Linux) at any time to open the com
 
 ## Keyboard Shortcuts
 
-Beyond ⌘R (simulate), ⌘K (command palette), and ⌘Z / ⇧⌘Z (undo/redo), the app has shortcuts for navigation and the canvas. Press **?** at any time to open the full in-app shortcut cheatsheet. Common ones (⌘ on macOS, Ctrl elsewhere):
+Beyond ⌘R (simulate), ⌘K (command palette), and ⌘Z / ⇧⌘Z (undo/redo), the app has shortcuts for navigation and the canvas. Press **?** at any time to open the in-app cheatsheet, or see the full [Keyboard Shortcuts](keyboard-shortcuts.md) reference. Common ones (⌘ on macOS, Ctrl elsewhere):
 
 | Shortcut | Action |
 |---|---|
