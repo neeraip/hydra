@@ -1,4 +1,5 @@
 import { MagnifyingGlassIcon, MapPinIcon } from "@heroicons/react/24/outline";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAppState, useSimulation } from "../../AppContext";
 import { useCanvasSelection } from "../../canvas/selection-context";
@@ -125,7 +126,16 @@ const STATIC_COMMANDS: DynamicCommand[] = [
     category: "Actions",
     action: "theme-system",
   },
+  {
+    id: "a-docs",
+    label: "Open documentation",
+    description: "Open the Hydra docs in your browser",
+    category: "Actions",
+  },
 ];
+
+/** Hydra documentation site — opened by the "Open documentation" command. */
+const DOCS_URL = "https://neeraip.github.io/hydra/";
 
 export function CommandPalette() {
   const sys = useUnitSystem();
@@ -161,27 +171,30 @@ export function CommandPalette() {
   const { resultMeta } = useSimulation();
   const { bumpNetwork } = useNetworkVersion();
 
+  const [query, setQuery] = useState("");
+  // Recent projects when idle; all projects become searchable once the user
+  // types, so quick-open reaches any project by name (not just the last 5).
   const allCommands = useMemo<DynamicCommand[]>(
     () => [
-      ...projects.slice(0, 5).map<DynamicCommand>((p) => ({
-        id: `r-${p.id}`,
-        label: p.name,
-        description:
-          p.state === "simulated"
-            ? "Simulated"
-            : p.state === "running"
-              ? "Running"
-              : "Draft",
-        category: "Recent",
-        action: "open-project",
-        projectId: p.id,
-      })),
+      ...projects
+        .slice(0, query.trim() ? projects.length : 5)
+        .map<DynamicCommand>((p) => ({
+          id: `r-${p.id}`,
+          label: p.name,
+          description:
+            p.state === "simulated"
+              ? "Simulated"
+              : p.state === "running"
+                ? "Running"
+                : "Draft",
+          category: "Recent",
+          action: "open-project",
+          projectId: p.id,
+        })),
       ...STATIC_COMMANDS,
     ],
-    [projects],
+    [projects, query],
   );
-
-  const [query, setQuery] = useState("");
   const [activeIdx, setActiveIdx] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
@@ -537,6 +550,12 @@ export function CommandPalette() {
       // ── New project → navigate home ─────────────────────────────────────
       if (cmd.id === "p-new") {
         setPage("home");
+        return;
+      }
+
+      // ── Open documentation in the browser ──────────────────────────────
+      if (cmd.id === "a-docs") {
+        void openUrl(DOCS_URL);
         return;
       }
 
