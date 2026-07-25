@@ -71,6 +71,12 @@ test-scripts:
 bench:
     cargo bench -p hydra-engine-wds
 
+# Regenerate the performance-page numbers: build the release CLI, then time
+# full end-to-end runs across the bundled fixture networks (Markdown table).
+bench-report:
+    cargo build --release -p hydra-cli
+    python3 scripts/benchmark.py
+
 # cargo-llvm-cov is installed by `just setup-tools`.
 # Generate an HTML test-coverage report (target/llvm-cov/html/index.html).
 coverage:
