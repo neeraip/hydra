@@ -100,12 +100,12 @@ The physical infrastructure is represented as a directed graph. **Nodes** corres
 - **Flow Control Valve (FCV)**: restricts the volumetric flow through it to a specified setpoint.
 - **Throttle Control Valve (TCV)**: applies a specified head loss coefficient; it behaves as a pipe with adjustable resistance.
 - **General Purpose Valve (GPV)**: head loss as a function of flow is entirely described by a user-supplied piece-wise linear curve.
-- **Positional Control Valve (PCV)**: The loss coefficient varies with a percent-open setting, optionally governed by a user-supplied curve relating the valve opening to the ratio of its loss coefficient to its fully-open loss coefficient.
+- **Positional Control Valve (PCV)**: The loss coefficient varies with a percent-open setting, optionally governed by a user-supplied curve relating the valve opening (percent open) to the ratio of its **flow coefficient** to its fully-open flow coefficient, $K_v/K_{v0}$. The internal minor-loss coefficient is then *derived* from this ratio as $K_{m0}/(K_v/K_{v0})^2$ (see §2.3).
 - **Pressure Breaker Valve (PBV)**: imposes a fixed head-loss setpoint. When the setting exceeds the natural minor-loss head drop at the current flow, the solver forces the exact head loss; otherwise the PBV falls back to ordinary pipe resistance. PBVs have no control states — they always contribute a resistance.
 
 ### Curves and Patterns
 
-User-defined **curves** are piece-wise linear relationships used throughout the model: pump head versus flow, pump efficiency versus flow, tank volume versus elevation, general purpose valve head loss versus flow, and positional valve opening versus loss ratio. Intermediate values are obtained by linear interpolation between the two bracketing data points.
+User-defined **curves** are piece-wise linear relationships used throughout the model: pump head versus flow, pump efficiency versus flow, tank volume versus elevation, general purpose valve head loss versus flow, and positional valve opening versus flow-coefficient ratio ($K_v/K_{v0}$). Intermediate values are obtained by linear interpolation between the two bracketing data points.
 
 **Patterns** are repeating sequences of dimensionless multipliers indexed by time. They modulate base demands at junctions, pump speed settings, and constituent source concentrations over the course of the simulation. At each hydraulic time step the pattern multiplier is determined by the **pattern period index**: given a global pattern start offset $t_{\text{start}}$, pattern time step $\Delta t_p$, and current simulation time $t$, the number of elapsed periods is $p = \lfloor (t + t_{\text{start}}) / \Delta t_p \rfloor$. For a demand category assigned to pattern $j$ of length $L_j$, the applicable multiplier is $F_j[p \bmod L_j]$, giving each pattern an independently repeating cycle. A **default pattern** is available and is applied to any demand category that has no explicit pattern assigned; if no default pattern exists either, a multiplier of 1.0 is used.
 
@@ -155,9 +155,9 @@ For **transitional flow** ($2000 < Re < 4000$), a cubic polynomial ensures conti
 
 #### Chezy-Manning Formula
 
-$$h_f = \left( \frac{4 n_M}{1.486 \, \pi \, D^2} \right)^2 \left( \frac{D}{4} \right)^{-4/3} L \, Q^2$$
+$$h_f = \left( \frac{4 n_M}{1.49 \, \pi \, D^2} \right)^2 \left( \frac{D}{4} \right)^{-4/3} L \, Q^2$$
 
-where $n_M$ is the Manning roughness coefficient. The exponent on $Q$ is 2 in this formulation (as used for full circular pipes). This formula is less common for pressurised systems but is supported for completeness.
+where $n_M$ is the Manning roughness coefficient. (The source hardcodes the empirical constant as $1.49$, a two-figure rounding of the textbook Manning-Strickler value $1.486$.) The exponent on $Q$ is 2 in this formulation (as used for full circular pipes). This formula is less common for pressurised systems but is supported for completeness.
 
 #### Minor Losses and Total Head Loss
 
@@ -217,9 +217,9 @@ The three control valves — PRV, PSV, and FCV — can inhabit one of three disc
 
 After each Newton-Raphson iteration the hydraulic state of each control valve is examined:
 
-- A PRV transitions from ACTIVE to OPEN if the upstream head has fallen to or below the setpoint (no pressure reduction needed), or to CLOSED if the downstream head exceeds the setpoint (would require reverse flow to maintain it).
-- A PSV transitions from ACTIVE to OPEN if the downstream head has risen to or above the setpoint, or to CLOSED if the upstream head falls below the setpoint.
-- An FCV transitions to OPEN if the available head difference is insufficient to sustain the target flow, or to CLOSED if the target flow is negative.
+- A PRV transitions from ACTIVE to OPEN if the upstream head has fallen to or below the setpoint (no pressure reduction needed), or to CLOSED if the flow through it reverses (maintaining the setpoint would require reverse flow).
+- A PSV transitions from ACTIVE to OPEN if the downstream head has risen to or above the setpoint, or to CLOSED if the flow through it reverses.
+- An FCV transitions to the **XFCV** state (it cannot enforce its setpoint) if the available head difference is insufficient to sustain the target flow, or if the flow through it turns negative.
 
 TCV, GPV, and PCV valves do not have control states; they always contribute a resistance (head loss as a function of flow) determined by their current setting.
 
@@ -300,9 +300,9 @@ The network has $n_j$ unknown junction heads and $n_l$ unknown link flows, givin
 
 #### Linearisation
 
-At iteration $m$, the head-loss function of link $k$ is linearised around the current flow estimate $Q_k^{(m)}$:
+At iteration $m$, the head-loss function of link $k$ is linearised around the current flow estimate $Q_k^{(m)}$ by a first-order Taylor expansion:
 
-$$h_k(Q_k) \;\approx\; \frac{\partial h_k}{\partial Q_k}\bigg|_{Q^{(m)}} Q_k \;-\; Y_k$$
+$$h_k(Q_k) \;\approx\; h_k(Q_k^{(m)}) \;+\; \frac{\partial h_k}{\partial Q_k}\bigg|_{Q^{(m)}} \left(Q_k - Q_k^{(m)}\right)$$
 
 Two derived quantities characterise every link:
 
@@ -332,9 +332,9 @@ where $\Delta_i$ includes the fixed-head boundary contributions from any reservo
 
 Once the linear system is solved for the new heads $\mathbf{H}^{(m+1)}$, the flow in each link is updated as:
 
-$$Q_k^{(m+1)} = P_k \left( H_i^{(m+1)} - H_j^{(m+1)} \right) + Y_k$$
+$$Q_k^{(m+1)} = Q_k^{(m)} - Y_k + P_k \left( H_i^{(m+1)} - H_j^{(m+1)} \right)$$
 
-where $i$ is the upstream node and $j$ the downstream node of link $k$ according to the assumed positive direction. For pumps, $H_j - H_i = \Delta H_k > 0$, so the sign convention is consistent.
+This is exactly the Newton correction obtained by inverting the linearised head-loss equation $H_i - H_j = h_k(Q_k)$ for $Q_k$: the current-flow term $Q_k^{(m)}$ and the offset $-Y_k = -P_k h_k(Q_k^{(m)})$ carry the old operating point, while $P_k(H_i - H_j)$ applies the head-driven correction. Here $i$ is the upstream node and $j$ the downstream node of link $k$ according to the assumed positive direction. For pumps, $H_j - H_i = \Delta H_k > 0$, so the sign convention is consistent.
 
 Emitter flows, leakage flows, and pressure-dependent demand flows are similarly updated using their own linearised head-flow relationships.
 
@@ -351,11 +351,11 @@ Two kinds of status check run during iteration, with different scheduling:
 - **Valve status checks** (`valvestatus`, governing PRV and PSV transitions): when `DampLimit = 0` (the default), these run after every flow update. When `DampLimit > 0`, they are deferred until the relative flow error at or below `DampLimit`; at that point damping (relaxation factor 0.6) is also activated simultaneously.
 - **Link status checks** (`linkstatus`, governing pumps, check valves, and pipes adjacent to tanks): these run periodically. The first check occurs at iteration *CheckFreq* and repeats every *CheckFreq* iterations thereafter, but stops once *MaxCheck* iterations have been reached. This staging prevents premature status oscillation during early iterations when flows are far from convergence.
 
-When `hasconverged` returns true, a full status check is performed — all three routines (`valvestatus`, `linkstatus`, and `pswitch`) are called regardless of the CheckFreq/DampLimit schedule. If any of them changes a link's status the iteration counter resets and the solve continues; only a convergence pass that produces no status changes terminates the loop.
+When `hasconverged` returns true, `linkstatus` and `pswitch` are called unconditionally (regardless of the CheckFreq schedule), alongside the `valvestatus` result already computed for that iteration under the DampLimit schedule. If any of them changes a link's status the periodic-check schedule (`nextcheck`) is advanced and the solve continues — the iteration counter itself is never reset; it only increments toward the iteration cap. Only a convergence pass that produces no status changes terminates the loop.
 
 The **ExtraIter** parameter handles networks that fail to converge because of status cycling — a cycle in which links repeatedly toggle between open and closed states without settling to a consistent configuration. When convergence is not achieved within MaxIter iterations and ExtraIter > 0, an additional ExtraIter iterations are performed with the periodic link-status checks (`linkstatus`) suspended — pumps, check valves, and tank-adjacent pipes no longer change state. `valvestatus` (PRV/PSV) continues to run every iteration. This allows the linear system to converge to a solution consistent with the current link configuration, even if that configuration is not the true steady state. A warning is issued that the system is unbalanced. If ExtraIter = −1, the solver sets a halt flag (`Haltflag`) after the current time step's results are saved; the simulation then terminates at the start of the next step rather than stopping mid-step.
 
-Two supplementary convergence criteria may also be applied. **FlowChangeLimit** terminates iteration early if the maximum absolute flow change in any link during the most recent iteration falls at or below the specified threshold. **HeadErrorLimit** terminates iteration if the maximum absolute head residual (flow imbalance expressed in head units) at any node is at or below its threshold. Both default to zero, which disables them; in the default configuration the sole termination criterion is $\epsilon \leq \epsilon_{\text{tol}}$ with no status change.
+Two supplementary convergence criteria may also be applied; rather than terminating the loop early, they make convergence *stricter* — each is tested only after the flow-accuracy criterion has already passed, and can withhold convergence for another iteration. **FlowChangeLimit** requires the maximum absolute flow change over all links *and* nodal elements (emitters, pressure-dependent demands, leakage) during the most recent iteration to be at or below its threshold. **HeadErrorLimit** requires the maximum absolute head residual (flow imbalance expressed in head units) at any node to be at or below its threshold. Both default to zero, which disables them. Two further gates are always active when their models are in use: convergence additionally requires the leakage flows and — in pressure-driven mode — the pressure-dependent demands to have themselves converged. In the default configuration (fixed demands, no leakage) the sole termination criterion is $\epsilon \leq \epsilon_{\text{tol}}$ with no status change.
 
 **Damping (RelaxFactor)**: the Newton flow update $\Delta Q_k$ may be scaled by a relaxation factor to improve convergence stability. By default `RelaxFactor = 1.0` (full Newton step). When `DampLimit > 0` and the relative flow error falls at or below `DampLimit`, `RelaxFactor` is set to 0.6 for that iteration. This under-relaxation is applied uniformly to all link flow updates, emitter flow updates, and pressure-dependent demand flow updates:
 
@@ -365,7 +365,7 @@ The purpose is to stabilise convergence in networks with highly nonlinear elemen
 
 **Matrix recovery (`badvalve`)**: if the Cholesky factorisation of $\mathbf{A}$ fails at a diagonal entry corresponding to node $n$, the solver checks whether an active PRV, PSV, or FCV has that node as one of its endpoints. If found, the valve's status is forced to XPRESSURE (for PRV/PSV) or XFCV (for FCV), breaking the singularity that the active-state matrix modification introduced. The solver then retries the factorisation and solve. This recovery mechanism ensures that ill-conditioned valve configurations do not crash the solver.
 
-The **XFLOW** status exists in the link status enumeration ("pump exceeds maximum flow") but is not currently triggered by the steady-state solver — the pump status evaluation checks only whether the head gain exceeds the speed-adjusted shutoff head (yielding XHEAD), and does not compare flow against the maximum-flow point of the pump curve. XFLOW is therefore a reserved diagnostic state rather than one raised during normal simulation.
+The **XFLOW** status ("pump exceeds maximum flow") is not produced by the solver's iterative status logic — the pump status evaluation checks only whether the head gain exceeds the speed-adjusted shutoff head (yielding XHEAD), and does not compare flow against the maximum-flow point of the pump curve. It is instead raised diagnostically *after* a step has been solved: the warning routine (`writehydwarn`) flags a pump as XFLOW when its flow exceeds $\text{setting} \cdot Q_{\max}$ (emitting warning WARN04), and the same status is returned through the public link-status query. XFLOW therefore never alters the solve; it is a reported warning state only.
 
 ### 2.5 Sparse Linear Algebra
 
@@ -373,7 +373,7 @@ The matrix $\mathbf{A}$ is symmetric and positive semi-definite (it is a Laplaci
 
 Three phases are performed:
 
-**Phase 1 — Node reordering (performed once before simulation begins)**: the Multiple Minimum Degree (MMD) algorithm reorders the junction indices to minimise the fill-in that occurs during Cholesky factorisation. Fill-in arises when a non-zero appears in the factor $\mathbf{L}$ at a position that was zero in $\mathbf{A}$; reordering the rows and columns can dramatically reduce the number of such positions. Parallel links (multiple pipes connecting the same pair of nodes in the same direction) are condensed into a single equivalent link before reordering to avoid redundancy.
+**Phase 1 — Node reordering (performed once before simulation begins)**: the Multiple Minimum Degree (MMD) algorithm reorders the junction indices to minimise the fill-in that occurs during Cholesky factorisation. Fill-in arises when a non-zero appears in the factor $\mathbf{L}$ at a position that was zero in $\mathbf{A}$; reordering the rows and columns can dramatically reduce the number of such positions. Parallel links (multiple links connecting the same pair of nodes, regardless of their orientation) are condensed into a single equivalent link before reordering to avoid redundancy.
 
 **Phase 2 — Symbolic factorisation (performed once before simulation begins)**: using the reordered sparsity pattern, the algorithm predetermines the exact set of non-zero positions that will appear in the lower Cholesky factor $\mathbf{L}$ (satisfying $\mathbf{A} = \mathbf{L} \mathbf{L}^\top$). These positions are stored in a compressed sparse form. From this point forward, only numerical values need to change; the structure is fixed.
 
@@ -427,9 +427,9 @@ where $H - z$ is the pressure head and $C_e = K_e^{-1/n_e}$. This is linearised 
 
 By default emitters can admit reverse flow (suction) if the junction pressure falls below the emitter's reference elevation. An **emitter backflow** option can disable this: when backflow is forbidden, a lower barrier function is applied to the head-loss gradient whenever the emitter flow would go negative. The barrier takes the same smooth differentiable form used for PDA demand bounds (§3.2):
 
-$$\\Delta h = \\frac{a - \\sqrt{a^2 + 10^{-6}}}{2}, \\qquad \\Delta(\\partial h/\\partial Q) = \\frac{10^9}{2}\\left(1 - \\frac{a}{\\sqrt{a^2 + 10^{-6}}}\\right), \\qquad a = 10^9 \\, Q_e$$
+$$\Delta h = \frac{a - \sqrt{a^2 + 10^{-6}}}{2}, \qquad \Delta(\partial h/\partial Q) = \frac{10^9}{2}\left(1 - \frac{a}{\sqrt{a^2 + 10^{-6}}}\right), \qquad a = 10^9 \, Q_e$$
 
-This adds a large one-sided penalty as $Q_e \\to 0^-$ while remaining smooth and differentiable, strongly driving $Q_e \\geq 0$ without creating a hard discontinuity that would break convergence.
+This adds a large one-sided penalty as $Q_e \to 0^-$ while remaining smooth and differentiable, strongly driving $Q_e \geq 0$ without creating a hard discontinuity that would break convergence.
 
 ---
 
@@ -439,7 +439,7 @@ Background leakage from deteriorated pipes — through corroded joints, stress c
 
 $$Q_{\text{leak}} = C_o \left( A_o + m H \right) \sqrt{H}$$
 
-where $H$ is the pressure head at the pipe midpoint, $A_o$ is the fixed (zero-pressure) crack area, $m$ is the rate of increase of crack area with pressure, and $C_o = 0.6\\sqrt{2g}$ is the orifice discharge coefficient. In the internal US customary unit system (flow in ft³/s, head in ft, area in ft²), $C_o \\approx 4.815 \\times 10^{-6}$ ft³/(s·ft^{1/2}) when area is expressed in the units used by the FAVAD crack parameters. Expanding this:
+where $H$ is the pressure head driving leakage from the pipe, $A_o$ is the fixed (zero-pressure) crack area, $m$ is the rate of increase of crack area with pressure, and $C_o = 0.6\sqrt{2g}$ is the orifice discharge coefficient. In the internal US customary unit system (flow in ft³/s, head in ft, area in ft²), $C_o \approx 4.815 \times 10^{-6}$ ft³/(s·ft^{1/2}) when area is expressed in the units used by the FAVAD crack parameters. Expanding this:
 
 $$Q_{\text{leak}} = C_o A_o H^{1/2} + C_o m H^{3/2}$$
 
@@ -451,7 +451,7 @@ $$H = C_{\text{fa}} \, Q_{\text{fa}}^{2} \qquad \text{(fixed-area component, ori
 
 $$H = C_{\text{va}} \, Q_{\text{va}}^{2/3} \qquad \text{(variable-area component, exponent } 3/2 \text{ on } H\text{)}$$
 
-The resistance coefficients $C_{\text{fa}}$ and $C_{\text{va}}$ are determined from the FAVAD parameters. For each pipe whose **both** end nodes are junctions, the pipe's leakage contribution is split equally: half is attributed to each end node (the pipe is split conceptually at its midpoint). When one end of a pipe is a fixed-grade node (reservoir or tank), that fixed-grade end cannot accumulate leakage in the nodal model; the junction at the other end therefore receives the **full** pipe-length contribution rather than half. The contributions of all pipes meeting at a given junction are aggregated: the total fixed-area conductance and variable-area conductance at the node are the sums over all incident (half- or full-) pipe contributions. The resulting nodal coefficients are then inverted to form $C_{\text{fa}}$ and $C_{\text{va}}$.
+The resistance coefficients $C_{\text{fa}}$ and $C_{\text{va}}$ are determined from the FAVAD parameters. For each pipe whose **both** end nodes are junctions, the pipe's leakage contribution is split equally: half is attributed to each end node (the pipe is split conceptually at its midpoint, with each half's leakage then driven by that end node's own pressure head rather than a single midpoint value). When one end of a pipe is a fixed-grade node (reservoir or tank), that fixed-grade end cannot accumulate leakage in the nodal model; the junction at the other end therefore receives the **full** pipe-length contribution rather than half. The contributions of all pipes meeting at a given junction are aggregated: the total fixed-area conductance and variable-area conductance at the node are the sums over all incident (half- or full-) pipe contributions. The resulting nodal coefficients are then inverted to form $C_{\text{fa}}$ and $C_{\text{va}}$.
 
 **Derivation of $C_{\text{fa}}$ and $C_{\text{va}}$**: let $\text{LeakCoeff1}_p$ and $\text{LeakCoeff2}_p$ be the full-pipe FAVAD discharge coefficients for pipe $p$. The per-end contribution for a junction endpoint $v$ of pipe $p$ is:
 
@@ -488,15 +488,16 @@ Steps 1–8 repeat until the specified simulation duration is reached.
 
 ### 6.2 Adaptive Time Step
 
-The hydraulic time step is not fixed; it adapts so that no physical limit is overshot. The actual step duration used is the minimum of five quantities:
+The hydraulic time step is not fixed; it adapts so that no physical limit is overshot. The actual step duration used is the minimum of the following quantities:
 
 - The user-specified nominal hydraulic time step.
 - The time remaining until the next reporting interval (so that results are recorded at exactly the right moments).
 - For each tank, the time at which the tank would reach its minimum level (if the net outflow continues at the current rate) or its maximum level (if the net inflow continues): $\Delta t_{\text{tank}} = \Delta V_{\text{available}} / |Q_{\text{net}}|$.
 - The time until the next scheduled change in any pattern (so that demand or pump multipliers change at exactly the right instant).
-- The time remaining until the end of the simulation.
+- The time until the next simple control activates (the earliest instant at which a timer control fires or a tank-level control crosses its threshold at the current fill/drain rate).
+- When rule-based controls are present, the time at which the next rule fires — determined by sub-stepping the rule evaluation across the hydraulic period (see §6.1 and §7.2).
 
-This adaptive strategy avoids the need for post-hoc correction of tank levels and ensures pattern changes are applied at their intended times.
+The end of the simulation is *not* one of these minimised quantities; it is enforced separately, by the main loop simply ceasing to issue steps once the clock reaches the specified duration. This adaptive strategy avoids the need for post-hoc correction of tank levels and ensures pattern changes and control actions are applied at their intended times.
 
 **Default time step derivation**: if the user does not specify either the quality time step or the rule evaluation time step, both default to $\Delta t_h / 10$, capped at $\Delta t_h$. The rule time step is additionally aligned so that evaluations fall on even multiples of the rule step within each hydraulic period — the first evaluation within a period may therefore be shorter than one full rule step to achieve this alignment. The quality time step is further constrained so it never exceeds the hydraulic time step. The hydraulic time step itself is clamped at the minimum of the user-specified nominal step, the pattern time step, and the reporting time step.
 
@@ -512,9 +513,9 @@ $$\Delta h = \frac{\Delta V}{A}$$
 
 For a tank described by a **volume-elevation curve**, the new volume $V_{\text{new}} = V_{\text{old}} + \Delta V$ is looked up in the curve to find the corresponding new water surface elevation.
 
-If the new level would fall below the minimum, the level is clamped at the minimum and the tank is treated as a fixed-grade node (like a small reservoir at its minimum head) for the next time step. If the new level would exceed the maximum and overflow is allowed, the surplus volume exits freely and the tank remains at its maximum level; if overflow is not permitted, the tank is clamped at its maximum level and treated as fixed-grade.
+If the new level would fall below the minimum, the level is clamped at the minimum and the tank is treated as a fixed-grade node (like a small reservoir at its minimum head) for the next time step. At the maximum level, the post-step update clamps the volume to the maximum in either case; the behavioural difference between the two overflow modes is enforced *during the hydraulic solve* rather than by this level clamp. When overflow is allowed, an over-full tank keeps accepting inflow and the surplus exits freely as overflow while the level is held at the maximum; when overflow is not permitted, the inflow links are held closed (see TEMPCLOSED below) so the tank cannot exceed its maximum, and it is treated as fixed-grade at that level.
 
-**TEMPCLOSED for links at tank limits**: independently of the level-clamping applied after the hydraulic step, within each Newton-Raphson iteration the status of every link adjacent to a tank is examined. If a link is carrying flow *into* a tank whose current head equals or exceeds the maximum level and overflow is not permitted, that link is set to TEMPCLOSED for the current iteration — it contributes no conductance and the coefficient matrix is assembled as if the link were closed. Similarly, a link carrying flow *out of* a tank at its minimum level is TEMPCLOSED. At the start of the next iteration, all TEMPCLOSED and XHEAD links are re-opened before the new operating point is evaluated, so the status is re-tested fresh at each iteration rather than being locked in.
+**TEMPCLOSED for links at tank limits**: independently of the level-clamping applied after the hydraulic step, whenever the solver performs a link-status check (at the periodic `CheckFreq` interval and at each convergence test) the status of every link adjacent to a tank is examined. If a link is carrying flow *into* a tank whose current head equals or exceeds the maximum level and overflow is not permitted, that link is set to TEMPCLOSED — it contributes no conductance and the coefficient matrix is assembled as if the link were closed. Similarly, a link carrying flow *out of* a tank at its minimum level is TEMPCLOSED. At the start of each such status check, all TEMPCLOSED and XHEAD links are first re-opened before the new operating point is evaluated, so the status is re-tested rather than being locked in.
 
 ---
 
@@ -524,7 +525,7 @@ If the new level would fall below the minimum, the level is clamped at the minim
 
 A simple control consists of a single condition and a single action. The condition is either a **level control** — a node's pressure or hydraulic grade exceeds or falls below a specified threshold — or a **timer control** — the simulation clock reaches a specified time or the current time of day reaches a specified hour.
 
-When a simple control fires, its action is applied immediately: it may open or close a link, change a pump's speed setting, or change a valve's setting. Simple controls are evaluated once at the start of each hydraulic time step. If a control fires and changes the network configuration, the subsequent hydraulic solution reflects the new state for the entire duration of that time step.
+When a simple control fires, its action is applied immediately: it may open or close a link, change a pump's speed setting, or change a valve's setting. Tank-level and time-based controls are evaluated once at the start of each hydraulic time step; if such a control fires and changes the network configuration, the subsequent hydraulic solution reflects the new state for the entire duration of that time step. Simple controls conditioned on a **junction** pressure or grade are handled differently: because the controlling pressure is itself an output of the solve, they are re-checked *after* the hydraulic system has converged, by the same `pswitch` routine that runs inside the solver loop. If the converged pressure has crossed the control threshold, the link status is switched and the system is re-solved, iterating until no such control changes state.
 
 For **level controls** on tanks, a small hysteresis margin is applied to prevent chattering when the tank is exactly at the control threshold under non-zero flow. The trigger condition is checked against the tank volume corresponding to the control's grade level, with a margin equal to the current absolute value of the tank's net demand flow rate (`|NodeDemand|`, in internal flow units). A low-level control fires when the current tank volume falls at or below the threshold volume plus the margin; a high-level control fires when the current tank volume reaches or exceeds the threshold volume minus the margin.
 
@@ -566,7 +567,7 @@ Three simulation modes are available:
 
 Advective transport of water quality through pipes is modelled with a **Lagrangian moving-segment** scheme. Each pipe is represented as an ordered sequence of segments. Each segment has a volume and a uniform concentration. Segments are created when new water of a different concentration enters a pipe and destroyed when they are fully flushed out the other end.
 
-**Advection step**: over a quality time step of duration $\delta t$, a volume $\mathcal{V}_k = Q_k \, \delta t$ of water is swept through pipe $k$. Starting from the upstream end of the pipe, segments are consumed one by one. The mass and volume of each consumed fraction are tracked; when the cumulative volume consumed equals $\mathcal{V}_k$, the remaining portion of the last consumed segment is returned to the front of the pipe. The total mass and volume that exited the pipe's downstream end are accumulated at the downstream node.
+**Advection step**: over a quality time step of duration $\delta t$, a volume $\mathcal{V}_k = Q_k \, \delta t$ of water is swept through pipe $k$. Consumption proceeds from the **downstream (leading) end** of the pipe — the segments nearest the receiving node — inward, one segment at a time. The mass and volume of each consumed fraction are tracked; when the cumulative volume consumed equals $\mathcal{V}_k$, the remaining portion of the last partially-consumed segment is retained as the new leading (downstream-end) segment. The total mass and volume that exited the pipe's downstream end are accumulated at the downstream node; fresh water of the upstream node's concentration is subsequently added as a new trailing segment at the pipe's upstream end.
 
 **Nodal mixing**: once all pipes have been processed, the outflow concentration at each junction is computed as:
 
@@ -593,7 +594,7 @@ where $m_k^{\text{out}}$ and $\mathcal{V}_k^{\text{out}}$ are the mass and volum
 
 Source concentrations may vary over time via a multiplier pattern.
 
-For all source types, a **stagnation guard** suppresses injection when the total volumetric outflow from the node during a quality sub-step is exactly zero (i.e. no volume leaves the node). This avoids division by zero when computing concentration increments. The separate QZERO threshold ($1.114 \times 10^{-5}$ ft³/s) governs whether a link's flow is treated as stagnant for topological-sort and transport purposes (§8.1); it does not apply to source injection.
+For all source types, a **stagnation guard** suppresses injection when the total volumetric outflow *rate* from the node during a quality sub-step falls at or below a small threshold `Q_STAGNANT` $= 1.114 \times 10^{-5}$ ft³/s (0.005 gpm). This avoids division by zero — and unstable large increments — when computing concentration increments at a near-stagnant node. The *same* `Q_STAGNANT` threshold also governs whether a link's flow is treated as negligible for the topological-sort and transport steps (§8.1); it is one constant serving both purposes, not two. (It is distinct from the hydraulic constant `QZERO` $= 10^{-6}$ ft³/s, which is used only to seed the flow of closed links and plays no role in the quality engine.)
 
 **Water age** requires no source. The "concentration" is initialised to zero everywhere and incremented by $\delta t$ (in hours) at every quality time step, representing the elapsed time since the water entered the system from a source (reservoir or tank).
 
@@ -615,7 +616,7 @@ where $k_b$ is the bulk reaction rate coefficient and $f(c)$ is the concentratio
 - **First order** ($n = 1$): $f(c) = c$ — the reaction rate is proportional to concentration; this covers simple first-order decay (e.g., chlorine demand).
 - **Second order** ($n = 2$): $f(c) = c^2$.
 - **$n$-th order with limiting concentration $C_L$**: $f(c) = c^{n-1} \cdot c_{\text{potential}}$, where the potential accounts for the approach to a limiting residual (decay toward a non-zero floor, or growth toward a ceiling).
-- **Michaelis-Menten kinetics** (negative order): $f(c) = c / (C_L \pm c)$, which models saturation kinetics — the reaction rate is approximately first-order at low concentrations and approximately zero-order at high concentrations relative to the half-saturation constant $C_L$.
+- **Michaelis-Menten kinetics** (negative order): $f(c) = c / (C_L + \mathrm{sign}(k_b)\,c)$ — the denominator is $C_L + c$ for growth ($k_b > 0$) and $C_L - c$ for decay ($k_b < 0$), so the sign is governed by the sign of the rate coefficient. This models saturation kinetics — the reaction rate is approximately first-order at low concentrations and approximately zero-order at high concentrations relative to the half-saturation constant $C_L$.
 
 #### Wall Reactions
 
@@ -653,7 +654,7 @@ The net concentration change in a pipe segment over a quality time step $\delta 
 
 $$\Delta c = \left( r_{\text{bulk}} + r_{\text{wall}} \right) \delta t$$
 
-This forward-Euler update is applied uniformly for all reaction orders. The quality time step is kept short relative to the reaction time scale to keep truncation error acceptably small.
+This forward-Euler update is applied uniformly for all reaction orders. After each step the updated concentration is floored at zero ($c \leftarrow \max(0,\, c + \Delta c)$) so that a decay reaction can never drive a constituent negative. The quality time step is kept short relative to the reaction time scale to keep truncation error acceptably small.
 
 #### Roughness–Reaction Correlation
 
@@ -692,7 +693,7 @@ The tank volume is divided into two compartments represented as two segments: an
 
 - **Emptying** ($v_{\text{net}} < 0$): water is drawn back from the stagnant zone into the mixing zone to compensate for the net deficit: $v_t = \min(V_{\text{stag}},\; |v_{\text{net}}|)$. The mixing zone concentration is updated as a volume-weighted average of its current contents, the inflow mass, and the transferred stagnant zone water.
 
-- **No net flow** ($v_{\text{net}} = 0$): no volume transfer occurs; inflow mass still mixes into the mixing zone.
+- **No net flow** ($v_{\text{net}} = 0$): no volume transfer occurs between the zones, and — because there is no net volume change over the sub-step — the mixing-zone concentration is left unchanged; any inflow mass is not blended in during this case.
 
 The outflow concentration is always the mixing zone concentration. This model captures the behaviour of elongated tanks where short-circuiting occurs — inflow water can exit before it fully mixes with the bulk stored water.
 
@@ -712,13 +713,13 @@ The simulator maintains a **running mass balance** for the quality constituent t
 
 - **Initial mass stored**: the total constituent mass in all pipes and tanks at the start of the simulation.
 - **Mass added from sources**: constituent injected at network sources.
-- **Mass removed as demand**: constituent carried out by consumer withdrawals.
+- **Mass removed as outflow**: constituent carried out of the network — consumer withdrawals, water leaving through reservoirs, and tank overflow are all accumulated in this term (not consumer demand alone).
 - **Mass reacted**: constituent lost (or gained) through bulk and wall reactions; computed as the integral of reaction rates over all pipe segments and tanks.
 - **Final mass stored**: the total mass remaining in the network at the end of the simulation.
 
 The overall mass balance ratio is computed as follows. Let $m_\text{reacted}$ be the signed total mass change due to reactions (negative for growth, positive for decay). If $m_\text{reacted} > 0$ (net decay), it is added to the output side of the ledger. If $m_\text{reacted} < 0$ (net growth), its absolute value is added to the input side:
 
-$$\text{ratio} = \frac{\text{mass demand outflow} + \max(m_\text{reacted}, 0) + \text{final mass stored}}{\text{initial mass stored} + \text{mass added by sources} + \max(-m_\text{reacted}, 0)}$$
+$$\text{ratio} = \frac{\text{mass outflow} + \max(m_\text{reacted}, 0) + \text{final mass stored}}{\text{initial mass stored} + \text{mass added by sources} + \max(-m_\text{reacted}, 0)}$$
 
 A value close to 1.0 confirms that constituent mass is being conserved to within numerical precision. A significant deviation from 1.0 indicates either a numerical error or an inconsistency in the reaction parameterisation. This diagnostic is reported at the end of the simulation.
 
@@ -755,7 +756,7 @@ $$\text{Cost}_j \mathrel{+}= c_j(t) \cdot P_j \cdot \Delta t$$
 
 where $c_j(t)$ is the applicable unit rate at the current time.
 
-In addition to energy cost, a global **peak demand charge** parameter $D_c$ (cost per peak kW) is supported. A running maximum of the simultaneous power draw across all pumps $P_{\text{max}} = \max_t \sum_j P_j(t)$ is tracked throughout the simulation. At report time the total peak demand cost $D_c \cdot P_{\text{max}}$ is added to the energy cost summary. The **KwHrsPerFlow** statistic is accumulated at each time step as $\sum_i (P_i / Q_i) \cdot \Delta t_i$ — a time-weighted harmonic-mean energy intensity — and reported as a measure of pumping efficiency per unit throughput.
+In addition to energy cost, a global **peak demand charge** parameter $D_c$ (cost per peak kW) is supported. A running maximum of the simultaneous power draw across all pumps $P_{\text{max}} = \max_t \sum_j P_j(t)$ is tracked throughout the simulation. At report time the total peak demand cost $D_c \cdot P_{\text{max}}$ is added to the energy cost summary. The **KwHrsPerFlow** statistic is accumulated at each time step as $\sum_i (P_i / Q_i) \cdot \Delta t_i$ — a time-weighted average of the instantaneous energy intensity $P/Q$ — and reported as a measure of pumping efficiency per unit throughput.
 
 ---
 
@@ -822,7 +823,7 @@ For **kinematic viscosity**, the user may supply either a multiplier (value $> 1
 
 The network is described in a structured plain-text input file organised into labelled sections. Each section corresponds to a class of network object or a simulation parameter group. The parser makes **two passes** through the file. A first pass does two things: it counts all objects of each type so that memory can be allocated in one contiguous block, and it also extracts the `UNITS` and `HEADLOSS` options from the `[OPTIONS]` section. These two options must be known before the first pass completes because they determine how patterns, curves, and other objects are sized and interpreted. A second pass reads and interprets all remaining data. The sections handled include: junctions, reservoirs, tanks, pipes, pumps, valves, demand categories, time patterns, head-loss and efficiency curves, simple controls, rule-based controls, water quality sources, emitter coefficients, leakage parameters, options (head-loss formula selection, flow units, demand model, tolerances), energy pricing, reaction coefficients, tank mixing model assignments, reporting options, initial status overrides, and simulation time parameters.
 
-**Initial link status overrides (`[STATUS]` section)**: the `[STATUS]` section allows the user to set the initial operational status of any link before simulation begins. For pipes and pumps, valid entries are `OPEN` or `CLOSED`. For valves, an entry may be `OPEN`, `CLOSED`, or a numeric setting that overrides the value from the `[VALVES]` section. Status overrides are applied after all link definitions have been parsed, so they take precedence over inline status values. During simulation, controls and rules may subsequently change these statuses.
+**Initial link status overrides (`[STATUS]` section)**: the `[STATUS]` section allows the user to set the initial operational status of any link before simulation begins. For pipes, valid entries are `OPEN` or `CLOSED`. For pumps, an entry may be `OPEN`, `CLOSED`, or a numeric relative-speed setting (a value of 0 closes the pump). For valves, an entry may be `OPEN`, `CLOSED`, or a numeric setting that overrides the value from the `[VALVES]` section. Because `[STATUS]` is parsed after the link-definition sections, its entries take precedence over inline status values. During simulation, controls and rules may subsequently change these statuses.
 
 Before simulation begins, the project undergoes a **validation pass** that checks for the following conditions: each tank must satisfy $H_{\min} \leq H_{\text{init}} \leq H_{\max}$; all patterns must have at least one period; all curves must have strictly increasing $x$-values (monotone); pump curves must have strictly decreasing head values; and the number of curve data points must meet a minimum for interpolation to work. Any unconnected node (a junction or tank with no adjacent links) is detected and reported as an error. If any validation check fails, the simulation does not start and the error is reported.
 
@@ -830,7 +831,7 @@ Alternatively, networks may be constructed entirely through the project API with
 
 ### Output
 
-**Hydraulic binary file**: at each hydraulic time step the solver writes all nodal heads, nodal demands, link flows, link velocities, and link status flags to a temporary binary file. This file is then replayed during the water quality simulation, supplying the velocity field needed for advection without requiring the hydraulics to be recomputed.
+**Hydraulic binary file**: at each hydraulic time step the solver writes nodal demands, nodal heads, link flows, link status flags, and link settings to a temporary binary file. This file is then replayed during the water quality simulation, supplying the flow field from which velocities are reconstructed for advection, without requiring the hydraulics to be recomputed. (Velocities themselves are not stored; they are derived from the saved flows and pipe geometry.)
 
 **Results binary file**: at each reporting time step (which may be less frequent than the hydraulic time step), all computed quantities for every node and link are saved to a separate binary output file. Node quantities include hydraulic head, pressure, demand, and constituent concentration. Link quantities include flow rate, velocity, unit head loss, friction factor, and quality. This file may subsequently be post-processed by external programs.
 
@@ -856,7 +857,7 @@ The file has five sections written sequentially:
 | 28 | INT4 | Quality flag: 0=None, 1=Chemical, 2=Age, 3=Trace |
 | 32 | INT4 | Trace node index (1-based; 0 if not trace mode) |
 | 36 | INT4 | Flow units enum: 0=CFS, 1=GPM, 2=MGD, 3=IMGD, 4=AFD, 5=LPS, 6=LPM, 7=MLD, 8=CMH, 9=CMD, 10=CMS |
-| 40 | INT4 | Pressure units: 0=PSI, 1=kPa, 2=metres |
+| 40 | INT4 | Pressure units: 0=PSI, 1=kPa, 2=metres, 3=bar, 4=feet |
 | 44 | INT4 | Report statistic: 0=Series, 1=Average, 2=Minimum, 3=Maximum, 4=Range |
 | 48 | INT4 | Report start time (seconds) |
 | 52 | INT4 | Report time step (seconds) |
