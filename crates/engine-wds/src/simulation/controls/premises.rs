@@ -15,8 +15,12 @@ const KW_PER_W: f64 = 1.0e-3;
 
 /// Evaluates the premise list for a single rule (§4.2.2).
 ///
-/// AND binds more tightly than OR. Consecutive premises are joined by the
-/// `connective` field of the preceding premise; `None` marks the last premise.
+/// `AND` binds more tightly than `OR`: the premises form a disjunction of
+/// conjunctive clauses. Each premise's `connective` is the operator that
+/// *precedes* it — `None` for the first premise, then `And`/`Or` taken from the
+/// keyword that begins each subsequent premise line (matching the parser and
+/// INP writer). An `Or` closes the running conjunctive clause and opens a new
+/// one; `And` (or the first premise) extends the current clause.
 pub(crate) fn evaluate_premises(
     premises: &[Premise],
     network: &Network,
@@ -33,18 +37,21 @@ pub(crate) fn evaluate_premises(
 
     for premise in premises {
         let truth = eval_single_premise(premise, network, node_states, link_states, t);
-        clause = clause && truth;
 
         match premise.connective {
-            Some(LogicOp::Or) | None => {
+            Some(LogicOp::Or) => {
+                // `Or` ends the current clause and starts a fresh one.
                 or_result = or_result || clause;
-                clause = true;
+                clause = truth;
             }
-            Some(LogicOp::And) => {}
+            // `And`, or the first premise (`None`), extends the current clause.
+            Some(LogicOp::And) | None => {
+                clause = clause && truth;
+            }
         }
     }
 
-    or_result
+    or_result || clause
 }
 
 fn eval_single_premise(

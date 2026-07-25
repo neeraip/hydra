@@ -399,12 +399,14 @@ mod tests {
         });
         net.links[0].base.to_node = 2;
 
-        // Rule: IF N1.HEAD > 50 AND N2.HEAD > 30 THEN close P1
+        // Rule: IF N1.HEAD > 50 AND N2.HEAD > 30 THEN close P1.
+        // Premise connectives precede each premise: first is `None`, the second
+        // carries the `And` that begins its line (matching the parser).
         net.rules.push(make_rule(
             1.0,
             vec![
-                head_premise(1, PremiseOperator::Gt, 50.0, Some(LogicOp::And)),
-                head_premise(2, PremiseOperator::Gt, 30.0, None),
+                head_premise(1, PremiseOperator::Gt, 50.0, None),
+                head_premise(2, PremiseOperator::Gt, 30.0, Some(LogicOp::And)),
             ],
             vec![close_action(1)],
             vec![],
@@ -451,8 +453,8 @@ mod tests {
         net.rules.push(make_rule(
             1.0,
             vec![
-                head_premise(1, PremiseOperator::Gt, 50.0, Some(LogicOp::And)),
-                head_premise(2, PremiseOperator::Gt, 30.0, None),
+                head_premise(1, PremiseOperator::Gt, 50.0, None),
+                head_premise(2, PremiseOperator::Gt, 30.0, Some(LogicOp::And)),
             ],
             vec![close_action(1)],
             vec![],
@@ -491,12 +493,13 @@ mod tests {
             source: None,
         });
         // Rule: IF N1.HEAD > 100 OR N2.HEAD > 30 THEN close P1
-        // N1.HEAD = 40 (false), N2.HEAD = 40 (true) → OR true → fires
+        // N1.HEAD = 40 (false), N2.HEAD = 40 (true) → OR true → fires.
+        // The `Or` precedes the second premise (matching the parser).
         net.rules.push(make_rule(
             1.0,
             vec![
-                head_premise(1, PremiseOperator::Gt, 100.0, Some(LogicOp::Or)),
-                head_premise(2, PremiseOperator::Gt, 30.0, None),
+                head_premise(1, PremiseOperator::Gt, 100.0, None),
+                head_premise(2, PremiseOperator::Gt, 30.0, Some(LogicOp::Or)),
             ],
             vec![close_action(1)],
             vec![],
@@ -515,6 +518,42 @@ mod tests {
         let link_states = vec![open_state()];
         let result = eval_rules(&net, &node_states, &link_states, 0.0);
         assert!(result.is_some());
+    }
+
+    /// Parses a small INP whose single rule ANDs three premises on J1's head,
+    /// then reports whether the rule fires for the given head. Exercises the
+    /// parser → evaluator path end to end (the parser stores each premise's
+    /// *leading* connective; the evaluator must AND all three).
+    fn parse_and_eval_triple_and(head: f64) -> bool {
+        let inp = "[OPTIONS]\nUnits CMS\nHeadloss H-W\n\n\
+                   [JUNCTIONS]\nJ1 0 0.5\n\n[RESERVOIRS]\nR1 100\n\n\
+                   [PIPES]\nP1 R1 J1 1000 300 100 0 Open\n\n\
+                   [RULES]\nRULE 1\n\
+                   IF NODE J1 HEAD > 10\n\
+                   AND NODE J1 HEAD > 50\n\
+                   AND NODE J1 HEAD > 30\n\
+                   THEN LINK P1 STATUS IS CLOSED\n";
+        let net = crate::io::parse(inp.as_bytes()).expect("INP parses");
+        let j1 = net
+            .nodes
+            .iter()
+            .position(|n| n.base.id == "J1")
+            .expect("J1 present");
+        let mut node_states: Vec<NodeState> =
+            (0..net.nodes.len()).map(|_| NodeState::default()).collect();
+        node_states[j1].head = head;
+        let link_states: Vec<_> = (0..net.links.len()).map(|_| open_state()).collect();
+        eval_rules(&net, &node_states, &link_states, 0.0).is_some()
+    }
+
+    #[test]
+    fn parsed_multi_and_rule_requires_every_premise() {
+        // All three thresholds satisfied → the rule fires.
+        assert!(parse_and_eval_triple_and(60.0));
+        // The first premise holds (>10) but a later AND premise fails (40 ≯ 50),
+        // so the rule must NOT fire. Regression guard: the evaluator previously
+        // honoured only the first premise and would have fired here.
+        assert!(!parse_and_eval_triple_and(40.0));
     }
 
     #[test]

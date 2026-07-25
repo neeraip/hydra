@@ -1091,7 +1091,8 @@ pub struct Premise {
     pub operator: PremiseOperator,
     /// The right-hand-side threshold value.
     pub value: f64,
-    /// Connective joining this premise to the next; `None` for the last premise.
+    /// Connective that *precedes* this premise: `None` for the first premise,
+    /// then the `And`/`Or` keyword that begins each subsequent premise line.
     pub connective: Option<LogicOp>,
 }
 
