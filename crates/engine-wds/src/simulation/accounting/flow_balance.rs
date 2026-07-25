@@ -25,10 +25,14 @@ pub(super) fn accumulate_flow_balance(
             NodeKind::Junction(j) => {
                 let d = ns.demand_flow;
                 if d < 0.0 {
+                    // Net-negative demand is a local inflow point (external source).
                     flow_balance.total_inflow += d.abs() * dt;
                 } else {
-                    flow_balance.total_outflow += (d + ns.emitter_flow + ns.leakage_flow) * dt;
+                    flow_balance.total_outflow += d * dt;
                 }
+                // Emitter and leakage discharge are always outflows, independent of
+                // the sign of consumer demand (spec §7.2 sums them over all junctions).
+                flow_balance.total_outflow += (ns.emitter_flow + ns.leakage_flow) * dt;
                 if opts.demand_model == DemandModel::PressureDriven {
                     let d_full = j.total_demand(t, opts, &network.patterns, &network.pattern_index);
                     let deficit = (d_full - d).max(0.0);
@@ -162,5 +166,36 @@ mod tests {
 
         assert_eq!(flow_balance.total_outflow, 40.0);
         assert_eq!(flow_balance.demand_deficit, 20.0);
+    }
+
+    #[test]
+    fn accumulate_flow_balance_counts_emitter_leakage_at_negative_demand_junction() {
+        // A net-negative-demand junction (a local source) that also has an emitter
+        // and FAVAD leak: the demand is an inflow, but the emitter/leakage discharge
+        // is still an outflow. Regression — these were previously dropped for d < 0.
+        let network = balance_network(DemandModel::DemandDriven);
+        let mut flow_balance = FlowBalance {
+            total_inflow: 0.0,
+            total_outflow: 0.0,
+            demand_deficit: 0.0,
+            initial_tank_volume: 0.0,
+        };
+        let node_states = vec![
+            NodeState {
+                net_flow: 0.0,
+                ..NodeState::default()
+            },
+            NodeState {
+                demand_flow: -2.0,
+                emitter_flow: 0.5,
+                leakage_flow: 0.25,
+                ..NodeState::default()
+            },
+        ];
+
+        accumulate_flow_balance(&mut flow_balance, &network, &node_states, 10.0, 0.0, 0.0);
+
+        assert_eq!(flow_balance.total_inflow, 20.0);
+        assert_eq!(flow_balance.total_outflow, 7.5);
     }
 }
