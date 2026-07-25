@@ -252,6 +252,53 @@ fn mass_conserved_no_reactions() {
     assert_abs_diff_eq!(ratio, 1.0, epsilon = 1e-10);
 }
 
+/// Mass carried out of the network into a fixed-grade reservoir sink must be
+/// charged to the outflow ledger (§6.9). Water flows R1 → J1 → R2; the mass
+/// initially in pipe P2 sweeps into the R2 sink. With a zero-quality supply and
+/// no reactions the balance must still close — before the fix the reservoir-sink
+/// mass was dropped and ρ_m fell below 1.
+#[test]
+fn mass_balance_charges_reservoir_sink_outflow() {
+    let builder = TestNetworkBuilder::new()
+        .with_options(SimulationOptions {
+            quality_mode: QualityMode::Chemical,
+            qual_step: 60.0,
+            duration: 3600.0,
+            ..SimulationOptions::default()
+        })
+        .reservoir("R1", 100.0)
+        .node_quality("R1", 0.0)
+        .junction("J1", 0.0, 0.0)
+        .reservoir("R2", 50.0)
+        .node_quality("R2", 0.0)
+        .hw_pipe("P1", "R1", "J1", 200.0, 12.0, 100.0)
+        .hw_pipe("P2", "J1", "R2", 200.0, 12.0, 100.0);
+
+    let (net, ns, mut ls, _) = builder.build_with_favad();
+    // Positive flow R1 → J1 → R2 (both pipes carry flow into the R2 sink).
+    ls[0].flow = 0.02;
+    ls[1].flow = 0.02;
+
+    let mut state = init_quality(&net, &ns, &ls).unwrap();
+    // Pre-fill pipe P2 with constituent so real mass sweeps into the sink.
+    if let Some(pq) = &mut state.pipe_quality[1] {
+        for seg in &mut pq.segments {
+            seg.concentration = 10.0;
+        }
+    }
+    state.mass_balance.init = crate::quality::shared::total_mass(&state);
+
+    advance_quality(&mut state, &net, &ns, &ls, 3600.0, 0.0);
+
+    // The mass that left into R2 is charged to the outflow ledger, so the
+    // balance closes despite the network losing mass through the reservoir.
+    assert!(
+        state.mass_balance.demand > 0.0,
+        "reservoir-sink mass should be charged to the outflow ledger"
+    );
+    assert_abs_diff_eq!(state.mass_balance.ratio(), 1.0, epsilon = 1e-9);
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // Trace mode — source node propagation
 // ═══════════════════════════════════════════════════════════════════════════════

@@ -210,6 +210,12 @@ pub(super) fn transport_step(
                     network.options.quality_mode,
                     t,
                 );
+                // §6.9: mass carried out of the network into a fixed-grade
+                // reservoir sink leaves the tracked system (reservoirs are not
+                // counted in total_mass), so it is charged to the outflow ledger —
+                // EPANET's `masslost = massin`. A supplying reservoir has no
+                // inflowing pipes, so massin is 0 and this adds nothing.
+                state.mass_balance.demand += massin;
             }
             NodeKind::Tank(tank) => {
                 let c_in = if volin > 0.0 {

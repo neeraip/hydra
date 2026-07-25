@@ -298,7 +298,7 @@ The quality engine maintains a running mass balance to verify numerical conserva
 |---|---|
 | $M_{\text{init}}$ | Constituent mass in all pipes and tanks at $t = 0$ |
 | $M_{\text{added}}$ | Mass injected by all sources |
-| $M_{\text{demand}}$ | Mass removed with consumer demand withdrawals |
+| $M_{\text{demand}}$ | Mass leaving the network — consumer demand withdrawals **plus** mass carried into fixed-grade reservoir sinks (EPANET's `masslost`) |
 | $M_{\text{reacted}}$ | Net mass consumed (or produced) by bulk and wall reactions (signed; positive = decay) |
 | $M_{\text{final}}$ | Constituent mass remaining at end of simulation |
 
@@ -307,6 +307,8 @@ The quality engine maintains a running mass balance to verify numerical conserva
 $$\rho_m = \frac{M_{\text{demand}} + \max(M_{\text{reacted}},\, 0) + M_{\text{final}}}{M_{\text{init}} + M_{\text{added}} + \max(-M_{\text{reacted}},\, 0)}$$
 
 where $M_{\text{reacted}} > 0$ represents net decay (mass removed from the water) and $M_{\text{reacted}} < 0$ represents net growth (mass added to the water). Decay contributes to the output side of the ledger; growth contributes to the input side. A value of $\rho_m \approx 1$ confirms conservation. A significant deviation indicates a numerical error or inconsistent reaction parameterisation.
+
+> **Known limitation**: mass leaving via **tank overflow** is not yet charged to $M_{\text{demand}}$. The quality engine's per-model tank-volume handling differs (the CSTR volume retains overflow water in $M_{\text{final}}$, while the two-compartment model discards its stagnant-zone surplus), so correctly attributing overflow mass requires first reconciling the quality tank volume with the hydraulic overflow clamp. Until then, a network that loses mass through tank overflow may show a small residual in $\rho_m$.
 
 #### 6.9.1 Disaggregated Reaction Rate Accumulators
 
