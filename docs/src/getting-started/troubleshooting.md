@@ -103,7 +103,7 @@ Hydra could not write output. Check that the output directory exists and that yo
 
 If the steps above do not resolve your issue, open a GitHub issue with:
 
-- The Hydra version (`hydra -v`)
+- The Hydra version (`hydra -V`)
 - Your operating system and version
 - A minimal `.inp` file that reproduces the problem (if applicable)
 - The full error message or report output

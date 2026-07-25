@@ -88,9 +88,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let json = io::rpt_writer::build_json_report(&sim)?;
     std::fs::write("report.json", json)?;
 
-    // EPANET-compatible binary .out file
-    let out_file = BufWriter::new(File::create("output.out")?);
-    io::out_writer::write_binary_output(out_file, &sim)?;
+    // EPANET-compatible binary .out file. The last three arguments are the
+    // input/report paths recorded in the file prolog and the output unit system
+    // (use the model's declared units via `sim.net().options.flow_units`).
+    let mut out_file = BufWriter::new(File::create("output.out")?);
+    io::out_writer::write_binary_output(
+        &mut out_file,
+        &sim,
+        "network.inp",
+        "report.rpt",
+        sim.net().options.flow_units,
+    )?;
 
     Ok(())
 }
@@ -113,7 +121,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     )?;
 
     println!("Network reliability: {:.1}%",
-        report.summary.network_reliability_ratio * 100.0);
+        report.summary.reliability_ratio() * 100.0);
 
     for node in &report.nodes {
         if node.reliability_ratio() < 0.99 {
@@ -147,9 +155,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         thresholds,
     )?;
 
-    println!("Compliant nodes: {}/{}", 
-        report.summary.compliant_node_count,
-        report.nodes.len());
+    let compliant = report.nodes.iter()
+        .filter(|n| n.below_min_count == 0 && n.above_max_count == 0)
+        .count();
+    println!("Compliant nodes: {}/{}", compliant, report.nodes.len());
 
     for node in &report.nodes {
         if node.below_min_count > 0 {

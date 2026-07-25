@@ -8,7 +8,7 @@ Hydra parses the EPANET 2.3 `.inp` file format. This page documents which sectio
 
 ### Fully Supported
 
-All data in these sections is parsed and applied.
+All data in these sections is parsed and applied to the simulation, with one exception noted below (`[REPORT]`).
 
 | Section | Contents |
 |---|---|
@@ -26,14 +26,14 @@ All data in these sections is parsed and applied.
 | `[CURVES]` | XY data points for pump head, pump efficiency, GPV headloss, PCV loss ratio, tank volume |
 | `[CONTROLS]` | Simple time-based, level-based, and pressure-based controls |
 | `[RULES]` | Rule-based controls with IF/AND/OR/THEN/ELSE/PRIORITY |
-| `[QUALITY]` | Per-node initial quality concentrations |
+| `[QUALITY]` | Initial quality concentrations, per node or over a node ID range (`node1 node2 value`) |
 | `[SOURCES]` | Quality source injection (CONCEN, MASS, FLOWPACED, SETPOINT) |
 | `[MIXING]` | Per-tank mixing model (MIXED, 2COMP, FIFO, LIFO) |
 | `[REACTIONS]` | Global and per-element bulk/wall reaction coefficients and orders |
-| `[ENERGY]` | Global price/efficiency and per-pump energy settings (EFFIC, PRICE, PRICEPATTERN) |
-| `[TIMES]` | Simulation duration, timesteps, report start, pattern start, clock offset |
+| `[ENERGY]` | Global settings (GLOBAL EFFICIENCY/PRICE/PATTERN, DEMAND CHARGE) and per-pump energy settings (EFFIC, PRICE, PATTERN) |
+| `[TIMES]` | Simulation duration, timesteps, report start, pattern start, clock offset, rule timestep, and reporting statistic |
 | `[OPTIONS]` | See [OPTIONS keywords](#options-keywords) below |
-| `[REPORT]` | Report field selection and formatting options |
+| `[REPORT]` | Report field selection and formatting options — parsed and stored, but not yet consumed by the report writer (field filtering is not implemented) |
 | `[COORDINATES]` | Node XY positions (visual metadata, no unit conversion) |
 | `[VERTICES]` | Link intermediate vertices (visual metadata) |
 | `[TAGS]` | Node and link string tags (metadata) |
@@ -51,11 +51,13 @@ These sections are recognised and accepted without error but produce no simulati
 
 Unknown sections (not listed in either table) are also silently ignored for forward compatibility.
 
+An `[END]` marker, if present, terminates parsing: any content after the first `[END]` line is ignored.
+
 ---
 
 ## OPTIONS Keywords
 
-All standard EPANET 2.3 `[OPTIONS]` keywords are supported. Unknown keywords are silently ignored.
+The `[OPTIONS]` keywords listed below are parsed and applied. A few EPANET keywords are not parsed — notably `PRESSURE` (pressure display units) and `MAP` — and any unknown keyword is silently ignored.
 
 | Keyword | Description |
 |---|---|

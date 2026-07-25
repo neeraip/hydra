@@ -16,16 +16,7 @@ After installing, see [Troubleshooting](troubleshooting.md) if macOS blocks the 
 
 For most users, **Cargo install is the recommended path**.
 
-**Option 1 — Pre-built binary** (no Rust required)
-
-Download the `hydra` binary for your platform from the [releases page](https://github.com/neeraip/hydra/releases/latest) and place it somewhere on your `PATH`.
-
-> **macOS** — Pre-built CLI binaries are currently not notarised. If Gatekeeper blocks the binary, remove the quarantine flag:
-> ```sh
-> xattr -d com.apple.quarantine hydra
-> ```
-
-**Option 2 — Install with Cargo (recommended)**
+**Option 1 — Install with Cargo (recommended)**
 
 ```sh
 cargo install hydra-cli
@@ -36,8 +27,17 @@ Requires Rust ≥ 1.95 (install via [rustup.rs](https://rustup.rs)).
 After installing, verify with:
 
 ```sh
-hydra -v
+hydra -V
 ```
+
+**Option 2 — Pre-built binary** (no Rust required)
+
+Download the `hydra` binary for your platform from the [releases page](https://github.com/neeraip/hydra/releases/latest) and place it somewhere on your `PATH`.
+
+> **macOS** — Pre-built CLI binaries are currently not notarised. If Gatekeeper blocks the binary, remove the quarantine flag:
+> ```sh
+> xattr -d com.apple.quarantine hydra
+> ```
 
 ## Building from Source
 

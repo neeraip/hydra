@@ -17,7 +17,7 @@ See [INP Format Support](inp-format.md) for the full section-by-section referenc
 | Format | Compatibility |
 |---|---|
 | `.out` binary | EPANET-compatible. Post-processing tools that read EPANET binary output files will work with Hydra's output. |
-| `.rpt` text report | EPANET-style report. Field names and layout follow EPANET conventions. |
+| `.rpt` text report | EPANET-style **summary** report (header, input summary, warnings, analysis timestamps). It does not include per-node/link result tables — use the `.out` file for those. |
 | `.json` report | Hydra extension (not an EPANET format). |
 
 ---

@@ -41,6 +41,8 @@ hydra network.inp report.rpt output.out
 hydra --input network.inp --report report.rpt --output output.out
 ```
 
+At most three positional arguments (input, report, output) are accepted; passing more is a usage error (exit `1`). `hydra -V` prints the Hydra engine version and the CLI version on separate lines.
+
 ## Output Formats
 
 The report path controls what format is written:
@@ -65,11 +67,13 @@ hydra https://example.com/network.inp
 hydra https://example.com/network.inp report.rpt output.out
 ```
 
+Both `http://` and `https://` are accepted, and a URL may also be given via `--input`. The fetch follows up to 10 redirects, uses a 10-second connect timeout and a 300-second overall timeout, and accepts response bodies up to 1 GiB. An HTTP 4xx response is treated as an input error (exit `1`); a 5xx or network failure is an I/O error (exit `3`).
+
 ## Flags
 
 | Flag | Description |
 |---|---|
-| `--input <PATH>` | Path to the `.inp` model file (alternative to positional) |
+| `--input <PATH>` | Path to the `.inp` model file, or an `http(s)://` URL (alternative to positional) |
 | `--report <PATH>` | Report output path (`.rpt` or `.json`); defaults to stdout |
 | `--output <PATH>` | Binary output path (`.out`); omit to skip |
 | `-q`, `--quiet` | Suppress progress output (auto-suppressed when stderr is not a terminal, e.g. when piping or redirecting) |
@@ -98,25 +102,47 @@ hydra https://example.com/network.inp report.rpt output.out
 
 ## Reading the Report
 
-The text report (`.rpt`) follows EPANET conventions. Key sections:
+Both report formats are **summary-level**. Per-node and per-link time series are written only to the binary `.out` file (`--output`).
 
-- **Network Status** — link/valve status at each time step
-- **Node Results** — demand, head, pressure, quality per node
-- **Link Results** — flow, velocity, headloss, quality per link
-- **Energy Usage** — pump efficiency and cost summary
-- **Warnings** — convergence issues, negative pressures, quality anomalies
+The text report (`.rpt`) contains:
 
-The JSON report contains summary-level data (not per-node/link time series) in a structured format:
+- **Header** — a Hydra version banner and the network title
+- **Input summary** — element counts, head-loss formula, demand model, timesteps, and simulation duration
+- **Warnings** — non-fatal diagnostics raised during the run: unbalanced hydraulics, negative pressures, and pump-head warnings
+- **Analysis timestamps** — "Analysis begun" / "Analysis ended" markers
+
+It does **not** contain per-node/link result tables, a network-status section, or an energy-usage section. Use the `.out` file for full results, or the JSON report's `energy` block for the energy summary.
+
+The JSON report contains the same summary-level data plus energy, flow-balance, and mass-balance blocks, in a structured format:
 
 ```json
 {
-  "input": { "title": "...", "units": "GPM", ... },
+  "input": {
+    "junctions": 92, "reservoirs": 1, "tanks": 2,
+    "pipes": 117, "pumps": 2, "valves": 0,
+    "headloss_formula": "Hazen-Williams", "demand_model": "DDA",
+    "hydraulic_timestep_s": 3600.0, "quality_timestep_s": 360.0,
+    "duration_s": 86400.0, "report_timestep_s": 3600.0
+  },
   "warnings": [...],
   "energy": { "pumps": [...], "peak_demand_kw": 12.3 },
   "flow_balance": { ... },
   "mass_balance": { ... },
-  "analysis": { "begun_epoch": "...", "ended_epoch": "..." }
+  "analysis": { "begun_epoch": "1615687166", "ended_epoch": "1615687167" }
 }
 ```
 
+The `begun_epoch` / `ended_epoch` values are strings holding raw seconds since the Unix epoch (or `null` if unavailable), not formatted datetimes.
+
 For full time-series data across all nodes and links, use the binary `.out` format.
+
+## Diagnostics on stderr
+
+Independently of the report, Hydra emits warnings and errors to **stderr** as one JSON object per line, suitable for machine parsing in scripts and pipelines:
+
+```json
+{"level":"warning","code":"warning/negative_pressure","message":"...","object_id":"J1","time_step":3600.0}
+{"level":"error","code":"solver/hydraulic","message":"...","object_id":null,"time_step":null}
+```
+
+Each line has `level` (`warning` or `error`), a `code`, a human-readable `message`, and nullable `object_id` and `time_step` fields. The human-readable progress bar and banner (also on stderr) are suppressed by `-q`/`--quiet` and when stderr is not a terminal; the JSON diagnostics are not.
