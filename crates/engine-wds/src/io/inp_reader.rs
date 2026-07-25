@@ -2105,7 +2105,15 @@ fn parse_rule_premise(
             }
             let attribute = parse_premise_attr(fields[1])?;
             let operator = parse_premise_op(fields[2])?;
-            let value = parse_premise_value(fields[3], &attribute)?;
+            // CLOCKTIME may carry an AM/PM suffix in fields[4] (e.g. `CLOCKTIME < 8 PM`).
+            // parse_clocktime consumes the whole `<value> [AM|PM]` slice and applies the
+            // 12-hour adjustment; parse_premise_value only sees a single token and would
+            // silently drop the suffix. Elapsed TIME never takes a suffix, so it stays on
+            // the ordinary value parser.
+            let value = match attribute {
+                PremiseAttribute::ClockTime => parse_clocktime(&fields[3..]),
+                _ => parse_premise_value(fields[3], &attribute)?,
+            };
             Ok(Premise {
                 object: PremiseObject::Clock,
                 attribute,
@@ -2368,10 +2376,15 @@ fn parse_clocktime(fields: &[&str]) -> f64 {
         return 0.0;
     }
     let s = fields[0];
-    let base = if let Some(colon_pos) = s.find(':') {
-        let h: f64 = s[..colon_pos].parse().unwrap_or(0.0);
-        let m: f64 = s[colon_pos + 1..].parse().unwrap_or(0.0);
-        h * 3600.0 + m * 60.0
+    let base = if s.contains(':') {
+        // H:MM or H:MM:SS — parse each colon-separated component independently
+        // (the previous single-split form parsed "6:30:00" as 6:00, dropping the
+        // seconds and mis-reading the minutes).
+        let mut parts = s.split(':');
+        let h: f64 = parts.next().and_then(|p| p.parse().ok()).unwrap_or(0.0);
+        let m: f64 = parts.next().and_then(|p| p.parse().ok()).unwrap_or(0.0);
+        let sec: f64 = parts.next().and_then(|p| p.parse().ok()).unwrap_or(0.0);
+        h * 3600.0 + m * 60.0 + sec
     } else {
         s.parse::<f64>().unwrap_or(0.0) * 3600.0
     };
@@ -4465,6 +4478,37 @@ Headloss    H-W
 
         let net = parse_inp(&minimal_cms_with_times("Start Clocktime    12 PM")).unwrap();
         assert_eq!(net.options.start_clocktime, 12.0 * 3600.0);
+    }
+
+    /// A [RULES] CLOCKTIME premise written with an AM/PM suffix must apply the
+    /// 12-hour adjustment. Regression: the suffix was silently dropped and the
+    /// value routed through the suffix-unaware time parser, so `8 PM` parsed as
+    /// 08:00 (28800 s) instead of 20:00 (72000 s).
+    fn minimal_cms_with_rule(rule_body: &str) -> Vec<u8> {
+        format!(
+            "[JUNCTIONS]\nJ1    0    0.5\n\n[RESERVOIRS]\nR1    100\n\n\
+             [PIPES]\nP1    R1    J1    1000    300    100    0    Open\n\n\
+             [RULES]\nRULE 1\n{rule_body}\nTHEN LINK P1 STATUS IS CLOSED\n\n\
+             [OPTIONS]\nUnits    CMS\nHeadloss    H-W\n"
+        )
+        .into_bytes()
+    }
+
+    #[test]
+    fn rule_premise_clocktime_am_pm() {
+        let net = parse_inp(&minimal_cms_with_rule("IF SYSTEM CLOCKTIME >= 8 PM")).unwrap();
+        assert_eq!(net.rules.len(), 1);
+        assert_eq!(net.rules[0].premises[0].value, 20.0 * 3600.0);
+
+        let net = parse_inp(&minimal_cms_with_rule("IF SYSTEM CLOCKTIME >= 8 AM")).unwrap();
+        assert_eq!(net.rules[0].premises[0].value, 8.0 * 3600.0);
+
+        // 24-hour and H:MM forms are unaffected by the fix.
+        let net = parse_inp(&minimal_cms_with_rule("IF SYSTEM CLOCKTIME >= 20:00")).unwrap();
+        assert_eq!(net.rules[0].premises[0].value, 20.0 * 3600.0);
+
+        let net = parse_inp(&minimal_cms_with_rule("IF SYSTEM CLOCKTIME >= 2:30 PM")).unwrap();
+        assert_eq!(net.rules[0].premises[0].value, 14.5 * 3600.0);
     }
 
     #[test]
