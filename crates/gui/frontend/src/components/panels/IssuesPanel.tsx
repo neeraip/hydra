@@ -1,14 +1,17 @@
 /* Issues / Notifications drawer.
-   Right-side slide-out panel that lists preflight + runtime issues with
-   severity filters, source filters, and click-to-deep-link navigation.
-   Opens via the Status bar issues counter or ⌘⇧M. */
+   Right-side slide-out panel: a live-health view of the current scenario's
+   preflight + runtime issues, with text search, severity/source filters, and
+   click-to-locate navigation. Issues are derived from the model and last run,
+   so they clear themselves when the underlying condition is fixed — there is
+   deliberately no manual "dismiss". Opens via the status-bar issues counter or
+   ⌘⇧M. */
 
-import { ArrowPathIcon } from "@heroicons/react/16/solid";
 import {
   ArrowRightIcon,
   ExclamationCircleIcon,
   ExclamationTriangleIcon,
   InformationCircleIcon,
+  MagnifyingGlassIcon,
   XMarkIcon,
 } from "@heroicons/react/24/outline";
 import { useVirtualizer } from "@tanstack/react-virtual";
@@ -48,7 +51,8 @@ const SOURCE_LABEL: Record<IssueSource, string> = {
   data: "Data",
 };
 
-type Tab = "active" | "dismissed";
+const ALL_SEVERITIES: IssueSeverity[] = ["error", "warn", "info"];
+const ALL_SOURCES = Object.keys(SOURCE_LABEL) as IssueSource[];
 
 export function IssuesPanel() {
   const {
@@ -59,31 +63,19 @@ export function IssuesPanel() {
     showToast,
     activeProjectId,
   } = useAppState();
-  const { issues: contextIssues, setIssues: setContextIssues } =
-    useSimulation();
+  const { issues } = useSimulation();
   const { selectNode, selectLink, zoomToNode, zoomToLink } =
     useCanvasSelection();
   const nodes = useNodes();
   const links = useLinks();
-  // Mirror context issues into local state so dismiss/restore works without
-  // lifting every mutation back up.
-  const [issues, setIssues] = useState<Issue[]>(contextIssues);
-  // Sync if context issues change (e.g. a new simulation produces new issues).
-  useEffect(() => {
-    setIssues(contextIssues);
-  }, [contextIssues]);
-  // Propagate dismiss/restore back to context so StatusBar badge stays current.
-  function syncToContext(next: Issue[]) {
-    setIssues(next);
-    setContextIssues(next);
-  }
-  const [tab, setTab] = useState<Tab>("active");
+
   const [activeSeverity, setActiveSeverity] = useState<Set<IssueSeverity>>(
-    () => new Set(["error", "warn", "info"]) as Set<IssueSeverity>,
+    () => new Set(ALL_SEVERITIES),
   );
   const [activeSource, setActiveSource] = useState<Set<IssueSource>>(
-    () => new Set(Object.keys(SOURCE_LABEL) as IssueSource[]),
+    () => new Set(ALL_SOURCES),
   );
+  const [search, setSearch] = useState("");
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
   // ESC closes.
@@ -97,16 +89,28 @@ export function IssuesPanel() {
   }, [issuesPanelOpen, closeIssuesPanel]);
 
   const visible = useMemo(() => {
+    const q = search.trim().toLowerCase();
     return issues
-      .filter((i) => i.dismissed === (tab === "dismissed"))
       .filter((i) => activeSeverity.has(i.severity))
       .filter((i) => activeSource.has(i.source))
+      .filter((i) => {
+        if (!q) return true;
+        return (
+          i.title.toLowerCase().includes(q) ||
+          i.detail.toLowerCase().includes(q) ||
+          (i.code?.toLowerCase().includes(q) ?? false)
+        );
+      })
       .sort((a, b) => sevRank(a.severity) - sevRank(b.severity));
-  }, [issues, tab, activeSeverity, activeSource]);
+  }, [issues, activeSeverity, activeSource, search]);
 
   const counts = countIssues(issues);
   const selected =
     visible.find((i) => i.id === selectedId) ?? visible[0] ?? null;
+  const filtersActive =
+    search.trim() !== "" ||
+    activeSeverity.size < ALL_SEVERITIES.length ||
+    activeSource.size < ALL_SOURCES.length;
 
   // Virtualized list: run warnings alone can produce thousands of issues
   // (e.g. negative-pressure per node), and mounting one card each froze the
@@ -138,15 +142,10 @@ export function IssuesPanel() {
       return next;
     });
   }
-  function dismiss(id: string) {
-    syncToContext(
-      issues.map((i) => (i.id === id ? { ...i, dismissed: true } : i)),
-    );
-  }
-  function restore(id: string) {
-    syncToContext(
-      issues.map((i) => (i.id === id ? { ...i, dismissed: false } : i)),
-    );
+  function resetFilters() {
+    setActiveSeverity(new Set(ALL_SEVERITIES));
+    setActiveSource(new Set(ALL_SOURCES));
+    setSearch("");
   }
   function deepLink(issue: Issue) {
     if (!issue.link) return;
@@ -247,39 +246,51 @@ export function IssuesPanel() {
           </button>
         </div>
 
-        {/* Tabs */}
+        {/* Search */}
         <div
           style={{
             display: "flex",
+            alignItems: "center",
+            gap: 8,
+            padding: "8px 12px",
             borderBottom: "1px solid var(--border)",
-            background: "var(--bg-app)",
           }}
         >
-          {(["active", "dismissed"] as Tab[]).map((t) => {
-            const on = tab === t;
-            return (
-              <button
-                type="button"
-                key={t}
-                onClick={() => setTab(t)}
-                style={{
-                  flex: 1,
-                  padding: "8px 10px",
-                  background: on ? "var(--bg-panel)" : "transparent",
-                  color: on ? "var(--text-primary)" : "var(--text-tertiary)",
-                  border: "none",
-                  borderBottom: on
-                    ? "2px solid var(--accent)"
-                    : "2px solid transparent",
-                  cursor: "pointer",
-                  fontSize: 12,
-                  textTransform: "capitalize",
-                }}
-              >
-                {t}
-              </button>
-            );
-          })}
+          <MagnifyingGlassIcon
+            style={{ width: 14, height: 14, color: "var(--text-tertiary)" }}
+          />
+          <input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search issues, element ids, codes…"
+            style={{
+              flex: 1,
+              minWidth: 0,
+              background: "transparent",
+              border: "none",
+              color: "var(--text-primary)",
+              fontSize: 12,
+              fontFamily: "var(--font-ui)",
+              outline: "none",
+            }}
+          />
+          {search && (
+            <button
+              type="button"
+              onClick={() => setSearch("")}
+              aria-label="Clear search"
+              style={{
+                background: "transparent",
+                border: "none",
+                color: "var(--text-tertiary)",
+                cursor: "pointer",
+                padding: 2,
+                display: "inline-flex",
+              }}
+            >
+              <XMarkIcon style={{ width: 13, height: 13 }} />
+            </button>
+          )}
         </div>
 
         {/* Severity filter row */}
@@ -291,7 +302,7 @@ export function IssuesPanel() {
             borderBottom: "1px solid var(--border)",
           }}
         >
-          {(Object.keys(SEVERITY_META) as IssueSeverity[]).map((s) => {
+          {ALL_SEVERITIES.map((s) => {
             const m = SEVERITY_META[s];
             const on = activeSeverity.has(s);
             return (
@@ -324,12 +335,13 @@ export function IssuesPanel() {
           style={{
             display: "flex",
             flexWrap: "wrap",
+            alignItems: "center",
             gap: 4,
             padding: "6px 12px 8px",
             borderBottom: "1px solid var(--border)",
           }}
         >
-          {(Object.keys(SOURCE_LABEL) as IssueSource[]).map((src) => {
+          {ALL_SOURCES.map((src) => {
             const on = activeSource.has(src);
             return (
               <button
@@ -350,6 +362,23 @@ export function IssuesPanel() {
               </button>
             );
           })}
+          <div style={{ flex: 1 }} />
+          {filtersActive && (
+            <button
+              type="button"
+              onClick={resetFilters}
+              style={{
+                background: "transparent",
+                border: "none",
+                color: "var(--accent)",
+                fontSize: 10,
+                cursor: "pointer",
+                fontFamily: "var(--font-ui)",
+              }}
+            >
+              Clear filters
+            </button>
+          )}
         </div>
 
         {/* List + detail (vertical split) */}
@@ -366,17 +395,37 @@ export function IssuesPanel() {
               style={{
                 flex: 1,
                 display: "flex",
+                flexDirection: "column",
                 alignItems: "center",
                 justifyContent: "center",
+                gap: 10,
                 color: "var(--text-tertiary)",
                 fontSize: 13,
                 padding: 24,
                 textAlign: "center",
               }}
             >
-              {tab === "active"
-                ? "All clear. No issues match the current filters."
-                : "No dismissed issues."}
+              {counts.total === 0
+                ? "All clear — no issues in the current scenario."
+                : "No issues match your search and filters."}
+              {counts.total > 0 && filtersActive && (
+                <button
+                  type="button"
+                  onClick={resetFilters}
+                  style={{
+                    background: "transparent",
+                    border: "1px solid var(--border)",
+                    borderRadius: 5,
+                    color: "var(--text-secondary)",
+                    fontSize: 11,
+                    padding: "4px 10px",
+                    cursor: "pointer",
+                    fontFamily: "var(--font-ui)",
+                  }}
+                >
+                  Clear filters
+                </button>
+              )}
             </div>
           ) : (
             <>
@@ -409,9 +458,6 @@ export function IssuesPanel() {
                           issue={issue}
                           selected={issue.id === selected?.id}
                           onSelect={() => setSelectedId(issue.id)}
-                          onDismiss={() => dismiss(issue.id)}
-                          onRestore={() => restore(issue.id)}
-                          showRestore={tab === "dismissed"}
                         />
                       </div>
                     );
@@ -447,20 +493,14 @@ function IssueRow({
   issue,
   selected,
   onSelect,
-  onDismiss,
-  onRestore,
-  showRestore,
 }: {
   issue: Issue;
   selected: boolean;
   onSelect: () => void;
-  onDismiss: () => void;
-  onRestore: () => void;
-  showRestore: boolean;
 }) {
   const m = SEVERITY_META[issue.severity];
   return (
-    // biome-ignore lint/a11y/useSemanticElements: row includes nested action buttons, so a native button is not valid markup.
+    // biome-ignore lint/a11y/useSemanticElements: virtualized row is absolutely positioned; a native button breaks the measure ref layout.
     <div
       role="button"
       tabIndex={0}
@@ -536,31 +576,6 @@ function IssueRow({
           <span>{issue.firstSeen}</span>
         </div>
       </div>
-      <button
-        type="button"
-        onClick={(e) => {
-          e.stopPropagation();
-          showRestore ? onRestore() : onDismiss();
-        }}
-        data-tooltip={showRestore ? "Restore" : "Dismiss"}
-        style={{
-          background: "transparent",
-          border: "none",
-          color: "var(--text-tertiary)",
-          cursor: "pointer",
-          fontSize: 11,
-          padding: "0 2px",
-          display: "inline-flex",
-          alignItems: "center",
-          justifyContent: "center",
-        }}
-      >
-        {showRestore ? (
-          <ArrowPathIcon style={{ width: 14, height: 14 }} />
-        ) : (
-          <XMarkIcon style={{ width: 14, height: 14 }} />
-        )}
-      </button>
     </div>
   );
 }

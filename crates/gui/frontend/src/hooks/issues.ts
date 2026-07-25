@@ -18,7 +18,6 @@ export interface Issue {
   code?: string;
   link?: { view: ProjectView; assetId?: string; label?: string };
   firstSeen: string;
-  dismissed: boolean;
 }
 export interface IssueCounts {
   error: number;
@@ -26,16 +25,12 @@ export interface IssueCounts {
   info: number;
   total: number;
 }
-export function countIssues(
-  issues: Issue[],
-  includeDismissed = false,
-): IssueCounts {
-  const list = includeDismissed ? issues : issues.filter((i) => !i.dismissed);
+export function countIssues(issues: Issue[]): IssueCounts {
   return {
-    error: list.filter((i) => i.severity === "error").length,
-    warn: list.filter((i) => i.severity === "warn").length,
-    info: list.filter((i) => i.severity === "info").length,
-    total: list.length,
+    error: issues.filter((i) => i.severity === "error").length,
+    warn: issues.filter((i) => i.severity === "warn").length,
+    info: issues.filter((i) => i.severity === "info").length,
+    total: issues.length,
   };
 }
 
@@ -71,7 +66,7 @@ export async function fetchValidationFindings(
  * Map one validation finding to an Issues-panel `Issue`.
  *
  * The id is derived from `code` + `elementId` (not array position) so it is
- * stable across refetches — the panel's dismissed flags key on issue id.
+ * stable across refetches — its first-seen timestamp survives re-derivation.
  * Severity maps error→error, warning→warn; source reuses the existing
  * "data" category so the panel's filter list needs no changes.
  */
@@ -94,7 +89,6 @@ export function validationFindingToIssue(
       label: f.elementId ? `Show ${f.elementId}` : "Open canvas",
     },
     firstSeen,
-    dismissed: false,
   };
 }
 
@@ -135,8 +129,8 @@ export async function fetchRunWarnings(
  * Map one run warning to an Issues-panel `Issue`.
  *
  * The id is derived from `code` + `elementId` (not array position) so it is
- * stable across refetches — the panel's dismissed flags key on issue id and
- * are merged forward by the AppContext issues derivation. Severity is always
+ * stable across refetches — duplicates collapse and its first-seen timestamp
+ * is merged forward by the AppContext issues derivation. Severity is always
  * "warn" and source "runtime"; the solver message is passed through as the
  * title (the detail additionally names the element when one is present).
  */
@@ -154,7 +148,6 @@ export function runWarningToIssue(w: RunWarning, firstSeen: string): Issue {
       label: w.elementId ? `Show ${w.elementId}` : "Open canvas",
     },
     firstSeen,
-    dismissed: false,
   };
 }
 
@@ -165,9 +158,9 @@ export function runWarningToIssue(w: RunWarning, firstSeen: string): Issue {
  * outside its curve or unbalanced hydraulics can repeat hundreds of times in
  * one EPS run — and every repeat maps to the SAME issue id
  * (`simwarn-<code>-<elementId|network>`). Passing duplicates through broke
- * the panel: duplicate React keys, inflated counts, and a single dismissal
- * hiding all copies. Collapse to the first occurrence (earliest sim time in
- * its message) and record the repeat count in the detail instead.
+ * the panel: duplicate React keys and inflated counts. Collapse to the first
+ * occurrence (earliest sim time in its message) and record the repeat count
+ * in the detail instead.
  */
 export function runWarningsToIssues(
   warnings: RunWarning[],

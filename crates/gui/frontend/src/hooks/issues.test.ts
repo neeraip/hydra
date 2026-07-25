@@ -73,12 +73,11 @@ describe("validationFindingToIssue", () => {
     expect(issue.title).toBe("Zero-length pipe");
   });
 
-  it("starts undismissed with the provided firstSeen", () => {
+  it("records the provided firstSeen", () => {
     const issue = validationFindingToIssue(
       { severity: "error", code: "C", message: "m" },
       FIRST_SEEN,
     );
-    expect(issue.dismissed).toBe(false);
     expect(issue.firstSeen).toBe(FIRST_SEEN);
   });
 });
@@ -152,12 +151,11 @@ describe("runWarningToIssue", () => {
     expect(withoutElement.detail).toBe("System unbalanced");
   });
 
-  it("starts undismissed with the provided firstSeen", () => {
+  it("records the provided firstSeen", () => {
     const issue = runWarningToIssue(
       { code: "C", message: "m", elementId: null },
       FIRST_SEEN,
     );
-    expect(issue.dismissed).toBe(false);
     expect(issue.firstSeen).toBe(FIRST_SEEN);
   });
 });

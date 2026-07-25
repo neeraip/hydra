@@ -1239,14 +1239,11 @@ function SimulationProvider({ children }: { children: ReactNode }) {
 
     const next: Issue[] = [];
     // All derived issues share the same canvas link and freshness fields.
-    const pushIssue = (
-      issue: Omit<Issue, "link" | "firstSeen" | "dismissed">,
-    ) => {
+    const pushIssue = (issue: Omit<Issue, "link" | "firstSeen">) => {
       next.push({
         ...issue,
         link: { view: "canvas", label: "Open canvas" },
         firstSeen: firstSeenNow,
-        dismissed: false,
       });
     };
 
@@ -1380,23 +1377,20 @@ function SimulationProvider({ children }: { children: ReactNode }) {
     }
 
     // Backend validation findings (already Issue-shaped; ids are stable
-    // code+elementId keys so the dismissed-merge below persists dismissals).
+    // code+elementId keys so the first-seen merge below survives re-derivation).
     next.push(...validationIssues);
 
     // Solver warnings from the last run (also Issue-shaped with stable
-    // simwarn-<code>-<elementId|network> ids for the dismissed-merge).
+    // simwarn-<code>-<elementId|network> ids for the first-seen merge).
     next.push(...runWarningIssues);
 
     setIssues((prev) => {
       const prevById = new Map(prev.map((i) => [i.id, i]));
       return next.map((i) => {
         const existing = prevById.get(i.id);
-        if (!existing) return i;
-        return {
-          ...i,
-          firstSeen: existing.firstSeen,
-          dismissed: existing.dismissed,
-        };
+        // Preserve the original first-seen time so a still-present issue keeps
+        // its age across re-derivations instead of resetting on every refresh.
+        return existing ? { ...i, firstSeen: existing.firstSeen } : i;
       });
     });
   }, [
