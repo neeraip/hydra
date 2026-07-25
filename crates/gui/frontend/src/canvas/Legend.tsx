@@ -74,6 +74,48 @@ interface LegendProps {
   /** Non-null while scenario comparison is active: ramps become the
    * diverging Δ scale and the threshold editor is hidden. */
   compare?: LegendCompare | null;
+  /** Locate (select + fly to) the network min/max of the active variable.
+   * Absent when there are no results to scan. */
+  onLocateExtreme?: (target: "node" | "link", which: "min" | "max") => void;
+}
+
+/** Compact "Locate  min  max" row placed under a variable's ramp. */
+function LocateRow({ onLocate }: { onLocate: (which: "min" | "max") => void }) {
+  const btn: React.CSSProperties = {
+    background: "transparent",
+    border: "1px solid var(--border)",
+    borderRadius: 4,
+    color: "var(--text-secondary)",
+    fontSize: 10,
+    fontFamily: "var(--font-ui)",
+    padding: "1px 6px",
+    cursor: "pointer",
+  };
+  return (
+    <div
+      style={{ display: "flex", alignItems: "center", gap: 5, marginTop: 5 }}
+    >
+      <span style={{ fontSize: 10, color: "var(--text-tertiary)" }}>
+        Locate
+      </span>
+      <button
+        type="button"
+        style={btn}
+        onClick={() => onLocate("min")}
+        data-tooltip="Select and zoom to the network minimum"
+      >
+        min
+      </button>
+      <button
+        type="button"
+        style={btn}
+        onClick={() => onLocate("max")}
+        data-tooltip="Select and zoom to the network maximum"
+      >
+        max
+      </button>
+    </div>
+  );
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -414,6 +456,7 @@ export function Legend({
   onColorModeChange,
   onThresholdsChange,
   compare = null,
+  onLocateExtreme,
 }: LegendProps) {
   const sys = useUnitSystem();
   const [detailsOpen, setDetailsOpen] = useState(false);
@@ -640,6 +683,9 @@ export function Legend({
                 {`< ${disp(thresholds.pressure.low, "pressure")} low · ${disp(thresholds.pressure.required, "pressure")} required · > ${disp(thresholds.pressure.high, "pressure")} high`}
               </div>
             )}
+            {!compare && onLocateExtreme && (
+              <LocateRow onLocate={(w) => onLocateExtreme("node", w)} />
+            )}
           </div>
 
           {/* Link variable ramp — variable is switched via the picker below */}
@@ -687,6 +733,9 @@ export function Legend({
                     );
                   })()}
               </>
+            )}
+            {!compare && linkVar !== "status" && onLocateExtreme && (
+              <LocateRow onLocate={(w) => onLocateExtreme("link", w)} />
             )}
           </div>
 

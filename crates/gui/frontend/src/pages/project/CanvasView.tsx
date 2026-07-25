@@ -1114,6 +1114,73 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
     setSimData(allNodes, allLinks);
   }, [allNodes, allLinks, setSimData]);
 
+  // Locate the network-wide min/max of the active variable for the current
+  // period, then select and fly to that element. Period arrays are index-
+  // aligned with posNodes / baseLinks.
+  const onLocateExtreme = useCallback(
+    (target: "node" | "link", which: "min" | "max") => {
+      const pr = currentPeriodResult;
+      if (!pr) return;
+      const pick = (
+        ids: { id: string }[],
+        arr: ArrayLike<number> | null | undefined,
+      ): string | null => {
+        if (!arr) return null;
+        let bestId: string | null = null;
+        let bestVal = which === "min" ? Infinity : -Infinity;
+        for (let i = 0; i < ids.length; i += 1) {
+          const v = arr[i];
+          if (v == null || !Number.isFinite(v)) continue;
+          if (which === "min" ? v < bestVal : v > bestVal) {
+            bestVal = v;
+            bestId = ids[i].id;
+          }
+        }
+        return bestId;
+      };
+      if (target === "node") {
+        const arr =
+          nodeVar === "pressure"
+            ? pr.nodePressure
+            : nodeVar === "head"
+              ? pr.nodeHead
+              : nodeVar === "demand"
+                ? pr.nodeDemand
+                : pr.nodeQuality;
+        const id = pick(posNodes, arr);
+        if (id) {
+          selectNode(id);
+          setFlyToState((s) => ({ nodeId: id, linkId: null, key: s.key + 1 }));
+        }
+      } else {
+        const arr =
+          linkVar === "flow"
+            ? pr.linkFlow
+            : linkVar === "velocity"
+              ? pr.linkVelocity
+              : linkVar === "headloss"
+                ? pr.linkHeadloss
+                : linkVar === "quality"
+                  ? pr.linkQuality
+                  : null;
+        const id = pick(baseLinks, arr);
+        if (id) {
+          selectLink(id);
+          setFlyToState((s) => ({ nodeId: null, linkId: id, key: s.key + 1 }));
+        }
+      }
+    },
+    [
+      currentPeriodResult,
+      nodeVar,
+      linkVar,
+      posNodes,
+      baseLinks,
+      selectNode,
+      selectLink,
+    ],
+  );
+
   // MapCanvas gets the *stable* position/base arrays plus the flat period
   // result — colours update via the periodResult prop without new arrays, so
   // the old flicker-latch over merged arrays is no longer needed. During the
@@ -1637,6 +1704,9 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
                 onColorModeChange={setColorMode}
                 onThresholdsChange={setThresholds}
                 compare={legendCompare}
+                onLocateExtreme={
+                  currentPeriodResult ? onLocateExtreme : undefined
+                }
               />
             )}
 

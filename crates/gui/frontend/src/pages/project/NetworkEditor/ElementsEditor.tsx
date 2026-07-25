@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAppState } from "../../../AppContext";
+import { useCanvasSelection } from "../../../canvas/selection-context";
 import { TabButton } from "../../../components/ui/TabButton";
 import {
   type JunctionRow,
@@ -75,7 +76,9 @@ export function ElementsEditor({
   // and isn't gated). `projectView` only distinguishes the top-level project
   // views; it cannot see NetworkEditor.tsx's own Curves/Patterns/Controls
   // sub-tabs, so while those are shown this still reads as "visible".
-  const { deferredProjectView } = useAppState();
+  const { deferredProjectView, setProjectView } = useAppState();
+  const { selectNode, selectLink, zoomToNode, zoomToLink } =
+    useCanvasSelection();
   const editorVisible = deferredProjectView === "editor";
   const [activeSection, setActiveSection] = useState<Section>("junctions");
   const [searchQuery, setSearchQuery] = useState("");
@@ -673,6 +676,36 @@ export function ElementsEditor({
     setSelectedId(null);
   }, [activeKind, selectedId, setPendingAdds, setPendingDeletes, setDraft]);
 
+  // ── Show the selected element on the canvas ────────────────────────────────
+  const activeIsNode =
+    activeSection === "junctions" ||
+    activeSection === "tanks" ||
+    activeSection === "reservoirs";
+  // Only saved elements exist on the canvas — a freshly-added (temp-id) row does
+  // not, so it can't be located there yet.
+  const canShowOnMap =
+    selectedId != null && !selectedId.startsWith(TEMP_ID_PREFIX);
+  const showSelectedOnMap = useCallback(() => {
+    if (!selectedId || selectedId.startsWith(TEMP_ID_PREFIX)) return;
+    const id = selectedId;
+    setProjectView("canvas");
+    if (activeIsNode) selectNode(id);
+    else selectLink(id);
+    // Defer the fly-to so the canvas view has activated and its map is ready.
+    window.setTimeout(() => {
+      if (activeIsNode) zoomToNode(id);
+      else zoomToLink(id);
+    }, 220);
+  }, [
+    selectedId,
+    activeIsNode,
+    setProjectView,
+    selectNode,
+    selectLink,
+    zoomToNode,
+    zoomToLink,
+  ]);
+
   const shownRows =
     activeSection === "junctions"
       ? junctionRows.length
@@ -815,6 +848,35 @@ export function ElementsEditor({
           }}
         >
           + Add element
+        </button>
+
+        <button
+          type="button"
+          onClick={showSelectedOnMap}
+          disabled={!canShowOnMap}
+          style={{
+            background: "transparent",
+            color: canShowOnMap
+              ? "var(--text-secondary)"
+              : "var(--text-disabled)",
+            border: "1px solid var(--border)",
+            borderRadius: 5,
+            padding: "0 10px",
+            height: 28,
+            fontSize: 12,
+            fontFamily: "var(--font-ui)",
+            cursor: canShowOnMap ? "pointer" : "not-allowed",
+            marginLeft: 6,
+            whiteSpace: "nowrap",
+            opacity: canShowOnMap ? 1 : 0.5,
+          }}
+          title={
+            canShowOnMap
+              ? "Select and zoom to this element on the map"
+              : "Select a saved element to locate it on the map"
+          }
+        >
+          Show on map
         </button>
 
         <button
