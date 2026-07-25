@@ -3,7 +3,7 @@ use std::collections::VecDeque;
 /// Physical concentration ceiling (mg/L or equivalent). Used for clamping.
 pub(super) const C_MAX: f64 = 1.0e6;
 
-/// Stagnation threshold (m³/s). SI equivalent of EPANET's QZERO = 1.114e-5 ft³/s.
+/// Stagnation threshold (m³/s). SI equivalent of EPANET's Q_STAGNANT = 1.114e-5 ft³/s (0.005 gpm).
 /// Used to decide whether a link flow is stagnant for quality transport purposes (§6.3.1).
 pub(super) const Q_STAG: f64 = 3.154e-7;
 

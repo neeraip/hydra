@@ -74,7 +74,7 @@ The friction factor $f$ and its derivative $\partial f / \partial Q$ are compute
 
 $$f = \left[-2\log\!\left(\frac{\varepsilon}{3.7D} + \frac{5.74}{Re^{0.9}}\right)\right]^{-2}$$
 
-- **Transitional** ($2000 < Re < 4000$): Dunlop cubic polynomial that interpolates $f$ and $\partial f / \partial Q$ continuously at both boundaries. Let $r = Re/2000$ (so $r \in (1, 2)$) and define the following roughness-dependent anchor values at $Re = 4000$ (using $w = Q/s = Re \cdot \pi/4$, $A_B = 5.74/4000^{0.9}$, $A_9 = -2/\ln 10$, $A_C = -1.8 \cdot A_9 \cdot A_B$):
+- **Transitional** ($2000 < Re < 4000$): Dunlop cubic polynomial that interpolates $f$ and $\partial f / \partial Q$ continuously at both boundaries. Let $r = Re/2000$ (so $r \in (1, 2)$) and define the following roughness-dependent anchor values at $Re = 4000$ (using $w = Q/s = Re \cdot \pi/4$, $A_B = 5.74/4000^{0.9}$, $A_9 = -2/\ln 10$, $A_C = 1.8 \cdot A_9 \cdot A_B$):
 
 $$y_2 = \frac{\varepsilon}{3.7D} + A_B, \qquad y_3 = A_9 \ln y_2$$
 $$f_a = \frac{1}{y_3^2} \quad (\text{friction factor at }Re=4000), \qquad f_b = \left(2 + \frac{A_C}{y_2\,y_3}\right)f_a \quad (\text{normalised gradient at }Re=4000)$$
@@ -163,9 +163,9 @@ Required: $h_0 > h_1 > h_2 \geq 0$, $q_2 > q_1 > 0$, $N > 0$, and $N \leq 20$.
 
 ### 3.3 Linearisation (P and Y Coefficients)
 
-At Newton iteration $m$, the head-loss function of each link $k$ is linearised around the current estimate $Q_k^{(m)}$:
+At Newton iteration $m$, the head-loss function of each link $k$ is linearised around the current estimate $Q_k^{(m)}$ by a first-order Taylor expansion:
 
-$$h_k(Q_k) \approx g_k \cdot Q_k - Y_k$$
+$$h_k(Q_k) \approx h_k\!\left(Q_k^{(m)}\right) + g_k \cdot \left(Q_k - Q_k^{(m)}\right)$$
 
 where $g_k = \partial h_k / \partial Q_k \big|_{Q^{(m)}}$ is the **head-loss gradient**. Two per-link scalars are derived:
 
@@ -175,7 +175,7 @@ $P_k$ is the **hydraulic conductance** of the linearised link. $Y_k$ is the corr
 
 **Guard conditions** (prevent division by zero and ill-conditioning):
 
-Let $g_{\min}$ be a small positive threshold (units: [head]/[flow] = s/m² in SI) below which the linearised gradient is considered degenerate. The value is $10^{-6}$ s/m², used unchanged regardless of the runtime unit system. This matches EPANET's `CSMALL` constant and serves as a purely numerical guard against division by zero — not a physically meaningful threshold.
+Let $g_{\min}$ be a small positive threshold (units: [head]/[flow] = s/m² in SI) below which the linearised gradient is considered degenerate. The value is $10^{-6}$ s/m² (Hydra's `G_MIN`, matching EPANET's `CSMALL` in magnitude), used unchanged regardless of the runtime unit system — a purely numerical guard against division by zero, not a physically meaningful threshold. This $g_{\min}$ applies to pipe, valve, constant-power-pump, and custom-curve-pump linearisation. **Emitter and power-function-pump linearisation instead use the tighter `rq_tol` clamp** (default $10^{-7}$ s/m²; `../model/spec.md` §2.1), matching EPANET's `RQtol` used in `emittercoeff`/`pipecoeff`.
 
 - If $g_k < g_{\min}$: set $g_k = g_{\min}/n_f$ and $h_k = g_k \cdot Q_k$ (linear regime), where $n_f$ is the flow exponent of the active head-loss formula (1.852 for Hazen-Williams, 2 for Darcy-Weisbach and Chezy-Manning).
 - Closed link: $P_k = 1/C_{\infty}$, $Y_k = Q_k$ (frozen at current flow with near-zero conductance).
@@ -199,7 +199,7 @@ where $Q_e$ is the current emitter flow. The linearised gradient:
 
 $$g_e = \hat{n} \cdot K_e \cdot |Q_e|^{\hat{n} - 1}$$
 
-**Guard**: if $g_e < g_{\min}$ (same threshold as the link guard in §3.3; $10^{-6}$ s/m²): set $g_e = g_{\min} / \hat{n}$, $h_e = g_e \cdot Q_e$ (linear regime). Otherwise: $h_e = g_e \cdot Q_e / \hat{n}$ (consistent with the power-law).
+**Guard**: if $g_e < g_{\text{rq}}$ (the emitter/pump linearisation clamp `rq_tol`, default $10^{-7}$ s/m² — a *tighter* threshold than the link guard $g_{\min}$ of §3.3, and matching EPANET's `RQtol` in `emittercoeff`): set $g_e = g_{\text{rq}} / \hat{n}$, $h_e = g_e \cdot Q_e$ (linear regime). Otherwise: $h_e = g_e \cdot Q_e / \hat{n}$ (consistent with the power-law).
 
 **Backflow barrier**: if `emitter_backflow = false`, apply the lower barrier (§3.3.4) to $(Q_e, h_e, g_e)$ to enforce $Q_e \geq 0$.
 

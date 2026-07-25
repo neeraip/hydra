@@ -50,7 +50,7 @@ Nodes must be processed in topological (upstream-first) order so that a node's o
 3. Repeatedly dequeue a node, emit it, and decrement the in-degree of its downstream neighbours; enqueue any that reach 0.
 4. Any nodes not emitted (part of a cycle under the current flow directions) are appended in an arbitrary fixed order.
 
-Links with $|Q_k| < Q_{\text{stag}}$ are treated as stagnant — they are excluded from the topological sort and carry no advected mass. $Q_{\text{stag}} = 3.154 \times 10^{-7}$ m³/s (= EPANET's `QZERO` = $1.114 \times 10^{-5}$ ft³/s converted to SI). This is a purely numerical guard; it does not scale with unit system.
+Links with $|Q_k| < Q_{\text{stag}}$ are treated as stagnant — they are excluded from the topological sort and carry no advected mass. $Q_{\text{stag}} = 3.154 \times 10^{-7}$ m³/s (= EPANET's `Q_STAGNANT` = $1.114 \times 10^{-5}$ ft³/s = 0.005 gpm, converted to SI; distinct from EPANET's hydraulic `QZERO` constant of $10^{-6}$ ft³/s, which plays no role in the quality engine). This is a purely numerical guard; it does not scale with unit system.
 
 The sort is recomputed only when at least one pipe's flow direction has reversed since the previous hydraulic period.
 
@@ -60,10 +60,10 @@ For pipe $k$ carrying flow $Q_k > 0$ (positive direction) over sub-step $\delta 
 
 $$\mathcal{V}_k = Q_k \cdot \delta t$$
 
-Starting from the upstream end of the segment list:
+Starting from the **downstream (outlet) end** of the segment list — the end adjacent to the receiving node:
 1. Consume segments one by one, accumulating swept mass $M = \sum c_s v_s$ and swept volume $V_{\text{swept}}$.
-2. When $V_{\text{swept}}$ would exceed $\mathcal{V}_k$, partially consume the front segment: reduce its volume by the remainder needed and stop.
-3. The total mass $M_k^{\text{out}}$ and volume $\mathcal{V}_k$ that exited the downstream end of pipe $k$ are recorded at the downstream node.
+2. When $V_{\text{swept}}$ would exceed $\mathcal{V}_k$, partially consume the outlet-end segment: reduce its volume by the remainder needed and stop.
+3. The total mass $M_k^{\text{out}}$ and volume $\mathcal{V}_k$ that exited the downstream end of pipe $k$ are recorded at the downstream node. Fresh water carrying the upstream node's concentration is added as a new segment at the upstream (inlet) end during nodal mixing (§6.4).
 
 For negative flow ($Q_k < 0$), the direction of traversal is reversed — segments are consumed from the other end.
 
@@ -135,6 +135,8 @@ where $k_b$ is the bulk rate coefficient (positive = growth, negative = decay) a
 | Michaelis-Menten | $c / (C_L + c)$ if $k_b > 0$; $c / (C_L - c)$ if $k_b < 0$ | Saturation kinetics; $C_L$ is the half-saturation constant (growth) or limiting concentration (decay). Activated by setting order $< 0$. |
 
 **Note on zero-order**: when `order = 0`, the potential is identically 1 regardless of $C_L$, giving a constant rate $r_b = k_b$.
+
+**Note on the limiting concentration for integer orders**: the `order = 1` and `order = 2` rows above show only the $C_L = 0$ case. When $C_L \neq 0$, a first- or second-order reaction uses the general-$n$ form with the $\max(0, \pm(c - C_L))$ limiting potential — i.e., the reaction drives $c$ toward $C_L$ rather than decaying/growing without bound. This matches EPANET, whose $n$-th-order branch includes $n = 1$ and $n = 2$.
 
 Concentration change over sub-step $\delta t$ (forward Euler):
 
@@ -226,15 +228,17 @@ The effective source value at time $t$ is `base_value` × $F_{\text{pattern}}(t)
 
 #### 6.7.1 Complete Mix (CSTR)
 
-The tank is a single well-mixed compartment. Concentration is uniform throughout volume $V$:
+The tank is a single well-mixed compartment; concentration is uniform throughout volume $V$. Mixing and reaction are applied as **two separate steps** within each sub-step (matching EPANET's `tankmix1`), not as a single combined ODE update.
 
-$$\frac{d(Vc)}{dt} = Q_{\text{in}} c_{\text{in}} - Q_{\text{out}} c + r_b V$$
+**Mixing** — the inflow volume $V_{\text{in}} = Q_{\text{in}}\,\delta t$ at volume-weighted inflow concentration $c_{\text{in}}$ is blended into the current contents, then the net volume change is applied:
 
-Discretised over sub-step $\delta t$ (forward Euler):
+$$c_{\text{mixed}} = \frac{c_{\text{old}}\,V + c_{\text{in}}\,V_{\text{in}}}{V + V_{\text{in}}}, \qquad V \leftarrow V + (Q_{\text{in}} - Q_{\text{out}})\,\delta t$$
 
-$$c_{\text{new}} = c_{\text{old}} + \frac{\delta t}{V} \!\left(Q_{\text{in}} c_{\text{in}} - Q_{\text{out}} c_{\text{old}} + r_b V\right)$$
+**Reaction** — the bulk reaction (§6.5.1) is applied to the tank concentration in the tank-reaction phase of the sub-step loop (§6.2), independently of the mixing step:
 
-Outflow concentration = $c_{\text{new}}$.
+$$c \leftarrow c + r_b(c)\,\delta t$$
+
+Outflow concentration = the post-mixing, post-reaction concentration.
 
 #### 6.7.2 Two-Compartment Mix
 

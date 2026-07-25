@@ -16,6 +16,8 @@ Controls modify link statuses and settings during the simulation. They are the m
 
 Simple controls are evaluated **once per hydraulic time step**, before the hydraulic solve for that step begins. Their effect is therefore in force for the entire duration of the step.
 
+One case is resolved inside the solver rather than here: a simple control whose trigger is a **junction** pressure or head cannot be evaluated before the solve, because the controlling pressure is itself an output of the solve. Such controls are re-evaluated after the hydraulics converge, by the `pswitch` mechanism described in [hydraulics spec](../hydraulics/spec.md) §3.8 — if the converged pressure has crossed the threshold, the link is switched and the system is re-solved, iterating until no such control changes state. Level triggers on **tank** nodes and time triggers are handled entirely here (their state does not change during the Newton iteration).
+
 **Evaluation procedure** (applied to each enabled simple control in index order):
 
 1. Determine whether the trigger condition is satisfied at time $t$:
@@ -179,7 +181,7 @@ where $Q_{\text{net}} = \sum_{k:\text{to}=\text{tank}} Q_k - \sum_{k:\text{from}
 **Boundary enforcement**:
 - If $h_{\text{new}} < h_{\min}$: clamp to $h_{\min}$; treat tank as a fixed-grade node at its minimum head for the next hydraulic step (inflow is cut off).
 - If $h_{\text{new}} > h_{\max}$:
-- `overflow = true`: clamp to $h_{\max}$; treat as fixed-grade at maximum head. Surplus volume exits freely. The overflow volume $\Delta V_{\text{overflow}} = (V_{\text{new}} - V_{\max})$ is accumulated in the global flow-balance accounts (§7.2) as nodal outflow from the tank — it contributes to `storage_change` and is included in the volumetric balance ratio. An implementing system may expose per-tank overflow volume as a reportable output quantity (§8.2).
+- `overflow = true`: clamp to $h_{\max}$; treat as fixed-grade at maximum head. Surplus volume exits freely. The overflow volume $\Delta V_{\text{overflow}} = (V_{\text{new}} - V_{\max})$ is accumulated in the global flow-balance accounts (§7.2) as nodal outflow from the tank — it is added to `total_outflow` (the water has left the tank and is not part of the final stored volume) and is thereby included in the volumetric balance ratio. An implementing system may expose per-tank overflow volume as a reportable output quantity (§8.2).
 - `overflow = false`: clamp to $h_{\max}$; treat as fixed-grade. No overflow volume is recorded or counted in the flow balance.
 
 ### 5.4 Pattern and Demand Update
@@ -248,7 +250,7 @@ $$W_{\text{elec},p} = W_p / \eta_p$$
 | `total_cost` | $+= W_{\text{elec},p} \cdot \Delta t \cdot k_{\text{unit}} \cdot \text{price}(t)$ |
 | `efficiency_sum` | $+= \eta_p \cdot \Delta t$ if $Q_p > 0$ |
 
-**Note on `kwh_per_flow`**: this statistic is a **time-weighted harmonic mean** of the energy intensity, accumulated as $\sum (P_i / Q_i) \cdot \Delta t_i$. It is *not* the ratio $\int P\,dt \,/\, \int Q\,dt$ — the two differ when flow or efficiency varies across steps.
+**Note on `kwh_per_flow`**: this statistic is a **time-weighted arithmetic mean** of the energy intensity $P/Q$, accumulated as $\sum (P_i / Q_i) \cdot \Delta t_i$. It is *not* the ratio $\int P\,dt \,/\, \int Q\,dt$ — the two differ when flow or efficiency varies across steps.
 
 The following read-only statistic is derived at report time:
 

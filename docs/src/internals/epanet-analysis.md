@@ -545,7 +545,7 @@ Premises may test:
 - Tank fill time (time for the tank to reach its maximum at the current inflow rate) or drain time
 - Simulation time or time of day
 
-Rules are evaluated not just at the start of a hydraulic time step but at intermediate **rule time steps** that subdivide each hydraulic step. When a rule fires and changes the network state, the hydraulics are re-solved for the remaining fraction of the hydraulic step. This allows the simulation to capture, for example, a pump switching on mid-step in response to a falling tank level.
+Rules are evaluated not just at the start of a hydraulic time step but at intermediate **rule time steps** that subdivide each hydraulic step. When a rule fires and changes the network state, the current hydraulic step is shortened to end at the firing time; consistent with §6.1, the shortened step's solution is not recomputed — the next hydraulic step is solved afresh from the new configuration. This allows the simulation to capture, for example, a pump switching on mid-step in response to a falling tank level.
 
 When multiple rules fire simultaneously and their THEN actions conflict (e.g., two rules disagree on the status of the same pump), **priority levels** resolve the conflict: the rule with the numerically higher priority value wins.
 
