@@ -15,6 +15,7 @@ import {
 import { useCanvasStatus } from "./canvas/status-context";
 import {
   ACCENT,
+  fetchProjectsShared,
   fetchRunWarnings,
   fetchValidationFindings,
   loadProjectNetwork,
@@ -235,6 +236,20 @@ function readProjectView(id: string): ProjectView | null {
   return localStorage.getItem(projectViewKey(id)) as ProjectView | null;
 }
 
+// ── Session restore ─────────────────────────────────────────────────────────
+const STORAGE_LAST_PROJECT = "hydra2-last-project";
+const STORAGE_RESTORE_SESSION = "hydra2-restore-session";
+/** "Reopen last project on launch" — enabled unless explicitly turned off. */
+function readRestoreSession(): boolean {
+  return localStorage.getItem(STORAGE_RESTORE_SESSION) !== "false";
+}
+/** The project to reopen on launch, or null when disabled / none stored. */
+function restoreProjectId(): string | null {
+  return readRestoreSession()
+    ? localStorage.getItem(STORAGE_LAST_PROJECT)
+    : null;
+}
+
 /** "HH:MM" label used for task and issue timestamps. */
 function formatClockTime(date: Date = new Date()): string {
   return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
@@ -248,38 +263,62 @@ function finishTimeLabel(finishedAt: number | null): string {
 }
 
 export function AppProvider({ children }: { children: ReactNode }) {
-  const [s, setS] = useState<AppState>(() => ({
-    page: "home",
-    projectView: "canvas",
-    railOpen: false,
-    commandPaletteOpen: false,
-    runModalOpen: false,
-    simSettingsModalOpen: false,
-    scenariosModalOpen: false,
-    crsModalOpen: false,
-    taskTrayOpen: false,
-    issuesPanelOpen: false,
-    theme:
-      (localStorage.getItem(STORAGE_THEME) as "dark" | "light" | "system") ??
-      "system",
-    activeProjectId: null,
-    toasts: [],
-    createdProject: null,
-    isNetworkLoaded: false,
-    projectsVersion: 0,
-    activeScenarioId: null,
-    scenariosVersion: 0,
-    simParamsVersion: 0,
-    navHistory: [
-      {
-        page: "home",
-        projectView: "canvas",
-        activeProjectId: null,
-        activeScenarioId: null,
-      },
-    ],
-    navCursor: 0,
-  }));
+  const [s, setS] = useState<AppState>(() => {
+    const base: AppState = {
+      page: "home",
+      projectView: "canvas",
+      railOpen: false,
+      commandPaletteOpen: false,
+      runModalOpen: false,
+      simSettingsModalOpen: false,
+      scenariosModalOpen: false,
+      crsModalOpen: false,
+      taskTrayOpen: false,
+      issuesPanelOpen: false,
+      theme:
+        (localStorage.getItem(STORAGE_THEME) as "dark" | "light" | "system") ??
+        "system",
+      activeProjectId: null,
+      toasts: [],
+      createdProject: null,
+      isNetworkLoaded: false,
+      projectsVersion: 0,
+      activeScenarioId: null,
+      scenariosVersion: 0,
+      simParamsVersion: 0,
+      navHistory: [
+        {
+          page: "home",
+          projectView: "canvas",
+          activeProjectId: null,
+          activeScenarioId: null,
+        },
+      ],
+      navCursor: 0,
+    };
+    // Session restore: launch straight into the last-open project. The
+    // network-load effect keys on activeProjectId, so seeding it here loads
+    // the model automatically; a deleted project falls back to Home via the
+    // validation effect below.
+    const restoreId = restoreProjectId();
+    if (!restoreId) return base;
+    const projectView = readProjectView(restoreId) ?? "canvas";
+    return {
+      ...base,
+      page: "project",
+      projectView,
+      activeProjectId: restoreId,
+      railOpen: readRailOpen(restoreId),
+      navHistory: [
+        {
+          page: "project",
+          projectView,
+          activeProjectId: restoreId,
+          activeScenarioId: null,
+        },
+      ],
+    };
+  });
 
   // Live snapshot of state for imperative reads inside stable callbacks
   // (navigation guards need the *current* page without re-creating the
@@ -288,6 +327,16 @@ export function AppProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     sRef.current = s;
   });
+
+  // Session restore: remember the open project so the next launch can reopen
+  // it, and clear it whenever the user leaves for a non-project page.
+  useEffect(() => {
+    if (s.page === "project" && s.activeProjectId) {
+      localStorage.setItem(STORAGE_LAST_PROJECT, s.activeProjectId);
+    } else if (s.page !== "project") {
+      localStorage.removeItem(STORAGE_LAST_PROJECT);
+    }
+  }, [s.page, s.activeProjectId]);
 
   // Tauri window-close guard: prompt when editor drafts are dirty. Outside a
   // Tauri shell (plain vite dev server) this effect is a no-op.
@@ -591,6 +640,25 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // the destination isn't "project", so there's nothing extra to do here.
   const closeProject = useCallback(() => {
     setPage("projects");
+  }, [setPage]);
+
+  // Session restore fallback: when we launched straight into a restored
+  // project, verify it still exists once the project list resolves and drop
+  // back to Home if it was deleted since the last session. One-shot.
+  useEffect(() => {
+    const id = restoreProjectId();
+    if (!id) return;
+    let cancelled = false;
+    fetchProjectsShared().then((rows) => {
+      if (cancelled || rows === null) return;
+      if (!rows.some((p) => p.id === id)) {
+        localStorage.removeItem(STORAGE_LAST_PROJECT);
+        setPage("projects");
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
   }, [setPage]);
 
   const createProject = useCallback(

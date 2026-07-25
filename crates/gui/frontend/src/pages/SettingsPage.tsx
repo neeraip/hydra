@@ -7,6 +7,8 @@ import { setUnitSystem, type UnitSystem, useUnitSystem } from "../units";
 const SK = {
   reducedMotion: "hydra2-reduced-motion",
   highContrast: "hydra2-high-contrast",
+  // Must match AppContext's STORAGE_RESTORE_SESSION.
+  restoreSession: "hydra2-restore-session",
 } as const;
 
 function getBool(key: string, fallback: boolean): boolean {
@@ -159,10 +161,17 @@ export function SettingsPage() {
   const [highContrast, setHighContrastRaw] = useState(() =>
     getBool(SK.highContrast, false),
   );
+  const [restoreSession, setRestoreSessionRaw] = useState(() =>
+    getBool(SK.restoreSession, true),
+  );
   const [versions, setVersions] = useState<Versions | null>(null);
   const [isReconciling, setIsReconciling] = useState(false);
 
   // Wrap setters to also persist to localStorage.
+  const setRestoreSession = (v: boolean) => {
+    setRestoreSessionRaw(v);
+    localStorage.setItem(SK.restoreSession, String(v));
+  };
   const setReducedMotion = (v: boolean) => {
     setReducedMotionRaw(v);
     localStorage.setItem(SK.reducedMotion, String(v));
@@ -217,6 +226,14 @@ export function SettingsPage() {
         >
           Appearance, accessibility, and maintenance tools.
         </p>
+        {/* General */}
+        <Section>General</Section>
+        <SettingRow
+          label="Reopen last project on launch"
+          description="Start Hydra straight back in the project you last had open."
+        >
+          <Toggle checked={restoreSession} onChange={setRestoreSession} />
+        </SettingRow>
         {/* Appearance */}
         <Section>Appearance</Section>
         <SettingRow label="Theme" description="Choose dark or light mode.">
