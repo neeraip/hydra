@@ -87,6 +87,12 @@ export interface TankHeadSeries {
   head: number[];
 }
 
+export interface WorstNode {
+  id: string;
+  /** Worst-case (minimum over all periods) pressure at this junction (m, SI). */
+  minPressureM: number;
+}
+
 export interface ResultAnalytics {
   periodCount: number;
   nodeCount: number;
@@ -96,7 +102,10 @@ export interface ResultAnalytics {
   minPressureNodeId?: string | null;
   /** Absent (omitted or null) when no valid pressure data exists. */
   minPressureM?: number | null;
+  /** Junctions below the minimum-pressure criterion passed to the fetch. */
   lowPressureCount: number;
+  /** Lowest-pressure junctions, ascending (up to 10). */
+  worstNodes: WorstNode[];
   /** Absent (omitted or null) when no valid velocity data exists. */
   maxVelocityLinkId?: string | null;
   /** Absent (omitted or null) when no valid velocity data exists. */
@@ -121,10 +130,15 @@ export async function getPumpEnergy(
 export async function getResultAnalytics(
   projectId: string,
   scenarioId?: string | null,
+  minPressure?: number | null,
 ): Promise<ResultAnalytics | null> {
   return tryInvokeOr<ResultAnalytics | null>(
     "get_result_analytics",
-    { projectId, scenarioId: scenarioId ?? null },
+    {
+      projectId,
+      scenarioId: scenarioId ?? null,
+      minPressure: minPressure ?? null,
+    },
     null,
   );
 }

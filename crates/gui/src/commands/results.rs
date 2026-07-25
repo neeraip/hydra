@@ -228,6 +228,15 @@ pub struct TankHeadSeriesDto {
     pub head: Vec<f64>,
 }
 
+/// One entry in the worst-pressure-nodes ("problem junctions") list.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorstNodeDto {
+    pub id: String,
+    /// Worst-case (minimum over all periods) pressure at this junction (m).
+    pub min_pressure_m: f64,
+}
+
 /// Full cross-period analytics computed by `get_result_analytics`.
 /// All values are computed by streaming the `.out` file one period at a time —
 /// no full-file load, safe for multi-gigabyte result sets.
@@ -247,8 +256,12 @@ pub struct ResultAnalyticsDto {
     /// Absent together with `min_pressure_node_id`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub min_pressure_m: Option<f64>,
-    /// Number of nodes whose worst-case pressure is below 14 m.
+    /// Number of nodes whose worst-case pressure is below the minimum-pressure
+    /// criterion (`min_pressure` request param; default 14 m).
     pub low_pressure_count: u32,
+    /// Junctions with the lowest worst-case pressure, ascending (up to 10).
+    /// A ranked "problem nodes" list; empty when no junction has finite data.
+    pub worst_nodes: Vec<WorstNodeDto>,
     /// Link ID with the highest peak velocity across all periods.
     /// Absent when every link's peak velocity is zero or NaN (the scan's
     /// "no data" default), i.e. there is no meaningful maximum.
@@ -705,6 +718,9 @@ pub fn get_result_analytics(
     state: tauri::State<'_, NetworkState>,
     project_id: String,
     scenario_id: Option<String>,
+    // Minimum-pressure criterion (m) for the low-pressure count. Defaults to
+    // 14 m when absent, matching the historical hardcoded threshold.
+    min_pressure: Option<f64>,
 ) -> Result<Option<ResultAnalyticsDto>, String> {
     validate_target_ids(&project_id, scenario_id.as_deref())?;
     let app_data = app_data_dir(&app)?;
@@ -746,12 +762,17 @@ pub fn get_result_analytics(
         .map(|&(lo, hi)| HistogramBucketDto { lo, hi, count: 0 })
         .collect();
 
-    const LOW_PRESSURE_THRESHOLD: f64 = 14.0; // m
+    // Configurable minimum-pressure criterion (default 14 m, the historical
+    // hardcoded value). A non-finite request is ignored.
+    let low_pressure_threshold = match min_pressure {
+        Some(v) if v.is_finite() => v,
+        _ => 14.0,
+    };
     let mut low_pressure_count = 0u32;
 
     for &p in node_min_pressure.iter() {
         if p.is_finite() {
-            if p < LOW_PRESSURE_THRESHOLD {
+            if p < low_pressure_threshold {
                 low_pressure_count += 1;
             }
             for bin in &mut pressure_histogram {
@@ -762,7 +783,36 @@ pub fn get_result_analytics(
             }
         }
     }
-    let min_pressure = min_finite_with_index(&node_min_pressure);
+    let min_pressure_stat = min_finite_with_index(&node_min_pressure);
+
+    // ── Worst junctions by lowest worst-case pressure (top 10) ────────────────
+    // Restricted to junctions: reservoir/tank "pressure" (head − elevation) is
+    // not a service-pressure metric and would otherwise dominate the list.
+    let mut worst_node_idxs: Vec<usize> = (0..n_nodes)
+        .filter(|&idx| {
+            node_min_pressure.get(idx).is_some_and(|p| p.is_finite())
+                && network
+                    .nodes
+                    .get(idx)
+                    .is_some_and(|n| matches!(n.kind, hydra::NodeKind::Junction(_)))
+        })
+        .collect();
+    worst_node_idxs.sort_unstable_by(|&a, &b| {
+        node_min_pressure[a]
+            .partial_cmp(&node_min_pressure[b])
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    let worst_nodes: Vec<WorstNodeDto> = worst_node_idxs
+        .iter()
+        .take(10)
+        .filter_map(|&idx| {
+            let node = network.nodes.get(idx)?;
+            Some(WorstNodeDto {
+                id: node.base.id.clone(),
+                min_pressure_m: node_min_pressure[idx],
+            })
+        })
+        .collect();
 
     // ── Velocity histogram (same 5 bins as the frontend) ─────────────────────
     const VELOCITY_BINS: &[(f64, f64)] = &[
@@ -844,10 +894,10 @@ pub fn get_result_analytics(
         .collect();
 
     // ── Summary values — absent (`None`) when no valid data exists ───────────
-    let min_pressure_node_id = min_pressure
+    let min_pressure_node_id = min_pressure_stat
         .and_then(|(idx, _)| network.nodes.get(idx))
         .map(|n| n.base.id.clone());
-    let min_pressure_m = min_pressure.map(|(_, v)| v);
+    let min_pressure_m = min_pressure_stat.map(|(_, v)| v);
     let max_velocity_link_id = max_velocity
         .and_then(|(idx, _)| network.links.get(idx))
         .map(|l| l.base.id.clone());
@@ -877,6 +927,7 @@ pub fn get_result_analytics(
         min_pressure_node_id,
         min_pressure_m,
         low_pressure_count,
+        worst_nodes,
         max_velocity_link_id,
         max_velocity_ms,
         pressure_histogram,
@@ -1470,6 +1521,7 @@ Duration  0
             min_pressure_node_id,
             min_pressure_m,
             low_pressure_count: 0,
+            worst_nodes: vec![],
             max_velocity_link_id,
             max_velocity_ms,
             pressure_histogram: vec![],

@@ -1,14 +1,24 @@
 import { useEffect, useState } from "react";
 import { useActiveProject, useAppState, useSimulation } from "../../AppContext";
+import {
+  DEFAULT_MIN_PRESSURE_M,
+  setMinPressure,
+  useMinPressure,
+} from "../../analysisCriteria";
 import { MetricChip } from "../../components/ui/MetricChip";
 import { WarningRow } from "../../components/ui/WarningRow";
 import {
   getResultAnalytics,
-  PRESSURE_THRESHOLD,
   type PumpEnergyRecord,
   type ResultAnalytics,
 } from "../../hooks";
-import { formatQty, useUnitSystem } from "../../units";
+import {
+  formatQty,
+  fromDisplay,
+  toDisplay,
+  unitLabel,
+  useUnitSystem,
+} from "../../units";
 import { AuditPanels } from "./AnalysisPanel/AuditPanels";
 import { pressureCompliancePct } from "./AnalysisPanel/compliance";
 import {
@@ -18,12 +28,14 @@ import {
 import { PipeCriticality } from "./AnalysisPanel/PipeCriticality";
 import { PumpEnergyPanel } from "./AnalysisPanel/PumpEnergyPanel";
 import { TankLevelsPanel } from "./AnalysisPanel/TankLevelsPanel";
+import { WorstNodesPanel } from "./AnalysisPanel/WorstNodesPanel";
 
 export function AnalysisPanel() {
   const { resultMeta, pumpEnergy } = useSimulation();
   const { project } = useActiveProject();
   const { activeScenarioId, deferredProjectView } = useAppState();
   const visible = deferredProjectView === "analysis";
+  const minPressure = useMinPressure();
 
   // Load analytics from the backend — streams the .out file one period at a
   // time so it is safe for arbitrarily large networks.  Re-fetches whenever
@@ -41,7 +53,7 @@ export function AnalysisPanel() {
     // behind while hidden, which is fine — nothing displays it).
     if (!visible) return;
     let cancelled = false;
-    getResultAnalytics(project.id, activeScenarioId)
+    getResultAnalytics(project.id, activeScenarioId, minPressure)
       .then((a) => {
         if (!cancelled) setAnalytics(a);
       })
@@ -53,7 +65,7 @@ export function AnalysisPanel() {
     return () => {
       cancelled = true;
     };
-  }, [project?.id, activeScenarioId, resultMeta, visible]);
+  }, [project?.id, activeScenarioId, resultMeta, visible, minPressure]);
 
   return (
     <div
@@ -65,8 +77,15 @@ export function AnalysisPanel() {
         animation: "fadeIn 150ms ease-out",
       }}
     >
+      {/* Compliance criterion editor */}
+      <CriteriaBar />
+
       {/* Panel 1: System Summary */}
-      <SystemSummary analytics={analytics} pumpEnergy={pumpEnergy} />
+      <SystemSummary
+        analytics={analytics}
+        pumpEnergy={pumpEnergy}
+        minPressureM={minPressure}
+      />
 
       {/* Panel 2: Two-column histograms */}
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20 }}>
@@ -74,8 +93,11 @@ export function AnalysisPanel() {
         <VelocityHistogram analytics={analytics} />
       </div>
 
-      {/* Panel 3: Top pipes by max velocity */}
-      <PipeCriticality analytics={analytics} />
+      {/* Panel 3: Worst offenders — links (velocity) and nodes (pressure) */}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20 }}>
+        <PipeCriticality analytics={analytics} />
+        <WorstNodesPanel analytics={analytics} minPressureM={minPressure} />
+      </div>
 
       {/* Panel 4: Mass-balance & energy audit */}
       <AuditPanels
@@ -115,9 +137,11 @@ function pumpEnergyChipValue(pumpEnergy: PumpEnergyRecord[] | null): string {
 function SystemSummary({
   analytics,
   pumpEnergy,
+  minPressureM,
 }: {
   analytics: ResultAnalytics | null;
   pumpEnergy: PumpEnergyRecord[] | null;
+  minPressureM: number;
 }) {
   const sys = useUnitSystem();
   if (!analytics) {
@@ -140,8 +164,7 @@ function SystemSummary({
   // in the results (e.g. no junctions, or no links with velocity data).
   const hasMinPressure = analytics.minPressureM != null;
   const minPressureColor =
-    analytics.minPressureM != null &&
-    analytics.minPressureM < PRESSURE_THRESHOLD
+    analytics.minPressureM != null && analytics.minPressureM < minPressureM
       ? "var(--status-error)"
       : undefined;
 
@@ -177,7 +200,7 @@ function SystemSummary({
         {compliancePct != null && (
           <MetricChip
             value={`${compliancePct.toFixed(1)} %`}
-            label={`Pressure ≥ ${formatQty(PRESSURE_THRESHOLD, "pressure", sys, sys === "si" ? 0 : 1)}`}
+            label={`Pressure ≥ ${formatQty(minPressureM, "pressure", sys, sys === "si" ? 0 : 1)}`}
             valueColor={
               compliancePct < 100 ? "var(--status-warning)" : undefined
             }
@@ -196,10 +219,104 @@ function SystemSummary({
         <WarningRow>
           {analytics.lowPressureCount} junction
           {analytics.lowPressureCount > 1 ? "s" : ""} below the minimum pressure
-          threshold of{" "}
-          {formatQty(PRESSURE_THRESHOLD, "pressure", sys, sys === "si" ? 0 : 1)}{" "}
-          at peak demand.
+          criterion of{" "}
+          {formatQty(minPressureM, "pressure", sys, sys === "si" ? 0 : 1)} at
+          peak demand.
         </WarningRow>
+      )}
+    </div>
+  );
+}
+
+/* ── Compliance criterion editor ─────────────────────────────────────────────── */
+
+function CriteriaBar() {
+  const sys = useUnitSystem();
+  const minPressure = useMinPressure();
+  const asDisplay = (m: number) =>
+    toDisplay(m, "pressure", sys).toFixed(sys === "si" ? 0 : 1);
+  const [draft, setDraft] = useState(asDisplay(minPressure));
+  // Re-sync the input when the stored value or the display unit changes.
+  // Inlined (not via asDisplay) so the deps stay exhaustive.
+  useEffect(() => {
+    setDraft(
+      toDisplay(minPressure, "pressure", sys).toFixed(sys === "si" ? 0 : 1),
+    );
+  }, [minPressure, sys]);
+
+  const commit = () => {
+    const n = Number(draft);
+    if (Number.isFinite(n) && n >= 0) {
+      setMinPressure(fromDisplay(n, "pressure", sys));
+    } else {
+      setDraft(asDisplay(minPressure));
+    }
+  };
+
+  return (
+    <div
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 8,
+        flexWrap: "wrap",
+        fontFamily: "var(--font-ui)",
+      }}
+    >
+      <span
+        style={{
+          fontSize: 11,
+          fontWeight: 600,
+          letterSpacing: "0.05em",
+          textTransform: "uppercase",
+          color: "var(--text-tertiary)",
+        }}
+      >
+        Criterion
+      </span>
+      <span style={{ fontSize: 12, color: "var(--text-secondary)" }}>
+        Min service pressure
+      </span>
+      <input
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") commit();
+          else if (e.key === "Escape") setDraft(asDisplay(minPressure));
+        }}
+        inputMode="decimal"
+        style={{
+          width: 64,
+          background: "var(--bg-input)",
+          border: "1px solid var(--border)",
+          borderRadius: 4,
+          color: "var(--text-primary)",
+          fontSize: 12,
+          fontFamily: "var(--font-mono)",
+          padding: "3px 6px",
+          textAlign: "right",
+          outline: "none",
+        }}
+      />
+      <span style={{ fontSize: 12, color: "var(--text-tertiary)" }}>
+        {unitLabel("pressure", sys)}
+      </span>
+      {minPressure !== DEFAULT_MIN_PRESSURE_M && (
+        <button
+          type="button"
+          onClick={() => setMinPressure(DEFAULT_MIN_PRESSURE_M)}
+          style={{
+            background: "transparent",
+            border: "none",
+            color: "var(--accent)",
+            fontSize: 11,
+            cursor: "pointer",
+            fontFamily: "var(--font-ui)",
+          }}
+        >
+          Reset
+        </button>
       )}
     </div>
   );
