@@ -269,7 +269,12 @@ pub(super) fn transport_step(
                     &network.patterns,
                     &network.pattern_index,
                 );
-                if c_src != 0.0 && volout > 0.0 {
+                // §6.6: suppress injection when the node's outflow *rate* is at or
+                // below the stagnation threshold Q_STAG (matching EPANET's Q_STAGNANT
+                // guard) rather than only when it is exactly zero. This also keeps the
+                // Mass/FlowPaced divisions below away from a near-zero volume that
+                // would otherwise produce an unstable, huge concentration increment.
+                if c_src != 0.0 && volout > Q_STAG * dt {
                     let c = state.node_conc[node_0];
                     let source_qual = match src.kind {
                         SourceType::Concentration => {

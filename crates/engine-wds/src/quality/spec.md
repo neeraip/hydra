@@ -213,7 +213,7 @@ The physical rationale is that rougher pipe surfaces tend to harbour more biofil
 
 After nodal mixing on each sub-step, source injection overrides or augments the mixed concentration at designated nodes.
 
-**Stagnation guard**: source injection at node $i$ is suppressed when the total volumetric outflow from $i$ during the sub-step is zero. This avoids division by zero and prevents injection into nodes with no outflow. (This is distinct from $Q_{\text{stag}}$ — that threshold governs link-level flow direction in transport, §6.3.1.)
+**Stagnation guard**: source injection at node $i$ is suppressed when the total volumetric outflow *rate* from $i$ during the sub-step is at or below the stagnation threshold $Q_{\text{stag}}$ (§6.3.1) — i.e. when $\mathcal{V}_{\text{out},i} \leq Q_{\text{stag}}\,\delta t$. Besides avoiding division by zero, this prevents the large, unstable concentration increments a near-zero outflow volume would otherwise produce for `MASS`/`FLOWPACED` sources. It is the *same* threshold used for link stagnation in transport (§6.3.1) — a single guard, matching EPANET's `Q_STAGNANT`.
 
 | Source type | Effect on node concentration $c_i$ (when $Q_{\text{out},i} > 0$) |
 |---|---|
