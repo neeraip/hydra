@@ -300,6 +300,48 @@ fn prv_limits_downstream_pressure() {
     assert!(ns[1].head > setting_m, "upstream must exceed PRV setting");
 }
 
+/// §3.8 damping: with `damp_limit > 0` the solver under-relaxes near convergence
+/// (0.6 factor) and defers PRV/PSV checks until the relative flow error reaches
+/// `damp_limit`. It must still converge to the same correct solution as the
+/// default (`damp_limit = 0`) full-Newton path — damping changes the iteration
+/// path, not the fixed point.
+#[test]
+fn damp_limit_reaches_same_solution_as_undamped() {
+    let build = |damp_limit: f64| {
+        TestNetworkBuilder::new()
+            .with_options(SimulationOptions {
+                damp_limit,
+                ..SimulationOptions::default()
+            })
+            .reservoir("R1", 200.0)
+            .junction("J1", 0.0, 0.0)
+            .junction("J2", 0.0, 100.0)
+            .hw_pipe("P1", "R1", "J1", 1000.0, 12.0, 100.0)
+            .valve("V1", "J1", "J2", ValveType::Prv, 12.0, 50.0)
+            .hw_pipe("P2", "J2", "J2_end", 1.0, 12.0, 100.0)
+            .junction("J2_end", 0.0, 0.0)
+    };
+
+    let (ns_undamped, ls_undamped, r0) = solve_once(build(0.0));
+    // damp_limit = 0.5 > flow_tol, so damping activates as rel_err descends.
+    let (ns_damped, ls_damped, r1) = solve_once(build(0.5));
+    assert_eq!(r0, SolveResult::Converged);
+    assert_eq!(r1, SolveResult::Converged);
+
+    // Same fixed point (well within the convergence tolerance).
+    for (u, d) in ns_undamped.iter().zip(&ns_damped) {
+        assert_relative_eq!(u.head, d.head, epsilon = 1e-4);
+    }
+    for (u, d) in ls_undamped.iter().zip(&ls_damped) {
+        assert_relative_eq!(u.flow, d.flow, epsilon = 1e-9, max_relative = 1e-3);
+    }
+
+    // The damped run still satisfies the PRV physics.
+    let ucf = make_ucf(FlowUnits::Gpm, 1.0);
+    let setting_m = 50.0 / ucf.pressure;
+    assert_relative_eq!(ns_damped[2].head, setting_m, epsilon = 0.2);
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // §3.2.5 — Constant-power pump
 // ═══════════════════════════════════════════════════════════════════════════════

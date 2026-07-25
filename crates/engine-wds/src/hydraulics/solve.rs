@@ -49,6 +49,7 @@ fn update_flows_and_check(
     flow_change_limit: f64,
     link_from: &[usize],
     link_to: &[usize],
+    relax: f64,
 ) -> FlowUpdateResult {
     let mut link_sq = 0.0_f64;
     let mut link_dsq = 0.0_f64;
@@ -71,6 +72,11 @@ fn update_flows_and_check(
         if is_const_hp_pump[k] && matches!(statuses[k], LinkStatus::Open) && dq > flows[k] {
             dq = flows[k] / 2.0;
         }
+
+        // §3.8 under-relaxation: scale the Newton step (relax = 1.0 by default;
+        // 0.6 once the relative flow error drops to `damp_limit`). Accumulated
+        // dq below is the actual (relaxed) flow change, so it feeds convergence.
+        let dq = relax * dq;
 
         flows[k] -= dq;
         link_sq += flows[k].abs();
@@ -579,6 +585,11 @@ pub fn solve_hydraulic_step(
 
     let mut result = SolveResult::Unbalanced;
     let mut status_frozen = false;
+    // §3.8 damping: relaxation factor applied to every flow update this iteration.
+    // Stays 1.0 (full Newton step) until `damp_limit > 0` and the relative flow
+    // error reaches `damp_limit`, from which point it is 0.6. Set from the previous
+    // iteration's error and consumed by the current iteration's flow updates.
+    let mut relax_factor = 1.0_f64;
     let is_pda = matches!(options.demand_model, DemandModel::PressureDriven);
     let max_total = options.max_iter as usize
         + if options.extra_iter > 0 {
@@ -736,6 +747,7 @@ pub fn solve_hydraulic_step(
             options.flow_change_limit,
             &ctx.link_from,
             &ctx.link_to,
+            relax_factor,
         );
 
         ctx.prev_emitter_flows.copy_from_slice(&ctx.emitter_flows);
@@ -744,6 +756,7 @@ pub fn solve_hydraulic_step(
             &ctx.node_heads,
             &ctx.emitter_node_indices,
             &mut ctx.emitter_flows,
+            relax_factor,
         );
 
         for i in 0..n_nodes {
@@ -756,6 +769,7 @@ pub fn solve_hydraulic_step(
             &ctx.favad_node_indices,
             &mut ctx.leakage_fa_flows,
             &mut ctx.leakage_va_flows,
+            relax_factor,
         );
 
         ctx.prev_pda_demand_flows
@@ -770,6 +784,7 @@ pub fn solve_hydraulic_step(
                 options.pda_min_pressure,
                 options.pda_required_pressure,
                 options.pda_pressure_exponent,
+                relax_factor,
             )
         } else {
             (0.0, 0.0)
@@ -789,7 +804,19 @@ pub fn solve_hydraulic_step(
         let converged = flow_converged && flow_result.head_ok && flow_result.flow_ok;
 
         let phase_started = timing_enabled.then(Instant::now);
-        let valve_changed = if !status_frozen {
+        // §3.8/§3.9 damping + valve-check scheduling:
+        //  - damp_limit == 0 (default): full Newton step; PRV/PSV checked every
+        //    iteration.
+        //  - damp_limit > 0: once the relative flow error reaches damp_limit,
+        //    under-relax the next iteration (0.6) and begin running PRV/PSV checks;
+        //    before that point the valve checks are deferred and no damping applies.
+        // Setting relax_factor here makes it take effect on the *next* iteration's
+        // flow updates (this iteration already applied the previously-set value).
+        let damping_active = options.damp_limit > 0.0 && rel_err <= options.damp_limit;
+        let run_valve_check = options.damp_limit <= 0.0 || damping_active;
+        relax_factor = if damping_active { 0.6 } else { 1.0 };
+
+        let valve_changed = if !status_frozen && run_valve_check {
             check_valve_status(
                 network,
                 &mut ctx.statuses,

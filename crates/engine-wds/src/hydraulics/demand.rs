@@ -83,6 +83,7 @@ pub(super) fn update_emitter_flows(
     node_heads: &[f64],
     emitter_indices: &[usize],
     emitter_flows: &mut [f64],
+    relax: f64,
 ) -> (f64, f64) {
     if emitter_indices.is_empty() {
         return (0.0, 0.0);
@@ -103,7 +104,7 @@ pub(super) fn update_emitter_flows(
         let (hloss, hgrad) = emitter_headloss(j.emitter_coeff, qexp, flow, emit_backflow, rq_tol);
 
         let pressure_head = node_heads[i] - node.base.elevation;
-        let dq = (hloss - pressure_head) / hgrad;
+        let dq = relax * (hloss - pressure_head) / hgrad;
         emitter_flows[i] -= dq;
 
         qsum += emitter_flows[i].abs();
@@ -194,6 +195,7 @@ pub(super) fn update_leakage_flows(
     favad_indices: &[usize],
     leak_fa: &mut [f64],
     leak_va: &mut [f64],
+    relax: f64,
 ) -> (f64, f64) {
     if favad_indices.is_empty() {
         return (0.0, 0.0);
@@ -216,7 +218,7 @@ pub(super) fn update_leakage_flows(
             hloss += barrier_head;
             hgrad += barrier_grad;
             if hgrad > G_MIN {
-                let dq = (hloss - pressure_head) / hgrad;
+                let dq = relax * (hloss - pressure_head) / hgrad;
                 leak_fa[i] = (leak_fa[i] - dq).max(0.0);
             }
             qsum += leak_fa[i].abs();
@@ -233,7 +235,7 @@ pub(super) fn update_leakage_flows(
             hloss += barrier_head;
             hgrad += barrier_grad;
             if hgrad > G_MIN {
-                let dq = (hloss - pressure_head) / hgrad;
+                let dq = relax * (hloss - pressure_head) / hgrad;
                 leak_va[i] = (leak_va[i] - dq).max(0.0);
             }
             qsum += leak_va[i].abs();
@@ -367,6 +369,7 @@ pub(super) fn update_pda_demand_flows(
     pda_pmin: f64,
     pda_preq: f64,
     pda_pexp: f64,
+    relax: f64,
 ) -> (f64, f64) {
     let n_d = 1.0 / pda_pexp;
     let dp = pda_preq - pda_pmin;
@@ -404,7 +407,7 @@ pub(super) fn update_pda_demand_flows(
 
         // D_i = P_d * (H_i - z_i - P_min) + Y_d, clamped to [0, D_full]
         let pressure_head = node_heads[i] - node.base.elevation - pda_pmin;
-        let dq = (hloss - pressure_head) / hgrad;
+        let dq = relax * (hloss - pressure_head) / hgrad;
         pda_demand_flows[i] = (pda_demand_flows[i] - dq).clamp(0.0, d_full);
 
         qsum += pda_demand_flows[i].abs();
