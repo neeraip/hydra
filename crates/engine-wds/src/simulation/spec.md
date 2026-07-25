@@ -137,7 +137,7 @@ $$\Delta t = \min\!\left(\Delta t_h,\ \Delta t_{\text{report}},\ \Delta t_{\text
 | Term | Definition |
 |---|---|
 | $\Delta t_h$ | User-specified nominal hydraulic time step |
-| $\Delta t_{\text{report}}$ | Time remaining until the next reporting instant: $\lceil t / \Delta t_r \rceil \cdot \Delta t_r - t$ |
+| $\Delta t_{\text{report}}$ | Time remaining until the next reporting instant. Report instants fall at $t_{\text{rstart}} + k\cdot\Delta t_{\text{rep}}$ (offset by `report_start`, mirroring how the pattern term is offset by `pattern_start`): $\bigl(t_{\text{rstart}} + \lceil (t - t_{\text{rstart}})/\Delta t_{\text{rep}}\rceil\,\Delta t_{\text{rep}}\bigr) - t$, or $t_{\text{rstart}} - t$ before the first instant |
 | $\Delta t_{\text{tank}}$ | Minimum over all tanks of the time to reach a level limit at the current net flow rate: $\min_{\text{tanks}} \Delta V_{\text{available}} / \lvert Q_{\text{net}} \rvert$ (set to $\Delta t_h$ if $Q_{\text{net}} = 0$) |
 | $\Delta t_{\text{pattern}}$ | Time remaining until the next pattern boundary: $\lceil (t + t_{\text{pstart}}) / \Delta t_p \rceil \cdot \Delta t_p - t - t_{\text{pstart}}$ |
 | $\Delta t_{\text{control}}$ | Shortest time until a simple control fires (§5.2.1) |

@@ -17,7 +17,15 @@ pub(crate) fn adaptive_timestep(t: f64, network: &Network, node_states: &[NodeSt
     }
 
     let dt_report = if opts.report_step > 0.0 {
-        let next = (t / opts.report_step).ceil() * opts.report_step;
+        // Report instants fall at report_start + k·report_step (mirroring how the
+        // pattern term below honors pattern_start, matching the snapshot marker and
+        // EPANET's Rstart). Before report_start, the next instant is report_start.
+        let rel = t - opts.report_start;
+        let next = if rel < 0.0 {
+            opts.report_start
+        } else {
+            opts.report_start + (rel / opts.report_step).ceil() * opts.report_step
+        };
         let dt = next - t;
         if dt > 0.0 {
             dt
@@ -330,6 +338,43 @@ mod tests {
         let dt = adaptive_timestep(0.0, &net, &node_states);
         assert!(dt <= 3600.0, "dt={dt} should be ≤ hyd_step=3600");
         assert!(dt >= 1.0, "dt={dt} should be ≥ 1 s");
+    }
+
+    #[test]
+    fn adaptive_dt_report_boundary_honors_report_start() {
+        // Report instants fall at report_start + k·report_step, not at multiples of
+        // report_step from t=0. With report_start=1800 and report_step=3600, the
+        // first report is at t=1800, so the step from t=0 is bounded to 1800.
+        let opts = SimulationOptions {
+            duration: 86400.0,
+            hyd_step: 3600.0,
+            report_step: 3600.0,
+            report_start: 1800.0,
+            // Large pattern step so the pattern term never constrains this test.
+            pattern_step: 86400.0,
+            pattern_start: 0.0,
+            ..SimulationOptions::default()
+        };
+        let net = Network {
+            title: vec![],
+            options: opts,
+            patterns: vec![],
+            curves: vec![],
+            nodes: vec![junction_node(1)],
+            links: vec![dummy_link(1)],
+            controls: vec![],
+            rules: vec![],
+            pattern_index: std::collections::HashMap::new(),
+            report: crate::ReportOptions::default(),
+            coordinates: std::collections::HashMap::new(),
+            vertices: std::collections::HashMap::new(),
+            node_tags: std::collections::HashMap::new(),
+            link_tags: std::collections::HashMap::new(),
+        };
+        let node_states = vec![NodeState::default()];
+        assert_eq!(adaptive_timestep(0.0, &net, &node_states), 1800.0);
+        // On the report_start boundary itself, the next instant is a full step away.
+        assert_eq!(adaptive_timestep(1800.0, &net, &node_states), 3600.0);
     }
 
     #[test]
