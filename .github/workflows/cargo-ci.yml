@@ -109,6 +109,10 @@ jobs:
   # Non-blocking — breakage here is an early warning, never a merge blocker.
   test-stable:
     name: Test / latest stable (non-blocking)
+    # Drift canary, not a merge gate (continue-on-error): running it per-PR
+    # spends ~9 runner-minutes without adding any PR safety. Main pushes and
+    # the weekly schedule keep the early warning.
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     continue-on-error: true

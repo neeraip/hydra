@@ -1,7 +1,8 @@
 name: Cargo Audit
 
+# Not run per-PR: cargo-deny in Cargo CI's lint job already checks the same
+# advisory database (plus licenses/bans/sources) on every pull request.
 on:
-  pull_request:
   schedule:
     - cron: '0 6 * * 1'  # Every Monday at 06:00 UTC
   workflow_dispatch:
