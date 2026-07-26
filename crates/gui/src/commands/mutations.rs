@@ -899,9 +899,7 @@ fn rename_element_in_network(
                 return Ok(());
             }
             if network.nodes.iter().any(|n| n.base.id == new_id) {
-                return Err(format!(
-                    "ID '{new_id}' is already in use by another node"
-                ));
+                return Err(format!("ID '{new_id}' is already in use by another node"));
             }
             for n in network.nodes.iter_mut() {
                 if n.base.id == old_id {
@@ -929,9 +927,7 @@ fn rename_element_in_network(
                 return Ok(());
             }
             if network.links.iter().any(|l| l.base.id == new_id) {
-                return Err(format!(
-                    "ID '{new_id}' is already in use by another link"
-                ));
+                return Err(format!("ID '{new_id}' is already in use by another link"));
             }
             for l in network.links.iter_mut() {
                 if l.base.id == old_id {
@@ -2514,7 +2510,13 @@ Duration  0
         network.options.trace_node = Some("J1".into());
         // Capture the endpoints referencing J1 (by index) to prove they still
         // resolve after the rename.
-        let j1_idx = network.nodes.iter().find(|n| n.base.id == "J1").unwrap().base.index;
+        let j1_idx = network
+            .nodes
+            .iter()
+            .find(|n| n.base.id == "J1")
+            .unwrap()
+            .base
+            .index;
         let links_on_j1: Vec<String> = network
             .links
             .iter()
@@ -2530,13 +2532,22 @@ Duration  0
         assert!(!network.nodes.iter().any(|n| n.base.id == "J1"));
         assert!(network.coordinates.contains_key("J1_NEW"));
         assert!(!network.coordinates.contains_key("J1"));
-        assert_eq!(network.node_tags.get("J1_NEW").map(String::as_str), Some("zone-a"));
+        assert_eq!(
+            network.node_tags.get("J1_NEW").map(String::as_str),
+            Some("zone-a")
+        );
         assert!(!network.node_tags.contains_key("J1"));
         assert_eq!(network.options.trace_node.as_deref(), Some("J1_NEW"));
 
         // Endpoints referenced J1 by index, so the same links now attach to
         // the renamed node at the same index — no dangling endpoints.
-        let new_idx = network.nodes.iter().find(|n| n.base.id == "J1_NEW").unwrap().base.index;
+        let new_idx = network
+            .nodes
+            .iter()
+            .find(|n| n.base.id == "J1_NEW")
+            .unwrap()
+            .base
+            .index;
         assert_eq!(new_idx, j1_idx, "index must be stable across a rename");
         for lid in &links_on_j1 {
             let l = network.links.iter().find(|l| l.base.id == *lid).unwrap();
@@ -2548,14 +2559,19 @@ Duration  0
         let reparsed = hydra::io::parse(&bytes).unwrap();
         assert!(reparsed.nodes.iter().any(|n| n.base.id == "J1_NEW"));
         assert!(reparsed.coordinates.contains_key("J1_NEW"));
-        assert_eq!(reparsed.node_tags.get("J1_NEW").map(String::as_str), Some("zone-a"));
+        assert_eq!(
+            reparsed.node_tags.get("J1_NEW").map(String::as_str),
+            Some("zone-a")
+        );
         assert_eq!(reparsed.options.trace_node.as_deref(), Some("J1_NEW"));
     }
 
     #[test]
     fn rename_link_cascades_vertices_and_tags() {
         let mut network = hydra::io::parse(CASCADE_INP.as_bytes()).unwrap();
-        network.vertices.insert("P1".into(), vec![(1.5, 2.5), (1.6, 2.6)]);
+        network
+            .vertices
+            .insert("P1".into(), vec![(1.5, 2.5), (1.6, 2.6)]);
         network.link_tags.insert("P1".into(), "trunk".into());
 
         rename_element_in_network(&mut network, "pipe", "P1", "P1_NEW").unwrap();
@@ -2564,14 +2580,20 @@ Duration  0
         assert!(!network.links.iter().any(|l| l.base.id == "P1"));
         assert_eq!(network.vertices.get("P1_NEW").map(Vec::len), Some(2));
         assert!(!network.vertices.contains_key("P1"));
-        assert_eq!(network.link_tags.get("P1_NEW").map(String::as_str), Some("trunk"));
+        assert_eq!(
+            network.link_tags.get("P1_NEW").map(String::as_str),
+            Some("trunk")
+        );
         assert!(!network.link_tags.contains_key("P1"));
 
         let bytes = hydra::write_inp(&network);
         let reparsed = hydra::io::parse(&bytes).unwrap();
         assert!(reparsed.links.iter().any(|l| l.base.id == "P1_NEW"));
         assert_eq!(reparsed.vertices.get("P1_NEW").map(Vec::len), Some(2));
-        assert_eq!(reparsed.link_tags.get("P1_NEW").map(String::as_str), Some("trunk"));
+        assert_eq!(
+            reparsed.link_tags.get("P1_NEW").map(String::as_str),
+            Some("trunk")
+        );
     }
 
     #[test]
@@ -2612,7 +2634,15 @@ Duration  0
             }
         }
         let (r1, j1, j2) = {
-            let idx = |id: &str| network.nodes.iter().find(|n| n.base.id == id).unwrap().base.index;
+            let idx = |id: &str| {
+                network
+                    .nodes
+                    .iter()
+                    .find(|n| n.base.id == id)
+                    .unwrap()
+                    .base
+                    .index
+            };
             (idx("R1"), idx("J1"), idx("J2"))
         };
         network.links.push(hydra::Link {
