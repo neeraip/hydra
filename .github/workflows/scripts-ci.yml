@@ -18,7 +18,7 @@ permissions:
 
 jobs:
   test:
-    name: Scripts CI
+    name: Scripts Test
     runs-on: ubuntu-latest
     timeout-minutes: 10
 

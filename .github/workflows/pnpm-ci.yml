@@ -17,8 +17,11 @@ permissions:
   contents: read
 
 jobs:
-  check:
-    name: PNPM Lint + Test
+  # Static checks + supply chain, mirroring Cargo Lint (which carries
+  # cargo-deny): the standalone PNPM Audit workflow only runs on a schedule
+  # for time-based advisories.
+  lint:
+    name: PNPM Lint
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
@@ -61,14 +64,41 @@ jobs:
         working-directory: ${{ github.workspace }}
         run: git diff --exit-code -- crates/gui/resources/crs-catalog.json
 
+      - name: Audit dependencies
+        run: pnpm audit --audit-level=high
+
+  test:
+    name: PNPM Test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    defaults:
+      run:
+        working-directory: crates/gui/frontend
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7.0.1
+        with:
+          fetch-depth: 1
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v6.0.9
+        with:
+          version: 10
+
+      - name: Install Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: 'pnpm'
+          cache-dependency-path: crates/gui/frontend/pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
       - name: Build
         run: pnpm build
 
       - name: Run tests
         run: pnpm test
-
-      # Per-PR advisory gate — the standalone PNPM Audit workflow only runs
-      # on a schedule (time-based advisories), mirroring the cargo split
-      # where cargo-deny covers PRs inside Cargo Lint.
-      - name: Audit dependencies
-        run: pnpm audit --audit-level=high
