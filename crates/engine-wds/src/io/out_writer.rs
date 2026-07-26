@@ -1096,9 +1096,8 @@ mod tests {
 
     #[test]
     fn period_stats_aggregations() {
-        let block = |vals: &[f32]| -> Vec<u8> {
-            vals.iter().flat_map(|v| v.to_le_bytes()).collect()
-        };
+        let block =
+            |vals: &[f32]| -> Vec<u8> { vals.iter().flat_map(|v| v.to_le_bytes()).collect() };
         let finalize = |stat: StatisticType| -> Vec<f32> {
             let mut s = PeriodStats::new(stat, 2);
             s.accumulate(&block(&[1.0, 4.0]));
