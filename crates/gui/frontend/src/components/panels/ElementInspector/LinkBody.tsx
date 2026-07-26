@@ -46,7 +46,6 @@ export function LinkBody({
         style={{ width: "100%", borderCollapse: "collapse", marginBottom: 14 }}
       >
         <tbody>
-          <PropRow label="Type" value={link.type} />
           {link.length != null && link.length > 0 && (
             <PropRow
               label="Length"

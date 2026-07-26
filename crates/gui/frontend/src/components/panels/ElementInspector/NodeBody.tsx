@@ -49,7 +49,6 @@ export function NodeBody({
         style={{ width: "100%", borderCollapse: "collapse", marginBottom: 14 }}
       >
         <tbody>
-          <PropRow label="Type" value={node.type} />
           {node.elevation != null && (
             <PropRow
               label="Elevation"
