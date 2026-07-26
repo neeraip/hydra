@@ -15,6 +15,14 @@ export default defineConfig({
   // Vite env prefixes are literal startsWith strings (no globs): this
   // exposes TAURI_ENV_PLATFORM etc. to client code via import.meta.env.
   envPrefix: ["VITE_", "TAURI_ENV_"],
+  optimizeDeps: {
+    // maplibre-gl ships a web-worker entry that Vite's dependency pre-bundler
+    // mishandles: it emits a reference to `.vite/deps/maplibre-gl-worker.mjs`
+    // without producing the file, so the basemap dies with a dev-only 404.
+    // Excluding it serves maplibre-gl's ESM as-is and sidesteps the worker
+    // breakage. Dev-only — the production Rollup build never uses this path.
+    exclude: ["maplibre-gl"],
+  },
   build: {
     target: ["chrome120", "safari16"],
     minify: !process.env.TAURI_ENV_DEBUG ? "esbuild" : false,
