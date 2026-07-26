@@ -164,7 +164,7 @@ export function EditableCell({
     if (inputType !== "number") return;
     const native = e.nativeEvent as InputEvent;
     if (native.inputType !== "insertText" || native.data == null) return;
-    if (/[^0-9.eE+\-]/.test(native.data)) e.preventDefault();
+    if (/[^0-9.eE+-]/.test(native.data)) e.preventDefault();
   }
 
   function onKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {

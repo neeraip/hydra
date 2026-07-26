@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import {
-  parseNumericInput,
   defaultDecimals,
   formatDistance,
   formatQty,
@@ -8,6 +7,7 @@ import {
   formatQtyValue,
   fromDisplay,
   getUnitSystem,
+  parseNumericInput,
   type Quantity,
   setUnitSystem,
   toDisplay,

@@ -1,11 +1,11 @@
 import { CheckIcon, XMarkIcon } from "@heroicons/react/16/solid";
 import { useEffect, useRef, useState } from "react";
 import { useAppState } from "../../../AppContext";
-import { getNetworkTitle, updateNetworkTitle } from "../../../hooks/network";
 import { useNetworkVersion } from "../../../hooks/NetworkVersionContext";
+import { getNetworkTitle, updateNetworkTitle } from "../../../hooks/network";
 import {
-  textToTitleLines,
   TITLE_DISPLAY_LINES,
+  textToTitleLines,
   titleLinesToText,
 } from "./modelTitle";
 
@@ -24,6 +24,7 @@ export function ModelTitleBlock() {
   const [expanded, setExpanded] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `version` is an intentional retrigger — refetch the title after the network changes (import, edit, undo).
   useEffect(() => {
     let cancelled = false;
     void (async () => {

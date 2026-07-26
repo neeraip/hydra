@@ -1267,5 +1267,6 @@ select:focus-visible {
 /* Overview model-description block: the whole text area is the edit target —
    highlight on hover instead of showing a separate edit icon. */
 .model-title-edit-target:hover {
+  /* biome-ignore lint/complexity/noImportantStyles: the button carries an inline `background: transparent`, which only !important can override on hover. */
   background: var(--nav-hover) !important;
 }

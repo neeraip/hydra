@@ -1,6 +1,6 @@
-import { ModelTitleBlock } from "./ModelTitleBlock";
 import { ArrowRightIcon, FolderOpenIcon } from "@heroicons/react/16/solid";
 import { PILL } from "../../../hooks";
+import { ModelTitleBlock } from "./ModelTitleBlock";
 import { Dot, IconButton, PrimaryButton, SecondaryButton } from "./primitives";
 
 export function Header({
