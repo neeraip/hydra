@@ -99,6 +99,8 @@ See [RELEASING.md](RELEASING.md) for the release process and version bump comman
 
 **Never run `git commit` or `git push` unless the user explicitly asks you to commit or push.** Making file changes is sufficient; the user will commit and push when ready.
 
+**The `just ci` recipe is the authoritative pre-commit gate.** Before committing, everything the `just ci` recipe checks must pass — never commit on a red tree. You do not have to invoke `just ci` literally: run the individual recipes it chains (`just fmt-check`, `just clippy`, `just docs-api`, `just test`, `just lint-frontend`, …), the subset relevant to the files you touched, or `just ci` as one batch — whatever is fastest. What matters is that everything the recipe would check is green, not how you run it. Note that `rustfmt`, `clippy -D warnings`, and rustdoc warnings are CI failures even when the test suite passes, so a green `cargo test` alone is not sufficient.
+
 **Never create git tags** unless the user explicitly asks for a tag or release.
 
 **Commit messages follow Conventional Commits:**
