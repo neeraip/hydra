@@ -18,7 +18,7 @@ permissions:
 
 jobs:
   check:
-    name: PNPM CI
+    name: PNPM Lint + Test
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
