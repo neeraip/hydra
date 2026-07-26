@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { Link, Node, Pattern } from "../../hooks";
 import { useLinks, useNodes, usePatterns } from "../../hooks";
 import { perfTrace } from "../../perfTrace";
-import { toDisplay, useUnitSystem } from "../../units";
+import { toDisplay, unitLabel, useUnitSystem } from "../../units";
 import { downsampleMinMax } from "../editors/patternDownsample";
 
 /** Preview strip is 220 units wide; more bars than half that cannot render
@@ -251,22 +251,44 @@ function NodesTab({
         </colgroup>
         <thead>
           <tr>
-            {(["id", "type", "elevation", "baseDemand"] as const).map((col) => (
-              <th key={col} style={TH} onClick={() => toggleSort(col)}>
-                {
-                  {
-                    id: "ID",
-                    type: "Type",
-                    elevation: "Elev",
-                    baseDemand: "Dem",
-                  }[col]
-                }
-                <SortIndicator col={col} sortCol={sortCol} sortDir={sortDir} />
-              </th>
-            ))}
+            {(["id", "type", "elevation", "baseDemand"] as const).map((col) => {
+              const meta = {
+                id: { label: "ID", tip: "Node ID" },
+                type: { label: "Type", tip: "Element type" },
+                elevation: {
+                  label: "Elev",
+                  tip: `Elevation (${unitLabel("elevation", sys)})`,
+                },
+                baseDemand: {
+                  label: "Demand",
+                  tip: `Base demand (${unitLabel("demand", sys)})`,
+                },
+              }[col];
+              return (
+                <th
+                  key={col}
+                  style={TH}
+                  onClick={() => toggleSort(col)}
+                  data-tooltip={meta.tip}
+                  data-tooltip-pos="bottom"
+                >
+                  {meta.label}
+                  <SortIndicator
+                    col={col}
+                    sortCol={sortCol}
+                    sortDir={sortDir}
+                  />
+                </th>
+              );
+            })}
             {hasResults && (
-              <th style={TH} onClick={() => toggleSort("pressure")}>
-                P
+              <th
+                style={TH}
+                onClick={() => toggleSort("pressure")}
+                data-tooltip={`Pressure (${unitLabel("pressure", sys)})`}
+                data-tooltip-pos="bottom"
+              >
+                Pres
                 <SortIndicator
                   col="pressure"
                   sortCol={sortCol}
@@ -502,14 +524,40 @@ function LinksTab({
         </colgroup>
         <thead>
           <tr>
-            {(["id", "type", "status", "diameter"] as const).map((col) => (
-              <th key={col} style={TH} onClick={() => toggleSort(col)}>
-                {{ id: "ID", type: "Type", status: "St.", diameter: "Ø" }[col]}
-                <SortIndicator col={col} sortCol={sortCol} sortDir={sortDir} />
-              </th>
-            ))}
+            {(["id", "type", "status", "diameter"] as const).map((col) => {
+              const meta = {
+                id: { label: "ID", tip: "Link ID" },
+                type: { label: "Type", tip: "Element type" },
+                status: { label: "St.", tip: "Status" },
+                diameter: {
+                  label: "Ø",
+                  tip: `Diameter (${unitLabel("diameter", sys)})`,
+                },
+              }[col];
+              return (
+                <th
+                  key={col}
+                  style={TH}
+                  onClick={() => toggleSort(col)}
+                  data-tooltip={meta.tip}
+                  data-tooltip-pos="bottom"
+                >
+                  {meta.label}
+                  <SortIndicator
+                    col={col}
+                    sortCol={sortCol}
+                    sortDir={sortDir}
+                  />
+                </th>
+              );
+            })}
             {hasResults && (
-              <th style={TH} onClick={() => toggleSort("flow")}>
+              <th
+                style={TH}
+                onClick={() => toggleSort("flow")}
+                data-tooltip={`Flow (${unitLabel("flow", sys)})`}
+                data-tooltip-pos="bottom"
+              >
                 Flow
                 <SortIndicator col="flow" sortCol={sortCol} sortDir={sortDir} />
               </th>
