@@ -49,6 +49,7 @@ interface NodeInspectorProps {
   onZoomTo?: () => void;
   disableZoomTo?: boolean;
   onDelete?: () => void;
+  onRename?: (newId: string) => void;
   onLocateRelated: (id: string) => void;
   onOpenPattern?: (id: string) => void;
   nodeVar?: NodeVariable;
@@ -64,6 +65,7 @@ export function NodeInspector({
   onZoomTo,
   disableZoomTo,
   onDelete,
+  onRename,
   onLocateRelated,
   onOpenPattern,
   nodeVar,
@@ -101,6 +103,7 @@ export function NodeInspector({
           />
         }
         onClose={onClose}
+        onRename={onRename}
       />
 
       <NodeBody
@@ -174,6 +177,7 @@ interface LinkInspectorProps {
   onZoomTo?: () => void;
   disableZoomTo?: boolean;
   onDelete?: () => void;
+  onRename?: (newId: string) => void;
   onLocateNode: (id: string) => void;
   linkVar?: LinkVariable;
   ranges?: ResultRanges;
@@ -188,6 +192,7 @@ export function LinkInspector({
   onZoomTo,
   disableZoomTo,
   onDelete,
+  onRename,
   onLocateNode,
   linkVar,
   ranges,
@@ -223,6 +228,7 @@ export function LinkInspector({
           />
         }
         onClose={onClose}
+        onRename={onRename}
       />
 
       <LinkBody

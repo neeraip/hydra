@@ -856,6 +856,125 @@ pub fn delete_element(
     })
 }
 
+/// Validate a user-supplied element/curve ID and return it trimmed.
+///
+/// Rejects empty IDs and any that contain whitespace, `;` (the INP comment
+/// character), or quotes — all of which would break INP tokenisation on the
+/// next round-trip. `what` names the thing being renamed for the error text.
+fn validate_inp_id(raw: &str, what: &str) -> Result<String, String> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Err(format!("{what} ID must not be empty"));
+    }
+    if trimmed.chars().any(char::is_whitespace) {
+        return Err(format!("{what} ID must not contain spaces"));
+    }
+    if trimmed.contains([';', '"', '\'']) {
+        return Err(format!("{what} ID must not contain ; or quotes"));
+    }
+    Ok(trimmed.to_string())
+}
+
+/// Rename a node or link in place, cascading the new ID everywhere the model
+/// keys on the old string ID. See [`rename_element`] for the full contract.
+/// Extracted from the command so the cascade is unit-testable without an
+/// `AppHandle`. `new_id` is assumed already validated by [`validate_inp_id`].
+fn rename_element_in_network(
+    network: &mut hydra::Network,
+    kind: &str,
+    old_id: &str,
+    new_id: &str,
+) -> Result<(), String> {
+    // EPANET keeps node IDs and link IDs in SEPARATE namespaces — a node and a
+    // link may legitimately share an ID (common with numeric IDs). So a node
+    // rename only conflicts with other nodes, a link rename only with other
+    // links; checking across both would wrongly reject reusing an ID that the
+    // other namespace happens to hold.
+    match kind {
+        "junction" | "reservoir" | "tank" => {
+            if !network.nodes.iter().any(|n| n.base.id == old_id) {
+                return Err(format!("node '{old_id}' not found"));
+            }
+            if new_id == old_id {
+                return Ok(());
+            }
+            if network.nodes.iter().any(|n| n.base.id == new_id) {
+                return Err(format!("ID '{new_id}' is already in use by another node"));
+            }
+            for n in network.nodes.iter_mut() {
+                if n.base.id == old_id {
+                    n.base.id = new_id.to_string();
+                }
+            }
+            // Re-key the id-keyed side tables. Links/controls/rules reference
+            // nodes by *index*, so they need no rewrite; only these maps and
+            // the quality trace node key on the string ID.
+            if let Some(v) = network.coordinates.remove(old_id) {
+                network.coordinates.insert(new_id.to_string(), v);
+            }
+            if let Some(v) = network.node_tags.remove(old_id) {
+                network.node_tags.insert(new_id.to_string(), v);
+            }
+            if network.options.trace_node.as_deref() == Some(old_id) {
+                network.options.trace_node = Some(new_id.to_string());
+            }
+        }
+        "pipe" | "pump" | "valve" => {
+            if !network.links.iter().any(|l| l.base.id == old_id) {
+                return Err(format!("link '{old_id}' not found"));
+            }
+            if new_id == old_id {
+                return Ok(());
+            }
+            if network.links.iter().any(|l| l.base.id == new_id) {
+                return Err(format!("ID '{new_id}' is already in use by another link"));
+            }
+            for l in network.links.iter_mut() {
+                if l.base.id == old_id {
+                    l.base.id = new_id.to_string();
+                }
+            }
+            // Endpoints (from/to), controls, and rules reference links by
+            // index; only the vertices and tags maps key on the link ID.
+            if let Some(v) = network.vertices.remove(old_id) {
+                network.vertices.insert(new_id.to_string(), v);
+            }
+            if let Some(v) = network.link_tags.remove(old_id) {
+                network.link_tags.insert(new_id.to_string(), v);
+            }
+        }
+        other => return Err(format!("unknown element kind '{other}'")),
+    }
+    Ok(())
+}
+
+/// Rename a node or link, cascading the new ID to every place the model keys
+/// on the old string ID.
+///
+/// `kind` is one of `"junction"`/`"reservoir"`/`"tank"` (nodes) or
+/// `"pipe"`/`"pump"`/`"valve"` (links). Because the engine references links'
+/// endpoints, controls, and rules by *index* (not string ID), those need no
+/// rewrite; the cascade only re-keys the id-keyed side tables:
+/// - Node: `base.id`, `[COORDINATES]`, `[TAGS]`, and `options.trace_node`.
+/// - Link: `base.id`, `[VERTICES]`, `[TAGS]`.
+///
+/// `new_id` must be non-empty, contain no whitespace/`;`/quotes, and be unique
+/// across all nodes and links. Fails without mutating anything on any
+/// violation. Renaming to the current ID is a no-op success.
+#[tauri::command(async)]
+pub fn rename_element(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, NetworkState>,
+    kind: String,
+    old_id: String,
+    new_id: String,
+) -> Result<(), String> {
+    let new_id = validate_inp_id(&new_id, "element")?;
+    mutate_structural(&app, &state, |network| {
+        rename_element_in_network(network, &kind, &old_id, &new_id)
+    })
+}
+
 /// Add a new node (junction, tank, or reservoir) to the in-memory network.
 ///
 /// `id` must be unique across all nodes and links.  `x` / `y` are geographic
@@ -882,10 +1001,11 @@ pub fn create_node(
         if id.trim().is_empty() {
             return Err("ID must not be empty".into());
         }
-        if network.nodes.iter().any(|n| n.base.id == id)
-            || network.links.iter().any(|l| l.base.id == id)
-        {
-            return Err(format!("ID '{}' is already in use", id));
+        // Node ids are unique among nodes only — a link may share the id
+        // (EPANET keeps node and link namespaces separate; the parser accepts
+        // it), so do not reject an id merely because a link holds it.
+        if network.nodes.iter().any(|n| n.base.id == id) {
+            return Err(format!("ID '{}' is already in use by another node", id));
         }
         let index = network.nodes.len() + 1;
         // Tank level defaults: ~3 m min gap, ~1.5 m initial (matching original 10 ft / 5 ft).
@@ -994,10 +1114,11 @@ pub fn create_link(
         if id.trim().is_empty() {
             return Err("ID must not be empty".into());
         }
-        if network.nodes.iter().any(|n| n.base.id == id)
-            || network.links.iter().any(|l| l.base.id == id)
-        {
-            return Err(format!("ID '{}' is already in use", id));
+        // Link ids are unique among links only — a node may share the id
+        // (EPANET keeps node and link namespaces separate; the parser accepts
+        // it), so do not reject an id merely because a node holds it.
+        if network.links.iter().any(|l| l.base.id == id) {
+            return Err(format!("ID '{}' is already in use by another link", id));
         }
         let from_node = network
             .nodes
@@ -1116,6 +1237,77 @@ pub fn delete_curve(
 
         network.curves.retain(|c| c.id != id);
         Ok(())
+    })
+}
+
+/// Rename a curve in place, cascading the new ID to every reference. See
+/// [`rename_curve`] for the contract. Extracted so the cascade is testable
+/// without an `AppHandle`; `new_id` is assumed validated by
+/// [`validate_inp_id`].
+fn rename_curve_in_network(
+    network: &mut hydra::Network,
+    old_id: &str,
+    new_id: &str,
+) -> Result<(), String> {
+    if !network.curves.iter().any(|c| c.id == old_id) {
+        return Err(format!("curve '{old_id}' not found"));
+    }
+    if new_id == old_id {
+        return Ok(());
+    }
+    if network.curves.iter().any(|c| c.id == new_id) {
+        return Err(format!("curve '{new_id}' already exists"));
+    }
+
+    for c in network.curves.iter_mut() {
+        if c.id == old_id {
+            c.id = new_id.to_string();
+        }
+    }
+    for l in network.links.iter_mut() {
+        match &mut l.kind {
+            hydra::LinkKind::Pump(p) => {
+                if p.head_curve.as_deref() == Some(old_id) {
+                    p.head_curve = Some(new_id.to_string());
+                }
+                if p.efficiency_curve.as_deref() == Some(old_id) {
+                    p.efficiency_curve = Some(new_id.to_string());
+                }
+            }
+            hydra::LinkKind::Valve(v) => {
+                if v.curve.as_deref() == Some(old_id) {
+                    v.curve = Some(new_id.to_string());
+                }
+            }
+            hydra::LinkKind::Pipe(_) => {}
+        }
+    }
+    for n in network.nodes.iter_mut() {
+        if let hydra::NodeKind::Tank(t) = &mut n.kind {
+            if t.volume_curve.as_deref() == Some(old_id) {
+                t.volume_curve = Some(new_id.to_string());
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Rename a curve, cascading the new ID to every reference: pump head and
+/// efficiency curves, GPV valve curves, and tank volume curves.
+///
+/// `new_id` must be non-empty, contain no whitespace/`;`/quotes, and be unique
+/// among curves (curves have their own ID namespace). Fails without mutating
+/// anything on any violation. Renaming to the current ID is a no-op success.
+#[tauri::command(async)]
+pub fn rename_curve(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, NetworkState>,
+    old_id: String,
+    new_id: String,
+) -> Result<(), String> {
+    let new_id = validate_inp_id(&new_id, "curve")?;
+    mutate_structural(&app, &state, |network| {
+        rename_curve_in_network(network, &old_id, &new_id)
     })
 }
 
@@ -2292,5 +2484,234 @@ Duration  0
         )
         .unwrap();
         assert_eq!(pipe(&network, "P1"), (hydra::LinkStatus::Open, false));
+    }
+
+    // ── element / curve rename ────────────────────────────────────────────
+
+    #[test]
+    fn validate_inp_id_rejects_empty_whitespace_and_unsafe_chars() {
+        assert!(validate_inp_id("  ", "element").is_err());
+        assert!(validate_inp_id("", "element").is_err());
+        assert!(validate_inp_id("a b", "element").is_err());
+        assert!(validate_inp_id("a\tb", "element").is_err());
+        assert!(validate_inp_id("a;b", "element").is_err());
+        assert!(validate_inp_id("a\"b", "element").is_err());
+        assert!(validate_inp_id("a'b", "element").is_err());
+        // Valid: trims and returns.
+        assert_eq!(validate_inp_id("  J-42  ", "element").unwrap(), "J-42");
+    }
+
+    #[test]
+    fn rename_node_cascades_maps_trace_node_and_survives_round_trip() {
+        let mut network = hydra::io::parse(CASCADE_INP.as_bytes()).unwrap();
+        // Attach id-keyed side state to J1 that must travel with the rename.
+        network.node_tags.insert("J1".into(), "zone-a".into());
+        network.options.quality_mode = hydra::QualityMode::Trace;
+        network.options.trace_node = Some("J1".into());
+        // Capture the endpoints referencing J1 (by index) to prove they still
+        // resolve after the rename.
+        let j1_idx = network
+            .nodes
+            .iter()
+            .find(|n| n.base.id == "J1")
+            .unwrap()
+            .base
+            .index;
+        let links_on_j1: Vec<String> = network
+            .links
+            .iter()
+            .filter(|l| l.base.from_node == j1_idx || l.base.to_node == j1_idx)
+            .map(|l| l.base.id.clone())
+            .collect();
+        assert!(!links_on_j1.is_empty(), "fixture must attach links to J1");
+
+        rename_element_in_network(&mut network, "junction", "J1", "J1_NEW").unwrap();
+
+        // Node id, coordinates, tag, and trace node all follow.
+        assert!(network.nodes.iter().any(|n| n.base.id == "J1_NEW"));
+        assert!(!network.nodes.iter().any(|n| n.base.id == "J1"));
+        assert!(network.coordinates.contains_key("J1_NEW"));
+        assert!(!network.coordinates.contains_key("J1"));
+        assert_eq!(
+            network.node_tags.get("J1_NEW").map(String::as_str),
+            Some("zone-a")
+        );
+        assert!(!network.node_tags.contains_key("J1"));
+        assert_eq!(network.options.trace_node.as_deref(), Some("J1_NEW"));
+
+        // Endpoints referenced J1 by index, so the same links now attach to
+        // the renamed node at the same index — no dangling endpoints.
+        let new_idx = network
+            .nodes
+            .iter()
+            .find(|n| n.base.id == "J1_NEW")
+            .unwrap()
+            .base
+            .index;
+        assert_eq!(new_idx, j1_idx, "index must be stable across a rename");
+        for lid in &links_on_j1 {
+            let l = network.links.iter().find(|l| l.base.id == *lid).unwrap();
+            assert!(l.base.from_node == new_idx || l.base.to_node == new_idx);
+        }
+
+        // Round-trip: the rename survives an INP write → parse.
+        let bytes = hydra::write_inp(&network);
+        let reparsed = hydra::io::parse(&bytes).unwrap();
+        assert!(reparsed.nodes.iter().any(|n| n.base.id == "J1_NEW"));
+        assert!(reparsed.coordinates.contains_key("J1_NEW"));
+        assert_eq!(
+            reparsed.node_tags.get("J1_NEW").map(String::as_str),
+            Some("zone-a")
+        );
+        assert_eq!(reparsed.options.trace_node.as_deref(), Some("J1_NEW"));
+    }
+
+    #[test]
+    fn rename_link_cascades_vertices_and_tags() {
+        let mut network = hydra::io::parse(CASCADE_INP.as_bytes()).unwrap();
+        network
+            .vertices
+            .insert("P1".into(), vec![(1.5, 2.5), (1.6, 2.6)]);
+        network.link_tags.insert("P1".into(), "trunk".into());
+
+        rename_element_in_network(&mut network, "pipe", "P1", "P1_NEW").unwrap();
+
+        assert!(network.links.iter().any(|l| l.base.id == "P1_NEW"));
+        assert!(!network.links.iter().any(|l| l.base.id == "P1"));
+        assert_eq!(network.vertices.get("P1_NEW").map(Vec::len), Some(2));
+        assert!(!network.vertices.contains_key("P1"));
+        assert_eq!(
+            network.link_tags.get("P1_NEW").map(String::as_str),
+            Some("trunk")
+        );
+        assert!(!network.link_tags.contains_key("P1"));
+
+        let bytes = hydra::write_inp(&network);
+        let reparsed = hydra::io::parse(&bytes).unwrap();
+        assert!(reparsed.links.iter().any(|l| l.base.id == "P1_NEW"));
+        assert_eq!(reparsed.vertices.get("P1_NEW").map(Vec::len), Some(2));
+        assert_eq!(
+            reparsed.link_tags.get("P1_NEW").map(String::as_str),
+            Some("trunk")
+        );
+    }
+
+    #[test]
+    fn rename_element_uniqueness_is_per_namespace_not_shared() {
+        let mut network = hydra::io::parse(CASCADE_INP.as_bytes()).unwrap();
+        // Renaming a node onto another node's id fails.
+        assert!(rename_element_in_network(&mut network, "junction", "J1", "J2").is_err());
+        // Renaming a link onto another link's id fails.
+        assert!(rename_element_in_network(&mut network, "pipe", "P1", "P2").is_err());
+        // A node and a link MAY share an id — EPANET keeps node and link ids in
+        // separate namespaces, and the INP parser accepts it. So renaming a
+        // node onto a link's id is allowed. (Regression test: reusing an id the
+        // other namespace holds was wrongly rejected as "already in use".)
+        rename_element_in_network(&mut network, "junction", "J1", "P1").unwrap();
+        assert!(network.nodes.iter().any(|n| n.base.id == "P1"));
+        assert!(network.links.iter().any(|l| l.base.id == "P1"));
+        // Failed renames leave everything untouched; unknown element errors.
+        assert!(network.nodes.iter().any(|n| n.base.id == "J2"));
+        assert!(rename_element_in_network(&mut network, "junction", "NOPE", "X").is_err());
+        // Renaming to the current id is a no-op success.
+        rename_element_in_network(&mut network, "pipe", "P1", "P1").unwrap();
+        assert!(network.links.iter().any(|l| l.base.id == "P1"));
+    }
+
+    #[test]
+    fn rename_curve_cascades_to_every_reference_kind() {
+        let mut network = hydra::io::parse(CASCADE_INP.as_bytes()).unwrap();
+        network.curves.push(hydra::Curve {
+            id: "C1".into(),
+            kind: hydra::CurveKind::PumpHead,
+            points: vec![hydra::CurvePoint { x: 0.0, y: 1.0 }],
+        });
+        // Reference C1 from a tank volume curve, a pump (head + efficiency),
+        // and a GPV valve.
+        for n in network.nodes.iter_mut() {
+            if let hydra::NodeKind::Tank(t) = &mut n.kind {
+                t.volume_curve = Some("C1".into());
+            }
+        }
+        let (r1, j1, j2) = {
+            let idx = |id: &str| {
+                network
+                    .nodes
+                    .iter()
+                    .find(|n| n.base.id == id)
+                    .unwrap()
+                    .base
+                    .index
+            };
+            (idx("R1"), idx("J1"), idx("J2"))
+        };
+        network.links.push(hydra::Link {
+            base: hydra::LinkBase {
+                id: "PUMP1".into(),
+                index: network.links.len() + 1,
+                from_node: r1,
+                to_node: j1,
+                initial_status: hydra::LinkStatus::Open,
+                initial_setting: None,
+            },
+            kind: hydra::LinkKind::Pump(hydra::Pump {
+                curve_type: hydra::PumpCurveType::Custom,
+                head_curve: Some("C1".into()),
+                power: None,
+                efficiency_curve: Some("C1".into()),
+                default_efficiency: 0.75,
+                speed_pattern: None,
+                energy_price: None,
+                price_pattern: None,
+            }),
+        });
+        network.links.push(hydra::Link {
+            base: hydra::LinkBase {
+                id: "V1".into(),
+                index: network.links.len() + 1,
+                from_node: j1,
+                to_node: j2,
+                initial_status: hydra::LinkStatus::Open,
+                initial_setting: Some(0.0),
+            },
+            kind: hydra::LinkKind::Valve(hydra::Valve {
+                valve_type: hydra::ValveType::Gpv,
+                diameter: 1.0,
+                minor_loss: 0.0,
+                curve: Some("C1".into()),
+            }),
+        });
+
+        rename_curve_in_network(&mut network, "C1", "CURVE_A").unwrap();
+
+        assert!(network.curves.iter().any(|c| c.id == "CURVE_A"));
+        assert!(!network.curves.iter().any(|c| c.id == "C1"));
+        let tank_curve = network.nodes.iter().find_map(|n| match &n.kind {
+            hydra::NodeKind::Tank(t) => t.volume_curve.clone(),
+            _ => None,
+        });
+        assert_eq!(tank_curve.as_deref(), Some("CURVE_A"));
+        let pump = network.links.iter().find(|l| l.base.id == "PUMP1").unwrap();
+        if let hydra::LinkKind::Pump(p) = &pump.kind {
+            assert_eq!(p.head_curve.as_deref(), Some("CURVE_A"));
+            assert_eq!(p.efficiency_curve.as_deref(), Some("CURVE_A"));
+        } else {
+            panic!("PUMP1 is a pump");
+        }
+        let valve = network.links.iter().find(|l| l.base.id == "V1").unwrap();
+        if let hydra::LinkKind::Valve(v) = &valve.kind {
+            assert_eq!(v.curve.as_deref(), Some("CURVE_A"));
+        } else {
+            panic!("V1 is a valve");
+        }
+
+        // Collision + not-found guards.
+        network.curves.push(hydra::Curve {
+            id: "C2".into(),
+            kind: hydra::CurveKind::PumpHead,
+            points: vec![hydra::CurvePoint { x: 0.0, y: 1.0 }],
+        });
+        assert!(rename_curve_in_network(&mut network, "CURVE_A", "C2").is_err());
+        assert!(rename_curve_in_network(&mut network, "NOPE", "X").is_err());
     }
 }

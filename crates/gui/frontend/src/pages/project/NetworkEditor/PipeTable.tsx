@@ -7,6 +7,7 @@ import {
   useUnitSystem,
 } from "../../../units";
 import { PIPE_STATUS_OPTIONS, pipeStatusPatchValue } from "./pipeStatus";
+import { ActionsTh, type RowAction, RowActionsCell } from "./RowActionsCell";
 import {
   EditableCell,
   RefInputCell,
@@ -18,7 +19,7 @@ import {
 } from "./TablePrimitives";
 import { shouldUseRefDatalist } from "./tableSearch";
 
-const COL_COUNT = 7;
+const COL_COUNT = 8;
 
 /** Single shared datalist id for every node-reference input in this table. */
 const NODE_LIST_ID = "pipe-node-options";
@@ -36,6 +37,7 @@ export function PipeTable({
   pendingRowIds,
   discardGen,
   scrollContainerRef,
+  onRowAction,
 }: {
   rows: PipeRow[];
   sortField: string;
@@ -54,6 +56,7 @@ export function PipeTable({
   pendingRowIds?: Set<string>;
   discardGen: number;
   scrollContainerRef: React.RefObject<HTMLDivElement | null>;
+  onRowAction: (action: RowAction, kind: string, id: string) => void;
 }) {
   const sys = useUnitSystem();
   const tdStyle: React.CSSProperties = {
@@ -139,6 +142,7 @@ export function PipeTable({
               sortAsc={sortAsc}
               onSort={onSort}
             />
+            <ActionsTh />
           </tr>
         </thead>
         <tbody>
@@ -304,6 +308,14 @@ export function PipeTable({
                       pipeStatusPatchValue(v as PipeInitialStatus),
                     )
                   }
+                />
+                <RowActionsCell
+                  kind="pipe"
+                  id={row.id}
+                  isSelected={isSelected}
+                  pendingKeys={pendingKeys}
+                  pendingRowIds={pendingRowIds}
+                  onAction={onRowAction}
                 />
               </tr>
             );

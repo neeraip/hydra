@@ -1270,3 +1270,14 @@ select:focus-visible {
   /* biome-ignore lint/complexity/noImportantStyles: the button carries an inline `background: transparent`, which only !important can override on hover. */
   background: var(--nav-hover) !important;
 }
+
+/* Element-table per-row actions (Show on map / Rename / Delete): hidden by
+   default, revealed on row hover, and always visible on the selected row. */
+.ne-row-actions {
+  opacity: 0;
+  transition: opacity var(--t-fast);
+}
+tr:hover .ne-row-actions,
+.ne-row-actions.is-visible {
+  opacity: 1;
+}

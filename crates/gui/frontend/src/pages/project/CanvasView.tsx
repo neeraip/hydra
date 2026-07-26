@@ -49,6 +49,7 @@ import {
   recreateSpecsForDelete,
   stackKey,
 } from "../../hooks/undoStack";
+import { useElementRename } from "../../hooks/useElementRename";
 import { useReducedMotion } from "../../hooks/useReducedMotion";
 import { CanvasErrorBoundary } from "./CanvasView/CanvasErrorBoundary";
 import { CanvasToolbar } from "./CanvasView/CanvasToolbar";
@@ -118,6 +119,7 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
     activeScenarioId,
     openCrsModal,
     setProjectView,
+    focusInEditor,
     projectView,
     railOpen,
     commandPaletteOpen,
@@ -125,6 +127,7 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
   } = useAppState();
   const { project } = useActiveProject();
   const { markEdited } = useNetworkVersion();
+  const renameElementFlow = useElementRename();
   const simParams = useSimParams(project?.id);
   const {
     selectedNodeId,
@@ -960,6 +963,20 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
     // No bumpNetwork(): backend event already bumps (see handleNodeMoved).
   }, [pendingDelete, project, activeScenarioId, markEdited, clearSelection]);
 
+  const handleRenameElement = useCallback(
+    async (kind: string, oldId: string, rawNewId: string) => {
+      const ok = await renameElementFlow(kind, oldId, rawNewId);
+      if (!ok) return;
+      // Keep the renamed element selected under its new id (the backend
+      // `network-changed` event drives the refetch that repopulates it).
+      const newId = rawNewId.trim();
+      if (kind === "pipe" || kind === "pump" || kind === "valve")
+        selectLink(newId);
+      else selectNode(newId);
+    },
+    [renameElementFlow, selectNode, selectLink],
+  );
+
   // ── Node / link ID suggestion ─────────────────────────────────────────────
   // Generates a short unique ID by finding the first gap in the existing IDs.
   // Accepts the node kind ("junction" | "reservoir" | "tank") and picks the
@@ -1394,9 +1411,9 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
               <NodeInspector
                 node={stableSelectedNode}
                 onClose={clearSelection}
-                onOpenInEditor={() => {
-                  setProjectView("editor");
-                }}
+                onOpenInEditor={() =>
+                  focusInEditor(stableSelectedNode.type, stableSelectedNode.id)
+                }
                 onZoomTo={() =>
                   setFlyToState((s) => ({
                     nodeId: selectedNodeId,
@@ -1410,6 +1427,13 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
                     kind: stableSelectedNode.type,
                     id: stableSelectedNode.id,
                   })
+                }
+                onRename={(newId) =>
+                  handleRenameElement(
+                    stableSelectedNode.type,
+                    stableSelectedNode.id,
+                    newId,
+                  )
                 }
                 onOpenPattern={() => {
                   setProjectView("editor");
@@ -1427,9 +1451,9 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
               <LinkInspector
                 link={stableSelectedLink}
                 onClose={clearSelection}
-                onOpenInEditor={() => {
-                  setProjectView("editor");
-                }}
+                onOpenInEditor={() =>
+                  focusInEditor(stableSelectedLink.type, stableSelectedLink.id)
+                }
                 onZoomTo={() =>
                   setFlyToState((s) => ({
                     nodeId: null,
@@ -1443,6 +1467,13 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
                     kind: stableSelectedLink.type,
                     id: stableSelectedLink.id,
                   })
+                }
+                onRename={(newId) =>
+                  handleRenameElement(
+                    stableSelectedLink.type,
+                    stableSelectedLink.id,
+                    newId,
+                  )
                 }
                 onLocateNode={(id) => {
                   if (nodeMap.has(id)) selectNode(id);

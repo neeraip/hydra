@@ -6,6 +6,7 @@ import {
   unitLabel,
   useUnitSystem,
 } from "../../../units";
+import { ActionsTh, type RowAction, RowActionsCell } from "./RowActionsCell";
 import {
   EditableCell,
   SortTh,
@@ -13,7 +14,7 @@ import {
   VirtualSpacerRow,
 } from "./TablePrimitives";
 
-const COL_COUNT = 5;
+const COL_COUNT = 6;
 
 export function ReservoirTable({
   rows,
@@ -27,6 +28,7 @@ export function ReservoirTable({
   pendingRowIds,
   discardGen,
   scrollContainerRef,
+  onRowAction,
 }: {
   rows: ReservoirRow[];
   sortField: string;
@@ -44,6 +46,7 @@ export function ReservoirTable({
   pendingRowIds?: Set<string>;
   discardGen: number;
   scrollContainerRef: React.RefObject<HTMLDivElement | null>;
+  onRowAction: (action: RowAction, kind: string, id: string) => void;
 }) {
   const sys = useUnitSystem();
   const tdStyle: React.CSSProperties = {
@@ -99,6 +102,7 @@ export function ReservoirTable({
             onSort={onSort}
             align="right"
           />
+          <ActionsTh />
         </tr>
       </thead>
       <tbody>
@@ -204,6 +208,14 @@ export function ReservoirTable({
                 onCommit={(v) =>
                   onPatch("reservoir", row.id, "y", parseFloat(v))
                 }
+              />
+              <RowActionsCell
+                kind="reservoir"
+                id={row.id}
+                isSelected={isSelected}
+                pendingKeys={pendingKeys}
+                pendingRowIds={pendingRowIds}
+                onAction={onRowAction}
               />
             </tr>
           );

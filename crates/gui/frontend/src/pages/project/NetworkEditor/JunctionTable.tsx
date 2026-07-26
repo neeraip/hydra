@@ -6,6 +6,7 @@ import {
   unitLabel,
   useUnitSystem,
 } from "../../../units";
+import { ActionsTh, type RowAction, RowActionsCell } from "./RowActionsCell";
 import {
   EditableCell,
   SortTh,
@@ -13,7 +14,7 @@ import {
   VirtualSpacerRow,
 } from "./TablePrimitives";
 
-const COL_COUNT = 5;
+const COL_COUNT = 6;
 
 export function JunctionTable({
   rows,
@@ -27,6 +28,7 @@ export function JunctionTable({
   pendingRowIds,
   discardGen,
   scrollContainerRef,
+  onRowAction,
 }: {
   rows: JunctionRow[];
   sortField: string;
@@ -44,6 +46,7 @@ export function JunctionTable({
   pendingRowIds?: Set<string>;
   discardGen: number;
   scrollContainerRef: React.RefObject<HTMLDivElement | null>;
+  onRowAction: (action: RowAction, kind: string, id: string) => void;
 }) {
   const sys = useUnitSystem();
   const tdStyle: React.CSSProperties = {
@@ -100,6 +103,7 @@ export function JunctionTable({
             onSort={onSort}
             align="right"
           />
+          <ActionsTh />
         </tr>
       </thead>
       <tbody>
@@ -226,6 +230,14 @@ export function JunctionTable({
                 onCommit={(v) =>
                   onPatch("junction", row.id, "y", parseFloat(v))
                 }
+              />
+              <RowActionsCell
+                kind="junction"
+                id={row.id}
+                isSelected={isSelected}
+                pendingKeys={pendingKeys}
+                pendingRowIds={pendingRowIds}
+                onAction={onRowAction}
               />
             </tr>
           );

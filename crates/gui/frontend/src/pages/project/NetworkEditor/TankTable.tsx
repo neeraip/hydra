@@ -6,6 +6,7 @@ import {
   unitLabel,
   useUnitSystem,
 } from "../../../units";
+import { ActionsTh, type RowAction, RowActionsCell } from "./RowActionsCell";
 import {
   EditableCell,
   SortTh,
@@ -13,7 +14,7 @@ import {
   VirtualSpacerRow,
 } from "./TablePrimitives";
 
-const COL_COUNT = 9;
+const COL_COUNT = 10;
 
 export function TankTable({
   rows,
@@ -27,6 +28,7 @@ export function TankTable({
   pendingRowIds,
   discardGen,
   scrollContainerRef,
+  onRowAction,
 }: {
   rows: TankRow[];
   sortField: string;
@@ -44,6 +46,7 @@ export function TankTable({
   pendingRowIds?: Set<string>;
   discardGen: number;
   scrollContainerRef: React.RefObject<HTMLDivElement | null>;
+  onRowAction: (action: RowAction, kind: string, id: string) => void;
 }) {
   const sys = useUnitSystem();
   const tdStyle: React.CSSProperties = {
@@ -134,6 +137,7 @@ export function TankTable({
             onSort={onSort}
             align="right"
           />
+          <ActionsTh />
         </tr>
       </thead>
       <tbody>
@@ -329,6 +333,14 @@ export function TankTable({
                 isPending={pendingKeys.has(`tank:${row.id}:y`)}
                 inputType="number"
                 onCommit={(v) => onPatch("tank", row.id, "y", parseFloat(v))}
+              />
+              <RowActionsCell
+                kind="tank"
+                id={row.id}
+                isSelected={isSelected}
+                pendingKeys={pendingKeys}
+                pendingRowIds={pendingRowIds}
+                onAction={onRowAction}
               />
             </tr>
           );

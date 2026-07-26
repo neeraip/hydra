@@ -8,6 +8,7 @@ import {
   unitLabel,
   useUnitSystem,
 } from "../../../units";
+import { ActionsTh, type RowAction, RowActionsCell } from "./RowActionsCell";
 import {
   EditableCell,
   RefInputCell,
@@ -20,7 +21,7 @@ import { shouldUseRefDatalist } from "./tableSearch";
 
 export const VALVE_TYPES = ["PRV", "PSV", "FCV", "TCV", "GPV", "PBV", "PCV"];
 
-const COL_COUNT = 6;
+const COL_COUNT = 7;
 
 /** Single shared datalist id for every node-reference input in this table. */
 const NODE_LIST_ID = "valve-node-options";
@@ -38,6 +39,7 @@ export function ValveTable({
   pendingRowIds,
   discardGen,
   scrollContainerRef,
+  onRowAction,
 }: {
   rows: ValveRow[];
   sortField: string;
@@ -56,6 +58,7 @@ export function ValveTable({
   pendingRowIds?: Set<string>;
   discardGen: number;
   scrollContainerRef: React.RefObject<HTMLDivElement | null>;
+  onRowAction: (action: RowAction, kind: string, id: string) => void;
 }) {
   const sys = useUnitSystem();
   const tdStyle: React.CSSProperties = {
@@ -137,6 +140,7 @@ export function ValveTable({
               onSort={onSort}
               align="right"
             />
+            <ActionsTh />
           </tr>
         </thead>
         <tbody>
@@ -358,6 +362,14 @@ export function ValveTable({
                     }
                   />
                 )}
+                <RowActionsCell
+                  kind="valve"
+                  id={row.id}
+                  isSelected={isSelected}
+                  pendingKeys={pendingKeys}
+                  pendingRowIds={pendingRowIds}
+                  onAction={onRowAction}
+                />
               </tr>
             );
           })}

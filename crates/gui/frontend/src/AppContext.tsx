@@ -71,6 +71,10 @@ interface AppState {
   navHistory: NavLocation[];
   /** Index of the currently visible location in navHistory. */
   navCursor: number;
+  /** Pending request to reveal a specific element in the Network Editor
+   *  (set by "Open in editor" from the canvas inspector). `nonce` bumps on
+   *  every request so the editor re-runs the jump even for the same id. */
+  editorFocus: { kind: string; id: string; nonce: number } | null;
 }
 
 interface AppActions {
@@ -80,6 +84,9 @@ interface AppActions {
   networkLoadFailure: string | null;
   setPage: (page: Page) => void;
   setProjectView: (view: ProjectView) => void;
+  /** Navigate to the Network Editor and reveal `id` (scroll + select its row).
+   *  `kind` is the element kind ("junction" | "pipe" | …). */
+  focusInEditor: (kind: string, id: string) => void;
   /** Open/switch to a project. Pass `view` to land on a specific tab (the
    *  ProjectSwitcher passes the current view to preserve it across a switch);
    *  omit it to resume the project's last-active tab. */
@@ -276,6 +283,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         },
       ],
       navCursor: 0,
+      editorFocus: null,
     };
     // Session restore: launch straight into the last-open project. The
     // network-load effect keys on activeProjectId, so seeding it here loads
@@ -582,6 +590,37 @@ export function AppProvider({ children }: { children: ReactNode }) {
         ? readRailOpen(prev.activeProjectId)
         : prev.railOpen;
       return { ...prev, ...nav, projectView: view, railOpen };
+    });
+  }, []);
+
+  const focusInEditor = useCallback((kind: string, id: string) => {
+    setS((prev) => {
+      const nonce = (prev.editorFocus?.nonce ?? 0) + 1;
+      const focus = { kind, id, nonce };
+      // Already on the editor: just bump the focus request (do NOT toggle the
+      // rail the way setProjectView("editor") would).
+      if (prev.page === "project" && prev.projectView === "editor") {
+        return { ...prev, editorFocus: focus };
+      }
+      if (prev.activeProjectId) {
+        localStorage.setItem(projectViewKey(prev.activeProjectId), "editor");
+      }
+      const nav = pushNav(prev, {
+        page: prev.page,
+        projectView: "editor",
+        activeProjectId: prev.activeProjectId,
+        activeScenarioId: prev.activeScenarioId,
+      });
+      const railOpen = prev.activeProjectId
+        ? readRailOpen(prev.activeProjectId)
+        : prev.railOpen;
+      return {
+        ...prev,
+        ...nav,
+        projectView: "editor",
+        railOpen,
+        editorFocus: focus,
+      };
     });
   }, []);
 
@@ -928,6 +967,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       networkLoadFailure,
       setPage,
       setProjectView,
+      focusInEditor,
       openProject,
       closeProject,
       toggleRail,
@@ -968,6 +1008,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       networkLoadFailure,
       setPage,
       setProjectView,
+      focusInEditor,
       openProject,
       closeProject,
       toggleRail,
