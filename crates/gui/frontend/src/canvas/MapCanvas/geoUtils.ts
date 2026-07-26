@@ -1,4 +1,6 @@
-import maplibregl from "maplibre-gl";
+// maplibre-gl 6 dropped its default export; the namespace import keeps
+// every `maplibregl.X` usage unchanged.
+import * as maplibregl from "maplibre-gl";
 import type { Node } from "../../hooks";
 
 /** Bounding box of all node coordinates. Returns null when nodes is empty. */
