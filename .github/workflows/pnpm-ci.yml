@@ -66,3 +66,9 @@ jobs:
 
       - name: Run tests
         run: pnpm test
+
+      # Per-PR advisory gate — the standalone PNPM Audit workflow only runs
+      # on a schedule (time-based advisories), mirroring the cargo split
+      # where cargo-deny covers PRs inside Cargo Lint.
+      - name: Audit dependencies
+        run: pnpm audit --audit-level=high

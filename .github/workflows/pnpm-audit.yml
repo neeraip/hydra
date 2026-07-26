@@ -1,7 +1,9 @@
 name: PNPM Audit
 
+# Not run per-PR: PNPM CI runs `pnpm audit` on every pull request; this
+# workflow exists for time-based advisories (published against deps already
+# on main), mirroring the cargo-audit arrangement.
 on:
-  pull_request:
   workflow_dispatch:
   # Weekly safety net: catch toolchain/registry drift during push-quiet weeks.
   schedule:
