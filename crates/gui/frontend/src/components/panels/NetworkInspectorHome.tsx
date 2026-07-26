@@ -295,13 +295,15 @@ function NodesTab({
                 />
               </th>
             )}
+            {/* Badge column: the cells are self-labelling, so the header is
+                just the sort affordance — the "Type" text was wider than the
+                40px column itself. */}
             <th
-              style={TH}
+              style={{ ...TH, textAlign: "center", padding: "5px 4px" }}
               onClick={() => toggleSort("type")}
-              data-tooltip="Element type"
+              data-tooltip="Element type — click to sort"
               data-tooltip-pos="bottom"
             >
-              Type
               <SortIndicator col="type" sortCol={sortCol} sortDir={sortDir} />
             </th>
             {onZoomTo && <th style={TH} />}
@@ -569,13 +571,15 @@ function LinksTab({
                 <SortIndicator col="flow" sortCol={sortCol} sortDir={sortDir} />
               </th>
             )}
+            {/* Badge column: the cells are self-labelling, so the header is
+                just the sort affordance — the "Type" text was wider than the
+                40px column itself. */}
             <th
-              style={TH}
+              style={{ ...TH, textAlign: "center", padding: "5px 4px" }}
               onClick={() => toggleSort("type")}
-              data-tooltip="Element type"
+              data-tooltip="Element type — click to sort"
               data-tooltip-pos="bottom"
             >
-              Type
               <SortIndicator col="type" sortCol={sortCol} sortDir={sortDir} />
             </th>
             {onZoomTo && <th style={TH} />}
