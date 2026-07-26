@@ -238,12 +238,15 @@ function NodesTab({
           tableLayout: "fixed",
         }}
       >
+        {/* Fixed table layout for scroll-stable, measurement-free columns
+            (the list is virtualized); only the intrinsically-sized columns
+            are pinned — the ID/data columns share the remaining rail width. */}
         <colgroup>
-          <col style={{ width: 64 }} />
+          <col />
           <col style={{ width: 40 }} />
-          <col style={{ width: 58 }} />
-          <col style={{ width: 58 }} />
-          {hasResults && <col style={{ width: 48 }} />}
+          <col />
+          <col />
+          {hasResults && <col />}
           {onZoomTo && <col style={{ width: 22 }} />}
         </colgroup>
         <thead>
@@ -487,12 +490,14 @@ function LinksTab({
           tableLayout: "fixed",
         }}
       >
+        {/* Same scheme as the nodes table: fixed layout, pinned narrow
+            columns, flexing ID/data columns. */}
         <colgroup>
-          <col style={{ width: 60 }} />
+          <col />
           <col style={{ width: 40 }} />
           <col style={{ width: 36 }} />
-          <col style={{ width: 52 }} />
-          {hasResults && <col style={{ width: 52 }} />}
+          <col />
+          {hasResults && <col />}
           {onZoomTo && <col style={{ width: 22 }} />}
         </colgroup>
         <thead>
