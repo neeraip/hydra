@@ -1394,27 +1394,44 @@ export const MapCanvas = memo(function MapCanvas({
       }
     });
 
+    // Fires once for the initial style and again on every basemap switch.
+    let firstStyleLoad = true;
     map.on("style.load", () => {
-      // setStyle tears down style-owned layers/sources. Reattach and reapply
-      // the deck overlay so network features remain visible after basemap switches.
-      const overlay = overlayRef.current;
-      if (overlay) {
-        try {
-          map.removeControl(overlay);
-        } catch {
-          /* ignore */
+      const isInitialLoad = firstStyleLoad;
+      firstStyleLoad = false;
+
+      if (isInitialLoad) {
+        // Initial load: reattach the overlay (harmless if already attached)
+        // and fit the viewport to the network once the style is ready.
+        const overlay = overlayRef.current;
+        if (overlay) {
+          try {
+            map.removeControl(overlay);
+          } catch {
+            /* ignore */
+          }
+          try {
+            map.addControl(overlay);
+          } catch {
+            /* ignore */
+          }
         }
-        try {
-          map.addControl(overlay);
-        } catch {
-          /* ignore */
+        if (isActiveRef.current && viewModeRef.current === "map") {
+          overlayRef.current?.setProps({ layers: buildLayersRef.current() });
+          markFirstFrame("map");
         }
+        fitMapExtents(nodesRef.current, map);
+        return;
       }
+
+      // Basemap switch: the deck overlay is non-interleaved — its canvas
+      // lives outside the style, so it survives setStyle untouched. The old
+      // remove/re-add dance here forced deck to rebuild and flash one frame
+      // with a desynced (zoomed-in) viewport, and the refit below yanked the
+      // user's pan/zoom back to the network extent. Just refresh the layers.
       if (isActiveRef.current && viewModeRef.current === "map") {
         overlayRef.current?.setProps({ layers: buildLayersRef.current() });
-        markFirstFrame("map");
       }
-      fitMapExtents(nodesRef.current, map);
     });
 
     const overlay = new MapboxOverlay({ layers: [], pickingRadius: 6 });
