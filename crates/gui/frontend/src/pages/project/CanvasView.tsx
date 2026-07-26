@@ -1,14 +1,11 @@
 import {
-  ArrowsPointingOutIcon,
   ArrowsRightLeftIcon,
   ChevronUpDownIcon,
   CursorArrowRaysIcon,
   EyeIcon,
   LinkIcon,
   MapPinIcon,
-  MinusIcon,
   PencilSquareIcon,
-  PlusIcon,
   XMarkIcon,
 } from "@heroicons/react/16/solid";
 import {
@@ -86,6 +83,7 @@ import { CanvasErrorBoundary } from "./CanvasView/CanvasErrorBoundary";
 import { CompareNoticePill } from "./CanvasView/CompareNoticePill";
 import { CoordStatusIndicator } from "./CanvasView/CoordStatusIndicator";
 import { InvalidCrsOverlay } from "./CanvasView/InvalidCrsOverlay";
+import { ViewportControls } from "./CanvasView/ViewportControls";
 
 const NODE_KIND_PREFIX: Record<string, string> = {
   junction: "J",
@@ -2264,74 +2262,13 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
             )}
 
             {/* Floating viewport controls */}
-            <div
-              className="canvas-toolbar"
-              style={{
-                position: "absolute",
-                right: 12,
-                bottom: 12,
-                zIndex: 11,
-                flexDirection: "column",
-                gap: 8,
-              }}
-            >
-              <div style={{ display: "flex", flexDirection: "column", gap: 0 }}>
-                <button
-                  type="button"
-                  className="tool-btn"
-                  onClick={() => setZoomInKey((k) => k + 1)}
-                  data-tooltip="Zoom in"
-                  data-tooltip-pos="left"
-                  aria-label="Zoom in"
-                  style={{
-                    borderBottomLeftRadius: 0,
-                    borderBottomRightRadius: 0,
-                  }}
-                >
-                  <PlusIcon style={ICON_14} />
-                </button>
-
-                <button
-                  type="button"
-                  className="tool-btn"
-                  onClick={() => setZoomOutKey((k) => k + 1)}
-                  data-tooltip="Zoom out"
-                  data-tooltip-pos="left"
-                  aria-label="Zoom out"
-                  style={{
-                    borderTopLeftRadius: 0,
-                    borderTopRightRadius: 0,
-                    marginTop: -1,
-                  }}
-                >
-                  <MinusIcon style={ICON_14} />
-                </button>
-              </div>
-
-              <button
-                type="button"
-                className="tool-btn"
-                onClick={() => setResetNorthKey((k) => k + 1)}
-                disabled={mapOnly}
-                data-tooltip={mapOnlyTooltip("Reset north")}
-                data-tooltip-pos="left"
-                aria-label="Reset north"
-                style={mapOnlyDim}
-              >
-                <ArrowsRightLeftIcon style={ICON_14} />
-              </button>
-
-              <button
-                type="button"
-                className="tool-btn"
-                onClick={() => setMapFitKey((k) => k + 1)}
-                data-tooltip="Fit network"
-                data-tooltip-pos="left"
-                aria-label="Fit network"
-              >
-                <ArrowsPointingOutIcon style={ICON_14} />
-              </button>
-            </div>
+            <ViewportControls
+              mapOnly={mapOnly}
+              onZoomIn={() => setZoomInKey((k) => k + 1)}
+              onZoomOut={() => setZoomOutKey((k) => k + 1)}
+              onResetNorth={() => setResetNorthKey((k) => k + 1)}
+              onFit={() => setMapFitKey((k) => k + 1)}
+            />
 
             {/* Inspector panel — node or link detail view */}
             {inspectorView === "node" && stableSelectedNode && (
