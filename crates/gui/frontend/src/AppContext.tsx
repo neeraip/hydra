@@ -391,12 +391,25 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // Reload NetworkState whenever the active project or scenario changes so that
   // `useNodes()` / `useLinks()` and the canvas automatically pick up the right INP.
   const { bumpNetwork } = useNetworkVersion();
-  const { primeNetworkData } = useNetworkData();
+  const { primeNetworkData, clearNetworkData } = useNetworkData();
+  // Which project the network store currently holds (or is loading) data for.
+  // Lets the load effect clear stale arrays exactly once per project switch —
+  // and NOT on scenario switches, where keeping the old geometry visible while
+  // the sibling scenario loads is deliberate.
+  const networkDataProjectRef = useRef<string | null>(null);
   useEffect(() => {
     if (!s.activeProjectId) return;
     let cancelled = false;
     const projectId = s.activeProjectId;
     const scenarioId = s.activeScenarioId;
+
+    // Project switch: drop the previous project's arrays immediately so no
+    // consumer (Overview composition, canvas, editor) renders the old
+    // network's data while this project's snapshot is still loading.
+    if (networkDataProjectRef.current !== projectId) {
+      networkDataProjectRef.current = projectId;
+      clearNetworkData();
+    }
 
     const delay = (ms: number) =>
       new Promise<void>((resolve) => {
@@ -492,6 +505,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     s.activeScenarioId,
     bumpNetwork,
     primeNetworkData,
+    clearNetworkData,
     showToast,
   ]);
 

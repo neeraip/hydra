@@ -37,6 +37,10 @@ interface NetworkDataCtx {
   summary: NetworkSummary;
   loading: boolean;
   primeNetworkData: (snapshot: NetworkSnapshotDto) => void;
+  /** Drop the held network and enter the loading state. Called on project
+   * switch so consumers never render the previous project's data while the
+   * next snapshot (seconds, on large networks) is still loading. */
+  clearNetworkData: () => void;
 }
 
 interface NetworkSnapshotDto {
@@ -195,6 +199,7 @@ const Ctx = createContext<NetworkDataCtx>({
   summary: EMPTY_SUMMARY,
   loading: false,
   primeNetworkData: () => {},
+  clearNetworkData: () => {},
 });
 
 export function NetworkDataProvider({ children }: { children: ReactNode }) {
@@ -222,6 +227,15 @@ export function NetworkDataProvider({ children }: { children: ReactNode }) {
     setNodes(normalizeNodes(snapshot.nodes));
     setLinks(snapshot.links);
     setLoading(false);
+  }, []);
+
+  // Drop the held arrays and enter the loading state. Deliberately leaves the
+  // fetch bookkeeping refs alone: the project-switch load that follows ends in
+  // a `primeNetworkData`, which resets them itself.
+  const clearNetworkData = useCallback(() => {
+    setNodes([]);
+    setLinks([]);
+    setLoading(true);
   }, []);
 
   // Apply single-element deltas from `network-changed` events in place.
@@ -343,8 +357,15 @@ export function NetworkDataProvider({ children }: { children: ReactNode }) {
   const summary = useMemo(() => summarizeNetwork(nodes, links), [links, nodes]);
 
   const value = useMemo(
-    () => ({ nodes, links, summary, loading, primeNetworkData }),
-    [links, loading, nodes, primeNetworkData, summary],
+    () => ({
+      nodes,
+      links,
+      summary,
+      loading,
+      primeNetworkData,
+      clearNetworkData,
+    }),
+    [links, loading, nodes, primeNetworkData, clearNetworkData, summary],
   );
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
