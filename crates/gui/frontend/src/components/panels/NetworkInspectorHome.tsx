@@ -30,10 +30,17 @@ function useSortedFiltered<T>(
   const [sortDir, setSortDir] = useState<SortDir>("asc");
   const lastTraceKeyRef = useRef<string>("");
 
+  // Tri-state: first click sorts ascending, second descending, third clears
+  // the sort entirely — restoring the network's natural (file) order, which
+  // is not necessarily ID order.
   function toggleSort(col: string) {
-    if (sortCol === col) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
-    else {
+    if (sortCol !== col) {
       setSortCol(col);
+      setSortDir("asc");
+    } else if (sortDir === "asc") {
+      setSortDir("desc");
+    } else {
+      setSortCol(null);
       setSortDir("asc");
     }
   }

@@ -201,11 +201,16 @@ export function ElementsEditor({
     setSelectedId(null);
   };
 
+  // Tri-state: ascending → descending → unsorted (the network's natural
+  // file order), matching the rail's network-list sorting.
   const handleSort = (field: string) => {
-    if (field === sortField) {
-      setSortAsc((prev) => !prev);
-    } else {
+    if (field !== sortField) {
       setSortField(field);
+      setSortAsc(true);
+    } else if (sortAsc) {
+      setSortAsc(false);
+    } else {
+      setSortField(null);
       setSortAsc(true);
     }
   };
