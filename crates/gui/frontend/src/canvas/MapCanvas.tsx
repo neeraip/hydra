@@ -11,7 +11,9 @@ import {
   TextLayer,
 } from "@deck.gl/layers";
 import { MapboxOverlay } from "@deck.gl/mapbox";
-import maplibregl from "maplibre-gl";
+// maplibre-gl 6 dropped its default export; the namespace import keeps
+// every `maplibregl.X` usage unchanged.
+import * as maplibregl from "maplibre-gl";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Link, Node, PeriodResults } from "../hooks";
 import { startPerfSpan } from "../perfTrace";
