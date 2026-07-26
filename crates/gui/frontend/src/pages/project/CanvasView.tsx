@@ -4,7 +4,6 @@ import {
   ChevronUpDownIcon,
   CursorArrowRaysIcon,
   EyeIcon,
-  GlobeAltIcon,
   LinkIcon,
   MapPinIcon,
   MinusIcon,
@@ -84,7 +83,9 @@ import {
 } from "../../hooks/undoStack";
 import { useReducedMotion } from "../../hooks/useReducedMotion";
 import { CanvasErrorBoundary } from "./CanvasView/CanvasErrorBoundary";
+import { CompareNoticePill } from "./CanvasView/CompareNoticePill";
 import { CoordStatusIndicator } from "./CanvasView/CoordStatusIndicator";
+import { InvalidCrsOverlay } from "./CanvasView/InvalidCrsOverlay";
 
 const NODE_KIND_PREFIX: Record<string, string> = {
   junction: "J",
@@ -1769,154 +1770,30 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
               !!stableResultMeta &&
               compareNotice &&
               !compareNoticeDismissed && (
-                <div
-                  style={{
-                    position: "absolute",
-                    top: 60,
-                    left: "50%",
-                    transform: "translateX(-50%)",
-                    zIndex: 25,
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 8,
-                    padding: "6px 10px",
-                    background: "var(--bg-card)",
-                    border: "1px solid var(--border)",
-                    borderRadius: 8,
-                    boxShadow: "var(--shadow-2)",
-                  }}
-                >
-                  <span
-                    style={{
-                      fontSize: 12,
-                      color: "var(--text-secondary)",
-                      fontFamily: "var(--font-ui)",
-                    }}
-                  >
-                    {compareNotice}
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => setCompareNoticeDismissed(true)}
-                    aria-label="Dismiss comparison notice"
-                    style={{
-                      border: "none",
-                      background: "transparent",
-                      cursor: "pointer",
-                      display: "inline-flex",
-                      padding: 2,
-                      color: "var(--text-tertiary)",
-                    }}
-                  >
-                    <XMarkIcon style={{ width: 12, height: 12 }} />
-                  </button>
-                </div>
+                <CompareNoticePill
+                  notice={compareNotice}
+                  onDismiss={() => setCompareNoticeDismissed(true)}
+                />
               )}
 
             {/* CRS alert — map mode only, shown when coordinates can't be
                 reprojected. Suppressed while a catalog proj4 def is still being
                 fetched for a persisted CRS (avoids a spurious cold-start flash). */}
             {viewMode === "map" && crsError && !crsResolving && (
-              <div
-                style={{
-                  position: "absolute",
-                  inset: 0,
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  pointerEvents: "none",
+              <InvalidCrsOverlay
+                // Auto-suggestion only makes sense for the out-of-range case
+                // (coords look projected while CRS is the EPSG:4326 default) —
+                // with a non-default CRS the error is a proj4 failure, not a
+                // wrong-guess situation.
+                showSuggest={sourceCrs === "EPSG:4326"}
+                onSetCrs={openCrsModal}
+                onSuggestCrs={() => {
+                  setPendingCrsSuggestionSample(
+                    pickCoordSample(rawPositionNodes),
+                  );
+                  openCrsModal();
                 }}
-              >
-                <div
-                  style={{
-                    display: "flex",
-                    flexDirection: "column",
-                    alignItems: "center",
-                    gap: 10,
-                    padding: "24px 28px",
-                    background: "var(--bg-card)",
-                    border: "1px solid var(--border)",
-                    borderRadius: 10,
-                    boxShadow: "0 4px 24px rgba(0,0,0,0.18)",
-                    maxWidth: 360,
-                    textAlign: "center",
-                  }}
-                >
-                  <GlobeAltIcon
-                    style={{
-                      width: 30,
-                      height: 30,
-                      color: "var(--text-tertiary)",
-                    }}
-                  />
-                  <span
-                    style={{
-                      fontSize: 14,
-                      fontWeight: 600,
-                      color: "var(--text-primary)",
-                      fontFamily: "var(--font-ui)",
-                    }}
-                  >
-                    Invalid coordinate reference system
-                  </span>
-                  <span
-                    style={{
-                      fontSize: 12,
-                      color: "var(--text-secondary)",
-                      fontFamily: "var(--font-ui)",
-                      lineHeight: 1.6,
-                    }}
-                  >
-                    Map view requires valid WGS84 coordinates. Set the correct
-                    source CRS to reproject the network, or switch to Schematic
-                    view.
-                  </span>
-                  <div style={{ display: "flex", gap: 8 }}>
-                    <button
-                      type="button"
-                      className="tool-btn"
-                      onClick={openCrsModal}
-                      style={{
-                        pointerEvents: "auto",
-                        // .tool-btn is a fixed 30×30 icon button; these are text
-                        // CTAs, so size to content and give them a border.
-                        width: "auto",
-                        border: "1px solid var(--border)",
-                        padding: "0 12px",
-                        fontSize: 12,
-                      }}
-                    >
-                      Set source CRS
-                    </button>
-                    {/* Auto-suggestion only makes sense for the out-of-range
-                      case (coords look projected while CRS is the EPSG:4326
-                      default) — with a non-default CRS the error is a proj4
-                      failure, not a wrong-guess situation. */}
-                    {sourceCrs === "EPSG:4326" && (
-                      <button
-                        type="button"
-                        className="tool-btn"
-                        onClick={() => {
-                          setPendingCrsSuggestionSample(
-                            pickCoordSample(rawPositionNodes),
-                          );
-                          openCrsModal();
-                        }}
-                        style={{
-                          pointerEvents: "auto",
-                          // See "Set source CRS" — size to content, not 30×30.
-                          width: "auto",
-                          border: "1px solid var(--border)",
-                          padding: "0 12px",
-                          fontSize: 12,
-                        }}
-                      >
-                        Suggest CRS…
-                      </button>
-                    )}
-                  </div>
-                </div>
-              </div>
+              />
             )}
 
             {/* Legacy SVG annotation overlays (schematic mode only).
