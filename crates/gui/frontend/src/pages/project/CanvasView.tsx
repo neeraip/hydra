@@ -5,13 +5,8 @@ import { AnnotationSummary, MeasureOverlay } from "../../canvas/Annotations";
 import type { BasemapStyle } from "../../canvas/Basemap";
 import { computeDeltas } from "../../canvas/compare";
 import {
-  ensureEpsgDef,
   haversineMeters,
-  normalizeEpsgCode,
   pickCoordSample,
-  registerCustomCrsDefinitions,
-  reprojectLinkVerticesCached,
-  reprojectNodesCached,
   setPendingCrsSuggestionSample,
   wgs84ToSourceCrs,
 } from "../../canvas/coords";
@@ -19,7 +14,6 @@ import { Legend, type LegendThresholds } from "../../canvas/Legend";
 import { MapCanvas } from "../../canvas/MapCanvas";
 import { CurrentPeriodProvider } from "../../canvas/period-context";
 import { useCanvasSelection } from "../../canvas/selection-context";
-import { useCanvasStatus } from "../../canvas/status-context";
 import { Timeline } from "../../canvas/Timeline";
 import type {
   CanvasTool,
@@ -44,7 +38,6 @@ import {
   createNode,
   deleteElement,
   getPeriodResults,
-  listCrsCatalogPage,
   loadResultMeta,
   type PeriodResults,
   patchNodePosition,
@@ -66,6 +59,7 @@ import { CanvasErrorBoundary } from "./CanvasView/CanvasErrorBoundary";
 import { CanvasToolbar } from "./CanvasView/CanvasToolbar";
 import { CompareNoticePill } from "./CanvasView/CompareNoticePill";
 import { InvalidCrsOverlay } from "./CanvasView/InvalidCrsOverlay";
+import { useCrsReprojection } from "./CanvasView/useCrsReprojection";
 import { ViewportControls } from "./CanvasView/ViewportControls";
 
 const NODE_KIND_PREFIX: Record<string, string> = {
@@ -146,7 +140,6 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
   const { project } = useActiveProject();
   const { markEdited } = useNetworkVersion();
   const simParams = useSimParams(project?.id);
-  const { setCoordStatus } = useCanvasStatus();
   const {
     selectedNodeId,
     selectedLinkId,
@@ -849,189 +842,23 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
     return opts;
   }, [scenarios, activeScenarioId]);
   // ── CRS reprojection ────────────────────────────────────────────────────
-  // EPANET [COORDINATES] carry no CRS tag. We default to WGS84 (pass-through).
-  // When the user sets a different source CRS we reproject the raw x/y to
-  // WGS84 before passing them to MapCanvas. Schematic mode uses the BFS layout
-  // so it is never affected by CRS — only geo/map mode needs this.
-  // Initialise from the persisted project value so the reprojection survives
-  // session restarts. Falls back to WGS84 for draft projects (project is null).
-  const [sourceCrs, setSourceCrs] = useState<string>(
-    project?.sourceCrs ?? "EPSG:4326",
-  );
-  const [crsError, setCrsError] = useState<string | null>(null);
-
-  // Keep sourceCrs in sync if the project row changes (e.g. loaded from disk
-  // while the canvas is already open).
-  useEffect(() => {
-    setSourceCrs(project?.sourceCrs ?? "EPSG:4326");
-  }, [project?.sourceCrs]);
-
-  // Ensure a proj4 definition exists for a projected source CRS before the
-  // reprojection memo runs. On a cold start only baseline (4326/3857) and
-  // auto-generatable (UTM/MGA) codes are known up front; a catalog EPSG like a
-  // state-plane zone has no def until the CRS modal fetches it. Without this, a
-  // persisted non-WGS84 CRS would fail to reproject after a restart and surface
-  // a spurious "Invalid coordinate reference system" popup. Look the code up in
-  // the catalog, register it, and bump a version so the memo re-runs.
-  const [crsDefsVersion, setCrsDefsVersion] = useState(0);
-  const [crsResolving, setCrsResolving] = useState(false);
-  useEffect(() => {
-    // ensureEpsgDef registers baseline/UTM/MGA defs as a side effect and
-    // returns true when the code is (now) usable — nothing more to do.
-    if (sourceCrs === "EPSG:4326" || ensureEpsgDef(sourceCrs)) {
-      setCrsResolving(false);
-      return;
-    }
-    let cancelled = false;
-    setCrsResolving(true);
-    void (async () => {
-      try {
-        const page = await listCrsCatalogPage({
-          query: sourceCrs,
-          page: 0,
-          pageSize: 100,
-        });
-        if (cancelled) return;
-        const entry = page.items.find(
-          (e) => normalizeEpsgCode(e.epsg) === sourceCrs,
-        );
-        if (entry?.proj4?.trim()) {
-          registerCustomCrsDefinitions([entry]);
-          // Re-run the reprojection memo now that the def is registered.
-          setCrsDefsVersion((v) => v + 1);
-        }
-      } finally {
-        if (!cancelled) setCrsResolving(false);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [sourceCrs]);
-
-  // Raw positional nodes (no pressure/demand merged yet) used for CRS sniffing
-  // and reprojection. Stable across timeline scrubs.
-  const rawPositionNodes = baseNodes;
-
-  // Clear any prior reprojection error when the network identity changes
-  // (new load or project switch); the reprojection memo below re-derives it.
-  useEffect(() => {
-    if (rawPositionNodes.length === 0) return;
-    setCrsError(null);
-  }, [rawPositionNodes.length]);
-
-  // Classify how many nodes have real map coordinates.
-  // The Rust backend emits (0, 0) for nodes that have no [COORDINATES] entry in
-  // the INP — so x === 0 && y === 0 is the sentinel for "missing".
-  const coordMissingCount = useMemo(
-    () => rawPositionNodes.filter((n) => n.x === 0 && n.y === 0).length,
-    [rawPositionNodes],
-  );
-  const coordStatus = useMemo((): "complete" | "partial" | "empty" => {
-    if (rawPositionNodes.length === 0) return "complete"; // nothing loaded yet
-    if (coordMissingCount === 0) return "complete";
-    if (coordMissingCount === rawPositionNodes.length) return "empty";
-    return "partial";
-  }, [rawPositionNodes, coordMissingCount]);
-
-  // Push coord status to the shared context so the TopBar breadcrumb indicator
-  // can read it without prop-drilling through ProjectPage.
-  useEffect(() => {
-    setCoordStatus(coordStatus, coordMissingCount, rawPositionNodes.length);
-  }, [coordStatus, coordMissingCount, rawPositionNodes.length, setCoordStatus]);
-
-  // Apply reprojection to the raw positional nodes. Result is memo-ised so
-  // pressure/velocity scrubs (which don't change x/y) don't re-run proj4.
-  // proj4 errors are surfaced via `crsError` (set in the effect below, not
-  // here — setting state inside useMemo is a React anti-pattern).
-  // Per-node reprojection cache: on a projected CRS every network mutation
-  // delivers a fresh baseNodes array, but almost all coordinates are
-  // unchanged — reuse both the proj4 result and the output object (identity)
-  // for nodes whose source object is identical, so a single-element patch
-  // costs one proj4 call instead of 46k.
-  const reprojCacheRef = useRef<{
-    crs: string;
-    byId: Map<
-      string,
-      {
-        src: (typeof baseNodes)[number];
-        out: (typeof baseNodes)[number];
-      }
-    >;
-  }>({ crs: "", byId: new Map() });
-  // crsDefsVersion is a deliberate re-run token — the memo reads global proj4
-  // defs registered by the CRS-resolution effect, a side effect biome cannot
-  // see as a dependency.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: re-run token, see above
-  const reprojection = useMemo(() => {
-    if (sourceCrs === "EPSG:4326") {
-      // Even with the default CRS, check that the raw coordinates are within
-      // WGS84 range. If any node is out of range the user has projected
-      // coordinates and needs to set the source CRS.
-      const outOfRange = rawPositionNodes.some(
-        (n) =>
-          !(n.x === 0 && n.y === 0) &&
-          (n.x < -180 || n.x > 180 || n.y < -90 || n.y > 90),
-      );
-      if (outOfRange) {
-        return {
-          nodes: rawPositionNodes,
-          error:
-            "Coordinates are outside WGS84 range. Set the source CRS in the toolbar.",
-        } as { nodes: typeof rawPositionNodes; error: string | null };
-      }
-      return { nodes: rawPositionNodes, error: null as string | null };
-    }
-    try {
-      const cache = reprojCacheRef.current;
-      if (cache.crs !== sourceCrs) {
-        cache.crs = sourceCrs;
-        cache.byId = new Map();
-      }
-      const nodes = reprojectNodesCached(
-        rawPositionNodes,
-        sourceCrs,
-        cache.byId,
-      );
-      return { nodes, error: null };
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      return { nodes: rawPositionNodes, error: msg };
-    }
-    // crsDefsVersion re-runs this once a lazily-fetched catalog proj4 def is
-    // registered (see the CRS-resolution effect above).
-  }, [sourceCrs, rawPositionNodes, crsDefsVersion]);
-
-  // Surface reprojection errors to the toolbar without setting state during
-  // render.  Runs after every reprojection result.
-  useEffect(() => {
-    setCrsError(reprojection.error);
-  }, [reprojection.error]);
-
-  const reprojectedPositionNodes = reprojection.nodes;
-
-  // Build a lookup from node id → reprojected [x, y] so allNodes below can
-  // merge reprojected positions without touching pressure/demand.
-  const reprojectedXY = useMemo(() => {
-    const m = new Map<string, { x: number; y: number }>();
-    // Identity match means coordinates are already WGS84 — posNodes will
-    // return baseNodes untouched, so skip building a 46k-entry Map.
-    if (reprojectedPositionNodes === baseNodes) return m;
-    for (const n of reprojectedPositionNodes) m.set(n.id, { x: n.x, y: n.y });
-    return m;
-  }, [reprojectedPositionNodes, baseNodes]);
-  // Base nodes with reprojected x/y merged — deliberately independent of
-  // period results so its identity is stable across timeline scrubs. The
-  // canvas reads sim values from the flat arrays (periodResult prop) instead.
-  const posNodes = useMemo(() => {
-    // No reprojection ran (EPSG:4326 in range): reuse baseNodes as-is —
-    // identity stability here keeps MapCanvas's data memos from rebuilding.
-    if (reprojectedXY.size === 0) return baseNodes;
-    return baseNodes.map((n) => {
-      const pos = reprojectedXY.get(n.id);
-      return pos ? { ...n, x: pos.x, y: pos.y } : n;
-    });
-  }, [baseNodes, reprojectedXY]);
+  // See useCrsReprojection: source-CRS mirror of the project row, lazy proj4
+  // def resolution, WGS84 reprojection of node coords + link vertices (with
+  // per-element identity caches), and coordinate-coverage classification.
+  const {
+    sourceCrs,
+    crsError,
+    crsResolving,
+    coordStatus,
+    coordMissingCount,
+    rawPositionNodes,
+    posNodes,
+    canvasLinks,
+  } = useCrsReprojection({
+    projectSourceCrs: project?.sourceCrs,
+    baseNodes,
+    baseLinks,
+  });
 
   // O(1) enrichment flag (replaces the previous 46k `.some` scans): true when
   // the current period result matches the network's node order/length.
@@ -1163,31 +990,6 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
   // matches by length and keeps the canvas coloured; after a topology change
   // the length guard in MapCanvas drops stale colours immediately.
   const canvasNodes = posNodes;
-  // Link polyline vertices are stored in the source CRS exactly like node
-  // coords, so they go through the same proj4 transform (with the same
-  // EPSG:4326 identity fast-path and a per-link identity cache). Errors are
-  // already surfaced by the node reprojection above — fall back to the raw
-  // links so map+schematic keep rendering.
-  const linkReprojCacheRef = useRef<{
-    crs: string;
-    byId: Map<
-      string,
-      { src: (typeof baseLinks)[number]; out: (typeof baseLinks)[number] }
-    >;
-  }>({ crs: "", byId: new Map() });
-  const canvasLinks = useMemo(() => {
-    if (sourceCrs === "EPSG:4326") return baseLinks;
-    try {
-      const cache = linkReprojCacheRef.current;
-      if (cache.crs !== sourceCrs) {
-        cache.crs = sourceCrs;
-        cache.byId = new Map();
-      }
-      return reprojectLinkVerticesCached(baseLinks, sourceCrs, cache.byId);
-    } catch {
-      return baseLinks;
-    }
-  }, [sourceCrs, baseLinks]);
 
   const nodeMap = useMemo(
     () => new Map(allNodes.map((n) => [n.id, n])),
