@@ -886,7 +886,23 @@ export function AppProvider({ children }: { children: ReactNode }) {
     );
   }, [s.activeProjectId]);
 
-  const deferredProjectView = useDeferredValue(s.projectView);
+  // Tab flips within a project are deferred so the nav highlight paints
+  // immediately while the heavy subtree switch happens in an interruptible
+  // render. Deferring the view ALONE leaked across project opens, though: this
+  // provider is always mounted, so for one deferred beat it still served the
+  // previous view ("canvas" on a cold start), flashing the wrong page before
+  // the project's saved view appeared. Defer the (project, view) pair and
+  // discard the deferred snapshot when it belongs to a different project —
+  // project opens render their saved view immediately; tab flips stay deferred.
+  const viewSnapshot = useMemo(
+    () => ({ projectId: s.activeProjectId, view: s.projectView }),
+    [s.activeProjectId, s.projectView],
+  );
+  const deferredViewSnapshot = useDeferredValue(viewSnapshot);
+  const deferredProjectView =
+    deferredViewSnapshot.projectId === s.activeProjectId
+      ? deferredViewSnapshot.view
+      : s.projectView;
 
   // Memoized: this provider re-renders on every piece of app state (toasts,
   // nav, modals); an inline value object handed every useAppState consumer a
