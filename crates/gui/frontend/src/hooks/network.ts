@@ -530,6 +530,30 @@ export async function renamePattern(
 }
 
 /**
+ * Rename a node or link, cascading the new ID to its coordinates/vertices,
+ * tags, and (for nodes) the quality trace node. `kind` is one of
+ * `"junction"`/`"reservoir"`/`"tank"` or `"pipe"`/`"pump"`/`"valve"`. Applied
+ * immediately (not staged in the editor draft); rejects with the backend
+ * message if `newId` is empty, unsafe, or already used by another node/link.
+ */
+export async function renameElement(
+  kind: string,
+  oldId: string,
+  newId: string,
+): Promise<void> {
+  await invoke<void>("rename_element", { kind, oldId, newId });
+}
+
+/**
+ * Rename a curve, cascading the new ID to every pump head/efficiency curve,
+ * GPV valve curve, and tank volume curve that referenced it. Applied
+ * immediately; rejects if `newId` is empty, unsafe, or already a curve ID.
+ */
+export async function renameCurve(oldId: string, newId: string): Promise<void> {
+  await invoke<void>("rename_curve", { oldId, newId });
+}
+
+/**
  * Delete a time pattern. Rejects if any junction demand, reservoir/tank head
  * pattern, pump speed/price pattern, or the global default/energy-price
  * pattern still references it — the caller should surface the returned

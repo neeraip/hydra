@@ -6,8 +6,14 @@
 import { TrashIcon } from "@heroicons/react/16/solid";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useAppState } from "../../AppContext";
-import { type CurvePoint, type PumpCurve, useCurves } from "../../hooks";
+import {
+  type CurvePoint,
+  type PumpCurve,
+  renameCurve,
+  useCurves,
+} from "../../hooks";
 import { useDraft } from "../../hooks/DraftContext";
+import { useNetworkVersion } from "../../hooks/NetworkVersionContext";
 import {
   EditableCell,
   useVirtualRows,
@@ -48,6 +54,7 @@ export function CurveEditor({
 }) {
   const sys = useUnitSystem();
   const { showToast } = useAppState();
+  const { bumpNetwork } = useNetworkVersion();
   const curves = useCurves();
   const {
     curveAdds,
@@ -58,6 +65,8 @@ export function CurveEditor({
     setCurveDeletes,
   } = useDraft();
   const [activeId, setActiveId] = useState<string | null>(null);
+  const [nameDraft, setNameDraft] = useState("");
+  const prevCurveId = useRef<string | null>(null);
   const [hoverIdx, setHoverIdx] = useState<number | null>(null);
   const [creating, setCreating] = useState(false);
   const [newId, setNewId] = useState("");
@@ -101,6 +110,74 @@ export function CurveEditor({
   const curve =
     mergedCurves.find((c) => c.id === activeId) ??
     (mergedCurves.length > 0 ? mergedCurves[0] : null);
+
+  // Keep the rename draft in sync when the active curve changes (render-time
+  // reconciliation, mirroring PatternEditor's header).
+  if (curve && curve.id !== prevCurveId.current) {
+    prevCurveId.current = curve.id;
+    setNameDraft(curve.id);
+  }
+
+  // Renaming re-keys the ID used throughout the draft maps, so — like the
+  // pattern editor — it isn't staged: a persisted curve renames immediately on
+  // the backend (cascading to pumps/tanks/valves that reference it), and any
+  // staged edits/deletes for it are re-keyed to the new ID. An unsaved (staged)
+  // curve just re-keys its local entry.
+  async function handleRename(rawNewId: string) {
+    if (!curve) return;
+    const oldId = curve.id;
+    const trimmed = rawNewId.trim();
+    if (!trimmed || trimmed === oldId) {
+      setNameDraft(oldId);
+      return;
+    }
+    if (
+      curves.some((c) => c.id === trimmed) ||
+      (curveAdds.has(trimmed) && trimmed !== oldId)
+    ) {
+      showToast(`curve '${trimmed}' already exists`, "error");
+      setNameDraft(oldId);
+      return;
+    }
+    if (curveAdds.has(oldId)) {
+      // Not yet created — just re-key the local staged create.
+      setCurveAdds((prev) => {
+        const next = new Map(prev);
+        const pts = next.get(oldId);
+        next.delete(oldId);
+        if (pts) next.set(trimmed, pts);
+        return next;
+      });
+      setActiveId(trimmed);
+      return;
+    }
+    try {
+      await renameCurve(oldId, trimmed);
+      bumpNetwork();
+      setCurveEdits((prev) => {
+        if (!prev.has(oldId)) return prev;
+        const next = new Map(prev);
+        const m = next.get(oldId);
+        next.delete(oldId);
+        if (m) next.set(trimmed, m);
+        return next;
+      });
+      setCurveDeletes((prev) => {
+        if (!prev.has(oldId)) return prev;
+        const next = new Set(prev);
+        next.delete(oldId);
+        next.add(trimmed);
+        return next;
+      });
+      setActiveId(trimmed);
+    } catch (err) {
+      showToast(
+        typeof err === "string" ? err : "Failed to rename curve",
+        "error",
+      );
+      setNameDraft(oldId);
+    }
+  }
 
   function handleCreate() {
     const trimmed = newId.trim();
@@ -382,16 +459,42 @@ export function CurveEditor({
               gap: 12,
             }}
           >
-            <div
+            <input
+              value={nameDraft}
+              onChange={(e) => setNameDraft(e.target.value)}
+              onFocus={(e) => {
+                e.currentTarget.style.border = "1px solid var(--border-focus)";
+                e.currentTarget.style.background =
+                  "var(--bg-input, var(--bg-app))";
+              }}
+              onBlur={(e) => {
+                e.currentTarget.style.border = "1px solid transparent";
+                e.currentTarget.style.background = "transparent";
+                if (nameDraft.trim() !== curve.id) handleRename(nameDraft);
+                else setNameDraft(curve.id);
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+                if (e.key === "Escape") {
+                  setNameDraft(curve.id);
+                  (e.target as HTMLInputElement).blur();
+                }
+              }}
+              spellCheck={false}
+              title="Rename curve (updates every pump/tank/valve that references it)"
               style={{
                 fontSize: 16,
                 fontWeight: 600,
                 color: "var(--text-primary)",
                 fontFamily: "var(--font-mono)",
+                background: "transparent",
+                border: "1px solid transparent",
+                borderRadius: 4,
+                padding: "2px 6px",
+                outline: "none",
+                width: 160,
               }}
-            >
-              {curve.id}
-            </div>
+            />
             <div style={{ fontSize: 12, color: "var(--text-tertiary)" }}>
               {curve.pumpId ? (
                 <>
