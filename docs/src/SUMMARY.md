@@ -31,6 +31,7 @@
 
 # Theory
 - [EPANET Analysis](theory/epanet-analysis.md)
+- [SWMM Analysis](theory/swmm-analysis.md)
 
 ---
 
