@@ -29,8 +29,8 @@
 - [Crate Layout](architecture/crates.md)
 - [Specifications](architecture/specs.md)
 
-# Internals
-- [EPANET Analysis](internals/epanet-analysis.md)
+# Theory
+- [EPANET Analysis](theory/epanet-analysis.md)
 
 ---
 
