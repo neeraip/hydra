@@ -20,7 +20,7 @@ jobs:
   # Lint, formatting, docs, and dependency checks are platform-independent —
   # run them once on Ubuntu rather than repeating them per-OS.
   lint:
-    name: Lint
+    name: Cargo Lint
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
@@ -65,7 +65,7 @@ jobs:
           RUSTDOCFLAGS: -D warnings
 
   test:
-    name: Test / ${{ matrix.os }}
+    name: Cargo Test / ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
 
@@ -108,7 +108,7 @@ jobs:
   # rust-toolchain.toml, so nothing else exercises the latest stable compiler.
   # Non-blocking — breakage here is an early warning, never a merge blocker.
   test-stable:
-    name: Test / latest stable (non-blocking)
+    name: Cargo Test / latest stable (non-blocking)
     # Drift canary, not a merge gate (continue-on-error): running it per-PR
     # spends ~9 runner-minutes without adding any PR safety. Main pushes and
     # the weekly schedule keep the early warning.
