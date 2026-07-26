@@ -27,20 +27,28 @@
 use hydra_engine_wds::{io, LinkQuantity, NodeQuantity, QualityMode, Simulation};
 use std::path::PathBuf;
 
-/// Relative tolerance for all golden comparisons.
+/// Golden comparisons use the standard mixed criterion:
+/// `|actual − golden| ≤ max(ABS_TOL, REL_TOL · |golden|)`.
 ///
-/// Loose enough to absorb cross-platform floating-point divergence: the
+/// Both terms exist to absorb cross-platform floating-point divergence — the
 /// iterative Newton solver over a long EPS run accumulates libm/FMA/rounding
-/// differences between platforms (observed up to ~1e-5 relative on Richmond
-/// between the macOS-blessed goldens and Linux/Windows CI — different sample
-/// points exceed a 1e-6 tolerance on each platform). 1e-4 gives ~10× headroom
-/// over that spread while remaining orders of magnitude tighter than any real
-/// behavioural change these goldens exist to catch.
+/// differences between platforms, so goldens blessed on one platform land a
+/// little off on the others (macOS-blessed values missed Linux/Windows CI by
+/// up to ~1e-5 relative on Richmond's large flows and by ~3e-8 m³/s absolute
+/// on its small ones).
+///
+/// - `REL_TOL` guards real magnitudes: 1e-4 is ~10× the observed platform
+///   spread and orders of magnitude below any behavioural change these
+///   goldens exist to catch.
+/// - `ABS_TOL` absorbs convergence-noise-scale wiggle on *small* values,
+///   where a purely relative check is meaningless: solver flows are only
+///   determined to roughly `Q_CLOSED` (~1e-6 m³/s) regardless of magnitude,
+///   so a 2e-4 m³/s trickle differing by 3e-8 across platforms is noise, not
+///   drift. 1e-5 in the solver's SI units is decades below engineering
+///   significance for every fingerprinted quantity (heads in metres, flows
+///   in m³/s, quality in mg/L or hours).
 const REL_TOL: f64 = 1e-4;
-/// Absolute floor: values whose golden magnitude is below this are compared
-/// absolutely. 1e-6 m³/s is the solver's `Q_CLOSED` convergence-noise level,
-/// so relative comparison below it would be meaningless.
-const ABS_FLOOR: f64 = 1e-6;
+const ABS_TOL: f64 = 1e-5;
 
 fn benchmark_path(name: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -91,18 +99,13 @@ fn sample_indices(len: usize) -> Vec<usize> {
 }
 
 fn assert_close(actual: f64, expected: f64, what: &str) {
-    if expected.abs() < ABS_FLOOR {
-        assert!(
-            (actual - expected).abs() < ABS_FLOOR,
-            "{what}: actual {actual:e} vs golden {expected:e} (abs)"
-        );
-    } else {
-        let rel = ((actual - expected) / expected).abs();
-        assert!(
-            rel < REL_TOL,
-            "{what}: actual {actual:.12e} vs golden {expected:.12e} (rel err {rel:.3e})"
-        );
-    }
+    let diff = (actual - expected).abs();
+    let tol = f64::max(ABS_TOL, REL_TOL * expected.abs());
+    assert!(
+        diff <= tol,
+        "{what}: actual {actual:.12e} vs golden {expected:.12e} \
+         (abs diff {diff:.3e}, tolerance {tol:.3e})"
+    );
 }
 
 /// Network-wide sums at the final snapshot: (Σ head over all nodes, Σ |flow|
