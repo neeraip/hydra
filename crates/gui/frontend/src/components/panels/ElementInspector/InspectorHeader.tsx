@@ -1,5 +1,6 @@
 import { XMarkIcon } from "@heroicons/react/16/solid";
 import type React from "react";
+import { TypeBadge } from "../../ui/TypeBadge";
 
 // ── Inspector header ───────────────────────────────────────────────────────────
 
@@ -11,6 +12,8 @@ export function Header({
   onClose,
 }: {
   id: string;
+  /** The element type ("junction", "pipe", …) — rendered as the shared letter
+   * badge with the full capitalised name beside it. */
   subtitle: string;
   /** Visual icon in the header — a circle dot for nodes, a short line for links. */
   badge: React.ReactNode;
@@ -44,13 +47,22 @@ export function Header({
         </div>
         <div
           style={{
-            fontSize: 11,
-            color: "var(--text-tertiary)",
-            marginTop: 1,
-            textTransform: "capitalize",
+            display: "flex",
+            alignItems: "center",
+            gap: 5,
+            marginTop: 2,
           }}
         >
-          {subtitle}
+          <TypeBadge type={subtitle} />
+          <span
+            style={{
+              fontSize: 11,
+              color: "var(--text-tertiary)",
+              textTransform: "capitalize",
+            }}
+          >
+            {subtitle}
+          </span>
         </div>
       </div>
       <button
