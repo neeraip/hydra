@@ -1,6 +1,6 @@
 import type React from "react";
-import { useEffect, useRef } from "react";
 import type { PumpRow } from "../../../hooks";
+import { ActionsTh, type RowAction, RowActionsCell } from "./RowActionsCell";
 import {
   EditableCell,
   RefInputCell,
@@ -11,7 +11,7 @@ import {
 } from "./TablePrimitives";
 import { shouldUseRefDatalist } from "./tableSearch";
 
-const COL_COUNT = 6;
+const COL_COUNT = 7;
 
 /** Single shared datalist id for every node-reference input in this table. */
 const NODE_LIST_ID = "pump-node-options";
@@ -29,7 +29,7 @@ export function PumpTable({
   pendingRowIds,
   discardGen,
   scrollContainerRef,
-  focusToken,
+  onRowAction,
 }: {
   rows: PumpRow[];
   sortField: string;
@@ -48,9 +48,7 @@ export function PumpTable({
   pendingRowIds?: Set<string>;
   discardGen: number;
   scrollContainerRef: React.RefObject<HTMLDivElement | null>;
-  /** Bumped (e.g. `Date.now()`) whenever `selectedId` should be scrolled into
-   *  view, such as a jump from the Pump curves tab's "attached to" link. */
-  focusToken?: number;
+  onRowAction: (action: RowAction, kind: string, id: string) => void;
 }) {
   const tdStyle: React.CSSProperties = {
     padding: "7px 10px",
@@ -58,18 +56,10 @@ export function PumpTable({
     fontFamily: "var(--font-mono)",
     borderBottom: "1px solid var(--border)",
   };
-  const { virtualItems, paddingTop, paddingBottom, virtualizer } =
-    useVirtualRows(rows, scrollContainerRef);
-  const appliedFocusToken = useRef<number | undefined>(undefined);
-  useEffect(() => {
-    if (focusToken == null || focusToken === appliedFocusToken.current) return;
-    if (!selectedId) return;
-    const idx = rows.findIndex((r) => r.id === selectedId);
-    if (idx >= 0) {
-      virtualizer.scrollToIndex(idx, { align: "center" });
-      appliedFocusToken.current = focusToken;
-    }
-  }, [focusToken, selectedId, rows, virtualizer]);
+  const { virtualItems, paddingTop, paddingBottom } = useVirtualRows(
+    rows,
+    scrollContainerRef,
+  );
   // Ref inputs only exist on pending (unsaved) rows, so the shared datalist
   // is only mounted while at least one pending row exists. `pendingRowIds` is
   // scoped to this table's element kind (see ElementsEditor), so pending rows
@@ -135,6 +125,7 @@ export function PumpTable({
               onSort={onSort}
               align="right"
             />
+            <ActionsTh />
           </tr>
         </thead>
         <tbody>
@@ -275,6 +266,14 @@ export function PumpTable({
                   onCommit={(v) =>
                     onPatch("pump", row.id, "speed", parseFloat(v))
                   }
+                />
+                <RowActionsCell
+                  kind="pump"
+                  id={row.id}
+                  isSelected={isSelected}
+                  pendingKeys={pendingKeys}
+                  pendingRowIds={pendingRowIds}
+                  onAction={onRowAction}
                 />
               </tr>
             );

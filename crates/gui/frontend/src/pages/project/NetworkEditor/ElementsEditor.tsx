@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAppState } from "../../../AppContext";
 import { useCanvasSelection } from "../../../canvas/selection-context";
+import { RenameElementModal } from "../../../components/modals/RenameElementModal";
 import { TabButton } from "../../../components/ui/TabButton";
 import {
   type JunctionRow,
@@ -17,6 +18,7 @@ import {
   type ValveRow,
 } from "../../../hooks";
 import { ELEMENT_TEMP_ID_PREFIX, useDraft } from "../../../hooks/DraftContext";
+import { useElementRename } from "../../../hooks/useElementRename";
 import {
   collectDirtyKinds,
   type ElementKind,
@@ -25,6 +27,7 @@ import { JunctionTable } from "./JunctionTable";
 import { PipeTable } from "./PipeTable";
 import { PumpTable } from "./PumpTable";
 import { ReservoirTable } from "./ReservoirTable";
+import type { RowAction } from "./RowActionsCell";
 import { EDITOR_ROW_HEIGHT } from "./TablePrimitives";
 import { TankTable } from "./TankTable";
 import {
@@ -44,15 +47,28 @@ type Section =
 
 const TEMP_ID_PREFIX = ELEMENT_TEMP_ID_PREFIX;
 
+/** Element kind → the table Section that lists it. */
+const SECTION_FOR_KIND: Record<string, Section> = {
+  junction: "junctions",
+  pipe: "pipes",
+  pump: "pumps",
+  tank: "tanks",
+  reservoir: "reservoirs",
+  valve: "valves",
+};
+
 export function ElementsEditor({
-  focusPumpId,
-  focusPumpToken,
+  focusKind,
+  focusId,
+  focusToken,
 }: {
-  /** Pump ID to select when `focusPumpToken` changes (e.g. "attached to" link
-   *  clicked from the Pump curves tab). */
-  focusPumpId?: string;
+  /** Element kind to reveal when `focusToken` changes ("junction" | "pipe" |
+   *  "pump" | "tank" | "reservoir" | "valve"). */
+  focusKind?: string;
+  /** Element ID to select and scroll into view when `focusToken` changes. */
+  focusId?: string;
   /** Bump this (e.g. `Date.now()`) to re-trigger the jump even for the same id. */
-  focusPumpToken?: number;
+  focusToken?: number;
 }) {
   const {
     elementsDraft: draft,
@@ -103,20 +119,69 @@ export function ElementsEditor({
   const [sortAsc, setSortAsc] = useState(true);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [discardGen, setDiscardGen] = useState(0);
+  const [renameTarget, setRenameTarget] = useState<{
+    kind: string;
+    id: string;
+  } | null>(null);
   const tableScrollRef = useRef<HTMLDivElement>(null);
+  const renameElementFlow = useElementRename();
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: `focusPumpToken` is an intentional trigger to re-run the jump even for the same pump id; `focusPumpId` is read only when a jump fires.
+  // Row click toggles selection: clicking the already-selected row clears it.
+  const toggleSelect = useCallback(
+    (id: string) => setSelectedId((cur) => (cur === id ? null : id)),
+    [],
+  );
+
+  // `rowsForSection` is defined after the row-model memos below; this ref lets
+  // the focus effect read the *latest* rows (post section-switch and search
+  // clear) inside its deferred rAF callback without depending on declaration
+  // order.
+  const rowsForSectionRef = useRef<(s: Section) => { id: string }[]>(() => []);
+  const appliedFocusToken = useRef<number | undefined>(undefined);
+
+  // General "reveal element" jump: switch to the element's kind tab, select
+  // it, clear the search, and scroll its row to centre. Uniform row height
+  // (EDITOR_ROW_HEIGHT) lets us scroll by index without the target row being
+  // mounted yet (virtualised rows off-screen are absent from the DOM).
   useEffect(() => {
-    if (focusPumpToken == null || !focusPumpId) return;
-    setActiveSection("pumps");
-    setSelectedId(focusPumpId);
+    if (focusToken == null || focusToken === appliedFocusToken.current) return;
+    if (!focusId || !focusKind) return;
+    const section = SECTION_FOR_KIND[focusKind];
+    if (!section) return;
+    appliedFocusToken.current = focusToken;
+    setActiveSection(section);
+    setSelectedId(focusId);
     setSearchQuery("");
-    // Also clear the debounced copy synchronously: the deferred clear in the
-    // effect above would let the pump table paint one frame filtered by the
-    // previous tab's query (a wasted ~46k-row filter pass, and the target
-    // pump may not even be in the stale result set).
+    // Clear the debounced copy synchronously too, so the table doesn't paint
+    // one frame filtered by the previous tab's query (a wasted ~46k-row pass,
+    // and the target may not even be in that stale result set).
     setDebouncedQuery("");
-  }, [focusPumpToken]);
+    // Scroll once the editor view is actually visible and this section's rows
+    // have built. When "Open in editor" fires from the canvas the editor is
+    // still display:none (clientHeight 0, scrollTop wouldn't take), and the
+    // deferred view switch + row memos need a few frames — so retry across
+    // frames rather than scrolling once, too early.
+    let attempts = 0;
+    const tryScroll = () => {
+      const container = tableScrollRef.current;
+      if (!container) return;
+      const idx = rowsForSectionRef
+        .current(section)
+        .findIndex((r) => r.id === focusId);
+      if ((container.clientHeight === 0 || idx < 0) && attempts < 40) {
+        attempts += 1;
+        requestAnimationFrame(tryScroll);
+        return;
+      }
+      if (idx < 0) return;
+      const target =
+        idx * EDITOR_ROW_HEIGHT -
+        container.clientHeight / 2 +
+        EDITOR_ROW_HEIGHT / 2;
+      container.scrollTop = Math.max(0, target);
+    };
+    requestAnimationFrame(tryScroll);
+  }, [focusToken, focusId, focusKind]);
   const draftValues = useMemo(() => Array.from(draft.values()), [draft]);
   const pendingKeys = useMemo(() => new Set(draft.keys()), [draft]);
   // Per-kind temp-id sets: each table only receives its own kind's pending
@@ -543,6 +608,28 @@ export function ElementsEditor({
     ],
   );
 
+  // Keep the focus effect's deferred row lookup pointed at the latest
+  // per-section (filtered + sorted) rows. Plain per-render assignment so the
+  // rAF in the focus effect reads post-switch, post-search-clear rows.
+  rowsForSectionRef.current = (s: Section) => {
+    switch (s) {
+      case "junctions":
+        return junctionRows;
+      case "pipes":
+        return pipeRows;
+      case "pumps":
+        return pumpRows;
+      case "tanks":
+        return tankRows;
+      case "reservoirs":
+        return reservoirRows;
+      case "valves":
+        return valveRows;
+      default:
+        return [];
+    }
+  };
+
   // Node-id options for the from/to reference inputs (shared datalist +
   // validation-on-blur). Only the Pipes/Pumps/Valves tables consume them, so
   // the ~46k-id collection + collator sort only runs while the editor is
@@ -648,68 +735,86 @@ export function ElementsEditor({
     });
   }, [pendingAdds]);
 
-  const handleDeleteSelected = useCallback(() => {
-    if (!selectedId) return;
-    const id = selectedId;
-    const kind = activeKind;
-
-    // Deleting an unsaved row just drops it from local staging.
-    if (id.startsWith(TEMP_ID_PREFIX)) {
-      setPendingAdds((prev) => prev.filter((p) => p.tempId !== id));
+  // Stage a delete for a specific row (deleting an unsaved row just drops it
+  // from local staging). Clears selection only if the deleted row was selected.
+  const deleteRow = useCallback(
+    (kind: string, id: string) => {
+      if (id.startsWith(TEMP_ID_PREFIX)) {
+        setPendingAdds((prev) => prev.filter((p) => p.tempId !== id));
+        setDraft((prev) => {
+          const next = new Map(prev);
+          for (const key of next.keys()) {
+            if (key.startsWith(`${kind}:${id}:`)) next.delete(key);
+          }
+          return next;
+        });
+        setSelectedId((cur) => (cur === id ? null : cur));
+        return;
+      }
+      setPendingDeletes((prev) => {
+        if (prev.some((d) => d.kind === kind && d.id === id)) return prev;
+        return [...prev, { kind: kind as ElementKind, id }];
+      });
       setDraft((prev) => {
         const next = new Map(prev);
-        for (const key of next.keys()) {
-          if (key.startsWith(`${kind}:${id}:`)) next.delete(key);
+        for (const [key, value] of next.entries()) {
+          if (value.kind === kind && value.id === id) next.delete(key);
         }
         return next;
       });
-      setSelectedId(null);
-      return;
-    }
+      setSelectedId((cur) => (cur === id ? null : cur));
+    },
+    [setPendingAdds, setPendingDeletes, setDraft],
+  );
 
-    setPendingDeletes((prev) => {
-      if (prev.some((d) => d.kind === kind && d.id === id)) return prev;
-      return [...prev, { kind, id }];
-    });
-    setDraft((prev) => {
-      const next = new Map(prev);
-      for (const [key, value] of next.entries()) {
-        if (value.kind === kind && value.id === id) next.delete(key);
+  // Rename is immediate + cascading (rewrites references, clears undo), so it
+  // can't be staged into the draft — the RowActionsCell disables it for temp
+  // rows and rows with staged edits (which key on the id and would desync).
+  // The modal commits it here.
+  const submitRename = useCallback(
+    async (newId: string) => {
+      const target = renameTarget;
+      if (!target) return;
+      setRenameTarget(null);
+      const ok = await renameElementFlow(target.kind, target.id, newId);
+      // Keep the row selected under its new id (backend `network-changed`
+      // drives the refetch that repopulates it).
+      if (ok) setSelectedId(newId.trim());
+    },
+    [renameTarget, renameElementFlow],
+  );
+
+  // Locate a saved element on the canvas (switch view, select, fly to it).
+  const showRowOnMap = useCallback(
+    (kind: string, id: string) => {
+      if (id.startsWith(TEMP_ID_PREFIX)) return;
+      const isNode =
+        kind === "junction" || kind === "tank" || kind === "reservoir";
+      setProjectView("canvas");
+      if (isNode) selectNode(id);
+      else selectLink(id);
+      // Defer the fly-to so the canvas view has activated and its map is ready.
+      window.setTimeout(() => {
+        if (isNode) zoomToNode(id);
+        else zoomToLink(id);
+      }, 220);
+    },
+    [setProjectView, selectNode, selectLink, zoomToNode, zoomToLink],
+  );
+
+  // Dispatch a per-row action icon (Show on map / Rename / Delete).
+  const handleRowAction = useCallback(
+    (action: RowAction, kind: string, id: string) => {
+      if (action === "delete") {
+        deleteRow(kind, id);
+        return;
       }
-      return next;
-    });
-    setSelectedId(null);
-  }, [activeKind, selectedId, setPendingAdds, setPendingDeletes, setDraft]);
-
-  // ── Show the selected element on the canvas ────────────────────────────────
-  const activeIsNode =
-    activeSection === "junctions" ||
-    activeSection === "tanks" ||
-    activeSection === "reservoirs";
-  // Only saved elements exist on the canvas — a freshly-added (temp-id) row does
-  // not, so it can't be located there yet.
-  const canShowOnMap =
-    selectedId != null && !selectedId.startsWith(TEMP_ID_PREFIX);
-  const showSelectedOnMap = useCallback(() => {
-    if (!selectedId || selectedId.startsWith(TEMP_ID_PREFIX)) return;
-    const id = selectedId;
-    setProjectView("canvas");
-    if (activeIsNode) selectNode(id);
-    else selectLink(id);
-    // Defer the fly-to so the canvas view has activated and its map is ready.
-    window.setTimeout(() => {
-      if (activeIsNode) zoomToNode(id);
-      else zoomToLink(id);
-    }, 220);
-  }, [
-    selectedId,
-    activeIsNode,
-    setProjectView,
-    selectNode,
-    selectLink,
-    zoomToNode,
-    zoomToLink,
-  ]);
+      setSelectedId(id);
+      if (action === "map") showRowOnMap(kind, id);
+      else setRenameTarget({ kind, id });
+    },
+    [showRowOnMap, deleteRow],
+  );
 
   const shownRows =
     activeSection === "junctions"
@@ -854,62 +959,6 @@ export function ElementsEditor({
         >
           + Add element
         </button>
-
-        <button
-          type="button"
-          onClick={showSelectedOnMap}
-          disabled={!canShowOnMap}
-          style={{
-            background: "transparent",
-            color: canShowOnMap
-              ? "var(--text-secondary)"
-              : "var(--text-disabled)",
-            border: "1px solid var(--border)",
-            borderRadius: 5,
-            padding: "0 10px",
-            height: 28,
-            fontSize: 12,
-            fontFamily: "var(--font-ui)",
-            cursor: canShowOnMap ? "pointer" : "not-allowed",
-            marginLeft: 6,
-            whiteSpace: "nowrap",
-            opacity: canShowOnMap ? 1 : 0.5,
-          }}
-          title={
-            canShowOnMap
-              ? "Select and zoom to this element on the map"
-              : "Select a saved element to locate it on the map"
-          }
-        >
-          Show on map
-        </button>
-
-        <button
-          type="button"
-          onClick={handleDeleteSelected}
-          disabled={!selectedId}
-          style={{
-            background: "rgba(210, 80, 80, 0.12)",
-            color: "rgba(240, 130, 130, 0.95)",
-            border: "1px solid rgba(210, 80, 80, 0.35)",
-            borderRadius: 5,
-            padding: "0 10px",
-            height: 28,
-            fontSize: 12,
-            fontFamily: "var(--font-ui)",
-            cursor: selectedId ? "pointer" : "not-allowed",
-            marginLeft: 6,
-            whiteSpace: "nowrap",
-            opacity: selectedId ? 1 : 0.45,
-          }}
-          title={
-            selectedId
-              ? "Stage delete for selected row"
-              : "Select a row to delete"
-          }
-        >
-          Delete selected
-        </button>
       </div>
 
       {/* Table */}
@@ -924,12 +973,13 @@ export function ElementsEditor({
             sortAsc={sortAsc}
             selectedId={selectedId}
             onSort={handleSort}
-            onSelect={setSelectedId}
+            onSelect={toggleSelect}
             onPatch={handleStage}
             pendingKeys={pendingKeys}
             pendingRowIds={pendingRowIdsByKind.junction}
             discardGen={discardGen}
             scrollContainerRef={tableScrollRef}
+            onRowAction={handleRowAction}
           />
         )}
         {activeSection === "pipes" && (
@@ -939,13 +989,14 @@ export function ElementsEditor({
             sortAsc={sortAsc}
             selectedId={selectedId}
             onSort={handleSort}
-            onSelect={setSelectedId}
+            onSelect={toggleSelect}
             onPatch={handleStage}
             nodeOptions={nodeReferenceOptions}
             pendingKeys={pendingKeys}
             pendingRowIds={pendingRowIdsByKind.pipe}
             discardGen={discardGen}
             scrollContainerRef={tableScrollRef}
+            onRowAction={handleRowAction}
           />
         )}
         {activeSection === "pumps" && (
@@ -955,14 +1006,14 @@ export function ElementsEditor({
             sortAsc={sortAsc}
             selectedId={selectedId}
             onSort={handleSort}
-            onSelect={setSelectedId}
+            onSelect={toggleSelect}
             onPatch={handleStage}
             nodeOptions={nodeReferenceOptions}
             pendingKeys={pendingKeys}
             pendingRowIds={pendingRowIdsByKind.pump}
             discardGen={discardGen}
             scrollContainerRef={tableScrollRef}
-            focusToken={focusPumpToken}
+            onRowAction={handleRowAction}
           />
         )}
         {activeSection === "tanks" && (
@@ -972,12 +1023,13 @@ export function ElementsEditor({
             sortAsc={sortAsc}
             selectedId={selectedId}
             onSort={handleSort}
-            onSelect={setSelectedId}
+            onSelect={toggleSelect}
             onPatch={handleStage}
             pendingKeys={pendingKeys}
             pendingRowIds={pendingRowIdsByKind.tank}
             discardGen={discardGen}
             scrollContainerRef={tableScrollRef}
+            onRowAction={handleRowAction}
           />
         )}
         {activeSection === "reservoirs" && (
@@ -987,12 +1039,13 @@ export function ElementsEditor({
             sortAsc={sortAsc}
             selectedId={selectedId}
             onSort={handleSort}
-            onSelect={setSelectedId}
+            onSelect={toggleSelect}
             onPatch={handleStage}
             pendingKeys={pendingKeys}
             pendingRowIds={pendingRowIdsByKind.reservoir}
             discardGen={discardGen}
             scrollContainerRef={tableScrollRef}
+            onRowAction={handleRowAction}
           />
         )}
         {activeSection === "valves" && (
@@ -1002,13 +1055,14 @@ export function ElementsEditor({
             sortAsc={sortAsc}
             selectedId={selectedId}
             onSort={handleSort}
-            onSelect={setSelectedId}
+            onSelect={toggleSelect}
             onPatch={handleStage}
             nodeOptions={nodeReferenceOptions}
             pendingKeys={pendingKeys}
             pendingRowIds={pendingRowIdsByKind.valve}
             discardGen={discardGen}
             scrollContainerRef={tableScrollRef}
+            onRowAction={handleRowAction}
           />
         )}
       </div>
@@ -1030,6 +1084,15 @@ export function ElementsEditor({
           Showing {shownRows} of {totalRows} elements
         </span>
       </div>
+
+      {renameTarget && (
+        <RenameElementModal
+          kind={renameTarget.kind}
+          id={renameTarget.id}
+          onSubmit={submitRename}
+          onClose={() => setRenameTarget(null)}
+        />
+      )}
     </div>
   );
 }

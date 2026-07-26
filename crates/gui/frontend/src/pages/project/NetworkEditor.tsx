@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useActiveProject, useAppState } from "../../AppContext";
 import { ControlsEditor } from "../../components/editors/ControlsEditor";
 import { CurveEditor } from "../../components/editors/CurveEditor";
@@ -47,7 +47,7 @@ function NetworkEditorInner() {
   const controls = useControls();
   const rules = useRules();
   const { accent } = useActiveProject();
-  const { showToast } = useAppState();
+  const { showToast, editorFocus } = useAppState();
   const {
     dirtyCount,
     dirtyBySection,
@@ -71,15 +71,32 @@ function NetworkEditorInner() {
   );
   const [previewOpen, setPreviewOpen] = useState(false);
   const [confirmDiscardOpen, setConfirmDiscardOpen] = useState(false);
-  const [pumpFocus, setPumpFocus] = useState<{
+  // General "reveal this element" request forwarded to the ElementsEditor:
+  // switches to its kind tab, selects the row, and scrolls it into view.
+  // Sources: the Pump curves tab's "attached to" link, and the canvas
+  // inspector's "Open in editor" (via AppContext.editorFocus).
+  const [elementFocus, setElementFocus] = useState<{
+    kind: string;
     id: string;
     token: number;
   } | null>(null);
 
   function handleNavigateToPump(pumpId: string) {
     setActiveSectionId("elements");
-    setPumpFocus({ id: pumpId, token: Date.now() });
+    setElementFocus({ kind: "pump", id: pumpId, token: Date.now() });
   }
+
+  // Canvas "Open in editor" → reveal the element. `editorFocus.nonce` bumps on
+  // every request so re-opening the same element re-runs the jump.
+  useEffect(() => {
+    if (!editorFocus) return;
+    setActiveSectionId("elements");
+    setElementFocus({
+      kind: editorFocus.kind,
+      id: editorFocus.id,
+      token: editorFocus.nonce,
+    });
+  }, [editorFocus]);
 
   /** Threshold above which Discard requires an explicit confirmation. */
   const DISCARD_CONFIRM_THRESHOLD = 5;
@@ -220,8 +237,9 @@ function NetworkEditorInner() {
             }}
           >
             <ElementsEditor
-              focusPumpId={pumpFocus?.id}
-              focusPumpToken={pumpFocus?.token}
+              focusKind={elementFocus?.kind}
+              focusId={elementFocus?.id}
+              focusToken={elementFocus?.token}
             />
           </div>
           <div
