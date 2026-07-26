@@ -3,7 +3,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useActiveProject, useAppState, useSimulation } from "../../AppContext";
 import { AnnotationSummary, MeasureOverlay } from "../../canvas/Annotations";
 import type { BasemapStyle } from "../../canvas/Basemap";
-import { computeDeltas } from "../../canvas/compare";
 import {
   haversineMeters,
   pickCoordSample,
@@ -33,19 +32,15 @@ import {
   NodeInspector,
 } from "../../components/panels/ElementInspector";
 import {
-  compareTopologyDigests,
   createLink,
   createNode,
   deleteElement,
   getPeriodResults,
-  loadResultMeta,
   type PeriodResults,
   patchNodePosition,
-  type ResultMeta,
   saveProjectOnDisk,
   useLinks,
   useNodes,
-  useScenarios,
   useSimParams,
 } from "../../hooks";
 import { useNetworkVersion } from "../../hooks/NetworkVersionContext";
@@ -60,6 +55,7 @@ import { CanvasToolbar } from "./CanvasView/CanvasToolbar";
 import { CompareNoticePill } from "./CanvasView/CompareNoticePill";
 import { InvalidCrsOverlay } from "./CanvasView/InvalidCrsOverlay";
 import { useCrsReprojection } from "./CanvasView/useCrsReprojection";
+import { useScenarioCompare } from "./CanvasView/useScenarioCompare";
 import { ViewportControls } from "./CanvasView/ViewportControls";
 
 const NODE_KIND_PREFIX: Record<string, string> = {
@@ -73,10 +69,6 @@ const NODE_KIND_PREFIX: Record<string, string> = {
 // which is deliberately a global preference and stays untouched).
 const canvasPrefsKey = (projectId: string) =>
   `hydra2-canvas-prefs:${projectId}`;
-
-/** Sentinel baseline id meaning "compare against the base model" (only
- * meaningful while a scenario is active). Distinct from `null` = off. */
-const BASE_COMPARE_ID = "__base__";
 
 interface CanvasPrefs {
   viewMode: ViewMode;
@@ -392,7 +384,6 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
     resultMetaLoading,
     resultGeneration,
     resultsTopologyStale,
-    liveNetworkDigest,
   } = useSimulation();
   // `stableResultMeta` lags behind `resultMeta` while metadata is loading.
   // Once loading settles, it mirrors the active scenario exactly (including
@@ -634,142 +625,29 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
   rawNetworkRef.current = { nodes: baseNodes, links: baseLinks };
 
   // ── Scenario comparison (Δ overlay) ──────────────────────────────────────
-  // The user picks a baseline; the canvas colours by (active − baseline) for
-  // the selected variables on a diverging ramp centred at zero.
-  const scenarios = useScenarios(project?.id ?? null);
-
-  // Resolve the persisted selection against current reality: "base model" is
-  // only a valid baseline while a scenario is active, a scenario baseline
-  // must exist and must not be the active scenario itself. Invalid selections
-  // are inert (treated as off) rather than destructively reset.
-  const effectiveCompareId = useMemo(() => {
-    if (!compareScenarioId) return null;
-    if (compareScenarioId === BASE_COMPARE_ID) {
-      return activeScenarioId != null ? BASE_COMPARE_ID : null;
-    }
-    if (compareScenarioId === activeScenarioId) return null;
-    return scenarios.some((s) => s.id === compareScenarioId)
-      ? compareScenarioId
-      : null;
-  }, [compareScenarioId, activeScenarioId, scenarios]);
-  const comparing = effectiveCompareId != null;
-  /** Baseline id in backend terms (null = base model) — only meaningful
-   * while `comparing`. */
-  const baselineScenarioId =
-    effectiveCompareId === BASE_COMPARE_ID ? null : effectiveCompareId;
-  const baselineName =
-    effectiveCompareId === BASE_COMPARE_ID
-      ? "Base model"
-      : (scenarios.find((s) => s.id === effectiveCompareId)?.name ??
-        "Baseline");
-
-  // Baseline result metadata — fetched once per (project, baseline,
-  // resultGeneration) and cached so toggling between baselines doesn't
-  // refetch. resultGeneration invalidates after any run completes.
-  const [baselineMeta, setBaselineMeta] = useState<ResultMeta | null>(null);
-  const [baselineMetaLoaded, setBaselineMetaLoaded] = useState(false);
-  const baselineMetaCacheRef = useRef(new Map<string, ResultMeta | null>());
-  useEffect(() => {
-    if (!comparing || !project?.id) {
-      setBaselineMeta(null);
-      setBaselineMetaLoaded(false);
-      return;
-    }
-    const cache = baselineMetaCacheRef.current;
-    const key = `${project.id}:${baselineScenarioId ?? BASE_COMPARE_ID}:${resultGeneration}`;
-    if (cache.has(key)) {
-      setBaselineMeta(cache.get(key) ?? null);
-      setBaselineMetaLoaded(true);
-      return;
-    }
-    let cancelled = false;
-    setBaselineMetaLoaded(false);
-    loadResultMeta(project.id, baselineScenarioId).then((m) => {
-      // Bound the cache: old generations/projects are never read again.
-      if (cache.size > 32) cache.clear();
-      cache.set(key, m);
-      if (!cancelled) {
-        setBaselineMeta(m);
-        setBaselineMetaLoaded(true);
-      }
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [comparing, project?.id, baselineScenarioId, resultGeneration]);
-
-  // Baseline per-period results — refetched on every scrub, mirroring the
-  // active-period fetch pattern above (cancellation included). The period is
-  // clamped to the baseline's own result length so a shorter baseline stays
-  // comparable while scrubbing beyond its end (holds its last period).
-  const [fetchedBaselinePeriodResult, setBaselinePeriodResult] =
-    useState<PeriodResults | null>(null);
-
-  // Same topology-stale gate as the active period result: baseline arrays are
-  // also index-addressed against the live network, so baseline results whose
-  // digest differs from the live model's are treated as absent (unknown
-  // digests pass through ungated, matching the pre-digest behaviour).
-  const baselineTopologyStale =
-    compareTopologyDigests(baselineMeta?.networkDigest, liveNetworkDigest) ===
-    "stale";
-  const baselinePeriodResult = baselineTopologyStale
-    ? null
-    : fetchedBaselinePeriodResult;
-
-  // Discard stale baseline data immediately when the baseline changes.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: `project?.id` and `effectiveCompareId` are intentional triggers to discard stale baseline data on switch.
-  useEffect(() => {
-    setBaselinePeriodResult(null);
-  }, [project?.id, effectiveCompareId]);
-  useEffect(() => {
-    if (!comparing || !project?.id || !baselineMeta) {
-      setBaselinePeriodResult(null);
-      return;
-    }
-    let cancelled = false;
-    const period = Math.max(
-      0,
-      Math.min(currentHour, baselineMeta.times.length - 1),
-    );
-    getPeriodResults(project.id, period, baselineScenarioId)
-      .then((r) => {
-        if (!cancelled) setBaselinePeriodResult(r);
-      })
-      // Decode failures reject (already logged); keep the previous baseline
-      // period visible rather than crashing the effect.
-      .catch(() => {});
-    return () => {
-      cancelled = true;
-    };
-  }, [comparing, project?.id, baselineScenarioId, baselineMeta, currentHour]);
-
-  // Delta arrays (active − baseline) — identity-stable; null while either
-  // side is missing or when the element counts don't match the network
-  // (topology drift → comparison unavailable). Quality deltas are dropped
-  // when the two runs used different quality modes (chemical vs age vs
-  // trace) — same-length arrays would otherwise subtract mg/L from hours.
-  const qualityComparable =
-    resultMeta?.qualityMode != null &&
-    resultMeta.qualityMode === baselineMeta?.qualityMode;
-  const compareDeltas = useMemo(() => {
-    if (!comparing || !currentPeriodResult || !baselinePeriodResult) {
-      return null;
-    }
-    return computeDeltas(
-      currentPeriodResult,
-      baselinePeriodResult,
-      baseNodes.length,
-      baseLinks.length,
-      qualityComparable,
-    );
-  }, [
+  // See useScenarioCompare: baseline resolution, cached metadata + per-period
+  // baseline fetches, topology-staleness gating, delta computation, the
+  // can't-compare notice, the Legend Δ caption, and the picker options.
+  const {
+    effectiveCompareId,
     comparing,
+    baselineName,
+    compareDeltas,
+    compareNotice,
+    compareNoticeDismissed,
+    setCompareNoticeDismissed,
+    legendCompare,
+    compareOptions,
+  } = useScenarioCompare({
+    projectId: project?.id ?? null,
+    compareScenarioId,
     currentPeriodResult,
-    baselinePeriodResult,
-    baseNodes.length,
-    baseLinks.length,
-    qualityComparable,
-  ]);
+    currentHour,
+    nodeCount: baseNodes.length,
+    linkCount: baseLinks.length,
+    nodeVar,
+    linkVar,
+  });
 
   // Dismissible notice explaining why result overlays vanished after a
   // structural edit (topology digest mismatch); re-arms when staleness
@@ -778,69 +656,6 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
   useEffect(() => {
     if (!resultsTopologyStale) setStaleNoticeDismissed(false);
   }, [resultsTopologyStale]);
-
-  // Small dismissible notice when comparison can't run; reset on baseline switch.
-  const [compareNoticeDismissed, setCompareNoticeDismissed] = useState(false);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: `effectiveCompareId` is the intentional reset trigger for the dismissal.
-  useEffect(() => {
-    setCompareNoticeDismissed(false);
-  }, [effectiveCompareId]);
-  const compareNotice = !comparing
-    ? null
-    : baselineMetaLoaded && !baselineMeta
-      ? "Baseline has no results"
-      : baselineTopologyStale
-        ? // Digest gate above nulled the baseline arrays — explain why.
-          "Baseline results predate the current network topology; re-run to compare"
-        : currentPeriodResult && baselinePeriodResult && !compareDeltas
-          ? "Baseline network differs; comparison unavailable"
-          : null;
-
-  // Legend inputs: max |Δ| for the active variables (SI; Legend converts to
-  // display units) plus the baseline caption. Null while not comparing or
-  // while deltas are unavailable — the Legend then renders normally.
-  const legendCompare = compareDeltas
-    ? {
-        baselineName,
-        nodeMaxAbs:
-          compareDeltas.maxAbs[
-            nodeVar === "pressure"
-              ? "nodePressure"
-              : nodeVar === "head"
-                ? "nodeHead"
-                : nodeVar === "demand"
-                  ? "nodeDemand"
-                  : "nodeQuality"
-          ],
-        linkMaxAbs:
-          linkVar === "status"
-            ? null
-            : compareDeltas.maxAbs[
-                linkVar === "flow"
-                  ? "linkFlow"
-                  : linkVar === "velocity"
-                    ? "linkVelocity"
-                    : linkVar === "headloss"
-                      ? "linkHeadloss"
-                      : "linkQuality"
-              ],
-      }
-    : null;
-
-  // Baseline picker options: Off / Base model (while a scenario is active) /
-  // every scenario except the active one.
-  const compareOptions = useMemo(() => {
-    const opts: { value: string | null; label: string }[] = [
-      { value: null, label: "Off" },
-    ];
-    if (activeScenarioId != null) {
-      opts.push({ value: BASE_COMPARE_ID, label: "Base model" });
-    }
-    for (const s of scenarios) {
-      if (s.id !== activeScenarioId) opts.push({ value: s.id, label: s.name });
-    }
-    return opts;
-  }, [scenarios, activeScenarioId]);
   // ── CRS reprojection ────────────────────────────────────────────────────
   // See useCrsReprojection: source-CRS mirror of the project row, lazy proj4
   // def resolution, WGS84 reprojection of node coords + link vertices (with
