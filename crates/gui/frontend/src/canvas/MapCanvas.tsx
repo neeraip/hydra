@@ -792,7 +792,6 @@ export const MapCanvas = memo(function MapCanvas({
         // Same polyline path as the main link layers.
         getPath: (d: typeof link) => d.path,
         widthUnits: linkWidthUnits,
-        widthMinPixels: LINK_WIDTH_MIN_PX,
         widthMaxPixels: LINK_GLOW_MAX_PX,
         capRounded: true as const,
         jointRounded: true as const,
@@ -807,6 +806,11 @@ export const MapCanvas = memo(function MapCanvas({
             id: `${idPrefix}-${suffix}`,
             getColor: [r, g, b, alpha] as unknown as RGBA,
             getWidth: width,
+            // Per-ring pixel floor: each ring's nominal width doubles as its
+            // minimum, so the halo keeps its full pad around the (clamped)
+            // link at far zooms. Sharing the link's own floor here made the
+            // rings converge with the link and selection became invisible.
+            widthMinPixels: Math.max(LINK_WIDTH_MIN_PX, width),
           }),
       );
     };
@@ -827,7 +831,6 @@ export const MapCanvas = memo(function MapCanvas({
         coordinateSystem: coordSystem,
         getPosition: (d: typeof node) => d.position,
         radiusUnits: nodeRadiusUnits,
-        radiusMinPixels: NODE_RADIUS_MIN_PX,
         radiusMaxPixels: NODE_GLOW_MAX_PX,
         stroked: false,
         pickable: false as const,
@@ -841,6 +844,11 @@ export const MapCanvas = memo(function MapCanvas({
             id: `${idPrefix}-${suffix}`,
             getRadius: baseR + radiusPad,
             getFillColor: [r, g, b, alpha] as unknown as RGBA,
+            // Per-ring pixel floor: keep the ring's pad visible around the
+            // (clamped) node at far zooms. Sharing the node's own floor here
+            // made the rings converge with the node and selection became
+            // invisible when zoomed out.
+            radiusMinPixels: NODE_RADIUS_MIN_PX + radiusPad,
           }),
       );
     };
