@@ -314,6 +314,13 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
     );
     setPrefsLoadedFor(id);
   }, [project?.id]);
+  // Cold-load gate: until the project row has arrived (an async fetch — it
+  // carries sourceCrs) AND its persisted canvas prefs have been applied, the
+  // defaults above ("streets" basemap, WGS84 CRS) are placeholders. Mounting
+  // MapLibre with them paints the wrong basemap for a beat and can flash the
+  // invalid-CRS alert against a projected network, so the map and the alert
+  // hold back until this is true (the canvas background shows meanwhile).
+  const prefsReady = project != null && prefsLoadedFor === project.id;
   useEffect(() => {
     const id = project?.id;
     if (!id || prefsLoadedFor !== id) return;
@@ -1640,48 +1647,52 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
             className="canvas-bg"
             style={{ flex: 1, position: "relative", overflow: "hidden" }}
           >
-            {/* Map + Schematic — MapLibre GL JS + deck.gl */}
-            <CanvasErrorBoundary>
-              <MapCanvas
-                nodes={canvasNodes}
-                links={canvasLinks}
-                periodResult={currentPeriodResult}
-                compare={compareDeltas}
-                isActive={canvasIsActive}
-                viewMode={viewMode}
-                nodeVar={nodeVar}
-                linkVar={linkVar}
-                animateLinks={animateLinks}
-                basemap={basemap}
-                selectedNodeId={selectedNodeId}
-                onSelectNode={handleSelectNode}
-                selectedLinkId={selectedLinkId}
-                onSelectLink={handleSelectLink}
-                headMin={stableResultMeta?.ranges.headMin ?? 0}
-                headMax={stableResultMeta?.ranges.headMax ?? 100}
-                demandMin={stableResultMeta?.ranges.demandMin ?? 0}
-                demandMax={stableResultMeta?.ranges.demandMax ?? 1}
-                flowMax={stableResultMeta?.ranges.flowMax ?? 1}
-                qualityMin={stableResultMeta?.ranges.qualityMin ?? 0}
-                qualityMax={stableResultMeta?.ranges.qualityMax ?? 1}
-                colorMode={colorMode}
-                pressureThresholds={thresholds.pressure}
-                velocityThresholds={thresholds.velocity}
-                flowThresholds={thresholds.flow}
-                tool={activeTool}
-                onNodeMoved={handleNodeMoved}
-                onCreateNodeRequest={handleCreateNodeRequest}
-                onCreateLinkRequest={handleCreateLinkRequest}
-                onMeasurePoint={handleMeasurePoint}
-                flyToNodeId={flyToState.nodeId}
-                flyToLinkId={flyToState.linkId}
-                flyToKey={flyToState.key}
-                fitKey={mapFitKey}
-                zoomInKey={zoomInKey}
-                zoomOutKey={zoomOutKey}
-                resetNorthKey={resetNorthKey}
-              />
-            </CanvasErrorBoundary>
+            {/* Map + Schematic — MapLibre GL JS + deck.gl. Held back until
+                prefsReady so MapLibre never initialises with the placeholder
+                basemap/CRS (see the cold-load gate above). */}
+            {prefsReady && (
+              <CanvasErrorBoundary>
+                <MapCanvas
+                  nodes={canvasNodes}
+                  links={canvasLinks}
+                  periodResult={currentPeriodResult}
+                  compare={compareDeltas}
+                  isActive={canvasIsActive}
+                  viewMode={viewMode}
+                  nodeVar={nodeVar}
+                  linkVar={linkVar}
+                  animateLinks={animateLinks}
+                  basemap={basemap}
+                  selectedNodeId={selectedNodeId}
+                  onSelectNode={handleSelectNode}
+                  selectedLinkId={selectedLinkId}
+                  onSelectLink={handleSelectLink}
+                  headMin={stableResultMeta?.ranges.headMin ?? 0}
+                  headMax={stableResultMeta?.ranges.headMax ?? 100}
+                  demandMin={stableResultMeta?.ranges.demandMin ?? 0}
+                  demandMax={stableResultMeta?.ranges.demandMax ?? 1}
+                  flowMax={stableResultMeta?.ranges.flowMax ?? 1}
+                  qualityMin={stableResultMeta?.ranges.qualityMin ?? 0}
+                  qualityMax={stableResultMeta?.ranges.qualityMax ?? 1}
+                  colorMode={colorMode}
+                  pressureThresholds={thresholds.pressure}
+                  velocityThresholds={thresholds.velocity}
+                  flowThresholds={thresholds.flow}
+                  tool={activeTool}
+                  onNodeMoved={handleNodeMoved}
+                  onCreateNodeRequest={handleCreateNodeRequest}
+                  onCreateLinkRequest={handleCreateLinkRequest}
+                  onMeasurePoint={handleMeasurePoint}
+                  flyToNodeId={flyToState.nodeId}
+                  flyToLinkId={flyToState.linkId}
+                  flyToKey={flyToState.key}
+                  fitKey={mapFitKey}
+                  zoomInKey={zoomInKey}
+                  zoomOutKey={zoomOutKey}
+                  resetNorthKey={resetNorthKey}
+                />
+              </CanvasErrorBoundary>
+            )}
 
             {/* Legend — visible only when simulation results exist */}
             {!!stableResultMeta && (
@@ -1779,7 +1790,7 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
             {/* CRS alert — map mode only, shown when coordinates can't be
                 reprojected. Suppressed while a catalog proj4 def is still being
                 fetched for a persisted CRS (avoids a spurious cold-start flash). */}
-            {viewMode === "map" && crsError && !crsResolving && (
+            {prefsReady && viewMode === "map" && crsError && !crsResolving && (
               <InvalidCrsOverlay
                 // Auto-suggestion only makes sense for the out-of-range case
                 // (coords look projected while CRS is the EPSG:4326 default) —
