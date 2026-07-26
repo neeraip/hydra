@@ -243,18 +243,17 @@ function NodesTab({
             are pinned — the ID/data columns share the remaining rail width. */}
         <colgroup>
           <col />
-          <col style={{ width: 40 }} />
           <col />
           <col />
           {hasResults && <col />}
+          <col style={{ width: 40 }} />
           {onZoomTo && <col style={{ width: 22 }} />}
         </colgroup>
         <thead>
           <tr>
-            {(["id", "type", "elevation", "baseDemand"] as const).map((col) => {
+            {(["id", "elevation", "baseDemand"] as const).map((col) => {
               const meta = {
                 id: { label: "ID", tip: "Node ID" },
-                type: { label: "Type", tip: "Element type" },
                 elevation: {
                   label: "Elev",
                   tip: `Elevation (${unitLabel("elevation", sys)})`,
@@ -296,6 +295,15 @@ function NodesTab({
                 />
               </th>
             )}
+            <th
+              style={TH}
+              onClick={() => toggleSort("type")}
+              data-tooltip="Element type"
+              data-tooltip-pos="bottom"
+            >
+              Type
+              <SortIndicator col="type" sortCol={sortCol} sortDir={sortDir} />
+            </th>
             {onZoomTo && <th style={TH} />}
           </tr>
         </thead>
@@ -345,9 +353,6 @@ function NodesTab({
                 >
                   {node.id}
                 </td>
-                <td style={TD}>
-                  <TypeBadge type={node.type} />
-                </td>
                 <td style={{ ...TD, fontFamily: "var(--font-mono)" }}>
                   {node.elevation != null
                     ? toDisplay(node.elevation, "elevation", sys).toFixed(1)
@@ -367,6 +372,9 @@ function NodesTab({
                       : "—"}
                   </td>
                 )}
+                <td style={TD}>
+                  <TypeBadge type={node.type} />
+                </td>
                 {onZoomTo && (
                   <td
                     style={{
@@ -516,18 +524,17 @@ function LinksTab({
             columns, flexing ID/data columns. */}
         <colgroup>
           <col />
-          <col style={{ width: 40 }} />
           <col style={{ width: 36 }} />
           <col />
           {hasResults && <col />}
+          <col style={{ width: 40 }} />
           {onZoomTo && <col style={{ width: 22 }} />}
         </colgroup>
         <thead>
           <tr>
-            {(["id", "type", "status", "diameter"] as const).map((col) => {
+            {(["id", "status", "diameter"] as const).map((col) => {
               const meta = {
                 id: { label: "ID", tip: "Link ID" },
-                type: { label: "Type", tip: "Element type" },
                 status: { label: "St.", tip: "Status" },
                 diameter: {
                   label: "Ø",
@@ -562,6 +569,15 @@ function LinksTab({
                 <SortIndicator col="flow" sortCol={sortCol} sortDir={sortDir} />
               </th>
             )}
+            <th
+              style={TH}
+              onClick={() => toggleSort("type")}
+              data-tooltip="Element type"
+              data-tooltip-pos="bottom"
+            >
+              Type
+              <SortIndicator col="type" sortCol={sortCol} sortDir={sortDir} />
+            </th>
             {onZoomTo && <th style={TH} />}
           </tr>
         </thead>
@@ -614,9 +630,6 @@ function LinksTab({
                   {link.id}
                 </td>
                 <td style={TD}>
-                  <TypeBadge type={link.type} />
-                </td>
-                <td style={TD}>
                   {link.status != null ? (
                     <span
                       data-tooltip={STATUS_LABEL[link.status] ?? "Unknown"}
@@ -649,6 +662,9 @@ function LinksTab({
                       : "—"}
                   </td>
                 )}
+                <td style={TD}>
+                  <TypeBadge type={link.type} />
+                </td>
                 {onZoomTo && (
                   <td
                     style={{
