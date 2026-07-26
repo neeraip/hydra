@@ -17,17 +17,10 @@ import type { Link, Node, PeriodResults } from "../hooks";
 import { startPerfSpan } from "../perfTrace";
 import { useUnitSystem } from "../units";
 import type { BasemapStyle } from "./Basemap";
-import type { CompareDeltas } from "./compare";
 import { FlowPathLayer } from "./FlowPathLayer";
 import { HoverChip, type HoverTip } from "./HoverChip";
 import { useCanvasLayers } from "./layers-context";
-import {
-  divergingRgba,
-  hashStr,
-  linkRgba,
-  nodeRgba,
-  type RGBA,
-} from "./MapCanvas/colorUtils";
+import { hashStr, linkRgba, nodeRgba, type RGBA } from "./MapCanvas/colorUtils";
 import {
   fitMapExtents,
   geoBounds,
@@ -129,12 +122,6 @@ interface MapCanvasProps {
    * nodes/links so a timeline scrub changes only this prop — the node/link
    * arrays keep their identity and deck.gl only re-evaluates colours. */
   periodResult?: PeriodResults | null;
-  /** Scenario-comparison Δ overlay (active − baseline). When set, node/link
-   * colours come from the delta arrays through the diverging ramp instead of
-   * the absolute-value ramps. Identity-stable (memoized in CanvasView) — it
-   * participates in updateTriggers, so it must only change when the deltas
-   * actually change. `null`/absent = normal (non-compare) rendering. */
-  compare?: CompareDeltas | null;
   basemap: BasemapStyle;
   selectedNodeId: string | null;
   onSelectNode: (id: string | null) => void;
@@ -204,7 +191,6 @@ export const MapCanvas = memo(function MapCanvas({
   linkVar,
   animateLinks = true,
   periodResult = null,
-  compare = null,
   basemap,
   selectedNodeId,
   onSelectNode,
@@ -711,34 +697,9 @@ export const MapCanvas = memo(function MapCanvas({
           }
         : d;
 
-    // ── Scenario comparison (Δ overlay) ──
-    // Length-guarded like `pr` so topology drift can never pair unrelated
-    // elements. In compare mode junction/link colours come from the delta
-    // arrays via the diverging ramp; non-junctions keep their type colour,
-    // pumps their fixed amber, and the categorical link "status" variable
-    // keeps its static colours (a status delta is not meaningful).
-    const cmp =
-      compare &&
-      compare.deltas.nodePressure.length === nodes.length &&
-      compare.deltas.linkFlow.length === links.length
-        ? compare
-        : null;
-
     // Shared colour accessors — used by BOTH the main node/link layers and
     // the hover/selection glow rings so halos always match the element.
     const nodeColor = (d: (typeof nodeData)[number]): RGBA => {
-      if (cmp && d.type === "junction") {
-        const field =
-          nodeVar === "pressure"
-            ? ("nodePressure" as const)
-            : nodeVar === "head"
-              ? ("nodeHead" as const)
-              : nodeVar === "demand"
-                ? ("nodeDemand" as const)
-                : ("nodeQuality" as const);
-        const arr = cmp.deltas[field];
-        return divergingRgba(arr ? arr[d.si] : null, cmp.maxAbs[field]);
-      }
       return nodeRgba(
         nodeSim(d),
         nodeVar,
@@ -752,18 +713,6 @@ export const MapCanvas = memo(function MapCanvas({
       );
     };
     const linkColor = (d: (typeof linkData)[number]): RGBA => {
-      if (cmp && linkVar !== "status" && d.type !== "pump") {
-        const field =
-          linkVar === "flow"
-            ? ("linkFlow" as const)
-            : linkVar === "velocity"
-              ? ("linkVelocity" as const)
-              : linkVar === "headloss"
-                ? ("linkHeadloss" as const)
-                : ("linkQuality" as const);
-        const arr = cmp.deltas[field];
-        return divergingRgba(arr ? arr[d.si] : null, cmp.maxAbs[field]);
-      }
       return linkRgba(
         linkSim(d),
         linkVar,
@@ -912,7 +861,6 @@ export const MapCanvas = memo(function MapCanvas({
         qualityMin,
         qualityMax,
         pr,
-        cmp,
       ];
       // Link hover/click is only meaningful in select/edit; skipping the
       // pick pass for other tools halves per-mousemove GPU picking cost.
@@ -965,11 +913,7 @@ export const MapCanvas = memo(function MapCanvas({
         // ids for the same class-transfer reason as above. FlowPathLayer is
         // already a PathLayer, so it renders the full polyline in both the
         // straight and vertex cases under its single id.
-        // Compare mode renders static delta colours — the flow pulse reads
-        // absolute velocities/flows and would contradict the Δ ramp.
-        ...(animateLinks &&
-        cmp == null &&
-        (linkVar === "flow" || linkVar === "velocity")
+        ...(animateLinks && (linkVar === "flow" || linkVar === "velocity")
           ? [
               new FlowPathLayer({
                 id: "links-flow",
@@ -1112,7 +1056,6 @@ export const MapCanvas = memo(function MapCanvas({
               colorMode,
               pressureThresholds,
               pr,
-              cmp,
             ],
             getRadius: [isSchematic],
           },
@@ -1287,7 +1230,6 @@ export const MapCanvas = memo(function MapCanvas({
     nodeDatumById,
     anyLinkVertices,
     periodResult,
-    compare,
     nodes,
     links,
     viewMode,
@@ -1620,12 +1562,8 @@ export const MapCanvas = memo(function MapCanvas({
     markFirstFrame("schematic");
   }, [buildLayers, isActive, markFirstFrame, viewMode]);
 
-  // Compare mode forces the flow/velocity pulse off (static Δ colours only);
-  // buildLayers applies the same gate when picking the flow layer class.
   const linkAnimationActive =
-    animateLinks &&
-    compare == null &&
-    (linkVar === "flow" || linkVar === "velocity");
+    animateLinks && (linkVar === "flow" || linkVar === "velocity");
 
   // Flow-animation loop — one RAF effect drives both view modes, pushing
   // fresh layers to the schematic deck or the map overlay. The clock resets

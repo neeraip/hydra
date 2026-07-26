@@ -19,7 +19,6 @@ import {
   useUnitSystem,
 } from "../units";
 import {
-  DIVERGING_GRADIENT_CSS,
   FLOW_GRADIENT_CSS,
   LINK_RISK_GRADIENT_CSS,
   PRESSURE_GRADIENT_CSS,
@@ -36,17 +35,6 @@ export interface LegendThresholds {
   pressure: { low: number; required: number; high: number };
   velocity: { low: number; target: number; high: number };
   flow: { low: number; target: number; high: number };
-}
-
-/** Scenario-comparison legend state: baseline caption + Δ ramp bounds. */
-export interface LegendCompare {
-  /** Display name of the baseline ("Base model" or the scenario name). */
-  baselineName: string;
-  /** Max |Δ| (SI) for the active node variable. */
-  nodeMaxAbs: number;
-  /** Max |Δ| (SI) for the active link variable; `null` when the link
-   * variable is "status" (categorical — not comparable). */
-  linkMaxAbs: number | null;
 }
 
 interface LegendProps {
@@ -71,9 +59,6 @@ interface LegendProps {
   thresholds: LegendThresholds;
   onColorModeChange: (mode: "relative" | "threshold") => void;
   onThresholdsChange: (t: LegendThresholds) => void;
-  /** Non-null while scenario comparison is active: ramps become the
-   * diverging Δ scale and the threshold editor is hidden. */
-  compare?: LegendCompare | null;
   /** Locate (select + fly to) the network min/max of the active variable.
    * Absent when there are no results to scan. */
   onLocateExtreme?: (target: "node" | "link", which: "min" | "max") => void;
@@ -180,47 +165,6 @@ function Ramp({
           style={{ fontSize: 10, color: "var(--text-tertiary)" }}
         >
           {max.toFixed(1)}
-        </span>
-      </div>
-    </div>
-  );
-}
-
-/** Compact delta-bound label: whole numbers when large, more precision when
- * the differences are small (Δ ranges are often well under 1 display unit). */
-function fmtDelta(v: number): string {
-  const a = Math.abs(v);
-  if (a >= 100) return v.toFixed(0);
-  if (a >= 1) return v.toFixed(1);
-  return v.toPrecision(2);
-}
-
-const RAMP_LABEL_STYLE: CSSProperties = {
-  fontSize: 10,
-  color: "var(--text-tertiary)",
-};
-
-/** Diverging Δ ramp with -max … 0 … +max labels (display units). */
-function DeltaRamp({ maxAbs }: { maxAbs: number }) {
-  return (
-    <div>
-      <div
-        style={{
-          height: 10,
-          borderRadius: 5,
-          background: DIVERGING_GRADIENT_CSS,
-          marginBottom: 4,
-        }}
-      />
-      <div style={{ display: "flex", justifyContent: "space-between" }}>
-        <span className="mono" style={RAMP_LABEL_STYLE}>
-          -{fmtDelta(maxAbs)}
-        </span>
-        <span className="mono" style={RAMP_LABEL_STYLE}>
-          0
-        </span>
-        <span className="mono" style={RAMP_LABEL_STYLE}>
-          +{fmtDelta(maxAbs)}
         </span>
       </div>
     </div>
@@ -455,7 +399,6 @@ export function Legend({
   thresholds,
   onColorModeChange,
   onThresholdsChange,
-  compare = null,
   onLocateExtreme,
 }: LegendProps) {
   const sys = useUnitSystem();
@@ -531,12 +474,9 @@ export function Legend({
     setEditing(false);
   }
 
-  // Colour ramps — the diverging Δ ramp replaces both while comparing
-  // (status keeps its discrete swatches in either mode).
-  const ng = compare ? DIVERGING_GRADIENT_CSS : nodeGradient(nodeVar);
-  const lg = compare
-    ? DIVERGING_GRADIENT_CSS
-    : linkGradient(linkVar, colorMode);
+  // Colour ramps (status keeps its discrete swatches).
+  const ng = nodeGradient(nodeVar);
+  const lg = linkGradient(linkVar, colorMode);
 
   // Display quantities for ramp min/max labels (null = unitless).
   const nodeQty: Quantity | null =
@@ -588,11 +528,10 @@ export function Legend({
   // Show threshold annotations in threshold mode (never while comparing —
   // Δ colours ignore threshold bands entirely).
   const showPressureAnnotations =
-    !compare && colorMode === "threshold" && nodeVar === "pressure";
+    colorMode === "threshold" && nodeVar === "pressure";
   const showVelAnnotations =
-    !compare && colorMode === "threshold" && linkVar === "velocity";
-  const showFlowAnnotations =
-    !compare && colorMode === "threshold" && linkVar === "flow";
+    colorMode === "threshold" && linkVar === "velocity";
+  const showFlowAnnotations = colorMode === "threshold" && linkVar === "flow";
 
   const nodeOptions: PickerOption<NodeVariable>[] = [
     { value: "pressure", label: `Pressure (${unitLabel("pressure", sys)})` },
@@ -644,46 +583,22 @@ export function Legend({
             gap: 12,
           }}
         >
-          {/* Comparison caption — which baseline the Δ colours are against */}
-          {compare && (
-            <div
-              style={{
-                fontSize: 10,
-                fontWeight: 600,
-                color: "var(--text-secondary)",
-              }}
-            >
-              Δ vs {compare.baselineName}
-            </div>
-          )}
-
           {/* Node variable ramp — variable is switched via the picker below */}
           <div>
             <div style={SECTION_LABEL_STYLE}>
-              {compare ? "Δ " : ""}
               {nodeOptions.find((o) => o.value === nodeVar)?.label}
             </div>
-            {compare ? (
-              <DeltaRamp
-                maxAbs={
-                  nodeQty
-                    ? toDisplay(compare.nodeMaxAbs, nodeQty, sys)
-                    : compare.nodeMaxAbs
-                }
-              />
-            ) : (
-              <Ramp
-                gradient={ng}
-                min={nodeQty ? toDisplay(nMin, nodeQty, sys) : nMin}
-                max={nodeQty ? toDisplay(nMax, nodeQty, sys) : nMax}
-              />
-            )}
+            <Ramp
+              gradient={ng}
+              min={nodeQty ? toDisplay(nMin, nodeQty, sys) : nMin}
+              max={nodeQty ? toDisplay(nMax, nodeQty, sys) : nMax}
+            />
             {showPressureAnnotations && (
               <div style={THRESHOLD_ANNOTATION_STYLE}>
                 {`< ${disp(thresholds.pressure.low, "pressure")} low · ${disp(thresholds.pressure.required, "pressure")} required · > ${disp(thresholds.pressure.high, "pressure")} high`}
               </div>
             )}
-            {!compare && onLocateExtreme && (
+            {onLocateExtreme && (
               <LocateRow onLocate={(w) => onLocateExtreme("node", w)} />
             )}
           </div>
@@ -691,28 +606,10 @@ export function Legend({
           {/* Link variable ramp — variable is switched via the picker below */}
           <div>
             <div style={SECTION_LABEL_STYLE}>
-              {compare && linkVar !== "status" ? "Δ " : ""}
               {linkOptions.find((o) => o.value === linkVar)?.label}
             </div>
             {linkVar === "status" ? (
-              <>
-                <StatusSwatches />
-                {compare && (
-                  <div style={THRESHOLD_ANNOTATION_STYLE}>
-                    Status is not comparable — showing current values.
-                  </div>
-                )}
-              </>
-            ) : compare ? (
-              <DeltaRamp
-                maxAbs={
-                  compare.linkMaxAbs == null
-                    ? 0
-                    : linkQty
-                      ? toDisplay(compare.linkMaxAbs, linkQty, sys)
-                      : compare.linkMaxAbs
-                }
-              />
+              <StatusSwatches />
             ) : (
               <>
                 <Ramp
@@ -734,20 +631,13 @@ export function Legend({
                   })()}
               </>
             )}
-            {!compare && linkVar !== "status" && onLocateExtreme && (
+            {linkVar !== "status" && onLocateExtreme && (
               <LocateRow onLocate={(w) => onLocateExtreme("link", w)} />
             )}
           </div>
 
-          {/* Thresholds don't apply to Δ colours — editor hidden while comparing */}
-          {compare && colorMode === "threshold" && (
-            <div style={THRESHOLD_ANNOTATION_STYLE}>
-              Thresholds don't apply while comparing.
-            </div>
-          )}
-
           {/* Threshold editor (only in threshold mode) */}
-          {!compare && colorMode === "threshold" && (
+          {colorMode === "threshold" && (
             <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
               <button
                 type="button"
@@ -814,13 +704,12 @@ export function Legend({
             </div>
           )}
 
-          {/* Mode toggle — inapplicable (disabled) while comparing */}
+          {/* Mode toggle */}
           <div style={{ display: "flex", gap: 6 }}>
             {(["relative", "threshold"] as const).map((m) => (
               <button
                 type="button"
                 key={m}
-                disabled={!!compare}
                 onClick={() => {
                   onColorModeChange(m);
                   if (m === "relative") setEditing(false);
@@ -833,8 +722,7 @@ export function Legend({
                   color:
                     colorMode === m ? "var(--accent)" : "var(--text-secondary)",
                   fontSize: 10,
-                  cursor: compare ? "default" : "pointer",
-                  opacity: compare ? 0.5 : 1,
+                  cursor: "pointer",
                   fontFamily: "var(--font-ui)",
                 }}
               >
@@ -955,19 +843,16 @@ export function Legend({
         />
         {(() => {
           // Animation applies to Flow and Velocity only; "Reduce motion"
-          // (Settings → Accessibility) always wins over the user toggle, and
-          // comparison mode forces static Δ colours.
+          // (Settings → Accessibility) always wins over the user toggle.
           const animatable = linkVar === "flow" || linkVar === "velocity";
-          const disabled = reducedMotion || !animatable || !!compare;
+          const disabled = reducedMotion || !animatable;
           const tooltip = reducedMotion
             ? "Animation off (Reduce motion is enabled in Settings)"
-            : compare
-              ? "Animation off while comparing scenarios"
-              : !animatable
-                ? "Animation applies to Flow and Velocity"
-                : linkAnimation
-                  ? "Pause link animation"
-                  : "Play link animation";
+            : !animatable
+              ? "Animation applies to Flow and Velocity"
+              : linkAnimation
+                ? "Pause link animation"
+                : "Play link animation";
           const active = linkAnimation && !disabled;
           return (
             <button

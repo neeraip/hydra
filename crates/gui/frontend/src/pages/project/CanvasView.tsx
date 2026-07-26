@@ -52,10 +52,8 @@ import {
 import { useReducedMotion } from "../../hooks/useReducedMotion";
 import { CanvasErrorBoundary } from "./CanvasView/CanvasErrorBoundary";
 import { CanvasToolbar } from "./CanvasView/CanvasToolbar";
-import { CompareNoticePill } from "./CanvasView/CompareNoticePill";
 import { InvalidCrsOverlay } from "./CanvasView/InvalidCrsOverlay";
 import { useCrsReprojection } from "./CanvasView/useCrsReprojection";
-import { useScenarioCompare } from "./CanvasView/useScenarioCompare";
 import { ViewportControls } from "./CanvasView/ViewportControls";
 
 const NODE_KIND_PREFIX: Record<string, string> = {
@@ -76,10 +74,6 @@ interface CanvasPrefs {
   nodeVar: NodeVariable;
   linkVar: LinkVariable;
   colorMode: "relative" | "threshold";
-  /** Scenario-comparison baseline: null = off, BASE_COMPARE_ID = base model,
-   * otherwise a scenario id. Optional for backward compat with stored prefs
-   * that predate comparison. */
-  compareScenarioId?: string | null;
 }
 
 // Allowlists so corrupt/stale localStorage can never inject invalid state.
@@ -220,14 +214,6 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
   // schematic mode (idealised orthogonal layout).
   const [viewMode, setViewMode] = useState<ViewMode>("map");
   const [basemap, setBasemap] = useState<BasemapStyle>("streets");
-  // ── Scenario comparison baseline ─────────────────────────────────────
-  // null = off, BASE_COMPARE_ID = base model, otherwise a scenario id.
-  // Validity against the current project/scenario is derived below
-  // (effectiveCompareId) so stale persisted ids are inert, never crashing.
-  const [compareScenarioId, setCompareScenarioId] = useState<string | null>(
-    null,
-  );
-  const [showCompareDropdown, setShowCompareDropdown] = useState(false);
 
   // ── Per-project canvas prefs: restore on project switch, persist on change.
   // `prefsLoadedFor` gates persisting so the write effect (which also re-runs
@@ -255,14 +241,6 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
         setColorMode(prefs.colorMode);
       }
     }
-    // Unlike the other prefs (global vocabularies), the compare baseline is
-    // project-scoped (a scenario id) — always reset it on project switch,
-    // falling back to "off" when the stored prefs predate comparison.
-    setCompareScenarioId(
-      typeof prefs?.compareScenarioId === "string"
-        ? prefs.compareScenarioId
-        : null,
-    );
     setPrefsLoadedFor(id);
   }, [project?.id]);
   // Cold-load gate: until the project row has arrived (an async fetch — it
@@ -281,7 +259,6 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
       nodeVar,
       linkVar,
       colorMode,
-      compareScenarioId,
     };
     try {
       localStorage.setItem(canvasPrefsKey(id), JSON.stringify(prefs));
@@ -296,7 +273,6 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
     nodeVar,
     linkVar,
     colorMode,
-    compareScenarioId,
   ]);
 
   useEffect(() => {
@@ -623,31 +599,6 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
   // coordinates and merged sim values.
   const rawNetworkRef = useRef({ nodes: baseNodes, links: baseLinks });
   rawNetworkRef.current = { nodes: baseNodes, links: baseLinks };
-
-  // ── Scenario comparison (Δ overlay) ──────────────────────────────────────
-  // See useScenarioCompare: baseline resolution, cached metadata + per-period
-  // baseline fetches, topology-staleness gating, delta computation, the
-  // can't-compare notice, the Legend Δ caption, and the picker options.
-  const {
-    effectiveCompareId,
-    comparing,
-    baselineName,
-    compareDeltas,
-    compareNotice,
-    compareNoticeDismissed,
-    setCompareNoticeDismissed,
-    legendCompare,
-    compareOptions,
-  } = useScenarioCompare({
-    projectId: project?.id ?? null,
-    compareScenarioId,
-    currentPeriodResult,
-    currentHour,
-    nodeCount: baseNodes.length,
-    linkCount: baseLinks.length,
-    nodeVar,
-    linkVar,
-  });
 
   // Dismissible notice explaining why result overlays vanished after a
   // structural edit (topology digest mismatch); re-arms when staleness
@@ -1169,7 +1120,6 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
   const handleSvgClick = useCallback(
     (e: React.MouseEvent<SVGSVGElement>) => {
       setShowBasemapDropdown(false);
-      setShowCompareDropdown(false);
       if (activeTool === "measure") {
         const p = eventToSvgPoint(e);
         if (!p) return;
@@ -1183,16 +1133,15 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
   // Global click-outside: close any open toolbar dropdown when the user clicks
   // anywhere outside the toolbar.
   useEffect(() => {
-    if (!showBasemapDropdown && !showCompareDropdown) return;
+    if (!showBasemapDropdown) return;
     function onDown(e: PointerEvent) {
       const target = e.target as HTMLElement | null;
       if (target?.closest("[data-toolbar-dropdown]")) return;
       setShowBasemapDropdown(false);
-      setShowCompareDropdown(false);
     }
     window.addEventListener("pointerdown", onDown);
     return () => window.removeEventListener("pointerdown", onDown);
-  }, [showBasemapDropdown, showCompareDropdown]);
+  }, [showBasemapDropdown]);
 
   return (
     // Scrub-position plumbing for the inspector's TimeSeriesCard markers.
@@ -1234,7 +1183,6 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
                   nodes={canvasNodes}
                   links={canvasLinks}
                   periodResult={currentPeriodResult}
-                  compare={compareDeltas}
                   isActive={canvasIsActive}
                   viewMode={viewMode}
                   nodeVar={nodeVar}
@@ -1294,7 +1242,6 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
                 thresholds={thresholds}
                 onColorModeChange={setColorMode}
                 onThresholdsChange={setThresholds}
-                compare={legendCompare}
                 onLocateExtreme={
                   currentPeriodResult ? onLocateExtreme : undefined
                 }
@@ -1354,16 +1301,6 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
             {/* Comparison notice — baseline missing results / topology drift.
                 Suppressed while the topology-stale notice occupies the same
                 slot (that notice already explains the hidden results). */}
-            {comparing &&
-              !resultsTopologyStale &&
-              !!stableResultMeta &&
-              compareNotice &&
-              !compareNoticeDismissed && (
-                <CompareNoticePill
-                  notice={compareNotice}
-                  onDismiss={() => setCompareNoticeDismissed(true)}
-                />
-              )}
 
             {/* CRS alert — map mode only, shown when coordinates can't be
                 reprojected. Suppressed while a catalog proj4 def is still being
@@ -1427,14 +1364,6 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
               onToolChange={setActiveTool}
               hasAnnotations={measureGeoPts.length > 0 || measurePts.length > 0}
               onClearAnnotations={clearAnnotations}
-              showComparePicker={!!stableResultMeta}
-              comparing={comparing}
-              baselineName={baselineName}
-              compareOptions={compareOptions}
-              effectiveCompareId={effectiveCompareId}
-              onSelectCompare={setCompareScenarioId}
-              showCompareDropdown={showCompareDropdown}
-              setShowCompareDropdown={setShowCompareDropdown}
             />
 
             {/* Annotation summary (measure) */}

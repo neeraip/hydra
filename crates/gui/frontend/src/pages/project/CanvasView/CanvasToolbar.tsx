@@ -54,14 +54,6 @@ export function CanvasToolbar({
   onToolChange,
   hasAnnotations,
   onClearAnnotations,
-  showComparePicker,
-  comparing,
-  baselineName,
-  compareOptions,
-  effectiveCompareId,
-  onSelectCompare,
-  showCompareDropdown,
-  setShowCompareDropdown,
 }: {
   viewMode: ViewMode;
   onViewModeChange: (m: ViewMode) => void;
@@ -80,15 +72,6 @@ export function CanvasToolbar({
   /** True when measure annotations exist (shows the clear button). */
   hasAnnotations: boolean;
   onClearAnnotations: () => void;
-  /** Render the comparison picker (same gate as the Legend: results exist). */
-  showComparePicker: boolean;
-  comparing: boolean;
-  baselineName: string;
-  compareOptions: { value: string | null; label: string }[];
-  effectiveCompareId: string | null;
-  onSelectCompare: (value: string | null) => void;
-  showCompareDropdown: boolean;
-  setShowCompareDropdown: Dispatch<SetStateAction<boolean>>;
 }) {
   const { layers: canvasLayers, setLayer } = useCanvasLayers();
 
@@ -415,90 +398,6 @@ export function CanvasToolbar({
         >
           Ll
         </button>
-
-        {/* Scenario comparison baseline picker — only when the active
-            scenario has results to compare from (same gate as Legend) */}
-        {showComparePicker && (
-          <>
-            <div className="tool-divider" />
-            <div data-toolbar-dropdown style={{ position: "relative" }}>
-              <button
-                type="button"
-                className={`tool-btn${comparing ? " active" : ""}`}
-                style={{
-                  width: "auto",
-                  padding: "0 8px",
-                  fontSize: 12,
-                  gap: 4,
-                  display: "flex",
-                  alignItems: "center",
-                  whiteSpace: "nowrap",
-                }}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setShowBasemapDropdown(false);
-                  setShowCompareDropdown((v) => !v);
-                }}
-                data-tooltip="Colour by difference vs a baseline scenario"
-                data-tooltip-pos="bottom"
-              >
-                {comparing ? `Δ vs ${baselineName}` : "Compare"}{" "}
-                <ChevronUpDownIcon
-                  style={{ width: 12, height: 12, verticalAlign: "middle" }}
-                />
-              </button>
-              {showCompareDropdown && (
-                <div
-                  style={{
-                    position: "absolute",
-                    top: "calc(100% + 4px)",
-                    left: 0,
-                    background: "var(--bg-panel)",
-                    border: "1px solid var(--border)",
-                    borderRadius: 7,
-                    boxShadow: "var(--shadow-2)",
-                    overflow: "hidden auto",
-                    minWidth: 140,
-                    maxHeight: 280,
-                    zIndex: 20,
-                  }}
-                >
-                  {compareOptions.map((o) => (
-                    <button
-                      type="button"
-                      key={o.value ?? "__off__"}
-                      onClick={() => {
-                        onSelectCompare(o.value);
-                        setShowCompareDropdown(false);
-                      }}
-                      style={{
-                        display: "block",
-                        width: "100%",
-                        padding: "7px 12px",
-                        border: "none",
-                        background:
-                          o.value === effectiveCompareId
-                            ? "var(--accent-dim)"
-                            : "transparent",
-                        color:
-                          o.value === effectiveCompareId
-                            ? "var(--accent)"
-                            : "var(--text-secondary)",
-                        cursor: "pointer",
-                        fontSize: 12,
-                        textAlign: "left",
-                        fontFamily: "var(--font-ui)",
-                        whiteSpace: "nowrap",
-                      }}
-                    >
-                      {o.label}
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-          </>
-        )}
       </div>
     </div>
   );
