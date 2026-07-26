@@ -28,7 +28,15 @@ use hydra_engine_wds::{io, LinkQuantity, NodeQuantity, QualityMode, Simulation};
 use std::path::PathBuf;
 
 /// Relative tolerance for all golden comparisons.
-const REL_TOL: f64 = 1e-6;
+///
+/// Loose enough to absorb cross-platform floating-point divergence: the
+/// iterative Newton solver over a long EPS run accumulates libm/FMA/rounding
+/// differences between platforms (observed up to ~1e-5 relative on Richmond
+/// between the macOS-blessed goldens and Linux/Windows CI — different sample
+/// points exceed a 1e-6 tolerance on each platform). 1e-4 gives ~10× headroom
+/// over that spread while remaining orders of magnitude tighter than any real
+/// behavioural change these goldens exist to catch.
+const REL_TOL: f64 = 1e-4;
 /// Absolute floor: values whose golden magnitude is below this are compared
 /// absolutely. 1e-6 m³/s is the solver's `Q_CLOSED` convergence-noise level,
 /// so relative comparison below it would be meaningless.
