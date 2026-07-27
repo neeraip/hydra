@@ -13,6 +13,7 @@ import { IssuesPanel } from "./components/panels/IssuesPanel";
 import { TaskTray } from "./components/panels/TaskTray";
 import { Toast } from "./components/ui/Toast";
 import { TooltipPortal } from "./components/ui/TooltipPortal";
+import { BasemapDownloadProvider } from "./hooks/BasemapDownloadContext";
 import { tryInvoke } from "./hooks/ipc";
 import { useUndoRedo } from "./hooks/useUndoRedo";
 import { startMainThreadStallWatch } from "./perfTrace";
@@ -265,40 +266,36 @@ export function App() {
       : undefined;
 
   return (
-    <div
-      style={{
-        display: "flex",
-        flexDirection: "row",
-        width: "100%",
-        height: "100%",
-        overflow: "hidden",
-        position: "relative",
-      }}
-    >
-      <ActivityBar />
+    // BasemapDownloadProvider sits here (inside AppProvider, above every
+    // page) so offline-basemap download progress and completion toasts
+    // survive navigation between Settings, the canvas, and everything else.
+    <BasemapDownloadProvider>
       <div
         style={{
-          flex: 1,
           display: "flex",
-          flexDirection: "column",
+          flexDirection: "row",
+          width: "100%",
+          height: "100%",
           overflow: "hidden",
+          position: "relative",
         }}
       >
-        <TopBar />
+        <ActivityBar />
         <div
           style={{
             flex: 1,
             display: "flex",
+            flexDirection: "column",
             overflow: "hidden",
-            position: "relative",
           }}
         >
+          <TopBar />
           <div
             style={{
               flex: 1,
-              overflow: "hidden",
               display: "flex",
-              flexDirection: "column",
+              overflow: "hidden",
+              position: "relative",
             }}
           >
             <div
@@ -307,51 +304,60 @@ export function App() {
                 overflow: "hidden",
                 display: "flex",
                 flexDirection: "column",
-                animation: slideAnim,
               }}
             >
-              <Suspense fallback={<PageLoader />}>
-                {page === "home" && <HomePage />}
-                {page === "projects" && <ProjectsPage />}
-                {page === "project" && <ProjectPage />}
-                {page === "settings" && <SettingsPage />}
-              </Suspense>
+              <div
+                style={{
+                  flex: 1,
+                  overflow: "hidden",
+                  display: "flex",
+                  flexDirection: "column",
+                  animation: slideAnim,
+                }}
+              >
+                <Suspense fallback={<PageLoader />}>
+                  {page === "home" && <HomePage />}
+                  {page === "projects" && <ProjectsPage />}
+                  {page === "project" && <ProjectPage />}
+                  {page === "settings" && <SettingsPage />}
+                </Suspense>
+              </div>
             </div>
           </div>
+          <StatusBar />
         </div>
-        <StatusBar />
+        {commandPaletteOpen && (
+          <Suspense fallback={null}>
+            <CommandPalette />
+          </Suspense>
+        )}
+        {runModalOpen && (
+          <Suspense fallback={null}>
+            <RunModal />
+          </Suspense>
+        )}
+        {simSettingsModalOpen && (
+          <Suspense fallback={null}>
+            <SimSettingsModal />
+          </Suspense>
+        )}
+        <Suspense fallback={null}>
+          <ScenariosModal />
+        </Suspense>
+        <Suspense fallback={null}>
+          <CrsModal />
+        </Suspense>
+        {shortcutCardOpen && (
+          <Suspense fallback={null}>
+            <ShortcutCard onClose={() => setShortcutCardOpen(false)} />
+          </Suspense>
+        )}
+        {taskTrayOpen && <TaskTray />}
+        <IssuesPanel />
+        <Toast />
+        <TooltipPortal />
       </div>
-      {commandPaletteOpen && (
-        <Suspense fallback={null}>
-          <CommandPalette />
-        </Suspense>
-      )}
-      {runModalOpen && (
-        <Suspense fallback={null}>
-          <RunModal />
-        </Suspense>
-      )}
-      {simSettingsModalOpen && (
-        <Suspense fallback={null}>
-          <SimSettingsModal />
-        </Suspense>
-      )}
-      <Suspense fallback={null}>
-        <ScenariosModal />
-      </Suspense>
-      <Suspense fallback={null}>
-        <CrsModal />
-      </Suspense>
-      {shortcutCardOpen && (
-        <Suspense fallback={null}>
-          <ShortcutCard onClose={() => setShortcutCardOpen(false)} />
-        </Suspense>
-      )}
-      {taskTrayOpen && <TaskTray />}
-      <IssuesPanel />
-      <Toast />
-      <TooltipPortal />
-    </div>
+    </BasemapDownloadProvider>
   );
 }
 

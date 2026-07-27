@@ -173,6 +173,13 @@ interface MapCanvasProps {
   ) => undefined | boolean | Promise<undefined | boolean>;
   /** Called when the user clicks a point in measure mode. */
   onMeasurePoint?: (lng: number, lat: number) => void;
+  /** Called after each geographic map move/zoom settles (map mode only) with
+   * the viewport bbox `[minLon, minLat, maxLon, maxLat]` (WGS84) and the map
+   * zoom. Fires on the initial fit too (fitBounds ends in a moveend). */
+  onViewportMoveEnd?: (
+    bbox: [number, number, number, number],
+    zoom: number,
+  ) => void;
   /** Called when the user clicks empty canvas in add-node mode. */
   onCreateNodeRequest?: (lng: number, lat: number) => void;
   /** Called when the user selects two nodes in add-link mode. */
@@ -228,6 +235,7 @@ export const MapCanvas = memo(function MapCanvas({
   onCreateNodeRequest,
   onCreateLinkRequest,
   onMeasurePoint,
+  onViewportMoveEnd,
   flyToNodeId,
   flyToLinkId,
   flyToKey,
@@ -303,6 +311,7 @@ export const MapCanvas = memo(function MapCanvas({
   const onCreateNodeRequestRef = useRef(onCreateNodeRequest);
   const onMeasurePointRef = useRef(onMeasurePoint);
   const onCreateLinkRequestRef = useRef(onCreateLinkRequest);
+  const onViewportMoveEndRef = useRef(onViewportMoveEnd);
   const nodesRef = useRef(nodes);
   const linksRef = useRef(links);
   // Initialised empty; kept current by useEffect once geoCoords is available.
@@ -454,6 +463,9 @@ export const MapCanvas = memo(function MapCanvas({
   useEffect(() => {
     onCreateLinkRequestRef.current = onCreateLinkRequest;
   }, [onCreateLinkRequest]);
+  useEffect(() => {
+    onViewportMoveEndRef.current = onViewportMoveEnd;
+  }, [onViewportMoveEnd]);
   useEffect(() => {
     nodesRef.current = nodes;
   }, [nodes]);
@@ -1357,6 +1369,15 @@ export const MapCanvas = memo(function MapCanvas({
     map.on("moveend", () => {
       if (labelsOnRef.current && viewModeRef.current === "map") {
         scheduleLabelRefresh("map");
+      }
+      // Report the settled viewport (offline-coverage checks live upstream).
+      const reportViewport = onViewportMoveEndRef.current;
+      if (reportViewport && viewModeRef.current === "map") {
+        const b = map.getBounds();
+        reportViewport(
+          [b.getWest(), b.getSouth(), b.getEast(), b.getNorth()],
+          map.getZoom(),
+        );
       }
     });
 

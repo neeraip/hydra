@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useActiveProject, useAppState, useSimulation } from "../../AppContext";
 import { AnnotationSummary, MeasureOverlay } from "../../canvas/Annotations";
 import type { BasemapStyle } from "../../canvas/Basemap";
+import { CoverageChip } from "../../canvas/CoverageChip";
 import {
   haversineMeters,
   pickCoordSample,
@@ -21,6 +22,7 @@ import type {
   NodeVariable,
   ViewMode,
 } from "../../canvas/types";
+import { BasemapDownloadModal } from "../../components/modals/BasemapDownloadModal";
 import { CreateLinkModal } from "../../components/modals/CreateLinkModal";
 import {
   CreateNodeModal,
@@ -43,6 +45,14 @@ import {
   useNodes,
   useSimParams,
 } from "../../hooks";
+import { useBasemapDownload } from "../../hooks/BasemapDownloadContext";
+import {
+  type BasemapBbox,
+  type BasemapCoverage,
+  getBasemapCoverage,
+  padBbox,
+  shouldShowCoverageChip,
+} from "../../hooks/basemaps";
 import { useNetworkVersion } from "../../hooks/NetworkVersionContext";
 import {
   pushUndoEntry,
@@ -220,6 +230,64 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
   // schematic mode (idealised orthogonal layout).
   const [viewMode, setViewMode] = useState<ViewMode>("map");
   const [basemap, setBasemap] = useState<BasemapStyle>("streets");
+
+  // ── Offline-basemap coverage chip ─────────────────────────────────────────
+  // MapCanvas reports the settled viewport on move-end; while an offline
+  // basemap is shown at street-detail zoom, a debounced probe asks the tile
+  // store whether the viewport is covered, and the chip offers a download
+  // when it isn't.
+  const { active: activeBasemapDownload, storeGeneration } =
+    useBasemapDownload();
+  const [mapViewport, setMapViewport] = useState<{
+    bbox: BasemapBbox;
+    zoom: number;
+  } | null>(null);
+  const handleViewportMoveEnd = useCallback(
+    (bbox: BasemapBbox, zoom: number) => setMapViewport({ bbox, zoom }),
+    [],
+  );
+  const [basemapCoverage, setBasemapCoverage] =
+    useState<BasemapCoverage | null>(null);
+  // Non-null while the download modal is open (the viewport bbox + padding).
+  const [basemapDownloadBbox, setBasemapDownloadBbox] =
+    useState<BasemapBbox | null>(null);
+  const basemapDownloadActive = activeBasemapDownload != null;
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `storeGeneration` intentionally re-probes coverage after the region store changes (download finished / region deleted).
+  useEffect(() => {
+    if (
+      !shouldShowCoverageChip({
+        basemap,
+        viewMode,
+        zoom: mapViewport?.zoom ?? null,
+        // Visibility gates minus the coverage answer itself — that is what
+        // this effect is about to fetch.
+        covered: false,
+        downloadActive: basemapDownloadActive,
+      }) ||
+      mapViewport === null
+    ) {
+      setBasemapCoverage(null);
+      return;
+    }
+    let stale = false;
+    // ~400 ms debounce: move-end can fire in quick bursts (inertia pans).
+    const timer = window.setTimeout(() => {
+      getBasemapCoverage(mapViewport.bbox, mapViewport.zoom).then((c) => {
+        if (!stale) setBasemapCoverage(c);
+      });
+    }, 400);
+    return () => {
+      stale = true;
+      window.clearTimeout(timer);
+    };
+  }, [basemap, viewMode, mapViewport, basemapDownloadActive, storeGeneration]);
+  const showCoverageChip = shouldShowCoverageChip({
+    basemap,
+    viewMode,
+    zoom: mapViewport?.zoom ?? null,
+    covered: basemapCoverage?.covered ?? null,
+    downloadActive: basemapDownloadActive,
+  });
 
   // ── Per-project canvas prefs: restore on project switch, persist on change.
   // `prefsLoadedFor` gates persisting so the write effect (which also re-runs
@@ -1229,6 +1297,7 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
                   onCreateNodeRequest={handleCreateNodeRequest}
                   onCreateLinkRequest={handleCreateLinkRequest}
                   onMeasurePoint={handleMeasurePoint}
+                  onViewportMoveEnd={handleViewportMoveEnd}
                   flyToNodeId={flyToState.nodeId}
                   flyToLinkId={flyToState.linkId}
                   flyToKey={flyToState.key}
@@ -1321,6 +1390,17 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
             {/* Comparison notice — baseline missing results / topology drift.
                 Suppressed while the topology-stale notice occupies the same
                 slot (that notice already explains the hidden results). */}
+
+            {/* Offline-coverage chip — offline basemap selected but the tile
+                store has no street detail for this viewport. */}
+            {showCoverageChip && (
+              <CoverageChip
+                onDownload={() => {
+                  if (mapViewport)
+                    setBasemapDownloadBbox(padBbox(mapViewport.bbox, 0.2));
+                }}
+              />
+            )}
 
             {/* CRS alert — map mode only, shown when coordinates can't be
                 reprojected. Suppressed while a catalog proj4 def is still being
@@ -1544,6 +1624,13 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
           toNodeId={pendingCreateLink?.toId ?? ""}
           onConfirm={handleConfirmCreateLink}
           onCancel={() => setPendingCreateLink(null)}
+        />
+        <BasemapDownloadModal
+          open={basemapDownloadBbox !== null}
+          initialBbox={basemapDownloadBbox}
+          initialName={project?.name ?? "Region"}
+          projectId={project?.id ?? null}
+          onClose={() => setBasemapDownloadBbox(null)}
         />
       </div>
     </CurrentPeriodProvider>

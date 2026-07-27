@@ -424,6 +424,12 @@ body,
   }
 }
 
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 /* ── Toggle switch ───────────────────────────────────────────────────────────*/
 .toggle {
   position: relative;
