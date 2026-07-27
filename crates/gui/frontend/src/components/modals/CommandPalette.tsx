@@ -14,6 +14,7 @@ import {
   useNetworkVersion,
   useNodes,
   useProjects,
+  useScenarios,
 } from "../../hooks";
 import { tryInvoke } from "../../hooks/ipc";
 import {
@@ -23,6 +24,7 @@ import {
   shiftModifierLabel,
 } from "../../shortcuts";
 import { formatQtyRaw, type UnitSystem, useUnitSystem } from "../../units";
+import { lineageLabel } from "../panels/ScenariosPanel/shared";
 import { ModalBackdrop, stopBackdropEvents } from "../ui/ModalBackdrop";
 
 /**
@@ -30,18 +32,21 @@ import { ModalBackdrop, stopBackdropEvents } from "../ui/ModalBackdrop";
  * with a synthetic "Page" group that the palette injects dynamically based
  * on the user's current view. The data layer doesn't know about "Page".
  */
-type DisplayCategory = CommandCategory | "Page";
+type DisplayCategory = CommandCategory | "Page" | "Scenarios";
 
 const CATEGORY_ORDER: DisplayCategory[] = [
   "Page",
   "Recent",
   "Navigate",
   "Simulate",
+  "Scenarios",
   "Actions",
 ];
 
 interface DynamicCommand extends Omit<Command, "category"> {
   projectId?: string;
+  /** Target for the "switch-scenario" action. */
+  scenarioId?: string;
   category: DisplayCategory;
 }
 
@@ -155,10 +160,17 @@ export function CommandPalette() {
     projectView,
     activeProjectId,
     activeScenarioId,
+    setActiveScenarioId,
     projectsVersion,
+    scenariosVersion,
   } = useAppState();
 
   const projects = useProjects(projectsVersion);
+  // Scenario quick-switch entries — only meaningful with a project open.
+  const scenarios = useScenarios(
+    page === "project" ? activeProjectId : null,
+    scenariosVersion,
+  );
   const allNodes = useNodes();
   const allLinks = useLinks();
   const {
@@ -478,10 +490,27 @@ export function CommandPalette() {
     inputRef.current?.focus();
   }, []);
 
+  /** One "switch scenario" entry per scenario, breadcrumbed by lineage. */
+  const scenarioCommands = useMemo<DynamicCommand[]>(() => {
+    if (page !== "project" || !activeProjectId) return [];
+    return scenarios.map((s) => ({
+      id: `sc-${s.id}`,
+      label: s.name,
+      description: lineageLabel(scenarios, s.id),
+      category: "Scenarios",
+      action: "switch-scenario",
+      scenarioId: s.id,
+    }));
+  }, [page, activeProjectId, scenarios]);
+
   // Combined command pool (page-context first, then static commands).
   const ALL_COMMANDS: DynamicCommand[] = useMemo(
-    () => [...pageCommands, ...(allCommands as DynamicCommand[])],
-    [pageCommands, allCommands],
+    () => [
+      ...pageCommands,
+      ...scenarioCommands,
+      ...(allCommands as DynamicCommand[]),
+    ],
+    [pageCommands, scenarioCommands, allCommands],
   );
 
   // Filtered and grouped results.
@@ -650,6 +679,9 @@ export function CommandPalette() {
         case "open-project":
           if (cmd.projectId) openProject(cmd.projectId);
           break;
+        case "switch-scenario":
+          if (cmd.scenarioId) setActiveScenarioId(cmd.scenarioId);
+          break;
         case "nav-canvas":
           setProjectView("canvas");
           break;
@@ -772,6 +804,7 @@ export function CommandPalette() {
       closeProject,
       activeProjectId,
       activeScenarioId,
+      setActiveScenarioId,
       setPage,
       setProjectView,
       setTheme,

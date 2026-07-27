@@ -31,6 +31,7 @@ export interface Command {
     | "theme-dark"
     | "theme-light"
     | "theme-system"
-    | "compare";
+    | "compare"
+    | "switch-scenario";
   projectId?: string;
 }
