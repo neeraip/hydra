@@ -1,5 +1,11 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+// The offline-basemap subsystem lands ahead of its consumers: the tile
+// store and `basemap://` protocol are live below, while the download and
+// coverage command surface arrives with the next milestones. Until those
+// commands exist, several of the module's exports are unused.
+#[allow(dead_code, unused_imports)]
+mod basemap;
 mod commands;
 mod meta;
 
@@ -16,6 +22,19 @@ fn main() {
         .plugin(tauri_plugin_opener::init())
         .manage(commands::NetworkState::default())
         .manage(commands::RunQueue::default())
+        .setup(|app| {
+            use tauri::Manager;
+            let db_path = commands::app_data_dir(app.handle())
+                .map(|dir| dir.join("basemaps.db"))
+                .map_err(std::io::Error::other)?;
+            app.manage(basemap::BasemapState::new(db_path));
+            Ok(())
+        })
+        .register_uri_scheme_protocol("basemap", |ctx, request| {
+            use tauri::Manager;
+            let state = ctx.app_handle().try_state::<basemap::BasemapState>();
+            basemap::protocol_response(state.as_deref(), &request)
+        })
         .invoke_handler(tauri::generate_handler![
             commands::list_projects,
             commands::create_project,
