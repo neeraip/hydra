@@ -83,7 +83,7 @@ Supported `(object, attribute)` combinations:
 | Pump | `FLOW`, `STATUS`, `SETTING`, `POWER` |
 | Simulation | `TIME`, `CLOCKTIME`, `DEMAND` (total system demand, m³/s) |
 
-> **DEVIATION from EPANET:** EPANET's rule grammar carries a `POWER` keyword in its vocabulary but rejects any premise using it at parse time; Hydra wires the attribute up ($P = \gamma\,Q\,\Delta H$ at the pump's current operating point) as a deliberate extension. `SYSTEM DEMAND` premises exist in both engines.
+> **EXTENSION beyond EPANET:** EPANET's rule grammar carries a `POWER` keyword in its vocabulary but rejects any premise using it at parse time; Hydra wires the attribute up ($P = \gamma\,Q\,\Delta H$ at the pump's current operating point). Opt-in: rules that avoid `POWER` premises behave identically in both engines. (`SYSTEM DEMAND` premises exist in both.)
 
 `FILLTIME` and `DRAINTIME` are computed from current tank state and expressed in **hours** (the EPANET convention for these attributes):
 
@@ -465,6 +465,11 @@ All errors and warnings must be accessible programmatically (not only as printed
 ## 9. Solver Characteristics and EPANET Comparison
 
 Hydra has been exercised against eight real-world hydraulic networks totalling 12,500+ junctions and up to 2,000 demand periods. The following characteristics explain all observed differences between Hydra and EPANET 2.3.5 output. They are properties of Hydra's solver — not bugs, and not deviations from a standard.
+
+**Note conventions.** Throughout all sub-specifications, two blockquote note types mark Hydra's relationship to EPANET (the OWA v2.3.5 baseline):
+
+- **DEVIATION from EPANET** — Hydra deliberately behaves differently on ground both engines share, because the divergence is more accurate, more robust, or follows Hydra's SI-idealised conventions. Comparison runs differ wherever the note's conditions occur. Input/output *file* compatibility is never affected.
+- **EXTENSION beyond EPANET** — Hydra offers an optional capability EPANET lacks (the lineage precedent being OWA's FAVAD leakage relative to USEPA EPANET). Extensions are strictly opt-in: inputs that do not use them behave identically in both engines.
 
 ### 9.1 Global Gradient Algorithm Numerical Path
 
