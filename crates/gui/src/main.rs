@@ -1,10 +1,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-// The offline-basemap subsystem lands ahead of its consumers: the tile
-// store and `basemap://` protocol are live below, while the download and
-// coverage command surface arrives with the next milestones. Until those
-// commands exist, several of the module's exports are unused.
-#[allow(dead_code, unused_imports)]
 mod basemap;
 mod commands;
 mod meta;
@@ -107,6 +102,13 @@ fn main() {
             commands::update_network_title,
             commands::export_project_inp,
             commands::export_results_csv,
+            commands::list_basemap_regions,
+            commands::delete_basemap_region,
+            commands::link_project_basemap_region,
+            commands::plan_basemap_download,
+            commands::download_basemap_region,
+            commands::cancel_basemap_download,
+            commands::basemap_coverage,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

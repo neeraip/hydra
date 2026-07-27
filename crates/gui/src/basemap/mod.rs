@@ -12,8 +12,8 @@ mod pmtiles;
 mod protocol;
 mod store;
 
-pub use extract::{plan_extract, run_extract, tiles_in_bbox, ExtractPlan};
-pub use pmtiles::{Archive, FileSource, HttpSource};
+pub use extract::{plan_extract, run_extract, tiles_in_bbox};
+pub use pmtiles::{Archive, HttpSource};
 pub use store::{RegionInfo, TileCoord, TileStore};
 
 use std::sync::OnceLock;
@@ -27,6 +27,8 @@ pub struct BasemapState {
     store: OnceLock<Result<TileStore, String>>,
     /// `Content-Encoding` of stored tiles, cached from store meta.
     encoding: OnceLock<Option<String>>,
+    /// Cancel flag of the running download; one download at a time.
+    active_download: parking_lot::Mutex<Option<std::sync::Arc<std::sync::atomic::AtomicBool>>>,
 }
 
 impl BasemapState {
@@ -35,7 +37,33 @@ impl BasemapState {
             db_path,
             store: OnceLock::new(),
             encoding: OnceLock::new(),
+            active_download: parking_lot::Mutex::new(None),
         }
+    }
+
+    /// Claim the single download slot, or fail if one is running.
+    pub fn begin_download(
+        &self,
+        cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    ) -> Result<(), String> {
+        let mut slot = self.active_download.lock();
+        if slot.is_some() {
+            return Err("a basemap download is already running".into());
+        }
+        *slot = Some(cancel);
+        Ok(())
+    }
+
+    /// Signal the running download (if any) to stop after its current batch.
+    pub fn cancel_download(&self) {
+        if let Some(cancel) = self.active_download.lock().as_ref() {
+            cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+        }
+    }
+
+    /// Release the download slot.
+    pub fn end_download(&self) {
+        *self.active_download.lock() = None;
     }
 
     /// The store, opened on first use.

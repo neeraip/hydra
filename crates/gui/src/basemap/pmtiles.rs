@@ -54,8 +54,6 @@ pub struct Header {
     pub data_offset: u64,
     pub internal_compression: Compression,
     pub tile_compression: Compression,
-    pub min_zoom: u8,
-    pub max_zoom: u8,
 }
 
 pub fn parse_header(bytes: &[u8]) -> Result<Header, String> {
@@ -76,8 +74,6 @@ pub fn parse_header(bytes: &[u8]) -> Result<Header, String> {
         data_offset: u64_at(56),
         internal_compression: Compression::from_u8(bytes[97])?,
         tile_compression: Compression::from_u8(bytes[98])?,
-        min_zoom: bytes[100],
-        max_zoom: bytes[101],
     })
 }
 
@@ -261,51 +257,6 @@ impl RangeSource for HttpSource {
             }
         }
         Err(format!("range read failed after retries: {last_err}"))
-    }
-}
-
-/// Local `.pmtiles` file (bundled overview, fixtures).
-pub struct FileSource {
-    file: std::fs::File,
-}
-
-impl FileSource {
-    pub fn open(path: &std::path::Path) -> Result<Self, String> {
-        Ok(Self {
-            file: std::fs::File::open(path).map_err(|e| e.to_string())?,
-        })
-    }
-}
-
-impl RangeSource for FileSource {
-    fn read_range(&self, offset: u64, length: u64) -> Result<Vec<u8>, String> {
-        // Positioned reads keep &self (no seek state to synchronise).
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::FileExt;
-            let mut buf = vec![0u8; length as usize];
-            self.file
-                .read_exact_at(&mut buf, offset)
-                .map_err(|e| e.to_string())?;
-            Ok(buf)
-        }
-        #[cfg(windows)]
-        {
-            use std::os::windows::fs::FileExt;
-            let mut buf = vec![0u8; length as usize];
-            let mut read = 0usize;
-            while read < buf.len() {
-                let n = self
-                    .file
-                    .seek_read(&mut buf[read..], offset + read as u64)
-                    .map_err(|e| e.to_string())?;
-                if n == 0 {
-                    return Err("unexpected EOF in pmtiles file".into());
-                }
-                read += n;
-            }
-            Ok(buf)
-        }
     }
 }
 
