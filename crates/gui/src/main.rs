@@ -1,5 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod basemap_providers;
 mod commands;
 mod meta;
 
@@ -16,6 +17,22 @@ fn main() {
         .plugin(tauri_plugin_opener::init())
         .manage(commands::NetworkState::default())
         .manage(commands::RunQueue::default())
+        .manage(basemap_providers::ProvidersState::default())
+        // Asynchronous variant: the handler hands the request to a worker
+        // thread and returns immediately. The proxy does blocking network
+        // I/O (up to the 10 s upstream timeout), which must never run on
+        // the thread the webview invokes scheme handlers on.
+        .register_asynchronous_uri_scheme_protocol("basemap", |ctx, request, responder| {
+            use tauri::Manager;
+            let state = ctx
+                .app_handle()
+                .state::<basemap_providers::ProvidersState>()
+                .inner()
+                .clone();
+            std::thread::spawn(move || {
+                responder.respond(basemap_providers::proxy::handle(&state, &request));
+            });
+        })
         .invoke_handler(tauri::generate_handler![
             commands::list_projects,
             commands::create_project,
@@ -88,6 +105,9 @@ fn main() {
             commands::update_network_title,
             commands::export_project_inp,
             commands::export_results_csv,
+            commands::list_basemap_providers,
+            commands::connect_basemap_provider,
+            commands::disconnect_basemap_provider,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
