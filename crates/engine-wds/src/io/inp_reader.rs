@@ -1873,7 +1873,17 @@ fn parse_controls(
     let mut controls = Vec::new();
 
     for_each_line(lines, "CONTROLS", |line| {
-        let fields: Vec<&str> = line.split_whitespace().collect();
+        let mut fields: Vec<&str> = line.split_whitespace().collect();
+        // EPANET 2.3: a control line may end in DISABLED, parsing the control
+        // but leaving it inactive until enabled (e.g. via the API).
+        let mut enabled = true;
+        if fields
+            .last()
+            .is_some_and(|f| f.eq_ignore_ascii_case("DISABLED"))
+        {
+            enabled = false;
+            fields.pop();
+        }
         if fields.len() < 6 {
             return Ok(());
         }
@@ -1910,7 +1920,7 @@ fn parse_controls(
                 trigger_grade: Some(grade),
                 action_status,
                 action_setting,
-                enabled: true,
+                enabled,
             });
         } else if rest.len() >= 3 && rest[0] == "AT" && rest[1] == "TIME" {
             // AT TIME <value>
@@ -1924,7 +1934,7 @@ fn parse_controls(
                 trigger_grade: None,
                 action_status,
                 action_setting,
-                enabled: true,
+                enabled,
             });
         } else if rest.len() >= 3 && rest[0] == "AT" && rest[1] == "CLOCKTIME" {
             // AT CLOCKTIME <value> [AM|PM]
@@ -1937,7 +1947,7 @@ fn parse_controls(
                 trigger_grade: None,
                 action_status,
                 action_setting,
-                enabled: true,
+                enabled,
             });
         }
         Ok(())

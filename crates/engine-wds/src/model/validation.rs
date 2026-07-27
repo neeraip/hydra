@@ -89,7 +89,9 @@ pub enum ValidationError {
     // Check 4
     /// The network has no reservoir (fixed-grade node).
     NoReservoir,
-    /// A junction or tank not reachable from any reservoir.
+    /// A junction not reachable from any fixed-grade node. (Tanks and
+    /// reservoirs are themselves BFS seeds, so only junctions can ever be
+    /// flagged; EPANET likewise permits unlinked tanks.)
     NodeNotReachable {
         /// String ID of the isolated node.
         node_id: String,

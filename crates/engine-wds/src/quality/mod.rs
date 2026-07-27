@@ -27,8 +27,9 @@ pub use shared::QualityState;
 /// Initialises the quality state at the start of a simulation (§6.8).
 ///
 /// Fills each pipe with a single full-volume segment at the concentration of
-/// its upstream node (based on `initial_quality`). Tank quality is initialised
-/// according to the tank's mixing model.
+/// its downstream node (`to_node`, matching EPANET `initsegs`), based on
+/// `initial_quality`. Tank quality is initialised according to the tank's
+/// mixing model.
 ///
 /// Returns `Err(ModeNone)` when `quality_mode = NONE`.
 pub fn init_quality(
@@ -43,9 +44,16 @@ pub fn init_quality(
     let n_nodes = network.nodes.len();
     let n_links = network.links.len();
 
-    let mut node_conc: Vec<f64> = (0..n_nodes)
-        .map(|i| network.nodes[i].base.initial_quality)
-        .collect();
+    // EPANET initqual(): TRACE mode zeroes every node before setting the trace
+    // node to 100% — initial [QUALITY] values are chemical-mode data and must
+    // not be reinterpreted as phantom tracer percentages.
+    let mut node_conc: Vec<f64> = if network.options.quality_mode == QualityMode::Trace {
+        vec![0.0; n_nodes]
+    } else {
+        (0..n_nodes)
+            .map(|i| network.nodes[i].base.initial_quality)
+            .collect()
+    };
 
     // For Trace mode, the trace source node starts at 100 %.
     if network.options.quality_mode == QualityMode::Trace {
@@ -519,5 +527,28 @@ mod tests {
         // from adjacent segment concentrations (EPANET noflowqual behavior).
         approx::assert_abs_diff_eq!(state.node_conc[0], 1.0, epsilon = 1e-12);
         approx::assert_abs_diff_eq!(state.node_conc[1], 1.0, epsilon = 1e-12);
+    }
+
+    #[test]
+    fn trace_mode_init_zeroes_initial_quality() {
+        // EPANET initqual(): TRACE mode zeroes every node before setting the
+        // trace node to 100% — nonzero [QUALITY] values (chemical-mode data)
+        // must not be reinterpreted as phantom tracer percentages.
+        use crate::test_support::TestNetworkBuilder;
+        let (mut net, ns, ls) = TestNetworkBuilder::new()
+            .reservoir("R1", 100.0)
+            .junction("J1", 0.0, 10.0)
+            .hw_pipe("P1", "R1", "J1", 1000.0, 12.0, 100.0)
+            .node_quality("J1", 2.5)
+            .build();
+        net.options.quality_mode = crate::QualityMode::Trace;
+        net.options.trace_node = Some("R1".into());
+
+        let state = init_quality(&net, &ns, &ls).unwrap();
+        assert_eq!(state.node_conc[0], 100.0, "trace node starts at 100%");
+        assert_eq!(
+            state.node_conc[1], 0.0,
+            "J1's initial 2.5 mg/L must not become 2.5% tracer"
+        );
     }
 }

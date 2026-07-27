@@ -460,9 +460,6 @@ pub fn write_inp(network: &Network) -> Vec<u8> {
     if !network.controls.is_empty() {
         out.push_str("[CONTROLS]\n");
         for ctrl in &network.controls {
-            if !ctrl.enabled {
-                continue;
-            }
             let link_id_str = link_id.get(ctrl.link).copied().unwrap_or("?");
             // Action part.
             let action_str = match (ctrl.action_status, ctrl.action_setting) {
@@ -526,7 +523,12 @@ pub fn write_inp(network: &Network) -> Vec<u8> {
                 }
             };
 
-            let _ = writeln!(out, " LINK {} {} {}", link_id_str, action_str, trigger_str);
+            let suffix = if ctrl.enabled { "" } else { " DISABLED" };
+            let _ = writeln!(
+                out,
+                " LINK {} {} {}{}",
+                link_id_str, action_str, trigger_str, suffix
+            );
         }
         out.push('\n');
     }
@@ -2663,5 +2665,38 @@ mod tests {
     #[test]
     fn fmt_clocktime_6_30_am() {
         assert_eq!(fmt_clocktime(6.0 * 3600.0 + 30.0 * 60.0), "6:30 AM");
+    }
+
+    #[test]
+    fn disabled_control_round_trips() {
+        // EPANET 2.3 DISABLED controls: previously the token was silently
+        // ignored on read (the control ran anyway) and disabled controls were
+        // dropped entirely on write. Both directions must now be lossless.
+        let inp = b"[TITLE]\nt\n\
+            [JUNCTIONS]\nJ1  0  10\n\
+            [RESERVOIRS]\nR1  100\n\
+            [PIPES]\nP1  R1  J1  1000  12  100  0\n\
+            [CONTROLS]\n\
+            LINK P1 CLOSED AT TIME 2:00 DISABLED\n\
+            LINK P1 OPEN AT TIME 4:00\n\
+            [END]\n";
+
+        let net1 = parse(inp).expect("parse with DISABLED control");
+        assert_eq!(net1.controls.len(), 2);
+        assert!(!net1.controls[0].enabled, "DISABLED must parse as inactive");
+        assert!(net1.controls[1].enabled);
+
+        let written = write_inp(&net1);
+        let text = String::from_utf8_lossy(&written);
+        assert_eq!(
+            text.matches("DISABLED").count(),
+            1,
+            "writer must emit exactly the one disabled control"
+        );
+
+        let net2 = parse(&written).expect("re-parse written INP");
+        assert_eq!(net2.controls.len(), 2);
+        assert!(!net2.controls[0].enabled, "enabled flag lost on round-trip");
+        assert!(net2.controls[1].enabled);
     }
 }

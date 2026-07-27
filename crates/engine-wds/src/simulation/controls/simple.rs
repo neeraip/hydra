@@ -1,4 +1,10 @@
-use crate::{LinkKind, LinkState, LinkStatus, Network, NodeKind, NodeState, TriggerType};
+use crate::{
+    LinkKind, LinkState, LinkStatus, Network, NodeKind, NodeState, PumpCurveType, TriggerType,
+};
+
+/// Design-flow initial guess for a constant-power pump (1 ft³/s in m³/s),
+/// restored on control-driven reopen (§4.1; EPANET `resetpumpflow()`).
+pub(crate) const CONST_HP_INIT_FLOW_M3S: f64 = 0.028317;
 
 /// Tolerance ε_t for time-trigger comparisons (§4.1).
 ///
@@ -163,8 +169,22 @@ pub(crate) fn apply_simple_controls(
 
         if let Some(new_status) = eff_status {
             if new_status != link_state.status {
+                let was_closed = matches!(
+                    link_state.status,
+                    LinkStatus::Closed | LinkStatus::TempClosed | LinkStatus::XHead
+                );
                 link_state.status = new_status;
                 any_changed = true;
+                // §4.1 / EPANET resetpumpflow(): a constant-power pump reopened
+                // by a control restarts from its design flow so the r/Q
+                // linearisation is well-posed (prevents wedging TEMPCLOSED).
+                if was_closed && new_status == LinkStatus::Open {
+                    if let LinkKind::Pump(ref p) = link.kind {
+                        if p.curve_type == PumpCurveType::ConstHp {
+                            link_state.flow = CONST_HP_INIT_FLOW_M3S;
+                        }
+                    }
+                }
             }
         }
         if let Some(new_setting) = eff_setting {
@@ -250,6 +270,15 @@ pub(crate) fn pswitch(
             is_valve,
         );
 
+        // EPANET pswitch → setlinkstatus(): a status-only action on a valve
+        // voids its numeric setting (MISSING/NaN sentinel), same as the
+        // pre-solve simple-controls path.
+        let eff_setting = if is_valve {
+            Some(eff_setting.unwrap_or(f64::NAN))
+        } else {
+            eff_setting
+        };
+
         if let Some(new_status) = eff_status {
             if new_status != statuses[link_index] {
                 statuses[link_index] = new_status;
@@ -257,7 +286,13 @@ pub(crate) fn pswitch(
             }
         }
         if let Some(new_setting) = eff_setting {
-            if new_setting != settings[link_index] {
+            // NaN-aware comparison: NaN == NaN should not be a change.
+            let changed = if new_setting.is_nan() {
+                !settings[link_index].is_nan()
+            } else {
+                new_setting != settings[link_index]
+            };
+            if changed {
                 settings[link_index] = new_setting;
                 any_changed = true;
             }
@@ -359,5 +394,34 @@ mod tests {
         let (net, ns, mut ls) = timer_control_network(TriggerType::TimeOfDay, 0.0);
         assert!(apply_simple_controls(&net, &ns, &mut ls, 86400.0 - 5.0e-7));
         assert_eq!(ls[0].status, LinkStatus::Closed);
+    }
+
+    #[test]
+    fn simple_control_reopen_restores_const_hp_pump_design_flow() {
+        // §4.1 / EPANET resetpumpflow(): a constant-power pump reopened by a
+        // simple control restarts from its 1 ft³/s design flow (anti-wedge).
+        use crate::test_support::TestNetworkBuilder;
+        use crate::SimpleControl;
+        let (mut net, ns, mut ls) = TestNetworkBuilder::new()
+            .reservoir("R1", 100.0)
+            .junction("J1", 0.0, 10.0)
+            .const_hp_pump("PU1", "R1", "J1", 50.0)
+            .build();
+        net.controls.push(SimpleControl {
+            link: 1,
+            trigger_type: TriggerType::Timer,
+            trigger_time: Some(3600.0),
+            trigger_node: None,
+            trigger_grade: None,
+            action_status: Some(LinkStatus::Open),
+            action_setting: None,
+            enabled: true,
+        });
+        ls[0].status = LinkStatus::TempClosed;
+        ls[0].flow = 0.0;
+
+        assert!(apply_simple_controls(&net, &ns, &mut ls, 3600.0));
+        assert_eq!(ls[0].status, LinkStatus::Open);
+        approx::assert_abs_diff_eq!(ls[0].flow, 0.028317, epsilon = 1e-12);
     }
 }

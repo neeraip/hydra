@@ -86,6 +86,14 @@ fn premise_lhs(
             PremiseAttribute::ClockTime => {
                 (t + network.options.start_clocktime).rem_euclid(86400.0)
             }
+            // SYSTEM DEMAND: total demand delivered at all junctions (m³/s),
+            // the analogue of EPANET's Dsystem.
+            PremiseAttribute::Demand => node_states
+                .iter()
+                .zip(network.nodes.iter())
+                .filter(|(_, n)| matches!(n.kind, NodeKind::Junction(_)))
+                .map(|(s, _)| s.demand_flow)
+                .sum(),
             _ => f64::NAN,
         },
 
@@ -338,5 +346,32 @@ mod tests {
         assert_eq!(link_status_as_f64(LinkStatus::Active), 2.0);
         assert_eq!(link_status_as_f64(LinkStatus::Closed), 0.0);
         assert_eq!(link_status_as_f64(LinkStatus::TempClosed), 0.0);
+    }
+
+    #[test]
+    fn system_demand_premise_sums_junction_demands() {
+        // SYSTEM DEMAND (EPANET Dsystem): total demand over junctions only —
+        // previously this attribute evaluated to NaN (silently always-false).
+        use crate::test_support::TestNetworkBuilder;
+        let (net, mut ns, ls) = TestNetworkBuilder::new()
+            .reservoir("R1", 100.0)
+            .junction("J1", 0.0, 10.0)
+            .junction("J2", 0.0, 5.0)
+            .hw_pipe("P1", "R1", "J1", 1000.0, 12.0, 100.0)
+            .hw_pipe("P2", "J1", "J2", 1000.0, 12.0, 100.0)
+            .build();
+        ns[0].demand_flow = -0.015; // reservoir supply — must be excluded
+        ns[1].demand_flow = 0.010;
+        ns[2].demand_flow = 0.005;
+
+        let premise = Premise {
+            object: PremiseObject::Clock,
+            attribute: PremiseAttribute::Demand,
+            operator: PremiseOperator::Ge,
+            value: 0.0,
+            connective: None,
+        };
+        let lhs = premise_lhs(&premise, &net, &ns, &ls, 0.0);
+        approx::assert_abs_diff_eq!(lhs, 0.015, epsilon = 1e-12);
     }
 }

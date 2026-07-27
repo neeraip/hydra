@@ -1,7 +1,7 @@
 use crate::{ActionValue, LinkState, Network, NodeState};
 
 use super::premises::evaluate_premises;
-use super::simple::resolve_control_action;
+use super::simple::{resolve_control_action, CONST_HP_INIT_FLOW_M3S};
 
 /// Evaluates §4.2 rules against the current hydraulic state at time `t`.
 ///
@@ -152,14 +152,43 @@ pub(crate) fn apply_link_actions(
             ActionValue::Status(s) => {
                 let (eff_status, eff_setting) =
                     resolve_control_action(Some(*s), None, is_pump_or_pipe, is_pump, is_valve);
+                // EPANET takeactions → setlinkstatus(): a status-only rule
+                // action on a valve voids its numeric setting (NaN sentinel),
+                // matching the simple-controls path.
+                let eff_setting = if is_valve {
+                    Some(eff_setting.unwrap_or(f64::NAN))
+                } else {
+                    eff_setting
+                };
                 if let Some(st) = eff_status {
                     if st != link_state.status {
+                        let was_closed = matches!(
+                            link_state.status,
+                            crate::LinkStatus::Closed
+                                | crate::LinkStatus::TempClosed
+                                | crate::LinkStatus::XHead
+                        );
                         link_state.status = st;
                         any_changed = true;
+                        // §4.1 / EPANET resetpumpflow(): reopened const-HP pump
+                        // restarts from its design flow.
+                        if was_closed && st == crate::LinkStatus::Open {
+                            if let crate::LinkKind::Pump(ref p) = network.links[link_0].kind {
+                                if p.curve_type == crate::PumpCurveType::ConstHp {
+                                    link_state.flow = CONST_HP_INIT_FLOW_M3S;
+                                }
+                            }
+                        }
                     }
                 }
                 if let Some(sv) = eff_setting {
-                    if sv != link_state.setting {
+                    // NaN-aware comparison: NaN == NaN should not be a change.
+                    let changed = if sv.is_nan() {
+                        !link_state.setting.is_nan()
+                    } else {
+                        sv != link_state.setting
+                    };
+                    if changed {
                         link_state.setting = sv;
                         any_changed = true;
                     }
@@ -289,5 +318,52 @@ mod tests {
         assert!(changed);
         assert_eq!(link_states[0].status, LinkStatus::Closed);
         assert_eq!(link_states[0].setting, 0.0);
+    }
+
+    #[test]
+    fn rule_status_action_voids_valve_setting() {
+        // EPANET takeactions → setlinkstatus(): a status-only rule action on a
+        // valve discards its numeric setting (NaN sentinel), disarming the
+        // automatic PRV/PSV/FCV status logic — matching the simple-controls path.
+        use crate::test_support::TestNetworkBuilder;
+        use crate::ValveType;
+        let (net, _ns, mut ls) = TestNetworkBuilder::new()
+            .reservoir("R1", 100.0)
+            .junction("J1", 0.0, 10.0)
+            .valve("V1", "R1", "J1", ValveType::Prv, 12.0, 35.0)
+            .build();
+        assert!(
+            ls[0].setting.is_finite(),
+            "valve starts with a numeric setting"
+        );
+
+        let actions = vec![(0usize, ActionValue::Status(LinkStatus::Open))];
+        assert!(apply_link_actions(&mut ls, &actions, &net));
+        assert_eq!(ls[0].status, LinkStatus::Open);
+        assert!(ls[0].setting.is_nan(), "setting must be voided");
+
+        // Re-applying the identical action is a no-op: NaN == NaN must not
+        // register as a change (else the rule loop would fire every sub-step).
+        assert!(!apply_link_actions(&mut ls, &actions, &net));
+    }
+
+    #[test]
+    fn rule_reopen_restores_const_hp_pump_design_flow() {
+        // §4.1 / EPANET resetpumpflow(): a constant-power pump reopened by a
+        // rule restarts from its 1 ft³/s design flow so the r/Q linearisation
+        // is well-posed (prevents wedging TEMPCLOSED).
+        use crate::test_support::TestNetworkBuilder;
+        let (net, _ns, mut ls) = TestNetworkBuilder::new()
+            .reservoir("R1", 100.0)
+            .junction("J1", 0.0, 10.0)
+            .const_hp_pump("PU1", "R1", "J1", 50.0)
+            .build();
+        ls[0].status = LinkStatus::TempClosed;
+        ls[0].flow = 0.0;
+
+        let actions = vec![(0usize, ActionValue::Status(LinkStatus::Open))];
+        assert!(apply_link_actions(&mut ls, &actions, &net));
+        assert_eq!(ls[0].status, LinkStatus::Open);
+        approx::assert_abs_diff_eq!(ls[0].flow, 0.028317, epsilon = 1e-12);
     }
 }
