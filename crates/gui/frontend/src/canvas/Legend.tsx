@@ -263,6 +263,48 @@ interface PickerOption<T extends string> {
   label: string;
 }
 
+// ── Picker glyphs ─────────────────────────────────────────────────────────────
+// Micro-icons distinguishing the two variable pickers: a filled dot matching
+// how junction nodes render on the canvas, and a short pipe segment for
+// links. Both use var(--text-tertiary) so they track the legend's existing
+// micro-label colour in light and dark themes alike.
+
+function NodeGlyph() {
+  return (
+    <svg
+      width={10}
+      height={10}
+      viewBox="0 0 10 10"
+      aria-hidden="true"
+      style={{ flexShrink: 0 }}
+    >
+      <circle cx={5} cy={5} r={3.2} fill="var(--text-tertiary)" />
+    </svg>
+  );
+}
+
+function LinkGlyph() {
+  return (
+    <svg
+      width={10}
+      height={10}
+      viewBox="0 0 10 10"
+      aria-hidden="true"
+      style={{ flexShrink: 0 }}
+    >
+      <line
+        x1={1.5}
+        y1={8.5}
+        x2={8.5}
+        y2={1.5}
+        stroke="var(--text-tertiary)"
+        strokeWidth={2}
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+}
+
 /** Always-visible dropdown button for switching a canvas variable — mirrors
  * the basemap/CRS picker pattern used in the canvas toolbar. */
 function PickerButton<T extends string>({
@@ -271,12 +313,18 @@ function PickerButton<T extends string>({
   isOpen,
   onToggle,
   onSelect,
+  icon,
+  pickerLabel,
 }: {
   value: T;
   options: PickerOption<T>[];
   isOpen: boolean;
   onToggle: () => void;
   onSelect: (v: T) => void;
+  /** Glyph rendered before the current value ("which picker is this?"). */
+  icon?: React.ReactNode;
+  /** Accessible name + tooltip, e.g. "Node variable". */
+  pickerLabel?: string;
 }) {
   const current = options.find((o) => o.value === value);
   return (
@@ -288,8 +336,12 @@ function PickerButton<T extends string>({
           e.stopPropagation();
           onToggle();
         }}
+        aria-label={pickerLabel}
+        data-tooltip={pickerLabel}
+        data-tooltip-pos="top"
         style={PICKER_BTN_STYLE}
       >
+        {icon}
         {current?.label ?? value}
         <ChevronUpDownIcon style={{ width: 12, height: 12 }} />
       </button>
@@ -405,7 +457,6 @@ export function Legend({
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [nodePickerOpen, setNodePickerOpen] = useState(false);
   const [linkPickerOpen, setLinkPickerOpen] = useState(false);
-  const [hovered, setHovered] = useState(false);
   const [editing, setEditing] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
 
@@ -734,12 +785,12 @@ export function Legend({
       )}
 
       {/* ── Persistent control bar: variable pickers + colour-scale toggle ── */}
-      {/* biome-ignore lint/a11y/noStaticElementInteractions: hover-only styling; all interactive children (PickerButton, toggle) are already focusable/clickable. */}
+      {/* Raised only while a dropdown/popover is open — deliberately no
+          container-level hover effect (per-button hovers carry the
+          affordance). */}
       <div
-        onMouseEnter={() => setHovered(true)}
-        onMouseLeave={() => setHovered(false)}
         className={`legend-glass${
-          hovered || detailsOpen || nodePickerOpen || linkPickerOpen
+          detailsOpen || nodePickerOpen || linkPickerOpen
             ? " legend-glass--raised"
             : ""
         }`}
@@ -766,15 +817,15 @@ export function Legend({
           title="Colour scale & thresholds"
           data-tooltip="Colour scale & thresholds"
           data-tooltip-pos="top"
+          className="tool-btn"
           style={{
-            display: "flex",
-            alignItems: "center",
+            width: "auto",
+            height: "auto",
             gap: 5,
-            border: "none",
-            background: "transparent",
-            cursor: "pointer",
-            padding: "4px 6px 4px 4px",
-            borderRadius: 16,
+            padding: "4px 6px 4px 6px",
+            // Left corners nest inside the bar's 20px rounding (20 − 4px
+            // padding); right corners match the neighbouring pickers.
+            borderRadius: "16px 6px 6px 16px",
           }}
         >
           <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
@@ -816,6 +867,8 @@ export function Legend({
         <PickerButton
           value={nodeVar}
           options={nodeOptions}
+          icon={<NodeGlyph />}
+          pickerLabel="Node variable"
           isOpen={nodePickerOpen}
           onToggle={() => {
             setNodePickerOpen((v) => !v);
@@ -830,6 +883,8 @@ export function Legend({
         <PickerButton
           value={linkVar}
           options={linkOptions}
+          icon={<LinkGlyph />}
+          pickerLabel="Link variable"
           isOpen={linkPickerOpen}
           onToggle={() => {
             setLinkPickerOpen((v) => !v);
@@ -868,7 +923,11 @@ export function Legend({
               data-tooltip-pos="top"
               style={{
                 ...PICKER_BTN_STYLE,
-                padding: "4px 6px",
+                padding: "4px 8px 4px 6px",
+                // Right corners nest inside the bar's 20px rounding (20 − 4px
+                // padding) so the hover fill is never cut off at the bar's
+                // rounded end; left corners match the neighbouring pickers.
+                borderRadius: "6px 16px 16px 6px",
                 color: active
                   ? "var(--accent)"
                   : disabled
