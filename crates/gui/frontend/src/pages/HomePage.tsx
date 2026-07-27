@@ -1,7 +1,10 @@
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { useMemo, useState } from "react";
+import ReactMarkdown, { type Components } from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { useAppState } from "../AppContext";
 import { NewProjectWizard } from "../components/modals/NewProjectWizard";
+import { ReleaseNotesModal } from "../components/modals/ReleaseNotesModal";
 import { SplitActionButton } from "../components/ui/SplitActionButton";
 import {
   ACCENT,
@@ -13,7 +16,13 @@ import {
   useNetworkVersion,
   useProjects,
 } from "../hooks";
-import { useLatestRelease } from "../hooks/useLatestRelease";
+import {
+  releaseHasNotes,
+  releasesWithContent,
+  unseenReleases,
+  useLastSeenGuiVersion,
+  useReleaseNotes,
+} from "../hooks/useReleaseNotes";
 
 const HELP_LINKS = [
   {
@@ -29,6 +38,53 @@ const HELP_LINKS = [
     url: "https://github.com/neeraip/hydra/issues/new?template=bug_report.yml",
   },
 ];
+
+// ── What's-new teaser markdown ────────────────────────────────────────────────
+// Restricted component map for the clamped sidebar teaser: headings become
+// bold lines, lists collapse to compact "·" lines, links render as inert
+// text, and images / code blocks / tables are suppressed entirely. The full
+// document rendering lives in ReleaseNotesModal.
+
+const TEASER_TEXT: React.CSSProperties = {
+  margin: "0 0 3px",
+  fontSize: 12,
+  lineHeight: 1.55,
+};
+
+const TEASER_COMPONENTS: Components = {
+  a: ({ children }) => (
+    <span style={{ textDecoration: "underline", textUnderlineOffset: 2 }}>
+      {children}
+    </span>
+  ),
+  h1: ({ children }) => <div style={TEASER_HEADING}>{children}</div>,
+  h2: ({ children }) => <div style={TEASER_HEADING}>{children}</div>,
+  h3: ({ children }) => <div style={TEASER_HEADING}>{children}</div>,
+  h4: ({ children }) => <div style={TEASER_HEADING}>{children}</div>,
+  h5: ({ children }) => <div style={TEASER_HEADING}>{children}</div>,
+  h6: ({ children }) => <div style={TEASER_HEADING}>{children}</div>,
+  p: ({ children }) => <div style={TEASER_TEXT}>{children}</div>,
+  ul: ({ children }) => <div style={TEASER_TEXT}>{children}</div>,
+  ol: ({ children }) => <div style={TEASER_TEXT}>{children}</div>,
+  li: ({ children }) => <div>· {children}</div>,
+  img: () => null,
+  pre: () => null,
+  table: () => null,
+  hr: () => null,
+  code: ({ children }) => (
+    <code style={{ fontFamily: "var(--font-mono)", fontSize: 11 }}>
+      {children}
+    </code>
+  ),
+};
+
+const TEASER_HEADING: React.CSSProperties = {
+  fontWeight: 700,
+  color: "var(--text-primary)",
+  fontSize: 12,
+  margin: "4px 0 2px",
+  lineHeight: 1.5,
+};
 
 // ── Section header ────────────────────────────────────────────────────────────
 
@@ -60,7 +116,33 @@ export function HomePage() {
     showToast,
   } = useAppState();
   const { bumpNetwork } = useNetworkVersion();
-  const release = useLatestRelease();
+  const notes = useReleaseNotes();
+  const { lastSeen, markSeen } = useLastSeenGuiVersion();
+  const [whatsNewOpen, setWhatsNewOpen] = useState(false);
+
+  const releases = notes.status === "loaded" ? notes.releases : [];
+  const latest = releases[0] ?? null;
+  const unseen = useMemo(
+    () => unseenReleases(releases, lastSeen),
+    [releases, lastSeen],
+  );
+  // Plumbing-only releases (cleaned body empty) stay in the modal accordion
+  // as compact rows (hiding them would read as missing versions) but are
+  // excluded from the earlier-updates count — that number should promise
+  // reading material.
+  const unseenWithContent = useMemo(
+    () => releasesWithContent(unseen),
+    [unseen],
+  );
+  // Unseen releases with content beyond the newest release.
+  const earlierCount = unseenWithContent.filter((r) => r !== latest).length;
+
+  const closeWhatsNew = () => {
+    setWhatsNewOpen(false);
+    // Everything shown is now seen — advance the marker to the newest
+    // fetched version.
+    if (latest) markSeen(latest.version);
+  };
 
   const backendProjects = useProjects(projectsVersion);
   const recentProjects = useMemo<Project[]>(() => {
@@ -300,7 +382,7 @@ export function HomePage() {
         {/* What's new */}
         <section>
           <SidebarSection title="What's New" />
-          {release.status === "loading" && (
+          {notes.status === "loading" && (
             <div
               style={{
                 fontSize: 13,
@@ -311,7 +393,7 @@ export function HomePage() {
               Loading…
             </div>
           )}
-          {release.status === "unavailable" && (
+          {notes.status === "unavailable" && (
             <div
               style={{
                 fontSize: 13,
@@ -322,74 +404,134 @@ export function HomePage() {
               No release information available.
             </div>
           )}
-          {release.status === "loaded" && (
-            <>
+          {latest && (
+            <button
+              type="button"
+              onClick={() => setWhatsNewOpen(true)}
+              onMouseEnter={(e) => {
+                (e.currentTarget as HTMLButtonElement).style.background =
+                  "var(--nav-hover)";
+              }}
+              onMouseLeave={(e) => {
+                (e.currentTarget as HTMLButtonElement).style.background =
+                  "transparent";
+              }}
+              style={{
+                display: "block",
+                width: "100%",
+                background: "transparent",
+                border: "none",
+                cursor: "pointer",
+                padding: "8px 10px",
+                margin: "-8px -10px",
+                borderRadius: 6,
+                textAlign: "left",
+                fontFamily: "var(--font-ui)",
+                transition: "background var(--t-fast)",
+              }}
+            >
+              {/* Header: newest version + date (+ New badge) */}
               <div
                 style={{
-                  fontSize: 12,
-                  fontWeight: 600,
-                  color: "var(--text-secondary)",
-                  marginBottom: 10,
                   display: "flex",
                   alignItems: "center",
                   gap: 6,
+                  fontSize: 12,
+                  fontWeight: 600,
+                  color: "var(--text-secondary)",
                 }}
               >
                 <span>
-                  v{release.version}
-                  {release.date ? ` · ${release.date}` : ""}
+                  v{latest.version}
+                  {latest.date ? ` · ${latest.date}` : ""}
                 </span>
-                <button
-                  type="button"
-                  onClick={() => openUrl(release.releaseUrl)}
-                  style={{
-                    background: "transparent",
-                    border: "none",
-                    cursor: "pointer",
-                    fontSize: 11,
-                    color: ACCENT,
-                    padding: 0,
-                    fontFamily: "var(--font-ui)",
-                  }}
-                >
-                  ↗ Release notes
-                </button>
+                {unseen.length > 0 && (
+                  <span
+                    style={{
+                      fontSize: 9,
+                      fontWeight: 700,
+                      letterSpacing: "0.07em",
+                      textTransform: "uppercase",
+                      color: ACCENT,
+                      background: `${ACCENT}22`,
+                      border: `1px solid ${ACCENT}44`,
+                      borderRadius: 4,
+                      padding: "1px 5px",
+                    }}
+                  >
+                    New
+                  </span>
+                )}
               </div>
-              {release.items.length > 0 ? (
-                <ul
-                  style={{
-                    margin: 0,
-                    padding: "0 0 0 16px",
-                    display: "flex",
-                    flexDirection: "column",
-                    gap: 5,
-                  }}
-                >
-                  {release.items.map((item) => (
-                    <li
-                      key={item}
-                      style={{
-                        fontSize: 13,
-                        color: "var(--text-secondary)",
-                        lineHeight: 1.5,
-                      }}
-                    >
-                      {item}
-                    </li>
-                  ))}
-                </ul>
-              ) : (
+
+              {/* Clamped markdown teaser with bottom fade — explicit muted
+                  empty state when cleanup left no notes. */}
+              {!releaseHasNotes(latest) && (
                 <div
                   style={{
-                    fontSize: 13,
+                    marginTop: 7,
+                    fontSize: 12,
                     color: "var(--text-tertiary)",
-                    lineHeight: 1.5,
+                    lineHeight: 1.55,
                   }}
                 >
-                  See release notes for details.
+                  No release notes
                 </div>
               )}
-            </>
+              {releaseHasNotes(latest) && (
+                <div style={{ position: "relative", marginTop: 7 }}>
+                  <div
+                    style={{
+                      display: "-webkit-box",
+                      WebkitBoxOrient: "vertical",
+                      WebkitLineClamp: 6,
+                      overflow: "hidden",
+                      // Fallback clamp for engines without -webkit-box:
+                      // ~6 lines at 12px/1.55.
+                      maxHeight: 6 * 12 * 1.55,
+                      color: "var(--text-secondary)",
+                    }}
+                  >
+                    <ReactMarkdown
+                      remarkPlugins={[remarkGfm]}
+                      components={TEASER_COMPONENTS}
+                      skipHtml
+                    >
+                      {latest.body}
+                    </ReactMarkdown>
+                  </div>
+                  {/* Fade-out into the Read-more affordance */}
+                  <div
+                    style={{
+                      position: "absolute",
+                      left: 0,
+                      right: 0,
+                      bottom: 0,
+                      height: 24,
+                      background:
+                        "linear-gradient(to bottom, transparent, var(--bg-panel))",
+                      pointerEvents: "none",
+                    }}
+                  />
+                </div>
+              )}
+
+              <div style={{ marginTop: 5, fontSize: 11, color: ACCENT }}>
+                Read more
+              </div>
+              {earlierCount > 0 && (
+                <div
+                  style={{
+                    marginTop: 3,
+                    fontSize: 11,
+                    color: "var(--text-tertiary)",
+                  }}
+                >
+                  +{earlierCount} earlier update
+                  {earlierCount !== 1 ? "s" : ""}
+                </div>
+              )}
+            </button>
           )}
         </section>
 
@@ -442,6 +584,13 @@ export function HomePage() {
       </div>
 
       {showWizard && <NewProjectWizard onClose={() => setShowWizard(false)} />}
+      {whatsNewOpen && releases.length > 0 && (
+        <ReleaseNotesModal
+          releases={releases}
+          lastSeen={lastSeen}
+          onClose={closeWhatsNew}
+        />
+      )}
     </div>
   );
 }
