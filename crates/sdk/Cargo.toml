@@ -14,4 +14,4 @@ categories = ["science", "simulation"]
 publish = true
 
 [dependencies]
-hydra-engine-wds = { path = "../engine-wds", version = "2.0.1" }
+hydra-engine-wds = { path = "../engine-wds", version = "2.1.0" }
