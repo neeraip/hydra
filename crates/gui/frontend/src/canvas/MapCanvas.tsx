@@ -14,6 +14,13 @@ import { MapboxOverlay } from "@deck.gl/mapbox";
 // maplibre-gl 6 dropped its default export; the namespace import keeps
 // every `maplibregl.X` usage unchanged.
 import * as maplibregl from "maplibre-gl";
+// maplibre-gl 6 loads its worker from a real URL resolved against
+// import.meta.url — a resolution that returns "" for non-http(s) origins
+// (the packaged app is served from tauri://localhost) and would point at a
+// file Vite never emits even where the scheme passes. Bundle the worker
+// entry explicitly and hand its emitted URL to maplibre, or every vector
+// source silently dies in production builds.
+import maplibreWorkerUrl from "maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Link, Node, PeriodResults } from "../hooks";
 import { startPerfSpan } from "../perfTrace";
@@ -31,6 +38,8 @@ import {
 } from "./MapCanvas/geoUtils";
 import { computeSchematicLayout } from "./schematicLayout";
 import type { CanvasTool, LinkVariable, NodeVariable, ViewMode } from "./types";
+
+maplibregl.setWorkerUrl(maplibreWorkerUrl);
 
 // Blank MapLibre style used when the user selects "No basemap". Renders a
 // solid background with no tile sources so no network requests are made.
