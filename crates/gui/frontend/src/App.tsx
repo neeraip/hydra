@@ -46,6 +46,11 @@ const CrsModal = lazy(() =>
     default: m.CrsModal,
   })),
 );
+const BasemapProvidersModal = lazy(() =>
+  import("./components/modals/BasemapProvidersModal").then((m) => ({
+    default: m.BasemapProvidersModal,
+  })),
+);
 const ShortcutCard = lazy(() =>
   import("./components/modals/ShortcutCard").then((m) => ({
     default: m.ShortcutCard,
@@ -341,6 +346,9 @@ export function App() {
       </Suspense>
       <Suspense fallback={null}>
         <CrsModal />
+      </Suspense>
+      <Suspense fallback={null}>
+        <BasemapProvidersModal />
       </Suspense>
       {shortcutCardOpen && (
         <Suspense fallback={null}>

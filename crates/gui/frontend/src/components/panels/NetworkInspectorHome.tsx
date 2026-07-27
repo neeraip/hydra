@@ -132,6 +132,9 @@ const TD: React.CSSProperties = {
   overflow: "hidden",
   textOverflow: "ellipsis",
   maxWidth: 110,
+  // Rows are click targets (select/locate an element); dragging across
+  // them must not highlight cell text.
+  userSelect: "none",
 };
 
 function SortIndicator({
@@ -200,6 +203,10 @@ function NodesTab({
           minWidth: "100%",
           borderCollapse: "collapse",
           tableLayout: "fixed",
+          // Rows are click targets; WKWebView needs the -webkit- form for
+          // user-select, and table-level scope covers every cell style.
+          userSelect: "none",
+          WebkitUserSelect: "none",
         }}
       >
         {/* Fixed table layout for scroll-stable, measurement-free columns
@@ -223,7 +230,7 @@ function NodesTab({
                   tip: `Elevation (${unitLabel("elevation", sys)})`,
                 },
                 baseDemand: {
-                  label: "Demand",
+                  label: "Dem",
                   tip: `Base demand (${unitLabel("demand", sys)})`,
                 },
               }[col];
@@ -484,6 +491,10 @@ function LinksTab({
           minWidth: "100%",
           borderCollapse: "collapse",
           tableLayout: "fixed",
+          // Rows are click targets; WKWebView needs the -webkit- form for
+          // user-select, and table-level scope covers every cell style.
+          userSelect: "none",
+          WebkitUserSelect: "none",
         }}
       >
         {/* Same scheme as the nodes table: fixed layout, pinned narrow

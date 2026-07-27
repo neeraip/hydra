@@ -2,7 +2,11 @@ import { XMarkIcon } from "@heroicons/react/16/solid";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useActiveProject, useAppState, useSimulation } from "../../AppContext";
 import { AnnotationSummary, MeasureOverlay } from "../../canvas/Annotations";
-import type { BasemapStyle } from "../../canvas/Basemap";
+import {
+  type BasemapId,
+  clampBasemapOpacity,
+  isValidBasemapId,
+} from "../../canvas/Basemap";
 import {
   haversineMeters,
   pickCoordSample,
@@ -71,20 +75,20 @@ const canvasPrefsKey = (projectId: string) =>
 
 interface CanvasPrefs {
   viewMode: ViewMode;
-  basemap: BasemapStyle;
+  /** Legacy id ("streets"/"light"/"dark"/"none", stored unchanged for
+   * backwards compatibility) or `provider:{providerId}:{styleId}`. */
+  basemap: BasemapId;
+  /** Basemap dimming, 0–1. Missing in older prefs → defaults to 1. */
+  basemapOpacity: number;
   nodeVar: NodeVariable;
   linkVar: LinkVariable;
   colorMode: "relative" | "threshold";
 }
 
 // Allowlists so corrupt/stale localStorage can never inject invalid state.
+// (Basemap ids are validated structurally via isValidBasemapId instead — the
+// provider catalog is open-ended.)
 const PREF_VIEW_MODES: readonly ViewMode[] = ["map", "schematic"];
-const PREF_BASEMAPS: readonly BasemapStyle[] = [
-  "streets",
-  "light",
-  "dark",
-  "none",
-];
 const PREF_NODE_VARS: readonly NodeVariable[] = [
   "pressure",
   "head",
@@ -117,6 +121,7 @@ function readCanvasPrefs(projectId: string): Partial<CanvasPrefs> | null {
 export function CanvasView({ isActive = true }: { isActive?: boolean }) {
   const {
     activeScenarioId,
+    openBasemapProvidersModal,
     openCrsModal,
     setProjectView,
     focusInEditor,
@@ -216,7 +221,8 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
   // "none" is a *map* basemap (geographic layout, no tiles), distinct from
   // schematic mode (idealised orthogonal layout).
   const [viewMode, setViewMode] = useState<ViewMode>("map");
-  const [basemap, setBasemap] = useState<BasemapStyle>("streets");
+  const [basemap, setBasemap] = useState<BasemapId>("streets");
+  const [basemapOpacity, setBasemapOpacity] = useState(1);
 
   // ── Per-project canvas prefs: restore on project switch, persist on change.
   // `prefsLoadedFor` gates persisting so the write effect (which also re-runs
@@ -231,9 +237,11 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
       if (prefs.viewMode && PREF_VIEW_MODES.includes(prefs.viewMode)) {
         setViewMode(prefs.viewMode);
       }
-      if (prefs.basemap && PREF_BASEMAPS.includes(prefs.basemap)) {
+      if (prefs.basemap && isValidBasemapId(prefs.basemap)) {
         setBasemap(prefs.basemap);
       }
+      // Clamp handles missing/corrupt values (→ 1), so always applied.
+      setBasemapOpacity(clampBasemapOpacity(prefs.basemapOpacity));
       if (prefs.nodeVar && PREF_NODE_VARS.includes(prefs.nodeVar)) {
         setNodeVar(prefs.nodeVar);
       }
@@ -259,6 +267,7 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
     const prefs: CanvasPrefs = {
       viewMode,
       basemap,
+      basemapOpacity,
       nodeVar,
       linkVar,
       colorMode,
@@ -273,6 +282,7 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
     prefsLoadedFor,
     viewMode,
     basemap,
+    basemapOpacity,
     nodeVar,
     linkVar,
     colorMode,
@@ -1206,6 +1216,7 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
                   linkVar={linkVar}
                   animateLinks={animateLinks}
                   basemap={basemap}
+                  basemapOpacity={basemapOpacity}
                   selectedNodeId={selectedNodeId}
                   onSelectNode={handleSelectNode}
                   selectedLinkId={selectedLinkId}
@@ -1372,11 +1383,14 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
               coordTotalCount={rawPositionNodes.length}
               basemap={basemap}
               onBasemapChange={setBasemap}
+              basemapOpacity={basemapOpacity}
+              onBasemapOpacityChange={setBasemapOpacity}
               showBasemapDropdown={showBasemapDropdown}
               setShowBasemapDropdown={setShowBasemapDropdown}
               sourceCrs={sourceCrs}
               crsError={crsError}
               onOpenCrsModal={openCrsModal}
+              onOpenBasemapProviders={openBasemapProvidersModal}
               activeTool={activeTool}
               onToolChange={setActiveTool}
               hasAnnotations={measureGeoPts.length > 0 || measurePts.length > 0}

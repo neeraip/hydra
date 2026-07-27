@@ -154,7 +154,7 @@ function UnitSystemToggle() {
 }
 
 export function SettingsPage() {
-  const { showToast } = useAppState();
+  const { showToast, openBasemapProvidersModal } = useAppState();
   const [reducedMotion, setReducedMotionRaw] = useState(() =>
     getBool(SK.reducedMotion, false),
   );
@@ -238,6 +238,29 @@ export function SettingsPage() {
         <Section>Appearance</Section>
         <SettingRow label="Theme" description="Choose dark or light mode.">
           <ThemeToggle />
+        </SettingRow>
+        {/* Map */}
+        <Section>Map</Section>
+        <SettingRow
+          label="Basemap providers"
+          description="Connect imagery providers (Mapbox, MapTiler, Esri) and choose which basemap styles appear in the canvas picker."
+        >
+          <button
+            type="button"
+            onClick={openBasemapProvidersModal}
+            style={{
+              padding: "5px 14px",
+              border: "1px solid var(--border-hover)",
+              borderRadius: 6,
+              background: "transparent",
+              color: "var(--text-primary)",
+              cursor: "pointer",
+              fontSize: 13,
+              fontFamily: "var(--font-ui)",
+            }}
+          >
+            Manage providers…
+          </button>
         </SettingRow>
         {/* Units */}
         <Section>Units</Section>

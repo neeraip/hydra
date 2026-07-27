@@ -23,9 +23,17 @@ import * as maplibregl from "maplibre-gl";
 import maplibreWorkerUrl from "maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Link, Node, PeriodResults } from "../hooks";
+import {
+  type BasemapProvider,
+  useBasemapProviders,
+} from "../hooks/basemapProviders";
 import { startPerfSpan } from "../perfTrace";
 import { useUnitSystem } from "../units";
-import type { BasemapStyle } from "./Basemap";
+import {
+  type BasemapId,
+  buildProviderRasterStyle,
+  parseProviderBasemapId,
+} from "./Basemap";
 import { FlowPathLayer } from "./FlowPathLayer";
 import { HoverChip, type HoverTip } from "./HoverChip";
 import { useCanvasLayers } from "./layers-context";
@@ -59,13 +67,54 @@ const BLANK_STYLE: maplibregl.StyleSpecification = {
 // "light"   = OpenFreeMap Positron (minimal light theme)
 // "dark"    = OpenFreeMap Dark (dark theme)
 // "none"    = tile-free blank background
-const MAP_STYLES: Record<BasemapStyle, string | maplibregl.StyleSpecification> =
-  {
-    streets: "https://tiles.openfreemap.org/styles/liberty",
-    light: "https://tiles.openfreemap.org/styles/positron",
-    dark: "https://tiles.openfreemap.org/styles/dark",
-    none: BLANK_STYLE,
-  };
+const MAP_STYLES: Record<string, string | maplibregl.StyleSpecification> = {
+  streets: "https://tiles.openfreemap.org/styles/liberty",
+  light: "https://tiles.openfreemap.org/styles/positron",
+  dark: "https://tiles.openfreemap.org/styles/dark",
+  none: BLANK_STYLE,
+};
+
+/**
+ * Resolve a basemap id to a MapLibre style. Legacy ids map to the constants
+ * above; `provider:{providerId}:{styleId}` ids build a raster style on the
+ * fly from the live catalog. Unknown/broken ids (stale prefs, disconnected
+ * catalog) fall back to "streets" gracefully.
+ */
+function resolveBasemapStyle(
+  basemap: BasemapId,
+  providers: readonly BasemapProvider[],
+): string | maplibregl.StyleSpecification {
+  const legacy = MAP_STYLES[basemap];
+  if (legacy !== undefined) return legacy;
+  const parsed = parseProviderBasemapId(basemap);
+  if (parsed) {
+    const provider = providers.find(
+      (p) => p.id === parsed.providerId && !p.builtin,
+    );
+    const style = provider?.styles.find((s) => s.id === parsed.styleId);
+    if (provider && style) {
+      return buildProviderRasterStyle({
+        providerId: provider.id,
+        styleId: style.id,
+        tileSize: style.tileSize,
+        maxZoom: style.maxZoom,
+        attribution: provider.attribution,
+      });
+    }
+  }
+  return MAP_STYLES.streets;
+}
+
+/** True when two resolved styles would render identically (style URLs compare
+ * by value; built specs are tiny, so structural JSON equality is cheap). */
+function sameBasemapStyle(
+  a: string | maplibregl.StyleSpecification,
+  b: string | maplibregl.StyleSpecification,
+): boolean {
+  if (a === b) return true;
+  if (typeof a === "string" || typeof b === "string") return false;
+  return JSON.stringify(a) === JSON.stringify(b);
+}
 
 const EMPTY_SCHEMATIC_COORDS: Map<string, [number, number]> = new Map();
 
@@ -133,7 +182,10 @@ interface MapCanvasProps {
    * nodes/links so a timeline scrub changes only this prop — the node/link
    * arrays keep their identity and deck.gl only re-evaluates colours. */
   periodResult?: PeriodResults | null;
-  basemap: BasemapStyle;
+  basemap: BasemapId;
+  /** Basemap dimming, 0–1 (1 = fully opaque). Applied as CSS opacity on the
+   * maplibre canvas only — never on the deck.gl network overlay. */
+  basemapOpacity?: number;
   selectedNodeId: string | null;
   onSelectNode: (id: string | null) => void;
   selectedLinkId: string | null;
@@ -203,6 +255,7 @@ export const MapCanvas = memo(function MapCanvas({
   animateLinks = true,
   periodResult = null,
   basemap,
+  basemapOpacity = 1,
   selectedNodeId,
   onSelectNode,
   selectedLinkId,
@@ -271,7 +324,27 @@ export const MapCanvas = memo(function MapCanvas({
   }
   const viewStateRef = viewStateLazyRef as { current: CanvasViewState };
   const prevViewModeRef = useRef<ViewMode | null>(null);
-  const prevBasemapRef = useRef<BasemapStyle>(basemap);
+  // ── Basemap resolution ────────────────────────────────────────────────────
+  // Provider ids resolve against the live catalog; before it arrives (or for
+  // stale ids) resolution falls back to "streets" and self-corrects via the
+  // setStyle effect once the catalog loads.
+  const basemapProviders = useBasemapProviders();
+  const resolvedBasemapStyle = useMemo(
+    () => resolveBasemapStyle(basemap, basemapProviders),
+    [basemap, basemapProviders],
+  );
+  // Latest resolved style, read by the map-creation effect via ref so the
+  // effect does not depend on (and recreate the map for) style changes.
+  const resolvedBasemapStyleRef = useRef(resolvedBasemapStyle);
+  resolvedBasemapStyleRef.current = resolvedBasemapStyle;
+  /** The style the MapLibre map currently has applied. */
+  const appliedBasemapStyleRef = useRef<string | maplibregl.StyleSpecification>(
+    resolvedBasemapStyle,
+  );
+  // Latest opacity, read by the map-creation effect via ref so re-mounts
+  // re-apply it without the effect depending on the prop.
+  const basemapOpacityRef = useRef(basemapOpacity);
+  basemapOpacityRef.current = basemapOpacity;
   const orthoViewRef = useRef(
     new OrthographicView({ id: "main", controller: true }),
   );
@@ -1336,18 +1409,23 @@ export const MapCanvas = memo(function MapCanvas({
     if (!mapElRef.current) return;
 
     const initialVs = roughGeoViewState(nodesRef.current);
+    appliedBasemapStyleRef.current = resolvedBasemapStyleRef.current;
     const map = new maplibregl.Map({
       container: mapElRef.current,
       // Read the style via the ref, NOT the `basemap` prop: having `basemap`
       // in this effect's deps tears down and recreates the whole map (losing
       // the viewport) on every style switch — the setStyle effect below
       // handles changes in place.
-      style: MAP_STYLES[prevBasemapRef.current],
+      style: resolvedBasemapStyleRef.current,
       center: [initialVs.longitude, initialVs.latitude],
       zoom: initialVs.zoom,
       attributionControl: false,
     });
     mapRef.current = map;
+    // Basemap dimming survives map re-creation: apply the current value to
+    // the fresh canvas (see the basemapOpacity effect below for why the
+    // canvas element and not the container).
+    map.getCanvas().style.opacity = String(basemapOpacityRef.current);
 
     map.on("moveend", () => {
       if (labelsOnRef.current && viewModeRef.current === "map") {
@@ -1619,14 +1697,32 @@ export const MapCanvas = memo(function MapCanvas({
   // updated layers as usual.)
 
   // Basemap style change — MapboxOverlay re-attaches automatically as IControl.
+  // Keyed on the *resolved* style (not the id): a provider id can re-resolve
+  // when the catalog arrives, and a catalog refresh with unchanged content
+  // must not restyle (sameBasemapStyle compares structurally).
   useEffect(() => {
     if (!isActive) return;
     const map = mapRef.current;
     if (!map) return;
-    if (prevBasemapRef.current === basemap) return;
-    prevBasemapRef.current = basemap;
-    map.setStyle(MAP_STYLES[basemap]);
-  }, [basemap, isActive]);
+    if (sameBasemapStyle(appliedBasemapStyleRef.current, resolvedBasemapStyle))
+      return;
+    appliedBasemapStyleRef.current = resolvedBasemapStyle;
+    map.setStyle(resolvedBasemapStyle);
+  }, [resolvedBasemapStyle, isActive]);
+
+  // Basemap dimming — CSS opacity on the maplibre *canvas*, not the container
+  // div: the non-interleaved MapboxOverlay renders the network to its own
+  // sibling canvas inside the same container, so dimming the container would
+  // dim network geometry too. maplibre keeps one canvas element across
+  // setStyle, so the value survives basemap switches; the map-creation effect
+  // re-applies it on re-mounts. (Deliberately NOT a style paint property —
+  // CSS dims vector and provider-raster styles uniformly and live. With
+  // basemap "none" this dims the blank background layer, which is harmless.)
+  useEffect(() => {
+    mapRef.current
+      ?.getCanvas()
+      .style.setProperty("opacity", String(basemapOpacity));
+  }, [basemapOpacity]);
 
   // View mode switch.
   useEffect(() => {

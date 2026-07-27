@@ -36,6 +36,7 @@ export {
   PRESSURE_THRESHOLD,
   pressureColor,
 } from "../types";
+export * from "./basemapProviders";
 export * from "./editors";
 export * from "./issues";
 export type { NetworkSummary } from "./NetworkDataContext";

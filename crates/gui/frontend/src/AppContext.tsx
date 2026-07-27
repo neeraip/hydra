@@ -44,6 +44,7 @@ interface AppState {
   simSettingsModalOpen: boolean;
   scenariosModalOpen: boolean;
   crsModalOpen: boolean;
+  basemapProvidersModalOpen: boolean;
   taskTrayOpen: boolean;
   issuesPanelOpen: boolean;
   theme: "dark" | "light" | "system";
@@ -103,6 +104,8 @@ interface AppActions {
   closeScenariosModal: () => void;
   openCrsModal: () => void;
   closeCrsModal: () => void;
+  openBasemapProvidersModal: () => void;
+  closeBasemapProvidersModal: () => void;
   toggleTaskTray: () => void;
   openTaskTray: () => void;
   closeTaskTray: () => void;
@@ -261,6 +264,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       simSettingsModalOpen: false,
       scenariosModalOpen: false,
       crsModalOpen: false,
+      basemapProvidersModalOpen: false,
       taskTrayOpen: false,
       issuesPanelOpen: false,
       theme:
@@ -844,6 +848,18 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setS((prev) => ({ ...prev, crsModalOpen: false }));
   }, []);
 
+  const openBasemapProvidersModal = useCallback(() => {
+    setS((prev) => ({
+      ...prev,
+      basemapProvidersModalOpen: true,
+      commandPaletteOpen: false,
+    }));
+  }, []);
+
+  const closeBasemapProvidersModal = useCallback(() => {
+    setS((prev) => ({ ...prev, basemapProvidersModalOpen: false }));
+  }, []);
+
   const toggleTaskTray = useCallback(() => {
     setS((prev) => ({
       ...prev,
@@ -981,6 +997,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
       closeScenariosModal,
       openCrsModal,
       closeCrsModal,
+      openBasemapProvidersModal,
+      closeBasemapProvidersModal,
       toggleTaskTray,
       openTaskTray,
       closeTaskTray,
@@ -1022,6 +1040,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
       closeScenariosModal,
       openCrsModal,
       closeCrsModal,
+      openBasemapProvidersModal,
+      closeBasemapProvidersModal,
       toggleTaskTray,
       openTaskTray,
       closeTaskTray,
