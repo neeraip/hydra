@@ -26,14 +26,40 @@ This document provides a self-contained, mathematical and conceptual description
     - [3.1 Meteorology](#31-meteorology)
     - [3.2 Surface Runoff](#32-surface-runoff)
     - [3.3 Infiltration](#33-infiltration)
+      - [Horton](#horton)
+      - [Modified Horton](#modified-horton)
+      - [Green–Ampt](#greenampt)
+      - [Modified Green–Ampt](#modified-greenampt)
+      - [Curve Number](#curve-number)
     - [3.4 Groundwater](#34-groundwater)
     - [3.5 Snowmelt](#35-snowmelt)
     - [3.6 Rainfall-Dependent Inflow/Infiltration (RDII)](#36-rainfall-dependent-inflowinfiltration-rdii)
   - [4. Flow Routing Theory](#4-flow-routing-theory)
   - [5. Dynamic Wave Analysis](#5-dynamic-wave-analysis)
+    - [5.1 Conduit Flow Update](#51-conduit-flow-update)
+    - [5.2 Node Head Update](#52-node-head-update)
+    - [5.3 Picard Iteration](#53-picard-iteration)
+    - [5.4 Surcharge](#54-surcharge)
+    - [5.5 Flooding and Ponding](#55-flooding-and-ponding)
+    - [5.6 Time-Step Control](#56-time-step-control)
+    - [5.7 Initial Conditions](#57-initial-conditions)
   - [6. Cross-Section Geometry](#6-cross-section-geometry)
+    - [6.1 Shape Families](#61-shape-families)
+    - [6.2 Transects](#62-transects)
+    - [6.3 Storage Geometry and Characteristic Depths](#63-storage-geometry-and-characteristic-depths)
   - [7. Pumps and Flow Regulators](#7-pumps-and-flow-regulators)
+    - [7.1 Pumps](#71-pumps)
+    - [7.2 Orifices](#72-orifices)
+    - [7.3 Weirs](#73-weirs)
+    - [7.4 Outlets](#74-outlets)
   - [8. Advanced Hydraulics](#8-advanced-hydraulics)
+    - [8.1 Conduit Evaporation and Seepage](#81-conduit-evaporation-and-seepage)
+    - [8.2 Minor Losses and Force Mains](#82-minor-losses-and-force-mains)
+    - [8.3 Culverts and Roadway Weirs](#83-culverts-and-roadway-weirs)
+    - [8.4 Streets and Inlets](#84-streets-and-inlets)
+      - [On-Grade Capture](#on-grade-capture)
+      - [On-Sag Capture](#on-sag-capture)
+      - [Capture Transfer and Statistics](#capture-transfer-and-statistics)
   - [9. Water Quality](#9-water-quality)
     - [9.1 Pollutants and Sources](#91-pollutants-and-sources)
     - [9.2 Buildup and Street Sweeping](#92-buildup-and-street-sweeping)
@@ -44,7 +70,14 @@ This document provides a self-contained, mathematical and conceptual description
   - [12. Continuity Accounting](#12-continuity-accounting)
   - [13. Units and Physical Constants](#13-units-and-physical-constants)
   - [14. Input and Output](#14-input-and-output)
+    - [Input](#input)
+    - [Interface Files](#interface-files)
+    - [Output](#output)
+      - [Binary Output File Layout](#binary-output-file-layout)
   - [15. The Engine as a Library](#15-the-engine-as-a-library)
+    - [Run-Loop Lifecycle](#run-loop-lifecycle)
+    - [Query and Mutation](#query-and-mutation)
+    - [Rainfall Injection and Checkpointing](#rainfall-injection-and-checkpointing)
   - [16. Cross-Cutting Engine Contracts](#16-cross-cutting-engine-contracts)
 
 ---
@@ -90,13 +123,44 @@ Nodes are the points of the conveyance graph. Every node has an invert elevation
 
 Links connect nodes and carry flow; a link's orientation defines positive flow direction, and negative flows denote reversal. There are five link types:
 
-**Conduits** are the pipes and channels of the network — the only link type with hydraulic length and the primary object of flow routing. Each conduit has a cross-sectional **shape** drawn from a library of more than twenty standard closed and open geometries (circular, rectangular, trapezoidal, egg, horseshoe, arch, elliptical, and others), an **irregular transect** (a surveyed station-elevation profile with left-bank/main-channel/right-bank roughness, in the manner of HEC-2/HEC-RAS river sections), a **street** cross-section (a curb-and-gutter roadway profile for dual-drainage street modelling), or a user-supplied **custom shape** curve of width versus depth. Conduits carry a Manning roughness coefficient, upstream and downstream invert offsets above their end nodes (expressible as heights or, via a global option, absolute elevations), an optional count of identical parallel **barrels** (routing solves one barrel at $Q/N$ and scales volumes and losses back by $N$), an optional maximum-flow limit, optional entrance/exit minor loss coefficients, an optional flap gate preventing reverse flow, and optional seepage and evaporation losses. Conduit slope is drop over *horizontal* distance, floored at a 0.001-ft elevation drop (or a user minimum slope); under dynamic wave an adverse-slope conduit is silently reversed internally, with all reported flows carrying a direction multiplier so output keeps the user's orientation. A conduit may also be designated a **culvert** (activating inlet-control capacity limits per FHWA HDS-5) or a **force main** (using Hazen-Williams or Darcy-Weisbach friction while pressurised, §8).
+**Conduits** are the pipes and channels of the network — the only link type with hydraulic length and the primary object of flow routing. Each conduit has a cross-sectional **shape** drawn from one of four descriptions:
 
-**Pumps** raise water between nodes according to a **pump curve** of five types: Type 1 (flow varies stepwise with wet-well volume), Type 2 (flow varies stepwise with inlet depth), Type 3 (flow varies continuously with delivered head), Type 4 (flow varies continuously with inlet depth), Type 5 (a variable-speed Type 3), plus an **ideal** transfer pump whose outflow equals its inflow. Pumps have on/off depth setpoints and may have their speed modulated by control rules.
+- a library of more than twenty standard closed and open geometries (circular, rectangular, trapezoidal, egg, horseshoe, arch, elliptical, and others);
+- an **irregular transect** (a surveyed station-elevation profile with left-bank/main-channel/right-bank roughness, in the manner of HEC-2/HEC-RAS river sections);
+- a **street** cross-section (a curb-and-gutter roadway profile for dual-drainage street modelling); or
+- a user-supplied **custom shape** curve of width versus depth.
+
+Conduits carry:
+
+- a Manning roughness coefficient;
+- upstream and downstream invert offsets above their end nodes (expressible as heights or, via a global option, absolute elevations);
+- an optional count of identical parallel **barrels** (routing solves one barrel at $Q/N$ and scales volumes and losses back by $N$);
+- an optional maximum-flow limit;
+- optional entrance/exit minor loss coefficients;
+- an optional flap gate preventing reverse flow; and
+- optional seepage and evaporation losses.
+
+Conduit slope is drop over *horizontal* distance, floored at a 0.001-ft elevation drop (or a user minimum slope); under dynamic wave an adverse-slope conduit is silently reversed internally, with all reported flows carrying a direction multiplier so output keeps the user's orientation. A conduit may also be designated a **culvert** (activating inlet-control capacity limits per FHWA HDS-5) or a **force main** (using Hazen–Williams or Darcy–Weisbach friction while pressurised, §8).
+
+**Pumps** raise water between nodes according to a **pump curve** of five types:
+
+- Type 1 (flow varies stepwise with wet-well volume);
+- Type 2 (flow varies stepwise with inlet depth);
+- Type 3 (flow varies continuously with delivered head);
+- Type 4 (flow varies continuously with inlet depth);
+- Type 5 (a variable-speed Type 3);
+
+plus an **ideal** transfer pump whose outflow equals its inflow. Pumps have on/off depth setpoints and may have their speed modulated by control rules.
 
 **Orifices** are openings in the side (**side orifice**) or bottom (**bottom orifice**) of a node's wall or floor, closable to a variable degree by control rules, discharging according to the orifice equation with distinct free, submerged, and partially-open regimes. Orifice geometry is circular or rectangular; an optional flap gate prevents reverse flow.
 
-**Weirs** are overflow structures of five types — **transverse**, **side-flow**, **V-notch** (triangular), **trapezoidal**, and **roadway** (an FHWA HDS-5 embankment-overtopping weir for culvert/roadway systems) — each with its characteristic head-discharge exponent and coefficient, with corrections for end contractions, submergence, and surcharge.
+**Weirs** are overflow structures of five types, each with its characteristic head-discharge exponent and coefficient, with corrections for end contractions, submergence, and surcharge:
+
+- **transverse**;
+- **side-flow**;
+- **V-notch** (triangular);
+- **trapezoidal**; and
+- **roadway** (an FHWA HDS-5 embankment-overtopping weir for culvert/roadway systems).
 
 **Outlets** are general-purpose head-discharge devices: their outflow is an arbitrary user-defined function of head or depth, given either as a power function or a rating curve. They model devices with bespoke ratings — vortex valves, flow-duration-control devices — that fit none of the standard structures.
 
@@ -138,7 +202,13 @@ SWMM advances three clocks with independent step sizes: a **runoff clock** ($\De
 
 Two interpolation exceptions: precipitation and infiltration rates are held piecewise-constant within a runoff step (a report time inside the step receives the step-start value), and climate-file temperatures are interpolated sinusoidally (§3.1). Both wet and dry runoff steps are truncated to end exactly at the next rainfall-interval boundary of any gage or the next evaporation-change date, so all forcing is constant within a step; a wet step longer than a used gage's recording interval is permanently reduced to that interval with a warning. Guidance is wet step ≲ subcatchment time of concentration, dry step of hours to a day.
 
-Three option-driven behaviours modify the routing loop itself. An **`[EVENT]`** list restricts routing to date windows: between events the routing step stretches to the next runoff or report time, no lateral inflows are applied and no flow or quality routing occurs (hydrology continues; state freezes); overlapping events are clipped to the next event's start. A **steady-state skip** option bypasses flow routing for a step when no control action fired, the previous step's system flow error is within a tolerance, and no node's lateral inflow changed by more than a relative tolerance (a zero↔nonzero change counts as 100%) — quality routing and outflow accounting still run. A **rule step** option evaluates control rules only at fixed intervals (the routing step is trimmed to land on them), though pump startup/shutoff depth targets still apply every step. Lateral inflows are assembled at the *start* of each routing step — runoff, groundwater, and LID drains interpolated to the old routing time; external, dry-weather, and RDII inflows evaluated at the step-start date — with near-zero inflows truncated, and a *negative* external inflow legal and booked as an outflow removing mass at the node's concentration.
+Three option-driven behaviours modify the routing loop itself:
+
+- An **`[EVENT]`** list restricts routing to date windows: between events the routing step stretches to the next runoff or report time, no lateral inflows are applied and no flow or quality routing occurs (hydrology continues; state freezes); overlapping events are clipped to the next event's start.
+- A **steady-state skip** option bypasses flow routing for a step when no control action fired, the previous step's system flow error is within a tolerance, and no node's lateral inflow changed by more than a relative tolerance (a zero↔nonzero change counts as 100%) — quality routing and outflow accounting still run.
+- A **rule step** option evaluates control rules only at fixed intervals (the routing step is trimmed to land on them), though pump startup/shutoff depth targets still apply every step.
+
+Lateral inflows are assembled at the *start* of each routing step — runoff, groundwater, and LID drains interpolated to the old routing time; external, dry-weather, and RDII inflows evaluated at the step-start date — with near-zero inflows truncated, and a *negative* external inflow legal and booked as an outflow removing mass at the node's concentration.
 
 The dual-clock design is an economy: hydrology on a 15-minute wet / 1-day dry grid costs a small fraction of the routing effort, and continuous multi-year simulations remain tractable while routing runs at whatever step stability demands (§5). The **state vector** of §1.7 is exactly what is saved to and restored from a **hotstart file**, allowing a simulation to resume from a prior ending condition (e.g. to establish non-zero antecedent conditions before a design storm). Internally, all computation is in feet and seconds regardless of the user's unit system, and dates are 8-byte doubles counting decimal days since 30 December 1899 (the Delphi epoch).
 
@@ -271,7 +341,9 @@ Kinematic wave's numerical scheme is a weighted implicit (Wendroff) four-point d
 
 The dynamic-wave engine is a staggered node-link scheme: conduits carry the momentum equation for flow, nodes carry continuity for head, and the two are advanced together by fixed-point (Picard) iteration within each time step.
 
-**Conduit flow update.** Substituting continuity into momentum and discretising over a conduit of length $L$ (implicit backward Euler in time, end-difference in space, overbars denoting conduit-average values) gives the update SWMM actually computes:
+### 5.1 Conduit Flow Update
+
+Substituting continuity into momentum and discretising over a conduit of length $L$ (implicit backward Euler in time, end-difference in space, overbars denoting conduit-average values) gives the update SWMM actually computes:
 
 $$Q^{t+\Delta t} = \frac{Q^t + \Delta Q_{inertia} + \Delta Q_{pressure}}{1 + \Delta Q_{friction} + \Delta Q_{losses}}$$
 
@@ -279,24 +351,48 @@ $$\Delta Q_{inertia} = \sigma\left[2\bar U(\bar A^{t+\Delta t} - \bar A^{t}) + \
 \Delta Q_{pressure} = -g\bar A\frac{(H_2 - H_1)\Delta t}{L},\quad
 \Delta Q_{friction} = \frac{g\,(n/1.486)^2\,|\bar U|\,\Delta t}{\bar R^{4/3}}$$
 
-Friction (and entrance/exit/average local losses, treated likewise) sit in the denominator — an implicit linearisation that keeps the update stable as flows approach zero. The **inertial damping factor** $\sigma$ scales the inertial terms by the Froude number ($\sigma = 1$ for $Fr \le 0.5$, tapering linearly to $0$ at $Fr = 1$), suppressing the terms that destabilise trans- and supercritical flow; user options force $\sigma = 1$ (keep all inertia) or $\sigma = 0$ (the local-inertial formulation — distinct from the diffusion wave, which also drops $\partial Q/\partial t$), and closed conduits flowing full always use $\sigma = 0$. The **upstream weighting** of the pressure/friction areas is this same Froude-based $\sigma$ (computed before any user damping override): none at $Fr \le 0.5$, fully upstream at $Fr \ge 1$, applied only in positive, non-full, downstream-sloping flow. Velocity is capped at 50 ft/s; a flow that reverses sign between successive iterates is clamped to 0.001 cfs in the new direction; flow out of an essentially dry node is suppressed; a user conduit flow limit, when given, caps $|Q|$ every iteration; and a positive computed flow is limited to Manning **normal flow** when the water-surface slope is *less* than the bed slope (upstream depth below downstream) or the upstream Froude number is at least 1 — user-selectable criteria (slope, Froude, both, or *neither*, disabling the limit entirely), except that conduits adjoining an outfall always apply the slope test and never the Froude test; the check is skipped for full upstream ends, critical/dry flow classes, and culvert-coded conduits. Special flow classes at nearly-dry or critical-depth ends substitute critical/normal depth for the nodal head on the affected end — with a linear *fasnh* ramp of the downstream area contribution across the band between critical and normal depth — and a conduit classed dry at both ends (or at its receiving end) carries exactly zero flow for the trial while retaining a nominal $\partial Q/\partial H$. Multi-barrel conduits solve one barrel and scale back (§1.4).
+Friction (and entrance/exit/average local losses, treated likewise) sit in the denominator — an implicit linearisation that keeps the update stable as flows approach zero. The **inertial damping factor** $\sigma$ scales the inertial terms by the Froude number ($\sigma = 1$ for $Fr \le 0.5$, tapering linearly to $0$ at $Fr = 1$), suppressing the terms that destabilise trans- and supercritical flow; user options force $\sigma = 1$ (keep all inertia) or $\sigma = 0$ (the local-inertial formulation — distinct from the diffusion wave, which also drops $\partial Q/\partial t$), and closed conduits flowing full always use $\sigma = 0$. The **upstream weighting** of the pressure/friction areas is this same Froude-based $\sigma$ (computed before any user damping override): none at $Fr \le 0.5$, fully upstream at $Fr \ge 1$, applied only in positive, non-full, downstream-sloping flow.
 
-**Node head update.** Each node integrates $\partial H/\partial t = \sum Q / A_S$, where the surface area $A_S$ sums the node's own storage area (zero for junctions) and each connecting conduit's contribution — nominally the trapezoidal area of the conduit's *adjacent half* (width-weighted, not half the total), but reapportioned by flow class: a free-fall (critical) end contributes zero with the far node taking area over the full length, a dry end contributes only absent an offset, and closed-conduit top widths are frozen at 96% of full depth (98.53% under the slot) so surface areas never collapse at the crown. Weirs and outlets contribute no surface area; orifices contribute half their equivalent-pipe area to each end (dropped at storage-node and critical-class ends). The total is floored at a user-adjustable default minimum of 12.566 ft² (a 4-ft manhole). The volume change uses trapezoidal averaging of the net inflow across the step.
+Several limits then constrain the updated flow:
 
-**Picard iteration.** Within a time step, each trial runs in two phases: all true conduits solve from the last-iteration heads (an OpenMP-parallel loop under the `THREADS` option — nodal accumulation stays serial, so results are thread-count-invariant), then dummy conduits, pumps, and regulators solve *serially in link-definition order*, each immediately updating its node flows — so a pump's available-volume clamp sees the accumulation so far, making pump/regulator results sensitive to link order. Flows are under-relaxed by $\theta = 0.5$ against the previous iterate (pumps exempt); node heads update and under-relax by 0.5 (skipped for surcharged nodes); iteration continues until every non-outfall node's head change is below the head tolerance (default **0.005 ft**) — outfalls are excluded, their depths reset from the boundary condition each pass — with a hard minimum of 2 trials and a user-adjustable maximum defaulting to **8** (links between converged nodes are bypassed). Non-convergence is tallied and reported but does not halt the simulation.
+- Velocity is capped at 50 ft/s.
+- A flow that reverses sign between successive iterates is clamped to 0.001 cfs in the new direction.
+- Flow out of an essentially dry node is suppressed.
+- A user conduit flow limit, when given, caps $|Q|$ every iteration.
+- A positive computed flow is limited to Manning **normal flow** when the water-surface slope is *less* than the bed slope (upstream depth below downstream) or the upstream Froude number is at least 1 — user-selectable criteria (slope, Froude, both, or *neither*, disabling the limit entirely), except that conduits adjoining an outfall always apply the slope test and never the Froude test; the check is skipped for full upstream ends, critical/dry flow classes, and culvert-coded conduits.
 
-**Surcharge.** A non-storage node is surcharged when its head exceeds the crown of its highest connecting **link** — orifice and weir opening tops participate, not conduits alone; closed storage nodes surcharge only when a supplementary surcharge depth is specified and exceeded, and ponded nodes never do. Two treatments exist:
+Special flow classes at nearly-dry or critical-depth ends substitute critical/normal depth for the nodal head on the affected end — with a linear *fasnh* ramp of the downstream area contribution across the band between critical and normal depth — and a conduit classed dry at both ends (or at its receiving end) carries exactly zero flow for the trial while retaining a nominal $\partial Q/\partial H$. Multi-barrel conduits solve one barrel and scale back (§1.4).
+
+### 5.2 Node Head Update
+
+Each node integrates $\partial H/\partial t = \sum Q / A_S$, where the surface area $A_S$ sums the node's own storage area (zero for junctions) and each connecting conduit's contribution — nominally the trapezoidal area of the conduit's *adjacent half* (width-weighted, not half the total), but reapportioned by flow class: a free-fall (critical) end contributes zero with the far node taking area over the full length, a dry end contributes only absent an offset, and closed-conduit top widths are frozen at 96% of full depth (98.53% under the slot) so surface areas never collapse at the crown. Weirs and outlets contribute no surface area; orifices contribute half their equivalent-pipe area to each end (dropped at storage-node and critical-class ends). The total is floored at a user-adjustable default minimum of 12.566 ft² (a 4-ft manhole). The volume change uses trapezoidal averaging of the net inflow across the step.
+
+### 5.3 Picard Iteration
+
+Within a time step, each trial runs in two phases: all true conduits solve from the last-iteration heads (an OpenMP-parallel loop under the `THREADS` option — nodal accumulation stays serial, so results are thread-count-invariant), then dummy conduits, pumps, and regulators solve *serially in link-definition order*, each immediately updating its node flows — so a pump's available-volume clamp sees the accumulation so far, making pump/regulator results sensitive to link order. Flows are under-relaxed by $\theta = 0.5$ against the previous iterate (pumps exempt); node heads update and under-relax by 0.5 (skipped for surcharged nodes); iteration continues until every non-outfall node's head change is below the head tolerance (default **0.005 ft**) — outfalls are excluded, their depths reset from the boundary condition each pass — with a hard minimum of 2 trials and a user-adjustable maximum defaulting to **8** (links between converged nodes are bypassed). Non-convergence is tallied and reported but does not halt the simulation.
+
+### 5.4 Surcharge
+
+A non-storage node is surcharged when its head exceeds the crown of its highest connecting **link** — orifice and weir opening tops participate, not conduits alone; closed storage nodes surcharge only when a supplementary surcharge depth is specified and exceeded, and ponded nodes never do. Two treatments exist:
 
 - The classic **EXTRAN point iteration**: with no free surface, continuity degenerates to $\sum Q = 0$, and the head correction is the Newton step $\Delta H = -\sum Q\,/\,\sum(\partial Q/\partial H)$ over connecting links, where $\partial Q/\partial H$ falls out of the flow-update denominator. SWMM 5.2 blends this smoothly with the free-surface update over a transition zone up to 25% above the crown (an exponential weighting $e^{-15 f_H}$ of the not-surcharged surface area against $\sum \partial Q/\partial H$), and damps the correction to 0.6 at terminal upstream nodes.
 - The **Preissmann slot** method (an optional `SURCHARGE_METHOD` introduced in 5.1.013 — **EXTRAN remains the default**): closed conduits acquire a narrow hypothetical slot above the crown — width $0.5423\,e^{-(y/y_{full})^{2.4}}$ of the maximum width, floored at 1% (Sjöberg's formula) — so depth may exceed the crown and the ordinary free-surface equations remain valid everywhere; hydraulic radius freezes at its full-pipe value, and the special surcharge branch is never taken.
 
-**Flooding and ponding.** A non-ponded node whose head would exceed its ground (plus optional surcharge depth) is pinned there and the surplus inflow is lost as reported flooding; with ponding enabled, the surplus accumulates in a user-specified ponded area atop the node — a virtual storage whose head may rise above ground and which drains back as the system recovers.
+### 5.5 Flooding and Ponding
 
-**Time-step control.** With a variable step enabled (the 5.2.4 default — Courant factor 0.75, with `PARTIAL` inertial damping the companion default), the step is the minimum over conduits of the Courant time $\frac{L}{|U| + \sqrt{gA/W}}$ (expressed via $Fr/(1{+}Fr)$ and scaled by the user's Courant factor; conduits with $Fr \le 0.01$ or negligible flow exempt) and over nodes of the time to change head by a quarter of the crown height at the recent rate (outfalls, near-dry, and surcharged nodes exempt), floored at a minimum step, quantised *down* to a whole millisecond, and starting the run at the minimum step. Because the scheme is iterative and semi-implicit, Courant factors above 1 are usable. The optional **conduit lengthening** transform trades short conduits for stability: $L' = \max[L,\ \Delta t(\sqrt{g y_{full}} + U_{full})]$ with slope rescaled by $L/L'$ and roughness by $\sqrt{L/L'}$ — preserving the conveyance factor $\beta$ exactly (the manual's own $\sqrt{}$-rescale of slope contradicts the code). The rule of thumb for stability is $\Delta t \approx L/\sqrt{g\,y_{full}}$; the standard diagnostics are the continuity error, a per-link flow-instability index, and a capacity-limited flag raised when a conduit's upstream end is full with HGL slope exceeding the bed slope (§12).
+A non-ponded node whose head would exceed its ground (plus optional surcharge depth) is pinned there and the surplus inflow is lost as reported flooding; with ponding enabled, the surplus accumulates in a user-specified ponded area atop the node — a virtual storage whose head may rise above ground and which drains back as the system recovers.
 
-**Initial conditions.** Default zero depths and flows; user-supplied initial conduit flows imply Manning normal depth; node depths without user values are seeded from connecting-link depths plus offsets; a hotstart file bypasses these depth-seeding heuristics (derived volumes and areas are still computed from its state).
+### 5.6 Time-Step Control
+
+With a variable step enabled (the 5.2.4 default — Courant factor 0.75, with `PARTIAL` inertial damping the companion default), the step is the minimum over conduits of the Courant time $\frac{L}{|U| + \sqrt{gA/W}}$ (expressed via $Fr/(1{+}Fr)$ and scaled by the user's Courant factor; conduits with $Fr \le 0.01$ or negligible flow exempt) and over nodes of the time to change head by a quarter of the crown height at the recent rate (outfalls, near-dry, and surcharged nodes exempt), floored at a minimum step, quantised *down* to a whole millisecond, and starting the run at the minimum step. Because the scheme is iterative and semi-implicit, Courant factors above 1 are usable. The optional **conduit lengthening** transform trades short conduits for stability: $L' = \max[L,\ \Delta t(\sqrt{g y_{full}} + U_{full})]$ with slope rescaled by $L/L'$ and roughness by $\sqrt{L/L'}$ — preserving the conveyance factor $\beta$ exactly (the manual's own $\sqrt{}$-rescale of slope contradicts the code). The rule of thumb for stability is $\Delta t \approx L/\sqrt{g\,y_{full}}$; the standard diagnostics are the continuity error, a per-link flow-instability index, and a capacity-limited flag raised when a conduit's upstream end is full with HGL slope exceeding the bed slope (§12).
+
+### 5.7 Initial Conditions
+
+Default zero depths and flows; user-supplied initial conduit flows imply Manning normal depth; node depths without user values are seeded from connecting-link depths plus offsets; a hotstart file bypasses these depth-seeding heuristics (derived volumes and areas are still computed from its state).
 
 ## 6. Cross-Section Geometry
+
+### 6.1 Shape Families
 
 Every conduit shape must supply a consistent family of geometric functions — area $A(Y)$, top width $W(Y)$, hydraulic radius $R(Y)$, the inverses $Y(A)$ and $A(\Psi)$, and the **section factor** $\Psi(A) = A\,R(A)^{2/3}$ with its derivative — because the routing methods consume geometry only through these. Three implementation families cover the shape library:
 
@@ -306,29 +402,95 @@ Every conduit shape must supply a consistent family of geometric functions — a
 
 Closed shapes embed a critical subtlety: the section factor **peaks below full depth** (e.g. at 97% area for rectangles, 0.9756 for circles), meaning Manning flow at ~94% depth ($0.938\,Y_{full}$) exceeds full-pipe flow. SWMM stores $\Psi_{max}$ and the area at which it occurs, interpolating the non-monotone tail linearly, and the inverse $A(\Psi)$ handles the two-branch ambiguity by bracketed lookup or Newton–bisection to 0.01% of $A_{full}$.
 
-**Transects** represent natural channels by station-elevation pairs (up to 1,500 stations; an X1-line multiplier and offset can rescale the survey) with distinct left-overbank, main-channel, and right-overbank Manning coefficients — an omitted overbank $n$ defaults to the channel's, and NC-line values persist as defaults into subsequent transects. Preprocessing appends vertical end walls at both ends (contributing wetted perimeter) and builds the 51-point tables by sweeping depth: each depth accumulates area, width, and wetted perimeter segment-by-segment, with composite roughness handled through **conveyance summation** — a new conveyance segment starts at each bank-roughness change *and* wherever the ground re-emerges above the water line (multi-thread sections sum correctly), each contributing $K_i = (1.486/n_i)A_i R_i^{2/3}$ — and the table's hydraulic-radius entry back-computes an effective $R$ from total conveyance as $R = (n_C K / 1.49 A)^{3/2}$. (The forward conveyance uses 1.486 but the back-computation 1.49 — an internal inconsistency of the code itself.) A meander modifier substitutes the shorter overbank (valley) length for the meandering main-channel length as the conduit's effective length, inflating main-channel roughness by the modifier's square root to preserve friction loss. Street cross-sections (§8) compile to transects through the same machinery.
+### 6.2 Transects
 
-**Storage geometry** integrates the surface-area description into volume: functional curves $A = c_0 + c_1 Y^{c_2}$ integrate analytically; tabular curves trapezoidal-integrate, with depth-from-volume solved analytically per segment (or by Newton–bisection for the functional form). Below a tabular curve's first point, area is assumed to grow linearly from zero ($V = \tfrac{a_1}{2 y_1}y^2$); above its last, area extrapolates along the final segment's slope — the regimes governing shallow and overfull storage. Rating-curve lookups behave similarly: below the first point they extrapolate proportionally through the origin, above the last along the final slope. **Critical depth** — needed at free outfalls and free-fall discontinuities — uses exact formulas where they exist (rectangular, triangular, parabolic, power-law) and otherwise interval enumeration (25 fixed depth intervals with linear interpolation) or Ridder's method on $A^3/W = Q^2/g$ to 0.001 ft, seeded by a circular-pipe approximation. **Normal depth** inverts the section factor: $Y_N = Y(A(\Psi = Q\,n/1.486\sqrt{S_0}))$.
+Transects represent natural channels by station-elevation pairs (up to 1,500 stations; an X1-line multiplier and offset can rescale the survey) with distinct left-overbank, main-channel, and right-overbank Manning coefficients — an omitted overbank $n$ defaults to the channel's, and NC-line values persist as defaults into subsequent transects. Preprocessing appends vertical end walls at both ends (contributing wetted perimeter) and builds the 51-point tables by sweeping depth: each depth accumulates area, width, and wetted perimeter segment-by-segment, with composite roughness handled through **conveyance summation** — a new conveyance segment starts at each bank-roughness change *and* wherever the ground re-emerges above the water line (multi-thread sections sum correctly), each contributing $K_i = (1.486/n_i)A_i R_i^{2/3}$ — and the table's hydraulic-radius entry back-computes an effective $R$ from total conveyance as $R = (n_C K / 1.49 A)^{3/2}$. (The forward conveyance uses 1.486 but the back-computation 1.49 — an internal inconsistency of the code itself.) A meander modifier substitutes the shorter overbank (valley) length for the meandering main-channel length as the conduit's effective length, inflating main-channel roughness by the modifier's square root to preserve friction loss. Street cross-sections (§8) compile to transects through the same machinery.
+
+### 6.3 Storage Geometry and Characteristic Depths
+
+Storage geometry integrates the surface-area description into volume: functional curves $A = c_0 + c_1 Y^{c_2}$ integrate analytically; tabular curves trapezoidal-integrate, with depth-from-volume solved analytically per segment (or by Newton–bisection for the functional form). Below a tabular curve's first point, area is assumed to grow linearly from zero ($V = \tfrac{a_1}{2 y_1}y^2$); above its last, area extrapolates along the final segment's slope — the regimes governing shallow and overfull storage. Rating-curve lookups behave similarly: below the first point they extrapolate proportionally through the origin, above the last along the final slope. **Critical depth** — needed at free outfalls and free-fall discontinuities — uses exact formulas where they exist (rectangular, triangular, parabolic, power-law) and otherwise interval enumeration (25 fixed depth intervals with linear interpolation) or Ridder's method on $A^3/W = Q^2/g$ to 0.001 ft, seeded by a circular-pipe approximation. **Normal depth** inverts the section factor: $Y_N = Y(A(\Psi = Q\,n/1.486\sqrt{S_0}))$.
 
 ## 7. Pumps and Flow Regulators
 
-**Pumps** are links whose flow comes from a user curve, in five types plus one degenerate: Type 1 (stepwise flow vs. inlet wet-well **volume**), Type 2 (stepwise vs. inlet **depth**), Type 3 (continuous head-difference vs. flow — the centrifugal characteristic), Type 4 (continuous flow vs. inlet depth, a variable-speed in-line profile), Type 5 (a variable-speed Type 3), and the **ideal** pump (outflow ≡ inflow; must be its node's only outlet). The curve flow scales by a speed setting $\omega$, driven by startup/shutoff wet-well depths or control rules; at storage inlet nodes (and the virtual wet well a Type 1 pump receives at a non-storage node) flow is clamped so the node cannot be drawn below empty ($Q \le Q_{in} + V_N/\Delta t$), while other pump types at non-storage nodes fall back to $Q = Q_{in}$ when the projected end-of-step depth would go negative; pumps contribute no surface area to their nodes, and reverse flow is never allowed. Energy is tallied as $0.7457\,\Delta H\,Q\,\Delta t/3600/8.814$ kWh (no efficiency factor).
+### 7.1 Pumps
 
-**Orifices** (side or bottom, circular or rectangular, coefficient $C_d$, optional flap gate) discharge by Torricelli, $Q = C_d A_O \sqrt{2gH_e}$, with the effective head switching between free-discharge (head above opening centre/invert) and differential (submerged tailwater) regimes. An **unsubmerged inlet** degrades smoothly to weir behaviour: below a threshold head the flow follows $Q = C_W L (H_1 - Z_O)^{1.5}$ with $C_W L$ matched to the orifice equation at the threshold (side) or $C_W = 3.33$ with perimeter-based $L$ (bottom), plus a Villemonte submergence factor $[1 - (H_2/H_1)^{1.5}]^{0.385}$. A partially-open setting $\omega$ (sluice-gate fraction, optionally slewing at a user open/close rate) re-computes the opening area from the §6 geometry. Flap gates charge the Armco head loss $\Delta H = (4U^2/g)\,e^{-1.15 U/\sqrt{H_e}}$, subtracted and re-solved. Under dynamic wave an orifice masquerades as an equivalent short pipe, contributing surface area to its end nodes and analytic $\partial Q/\partial H$ ($0.5\,Q/H_e$ submerged, $1.5\,Q/(H_1 - Z_O)$ as a weir) to the surcharge update.
+Pumps are links whose flow comes from a user curve, in five types plus one degenerate: Type 1 (stepwise flow vs. inlet wet-well **volume**), Type 2 (stepwise vs. inlet **depth**), Type 3 (continuous head-difference vs. flow — the centrifugal characteristic), Type 4 (continuous flow vs. inlet depth, a variable-speed in-line profile), Type 5 (a variable-speed Type 3), and the **ideal** pump (outflow ≡ inflow; must be its node's only outlet). The curve flow scales by a speed setting $\omega$, driven by startup/shutoff wet-well depths or control rules; at storage inlet nodes (and the virtual wet well a Type 1 pump receives at a non-storage node) flow is clamped so the node cannot be drawn below empty ($Q \le Q_{in} + V_N/\Delta t$), while other pump types at non-storage nodes fall back to $Q = Q_{in}$ when the projected end-of-step depth would go negative; pumps contribute no surface area to their nodes, and reverse flow is never allowed. Energy is tallied as $0.7457\,\Delta H\,Q\,\Delta t/3600/8.814$ kWh (no efficiency factor).
 
-**Weirs** come as transverse rectangular ($Q = C_W L_e H_e^{3/2}$), V-notch ($Q = C_W \tan(\theta/2)H_e^{5/2}$), trapezoidal (sum of both parts), and side-flow (Engels, $Q = C_W L_e^{0.83} H_e^{1.67}$, reverting to the transverse form under reverse flow). Effective crest length subtracts end contractions ($L_e = L - 0.1\,n_c H_e$); a partially-raised crest ($\omega < 1$) turns a V-notch into a trapezoid; submergence applies Villemonte with the type's own head exponent. Weirs default to *surchargeable* (roadway weirs excepted): above the opening they switch to an equivalent-orifice form $Q = C_O\sqrt{H_e}$ (coefficient matched to the weir equation at the opening top), while a weir with surcharging disabled simply caps the head at its opening height and continues weir-equation flow. Under steady/kinematic routing, all regulators discharge freely — head is always computed against the upstream node's invert as tailwater, never submerged. $\partial Q/\partial H$ is the analytic exponent-scaled ratio per type. **Outlets** are the catch-all: flow from a power function $Q = aH_e^b$ or tabulated rating curve of either upstream depth or head difference, scaled by the setting, with flap-gate reversal blocking — the vehicle for vortex valves and other bespoke devices.
+### 7.2 Orifices
+
+Orifices (side or bottom, circular or rectangular, coefficient $C_d$, optional flap gate) discharge by Torricelli:
+
+$$Q = C_d A_O \sqrt{2gH_e}$$
+
+where $C_d$ is the discharge coefficient, $A_O$ the opening area, and $H_e$ the effective head, which switches between free-discharge (head above opening centre/invert) and differential (submerged tailwater) regimes. An **unsubmerged inlet** degrades smoothly to weir behaviour: below a threshold head the flow follows
+
+$$Q = C_W L (H_1 - Z_O)^{1.5}$$
+
+where $H_1$ is the upstream head and $Z_O$ the opening elevation, with $C_W L$ matched to the orifice equation at the threshold (side) or $C_W = 3.33$ with perimeter-based $L$ (bottom), plus a Villemonte submergence factor $[1 - (H_2/H_1)^{1.5}]^{0.385}$. A partially-open setting $\omega$ (sluice-gate fraction, optionally slewing at a user open/close rate) re-computes the opening area from the §6 geometry. Flap gates charge the Armco head loss $\Delta H = (4U^2/g)\,e^{-1.15 U/\sqrt{H_e}}$, subtracted and re-solved. Under dynamic wave an orifice masquerades as an equivalent short pipe, contributing surface area to its end nodes and analytic $\partial Q/\partial H$ ($0.5\,Q/H_e$ submerged, $1.5\,Q/(H_1 - Z_O)$ as a weir) to the surcharge update.
+
+### 7.3 Weirs
+
+Weirs come as transverse rectangular, V-notch, trapezoidal (sum of both parts), and side-flow (Engels, reverting to the transverse form under reverse flow), with head-discharge relations:
+
+$$Q = C_W L_e H_e^{3/2} \qquad \text{(transverse rectangular)}$$
+
+$$Q = C_W \tan(\theta/2)H_e^{5/2} \qquad \text{(V-notch)}$$
+
+$$Q = C_W L_e^{0.83} H_e^{1.67} \qquad \text{(side-flow, Engels)}$$
+
+where $C_W$ is the weir discharge coefficient, $L_e$ the effective crest length, $H_e$ the effective head, and $\theta$ the notch angle. Effective crest length subtracts end contractions ($L_e = L - 0.1\,n_c H_e$); a partially-raised crest ($\omega < 1$) turns a V-notch into a trapezoid; submergence applies Villemonte with the type's own head exponent. Weirs default to *surchargeable* (roadway weirs excepted): above the opening they switch to an equivalent-orifice form $Q = C_O\sqrt{H_e}$ (coefficient matched to the weir equation at the opening top), while a weir with surcharging disabled simply caps the head at its opening height and continues weir-equation flow. Under steady/kinematic routing, all regulators discharge freely — head is always computed against the upstream node's invert as tailwater, never submerged. $\partial Q/\partial H$ is the analytic exponent-scaled ratio per type.
+
+### 7.4 Outlets
+
+Outlets are the catch-all: flow from a power function $Q = aH_e^b$ or tabulated rating curve of either upstream depth or head difference, scaled by the setting, with flap-gate reversal blocking — the vehicle for vortex valves and other bespoke devices.
 
 ## 8. Advanced Hydraulics
 
-**Conduit evaporation and seepage** are uniformly-distributed lateral losses: $q_E = e_t W(\bar Y)$ (open channels) and $q_S = s f_c W(\bar Y)$ (seepage, with monthly adjustment $f_c$ and the width capped at the depth of maximum width, since seepage is vertical), together bounded by the conduit volume per step (dynamic wave) or the flow magnitude (steady/kinematic). The momentum equation itself gains Strelkoff's lateral-outflow term $-\bar U q_L/2$, which after substituting continuity becomes a $+2.5\,\bar U q_L$ term in the dynamic-wave flow-update numerator; the lost volume debits the appropriate node; kinematic wave adds $q_L L/\phi$ into its $C_2$ constant. **Storage units** evaporate at the potential rate times a user-supplied realisation fraction $f_E$ (1 normally, 0 for roofed units), applied to the start-of-step surface area, and seep by a Green–Ampt formulation with ponded depth added to the suction head, applied separately to bottom and sloped-side areas.
+### 8.1 Conduit Evaporation and Seepage
+
+Conduit evaporation and seepage are uniformly-distributed lateral losses: $q_E = e_t W(\bar Y)$ (open channels) and $q_S = s f_c W(\bar Y)$ (seepage, with monthly adjustment $f_c$ and the width capped at the depth of maximum width, since seepage is vertical), together bounded by the conduit volume per step (dynamic wave) or the flow magnitude (steady/kinematic). The momentum equation itself gains Strelkoff's lateral-outflow term $-\bar U q_L/2$, which after substituting continuity becomes a $+2.5\,\bar U q_L$ term in the dynamic-wave flow-update numerator; the lost volume debits the appropriate node; kinematic wave adds $q_L L/\phi$ into its $C_2$ constant. **Storage units** evaporate at the potential rate times a user-supplied realisation fraction $f_E$ (1 normally, 0 for roofed units), applied to the start-of-step surface area, and seep by a Green–Ampt formulation with ponded depth added to the suction head, applied separately to bottom and sloped-side areas.
+
+### 8.2 Minor Losses and Force Mains
 
 **Minor losses** (entrance, exit, average, with velocities evaluated at the respective locations) enter the flow-update denominator as $\frac{\Delta t}{2L}\sum K_{m,i}|U_i|$ — dynamic wave only. **Force mains** (circular, dynamic wave) swap the Manning friction term for Hazen–Williams ($\Delta Q_{friction} = 0.6g|\bar U|^{0.852}\Delta t / C_{HW}^{1.852}R_{full}^{1.1667}$ — note the 7/6 hydraulic-radius exponent) or Darcy–Weisbach ($f|\bar U|\Delta t/8R_{full}$, with Swamee–Jain $f$, laminar $64/Re$ below 2000 with $Re$ floored at 10, a linear blend from $f = 0.032$ between 2000 and 4000, and the fully-rough form above $Re = 10^{10}$) **only while pressurised**; partly-full flow uses an equivalent Manning $n$ (slope-dependent for Hazen–Williams: $n = 1.067\,C^{-1}(D/S_0)^{0.04}$). Force mains also carry their own conduit-lengthening compensation (dividing friction by the length factor rather than rescaling $n$), and the force-main cross-section's section factor uses the Hazen–Williams exponent $A R^{0.63}$ instead of Manning's $R^{2/3}$ — altering its normal-flow limit.
 
+### 8.3 Culverts and Roadway Weirs
+
 **Culverts** designated by an FHWA HDS-5 code get an **inlet-control** capacity check layered on the ordinary dynamic-wave (outlet-control) solution: unsubmerged flow from either the form-1 critical-energy equation (Ridder's method on critical depth) or the form-2 power law, submerged flow from the quadratic HDS-5 relation, a linear transition between (SWMM places the unsubmerged limit at $H_1 < Z_1 + 0.95\,Y_{full}$), and the smaller of the two flows governs. Each relation carries a slope-correction term $S_{cf}S_O$ ($-0.5\,S_O$ standard, $+0.7\,S_O$ mitered per HDS-5 — though the pinned code applies $+7.0\,S_O$ for mitered inlets, a 10× divergence from the published coefficient). The constants come from a compiled table of **57 inlet configurations** storing the HDS-5 Table H-2 values (form, $K$, $M$, $c$, $Y$), of which codes 5, 37, and 46 are the mitered ones; submergence begins at $y = Y_{full}(16c + Y - S_{cf}S_O)$, fixing the transition band's upper bound. **Roadway weirs** apply the FHWA head-dependent coefficient only when both a road width and surface type are given (otherwise the user's constant $C_D$); the "charts" are small digitised piecewise-linear tables — low-head coefficients looked up against *absolute head in feet* below $h/W_{road} = 0.15$ and against the ratio above, with submergence factors bottoming at 0.40 (paved) / 0.24 (gravel); they are typically paired in parallel with a culvert to model embankment overtopping.
 
-**Streets and inlets** (new in 5.2) implement HEC-22 dual drainage. A street section — crown width, curb height, cross slope, optional depressed gutter and backing, and a one- or two-sided flag (default two; approach flow halves and capture doubles per side) — compiles into a §6 transect, so street conduits route like any channel. **Inlet designs** comprise: grates (seven standard types with open-area ratios and splash-over velocity fits, plus a generic type with user-supplied values), curb openings with three throat geometries, slotted drains, drop grates/curbs, custom-curve inlets, and the implicit **combination inlet** formed when one design defines both a grate and a curb. Placement rules are shape-checked: street inlets (grate/curb/combo/slotted) belong only in street cross-sections, **drop inlets only in rectangular or trapezoidal open channels**, custom inlets anywhere with a diversion or rating curve; an invalid placement is removed with a warning, and a conduit holds at most one inlet usage (a second definition overwrites). Each usage line adds modifiers: a replicate count (on-grade replicates evaluate *sequentially*, each seeing the previous one's bypass; on-sag they multiply), a clogging percentage scaling both capture and the open area used for backflow apportioning, a per-inlet flow cap, and a local gutter depression added to the street's continuous one. `AUTOMATIC` placement resolves to on-grade when the bypass node has an outgoing link, else on-sag; drop-curb inlets always compute in depth-driven (on-sag) mode capped by approach flow, and custom inlets ignore placement entirely (diversion curve = flow-driven, rating curve = depth-driven).
+### 8.4 Streets and Inlets
 
-**On-grade** capture starts from gutter spread ($Q = \frac{0.56}{n}\sqrt{S_L}\,S_x^{1.67}\,T^{2.67}$, composite-gutter corrected via the frontal-flow ratio $E_o$): grates apply frontal ($R_f = 1 - 0.09(V - V_o)$ above splash-over) and side ($R_s = [1 + 0.15V^{1.8}/S_xL^{2.3}]^{-1}$) efficiencies; curb openings use the equivalent slope $S_e = S_x + (a/W)E_o$, full-capture length $L_T = 0.6\,Q^{0.42}S_L^{0.3}(nS_e)^{-0.6}$, and efficiency $E = 1 - (1 - L/L_T)^{1.8}$; on-grade slotted drains are treated as curb openings of equal length; combination inlets capture through the curb "sweeper" (curb length beyond the grate) first, then the grate on the remainder at recomputed spread. **On-sag** capture is weir flow at shallow depth, orifice flow at depth, with a *linear interpolation* across the transition band (no discontinuity): grate weir $3.0\,P\,d^{1.5}$ ($P = L_g + 2W_g$; full perimeter for drop grates) switching at $d = 1.79\,A_o/P$ to orifice $0.67\,A_o\sqrt{2gd}$; curb weir $3.0\,L\,d^{1.5}$ (or $2.3(L + 1.8W)d^{1.5}$ with crest at $h + a$ when depressed) to orifice $0.67\,hL\sqrt{2g\,d_{eff}}$ above $d = 1.4h$, with throat-angle head corrections; slotted weir $2.48\,L\,d^{1.5}$ to orifice $0.8\,Lw\sqrt{2gd}$ at $d = 2.587w$; a combination adds curb-orifice flow over the grate length once the grate is in orifice mode. (The inlet equations use HEC-22's $g = 32.16$ ft/s², not the engine's 32.2.)
+Streets and inlets (new in 5.2) implement HEC-22 dual drainage. A street section — crown width, curb height, cross slope, optional depressed gutter and backing, and a one- or two-sided flag (default two; approach flow halves and capture doubles per side) — compiles into a §6 transect, so street conduits route like any channel. **Inlet designs** comprise: grates (seven standard types with open-area ratios and splash-over velocity fits, plus a generic type with user-supplied values), curb openings with three throat geometries, slotted drains, drop grates/curbs, custom-curve inlets, and the implicit **combination inlet** formed when one design defines both a grate and a curb. Placement rules are shape-checked: street inlets (grate/curb/combo/slotted) belong only in street cross-sections, **drop inlets only in rectangular or trapezoidal open channels**, custom inlets anywhere with a diversion or rating curve; an invalid placement is removed with a warning, and a conduit holds at most one inlet usage (a second definition overwrites). Each usage line adds modifiers: a replicate count (on-grade replicates evaluate *sequentially*, each seeing the previous one's bypass; on-sag they multiply), a clogging percentage scaling both capture and the open area used for backflow apportioning, a per-inlet flow cap, and a local gutter depression added to the street's continuous one. `AUTOMATIC` placement resolves to on-grade when the bypass node has an outgoing link, else on-sag; drop-curb inlets always compute in depth-driven (on-sag) mode capped by approach flow, and custom inlets ignore placement entirely (diversion curve = flow-driven, rating curve = depth-driven).
+
+#### On-Grade Capture
+
+On-grade capture starts from the gutter-spread relation
+
+$$Q = \frac{0.56}{n}\sqrt{S_L}\,S_x^{1.67}\,T^{2.67}$$
+
+where $n$ is the gutter's Manning roughness, $S_L$ the longitudinal slope, $S_x$ the cross slope, and $T$ the spread — composite-gutter corrected via the frontal-flow ratio $E_o$. Grates apply a frontal efficiency (above splash-over)
+
+$$R_f = 1 - 0.09(V - V_o)$$
+
+and a side efficiency
+
+$$R_s = [1 + 0.15V^{1.8}/S_xL^{2.3}]^{-1}$$
+
+where $V$ is the gutter velocity, $V_o$ the splash-over velocity, and $L$ the grate length. Curb openings use the equivalent slope $S_e = S_x + (a/W)E_o$, the full-capture length
+
+$$L_T = 0.6\,Q^{0.42}S_L^{0.3}(nS_e)^{-0.6}$$
+
+and the efficiency
+
+$$E = 1 - (1 - L/L_T)^{1.8}$$
+
+where $L$ here is the curb-opening length. On-grade slotted drains are treated as curb openings of equal length; combination inlets capture through the curb "sweeper" (curb length beyond the grate) first, then the grate on the remainder at recomputed spread.
+
+#### On-Sag Capture
+
+On-sag capture is weir flow at shallow depth, orifice flow at depth, with a *linear interpolation* across the transition band (no discontinuity): grate weir $3.0\,P\,d^{1.5}$ ($P = L_g + 2W_g$; full perimeter for drop grates) switching at $d = 1.79\,A_o/P$ to orifice $0.67\,A_o\sqrt{2gd}$; curb weir $3.0\,L\,d^{1.5}$ (or $2.3(L + 1.8W)d^{1.5}$ with crest at $h + a$ when depressed) to orifice $0.67\,hL\sqrt{2g\,d_{eff}}$ above $d = 1.4h$, with throat-angle head corrections; slotted weir $2.48\,L\,d^{1.5}$ to orifice $0.8\,Lw\sqrt{2gd}$ at $d = 2.587w$; a combination adds curb-orifice flow over the grate length once the grate is in orifice mode. (The inlet equations use HEC-22's $g = 32.16$ ft/s², not the engine's 32.2.)
+
+#### Capture Transfer and Statistics
 
 Captured flow transfers from the street conduit's downstream (bypass) node to the sewer capture node each routing step, carrying pollutant mass at the bypass node's previous-step concentration; sewer surcharge returns as backflow at the capture node's concentration, apportioned by open-area ratio among standard inlets (by count among custom ones) sharing the node — flooding that stays inside the model, with continuity accounting corrected accordingly. Under steady/kinematic routing, on-sag capture is additionally limited to the inlet's share of bypass-node inflow plus stored volume per step. One structural caveat: the gutter-spread factor is cached at validation from the conduit's *bed* slope under a normal-flow assumption, so on-grade capture is insensitive to dynamic-wave backwater — though the reported maximum street spread *is* depth-based and does reflect it. Per-inlet statistics (flow/capture/backflow period counts after report start, capture efficiency at peak approach flow, average efficiency, bypass/backflow frequencies, peak flows) feed the street-flow summary, which lists every street conduit with or without an inlet.
 
@@ -360,7 +522,17 @@ $$c(t{+}\Delta t) = \frac{c(t)\,V(t)\,e^{-K_1\Delta t} + C_{in}Q_{in}\Delta t}{V
 
 chosen over the analytical CSTR solution (exact only under constant-inflow, averaged-volume assumptions) because it stays stable as volumes vanish and never overshoots a step input. Two code-level deviations from this manual form: the pinned source evaluates the decay factor as the linear truncation $(1 - K_1\Delta t)$ floored at zero — the exponential survives only on the steady-flow path — and clamps the mixed result to at most the larger of the reactor and inflow concentrations. Under dynamic wave (which yields one flow per conduit) the mixing inflow is volume-adjusted, $Q_{in} \leftarrow \max(0,\ Q_{in} + (V_2 + V_{losses} - V_1)/\Delta t)$. The dry thresholds are concrete: below **1 litre** of volume or **1 mm** of depth an element's remaining mass is flushed to final storage and its concentration zeroed (initial concentrations seed only elements wet at start; a wet no-inflow junction keeps its previous concentration). Volume-less links (pumps, regulators, dummy conduits) pass their upstream node concentration through; evaporation concentrates by $1 + V_{evap}/V$; steady-flow routing replaces conduit contents with the upstream node concentration decayed by $e^{-K_1\Delta t}$ and scaled by the evaporation factor.
 
-**Treatment** attaches a user expression to any (node, pollutant): either `c = …` (resulting concentration) or `r = …` (fractional removal applied to the inflow concentration), written over pollutant symbols — a pollutant's **bare name** (`TSS`) for its concentration and `R_<name>` for its fractional removal — hydraulic variables (`FLOW` in user flow units; `DEPTH` and `AREA` as old/new-step averages in user length units; `DT` in seconds; and for storage nodes `HRT`, the residence time in *hours*, updated as $\theta \leftarrow (\theta + \Delta t)\,V/(V + Q_{in}\Delta t)$, zero elsewhere), and the expression language's 19 functions (`sin cos tan cot asin acos atan acot sinh cosh tanh coth abs sgn sqrt log log10 exp step`, case-insensitive, with `+ - * / ^` and scientific literals). Domain violations do not error: square roots and logarithms of non-positive arguments, powers of non-positive bases, and NaN results all silently evaluate to **zero**. A subtle semantic: a referenced pollutant symbol denotes the *combined-influent* concentration when **that pollutant's** equation at the node is removal-type (also the default when it has no equation there), and the node's pre-treatment concentration otherwise — equivalent only at nodes holding no volume. This small expression language expresses constant EMCs, co-removal, concentration-switched removal, $n$-th-order kinetics, the k-C* wetland model, and quiescent gravity settling. Guardrails: treated concentration bounded by [0, untreated]; removals ≤ 1; removal-form yields zero without inflow; a treatment expression at a node **overrides** the pollutant's global decay there; and co-pollutants receive no automatic co-treatment.
+**Treatment** attaches a user expression to any (node, pollutant): either `c = …` (resulting concentration) or `r = …` (fractional removal applied to the inflow concentration), written over:
+
+- pollutant symbols — a pollutant's **bare name** (`TSS`) for its concentration and `R_<name>` for its fractional removal;
+- hydraulic variables:
+  - `FLOW`, in user flow units;
+  - `DEPTH` and `AREA`, as old/new-step averages in user length units;
+  - `DT`, in seconds;
+  - for storage nodes, `HRT` — the residence time in *hours*, updated as $\theta \leftarrow (\theta + \Delta t)\,V/(V + Q_{in}\Delta t)$ — zero elsewhere;
+- and the expression language's 19 functions (`sin cos tan cot asin acos atan acot sinh cosh tanh coth abs sgn sqrt log log10 exp step`, case-insensitive, with `+ - * / ^` and scientific literals).
+
+Domain violations do not error: square roots and logarithms of non-positive arguments, powers of non-positive bases, and NaN results all silently evaluate to **zero**. A subtle semantic: a referenced pollutant symbol denotes the *combined-influent* concentration when **that pollutant's** equation at the node is removal-type (also the default when it has no equation there), and the node's pre-treatment concentration otherwise — equivalent only at nodes holding no volume. This small expression language expresses constant EMCs, co-removal, concentration-switched removal, $n$-th-order kinetics, the k-C* wetland model, and quiescent gravity settling. Guardrails: treated concentration bounded by [0, untreated]; removals ≤ 1; removal-form yields zero without inflow; a treatment expression at a node **overrides** the pollutant's global decay there; and co-pollutants receive no automatic co-treatment.
 
 ## 10. LID Controls
 
@@ -397,29 +569,95 @@ Four independent balances are tallied over the whole run, each reporting $100(1 
 
 A per-step flow error (rates in vs. rates out) feeds the **steady-state skip** decision (§2), not the time-step diagnostics. A continuity table prints only when its |error| exceeds 10% or the CONTINUITY report option is on. Per-node cumulative inflow/outflow volumes are also tracked (initial volume seeding inflow; outfalls and terminal nodes counting inflow as outflow; final volume added to outflow), driving the node-inflow summary's flow-balance column and the "highest continuity errors" top-five.
 
-**Reported statistics.** Alongside the balances, the engine accumulates summary statistics on every routing step *after the report start date* ("hours" quantities are step-time integrals; maxima carry occurrence dates): per-subcatchment water-balance totals, peak runoff, and runoff coefficient; groundwater flux totals and time-weighted average moisture/water-table; per-pollutant washoff loads; node average/maximum depths (plus a separate maximum sampled only at reporting intervals), flooding (hours, volume, peak overflow, peak ponding — a node "floods" when over full volume or overflowing), and surcharge (dynamic wave only; hours and clearances above crown/below rim); storage average/max volumes and losses; outfall flow-frequency, average/max flow, and total loads (plus the system-wide maximum simultaneous outfall flow); link maxima (|flow|, velocity, depth, capacity ratios); conduit time-in-flow-class across the seven dynamic-wave classes, hours normal-flow-limited, under inlet control, at full flow, capacity-limited, and full at either end; pump utilisation, startup count, min/avg/max flow, volume, energy (kWh), and time off both ends of its curve; routing time-step min/avg/max with a log-binned frequency table, average iterations, percent non-converging, and percent of time in steady state; and top-five "highest" lists — node continuity errors, Courant-critical elements (counted as occurrences of being the step-limiting element), flow-instability indices, and most-frequently non-converging nodes. The report file additionally carries a rainfall-file summary, an RDII sewershed summary, the control-actions log, an options echo, and (on request) per-object time-series tables — a text channel separate from the binary output.
+**Reported statistics.** Alongside the balances, the engine accumulates summary statistics on every routing step *after the report start date* ("hours" quantities are step-time integrals; maxima carry occurrence dates):
+
+- per-subcatchment water-balance totals, peak runoff, and runoff coefficient;
+- groundwater flux totals and time-weighted average moisture/water-table;
+- per-pollutant washoff loads;
+- node average/maximum depths (plus a separate maximum sampled only at reporting intervals), flooding (hours, volume, peak overflow, peak ponding — a node "floods" when over full volume or overflowing), and surcharge (dynamic wave only; hours and clearances above crown/below rim);
+- storage average/max volumes and losses;
+- outfall flow-frequency, average/max flow, and total loads (plus the system-wide maximum simultaneous outfall flow);
+- link maxima (|flow|, velocity, depth, capacity ratios);
+- conduit time-in-flow-class across the seven dynamic-wave classes, hours normal-flow-limited, under inlet control, at full flow, capacity-limited, and full at either end;
+- pump utilisation, startup count, min/avg/max flow, volume, energy (kWh), and time off both ends of its curve;
+- routing time-step min/avg/max with a log-binned frequency table, average iterations, percent non-converging, and percent of time in steady state; and
+- top-five "highest" lists — node continuity errors, Courant-critical elements (counted as occurrences of being the step-limiting element), flow-instability indices, and most-frequently non-converging nodes.
+
+The report file additionally carries a rainfall-file summary, an RDII sewershed summary, the control-actions log, an options echo, and (on request) per-object time-series tables — a text channel separate from the binary output.
 
 ## 13. Units and Physical Constants
 
-The user's **flow unit selects the entire unit system**: CFS/GPM/MGD imply US customary for every quantity, CMS/LPS/MLD imply SI. Internally *all* computation runs in feet, square/cubic feet, cfs, and °F, with time in seconds (and dates as decimal days since 1899-12-30); conversion happens only at input parsing and output writing, through a fixed factor table (e.g. rainfall ft/s → in/hr ×43,200 or → mm/hr ×1,097,280; Manning's $n$ is s/m$^{1/3}$ in both systems, whence the recurring 1.486 = 1/0.3048$^{1/3}$ factor). Physical constants: $g = 32.2$ ft/s², kinematic viscosity $1.1\times10^{-5}$ ft²/s, and the various structure coefficients of §7. Two localised exceptions to the internal-units convention: the HEC-22 inlet equations use $g = 32.16$ ft/s², and the LID underdrain equation evaluates in user units (§10). Concentrations are mg/L, µg/L, or counts/L regardless of system.
+**Unit system selection**: the user's **flow unit selects the entire unit system**, for every quantity:
+
+| Flow units | System |
+|------------|--------|
+| CFS, GPM, MGD | US customary |
+| CMS, LPS, MLD | SI |
+
+Internally *all* computation runs in feet, square/cubic feet, cfs, and °F, with time in seconds (and dates as decimal days since 1899-12-30); conversion happens only at input parsing and output writing, through a fixed factor table. Key examples:
+
+| Conversion | Factor |
+|------------|--------|
+| Rainfall, ft/s → in/hr | ×43,200 |
+| Rainfall, ft/s → mm/hr | ×1,097,280 |
+| Manning's $n$ | s/m$^{1/3}$ in both systems, whence the recurring 1.486 = 1/0.3048$^{1/3}$ factor |
+
+**Physical constants**, together with the two localised exceptions to the internal-units convention:
+
+| Constant / convention | Value | Notes |
+|-----------------------|-------|-------|
+| Gravitational acceleration $g$ | 32.2 ft/s² | |
+| Kinematic viscosity | $1.1\times10^{-5}$ ft²/s | |
+| $g$ in the HEC-22 inlet equations | 32.16 ft/s² | Localised exception |
+| LID underdrain equation | — | Evaluates in user units (§10) — localised exception |
+
+The various structure coefficients of §7 complete the constant set. Concentrations are mg/L, µg/L, or counts/L regardless of system.
 
 ## 14. Input and Output
 
-**Input** is the text INP file of ~57 bracketed sections (matched by prefix), grouping: options and interface-file directives; hydrology objects (`[RAINGAGES]`, `[SUBCATCHMENTS]`, `[SUBAREAS]`, `[INFILTRATION]`, `[AQUIFERS]`, `[GROUNDWATER]`/`[GWF]`, `[SNOWPACKS]`, `[HYDROGRAPHS]`, `[RDII]`); network objects (`[JUNCTIONS]`, `[OUTFALLS]`, `[STORAGE]`, `[DIVIDERS]`, `[CONDUITS]`, `[PUMPS]`, `[ORIFICES]`, `[WEIRS]`, `[OUTLETS]`, `[XSECTIONS]`, `[TRANSECTS]`, `[LOSSES]`); quality (`[POLLUTANTS]`, `[LANDUSES]`, `[BUILDUP]`, `[WASHOFF]`, `[COVERAGES]`, `[TREATMENT]`, `[LOADINGS]`); inflows (`[INFLOWS]`, `[DWF]`, `[PATTERNS]`); controls, curves, time series; LID (`[LID_CONTROLS]`, `[LID_USAGE]`); map/display metadata; and the 5.2 street-drainage trio `[STREETS]`, `[INLETS]`, `[INLET_USAGE]`. Global **process switches** (`IGNORE_RAINFALL/SNOWMELT/GWATER/RDII/ROUTING/QUALITY`, plus `ROUTE_MODEL NONE`) disable whole subsystems — quality ignoring also strips all pollutant variables from the binary output — and subsystems with no objects are ignored automatically. Time steps interlock at validation: the report step must be ≥ the routing step (fatal otherwise), the dry step is raised to the wet step, and the routing step is clamped to the wet step. Date/time conventions: INP dates are M/D/Y with `-`/`/` separators (3-letter month names accepted), times decimal-hours or h:m:s; decoded times round to the nearest second; every conversion of elapsed time to a calendar date adds **+1 ms** (so each reporting timestamp and date-driven lookup sits 1 ms past nominal); and elapsed-time labels measure from *report* start.
+### Input
 
-Ancillary **interface files** carry data between runs. The **rainfall interface file** (binary, `SWMM5-RAIN` stamp) collates external files into per-station records of (date, depth) pairs for non-zero periods only — gages are matched by *station ID* (shared stations share data; one station in two files is fatal), file-fed gages become volume-type at the file's interval (NWS/Canadian formats override the declared interval and shift end-of-interval stamps), NWS accumulation codes split totals evenly across their span, and decreasing cumulative readings reset the accumulator. The **routing interface file** (text) carries a header (title, report step, constituent names/units, node names) then one line per node per period; on reading, values are linearly interpolated in time, nodes and pollutants matched by name (unmatched pollutants zero), and flows converted from the *file's* units; outflows are saved for outlet nodes only, and one file cannot serve as both inflow and outflow. The **hotstart file** (`SWMM5-HOTSTART4` stamp; versions 1–4 readable, with older versions carrying progressively less state) checkpoints approximately the §1.7 state vector (see the caveats there) — runoff state as doubles, routing state as floats, link settings re-applied through the control machinery — and its compatibility check covers **object counts and flow units only**: a reordered model silently loads the wrong state.
+The input is the text INP file of ~57 bracketed sections (matched by prefix), grouping: options and interface-file directives; hydrology objects (`[RAINGAGES]`, `[SUBCATCHMENTS]`, `[SUBAREAS]`, `[INFILTRATION]`, `[AQUIFERS]`, `[GROUNDWATER]`/`[GWF]`, `[SNOWPACKS]`, `[HYDROGRAPHS]`, `[RDII]`); network objects (`[JUNCTIONS]`, `[OUTFALLS]`, `[STORAGE]`, `[DIVIDERS]`, `[CONDUITS]`, `[PUMPS]`, `[ORIFICES]`, `[WEIRS]`, `[OUTLETS]`, `[XSECTIONS]`, `[TRANSECTS]`, `[LOSSES]`); quality (`[POLLUTANTS]`, `[LANDUSES]`, `[BUILDUP]`, `[WASHOFF]`, `[COVERAGES]`, `[TREATMENT]`, `[LOADINGS]`); inflows (`[INFLOWS]`, `[DWF]`, `[PATTERNS]`); controls, curves, time series; LID (`[LID_CONTROLS]`, `[LID_USAGE]`); map/display metadata; and the 5.2 street-drainage trio `[STREETS]`, `[INLETS]`, `[INLET_USAGE]`. Global **process switches** (`IGNORE_RAINFALL/SNOWMELT/GWATER/RDII/ROUTING/QUALITY`, plus `ROUTE_MODEL NONE`) disable whole subsystems — quality ignoring also strips all pollutant variables from the binary output — and subsystems with no objects are ignored automatically. Time steps interlock at validation: the report step must be ≥ the routing step (fatal otherwise), the dry step is raised to the wet step, and the routing step is clamped to the wet step. Date/time conventions: INP dates are M/D/Y with `-`/`/` separators (3-letter month names accepted), times decimal-hours or h:m:s; decoded times round to the nearest second; every conversion of elapsed time to a calendar date adds **+1 ms** (so each reporting timestamp and date-driven lookup sits 1 ms past nominal); and elapsed-time labels measure from *report* start.
 
-**Output** has two faces. The text **report file** carries the input summary, continuity balances, per-object summary tables (including the 5.2 street-flow table), and diagnostics. The binary **`.out` file** is the machine interface: magic number 516114522; version int (52004); flow-units code; object counts; ID name table; per-pollutant concentration-unit codes; static property tables (subcatchment areas; node type/invert/max-depth; link type/offsets/max-depth/length); result-variable code lists; then fixed-size per-reporting-period records — an 8-byte timestamp followed by float results for every reported subcatchment (8 vars + washoff per pollutant), node (6 vars + quality), link (5 vars + quality), and 15 system-wide series — closed by a six-int epilog giving the table offsets, period count, error code, and the magic number again, so readers navigate by seeking −24 bytes from EOF. Node and link values are period-interpolated (or period-averaged on request — though regulator/pump settings are never averaged, and pump flows are not interpolated across on/off transitions); subcatchment values are always interpolated and system values are current-step totals — all already in user units. Two reader caveats: per-object results appear **only for objects flagged in `[REPORT]`** (all off by default — an unconfigured run's binary file holds only the 15 system series), and when the report start postdates the simulation start, the stored start-date field is deliberately backdated one period before the first record.
+### Interface Files
+
+Ancillary interface files carry data between runs. The **rainfall interface file** (binary, `SWMM5-RAIN` stamp) collates external files into per-station records of (date, depth) pairs for non-zero periods only — gages are matched by *station ID* (shared stations share data; one station in two files is fatal), file-fed gages become volume-type at the file's interval (NWS/Canadian formats override the declared interval and shift end-of-interval stamps), NWS accumulation codes split totals evenly across their span, and decreasing cumulative readings reset the accumulator. The **routing interface file** (text) carries a header (title, report step, constituent names/units, node names) then one line per node per period; on reading, values are linearly interpolated in time, nodes and pollutants matched by name (unmatched pollutants zero), and flows converted from the *file's* units; outflows are saved for outlet nodes only, and one file cannot serve as both inflow and outflow. The **hotstart file** (`SWMM5-HOTSTART4` stamp; versions 1–4 readable, with older versions carrying progressively less state) checkpoints approximately the §1.7 state vector (see the caveats there) — runoff state as doubles, routing state as floats, link settings re-applied through the control machinery — and its compatibility check covers **object counts and flow units only**: a reordered model silently loads the wrong state.
+
+### Output
+
+Output has two faces. The text **report file** carries the input summary, continuity balances, per-object summary tables (including the 5.2 street-flow table), and diagnostics. The binary **`.out` file** is the machine interface.
+
+#### Binary Output File Layout
+
+The `.out` file is written as the following record sequence:
+
+| Record | Contents |
+|--------|----------|
+| Header | Magic number 516114522; version int (52004); flow-units code; object counts |
+| ID name table | Object ID names |
+| Pollutant units | Per-pollutant concentration-unit codes |
+| Static property tables | Subcatchment areas; node type/invert/max-depth; link type/offsets/max-depth/length |
+| Result-variable code lists | Codes of the reported result variables |
+| Per-reporting-period records (fixed size) | An 8-byte timestamp followed by float results for every reported subcatchment (8 vars + washoff per pollutant), node (6 vars + quality), link (5 vars + quality), and 15 system-wide series |
+| Epilog | Six ints giving the table offsets, period count, error code, and the magic number again — so readers navigate by seeking −24 bytes from EOF |
+
+Node and link values are period-interpolated (or period-averaged on request — though regulator/pump settings are never averaged, and pump flows are not interpolated across on/off transitions); subcatchment values are always interpolated and system values are current-step totals — all already in user units. Two reader caveats: per-object results appear **only for objects flagged in `[REPORT]`** (all off by default — an unconfigured run's binary file holds only the 15 system series), and when the report start postdates the simulation start, the stored start-date field is deliberately backdated one period before the first record.
 
 ## 15. The Engine as a Library
 
 SWMM is an embeddable shared library; the command-line tool is a thin progress-callback wrapper over the same public API. Three tiers:
 
-**Run-loop lifecycle.** `swmm_open` (parse and validate) → `swmm_start(saveResults)` (initialise state; collate the rainfall interface file; pre-compute RDII; read any hotstart file; `saveResults = FALSE` skips the binary output) → repeated `swmm_step`, each advancing exactly one routing step and returning elapsed decimal days, `0.0` signalling completion — or `swmm_stride(seconds)`, which advances a fixed span of simulation time by temporarily capping the routing step — → `swmm_end` → optional `swmm_report` (write the text report) → `swmm_close`. The window between `open` and `start` is where pre-run modification is legal; the run-total mass-balance errors are queryable only between `end` and re-`start`.
+### Run-Loop Lifecycle
 
-**Query and mutation.** A property-code get/set surface (5.2) exposes counts, names, indices, and current values for gages, subcatchments, nodes, and links, plus system values; `swmm_getSavedValue` re-reads any object's binary-file results by reporting period after `swmm_end` (a link's *setting* is served from the file's capacity slot). Mid-simulation **setters** change boundary forcing and controls while the model runs: gage rainfall override (taking precedence over every data source), node lateral inflow, outfall stage (converting the outfall to fixed-stage), and link target settings (conduits excluded; applications are logged to the report as a virtual "ToolkitAPI" rule). Setting the routing step mid-run silently zeroes the Courant factor — disabling variable time-stepping for the remainder of the run. The OWA toolkit layer (~90 functions) extends this with object enumeration across all types, simulation-date get/set, property get/set under explicit timing rules (geometry pre-start only; loss coefficients, flow limits, LID drain/roughness/clogging parameters mutable mid-run), current-time results for every object including concentrations, mid-run summary statistics and mass-balance totals, persistent programmatic node inflows, and direct node/link concentration overrides.
+`swmm_open` (parse and validate) → `swmm_start(saveResults)` (initialise state; collate the rainfall interface file; pre-compute RDII; read any hotstart file; `saveResults = FALSE` skips the binary output) → repeated `swmm_step`, each advancing exactly one routing step and returning elapsed decimal days, `0.0` signalling completion — or `swmm_stride(seconds)`, which advances a fixed span of simulation time by temporarily capping the routing step — → `swmm_end` → optional `swmm_report` (write the text report) → `swmm_close`. The window between `open` and `start` is where pre-run modification is legal; the run-total mass-balance errors are queryable only between `end` and re-`start`.
 
-**Rainfall injection and checkpointing.** Two distinct rainfall mechanisms exist: the property-based intensity override, and `swmm_setGagePrecip`, which converts a gage to the `RAIN_API` data source fed each step by the caller. `swmm_hotstart` both loads a state file before start and **saves an on-demand checkpoint mid-run** — the programmatic complement of the `[FILES]` hotstart directives.
+### Query and Mutation
+
+A property-code get/set surface (5.2) exposes counts, names, indices, and current values for gages, subcatchments, nodes, and links, plus system values; `swmm_getSavedValue` re-reads any object's binary-file results by reporting period after `swmm_end` (a link's *setting* is served from the file's capacity slot). Mid-simulation **setters** change boundary forcing and controls while the model runs: gage rainfall override (taking precedence over every data source), node lateral inflow, outfall stage (converting the outfall to fixed-stage), and link target settings (conduits excluded; applications are logged to the report as a virtual "ToolkitAPI" rule). Setting the routing step mid-run silently zeroes the Courant factor — disabling variable time-stepping for the remainder of the run. The OWA toolkit layer (~90 functions) extends this with object enumeration across all types, simulation-date get/set, property get/set under explicit timing rules (geometry pre-start only; loss coefficients, flow limits, LID drain/roughness/clogging parameters mutable mid-run), current-time results for every object including concentrations, mid-run summary statistics and mass-balance totals, persistent programmatic node inflows, and direct node/link concentration overrides.
+
+### Rainfall Injection and Checkpointing
+
+Two distinct rainfall mechanisms exist: the property-based intensity override, and `swmm_setGagePrecip`, which converts a gage to the `RAIN_API` data source fed each step by the caller. `swmm_hotstart` both loads a state file before start and **saves an on-demand checkpoint mid-run** — the programmatic complement of the `[FILES]` hotstart directives.
 
 ## 16. Cross-Cutting Engine Contracts
 
