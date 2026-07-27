@@ -31,6 +31,8 @@ uuid = { version = "1", features = ["v4"] }
 parking_lot = "0.12"
 hydra = { package = "hydra-sdk", path = "../sdk" }
 tauri-plugin-opener = "2"
+tauri-plugin-process = "2"
+tauri-plugin-updater = "2"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service"] }

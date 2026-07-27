@@ -203,6 +203,11 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          # Updater (minisign-style) signing — separate from Apple code
+          # signing. Produces the .sig files the installed app verifies
+          # before applying an update.
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           projectPath: crates/gui
           tauriScript: cargo tauri
@@ -224,19 +229,22 @@ jobs:
           target = os.environ['TARGET']
           version = tag.removeprefix('gui-v')
 
+          # Updater bundles (createUpdaterArtifacts: true, v2 format) ship
+          # alongside the installers: macOS .app.tar.gz, plus a detached
+          # .sig for every updater-consumable artifact. The v1-compat forms
+          # (.nsis.zip / .AppImage.tar.gz) are not produced — skip
+          # defensively if they ever appear.
           def classify(path):
-              if path.endswith('.app.tar.gz'):          return None  # updater bundle — not configured
-              if path.endswith('.app.tar.gz.sig'):      return None
-              if path.endswith('.AppImage.tar.gz'):     return None
+              if path.endswith('.AppImage.tar.gz'):     return None  # v1-compat — not produced
               if path.endswith('.AppImage.tar.gz.sig'): return None
               if path.endswith('.nsis.zip'):            return None
               if path.endswith('.nsis.zip.sig'):        return None
-              if path.endswith('.AppImage'):            return '.AppImage'
-              if path.endswith('.dmg'):                 return '.dmg'
-              if path.endswith('.exe'):                 return '.exe'
-              if path.endswith('.msi'):                 return '.msi'
-              if path.endswith('.deb'):                 return '.deb'
-              if path.endswith('.rpm'):                 return '.rpm'
+              exts = ('.app.tar.gz', '.AppImage', '.dmg', '.exe', '.msi', '.deb', '.rpm')
+              for ext in exts:
+                  if path.endswith(ext):
+                      return ext
+                  if path.endswith(ext + '.sig'):
+                      return ext + '.sig'
               return None
 
           for src in paths:

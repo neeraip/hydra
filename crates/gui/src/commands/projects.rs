@@ -1267,6 +1267,23 @@ pub fn get_versions() -> Versions {
     }
 }
 
+#[tauri::command]
+/// Whether this install can self-update via the updater plugin.
+///
+/// False in dev builds (there is no installed bundle to replace) and on
+/// Linux when not running from an AppImage — the updater plugin supports
+/// only AppImage there, so deb/rpm installs must hide all updater UI and
+/// keep updating through their package manager.
+pub fn updater_supported() -> bool {
+    if cfg!(debug_assertions) {
+        return false;
+    }
+    if cfg!(target_os = "linux") {
+        return std::env::var_os("APPIMAGE").is_some();
+    }
+    true
+}
+
 #[cfg(test)]
 mod tests {
 

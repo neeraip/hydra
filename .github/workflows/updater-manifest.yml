@@ -1,0 +1,126 @@
+# Publishes the Tauri updater manifest (latest.json) consumed by installed
+# GUI apps (tauri-plugin-updater). Runs when a GUI release is PUBLISHED —
+# not on tag push — so the manifest can never point at draft assets, which
+# are not publicly downloadable. The manifest lives as the single asset of a
+# rolling release with the fixed tag `updater`, giving the plugin a stable
+# endpoint URL:
+#
+#   https://github.com/neeraip/hydra/releases/download/updater/latest.json
+#
+# The GitHub "/releases/latest" endpoint is unusable here because this repo
+# interleaves Library (v*), CLI (cli-v*), and GUI (gui-v*) releases.
+name: Updater Manifest
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+# Serialise manifest updates; never cancel one mid-write.
+concurrency:
+  group: updater-manifest
+  cancel-in-progress: false
+
+jobs:
+  publish-manifest:
+    name: Publish latest.json
+    if: startsWith(github.event.release.tag_name, 'gui-v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Build and publish manifest
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ github.event.release.tag_name }}
+          HTML_URL: ${{ github.event.release.html_url }}
+          PUB_DATE: ${{ github.event.release.published_at }}
+        run: |
+          set -euo pipefail
+          version="${TAG#gui-v}"
+
+          # Signatures are tiny detached files — pull them all.
+          mkdir sigs && gh release download "${TAG}" --repo "${REPO}" \
+            --pattern '*.sig' --dir sigs || true
+
+          # Current manifest (absent on first ever publish).
+          gh release download updater --repo "${REPO}" \
+            --pattern 'latest.json' --output current.json || true
+
+          python3 << 'EOF'
+          import json, os, sys
+
+          repo     = os.environ['REPO']
+          tag      = os.environ['TAG']
+          version  = os.environ['TAG'].removeprefix('gui-v')
+
+          # Never move the manifest backwards: publishing an old release
+          # (or re-publishing) must not downgrade every installed app's
+          # update target.
+          def semver(v):
+              return tuple(int(''.join(c for c in part if c.isdigit()) or 0)
+                           for part in v.split('.'))
+          try:
+              with open('current.json') as f:
+                  current = json.load(f)
+              if semver(current.get('version', '0.0.0')) >= semver(version):
+                  print(f"Manifest already at {current['version']} >= {version}; skipping.")
+                  sys.exit(0)
+          except FileNotFoundError:
+              pass
+
+          # target triple (in asset filenames) → updater platform key,
+          # with the updater-consumable artifact extension per platform.
+          PLATFORMS = {
+              'darwin-aarch64':  ('aarch64-apple-darwin',      '.app.tar.gz'),
+              'darwin-x86_64':   ('x86_64-apple-darwin',       '.app.tar.gz'),
+              'windows-x86_64':  ('x86_64-pc-windows-msvc',    '.exe'),
+              'linux-x86_64':    ('x86_64-unknown-linux-gnu',  '.AppImage'),
+              'linux-aarch64':   ('aarch64-unknown-linux-gnu', '.AppImage'),
+          }
+
+          platforms = {}
+          for key, (triple, ext) in PLATFORMS.items():
+              asset = f'hydra-gui-{version}-{triple}{ext}'
+              sig_path = os.path.join('sigs', asset + '.sig')
+              if not os.path.exists(sig_path):
+                  continue
+              with open(sig_path) as f:
+                  signature = f.read().strip()
+              platforms[key] = {
+                  'signature': signature,
+                  'url': f'https://github.com/{repo}/releases/download/{tag}/{asset}',
+              }
+
+          if not platforms:
+              print('No signed updater artifacts found on the release — '
+                    'is TAURI_SIGNING_PRIVATE_KEY configured?')
+              sys.exit(1)
+
+          manifest = {
+              'version': version,
+              'notes': f"Hydra GUI {version} — release notes: {os.environ['HTML_URL']}",
+              'pub_date': os.environ['PUB_DATE'],
+              'platforms': platforms,
+          }
+          with open('latest.json', 'w') as f:
+              json.dump(manifest, f, indent=2)
+          print(f'Manifest for {version}: {", ".join(sorted(platforms))}')
+          EOF
+
+          # A guard exit above leaves no manifest to publish.
+          [ -f latest.json ] || exit 0
+
+          # Rolling release holding the manifest at a stable URL. Prerelease
+          # + not-latest keeps it out of the repo's "Latest" slot and the
+          # in-app What's-new feed (which filters to gui-v* tags anyway).
+          if ! gh release view updater --repo "${REPO}" > /dev/null 2>&1; then
+            gh release create updater --repo "${REPO}" \
+              --title "Updater manifest" \
+              --notes "Machine-consumed manifest for the in-app updater. Do not delete: installed apps poll this release's latest.json." \
+              --prerelease --latest=false
+          fi
+          gh release upload updater latest.json --repo "${REPO}" --clobber

@@ -46,14 +46,22 @@ just bump-cli patch   # and/or just bump-gui patch
 - **Never push a `cli-v*` or `gui-v*` tag at the same time as a `v*` tag.** The CLI publish will race against the library publish and fail because `hydra-sdk` won't be on crates.io yet.
 - **Never use these recipes just to set a version without intending a release.** They commit and tag, which triggers CI/CD. To reset or change a version without releasing, edit the relevant `Cargo.toml`, `tauri.conf.json`, and `crates/gui/frontend/package.json` files directly, run `cargo update --workspace`, and commit — no tag.
 
+## GUI self-updater
+
+Installed GUI apps check for updates via `tauri-plugin-updater`. The moving parts:
+
+- **Signing.** The GUI release build signs its updater artifacts (macOS `.app.tar.gz`, Windows `.exe`, Linux `.AppImage` + detached `.sig` files) with a Tauri-specific minisign keypair — **separate from Apple code signing**. CI needs the `TAURI_SIGNING_PRIVATE_KEY` and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` secrets; the matching public key is committed in `crates/gui/tauri.conf.json` (`plugins.updater.pubkey`).
+- **Losing the private key strands every installed copy** — apps verify updates against the embedded public key and can never accept an update signed with a replacement key. Keep an offline backup of the key and its password (password manager); GitHub secrets are write-only and are not a backup.
+- **Manifest.** Publishing a `gui-v*` release (draft → published) triggers the `updater-manifest` workflow, which composes `latest.json` from the release's signed assets and uploads it to the rolling `updater` release. Installed apps poll `https://github.com/neeraip/hydra/releases/download/updater/latest.json`. **Do not delete the `updater` release or its tag.** The workflow never moves the manifest to an older version.
+- **Draft releases are invisible to the updater** — nothing reaches users until you publish the release, same as the in-app What's-new feed.
+- **Linux:** only AppImage installs can self-update; the app hides updater UI on deb/rpm installs (they update via the package manager).
+- **Local bundles need the key too.** With `createUpdaterArtifacts` enabled, `just bundle` fails at the signing step unless `TAURI_SIGNING_PRIVATE_KEY` (and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`) are set in the environment, e.g. `TAURI_SIGNING_PRIVATE_KEY="$(cat ~/.tauri/hydra-updater.key)" TAURI_SIGNING_PRIVATE_KEY_PASSWORD=… just bundle`.
+
 ## Release notes
 
 GitHub release notes should keep the categorized sections from `.github/release.yml` (`What's New`, `Bug Fixes`, `Performance`, `Internal`) — this distinction genuinely helps readers tell new capabilities apart from fixes and security-relevant patches, and is worth preserving even when writing notes by hand instead of using `gh release create --generate-notes`.
 
-The GUI's in-app "What's New" panel (`crates/gui/frontend/src/hooks/useLatestRelease.ts`) does **not** render this structure — it only extracts flat bullet lines (`- ` / `* `) from the release body via regex and discards everything else, including section headers. So:
-
-- Keep section headers (`## What's New`, `## Bug Fixes`, etc.) in the GitHub release body for readers on GitHub.
-- Don't expect those headers to appear in-app — the GUI intentionally flattens everything into one plain bullet list under its own single "What's New" heading. This is expected behavior, not a bug; no changes are needed on the GUI side to support categorized release notes.
+The GUI's in-app "What's New" panel (`crates/gui/frontend/src/hooks/useReleaseNotes.ts`) renders the release body as markdown, after stripping plumbing: HTML comments, "Full Changelog" lines, and the trailing "Installation Note" boilerplate section. Categorized section headers survive and render in the in-app modal.
 
 ### Writing style
 

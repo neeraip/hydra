@@ -15,6 +15,8 @@ fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(commands::NetworkState::default())
         .manage(commands::RunQueue::default())
         .manage(basemap_providers::ProvidersState::default())
@@ -93,6 +95,7 @@ fn main() {
             commands::delete_rule,
             commands::preview_patches,
             commands::get_versions,
+            commands::updater_supported,
             commands::reconcile_projects,
             commands::get_run_queue,
             commands::enqueue_runs,

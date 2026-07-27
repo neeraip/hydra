@@ -23,6 +23,7 @@ import {
   useLastSeenGuiVersion,
   useReleaseNotes,
 } from "../hooks/useReleaseNotes";
+import { type UpdaterState, useUpdater } from "../hooks/useUpdater";
 
 const HELP_LINKS = [
   {
@@ -86,6 +87,125 @@ const TEASER_HEADING: React.CSSProperties = {
   lineHeight: 1.5,
 };
 
+// ── Self-update row ───────────────────────────────────────────────────────────
+// Rendered at the top of the What's-new section while an update is
+// available / downloading / ready. The teaser + ReleaseNotesModal below it
+// remain the what-am-I-getting view; this row only carries the action.
+
+function UpdateRow({
+  updater,
+  install,
+  restart,
+}: {
+  updater: UpdaterState;
+  install: () => void;
+  restart: () => void;
+}) {
+  if (updater.phase === "idle") return null;
+
+  const actionable = updater.phase !== "downloading";
+  const label =
+    updater.phase === "available"
+      ? `Update available — v${updater.version}`
+      : updater.phase === "downloading"
+        ? `Downloading v${updater.version}…${
+            updater.percent !== null ? ` ${updater.percent}%` : ""
+          }`
+        : updater.phase === "ready"
+          ? "Restart to update"
+          : "Update failed — retry";
+  const sublabel =
+    updater.phase === "available"
+      ? "Download and install"
+      : updater.phase === "ready"
+        ? `v${updater.version} is ready to install`
+        : updater.phase === "error"
+          ? updater.message
+          : null;
+
+  return (
+    <button
+      type="button"
+      disabled={!actionable}
+      onClick={updater.phase === "ready" ? restart : install}
+      title={updater.phase === "error" ? updater.message : undefined}
+      style={{
+        display: "block",
+        width: "100%",
+        background: `${ACCENT}14`,
+        border: `1px solid ${ACCENT}55`,
+        borderRadius: 6,
+        cursor: actionable ? "pointer" : "default",
+        padding: "8px 10px",
+        marginBottom: 14,
+        textAlign: "left",
+        fontFamily: "var(--font-ui)",
+        transition: "background var(--t-fast)",
+      }}
+      onMouseEnter={(e) => {
+        if (actionable)
+          (e.currentTarget as HTMLButtonElement).style.background =
+            `${ACCENT}26`;
+      }}
+      onMouseLeave={(e) => {
+        (e.currentTarget as HTMLButtonElement).style.background = `${ACCENT}14`;
+      }}
+    >
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 6,
+          fontSize: 12,
+          fontWeight: 600,
+          color: ACCENT,
+        }}
+      >
+        <span aria-hidden style={{ fontSize: 13, lineHeight: 1 }}>
+          {updater.phase === "ready" ? "↻" : "↓"}
+        </span>
+        <span>{label}</span>
+      </div>
+      {sublabel && (
+        <div
+          style={{
+            marginTop: 3,
+            fontSize: 11,
+            color: "var(--text-tertiary)",
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+          }}
+        >
+          {sublabel}
+        </div>
+      )}
+      {updater.phase === "downloading" && (
+        <div
+          style={{
+            marginTop: 7,
+            height: 3,
+            borderRadius: 2,
+            background: `${ACCENT}22`,
+            overflow: "hidden",
+          }}
+        >
+          <div
+            style={{
+              height: "100%",
+              borderRadius: 2,
+              background: ACCENT,
+              width: `${updater.percent ?? 100}%`,
+              opacity: updater.percent !== null ? 1 : 0.35,
+              transition: "width 200ms ease-out",
+            }}
+          />
+        </div>
+      )}
+    </button>
+  );
+}
+
 // ── Section header ────────────────────────────────────────────────────────────
 
 function SidebarSection({ title }: { title: string }) {
@@ -118,6 +238,7 @@ export function HomePage() {
   const { bumpNetwork } = useNetworkVersion();
   const notes = useReleaseNotes();
   const { lastSeen, markSeen } = useLastSeenGuiVersion();
+  const { updater, install, restart } = useUpdater();
   const [whatsNewOpen, setWhatsNewOpen] = useState(false);
 
   const releases = notes.status === "loaded" ? notes.releases : [];
@@ -382,6 +503,7 @@ export function HomePage() {
         {/* What's new */}
         <section>
           <SidebarSection title="What's New" />
+          <UpdateRow updater={updater} install={install} restart={restart} />
           {notes.status === "loading" && (
             <div
               style={{
