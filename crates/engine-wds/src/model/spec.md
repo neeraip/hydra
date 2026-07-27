@@ -106,7 +106,7 @@ A curve is a piecewise-linear mapping from an $x$-value to a $y$-value.
 
 **Evaluation**: for a query value $x$, find the unique segment $[x_{k-1}, x_k]$ that brackets $x$ (extrapolation linearly from the nearest endpoint segment when $x$ is outside the curve range). Return $y = y_{k-1} + (y_k - y_{k-1}) \cdot (x - x_{k-1}) / (x_k - x_{k-1})$.
 
-> **DEVIATION from EPANET:** EPANET's general curve lookup *clamps* to the endpoint $y$-values outside the curve's range (it never extrapolates; its PCV curve is a further special case, interpolating toward the origin below range and toward (100%, 100%) above). Hydra deliberately extrapolates along the nearest segment for all curves: a clamped tank volume curve would make volume insensitive to level beyond the last point — a physically absurd dead zone that also ill-conditions the level-from-volume inversion — and the cases where extrapolation could misbehave are already bounded downstream (pump efficiency clamped to [1%, 100%], PCV ratio to $[10^{-6}, 1]$). This is an intentional improvement, not an oversight; consumers should expect out-of-range results to differ from EPANET's.
+> **DEVIATION from EPANET:** EPANET evaluates curves through two distinct paths. Its solver-side **segment evaluation** — used for custom pump head curves and GPV head-loss curves — extrapolates linearly along the end segments beyond the curve's $x$-range, exactly as Hydra does; for those curves Hydra **matches** EPANET. Its **general lookup** — used for tank volume and pump efficiency curves — instead *clamps* to the endpoint $y$-values outside the range. (The PCV loss-ratio curve is a further special case of the lookup path: below range EPANET interpolates between the origin and the first point, and above range between the last point and the literal coordinate pair $(1, 1)$ — on the curve's percent-scaled axes an evident $(100\%, 100\%)$ intent — so the computed ratio *decreases* beyond the last point before clamping.) Hydra deliberately extrapolates along the nearest segment for **all** curves, so it deviates only on the general-lookup path: a clamped tank volume curve would make volume insensitive to level beyond the last point — a physically absurd dead zone that also ill-conditions the level-from-volume inversion — and the cases where extrapolation could misbehave are already bounded downstream (pump efficiency clamped to [1%, 100%], PCV ratio to $[10^{-6}, 1]$). This is an intentional improvement, not an oversight; consumers should expect out-of-range results for tank volume, pump efficiency, and PCV loss-ratio curves to differ from EPANET's.
 
 **Mutability**: static.
 
@@ -232,7 +232,9 @@ All links share common identity and base properties. There are three link types:
 
 **Speed scaling**: all head and flow values scale by the affinity laws — $\Delta H(\omega, Q) = \omega^2 \Delta H_1(Q/\omega)$. `init_setting` is the initial relative speed $\omega$ (1.0 = rated).
 
-**Pump curve coefficients** ($H_0$, $r$, $N$) for `POWER_FUNCTION` type: derived at load time from the head curve data (direct read from curve or 3-point fit; see §3.2). Stored statically.
+**Curve-type classification**: a pump with a head curve is `POWER_FUNCTION` only when the curve has exactly **one** point — expanded at load time to the three points $(0,\; 1.33334\,H_1)$, $(Q_1, H_1)$, $(2 Q_1, 0)$ — or exactly **three** points whose first point is at zero flow. Every other head curve is `CUSTOM` (piece-wise linear segment evaluation). This matches EPANET's classification.
+
+**Pump curve coefficients** ($H_0$, $r$, $N$) for `POWER_FUNCTION` type: derived at load time from the head curve data by the three-point fit of the [hydraulics spec](../hydraulics/spec.md) §3.2.5, which also defines the fit's validity constraints ($H_0 > H_1 > H_2 \geq 0$, $Q_2 > Q_1 > 0$, $0 < N \leq 20$). Stored statically.
 
 #### 2.6.4 Valves
 
@@ -248,7 +250,7 @@ All valves share `diameter` (m) and `minor_loss` ($K_m$, the fully-open minor-lo
 | `PCV` | Percent-open setting (0–100) | N/A — always resistance-type; loss ratio from `PCV_LOSS_RATIO` curve |
 | `PBV` | Fixed head-loss setpoint $h_s$ (m) | N/A — always resistance-type |
 
-PRV, PSV, and FCV have discrete states: `OPEN`, `CLOSED`, `ACTIVE`, `XPRESSURE` (PRV/PSV: reverse pressure gradient), or `XFCV` (FCV: cannot enforce setpoint). TCV, GPV, PCV, and PBV have no discrete states — they always contribute a resistance.
+PRV, PSV, and FCV have discrete states: `OPEN`, `CLOSED`, `ACTIVE`, `XPRESSURE` (PRV/PSV: the valve cannot deliver its pressure setting — assigned only through the ill-conditioning recovery of the [hydraulics spec](../hydraulics/spec.md) §3.6, when an active valve makes the solution matrix singular; never by a hydraulic status transition), or `XFCV` (FCV: cannot enforce setpoint). TCV, GPV, PCV, and PBV have no discrete states — they always contribute a resistance.
 
 A valve with `init_status = OPEN` or `CLOSED` and `init_setting = MISSING` is **fixed**: its status will not be changed by automatic status logic for the duration of the simulation.
 
@@ -311,6 +313,17 @@ Consecutive premises are joined by `AND` or `OR`. `AND` binds more tightly than 
 
 The full list of constraints and their fatal-error semantics is documented on
 `Network::validate()` in `model/validation.rs`.
+
+**Valve-placement rules.** A PRV, PSV, or FCV replaces ordinary head-loss behaviour with a head- or flow-fixing constraint when it goes active (see [hydraulics spec](../hydraulics/spec.md) §3.5). Certain placements make that constraint structurally unsatisfiable, producing a singular linear system the moment the valve activates. The following placements are therefore **fatal validation errors**, checked in the single post-load validation pass alongside all other constraints (EPANET enforces the identical rules while parsing valve input lines — its errors 219 and 220 — so the accept/reject outcomes are the same):
+
+1. A PRV, PSV, or FCV may not connect to a reservoir or tank at either end. (Interpose a pipe between the valve and the fixed-grade node.)
+2. Two PRVs may not share the same downstream node, and may not be connected in series (the downstream node of one being the upstream node of the other, in either order).
+3. Two PSVs may not share the same upstream node, and may not be connected in series.
+4. A PSV's upstream node may not be a PRV's downstream node (a PSV may not sit immediately downstream of a PRV).
+5. A PSV's upstream node may not be an FCV's downstream node (a PSV may not sit immediately downstream of an FCV).
+6. A PRV's downstream node may not be an FCV's upstream node (a PRV may not sit immediately upstream of an FCV).
+
+"Upstream" and "downstream" refer to the link's defined from → to orientation, not the signed flow direction at run time. Pairings not listed are legal: two PRVs may share an upstream node, two PSVs a downstream node, a PRV may sit downstream of a PSV, an FCV may sit upstream of a PRV or downstream of a PSV, and FCV pairs are unrestricted among themselves. TCV, GPV, PCV, and PBV are pure resistance elements and are exempt from all of these rules.
 
 ---
 
@@ -446,7 +459,8 @@ The INP format is the plain-text network description format used by EPANET. Supp
 
 **Section-to-core mapping notes:**
 
-- `[TAGS]`, `[COORDINATES]`, `[VERTICES]`, `[LABELS]`, `[BACKDROP]`: display/annotation data only — not passed to the core session. Components may preserve these for their own output.
+- `[TAGS]`, `[COORDINATES]`, `[VERTICES]`: display/annotation data with no effect on simulation results, but **stored on the network model** and re-serialised from the in-memory data on output — matching EPANET, which likewise rewrites these three sections from memory when regenerating an INP file.
+- `[LABELS]`, `[BACKDROP]`: display no-ops — parsed leniently, never stored (see the deviation note at the end of this section).
 - `[TITLE]`: stored in the data model (`Network.title`) and written to the binary output prolog (§4.5.2). Up to three title lines are preserved.
 - `[REPORT]`: controls output filtering and verbosity. These are component-level settings, not simulation parameters.
 - `[TIMES] Statistic`: the `STATISTIC` keyword within `[TIMES]` (values: `NONE`, `AVERAGED`, `MINIMUM`, `MAXIMUM`, `RANGE`) controls how per-timestep results are post-processed before output. `NONE` writes every reporting step individually. The other modes aggregate across all reporting periods into a **single** output period — arithmetic mean over the periods (equal to time-weighted for Hydra's uniform report-step spacing), element-wise minimum/maximum, or max−min range — and the mode is recorded in the prolog report-statistic field (§4.5.2). The binary output writer applies this aggregation with a single streaming accumulator pass (no buffering of all periods). It remains a pure output-boundary transform: the core session still delivers every per-step result regardless of this setting.
@@ -465,7 +479,9 @@ The INP format is the plain-text network description format used by EPANET. Supp
 - `[OPTIONS]` `HTOL` / `QTOL` / `RQTOL`: written when they differ from the §2.1 defaults (`head_tol` = 1.524×10⁻⁴ m, `flow_change_tol` = 2.832×10⁻⁶ m³/s, `rq_tol` = 10⁻⁷), applying the exact inverse of the load conversion: `HTOL` = `head_tol` × elevation factor, `QTOL` = `flow_change_tol` × flow factor, `RQTOL` unconverted. Values are written in shortest round-trip decimal form (no fixed precision) because these tolerances can be far smaller than any fixed decimal precision.
 - `[RULES]`: premise values for `TIME` and `CLOCKTIME` are always written as `H:MM(:SS)` literals. A bare numeric value would be re-parsed as **hours**, multiplying the stored seconds by 3600 on every save/load cycle. `FILLTIME`/`DRAINTIME` premise values are stored in hours (§2.8.2) and written back unchanged.
 - `[MIXING]`: only tanks with a **non-default** mixing configuration are written. The default is `MIXED` (CSTR) with `mix_fraction` = 1.0 (the parser's default fraction when the column is absent); a tank is written when its model is not CSTR or its fraction is not 1.0. The Fraction column is written for `2COMP` always, and for any other model whenever the fraction differs from 1.0 (so an explicitly-parsed fraction survives).
-- `[LABELS]` and `[BACKDROP]` are display no-ops: parsed leniently, never written.
+- `[LABELS]` and `[BACKDROP]` are display no-ops: parsed leniently, never stored, never written.
+
+> **DEVIATION from EPANET:** when regenerating an INP file, EPANET copies the `[LABELS]` and `[BACKDROP]` sections **verbatim from the original input file** — they are the only two sections it preserves that way (`[COORDINATES]`, `[VERTICES]`, and `[TAGS]` are rewritten from in-memory data, as Hydra also does). Hydra does not retain the original file text, so these two sections are dropped on re-serialisation. This is deliberate round-trip data loss limited to map labels and backdrop metadata; it never affects simulation behaviour.
 
 **Malformed data lines:** a data line in a recognised section that has fewer fields than the section's required columns, or a field that fails numeric conversion or range validation, must produce a parse error identifying the section, the 1-based source line number, and the offending field or value. This applies uniformly to the object-defining sections (`[JUNCTIONS]`, `[RESERVOIRS]`, `[TANKS]`, `[PIPES]`, `[PUMPS]`, `[VALVES]`) and the node/link property sections (`[DEMANDS]`, `[EMITTERS]`, `[QUALITY]`, `[MIXING]`, `[SOURCES]`, `[STATUS]`, `[LEAKAGE]`). Display/annotation sections (`[COORDINATES]`, `[VERTICES]`, `[TAGS]`, `[REPORT]`) remain lenient: under-length lines and unknown IDs there are skipped, matching EPANET.
 
@@ -521,7 +537,7 @@ Writers always produce the newest version. Readers must accept **both** versions
 | duration (s) | INT4 |
 | 3 title lines | 3 × 80 bytes |
 | input filename, report filename | 2 × 260 bytes |
-| chemical name, chemical units | 2 × 32 bytes |
+| chemical name, quality units (per-mode contents below) | 2 × 32 bytes |
 | node IDs | $N_n$ × 32 bytes |
 | link IDs | $N_l$ × 32 bytes |
 | link from-node indices (1-based) | $N_l$ × INT4 |
@@ -534,6 +550,17 @@ Writers always produce the newest version. Readers must accept **both** versions
 | link diameters (output diameter units; 0 for pumps) | $N_l$ × REAL4 |
 
 Prolog size: $884 + 36 N_n + 52 N_l + 8 N_t$ bytes.
+
+The two 32-byte chemical fields hold quality-mode-dependent strings. Byte-level compatibility follows EPANET's **file-driven** writer — the strings EPANET produces when running an INP model. (EPANET's toolkit API assigns a different name string for a trace analysis, `TRACE`; the file-driven strings are the compatibility target.)
+
+| `quality_mode` | Chemical-name field | Quality-units field |
+|---|---|---|
+| `NONE` | `Chemical` | empty string |
+| `CHEMICAL` | chemical name from the quality option (default `Chemical`) | concentration units from the quality option (default `mg/L`) |
+| `AGE` | `AGE` | `hrs` |
+| `TRACE` | `% from` | `% from` |
+
+The `TRACE` name string is genuinely `% from`: EPANET's input parser assigns the percent label to the chemical-name slot for trace analyses, and the units slot in the file is populated from the report quality-units field, which is also `% from` for trace. Both 32-byte fields therefore carry the identical `% from` string.
 
 #### 4.5.3 Energy Section
 

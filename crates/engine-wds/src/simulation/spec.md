@@ -95,6 +95,8 @@ where $Q_{\text{net}}$ is the net inflow (positive = filling, m³/s) and $V$, $V
 
 **Logical combination**: consecutive premises within a rule are joined by `AND` or `OR`. `AND` binds more tightly than `OR`. A rule's overall truth value is the evaluation of this expression.
 
+> **DEVIATION from EPANET:** EPANET does not apply operator precedence. It evaluates premises left-to-right with a single accumulated boolean: an `OR` clause is consulted only when the accumulated result is false, and a false result reaching an `AND` clause rejects the rule outright — so later `OR` alternatives are never consulted. For "A AND B OR C" with A false, EPANET yields false without consulting C, whereas Hydra evaluates (A AND B) OR C and lets C decide. Hydra keeps true precedence because it makes the rule text mean what it reads, while EPANET's behaviour is an accumulator artifact undocumented in its manual. Ported models that mix `AND` and `OR` within a single rule should be checked for intent.
+
 #### 4.2.3 Action Application and Conflict Resolution
 
 When a rule fires, its THEN actions are applied; when it does not fire (any premise false), its ELSE actions are applied (if any).
@@ -140,7 +142,7 @@ $$\Delta t = \min\!\left(\Delta t_h,\ \Delta t_{\text{report}},\ \Delta t_{\text
 |---|---|
 | $\Delta t_h$ | User-specified nominal hydraulic time step |
 | $\Delta t_{\text{report}}$ | Time remaining until the next reporting instant. Report instants fall at $t_{\text{rstart}} + k\cdot\Delta t_{\text{rep}}$ (offset by `report_start`, mirroring how the pattern term is offset by `pattern_start`): $\bigl(t_{\text{rstart}} + \lceil (t - t_{\text{rstart}})/\Delta t_{\text{rep}}\rceil\,\Delta t_{\text{rep}}\bigr) - t$, or $t_{\text{rstart}} - t$ before the first instant |
-| $\Delta t_{\text{tank}}$ | Minimum over all tanks of the time to reach a level limit at the current net flow rate: $\min_{\text{tanks}} \Delta V_{\text{available}} / \lvert Q_{\text{net}} \rvert$ (set to $\Delta t_h$ if $Q_{\text{net}} = 0$) |
+| $\Delta t_{\text{tank}}$ | Minimum over all tanks of the time to reach a level limit at the current net flow rate: $\min_{\text{tanks}} \Delta V_{\text{available}} / \lvert Q_{\text{net}} \rvert$ (tanks with $\lvert Q_{\text{net}} \rvert \leq Q_{\text{zero}}$ are skipped; $\Delta t_h$ if no tank qualifies). $Q_{\text{zero}} = 10^{-6}$ m³/s is the negligible-flow threshold (the same value as $Q_0$ in `../hydraulics/spec.md` §3.10); its SI value relative to EPANET's $10^{-6}$ ft³/s is covered by the DEVIATION note in `../hydraulics/spec.md` §3.9 |
 | $\Delta t_{\text{pattern}}$ | Time remaining until the next pattern boundary: $\lceil (t + t_{\text{pstart}}) / \Delta t_p \rceil \cdot \Delta t_p - t - t_{\text{pstart}}$ |
 | $\Delta t_{\text{control}}$ | Shortest time until a simple control fires (§5.2.1) |
 | $t_{\text{duration}} - t$ | Time remaining until end of simulation |
@@ -175,6 +177,8 @@ After the time step $\Delta t$ is determined and any rule re-solves are complete
 $$V_{\text{new}} = V_{\text{old}} + Q_{\text{net}} \cdot \Delta t$$
 
 where $Q_{\text{net}} = \sum_{k:\text{to}=\text{tank}} Q_k - \sum_{k:\text{from}=\text{tank}} Q_k$.
+
+The update is applied unconditionally: Hydra intentionally does not skip it when $\lvert Q_{\text{net}} \rvert \leq Q_{\text{zero}}$ (as EPANET does) — the update is exact at any flow magnitude, and the difference is numerically negligible.
 
 **Level from volume**:
 - Cylindrical tank: $h_{\text{new}} = h_{\text{old}} + \Delta V / A$ where $A = \pi D^2/4$.
@@ -456,7 +460,7 @@ Errors fall into three categories:
 |---|---|---|
 | **Fatal pre-simulation** | Validation failure (`../model/spec.md` §2.9), malformed data model, unknown object type | Abort; return structured error with offending object ID and condition |
 | **Fatal mid-simulation** | Unrecoverable solver singularity, out-of-memory in segment pool | Abort current simulation; session remains valid for inspection of partial results |
-| **Warning** | Non-convergence (with ExtraIter bailout), negative pressure in DDA mode, pump XHEAD | Simulation continues; warning attached to the affected time step in the result |
+| **Warning** | Non-convergence with `extra_iter` $\geq 0$ (frozen-status extra iterations), negative pressure in DDA mode, pump XHEAD | Simulation continues; warning attached to the affected time step in the result. With `extra_iter` $= -1$ a non-converged step instead halts the simulation after its results are recorded (§9.2) |
 
 All errors and warnings must be accessible programmatically (not only as printed text) so that callers can handle them without parsing log output.
 
@@ -486,19 +490,20 @@ Hydra has been exercised against eight real-world hydraulic networks totalling 1
 
 **Note**: The absolute differences are small (<0.1% of network head ranges) and physically sensible.
 
-### 9.2 Unbalanced-Stop Mode Not Implemented
+### 9.2 Unbalanced-Stop (`extra_iter = -1`) Halt Behaviour
 
-**System**: EPANET has a configurable "unbalanced stop" mode that halts the EPS when node pressures throughout the network cannot be made non-negative. This is a numerical stability safeguard intended to prevent divergence.
+**System**: EPANET's `UNBALANCED STOP` option (`extra_iter = -1`) halts the extended-period simulation when a hydraulic solve fails to converge within the iteration limit. The trigger is **non-convergence of the hydraulic solve** — not negative pressures. In EPANET the halt flag is set immediately after the unbalanced solve returns, before the step's results are saved; the results are then saved as usual and the simulation terminates at the start of the next step.
 
-**Current state**: Hydra's time-stepping solver (§5) is designed to converge at each step and does not include an "unbalanced-stop" check. If a network solution becomes marginally infeasible (e.g. one or two nodes with slight negative pressure), Hydra continues to integrate, while EPANET would halt.
+**Hydra behaviour**: Hydra implements the same option with equivalent observable semantics. When a hydraulic solve exhausts its iteration budget without converging:
 
-**Observed consequence**: 
+- `extra_iter` $\geq 0$: a non-convergence warning is attached to the step and the simulation continues, using the unbalanced solution (after the frozen-status extra iterations, if any) — see §8.4.
+- `extra_iter` $= -1$: the non-convergence warning is attached, the step's results are recorded as usual, and the simulation then terminates. No further steps are taken; already-recorded results remain available through the session API (§8.2). This matches EPANET's save-then-halt ordering: the unbalanced step's results appear in the output, and nothing after it does.
 
-- Richmond network: Hydra computes 49 periods of full convergence; EPANET halts after 28 periods due to unbalanced state. The last 21 periods in EPANET's output file are empty or filled with earlier values; Hydra continues with physically valid equilibria.
+**Observed consequence**: because the two engines' iteration trajectories differ (§9.1), the *step at which* non-convergence first occurs can differ, so an `UNBALANCED STOP` run may terminate at different periods in each engine even though both apply the same halt rule.
 
-**Verdict**: Correct, and favorable. Hydra's solver does not need an emergency halt — it integrates through marginally infeasible states to physically valid equilibria. The EPANET unbalanced-stop halt is a legacy safeguard; Hydra's more robust solver makes it unnecessary.
+- Richmond network: Hydra computes 49 periods of full convergence; EPANET halts after 28 periods on a step its solver could not balance. The last 21 periods in EPANET's output file are empty or filled with earlier values; Hydra, converging at every step, never triggers the halt and continues with physically valid equilibria.
 
-**Future consideration**: An `unbalanced_stop` option could be added to the session API (§8.3) and `../model/spec.md` §2.4 (Options) for users who need to reproduce EPANET's exact halt-on-infeasible behavior. Currently, no such option is defined or needed.
+**Verdict**: Correct. The halt rule itself is identical; divergent halt points are a downstream effect of the §9.1 numerical-path differences, not a behavioural deviation.
 
 ### 9.3 Energy Statistics Differences
 

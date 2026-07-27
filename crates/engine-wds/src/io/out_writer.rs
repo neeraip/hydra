@@ -310,9 +310,30 @@ fn write_prolog<W: Write>(
     write_fixed_str(w, input_file, MAXFNAME)?;
     write_fixed_str(w, report_file, MAXFNAME)?;
 
-    // Chemical name + units × 32 bytes each
-    write_fixed_str(w, &network.options.chem_name, MAXID)?;
-    write_fixed_str(w, &network.options.chem_units, MAXID)?;
+    // Chemical name + quality units × 32 bytes each.  The strings are
+    // quality-mode-dependent and must match EPANET's file-driven writer
+    // byte-for-byte (spec §4.5.2): EPANET's parser puts "% from" in *both*
+    // slots for a trace analysis, "AGE"/"hrs" for water age, and defaults
+    // "Chemical"/"mg/L" for chemical mode (units field empty for NONE).
+    let (chem_name, chem_units): (&str, &str) = match options.quality_mode {
+        QualityMode::None => ("Chemical", ""),
+        QualityMode::Chemical => (
+            if network.options.chem_name.is_empty() {
+                "Chemical"
+            } else {
+                &network.options.chem_name
+            },
+            if network.options.chem_units.is_empty() {
+                "mg/L"
+            } else {
+                &network.options.chem_units
+            },
+        ),
+        QualityMode::Age => ("AGE", "hrs"),
+        QualityMode::Trace => ("% from", "% from"),
+    };
+    write_fixed_str(w, chem_name, MAXID)?;
+    write_fixed_str(w, chem_units, MAXID)?;
 
     // Node IDs
     for node in &network.nodes {
@@ -1183,6 +1204,62 @@ mod tests {
             i32::from_le_bytes(data[data.len() - 4..].try_into().unwrap()),
             MAGIC
         );
+    }
+
+    /// The prolog's two 32-byte chemical fields must match EPANET's
+    /// file-driven writer byte-for-byte for every quality mode (spec §4.5.2):
+    /// "Chemical"/"" for NONE, name/units (defaulting "Chemical"/"mg/L") for
+    /// CHEMICAL, "AGE"/"hrs" for AGE, and "% from" in *both* fields for TRACE.
+    #[test]
+    fn prolog_chemical_fields_match_epanet_per_quality_mode() {
+        // Fixed prolog offsets: 15 INT4 (60) + 3×80 titles + 2×260 filenames.
+        const NAME_OFF: usize = 60 + 240 + 520;
+        const UNITS_OFF: usize = NAME_OFF + 32;
+
+        let fixed32 = |s: &str| -> Vec<u8> {
+            let mut v = s.as_bytes().to_vec();
+            v.resize(32, 0);
+            v
+        };
+        let write = |session: &MockSession| -> Vec<u8> {
+            let mut buf = Cursor::new(Vec::new());
+            write_binary_output(&mut buf, session, "test.inp", "test.rpt", FlowUnits::Gpm)
+                .expect("write binary output");
+            buf.into_inner()
+        };
+
+        let mut session = mock_session("single_pipe_hw.inp");
+
+        let cases: Vec<(QualityMode, &str, &str, &str, &str)> = vec![
+            // (mode, chem_name option, chem_units option, expected name, expected units)
+            (QualityMode::None, "", "", "Chemical", ""),
+            (
+                QualityMode::Chemical,
+                "Fluoride",
+                "ug/L",
+                "Fluoride",
+                "ug/L",
+            ),
+            (QualityMode::Chemical, "", "", "Chemical", "mg/L"),
+            (QualityMode::Age, "", "", "AGE", "hrs"),
+            (QualityMode::Trace, "", "", "% from", "% from"),
+        ];
+        for (mode, name_opt, units_opt, expect_name, expect_units) in cases {
+            session.network.options.quality_mode = mode;
+            session.network.options.chem_name = name_opt.to_string();
+            session.network.options.chem_units = units_opt.to_string();
+            let data = write(&session);
+            assert_eq!(
+                &data[NAME_OFF..NAME_OFF + 32],
+                fixed32(expect_name).as_slice(),
+                "chem-name field for {mode:?}"
+            );
+            assert_eq!(
+                &data[UNITS_OFF..UNITS_OFF + 32],
+                fixed32(expect_units).as_slice(),
+                "quality-units field for {mode:?}"
+            );
+        }
     }
 
     /// Written files carry the network topology digest in the epilog

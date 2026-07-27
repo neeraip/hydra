@@ -19,6 +19,10 @@ See `QualityMode` in `model/network.rs` for the four modes (`None`, `Chemical`,
 "concentration" is incremented by $\delta t_q / 3600$ at every sub-step; in
 `TRACE` mode the trace node holds 100 % and all other fixed-grade inflows hold 0 %.
 
+**Initial state**: in `CHEMICAL` and `AGE` modes every node quality, pipe segment, and tank compartment is seeded from the nodes' initial quality $C_0$ — each pipe is filled with one full-volume segment carrying the initial quality of its nominal downstream endpoint (the link's `to` node, regardless of the initial flow direction), and each tank's compartments carry the tank node's $C_0$. In `TRACE` mode the **entire** quality state — node values, pipe segments, and tank compartments — is initialised to zero before the trace node is set to 100 %: initial-quality values are chemical-mode data and are not reinterpreted as tracer percentages.
+
+> **DEVIATION from EPANET:** in `TRACE` mode EPANET zeroes the node qualities but still seeds each tank's stored segments from the node's raw $C_0$ — a chemical-units value — so a tank with nonzero initial quality begins a trace run holding phantom tracer at $C_0$ percent. Hydra zeroes tank contents along with the rest of the quality state, resolving this internal inconsistency. This is an intentional correction, not an oversight.
+
 ### 6.2 Quality Sub-Step Loop
 
 Within each hydraulic period of duration $\Delta t_h$, quality advances through sub-steps of size $\delta t_q$ (user parameter; must satisfy $\delta t_q \leq \Delta t_h$):
@@ -63,11 +67,13 @@ $$\mathcal{V}_k = Q_k \cdot \delta t$$
 Starting from the **downstream (outlet) end** of the segment list — the end adjacent to the receiving node:
 1. Consume segments one by one, accumulating swept mass $M = \sum c_s v_s$ and swept volume $V_{\text{swept}}$.
 2. When $V_{\text{swept}}$ would exceed $\mathcal{V}_k$, partially consume the outlet-end segment: reduce its volume by the remainder needed and stop.
-3. The total mass $M_k^{\text{out}}$ and volume $\mathcal{V}_k$ that exited the downstream end of pipe $k$ are recorded at the downstream node. Fresh water carrying the upstream node's concentration is added as a new segment at the upstream (inlet) end during nodal mixing (§6.4).
+3. The total mass $M_k^{\text{out}}$ and volume $V_{\text{swept}}$ that exited the downstream end of pipe $k$ are accumulated into the downstream node's inflow totals.
 
 For negative flow ($Q_k < 0$), the direction of traversal is reversed — segments are consumed from the other end.
 
-∥ **Parallelism**: advection in each pipe is independent. All pipes may be processed concurrently. Node mixing (§6.4) requires a barrier after all pipe transports are complete.
+Advection is **not** a separate global phase. Each pipe's consumption happens when its **downstream** node is visited in the single topological sweep (§6.4); because the pipe's upstream node was visited earlier in the same sweep, the fresh segment carrying that node's outflow concentration has already been pushed into the inlet end. This ordering is observable: when $\mathcal{V}_k$ exceeds the pipe's stored volume, the downstream node draws water that entered the pipe during the same sub-step, so a quality front can traverse a chain of short pipes within a single sub-step.
+
+**Sequential by construction**: consumption and pushing interleave node by node, so the transport sweep must **not** be parallelised across pipes or nodes. (The reaction phase of §6.5, which runs before transport, remains the parallelisable step.)
 
 #### 6.3.3 Segment Merging
 
@@ -85,25 +91,29 @@ Each pipe and plug-flow tank maintains an ordered collection of segments. Consum
 
 ### 6.4 Nodal Mixing
 
-After all pipe transports are complete, the outflow concentration at each junction is computed in topological order.
+Transport, mixing, and segment release form a **single sweep** over the nodes in topological order (§6.3.1). For each node in turn: the inflow-pipe segments are consumed (§6.3.2), the node's outflow concentration is computed (junction mixing below; tank mixing §6.7; reservoir boundary §6.4.3), source injection is applied (§6.6), and new segments carrying the final concentration are pushed into every outflow pipe — all before the next node is processed.
 
-#### 6.4.1 Junctions with Net Inflow
+#### 6.4.1 Junctions with Gross Inflow
 
 The outflow concentration is the mass-weighted average of all inflows:
 
 $$c_{\text{out},i} = \frac{\displaystyle\sum_{k \in \text{in}(i)} M_k^{\text{out}}}{\displaystyle\sum_{k \in \text{in}(i)} \mathcal{V}_k^{\text{out}}}$$
 
-where $\mathcal{V}_k^{\text{out}}$ and $M_k^{\text{out}}$ are the volume and mass that exited pipe $k$ into node $i$ during the sub-step. This is the **instantaneous complete-mixing** assumption.
+where $\mathcal{V}_k^{\text{out}}$ and $M_k^{\text{out}}$ are the volume and mass that exited pipe $k$ into node $i$ during the sub-step. A junction with negative demand ($D_i < 0$) additionally receives an external inflow volume $-D_i\,\delta t$ at zero concentration, which enters the denominator and dilutes the average (a `CONCENTRATION` source can assign this water a quality, §6.6). This is the **instantaneous complete-mixing** assumption.
 
-The resulting $c_{\text{out},i}$ is then pushed as a new upstream segment into every pipe carrying flow away from node $i$.
+The resulting $c_{\text{out},i}$ — after source injection (§6.6) — is immediately pushed as a new upstream segment into every pipe carrying flow away from node $i$, before the next node in the sweep is processed.
 
-#### 6.4.2 Junctions with Zero Net Inflow (Stagnant)
+#### 6.4.2 Junctions with Zero Gross Inflow (Stagnant)
 
-When $\sum_k \mathcal{V}_k^{\text{out}} = 0$ at junction $i$ and `quality_mode ∈ {CHEMICAL, AGE}`, the junction concentration is set to the arithmetic mean of the concentrations at the nearest segment boundaries of all adjacent pipes:
+When the total **gross** inflow volume — pipe inflows plus any external inflow from a negative demand —
+
+$$\sum_{k \in \text{in}(i)} \mathcal{V}_k^{\text{out}} + \max(0,\, -D_i)\,\delta t = 0$$
+
+at junction $i$ and `quality_mode ∈ {CHEMICAL, AGE}`, the junction concentration is set to the arithmetic mean of the concentrations at the nearest segment boundaries of all adjacent pipes:
 
 $$c_i = \frac{1}{|\mathcal{N}(i)|} \sum_{k \in \mathcal{N}(i)} c_{k,\text{near}}$$
 
-where $c_{k,\text{near}}$ is the concentration of the segment at the end of pipe $k$ facing node $i$ (the front segment for inflow pipes, the back segment for outflow pipes). This prevents unphysical drift at dead-end nodes.
+where $c_{k,\text{near}}$ is the concentration of the segment at the end of pipe $k$ facing node $i$ (the front segment for inflow pipes, the back segment for outflow pipes). This prevents unphysical drift at dead-end nodes. The trigger is **gross** inflow, not net inflow: a junction whose inflow and outflow balance is not stagnant.
 
 #### 6.4.3 Reservoirs
 
@@ -155,6 +165,8 @@ $$Re = \frac{4 |Q|}{\pi D \nu}, \qquad Sc = \frac{\nu}{\mathcal{D}}$$
 **Step 2 — Sherwood number** (ratio of convective to diffusive mass transfer):
 
 $$Sh = \begin{cases} 2 & Re < 1 \\ 3.65 + \dfrac{0.0668\,(D/L)\,Re\,Sc}{1 + 0.04\,[(D/L)\,Re\,Sc]^{2/3}} & 1 \leq Re < 2300 \quad \text{(Graetz-Lévêque)} \\ 0.0149\,Re^{0.88}\,Sc^{1/3} & Re \geq 2300 \quad \text{(Notter-Sleicher)} \end{cases}$$
+
+> **DEVIATION from EPANET:** EPANET evaluates the fractional exponents in these correlations as the truncated literals `0.667` and `0.333`. Hydra deliberately uses the exact $2/3$ and $1/3$ as part of its numerical modernisation; the resulting difference in $Sh$ is well under 1 % for physically realistic arguments. This is an intentional divergence, not an oversight.
 
 **Step 3 — Mass transfer coefficient**:
 
@@ -211,7 +223,7 @@ The physical rationale is that rougher pipe surfaces tend to harbour more biofil
 
 ### 6.6 Source Injection
 
-After nodal mixing on each sub-step, source injection overrides or augments the mixed concentration at designated nodes.
+Source injection is applied within the per-node transport sweep (§6.4): after a node's mixed concentration is computed and **before** its outflow segments are pushed, the source overrides or augments the mixed concentration at designated nodes.
 
 **Stagnation guard**: source injection at node $i$ is suppressed when the total volumetric outflow *rate* from $i$ during the sub-step is at or below the stagnation threshold $Q_{\text{stag}}$ (§6.3.1) — i.e. when $\mathcal{V}_{\text{out},i} \leq Q_{\text{stag}}\,\delta t$. Besides avoiding division by zero, this prevents the large, unstable concentration increments a near-zero outflow volume would otherwise produce for `MASS`/`FLOWPACED` sources. It is the *same* threshold used for link stagnation in transport (§6.3.1) — a single guard, matching EPANET's `Q_STAGNANT`.
 
@@ -288,13 +300,20 @@ Outflow concentration = the concentration of the oldest (outlet-end) segment, co
 
 #### 6.7.4 LIFO Stacked Layers
 
-Inflow and outflow both occur at the **same end** (top). A new segment is pushed onto the top of the stack for each sub-step inflow; outflow pops segments from the same end. Reactions apply segment-by-segment. 
+Inflow and outflow both occur at the **same end** (top). Each sub-step processes the **gross** inflow and outflow volumes, in this order:
 
-Outflow concentration = the concentration of the topmost (most recently added) segment.
+1. **Outflow**: pop the gross outflow volume $v_{\text{out}}$ from the top of the stack, consuming segments (the top segment partially, if needed) until $v_{\text{out}}$ is exhausted or the stack is empty.
+2. **Inflow**: push the gross inflow volume $v_{\text{in}}$ as a new top segment at the inflow concentration $c_{\text{in}}$, merging with the existing top segment when the concentrations are within $C_{\text{tol}}$ (§6.3.3).
+
+Reactions apply segment-by-segment.
+
+Outflow concentration = the concentration of the topmost segment after the update.
+
+> **DEVIATION from EPANET:** EPANET's LIFO model moves only the **net** flow $v_{\text{net}} = v_{\text{in}} - v_{\text{out}}$: filling pushes a $v_{\text{net}}$-sized top segment, draining pops $|v_{\text{net}}|$, and simultaneous inflow and outflow cancel without touching the stack — the exchanged mass is discarded. Hydra processes the gross volumes (as the FIFO model does), so the water actually passing through the top of the stack participates in transport; this conserves mass and is truer to the stacked-layer premise, in the same family as the zero-net-flow mixing correction in §6.7.2. This is an intentional accuracy improvement, not an oversight.
 
 ### 6.8 Water Age
 
-In `AGE` mode, "concentration" is interpreted as residence time (hours). At every quality sub-step, after reactions and before transport, add $\delta t / 3600$ to the concentration of every segment in every pipe and every tank compartment. Reservoirs (fixed-grade nodes) hold a constant age of 0 — water entering from a reservoir resets the age to 0.
+In `AGE` mode, "concentration" is interpreted as residence time (hours). Initial ages are seeded from each node's initial quality $C_0$, interpreted in hours (§6.1) — zero only by default, so nonzero starting ages are legal. At every quality sub-step, after reactions and before transport, add $\delta t / 3600$ to the concentration of every segment in every pipe and every tank compartment. Reservoirs (fixed-grade nodes) hold a constant age of 0 — water entering from a reservoir resets the age to 0.
 
 ### 6.9 Mass Balance
 

@@ -1,6 +1,15 @@
 use crate::simulation::controls::{resolve_control_action, TIME_TRIGGER_TOL};
 use crate::{LinkKind, LinkState, Network, NodeKind, NodeState, TriggerType};
 
+/// Near-zero flow guard Q_zero (m³/s) used when predicting tank fill/drain
+/// times: tanks with negligible net flow are skipped both by the tank
+/// time-step computation (§5.2) and by the level-control time-step prediction
+/// (§5.2.1). Skips division when net flow is negligibly small.
+/// Not the same as the quality engine's Q_STAG (3.154e-7 m³/s, the SI equivalent
+/// of EPANET's QZERO = 1.114e-5 ft³/s); that threshold governs link stagnation
+/// for quality transport purposes (§6.3.1 of quality/spec.md).
+const QZERO: f64 = 1.0e-6;
+
 /// Computes the adaptive hydraulic time step (§5.2).
 ///
 /// Returns $
@@ -57,7 +66,9 @@ pub(crate) fn adaptive_timestep(t: f64, network: &Network, node_states: &[NodeSt
             if let NodeKind::Tank(tank) = &node.kind {
                 let ns = &node_states[i];
                 let q_net = ns.net_flow;
-                if q_net == 0.0 {
+                // §5.2: tanks with |Q_net| ≤ Q_zero are skipped (matches
+                // EPANET tanktimestep()'s QZERO guard).
+                if q_net.abs() <= QZERO {
                     return None;
                 }
                 let dv_available = if q_net > 0.0 {
@@ -81,13 +92,6 @@ pub(crate) fn adaptive_timestep(t: f64, network: &Network, node_states: &[NodeSt
     let dt = dth.min(dt_report).min(dt_tank).min(dt_pattern);
     dt.max(1.0).min(dt_end)
 }
-
-/// Near-zero flow guard (m³/s) used when predicting tank fill/drain times for
-/// control timestep scheduling. Skips division when net flow is negligibly small.
-/// Not the same as the quality engine's Q_STAG (3.154e-7 m³/s, the SI equivalent
-/// of EPANET's QZERO = 1.114e-5 ft³/s); that threshold governs link stagnation
-/// for quality transport purposes (§6.3.1 of quality/spec.md).
-const QZERO: f64 = 1.0e-6;
 
 /// Computes the shortest time until a simple control fires and changes a
 /// link's status or setting (§5.2.1).
@@ -461,6 +465,36 @@ mod tests {
         assert_eq!(
             dt, 3600.0,
             "tank with zero net_flow should not constrain dt"
+        );
+    }
+
+    #[test]
+    fn adaptive_dt_skips_tank_with_negligible_net_flow() {
+        // §5.2: tanks with |Q_net| ≤ Q_zero are skipped by the tank
+        // time-step computation (EPANET tanktimestep()'s QZERO guard).
+        // 1e-4 m³ from full at 5e-7 m³/s would give dt_tank = 200 s if the
+        // guard were absent; the guard must leave dt at the hydraulic step.
+        let a = std::f64::consts::PI * 25.0;
+        let opts = SimulationOptions {
+            duration: 86400.0,
+            hyd_step: 3600.0,
+            report_step: 3600.0,
+            pattern_step: 3600.0,
+            pattern_start: 0.0,
+            ..SimulationOptions::default()
+        };
+        let tank = cylindrical_tank_node(1, 0.0, 0.0, 10.0, 10.0, 10.0, false);
+        let (net, _) = network_with_tank(opts, tank);
+        let node_states = vec![NodeState {
+            volume: a * 10.0 - 1.0e-4,
+            level: 10.0 - 1.0e-4 / a,
+            net_flow: 5.0e-7,
+            ..NodeState::default()
+        }];
+        let dt = adaptive_timestep(0.0, &net, &node_states);
+        assert_eq!(
+            dt, 3600.0,
+            "tank with |net_flow| ≤ QZERO must not constrain dt"
         );
     }
 

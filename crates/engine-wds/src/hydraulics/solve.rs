@@ -68,7 +68,7 @@ fn update_flows_and_check(
         let mut dq = yk - pk * head_drop;
 
         // ConstHp pump flow cap: if the unconstrained correction would exceed
-        // the current flow, cap the step to half the current flow (§3.8).
+        // the current flow, cap the step to half the current flow (§3.7).
         if is_const_hp_pump[k] && matches!(statuses[k], LinkStatus::Open) && dq > flows[k] {
             dq = flows[k] / 2.0;
         }

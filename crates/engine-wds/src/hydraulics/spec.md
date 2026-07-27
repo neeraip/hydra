@@ -129,7 +129,7 @@ $$K_{m,\text{eff}} = \frac{0.08262 \cdot s}{D^4} \quad (\text{SI: }Q \text{ in m
 
 where the constant $0.08262 = 8/(\pi^2 g)$ with $g = 9.81$ m/s². The resulting $K_{m,\text{eff}}$ replaces $K_m$ in the minor-loss term for that step.
 
-**GPV (general-purpose valve)** — head loss is read directly from the `GPV_HEADLOSS` curve at the current absolute flow $|Q|$, using piecewise-linear interpolation. The intercept $h_0$ and slope $r$ of the bracketing curve segment give:
+**GPV (general-purpose valve)** — head loss is read directly from the `GPV_HEADLOSS` curve at the current absolute flow $|Q|$, using piecewise-linear interpolation. When $|Q|$ lies outside the curve's flow range, the first/last segment is extended linearly (this segment evaluation matches EPANET's own solver-side curve evaluation — it is not a deviation). The intercept $h_0$ and slope $r$ of the bracketing curve segment give:
 
 $$P_k = \frac{1}{r}, \qquad Y_k = \frac{h_0}{r} \cdot \text{sgn}(Q) + Q$$
 
@@ -147,7 +147,7 @@ For a pump operating at relative speed $\omega$:
 
 - **Power-function**: $\Delta H = \omega^2 H_0 - r\,\omega^{2-N} Q^N$ (where $H_0$, $r$, $N$ are from the head curve; see `../model/spec.md` §2.6.3)
 - **Constant-HP**: $\Delta H = P_{\text{rated}} / (\gamma Q)$ where $\gamma = \rho g$
-- **Custom curve**: $\Delta H$ is evaluated as the intercept-plus-slope at the speed-adjusted flow $Q/\omega$, multiplied by $\omega^2$ (affinity law). The linearisation derivative for a custom curve pump is:
+- **Custom curve**: $\Delta H$ is evaluated as the intercept-plus-slope at the speed-adjusted flow $Q/\omega$, multiplied by $\omega^2$ (affinity law). When $Q/\omega$ lies outside the curve's flow range, the first/last segment is extended linearly (this segment evaluation matches EPANET's own solver-side curve evaluation — it is not a deviation). The linearisation derivative for a custom curve pump is:
 
 $$\frac{\partial \Delta H}{\partial Q} = \omega \cdot \left.\frac{\partial y}{\partial x}\right|_{x = Q/\omega}$$
 
@@ -344,7 +344,9 @@ Using the reordered sparsity pattern, determine the exact set of positions $(i,j
 3. Solve $\mathbf{L}\mathbf{y} = \mathbf{F}$ by forward substitution.
 4. Solve $\mathbf{L}^\top\mathbf{H} = \mathbf{y}$ by backward substitution.
 
-If $\mathbf{A}$ is numerically singular during factorisation and the failing row corresponds to an active control valve node, fix that valve's status to `OPEN` (or `XFCV` for FCV) and restart the current iteration. Otherwise, report an unrecoverable solver error.
+If $\mathbf{A}$ is numerically singular during factorisation and the failing row corresponds to an active control valve node, fix that valve's status to `XPRESSURE` (PRV/PSV) or `XFCV` (FCV) and restart the current iteration. Otherwise, report an unrecoverable solver error.
+
+`XPRESSURE` means the valve **cannot deliver its pressure setting**. It is assigned only through this ill-conditioning recovery — it is not a hydraulic status transition, and no condition in §3.9 produces it.
 
 ### 3.7 Flow Update
 
@@ -357,6 +359,8 @@ $$Q_k^{(m+1)} = Q_k^{(m)} - \delta q_k$$
 Equivalently: $Q_k^{(m+1)} = Q_k^{(m)} - Y_k + P_k\!\left(H_{\text{from}(k)}^{(m+1)} - H_{\text{to}(k)}^{(m+1)}\right)$.
 
 (For fixed-grade endpoints the known head is used directly.)
+
+**Constant-power pump guard**: for a Constant-HP pump in the OPEN state, if the Newton correction would drive the flow **strictly** negative ($\delta q_k > Q_k^{(m)}$), the correction is replaced by halving the current flow: $\delta q_k = Q_k^{(m)}/2$. A correction that lands the flow exactly at zero ($\delta q_k = Q_k^{(m)}$) is applied unchanged.
 
 **Emitter flow**: compute $(h_e, g_e)$ from the current emitter flow $Q_e^{(m)}$ as in §3.3.1, then:
 $$\delta Q_e = \frac{h_e - (H_i^{(m+1)} - z_i)}{g_e}, \qquad Q_e^{(m+1)} = Q_e^{(m)} - \delta Q_e$$
@@ -391,17 +395,19 @@ $$q_{\text{ref},i} = \sqrt{\max(0,h_i) / c_{\text{fa},i}} + \max(0,h_i / c_{\tex
 
 (terms for absent components are omitted). If $|q_{\text{ref},i} - (q_{\text{fa},i} + q_{\text{va},i})| > Q_{\text{leak-tol}}$ for any junction, the solution is not yet converged and the Newton loop continues. $Q_{\text{leak-tol}}$ is an absolute tolerance in m³/s; the value is $2.83 \times 10^{-6}$ m³/s (= $10^{-4}$ ft³/s, approximately 0.005 gpm or 0.2 lpm). This check is independent of the relative flow accuracy criterion (criterion 1) and must be satisfied simultaneously with the other criteria.
 
-**Note**: `head_tol` is used as the absolute tolerance $\varepsilon_H$ in link status transition conditions (§3.9), not as a convergence criterion for the solver iteration. 
+**Note**: `head_tol` is not a convergence criterion for the solver iteration. It is used as the absolute tolerance $\varepsilon_H$ in link status transition conditions (§3.9) and as the dead-band on pressure-based simple-control triggers in the post-convergence `pswitch` re-evaluation (below).
 
 If convergence is not reached within `max_iter` iterations and `extra_iter > 0`, an additional `extra_iter` iterations are run with all status changes frozen. Results are valid but marked as **unbalanced**. If `extra_iter = −1`, simulation halts on non-convergence.
 
-**Damping**: when `damp_limit > 0` and $\varepsilon_Q \leq \text{damp\_limit}$, a relaxation factor of 0.6 is applied to all flow updates and valve status checks are simultaneously activated.
+> **DEVIATION from EPANET:** EPANET never explicitly freezes status logic during its extra iterations: its PRV/PSV check (`valvestatus`) keeps running every iteration, and only the convergence-time `linkstatus`/`pswitch` calls are skipped — the periodic `linkstatus` checks fall silent merely because the default `max_check` (10) is far below the default `max_iter` (200), an emergent consequence of defaults rather than an explicit suspension. Hydra deliberately freezes **all** status changes: the purpose of the extra iterations is to let the Newton iteration settle on a self-consistent solution for a *fixed* configuration so it can be reported alongside the unbalanced warning, whereas continued PRV/PSV switching can keep cycling and converge to nothing when those valves are the cycling elements.
 
-**Post-convergence control re-evaluation (`pswitch`)**: when the solver reaches convergence (all four criteria above satisfied), a full status check is performed that includes not only `valvestatus` and `linkstatus` (§3.9) but also a re-evaluation of **simple controls** (`../simulation/spec.md` §4.1) whose trigger is a **junction** head (not a tank level or timer, since those do not change during the Newton iteration). If any simple control fires and changes a link's status or setting at this point, the Newton loop resumes from the current iteration count (the counter is **not** reset). Convergence is only accepted when a full status check — including simple controls — produces no changes. During extra iterations (`iter > max_iter`), convergence is accepted immediately without the `pswitch` check.
+**Damping**: when `damp_limit > 0` and $\varepsilon_Q \leq \text{damp\_limit}$, the relaxation factor for flow updates is set to 0.6 and valve status checks are simultaneously activated. The factor is set **after** the current iteration's flow update, so it damps the **next** iteration's flow updates; the valve status checks activate in the current iteration.
+
+**Post-convergence control re-evaluation (`pswitch`)**: when the solver reaches convergence (all four criteria above satisfied), a full status check is performed that includes not only `valvestatus` and `linkstatus` (§3.9) but also a re-evaluation of **simple controls** (`../simulation/spec.md` §4.1) whose trigger is a **junction** head (not a tank level or timer, since those do not change during the Newton iteration). The trigger comparison uses `head_tol` as a dead-band: a low-level control fires when $H \leq \text{grade} + \varepsilon_H$ and a high-level control fires when $H \geq \text{grade} - \varepsilon_H$. If any simple control fires and changes a link's status or setting at this point, the Newton loop resumes from the current iteration count (the counter is **not** reset). Convergence is only accepted when a full status check — including simple controls — produces no changes. During extra iterations (`iter > max_iter`), convergence is accepted immediately without the `pswitch` check.
 
 ### 3.9 Link Status Logic
 
-Status checks are triggered periodically (every `check_freq` iterations, up to `max_check`) and always after convergence is first reached.
+Status checks are triggered periodically (every `check_freq` iterations, up to `max_check`) and always after convergence is first reached. After a convergence pass that produces any status change, the periodic-check counter is reset so that the next periodic check falls `check_freq` iterations after the current one.
 
 #### Check Valve (CV pipe)
 
@@ -410,7 +416,10 @@ Status checks are triggered periodically (every `check_freq` iterations, up to `
 
 #### Pump
 
-- OPEN → XHEAD: if head gain required exceeds $\omega^2 H_0$ (speed-adjusted shutoff head).
+- OPEN → XHEAD: if the required head gain exceeds the speed-adjusted shutoff head with `head_tol` slack: $H_{\text{to}} - H_{\text{from}} > \omega^2 H_0 + \varepsilon_H$. For power-function curves $H_0$ is the shutoff head of §3.2.5. For custom curves $H_0$ is the head intercept obtained by extrapolating the first curve segment to zero flow (equal to the first head point when the curve starts at $Q = 0$).
+
+> **DEVIATION from EPANET:** for custom curves EPANET compares against the literal first head point even when the curve's first flow point is nonzero. Hydra uses the first segment's extrapolated intercept at zero flow, which is exactly the limit of the solver's own segment evaluation (§3.2.5) as $Q \to 0$; EPANET's literal-first-point threshold is inconsistent with its own segment evaluation and closes such pumps prematurely.
+
 - OPEN → TEMPCLOSED: constant-HP pump with $Q < 10^{-6}$ m³/s (a strictly positive cutoff — the power formula is undefined at zero flow).
 
 > **DEVIATION from EPANET:** EPANET's cutoff is $10^{-6}$ ft³/s; Hydra's SI-internal $10^{-6}$ m³/s is the unit-analogue and is ≈35× larger physically, consistent with Hydra's SI flow conventions.
@@ -428,6 +437,8 @@ When `overflow = true`, a full tank does **not** close its inlet links — exces
 #### PRV Status (tested after every iteration when `damp_limit = 0`, otherwise only when $\varepsilon_Q \leq \text{damp\_limit}$)
 
 Here $H_s = z_{\text{to}(k)} + s_k$ (the absolute downstream setpoint), $H_1 = H_{\text{from}(k)}$, and $H_2 = H_{\text{to}(k)}$.
+
+**Precedence**: in the ACTIVE and OPEN states the reverse-flow test ($Q < -\varepsilon_Q$ → CLOSED) is evaluated **first** and takes priority when it and a pressure condition hold simultaneously. The same precedence applies to the PSV table below.
 
 | Current | Transition | Condition |
 |---|---|---|
@@ -507,7 +518,7 @@ c. Form the node residual: $F_i \mathrel{+}= x_i - D_i$ for each junction $i$.
 
 d. Apply active valve modifications (§3.5).
 
-3. **Solve** (§3.6 Phase 3): factorise $\mathbf{A} = \mathbf{L}\mathbf{L}^\top$ and solve for $\mathbf{H}^{(m)}$ by forward/backward substitution. If the matrix is singular at a row corresponding to an active control valve node, demote that valve to OPEN (or XFCV for FCV) and restart iteration $m$.
+3. **Solve** (§3.6 Phase 3): factorise $\mathbf{A} = \mathbf{L}\mathbf{L}^\top$ and solve for $\mathbf{H}^{(m)}$ by forward/backward substitution. If the matrix is singular at a row corresponding to an active control valve node, demote that valve to XPRESSURE (PRV/PSV) or XFCV (FCV) per §3.6 and restart iteration $m$.
 
 4. **Extract heads**: copy the solved junction heads $\mathbf{H}^{(m)}$ into the working state. Fixed-grade nodes (reservoirs, tanks) retain their known heads.
 
@@ -515,7 +526,7 @@ d. Apply active valve modifications (§3.5).
 
 6. **Evaluate convergence** (§3.8): compute the relative flow accuracy $\varepsilon_Q$, the per-link head balance error $\max_k \epsilon_{H,k}$, and the per-link absolute flow change $\max_k |Q_k^{(m)} - Q_k^{(m-1)}|$. Determine whether all active criteria are satisfied.
 
-When `damp_limit > 0` and $\varepsilon_Q \leq \texttt{damp\_limit}$, a relaxation factor of 0.6 is applied to all flow updates in step 5 and valve status checks in step 7 are simultaneously activated.
+When `damp_limit > 0` and $\varepsilon_Q \leq \texttt{damp\_limit}$, the relaxation factor is set to 0.6 — taking effect on the **next** iteration's flow updates in step 5, since the current iteration's step 5 has already run — and valve status checks in step 7 are activated for the current iteration (§3.8).
 
 7. **Check statuses** (§3.9) — unless status changes are frozen ($m > M$):
 

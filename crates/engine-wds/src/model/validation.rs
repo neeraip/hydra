@@ -172,6 +172,25 @@ pub enum ValidationError {
         /// The out-of-range 1-based link index stored in the control.
         link_index: usize,
     },
+
+    // Check 12 — valve-placement rules (§2.9)
+    /// A PRV, PSV, or FCV connects directly to a reservoir or tank
+    /// (§2.9 valve-placement rule 1).
+    ValveOnFixedGradeNode {
+        /// String ID of the offending valve link.
+        link_id: String,
+        /// String ID of the reservoir or tank node it connects to.
+        node_id: String,
+    },
+    /// Two PRV/PSV/FCV valves are placed so that their active-state
+    /// constraints conflict — shared or serial control nodes
+    /// (§2.9 valve-placement rules 2–6).
+    ValvePlacementConflict {
+        /// String ID of the first valve link (network order).
+        link_id: String,
+        /// String ID of the second valve link.
+        other_link_id: String,
+    },
 }
 
 impl std::fmt::Display for ValidationError {
@@ -283,6 +302,19 @@ impl std::fmt::Display for ValidationError {
                 f,
                 "control {control_index} references unknown link index {link_index}"
             ),
+            Self::ValveOnFixedGradeNode { link_id, node_id } => write!(
+                f,
+                "valve '{link_id}' connects to fixed-grade node '{node_id}' \
+                 (a PRV, PSV, or FCV may not attach to a reservoir or tank)"
+            ),
+            Self::ValvePlacementConflict {
+                link_id,
+                other_link_id,
+            } => write!(
+                f,
+                "valves '{link_id}' and '{other_link_id}' violate the PRV/PSV/FCV \
+                 placement rules (shared or serial control nodes)"
+            ),
         }
     }
 }
@@ -310,6 +342,10 @@ impl Network {
     /// 8. All patterns have at least one factor.
     /// 9. Every rule action that references a link references a valid link index.
     /// 10. `wall_order` is 0 or 1; no other value is valid.
+    /// 11. The §2.9 valve-placement rules: a PRV, PSV, or FCV may not connect
+    ///     to a reservoir or tank, and PRV/PSV/FCV pairs may not share or
+    ///     chain control nodes in the configurations §2.9 forbids (mirrors
+    ///     EPANET's parse-time errors 219/220).
     ///
     /// Violations of any of the above are fatal — the simulation must not proceed.
     pub fn validate(&self) -> Result<(), Vec<ValidationError>> {
@@ -680,6 +716,77 @@ impl Network {
                         rule_priority: rule.priority,
                         link_index: action.link,
                     });
+                }
+            }
+        }
+
+        // ── Check 12: PRV/PSV/FCV valve-placement rules (§2.9) ────────────────
+        // An active PRV/PSV/FCV replaces head-loss behaviour with a head- or
+        // flow-fixing constraint; the placements below make that constraint
+        // structurally unsatisfiable (singular GGA matrix). Mirrors EPANET's
+        // valvecheck (its parse-time errors 219/220), run here in the single
+        // post-load validation pass. Only links with in-range node indices
+        // participate — out-of-range indices are already reported by Check 1.
+        {
+            let control_valves: Vec<(usize, ValveType, usize, usize)> = self
+                .links
+                .iter()
+                .enumerate()
+                .filter_map(|(i, link)| match &link.kind {
+                    LinkKind::Valve(v)
+                        if matches!(
+                            v.valve_type,
+                            ValveType::Prv | ValveType::Psv | ValveType::Fcv
+                        ) =>
+                    {
+                        let (n1, n2) = (link.base.from_node, link.base.to_node);
+                        let in_range = |n: usize| (1..=node_count).contains(&n);
+                        (in_range(n1) && in_range(n2)).then_some((i, v.valve_type, n1, n2))
+                    }
+                    _ => None,
+                })
+                .collect();
+
+            // Rule 1: no direct connection to a reservoir or tank.
+            for &(i, _, n1, n2) in &control_valves {
+                for n in [n1, n2] {
+                    let node = &self.nodes[n - 1];
+                    if !matches!(node.kind, NodeKind::Junction(_)) {
+                        errors.push(ValidationError::ValveOnFixedGradeNode {
+                            link_id: self.links[i].base.id.clone(),
+                            node_id: node.base.id.clone(),
+                        });
+                    }
+                }
+            }
+
+            // Rules 2–6: pairwise shared/serial control-node conflicts.
+            // Node roles: a1/b1 = upstream (from), a2/b2 = downstream (to).
+            for (a_pos, &(ai, at, a1, a2)) in control_valves.iter().enumerate() {
+                for &(bi, bt, b1, b2) in &control_valves[a_pos + 1..] {
+                    use ValveType::{Fcv, Prv, Psv};
+                    let conflict = match (at, bt) {
+                        // Rule 2: two PRVs sharing a downstream node or in series.
+                        (Prv, Prv) => a2 == b2 || a2 == b1 || a1 == b2,
+                        // Rule 3: two PSVs sharing an upstream node or in series.
+                        (Psv, Psv) => a1 == b1 || a1 == b2 || a2 == b1,
+                        // Rule 4: PSV immediately downstream of a PRV.
+                        (Prv, Psv) => a2 == b1,
+                        (Psv, Prv) => b2 == a1,
+                        // Rule 5: PSV immediately downstream of an FCV.
+                        (Fcv, Psv) => a2 == b1,
+                        (Psv, Fcv) => b2 == a1,
+                        // Rule 6: PRV immediately upstream of an FCV.
+                        (Prv, Fcv) => a2 == b1,
+                        (Fcv, Prv) => b2 == a1,
+                        _ => false,
+                    };
+                    if conflict {
+                        errors.push(ValidationError::ValvePlacementConflict {
+                            link_id: self.links[ai].base.id.clone(),
+                            other_link_id: self.links[bi].base.id.clone(),
+                        });
+                    }
                 }
             }
         }
@@ -1113,6 +1220,248 @@ mod tests {
                 .any(|e| matches!(e, ValidationError::ControlUnknownLink { .. })),
             "expected ControlUnknownLink"
         );
+    }
+
+    // ── Check 12: valve-placement rules (§2.9) ───────────────────────────────
+
+    /// Appends a junction with the given ID and 1-based index.
+    fn push_junction(net: &mut Network, id: &str, index: usize) {
+        net.nodes.push(Node {
+            base: NodeBase {
+                id: id.into(),
+                index,
+                elevation: 0.0,
+                initial_quality: 0.0,
+            },
+            kind: NodeKind::Junction(Junction {
+                demands: vec![],
+                emitter_coeff: 0.0,
+                emitter_exp: 0.5,
+            }),
+            source: None,
+        });
+    }
+
+    /// Appends a control valve of the given type between two node indices.
+    fn push_valve(net: &mut Network, id: &str, vt: ValveType, from: usize, to: usize) {
+        let index = net.links.len() + 1;
+        net.links.push(Link {
+            base: LinkBase {
+                id: id.into(),
+                index,
+                from_node: from,
+                to_node: to,
+                initial_status: LinkStatus::Active,
+                initial_setting: Some(10.0),
+            },
+            kind: LinkKind::Valve(Valve {
+                valve_type: vt,
+                diameter: 0.3,
+                minor_loss: 0.0,
+                curve: None,
+            }),
+        });
+    }
+
+    /// Appends a plain pipe between two node indices (keeps every junction
+    /// reachable so accepted-network tests exercise only the valve rules).
+    fn push_pipe(net: &mut Network, id: &str, from: usize, to: usize) {
+        let index = net.links.len() + 1;
+        net.links.push(Link {
+            base: LinkBase {
+                id: id.into(),
+                index,
+                from_node: from,
+                to_node: to,
+                initial_status: LinkStatus::Open,
+                initial_setting: Some(1.0),
+            },
+            kind: LinkKind::Pipe(Pipe {
+                length: 100.0,
+                diameter: 0.3,
+                roughness: 100.0,
+                minor_loss: 0.0,
+                check_valve: false,
+                bulk_coeff: None,
+                wall_coeff: None,
+                leak_coeff_1: 0.0,
+                leak_coeff_2: 0.0,
+            }),
+        });
+    }
+
+    /// make_simple() plus junctions J2 (index 3) and J3 (index 4), connected
+    /// by pipes so every junction stays reachable; valves can then be chained
+    /// off J1 (index 2) without touching the reservoir.
+    fn make_valve_base() -> Network {
+        let mut net = make_simple();
+        push_junction(&mut net, "J2", 3);
+        push_junction(&mut net, "J3", 4);
+        push_pipe(&mut net, "P2", 2, 3);
+        push_pipe(&mut net, "P3", 2, 4);
+        net
+    }
+
+    fn has_fixed_grade_err(errs: &[ValidationError]) -> bool {
+        errs.iter()
+            .any(|e| matches!(e, ValidationError::ValveOnFixedGradeNode { .. }))
+    }
+
+    fn has_placement_conflict(errs: &[ValidationError]) -> bool {
+        errs.iter()
+            .any(|e| matches!(e, ValidationError::ValvePlacementConflict { .. }))
+    }
+
+    #[test]
+    fn prv_between_junctions_accepted() {
+        let mut net = make_valve_base();
+        push_valve(&mut net, "V1", ValveType::Prv, 2, 3);
+        assert!(net.validate().is_ok());
+    }
+
+    #[test]
+    fn prv_connected_to_reservoir_rejected() {
+        let mut net = make_valve_base();
+        push_valve(&mut net, "V1", ValveType::Prv, 1, 3); // node 1 is reservoir R1
+        let errs = net.validate().unwrap_err();
+        assert!(has_fixed_grade_err(&errs), "expected ValveOnFixedGradeNode");
+    }
+
+    #[test]
+    fn tcv_connected_to_reservoir_accepted() {
+        // Resistance-type valves are exempt from the placement rules.
+        let mut net = make_valve_base();
+        push_valve(&mut net, "V1", ValveType::Tcv, 1, 3);
+        assert!(net.validate().is_ok());
+    }
+
+    #[test]
+    fn prvs_sharing_downstream_node_rejected() {
+        let mut net = make_valve_base();
+        push_valve(&mut net, "V1", ValveType::Prv, 2, 4);
+        push_valve(&mut net, "V2", ValveType::Prv, 3, 4);
+        let errs = net.validate().unwrap_err();
+        assert!(
+            has_placement_conflict(&errs),
+            "expected ValvePlacementConflict"
+        );
+    }
+
+    #[test]
+    fn prvs_sharing_upstream_node_accepted() {
+        // Legal per EPANET: only shared *downstream* nodes conflict for PRVs.
+        let mut net = make_valve_base();
+        push_valve(&mut net, "V1", ValveType::Prv, 2, 3);
+        push_valve(&mut net, "V2", ValveType::Prv, 2, 4);
+        assert!(net.validate().is_ok());
+    }
+
+    #[test]
+    fn prvs_in_series_rejected() {
+        let mut net = make_valve_base();
+        push_valve(&mut net, "V1", ValveType::Prv, 2, 3);
+        push_valve(&mut net, "V2", ValveType::Prv, 3, 4);
+        let errs = net.validate().unwrap_err();
+        assert!(
+            has_placement_conflict(&errs),
+            "expected ValvePlacementConflict"
+        );
+    }
+
+    #[test]
+    fn psvs_sharing_upstream_node_rejected() {
+        let mut net = make_valve_base();
+        push_valve(&mut net, "V1", ValveType::Psv, 2, 3);
+        push_valve(&mut net, "V2", ValveType::Psv, 2, 4);
+        let errs = net.validate().unwrap_err();
+        assert!(
+            has_placement_conflict(&errs),
+            "expected ValvePlacementConflict"
+        );
+    }
+
+    #[test]
+    fn psvs_sharing_downstream_node_accepted() {
+        // Legal per EPANET: only shared *upstream* nodes conflict for PSVs.
+        let mut net = make_valve_base();
+        push_valve(&mut net, "V1", ValveType::Psv, 2, 4);
+        push_valve(&mut net, "V2", ValveType::Psv, 3, 4);
+        assert!(net.validate().is_ok());
+    }
+
+    #[test]
+    fn psvs_in_series_rejected() {
+        let mut net = make_valve_base();
+        push_valve(&mut net, "V1", ValveType::Psv, 2, 3);
+        push_valve(&mut net, "V2", ValveType::Psv, 3, 4);
+        let errs = net.validate().unwrap_err();
+        assert!(
+            has_placement_conflict(&errs),
+            "expected ValvePlacementConflict"
+        );
+    }
+
+    #[test]
+    fn psv_downstream_of_prv_rejected() {
+        let mut net = make_valve_base();
+        push_valve(&mut net, "V1", ValveType::Prv, 2, 3);
+        push_valve(&mut net, "V2", ValveType::Psv, 3, 4);
+        let errs = net.validate().unwrap_err();
+        assert!(
+            has_placement_conflict(&errs),
+            "expected ValvePlacementConflict"
+        );
+    }
+
+    #[test]
+    fn prv_downstream_of_psv_accepted() {
+        // Legal per EPANET: only the PRV → PSV series direction conflicts.
+        let mut net = make_valve_base();
+        push_valve(&mut net, "V1", ValveType::Psv, 2, 3);
+        push_valve(&mut net, "V2", ValveType::Prv, 3, 4);
+        assert!(net.validate().is_ok());
+    }
+
+    #[test]
+    fn psv_downstream_of_fcv_rejected() {
+        let mut net = make_valve_base();
+        push_valve(&mut net, "V1", ValveType::Fcv, 2, 3);
+        push_valve(&mut net, "V2", ValveType::Psv, 3, 4);
+        let errs = net.validate().unwrap_err();
+        assert!(
+            has_placement_conflict(&errs),
+            "expected ValvePlacementConflict"
+        );
+    }
+
+    #[test]
+    fn prv_upstream_of_fcv_rejected() {
+        let mut net = make_valve_base();
+        push_valve(&mut net, "V1", ValveType::Prv, 2, 3);
+        push_valve(&mut net, "V2", ValveType::Fcv, 3, 4);
+        let errs = net.validate().unwrap_err();
+        assert!(
+            has_placement_conflict(&errs),
+            "expected ValvePlacementConflict"
+        );
+    }
+
+    #[test]
+    fn fcv_upstream_of_prv_accepted() {
+        // Legal per EPANET: only PRV → FCV series direction conflicts.
+        let mut net = make_valve_base();
+        push_valve(&mut net, "V1", ValveType::Fcv, 2, 3);
+        push_valve(&mut net, "V2", ValveType::Prv, 3, 4);
+        assert!(net.validate().is_ok());
+    }
+
+    #[test]
+    fn fcvs_in_series_accepted() {
+        // Legal per EPANET: FCV pairs are unrestricted among themselves.
+        let mut net = make_valve_base();
+        push_valve(&mut net, "V1", ValveType::Fcv, 2, 3);
+        push_valve(&mut net, "V2", ValveType::Fcv, 3, 4);
+        assert!(net.validate().is_ok());
     }
 
     // ── Multi-error collection ────────────────────────────────────────────────
