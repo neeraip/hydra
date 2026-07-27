@@ -31,7 +31,9 @@ const REGION_MAX_ZOOM: u8 = 15;
 #[serde(rename_all = "camelCase")]
 pub struct BasemapStorageDto {
     pub regions: Vec<RegionInfo>,
-    /// Actual bytes of the store on disk (db + WAL).
+    /// Bytes of downloaded tile data.
+    pub data_bytes: u64,
+    /// Actual bytes of the store on disk (db + WAL, incl. container overhead).
     pub disk_bytes: u64,
     pub unused_region_ids: Vec<String>,
 }
@@ -43,6 +45,7 @@ pub fn list_basemap_regions(
     let store = state.store()?;
     Ok(BasemapStorageDto {
         regions: store.list_regions()?,
+        data_bytes: store.data_bytes()?,
         disk_bytes: store.disk_bytes(),
         unused_region_ids: store.unused_regions()?,
     })

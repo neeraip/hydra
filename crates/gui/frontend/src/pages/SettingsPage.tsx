@@ -386,7 +386,7 @@ function OfflineBasemapsSection() {
             }}
           >
             {storage
-              ? `${regions.length} region${regions.length === 1 ? "" : "s"} · ${formatBytes(storage.diskBytes)} on disk`
+              ? `${regions.length} region${regions.length === 1 ? "" : "s"} · ${storage.dataBytes > 0 ? `${formatBytes(storage.dataBytes)} of map data (${formatBytes(storage.diskBytes)} on disk)` : "no map data downloaded"}`
               : loaded
                 ? "Offline basemap store unavailable"
                 : "Loading…"}

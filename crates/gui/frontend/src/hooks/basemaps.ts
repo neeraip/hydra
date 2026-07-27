@@ -40,6 +40,7 @@ export interface BasemapRegionInfo {
 export interface BasemapStorage {
   regions: BasemapRegionInfo[];
   /** Actual bytes of the store on disk (db + WAL). */
+  dataBytes: number;
   diskBytes: number;
   /** Regions no project references — safe to remove. */
   unusedRegionIds: string[];

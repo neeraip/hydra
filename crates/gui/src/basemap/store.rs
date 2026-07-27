@@ -393,8 +393,25 @@ impl TileStore {
     }
 
     /// Actual on-disk footprint of the store (db + WAL + shm), in bytes.
+    /// Total bytes of stored tile data (the number users think of as
+    /// "downloaded map data" — excludes SQLite container overhead).
+    pub fn data_bytes(&self) -> Result<u64, String> {
+        self.conn
+            .lock()
+            .query_row("SELECT COALESCE(SUM(size), 0) FROM tiles", [], |r| {
+                r.get::<_, i64>(0).map(|v| v as u64)
+            })
+            .map_err(|e| e.to_string())
+    }
+
     pub fn disk_bytes(&self) -> u64 {
-        ["", "-wal", "-shm"]
+        // Fold the WAL back into the main file first so the reported
+        // footprint is not inflated by unmerged journal frames.
+        let _ = self
+            .conn
+            .lock()
+            .execute_batch("PRAGMA wal_checkpoint(TRUNCATE);");
+        ["", "-wal"]
             .iter()
             .filter_map(|suffix| {
                 let mut p = self.path.as_os_str().to_owned();
