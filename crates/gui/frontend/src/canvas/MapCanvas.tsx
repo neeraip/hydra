@@ -36,6 +36,7 @@ import {
   orthoCenterFromMap,
   roughGeoViewState,
 } from "./MapCanvas/geoUtils";
+import { buildOfflineStyle } from "./offlineStyles";
 import { computeSchematicLayout } from "./schematicLayout";
 import type { CanvasTool, LinkVariable, NodeVariable, ViewMode } from "./types";
 
@@ -55,15 +56,19 @@ const BLANK_STYLE: maplibregl.StyleSpecification = {
   ],
 };
 
-// "streets" = OpenFreeMap Liberty (full coloured streets)
-// "light"   = OpenFreeMap Positron (minimal light theme)
-// "dark"    = OpenFreeMap Dark (dark theme)
-// "none"    = tile-free blank background
+// "streets"   = OpenFreeMap Liberty (full coloured streets)
+// "light"     = OpenFreeMap Positron (minimal light theme)
+// "dark"      = OpenFreeMap Dark (dark theme)
+// "offline-*" = local Protomaps tiles via the basemap:// protocol
+// "none"      = tile-free blank background
 const MAP_STYLES: Record<BasemapStyle, string | maplibregl.StyleSpecification> =
   {
     streets: "https://tiles.openfreemap.org/styles/liberty",
     light: "https://tiles.openfreemap.org/styles/positron",
     dark: "https://tiles.openfreemap.org/styles/dark",
+    "offline-streets": buildOfflineStyle("offline-streets"),
+    "offline-light": buildOfflineStyle("offline-light"),
+    "offline-dark": buildOfflineStyle("offline-dark"),
     none: BLANK_STYLE,
   };
 

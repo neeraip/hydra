@@ -83,6 +83,9 @@ const PREF_BASEMAPS: readonly BasemapStyle[] = [
   "streets",
   "light",
   "dark",
+  "offline-streets",
+  "offline-light",
+  "offline-dark",
   "none",
 ];
 const PREF_NODE_VARS: readonly NodeVariable[] = [

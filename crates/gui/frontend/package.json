@@ -19,6 +19,7 @@
     "@deck.gl/layers": "^9.3.4",
     "@deck.gl/mapbox": "^9.3.7",
     "@heroicons/react": "^2.2.0",
+    "@protomaps/basemaps": "^5.7.2",
     "@tanstack/react-table": "^8.21.3",
     "@tanstack/react-virtual": "^3.14.8",
     "@tauri-apps/api": "^2.11.1",
