@@ -24,14 +24,9 @@ const ICON_BTN_STYLE: CSSProperties = {
 /** Standard 14px toolbar icon size. */
 const ICON_14: CSSProperties = { width: 14, height: 14 };
 
-/** Display label for a basemap style value ("offline-streets" → "Offline Streets"). */
+/** Display label for a basemap style value. */
 const basemapLabel = (b: BasemapStyle) =>
-  b === "none"
-    ? "No basemap"
-    : b
-        .split("-")
-        .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
-        .join(" ");
+  b === "none" ? "No basemap" : b.charAt(0).toUpperCase() + b.slice(1);
 
 /**
  * The canvas' top-left toolbar overlay: view-mode toggle, coordinate-coverage
@@ -200,42 +195,36 @@ export function CanvasToolbar({
                 zIndex: 20,
               }}
             >
-              {(
-                [
-                  "streets",
-                  "light",
-                  "dark",
-                  "offline-streets",
-                  "offline-light",
-                  "offline-dark",
-                  "none",
-                ] as BasemapStyle[]
-              ).map((b) => (
-                <button
-                  type="button"
-                  key={b}
-                  onClick={() => {
-                    onBasemapChange(b);
-                    setShowBasemapDropdown(false);
-                  }}
-                  style={{
-                    display: "block",
-                    width: "100%",
-                    padding: "7px 12px",
-                    border: "none",
-                    background:
-                      basemap === b ? "var(--accent-dim)" : "transparent",
-                    color:
-                      basemap === b ? "var(--accent)" : "var(--text-secondary)",
-                    cursor: "pointer",
-                    fontSize: 12,
-                    textAlign: "left",
-                    fontFamily: "var(--font-ui)",
-                  }}
-                >
-                  {basemapLabel(b)}
-                </button>
-              ))}
+              {(["streets", "light", "dark", "none"] as BasemapStyle[]).map(
+                (b) => (
+                  <button
+                    type="button"
+                    key={b}
+                    onClick={() => {
+                      onBasemapChange(b);
+                      setShowBasemapDropdown(false);
+                    }}
+                    style={{
+                      display: "block",
+                      width: "100%",
+                      padding: "7px 12px",
+                      border: "none",
+                      background:
+                        basemap === b ? "var(--accent-dim)" : "transparent",
+                      color:
+                        basemap === b
+                          ? "var(--accent)"
+                          : "var(--text-secondary)",
+                      cursor: "pointer",
+                      fontSize: 12,
+                      textAlign: "left",
+                      fontFamily: "var(--font-ui)",
+                    }}
+                  >
+                    {basemapLabel(b)}
+                  </button>
+                ),
+              )}
             </div>
           )}
         </div>

@@ -48,7 +48,6 @@
 //! completes before the item is marked cancelled. Closing the application
 //! discards all pending items (queue state is not persisted).
 
-mod basemaps;
 mod binary_codec;
 mod mutations;
 mod network_dto;
@@ -60,7 +59,6 @@ mod simulation;
 #[cfg(test)]
 mod test_fixtures;
 
-pub use basemaps::*;
 pub use binary_codec::*;
 pub use mutations::*;
 pub use network_dto::*;

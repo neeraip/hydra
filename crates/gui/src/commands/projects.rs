@@ -224,9 +224,6 @@ pub fn delete_project(app: tauri::AppHandle, id: String) -> Result<bool, String>
         return Ok(false);
     }
     bundle::delete_project_dir(&app_data, &id).map_err(|e| e.to_string())?;
-    // Release the project's offline-basemap region references so those
-    // regions surface as "unused" in the basemap manager.
-    super::basemaps::release_project_regions(&app, &id);
     Ok(true)
 }
 

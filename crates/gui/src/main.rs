@@ -1,6 +1,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-mod basemap;
 mod commands;
 mod meta;
 
@@ -17,19 +16,6 @@ fn main() {
         .plugin(tauri_plugin_opener::init())
         .manage(commands::NetworkState::default())
         .manage(commands::RunQueue::default())
-        .setup(|app| {
-            use tauri::Manager;
-            let db_path = commands::app_data_dir(app.handle())
-                .map(|dir| dir.join("basemaps.db"))
-                .map_err(std::io::Error::other)?;
-            app.manage(basemap::BasemapState::new(db_path));
-            Ok(())
-        })
-        .register_uri_scheme_protocol("basemap", |ctx, request| {
-            use tauri::Manager;
-            let state = ctx.app_handle().try_state::<basemap::BasemapState>();
-            basemap::protocol_response(state.as_deref(), &request)
-        })
         .invoke_handler(tauri::generate_handler![
             commands::list_projects,
             commands::create_project,
@@ -102,13 +88,6 @@ fn main() {
             commands::update_network_title,
             commands::export_project_inp,
             commands::export_results_csv,
-            commands::list_basemap_regions,
-            commands::delete_basemap_region,
-            commands::link_project_basemap_region,
-            commands::plan_basemap_download,
-            commands::download_basemap_region,
-            commands::cancel_basemap_download,
-            commands::basemap_coverage,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

@@ -36,12 +36,6 @@ export {
   PRESSURE_THRESHOLD,
   pressureColor,
 } from "../types";
-export {
-  type ActiveBasemapDownload,
-  BasemapDownloadProvider,
-  useBasemapDownload,
-} from "./BasemapDownloadContext";
-export * from "./basemaps";
 export * from "./editors";
 export * from "./issues";
 export type { NetworkSummary } from "./NetworkDataContext";
