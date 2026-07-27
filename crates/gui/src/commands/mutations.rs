@@ -1485,11 +1485,11 @@ pub fn rename_pattern(
 
 /// Delete a time pattern from the network.
 ///
-/// Fails if any junction demand, reservoir head pattern, pump
-/// speed/price pattern, or the global default/energy-price pattern (from
-/// `[OPTIONS]`) still references it — the reference must be cleared first so
-/// the network never ends up with a dangling pattern ID that would fail to
-/// parse on the next INP round-trip.
+/// Fails if any junction demand, reservoir head pattern, quality-source
+/// pattern, pump speed/price pattern, or the global default/energy-price
+/// pattern (from `[OPTIONS]`) still references it — the reference must be
+/// cleared first so the network never ends up with a dangling pattern ID that
+/// would fail to parse on the next INP round-trip.
 #[tauri::command(async)]
 pub fn delete_pattern(
     app: tauri::AppHandle,
@@ -1520,6 +1520,12 @@ pub fn delete_pattern(
                 // Tanks carry no pattern references (head patterns are
                 // reservoir-only).
                 hydra::NodeKind::Tank(_) => {}
+            }
+            if n.source
+                .as_ref()
+                .is_some_and(|s| s.pattern.as_deref() == Some(id.as_str()))
+            {
+                referenced_by.push(format!("{} (quality source)", n.base.id));
             }
         }
         for l in &network.links {
@@ -1796,6 +1802,16 @@ fn validation_finding(err: &hydra::ValidationError) -> ValidationFindingDto {
             Some("curve"),
         ),
         V::ControlUnknownLink { .. } => ("control-unknown-link", None, None),
+        V::ValveOnFixedGradeNode { link_id, .. } => (
+            "valve-on-fixed-grade-node",
+            Some(link_id.clone()),
+            Some("link"),
+        ),
+        V::ValvePlacementConflict { link_id, .. } => (
+            "valve-placement-conflict",
+            Some(link_id.clone()),
+            Some("link"),
+        ),
     };
     ValidationFindingDto {
         severity: "error".to_string(),
