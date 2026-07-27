@@ -50,7 +50,7 @@
     "updater": {
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDVBRDZFQ0M5MDg4NzdENDIKUldSQ2ZZY0l5ZXpXV3BtNXhlSWllczJ5MTVYWTh3LzhiOVdKbU5DS1N6d2FtbGgzZ2hWbVpzMGsK",
       "endpoints": [
-        "https://github.com/neeraip/hydra/releases/download/updater/latest.json"
+        "https://raw.githubusercontent.com/neeraip/hydra/updater-manifest/latest.json"
       ],
       "windows": {
         "installMode": "passive"

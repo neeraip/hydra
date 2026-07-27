@@ -1,19 +1,32 @@
 # Publishes the Tauri updater manifest (latest.json) consumed by installed
 # GUI apps (tauri-plugin-updater). Runs when a GUI release is PUBLISHED —
 # not on tag push — so the manifest can never point at draft assets, which
-# are not publicly downloadable. The manifest lives as the single asset of a
-# rolling release with the fixed tag `updater`, giving the plugin a stable
-# endpoint URL:
+# are not publicly downloadable. The manifest lives on the dedicated
+# `updater-manifest` branch, giving the plugin a stable endpoint URL:
 #
-#   https://github.com/neeraip/hydra/releases/download/updater/latest.json
+#   https://raw.githubusercontent.com/neeraip/hydra/updater-manifest/latest.json
 #
-# The GitHub "/releases/latest" endpoint is unusable here because this repo
-# interleaves Library (v*), CLI (cli-v*), and GUI (gui-v*) releases.
+# Why a branch and not a release asset: this repo has IMMUTABLE RELEASES
+# enabled — a published release's assets are frozen forever, AND a deleted
+# immutable release permanently tombstones its tag name ("tag_name was used
+# by an immutable release"), so no fixed release tag can ever host a
+# replaceable manifest. (The `updater` tag was burned learning this; shipped
+# gui-v2.2.0 binaries point at that dead endpoint and cannot self-update.)
+# The GitHub "/releases/latest" endpoint is equally unusable because this
+# repo interleaves Library (v*), CLI (cli-v*), and GUI (gui-v*) releases.
 name: Updater Manifest
 
 on:
   release:
     types: [published]
+  # Manual recovery/testing: rebuild the manifest from any published GUI
+  # release without republishing it.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Published GUI release tag (gui-vX.Y.Z) to build the manifest from"
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -26,29 +39,52 @@ concurrency:
 jobs:
   publish-manifest:
     name: Publish latest.json
-    if: startsWith(github.event.release.tag_name, 'gui-v')
+    if: github.event_name == 'workflow_dispatch' || startsWith(github.event.release.tag_name, 'gui-v')
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
     steps:
-      - name: Build and publish manifest
+      - uses: actions/checkout@v7.0.1
+        with:
+          fetch-depth: 1
+
+      - name: Build manifest
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
-          TAG: ${{ github.event.release.tag_name }}
-          HTML_URL: ${{ github.event.release.html_url }}
-          PUB_DATE: ${{ github.event.release.published_at }}
+          TAG: ${{ github.event.release.tag_name || inputs.tag }}
         run: |
           set -euo pipefail
-          version="${TAG#gui-v}"
+          case "${TAG}" in
+            gui-v*) ;;
+            *) echo "Not a GUI release tag: ${TAG}"; exit 1 ;;
+          esac
+
+          # Source release metadata from the API (uniform across the
+          # release-published and manual-dispatch triggers). Drafts have no
+          # public asset URLs — refuse them.
+          release_info="$(gh release view "${TAG}" --repo "${REPO}" --json url,publishedAt,isDraft)"
+          if [ "$(echo "${release_info}" | python3 -c 'import json,sys; print(json.load(sys.stdin)["isDraft"])')" = "True" ]; then
+            echo "Release ${TAG} is still a draft — publish it first."
+            exit 1
+          fi
+          HTML_URL="$(echo "${release_info}" | python3 -c 'import json,sys; print(json.load(sys.stdin)["url"])')"
+          PUB_DATE="$(echo "${release_info}" | python3 -c 'import json,sys; print(json.load(sys.stdin)["publishedAt"])')"
+          export HTML_URL PUB_DATE
+
+          # Work outside the repo tree — the next step switches branches.
+          cd "${RUNNER_TEMP}"
 
           # Signatures are tiny detached files — pull them all.
-          mkdir sigs && gh release download "${TAG}" --repo "${REPO}" \
+          mkdir -p sigs && gh release download "${TAG}" --repo "${REPO}" \
             --pattern '*.sig' --dir sigs || true
 
-          # Current manifest (absent on first ever publish).
-          gh release download updater --repo "${REPO}" \
-            --pattern 'latest.json' --output current.json || true
+          # Current manifest (absent until the branch first exists).
+          cd "${GITHUB_WORKSPACE}"
+          if git fetch origin updater-manifest 2>/dev/null; then
+            git show FETCH_HEAD:latest.json > "${RUNNER_TEMP}/current.json" || true
+          fi
+          cd "${RUNNER_TEMP}"
 
           python3 << 'EOF'
           import json, os, sys
@@ -111,16 +147,31 @@ jobs:
           print(f'Manifest for {version}: {", ".join(sorted(platforms))}')
           EOF
 
+      - name: Push to updater-manifest branch
+        env:
+          TAG: ${{ github.event.release.tag_name || inputs.tag }}
+        run: |
+          set -euo pipefail
           # A guard exit above leaves no manifest to publish.
-          [ -f latest.json ] || exit 0
+          [ -f "${RUNNER_TEMP}/latest.json" ] || { echo "Nothing to publish."; exit 0; }
 
-          # Rolling release holding the manifest at a stable URL. Prerelease
-          # + not-latest keeps it out of the repo's "Latest" slot and the
-          # in-app What's-new feed (which filters to gui-v* tags anyway).
-          if ! gh release view updater --repo "${REPO}" > /dev/null 2>&1; then
-            gh release create updater --repo "${REPO}" \
-              --title "Updater manifest" \
-              --notes "Machine-consumed manifest for the in-app updater. Do not delete: installed apps poll this release's latest.json." \
-              --prerelease --latest=false
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          # Continue the branch's history when it exists; otherwise start an
+          # orphan branch holding only the manifest.
+          if git fetch origin updater-manifest 2>/dev/null; then
+            git checkout -B updater-manifest FETCH_HEAD
+          else
+            git checkout --orphan updater-manifest
+            git rm -rfq . || true
           fi
-          gh release upload updater latest.json --repo "${REPO}" --clobber
+
+          cp "${RUNNER_TEMP}/latest.json" latest.json
+          git add latest.json
+          if git diff --cached --quiet; then
+            echo "Manifest unchanged."
+            exit 0
+          fi
+          git commit -m "updater manifest for ${TAG}"
+          git push origin updater-manifest
