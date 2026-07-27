@@ -101,7 +101,16 @@ function UpdateRow({
   install: () => void;
   restart: () => void;
 }) {
-  if (updater.phase === "idle") return null;
+  // Passive phases (nothing to act on) render nothing here — Settings is
+  // the surface that reports "checking" / "up to date" / "check failed".
+  if (
+    updater.phase === "idle" ||
+    updater.phase === "checking" ||
+    updater.phase === "upToDate" ||
+    updater.phase === "checkFailed"
+  ) {
+    return null;
+  }
 
   const actionable = updater.phase !== "downloading";
   const label =

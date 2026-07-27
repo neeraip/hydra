@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useAppState } from "../AppContext";
 import { Toggle } from "../components/ui/Toggle";
 import { getVersions, reconcileProjects, type Versions } from "../hooks";
+import { useUpdater } from "../hooks/useUpdater";
 import { setUnitSystem, type UnitSystem, useUnitSystem } from "../units";
 
 const SK = {
@@ -110,6 +111,77 @@ function ThemeToggle() {
         </button>
       ))}
     </div>
+  );
+}
+
+/** "Software updates" row: manual update check with inline status. Hidden
+ * entirely when this install can't self-update (dev builds, Linux deb/rpm —
+ * those update via the package manager). The row's description doubles as
+ * the status line; the single button carries the whole flow. */
+function UpdatesRow() {
+  const { updater, supported, install, restart, checkNow } = useUpdater();
+  if (supported !== true) return null;
+
+  const description =
+    updater.phase === "checking"
+      ? "Checking for updates…"
+      : updater.phase === "upToDate"
+        ? "You're up to date."
+        : updater.phase === "checkFailed"
+          ? `Couldn't check for updates: ${updater.message}`
+          : updater.phase === "available"
+            ? `Version ${updater.version} is available.`
+            : updater.phase === "downloading"
+              ? `Downloading version ${updater.version}…`
+              : updater.phase === "ready"
+                ? `Version ${updater.version} is ready to install.`
+                : updater.phase === "error"
+                  ? `Update failed: ${updater.message}`
+                  : "Check if a newer version of Hydra is available.";
+
+  const busy = updater.phase === "checking" || updater.phase === "downloading";
+  const label =
+    updater.phase === "checking"
+      ? "Checking…"
+      : updater.phase === "available"
+        ? `Download v${updater.version}`
+        : updater.phase === "downloading"
+          ? updater.percent !== null
+            ? `Downloading… ${updater.percent}%`
+            : "Downloading…"
+          : updater.phase === "ready"
+            ? "Restart to update"
+            : updater.phase === "error"
+              ? "Retry download"
+              : "Check for updates";
+  const onClick =
+    updater.phase === "available" || updater.phase === "error"
+      ? install
+      : updater.phase === "ready"
+        ? restart
+        : checkNow;
+
+  return (
+    <SettingRow label="Software updates" description={description}>
+      <button
+        type="button"
+        disabled={busy}
+        onClick={onClick}
+        style={{
+          padding: "5px 14px",
+          border: "1px solid var(--border-hover)",
+          borderRadius: 6,
+          background: "transparent",
+          color: busy ? "var(--text-tertiary)" : "var(--text-primary)",
+          cursor: busy ? "default" : "pointer",
+          fontSize: 13,
+          fontFamily: "var(--font-ui)",
+          fontVariantNumeric: "tabular-nums",
+        }}
+      >
+        {label}
+      </button>
+    </SettingRow>
   );
 }
 
@@ -286,6 +358,7 @@ export function SettingsPage() {
         </SettingRow>
         {/* About */}
         <Section>About</Section>
+        <UpdatesRow />
         <div
           style={{
             padding: "12px 0",

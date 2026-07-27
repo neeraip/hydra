@@ -1,16 +1,17 @@
 /**
  * In-app self-update flow (tauri-plugin-updater).
  *
- * One check per app session: on first use the hook asks the backend whether
- * this install can self-update at all (`updater_supported` — false in dev
- * builds and on Linux deb/rpm installs, which update via their package
- * manager), then polls the updater endpoint once. State lives in a
- * module-level store so a download keeps its progress when the home page
- * unmounts and remounts.
+ * On first use the hook asks the backend whether this install can
+ * self-update at all (`updater_supported` — false in dev builds and on
+ * Linux deb/rpm installs, which update via their package manager), then
+ * polls the updater endpoint once per app session; Settings can trigger
+ * additional checks via `checkNow`. State lives in a module-level store so
+ * a download keeps its progress when pages unmount and remount.
  *
- * Phases: idle → available → downloading → ready (restart), with error as
- * a retryable side exit. `idle` covers "no update", "unsupported", and
- * "check failed" alike — the UI simply shows nothing.
+ * Phases: idle → checking → (upToDate | checkFailed | available) →
+ * downloading → ready (restart), with error as a retryable side exit from
+ * the download. The home page renders only the actionable phases
+ * (available onward); Settings surfaces the passive ones too.
  *
  * Dev QA: set `localStorage["hydra2-updater-mock"] = "9.9.9"` to simulate
  * an available update; install animates fake progress and restart clears
@@ -26,6 +27,9 @@ const MOCK_KEY = "hydra2-updater-mock";
 
 export type UpdaterState =
   | { phase: "idle" }
+  | { phase: "checking" }
+  | { phase: "upToDate" }
+  | { phase: "checkFailed"; message: string }
   | { phase: "available"; version: string }
   | { phase: "downloading"; version: string; percent: number | null }
   | { phase: "ready"; version: string }
@@ -53,10 +57,18 @@ export function mockUpdateVersion(raw: string | null): string | null {
 // ── Module-level store ───────────────────────────────────────────────────────
 
 let state: UpdaterState = { phase: "idle" };
+/** Whether this install can self-update at all; null until known. Settings
+ * hides its updates row unless this is true. */
+let supported: boolean | null = null;
 const listeners = new Set<() => void>();
 
 function setState(next: UpdaterState): void {
   state = next;
+  for (const l of listeners) l();
+}
+
+function setSupported(next: boolean): void {
+  supported = next;
   for (const l of listeners) l();
 }
 
@@ -81,32 +93,53 @@ function readMockVersion(): string | null {
 let pendingUpdate: Update | null = null;
 let checkStarted = false;
 
-async function checkOnce(): Promise<void> {
-  if (checkStarted) return;
-  checkStarted = true;
+async function runCheck(): Promise<void> {
+  // Never clobber an in-flight check or an update mid-install.
+  if (
+    state.phase === "checking" ||
+    state.phase === "downloading" ||
+    state.phase === "ready"
+  ) {
+    return;
+  }
 
   const mock = readMockVersion();
   if (mock !== null) {
+    setSupported(true);
     setState({ phase: "available", version: mock });
     return;
   }
 
-  const supported = await tryInvokeOr<boolean>(
-    "updater_supported",
-    undefined,
-    false,
-  );
+  if (supported === null) {
+    setSupported(
+      await tryInvokeOr<boolean>("updater_supported", undefined, false),
+    );
+  }
   if (!supported) return;
 
+  setState({ phase: "checking" });
   try {
     const update = await check();
     if (update) {
       pendingUpdate = update;
       setState({ phase: "available", version: update.version });
+    } else {
+      setState({ phase: "upToDate" });
     }
-  } catch {
-    // Offline or endpoint unavailable — stay idle; next app launch retries.
+  } catch (err) {
+    // Offline or endpoint unavailable. The home page renders nothing for
+    // this phase; Settings shows the message next to its retry button.
+    setState({
+      phase: "checkFailed",
+      message: err instanceof Error ? err.message : String(err),
+    });
   }
+}
+
+async function checkOnce(): Promise<void> {
+  if (checkStarted) return;
+  checkStarted = true;
+  await runCheck();
 }
 
 async function install(): Promise<void> {
@@ -175,14 +208,18 @@ async function restart(): Promise<void> {
 
 // ── Hook ─────────────────────────────────────────────────────────────────────
 
-/** Self-update state plus the two user actions. `install` also serves as
- * the retry action from the error phase. */
+/** Self-update state plus the user actions. `install` also serves as the
+ * retry action from the error phase; `checkNow` re-polls the endpoint on
+ * demand (Settings) and is a no-op while checking or mid-install. */
 export function useUpdater(): {
   updater: UpdaterState;
+  supported: boolean | null;
   install: () => void;
   restart: () => void;
+  checkNow: () => void;
 } {
   const updater = useSyncExternalStore(subscribe, () => state);
+  const supportedNow = useSyncExternalStore(subscribe, () => supported);
 
   useEffect(() => {
     void checkOnce();
@@ -190,11 +227,15 @@ export function useUpdater(): {
 
   return {
     updater,
+    supported: supportedNow,
     install: useCallback(() => {
       void install();
     }, []),
     restart: useCallback(() => {
       void restart();
+    }, []),
+    checkNow: useCallback(() => {
+      void runCheck();
     }, []),
   };
 }
