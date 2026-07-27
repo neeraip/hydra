@@ -2,7 +2,7 @@
 
 ## Introduction
 
-[OWA-EPANET](https://github.com/OpenWaterAnalytics/EPANET) is a computational engine for simulating the hydraulic and water quality behaviour of pressurised water distribution networks over time. It represents a network as a directed graph of nodes connected by links and advances a time-stepped extended-period simulation, solving at each step for pressures, flows, and constituent concentrations throughout the system. The solver combines rigorous physical models — empirical head-loss formulas, Newton-Raphson linearisation, sparse direct linear algebra, and Lagrangian advection-reaction transport — with flexible engineering constructs such as demand patterns, operational controls, and tank mixing models.
+[OWA-EPANET](https://github.com/OpenWaterAnalytics/EPANET) is a computational engine for simulating the hydraulic and water quality behaviour of pressurised water distribution networks over time. It represents a network as a directed graph of nodes connected by links and advances a time-stepped extended-period simulation, solving at each step for pressures, flows, and constituent concentrations throughout the system. The solver combines rigorous physical models — empirical head-loss formulas, Newton–Raphson linearisation, sparse direct linear algebra, and Lagrangian advection-reaction transport — with flexible engineering constructs such as demand patterns, operational controls, and tank mixing models.
 
 This document provides a self-contained, mathematical and conceptual description of every major subsystem: how the network is represented, how hydraulic equilibrium is computed at each time step, how demands are handled under both fixed and pressure-dependent conditions, how leakage and emitter flows enter the system, how the simulation advances through time, how control logic operates, how water quality is transported and reacted, and how energy and mass balance are tracked. The goal is to give the reader a complete algorithmic and mathematical understanding of the system; implementation-specific details such as memory layout and data-structure internals are omitted, but input/output behaviour and the public API are described at a conceptual level. The analysis describes **EPANET 2.3.5** — tag `v2.3.5` of the [OWA-EPANET](https://github.com/OpenWaterAnalytics/EPANET) repository — and was derived from its C source, which is authoritative throughout.
 
@@ -17,11 +17,12 @@ This document provides a self-contained, mathematical and conceptual description
     - [Node Types](#node-types)
     - [Link Types](#link-types)
     - [Curves and Patterns](#curves-and-patterns)
+    - [The State-Vector View](#the-state-vector-view)
   - [2. Hydraulic Simulation](#2-hydraulic-simulation)
     - [2.1 Head Loss in Pipes](#21-head-loss-in-pipes)
-      - [Hazen-Williams Formula](#hazen-williams-formula)
-      - [Darcy-Weisbach Formula](#darcy-weisbach-formula)
-      - [Chezy-Manning Formula](#chezy-manning-formula)
+      - [Hazen–Williams Formula](#hazenwilliams-formula)
+      - [Darcy–Weisbach Formula](#darcyweisbach-formula)
+      - [Chezy–Manning Formula](#chezymanning-formula)
       - [Minor Losses and Total Head Loss](#minor-losses-and-total-head-loss)
     - [2.2 Pump Head Gain](#22-pump-head-gain)
     - [2.3 Valve Behaviour](#23-valve-behaviour)
@@ -72,6 +73,7 @@ This document provides a self-contained, mathematical and conceptual description
       - [Network Reactions](#network-reactions)
       - [Epilog](#epilog)
     - [API](#api)
+  - [15. Cross-Cutting Engine Contracts](#15-cross-cutting-engine-contracts)
 
 ---
 
@@ -115,6 +117,14 @@ User-defined **curves** are piece-wise linear relationships used throughout the 
 
 **Pump utilisation patterns**: each pump may have a separate utilisation pattern (distinct from any energy cost pattern) that controls the pump's speed setting at each hydraulic time step. The current pattern multiplier is applied directly as the normalised speed $\omega$; a multiplier of zero closes the pump, while a multiplier of 1.0 sets it to its rated speed. This allows pump schedules to be encoded as a time series without requiring explicit control rules.
 
+### The State-Vector View
+
+Because each hydraulic time step is solved as a steady state (§6.1), the quantities that genuinely evolve from one step to the next form a small state vector. On the hydraulic side it comprises: the tank water levels — equivalently the stored volumes — integrated forward after each solve (§6.3), the only continuously-evolving physical state; every link's discrete status and numeric setting, as modified by controls and rules (§7) or by pattern-driven pump speed settings (see above); and the link flows themselves, which carry over as the estimates around which the next solve's linearisation begins — §2.2 gives the cold-start seeding used before the first solve, and on re-initialisation existing link flows are preserved as a warm start unless re-initialisation is explicitly requested or the flow is near zero (§6.1). Everything else the hydraulic engine reports — junction heads, pressures, equilibrium link flows, velocities — is *derived*: recomputed at every step by the Global Gradient Algorithm (§2.4) from the boundary conditions this state defines, namely the known heads of reservoirs (possibly pattern-scaled) and tanks at their current levels, together with the pattern-scaled demands.
+
+The water-quality engine carries its own state between quality sub-steps: the ordered segment lists of each pipe, each segment holding a volume and a uniform concentration (§8.2); the mixing state of each tank as prescribed by its mixing model — a single uniform concentration for a complete-mix tank, the volumes and concentrations of the mixing and stagnant zones for a two-compartment tank, and the segment stacks of FIFO and LIFO tanks (§9); and the running mass-balance ledger that accounts for source mass added, mass removed as outflow, and mass reacted (§10).
+
+The seam between the two engines is explicit: at each hydraulic step the solver writes nodal demands, heads, link flows, statuses, and settings to a hydraulics binary file, and the quality simulation *replays* this file — velocities are reconstructed from the saved flows and pipe geometry, and the flow field is held constant across the quality sub-steps within each hydraulic period (§8.1, §14). The saved record is therefore the complete hydraulic input the quality engine ever sees, which is why a saved hydraulics file can be reused across runs without recomputing the hydraulics (§14).
+
 ---
 
 ## 2. Hydraulic Simulation
@@ -129,33 +139,33 @@ where $P$ is the gauge pressure, $\rho$ is the water density, $g$ is gravitation
 
 Three empirical head-loss formulas are available, and one is selected uniformly for the entire network.
 
-#### Hazen-Williams Formula
+#### Hazen–Williams Formula
 
 $$h_f = \frac{4.727 \, L}{C^{1.852} \, D^{4.871}} \, Q^{1.852}$$
 
-Here $L$ is the pipe length, $D$ is the internal diameter, $C$ is the Hazen-Williams roughness coefficient (higher values indicate smoother pipes), and $Q$ is the volumetric flow rate. The flow exponent is $n = 1.852$. This formula is empirical and strictly valid only for turbulent flow of water at ordinary temperatures.
+Here $L$ is the pipe length, $D$ is the internal diameter, $C$ is the Hazen–Williams roughness coefficient (higher values indicate smoother pipes), and $Q$ is the volumetric flow rate. The flow exponent is $n = 1.852$. This formula is empirical and strictly valid only for turbulent flow of water at ordinary temperatures.
 
-#### Darcy-Weisbach Formula
+#### Darcy–Weisbach Formula
 
 $$h_f = f \cdot \frac{L}{D} \cdot \frac{V^2}{2g} = f \cdot \frac{8 L}{\pi^2 g D^5} \, Q^2$$
 
 where $V = Q / (\pi D^2 / 4)$ is the mean flow velocity and $f$ is the dimensionless Darcy friction factor, which depends on the Reynolds number $Re = VD/\nu$ and the relative roughness $\varepsilon/D$.
 
-For **laminar flow** ($Re \leq 2000$) the Hagen-Poiseuille result applies:
+For **laminar flow** ($Re \leq 2000$) the Hagen–Poiseuille result applies:
 
 $$f = \frac{64}{Re}$$
 
 yielding a head loss proportional to $Q$ (linear regime).
 
-For **turbulent flow** ($Re \geq 4000$) the friction factor is computed from the Swamee-Jain approximation to the Colebrook-White implicit equation:
+For **turbulent flow** ($Re \geq 4000$) the friction factor is computed from the Swamee–Jain approximation to the Colebrook-White implicit equation:
 
 $$f = \left[ -2 \log\!\left( \frac{\varepsilon}{3.7 D} + \frac{5.74}{Re^{0.9}} \right) \right]^{-2}$$
 
 where $\varepsilon$ is the absolute roughness. The quantity $f$ and its derivative with respect to $Q$ are evaluated simultaneously at each Newton iteration so that the linearisation of the solver (§2.4) remains consistent.
 
-For **transitional flow** ($2000 < Re < 4000$), a cubic polynomial ensures continuity in $f$ and $df/dQ$ across the transition. The polynomial is anchored at both ends: $f = 64/Re$ at $Re = 2000$ (exact laminar value), and the Swamee-Jain value and its derivative at $Re = 4000$ (turbulent end). The laminar Hagen-Poiseuille branch handles flows below a pipe-geometry-dependent low-flow threshold independently and does not call this cubic.
+For **transitional flow** ($2000 < Re < 4000$), a cubic polynomial ensures continuity in $f$ and $df/dQ$ across the transition. The polynomial is anchored at both ends: $f = 64/Re$ at $Re = 2000$ (exact laminar value), and the Swamee–Jain value and its derivative at $Re = 4000$ (turbulent end). The laminar Hagen–Poiseuille branch handles flows below a pipe-geometry-dependent low-flow threshold independently and does not call this cubic.
 
-#### Chezy-Manning Formula
+#### Chezy–Manning Formula
 
 $$h_f = \left( \frac{4 n_M}{1.49 \, \pi \, D^2} \right)^2 \left( \frac{D}{4} \right)^{-1.333} L \, Q^2$$
 
@@ -173,9 +183,9 @@ The **total head loss** across a pipe combining friction and minor losses is:
 
 $$h = R \, Q^n \cdot \mathrm{sign}(Q) + K_m \, Q \, |Q|$$
 
-where $R$ is the friction resistance coefficient derived from whichever formula is in use and $n$ is the corresponding flow exponent (1.852 for Hazen-Williams, 2 for Darcy-Weisbach and Chezy-Manning in their simplified forms). The sign convention ensures that the expression is an odd function of $Q$: head loss is always in the direction opposing flow.
+where $R$ is the friction resistance coefficient derived from whichever formula is in use and $n$ is the corresponding flow exponent (1.852 for Hazen–Williams, 2 for Darcy–Weisbach and Chezy–Manning in their simplified forms). The sign convention ensures that the expression is an odd function of $Q$: head loss is always in the direction opposing flow.
 
-To keep the Jacobian non-singular near zero flow, whenever an element's head-loss gradient falls below the `RQTOL` option (default $10^{-7}$), the gradient is floored and the element's head loss becomes a *linear* function of flow — applied to Hazen-Williams and Chezy-Manning pipes, nonlinear pump curves, valve minor losses (floored at $RQtol/2$), and emitters; Darcy-Weisbach pipes rely on their laminar branch instead.
+To keep the Jacobian non-singular near zero flow, whenever an element's head-loss gradient falls below the `RQTOL` option (default $10^{-7}$), the gradient is floored and the element's head loss becomes a *linear* function of flow — applied to Hazen–Williams and Chezy–Manning pipes, nonlinear pump curves, valve minor losses (floored at $RQtol/2$), and emitters; Darcy–Weisbach pipes rely on their laminar branch instead.
 
 ### 2.2 Pump Head Gain
 
@@ -199,7 +209,7 @@ where $\gamma = \rho g$ is the specific weight of water. As flow decreases towar
 
 $$\Delta H(\omega, Q) = \omega^2 \cdot \Delta H_1\!\left(\frac{Q}{\omega}\right)$$
 
-where $\Delta H_1$ is the head gain at rated speed. Equivalently, the shutoff head scales as $\omega^2$ and the flow axis scales as $\omega$. In the Newton-Raphson solver, a pump is treated as a link with a **negative** head-loss value (a gain), and its linearised resistance coefficient $P_k$ and offset $Y_k$ are derived from the pump curve in the same algebraic framework as pipe head losses.
+where $\Delta H_1$ is the head gain at rated speed. Equivalently, the shutoff head scales as $\omega^2$ and the flow axis scales as $\omega$. In the Newton–Raphson solver, a pump is treated as a link with a **negative** head-loss value (a gain), and its linearised resistance coefficient $P_k$ and offset $Y_k$ are derived from the pump curve in the same algebraic framework as pipe head losses.
 
 **Three-point pump curve fitting**: when a pump is specified by three operating points — the shutoff head $h_0$ (head at zero flow), the design point $(q_1, h_1)$, and the maximum-flow point $(q_2, h_2)$ — the power-function parameters are determined analytically:
 
@@ -209,7 +219,7 @@ yielding the curve $\Delta H = a - b \, Q^c$. The curve is validated: it must be
 
 **Pump status — XHEAD**: a pump in the OPEN state transitions to the **XHEAD** (excess head) state when the head gain required to maintain the computed flow exceeds the speed-adjusted shutoff head $\omega^2 h_0$. In this state the pump is treated as a closed link for that iteration. The status reverts to OPEN at the start of each periodic status check, and is re-tested against the new computed operating point. For constant-power pumps, XHEAD cannot occur; instead, the pump is flagged TEMPCLOSED when the flow falls below $10^{-6}$ ft³/s (a strictly positive cutoff, since the power formula is undefined at zero flow).
 
-**Initial flow conditions**: before the first Newton-Raphson solve, link flows are initialised as follows — closed links receive a negligible flow $Q_0 \approx 10^{-6}$ ft³/s; pumps receive the product of their speed setting and their design flow $Q_{\text{design}}$; all other links (pipes and valves) receive the flow corresponding to a nominal velocity of 1 ft/s through the full pipe cross-section: $Q = \pi D^2 / 4$. These initial values need not be physically consistent; the Newton-Raphson iteration converges from them to the true solution.
+**Initial flow conditions**: before the first Newton–Raphson solve, link flows are initialised as follows — closed links receive a negligible flow $Q_0 \approx 10^{-6}$ ft³/s; pumps receive the product of their speed setting and their design flow $Q_{\text{design}}$; all other links (pipes and valves) receive the flow corresponding to a nominal velocity of 1 ft/s through the full pipe cross-section: $Q = \pi D^2 / 4$. These initial values need not be physically consistent; the Newton–Raphson iteration converges from them to the true solution.
 
 ### 2.3 Valve Behaviour
 
@@ -219,7 +229,7 @@ The three control valves — PRV, PSV, and FCV — can inhabit one of three disc
 - **Open**: the valve is behaving as a short section of pipe with negligible resistance; no constraint is enforced.
 - **Closed**: the valve passes no flow.
 
-After each Newton-Raphson iteration the hydraulic state of each control valve is examined:
+After each Newton–Raphson iteration the hydraulic state of each control valve is examined:
 
 - A PRV transitions from ACTIVE to OPEN if the upstream head has fallen to or below the setpoint (no pressure reduction needed), or to CLOSED if the flow through it reverses (maintaining the setpoint would require reverse flow).
 - A PSV transitions from ACTIVE to OPEN if the downstream head has risen to or above the setpoint, or to CLOSED if the flow through it reverses.
@@ -227,7 +237,7 @@ After each Newton-Raphson iteration the hydraulic state of each control valve is
 
 TCV, GPV, and PCV valves do not have control states; they always contribute a resistance (head loss as a function of flow) determined by their current setting.
 
-**Precise valve status transitions**: PRV and PSV states are re-evaluated after each Newton-Raphson iteration (governed by the DampLimit parameter; see §2.4); **FCV transitions instead belong to the periodic `linkstatus` schedule** (CheckFreq/MaxCheck, plus the convergence-time pass). The transition rules are:
+**Precise valve status transitions**: PRV and PSV states are re-evaluated after each Newton–Raphson iteration (governed by the DampLimit parameter; see §2.4); **FCV transitions instead belong to the periodic `linkstatus` schedule** (CheckFreq/MaxCheck, plus the convergence-time pass). The transition rules are:
 
 - *PRV*: ACTIVE → OPEN if $H_1 - K_m Q^2 < H_\text{set} - \varepsilon_H$ (upstream pressure insufficient to need reduction); ACTIVE → CLOSED if $Q < -\varepsilon_Q$ (reverse flow); OPEN → CLOSED likewise if $Q < -\varepsilon_Q$. OPEN → ACTIVE if $H_2 \geq H_\text{set} + \varepsilon_H$ (downstream pressure reaches setpoint). CLOSED → ACTIVE if $H_1 \geq H_\text{set} + \varepsilon_H$ and $H_2 < H_\text{set} - \varepsilon_H$; CLOSED → OPEN if $H_1 < H_\text{set} - \varepsilon_H$ and $H_1 > H_2 + \varepsilon_H$. The special XPRESSURE state (reverse pressure gradient that would require reverse flow) transitions to CLOSED on reverse flow.
 - *PSV*: symmetric to PRV — ACTIVE → OPEN if $H_2 + K_m Q^2 > H_\text{set} + \varepsilon_H$; ACTIVE → CLOSED and OPEN → CLOSED if $Q < -\varepsilon_Q$; OPEN → ACTIVE if $H_1 < H_\text{set} - \varepsilon_H$. From CLOSED, the **OPEN test runs first**: CLOSED → OPEN if $H_2 > H_\text{set} + \varepsilon_H$ and $H_1 > H_2 + \varepsilon_H$ — when both this and the ACTIVE condition hold, the valve opens; only otherwise CLOSED → ACTIVE if $H_1 \geq H_\text{set} + \varepsilon_H$ and $H_1 > H_2 + \varepsilon_H$. The XPRESSURE state transitions to CLOSED on reverse flow.
@@ -275,7 +285,7 @@ $$F_i \mathrel{-}= Q_\text{set}, \qquad F_j \mathrel{+}= Q_\text{set}$$
 
 The two sides of the FCV are effectively decoupled; the network is solved as if $Q_\text{set}$ flows through the valve as a prescribed boundary condition, and the resulting head difference across the valve is whatever the network produces with that imposed flow.
 
-**Check valve (CVPIPE) status transitions**: a check valve is treated as a pipe that is permitted to carry flow only in its positive direction. After each Newton-Raphson iteration, its status is re-evaluated. Let $\Delta h = H_i - H_j$ be the head difference and $Q$ the current flow:
+**Check valve (CVPIPE) status transitions**: a check valve is treated as a pipe that is permitted to carry flow only in its positive direction. After each Newton–Raphson iteration, its status is re-evaluated. Let $\Delta h = H_i - H_j$ be the head difference and $Q$ the current flow:
 
 - If $|\Delta h| > H_{\text{tol}}$: CLOSED if $\Delta h < -H_{\text{tol}}$ (reverse head gradient); CLOSED if $Q < -Q_{\text{tol}}$ (reverse flow); otherwise OPEN.
 - If $|\Delta h| \leq H_{\text{tol}}$: CLOSED if $Q < -Q_{\text{tol}}$; otherwise the current status is preserved.
@@ -284,7 +294,7 @@ This hysteresis prevents rapid cycling near the zero-flow condition.
 
 ### 2.4 The Global Gradient Algorithm
 
-The hydraulic solver at each time step employs the **Todini-Pilati Global Gradient Algorithm (GGA)**, a variant of Newton-Raphson that solves simultaneously for all unknown junction heads and then derives all link flows in a single update.
+The hydraulic solver at each time step employs the **Todini–Pilati Global Gradient Algorithm (GGA)**, a variant of Newton–Raphson that solves simultaneously for all unknown junction heads and then derives all link flows in a single update.
 
 #### Governing Equations
 
@@ -409,7 +419,7 @@ The PDA model is incorporated into the GGA by treating the pressure-dependent co
 
 $$P = P_{\min} + (P_{\text{req}} - P_{\min}) \left( \frac{D}{D_{\text{full}}} \right)^{1/n_P}$$
 
-This is linearised and added to the diagonal of $\mathbf{A}$ and the right-hand side $\mathbf{F}$. Barrier terms prevent the numerical demand from drifting below zero or above $D_{\text{full}}$, maintaining the physical bounds throughout the iteration. The barrier is implemented as a smooth differentiable approximation (not a hard constraint) to avoid discontinuities that would break the Newton-Raphson iteration. Specifically, the signed head-loss and gradient increments from a lower barrier at $Q = 0$ take the form:
+This is linearised and added to the diagonal of $\mathbf{A}$ and the right-hand side $\mathbf{F}$. Barrier terms prevent the numerical demand from drifting below zero or above $D_{\text{full}}$, maintaining the physical bounds throughout the iteration. The barrier is implemented as a smooth differentiable approximation (not a hard constraint) to avoid discontinuities that would break the Newton–Raphson iteration. Specifically, the signed head-loss and gradient increments from a lower barrier at $Q = 0$ take the form:
 
 $$\Delta h = \frac{a - \sqrt{a^2 + 10^{-6}}}{2}, \qquad \Delta(\partial h/\partial Q) = \frac{10^9}{2}\left(1 - \frac{a}{\sqrt{a^2 + 10^{-6}}}\right), \qquad a = 10^9 \, Q$$
 
@@ -443,11 +453,11 @@ This adds a large one-sided penalty as $Q_e \to 0^-$ while remaining smooth and 
 
 Background leakage from deteriorated pipes — through corroded joints, stress cracks, and micro-fractures — is modelled using the **FAVAD** (Fixed And Variable Area Discharge) framework. Unlike a simple orifice, pipe cracks may dilate under pressure, making the effective discharge area itself pressure-dependent. The FAVAD model captures this through:
 
-$$Q_{\text{leak}} = C_o \left( A_o + m H \right) \sqrt{H}$$
+$$Q_{\text{leak}} = C_o \, \frac{L}{100} \left( A_o + m H \right) \sqrt{H}$$
 
-where $H$ is the pressure head driving leakage from the pipe, $A_o$ is the fixed (zero-pressure) crack area, $m$ is the rate of increase of crack area with pressure, and $C_o = 0.6\sqrt{2g}$ is the orifice discharge coefficient. In the internal US customary unit system (flow in ft³/s, head in ft, area in ft²), $C_o \approx 4.815 \times 10^{-6}$ ft³/(s·ft^{1/2}) when area is expressed in the units used by the FAVAD crack parameters. Expanding this:
+where $H$ is the pressure head driving leakage from the pipe, $L$ is the pipe length, $A_o$ is the fixed (zero-pressure) crack area **per 100 units of pipe length**, $m$ is the rate of increase of crack area with pressure head (same per-100-length basis), and $C_o = 0.6\sqrt{2g} \approx 4.815$ in pure ft units — leakage scales linearly with pipe length. The crack parameters are supplied in mm² (and mm² per metre of head): internally the coefficient absorbs the mm²→m² factor $10^{-6}$ and a further division by $0.3048^2$ (fixed-area term) or $0.3048$ (variable-area term), so with areas in their input units the effective fixed-area coefficient is $\approx 5.18 \times 10^{-5}$. Expanding this:
 
-$$Q_{\text{leak}} = C_o A_o H^{1/2} + C_o m H^{3/2}$$
+$$Q_{\text{leak}} = C_o \tfrac{L}{100} A_o H^{1/2} + C_o \tfrac{L}{100} m H^{3/2}$$
 
 The two terms have different pressure exponents: the fixed-area term behaves like a standard orifice (exponent $1/2$), while the variable-area term has exponent $3/2$.
 
@@ -457,9 +467,9 @@ $$H = C_{\text{fa}} \, Q_{\text{fa}}^{2} \qquad \text{(fixed-area component, ori
 
 $$H = C_{\text{va}} \, Q_{\text{va}}^{2/3} \qquad \text{(variable-area component, exponent } 3/2 \text{ on } H\text{)}$$
 
-The resistance coefficients $C_{\text{fa}}$ and $C_{\text{va}}$ are determined from the FAVAD parameters. For each pipe whose **both** end nodes are junctions, the pipe's leakage contribution is split equally: half is attributed to each end node (the pipe is split conceptually at its midpoint, with each half's leakage then driven by that end node's own pressure head rather than a single midpoint value). When one end of a pipe is a fixed-grade node (reservoir or tank), that fixed-grade end cannot accumulate leakage in the nodal model; the junction at the other end therefore receives the **full** pipe-length contribution rather than half. The contributions of all pipes meeting at a given junction are aggregated: the total fixed-area conductance and variable-area conductance at the node are the sums over all incident (half- or full-) pipe contributions. The resulting nodal coefficients are then inverted to form $C_{\text{fa}}$ and $C_{\text{va}}$.
+The resistance coefficients $C_{\text{fa}}$ and $C_{\text{va}}$ are determined from the FAVAD parameters. For each pipe whose **both** end nodes are junctions, the pipe's leakage contribution is split equally: half is attributed to each end node (the pipe is split conceptually at its midpoint, with each half's leakage then driven by that end node's own pressure head rather than a single midpoint value). When one end of a pipe is a fixed-grade node (reservoir or tank), that fixed-grade end cannot accumulate leakage in the nodal model; the junction at the other end therefore receives the **full** pipe-length contribution rather than half. A pipe whose *both* end nodes are fixed-grade contributes no leakage at all — leakage is realised as a nodal demand, which fixed-grade nodes carry none of. The contributions of all pipes meeting at a given junction are aggregated: the total fixed-area conductance and variable-area conductance at the node are the sums over all incident (half- or full-) pipe contributions. The resulting nodal coefficients are then inverted to form $C_{\text{fa}}$ and $C_{\text{va}}$.
 
-**Derivation of $C_{\text{fa}}$ and $C_{\text{va}}$**: let $\text{LeakCoeff1}_p$ and $\text{LeakCoeff2}_p$ be the full-pipe FAVAD discharge coefficients for pipe $p$. The per-end contribution for a junction endpoint $v$ of pipe $p$ is:
+**Derivation of $C_{\text{fa}}$ and $C_{\text{va}}$**: let $\text{LeakCoeff1}_p = C_o A_o L_p / 100$ and $\text{LeakCoeff2}_p = C_o\, m\, L_p / 100$ be the full-pipe FAVAD discharge coefficients for pipe $p$ (unit conversions absorbed as above). The per-end contribution for a junction endpoint $v$ of pipe $p$ is:
 
 $$k_{1,p,v} = \begin{cases} \tfrac{1}{2}\,\text{LeakCoeff1}_p & \text{both end nodes of pipe } p \text{ are junctions} \\ \text{LeakCoeff1}_p & \text{exactly one end node of pipe } p \text{ is a fixed-grade node} \end{cases}$$
 
@@ -470,6 +480,8 @@ $$C_{\text{fa},i} = 1/K_{\text{fa},i}^{2}, \qquad C_{\text{va},i} = 1/K_{\text{v
 (with the respective term omitted when $K = 0$).
 
 These two emitter-like terms are linearised and incorporated into the GGA matrix assembly in exactly the same way as ordinary emitters (§4): a conductance term is added to the diagonal of $\mathbf{A}$ and a flow offset term is added to the right-hand side $\mathbf{F}$.
+
+Leakage is **non-negative by construction**: the smooth lower barrier of §3.2 is applied *unconditionally* to both leakage components — unlike emitters, where it is conditional on the backflow option — so a node at sub-atmospheric pressure simply leaks nothing; the post-solution per-pipe leakage report likewise clamps negative pressure heads to zero. Leakage carries its own **convergence gate**: each node's solved leakage must match a direct FAVAD evaluation at the current pressure, $\sqrt{H/C_{\text{fa}}} + (H/C_{\text{va}})^{3/2}$, within $10^{-4}$ ft³/s; leakage flow corrections are damped by the same relaxation factor as the flow update and enter the global relative-flow-change measure (§2.4). Before iteration begins, the nodal elements are seeded with nonzero flows — 1.0 ft³/s per emitter, 0.001 ft³/s per leakage component, and the full demand for pressure-dependent demands — and at the converged solution the **reported junction demand aggregates all three outflow elements**: consumer demand plus emitter flow plus leakage flow.
 
 ---
 
@@ -604,13 +616,13 @@ where $m_k^{\text{out}}$ and $\mathcal{V}_k^{\text{out}}$ are the mass and volum
 - **Setpoint booster**: if the naturally mixed concentration at the node falls below the specified setpoint, it is raised to the setpoint. If it already exceeds the setpoint, no adjustment is made.
 - **Flow-paced booster**: a fixed concentration increment is added to the natural concentration of all water leaving the node, in proportion to the flow.
 
-Source concentrations may vary over time via a multiplier pattern.
+Source concentrations may vary over time via a multiplier pattern. Mass-source strengths are interpreted as mass per **minute** (converted internally to per-second); the other source types are concentrations in user units. A source whose baseline strength is zero is inert regardless of its pattern.
 
 For all source types, a **stagnation guard** suppresses injection when the total volumetric outflow *rate* from the node during a quality sub-step falls at or below a small threshold `Q_STAGNANT` $= 1.114 \times 10^{-5}$ ft³/s (0.005 gpm). This avoids division by zero — and unstable large increments — when computing concentration increments at a near-stagnant node. The *same* `Q_STAGNANT` threshold also governs whether a link's flow is treated as negligible for the topological-sort and transport steps (§8.1); it is one constant serving both purposes, not two. (It is distinct from the hydraulic constant `QZERO` $= 10^{-6}$ ft³/s, which is used only to seed the flow of closed links and plays no role in the quality engine.)
 
 **Water age** requires no source. The "concentration" is initialised to zero everywhere and incremented by $\delta t$ (in hours) at every quality time step, representing the elapsed time since the water entered the system from a source (reservoir or tank).
 
-**Source tracing** assigns a "concentration" of 100 (representing 100%) to all water leaving the designated trace node. All water entering the network from other fixed-grade nodes or from tanks carries a concentration of zero. The trace value at any pipe segment or junction then represents the fraction of that water — expressed as a percentage — that originated from the traced source.
+**Source tracing** assigns a "concentration" of 100 (representing 100%) to all water leaving the designated trace node. All water entering the network from other *reservoirs* carries a concentration of zero permanently; tanks start at zero but **store and re-release** whatever tracer reaches them through their mixing models. The trace value at any pipe segment or junction then represents the fraction of that water — expressed as a percentage — that originated from the traced source.
 
 ### 8.4 Chemical Reactions
 
@@ -640,11 +652,11 @@ The analysis proceeds as follows:
 
 2. Compute the **Sherwood number** $Sh$, which characterises the ratio of convective to diffusive mass transfer:
    - Stagnant ($Re < 1$): $Sh = 2$ (pure diffusion limit)
-   - Laminar ($1 \leq Re < 2300$): Graetz-Lévêque solution for developing concentration profiles in a tube:
+   - Laminar ($1 \leq Re < 2300$): Graetz–Lévêque solution for developing concentration profiles in a tube:
 
    $$Sh = 3.65 + \frac{0.0668 \,(D/L)\,Re\,Sc}{1 + 0.04\,[(D/L)\,Re\,Sc]^{2/3}}$$
 
-   - Turbulent ($Re \geq 2300$): Notter-Sleicher correlation:
+   - Turbulent ($Re \geq 2300$): Notter–Sleicher correlation:
 
    $$Sh = 0.0149 \, Re^{0.88} \, Sc^{1/3}$$
 
@@ -660,6 +672,8 @@ The analysis proceeds as follows:
 
 5. For **zero-order** wall reactions ($n_w = 0$), the wall demand rate $k_w$ (converted to internal units as $k_w \cdot f_u^2$ where $f_u$ is the elevation unit conversion factor) and the concentration-dependent diffusive supply rate $c \cdot k_f$ are compared independently. The effective volumetric wall rate is $\mathrm{sgn}(k_w) \cdot \min(|k_w \cdot f_u^2|,\; c \cdot k_f) \cdot 4/D$. When the diffusion boundary layer cannot supply mass as fast as the wall consumes it ($c \cdot k_f < |k_w|$), the reaction becomes mass-transfer-limited and concentration-dependent despite the nominally zero-order kinetics.
 
+Setting the molecular diffusivity to **zero disables the mass-transfer stage entirely**: the Sherwood analysis is skipped, first-order wall kinetics act at their intrinsic rate ($k_{\text{eff}} = 4k_w/D$ with no $k_f$ limitation), and zero-order wall demand is never transfer-limited.
+
 #### Combined Reaction in a Segment
 
 The net concentration change in a pipe segment over a quality time step $\delta t$ is:
@@ -672,13 +686,13 @@ This forward-Euler update is applied uniformly for all reaction orders. After ea
 
 As an alternative to specifying a wall reaction coefficient $k_w$ for each pipe individually, EPANET supports a global **roughness–reaction correlation factor** $R_f$. When $R_f \neq 0$, the wall coefficient for each pipe is derived automatically from its roughness parameter. The correlation formula depends on the head-loss formula in use:
 
-- **Hazen-Williams** ($C$ is the HW roughness coefficient, smoother pipes have higher $C$):
+- **Hazen–Williams** ($C$ is the HW roughness coefficient, smoother pipes have higher $C$):
 $$k_w = \frac{R_f}{C}$$
 
-- **Darcy-Weisbach** ($\varepsilon$ is the absolute roughness, $D$ the diameter):
+- **Darcy–Weisbach** ($\varepsilon$ is the absolute roughness, $D$ the diameter):
 $$k_w = \frac{R_f}{|\ln(\varepsilon/D)|}$$
 
-- **Chezy-Manning** ($n_M$ is Manning's roughness, rougher pipes have higher $n_M$):
+- **Chezy–Manning** ($n_M$ is Manning's roughness, rougher pipes have higher $n_M$):
 $$k_w = R_f \cdot n_M$$
 
 In all three cases, $R_f$ has units of $[k_w \cdot \text{roughness parameter}]$, chosen so that the resulting $k_w$ is in the wall-rate units expected by the wall reaction formulas (velocity, m/s or ft/s). The physical motivation is that rougher pipe surfaces tend to harbour more biofilm or corrosion products and hence exhibit higher wall demand. Any pipe whose $k_w$ is set explicitly in the input takes precedence over the correlation.
@@ -695,7 +709,7 @@ The tank is modelled as a **Continuously Stirred Tank Reactor (CSTR)**. All wate
 
 $$c_{\text{new}} = \frac{c \cdot V + c_{\text{in}} \cdot V_{\text{in}}}{V + V_{\text{in}}}$$
 
-where $V$ is the current stored volume, $c$ is the (uniform) tank concentration, $c_{\text{in}}$ is the volume-weighted inflow concentration, and $V_{\text{in}}$ is the inflow volume during the sub-step. Bulk reactions are applied separately (not during the mixing step) in the same phase as pipe reactions.
+where $V$ is the current stored volume, $c$ is the (uniform) tank concentration, $c_{\text{in}}$ is the volume-weighted inflow concentration, and $V_{\text{in}}$ is the inflow volume during the sub-step. Bulk reactions are applied separately (not during the mixing step) in the same phase as pipe reactions. If the tank is at capacity, the stored volume is clamped at $V_{\max}$ and the excess mass is booked as overflow outflow in the mass balance.
 
 ### Two-Compartment Mix
 
@@ -711,11 +725,11 @@ The outflow concentration is always the mixing zone concentration. This model ca
 
 ### FIFO Plug Flow
 
-The tank is treated as a perfectly ordered pipe with no axial mixing. Water enters from one end and exits from the other in strict **first-in, first-out** order. The segment representation used for pipes (§8.2) is applied directly to the tank. New inflow creates a new segment at the inlet end; outflow consumes segments from the outlet end. Reactions occur within each segment. This model is appropriate for narrow, tall standpipes or tanks with well-separated inlet and outlet ports.
+The tank is treated as a perfectly ordered pipe with no axial mixing. Water enters from one end and exits from the other in strict **first-in, first-out** order. The segment representation used for pipes (§8.2) is applied directly to the tank. New inflow creates a new segment at the inlet end; outflow consumes segments from the outlet end. Reactions occur within each segment. This model is appropriate for narrow, tall standpipes or tanks with well-separated inlet and outlet ports. When the tank is full, the full inflow volume is withdrawn from the outlet end and the net inflow's mass is booked as overflow.
 
 ### LIFO (Stacked Layers)
 
-Water enters and exits from the **same end** of the tank, as in a stratified system. New inflow creates a new segment at the top (or inlet side); outflow removes segments from the same end in **last-in, first-out** order. This model approximates thermal stratification in tanks where buoyancy prevents vertical mixing, so that recently added water leaves first.
+Water enters and exits from the **same end** of the tank, as in a stratified system. New inflow creates a new segment at the top (or inlet side); outflow removes segments from the same end in **last-in, first-out** order. This model approximates thermal stratification in tanks where buoyancy prevents vertical mixing, so that recently added water leaves first. When the tank is full, the net inflow volume is removed from the *opposite* (first) end and that mass is booked as overflow.
 
 ---
 
@@ -724,7 +738,7 @@ Water enters and exits from the **same end** of the tank, as in a stratified sys
 The simulator maintains a **running mass balance** for the quality constituent throughout the simulation. At each quality time step, the following quantities are accumulated:
 
 - **Initial mass stored**: the total constituent mass in all pipes and tanks at the start of the simulation.
-- **Mass added from sources**: constituent injected at network sources.
+- **Mass added from sources**: constituent injected at network sources — including, implicitly, every reservoir's outflow at its own fixed quality, source or not; conversely, all mass flowing *into* a reservoir counts as network outflow.
 - **Mass removed as outflow**: constituent carried out of the network — consumer withdrawals, water leaving through reservoirs, and tank overflow are all accumulated in this term (not consumer demand alone).
 - **Mass reacted**: constituent lost (or gained) through bulk and wall reactions; computed as the integral of reaction rates over all pipe segments and tanks.
 - **Final mass stored**: the total mass remaining in the network at the end of the simulation.
@@ -747,7 +761,7 @@ where $Q$ is the flow through the pump and $\Delta H$ is the head added. The act
 
 $$P_{\text{electrical}} = \frac{\rho g Q \, \Delta H}{\eta}$$
 
-where $\eta$ is the pump efficiency. If an efficiency curve (efficiency versus flow) is provided, $\eta$ is read from the curve at the current operating point; otherwise a default efficiency is assumed. When a pump operates at a speed setting $\omega \neq 1.0$ and an efficiency curve is supplied, the efficiency is further adjusted using the **Sarbu-Borza** speed-correction formula:
+where $\eta$ is the pump efficiency. If an efficiency curve (efficiency versus flow) is provided, $\eta$ is read from the curve at the current operating point; otherwise a default efficiency is assumed. When a pump operates at a speed setting $\omega \neq 1.0$ and an efficiency curve is supplied, the efficiency is further adjusted using the **Sarbu–Borza** speed-correction formula:
 
 $$\eta_{\omega} = 100 - \frac{100 - \eta_1}{\omega^{0.1}}$$
 
@@ -818,7 +832,7 @@ For **kinematic viscosity**, the user may supply either a multiplier (value $> 1
 
 | Parameter | Default | Meaning |
 |-----------|---------|--------|
-| MaxIter | 200 | Maximum Newton-Raphson iterations |
+| MaxIter | 200 | Maximum Newton–Raphson iterations |
 | Hacc | 0.001 | Flow accuracy tolerance $\epsilon_{\text{tol}}$ |
 | Htol | 0.0005 ft | Head tolerance for status checks |
 | Qtol | 0.0001 cfs | Flow tolerance for status checks |
@@ -940,7 +954,7 @@ Written once per reporting period. Each period contains the following arrays, al
 | 5 | Status | Cast to REAL4: 0=XHead, 1=TempClosed, 2=Closed, 3=Open, 4=Active, 5=XFlow, 6=XFCV, 7=XPressure, 8=Filling, 9=Emptying, 10=Overflowing |
 | 6 | Setting | Pipes: roughness. Pumps: speed. PRV/PSV/PBV: setting in pressure units. FCV: setting in flow units. TCV: raw setting. |
 | 7 | Reaction rate | Mass/L/day, converted to output quality units |
-| 8 | Friction factor | Darcy-Weisbach $f$; dimensionless; 0 for non-pipes or negligible flow |
+| 8 | Friction factor | Darcy–Weisbach $f$; dimensionless; 0 for non-pipes or negligible flow |
 
 Bytes per period: $(4 N_n + 8 N_l) \times 4$.
 
@@ -986,3 +1000,21 @@ The system exposes a complete project-handle–based API. The workflow is as fol
 Beyond this workflow, the API surface also covers: full network editing (creating, deleting, and renaming every object class, including demands, patterns, curves, controls, and rules, plus vertex/coordinate and comment/tag metadata); per-control and per-rule enable/disable; solver introspection (iteration statistics, result indices, time to the next event); report control (generation, custom lines, copying and resetting); one-shot run drivers; and regeneration of the input file from memory. A legacy function family wraps a single global default project — the multi-instance concurrency described below applies only to the handle-based API.
 
 Multiple project instances may coexist in the same process, enabling Monte Carlo analysis, parallel scenario evaluation, or re-entrant simulation from multiple threads (provided each thread operates on a distinct project handle and any shared file system resources are managed appropriately).
+
+---
+
+## 15. Cross-Cutting Engine Contracts
+
+The preceding sections follow EPANET's physical subsystems; this one collects the conceptual conventions that span them, each referenced back to the sections carrying its details.
+
+**The internal-units contract.** All hydraulic computation runs in a fixed US customary system — lengths and heads in feet, flows in ft³/s, power in horsepower — with conversion applied only at the boundaries: once at input parsing and again at output time (§13). Interior constants are therefore expressed in these units: the TCV loss-coefficient factor $0.02517\,s/D^4$ (§2.3), the FAVAD orifice coefficient $C_o$ (§5), the constant-power pump's nominal design flow of 1 ft³/s (§2.2), and the quality thresholds `Q_STAGNANT` and `QZERO` (§8.3). Specific gravity couples into the pressure boundary alone: reported pressures in psi, kPa, and bar embed it in their conversion factors, while metres and feet do not (§13), and in US units the emitter coefficient is defined per psi$^{n_e}$ adjusted for specific gravity (§4).
+
+**The status-machine convention.** Every link carries a discrete status re-evaluated during the solve: check-valve pipes toggle OPEN/CLOSED (§2.3), pumps pass through OPEN, XHEAD, and TEMPCLOSED (§2.2), PRVs and PSVs inhabit ACTIVE/OPEN/CLOSED plus XPRESSURE and FCVs ACTIVE/XFCV (§2.3), and tank-adjacent links are forced TEMPCLOSED at tank limits (§6.3). All transition tests share the two tolerances Htol and Qtol, which serve status logic *only* and are entirely separate from the convergence tolerance Hacc governing solver termination (§2.3, §13). The checks follow a re-open-then-re-test pattern — TEMPCLOSED and XHEAD links are first re-opened at the start of each status check and the new operating point re-evaluated, so no status is locked in (§2.2, §6.3) — and convergence itself requires a pass that produces no status change (§2.4).
+
+**The smooth-barrier idiom.** One differentiable one-sided penalty, $\Delta h = (a - \sqrt{a^2 + 10^{-6}})/2$ with $a = 10^9 Q$ and its matching gradient increment, is the engine's device for enforcing inequality bounds without breaking the Newton–Raphson iteration: it holds pressure-driven demands within $[0, D_{\text{full}}]$ (§3.2) and, when backflow is forbidden, drives emitter flow non-negative (§4) — the same closed form in both places, approaching a hard constraint as the bound is violated while remaining smooth throughout.
+
+**The $(P, Y)$ linearisation contract.** Every head–flow element reduces at each iteration to the same pair — a conductance $P_k$ (inverse head-loss gradient) and an offset $Y_k$ — consumed identically by the GGA assembly: $P$ into the Laplacian diagonal and off-diagonals, $Y$ into the right-hand side (§2.4). Pipes under all three friction formulas with minor losses (§2.1), pumps as negative head loss (§2.2), the resistance-type valves TCV, PBV, GPV, and PCV (§2.3), emitters (§4), pressure-dependent demands (§3.2), and the two FAVAD leakage components as equivalent emitters (§5) all enter through this one algebra. Its edge cases are handled inside the same coefficients: the RQtol gradient floor keeps $P$ bounded near zero flow (§2.1), and the large constant $C_\infty \approx 10^8$ turns the pair into a near-exact constraint — the PBV's fixed head drop, the active PRV/PSV head pinning, and the constant-power pump's near-zero-flow closure (§2.2, §2.3). Only the ACTIVE control valves step outside it, zeroing $P_k$ and augmenting the matrix directly (§2.3).
+
+**The curve-clamping rule.** User-defined curves are piece-wise linear: intermediate values interpolate linearly between the two bracketing data points, and values outside a curve's x-range are clamped to its end-point values — curves never extrapolate (§1). The PCV opening curve is the one documented departure, interpolating from the origin below its first point and toward the $(100\%, 100\%)$ anchor above its last, with the resulting ratio clamped to $[10^{-6}, 1]$ (§2.3). Validation enforces that every curve is non-empty with strictly increasing $x$-values and that pump curves take one of the admissible forms of §2.2 (§14).
+
+**The pattern-clock convention.** All patterns advance on one clock: the period index $p = \lfloor (t + t_{\text{start}}) / \Delta t_p \rfloor$ selects multiplier $F_j[p \bmod L_j]$, giving each pattern an independently repeating cycle (§1). The same convention drives junction demands, reservoir heads, and pump speed settings (§1), source-concentration multipliers (§8.3), and energy cost patterns (§11); a default pattern backstops demand categories with none assigned, and a multiplier of 1.0 applies when no default exists either (§1). The adaptive time step conspires with this clock — the next pattern change is one of the minimised step limits, so multipliers change exactly at step boundaries, never mid-step (§6.2).
