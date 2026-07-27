@@ -357,7 +357,7 @@ export function BasemapDownloadModal({
             </span>
           </div>
         ) : planState.status === "error" ? (
-          <span style={{ fontSize: 12, color: "var(--status-error)" }}>
+          <span style={{ fontSize: 12, padding: "6px 14px", color: "var(--status-error)" }}>
             Size estimate failed: {planState.message}
           </span>
         ) : (
@@ -367,20 +367,20 @@ export function BasemapDownloadModal({
         )}
 
         {startError && (
-          <span style={{ fontSize: 12, color: "var(--status-error)" }}>
+          <span style={{ fontSize: 12, padding: "6px 14px", color: "var(--status-error)" }}>
             {startError}
           </span>
         )}
 
         {/* Actions */}
-        <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+        <div style={{ display: "flex", gap: 12, justifyContent: "flex-end" }}>
           {downloading ? (
             <>
               <button
                 type="button"
                 className="tool-btn"
                 onClick={cancelDownload}
-                style={{ fontSize: 12, color: "var(--status-error)" }}
+                style={{ fontSize: 12, padding: "6px 14px", color: "var(--status-error)" }}
               >
                 Cancel download
               </button>
@@ -388,7 +388,7 @@ export function BasemapDownloadModal({
                 type="button"
                 className="tool-btn"
                 onClick={onClose}
-                style={{ fontSize: 12 }}
+                style={{ fontSize: 12, padding: "6px 14px" }}
               >
                 Close
               </button>
@@ -399,7 +399,7 @@ export function BasemapDownloadModal({
                 type="button"
                 className="tool-btn"
                 onClick={onClose}
-                style={{ fontSize: 12 }}
+                style={{ fontSize: 12, padding: "6px 14px" }}
               >
                 Cancel
               </button>
