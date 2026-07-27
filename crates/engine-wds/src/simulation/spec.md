@@ -81,7 +81,9 @@ Supported `(object, attribute)` combinations:
 | Reservoir | `HEAD` |
 | Pipe / Valve | `FLOW`, `STATUS`, `SETTING` |
 | Pump | `FLOW`, `STATUS`, `SETTING`, `POWER` |
-| Simulation | `TIME`, `CLOCKTIME` |
+| Simulation | `TIME`, `CLOCKTIME`, `DEMAND` (total system demand, m³/s) |
+
+> **DEVIATION from EPANET:** EPANET's rule grammar carries a `POWER` keyword in its vocabulary but rejects any premise using it at parse time; Hydra wires the attribute up ($P = \gamma\,Q\,\Delta H$ at the pump's current operating point) as a deliberate extension. `SYSTEM DEMAND` premises exist in both engines.
 
 `FILLTIME` and `DRAINTIME` are computed from current tank state and expressed in **hours** (the EPANET convention for these attributes):
 
@@ -250,13 +252,17 @@ $$W_{\text{elec},p} = W_p / \eta_p$$
 | `total_cost` | $+= W_{\text{elec},p} \cdot \Delta t \cdot k_{\text{unit}} \cdot \text{price}(t)$ |
 | `efficiency_sum` | $+= \eta_p \cdot \Delta t$ if $Q_p > 0$ |
 
-**Note on `kwh_per_flow`**: this statistic is a **time-weighted arithmetic mean** of the energy intensity $P/Q$, accumulated as $\sum (P_i / Q_i) \cdot \Delta t_i$. It is *not* the ratio $\int P\,dt \,/\, \int Q\,dt$ — the two differ when flow or efficiency varies across steps.
+**Note on `kwh_per_flow`**: the raw accumulator is the time *integral* $\sum (P_i / Q_i) \cdot \Delta t_i$ of the energy intensity $P/Q$ (with $Q$ floored at $10^{-6}$ m³/s); it becomes a time-weighted mean only after the report-time division by online hours below. It is *not* the ratio $\int P\,dt \,/\, \int Q\,dt$ — the two differ when flow or efficiency varies across steps.
 
-The following read-only statistic is derived at report time:
+The following read-only statistics are derived at report time:
 
 | Reported statistic | Definition |
 |---|---|
 | `avg_efficiency` | $= \mathtt{efficiency\_sum} / \mathtt{time\_online}$ (time-weighted average efficiency fraction while pump is running) |
+| `pct_online` | $= \mathtt{time\_online} / \text{duration} \times 100$ |
+| `avg_kw` | $= \mathtt{kwh} \cdot 3600 / \mathtt{time\_online}$ (average power over online time) |
+| `kwh_per_flow` (reported) | $= \mathtt{kwh\_per\_flow} / \mathtt{time\_online}$, then unit-converted to kWh/m³ (SI) or kWh/Mgal (US) |
+| `avg_cost` | $= \mathtt{total\_cost} / (\text{duration}/86400)$ — cost per day; a zero-duration analysis accounts energy as one hour |
 
 where $k_{\text{unit}}$ is the conversion factor from internal power units to kW:
 

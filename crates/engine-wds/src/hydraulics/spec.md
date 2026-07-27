@@ -97,6 +97,8 @@ where $k_M$ takes the following values depending on the unit system:
 | SI | m | m³/s | m | 1.0 |
 | US customary | ft | ft³/s | ft | 1.486 |
 
+> **DEVIATION from EPANET:** EPANET hardcodes the US constant as `1.49` (a two-figure rounding of 1.486) and the depth exponent as `-1.333` (a truncation of $-4/3$). Hydra deliberately uses the exact SI-idealised forms ($k_M = 1.0$ internally, exact $4/3$) as part of its SI modernisation, giving a systematic ≈0.5% lower Chezy–Manning resistance than EPANET. This is an intentional divergence, not an oversight.
+
 The factor $k_M$ arises from the empirical unit conversion embedded in Manning's velocity formula ($V = (k_M/n_M) R_h^{2/3} S^{1/2}$), which was originally formulated in SI.
 
 **Example (SI):** $L = 100$ m, $D = 0.5$ m, $n_M = 0.013$, $Q = 0.25$ m³/s:
@@ -409,7 +411,9 @@ Status checks are triggered periodically (every `check_freq` iterations, up to `
 #### Pump
 
 - OPEN → XHEAD: if head gain required exceeds $\omega^2 H_0$ (speed-adjusted shutoff head).
-- OPEN → TEMPCLOSED: constant-HP pump with $Q \leq 0$.
+- OPEN → TEMPCLOSED: constant-HP pump with $Q < 10^{-6}$ m³/s (a strictly positive cutoff — the power formula is undefined at zero flow).
+
+> **DEVIATION from EPANET:** EPANET's cutoff is $10^{-6}$ ft³/s; Hydra's SI-internal $10^{-6}$ m³/s is the unit-analogue and is ≈35× larger physically, consistent with Hydra's SI flow conventions.
 - XHEAD / TEMPCLOSED → OPEN: reset at the start of each periodic status check; re-tested immediately.
 
 #### Tank Inlet/Outlet Pipe

@@ -217,12 +217,14 @@ After nodal mixing on each sub-step, source injection overrides or augments the 
 
 | Source type | Effect on node concentration $c_i$ (when $Q_{\text{out},i} > 0$) |
 |---|---|
-| `CONCENTRATION` | At **reservoirs and tanks**: $c_i \leftarrow c_{\text{src}}$ (full override). At **junctions**: effective only when the junction has net negative demand ($D_i < 0$, i.e., the node is a local inflow point); otherwise the source contributes nothing regardless of $c_{\text{src}}$. |
-| `MASS` | $c_i \leftarrow c_i + r_s \cdot \delta t / (Q_{\text{out},i} \cdot 10^3)$ where $r_s$ is the source rate in mg/min, $\delta t$ in s, $Q_{\text{out},i}$ in m³; the factor $10^3$ converts m³ to L so the result is in mg/L. |
+| `CONCENTRATION` | At **reservoirs and tanks**: $c_i \leftarrow c_{\text{src}}$ (full override — the outflow quality *is* the source value; a tank's stored quality is left unmodified). At **junctions**: effective only when the junction has net negative demand ($D_i < 0$, i.e., the node is a local inflow point); otherwise the source contributes nothing regardless of $c_{\text{src}}$. |
+| `MASS` | $c_i \leftarrow c_i + (r_s / 60) \cdot \delta t / (V_{\text{out},i} \cdot 10^3)$ where $r_s$ is the source rate in mg/**min** (÷60 → mg/s), $\delta t$ in s, $V_{\text{out},i}$ the outflow volume in m³; the factor $10^3$ converts m³ to L so the result is in mg/L. |
 | `SETPOINT` | $c_i \leftarrow \max(c_i, c_{\text{src}})$ (raise to setpoint if below it; no reduction) |
 | `FLOWPACED` | $c_i \leftarrow c_i + c_{\text{src}}$ (fixed increment above natural mixed concentration) |
 
 The effective source value at time $t$ is `base_value` × $F_{\text{pattern}}(t)$ (`../model/spec.md` §2.7).
+
+> **DEVIATION from EPANET:** at a tank, EPANET *adds* a `CONCENTRATION` source on top of the tank's mixed outflow quality — the flow-paced booster formula applied to a different source type, contradicting EPANET's own definition of a concentration source ("fixes the quality of water leaving the node"). Hydra implements the defined semantics uniformly: the tank's outflow quality is the source value. Additive boosting at a tank remains expressible with a `FLOWPACED` source. This is an intentional correction of an EPANET inconsistency, not an oversight.
 
 ### 6.7 Tank Mixing Models
 

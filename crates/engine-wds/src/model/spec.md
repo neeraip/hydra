@@ -106,6 +106,8 @@ A curve is a piecewise-linear mapping from an $x$-value to a $y$-value.
 
 **Evaluation**: for a query value $x$, find the unique segment $[x_{k-1}, x_k]$ that brackets $x$ (extrapolation linearly from the nearest endpoint segment when $x$ is outside the curve range). Return $y = y_{k-1} + (y_k - y_{k-1}) \cdot (x - x_{k-1}) / (x_k - x_{k-1})$.
 
+> **DEVIATION from EPANET:** EPANET's general curve lookup *clamps* to the endpoint $y$-values outside the curve's range (it never extrapolates; its PCV curve is a further special case, interpolating toward the origin below range and toward (100%, 100%) above). Hydra deliberately extrapolates along the nearest segment for all curves: a clamped tank volume curve would make volume insensitive to level beyond the last point — a physically absurd dead zone that also ill-conditions the level-from-volume inversion — and the cases where extrapolation could misbehave are already bounded downstream (pump efficiency clamped to [1%, 100%], PCV ratio to $[10^{-6}, 1]$). This is an intentional improvement, not an oversight; consumers should expect out-of-range results to differ from EPANET's.
+
 **Mutability**: static.
 
 ### 2.4 Nodes
