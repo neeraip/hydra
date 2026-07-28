@@ -2331,7 +2331,7 @@ dependencies = [
 
 [[package]]
 name = "hydra-common"
-version = "2.1.0"
+version = "2.2.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -2339,7 +2339,7 @@ dependencies = [
 
 [[package]]
 name = "hydra-engine-wds"
-version = "2.1.0"
+version = "2.2.0"
 dependencies = [
  "approx",
  "chrono",
@@ -2378,7 +2378,7 @@ dependencies = [
 
 [[package]]
 name = "hydra-report"
-version = "2.1.0"
+version = "2.2.0"
 dependencies = [
  "hydra-common",
  "serde",
@@ -2390,7 +2390,7 @@ dependencies = [
 
 [[package]]
 name = "hydra-sdk"
-version = "2.1.0"
+version = "2.2.0"
 dependencies = [
  "hydra-common",
  "hydra-engine-wds",
