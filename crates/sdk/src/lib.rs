@@ -152,10 +152,12 @@ pub use hydra_engine_wds::{
 ///
 /// - [`io::parse`] — parse EPANET `.inp` bytes into a [`Network`].
 /// - [`io::out_writer`] / [`io::rpt_writer`] — write binary `.out` and text `.rpt` output.
+/// - [`io::units`] — unit-conversion factors ([`io::units::Ucf`]) for
+///   interpreting raw result values in display units.
 pub mod io {
     pub use hydra_engine_wds::io::{
-        analysis_io, compute_network_digest, out_reader, out_writer, parse, rpt_writer, write_inp,
-        ParseError,
+        analysis_io, compute_network_digest, out_reader, out_writer, parse, rpt_writer, units,
+        write_inp, ParseError,
     };
 }
 
