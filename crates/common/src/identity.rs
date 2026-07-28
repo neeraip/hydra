@@ -2,6 +2,38 @@
 
 use serde::Serialize;
 
+/// Whether a registered engine is implemented in this distribution
+/// (spec §2.3).
+///
+/// A `Planned` engine is registered so applications can present it and so
+/// its key is reserved — it carries no implementation. Applications must
+/// refuse to create projects, import models, or run simulations for one.
+/// Resolving a planned key is **not** an [`UnknownEngineError`]: the
+/// descriptor exists and its identity fields are valid.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum EngineStatus {
+    /// Implemented and usable.
+    Available,
+    /// Registered and reserved; no implementation yet.
+    Planned,
+}
+
+/// One source-model file format an engine imports (spec §2.2).
+///
+/// This names a format for a file picker's filter. It is **not** a
+/// validity test: `wds` and `uds` both claim the `inp` extension with
+/// wholly incompatible contents, so deciding whether a file really is a
+/// model of this format is the owning engine's job.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImportFormat {
+    /// Human-facing format name, e.g. "EPANET input file".
+    pub label: &'static str,
+    /// Filename extensions, lowercase ASCII with no leading dot.
+    pub extensions: &'static [&'static str],
+}
+
 /// Immutable identity of one Hydra engine (spec §2.1).
 ///
 /// `key` and the `label`/`pill` pair are two deliberately separate naming
@@ -23,18 +55,63 @@ pub struct EngineDescriptor {
     pub accent: &'static str,
     /// One-sentence description of the engine's domain. Plain text.
     pub summary: &'static str,
+    /// Whether this distribution can actually run the engine (spec §2.3).
+    pub status: EngineStatus,
+    /// Source-model formats this engine imports (spec §2.2). May be empty.
+    pub import: &'static [ImportFormat],
+}
+
+impl EngineDescriptor {
+    /// Whether this engine is implemented in this distribution.
+    pub fn is_available(&self) -> bool {
+        matches!(self.status, EngineStatus::Available)
+    }
 }
 
 /// Every engine compiled into this distribution, in presentation order
-/// (spec §2.2).
-pub const ENGINES: &[EngineDescriptor] = &[EngineDescriptor {
-    key: "wds",
-    label: "Water Distribution",
-    pill: "WD",
-    accent: "#4a90d9",
-    summary: "Pressurized water distribution network simulation — hydraulics, \
-              water quality, and energy on the EPANET data model.",
-}];
+/// (spec §2.4) — planned engines included, so applications can present
+/// the full modelling scope rather than only what ships today.
+pub const ENGINES: &[EngineDescriptor] = &[
+    EngineDescriptor {
+        key: "wds",
+        label: "Water Distribution",
+        pill: "WD",
+        accent: "#4a90d9",
+        summary: "Pressurized water distribution network simulation — hydraulics, \
+                  water quality, and energy on the EPANET data model.",
+        status: EngineStatus::Available,
+        import: &[ImportFormat {
+            label: "EPANET input file",
+            extensions: &["inp"],
+        }],
+    },
+    EngineDescriptor {
+        key: "uds",
+        label: "Urban Drainage",
+        pill: "UD",
+        accent: "#7a6ff0",
+        summary: "Stormwater and wastewater collection network simulation — \
+                  runoff, routing, and water quality on the SWMM data model.",
+        status: EngineStatus::Planned,
+        import: &[ImportFormat {
+            label: "SWMM input file",
+            extensions: &["inp"],
+        }],
+    },
+    EngineDescriptor {
+        key: "och",
+        label: "Open Channel",
+        pill: "OC",
+        accent: "#3daf75",
+        summary: "River and open-channel hydraulics — steady and unsteady flow \
+                  on the HEC-RAS data model.",
+        status: EngineStatus::Planned,
+        import: &[ImportFormat {
+            label: "HEC-RAS project archive",
+            extensions: &["zip", "7z", "tar", "gz", "tgz"],
+        }],
+    },
+];
 
 /// Lookup failure for [`engine_by_key`].
 ///
@@ -75,6 +152,72 @@ mod tests {
     }
 
     #[test]
+    fn registry_lists_the_three_domain_engines_in_order() {
+        let keys: Vec<_> = ENGINES.iter().map(|e| e.key).collect();
+        assert_eq!(keys, ["wds", "uds", "och"]);
+    }
+
+    #[test]
+    fn wds_is_the_only_available_engine() {
+        // Guards the availability contract in both directions: adding an
+        // engine implementation without flipping its status leaves it
+        // unusable, and flipping a status without an implementation lets
+        // applications create projects that can never run.
+        let available: Vec<_> = ENGINES
+            .iter()
+            .filter(|e| e.is_available())
+            .map(|e| e.key)
+            .collect();
+        assert_eq!(available, ["wds"]);
+        assert_eq!(engine_by_key("uds").unwrap().status, EngineStatus::Planned);
+        assert_eq!(engine_by_key("och").unwrap().status, EngineStatus::Planned);
+    }
+
+    #[test]
+    fn every_engine_declares_a_usable_import_filter() {
+        for e in ENGINES {
+            assert!(
+                !e.import.is_empty(),
+                "engine {:?} declares no import format",
+                e.key
+            );
+            for fmt in e.import {
+                assert!(!fmt.label.is_empty());
+                assert!(
+                    !fmt.extensions.is_empty(),
+                    "format {:?} lists no extensions",
+                    fmt.label
+                );
+                for ext in fmt.extensions {
+                    // A leading dot or any uppercase would silently break
+                    // extension matching in every consumer.
+                    assert!(
+                        !ext.is_empty()
+                            && ext
+                                .chars()
+                                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit()),
+                        "extension {ext:?} must be lowercase ASCII with no leading dot",
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn the_inp_extension_is_shared_and_therefore_never_a_validity_test() {
+        // wds and uds both claim `inp`. This is the concrete reason spec
+        // §2.2 forbids treating an extension as a format check — if this
+        // assertion ever fails, that rationale needs revisiting, not the
+        // consumers that rely on it.
+        let claimants: Vec<_> = ENGINES
+            .iter()
+            .filter(|e| e.import.iter().any(|f| f.extensions.contains(&"inp")))
+            .map(|e| e.key)
+            .collect();
+        assert_eq!(claimants, ["wds", "uds"]);
+    }
+
+    #[test]
     fn descriptor_field_invariants_hold_for_every_engine() {
         for e in ENGINES {
             assert!(
@@ -109,8 +252,17 @@ mod tests {
     #[test]
     fn lookup_resolves_and_rejects() {
         assert_eq!(engine_by_key("wds").unwrap().pill, "WD");
-        let err = engine_by_key("och").unwrap_err();
-        assert_eq!(err.key, "och");
-        assert!(err.to_string().contains("och"));
+        let err = engine_by_key("nope").unwrap_err();
+        assert_eq!(err.key, "nope");
+        assert!(err.to_string().contains("nope"));
+    }
+
+    #[test]
+    fn a_planned_engine_resolves_rather_than_erroring() {
+        // Spec §2.3: "planned" and "unknown" are distinct states. Conflating
+        // them would make a planned engine indistinguishable from one this
+        // build has never heard of.
+        assert!(engine_by_key("uds").is_ok());
+        assert!(!engine_by_key("uds").unwrap().is_available());
     }
 }

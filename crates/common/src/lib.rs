@@ -6,7 +6,9 @@ pub const HYDRA_COMMON_VERSION: &str = env!("CARGO_PKG_VERSION");
 mod identity;
 mod report;
 
-pub use identity::{engine_by_key, EngineDescriptor, UnknownEngineError, ENGINES};
+pub use identity::{
+    engine_by_key, EngineDescriptor, EngineStatus, ImportFormat, UnknownEngineError, ENGINES,
+};
 pub use report::{
     BlockDescriptor, BlockError, Chart, ChartData, Column, Fragment, FragmentItem, KeyValue,
     LineSeries, Table, Value, ValueKind,

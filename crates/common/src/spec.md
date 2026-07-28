@@ -1,8 +1,9 @@
 # Hydra Common — Foundation Contract
 
-Status: **v1.2 — ratified 2026-07-28** (v1.1 added opaque per-block options
+Status: **v1.3 — ratified 2026-07-28** (v1.1 added opaque per-block options
 to the production contract, §3.4; v1.2 added the chart fragment item,
-§3.3). This file is the module documentation
+§3.3; v1.3 added engine availability and import formats, §2.1–2.3).
+This file is the module documentation
 of the `hydra-common` crate and follows the same spec-first workflow as the
 engine specs: implementation changes flow from changes here, never the
 reverse.
@@ -44,19 +45,65 @@ Every engine publishes one immutable descriptor:
 | `pill` | Two-character badge | Uppercase, exactly 2 characters (e.g. "WD"). |
 | `accent` | Brand color for this engine | `#rrggbb` hex string. |
 | `summary` | One-sentence description of the engine's domain | Plain text, no markup. |
+| `status` | Whether this distribution can actually run the engine | `available` or `planned` (§2.3). |
+| `import` | Source-model formats the engine imports | Ordered list of import-format descriptors (§2.2); may be empty for an engine with no import path. |
 
 The `key` and the `label`/`pill` pair are two deliberately separate naming
 systems: the key carries the accurate domain umbrella; the label carries
 the familiar practitioner term. They are allowed to diverge and must not
 be derived from one another.
 
-### 2.2 Registry
+### 2.2 Import formats
+
+An engine's models originate in some external tool's file format. The
+descriptor names those formats so applications can offer a correctly
+filtered file picker for *any* engine without hardcoding per-engine file
+knowledge:
+
+| Field | Meaning | Constraints |
+|---|---|---|
+| `label` | Human-facing format name | Plain text, e.g. "EPANET input file". |
+| `extensions` | Filename extensions the format uses | One or more, lowercase ASCII, no leading dot. |
+
+This is deliberately the *only* file knowledge in the foundation layer.
+It names formats; it says nothing about their contents, and nothing here
+may be used to decide whether a given file is valid. **Validating that a
+file really is a model of the named format is the owning engine's job** —
+extensions are a picker filter and a first-pass hint, never a check. Two
+engines legitimately share the `inp` extension (EPANET and SWMM both use
+it) with entirely incompatible contents, so an application that trusted
+the extension would hand a stormwater model to a water-distribution
+solver.
+
+### 2.3 Availability
+
+A registered engine is either:
+
+- **`available`** — implemented in this distribution and usable;
+- **`planned`** — registered so applications can present it (and so its
+  key is reserved), but carrying no implementation.
+
+Planned engines are registered rather than hidden because a user choosing
+a modelling domain deserves to see what Hydra covers and what is coming,
+and because the key must be reserved before anything persists it.
+
+Applications **must** present planned engines as explicitly unavailable
+and **must** refuse to create projects, run simulations, or import models
+for them. Refusing is a hard requirement, not a UI nicety: a persisted
+project naming a planned engine would be indistinguishable from one whose
+engine was removed.
+
+Resolving a planned engine's key is **not** an error and must not be
+conflated with the unknown-key case (§2.4) — the descriptor exists and
+its identity fields are valid; only its implementation is absent.
+
+### 2.4 Registry
 
 The registry is the ordered collection of descriptors for every engine
 compiled into a distribution. It supports:
 
 - **Enumeration** in a stable, deliberate order (the order engines are
-  presented to users).
+  presented to users), available and planned engines alike.
 - **Lookup by key**, which either yields the descriptor or a typed
   "unknown engine" error.
 
@@ -64,7 +111,8 @@ Applications must treat an unknown key (e.g. a project created by a newer
 Hydra carrying an engine this build lacks) as an explicit unsupported
 state, never as a fallback to a default engine.
 
-v1 ships with a single registered engine: `wds`.
+v1 ships three registered engines — `wds` (available), `uds` (planned),
+and `och` (planned) — in that order.
 
 ---
 
