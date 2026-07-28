@@ -12,13 +12,15 @@ Hydra is a water distribution network simulator written in Rust. It implements t
 | `hydra-engine-wds` | Complete simulation engine: data model; INP/OUT/RPT parsers and writers; unit conversion; GGA hydraulic solver; Lagrangian quality engine; controls; timestep; accounting; session API (`Simulation`); post-simulation analytics; report blocks implementing the `hydra-common` reportable-output contract; local filesystem reads for `.out`/analysis-artifact files via explicit path-based helpers (`io::out_reader`, `io::analysis_io`) | Interface logic; network I/O; any other filesystem I/O (INP model bytes are supplied in memory by callers) |
 | `hydra-engine-uds`, `hydra-engine-och` | Nothing yet — published scaffolds for the future urban-drainage and open-channel engines, so their crate names and versions track the workspace from the start | Any functionality (deliberately empty until their development begins) |
 | `hydra-report` | Report generation: JSON report templates, document assembly from engine-neutral fragments, deterministic txt/csv/html renderers | Any engine knowledge (depends only on `hydra-common`); analysis math; file/output-path UX (CLI/GUI) |
-| `hydra-sdk` | Curated public re-exports — the umbrella crate | Any new logic |
+| `hydra-sdk` | **Hydra's public API** — the single crate third parties depend on to build on Hydra; curated re-exports of the full integrator-facing surface | Any new logic |
 | `hydra-cli` | CLI argument parsing; input source resolution; file I/O | All simulation logic |
 | `hydra-gui` | Tauri command surface; project/scenario persistence; background run queue; React frontend | Solver algorithms; session logic |
 
 **`hydra-engine-wds` is a self-contained black box.** Its internal module structure (`hydraulics/`, `quality/`, `simulation/`, `analysis/`, `model/`, `io/`) is an implementation detail. Callers depend only on its public re-export surface.
 
-**`hydra-cli` and `hydra-gui` are downstream consumers of Hydra** — they depend on the umbrella crate and never import from `hydra-engine-wds` directly. This is the same contract any third-party integrator has.
+**`hydra-sdk` is Hydra's public API, not an in-house convenience layer.** Its surface is sized by what a third-party integrator building on Hydra needs — never by what the official applications happen to use. Do not propose narrowing a re-export because the in-house apps don't exercise it; wholesale module re-exports (e.g. the engine's `io`) are correct when the module is genuinely public-facing.
+
+**`hydra-cli` and `hydra-gui` are reference consumers of that public API.** They depend on the umbrella crate under the exact contract any third-party integrator has — and double as the prime examples of building software on it. They never import from `hydra-engine-wds`, `hydra-common`, `hydra-report`, or any other internal crate directly.
 
 **`hydra-sdk` contains no logic** — only re-exports. Never add functions, structs, or trait implementations to it. (Downstream crates import it under the alias `hydra`.)
 
@@ -99,9 +101,9 @@ implementations live in its submodules). No separate spec files exist for those 
    file-format changes.
 2. Only then write or change implementation code.
 
-### Facade (hydra-sdk)
+### Umbrella (hydra-sdk)
 
-Update the re-export list and `README.md` examples when the public API changes. No spec document needed.
+Update the re-export list and `README.md` examples when the public API changes. No spec document needed. When deciding whether something belongs in the sdk, the question is "does a third party building on Hydra need this?" — never "do our apps use this?".
 
 ### CLI (hydra-cli) and GUI (hydra-gui)
 

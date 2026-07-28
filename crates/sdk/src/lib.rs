@@ -191,12 +191,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn facade_reexports_simulation_type() {
+    fn umbrella_reexports_simulation_type() {
         let _ = Simulation::create();
     }
 
     #[test]
-    fn facade_reexports_common_io_parse() {
+    fn umbrella_reexports_common_io_parse() {
         let bytes = b"{\"invalid\":true}";
         let err = io::parse(bytes).expect_err("invalid model bytes should fail parse");
         assert!(matches!(err, io::ParseError::UnrecognisedFormat));
