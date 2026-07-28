@@ -18,6 +18,11 @@ use std::time::{SystemTime, UNIX_EPOCH};
 #[serde(rename_all = "camelCase")]
 pub struct ProjectMeta {
     pub name: String,
+    /// Engine key from the `hydra::common` registry (`"wds"`, …). Projects
+    /// written before the field existed default to `"wds"` — the only
+    /// engine that existed then.
+    #[serde(default = "default_engine")]
+    pub engine: String,
     #[serde(default = "default_crs")]
     pub source_crs: String,
     #[serde(default)]
@@ -30,6 +35,10 @@ pub struct ProjectMeta {
 
 fn default_crs() -> String {
     "EPSG:4326".into()
+}
+
+fn default_engine() -> String {
+    "wds".into()
 }
 
 // ── Scenario metadata ─────────────────────────────────────────────────────────

@@ -15,12 +15,11 @@ import { ClockIcon } from "@heroicons/react/24/outline";
 import { useEffect, useState } from "react";
 import { useAppState } from "../../AppContext";
 import {
-  ACCENT,
   createProjectOnDisk,
   formatInpImportError,
-  LABEL,
   openAndLoadNetwork,
   type Project,
+  useEngines,
   useNetworkVersion,
 } from "../../hooks";
 import { NetworkThumbnail } from "../ui/NetworkThumbnail";
@@ -41,6 +40,9 @@ export function NewProjectWizard({
 }: Props) {
   const { createProject, showToast } = useAppState();
   const { bumpNetwork } = useNetworkVersion();
+  // New projects are created with the registry's first engine (its only
+  // one while Hydra ships single-engine); a picker arrives with engine #2.
+  const engine = useEngines()[0];
 
   const [step, setStep] = useState<1 | 2 | 3>(initialStep);
   const [projectName, setProjectName] = useState(
@@ -92,6 +94,7 @@ export function NewProjectWizard({
     const project: Project = persisted ?? {
       id,
       name,
+      engine: engine.key,
       state: "draft",
       scenarioCount: 0,
       modifiedLabel: "Just now",
@@ -475,7 +478,7 @@ export function NewProjectWizard({
                   overflow: "hidden",
                 }}
               >
-                <NetworkThumbnail accent={ACCENT} />
+                <NetworkThumbnail accent={engine.accent} />
               </div>
               <div style={{ padding: "12px 16px" }}>
                 <div
@@ -492,13 +495,13 @@ export function NewProjectWizard({
                   <span
                     className="badge"
                     style={{
-                      color: ACCENT,
-                      background: `${ACCENT}26`,
-                      borderColor: `${ACCENT}55`,
+                      color: engine.accent,
+                      background: `${engine.accent}26`,
+                      borderColor: `${engine.accent}55`,
                       fontWeight: 600,
                     }}
                   >
-                    {LABEL}
+                    {engine.label}
                   </span>
                   {fileDetected && (
                     <span className="badge">

@@ -15,7 +15,7 @@ import {
   useTasks,
 } from "../../AppContext";
 import { useCanvasSelection } from "../../canvas/selection-context";
-import { countIssues, LABEL, PILL } from "../../hooks";
+import { countIssues } from "../../hooks";
 import {
   formatShortcut,
   primaryModifierLabel,
@@ -26,7 +26,7 @@ type SolverState = "idle" | "loading" | "running" | "converged" | "warning";
 
 export function StatusBar() {
   const { toggleIssuesPanel } = useAppState();
-  const { project, accent } = useActiveProject();
+  const { project, accent, engine } = useActiveProject();
   const { resultMeta, resultMetaLoading, issues } = useSimulation();
   const { selectedNodeId, selectedLinkId } = useCanvasSelection();
   const tasks = useTasks();
@@ -76,9 +76,11 @@ export function StatusBar() {
         <Pill
           background={`${accent}1f`}
           color={accent}
-          title={`${LABEL} · ${project.name}`}
+          title={`${engine?.label ?? "Unsupported engine"} · ${project.name}`}
         >
-          <span style={{ fontWeight: 600, letterSpacing: 0.4 }}>{PILL}</span>
+          <span style={{ fontWeight: 600, letterSpacing: 0.4 }}>
+            {engine?.pill ?? "??"}
+          </span>
           <span style={{ marginLeft: 6, color: "var(--text-secondary)" }}>
             {project.name}
           </span>

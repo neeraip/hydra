@@ -1,5 +1,6 @@
-/* Project view configuration for the Water Distribution engine.
-   Hydra is exclusively a water distribution simulator. */
+/* Project view configuration. Engine identity (label, pill, accent) is
+   registry-driven — see hooks/engines.ts; nothing engine-specific may be
+   hardcoded here. */
 
 import {
   ChartBarSquareIcon,
@@ -9,13 +10,13 @@ import {
 } from "@heroicons/react/24/outline";
 import type { ComponentType, SVGProps } from "react";
 
-// ── Identity constants ───────────────────────────────────────────────────────
+// ── App accent ───────────────────────────────────────────────────────────────
 
-/** Full display label shown in project cards and the new-project wizard. */
-export const LABEL = "Water Distribution" as const;
-/** Compact pill code shown on cards. */
-export const PILL = "WD" as const;
-/** Hex accent colour used for thumbnails / pill backgrounds. */
+/** App-wide accent colour for generic chrome (buttons, highlights, toasts).
+ * Currently equal to the WDS engine accent while Hydra ships one engine.
+ * Engine-identity surfaces (project cards, pills, wizard, status bar) must
+ * NOT use this — they resolve the project's engine via
+ * `useEngines`/`engineByKey` instead. */
 export const ACCENT = "#4a90d9" as const;
 
 // ── Project view identifiers ─────────────────────────────────────────────────

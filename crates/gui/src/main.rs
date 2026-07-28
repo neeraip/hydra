@@ -95,6 +95,7 @@ fn main() {
             commands::delete_rule,
             commands::preview_patches,
             commands::get_versions,
+            commands::list_engines,
             commands::updater_supported,
             commands::reconcile_projects,
             commands::get_run_queue,

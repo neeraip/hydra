@@ -1,20 +1,28 @@
 import { describe, expect, it } from "vitest";
+import { engineByKey, FALLBACK_ENGINES } from "./hooks/engines";
 import type { ProjectView } from "./projectConfig";
-import { ACCENT, LABEL, PILL, PROJECT_VIEWS } from "./projectConfig";
+import { ACCENT, PROJECT_VIEWS } from "./projectConfig";
 
-// ── WD engine constants ────────────────────────────────────────────────────
+// ── App accent + engine registry fallback ────────────────────────────────────
 
-describe("WD engine constants", () => {
-  it("LABEL is non-empty", () => {
-    expect(LABEL.length).toBeGreaterThan(0);
-  });
-
-  it("PILL is 'WD'", () => {
-    expect(PILL).toBe("WD");
-  });
-
+describe("app accent", () => {
   it("ACCENT is a 6-digit hex colour", () => {
     expect(ACCENT).toMatch(/^#[0-9a-fA-F]{6}$/);
+  });
+});
+
+describe("engine registry fallback", () => {
+  it("carries the wds engine with a 2-char pill and hex accent", () => {
+    const wds = engineByKey(FALLBACK_ENGINES, "wds");
+    expect(wds).not.toBeNull();
+    expect(wds?.label.length).toBeGreaterThan(0);
+    expect(wds?.pill).toBe("WD");
+    expect(wds?.accent).toMatch(/^#[0-9a-fA-F]{6}$/);
+  });
+
+  it("unknown keys resolve to null, never a default engine", () => {
+    expect(engineByKey(FALLBACK_ENGINES, "och")).toBeNull();
+    expect(engineByKey(FALLBACK_ENGINES, "")).toBeNull();
   });
 });
 

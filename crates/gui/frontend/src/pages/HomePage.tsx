@@ -9,10 +9,11 @@ import { SplitActionButton } from "../components/ui/SplitActionButton";
 import {
   ACCENT,
   createProjectOnDisk,
+  engineByKey,
   formatInpImportError,
   openAndLoadNetwork,
-  PILL,
   type Project,
+  useEngines,
   useNetworkVersion,
   useProjects,
 } from "../hooks";
@@ -274,6 +275,7 @@ export function HomePage() {
     if (latest) markSeen(latest.version);
   };
 
+  const engines = useEngines();
   const backendProjects = useProjects(projectsVersion);
   const recentProjects = useMemo<Project[]>(() => {
     const base =
@@ -301,6 +303,7 @@ export function HomePage() {
       const project: Project = persisted ?? {
         id,
         name,
+        engine: "wds",
         state: "ready",
         scenarioCount: 0,
         modifiedLabel: "Just now",
@@ -432,6 +435,7 @@ export function HomePage() {
           ) : (
             <div style={{ display: "flex", flexDirection: "column", gap: 1 }}>
               {recentProjects.map((p) => {
+                const engine = engineByKey(engines, p.engine);
                 return (
                   <button
                     type="button"
@@ -483,19 +487,20 @@ export function HomePage() {
                       </div>
                     </div>
                     <span
+                      title={engine ? engine.label : "Unsupported engine"}
                       style={{
                         fontSize: 10,
                         fontWeight: 700,
                         letterSpacing: "0.06em",
-                        color: ACCENT,
-                        background: `${ACCENT}22`,
-                        border: `1px solid ${ACCENT}44`,
+                        color: engine?.accent ?? "var(--text-tertiary)",
+                        background: `${engine?.accent ?? "#888888"}22`,
+                        border: `1px solid ${engine?.accent ?? "#888888"}44`,
                         borderRadius: 4,
                         padding: "2px 6px",
                         flexShrink: 0,
                       }}
                     >
-                      {PILL}
+                      {engine?.pill ?? "??"}
                     </span>
                   </button>
                 );

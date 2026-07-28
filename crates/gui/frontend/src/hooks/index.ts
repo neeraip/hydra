@@ -16,7 +16,7 @@
 
 export type { ProjectView } from "../projectConfig";
 // Engine constants and view config.
-export { ACCENT, LABEL, PILL, PROJECT_VIEWS } from "../projectConfig";
+export { ACCENT, PROJECT_VIEWS } from "../projectConfig";
 export type {
   Command,
   CommandCategory,
@@ -38,6 +38,13 @@ export {
 } from "../types";
 export * from "./basemapProviders";
 export * from "./editors";
+export {
+  type EngineInfo,
+  engineByKey,
+  FALLBACK_ENGINES,
+  getEngines,
+  useEngines,
+} from "./engines";
 export * from "./issues";
 export type { NetworkSummary } from "./NetworkDataContext";
 export {

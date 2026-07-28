@@ -1,5 +1,5 @@
 import { ArrowRightIcon, FolderOpenIcon } from "@heroicons/react/16/solid";
-import { PILL } from "../../../hooks";
+import { useActiveProject } from "../../../AppContext";
 import { ModelTitleBlock } from "./ModelTitleBlock";
 import { Dot, IconButton, PrimaryButton, SecondaryButton } from "./primitives";
 
@@ -18,6 +18,7 @@ export function Header({
   onOpenAnalysis: () => void;
   onOpenFolder: () => void;
 }) {
+  const { engine } = useActiveProject();
   const stateColor =
     project.state === "simulated"
       ? "var(--status-success)"
@@ -85,7 +86,7 @@ export function Header({
                 color: accent,
               }}
             >
-              {PILL}
+              {engine?.pill ?? "??"}
             </span>
             <Dot color={stateColor} />
             <span style={{ fontSize: 12, color: stateColor }}>

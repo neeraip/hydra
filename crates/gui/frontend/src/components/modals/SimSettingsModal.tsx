@@ -4,7 +4,6 @@ import { useActiveProject, useAppState } from "../../AppContext";
 import {
   ACCENT,
   getSimParams,
-  PILL,
   type SimParams,
   updateSimParams,
   useScenarios,
@@ -79,7 +78,7 @@ export function SimSettingsModal() {
     showToast,
     bumpSimParams,
   } = useAppState();
-  const { project } = useActiveProject();
+  const { project, engine } = useActiveProject();
   const { markEdited } = useNetworkVersion();
   const scenarios = useScenarios(activeProjectId ?? null);
   const scenariosRef = useRef(scenarios);
@@ -218,7 +217,7 @@ export function SimSettingsModal() {
               borderRadius: 4,
             }}
           >
-            {PILL}
+            {engine?.pill ?? "??"}
           </span>
           <div style={{ flex: 1 }}>
             <div

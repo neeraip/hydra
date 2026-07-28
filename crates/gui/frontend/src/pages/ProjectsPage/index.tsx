@@ -90,6 +90,7 @@ export function ProjectsPage() {
       const project: Project = persisted ?? {
         id,
         name,
+        engine: "wds",
         state: "ready",
         scenarioCount: 0,
         modifiedLabel: "Just now",

@@ -11,11 +11,13 @@ import {
   useState,
 } from "react";
 import {
-  ACCENT,
+  type EngineInfo,
+  engineByKey,
   fetchProjectsShared,
   loadProjectNetwork,
   type Project,
   type ProjectView,
+  useEngines,
   useProject,
 } from "./hooks";
 import { formatIpcError, isTauri, onIpcError } from "./hooks/ipc";
@@ -1078,13 +1080,19 @@ export function useAppState() {
 }
 
 /**
- * Derived selector for the active project and its accent color.
+ * Derived selector for the active project, its engine, and accent color.
  *
- * `accent` always resolves to a string — falls back to the CSS accent token
- * when no project is open, so callers can render confidently.
+ * `engine` is the registry descriptor for the project's engine key — null
+ * when no project is open, and also null for an unresolvable key (a
+ * project from a newer Hydra): render that as unsupported, never as a
+ * default engine. `accent` always resolves to a string — falls back to the
+ * CSS accent token — so callers can render confidently.
  */
 export interface ActiveProject {
   project: Project | null;
+  /** Registry descriptor of the project's engine; null when no project is
+   * open or the key is unsupported by this build. */
+  engine: EngineInfo | null;
   /** Engine accent color (hex). Falls back to the CSS `--accent` token. */
   accent: string;
 }
@@ -1094,14 +1102,16 @@ const FALLBACK_ACCENT = "var(--accent)";
 export function useActiveProject(): ActiveProject {
   const { activeProjectId, createdProject, projectsVersion } = useAppState();
   const lookedUpProject = useProject(activeProjectId, projectsVersion);
+  const engines = useEngines();
   const project = lookedUpProject ?? createdProject ?? null;
-  return useMemo<ActiveProject>(
-    () => ({
+  return useMemo<ActiveProject>(() => {
+    const engine = project ? engineByKey(engines, project.engine) : null;
+    return {
       project,
-      accent: project ? ACCENT : FALLBACK_ACCENT,
-    }),
-    [project],
-  );
+      engine,
+      accent: engine?.accent ?? FALLBACK_ACCENT,
+    };
+  }, [project, engines]);
 }
 
 // Re-exported for consumers that import from AppContext.

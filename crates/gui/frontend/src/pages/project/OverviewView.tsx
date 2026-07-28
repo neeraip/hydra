@@ -1,10 +1,5 @@
 import { useActiveProject, useAppState } from "../../AppContext";
-import {
-  LABEL,
-  openBaseFolder,
-  useNetworkSummary,
-  useScenarios,
-} from "../../hooks";
+import { openBaseFolder, useNetworkSummary, useScenarios } from "../../hooks";
 import { Header } from "./OverviewView/Header";
 import { NetworkComposition } from "./OverviewView/NetworkComposition";
 import { ProjectInfo } from "./OverviewView/ProjectInfo";
@@ -23,7 +18,7 @@ import { ScenarioList } from "./OverviewView/ScenarioList";
 export function OverviewView() {
   const { setProjectView, openScenariosModal, openCrsModal, scenariosVersion } =
     useAppState();
-  const { project, accent } = useActiveProject();
+  const { project, accent, engine } = useActiveProject();
 
   const summary = useNetworkSummary();
   const scenarios = useScenarios(project?.id ?? null, scenariosVersion);
@@ -84,7 +79,7 @@ export function OverviewView() {
             crs={project.sourceCrs}
             modifiedLabel={project.modifiedLabel}
             lastRunLabel={project.lastRunLabel ?? null}
-            engineLabel={LABEL}
+            engineLabel={engine?.label ?? "Unsupported engine"}
             onEditCrs={openCrsModal}
             onOpenFolder={() => openBaseFolder(project.id)}
           />

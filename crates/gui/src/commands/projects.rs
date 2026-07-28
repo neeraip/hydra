@@ -26,6 +26,10 @@ pub struct ProjectInsights {
 pub struct Project {
     pub id: String,
     pub name: String,
+    /// Engine key from the `hydra::common` registry (`"wds"`, …). The
+    /// frontend resolves it against `list_engines`; an unresolvable key is
+    /// an explicit unsupported state, never a fallback.
+    pub engine: String,
     pub scenario_count: u32,
     pub state: String,
     pub modified_label: String,
@@ -122,6 +126,7 @@ pub fn create_project(
 
     let meta = meta::ProjectMeta {
         name,
+        engine: "wds".into(),
         source_crs: "EPSG:4326".into(),
         node_count,
         link_count,
@@ -875,6 +880,7 @@ fn project_to_dto(
         last_run_at_ms: last_run_at.and_then(epoch_secs_to_ms),
         id: id.to_string(),
         name: meta.name.clone(),
+        engine: meta.engine.clone(),
         scenario_count,
         state: state.into(),
         node_count: meta.node_count,
@@ -1259,6 +1265,15 @@ pub struct Versions {
 }
 
 #[tauri::command]
+/// The engine registry: every engine compiled into this build, in
+/// presentation order (hydra-common spec §2.2). The frontend derives all
+/// engine-identity presentation (label, pill, accent) from this instead of
+/// hardcoding it.
+pub fn list_engines() -> &'static [hydra::common::EngineDescriptor] {
+    hydra::common::ENGINES
+}
+
+#[tauri::command]
 /// Return the hydra engine and application version strings.
 pub fn get_versions() -> Versions {
     Versions {
@@ -1344,6 +1359,7 @@ mod tests {
     fn sample_meta(nodes: u32, links: u32) -> meta::ProjectMeta {
         meta::ProjectMeta {
             name: "test".into(),
+            engine: "wds".into(),
             source_crs: "EPSG:4326".into(),
             node_count: nodes,
             link_count: links,

@@ -30,6 +30,10 @@ export type ProjectInsights = {
 export interface Project {
   id: string;
   name: string;
+  /** Engine key from the registry (`"wds"`, …). Resolve presentation via
+   * `engineByKey`; an unresolvable key renders as unsupported, never as a
+   * default engine. */
+  engine: string;
   scenarioCount: number;
   state: ProjectState;
   modifiedLabel: string;

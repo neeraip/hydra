@@ -6,7 +6,6 @@ import {
   ACCENT,
   enqueueRuns,
   getSimParams,
-  PILL,
   type SimParams,
   useScenarios,
 } from "../../hooks";
@@ -119,7 +118,7 @@ export function RunModal() {
     scenariosVersion,
     showToast,
   } = useAppState();
-  const { project } = useActiveProject();
+  const { project, engine } = useActiveProject();
   const { editedScenarioIds } = useNetworkVersion();
 
   const dbScenarios = useScenarios(activeProjectId ?? null, scenariosVersion);
@@ -282,7 +281,7 @@ export function RunModal() {
               borderRadius: 4,
             }}
           >
-            {PILL}
+            {engine?.pill ?? "??"}
           </span>
           <div style={{ flex: 1 }}>
             <div
