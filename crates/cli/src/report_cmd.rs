@@ -118,9 +118,12 @@ pub fn run<I: IntoIterator<Item = String>>(args: I) -> i32 {
     };
 
     let results_path = Path::new(&cli.results);
-    let document = assemble(&template, context, |id, options| {
-        hydra::produce_report_block(id, results_path, &network, options)
-    });
+    let document = assemble(
+        &template,
+        hydra::report_catalog(),
+        context,
+        |id, options| hydra::produce_report_block(id, results_path, &network, options),
+    );
 
     let format = cli.format.unwrap_or_else(|| {
         match cli
