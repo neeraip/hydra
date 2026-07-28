@@ -7,6 +7,7 @@ mod artifact;
 mod binning;
 mod demand_reliability;
 mod errors;
+mod report_blocks;
 mod service_compliance;
 
 pub use artifact::{decode_analysis_artifact, encode_analysis_artifact, AnalysisBytesError};
@@ -22,6 +23,7 @@ pub use demand_reliability::{
     DemandReliabilitySummary,
 };
 pub use errors::AnalysisComputeError;
+pub use report_blocks::{produce_report_block, report_catalog};
 pub use service_compliance::{
     compute_service_compliance_from_out, ServiceComplianceNode, ServiceComplianceReport,
     ServiceComplianceSummary, ServiceComplianceThresholds,

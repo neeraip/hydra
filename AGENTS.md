@@ -8,7 +8,8 @@ Hydra is a water distribution network simulator written in Rust. It implements t
 
 | Crate | Owns | Does not own |
 |---|---|---|
-| `hydra-engine-wds` | Complete simulation engine: data model; INP/OUT/RPT parsers and writers; unit conversion; GGA hydraulic solver; Lagrangian quality engine; controls; timestep; accounting; session API (`Simulation`); post-simulation analytics; local filesystem reads for `.out`/analysis-artifact files via explicit path-based helpers (`io::out_reader`, `io::analysis_io`) | Interface logic; network I/O; any other filesystem I/O (INP model bytes are supplied in memory by callers) |
+| `hydra-common` | Foundation contracts shared by all engines and applications: engine identity (descriptor + registry) and the reportable-output contract (block catalog, neutral fragment model). Depends on nothing in the workspace | Any engine logic; presentation/rendering; shared element schemas and unit systems (deferred by design until a second engine exists) |
+| `hydra-engine-wds` | Complete simulation engine: data model; INP/OUT/RPT parsers and writers; unit conversion; GGA hydraulic solver; Lagrangian quality engine; controls; timestep; accounting; session API (`Simulation`); post-simulation analytics; report blocks implementing the `hydra-common` reportable-output contract; local filesystem reads for `.out`/analysis-artifact files via explicit path-based helpers (`io::out_reader`, `io::analysis_io`) | Interface logic; network I/O; any other filesystem I/O (INP model bytes are supplied in memory by callers) |
 | `hydra-sdk` | Curated public re-exports — the umbrella crate | Any new logic |
 | `hydra-cli` | CLI argument parsing; input source resolution; file I/O | All simulation logic |
 | `hydra-gui` | Tauri command surface; project/scenario persistence; background run queue; React frontend | Solver algorithms; session logic |
@@ -31,6 +32,7 @@ authoritative definition of Hydra's mathematical behaviour:
 
 | Spec file | Covers |
 |---|---|
+| `crates/common/src/spec.md` | Foundation contracts: engine identity/registry, reportable-output contract |
 | `crates/engine-wds/src/model/spec.md` | Network data model, unit system, INP/OUT/RPT formats |
 | `crates/engine-wds/src/hydraulics/spec.md` | GGA Newton-Raphson solver, valve models, demand models |
 | `crates/engine-wds/src/quality/spec.md` | Lagrangian transport, mixing, reactions, source tracing |
@@ -75,6 +77,14 @@ implementations live in its submodules). No separate spec files exist for those 
 ### Post-simulation analytics (hydra-engine-wds analysis)
 
 1. Update `crates/engine-wds/src/analysis/spec.md`.
+2. Only then write or change implementation code.
+
+### Foundation contracts (hydra-common)
+
+1. Update `crates/common/src/spec.md`. Keep the layer slim: no engine
+   vocabulary (result classes, element kinds) may enter these contracts —
+   engine-specific meaning travels only through opaque ids and
+   engine-authored text.
 2. Only then write or change implementation code.
 
 ### Facade (hydra-sdk)

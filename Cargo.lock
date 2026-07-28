@@ -1994,12 +1994,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "hydra-common"
+version = "2.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "hydra-engine-wds"
 version = "2.1.0"
 dependencies = [
  "approx",
  "chrono",
  "criterion",
+ "hydra-common",
  "hydra-engine-wds",
  "pretty_assertions",
  "rstest",
@@ -2033,6 +2042,7 @@ dependencies = [
 name = "hydra-sdk"
 version = "2.1.0"
 dependencies = [
+ "hydra-common",
  "hydra-engine-wds",
 ]
 

@@ -170,6 +170,17 @@ pub use hydra_engine_wds::write_inp;
 /// relative to an edited network topology.
 pub use hydra_engine_wds::compute_network_digest;
 
+// ── Foundation contracts ──────────────────────────────────────────────────────
+
+/// Engine identity (descriptor + registry) and the reportable-output
+/// contract shared by all engines and applications. See the `hydra-common`
+/// crate spec for the authoritative contract definition.
+pub use hydra_common as common;
+
+/// Report blocks the water-distribution engine can produce, per the
+/// `common` reportable-output contract.
+pub use hydra_engine_wds::{produce_report_block, report_catalog};
+
 #[cfg(test)]
 mod tests {
     use super::*;

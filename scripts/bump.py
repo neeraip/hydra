@@ -27,12 +27,23 @@ def main():
     cli = pathlib.Path("crates/cli/Cargo.toml")
     cli.write_text(re.sub(r'(hydra-sdk[^\n]+version = ")\d+\.\d+\.\d+"', rf'\g<1>{version}"', cli.read_text()))
 
-    # Update only the hydra-engine-wds dep pin in hydra-sdk.
+    # Update the hydra-engine-wds and hydra-common dep pins in hydra-sdk.
     sdk = pathlib.Path("crates/sdk/Cargo.toml")
-    sdk.write_text(re.sub(r'(hydra-engine-wds[^\n]+version = ")\d+\.\d+\.\d+"', rf'\g<1>{version}"', sdk.read_text()))
+    sdk_text = re.sub(r'(hydra-engine-wds[^\n]+version = ")\d+\.\d+\.\d+"', rf'\g<1>{version}"', sdk.read_text())
+    sdk.write_text(re.sub(r'(hydra-common[^\n]+version = ")\d+\.\d+\.\d+"', rf'\g<1>{version}"', sdk_text))
+
+    # Update only the hydra-common dep pin in hydra-engine-wds.
+    engine = pathlib.Path("crates/engine-wds/Cargo.toml")
+    engine.write_text(re.sub(r'(hydra-common[^\n]+version = ")\d+\.\d+\.\d+"', rf'\g<1>{version}"', engine.read_text()))
 
     commit_and_tag(
-        ["Cargo.toml", "Cargo.lock", "crates/cli/Cargo.toml", "crates/sdk/Cargo.toml"],
+        [
+            "Cargo.toml",
+            "Cargo.lock",
+            "crates/cli/Cargo.toml",
+            "crates/sdk/Cargo.toml",
+            "crates/engine-wds/Cargo.toml",
+        ],
         f"chore: bump library version to {version}",
         f"v{version}",
     )

@@ -1,0 +1,240 @@
+//! Reportable-output contract: block descriptors and the neutral fragment
+//! model (spec §3).
+//!
+//! Everything here is *data*, deliberately free of presentation (no colors,
+//! fonts, page geometry, or format hints) and free of engine knowledge. An
+//! engine's catalog describes what it can produce; fragments carry the
+//! materialized content of one block for one completed simulation; the
+//! report layer renders fragments without knowing which engine made them.
+
+use serde::{Deserialize, Serialize};
+
+/// Descriptor of one block in an engine's catalog (spec §3.2).
+///
+/// `id` is namespaced by engine key (`wds.pressure-summary`) and **never
+/// changes once released** — report templates reference it; removing or
+/// repurposing an id is a compatibility break on par with a file-format
+/// break.
+///
+/// Deliberately carries no result-class or prerequisite vocabulary: what a
+/// block needs from a simulation is the producing engine's internal
+/// concern, surfaced only through [`BlockError::Unavailable`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BlockDescriptor {
+    /// Stable namespaced identifier: `<engine>.<name>`.
+    pub id: &'static str,
+    /// Default human-facing heading.
+    pub title: &'static str,
+    /// What this block contains, for the template-builder UI.
+    pub summary: &'static str,
+}
+
+/// Kind of a [`Value`], used in column descriptors (spec §3.3).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ValueKind {
+    Number,
+    Integer,
+    Boolean,
+    Text,
+    Timestamp,
+}
+
+/// One typed value inside a fragment (spec §3.3). Unit strings are display
+/// text — a structured unit system in this layer is an explicit non-goal
+/// (spec §1).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "camelCase")]
+pub enum Value {
+    Number {
+        value: f64,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        unit: Option<String>,
+    },
+    Integer {
+        value: i64,
+    },
+    Boolean {
+        value: bool,
+    },
+    Text {
+        value: String,
+    },
+    /// RFC 3339 timestamp text.
+    Timestamp {
+        value: String,
+    },
+    /// Explicitly missing (rendered as a gap, not zero).
+    Absent,
+}
+
+impl Value {
+    /// The [`ValueKind`] this value belongs to; `None` for [`Value::Absent`],
+    /// which is valid under any column kind.
+    pub fn kind(&self) -> Option<ValueKind> {
+        match self {
+            Value::Number { .. } => Some(ValueKind::Number),
+            Value::Integer { .. } => Some(ValueKind::Integer),
+            Value::Boolean { .. } => Some(ValueKind::Boolean),
+            Value::Text { .. } => Some(ValueKind::Text),
+            Value::Timestamp { .. } => Some(ValueKind::Timestamp),
+            Value::Absent => None,
+        }
+    }
+}
+
+/// One (label, value) pair in a key-value list (spec §3.3).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KeyValue {
+    pub label: String,
+    pub value: Value,
+}
+
+/// Column descriptor of a table (spec §3.3).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Column {
+    pub name: String,
+    /// Unit display text applying to every value in this column.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub unit: Option<String>,
+    pub kind: ValueKind,
+}
+
+/// Column descriptors plus row-major values (spec §3.3).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Table {
+    pub columns: Vec<Column>,
+    pub rows: Vec<Vec<Value>>,
+}
+
+/// One item of a fragment (spec §3.3).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "camelCase")]
+pub enum FragmentItem {
+    KeyValues {
+        entries: Vec<KeyValue>,
+    },
+    Table {
+        table: Table,
+    },
+    /// Plain-text paragraph for caveats and methodological remarks.
+    Note {
+        text: String,
+    },
+}
+
+/// The materialized content of one block for one completed simulation
+/// (spec §3.1): a titled sequence of items.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Fragment {
+    pub title: String,
+    pub items: Vec<FragmentItem>,
+}
+
+/// Failure producing a block (spec §3.4). The report layer decides how an
+/// unavailable or failed block renders (placeholder, omission) — the
+/// engine never does, and the contract carries no engine vocabulary for
+/// *why* beyond the engine-authored reason text.
+#[derive(Debug, Clone, PartialEq)]
+pub enum BlockError {
+    /// The id is not in this engine's catalog.
+    UnknownBlock { id: String },
+    /// The block does not apply to this run — an expected condition, not a
+    /// fault. `reason` is engine-authored human-readable text.
+    Unavailable { reason: String },
+    /// Reading or deriving from the simulation artifacts failed.
+    Failed { message: String },
+}
+
+impl std::fmt::Display for BlockError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            BlockError::UnknownBlock { id } => write!(f, "unknown report block: {id:?}"),
+            BlockError::Unavailable { reason } => {
+                write!(f, "report block unavailable for this run: {reason}")
+            }
+            BlockError::Failed { message } => write!(f, "report block failed: {message}"),
+        }
+    }
+}
+
+impl std::error::Error for BlockError {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn value_serde_wire_shape_is_stable() {
+        // The JSON shape is a compatibility surface (templates, IPC):
+        // internally tagged with camelCase type names.
+        let v = Value::Number {
+            value: 1.5,
+            unit: Some("m".into()),
+        };
+        assert_eq!(
+            serde_json::to_string(&v).unwrap(),
+            r#"{"type":"number","value":1.5,"unit":"m"}"#
+        );
+        assert_eq!(
+            serde_json::to_string(&Value::Absent).unwrap(),
+            r#"{"type":"absent"}"#
+        );
+    }
+
+    #[test]
+    fn fragment_round_trips_through_json() {
+        let fragment = Fragment {
+            title: "Run Summary".into(),
+            items: vec![
+                FragmentItem::KeyValues {
+                    entries: vec![KeyValue {
+                        label: "Junctions".into(),
+                        value: Value::Integer { value: 42 },
+                    }],
+                },
+                FragmentItem::Table {
+                    table: Table {
+                        columns: vec![Column {
+                            name: "Quantity".into(),
+                            unit: None,
+                            kind: ValueKind::Text,
+                        }],
+                        rows: vec![vec![Value::Text {
+                            value: "Pressure".into(),
+                        }]],
+                    },
+                },
+                FragmentItem::Note {
+                    text: "Sampled.".into(),
+                },
+            ],
+        };
+        let json = serde_json::to_string(&fragment).unwrap();
+        let back: Fragment = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, fragment);
+    }
+
+    #[test]
+    fn value_kind_mapping() {
+        assert_eq!(Value::Integer { value: 1 }.kind(), Some(ValueKind::Integer));
+        assert_eq!(Value::Absent.kind(), None);
+    }
+
+    #[test]
+    fn block_error_messages_are_descriptive() {
+        let e = BlockError::Unavailable {
+            reason: "the run has no water-quality results".into(),
+        };
+        assert!(e.to_string().contains("no water-quality results"));
+        let e = BlockError::UnknownBlock {
+            id: "wds.nope".into(),
+        };
+        assert!(e.to_string().contains("wds.nope"));
+    }
+}

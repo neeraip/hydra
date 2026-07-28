@@ -1,0 +1,20 @@
+[package]
+name = "hydra-common"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+publish = true
+repository.workspace = true
+homepage.workspace = true
+documentation.workspace = true
+description = "Hydra foundation contracts — engine identity and reportable-output interfaces shared by all engines and applications"
+readme = "README.md"
+keywords = ["water", "hydraulics", "simulation", "engine"]
+categories = ["science", "simulation"]
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+
+[dev-dependencies]
+serde_json = "1"

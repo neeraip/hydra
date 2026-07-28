@@ -120,3 +120,55 @@ See `encode_analysis_artifact` for the stale-on-edit invalidation rule.
 See `estimate_simulation_runtime` in `simulation/estimator.rs` for the cost
 model and determinism guarantee. Inputs: node count, link count, period count,
 and selected analysis modules. Output: `RuntimeEstimate` (`Low`/`Medium`/`High`).
+
+---
+
+## 7. Report Blocks
+
+The analysis module implements the foundation layer's reportable-output
+contract (hydra-common spec §3) for the water-distribution engine: a
+statically-queryable catalog of blocks, and deterministic production of
+neutral content fragments for one completed simulation.
+
+### 7.1 Catalog (v1)
+
+| Block id | Content | Available when |
+|---|---|---|
+| `wds.run-summary` | Network size (junction / tank-and-reservoir / link / pump counts), reporting window (start, step, final report time, period count), flow and pressure units, quality mode. | always |
+| `wds.result-extremes` | Global minimum and maximum of nodal pressure, head, and demand, and of link flow and velocity — plus quality when present — over the reporting horizon. | the file holds ≥ 1 reporting period |
+| `wds.pump-energy` | Per-pump table: utilization, average efficiency, average and peak power, average daily cost; plus the network demand charge. | the network has ≥ 1 pump |
+| `wds.quality-summary` | Quality mode and global quality extremes with the mode's display unit. | the run produced water-quality results |
+
+Availability is this engine's internal concern — the foundation contract
+carries no result-class vocabulary; an inapplicable block fails production
+with the neutral "unavailable" error and a human-readable reason.
+
+Block ids are stable per the foundation contract: removing or repurposing an
+id is a compatibility break.
+
+### 7.2 Production contract
+
+**Inputs:** the persisted `.out` results file and the corresponding loaded
+network. Counts and result values come from the `.out` file
+(result-authoritative); element identifiers and declared display units come
+from the network. Production is read-only and deterministic: identical
+inputs always yield identical fragments.
+
+**Extremes sampling:** `wds.result-extremes` and the quality extremes reuse
+the sampled range scan (§4-adjacent `scan_ranges`; at most 2048 sampled
+periods including the first and last). When the file holds more periods than
+the sample budget, the fragment carries a note disclosing sampling; below
+the budget, the scan is exhaustive.
+
+**Units:** unit labels are display text per the foundation contract. Flow
+and demand carry the network's declared flow unit; pressure, head, and
+velocity carry the unit-system-appropriate label (SI: m, m, m/s;
+US customary: psi, ft, ft/s). Quality carries mg/L (chemical — the file
+default), hours (age), or % (trace). Cost values carry no unit (currency
+is not modelled).
+
+**Errors:** unknown ids map to the foundation contract's unknown-block
+error; inapplicable blocks (`wds.pump-energy` with zero pumps,
+`wds.quality-summary` for a hydraulics-only file) map to its unavailable
+error with a reason; read failures map to its failed error. The engine
+never renders placeholders — that is the report layer's decision.
