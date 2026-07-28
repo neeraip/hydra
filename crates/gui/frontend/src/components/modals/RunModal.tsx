@@ -6,6 +6,7 @@ import {
   ACCENT,
   enqueueRuns,
   getSimParams,
+  projectHasNetwork,
   type SimParams,
   useScenarios,
 } from "../../hooks";
@@ -145,7 +146,12 @@ export function RunModal() {
     new Set([activeScenarioId]),
   );
   const [params, setParams] = useState<SimParams | null>(null);
+  // Tracked separately from `params`, because a null `params` means both
+  // "still fetching" and "this project has no model" — and conflating them
+  // left an empty project showing "Loading…" forever.
+  const [paramsLoading, setParamsLoading] = useState(false);
   const checkedIds = useMemo(() => [...checked], [checked]);
+  const hasNetwork = projectHasNetwork(project);
 
   // When the modal opens, reset the checklist to just the active scenario.
   useEffect(() => {
@@ -157,9 +163,14 @@ export function RunModal() {
   useEffect(() => {
     if (!runModalOpen || !activeProjectId) return;
     let cancelled = false;
-    getSimParams(activeProjectId).then((p) => {
-      if (!cancelled) setParams(p);
-    });
+    setParamsLoading(true);
+    getSimParams(activeProjectId)
+      .then((p) => {
+        if (!cancelled) setParams(p);
+      })
+      .finally(() => {
+        if (!cancelled) setParamsLoading(false);
+      });
     return () => {
       cancelled = true;
     };
@@ -197,7 +208,9 @@ export function RunModal() {
 
   const runShortcut = formatShortcut([primaryModifierLabel(), "Enter"]);
 
-  const canRun = params != null && checkedIds.length > 0;
+  // A project with no network has nothing to simulate — the engine would be
+  // handed an empty model and fail at parse time.
+  const canRun = hasNetwork && params != null && checkedIds.length > 0;
   const allChecked = scenarios.every((s) => checked.has(s.id));
 
   function toggleScenario(id: string | null) {
@@ -316,6 +329,30 @@ export function RunModal() {
 
         {/* Body */}
         <div style={{ flex: 1, overflowY: "auto", padding: "16px 20px" }}>
+          {!hasNetwork && (
+            <div
+              style={{
+                display: "flex",
+                gap: 10,
+                alignItems: "flex-start",
+                background: "var(--bg-card)",
+                border: "1px solid var(--border)",
+                borderRadius: 6,
+                padding: "10px 12px",
+                marginBottom: 16,
+                fontSize: 12,
+                color: "var(--text-secondary)",
+                lineHeight: 1.6,
+              }}
+            >
+              <span style={{ flexShrink: 0, fontSize: 14 }}>ℹ</span>
+              <span>
+                This project has no network yet. Import a model file or build
+                one in the editor before running a simulation.
+              </span>
+            </div>
+          )}
+
           {/* Scenario checklist */}
           <div style={{ marginBottom: 16 }}>
             <div
@@ -435,7 +472,11 @@ export function RunModal() {
             <SummaryGrid params={params} />
           ) : (
             <div style={{ fontSize: 12, color: "var(--text-tertiary)" }}>
-              {activeProjectId ? "Loading…" : "No project selected."}
+              {!activeProjectId
+                ? "No project selected."
+                : paramsLoading
+                  ? "Loading…"
+                  : "Unavailable — this project has no network yet."}
             </div>
           )}
         </div>

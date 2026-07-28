@@ -20,6 +20,8 @@ import {
   enqueueRuns,
   fetchProjectsShared,
   getVersions,
+  type Project,
+  projectHasNetwork,
   reconcileProjects,
   type SimParams,
   updateSimParams,
@@ -214,5 +216,43 @@ describe("fetchProjectsShared", () => {
     mockInvoke.mockResolvedValueOnce([]);
     await fetchProjectsShared();
     expect(mockInvoke).toHaveBeenCalledTimes(2);
+  });
+});
+
+// ── projectHasNetwork ────────────────────────────────────────────────────────
+
+describe("projectHasNetwork", () => {
+  const base: Project = {
+    id: "p1",
+    name: "Test",
+    engine: "wds",
+    scenarioCount: 0,
+    state: "draft",
+    modifiedLabel: "Just now",
+    nodeCount: 0,
+    linkCount: 0,
+    sourceCrs: "EPSG:4326",
+    insights: null,
+    folderMissing: false,
+  };
+
+  it("is false for a project created without importing a model", () => {
+    expect(projectHasNetwork(base)).toBe(false);
+  });
+
+  it("is false when there is no project at all", () => {
+    expect(projectHasNetwork(null)).toBe(false);
+  });
+
+  it("is true once the project has elements", () => {
+    expect(projectHasNetwork({ ...base, nodeCount: 2, linkCount: 1 })).toBe(
+      true,
+    );
+  });
+
+  it("counts links alone as a network", () => {
+    // Defensive: a model that parses always has nodes, so this shape should
+    // not occur — but reading it as "empty" would hide a real network.
+    expect(projectHasNetwork({ ...base, linkCount: 1 })).toBe(true);
   });
 });

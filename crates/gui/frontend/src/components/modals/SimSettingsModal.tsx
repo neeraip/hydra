@@ -89,6 +89,9 @@ export function SimSettingsModal() {
   const [original, setOriginal] = useState<SimParams | null>(null);
   const [draft, setDraft] = useState<SimParams | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
+  // Distinct from `original === null`, which also means "no model on disk" —
+  // without this the modal claims to be loading forever on an empty project.
+  const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
 
   // (Re)load params whenever the modal opens or the project changes — the model
@@ -99,6 +102,7 @@ export function SimSettingsModal() {
     setLoadError(null);
     setOriginal(null);
     setDraft(null);
+    setLoading(true);
     getSimParams(activeProjectId)
       .then((p) => {
         if (cancelled) return;
@@ -107,6 +111,9 @@ export function SimSettingsModal() {
       })
       .catch((e) => {
         if (!cancelled) setLoadError(String(e));
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
       });
     return () => {
       cancelled = true;
@@ -260,9 +267,11 @@ export function SimSettingsModal() {
             <Empty>Could not read simulation settings: {loadError}</Empty>
           ) : original === null || draft === null ? (
             <Empty>
-              {activeProjectId
-                ? "Loading… (import or create a model to configure simulation settings)"
-                : "No project selected."}
+              {!activeProjectId
+                ? "No project selected."
+                : loading
+                  ? "Loading…"
+                  : "This project has no network yet. Import a model file or build one in the editor to configure simulation settings."}
             </Empty>
           ) : (
             <SettingsBody draft={draft} update={update} sys={sys} />

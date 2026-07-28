@@ -230,6 +230,17 @@ export function NewProjectWizard({ onClose }: Props) {
             </div>
 
             <div style={fieldLabelStyle}>Source model (optional)</div>
+            <p
+              style={{
+                fontSize: 12,
+                color: "var(--text-tertiary)",
+                margin: "-2px 0 8px",
+                lineHeight: 1.6,
+              }}
+            >
+              Skip this to start from a single reservoir and build the network
+              in the editor.
+            </p>
 
             <div
               style={{
@@ -403,12 +414,11 @@ export function NewProjectWizard({ onClose }: Props) {
                   >
                     {engine.label}
                   </span>
-                  {fileDetected && (
-                    <span className="badge">
-                      {detectedNodeCount.toLocaleString()} nodes
-                    </span>
-                  )}
-                  <span className="badge">Draft</span>
+                  <span className="badge">
+                    {fileDetected
+                      ? `${detectedNodeCount.toLocaleString()} nodes`
+                      : "Starter network"}
+                  </span>
                 </div>
               </div>
             </div>

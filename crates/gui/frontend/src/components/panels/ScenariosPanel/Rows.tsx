@@ -22,11 +22,14 @@ export function BaseRow({
   accent,
   onActivate,
   onNewScenario,
+  canBranch,
 }: {
   isActive: boolean;
   accent: string;
   onActivate: () => void;
   onNewScenario: () => void;
+  /** False while the project has no network — there is nothing to branch. */
+  canBranch: boolean;
 }) {
   return (
     <div
@@ -79,7 +82,9 @@ export function BaseRow({
         <div
           style={{ fontSize: 11, color: "var(--text-tertiary)", marginTop: 2 }}
         >
-          Canonical network. All scenarios branch from here.
+          {canBranch
+            ? "Canonical network. All scenarios branch from here."
+            : "No network yet. Import a model file or build one in the editor."}
         </div>
       </div>
 
@@ -97,13 +102,20 @@ export function BaseRow({
       <button
         type="button"
         onClick={onNewScenario}
+        disabled={!canBranch}
         style={{
           ...rowButtonStyle,
           display: "inline-flex",
           alignItems: "center",
           gap: 4,
+          opacity: canBranch ? 1 : 0.45,
+          cursor: canBranch ? "pointer" : "default",
         }}
-        data-tooltip="Create a new scenario branching from the base model"
+        data-tooltip={
+          canBranch
+            ? "Create a new scenario branching from the base model"
+            : "The base model has no network to branch from"
+        }
       >
         <PlusIcon style={{ width: 10, height: 10 }} />
         New scenario

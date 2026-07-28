@@ -14,6 +14,7 @@ import {
   deleteScenario,
   enqueueRuns,
   openScenarioFolder,
+  projectHasNetwork,
   renameScenario,
   useScenarios,
 } from "../../hooks";
@@ -30,6 +31,10 @@ export function ScenariosPanel({
   showHeader?: boolean;
 }) {
   const { project, accent } = useActiveProject();
+  // A scenario is a variant of the base model, so an empty project has
+  // nothing to branch. The backend refuses too — this only keeps the UI from
+  // offering an action that can only fail.
+  const hasNetwork = projectHasNetwork(project);
   const {
     showToast,
     activeScenarioId,
@@ -223,6 +228,10 @@ export function ScenariosPanel({
               setCreateParentId(null);
               setCreating(true);
             }}
+            disabled={!hasNetwork}
+            data-tooltip={
+              hasNetwork ? undefined : "This project has no network to branch"
+            }
             style={{
               display: "inline-flex",
               alignItems: "center",
@@ -234,7 +243,8 @@ export function ScenariosPanel({
               color: accent,
               fontSize: 12,
               fontWeight: 500,
-              cursor: "pointer",
+              cursor: hasNetwork ? "pointer" : "default",
+              opacity: hasNetwork ? 1 : 0.45,
               fontFamily: "var(--font-ui)",
             }}
           >
@@ -263,6 +273,7 @@ export function ScenariosPanel({
               setCreateParentId(null);
               setCreating(true);
             }}
+            canBranch={hasNetwork}
           />
 
           {/* Inline create row (when branching from base) */}
@@ -291,26 +302,30 @@ export function ScenariosPanel({
               }}
             >
               No named scenarios yet.{" "}
-              <button
-                type="button"
-                onClick={() => {
-                  setCreateParentId(null);
-                  setCreating(true);
-                }}
-                style={{
-                  background: "none",
-                  border: "none",
-                  color: accent,
-                  cursor: "pointer",
-                  fontSize: 13,
-                  padding: 0,
-                  fontFamily: "var(--font-ui)",
-                  textDecoration: "underline",
-                  textUnderlineOffset: 2,
-                }}
-              >
-                Create one from the base model.
-              </button>
+              {!hasNetwork ? (
+                "Import or build a network first."
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCreateParentId(null);
+                    setCreating(true);
+                  }}
+                  style={{
+                    background: "none",
+                    border: "none",
+                    color: accent,
+                    cursor: "pointer",
+                    fontSize: 13,
+                    padding: 0,
+                    fontFamily: "var(--font-ui)",
+                    textDecoration: "underline",
+                    textUnderlineOffset: 2,
+                  }}
+                >
+                  Create one from the base model.
+                </button>
+              )}
             </div>
           )}
 

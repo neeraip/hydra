@@ -52,6 +52,30 @@ export interface Project {
   folderMissing: boolean;
 }
 
+/**
+ * Whether the project has a network at all.
+ *
+ * A project created without importing a source model has no `model.inp` on
+ * disk — the wizard's "start with an empty network" path produces exactly
+ * that, and it is a normal resting state, not a broken one. Nearly
+ * everything downstream (running, scenarios, settings, export, reports)
+ * needs a network to act on, so each of those has to ask this question
+ * before offering itself.
+ *
+ * Element counts are the signal because a model that parses always has at
+ * least one node: parse-time validation rejects a network with no source
+ * (`NoReservoir`). So "zero elements" and "no model file" coincide, and the
+ * counts are already on every `Project` — no extra round-trip.
+ *
+ * This inference lives here, once, rather than as scattered
+ * `nodeCount === 0` checks whose intent would have to be re-derived at every
+ * call site.
+ */
+export function projectHasNetwork(project: Project | null): boolean {
+  if (project === null) return false;
+  return project.nodeCount > 0 || project.linkCount > 0;
+}
+
 export interface CustomCrsDef {
   label: string;
   epsg: string;

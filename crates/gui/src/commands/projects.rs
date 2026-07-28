@@ -108,11 +108,56 @@ fn require_available_engine(key: &str) -> Result<&'static hydra::common::EngineD
     Ok(descriptor)
 }
 
-/// Persist a new project. Called from the frontend's "New Project" wizard
-/// once a network has been loaded into [`NetworkState`]. The INP bytes
-/// currently held in managed state are copied into the bundle as the
-/// project's canonical base model so the bundle is self-contained on disk
-/// even if the original source file is later moved or deleted.
+/// The model a project starts from when the user imports nothing.
+///
+/// Hydra cannot represent a network with *no* elements: validation requires
+/// at least one fixed-grade node, so a truly empty model fails to parse
+/// (`NoReservoir`) and a project with no `model.inp` at all has no in-memory
+/// network for the editor to mutate — which is why adding a junction to one
+/// used to fail outright.
+///
+/// A single reservoir is therefore the smallest thing that is a network. It
+/// is also the right one to hand someone: a distribution model needs a
+/// source, so this is the element they would have had to draw first anyway.
+/// Everything downstream — the editor, simulation settings, scenarios,
+/// export, the topology digest — then works on a new project with no special
+/// cases.
+///
+/// LPS/H-W because the GUI presents SI throughout; `Duration 0` starts the
+/// project as a single-period steady-state run, the cheapest thing to solve
+/// while a model is still being drawn. The project's own name is
+/// deliberately NOT written as the `[TITLE]`: it is user input, and a name
+/// beginning with `[` would open a section and inject content into the file.
+const STARTER_INP: &[u8] = b"\
+[RESERVOIRS]
+;ID   Head
+ R1   100
+
+[COORDINATES]
+;Node X    Y
+ R1   0    0
+
+[OPTIONS]
+ Units      LPS
+ Headloss   H-W
+
+[TIMES]
+ Duration   0
+
+[END]
+";
+
+/// Node count of [`STARTER_INP`]. Asserted against the parsed model in
+/// `starter_inp_is_a_valid_minimal_network`, so the two cannot drift.
+const STARTER_NODE_COUNT: u32 = 1;
+
+/// Persist a new project. Called from the frontend's "New Project" wizard.
+///
+/// The INP bytes currently held in managed state are copied into the bundle
+/// as the project's canonical base model, so the bundle is self-contained on
+/// disk even if the original source file is later moved or deleted. When
+/// nothing was imported, [`STARTER_INP`] is written instead — a project
+/// always has a model.
 #[tauri::command(async)]
 /// Create a new project directory with `meta.json` and `base/` subdirectories.
 pub fn create_project(
@@ -131,16 +176,21 @@ pub fn create_project(
 
     // Snapshot the currently loaded network (if any). `up_to_date_raw_bytes`
     // re-serialises first when in-memory edits have not been flushed yet.
-    let (inp_bytes, node_count, link_count) = {
+    let imported = {
         let mut guard = state.0.lock();
         let bytes = guard.up_to_date_raw_bytes().cloned();
-        match &*guard {
-            NetworkStateInner::Loaded { dto, .. } => {
-                (bytes, dto.nodes.len() as u32, dto.links.len() as u32)
+        match (&*guard, bytes) {
+            (NetworkStateInner::Loaded { dto, .. }, Some(bytes)) => {
+                Some((bytes, dto.nodes.len() as u32, dto.links.len() as u32))
             }
-            NetworkStateInner::Empty => (None, 0, 0),
+            _ => None,
         }
     };
+    // Counts must describe the bytes actually written, starter model included
+    // — they are what `state` ("draft" vs "ready") and every has-a-network
+    // check downstream are derived from.
+    let (inp_bytes, node_count, link_count) =
+        imported.unwrap_or_else(|| (STARTER_INP.to_vec(), STARTER_NODE_COUNT, 0));
 
     let project_dir = bundle::project_dir(&app_data, &id);
     let base_dir = bundle::base_dir(&app_data, &id);
@@ -158,10 +208,8 @@ pub fn create_project(
     };
     meta::write_project_meta(&project_dir, &meta)?;
 
-    if let Some(bytes) = inp_bytes {
-        bundle::atomic_write(&bundle::base_model_path(&app_data, &id), &bytes)
-            .map_err(|e| e.to_string())?;
-    }
+    bundle::atomic_write(&bundle::base_model_path(&app_data, &id), &inp_bytes)
+        .map_err(|e| e.to_string())?;
 
     let modified_at = meta::mtime_secs(&bundle::base_model_path(&app_data, &id))
         .or_else(|| meta::mtime_secs(&project_dir))
@@ -680,8 +728,10 @@ pub fn create_scenario(
         validate_id(pid)?;
     }
     let app_data = app_data_dir(&app)?;
-    let id = uuid::Uuid::new_v4().to_string();
 
+    let src = scenario_source_model(&app_data, &project_id, parent_scenario_id.as_deref())?;
+
+    let id = uuid::Uuid::new_v4().to_string();
     let sc_dir = bundle::scenario_dir(&app_data, &project_id, &id);
     std::fs::create_dir_all(&sc_dir).map_err(|e| e.to_string())?;
 
@@ -691,17 +741,40 @@ pub fn create_scenario(
     };
     meta::write_scenario_meta(&sc_dir, &sc_meta)?;
 
-    // Copy the parent model (or base model) into the new scenario directory.
-    let src = match &parent_scenario_id {
-        Some(pid) => bundle::scenario_model_path(&app_data, &project_id, pid),
-        None => bundle::base_model_path(&app_data, &project_id),
-    };
-    if src.exists() {
-        let dest = bundle::scenario_model_path(&app_data, &project_id, &id);
-        std::fs::copy(&src, &dest).map_err(|e| e.to_string())?;
-    }
+    let dest = bundle::scenario_model_path(&app_data, &project_id, &id);
+    std::fs::copy(&src, &dest).map_err(|e| e.to_string())?;
 
     Ok(scenario_meta_to_dto(&id, &project_id, &sc_meta, "not-run"))
+}
+
+/// Resolve the model a new scenario branches from — the parent scenario's,
+/// or the base model — failing when there is none.
+///
+/// A scenario is a variant of a model, so there has to be a model to vary.
+/// Branching a project with none used to succeed and silently skip the copy,
+/// producing a scenario with no model of its own: indistinguishable on disk
+/// from the empty parent it came from, and equally unrunnable. Refusing is
+/// the honest answer, and it keeps an empty project from quietly growing a
+/// tree of empty children.
+fn scenario_source_model(
+    app_data: &std::path::Path,
+    project_id: &str,
+    parent_scenario_id: Option<&str>,
+) -> Result<std::path::PathBuf, String> {
+    let src = match parent_scenario_id {
+        Some(pid) => bundle::scenario_model_path(app_data, project_id, pid),
+        None => bundle::base_model_path(app_data, project_id),
+    };
+    if !src.exists() {
+        return Err(match parent_scenario_id {
+            Some(_) => "That scenario has no network to branch from".to_string(),
+            None => {
+                "This project has no network yet — import or build one before creating scenarios"
+                    .to_string()
+            }
+        });
+    }
+    Ok(src)
 }
 
 fn scenario_meta_to_dto(
@@ -1342,6 +1415,67 @@ mod tests {
         let err = require_available_engine("zzz").unwrap_err();
         assert!(err.contains("unknown engine"), "got: {err}");
         assert!(!err.contains("not available yet"), "got: {err}");
+    }
+
+    // ── starter model ────────────────────────────────────────────────────
+
+    #[test]
+    fn starter_inp_is_a_valid_minimal_network() {
+        // The whole point of the starter model is that it parses: a project
+        // written with a model that does not load is worse than no model.
+        let network = hydra::io::parse(STARTER_INP).expect("starter model must parse");
+        assert_eq!(network.nodes.len() as u32, STARTER_NODE_COUNT);
+        assert_eq!(network.links.len(), 0);
+        assert!(
+            matches!(network.nodes[0].kind, hydra::NodeKind::Reservoir(_)),
+            "the starter node must be a fixed-grade source, or validation fails"
+        );
+        // Coordinates matter: a node the canvas cannot place is a node the
+        // user cannot see or build from.
+        assert!(network.coordinates.contains_key(&network.nodes[0].base.id));
+    }
+
+    #[test]
+    fn a_lone_junction_would_not_have_been_a_valid_starter() {
+        // Records why the starter is a reservoir rather than the junction one
+        // might reach for first: an unreachable junction fails validation, so
+        // "one junction" is not a smaller valid model — it is an invalid one.
+        let inp = b"[JUNCTIONS]\n J1  10\n\n[OPTIONS]\n Units LPS\n\n[END]\n";
+        assert!(hydra::io::parse(inp).is_err());
+    }
+
+    #[test]
+    fn the_starter_model_round_trips_through_a_write() {
+        // The editor re-serialises the in-memory network on save, so a
+        // starter that cannot survive parse → write → parse would break on
+        // the user's first edit.
+        let network = hydra::io::parse(STARTER_INP).unwrap();
+        let written = hydra::io::write_inp(&network);
+        let reparsed = hydra::io::parse(&written).expect("re-serialised model must load");
+        assert_eq!(reparsed.nodes.len(), network.nodes.len());
+        assert_eq!(reparsed.coordinates, network.coordinates);
+    }
+
+    // ── scenario branching ───────────────────────────────────────────────
+
+    #[test]
+    fn a_scenario_cannot_branch_from_a_project_with_no_network() {
+        let dir = tempfile::tempdir().unwrap();
+
+        // Empty project: base model absent.
+        let err = scenario_source_model(dir.path(), "p1", None).unwrap_err();
+        assert!(err.contains("no network yet"), "got: {err}");
+
+        // Same for branching a scenario that has no model of its own.
+        let err = scenario_source_model(dir.path(), "p1", Some("s1")).unwrap_err();
+        assert!(err.contains("no network to branch"), "got: {err}");
+
+        // With a base model present, branching resolves to it.
+        bundle::atomic_write(&bundle::base_model_path(dir.path(), "p1"), b"[JUNCTIONS]\n").unwrap();
+        assert_eq!(
+            scenario_source_model(dir.path(), "p1", None).unwrap(),
+            bundle::base_model_path(dir.path(), "p1")
+        );
     }
 
     // ── project_to_dto state derivation ──────────────────────────────────
