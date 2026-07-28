@@ -6,6 +6,7 @@ import { useCanvasSelection } from "../../canvas/selection-context";
 import {
   type Command,
   type CommandCategory,
+  deleteSimulation,
   formatInpImportError,
   type Link,
   type Node,
@@ -16,7 +17,7 @@ import {
   useProjects,
   useScenarios,
 } from "../../hooks";
-import { tryInvoke } from "../../hooks/ipc";
+import { formatIpcError, tryInvoke } from "../../hooks/ipc";
 import {
   formatPrimaryShortcut,
   formatShortcut,
@@ -163,6 +164,8 @@ export function CommandPalette() {
     setActiveScenarioId,
     projectsVersion,
     scenariosVersion,
+    bumpProjects,
+    bumpScenarios,
   } = useAppState();
 
   const projects = useProjects(projectsVersion);
@@ -184,7 +187,7 @@ export function CommandPalette() {
     zoomToNode,
     zoomToLink,
   } = useCanvasSelection();
-  const { resultMeta } = useSimulation();
+  const { resultMeta, setResultMeta, setPumpEnergy } = useSimulation();
   const { bumpNetwork } = useNetworkVersion();
 
   const [query, setQuery] = useState("");
@@ -317,6 +320,13 @@ export function CommandPalette() {
                 id: "a-export-csv",
                 label: "Export results as CSV…",
                 description: "Save the simulation results as a CSV file",
+                category: "Actions",
+              } satisfies DynamicCommand,
+              {
+                id: "a-clear-results",
+                label: "Clear simulation results",
+                description:
+                  "Return the active scenario to an unsimulated state",
                 category: "Actions",
               } satisfies DynamicCommand,
             ]
@@ -556,6 +566,31 @@ export function CommandPalette() {
       }
       if (cmd.id === "p-tasks") {
         toggleTaskTray();
+        return;
+      }
+
+      // ── Clear the active target's results ──────────────────────────────
+      if (cmd.id === "a-clear-results") {
+        if (!activeProjectId) return;
+        deleteSimulation(activeProjectId, activeScenarioId)
+          .then((cleared) => {
+            bumpScenarios();
+            bumpProjects();
+            // Always the active target here, so the loaded metadata is
+            // always the one just deleted.
+            setResultMeta(null);
+            setPumpEnergy(null);
+            showToast(
+              cleared ? "Simulation results cleared" : "No results to clear",
+              cleared ? "success" : "info",
+            );
+          })
+          .catch((err) => {
+            showToast(
+              `Could not clear results: ${formatIpcError(err)}`,
+              "error",
+            );
+          });
         return;
       }
 
@@ -806,6 +841,10 @@ export function CommandPalette() {
       activeProjectId,
       activeProjectEngine,
       activeScenarioId,
+      bumpProjects,
+      bumpScenarios,
+      setResultMeta,
+      setPumpEnergy,
       setActiveScenarioId,
       setPage,
       setProjectView,

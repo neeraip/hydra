@@ -10,6 +10,7 @@ use super::binary_codec::{encode_network_snapshot, encode_network_snapshot_absen
 use super::network_dto::{
     format_inp_parse_error, network_to_dto, NetworkDto, NetworkState, NetworkStateInner,
 };
+use super::simulation::try_acquire_run_target;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -568,6 +569,39 @@ pub(crate) fn results_path_for(
     match scenario_id {
         Some(sid) => bundle::scenario_results_path(app_data, project_id, sid),
         None => bundle::base_results_path(app_data, project_id),
+    }
+}
+
+/// Delete a target's simulation results, returning it to its unsimulated
+/// state. Returns `true` when a results file was removed, `false` when the
+/// target had none (already unsimulated — not an error, so repeating the
+/// action is harmless).
+///
+/// `results.out` is the *only* artifact a run produces, and every derived
+/// notion of "simulated" is read back from it: the project and scenario sim
+/// state, the last-run timestamp, result metadata, and the analytics cache
+/// (keyed on the file's path, length and mtime, so its entries can never
+/// match a later file). Removing it is therefore the whole operation — there
+/// is no second place where a stale "simulated" flag could survive.
+///
+/// The run lock is taken first. Deleting the file out from under a running
+/// simulation would leave the queue writing to an unlinked inode and report
+/// success for results nobody can read.
+#[tauri::command(async)]
+/// Delete a project or scenario's `results.out`, returning it to "not-run".
+pub fn delete_simulation(
+    app: tauri::AppHandle,
+    project_id: String,
+    scenario_id: Option<String>,
+) -> Result<bool, String> {
+    validate_target_ids(&project_id, scenario_id.as_deref())?;
+    let app_data = app_data_dir(&app)?;
+    let _run_guard = try_acquire_run_target(&project_id, scenario_id.as_deref())?;
+    let path = results_path_for(&app_data, &project_id, scenario_id.as_deref());
+    match std::fs::remove_file(&path) {
+        Ok(()) => Ok(true),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(e) => Err(format!("Cannot delete simulation results: {e}")),
     }
 }
 
@@ -1415,6 +1449,49 @@ mod tests {
         let err = require_available_engine("zzz").unwrap_err();
         assert!(err.contains("unknown engine"), "got: {err}");
         assert!(!err.contains("not available yet"), "got: {err}");
+    }
+
+    // ── deleting simulation results ──────────────────────────────────────
+
+    #[test]
+    fn sim_state_follows_the_results_file_both_ways() {
+        // `delete_simulation` removes exactly one file, which works only
+        // because every notion of "simulated" is read back from that file's
+        // existence. This pins that relationship: if a second source of
+        // truth for sim state ever appears, deleting results.out would stop
+        // being enough and this test is where it should be noticed.
+        let dir = tempfile::tempdir().unwrap();
+        let path = results_path_for(dir.path(), "p1", None);
+        assert_eq!(meta::sim_state_from_results(&path), "not-run");
+
+        bundle::atomic_write(&path, b"fake results").unwrap();
+        assert_eq!(meta::sim_state_from_results(&path), "done");
+
+        std::fs::remove_file(&path).unwrap();
+        assert_eq!(meta::sim_state_from_results(&path), "not-run");
+    }
+
+    #[test]
+    fn deleting_results_is_idempotent_and_scenario_scoped() {
+        let dir = tempfile::tempdir().unwrap();
+        let base = results_path_for(dir.path(), "p1", None);
+        let scenario = results_path_for(dir.path(), "p1", Some("s1"));
+        bundle::atomic_write(&base, b"base results").unwrap();
+        bundle::atomic_write(&scenario, b"scenario results").unwrap();
+
+        // Clearing one target must not touch its siblings — the command
+        // resolves a single path, and these are the paths it resolves.
+        assert_ne!(base, scenario);
+        std::fs::remove_file(&scenario).unwrap();
+        assert!(base.exists(), "base results must survive");
+        assert_eq!(meta::sim_state_from_results(&scenario), "not-run");
+
+        // Second delete finds nothing; the command reports `false` rather
+        // than failing, so repeating the action is harmless.
+        assert_eq!(
+            std::fs::remove_file(&scenario).unwrap_err().kind(),
+            std::io::ErrorKind::NotFound
+        );
     }
 
     // ── starter model ────────────────────────────────────────────────────

@@ -1,5 +1,6 @@
 import {
   ArrowTurnDownRightIcon,
+  ArrowUturnLeftIcon,
   CheckIcon,
   FolderOpenIcon,
   PencilIcon,
@@ -23,6 +24,8 @@ export function BaseRow({
   onActivate,
   onNewScenario,
   canBranch,
+  simulated,
+  onClearResults,
 }: {
   isActive: boolean;
   accent: string;
@@ -30,6 +33,9 @@ export function BaseRow({
   onNewScenario: () => void;
   /** False while the project has no network — there is nothing to branch. */
   canBranch: boolean;
+  /** Whether the base model currently holds simulation results. */
+  simulated: boolean;
+  onClearResults: () => void;
 }) {
   return (
     <div
@@ -99,6 +105,17 @@ export function BaseRow({
         </button>
       )}
 
+      {simulated && (
+        <button
+          type="button"
+          onClick={onClearResults}
+          style={rowButtonStyle}
+          data-tooltip="Delete the base model's simulation results"
+        >
+          Clear results
+        </button>
+      )}
+
       <button
         type="button"
         onClick={onNewScenario}
@@ -141,6 +158,7 @@ export function ScenarioRow({
   onRenameCancel,
   onBranch,
   onRun,
+  onClearResults,
   onDelete,
   onOpenFolder,
 }: {
@@ -160,11 +178,16 @@ export function ScenarioRow({
   onRenameCancel: () => void;
   onBranch: () => void;
   onRun: () => void;
+  onClearResults: () => void;
   onDelete: () => void;
   onOpenFolder: () => void;
 }) {
   const stateColor = STATE_COLOR[scenario.state] ?? "var(--text-tertiary)";
   const stateLabel = STATE_LABEL[scenario.state] ?? scenario.state;
+  // "stale" still means a results file exists — it is results that no longer
+  // match the edited network, which is exactly when clearing is most useful.
+  const hasResults =
+    scenario.state === "simulated" || scenario.state === "stale";
 
   return (
     <div
@@ -348,6 +371,19 @@ export function ScenarioRow({
           >
             <PlayIcon style={{ width: 12, height: 12 }} />
           </button>
+
+          {/* Only offered when there is something to clear — an always-present
+              control would imply results exist where they never did. */}
+          {hasResults && (
+            <button
+              type="button"
+              onClick={onClearResults}
+              style={iconButtonStyle}
+              data-tooltip="Delete simulation results"
+            >
+              <ArrowUturnLeftIcon style={{ width: 12, height: 12 }} />
+            </button>
+          )}
 
           <button
             type="button"

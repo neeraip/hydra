@@ -3,7 +3,7 @@
  */
 
 import { useEffect, useState } from "react";
-import { tryInvoke, tryInvokeOr } from "./ipc";
+import { invoke, tryInvoke, tryInvokeOr } from "./ipc";
 
 /** Flat DTO returned by `list_scenarios` / `create_scenario`. */
 export interface ScenarioDto {
@@ -104,4 +104,22 @@ export async function renameScenario(
     { projectId, scenarioId, name },
     false,
   );
+}
+
+/**
+ * Delete a target's simulation results, returning it to "not-run".
+ *
+ * Resolves `true` when results were removed, `false` when the target had
+ * none. Rejects with the backend message on failure — most usefully when a
+ * simulation is currently writing to this target, which the backend refuses
+ * rather than pulling the file out from under it.
+ *
+ * `scenarioId: null` addresses the base model, matching every other
+ * target-addressed command.
+ */
+export async function deleteSimulation(
+  projectId: string,
+  scenarioId: string | null,
+): Promise<boolean> {
+  return await invoke<boolean>("delete_simulation", { projectId, scenarioId });
 }
