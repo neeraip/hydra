@@ -181,6 +181,11 @@ pub use hydra_common as common;
 /// `common` reportable-output contract.
 pub use hydra_engine_wds::{produce_report_block, report_catalog};
 
+/// Report generation: JSON templates, document assembly from engine
+/// fragments, and deterministic txt/csv/html renderers. See the
+/// `hydra-report` crate spec for the authoritative definition.
+pub use hydra_report as report;
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -27,14 +27,18 @@ def main():
     cli = pathlib.Path("crates/cli/Cargo.toml")
     cli.write_text(re.sub(r'(hydra-sdk[^\n]+version = ")\d+\.\d+\.\d+"', rf'\g<1>{version}"', cli.read_text()))
 
-    # Update the hydra-engine-wds and hydra-common dep pins in hydra-sdk.
+    # Update the hydra-engine-wds, hydra-common, and hydra-report dep pins
+    # in hydra-sdk.
     sdk = pathlib.Path("crates/sdk/Cargo.toml")
-    sdk_text = re.sub(r'(hydra-engine-wds[^\n]+version = ")\d+\.\d+\.\d+"', rf'\g<1>{version}"', sdk.read_text())
-    sdk.write_text(re.sub(r'(hydra-common[^\n]+version = ")\d+\.\d+\.\d+"', rf'\g<1>{version}"', sdk_text))
+    sdk_text = sdk.read_text()
+    for dep in ("hydra-engine-wds", "hydra-common", "hydra-report"):
+        sdk_text = re.sub(rf'({dep}[^\n]+version = ")\d+\.\d+\.\d+"', rf'\g<1>{version}"', sdk_text)
+    sdk.write_text(sdk_text)
 
-    # Update only the hydra-common dep pin in hydra-engine-wds.
-    engine = pathlib.Path("crates/engine-wds/Cargo.toml")
-    engine.write_text(re.sub(r'(hydra-common[^\n]+version = ")\d+\.\d+\.\d+"', rf'\g<1>{version}"', engine.read_text()))
+    # Update the hydra-common dep pins in hydra-engine-wds and hydra-report.
+    for crate in ("crates/engine-wds/Cargo.toml", "crates/report/Cargo.toml"):
+        p = pathlib.Path(crate)
+        p.write_text(re.sub(r'(hydra-common[^\n]+version = ")\d+\.\d+\.\d+"', rf'\g<1>{version}"', p.read_text()))
 
     commit_and_tag(
         [
@@ -43,6 +47,7 @@ def main():
             "crates/cli/Cargo.toml",
             "crates/sdk/Cargo.toml",
             "crates/engine-wds/Cargo.toml",
+            "crates/report/Cargo.toml",
         ],
         f"chore: bump library version to {version}",
         f"v{version}",

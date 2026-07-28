@@ -10,6 +10,7 @@ Hydra is a water distribution network simulator written in Rust. It implements t
 |---|---|---|
 | `hydra-common` | Foundation contracts shared by all engines and applications: engine identity (descriptor + registry) and the reportable-output contract (block catalog, neutral fragment model). Depends on nothing in the workspace | Any engine logic; presentation/rendering; shared element schemas and unit systems (deferred by design until a second engine exists) |
 | `hydra-engine-wds` | Complete simulation engine: data model; INP/OUT/RPT parsers and writers; unit conversion; GGA hydraulic solver; Lagrangian quality engine; controls; timestep; accounting; session API (`Simulation`); post-simulation analytics; report blocks implementing the `hydra-common` reportable-output contract; local filesystem reads for `.out`/analysis-artifact files via explicit path-based helpers (`io::out_reader`, `io::analysis_io`) | Interface logic; network I/O; any other filesystem I/O (INP model bytes are supplied in memory by callers) |
+| `hydra-report` | Report generation: JSON report templates, document assembly from engine-neutral fragments, deterministic txt/csv/html renderers | Any engine knowledge (depends only on `hydra-common`); analysis math; file/output-path UX (CLI/GUI) |
 | `hydra-sdk` | Curated public re-exports — the umbrella crate | Any new logic |
 | `hydra-cli` | CLI argument parsing; input source resolution; file I/O | All simulation logic |
 | `hydra-gui` | Tauri command surface; project/scenario persistence; background run queue; React frontend | Solver algorithms; session logic |
@@ -33,6 +34,7 @@ authoritative definition of Hydra's mathematical behaviour:
 | Spec file | Covers |
 |---|---|
 | `crates/common/src/spec.md` | Foundation contracts: engine identity/registry, reportable-output contract |
+| `crates/report/src/spec.md` | Report templates, document model, txt/csv/html renderer formats |
 | `crates/engine-wds/src/model/spec.md` | Network data model, unit system, INP/OUT/RPT formats |
 | `crates/engine-wds/src/hydraulics/spec.md` | GGA Newton-Raphson solver, valve models, demand models |
 | `crates/engine-wds/src/quality/spec.md` | Lagrangian transport, mixing, reactions, source tracing |
@@ -85,6 +87,15 @@ implementations live in its submodules). No separate spec files exist for those 
    vocabulary (result classes, element kinds) may enter these contracts —
    engine-specific meaning travels only through opaque ids and
    engine-authored text.
+2. Only then write or change implementation code.
+
+### Report generation (hydra-report)
+
+1. Update `crates/report/src/spec.md`. The same no-engine-knowledge rule
+   applies: this layer only presents given blocks of data; it must depend
+   on nothing but `hydra-common`. The template JSON and renderer output
+   formats are compatibility surfaces — changes need the same care as
+   file-format changes.
 2. Only then write or change implementation code.
 
 ### Facade (hydra-sdk)

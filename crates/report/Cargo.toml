@@ -1,19 +1,19 @@
 [package]
-name = "hydra-sdk"
+name = "hydra-report"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
 license.workspace = true
+publish = true
 repository.workspace = true
 homepage.workspace = true
 documentation.workspace = true
-description = "Water distribution network simulator — EPANET-compatible extended-period simulation"
+description = "Hydra report generation — templates, document assembly, and txt/csv/html renderers over engine-neutral content fragments"
 readme = "README.md"
-keywords = ["epanet", "water", "hydraulics", "simulation", "network"]
+keywords = ["water", "hydraulics", "simulation", "report"]
 categories = ["science", "simulation"]
-publish = true
 
 [dependencies]
 hydra-common = { path = "../common", version = "2.1.0" }
-hydra-engine-wds = { path = "../engine-wds", version = "2.1.0" }
-hydra-report = { path = "../report", version = "2.1.0" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
