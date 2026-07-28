@@ -10,7 +10,7 @@ use super::network_dto::{
     rule_from_dto, ControlDto, LinkDto, NetworkDto, NetworkState, NetworkStateInner, NodeDto,
     RuleDto, CFS_TO_LPS, FT_TO_M, FT_TO_MM,
 };
-use super::projects::{app_data_dir, model_path_for, validate_target_ids};
+use super::projects::{app_data_dir, model_path_for, read_model_bytes, validate_target_ids};
 use super::simulation::emit_or_warn;
 
 /// Mutating commands emit this event *while still holding* the `NetworkState`
@@ -1830,7 +1830,11 @@ pub fn validate_network(
         None => {
             let app_data = app_data_dir(&app)?;
             let model_path = model_path_for(&app_data, &project_id, scenario_id.as_deref());
-            let raw = std::fs::read(&model_path).map_err(|e| format!("Cannot read model: {e}"))?;
+            // No model yet (a project created without importing one): there
+            // is nothing to validate, and nothing wrong either.
+            let Some(raw) = read_model_bytes(&model_path)? else {
+                return Ok(Vec::new());
+            };
             std::sync::Arc::new(hydra::io::parse(&raw).map_err(format_inp_parse_error)?)
         }
     };

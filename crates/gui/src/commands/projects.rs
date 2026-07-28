@@ -536,6 +536,27 @@ pub(crate) fn model_path_for(
     }
 }
 
+/// Read a target's model bytes, distinguishing "there is no model yet" from
+/// a genuine read failure.
+///
+/// A project created without importing a source model has no `model.inp` at
+/// all — that is its normal resting state, not a fault, and the "start with
+/// an empty network" path exists precisely to produce it. Commands that
+/// merely *describe* a model (validation, topology digest) must answer
+/// "nothing to describe" for one, or every blank project greets the user
+/// with backend-error toasts the moment it opens.
+///
+/// Only `NotFound` is folded into `Ok(None)`. A permission error or a bad
+/// symlink still fails loudly: those mean the model exists and is
+/// unreachable, which is exactly the situation a user needs told about.
+pub(crate) fn read_model_bytes(path: &std::path::Path) -> Result<Option<Vec<u8>>, String> {
+    match std::fs::read(path) {
+        Ok(bytes) => Ok(Some(bytes)),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(format!("Cannot read model: {e}")),
+    }
+}
+
 /// Count the scenario subdirectories under `<app_data>/projects/<id>/scenarios/`
 /// that hold a readable `meta.json` — the same criterion `list_scenarios`
 /// applies, so project-card counts always match the scenario list.
@@ -1163,7 +1184,11 @@ pub async fn export_project_inp(
         Some(b) => b,
         None => {
             let path = model_path_for(&app_data, &project_id, scenario_id.as_deref());
-            std::fs::read(&path).map_err(|e| format!("Cannot read model: {e}"))?
+            // Unlike the describe-only commands, exporting genuinely needs a
+            // model — but say so in the user's terms rather than handing them
+            // a raw errno for a project they simply have not built yet.
+            read_model_bytes(&path)?
+                .ok_or("This project has no network yet — import or build one before exporting")?
         }
     };
 

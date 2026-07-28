@@ -9,7 +9,9 @@ use super::binary_codec::encode_period_results;
 use super::network_dto::{
     format_inp_parse_error, NetworkState, NetworkStateInner, FT3_TO_M3, FT_TO_MM,
 };
-use super::projects::{app_data_dir, model_path_for, results_path_for, validate_target_ids};
+use super::projects::{
+    app_data_dir, model_path_for, read_model_bytes, results_path_for, validate_target_ids,
+};
 
 // ── Simulation helpers ───────────────────────────────────────────────────────
 
@@ -427,12 +429,16 @@ pub(crate) fn network_for_target(
 /// is computed under the lock without cloning — FNV-1a over element IDs is
 /// cheap even at 46k nodes. Falls back to parsing the on-disk model when the
 /// cache holds a different target.
+///
+/// Returns `Ok(None)` when the target has no model on disk yet (a project
+/// created without importing one): there is no topology to fingerprint, and
+/// no results for it to disagree with either.
 fn live_network_digest(
     app_data: &std::path::Path,
     state: &NetworkState,
     project_id: &str,
     scenario_id: Option<&str>,
-) -> Result<u64, String> {
+) -> Result<Option<u64>, String> {
     {
         let guard = state.0.lock();
         if let NetworkStateInner::Loaded {
@@ -443,14 +449,16 @@ fn live_network_digest(
         } = &*guard
         {
             if owner == project_id && owner_scenario_id.as_deref() == scenario_id {
-                return Ok(hydra::compute_network_digest(network));
+                return Ok(Some(hydra::compute_network_digest(network)));
             }
         }
     }
     let model_path = model_path_for(app_data, project_id, scenario_id);
-    let raw = std::fs::read(&model_path).map_err(|e| format!("Cannot read model: {e}"))?;
+    let Some(raw) = read_model_bytes(&model_path)? else {
+        return Ok(None);
+    };
     let network = hydra::io::parse(&raw).map_err(format_inp_parse_error)?;
-    Ok(hydra::compute_network_digest(&network))
+    Ok(Some(hydra::compute_network_digest(&network)))
 }
 
 /// Return the topology digest of the current model for a project or scenario
@@ -458,6 +466,9 @@ fn live_network_digest(
 /// managed network cache holds that target (see [`live_network_digest`]).
 /// The frontend compares this against `ResultMetaDto::network_digest` to
 /// detect results that predate the live topology.
+///
+/// `null` when the target has no model yet — the frontend already treats an
+/// absent digest as "unknown" and simply skips the staleness comparison.
 #[tauri::command(async)]
 /// Return the current model's topology digest (hex) for a project/scenario.
 pub fn get_network_digest(
@@ -465,10 +476,13 @@ pub fn get_network_digest(
     state: tauri::State<'_, NetworkState>,
     project_id: String,
     scenario_id: Option<String>,
-) -> Result<String, String> {
+) -> Result<Option<String>, String> {
     validate_target_ids(&project_id, scenario_id.as_deref())?;
     let app_data = app_data_dir(&app)?;
-    live_network_digest(&app_data, &state, &project_id, scenario_id.as_deref()).map(digest_hex)
+    Ok(
+        live_network_digest(&app_data, &state, &project_id, scenario_id.as_deref())?
+            .map(digest_hex),
+    )
 }
 
 /// Return the pump energy summary for a project or scenario.
@@ -1303,7 +1317,8 @@ Duration  0
         let dir = tempfile::tempdir().unwrap();
         let state = NetworkState(parking_lot::Mutex::new(loaded_state()));
         let digest = live_network_digest(dir.path(), &state, "test-project", None)
-            .expect("matching cache must be served without disk IO");
+            .expect("matching cache must be served without disk IO")
+            .expect("a cached network always has a digest");
         let expected =
             hydra::compute_network_digest(&hydra::io::parse(TEST_INP.as_bytes()).unwrap());
         assert_eq!(digest, expected);
@@ -1331,7 +1346,8 @@ Duration  0
         let state = NetworkState(parking_lot::Mutex::new(inner));
 
         let digest = live_network_digest(dir.path(), &state, "test-project", None)
-            .expect("dirty matching cache must be served without disk IO");
+            .expect("dirty matching cache must be served without disk IO")
+            .expect("a cached network always has a digest");
         assert_ne!(
             digest, baseline,
             "digest must reflect the unsaved added node"
@@ -1347,10 +1363,36 @@ Duration  0
         )
         .unwrap();
         let state = NetworkState(parking_lot::Mutex::new(loaded_state()));
-        let digest = live_network_digest(dir.path(), &state, "test-project", Some("s1")).unwrap();
+        let digest = live_network_digest(dir.path(), &state, "test-project", Some("s1"))
+            .unwrap()
+            .expect("the on-disk model has a digest");
         let expected =
             hydra::compute_network_digest(&hydra::io::parse(DISK_INP.as_bytes()).unwrap());
         assert_eq!(digest, expected);
+    }
+
+    #[test]
+    fn live_network_digest_is_absent_for_a_project_with_no_model() {
+        // A project created without importing a source model has no
+        // model.inp at all. That is its normal resting state, so the digest
+        // is "none", not an error — otherwise opening a blank project greets
+        // the user with a backend-error toast.
+        let dir = tempfile::tempdir().unwrap();
+        let state = NetworkState(parking_lot::Mutex::new(NetworkStateInner::Empty));
+        let digest = live_network_digest(dir.path(), &state, "blank-project", None)
+            .expect("a missing model is not a failure");
+        assert!(digest.is_none());
+    }
+
+    #[test]
+    fn read_model_bytes_still_fails_loudly_on_a_non_notfound_error() {
+        // Only NotFound is folded into "no model". A model that exists but
+        // cannot be read is a real fault the user needs told about — here a
+        // directory standing where the model file should be.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("model.inp");
+        std::fs::create_dir(&path).unwrap();
+        assert!(read_model_bytes(&path).is_err());
     }
 
     #[test]
