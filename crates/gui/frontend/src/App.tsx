@@ -9,6 +9,7 @@ import { registerCustomCrsDefinitions } from "./canvas/coords";
 import { ActivityBar } from "./components/layout/ActivityBar";
 import { StatusBar } from "./components/layout/StatusBar";
 import { TopBar } from "./components/layout/TopBar";
+import { ClearResultsModal } from "./components/modals/ClearResultsModal";
 import { IssuesPanel } from "./components/panels/IssuesPanel";
 import { TaskTray } from "./components/panels/TaskTray";
 import { Toast } from "./components/ui/Toast";
@@ -331,6 +332,7 @@ export function App() {
           <CommandPalette />
         </Suspense>
       )}
+      <ClearResultsModal />
       {runModalOpen && (
         <Suspense fallback={null}>
           <RunModal />

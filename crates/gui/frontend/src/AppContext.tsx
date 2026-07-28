@@ -37,6 +37,20 @@ export interface NavLocation {
   activeScenarioId: string | null;
 }
 
+/** What a confirmed clear-results action should delete. */
+export interface ClearResultsRequest {
+  projectId: string;
+  /** Target scope: one scenario (`scenarioId`, null = base model), or the
+   * whole project. */
+  scope: "target" | "all";
+  /** `null` addresses the base model. Ignored when `scope` is "all". */
+  scenarioId: string | null;
+  /** Human-facing name of what is being cleared, for the confirmation. */
+  name: string;
+  /** How many targets currently hold results (used by the "all" wording). */
+  simulatedCount?: number;
+}
+
 interface AppState {
   page: Page;
   projectView: ProjectView;
@@ -45,6 +59,14 @@ interface AppState {
   runModalOpen: boolean;
   simSettingsModalOpen: boolean;
   scenariosModalOpen: boolean;
+  /**
+   * Pending "clear simulation results" request awaiting confirmation, or
+   * null. Lives at app level rather than in the surface that asked, because
+   * the command palette unmounts the moment it runs a command and so cannot
+   * own a modal of its own — and because one owner means one implementation
+   * of the delete, its toasts and its refresh.
+   */
+  clearResults: ClearResultsRequest | null;
   crsModalOpen: boolean;
   basemapProvidersModalOpen: boolean;
   taskTrayOpen: boolean;
@@ -104,6 +126,8 @@ interface AppActions {
   closeSimSettingsModal: () => void;
   openScenariosModal: () => void;
   closeScenariosModal: () => void;
+  requestClearResults: (req: ClearResultsRequest) => void;
+  closeClearResults: () => void;
   openCrsModal: () => void;
   closeCrsModal: () => void;
   openBasemapProvidersModal: () => void;
@@ -265,6 +289,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       runModalOpen: false,
       simSettingsModalOpen: false,
       scenariosModalOpen: false,
+      clearResults: null,
       crsModalOpen: false,
       basemapProvidersModalOpen: false,
       taskTrayOpen: false,
@@ -846,6 +871,20 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setS((prev) => ({ ...prev, scenariosModalOpen: false }));
   }, []);
 
+  const requestClearResults = useCallback((req: ClearResultsRequest) => {
+    // Closing the palette here keeps the confirmation the only thing on
+    // screen — the palette is itself an overlay and would sit on top of it.
+    setS((prev) => ({
+      ...prev,
+      clearResults: req,
+      commandPaletteOpen: false,
+    }));
+  }, []);
+
+  const closeClearResults = useCallback(() => {
+    setS((prev) => ({ ...prev, clearResults: null }));
+  }, []);
+
   const openCrsModal = useCallback(() => {
     setS((prev) => ({
       ...prev,
@@ -1005,6 +1044,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
       closeSimSettingsModal,
       openScenariosModal,
       closeScenariosModal,
+      requestClearResults,
+      closeClearResults,
       openCrsModal,
       closeCrsModal,
       openBasemapProvidersModal,
@@ -1048,6 +1089,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
       closeSimSettingsModal,
       openScenariosModal,
       closeScenariosModal,
+      requestClearResults,
+      closeClearResults,
       openCrsModal,
       closeCrsModal,
       openBasemapProvidersModal,

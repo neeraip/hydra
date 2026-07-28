@@ -150,7 +150,10 @@ export function RowMenu({
           >
             {items.map((item, i) => (
               <div key={item.label}>
-                {item.danger && i === dangerStart && (
+                {/* Separator only when destructive entries actually follow
+                    safe ones — a menu that opens with a danger item would
+                    otherwise get a stray rule above its first row. */}
+                {item.danger && i === dangerStart && i > 0 && (
                   <div
                     style={{
                       height: 1,

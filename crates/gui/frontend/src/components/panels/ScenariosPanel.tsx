@@ -8,12 +8,10 @@ import React, {
   useRef,
   useState,
 } from "react";
-import { useActiveProject, useAppState, useSimulation } from "../../AppContext";
+import { useActiveProject, useAppState } from "../../AppContext";
 import {
   createScenarioOnDisk,
-  deleteAllSimulations,
   deleteScenario,
-  deleteSimulation,
   enqueueRuns,
   openScenarioFolder,
   projectHasNetwork,
@@ -37,14 +35,13 @@ export function ScenariosPanel({
   // nothing to branch. The backend refuses too — this only keeps the UI from
   // offering an action that can only fail.
   const hasNetwork = projectHasNetwork(project);
-  const { setResultMeta, setPumpEnergy } = useSimulation();
   const {
     showToast,
     activeScenarioId,
     setActiveScenarioId,
     scenariosVersion,
     bumpScenarios,
-    bumpProjects,
+    requestClearResults,
     openTaskTray,
   } = useAppState();
 
@@ -78,18 +75,6 @@ export function ScenariosPanel({
   const [deletingId, setDeletingId] = useState<string | null>(null);
   /** Scenario awaiting delete confirmation (trash click → confirm → delete). */
   const [pendingDelete, setPendingDelete] = useState<FlatScenario | null>(null);
-  /**
-   * Target awaiting results-clear confirmation. `id: null` is the base model,
-   * matching the target addressing everywhere else. Held as an object rather
-   * than an id so `null` stays meaningful — a bare `string | null` could not
-   * distinguish "base model" from "nothing pending".
-   */
-  const [pendingClear, setPendingClear] = useState<{
-    id: string | null;
-    name: string;
-  } | null>(null);
-  /** True while the project-wide clear awaits confirmation. */
-  const [pendingClearAll, setPendingClearAll] = useState(false);
   const [runningId, setRunningId] = useState<string | null>(null);
   const renameInputRef = useRef<HTMLInputElement>(null);
 
@@ -129,70 +114,6 @@ export function ScenariosPanel({
       showToast("Failed to create scenario", "error");
     }
   }, [createName, createParentId, project, bumpScenarios, showToast]);
-
-  const handleClearResults = useCallback(async () => {
-    const target = pendingClear;
-    setPendingClear(null);
-    if (!target || !project) return;
-    try {
-      const cleared = await deleteSimulation(project.id, target.id);
-      bumpScenarios();
-      bumpProjects();
-      // Result metadata is loaded per active target and only refreshed on a
-      // target switch or a completed run, so clearing the target the user is
-      // currently looking at has to drop it here — otherwise the canvas keeps
-      // rendering a timeline whose results file no longer exists.
-      if (target.id === activeScenarioId) {
-        setResultMeta(null);
-        setPumpEnergy(null);
-      }
-      showToast(
-        cleared
-          ? `Cleared results for "${target.name}"`
-          : `"${target.name}" had no results to clear`,
-        cleared ? "success" : "info",
-      );
-    } catch (err) {
-      showToast(`Could not clear results: ${formatIpcError(err)}`, "error");
-    }
-  }, [
-    pendingClear,
-    project,
-    activeScenarioId,
-    bumpScenarios,
-    bumpProjects,
-    setResultMeta,
-    setPumpEnergy,
-    showToast,
-  ]);
-
-  const handleClearAllResults = useCallback(async () => {
-    setPendingClearAll(false);
-    if (!project) return;
-    try {
-      const removed = await deleteAllSimulations(project.id);
-      bumpScenarios();
-      bumpProjects();
-      // Whatever the active target was, it is among those just cleared.
-      setResultMeta(null);
-      setPumpEnergy(null);
-      showToast(
-        removed === 0
-          ? "No results to clear"
-          : `Cleared results for ${removed} target${removed === 1 ? "" : "s"}`,
-        removed === 0 ? "info" : "success",
-      );
-    } catch (err) {
-      showToast(`Could not clear results: ${formatIpcError(err)}`, "error");
-    }
-  }, [
-    project,
-    bumpScenarios,
-    bumpProjects,
-    setResultMeta,
-    setPumpEnergy,
-    showToast,
-  ]);
 
   // ── handlers ─────────────────────────────────────────────────────────────
 
@@ -365,10 +286,25 @@ export function ScenariosPanel({
             canBranch={hasNetwork}
             simulated={project?.state === "simulated"}
             onClearResults={() =>
-              setPendingClear({ id: null, name: "Base model" })
+              project &&
+              requestClearResults({
+                projectId: project.id,
+                scope: "target",
+                scenarioId: null,
+                name: "Base model",
+              })
             }
             clearAllCount={simulatedCount}
-            onClearAllResults={() => setPendingClearAll(true)}
+            onClearAllResults={() =>
+              project &&
+              requestClearResults({
+                projectId: project.id,
+                scope: "all",
+                scenarioId: null,
+                name: project.name,
+                simulatedCount,
+              })
+            }
           />
 
           {/* Inline create row (when branching from base) */}
@@ -456,7 +392,13 @@ export function ScenariosPanel({
                 }}
                 onBranch={() => handleBranch(s)}
                 onClearResults={() =>
-                  setPendingClear({ id: s.id, name: s.name })
+                  project &&
+                  requestClearResults({
+                    projectId: project.id,
+                    scope: "target",
+                    scenarioId: s.id,
+                    name: s.name,
+                  })
                 }
                 onRun={() => handleRun(s)}
                 onDelete={() => setPendingDelete(s)}
@@ -486,47 +428,6 @@ export function ScenariosPanel({
 
       {/* Delete confirmation — deleting a scenario destroys its INP and
           simulation results, so it must never be a single-click action. */}
-      <DeleteConfirmModal
-        open={pendingClearAll}
-        elementKind="results"
-        elementId={project?.name ?? ""}
-        title="Clear All Simulation Results"
-        message={
-          <>
-            Delete the simulation results for the base model and{" "}
-            <strong style={{ color: "var(--text-primary)" }}>
-              every scenario
-            </strong>{" "}
-            in this project? {simulatedCount} target
-            {simulatedCount === 1 ? "" : "s"} currently hold results. The
-            networks themselves are not changed, so the runs can be repeated.
-          </>
-        }
-        confirmLabel="Clear all results"
-        onConfirm={handleClearAllResults}
-        onCancel={() => setPendingClearAll(false)}
-      />
-
-      <DeleteConfirmModal
-        open={!!pendingClear}
-        elementKind="results"
-        elementId={pendingClear?.name ?? ""}
-        title="Clear Simulation Results"
-        message={
-          <>
-            Delete the simulation results for{" "}
-            <strong style={{ color: "var(--text-primary)" }}>
-              {pendingClear?.name}
-            </strong>
-            ? It returns to an unsimulated state. The network itself is not
-            changed, so the run can be repeated.
-          </>
-        }
-        confirmLabel="Clear results"
-        onConfirm={handleClearResults}
-        onCancel={() => setPendingClear(null)}
-      />
-
       <DeleteConfirmModal
         open={!!pendingDelete}
         elementKind="scenario"

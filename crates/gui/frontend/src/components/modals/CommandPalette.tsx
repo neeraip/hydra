@@ -6,8 +6,6 @@ import { useCanvasSelection } from "../../canvas/selection-context";
 import {
   type Command,
   type CommandCategory,
-  deleteAllSimulations,
-  deleteSimulation,
   formatInpImportError,
   type Link,
   type Node,
@@ -18,7 +16,7 @@ import {
   useProjects,
   useScenarios,
 } from "../../hooks";
-import { formatIpcError, tryInvoke } from "../../hooks/ipc";
+import { tryInvoke } from "../../hooks/ipc";
 import {
   formatPrimaryShortcut,
   formatShortcut,
@@ -165,8 +163,7 @@ export function CommandPalette() {
     setActiveScenarioId,
     projectsVersion,
     scenariosVersion,
-    bumpProjects,
-    bumpScenarios,
+    requestClearResults,
   } = useAppState();
 
   const projects = useProjects(projectsVersion);
@@ -188,7 +185,7 @@ export function CommandPalette() {
     zoomToNode,
     zoomToLink,
   } = useCanvasSelection();
-  const { resultMeta, setResultMeta, setPumpEnergy } = useSimulation();
+  const { resultMeta } = useSimulation();
   const { bumpNetwork } = useNetworkVersion();
 
   const [query, setQuery] = useState("");
@@ -577,52 +574,20 @@ export function CommandPalette() {
         return;
       }
 
-      // ── Clear the active target's results ──────────────────────────────
-      if (cmd.id === "a-clear-results") {
+      // ── Clear results (confirmed by the app-level modal) ───────────────
+      if (cmd.id === "a-clear-results" || cmd.id === "a-clear-all-results") {
         if (!activeProjectId) return;
-        deleteSimulation(activeProjectId, activeScenarioId)
-          .then((cleared) => {
-            bumpScenarios();
-            bumpProjects();
-            // Always the active target here, so the loaded metadata is
-            // always the one just deleted.
-            setResultMeta(null);
-            setPumpEnergy(null);
-            showToast(
-              cleared ? "Simulation results cleared" : "No results to clear",
-              cleared ? "success" : "info",
-            );
-          })
-          .catch((err) => {
-            showToast(
-              `Could not clear results: ${formatIpcError(err)}`,
-              "error",
-            );
-          });
-        return;
-      }
-
-      if (cmd.id === "a-clear-all-results") {
-        if (!activeProjectId) return;
-        deleteAllSimulations(activeProjectId)
-          .then((removed) => {
-            bumpScenarios();
-            bumpProjects();
-            setResultMeta(null);
-            setPumpEnergy(null);
-            showToast(
-              removed === 0
-                ? "No results to clear"
-                : `Cleared results for ${removed} target${removed === 1 ? "" : "s"}`,
-              removed === 0 ? "info" : "success",
-            );
-          })
-          .catch((err) => {
-            showToast(
-              `Could not clear results: ${formatIpcError(err)}`,
-              "error",
-            );
-          });
+        const all = cmd.id === "a-clear-all-results";
+        const scenario = scenarios.find((s) => s.id === activeScenarioId);
+        requestClearResults({
+          projectId: activeProjectId,
+          scope: all ? "all" : "target",
+          scenarioId: activeScenarioId,
+          name: all
+            ? (projects.find((p) => p.id === activeProjectId)?.name ??
+              "this project")
+            : (scenario?.name ?? "Base model"),
+        });
         return;
       }
 
@@ -873,10 +838,9 @@ export function CommandPalette() {
       activeProjectId,
       activeProjectEngine,
       activeScenarioId,
-      bumpProjects,
-      bumpScenarios,
-      setResultMeta,
-      setPumpEnergy,
+      requestClearResults,
+      projects,
+      scenarios,
       setActiveScenarioId,
       setPage,
       setProjectView,

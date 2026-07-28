@@ -43,6 +43,11 @@ export function BaseRow({
   clearAllCount: number;
   onClearAllResults: () => void;
 }) {
+  // Mirrors the scenario rows' derivation so both read from one vocabulary.
+  const baseState = simulated ? "simulated" : "not-run";
+  const baseStateColor = STATE_COLOR[baseState] ?? "var(--text-tertiary)";
+  const baseStateLabel = STATE_LABEL[baseState] ?? baseState;
+
   return (
     <div
       style={{
@@ -90,6 +95,22 @@ export function BaseRow({
               Active
             </span>
           )}
+
+          {/* The same state badge the scenario rows carry. The base model is
+              a simulation target like any other, so reading its state must
+              not require inferring it from which actions are available. */}
+          <span
+            style={{
+              fontSize: 10,
+              fontWeight: 600,
+              color: baseStateColor,
+              background: `${baseStateColor}22`,
+              borderRadius: 10,
+              padding: "1px 7px",
+            }}
+          >
+            {baseStateLabel}
+          </span>
         </div>
         <div
           style={{ fontSize: 11, color: "var(--text-tertiary)", marginTop: 2 }}
@@ -141,6 +162,7 @@ export function BaseRow({
             onSelect: onClearResults,
             disabled: !simulated,
             disabledReason: "The base model has not been simulated",
+            danger: true,
           },
           {
             label: "Clear all results",
@@ -389,15 +411,16 @@ export function ScenarioRow({
           <RowMenu
             label={`Actions for ${scenario.name}`}
             items={[
+              { label: "Branch from this scenario", onSelect: onBranch },
+              { label: "Rename…", onSelect: onRenameStart },
+              { label: "Open in Finder", onSelect: onOpenFolder },
               {
                 label: "Clear results",
                 onSelect: onClearResults,
                 disabled: !hasResults,
                 disabledReason: "This scenario has not been simulated",
+                danger: true,
               },
-              { label: "Branch from this scenario", onSelect: onBranch },
-              { label: "Rename…", onSelect: onRenameStart },
-              { label: "Open in Finder", onSelect: onOpenFolder },
               {
                 label: "Delete scenario",
                 onSelect: onDelete,
