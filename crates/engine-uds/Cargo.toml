@@ -1,0 +1,16 @@
+[package]
+name = "hydra-engine-uds"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+publish = true
+repository.workspace = true
+homepage.workspace = true
+documentation.workspace = true
+description = "Hydra urban drainage (stormwater and wastewater) simulation engine — early scaffold, not yet functional"
+readme = "README.md"
+keywords = ["water", "hydraulics", "simulation", "engine"]
+categories = ["science", "simulation"]
+
+[dependencies]

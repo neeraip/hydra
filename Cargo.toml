@@ -2,6 +2,8 @@
 members = [
     "crates/common",
     "crates/engine-wds",
+    "crates/engine-uds",
+    "crates/engine-och",
     "crates/report",
     "crates/sdk",
     "crates/cli",
