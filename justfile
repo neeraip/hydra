@@ -166,7 +166,12 @@ check-crs-catalog: regen-crs-catalog
 check:
     cargo check --workspace --all-targets
 
-# Build debug binaries
+# NOTE: this is a compile check — it does NOT build the frontend and does NOT
+# enable hydra-gui/custom-protocol, so `target/debug/hydra-gui` from here shows
+# a white window (it tries to load the dev-server URL). Use `just dev` to run
+# the GUI, `just release` for an optimised binary, or `just bundle` for the
+# distributable app.
+# Build debug binaries (compile check; the GUI binary is not runnable)
 build:
     cargo build
 
