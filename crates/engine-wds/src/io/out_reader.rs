@@ -184,6 +184,9 @@ pub struct OutMetadata {
     pub report_start: f64,
     /// Duration of each reporting period (seconds).
     pub report_step: f64,
+    /// Total simulation duration (seconds) from the prolog header
+    /// (model spec §4.5.2). `0` for a steady-state run.
+    pub duration: f64,
     /// Number of reporting periods written to the file.
     pub n_periods: usize,
     /// FNV-1a 64-bit network topology digest (model spec §4.5.7) from the
@@ -369,6 +372,7 @@ pub fn read_metadata_checked(path: &std::path::Path) -> Result<OutMetadata, OutV
 
     let report_start = i32_at(48) as f64;
     let report_step = i32_at(52) as f64;
+    let duration = i32_at(56) as f64;
 
     if file_len < 60 + epilog_len {
         return Err(OutValidityError {
@@ -475,6 +479,7 @@ pub fn read_metadata_checked(path: &std::path::Path) -> Result<OutMetadata, OutV
         quality_flag,
         report_start,
         report_step,
+        duration,
         n_periods,
         network_digest,
     })
@@ -636,6 +641,138 @@ pub fn read_period(
         link_setting,
         link_reaction_rate,
         link_friction_factor,
+    })
+}
+
+// ── Single-element series (strided access) ───────────────────────────────────
+
+/// Which side of the model an element series addresses.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ElementKind {
+    /// A node — variables in file order: demand, head, pressure, quality.
+    Node,
+    /// A link — variables in file order: flow, velocity, headloss, quality,
+    /// status, setting, reaction rate, friction factor.
+    Link,
+}
+
+impl ElementKind {
+    /// Variable names in the file's column order (model spec §4.5.4).
+    pub fn variables(self) -> &'static [&'static str] {
+        match self {
+            ElementKind::Node => &["demand", "head", "pressure", "quality"],
+            ElementKind::Link => &[
+                "flow",
+                "velocity",
+                "headloss",
+                "quality",
+                "status",
+                "setting",
+                "reaction_rate",
+                "friction_factor",
+            ],
+        }
+    }
+}
+
+/// One variable's full-simulation series for a single element.
+#[derive(Debug, Clone)]
+pub struct ElementVariableSeries {
+    /// Variable name, from [`ElementKind::variables`].
+    pub variable: &'static str,
+    /// One value per reporting period, in period order.
+    pub values: Vec<f32>,
+}
+
+/// Every result variable of one element, across every reporting period.
+#[derive(Debug, Clone)]
+pub struct ElementSeries {
+    /// Snapshot times (s), one per reporting period — parallel to each
+    /// series' `values`.
+    pub times: Vec<f64>,
+    /// One entry per variable, in the file's column order.
+    pub series: Vec<ElementVariableSeries>,
+}
+
+/// Read every result variable of a single element across all reporting
+/// periods, addressing each value directly (model spec §4.5.8).
+///
+/// Reads `4 × variables × n_periods` bytes total — independent of network
+/// size. The whole-period alternative (`read_period` in a loop) costs
+/// `n_periods × (16·N_n + 32·N_l)` bytes to extract the same values, which on
+/// a 46k-node network is four orders of magnitude more I/O.
+///
+/// `index` is the element's 0-based network-order index, bounds-checked
+/// against the file's counts. Values are returned exactly as stored (the
+/// units declared in the prolog header).
+pub fn read_element_series(
+    path: &std::path::Path,
+    meta: &OutMetadata,
+    kind: ElementKind,
+    index: usize,
+) -> Result<ElementSeries, String> {
+    use std::io::{Read, Seek, SeekFrom};
+
+    let count = match kind {
+        ElementKind::Node => meta.n_nodes,
+        ElementKind::Link => meta.n_links,
+    };
+    if index >= count {
+        return Err(format!(
+            "Invalid .out (corrupt): {} index {index} out of range (0..{count})",
+            match kind {
+                ElementKind::Node => "node",
+                ElementKind::Link => "link",
+            }
+        ));
+    }
+
+    let variables = kind.variables();
+    let n_periods = meta.n_periods;
+    let mut values: Vec<Vec<f32>> = variables
+        .iter()
+        .map(|_| Vec::with_capacity(n_periods))
+        .collect();
+
+    let mut f = std::fs::File::open(path)
+        .map_err(|e| format!("Invalid .out (io): failed to open file: {e}"))?;
+
+    // Value offset within a period block (spec §4.5.8): node variable `v` of
+    // node `i` sits at 4(v·N_n + i); link variable `v` of link `j` sits at
+    // 4(4·N_n + v·N_l + j).
+    let value_offset = |var: usize| -> u64 {
+        let words = match kind {
+            ElementKind::Node => var * meta.n_nodes + index,
+            ElementKind::Link => 4 * meta.n_nodes + var * meta.n_links + index,
+        };
+        4 * words as u64
+    };
+
+    let mut buf = [0u8; 4];
+    for period in 0..n_periods {
+        let period_offset = meta.dynamic_offset() + (period as u64) * meta.period_bytes();
+        for (var, column) in values.iter_mut().enumerate() {
+            f.seek(SeekFrom::Start(period_offset + value_offset(var)))
+                .map_err(|e| format!("Invalid .out (io): failed to seek period {period}: {e}"))?;
+            f.read_exact(&mut buf).map_err(|e| {
+                let kind = if e.kind() == std::io::ErrorKind::UnexpectedEof {
+                    "incomplete"
+                } else {
+                    "io"
+                };
+                format!("Invalid .out ({kind}): failed to read period {period}: {e}")
+            })?;
+            column.push(f32::from_le_bytes(buf));
+        }
+    }
+
+    Ok(ElementSeries {
+        times: meta.snapshot_times(),
+        series: variables
+            .iter()
+            .zip(values)
+            .map(|(&variable, values)| ElementVariableSeries { variable, values })
+            .collect(),
     })
 }
 
@@ -1747,6 +1884,7 @@ mod tests {
             quality_flag: 0,
             report_start: 0.0,
             report_step: 3600.0,
+            duration: 18_000.0,
             n_periods: 5,
             network_digest: None,
         };
@@ -1769,6 +1907,7 @@ mod tests {
             quality_flag: 0,
             report_start: 0.0,
             report_step: 3600.0,
+            duration: 7200.0,
             n_periods: 3,
             network_digest: None,
         };
@@ -1839,5 +1978,181 @@ mod tests {
         assert_eq!(ranges.demand_max, 3.0);
         assert_eq!(ranges.flow_min, 2.0);
         assert_eq!(ranges.velocity_min, 0.5);
+    }
+
+    // ── duration + strided element series (spec §4.5.8) ───────────────────
+
+    /// A well-formed multi-period `.out` whose every dynamic REAL4 carries a
+    /// distinct value derived from its own byte offset, so a strided read
+    /// landing one word off is detected rather than coincidentally matching.
+    fn make_out_with_periods(
+        n_nodes: usize,
+        n_tanks: usize,
+        n_links: usize,
+        n_periods: usize,
+        duration: i32,
+    ) -> Vec<u8> {
+        let prolog = 884 + 36 * n_nodes + 52 * n_links + 8 * n_tanks;
+        let energy = 4; // no pumps
+        let period = 4 * (4 * n_nodes + 8 * n_links);
+        let size = prolog + energy + n_periods * period + 16 + 12;
+        let mut data = vec![0u8; size];
+
+        data[0..4].copy_from_slice(&516_114_521_i32.to_le_bytes());
+        data[4..8].copy_from_slice(&20012_i32.to_le_bytes());
+        data[8..12].copy_from_slice(&(n_nodes as i32).to_le_bytes());
+        data[12..16].copy_from_slice(&(n_tanks as i32).to_le_bytes());
+        data[16..20].copy_from_slice(&(n_links as i32).to_le_bytes());
+        data[20..24].copy_from_slice(&0_i32.to_le_bytes()); // n_pumps
+        data[48..52].copy_from_slice(&0_i32.to_le_bytes()); // report start
+        data[52..56].copy_from_slice(&3600_i32.to_le_bytes()); // report step
+        data[56..60].copy_from_slice(&duration.to_le_bytes());
+
+        let dynamic = prolog + energy;
+        for word in 0..(n_periods * period / 4) {
+            let off = dynamic + 4 * word;
+            let value = (word as f32) * 0.25 + 1.0;
+            data[off..off + 4].copy_from_slice(&value.to_le_bytes());
+        }
+
+        let epi = size - 12;
+        data[epi..epi + 4].copy_from_slice(&(n_periods as i32).to_le_bytes());
+        data[epi + 8..epi + 12].copy_from_slice(&516_114_521_i32.to_le_bytes());
+        data
+    }
+
+    #[test]
+    fn read_metadata_exposes_prolog_duration() {
+        let path = write_temp_bytes(&make_out_with_periods(3, 1, 2, 2, 86_400));
+        let meta = read_metadata_checked(&path).expect("valid file");
+        let _ = std::fs::remove_file(&path);
+        assert_eq!(meta.duration, 86_400.0);
+    }
+
+    #[test]
+    fn read_metadata_duration_is_zero_for_steady_state() {
+        let path = write_temp_bytes(&make_out_with_periods(2, 1, 1, 1, 0));
+        let meta = read_metadata_checked(&path).expect("valid file");
+        let _ = std::fs::remove_file(&path);
+        assert_eq!(meta.duration, 0.0);
+    }
+
+    /// The strided reader must agree with the whole-block reader for every
+    /// element, variable, and period — it is a pure I/O optimisation.
+    #[test]
+    fn element_series_matches_read_period_for_every_variable() {
+        let (n_nodes, n_tanks, n_links, n_periods) = (4, 1, 3, 5);
+        let path = write_temp_bytes(&make_out_with_periods(
+            n_nodes, n_tanks, n_links, n_periods, 14_400,
+        ));
+        let meta = read_metadata_checked(&path).expect("valid file");
+        let periods: Vec<PeriodResult> = (0..n_periods)
+            .map(|p| read_period(&path, &meta, p).expect("period"))
+            .collect();
+
+        for i in 0..n_nodes {
+            let series = read_element_series(&path, &meta, ElementKind::Node, i).expect("node");
+            assert_eq!(series.times, meta.snapshot_times());
+            let by_name = |name: &str| {
+                &series
+                    .series
+                    .iter()
+                    .find(|s| s.variable == name)
+                    .unwrap_or_else(|| panic!("node variable {name}"))
+                    .values
+            };
+            for (p, pr) in periods.iter().enumerate() {
+                assert_eq!(by_name("demand")[p], pr.node_demand[i], "node {i} demand");
+                assert_eq!(by_name("head")[p], pr.node_head[i], "node {i} head");
+                assert_eq!(
+                    by_name("pressure")[p],
+                    pr.node_pressure[i],
+                    "node {i} pressure"
+                );
+                assert_eq!(
+                    by_name("quality")[p],
+                    pr.node_quality[i],
+                    "node {i} quality"
+                );
+            }
+        }
+
+        for j in 0..n_links {
+            let series = read_element_series(&path, &meta, ElementKind::Link, j).expect("link");
+            let by_name = |name: &str| {
+                &series
+                    .series
+                    .iter()
+                    .find(|s| s.variable == name)
+                    .unwrap_or_else(|| panic!("link variable {name}"))
+                    .values
+            };
+            for (p, pr) in periods.iter().enumerate() {
+                assert_eq!(by_name("flow")[p], pr.link_flow[j], "link {j} flow");
+                assert_eq!(
+                    by_name("velocity")[p],
+                    pr.link_velocity[j],
+                    "link {j} velocity"
+                );
+                assert_eq!(
+                    by_name("headloss")[p],
+                    pr.link_headloss[j],
+                    "link {j} headloss"
+                );
+                assert_eq!(by_name("quality")[p], pr.link_quality[j], "link {j} qual");
+                assert_eq!(by_name("status")[p], pr.link_status[j], "link {j} status");
+                assert_eq!(
+                    by_name("setting")[p],
+                    pr.link_setting[j],
+                    "link {j} setting"
+                );
+                assert_eq!(
+                    by_name("reaction_rate")[p],
+                    pr.link_reaction_rate[j],
+                    "link {j} reaction"
+                );
+                assert_eq!(
+                    by_name("friction_factor")[p],
+                    pr.link_friction_factor[j],
+                    "link {j} friction"
+                );
+            }
+        }
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn element_series_rejects_out_of_range_index() {
+        let path = write_temp_bytes(&make_out_with_periods(2, 1, 1, 2, 3600));
+        let meta = read_metadata_checked(&path).expect("valid file");
+        let node_err = read_element_series(&path, &meta, ElementKind::Node, 2)
+            .expect_err("node index past the end");
+        let link_err = read_element_series(&path, &meta, ElementKind::Link, 1)
+            .expect_err("link index past the end");
+        let _ = std::fs::remove_file(&path);
+        assert!(node_err.contains("out of range"), "got: {node_err}");
+        assert!(link_err.contains("out of range"), "got: {link_err}");
+    }
+
+    #[test]
+    fn element_series_variable_order_matches_file_layout() {
+        assert_eq!(
+            ElementKind::Node.variables(),
+            ["demand", "head", "pressure", "quality"]
+        );
+        assert_eq!(
+            ElementKind::Link.variables(),
+            [
+                "flow",
+                "velocity",
+                "headloss",
+                "quality",
+                "status",
+                "setting",
+                "reaction_rate",
+                "friction_factor"
+            ]
+        );
     }
 }

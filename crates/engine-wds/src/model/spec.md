@@ -600,6 +600,26 @@ The network digest binds a results file to the topology of the network that prod
 
 The digest is deterministic and **order-sensitive**: reordering nodes or links, renaming any element, or rewiring a link's endpoints all change the digest. It intentionally covers identity and connectivity only — property edits (demands, diameters, options) do not change it.
 
+#### 4.5.8 Random Access
+
+Every section of the file has a size that depends only on the prolog counts, so any individual value is addressable by computation — no scan is required to reach it. Let
+
+$$B_{\text{pro}} = 884 + 36 N_n + 52 N_l + 8 N_t, \qquad B_{\text{ene}} = 28 N_p + 4, \qquad B_{\text{per}} = 4(4 N_n + 8 N_l)$$
+
+be the prolog, energy, and per-period block sizes in bytes (§4.5.2–§4.5.4). The dynamic section begins at $D = B_{\text{pro}} + B_{\text{ene}}$, and reporting period $p$ (0-based) begins at $D + p \cdot B_{\text{per}}$.
+
+Within a period block the variables are stored column-major (§4.5.4), so the value of node variable $v_n \in \{0,1,2,3\}$ (demand, head, pressure, quality) for the node at 0-based network index $i$ lies at byte offset
+
+$$D + p \cdot B_{\text{per}} + 4 (v_n N_n + i)$$
+
+and the value of link variable $v_l \in \{0,\dots,7\}$ (flow, velocity, unit headloss, quality, status, setting, reaction rate, friction factor) for the link at 0-based network index $j$ lies at
+
+$$D + p \cdot B_{\text{per}} + 4 (4 N_n + v_l N_l + j).$$
+
+Consequently a reader extracting the full time series of a **single** element must read $N_{\text{per}}$ values of 4 bytes each — one strided read per period — and must never read whole period blocks to do so. Reading the entire block per period is $O(N_{\text{per}} (N_n + N_l))$ where $O(N_{\text{per}})$ suffices, and on large networks that difference is four orders of magnitude.
+
+Metadata readers expose the prolog's scalar header fields — including the simulation duration at the fixed offset given in §4.5.2 — so that consumers never re-derive them by seeking into the header themselves.
+
 ## 5. Runtime Estimation Types
 
 See `RuntimeEstimate` in `model/network.rs`. Allowed values: `Low`, `Medium`, `High`.
