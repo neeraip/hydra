@@ -22,35 +22,34 @@ const MAX_SETTLED_ROWS = 50;
 // ── Main component ────────────────────────────────────────────────────────────
 
 export function TaskTray() {
-  const {
-    closeTaskTray,
-    setProjectView,
-    setPage,
-    setActiveScenarioId,
-    showToast,
-  } = useAppState();
+  const { closeTaskTray, openProject, setActiveScenarioId, showToast } =
+    useAppState();
   const { dismissTask, setResultMeta } = useSimulation();
   const ref = useRef<HTMLDivElement>(null);
 
   const handleViewResults = useCallback(
     (task: Task) => {
-      if (!task.projectId) return;
+      if (!task.projectId) {
+        // Identity is backfilled from the run queue, so this should not
+        // happen — but a dead button is the worst possible failure, so say
+        // something rather than returning silently.
+        showToast("This run is no longer linked to a project", "warn");
+        return;
+      }
       const { projectId, scenarioId } = task;
       loadResultMeta(projectId, scenarioId).then((meta) => {
         if (meta) setResultMeta(meta);
-        setPage("project");
-        setProjectView("analysis");
+        // Open the task's OWN project: a completed run in the tray may
+        // belong to a project other than the one on screen (or to none, if
+        // the user has since navigated home). `setPage("project")` alone
+        // keeps whatever project was already active, which quietly shows
+        // the wrong results.
+        openProject(projectId, "analysis");
         if (scenarioId !== undefined) setActiveScenarioId(scenarioId);
         closeTaskTray();
       });
     },
-    [
-      setPage,
-      setProjectView,
-      setActiveScenarioId,
-      closeTaskTray,
-      setResultMeta,
-    ],
+    [openProject, setActiveScenarioId, closeTaskTray, setResultMeta, showToast],
   );
 
   const tasks = useTasks();

@@ -40,6 +40,7 @@ import {
   validationFindingsToIssues,
 } from "./hooks";
 import { useNetworkVersion } from "./hooks/NetworkVersionContext";
+import { backfillTask, taskNeedsBackfill } from "./hooks/taskBackfill";
 
 /** "HH:MM" label used for task and issue timestamps. */
 function formatClockTime(date: Date = new Date()): string {
@@ -762,23 +763,23 @@ export function SimulationProvider({ children }: { children: ReactNode }) {
               };
             });
 
-          // Patch placeholder names on tasks that were synthesised before
-          // run_queue_update arrived (e.g. when the simulation completes so
-          // quickly that the item is already "done" when this handler runs,
-          // so it was never included in liveItems above).
+          // Backfill tasks synthesised by the progress-event timing race
+          // (progress arrived before run_queue_update created the entry, e.g.
+          // when a run finishes so quickly the item is already "done" here).
+          // Those placeholders carry neither names nor identity: the progress
+          // event names only a run id. `taskBackfill` documents why identity
+          // is patched independently of the names — keying on the names alone
+          // is what left "View results" dead.
           return [...fresh, ...kept].map((t) => {
-            if (t.projectName !== "…" && t.scenarioName !== "…") return t;
+            if (!taskNeedsBackfill(t)) return t;
             const matchingItem = items.find((i) => `queue-${i.id}` === t.id);
             if (!matchingItem) return t;
-            return {
-              ...t,
-              projectName:
-                t.projectName === "…" ? resolvedProjectName : t.projectName,
-              scenarioName:
-                t.scenarioName === "…"
-                  ? (matchingItem.targetName ?? "Base Model")
-                  : t.scenarioName,
-            };
+            return backfillTask(t, {
+              projectId,
+              targetId: matchingItem.targetId,
+              projectName: resolvedProjectName,
+              targetName: matchingItem.targetName ?? null,
+            });
           });
         });
       });
