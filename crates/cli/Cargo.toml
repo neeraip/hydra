@@ -18,7 +18,7 @@ name = "hydra"
 path = "src/main.rs"
 
 [dependencies]
-hydra = { package = "hydra-sdk", path = "../sdk", version = "2.2.0", features = ["report-pdf"] }
+hydra = { package = "hydra-sdk", path = "../sdk", version = "2.2.1", features = ["report-pdf"] }
 anyhow = "1"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 clap = { version = "4", features = ["derive"] }
