@@ -14,11 +14,24 @@
  * The menu renders through a portal on <body>. Row menus live inside
  * scrolling, `overflow: auto` containers that would otherwise clip the
  * dropdown to the row it belongs to.
+ *
+ * Dismissal listeners run in the CAPTURE phase, and opening claims a
+ * process-wide exclusive slot (see `exclusiveOpen`). Both are needed because
+ * these menus sit inside modal panels that call `stopPropagation` on
+ * mousedown — a bubble-phase listener above them never sees the click at
+ * all.
  */
 
 import { EllipsisHorizontalIcon } from "@heroicons/react/16/solid";
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import { createPortal } from "react-dom";
+import { claimExclusive, releaseExclusive } from "./exclusiveOpen";
 
 export interface RowMenuItem {
   /** Menu entry label. Also the accessible name. */
@@ -43,6 +56,9 @@ export function RowMenu({
   label?: string;
 }) {
   const [open, setOpen] = useState(false);
+  // Stable identity: `exclusiveOpen` recognises a holder by this reference,
+  // so a per-render closure would strand the slot on unmount.
+  const close = useCallback(() => setOpen(false), []);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
@@ -64,6 +80,14 @@ export function RowMenu({
     });
   }, [open]);
 
+  // Hold the exclusive slot for exactly as long as this menu is open, and
+  // give it up on unmount so a closing row cannot block the next menu.
+  useEffect(() => {
+    if (!open) return;
+    claimExclusive(close);
+    return () => releaseExclusive(close);
+  }, [open, close]);
+
   useEffect(() => {
     if (!open) return;
     function onPointerDown(e: MouseEvent) {
@@ -84,13 +108,15 @@ export function RowMenu({
     function onReflow() {
       setOpen(false);
     }
-    window.addEventListener("mousedown", onPointerDown);
-    window.addEventListener("keydown", onKey, true);
+    // Capture phase: modal panels stop mousedown from bubbling, so a
+    // bubble-phase listener here would never fire inside one.
+    document.addEventListener("mousedown", onPointerDown, true);
+    document.addEventListener("keydown", onKey, true);
     window.addEventListener("scroll", onReflow, true);
     window.addEventListener("resize", onReflow);
     return () => {
-      window.removeEventListener("mousedown", onPointerDown);
-      window.removeEventListener("keydown", onKey, true);
+      document.removeEventListener("mousedown", onPointerDown, true);
+      document.removeEventListener("keydown", onKey, true);
       window.removeEventListener("scroll", onReflow, true);
       window.removeEventListener("resize", onReflow);
     };
