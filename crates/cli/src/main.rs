@@ -11,6 +11,8 @@
 //   3 — I/O error (permission denied, HTTP 5xx, network failure)
 //   4 — internal error (unexpected engine state; please report a bug)
 
+mod report_cmd;
+
 use std::io::{IsTerminal, Write};
 use std::process;
 use std::time::Instant;
@@ -47,7 +49,7 @@ enum CliRunError {
     name = "hydra",
     disable_version_flag = true,
     about,
-    override_usage = "hydra [OPTIONS] <INPUT> [REPORT] [OUTPUT]\n       hydra [OPTIONS] --input <PATH>"
+    override_usage = "hydra [OPTIONS] <INPUT> [REPORT] [OUTPUT]\n       hydra [OPTIONS] --input <PATH>\n       hydra report --model <PATH> --results <PATH> [OPTIONS]"
 )]
 struct Cli {
     /// Model file path, and optionally report and output file paths.
@@ -112,6 +114,14 @@ impl Cli {
 }
 
 fn main() {
+    // Subcommand dispatch ahead of the legacy EPANET-positional grammar:
+    // `hydra report …` generates a report document from existing results.
+    // (A model file literally named `report` must be passed as `./report`.)
+    let mut raw_args = std::env::args();
+    if raw_args.nth(1).as_deref() == Some("report") {
+        process::exit(report_cmd::run(raw_args));
+    }
+
     // clap's default `parse()` exits with code 2 on usage errors, but this
     // CLI reserves 2 for solver errors. Map usage errors to exit 1 while
     // keeping clap's rendered output verbatim on the stream clap chose
