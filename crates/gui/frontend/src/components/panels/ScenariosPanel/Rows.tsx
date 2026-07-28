@@ -1,15 +1,12 @@
 import {
   ArrowTurnDownRightIcon,
-  ArrowUturnLeftIcon,
   CheckIcon,
-  FolderOpenIcon,
-  PencilIcon,
   PlayIcon,
   PlusIcon,
-  TrashIcon,
   XMarkIcon,
 } from "@heroicons/react/16/solid";
 import React from "react";
+import { RowMenu } from "../../ui/RowMenu";
 import {
   type FlatScenario,
   iconButtonStyle,
@@ -39,10 +36,9 @@ export function BaseRow({
   simulated: boolean;
   onClearResults: () => void;
   /**
-   * How many targets across the whole project hold results. Zero hides the
-   * clear-all control; one hides it too, because with a single simulated
-   * target it would do exactly what "Clear results" already does, and two
-   * near-identical destructive buttons invite the wrong click.
+   * How many targets across the whole project hold results. Zero disables
+   * the clear-all entry rather than removing it — inside a labelled menu an
+   * inert row can say why it does not apply, which an absent row cannot.
    */
   clearAllCount: number;
   onClearAllResults: () => void;
@@ -115,28 +111,6 @@ export function BaseRow({
         </button>
       )}
 
-      {simulated && (
-        <button
-          type="button"
-          onClick={onClearResults}
-          style={rowButtonStyle}
-          data-tooltip="Delete the base model's simulation results"
-        >
-          Clear results
-        </button>
-      )}
-
-      {clearAllCount > 1 && (
-        <button
-          type="button"
-          onClick={onClearAllResults}
-          style={rowButtonStyle}
-          data-tooltip={`Delete simulation results across the whole project (${clearAllCount} simulated)`}
-        >
-          Clear all results
-        </button>
-      )}
-
       <button
         type="button"
         onClick={onNewScenario}
@@ -158,6 +132,25 @@ export function BaseRow({
         <PlusIcon style={{ width: 10, height: 10 }} />
         New scenario
       </button>
+
+      <RowMenu
+        label="Base model actions"
+        items={[
+          {
+            label: "Clear results",
+            onSelect: onClearResults,
+            disabled: !simulated,
+            disabledReason: "The base model has not been simulated",
+          },
+          {
+            label: "Clear all results",
+            onSelect: onClearAllResults,
+            disabled: clearAllCount === 0,
+            disabledReason: "Nothing in this project has been simulated",
+            danger: true,
+          },
+        ]}
+      />
     </div>
   );
 }
@@ -393,58 +386,26 @@ export function ScenarioRow({
             <PlayIcon style={{ width: 12, height: 12 }} />
           </button>
 
-          {/* Only offered when there is something to clear — an always-present
-              control would imply results exist where they never did. */}
-          {hasResults && (
-            <button
-              type="button"
-              onClick={onClearResults}
-              style={iconButtonStyle}
-              data-tooltip="Delete simulation results"
-            >
-              <ArrowUturnLeftIcon style={{ width: 12, height: 12 }} />
-            </button>
-          )}
-
-          <button
-            type="button"
-            onClick={onBranch}
-            style={iconButtonStyle}
-            data-tooltip="Branch from this scenario"
-          >
-            <ArrowTurnDownRightIcon style={{ width: 12, height: 12 }} />
-          </button>
-
-          <button
-            type="button"
-            onClick={onRenameStart}
-            style={iconButtonStyle}
-            data-tooltip="Rename"
-          >
-            <PencilIcon style={{ width: 12, height: 12 }} />
-          </button>
-
-          <button
-            type="button"
-            onClick={onOpenFolder}
-            style={iconButtonStyle}
-            data-tooltip="Open in Finder"
-          >
-            <FolderOpenIcon style={{ width: 12, height: 12 }} />
-          </button>
-
-          <button
-            type="button"
-            onClick={onDelete}
-            disabled={isDeleting}
-            style={{
-              ...iconButtonStyle,
-              color: "var(--status-error, #e05c5c)",
-            }}
-            data-tooltip="Delete scenario"
-          >
-            <TrashIcon style={{ width: 12, height: 12 }} />
-          </button>
+          <RowMenu
+            label={`Actions for ${scenario.name}`}
+            items={[
+              {
+                label: "Clear results",
+                onSelect: onClearResults,
+                disabled: !hasResults,
+                disabledReason: "This scenario has not been simulated",
+              },
+              { label: "Branch from this scenario", onSelect: onBranch },
+              { label: "Rename…", onSelect: onRenameStart },
+              { label: "Open in Finder", onSelect: onOpenFolder },
+              {
+                label: "Delete scenario",
+                onSelect: onDelete,
+                disabled: isDeleting,
+                danger: true,
+              },
+            ]}
+          />
         </div>
       )}
     </div>
