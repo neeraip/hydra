@@ -135,10 +135,15 @@ export function useProject(
  * project's canonical INP. Returns the persisted manifest as a `Project`,
  * or `null` when running outside a Tauri shell so the caller can fall back to
  * a purely in-memory project.
+ *
+ * `engine` is persisted into the bundle and never rewritten; the backend
+ * rejects a key it cannot run, so a project can never be created for an
+ * engine that has no implementation.
  */
 export async function createProjectOnDisk(args: {
   id: string;
   name: string;
+  engine: string;
 }): Promise<Project | null> {
   return tryInvokeOr<Project | null>("create_project", args, null);
 }

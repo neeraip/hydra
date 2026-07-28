@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { engineByKey, FALLBACK_ENGINES } from "./hooks/engines";
+import {
+  engineByKey,
+  FALLBACK_ENGINES,
+  importExtensionLabel,
+  isEngineAvailable,
+} from "./hooks/engines";
 import type { ProjectView } from "./projectConfig";
 import { ACCENT, PROJECT_VIEWS } from "./projectConfig";
 
@@ -21,8 +26,63 @@ describe("engine registry fallback", () => {
   });
 
   it("unknown keys resolve to null, never a default engine", () => {
-    expect(engineByKey(FALLBACK_ENGINES, "och")).toBeNull();
+    expect(engineByKey(FALLBACK_ENGINES, "nope")).toBeNull();
     expect(engineByKey(FALLBACK_ENGINES, "")).toBeNull();
+  });
+
+  it("registers the planned engines so the wizard can present them", () => {
+    // Planned ≠ unknown (hydra-common spec §2.3): they resolve, and carry
+    // full identity, but must never back a project.
+    for (const key of ["uds", "och"]) {
+      const engine = engineByKey(FALLBACK_ENGINES, key);
+      if (engine === null) throw new Error(`${key} must be registered`);
+      expect(engine.pill).toHaveLength(2);
+      expect(isEngineAvailable(engine)).toBe(false);
+    }
+  });
+
+  it("only wds is available in this build", () => {
+    const available = FALLBACK_ENGINES.filter(isEngineAvailable).map(
+      (e) => e.key,
+    );
+    expect(available).toEqual(["wds"]);
+  });
+
+  it("mirrors the backend registry order", () => {
+    // The fallback stands in for `list_engines` outside a Tauri shell — a
+    // divergence here would make the wizard's card order depend on how the
+    // app was launched.
+    expect(FALLBACK_ENGINES.map((e) => e.key)).toEqual(["wds", "uds", "och"]);
+  });
+
+  it("every engine declares importable formats", () => {
+    for (const engine of FALLBACK_ENGINES) {
+      expect(engine.import.length).toBeGreaterThan(0);
+      for (const format of engine.import) {
+        expect(format.label.length).toBeGreaterThan(0);
+        expect(format.extensions.length).toBeGreaterThan(0);
+        // A leading dot or uppercase would break the picker filter.
+        for (const ext of format.extensions) {
+          expect(ext).toMatch(/^[a-z0-9]+$/);
+        }
+      }
+    }
+  });
+
+  it("renders extension hints with dots and no duplicates", () => {
+    expect(importExtensionLabel(FALLBACK_ENGINES[0])).toBe(".inp");
+    const och = engineByKey(FALLBACK_ENGINES, "och");
+    if (och === null) throw new Error("och must be registered");
+    expect(importExtensionLabel(och)).toBe(".zip, .7z, .tar, .gz, .tgz");
+  });
+
+  it("wds and uds share the .inp extension", () => {
+    // The reason the extension can never stand in for validation: only the
+    // engine's own parser can tell an EPANET model from a SWMM one.
+    const claimants = FALLBACK_ENGINES.filter((e) =>
+      e.import.some((f) => f.extensions.includes("inp")),
+    ).map((e) => e.key);
+    expect(claimants).toEqual(["wds", "uds"]);
   });
 });
 

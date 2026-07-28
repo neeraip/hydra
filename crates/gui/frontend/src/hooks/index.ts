@@ -40,9 +40,13 @@ export * from "./basemapProviders";
 export * from "./editors";
 export {
   type EngineInfo,
+  type EngineStatus,
   engineByKey,
   FALLBACK_ENGINES,
   getEngines,
+  type ImportFormat,
+  importExtensionLabel,
+  isEngineAvailable,
   useEngines,
 } from "./engines";
 export * from "./issues";

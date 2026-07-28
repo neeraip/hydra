@@ -22,18 +22,14 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAppState } from "../../AppContext";
 import { DeleteProjectModal } from "../../components/modals/DeleteProjectModal";
 import { NewProjectWizard } from "../../components/modals/NewProjectWizard";
-import { SplitActionButton } from "../../components/ui/SplitActionButton";
+import { PrimaryButton } from "../../components/ui/PrimaryButton";
 import {
-  createProjectOnDisk,
   deleteProjectOnDisk,
-  formatInpImportError,
-  openAndLoadNetwork,
   openBaseFolder,
   type Project,
   type ProjectState,
   reconcileProjects,
   renameProjectOnDisk,
-  useNetworkVersion,
   useProjects,
 } from "../../hooks";
 import { PROJECTS_SEARCH_INPUT_ID } from "../../shortcuts";
@@ -64,50 +60,9 @@ const col = createColumnHelper<Project>();
 // ── Main page ────────────────────────────────────────────────────────────────
 
 export function ProjectsPage() {
-  const {
-    projectsVersion,
-    openProject,
-    bumpProjects,
-    createProject,
-    showToast,
-  } = useAppState();
+  const { projectsVersion, openProject, bumpProjects } = useAppState();
   const [showWizard, setShowWizard] = useState(false);
-  const { bumpNetwork } = useNetworkVersion();
-  // Busy flag while the INP file dialog + parse + project persist runs, so
-  // the action button can't be double-triggered and shows progress.
-  const [importing, setImporting] = useState(false);
 
-  async function handleImportInp() {
-    if (importing) return;
-    setImporting(true);
-    try {
-      const result = await openAndLoadNetwork();
-      if (!result) return;
-      bumpNetwork();
-      const id = crypto.randomUUID();
-      const name = result.fileStem || "Imported Project";
-      const persisted = await createProjectOnDisk({ id, name });
-      const project: Project = persisted ?? {
-        id,
-        name,
-        engine: "wds",
-        state: "ready",
-        scenarioCount: 0,
-        modifiedLabel: "Just now",
-        nodeCount: result.nodes.length,
-        linkCount: result.links.length,
-        sourceCrs: "EPSG:4326",
-        insights: null,
-        folderMissing: false,
-      };
-      createProject(project);
-      bumpProjects();
-    } catch (err) {
-      showToast(formatInpImportError(err), "error");
-    } finally {
-      setImporting(false);
-    }
-  }
   const handleOpenProject = useCallback(
     (id: string) => {
       // Navigate immediately; AppContext loads and primes network data in the background.
@@ -419,13 +374,9 @@ export function ProjectsPage() {
         <div style={{ flex: 1 }} />
 
         {/* New Project button */}
-        <SplitActionButton
-          size="sm"
-          label={importing ? "Importing…" : "+ New project"}
-          onClick={() => setShowWizard(true)}
-          disabled={importing}
-          menuItems={[{ label: "Import INP file…", onClick: handleImportInp }]}
-        />
+        <PrimaryButton size="sm" onClick={() => setShowWizard(true)}>
+          + New project
+        </PrimaryButton>
 
         {/* Row count */}
         <span

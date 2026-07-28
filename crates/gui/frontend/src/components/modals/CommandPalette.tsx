@@ -166,6 +166,10 @@ export function CommandPalette() {
   } = useAppState();
 
   const projects = useProjects(projectsVersion);
+  // Engine key of the open project — the "import model file" action needs it
+  // to pick the right file filter and parser.
+  const activeProjectEngine =
+    projects.find((p) => p.id === activeProjectId)?.engine ?? null;
   // Scenario quick-switch entries — only meaningful with a project open.
   const scenarios = useScenarios(
     page === "project" ? activeProjectId : null,
@@ -229,12 +233,6 @@ export function CommandPalette() {
           id: "p-new",
           label: "New project",
           description: "Start from a blank network",
-          category: "Page",
-        },
-        {
-          id: "p-import",
-          label: "Import INP file…",
-          description: "Add a new network to a project",
           category: "Page",
         },
         {
@@ -325,7 +323,7 @@ export function CommandPalette() {
           : []),
         {
           id: "a4",
-          label: "Import INP file…",
+          label: "Import model file…",
           description: "Replace or update the network for this project",
           category: "Actions",
         },
@@ -561,9 +559,12 @@ export function CommandPalette() {
         return;
       }
 
-      // ── Import INP (home or Actions command) ───────────────────────────
-      if (cmd.id === "p-import" || cmd.id === "a4") {
-        openAndLoadNetwork()
+      // ── Replace this project's network ─────────────────────────────────
+      if (cmd.id === "a4") {
+        // The picker filter and the parser both follow the open project's
+        // engine — `.inp` alone does not say which model format a file is.
+        if (!activeProjectEngine) return;
+        openAndLoadNetwork(activeProjectEngine)
           .then((net) => {
             if (net) {
               bumpNetwork();
@@ -803,6 +804,7 @@ export function CommandPalette() {
       openProject,
       closeProject,
       activeProjectId,
+      activeProjectEngine,
       activeScenarioId,
       setActiveScenarioId,
       setPage,

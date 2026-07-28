@@ -89,6 +89,25 @@ pub fn list_projects(app: tauri::AppHandle) -> Result<Vec<Project>, String> {
     Ok(projects)
 }
 
+/// Resolve an engine key, refusing anything this build cannot actually run
+/// (hydra-common spec §2.3).
+///
+/// The two failure modes are deliberately distinct in the message: an
+/// unknown key means the project came from a newer Hydra, while a planned
+/// key means the engine is registered but unimplemented. Collapsing them
+/// would leave a user unable to tell "upgrade Hydra" from "wait for it".
+fn require_available_engine(key: &str) -> Result<&'static hydra::common::EngineDescriptor, String> {
+    let descriptor = hydra::common::engine_by_key(key)
+        .map_err(|_| format!("unknown engine {key:?} — this build of Hydra does not have it"))?;
+    if !descriptor.is_available() {
+        return Err(format!(
+            "{} modelling is not available yet in this build of Hydra",
+            descriptor.label
+        ));
+    }
+    Ok(descriptor)
+}
+
 /// Persist a new project. Called from the frontend's "New Project" wizard
 /// once a network has been loaded into [`NetworkState`]. The INP bytes
 /// currently held in managed state are copied into the bundle as the
@@ -101,8 +120,13 @@ pub fn create_project(
     state: tauri::State<'_, NetworkState>,
     id: String,
     name: String,
+    engine: String,
 ) -> Result<Project, String> {
     validate_id(&id)?;
+    // The engine key is persisted into meta.json and never rewritten, so a
+    // key that this build cannot run must be refused here rather than
+    // producing a project that opens into a permanent unsupported state.
+    require_available_engine(&engine)?;
     let app_data = app_data_dir(&app)?;
 
     // Snapshot the currently loaded network (if any). `up_to_date_raw_bytes`
@@ -126,7 +150,7 @@ pub fn create_project(
 
     let meta = meta::ProjectMeta {
         name,
-        engine: "wds".into(),
+        engine,
         source_crs: "EPSG:4326".into(),
         node_count,
         link_count,
@@ -879,27 +903,36 @@ fn format_modified(modified_at: i64) -> String {
     }
 }
 
-/// Open a native file-open dialog, parse the chosen `.inp` file, store the
-/// result in managed state, and return the `NetworkDto` to the caller.
+/// Open a native file-open dialog filtered to `engine`'s source-model
+/// formats, parse the chosen file with that engine, store the result in
+/// managed state, and return the `NetworkDto` to the caller.
 ///
 /// Returns `null` to the frontend when the dialog is cancelled.
+///
+/// The picker filter comes from the engine descriptor rather than being
+/// hardcoded, but the filter is only a filter: `wds` and `uds` both claim
+/// `.inp` (hydra-common spec §2.2), so the parse below is what actually
+/// decides whether the file is the right kind of model.
 #[tauri::command]
-/// Open a native file-picker, parse the chosen INP, and hold it in `NetworkState`.
+/// Open a native file-picker, parse the chosen model file, and hold it in `NetworkState`.
 pub async fn open_and_load_network(
     state: tauri::State<'_, NetworkState>,
     app: tauri::AppHandle,
+    engine: String,
 ) -> Result<Option<NetworkDto>, String> {
     use tauri_plugin_dialog::DialogExt;
+
+    let descriptor = require_available_engine(&engine)?;
 
     // The dialog call blocks until the user answers — run it on the blocking
     // pool so it does not tie up an async runtime worker for that whole time.
     let dialog_app = app.clone();
     let path = tauri::async_runtime::spawn_blocking(move || {
-        dialog_app
-            .dialog()
-            .file()
-            .add_filter("EPANET Input File", &["inp"])
-            .blocking_pick_file()
+        let mut dialog = dialog_app.dialog().file();
+        for format in descriptor.import {
+            dialog = dialog.add_filter(format.label, format.extensions);
+        }
+        dialog.blocking_pick_file()
     })
     .await
     .map_err(|e| format!("file dialog task panicked: {e}"))?;
@@ -916,7 +949,14 @@ pub async fn open_and_load_network(
         .unwrap_or("")
         .to_string();
     let bytes = std::fs::read(&path_buf).map_err(|e| e.to_string())?;
-    let network = hydra::io::parse(&bytes).map_err(format_inp_parse_error)?;
+    // `require_available_engine` has already narrowed this to the one engine
+    // with an implementation. Matching on the key rather than calling the wds
+    // parser unconditionally makes the next engine a compile-time decision
+    // instead of a silently wrong parse.
+    let network = match descriptor.key {
+        "wds" => hydra::io::parse(&bytes).map_err(format_inp_parse_error)?,
+        other => return Err(format!("no importer for engine {other:?}")),
+    };
 
     let mut dto = network_to_dto(&network);
     dto.file_stem = file_stem;
@@ -1254,6 +1294,29 @@ mod tests {
     fn format_modified_two_months() {
         let label = format_modified(meta::now_secs() - 65 * 86_400); // ~2 months ago
         assert_eq!(label, "2mo ago");
+    }
+
+    // ── engine gating ────────────────────────────────────────────────────
+
+    #[test]
+    fn only_an_implemented_engine_may_back_a_new_project() {
+        assert_eq!(require_available_engine("wds").unwrap().key, "wds");
+
+        // Planned: registered and presentable, but nothing can run it. The
+        // wizard disables these cards; this is the backstop for a caller
+        // that ignores the card state.
+        for planned in ["uds", "och"] {
+            let err = require_available_engine(planned).unwrap_err();
+            assert!(
+                err.contains("not available yet"),
+                "{planned} rejection should say it is unimplemented, got: {err}"
+            );
+        }
+
+        // Unknown: a different failure with a different remedy (upgrade).
+        let err = require_available_engine("zzz").unwrap_err();
+        assert!(err.contains("unknown engine"), "got: {err}");
+        assert!(!err.contains("not available yet"), "got: {err}");
     }
 
     // ── project_to_dto state derivation ──────────────────────────────────

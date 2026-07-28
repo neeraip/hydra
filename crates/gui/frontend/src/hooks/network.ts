@@ -308,7 +308,14 @@ export async function fetchNetworkSnapshot(): Promise<{
 
 // ── Network model hooks (nodes, links) ─────────────────────────────────────
 
-export async function openAndLoadNetwork(): Promise<{
+/**
+ * Open the native file picker filtered to `engine`'s source-model formats,
+ * parse the chosen file with that engine, and hold it in backend state.
+ *
+ * `engine` is required rather than defaulting: the picker filter and the
+ * parser both depend on it, and every `.inp` looks alike from here.
+ */
+export async function openAndLoadNetwork(engine: string): Promise<{
   nodes: Node[];
   links: Link[];
   fileStem: string;
@@ -318,14 +325,14 @@ export async function openAndLoadNetwork(): Promise<{
     nodes: Node[];
     links: Link[];
     fileStem: string;
-  } | null>("open_and_load_network");
+  } | null>("open_and_load_network", { engine });
 }
 
 /** Convert backend/Tauri import errors into concise toast-safe text. */
 export function formatInpImportError(err: unknown): string {
   const raw = err instanceof Error ? err.message : String(err ?? "");
   const normalized = raw.replace(/\r\n/g, "\n").trim();
-  if (!normalized) return "Could not import INP file.";
+  if (!normalized) return "Could not import the model file.";
 
   const firstUsefulLine = normalized
     .split("\n")
@@ -348,14 +355,14 @@ export function formatInpImportError(err: unknown): string {
     detail = detail.slice(0, causedByIdx).trim();
   }
 
-  if (!detail) return "Could not import INP file.";
+  if (!detail) return "Could not import the model file.";
 
   const maxLen = 220;
   if (detail.length > maxLen) {
     detail = `${detail.slice(0, maxLen - 1).trimEnd()}...`;
   }
 
-  return `Could not import INP file: ${detail}`;
+  return `Could not import the model file: ${detail}`;
 }
 
 /**

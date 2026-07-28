@@ -5,16 +5,12 @@ import remarkGfm from "remark-gfm";
 import { useAppState } from "../AppContext";
 import { NewProjectWizard } from "../components/modals/NewProjectWizard";
 import { ReleaseNotesModal } from "../components/modals/ReleaseNotesModal";
-import { SplitActionButton } from "../components/ui/SplitActionButton";
+import { PrimaryButton } from "../components/ui/PrimaryButton";
 import {
   ACCENT,
-  createProjectOnDisk,
   engineByKey,
-  formatInpImportError,
-  openAndLoadNetwork,
   type Project,
   useEngines,
-  useNetworkVersion,
   useProjects,
 } from "../hooks";
 import {
@@ -238,14 +234,7 @@ function SidebarSection({ title }: { title: string }) {
 // ── Home page ─────────────────────────────────────────────────────────────────
 
 export function HomePage() {
-  const {
-    projectsVersion,
-    createdProject,
-    openProject,
-    createProject,
-    showToast,
-  } = useAppState();
-  const { bumpNetwork } = useNetworkVersion();
+  const { projectsVersion, createdProject, openProject } = useAppState();
   const notes = useReleaseNotes();
   const { lastSeen, markSeen } = useLastSeenGuiVersion();
   const { updater, install, restart } = useUpdater();
@@ -286,40 +275,6 @@ export function HomePage() {
   }, [backendProjects, createdProject]);
 
   const [showWizard, setShowWizard] = useState(false);
-  // Busy flag while the INP file dialog + parse + project persist runs, so
-  // the action button can't be double-triggered and shows progress.
-  const [importing, setImporting] = useState(false);
-
-  async function handleImportInp() {
-    if (importing) return;
-    setImporting(true);
-    try {
-      const result = await openAndLoadNetwork();
-      if (!result) return;
-      bumpNetwork();
-      const id = crypto.randomUUID();
-      const name = result.fileStem || "Imported Project";
-      const persisted = await createProjectOnDisk({ id, name });
-      const project: Project = persisted ?? {
-        id,
-        name,
-        engine: "wds",
-        state: "ready",
-        scenarioCount: 0,
-        modifiedLabel: "Just now",
-        nodeCount: result.nodes.length,
-        linkCount: result.links.length,
-        sourceCrs: "EPSG:4326",
-        insights: null,
-        folderMissing: false,
-      };
-      createProject(project);
-    } catch (err) {
-      showToast(formatInpImportError(err), "error");
-    } finally {
-      setImporting(false);
-    }
-  }
 
   function openRecentProject(project: Project) {
     // Navigate immediately; AppContext loads and primes network data in the background.
@@ -394,14 +349,9 @@ export function HomePage() {
             A modern engine for water distribution simulation.
           </div>
           <div style={{ display: "inline-flex" }}>
-            <SplitActionButton
-              label={importing ? "Importing…" : "+ New project"}
-              onClick={() => setShowWizard(true)}
-              disabled={importing}
-              menuItems={[
-                { label: "Import INP file…", onClick: handleImportInp },
-              ]}
-            />
+            <PrimaryButton onClick={() => setShowWizard(true)}>
+              + New project
+            </PrimaryButton>
           </div>
         </div>
       </div>

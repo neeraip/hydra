@@ -1543,6 +1543,18 @@ Duration  0
     }
 
     #[test]
+    fn format_inp_parse_error_explains_a_swmm_file_picked_by_mistake() {
+        // Both engines' models are `.inp`, so the picker cannot stop this —
+        // the message is the only thing telling the user what went wrong.
+        let inp = b"[JUNCTIONS]\nJ1  12.0  3.0  0  0  0\n\n\
+                    [CONDUITS]\nC1  J1  J2  400  0.01  0  0  0\n";
+        let err = hydra::io::parse(inp).expect_err("a SWMM model must not load as EPANET");
+        let msg = format_inp_parse_error(err);
+        assert!(msg.contains("SWMM"), "got: {msg}");
+        assert!(msg.contains("[CONDUITS]"), "got: {msg}");
+    }
+
+    #[test]
     fn format_inp_parse_error_renders_duplicate_id() {
         let inp = b"[JUNCTIONS]\nJ1    0    10\nJ1    0    20\n\n[RESERVOIRS]\nR1    100\n\n\
                     [PIPES]\nP1    R1    J1    1000    12    100    0    Open\n\n\
