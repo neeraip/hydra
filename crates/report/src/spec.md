@@ -59,8 +59,9 @@ valid and yields a document with no sections.
 Assembly pairs a template with a **producer** — a function the
 application supplies that maps a block id and the block's optional
 options value to a fragment or a block error (the engine's
-`produce_report_block` behind the scenes). The result is a
-render-ready document:
+`produce_report_block` behind the scenes) — and with the **block
+catalog** the template's ids refer to (hydra-common spec §3.1). The
+result is a render-ready document:
 
 - **Title** — from the template.
 - **Provenance** — caller-supplied: an optional generation timestamp
@@ -77,6 +78,22 @@ render-ready document:
 
 Placeholders are never silently omitted — a report a reader believes is
 complete must not be hiding sections that could not be produced.
+
+**Section headings** resolve in a fixed order, identically for all three
+variants:
+
+1. the template block's heading override, when set;
+2. otherwise the catalog descriptor's default heading for that block id;
+3. otherwise the raw block id.
+
+A produced fragment carries its own heading, which the catalog entry
+matches by construction, so step 2 changes nothing for content sections.
+It exists for placeholders: a block that is unavailable or failed has no
+fragment to take a heading from, and falling straight to the raw id
+surfaces an internal identifier (`wds.quality-summary`) in a document
+whose every other heading is prose. Step 3 remains only for an id absent
+from the catalog — which is exactly the unknown-block case, where showing
+the offending id is the useful thing to do.
 
 ---
 
