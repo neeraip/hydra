@@ -4,6 +4,7 @@
 
 import {
   ChartBarSquareIcon,
+  DocumentTextIcon,
   MapIcon,
   RectangleGroupIcon,
   TableCellsIcon,
@@ -25,7 +26,12 @@ export const ACCENT = "#4a90d9" as const;
  * Top-level project views. Canvas is the primary workspace; Overview is the
  * landing screen when a project is first opened.
  */
-export type ProjectView = "overview" | "canvas" | "editor" | "analysis";
+export type ProjectView =
+  | "overview"
+  | "canvas"
+  | "editor"
+  | "analysis"
+  | "report";
 
 type IconCmp = ComponentType<SVGProps<SVGSVGElement>>;
 
@@ -44,4 +50,5 @@ export const PROJECT_VIEWS: ProjectViewSpec[] = [
   { id: "canvas", label: "Canvas", icon: MapIcon, ready: true },
   { id: "editor", label: "Editor", icon: TableCellsIcon, ready: true },
   { id: "analysis", label: "Results", icon: ChartBarSquareIcon, ready: true },
+  { id: "report", label: "Report", icon: DocumentTextIcon, ready: true },
 ];

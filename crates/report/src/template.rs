@@ -7,18 +7,22 @@ use serde::{Deserialize, Serialize};
 
 /// One block reference in a template (spec §2). The id is opaque to this
 /// layer — it is validated only by the producing engine at assembly time.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TemplateBlock {
     pub id: String,
     /// Optional heading override replacing the block's default heading.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
+    /// Optional per-block options, passed to the producing engine verbatim
+    /// (hydra-common spec §3.4) — fully opaque to this layer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub options: Option<serde_json::Value>,
 }
 
 /// A report template (spec §2). Unknown fields are ignored on read
 /// (additive evolution); breaking format changes require a version bump.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ReportTemplate {
     /// Template format version; must equal [`ReportTemplate::VERSION`].
@@ -97,6 +101,7 @@ impl ReportTemplate {
                 .map(|b| TemplateBlock {
                     id: b.id.into(),
                     title: None,
+                    options: None,
                 })
                 .collect(),
         }
@@ -151,6 +156,7 @@ mod tests {
             blocks: vec![TemplateBlock {
                 id: "wds.x".into(),
                 title: Some("Override".into()),
+                options: Some(serde_json::json!({ "minPressure": 20 })),
             }],
         };
         assert_eq!(ReportTemplate::from_json(&t.to_json()).unwrap(), t);

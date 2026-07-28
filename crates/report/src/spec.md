@@ -18,9 +18,7 @@ only on the foundation contracts.
 Applications are the composition root: they obtain fragments from an
 engine and hand them to this layer. This layer never invokes an engine.
 
-**v1 non-goals:** PDF output (format decision deferred; the GUI can print
-the html rendering meanwhile), charts, per-block options, styling themes.
-All must arrive additively.
+**v1 non-goals:** charts and styling themes. Both must arrive additively.
 
 ---
 
@@ -48,6 +46,7 @@ headless CLI generation.
 | `title` | Document title | Plain text, non-empty. |
 | `blocks[].id` | Block reference | Opaque to this layer — validated only by the producing engine at assembly time. |
 | `blocks[].title` | Optional heading override | Plain text; replaces the block's default heading. |
+| `blocks[].options` | Optional per-block options | A JSON value passed to the producing engine verbatim (hydra-common spec §3.4); fully opaque to this layer. |
 
 Unknown fields are ignored on read (additive evolution); a breaking
 change to the format requires a version bump. An empty `blocks` list is
@@ -58,8 +57,9 @@ valid and yields a document with no sections.
 ## 3. Document Model
 
 Assembly pairs a template with a **producer** — a function the
-application supplies that maps a block id to a fragment or a block error
-(the engine's `produce_report_block` behind the scenes). The result is a
+application supplies that maps a block id and the block's optional
+options value to a fragment or a block error (the engine's
+`produce_report_block` behind the scenes). The result is a
 render-ready document:
 
 - **Title** — from the template.
@@ -84,6 +84,27 @@ complete must not be hiding sections that could not be produced.
 
 Each renderer is a pure function from a document to a string. Output is
 deterministic byte-for-byte for identical documents.
+
+**Fidelity tiering (ratified 2026-07-28).** pdf is the flagship deliverable
+format: new visual features (charts, future branding/layout work) land
+there first. html tracks pdf where cheap — it is also the GUI's live
+preview. txt and csv are stable utility formats — diffable regression
+artifacts and data interchange respectively — frozen at tabular fidelity:
+new fragment kinds degrade to their tabular derivation there and never
+require visual support.
+
+**Charts (hydra-common spec §3.3).** pdf and html render charts as static
+vector graphics sharing one SVG generator; txt and csv render the chart's
+derived data table. Chart graphics follow fixed marks: bars ≤ 24 units
+thick with rounded data-ends and square baselines, 2-unit surface gaps
+between touching bars, 2-unit lines, hairline solid gridlines, one axis,
+value labels on bar caps, line series direct-labeled at their ends when
+they fit plus a legend whenever there are two or more series (never a
+legend for one). Series colors come from a fixed validated categorical
+order (colorblind-checked against the white document surface); color
+follows the series, never its rank; text always wears ink colors, never
+series colors. Documents are light-surface artifacts — charts have no
+dark variant.
 
 ### 4.1 Number formatting
 
@@ -122,11 +143,28 @@ Neutral styling that prints acceptably (the GUI's print-to-PDF path).
 All text content is HTML-escaped. This rendering doubles as the GUI's
 live preview.
 
+### 4.5 pdf
+
+Available behind an opt-in build feature (`pdf`) — it embeds a typesetting
+engine and fonts, a heavyweight dependency the text formats never pay
+for. The document model is typeset (via Typst) to an A4 portrait page
+with 2 cm margins and embedded fonts: title and provenance header,
+numbered-free section headings, key-value grids, ruled tables with
+right-aligned numeric columns, and the same placeholder treatment as the
+other renderers. All user text passes through string context — content
+can never inject markup. No creation timestamp is embedded, preserving
+byte-determinism for identical documents.
+
+Unlike the text renderers, PDF rendering **may fail** (typesetting
+diagnostics); it returns the document bytes or a typed error carrying the
+diagnostic text.
+
 ---
 
 ## 5. Errors
 
 Template parsing fails with a typed error naming the problem (bad JSON,
 unsupported version, empty title). Assembly itself cannot fail — block
-production failures become placeholder sections (§3). Renderers cannot
-fail.
+production failures become placeholder sections (§3). The txt/csv/html
+renderers cannot fail; the pdf renderer fails only with a typed
+typesetting error (§4.5).

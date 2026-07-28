@@ -12,7 +12,7 @@ use std::path::Path;
 use clap::Parser;
 use hydra::report::{assemble, render_csv, render_html, render_txt, ReportContext, ReportTemplate};
 
-use crate::{EXIT_INPUT, EXIT_IO, EXIT_OK};
+use crate::{EXIT_INPUT, EXIT_INTERNAL, EXIT_IO, EXIT_OK};
 
 #[derive(Parser, Debug)]
 #[command(
@@ -53,6 +53,7 @@ enum Format {
     Txt,
     Csv,
     Html,
+    Pdf,
 }
 
 /// Run the subcommand with the arguments following `hydra report`.
@@ -117,8 +118,8 @@ pub fn run<I: IntoIterator<Item = String>>(args: I) -> i32 {
     };
 
     let results_path = Path::new(&cli.results);
-    let document = assemble(&template, context, |id| {
-        hydra::produce_report_block(id, results_path, &network)
+    let document = assemble(&template, context, |id, options| {
+        hydra::produce_report_block(id, results_path, &network, options)
     });
 
     let format = cli.format.unwrap_or_else(|| {
@@ -132,23 +133,46 @@ pub fn run<I: IntoIterator<Item = String>>(args: I) -> i32 {
         {
             Some("csv") => Format::Csv,
             Some("html") | Some("htm") => Format::Html,
+            Some("pdf") => Format::Pdf,
             _ => Format::Txt,
         }
     });
+
+    enum Rendered {
+        Text(String),
+        Binary(Vec<u8>),
+    }
     let rendered = match format {
-        Format::Txt => render_txt(&document),
-        Format::Csv => render_csv(&document),
-        Format::Html => render_html(&document),
+        Format::Txt => Rendered::Text(render_txt(&document)),
+        Format::Csv => Rendered::Text(render_csv(&document)),
+        Format::Html => Rendered::Text(render_html(&document)),
+        Format::Pdf => match hydra::report::render_pdf(&document) {
+            Ok(bytes) => Rendered::Binary(bytes),
+            Err(e) => {
+                eprintln!("error: {e}");
+                return EXIT_INTERNAL;
+            }
+        },
     };
 
-    match &cli.out {
-        Some(path) => {
-            if let Err(e) = std::fs::write(path, rendered) {
+    match (&cli.out, rendered) {
+        (Some(path), Rendered::Text(text)) => {
+            if let Err(e) = std::fs::write(path, text) {
                 eprintln!("error: cannot write {path}: {e}");
                 return EXIT_IO;
             }
         }
-        None => print!("{rendered}"),
+        (Some(path), Rendered::Binary(bytes)) => {
+            if let Err(e) = std::fs::write(path, bytes) {
+                eprintln!("error: cannot write {path}: {e}");
+                return EXIT_IO;
+            }
+        }
+        (None, Rendered::Text(text)) => print!("{text}"),
+        (None, Rendered::Binary(_)) => {
+            eprintln!("error: pdf output requires --out <PATH>");
+            return EXIT_INPUT;
+        }
     }
     EXIT_OK
 }

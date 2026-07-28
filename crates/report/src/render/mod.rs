@@ -2,15 +2,98 @@
 //! shared value-formatting helpers. Deterministic byte-for-byte for
 //! identical documents; renderers cannot fail.
 
+mod chart_svg;
 mod csv;
 mod html;
+#[cfg(feature = "pdf")]
+mod pdf;
 mod txt;
 
 pub use csv::render_csv;
 pub use html::render_html;
+#[cfg(feature = "pdf")]
+pub use pdf::{render_pdf, PdfError};
 pub use txt::render_txt;
 
-use hydra_common::Value;
+use hydra_common::{Chart, ChartData, Column, Table, Value, ValueKind};
+
+/// The mechanical table derivation of a chart (hydra-common spec §3.3),
+/// used by renderers without graphics support (txt, csv): bar →
+/// category/value rows; line → x column plus one column per series,
+/// absent where a series lacks that x.
+pub(crate) fn derive_chart_table(chart: &Chart) -> Table {
+    match &chart.data {
+        ChartData::Bar { categories, values } => Table {
+            columns: vec![
+                Column {
+                    name: chart.x_label.clone(),
+                    unit: chart.x_unit.clone(),
+                    kind: ValueKind::Text,
+                },
+                Column {
+                    name: chart.y_label.clone(),
+                    unit: chart.y_unit.clone(),
+                    kind: ValueKind::Number,
+                },
+            ],
+            rows: categories
+                .iter()
+                .zip(values)
+                .map(|(category, &value)| {
+                    vec![
+                        Value::Text {
+                            value: category.clone(),
+                        },
+                        Value::Number { value, unit: None },
+                    ]
+                })
+                .collect(),
+        },
+        ChartData::Line { series } => {
+            let mut xs: Vec<f64> = series
+                .iter()
+                .flat_map(|s| s.points.iter().map(|p| p[0]))
+                .collect();
+            xs.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+            xs.dedup_by(|a, b| (*a - *b).abs() < 1e-12);
+
+            let mut columns = vec![Column {
+                name: chart.x_label.clone(),
+                unit: chart.x_unit.clone(),
+                kind: ValueKind::Number,
+            }];
+            columns.extend(series.iter().map(|s| Column {
+                name: s.name.clone(),
+                unit: chart.y_unit.clone(),
+                kind: ValueKind::Number,
+            }));
+
+            let rows = xs
+                .iter()
+                .map(|&x| {
+                    let mut row = vec![Value::Number {
+                        value: x,
+                        unit: None,
+                    }];
+                    for s in series {
+                        row.push(
+                            s.points
+                                .iter()
+                                .find(|p| (p[0] - x).abs() < 1e-12)
+                                .map(|p| Value::Number {
+                                    value: p[1],
+                                    unit: None,
+                                })
+                                .unwrap_or(Value::Absent),
+                        );
+                    }
+                    row
+                })
+                .collect();
+            Table { columns, rows }
+        }
+    }
+}
 
 /// Human number formatting (spec §4.1): up to 3 decimal places, trailing
 /// zeros and trailing decimal point trimmed.

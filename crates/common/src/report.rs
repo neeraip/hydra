@@ -111,6 +111,44 @@ pub struct Table {
     pub rows: Vec<Vec<Value>>,
 }
 
+/// One named series of (x, y) points in x order (spec §3.3).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LineSeries {
+    pub name: String,
+    pub points: Vec<[f64; 2]>,
+}
+
+/// Chart data (spec §3.3).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "camelCase")]
+pub enum ChartData {
+    /// Parallel category labels and values (distributions, rankings).
+    /// Single-series in this revision.
+    Bar {
+        categories: Vec<String>,
+        values: Vec<f64>,
+    },
+    /// One or more named series over a continuous x axis (time series).
+    Line { series: Vec<LineSeries> },
+}
+
+/// A declarative chart (spec §3.3): data plus axis labels only — engines
+/// describe *what* is charted, never colors, geometry, or layout. Every
+/// chart is table-derivable so it never gates information behind a
+/// graphics-capable format.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Chart {
+    pub x_label: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub x_unit: Option<String>,
+    pub y_label: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub y_unit: Option<String>,
+    pub data: ChartData,
+}
+
 /// One item of a fragment (spec §3.3).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
@@ -124,6 +162,11 @@ pub enum FragmentItem {
     /// Plain-text paragraph for caveats and methodological remarks.
     Note {
         text: String,
+    },
+    /// A declarative chart; renderers without graphics support present
+    /// its mechanical table derivation instead.
+    Chart {
+        chart: Chart,
     },
 }
 
@@ -218,6 +261,29 @@ mod tests {
         let json = serde_json::to_string(&fragment).unwrap();
         let back: Fragment = serde_json::from_str(&json).unwrap();
         assert_eq!(back, fragment);
+    }
+
+    #[test]
+    fn chart_serde_wire_shape_is_stable() {
+        let chart = Chart {
+            x_label: "Minimum pressure".into(),
+            x_unit: Some("m".into()),
+            y_label: "Junctions".into(),
+            y_unit: None,
+            data: ChartData::Bar {
+                categories: vec!["0 – 14".into()],
+                values: vec![3.0],
+            },
+        };
+        assert_eq!(
+            serde_json::to_string(&FragmentItem::Chart {
+                chart: chart.clone()
+            })
+            .unwrap(),
+            r#"{"type":"chart","chart":{"xLabel":"Minimum pressure","xUnit":"m","yLabel":"Junctions","data":{"type":"bar","categories":["0 – 14"],"values":[3.0]}}}"#
+        );
+        let json = serde_json::to_string(&chart).unwrap();
+        assert_eq!(serde_json::from_str::<Chart>(&json).unwrap(), chart);
     }
 
     #[test]

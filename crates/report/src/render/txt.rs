@@ -3,7 +3,7 @@
 
 use hydra_common::{Fragment, FragmentItem, Table, ValueKind};
 
-use super::{column_header, value_human};
+use super::{column_header, derive_chart_table, value_human};
 use crate::document::{ReportDocument, Section};
 
 /// Render the document as plain text (spec §4.2).
@@ -69,6 +69,7 @@ fn render_fragment(out: &mut String, fragment: &Fragment) {
                 out.push_str(text);
                 out.push('\n');
             }
+            FragmentItem::Chart { chart } => render_table(out, &derive_chart_table(chart)),
         }
     }
 }

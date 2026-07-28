@@ -8,9 +8,14 @@
 use std::path::Path;
 
 use hydra_common::{
-    BlockDescriptor, BlockError, Column, Fragment, FragmentItem, KeyValue, Table, Value, ValueKind,
+    BlockDescriptor, BlockError, Chart, ChartData, Column, Fragment, FragmentItem, KeyValue,
+    LineSeries, Table, Value, ValueKind,
 };
 
+use super::demand_reliability::{
+    compute_demand_reliability_from_out_with_options, DemandReliabilityOptions,
+};
+use super::service_compliance::{compute_service_compliance_from_out, ServiceComplianceThresholds};
 use crate::io::out_reader::{self, OutMetadata};
 use crate::{FlowUnits, Network};
 
@@ -41,6 +46,33 @@ const CATALOG: &[BlockDescriptor] = &[
         title: "Water Quality Summary",
         summary: "Quality mode and global quality extremes.",
     },
+    BlockDescriptor {
+        id: "wds.service-compliance",
+        title: "Pressure Adequacy",
+        summary: "Junction-pressure service compliance against a minimum (and optional \
+                  maximum) pressure criterion, with the worst-performing junctions.",
+    },
+    BlockDescriptor {
+        id: "wds.demand-reliability",
+        title: "Demand Reliability",
+        summary: "Delivered-vs-required demand volumes, reliability ratio, and the \
+                  worst-served junctions.",
+    },
+    BlockDescriptor {
+        id: "wds.pressure-distribution",
+        title: "Pressure Distribution",
+        summary: "Distribution of each junction's minimum pressure over the run.",
+    },
+    BlockDescriptor {
+        id: "wds.velocity-distribution",
+        title: "Velocity Distribution",
+        summary: "Distribution of each link's maximum velocity over the run.",
+    },
+    BlockDescriptor {
+        id: "wds.tank-levels",
+        title: "Tank Levels",
+        summary: "Hydraulic head of each tank over the reporting horizon.",
+    },
 ];
 
 /// The water-distribution engine's report-block catalog (analysis spec §7.1).
@@ -48,18 +80,25 @@ pub fn report_catalog() -> &'static [BlockDescriptor] {
     CATALOG
 }
 
-/// Produce the fragment for one catalog block from a persisted `.out` file
-/// and the corresponding loaded network (analysis spec §7.2).
+/// Produce the fragment for one catalog block from a persisted `.out`
+/// file, the corresponding loaded network, and the optional per-block
+/// options value (analysis spec §7.1.1/§7.2).
 pub fn produce_report_block(
     id: &str,
     out_path: &Path,
     network: &Network,
+    options: Option<&serde_json::Value>,
 ) -> Result<Fragment, BlockError> {
     match id {
         "wds.run-summary" => run_summary(out_path, network),
         "wds.result-extremes" => result_extremes(out_path, network),
         "wds.pump-energy" => pump_energy(out_path, network),
         "wds.quality-summary" => quality_summary(out_path),
+        "wds.service-compliance" => service_compliance(out_path, network, options),
+        "wds.demand-reliability" => demand_reliability(out_path, network, options),
+        "wds.pressure-distribution" => pressure_distribution(out_path, network),
+        "wds.velocity-distribution" => velocity_distribution(out_path, network),
+        "wds.tank-levels" => tank_levels(out_path, network),
         _ => Err(BlockError::UnknownBlock { id: id.into() }),
     }
 }
@@ -399,6 +438,545 @@ fn quality_summary(out_path: &Path) -> Result<Fragment, BlockError> {
     })
 }
 
+// ── Option parsing (analysis spec §7.1.1) ─────────────────────────────────────
+//
+// Options are opaque JSON per the foundation contract; unknown fields are
+// ignored, malformed values fail production naming the field.
+
+fn opt_f64(
+    options: Option<&serde_json::Value>,
+    field: &str,
+    require_non_negative: bool,
+) -> Result<Option<f64>, BlockError> {
+    let Some(value) = options.and_then(|o| o.get(field)) else {
+        return Ok(None);
+    };
+    let number = value.as_f64().ok_or_else(|| BlockError::Failed {
+        message: format!("option {field:?} must be a number"),
+    })?;
+    if !number.is_finite() || (require_non_negative && number < 0.0) {
+        return Err(BlockError::Failed {
+            message: format!("option {field:?} must be a finite non-negative number"),
+        });
+    }
+    Ok(Some(number))
+}
+
+fn opt_usize(
+    options: Option<&serde_json::Value>,
+    field: &str,
+) -> Result<Option<usize>, BlockError> {
+    let Some(value) = options.and_then(|o| o.get(field)) else {
+        return Ok(None);
+    };
+    let number = value.as_u64().ok_or_else(|| BlockError::Failed {
+        message: format!("option {field:?} must be a non-negative integer"),
+    })?;
+    Ok(Some(number as usize))
+}
+
+/// Default worst-junctions table length (analysis spec §7.1.1).
+const DEFAULT_WORST_COUNT: usize = 10;
+
+/// `12.3%` style share text used in narrative values.
+fn percent(ratio: f64) -> Value {
+    num_unit(ratio * 100.0, "%")
+}
+
+fn service_compliance(
+    out_path: &Path,
+    network: &Network,
+    options: Option<&serde_json::Value>,
+) -> Result<Fragment, BlockError> {
+    let meta = read_meta(out_path)?;
+    if meta.n_periods == 0 {
+        return Err(BlockError::Failed {
+            message: "results file holds no reporting periods".into(),
+        });
+    }
+    let (pressure_unit, _, _) = unit_labels(network);
+    // Spec §7.1.1 default criterion: 14 m for SI files, 20 psi for US files.
+    let default_min = if is_si(network.options.flow_units) {
+        14.0
+    } else {
+        20.0
+    };
+    let min_pressure = opt_f64(options, "minPressure", true)?.unwrap_or(default_min);
+    let max_pressure = opt_f64(options, "maxPressure", true)?;
+    let worst_count = opt_usize(options, "worstCount")?.unwrap_or(DEFAULT_WORST_COUNT);
+
+    let thresholds = ServiceComplianceThresholds {
+        min_pressure,
+        max_pressure,
+    };
+    let report = compute_service_compliance_from_out(out_path, thresholds).map_err(|e| {
+        BlockError::Failed {
+            message: e.to_string(),
+        }
+    })?;
+    let summary = &report.summary;
+
+    let entries = vec![
+        entry("Junctions analysed", int(summary.node_count)),
+        entry(
+            "Minimum pressure criterion",
+            num_unit(min_pressure, pressure_unit),
+        ),
+        entry(
+            "Maximum pressure criterion",
+            match max_pressure {
+                Some(max) => num_unit(max, pressure_unit),
+                None => Value::Absent,
+            },
+        ),
+        entry("Compliance", percent(summary.compliance_ratio())),
+        entry("Samples below minimum", int(summary.below_min_samples)),
+        entry("Samples above maximum", int(summary.above_max_samples)),
+        entry(
+            "Worst pressure deficit",
+            num_unit(summary.worst_below_min, pressure_unit),
+        ),
+        entry(
+            "Pressure deficit integral",
+            num_unit(
+                summary.pressure_deficit_integral / 3600.0,
+                &format!("{pressure_unit}·h"),
+            ),
+        ),
+    ];
+
+    // Narrative: how many junctions ever dipped below the criterion.
+    let below_nodes = report
+        .nodes
+        .iter()
+        .filter(|n| n.below_min_count > 0)
+        .count();
+    let note = if below_nodes == 0 {
+        format!(
+            "All analysed junctions stayed at or above the minimum pressure \
+             criterion of {} {pressure_unit} for the entire run.",
+            fmt_compact(min_pressure)
+        )
+    } else {
+        format!(
+            "{below_nodes} junction{} below the minimum pressure criterion of {} \
+             {pressure_unit} during at least one reporting period.",
+            if below_nodes == 1 { " fell" } else { "s fell" },
+            fmt_compact(min_pressure)
+        )
+    };
+
+    // Worst offenders: by violation ratio, then deficit integral, then id
+    // for a deterministic order.
+    let mut worst: Vec<_> = report
+        .nodes
+        .iter()
+        .filter(|n| n.violating_sample_count() > 0)
+        .collect();
+    worst.sort_by(|a, b| {
+        b.violation_ratio()
+            .partial_cmp(&a.violation_ratio())
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then(
+                b.pressure_deficit_integral
+                    .partial_cmp(&a.pressure_deficit_integral)
+                    .unwrap_or(std::cmp::Ordering::Equal),
+            )
+            .then_with(|| node_id(network, a.node_index).cmp(&node_id(network, b.node_index)))
+    });
+    worst.truncate(worst_count);
+
+    let mut items = vec![
+        FragmentItem::KeyValues { entries },
+        FragmentItem::Note { text: note },
+    ];
+    if !worst.is_empty() {
+        let table = Table {
+            columns: vec![
+                Column {
+                    name: "Junction".into(),
+                    unit: None,
+                    kind: ValueKind::Text,
+                },
+                Column {
+                    name: "Out-of-limit share".into(),
+                    unit: Some("%".into()),
+                    kind: ValueKind::Number,
+                },
+                Column {
+                    name: "Samples below min".into(),
+                    unit: None,
+                    kind: ValueKind::Integer,
+                },
+                Column {
+                    name: "Worst deficit".into(),
+                    unit: Some(pressure_unit.into()),
+                    kind: ValueKind::Number,
+                },
+                Column {
+                    name: "Longest violation streak".into(),
+                    unit: Some("periods".into()),
+                    kind: ValueKind::Integer,
+                },
+            ],
+            rows: worst
+                .iter()
+                .map(|n| {
+                    vec![
+                        text(node_id(network, n.node_index)),
+                        num(n.violation_ratio() * 100.0),
+                        int(n.below_min_count),
+                        num(n.worst_below_min),
+                        int(n.longest_violation_streak),
+                    ]
+                })
+                .collect(),
+        };
+        items.push(FragmentItem::Table { table });
+    }
+
+    Ok(Fragment {
+        title: "Pressure Adequacy".into(),
+        items,
+    })
+}
+
+fn demand_reliability(
+    out_path: &Path,
+    network: &Network,
+    options: Option<&serde_json::Value>,
+) -> Result<Fragment, BlockError> {
+    let meta = read_meta(out_path)?;
+    if meta.n_periods == 0 {
+        return Err(BlockError::Failed {
+            message: "results file holds no reporting periods".into(),
+        });
+    }
+    let mut dr_options = DemandReliabilityOptions::default();
+    if let Some(tolerance) = opt_f64(options, "deficitTolerance", true)? {
+        dr_options.deficit_tolerance = tolerance;
+    }
+    let worst_count = opt_usize(options, "worstCount")?.unwrap_or(DEFAULT_WORST_COUNT);
+
+    let report = compute_demand_reliability_from_out_with_options(out_path, network, dr_options)
+        .map_err(|e| BlockError::Failed {
+            message: e.to_string(),
+        })?;
+    let summary = &report.summary;
+
+    let entries = vec![
+        entry("Junctions analysed", int(summary.node_count)),
+        entry("Demand model", text(format!("{:?}", report.demand_model))),
+        entry("Required volume", num_unit(summary.required_volume, "m³")),
+        entry("Delivered volume", num_unit(summary.delivered_volume, "m³")),
+        entry("Unmet volume", num_unit(summary.unmet_volume, "m³")),
+        entry("Reliability", percent(summary.reliability_ratio())),
+        entry(
+            "Deficit (junction, period) pairs",
+            int(summary.deficit_periods),
+        ),
+    ];
+
+    // Worst-served junctions: by reliability ascending, then unmet volume
+    // descending, then id.
+    let mut worst: Vec<_> = report
+        .nodes
+        .iter()
+        .filter(|n| n.unmet_volume > 0.0 || n.deficit_periods > 0)
+        .collect();
+    worst.sort_by(|a, b| {
+        a.reliability_ratio()
+            .partial_cmp(&b.reliability_ratio())
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then(
+                b.unmet_volume
+                    .partial_cmp(&a.unmet_volume)
+                    .unwrap_or(std::cmp::Ordering::Equal),
+            )
+            .then_with(|| a.node_id.cmp(&b.node_id))
+    });
+    worst.truncate(worst_count);
+
+    let mut items = vec![FragmentItem::KeyValues { entries }];
+    if !worst.is_empty() {
+        let table = Table {
+            columns: vec![
+                Column {
+                    name: "Junction".into(),
+                    unit: None,
+                    kind: ValueKind::Text,
+                },
+                Column {
+                    name: "Reliability".into(),
+                    unit: Some("%".into()),
+                    kind: ValueKind::Number,
+                },
+                Column {
+                    name: "Unmet volume".into(),
+                    unit: Some("m³".into()),
+                    kind: ValueKind::Number,
+                },
+                Column {
+                    name: "Deficit periods".into(),
+                    unit: None,
+                    kind: ValueKind::Integer,
+                },
+                Column {
+                    name: "Longest deficit streak".into(),
+                    unit: Some("periods".into()),
+                    kind: ValueKind::Integer,
+                },
+            ],
+            rows: worst
+                .iter()
+                .map(|n| {
+                    vec![
+                        text(n.node_id.clone()),
+                        num(n.reliability_ratio() * 100.0),
+                        num(n.unmet_volume),
+                        int(n.deficit_periods),
+                        int(n.longest_deficit_streak),
+                    ]
+                })
+                .collect(),
+        };
+        items.push(FragmentItem::Table { table });
+    }
+
+    Ok(Fragment {
+        title: "Demand Reliability".into(),
+        items,
+    })
+}
+
+fn pressure_distribution(out_path: &Path, network: &Network) -> Result<Fragment, BlockError> {
+    let meta = read_meta(out_path)?;
+    if meta.n_periods == 0 {
+        return Err(BlockError::Failed {
+            message: "results file holds no reporting periods".into(),
+        });
+    }
+    let scan = out_reader::scan_analytics(out_path, &meta)
+        .map_err(|message| BlockError::Failed { message })?;
+    let (pressure_unit, _, _) = unit_labels(network);
+    // Junctions only (analysis spec §7.1.2): tank/reservoir indices sit at
+    // the tail of the node list.
+    let junction_count = meta.n_nodes.saturating_sub(meta.n_tanks);
+    let values: Vec<f64> = scan
+        .node_min_pressure
+        .iter()
+        .take(junction_count)
+        .copied()
+        .filter(|v| v.is_finite())
+        .collect();
+
+    Ok(distribution_fragment(
+        "Pressure Distribution",
+        "Junctions",
+        "Minimum pressure",
+        pressure_unit,
+        &values,
+        meta.n_periods,
+    ))
+}
+
+fn velocity_distribution(out_path: &Path, network: &Network) -> Result<Fragment, BlockError> {
+    let meta = read_meta(out_path)?;
+    if meta.n_periods == 0 {
+        return Err(BlockError::Failed {
+            message: "results file holds no reporting periods".into(),
+        });
+    }
+    let scan = out_reader::scan_analytics(out_path, &meta)
+        .map_err(|message| BlockError::Failed { message })?;
+    let (_, _, velocity_unit) = unit_labels(network);
+    let values: Vec<f64> = scan
+        .link_max_velocity
+        .iter()
+        .copied()
+        .filter(|v| v.is_finite())
+        .collect();
+
+    Ok(distribution_fragment(
+        "Velocity Distribution",
+        "Links",
+        "Maximum velocity",
+        velocity_unit,
+        &values,
+        meta.n_periods,
+    ))
+}
+
+/// Equal-width six-bin distribution as a bar chart (analysis spec
+/// §7.1.2): edges rounded outward to whole display units; a degenerate
+/// range yields a single bin. Table-derivable everywhere per the
+/// foundation contract.
+fn distribution_fragment(
+    title: &str,
+    element_label: &str,
+    quantity_label: &str,
+    unit: &str,
+    values: &[f64],
+    n_periods: usize,
+) -> Fragment {
+    const BIN_COUNT: usize = 6;
+
+    let mut items = Vec::new();
+    if values.is_empty() {
+        items.push(FragmentItem::Note {
+            text: format!(
+                "No {} carry a value for this quantity.",
+                element_label.to_lowercase()
+            ),
+        });
+    } else {
+        let lo = values.iter().copied().fold(f64::INFINITY, f64::min).floor();
+        let hi = values
+            .iter()
+            .copied()
+            .fold(f64::NEG_INFINITY, f64::max)
+            .ceil();
+        let (lo, hi, bins) = if hi > lo {
+            (lo, hi, BIN_COUNT)
+        } else {
+            (lo, lo + 1.0, 1)
+        };
+        let width = (hi - lo) / bins as f64;
+        let mut counts = vec![0usize; bins];
+        for &v in values {
+            let index = (((v - lo) / width) as usize).min(bins - 1);
+            counts[index] += 1;
+        }
+
+        let categories = (0..bins)
+            .map(|i| {
+                format!(
+                    "{} – {}",
+                    fmt_compact(lo + width * i as f64),
+                    fmt_compact(lo + width * (i + 1) as f64)
+                )
+            })
+            .collect();
+        items.push(FragmentItem::Chart {
+            chart: Chart {
+                x_label: quantity_label.into(),
+                x_unit: Some(unit.into()),
+                y_label: element_label.into(),
+                y_unit: None,
+                data: ChartData::Bar {
+                    categories,
+                    values: counts.iter().map(|&c| c as f64).collect(),
+                },
+            },
+        });
+        items.push(FragmentItem::Note {
+            text: format!(
+                "Per-element extremes accumulated over all {n_periods} reporting periods."
+            ),
+        });
+    }
+
+    Fragment {
+        title: title.into(),
+        items,
+    }
+}
+
+/// Tank hydraulic head over the reporting horizon as a line chart
+/// (analysis spec §7.1.2): one series per tank in node order, capped at
+/// the first [`MAX_TANK_SERIES`] with a disclosure note when more exist.
+const MAX_TANK_SERIES: usize = 8;
+
+fn tank_levels(out_path: &Path, network: &Network) -> Result<Fragment, BlockError> {
+    let meta = read_meta(out_path)?;
+    if meta.n_periods == 0 {
+        return Err(BlockError::Failed {
+            message: "results file holds no reporting periods".into(),
+        });
+    }
+    let scan = out_reader::scan_analytics(out_path, &meta)
+        .map_err(|message| BlockError::Failed { message })?;
+    let (_, length_unit, _) = unit_labels(network);
+    let tank_start = meta.n_nodes.saturating_sub(meta.n_tanks);
+
+    // The scan's tank series cover tanks AND reservoirs (the prolog count
+    // groups them); keep genuine tanks only.
+    let tanks: Vec<(String, &Vec<f64>)> = scan
+        .tank_head
+        .iter()
+        .enumerate()
+        .filter_map(|(ti, series)| {
+            let node = network.nodes.get(tank_start + ti)?;
+            matches!(node.kind, crate::NodeKind::Tank(_)).then(|| (node.base.id.clone(), series))
+        })
+        .collect();
+    if tanks.is_empty() {
+        return Err(BlockError::Unavailable {
+            reason: "the network has no tanks".into(),
+        });
+    }
+
+    let total = tanks.len();
+    let series: Vec<LineSeries> = tanks
+        .into_iter()
+        .take(MAX_TANK_SERIES)
+        .map(|(id, heads)| LineSeries {
+            name: id,
+            points: heads
+                .iter()
+                .enumerate()
+                .map(|(p, &head)| {
+                    let hours = (meta.report_start + meta.report_step * p as f64) / 3600.0;
+                    [hours, head]
+                })
+                .collect(),
+        })
+        .collect();
+
+    let mut items = vec![FragmentItem::Chart {
+        chart: Chart {
+            x_label: "Time".into(),
+            x_unit: Some("h".into()),
+            y_label: "Hydraulic head".into(),
+            y_unit: Some(length_unit.into()),
+            data: ChartData::Line { series },
+        },
+    }];
+    if total > MAX_TANK_SERIES {
+        items.push(FragmentItem::Note {
+            text: format!("Showing the first {MAX_TANK_SERIES} of {total} tanks in node order."),
+        });
+    }
+
+    Ok(Fragment {
+        title: "Tank Levels".into(),
+        items,
+    })
+}
+
+/// Compact numeric text for narrative strings and bin labels: up to two
+/// decimals, trailing zeros trimmed.
+fn fmt_compact(value: f64) -> String {
+    let mut s = format!("{value:.2}");
+    if s.contains('.') {
+        while s.ends_with('0') {
+            s.pop();
+        }
+        if s.ends_with('.') {
+            s.pop();
+        }
+    }
+    s
+}
+
+fn node_id(network: &Network, node_index: usize) -> String {
+    network
+        .nodes
+        .get(node_index)
+        .map(|n| n.base.id.clone())
+        .unwrap_or_else(|| format!("node #{node_index}"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -420,7 +998,7 @@ mod tests {
     #[test]
     fn unknown_block_id_is_rejected() {
         let network = crate::io::parse(FIXTURE_INP.as_bytes()).expect("parse network");
-        let err = produce_report_block("wds.nope", Path::new("/nonexistent"), &network)
+        let err = produce_report_block("wds.nope", Path::new("/nonexistent"), &network, None)
             .expect_err("unknown id must fail");
         assert!(matches!(err, BlockError::UnknownBlock { .. }));
     }
@@ -478,10 +1056,23 @@ mod tests {
         }
     }
 
+    /// Fixture with a tank appended (T1 behind J2), for tank-facing
+    /// blocks. Junction heads stay at 50/45 m; the tank sits at 25 m.
+    const TANK_FIXTURE_INP: &str = "[JUNCTIONS]\nJ1  0  10\nJ2  0  10\n\n\
+        [RESERVOIRS]\nR1  100\n\n\
+        [TANKS]\nT1  20  5  2  8  12  0\n\n\
+        [PIPES]\nP1  R1  J1  1000  300  100  0  Open\nP2  J1  J2  800  250  100  0  Open\n\
+        P3  J2  T1  600  200  100  0  Open\n\n\
+        [OPTIONS]\nUnits  LPS\nHeadloss  H-W\n\n[END]\n";
+
     /// Persist a one-snapshot `.out` for the fixture network and run `f`
     /// with its path; the file is removed afterwards.
     fn with_fixture_out(f: impl FnOnce(&Path, &crate::Network)) {
-        let network = crate::io::parse(FIXTURE_INP.as_bytes()).expect("parse network");
+        with_inp_out(FIXTURE_INP, f)
+    }
+
+    fn with_inp_out(inp: &str, f: impl FnOnce(&Path, &crate::Network)) {
+        let network = crate::io::parse(inp.as_bytes()).expect("parse network");
         let mut node_states: Vec<crate::NodeState> = network
             .nodes
             .iter()
@@ -530,7 +1121,7 @@ mod tests {
     #[test]
     fn run_summary_reports_counts_units_and_window() {
         with_fixture_out(|path, network| {
-            let fragment = produce_report_block("wds.run-summary", path, network)
+            let fragment = produce_report_block("wds.run-summary", path, network, None)
                 .expect("produce run summary");
             assert_eq!(fragment.title, "Run Summary");
             let FragmentItem::KeyValues { entries } = &fragment.items[0] else {
@@ -557,7 +1148,7 @@ mod tests {
     #[test]
     fn result_extremes_covers_core_quantities_without_quality() {
         with_fixture_out(|path, network| {
-            let fragment = produce_report_block("wds.result-extremes", path, network)
+            let fragment = produce_report_block("wds.result-extremes", path, network, None)
                 .expect("produce extremes");
             let FragmentItem::Table { table } = &fragment.items[0] else {
                 panic!("expected table item");
@@ -588,7 +1179,7 @@ mod tests {
     #[test]
     fn pump_energy_requires_a_pump() {
         with_fixture_out(|path, network| {
-            let err = produce_report_block("wds.pump-energy", path, network)
+            let err = produce_report_block("wds.pump-energy", path, network, None)
                 .expect_err("no pumps in fixture");
             assert_eq!(
                 err,
@@ -600,9 +1191,143 @@ mod tests {
     }
 
     #[test]
+    fn service_compliance_defaults_are_compliant_for_healthy_fixture() {
+        // Fixture junction gauge pressures are 50 m and 45 m — both above
+        // the 14 m SI default criterion.
+        with_fixture_out(|path, network| {
+            let fragment = produce_report_block("wds.service-compliance", path, network, None)
+                .expect("produce compliance");
+            let FragmentItem::KeyValues { entries } = &fragment.items[0] else {
+                panic!("expected key-values item");
+            };
+            let compliance = entries
+                .iter()
+                .find(|e| e.label == "Compliance")
+                .expect("compliance entry");
+            assert_eq!(
+                compliance.value,
+                Value::Number {
+                    value: 100.0,
+                    unit: Some("%".into())
+                }
+            );
+            let FragmentItem::Note { text } = &fragment.items[1] else {
+                panic!("expected narrative note");
+            };
+            assert!(text.contains("All analysed junctions"), "{text}");
+            // Fully compliant → no worst-offenders table.
+            assert_eq!(fragment.items.len(), 2);
+        });
+    }
+
+    #[test]
+    fn service_compliance_honors_min_pressure_option() {
+        // A 48 m criterion puts J2 (45 m) in violation but not J1 (50 m).
+        with_fixture_out(|path, network| {
+            let options = serde_json::json!({ "minPressure": 48 });
+            let fragment =
+                produce_report_block("wds.service-compliance", path, network, Some(&options))
+                    .expect("produce compliance");
+            let FragmentItem::Note { text } = &fragment.items[1] else {
+                panic!("expected narrative note");
+            };
+            assert!(
+                text.contains("1 junction fell below the minimum pressure criterion of 48"),
+                "{text}"
+            );
+            let FragmentItem::Table { table } = &fragment.items[2] else {
+                panic!("expected worst-junctions table");
+            };
+            assert_eq!(table.rows.len(), 1);
+            assert_eq!(table.rows[0][0], Value::Text { value: "J2".into() });
+        });
+    }
+
+    #[test]
+    fn malformed_options_fail_naming_the_field() {
+        with_fixture_out(|path, network| {
+            let options = serde_json::json!({ "minPressure": "high" });
+            let err = produce_report_block("wds.service-compliance", path, network, Some(&options))
+                .expect_err("string threshold must fail");
+            assert!(matches!(
+                &err,
+                BlockError::Failed { message } if message.contains("minPressure")
+            ));
+        });
+    }
+
+    #[test]
+    fn demand_reliability_reports_summary_and_worst_table() {
+        // The fixture snapshot delivers zero demand against required base
+        // demands of 5 and 8 LPS — full deficit everywhere.
+        with_fixture_out(|path, network| {
+            let fragment = produce_report_block("wds.demand-reliability", path, network, None)
+                .expect("produce reliability");
+            let FragmentItem::KeyValues { entries } = &fragment.items[0] else {
+                panic!("expected key-values item");
+            };
+            let reliability = entries
+                .iter()
+                .find(|e| e.label == "Reliability")
+                .expect("reliability entry");
+            let Value::Number { value, .. } = reliability.value else {
+                panic!("expected numeric reliability");
+            };
+            assert!(value < 100.0, "zero delivery cannot be fully reliable");
+            assert!(
+                fragment
+                    .items
+                    .iter()
+                    .any(|i| matches!(i, FragmentItem::Table { .. })),
+                "expected worst-served table"
+            );
+        });
+    }
+
+    #[test]
+    fn pressure_distribution_bins_junction_minima_as_bar_chart() {
+        with_fixture_out(|path, network| {
+            let fragment = produce_report_block("wds.pressure-distribution", path, network, None)
+                .expect("produce distribution");
+            let FragmentItem::Chart { chart } = &fragment.items[0] else {
+                panic!("expected distribution chart");
+            };
+            let ChartData::Bar { categories, values } = &chart.data else {
+                panic!("expected bar data");
+            };
+            assert_eq!(categories.len(), values.len());
+            // Two junctions total, spread across the bins.
+            let total: f64 = values.iter().sum();
+            assert!((total - 2.0).abs() < 1e-12, "bin counts must sum to 2");
+            assert_eq!(chart.y_label, "Junctions");
+            assert!(matches!(&fragment.items[1], FragmentItem::Note { .. }));
+        });
+    }
+
+    #[test]
+    fn tank_levels_charts_tanks_but_not_reservoirs() {
+        with_inp_out(TANK_FIXTURE_INP, |path, network| {
+            let fragment = produce_report_block("wds.tank-levels", path, network, None)
+                .expect("produce tank levels");
+            let FragmentItem::Chart { chart } = &fragment.items[0] else {
+                panic!("expected line chart");
+            };
+            let ChartData::Line { series } = &chart.data else {
+                panic!("expected line data");
+            };
+            // Fixture has one tank (T1) and one reservoir (R1); only the
+            // tank charts.
+            assert_eq!(series.len(), 1);
+            assert_eq!(series[0].name, "T1");
+            assert_eq!(series[0].points.len(), 1); // one snapshot period
+            assert_eq!(chart.y_unit.as_deref(), Some("m"));
+        });
+    }
+
+    #[test]
     fn quality_summary_requires_a_quality_run() {
         with_fixture_out(|path, network| {
-            let err = produce_report_block("wds.quality-summary", path, network)
+            let err = produce_report_block("wds.quality-summary", path, network, None)
                 .expect_err("fixture has no quality results");
             assert_eq!(
                 err,

@@ -9,4 +9,6 @@ mod template;
 
 pub use document::{assemble, ReportContext, ReportDocument, Section};
 pub use render::{render_csv, render_html, render_txt};
+#[cfg(feature = "pdf")]
+pub use render::{render_pdf, PdfError};
 pub use template::{ReportTemplate, TemplateBlock, TemplateError};

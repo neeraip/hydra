@@ -138,6 +138,44 @@ neutral content fragments for one completed simulation.
 | `wds.result-extremes` | Global minimum and maximum of nodal pressure, head, and demand, and of link flow and velocity — plus quality when present — over the reporting horizon. | the file holds ≥ 1 reporting period |
 | `wds.pump-energy` | Per-pump table: utilization, average efficiency, average and peak power, average daily cost; plus the network demand charge. | the network has ≥ 1 pump |
 | `wds.quality-summary` | Quality mode and global quality extremes with the mode's display unit. | the run produced water-quality results |
+| `wds.service-compliance` | Junction-pressure service compliance (§4.1): compliance ratio, violation counts, deficit integral, a worst-junctions table, and a narrative note ("N junctions below the minimum pressure criterion of X"). | the file holds ≥ 1 reporting period |
+| `wds.demand-reliability` | Delivered-vs-required demand reliability (§4.2): volumes, reliability ratio, deficit periods, and a worst-junctions table. | the file holds ≥ 1 reporting period |
+| `wds.pressure-distribution` | Distribution of per-junction minimum pressure over the run: equal-width bins as a bar chart (counts per bin). | the file holds ≥ 1 reporting period |
+| `wds.velocity-distribution` | Distribution of per-link maximum velocity over the run: equal-width bins as a bar chart (counts per bin). | the file holds ≥ 1 reporting period |
+| `wds.tank-levels` | Hydraulic head of each tank over the reporting horizon as a line chart (one series per tank, first 8 in node order with a note when more exist). | the network has ≥ 1 tank |
+
+### 7.1.1 Block options
+
+Per the foundation contract (hydra-common spec §3.4) options are opaque
+JSON authored per template block; this engine defines:
+
+| Block | Option | Meaning | Default |
+|---|---|---|---|
+| `wds.service-compliance` | `minPressure` | Minimum acceptable junction pressure, in the results file's pressure display unit | 14 (SI files, m) / 20 (US files, psi) |
+| `wds.service-compliance` | `maxPressure` | Optional maximum acceptable pressure, same unit | none |
+| `wds.service-compliance` | `worstCount` | Rows in the worst-junctions table | 10 |
+| `wds.demand-reliability` | `deficitTolerance` | Deficit flow-rate tolerance (m³/s) below which a per-period shortfall is not counted | 1e-9 |
+| `wds.demand-reliability` | `worstCount` | Rows in the worst-junctions table | 10 |
+
+Unknown option fields are ignored; malformed values (wrong type, negative
+where a magnitude is required) fail production with the foundation
+contract's `failed` error naming the field.
+
+### 7.1.2 Distribution binning
+
+Distribution blocks use **six equal-width bins** spanning the observed
+value range, with edges rounded outward to whole display units (pressure:
+the file's pressure unit over per-junction minima; velocity: m/s or ft/s
+over per-link maxima). A degenerate range (all values equal) yields a
+single bin. The bins are emitted as a bar chart (per the foundation
+contract's chart item, table-derivable everywhere): category = bin
+interval, value = element count. Junction-only for pressure (§4.1
+rationale); all links for velocity.
+
+`wds.tank-levels` emits a line chart: x = report time in hours, y = tank
+hydraulic head in the file's length display unit, one series per tank
+(ids from the network), capped at the first 8 tanks in node order with a
+disclosure note when more exist.
 
 Availability is this engine's internal concern — the foundation contract
 carries no result-class vocabulary; an inapplicable block fails production
@@ -148,8 +186,8 @@ id is a compatibility break.
 
 ### 7.2 Production contract
 
-**Inputs:** the persisted `.out` results file and the corresponding loaded
-network. Counts and result values come from the `.out` file
+**Inputs:** the persisted `.out` results file, the corresponding loaded
+network, and the optional per-block options value (§7.1.1). Counts and result values come from the `.out` file
 (result-authoritative); element identifiers and declared display units come
 from the network. Production is read-only and deterministic: identical
 inputs always yield identical fragments.

@@ -4,7 +4,7 @@
 
 use hydra_common::{Fragment, FragmentItem, Table, ValueKind};
 
-use super::{column_header, value_human};
+use super::{chart_svg::chart_svg, column_header, value_human};
 use crate::document::{ReportDocument, Section};
 
 const STYLE: &str = "\
@@ -26,6 +26,8 @@ th, td { border: 1px solid #c9d1d9; padding: 0.3rem 0.55rem; text-align: left; }
 th { background: #f2f4f7; }
 td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 p.note { font-size: 0.85rem; color: #555f6b; }
+figure.chart { margin: 0.8rem 0; }
+figure.chart svg { max-width: 100%; height: auto; }
 p.placeholder { font-style: italic; color: #8a6d1f; background: #fdf6e3;
                 border: 1px solid #e8dcb5; border-radius: 4px; padding: 0.4rem 0.6rem; }
 @media print { body { margin: 0; max-width: none; } }
@@ -92,6 +94,12 @@ fn render_fragment(out: &mut String, fragment: &Fragment) {
             FragmentItem::Table { table } => render_table(out, table),
             FragmentItem::Note { text } => {
                 out.push_str(&format!("<p class=\"note\">{}</p>\n", esc(text)));
+            }
+            FragmentItem::Chart { chart } => {
+                // The generator escapes all embedded text itself.
+                out.push_str("<figure class=\"chart\">\n");
+                out.push_str(&chart_svg(chart));
+                out.push_str("</figure>\n");
             }
         }
     }

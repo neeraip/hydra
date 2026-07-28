@@ -1,6 +1,8 @@
 # Hydra Common — Foundation Contract
 
-Status: **v1 — ratified 2026-07-28.** This file is the module documentation
+Status: **v1.2 — ratified 2026-07-28** (v1.1 added opaque per-block options
+to the production contract, §3.4; v1.2 added the chart fragment item,
+§3.3). This file is the module documentation
 of the `hydra-common` crate and follows the same spec-first workflow as the
 engine specs: implementation changes flow from changes here, never the
 reverse.
@@ -111,25 +113,44 @@ hints. A fragment is a titled sequence of items; each item is one of:
 | **Key-value list** | Ordered pairs of (label, value) | For scalar summaries ("Total demand", "Simulation duration"). |
 | **Table** | Column descriptors + row-major values | Column descriptor: name, optional unit text, value kind. |
 | **Note** | Plain text paragraph | For caveats and methodological remarks (e.g. "Convergence relaxed at 3 timesteps"). |
+| **Chart** | Axis labels/units + chart data (below) | Declarative data only — engines describe *what* is charted, never colors, geometry, or layout. |
+
+Chart data is one of:
+
+- **Bar** — parallel category labels and values (distributions, rankings).
+  Single-series in this revision.
+- **Line** — one or more named series of (x, y) points over a continuous
+  x axis (time series).
+
+Every chart must be **table-derivable**: renderers without graphics
+support present the chart as a data table derived mechanically from its
+data (bar → category/value rows; line → x column plus one column per
+series, absent where a series lacks that x). A chart therefore never
+gates information behind a graphics-capable format.
 
 Values are typed: number (with optional unit *text*), integer, boolean,
 text, timestamp, or absent. Unit strings are display text in v1; a
 structured unit system in `common` is an explicit non-goal (§1).
-Nested sections, charts, and images are deferred to a later revision —
-the report layer may still render charts from table data on its own
-initiative, but engines do not describe charts in v1.
+Nested sections and images are deferred to a later revision.
 
 ### 3.4 Production
 
 An engine produces a fragment given:
 
-- a block `id` from its catalog, and
+- a block `id` from its catalog,
 - the artifacts of one completed simulation (results and derived
-  analytics — the engine defines internally what it needs).
+  analytics — the engine defines internally what it needs), and
+- an optional **options value**: JSON-shaped structured data whose
+  meaning is defined entirely by the producing engine (thresholds,
+  top-N counts, tolerances). The foundation layer and the report layer
+  treat it as fully opaque — carrying it, never interpreting it. An
+  absent options value means the engine's documented defaults; a
+  malformed options value fails production with the `failed` error
+  naming the problem. No option vocabulary may be defined in this layer.
 
-Production is read-only and deterministic: the same simulation artifacts
-and block id always yield the same fragment. Production fails with one of
-three neutral, typed errors:
+Production is read-only and deterministic: the same simulation artifacts,
+block id, and options always yield the same fragment. Production fails
+with one of three neutral, typed errors:
 
 - **unknown block** — the id is not in this engine's catalog;
 - **unavailable** — the block does not apply to this run, with a
@@ -141,9 +162,11 @@ The report layer decides how an unavailable or failed block renders
 (placeholder, omission) — the engine never does, and the contract carries
 no engine vocabulary for *why* beyond the engine-authored reason text.
 
-Block options (per-block user configuration such as thresholds or top-N
-counts) are **deferred from v1**; the descriptor and production interface
-must be shaped so options can be added additively.
+Block options arrived in v1.1 as production inputs only — the
+*descriptor* still carries no options schema. How an engine's options are
+discovered and edited by a template-builder UI is deferred; until then,
+options are authored knowingly (documentation, or app-side knowledge of
+specific ids).
 
 ### 3.5 Consumers and dependency rules
 

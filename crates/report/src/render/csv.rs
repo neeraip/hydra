@@ -4,7 +4,7 @@
 
 use hydra_common::{Fragment, FragmentItem, Table};
 
-use super::{column_header, value_data, value_unit};
+use super::{column_header, derive_chart_table, value_data, value_unit};
 use crate::document::{ReportDocument, Section};
 
 /// Render the document as CSV (spec §4.3).
@@ -53,6 +53,7 @@ fn render_fragment(out: &mut String, fragment: &Fragment) {
             }
             FragmentItem::Table { table } => render_table(out, table),
             FragmentItem::Note { text } => push_row(out, std::slice::from_ref(text)),
+            FragmentItem::Chart { chart } => render_table(out, &derive_chart_table(chart)),
         }
     }
 }

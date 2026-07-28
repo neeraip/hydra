@@ -16,6 +16,9 @@ const NetworkEditor = lazy(() =>
 const AnalysisView = lazy(() =>
   import("./AnalysisView").then((m) => ({ default: m.AnalysisView })),
 );
+const ReportView = lazy(() =>
+  import("./ReportView").then((m) => ({ default: m.ReportView })),
+);
 
 export function ProjectPage() {
   // Deferred: the tab highlight (TopBar) reads the urgent value; the heavy
@@ -107,6 +110,17 @@ export function ProjectPage() {
               }}
             >
               <AnalysisView />
+            </div>
+            <div
+              style={{
+                flex: 1,
+                display: projectView === "report" ? "flex" : "none",
+                flexDirection: "column",
+                overflow: "hidden",
+                minHeight: 0,
+              }}
+            >
+              <ReportView />
             </div>
           </Suspense>
         )}

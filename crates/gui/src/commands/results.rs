@@ -429,7 +429,7 @@ pub fn get_period_results(
 /// contain structural edits (added/deleted elements) the results know nothing
 /// about, which would silently attach results to the wrong elements — so a
 /// dirty cache is treated exactly like a non-matching target.
-fn network_for_target(
+pub(crate) fn network_for_target(
     app_data: &std::path::Path,
     state: &NetworkState,
     project_id: &str,

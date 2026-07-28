@@ -56,6 +56,7 @@ export { useNetworkVersion } from "./NetworkVersionContext";
 export * from "./network";
 export * from "./projects";
 export * from "./queue";
+export * from "./reports";
 export * from "./results";
 export * from "./scenarios";
 export * from "./simulation";

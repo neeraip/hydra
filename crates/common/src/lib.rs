@@ -8,5 +8,6 @@ mod report;
 
 pub use identity::{engine_by_key, EngineDescriptor, UnknownEngineError, ENGINES};
 pub use report::{
-    BlockDescriptor, BlockError, Column, Fragment, FragmentItem, KeyValue, Table, Value, ValueKind,
+    BlockDescriptor, BlockError, Chart, ChartData, Column, Fragment, FragmentItem, KeyValue,
+    LineSeries, Table, Value, ValueKind,
 };
