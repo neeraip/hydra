@@ -445,6 +445,22 @@ Format is **always detected from file contents**, not from the file extension. A
 
 Accepting a leading `;` allows INP files that begin with comment lines before their first section header.
 
+#### 4.1.1 Dialect Rejection
+
+`.inp` is not one format. EPANET and SWMM both use the extension, both open with a `[` section header, and both name a section `[JUNCTIONS]` — with incompatible column layouts (EPANET: ID, elevation, demand, pattern; SWMM: name, invert elevation, max depth, initial depth, …). Neither the extension nor §4.1's content sniff separates them.
+
+Left unchecked this fails **silently, not loudly**: the forward-compatibility leniency in §4.3 skips every section it does not recognise, so a stormwater model loads as a pressurised network of junctions at plausible-looking elevations, carrying each junction's max depth as its demand, joined by no links at all. That is a wrong answer wearing the costume of a right one — far worse than a rejection.
+
+A parse must therefore fail with an error naming the offending section and identifying the file as a different modelling tool's input when the input declares **any** of these sections, none of which exists in EPANET 2.3:
+
+`[SUBCATCHMENTS]`, `[SUBAREAS]`, `[INFILTRATION]`, `[RAINGAGES]`, `[OUTFALLS]`, `[CONDUITS]`, `[XSECTIONS]`, `[STORAGE]`, `[DIVIDERS]`, `[WEIRS]`, `[ORIFICES]`, `[OUTLETS]`, `[TRANSECTS]`, `[LOSSES]`, `[DWF]`, `[INFLOWS]`, `[HYDROGRAPHS]`, `[AQUIFERS]`, `[SNOWPACKS]`, `[POLLUTANTS]`, `[LANDUSES]`, `[COVERAGES]`, `[LOADINGS]`, `[TREATMENT]`, `[LID_CONTROLS]`, `[LID_USAGE]`, `[GWF]`, `[ADJUSTMENTS]`, `[EVAPORATION]`, `[TEMPERATURE]`, `[POLYGONS]`, `[PROFILES]`.
+
+The check is deliberately **positive** — it fires on the presence of a foreign section, never on the absence of an expected one. An EPANET file is not required to contain any particular section, so an absence test would reject legitimate sparse models.
+
+> This is a bounded exception to the "unknown sections are silently ignored" deviation in §4.3, and does not weaken it. That leniency exists for *unrecognised* sections — metadata a newer tool appended to a file that is still an EPANET model. The sections listed above are not unrecognised: each is positively known to belong to another tool's data model, and their presence is evidence about what the file **is**, not about what a future version might add.
+
+Detecting a foreign dialect is not the same as supporting it. Rejection here says only that this engine cannot read the file; whether another Hydra engine can is the application's business, not this engine's.
+
 ### 4.2 Parse Complexity
 
 The parser must complete in **at most two sequential passes** over the input, with no re-reads.

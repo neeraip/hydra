@@ -83,6 +83,72 @@ fn split_sections(text: &str) -> HashMap<String, Vec<SecLine<'_>>> {
     sections
 }
 
+/// Sections that exist in SWMM's input format and in no EPANET 2.3 file
+/// (spec §4.1.1).
+///
+/// Both tools write `.inp`, both open with a `[` header, and both name a
+/// section `[JUNCTIONS]` — with different columns. Without this list a SWMM
+/// model parses "successfully" into junctions whose max depths have become
+/// demands, joined by no links, because §4.3's forward-compatibility
+/// leniency skips every section it does not recognise.
+///
+/// Kept sorted so a reader can scan it; membership is by exact match on the
+/// upper-cased section name.
+const SWMM_ONLY_SECTIONS: &[&str] = &[
+    "ADJUSTMENTS",
+    "AQUIFERS",
+    "CONDUITS",
+    "COVERAGES",
+    "DIVIDERS",
+    "DWF",
+    "EVAPORATION",
+    "GWF",
+    "HYDROGRAPHS",
+    "INFILTRATION",
+    "INFLOWS",
+    "LANDUSES",
+    "LID_CONTROLS",
+    "LID_USAGE",
+    "LOADINGS",
+    "LOSSES",
+    "ORIFICES",
+    "OUTFALLS",
+    "OUTLETS",
+    "POLLUTANTS",
+    "POLYGONS",
+    "PROFILES",
+    "RAINGAGES",
+    "SNOWPACKS",
+    "STORAGE",
+    "SUBAREAS",
+    "SUBCATCHMENTS",
+    "TEMPERATURE",
+    "TRANSECTS",
+    "TREATMENT",
+    "WEIRS",
+    "XSECTIONS",
+];
+
+/// Reject an INP file that belongs to a different modelling tool (spec §4.1.1).
+///
+/// Positive test only: it fires on the presence of a foreign section, never
+/// on the absence of an expected one — an EPANET model is not required to
+/// contain any particular section, so an absence test would reject
+/// legitimate sparse networks.
+fn check_dialect(sections: &HashMap<String, Vec<SecLine<'_>>>) -> Result<(), ParseError> {
+    // Iterate the constant, not the parsed sections, so the reported section
+    // is the same for a given file regardless of HashMap ordering.
+    for &name in SWMM_ONLY_SECTIONS {
+        if sections.contains_key(name) {
+            return Err(ParseError::ForeignDialect {
+                tool: "SWMM",
+                section: name,
+            });
+        }
+    }
+    Ok(())
+}
+
 /// Iterate a section's data lines, attaching the section name and the line's
 /// 1-based source line number to any error produced by `f`.
 fn for_each_line<F>(
@@ -112,6 +178,10 @@ pub fn parse_inp(bytes: &[u8]) -> Result<Network, ParseError> {
     let text = String::from_utf8_lossy(bytes);
 
     let sections = split_sections(&text);
+
+    // Reject another tool's INP before reading a single value out of it
+    // (spec §4.1.1) — misreading it is silent, so the check must come first.
+    check_dialect(&sections)?;
 
     // ── 0. Title lines (up to 3, preserving original text) ───────────────────
     let title: Vec<String> = sections
@@ -2711,6 +2781,150 @@ mod tests {
     /// `SecLine` shape produced by `split_sections`.
     fn secs<'a>(lines: &[&'a str]) -> Vec<SecLine<'a>> {
         lines.iter().enumerate().map(|(i, &l)| (i + 1, l)).collect()
+    }
+
+    // ── Dialect rejection (spec §4.1.1) ──────────────────────────────────────
+
+    /// A SWMM model reduced to the parts that matter here: it opens with `[`,
+    /// it has a `[JUNCTIONS]` section, and that section's columns mean
+    /// something entirely different (name, invert elev, max depth, init
+    /// depth, surcharge depth, ponded area).
+    const SWMM_INP: &str = "\
+[TITLE]
+Example stormwater model
+
+[OPTIONS]
+FLOW_UNITS           CFS
+INFILTRATION         HORTON
+
+[JUNCTIONS]
+J1   12.0   3.0   0   0   0
+J2   10.5   3.0   0   0   0
+
+[OUTFALLS]
+O1   8.0    FREE              NO
+
+[CONDUITS]
+C1   J1   J2   400   0.01   0   0   0
+
+[XSECTIONS]
+C1   CIRCULAR   1.5   0   0   0
+
+[COORDINATES]
+J1   0.0   0.0
+J2   400.0 0.0
+";
+
+    #[test]
+    fn swmm_input_is_rejected_rather_than_silently_misread() {
+        let err = parse_inp(SWMM_INP.as_bytes()).expect_err("SWMM input must not parse");
+        match err {
+            ParseError::ForeignDialect { tool, section } => {
+                assert_eq!(tool, "SWMM");
+                // CONDUITS sorts first among the foreign sections present.
+                assert_eq!(section, "CONDUITS");
+            }
+            other => panic!("expected ForeignDialect, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn the_rejection_message_names_the_tool_and_the_offending_section() {
+        let msg = parse_inp(SWMM_INP.as_bytes()).unwrap_err().to_string();
+        assert!(msg.contains("SWMM"), "message must name the tool: {msg}");
+        assert!(
+            msg.contains("[CONDUITS]"),
+            "message must name the section: {msg}"
+        );
+    }
+
+    /// The regression this whole check exists for: without it the file above
+    /// parses, yielding junctions carrying max depth as demand and no links
+    /// at all — a wrong answer that looks like a right one.
+    #[test]
+    fn without_the_check_a_swmm_file_would_look_like_a_valid_network() {
+        let sections = split_sections(SWMM_INP);
+        assert!(check_dialect(&sections).is_err());
+        // Every EPANET section this parser would go on to read is either
+        // absent or means something else — proving the misread is silent,
+        // not something a later validation step would have caught.
+        assert!(!sections.contains_key("PIPES"));
+        assert!(!sections.contains_key("RESERVOIRS"));
+        assert!(!sections.contains_key("TANKS"));
+        assert_eq!(sections.get("JUNCTIONS").map(Vec::len), Some(2));
+    }
+
+    #[test]
+    fn every_listed_foreign_section_triggers_rejection_on_its_own() {
+        for &name in SWMM_ONLY_SECTIONS {
+            let inp = format!("[JUNCTIONS]\nJ1  0  10\n[{name}]\n");
+            match parse_inp(inp.as_bytes()) {
+                Err(ParseError::ForeignDialect { section, .. }) => assert_eq!(section, name),
+                Err(other) => panic!("[{name}] produced {other:?}"),
+                Ok(_) => panic!("[{name}] must be rejected on its own"),
+            }
+        }
+    }
+
+    #[test]
+    fn the_foreign_section_list_shares_no_name_with_epanet() {
+        // A name in both lists would reject valid EPANET files outright.
+        const EPANET_SECTIONS: &[&str] = &[
+            "TITLE",
+            "JUNCTIONS",
+            "RESERVOIRS",
+            "TANKS",
+            "PIPES",
+            "PUMPS",
+            "VALVES",
+            "TAGS",
+            "DEMANDS",
+            "STATUS",
+            "PATTERNS",
+            "CURVES",
+            "CONTROLS",
+            "RULES",
+            "ENERGY",
+            "EMITTERS",
+            "QUALITY",
+            "REACTIONS",
+            "SOURCES",
+            "LEAKAGE",
+            "MIXING",
+            "OPTIONS",
+            "TIMES",
+            "REPORT",
+            "COORDINATES",
+            "VERTICES",
+            "LABELS",
+            "BACKDROP",
+            "END",
+        ];
+        for &foreign in SWMM_ONLY_SECTIONS {
+            assert!(
+                !EPANET_SECTIONS.contains(&foreign),
+                "[{foreign}] is a valid EPANET 2.3 section and must not be treated as foreign",
+            );
+        }
+    }
+
+    #[test]
+    fn an_unrecognised_section_is_still_ignored_leniently() {
+        // The dialect check must not erode the forward-compatibility
+        // deviation in spec §4.3 — an unknown section is not a foreign one.
+        let inp = "\
+[JUNCTIONS]
+J1  0  10
+[RESERVOIRS]
+R1  100
+[PIPES]
+P1  R1  J1  1000  12  100  0  Open
+[SOMETHING_NEW]
+whatever  1  2
+";
+        let net = parse_inp(inp.as_bytes()).expect("unknown sections stay lenient");
+        assert_eq!(net.nodes.len(), 2);
+        assert_eq!(net.links.len(), 1);
     }
 
     // ── split_sections comment handling ──────────────────────────────────────

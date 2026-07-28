@@ -35,6 +35,13 @@ use crate::{Network, ValidationError};
 pub enum ParseError {
     /// The file format was not recognised (not an INP file).
     UnrecognisedFormat,
+    /// The file is an INP file, but another modelling tool's (spec §4.1.1).
+    ForeignDialect {
+        /// The tool the file appears to belong to, e.g. `"SWMM"`.
+        tool: &'static str,
+        /// The foreign section whose presence gave it away, without brackets.
+        section: &'static str,
+    },
     /// The file parsed successfully but failed one or more §2.9 validation checks.
     ValidationFailed(Vec<ValidationError>),
     /// A specific field value was syntactically valid but semantically out of range.
@@ -81,6 +88,11 @@ impl fmt::Display for ParseError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::UnrecognisedFormat => write!(f, "unrecognised model file format"),
+            Self::ForeignDialect { tool, section } => write!(
+                f,
+                "this looks like a {tool} model, not an EPANET one \
+                 (it declares a [{section}] section, which EPANET has no concept of)"
+            ),
             Self::ValidationFailed(errs) => write!(f, "validation failed: {} error(s)", errs.len()),
             Self::InvalidField { field, reason } => {
                 write!(f, "invalid field '{field}': {reason}")
