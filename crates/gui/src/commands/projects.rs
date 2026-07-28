@@ -598,11 +598,82 @@ pub fn delete_simulation(
     let app_data = app_data_dir(&app)?;
     let _run_guard = try_acquire_run_target(&project_id, scenario_id.as_deref())?;
     let path = results_path_for(&app_data, &project_id, scenario_id.as_deref());
-    match std::fs::remove_file(&path) {
+    remove_results_file(&path)
+}
+
+/// Remove one `results.out`, treating "already absent" as success.
+fn remove_results_file(path: &std::path::Path) -> Result<bool, String> {
+    match std::fs::remove_file(path) {
         Ok(()) => Ok(true),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
         Err(e) => Err(format!("Cannot delete simulation results: {e}")),
     }
+}
+
+/// Scenario ids of `project_id`, discovered from the bundle directory.
+///
+/// Read straight from disk rather than taken from the caller: this backs a
+/// clear-everything action, and a list supplied by a frontend whose scenario
+/// cache was stale would silently leave results behind on whichever scenario
+/// it had not heard about.
+fn scenario_ids(app_data: &std::path::Path, project_id: &str) -> Result<Vec<String>, String> {
+    let scenarios_dir = bundle::project_dir(app_data, project_id).join("scenarios");
+    if !scenarios_dir.exists() {
+        return Ok(vec![]);
+    }
+    let mut ids = Vec::new();
+    for entry in std::fs::read_dir(&scenarios_dir).map_err(|e| e.to_string())? {
+        let path = entry.map_err(|e| e.to_string())?.path();
+        if !path.is_dir() {
+            continue;
+        }
+        // A directory without readable metadata is not a scenario the rest of
+        // the app will show, so `list_scenarios` skips it — skip it here too,
+        // rather than reaching into something we cannot identify.
+        if meta::read_scenario_meta(&path).is_err() {
+            continue;
+        }
+        if let Some(id) = path.file_name().and_then(|n| n.to_str()) {
+            ids.push(id.to_string());
+        }
+    }
+    Ok(ids)
+}
+
+/// Delete the simulation results of a project's base model **and** every one
+/// of its scenarios. Returns how many results files were removed.
+///
+/// All run locks are taken up front, before a single file is touched, so the
+/// operation is all-or-nothing: if any target is mid-run the call fails
+/// having changed nothing. Clearing target-by-target and stopping at the busy
+/// one would leave the project in a state the user did not ask for and cannot
+/// easily identify — some results gone, some not, and no record of which.
+#[tauri::command(async)]
+/// Delete every `results.out` in a project (base model and all scenarios).
+pub fn delete_all_simulations(app: tauri::AppHandle, project_id: String) -> Result<u32, String> {
+    validate_id(&project_id)?;
+    let app_data = app_data_dir(&app)?;
+
+    let mut targets: Vec<Option<String>> = vec![None];
+    targets.extend(scenario_ids(&app_data, &project_id)?.into_iter().map(Some));
+
+    // Held for the whole function: dropping a guard early would let a run
+    // start on a target already cleared, so its fresh results would be
+    // deleted by nothing but would exist inside an operation reporting that
+    // everything was cleared.
+    let _guards = targets
+        .iter()
+        .map(|sid| try_acquire_run_target(&project_id, sid.as_deref()))
+        .collect::<Result<Vec<_>, _>>()?;
+
+    let mut removed = 0u32;
+    for sid in &targets {
+        let path = results_path_for(&app_data, &project_id, sid.as_deref());
+        if remove_results_file(&path)? {
+            removed += 1;
+        }
+    }
+    Ok(removed)
 }
 
 /// `model.inp` path for a project's base model (`scenario_id == None`) or
@@ -1492,6 +1563,32 @@ mod tests {
             std::fs::remove_file(&scenario).unwrap_err().kind(),
             std::io::ErrorKind::NotFound
         );
+    }
+
+    #[test]
+    fn scenario_ids_reads_the_bundle_not_the_caller() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(scenario_ids(dir.path(), "p1").unwrap().is_empty());
+
+        for (sid, name) in [("s1", "Alpha"), ("s2", "Beta")] {
+            let sc_dir = bundle::scenario_dir(dir.path(), "p1", sid);
+            std::fs::create_dir_all(&sc_dir).unwrap();
+            meta::write_scenario_meta(
+                &sc_dir,
+                &meta::ScenarioMeta {
+                    name: name.into(),
+                    parent_scenario_id: None,
+                },
+            )
+            .unwrap();
+        }
+        // A directory with no readable meta.json is not a scenario anywhere
+        // else in the app, so clear-all must not reach into it either.
+        std::fs::create_dir_all(bundle::scenario_dir(dir.path(), "p1", "junk")).unwrap();
+
+        let mut ids = scenario_ids(dir.path(), "p1").unwrap();
+        ids.sort();
+        assert_eq!(ids, ["s1", "s2"]);
     }
 
     // ── starter model ────────────────────────────────────────────────────

@@ -123,3 +123,15 @@ export async function deleteSimulation(
 ): Promise<boolean> {
   return await invoke<boolean>("delete_simulation", { projectId, scenarioId });
 }
+
+/**
+ * Delete every simulation result in a project — base model and all
+ * scenarios. Resolves to the number of results files removed.
+ *
+ * All-or-nothing: the backend takes every target's run lock before touching
+ * a file, so a project with a simulation in flight rejects the whole call
+ * rather than clearing some targets and stopping at the busy one.
+ */
+export async function deleteAllSimulations(projectId: string): Promise<number> {
+  return await invoke<number>("delete_all_simulations", { projectId });
+}

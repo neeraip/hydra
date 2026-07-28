@@ -26,6 +26,8 @@ export function BaseRow({
   canBranch,
   simulated,
   onClearResults,
+  clearAllCount,
+  onClearAllResults,
 }: {
   isActive: boolean;
   accent: string;
@@ -36,6 +38,14 @@ export function BaseRow({
   /** Whether the base model currently holds simulation results. */
   simulated: boolean;
   onClearResults: () => void;
+  /**
+   * How many targets across the whole project hold results. Zero hides the
+   * clear-all control; one hides it too, because with a single simulated
+   * target it would do exactly what "Clear results" already does, and two
+   * near-identical destructive buttons invite the wrong click.
+   */
+  clearAllCount: number;
+  onClearAllResults: () => void;
 }) {
   return (
     <div
@@ -113,6 +123,17 @@ export function BaseRow({
           data-tooltip="Delete the base model's simulation results"
         >
           Clear results
+        </button>
+      )}
+
+      {clearAllCount > 1 && (
+        <button
+          type="button"
+          onClick={onClearAllResults}
+          style={rowButtonStyle}
+          data-tooltip={`Delete simulation results across the whole project (${clearAllCount} simulated)`}
+        >
+          Clear all results
         </button>
       )}
 

@@ -6,6 +6,7 @@ import { useCanvasSelection } from "../../canvas/selection-context";
 import {
   type Command,
   type CommandCategory,
+  deleteAllSimulations,
   deleteSimulation,
   formatInpImportError,
   type Link,
@@ -329,6 +330,13 @@ export function CommandPalette() {
                   "Return the active scenario to an unsimulated state",
                 category: "Actions",
               } satisfies DynamicCommand,
+              {
+                id: "a-clear-all-results",
+                label: "Clear all simulation results",
+                description:
+                  "Return the base model and every scenario to an unsimulated state",
+                category: "Actions",
+              } satisfies DynamicCommand,
             ]
           : []),
         {
@@ -583,6 +591,30 @@ export function CommandPalette() {
             showToast(
               cleared ? "Simulation results cleared" : "No results to clear",
               cleared ? "success" : "info",
+            );
+          })
+          .catch((err) => {
+            showToast(
+              `Could not clear results: ${formatIpcError(err)}`,
+              "error",
+            );
+          });
+        return;
+      }
+
+      if (cmd.id === "a-clear-all-results") {
+        if (!activeProjectId) return;
+        deleteAllSimulations(activeProjectId)
+          .then((removed) => {
+            bumpScenarios();
+            bumpProjects();
+            setResultMeta(null);
+            setPumpEnergy(null);
+            showToast(
+              removed === 0
+                ? "No results to clear"
+                : `Cleared results for ${removed} target${removed === 1 ? "" : "s"}`,
+              removed === 0 ? "info" : "success",
             );
           })
           .catch((err) => {
