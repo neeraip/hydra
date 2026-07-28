@@ -20,6 +20,19 @@ import { ModalBackdrop, stopBackdropEvents } from "../ui/ModalBackdrop";
 
 const NODE_KINDS = new Set(["junction", "reservoir", "tank"]);
 
+/**
+ * Confirmations sit above the surface that raised them.
+ *
+ * At the same z-index as an ordinary modal this only *looks* correct while
+ * the confirmation happens to be a DOM descendant of its invoker — nesting
+ * puts it inside that modal's stacking context. Raised from app level, as
+ * the clear-results confirmation is, equal z-index means paint order decides
+ * and the confirmation lands underneath the modal it belongs to. Above every
+ * modal layer (200–300) is the only position that holds either way, and it
+ * is the honest one: a confirmation is never the thing to be obscured.
+ */
+const CONFIRM_Z_INDEX = 400;
+
 interface DeleteConfirmModalProps {
   open: boolean;
   elementKind: string;
@@ -73,7 +86,7 @@ export function DeleteConfirmModal({
   return (
     <ModalBackdrop
       onDismiss={onCancel}
-      zIndex={200}
+      zIndex={CONFIRM_Z_INDEX}
       background="rgba(0,0,0,0.55)"
     >
       <div
