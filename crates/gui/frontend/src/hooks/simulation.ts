@@ -11,33 +11,14 @@ import { useEffect, useState } from "react";
 // still mid-evaluation, and it is only invoked at render time.
 import { useAppState } from "../AppContext";
 import { invoke, tryInvokeOr } from "./ipc";
-import type { PumpEnergyRecord } from "./results";
-
-/** Returned by `run_simulation`. Contains only pump energy. */
-export interface SimulationResult {
-  pumpEnergy: PumpEnergyRecord[];
-}
-
-export async function runSimulation(opts?: {
-  projectId?: string;
-  scenarioId?: string;
-  qualityMode?: string;
-  traceNode?: string;
-}): Promise<SimulationResult | null> {
-  return await invoke<SimulationResult | null>("run_simulation", {
-    projectId: opts?.projectId ?? null,
-    scenarioId: opts?.scenarioId ?? null,
-    qualityMode: opts?.qualityMode ?? null,
-    traceNode: opts?.traceNode ?? null,
-  });
-}
 
 // ── Simulation progress events ─────────────────────────────────────────────
 
 export const SIMULATION_PROGRESS_EVENT = "simulation_progress";
 
 export interface SimulationProgressEvent {
-  /** The run-queue item UUID; `null` for direct (non-queued) runs. */
+  /** The run-queue item UUID. Every run is queued, so this is always set;
+   *  the nullable type is kept because the backend field is `Option`. */
   runId: string | null;
   /** "hydraulics" or "quality" */
   phase: string;

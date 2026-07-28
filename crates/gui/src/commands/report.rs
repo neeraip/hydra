@@ -188,7 +188,7 @@ fn render_for_target(
         ],
     };
 
-    let document = assemble(template, context, |id, options| {
+    let document = assemble(template, hydra::report_catalog(), context, |id, options| {
         hydra::produce_report_block(id, &out_path, &network, options)
     });
     Ok(match format {

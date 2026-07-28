@@ -201,10 +201,8 @@ export function formatQtyRaw(v: number, q: Quantity, sys: UnitSystem): string {
  *
  * Used by table cells whose column header already carries the unit (via
  * {@link unitLabel}), so the cell shows just the number and the edit pre-fill
- * is directly parseable. In SI the raw value is passed through unrounded
- * (exactly {@link formatQtyRaw}'s SI behavior minus the label) unless
- * `decimals` is given explicitly; in US the value is converted and rounded
- * with the same decimals policy as {@link formatQty}.
+ * is directly parseable. Both systems round to a fixed number of decimals —
+ * `decimals` when given, otherwise {@link defaultDecimals}.
  */
 export function formatQtyValue(
   v: number,
@@ -212,8 +210,26 @@ export function formatQtyValue(
   sys: UnitSystem,
   decimals?: number,
 ): string {
-  if (sys === "si") return decimals != null ? v.toFixed(decimals) : `${v}`;
-  return toDisplay(v, q, sys).toFixed(decimals ?? defaultDecimals(q, sys));
+  // Both unit systems get a fixed decimal count. SI used to fall through to
+  // raw number-to-string, which produced ragged columns in the editor tables
+  // — "42.21" above "42.4" above "42.07", right-aligned so nothing lined up.
+  // A fixed count is what makes a numeric column scannable.
+  const d = decimals ?? defaultDecimals(q, sys);
+  if (sys === "si") return v.toFixed(d);
+  return toDisplay(v, q, sys).toFixed(d);
+}
+
+/**
+ * Format a raw `[COORDINATES]` value for a table cell.
+ *
+ * Coordinates are not a unit `Quantity` — they are plain numbers in whatever
+ * CRS the project declares — but they still need a fixed decimal count, or a
+ * right-aligned column renders "6594418.2" next to "6594308.45" with nothing
+ * lined up. Two decimals is well inside the precision of any projected CRS
+ * Hydra supports and comfortably sub-millimetre for degrees.
+ */
+export function formatCoordValue(v: number): string {
+  return Number.isFinite(v) ? v.toFixed(2) : "";
 }
 
 /**

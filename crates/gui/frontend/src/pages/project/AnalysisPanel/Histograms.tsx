@@ -1,5 +1,4 @@
 import type { ResultAnalytics } from "../../../hooks";
-import { PRESSURE_THRESHOLD } from "../../../hooks";
 import {
   formatQty,
   type Quantity,
@@ -12,6 +11,8 @@ import { type BarEntry, HorizontalBarChart } from "./charts";
 
 // Histogram buckets arrive from the backend with fixed SI boundaries; only
 // the labels are converted for display — counts and bucket edges stay SI.
+// These must stay in step with PRESSURE_BINS / VELOCITY_BINS in the backend's
+// commands/results.rs.
 const PRESSURE_BIN_EDGES_M = [0, 10, 20, 30, 40, 50, 60];
 const VELOCITY_BIN_EDGES_MS = [0.1, 0.3, 0.6, 1.0];
 
@@ -23,11 +24,13 @@ function fmtEdge(v: number, q: Quantity, sys: UnitSystem): string {
     : conv.toFixed(1);
 }
 
-/** "0–10 m", …, "≥ 60 m" (converted for the active display system). */
+/** "< 0 m", "0–10 m", …, "≥ 60 m" (converted for the active display system).
+ *  The leading below-zero bucket is where junctions in pressure deficit land;
+ *  without it they were dropped from the chart entirely. */
 function pressureBinLabels(sys: UnitSystem): string[] {
   const u = unitLabel("pressure", sys);
   const e = PRESSURE_BIN_EDGES_M.map((v) => fmtEdge(v, "pressure", sys));
-  const labels: string[] = [];
+  const labels: string[] = [`< ${e[0]} ${u}`];
   for (let i = 0; i < e.length - 1; i += 1)
     labels.push(`${e[i]}–${e[i + 1]} ${u}`);
   labels.push(`≥ ${e[e.length - 1]} ${u}`);
@@ -47,8 +50,12 @@ function velocityBinLabels(sys: UnitSystem): string[] {
 
 export function PressureHistogram({
   analytics,
+  minPressureM,
 }: {
   analytics: ResultAnalytics | null;
+  /** The user's minimum-service-pressure criterion (m, SI) — the same value
+   *  `lowPressureCount` was computed against. */
+  minPressureM: number;
 }) {
   const sys = useUnitSystem();
   if (!analytics) {
@@ -72,18 +79,20 @@ export function PressureHistogram({
     );
   }
 
-  const { pressureHistogram, nodeCount } = analytics;
+  const { pressureHistogram, junctionCount } = analytics;
   const labels = pressureBinLabels(sys);
   const maxCount = Math.max(...pressureHistogram.map((b) => b.count), 1);
-  // Colour by bucket index (SI semantics): bins 0–1 (< 20 m) are below the
-  // pressure threshold, bin 2 (20–30 m) is marginal.
+  // Colour by the bucket's own range against the user's criterion, not by a
+  // fixed index: a bucket entirely below the criterion is an error, one that
+  // straddles it is marginal, one entirely above it is fine. Index-based
+  // colouring silently lied whenever the criterion moved off its default.
   const bars: BarEntry[] = pressureHistogram.map((b, i) => ({
     label: labels[i] ?? `Bin ${i}`,
     count: b.count,
     fill:
-      i <= 1
+      b.hi <= minPressureM
         ? "var(--status-error)"
-        : i === 2
+        : b.lo < minPressureM
           ? "var(--status-warning)"
           : b.count > 0
             ? "var(--accent)"
@@ -91,8 +100,11 @@ export function PressureHistogram({
   }));
 
   const belowThreshold = analytics.lowPressureCount;
+  // The criterion the count was actually computed against — previously a
+  // fixed 24 m constant, which contradicted the criterion shown one line
+  // above it in the same panel.
   const thresholdLabel = formatQty(
-    PRESSURE_THRESHOLD,
+    minPressureM,
     "pressure",
     sys,
     sys === "si" ? 0 : 1,
@@ -122,7 +134,7 @@ export function PressureHistogram({
             fontFamily: "var(--font-mono)",
           }}
         >
-          {nodeCount} nodes
+          {junctionCount} junctions
         </span>
       </div>
       <HorizontalBarChart bars={bars} maxCount={maxCount} />
@@ -130,8 +142,8 @@ export function PressureHistogram({
         style={{ fontSize: 12, color: "var(--text-tertiary)", marginTop: 10 }}
       >
         {belowThreshold > 0
-          ? `${belowThreshold} node${belowThreshold > 1 ? "s" : ""} below minimum (${thresholdLabel}) at worst hour`
-          : `All nodes above minimum pressure threshold (${thresholdLabel})`}
+          ? `${belowThreshold} junction${belowThreshold > 1 ? "s" : ""} below minimum (${thresholdLabel}) at worst hour`
+          : `All junctions above the minimum pressure criterion (${thresholdLabel})`}
       </div>
     </div>
   );
@@ -164,7 +176,7 @@ export function VelocityHistogram({
     );
   }
 
-  const { velocityHistogram, linkCount } = analytics;
+  const { velocityHistogram, pipeCount } = analytics;
   const labels = velocityBinLabels(sys);
   const maxCount = Math.max(...velocityHistogram.map((b) => b.count), 1);
   // Colour by bucket index: stagnant / good / normal / normal / too fast.
@@ -208,7 +220,7 @@ export function VelocityHistogram({
             fontFamily: "var(--font-mono)",
           }}
         >
-          {linkCount} pipes
+          {pipeCount} pipes
         </span>
       </div>
       <HorizontalBarChart bars={bars} maxCount={maxCount} />

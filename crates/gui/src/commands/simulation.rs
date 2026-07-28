@@ -1,6 +1,7 @@
 //! Simulation execution: the stepped hydraulics/quality run loop with results
-//! streaming, progress emission, the per-target run lock, and the direct
-//! `run_simulation` command.
+//! streaming, progress emission, and the per-target run lock.
+//!
+//! Runs are always queued (see `run_queue`) — there is no direct-run command.
 
 use std::time::{Duration, Instant};
 
@@ -9,9 +10,7 @@ use tauri::{Emitter, Manager};
 
 use crate::meta::bundle;
 
-use super::network_dto::{format_inp_parse_error, NetworkState};
 use super::projects::{results_path_for, validate_id};
-use super::results::{collect_pump_energy, network_has_energy_price, PumpEnergyDto};
 
 pub(crate) const SIMULATION_PROGRESS_EVENT: &str = "simulation_progress";
 
@@ -20,9 +19,7 @@ const PROGRESS_EMIT_INTERVAL: Duration = Duration::from_millis(125);
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct SimulationProgressDto {
-    /// The run-queue item UUID for queue-sourced runs; `None` for direct
-    /// `run_simulation` runs (the frontend contract types this as `null`
-    /// for direct runs).
+    /// The run-queue item UUID. Always `Some` — every run is queued.
     pub(crate) run_id: Option<String>,
     pub(crate) phase: &'static str,
     pub(crate) simulated_seconds: f64,
@@ -552,22 +549,11 @@ where
     )
 }
 
-/// Result returned by `run_simulation`.
-/// Does **not** contain per-period timestep arrays — those can be gigabytes for
-/// large networks and are always accessed on demand via `get_period_results`.
-/// Cross-period analytics are available via `get_result_analytics`.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SimulationResultDto {
-    /// Per-pump energy accounting for the full simulation.  Empty when no pumps
-    /// exist or when energy accounting was not available.
-    #[serde(default)]
-    pub pump_energy: Vec<PumpEnergyDto>,
-}
-
 /// Simulation targets (project/scenario pairs) whose `results.out` is
-/// currently being written, by direct `run_simulation` calls or by the queue
-/// processor. Guards against two runs corrupting the same output file.
+/// currently being written by the queue processor. The processor drains items
+/// one at a time, so this is belt-and-braces against a future second writer
+/// rather than a live race — but a corrupted results file is expensive enough
+/// to keep the guard.
 static ACTIVE_RUN_TARGETS: parking_lot::Mutex<Vec<String>> = parking_lot::Mutex::new(Vec::new());
 
 /// RAII lock on a single simulation target. Released on drop.
@@ -581,7 +567,7 @@ impl Drop for RunTargetGuard {
 
 /// Claim exclusive write access to the `results.out` of
 /// `(project_id, scenario_id)`. Fails fast with a clear error when another
-/// simulation (direct or queued) is already writing to the same target.
+/// simulation is already writing to the same target.
 pub(crate) fn try_acquire_run_target(
     project_id: &str,
     scenario_id: Option<&str>,
@@ -598,162 +584,6 @@ pub(crate) fn try_acquire_run_target(
     }
     active.push(key.clone());
     Ok(RunTargetGuard(key))
-}
-
-/// Run hydraulics (and optionally water quality) on the currently loaded
-/// network and return EPS results.
-///
-/// Returns `null` if no network has been loaded yet.
-/// Returns an error string if the simulation fails.
-#[tauri::command]
-/// Run hydraulics + optional quality directly (not queued); streams progress via `simulation_progress`.
-pub async fn run_simulation(
-    app: tauri::AppHandle,
-    state: tauri::State<'_, NetworkState>,
-    project_id: Option<String>,
-    scenario_id: Option<String>,
-    quality_mode: Option<String>,
-    trace_node: Option<String>,
-) -> Result<Option<SimulationResultDto>, String> {
-    use hydra::{QualityMode, Simulation};
-    if let Some(pid) = &project_id {
-        validate_id(pid)?;
-    }
-    if let Some(sid) = &scenario_id {
-        validate_id(sid)?;
-    }
-    // A scenario can only be resolved within its project — silently falling
-    // back to the in-memory network would run the wrong model.
-    if scenario_id.is_some() && project_id.is_none() {
-        return Err(
-            "scenario_id requires project_id: a scenario model can only be \
-             located inside its project bundle"
-                .into(),
-        );
-    }
-
-    // Load model bytes.  When IDs are supplied we read directly from the
-    // bundle on disk so the correct model.inp is always used, regardless of
-    // which file (if any) is currently open in the editor.
-    let raw_bytes: Vec<u8> = if let (Some(pid), Some(sid)) = (&project_id, &scenario_id) {
-        let app_data = app.path().app_data_dir().map_err(|e| format!("{e:?}"))?;
-        let path = bundle::scenario_model_path(&app_data, pid, sid);
-        std::fs::read(&path).map_err(|e| format!("Cannot read scenario model '{}': {}", sid, e))?
-    } else if let Some(pid) = &project_id {
-        let app_data = app.path().app_data_dir().map_err(|e| format!("{e:?}"))?;
-        let path = bundle::base_model_path(&app_data, pid);
-        std::fs::read(&path).map_err(|e| format!("Cannot read base model '{}': {}", pid, e))?
-    } else {
-        // Fall back to the in-memory network (opened via file picker).
-        let mut guard = state.0.lock();
-        match guard.up_to_date_raw_bytes() {
-            Some(bytes) => bytes.clone(),
-            None => return Ok(None),
-        }
-    };
-
-    let mut network = hydra::io::parse(&raw_bytes).map_err(format_inp_parse_error)?;
-
-    // Apply quality mode override from the caller. When `None` is passed,
-    // honour whatever the INP `[OPTIONS]` declares — the INP is the canonical
-    // source for sim params now that the Overview page edits it directly.
-    if let Some(q) = quality_mode.as_deref() {
-        let resolved = match q {
-            "chemical" => QualityMode::Chemical,
-            "age" => QualityMode::Age,
-            "trace" => QualityMode::Trace,
-            _ => QualityMode::None,
-        };
-        network.options.quality_mode = resolved;
-        if resolved == QualityMode::Trace {
-            network.options.trace_node = trace_node.clone();
-        }
-    }
-    let resolved_quality = network.options.quality_mode;
-    let run_quality = resolved_quality != QualityMode::None;
-    let duration_seconds = network.options.duration;
-    // Captured before `sim.load(network)` consumes the network — decides
-    // whether pump `total_cost` is meaningful (`None` when no price info).
-    let has_price_info = network_has_energy_price(&network);
-
-    // Resolve the .out path before moving into spawn_blocking. In-memory runs
-    // (no project id) write no results file.
-    let out_path: Option<std::path::PathBuf> = match (app.path().app_data_dir(), &project_id) {
-        (Ok(app_data), Some(pid)) => Some(results_path_for(&app_data, pid, scenario_id.as_deref())),
-        _ => None,
-    };
-
-    // Claim exclusive write access to this target's results.out so a direct
-    // run and a queued run can never write the same file concurrently. Held
-    // (via RAII) until this function returns. In-memory runs (no project id)
-    // write no .out file and need no lock.
-    let _run_guard = match &project_id {
-        Some(pid) => Some(try_acquire_run_target(pid, scenario_id.as_deref())?),
-        None => None,
-    };
-
-    let mut sim = Simulation::create();
-    sim.load(network).map_err(|e| format!("{e:?}"))?;
-
-    // ── Phase 2: stepped loops on a blocking thread ─────────────────────────
-    let app2 = app.clone();
-    let (sim, run_err, wall_ms, hyd_steps) = tauri::async_runtime::spawn_blocking(move || {
-        run_sim_loops(
-            sim,
-            out_path,
-            duration_seconds,
-            run_quality,
-            |phase, ss, done, failed, msg| {
-                emit_or_warn(
-                    &app2,
-                    SIMULATION_PROGRESS_EVENT,
-                    &SimulationProgressDto {
-                        // Direct runs are not queue items: `None` per the
-                        // frontend contract (simulation.ts types run_id as
-                        // "null for direct runs").
-                        run_id: None,
-                        phase,
-                        simulated_seconds: ss,
-                        duration_seconds,
-                        percent: if done {
-                            100.0
-                        } else {
-                            progress_percent(ss, duration_seconds)
-                        },
-                        done,
-                        failed,
-                        message: msg,
-                        run_quality,
-                    },
-                );
-            },
-            || false,
-        )
-    })
-    .await
-    .map_err(|e| format!("Simulation task panicked: {e:?}"))?;
-
-    tracing::info!(
-        project_id = project_id.as_deref().unwrap_or("-"),
-        scenario_id = scenario_id.as_deref().unwrap_or("-"),
-        wall_ms,
-        hyd_steps,
-        outcome = run_loop_outcome(&run_err),
-        "direct simulation run finished"
-    );
-
-    if let Some(err) = run_err {
-        return Err(match err {
-            RunLoopError::Failed(msg) => msg,
-            RunLoopError::Cancelled => "Simulation cancelled".into(),
-        });
-    }
-
-    let result = SimulationResultDto {
-        pump_energy: collect_pump_energy(&sim, duration_seconds, has_price_info),
-    };
-
-    Ok(Some(result))
 }
 
 /// Terse outcome label for run-summary log lines.

@@ -38,7 +38,7 @@ pub(crate) fn loaded_state() -> NetworkStateInner {
     NetworkStateInner::Loaded {
         raw_bytes: raw,
         dirty: false,
-        network,
+        network: std::sync::Arc::new(network),
         dto,
         owner_project_id: Some("test-project".into()),
         owner_scenario_id: None,

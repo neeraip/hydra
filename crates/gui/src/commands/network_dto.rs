@@ -285,11 +285,18 @@ pub enum NetworkStateInner {
         /// `true` when `network` has been mutated since `raw_bytes` was last
         /// serialised from it.
         dirty: bool,
-        /// Parsed network — cached to avoid re-parsing on every `patch_element` call.
-        network: hydra::Network,
+        /// Parsed network — cached to avoid re-parsing on every mutating call.
+        ///
+        /// Behind an `Arc` so read commands that need the whole network while
+        /// *not* holding the state lock (report rendering, validation) take a
+        /// pointer copy instead of a deep clone: at 46k nodes + 46k links that
+        /// clone showed up on every project/scenario switch. Mutations go
+        /// through `Arc::make_mut`, which only copies while another reader is
+        /// still holding the previous version.
+        network: std::sync::Arc<hydra::Network>,
         dto: NetworkDto,
         /// Project that owns this network — `Some` when loaded from a project
-        /// bundle (`load_project` / `load_project_network`), `None` when loaded
+        /// bundle (`load_project_network`), `None` when loaded
         /// from the file picker (`open_and_load_network`, pre-`create_project`).
         /// `save_project` refuses to write when the caller's project id does
         /// not match, so a stale `activeProjectId` in the frontend can never
@@ -444,8 +451,7 @@ fn summarize_unknown_pattern_refs(errors: &[hydra::ValidationError]) -> Option<S
 
 /// Clone one collection out of the cached `NetworkDto` under the state lock,
 /// returning an empty vec when no network is loaded. Shared by the read-only
-/// `get_nodes` / `get_links` / `get_patterns` / `get_curves` / `get_controls`
-/// / `get_rules` commands.
+/// `get_patterns` / `get_curves` / `get_controls` / `get_rules` commands.
 fn cloned_from_dto<T: Clone>(
     state: &NetworkState,
     get: impl FnOnce(&NetworkDto) -> &[T],
@@ -454,19 +460,6 @@ fn cloned_from_dto<T: Clone>(
         NetworkStateInner::Loaded { dto, .. } => get(dto).to_vec(),
         NetworkStateInner::Empty => vec![],
     }
-}
-
-#[tauri::command(async)]
-/// Return the node list for the loaded network.
-pub fn get_nodes(state: tauri::State<'_, NetworkState>) -> Vec<NodeDto> {
-    cloned_from_dto(&state, |dto| &dto.nodes)
-}
-
-/// Return the links of the currently loaded network, or an empty list.
-#[tauri::command(async)]
-/// Return the link list for the loaded network.
-pub fn get_links(state: tauri::State<'_, NetworkState>) -> Vec<LinkDto> {
-    cloned_from_dto(&state, |dto| &dto.links)
 }
 
 /// Return the patterns of the currently loaded network, or an empty list.
@@ -496,7 +489,7 @@ pub fn get_network_title(state: tauri::State<'_, NetworkState>) -> Vec<String> {
 // ── Internal helpers ─────────────────────────────────────────────────────────
 
 /// Build the DTO for a single node. Shared by the full `network_to_dto`
-/// rebuild and the single-element delta path in `patch_element`.
+/// rebuild and the single-element delta path in `patch_elements`.
 pub(crate) fn node_to_dto(network: &hydra::Network, n: &hydra::Node) -> NodeDto {
     use hydra::NodeKind;
 
@@ -1295,8 +1288,9 @@ mod tests {
         let before = state.up_to_date_raw_bytes().unwrap().clone();
         assert_eq!(before, TEST_INP.as_bytes());
 
-        // Mutate the network the way `patch_element` does: apply + mark dirty.
+        // Mutate the network the way `patch_elements` does: apply + mark dirty.
         if let NetworkStateInner::Loaded { network, dirty, .. } = &mut state {
+            let network = std::sync::Arc::make_mut(network);
             apply_patch_to_network(network, "pipe", "P1", "roughness", serde_json::json!(140.0))
                 .unwrap();
             *dirty = true;

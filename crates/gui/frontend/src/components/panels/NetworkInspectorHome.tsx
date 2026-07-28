@@ -6,6 +6,7 @@ import { useLinks, useNodes, usePatterns } from "../../hooks";
 import { perfTrace } from "../../perfTrace";
 import { toDisplay, unitLabel, useUnitSystem } from "../../units";
 import { downsampleMinMax } from "../editors/patternDownsample";
+import { MiddleTruncate } from "../ui/MiddleTruncate";
 import { TypeBadge } from "../ui/TypeBadge";
 
 /** Preview strip is 220 units wide; more bars than half that cannot render
@@ -324,7 +325,7 @@ function NodesTab({
                     fontFamily: "var(--font-mono)",
                   }}
                 >
-                  {node.id}
+                  <MiddleTruncate text={node.id} />
                 </td>
                 <td style={{ ...TD, fontFamily: "var(--font-mono)" }}>
                   {node.elevation != null
@@ -606,7 +607,7 @@ function LinksTab({
                     fontFamily: "var(--font-mono)",
                   }}
                 >
-                  {link.id}
+                  <MiddleTruncate text={link.id} />
                 </td>
                 <td style={TD}>
                   {link.status != null ? (

@@ -421,11 +421,9 @@ async fn process_queue(app: tauri::AppHandle) {
 
 /// Run a single simulation on behalf of the queue processor.
 ///
-/// Unlike [`run_simulation`](super::run_simulation), this reads the model
-/// entirely from disk, does
-/// not accept quality-mode overrides (the INP `[OPTIONS]` section is the sole
-/// source of truth), and returns only success/failure — results are accessed
-/// on demand from `results.out`.
+/// Reads the model entirely from disk and returns only success/failure —
+/// results are accessed on demand from `results.out`. The INP `[OPTIONS]`
+/// section is the sole source of truth for the quality mode.
 async fn run_sim_for_queue(
     app: &tauri::AppHandle,
     run_id: &str,

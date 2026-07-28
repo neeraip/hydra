@@ -95,14 +95,27 @@ export interface WorstNode {
 
 export interface ResultAnalytics {
   periodCount: number;
-  nodeCount: number;
-  linkCount: number;
+  /**
+   * Junctions carrying finite pressure data — the population every pressure
+   * figure here is drawn from, and the sum of `pressureHistogram`'s counts.
+   * Reservoirs and tanks are excluded (head − elevation is not a service
+   * pressure). Use this, never the network's node count, as the denominator
+   * for pressure compliance.
+   */
+  junctionCount: number;
+  /**
+   * Pipes — the population `velocityHistogram` and `topPipes` are drawn from,
+   * and the sum of `velocityHistogram`'s counts. Pumps and valves are
+   * excluded: they have no pipe velocity.
+   */
+  pipeCount: number;
   massBalance: MassBalance;
   /** Absent (omitted or null) when no valid pressure data exists. */
   minPressureNodeId?: string | null;
   /** Absent (omitted or null) when no valid pressure data exists. */
   minPressureM?: number | null;
-  /** Junctions below the minimum-pressure criterion passed to the fetch. */
+  /** Junctions below the minimum-pressure criterion passed to the fetch.
+   *  Always ≤ `junctionCount`. */
   lowPressureCount: number;
   /** Lowest-pressure junctions, ascending (up to 10). */
   worstNodes: WorstNode[];
@@ -110,7 +123,10 @@ export interface ResultAnalytics {
   maxVelocityLinkId?: string | null;
   /** Absent (omitted or null) when no valid velocity data exists. */
   maxVelocityMs?: number | null;
+  /** Per-junction minimum pressure, 8 bins. The first is unbounded below, so
+   *  negative pressures are counted rather than dropped. */
   pressureHistogram: HistogramBucket[];
+  /** Per-pipe maximum velocity, 5 bins. */
   velocityHistogram: HistogramBucket[];
   topPipes: TopPipe[];
   tankSeries: TankHeadSeries[];

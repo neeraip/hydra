@@ -728,6 +728,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const setActiveScenarioId = useCallback((id: string | null) => {
+    // Same guard as leaving the project page. Staged editor drafts are held
+    // per-project, not per-scenario, so a silent switch left them pointing at
+    // a model they were not authored against: the next ⌘S applied one
+    // target's edits to another's model.inp. Both halves matter — the backend
+    // refuses a save whose target does not own the loaded network, and this
+    // stops the user reaching that state by accident in the first place.
+    if (sRef.current.activeScenarioId === id) return;
+    if (!confirmDiscardDrafts("Switch scenario")) return;
     setS((prev) => ({ ...prev, activeScenarioId: id }));
   }, []);
 

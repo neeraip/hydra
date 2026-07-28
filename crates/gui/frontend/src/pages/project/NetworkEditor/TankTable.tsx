@@ -1,6 +1,7 @@
 import type React from "react";
 import type { TankRow } from "../../../hooks";
 import {
+  formatCoordValue,
   formatQtyValue,
   fromDisplay,
   unitLabel,
@@ -316,7 +317,7 @@ export function TankTable({
               />
               <EditableCell
                 key={`${discardGen}-${row.id}-x`}
-                display={isPendingRow ? "" : String(row.x)}
+                display={isPendingRow ? "" : formatCoordValue(row.x)}
                 placeholder={isPendingRow}
                 align="right"
                 style={{ color: "var(--text-primary)" }}
@@ -326,7 +327,7 @@ export function TankTable({
               />
               <EditableCell
                 key={`${discardGen}-${row.id}-y`}
-                display={isPendingRow ? "" : String(row.y)}
+                display={isPendingRow ? "" : formatCoordValue(row.y)}
                 placeholder={isPendingRow}
                 align="right"
                 style={{ color: "var(--text-primary)" }}

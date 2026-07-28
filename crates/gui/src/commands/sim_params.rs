@@ -279,7 +279,7 @@ fn apply_sim_params_to_cached_base(
             // leave the cached network half-updated.
             let mut new_options = network.options.clone();
             apply_dto_to_options(&mut new_options, params)?;
-            network.options = new_options;
+            std::sync::Arc::make_mut(network).options = new_options;
             *raw_bytes = hydra::write_inp(network);
             // See doc comment: guards against a racing `save_project`.
             *dirty = true;
@@ -344,7 +344,7 @@ pub fn update_sim_params(
                 if *owner == project_id {
                     let mut new_options = network.options.clone();
                     if apply_dto_to_options(&mut new_options, &params).is_ok() {
-                        network.options = new_options;
+                        std::sync::Arc::make_mut(network).options = new_options;
                         *dirty = true;
                     }
                 }

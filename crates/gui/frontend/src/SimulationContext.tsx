@@ -21,7 +21,6 @@ import {
 import { useAppState } from "./AppContext";
 import { useCanvasStatus } from "./canvas/status-context";
 import {
-  runSimulation as _runSimulation,
   compareTopologyDigests,
   fetchRunWarnings,
   fetchValidationFindings,
@@ -96,17 +95,6 @@ interface SimulationCtxValue {
   tasks: Task[];
   issues: Issue[];
   setIssues: Dispatch<SetStateAction<Issue[]>>;
-  /** Run the simulation, managing a task entry for the duration. */
-  runSim: (
-    projectName: string,
-    scenarioName: string,
-    opts?: {
-      projectId?: string;
-      scenarioId?: string;
-      qualityMode?: string;
-      traceNode?: string;
-    },
-  ) => Promise<void>;
   /** Remove a completed or failed task from the tray. */
   dismissTask: (id: string) => void;
 }
@@ -123,7 +111,6 @@ const SimCtx = createContext<SimulationCtxValue>({
   tasks: [],
   issues: [],
   setIssues: () => {},
-  runSim: async () => {},
   dismissTask: () => {},
 });
 
@@ -477,14 +464,13 @@ export function SimulationProvider({ children }: { children: ReactNode }) {
     let unlisten: (() => void) | null = null;
     listenSimulationProgress((ev) => {
       setTasks((prev) => {
-        // Locate the target task:
-        //  • Queue path: match by run_id → task id = "queue-{runId}"
-        //  • Direct path: first running task (run_id is null)
+        // Every run is queued, so the run id always identifies its task.
+        // (There used to be a fallback to "the first running task" for
+        // non-queued runs; with two runs in flight it attributed one run's
+        // progress to the other's row.)
+        if (ev.runId == null) return prev;
         let tasks = prev;
-        let idx =
-          ev.runId != null
-            ? prev.findIndex((t) => t.id === `queue-${ev.runId}`)
-            : prev.findIndex((t) => t.status === "running");
+        let idx = prev.findIndex((t) => t.id === `queue-${ev.runId}`);
 
         // Timing-race recovery: progress arrived before run_queue_update
         // created the task entry. Synthesise a placeholder immediately so
@@ -496,7 +482,6 @@ export function SimulationProvider({ children }: { children: ReactNode }) {
         // The explicit `prev.some()` guard below makes this invariant visible
         // and keeps it safe against future refactors of the `idx` search logic.
         if (
-          ev.runId != null &&
           !ev.done &&
           !ev.failed &&
           !prev.some((t) => t.id === `queue-${ev.runId}`)
@@ -682,8 +667,7 @@ export function SimulationProvider({ children }: { children: ReactNode }) {
       getRunQueue(projectId).then((items: RunQueueItem[]) => {
         if (cancelled) return;
         // Clear the stale-results flag for every scenario that just completed
-        // successfully. This is the queue path (enqueueRuns) — the direct
-        // runSim path clears it separately inside its own try/catch.
+        // successfully.
         for (const item of items) {
           if (item.status === "done") clearEdited(item.targetId);
         }
@@ -811,87 +795,6 @@ export function SimulationProvider({ children }: { children: ReactNode }) {
     };
   }, [clearEdited, bumpScenarios, bumpProjects]);
 
-  const runSim = useCallback(
-    async (
-      projectName: string,
-      scenarioName: string,
-      opts?: {
-        projectId?: string;
-        scenarioId?: string;
-        qualityMode?: string;
-        traceNode?: string;
-      },
-    ): Promise<void> => {
-      const id = `task-${Date.now()}`;
-      const startedAt = formatClockTime();
-      /** Merge `patch` into this run's task entry. */
-      const patchTask = (patch: Partial<Task>) => {
-        setTasks((prev) =>
-          prev.map((t) => (t.id === id ? { ...t, ...patch } : t)),
-        );
-      };
-      setTasks((prev) => [
-        {
-          id,
-          projectId: opts?.projectId,
-          scenarioId: opts?.scenarioId ?? null,
-          projectName,
-          scenarioName,
-          status: "running",
-          timeLabel: `Started ${startedAt}`,
-          progressPercent: undefined,
-          progressMessage: "Solving…",
-          history: [{ at: Date.now(), label: "Queued" }],
-        },
-        ...prev,
-      ]);
-      try {
-        const result = await _runSimulation(opts);
-        const elapsed = formatClockTime();
-        if (result) {
-          // Store only pump energy (epilog data — tiny regardless of network size).
-          // Cross-period analytics are fetched on-demand by individual views.
-          setPumpEnergy(result.pumpEnergy);
-          // Clear the stale flag for this scenario now that results are fresh.
-          clearEdited(opts?.scenarioId ?? null);
-          // Load global metadata (snapshot times + ranges) from the binary
-          // results file so the Timeline and ResultsSummary work without loading
-          // all periods into memory.
-          if (opts?.projectId) {
-            loadResultMeta(opts.projectId, opts.scenarioId).then((meta) => {
-              if (meta) {
-                setResultMeta(meta);
-                setResultGeneration((g) => g + 1);
-              }
-            });
-          }
-          // Refresh project and scenario rows so state badges update immediately.
-          bumpProjects();
-          bumpScenarios();
-          patchTask({
-            status: "completed",
-            timeLabel: `Completed ${elapsed}`,
-            primaryAction: "View results",
-          });
-        } else {
-          patchTask({
-            status: "failed",
-            timeLabel: `Failed ${elapsed}`,
-            errorMessage:
-              "Simulation returned no results. Is a network loaded?",
-          });
-        }
-      } catch (err) {
-        patchTask({
-          status: "failed",
-          timeLabel: `Failed ${formatClockTime()}`,
-          errorMessage: String(err),
-        });
-      }
-    },
-    [bumpProjects, bumpScenarios, clearEdited],
-  );
-
   const dismissTask = useCallback((id: string) => {
     setTasks((prev) => prev.filter((t) => t.id !== id));
   }, []);
@@ -911,7 +814,6 @@ export function SimulationProvider({ children }: { children: ReactNode }) {
       tasks,
       issues,
       setIssues,
-      runSim,
       dismissTask,
     }),
     [
@@ -923,7 +825,6 @@ export function SimulationProvider({ children }: { children: ReactNode }) {
       liveNetworkDigest,
       tasks,
       issues,
-      runSim,
       dismissTask,
     ],
   );

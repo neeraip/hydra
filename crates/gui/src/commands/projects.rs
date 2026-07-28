@@ -153,70 +153,6 @@ pub fn create_project(
     ))
 }
 
-/// Result returned by `load_project`: the persisted row, plus the network it
-/// carries (if any). The network is parsed during the load and stashed in
-/// `NetworkState` so subsequent `get_nodes` / `get_links` / `run_simulation`
-/// calls operate on it.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct LoadedProject {
-    pub project: Project,
-    /// Always `None` — the frontend fetches the network separately via
-    /// `load_project_network`, so the full DTO is no longer serialised into
-    /// this payload. The field is kept for wire-format compatibility.
-    pub network: Option<NetworkDto>,
-}
-
-/// Open an existing project from disk. Reads the metadata, and if a base model
-/// is present, parses it into [`NetworkState`] so the rest of the app can read
-/// nodes/links/results from it.
-#[tauri::command(async)]
-/// Read project `meta.json` and derive simulation state from `results.out` presence.
-pub fn load_project(
-    app: tauri::AppHandle,
-    state: tauri::State<'_, NetworkState>,
-    id: String,
-) -> Result<Option<LoadedProject>, String> {
-    validate_id(&id)?;
-    let app_data = app_data_dir(&app)?;
-    let project_dir = bundle::project_dir(&app_data, &id);
-    if !project_dir.exists() {
-        return Ok(None);
-    }
-    let meta = match meta::read_project_meta(&project_dir) {
-        Ok(m) => m,
-        Err(_) => return Ok(None),
-    };
-    let project = project_dto_from_disk(&app_data, &project_dir, &id, &meta);
-
-    // If the bundle has a base model on disk, parse it and populate state.
-    // The parsed network and its DTO are intentionally *not* returned to the
-    // caller: the frontend fetches the snapshot separately via
-    // `load_project_network` / `get_network_snapshot`, so returning the full
-    // network here would serialise tens of MB that are immediately discarded.
-    let model_path = bundle::base_model_path(&app_data, &id);
-    if model_path.exists() {
-        let bytes = std::fs::read(&model_path).map_err(|e| e.to_string())?;
-        let net = hydra::io::parse(&bytes).map_err(format_inp_parse_error)?;
-        let dto = network_to_dto(&net);
-        *state.0.lock() = NetworkStateInner::Loaded {
-            raw_bytes: bytes,
-            dirty: false,
-            network: net,
-            dto,
-            owner_project_id: Some(id.clone()),
-            owner_scenario_id: None,
-        };
-    } else {
-        *state.0.lock() = NetworkStateInner::Empty;
-    }
-
-    Ok(Some(LoadedProject {
-        project,
-        network: None,
-    }))
-}
-
 /// Permanently delete a project. Returns `true` when the directory was removed,
 /// `false` when the id was not found on disk.
 #[tauri::command]
@@ -827,8 +763,8 @@ pub fn open_scenario_folder(
 /// Build a [`Project`] DTO from a project's on-disk bundle state: scenario
 /// count, sim state + last-run time derived from `base/results.out`, and
 /// `modified_at` from `base/model.inp` (falling back to the project directory
-/// mtime, then to "now"). Shared by `list_projects` / `load_project` /
-/// `rename_project` so the three always derive identical rows.
+/// mtime, then to "now"). Shared by `list_projects` / `rename_project` so
+/// both always derive identical rows.
 fn project_dto_from_disk(
     app_data: &std::path::Path,
     project_dir: &std::path::Path,
@@ -943,59 +879,6 @@ fn format_modified(modified_at: i64) -> String {
     }
 }
 
-/// Minimal descriptor returned when the user picks a field-data file (CSV,
-/// Excel, etc.) via the native file-open dialog. The frontend adds this to the
-/// import source list; actual CSV parsing is not yet implemented on the backend.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct PickedCsvFile {
-    pub id: String,
-    pub filename: String,
-}
-
-/// Open a native file-open dialog filtered to common field-data formats and
-/// return just the filename. Returns `null` when the dialog is cancelled.
-#[tauri::command]
-/// Open a file-picker filtered to CSV/Excel; returns the filename and a generated ID.
-pub async fn pick_csv_file(app: tauri::AppHandle) -> Result<Option<PickedCsvFile>, String> {
-    use tauri_plugin_dialog::DialogExt;
-
-    // The dialog call blocks until the user answers — run it on the blocking
-    // pool so it does not tie up an async runtime worker for that whole time.
-    let dialog_app = app.clone();
-    let path = tauri::async_runtime::spawn_blocking(move || {
-        dialog_app
-            .dialog()
-            .file()
-            .add_filter("Field data (CSV, Excel)", &["csv", "xlsx", "xls"])
-            .blocking_pick_file()
-    })
-    .await
-    .map_err(|e| format!("file dialog task panicked: {e}"))?;
-
-    let file_path = match path {
-        Some(p) => p,
-        None => return Ok(None),
-    };
-
-    let path_buf = file_path.into_path().map_err(|e| e.to_string())?;
-    let filename = path_buf
-        .file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_else(|| "unknown".to_string());
-
-    Ok(Some(PickedCsvFile {
-        id: format!(
-            "src-{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_millis())
-                .unwrap_or(0)
-        ),
-        filename,
-    }))
-}
-
 /// Open a native file-open dialog, parse the chosen `.inp` file, store the
 /// result in managed state, and return the `NetworkDto` to the caller.
 ///
@@ -1041,7 +924,7 @@ pub async fn open_and_load_network(
     *state.0.lock() = NetworkStateInner::Loaded {
         raw_bytes: bytes,
         dirty: false,
-        network,
+        network: std::sync::Arc::new(network),
         dto: dto.clone(),
         owner_project_id: None,
         owner_scenario_id: None,
@@ -1057,18 +940,45 @@ pub async fn open_and_load_network(
 ///
 /// When `scenario_id` is `Some`, writes to the scenario's INP file instead of
 /// the base model file (and skips the base-model node/link count update).
-/// Reject a `save_project` call whose target project does not own the network
-/// currently held in `NetworkState`. `owner_project_id` is `None` only for
-/// networks loaded from the file picker (no owning project yet), which are
-/// allowed through to preserve the draft/`create_project` flow.
-fn check_save_target(owner_project_id: Option<&str>, id: &str) -> Result<(), String> {
-    match owner_project_id {
-        Some(owner) if owner != id => Err(format!(
+/// Reject a `save_project` call whose target does not own the network
+/// currently held in `NetworkState`.
+///
+/// BOTH halves of the target are checked. The project half stops a stale
+/// `activeProjectId` from overwriting another project's `model.inp`; the
+/// scenario half stops the much easier mistake of writing the base model's
+/// bytes into a scenario (or one scenario's into a sibling's) during the
+/// window between the frontend switching `activeScenarioId` and the new
+/// target's INP actually being loaded. A project-only check passes that case
+/// happily, because the project does match.
+///
+/// `owner_project_id` is `None` only for networks loaded from the file picker
+/// (no owning project yet), which are allowed through to preserve the
+/// draft/`create_project` flow.
+fn check_save_target(
+    owner_project_id: Option<&str>,
+    owner_scenario_id: Option<&str>,
+    id: &str,
+    scenario_id: Option<&str>,
+) -> Result<(), String> {
+    let Some(owner) = owner_project_id else {
+        return Ok(());
+    };
+    if owner != id {
+        return Err(format!(
             "save_project refused: the loaded network belongs to project {owner}, not {id}; \
              reload the project before saving"
-        )),
-        _ => Ok(()),
+        ));
     }
+    if owner_scenario_id != scenario_id {
+        let name = |s: Option<&str>| s.map_or_else(|| "the base model".to_string(), str::to_string);
+        return Err(format!(
+            "save_project refused: the loaded network belongs to {}, not {}; \
+             wait for the target to finish loading before saving",
+            name(owner_scenario_id),
+            name(scenario_id)
+        ));
+    }
+    Ok(())
 }
 
 #[tauri::command(async)]
@@ -1084,8 +994,15 @@ pub fn save_project(
         let mut guard = state.0.lock();
         match &*guard {
             NetworkStateInner::Loaded {
-                owner_project_id, ..
-            } => check_save_target(owner_project_id.as_deref(), &id)?,
+                owner_project_id,
+                owner_scenario_id,
+                ..
+            } => check_save_target(
+                owner_project_id.as_deref(),
+                owner_scenario_id.as_deref(),
+                &id,
+                scenario_id.as_deref(),
+            )?,
             NetworkStateInner::Empty => return Ok(false),
         }
         // Serialise pending in-memory edits (dirty flag) exactly once, here at
@@ -1120,7 +1037,7 @@ pub fn save_project(
 }
 
 /// Load the INP for a project's base model or a named scenario into
-/// `NetworkState`, making it available to `get_nodes` / `get_links`.
+/// `NetworkState`, making it available to the read-only `get_*` commands.
 ///
 /// Returns a compact binary nodes+links snapshot when loaded (see
 /// [`encode_network_snapshot`] for the byte layout). When the target INP does
@@ -1151,27 +1068,12 @@ pub fn load_project_network(
     *state.0.lock() = NetworkStateInner::Loaded {
         raw_bytes: bytes,
         dirty: false,
-        network,
+        network: std::sync::Arc::new(network),
         dto,
         owner_project_id: Some(project_id.clone()),
         owner_scenario_id: scenario_id.clone(),
     };
     Ok(tauri::ipc::Response::new(encoded))
-}
-
-/// Return the raw INP text of a project's base model (`base/model.inp`).
-/// Scenario INPs are not addressable through this command.
-///
-/// Used by the "Preview changes" diff dialog so the frontend can compare the
-/// saved file against a prospective patched version.
-#[tauri::command(async)]
-/// Return the raw INP text for a project's base model.
-pub fn get_project_inp(app: tauri::AppHandle, project_id: String) -> Result<String, String> {
-    validate_id(&project_id)?;
-    let app_data = app_data_dir(&app)?;
-    let path = bundle::base_model_path(&app_data, &project_id);
-    let bytes = std::fs::read(&path).map_err(|e| e.to_string())?;
-    String::from_utf8(bytes).map_err(|e| e.to_string())
 }
 
 /// Export the current INP for a project's base model or a scenario via a
@@ -1454,16 +1356,36 @@ mod tests {
 
     #[test]
     fn check_save_target_rejects_mismatched_project() {
-        let err = check_save_target(Some("owner-a"), "other-b").unwrap_err();
+        let err = check_save_target(Some("owner-a"), None, "other-b", None).unwrap_err();
         assert!(err.contains("owner-a"));
         assert!(err.contains("other-b"));
     }
 
     #[test]
     fn check_save_target_allows_matching_or_unowned() {
-        assert!(check_save_target(Some("owner-a"), "owner-a").is_ok());
+        assert!(check_save_target(Some("owner-a"), None, "owner-a", None).is_ok());
+        assert!(check_save_target(Some("a"), Some("s1"), "a", Some("s1")).is_ok());
         // File-picker loads have no owner yet (pre-create_project draft flow).
-        assert!(check_save_target(None, "owner-a").is_ok());
+        assert!(check_save_target(None, None, "owner-a", None).is_ok());
+    }
+
+    /// The scenario half of the guard. Without it, a save issued between the
+    /// frontend switching scenario and the new INP loading writes the OLD
+    /// target's bytes into the NEW target's model.inp — the project matches,
+    /// so a project-only check waves it through.
+    #[test]
+    fn check_save_target_rejects_mismatched_scenario_within_one_project() {
+        // Base model loaded, save aimed at a scenario.
+        let err = check_save_target(Some("a"), None, "a", Some("s1")).unwrap_err();
+        assert!(err.contains("base model"), "got: {err}");
+        assert!(err.contains("s1"), "got: {err}");
+        // Scenario loaded, save aimed at the base model.
+        let err = check_save_target(Some("a"), Some("s1"), "a", None).unwrap_err();
+        assert!(err.contains("s1"), "got: {err}");
+        assert!(err.contains("base model"), "got: {err}");
+        // Scenario loaded, save aimed at a sibling scenario.
+        let err = check_save_target(Some("a"), Some("s1"), "a", Some("s2")).unwrap_err();
+        assert!(err.contains("s1") && err.contains("s2"), "got: {err}");
     }
 
     // ── sim_state_from_results ────────────────────────────────────────────

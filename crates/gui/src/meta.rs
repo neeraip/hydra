@@ -175,17 +175,42 @@ pub mod bundle {
 
     /// Atomically write `bytes` to `path` by writing to a sibling temp file
     /// and renaming. Creates parent directories as needed.
+    ///
+    /// The temp file carries a per-call unique suffix. A name derived only
+    /// from the destination would be shared by two concurrent writers to the
+    /// same path — `save_project` racing `update_sim_params`, both of which
+    /// write `base/model.inp` — and `std::fs::write` is not atomic within the
+    /// temp file, so their interleaved bytes would be renamed into place as a
+    /// corrupt model. Distinct temp names make the rename the only contended
+    /// step, and rename is atomic: one writer wins whole.
     pub fn atomic_write(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
+        let unique = format!("{}.{}", std::process::id(), next_temp_seq());
         let tmp = match path.extension().and_then(|s| s.to_str()) {
-            Some(ext) => path.with_extension(format!("{ext}.tmp")),
-            None => path.with_extension("tmp"),
+            Some(ext) => path.with_extension(format!("{ext}.{unique}.tmp")),
+            None => path.with_extension(format!("{unique}.tmp")),
         };
-        std::fs::write(&tmp, bytes)?;
-        std::fs::rename(tmp, path)?;
+        // A failed write leaves the temp file behind; clear it so a full disk
+        // or permission error cannot litter the bundle with partial models.
+        if let Err(e) = std::fs::write(&tmp, bytes) {
+            let _ = std::fs::remove_file(&tmp);
+            return Err(e);
+        }
+        if let Err(e) = std::fs::rename(&tmp, path) {
+            let _ = std::fs::remove_file(&tmp);
+            return Err(e);
+        }
         Ok(())
+    }
+
+    /// Monotonic counter making concurrent `atomic_write` temp names unique
+    /// within this process (the pid disambiguates across processes).
+    fn next_temp_seq() -> u64 {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static SEQ: AtomicU64 = AtomicU64::new(0);
+        SEQ.fetch_add(1, Ordering::Relaxed)
     }
 
     /// Recursively delete the on-disk project bundle. No-op if it doesn't exist.

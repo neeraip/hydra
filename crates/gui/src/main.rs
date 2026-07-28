@@ -20,10 +20,12 @@ fn main() {
         .manage(commands::NetworkState::default())
         .manage(commands::RunQueue::default())
         .manage(basemap_providers::ProvidersState::default())
-        // Asynchronous variant: the handler hands the request to a worker
-        // thread and returns immediately. The proxy does blocking network
+        // Asynchronous variant: the handler hands the request to a pool
+        // worker and returns immediately. The proxy does blocking network
         // I/O (up to the 10 s upstream timeout), which must never run on
-        // the thread the webview invokes scheme handlers on.
+        // the thread the webview invokes scheme handlers on. The pool is
+        // bounded — see `basemap_providers::pool` for why a thread per tile
+        // is not an option.
         .register_asynchronous_uri_scheme_protocol("basemap", |ctx, request, responder| {
             use tauri::Manager;
             let state = ctx
@@ -31,14 +33,27 @@ fn main() {
                 .state::<basemap_providers::ProvidersState>()
                 .inner()
                 .clone();
-            std::thread::spawn(move || {
-                responder.respond(basemap_providers::proxy::handle(&state, &request));
+            // The responder moves into the job, so the overload answer has to
+            // be prepared before submitting: recover it via the cell if the
+            // job was refused.
+            let responder = std::sync::Arc::new(std::sync::Mutex::new(Some(responder)));
+            let job_responder = responder.clone();
+            let submitted = basemap_providers::pool::try_submit(move || {
+                let taken = job_responder.lock().ok().and_then(|mut r| r.take());
+                if let Some(responder) = taken {
+                    responder.respond(basemap_providers::proxy::handle(&state, &request));
+                }
             });
+            if !submitted {
+                let taken = responder.lock().ok().and_then(|mut r| r.take());
+                if let Some(responder) = taken {
+                    responder.respond(basemap_providers::pool::overloaded_response());
+                }
+            }
         })
         .invoke_handler(tauri::generate_handler![
             commands::list_projects,
             commands::create_project,
-            commands::load_project,
             commands::delete_project,
             commands::rename_project,
             commands::update_project_crs,
@@ -54,16 +69,12 @@ fn main() {
             commands::open_base_folder,
             commands::open_scenario_folder,
             commands::open_and_load_network,
-            commands::pick_csv_file,
             commands::get_network_snapshot,
-            commands::get_nodes,
-            commands::get_links,
             commands::get_patterns,
             commands::get_curves,
             commands::get_network_title,
             commands::get_controls,
             commands::get_rules,
-            commands::run_simulation,
             commands::get_run_warnings,
             commands::load_result_meta,
             commands::get_network_digest,
@@ -71,9 +82,7 @@ fn main() {
             commands::get_pump_energy,
             commands::get_result_analytics,
             commands::load_project_network,
-            commands::patch_element,
             commands::patch_elements,
-            commands::get_project_inp,
             commands::patch_node_position,
             commands::delete_element,
             commands::rename_element,

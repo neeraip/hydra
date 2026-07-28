@@ -129,20 +129,25 @@ describe("formatQtyRaw", () => {
 });
 
 describe("formatQtyValue", () => {
-  it("passes the raw value through in SI with no label", () => {
-    expect(formatQtyValue(216.408, "elevation", "si")).toBe("216.408");
+  it("rounds to the quantity's default decimals in SI, with no label", () => {
+    expect(formatQtyValue(216.408, "elevation", "si")).toBe("216.4");
     expect(formatQtyValue(300, "diameter", "si")).toBe("300");
-    expect(formatQtyValue(0.5, "flow", "si")).toBe("0.5");
+    expect(formatQtyValue(0.5, "flow", "si")).toBe("0.50");
   });
 
-  it("matches formatQtyRaw's SI rendering minus the unit label", () => {
-    for (const q of QUANTITIES) {
-      for (const v of [0, 0.001, 24, 967.25]) {
-        expect(`${formatQtyValue(v, q, "si")} ${unitLabel(q, "si")}`).toBe(
-          formatQtyRaw(v, q, "si"),
-        );
-      }
-    }
+  /**
+   * The point of the fixed decimal count: a right-aligned numeric column only
+   * reads as a column when every cell has the same number of decimals. SI used
+   * to pass the raw value through, so a table showed "42.21" above "42.4"
+   * above "42.07" with the decimal points wandering.
+   */
+  it("gives every value in a column the same decimal count", () => {
+    const column = [42.21, 42.4, 42.07, 100].map((v) =>
+      formatQtyValue(v, "elevation", "si"),
+    );
+    expect(column).toEqual(["42.2", "42.4", "42.1", "100.0"]);
+    const decimals = new Set(column.map((s) => s.split(".")[1]?.length ?? 0));
+    expect(decimals.size).toBe(1);
   });
 
   it("honours explicit decimals in SI", () => {

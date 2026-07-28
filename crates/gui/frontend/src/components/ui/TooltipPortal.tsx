@@ -151,15 +151,44 @@ export function TooltipPortal() {
       }
     }
 
+    /** Dismiss without needing a pointer event. */
+    function dismiss() {
+      clearShowTimer();
+      pendingTargetRef.current = null;
+      if (targetRef.current) {
+        targetRef.current = null;
+        setTip(null);
+      }
+    }
+
+    // A keystroke means the user has stopped pointing. Without this, any
+    // keyboard navigation away from a hovered anchor (⌘1–⌘4 between project
+    // views, ⌘K, Escape) left the tip floating over the new view: the anchor
+    // itself stays mounted, so neither mouseleave nor the removal observer
+    // below ever fires.
+    function onKeyDown() {
+      dismiss();
+    }
+
+    // Losing the window (or the tab being hidden) means no mouseleave will
+    // arrive either.
+    function onWindowBlur() {
+      dismiss();
+    }
+
     // Use capture so we see events on disabled buttons too
     document.addEventListener("mouseenter", onEnter, true);
     document.addEventListener("mouseleave", onLeave, true);
     document.addEventListener("mousedown", onPointerDown, true);
+    document.addEventListener("keydown", onKeyDown, true);
+    window.addEventListener("blur", onWindowBlur);
     return () => {
       clearShowTimer();
       document.removeEventListener("mouseenter", onEnter, true);
       document.removeEventListener("mouseleave", onLeave, true);
       document.removeEventListener("mousedown", onPointerDown, true);
+      document.removeEventListener("keydown", onKeyDown, true);
+      window.removeEventListener("blur", onWindowBlur);
     };
   }, []);
 

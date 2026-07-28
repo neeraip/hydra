@@ -1,79 +1,62 @@
 /**
  * Tests for the pressure-compliance derivation used by the Analysis page's
- * System Summary. The derivation must use only fields that exist on the
- * ResultAnalytics DTO and return null when nothing is derivable.
+ * System Summary. The derivation must use the evaluated-junction population
+ * the backend reports and return null when nothing is derivable.
  */
 import { describe, expect, it } from "vitest";
 import { pressureCompliancePct } from "./compliance";
-
-function histogram(counts: number[]) {
-  return counts.map((count, i) => ({ lo: i * 10, hi: (i + 1) * 10, count }));
-}
 
 describe("pressureCompliancePct", () => {
   it("returns null for absent analytics", () => {
     expect(pressureCompliancePct(null)).toBeNull();
   });
 
-  it("returns null when the histogram carries no counts", () => {
+  it("returns null when no junction carried pressure data", () => {
     expect(
-      pressureCompliancePct({ lowPressureCount: 3, pressureHistogram: [] }),
+      pressureCompliancePct({ lowPressureCount: 3, junctionCount: 0 }),
     ).toBeNull();
     expect(
       pressureCompliancePct({
         lowPressureCount: 0,
-        pressureHistogram: histogram([0, 0, 0]),
+        junctionCount: Number.NaN,
       }),
     ).toBeNull();
   });
 
-  it("is 100% when no node is below the threshold", () => {
+  it("is 100% when no junction is below the threshold", () => {
     expect(
-      pressureCompliancePct({
-        lowPressureCount: 0,
-        pressureHistogram: histogram([10, 20, 30]),
-      }),
+      pressureCompliancePct({ lowPressureCount: 0, junctionCount: 60 }),
     ).toBe(100);
   });
 
-  it("derives (total - low) / total from the histogram population", () => {
-    // 60 nodes with pressure data, 15 below threshold → 75%.
+  it("derives (total - low) / total from the evaluated population", () => {
     expect(
-      pressureCompliancePct({
-        lowPressureCount: 15,
-        pressureHistogram: histogram([10, 20, 30]),
-      }),
+      pressureCompliancePct({ lowPressureCount: 15, junctionCount: 60 }),
     ).toBeCloseTo(75);
   });
 
-  it("clamps a lowPressureCount larger than the histogram population to 0%", () => {
+  /**
+   * The regression: negative-pressure junctions used to fall outside every
+   * histogram bucket, so summing buckets gave a denominator far below the
+   * real population while lowPressureCount still counted them. With 46190
+   * junctions of which 23012 are low, compliance is ~50% — the bucket-sum
+   * denominator (26366) produced 12.7%.
+   */
+  it("is unaffected by how the histogram buckets the population", () => {
     expect(
-      pressureCompliancePct({
-        lowPressureCount: 999,
-        pressureHistogram: histogram([5, 5]),
-      }),
-    ).toBe(0);
+      pressureCompliancePct({ lowPressureCount: 23012, junctionCount: 46190 }),
+    ).toBeCloseTo(50.18, 1);
   });
 
-  it("ignores negative or non-finite bucket counts", () => {
+  it("clamps a lowPressureCount larger than the population to 0%", () => {
     expect(
-      pressureCompliancePct({
-        lowPressureCount: 0,
-        pressureHistogram: [
-          { lo: 0, hi: 10, count: -5 },
-          { lo: 10, hi: 20, count: Number.NaN },
-          { lo: 20, hi: 30, count: 10 },
-        ],
-      }),
-    ).toBe(100);
+      pressureCompliancePct({ lowPressureCount: 999, junctionCount: 10 }),
+    ).toBe(0);
   });
 
   it("treats a negative lowPressureCount as 0 (never > 100%)", () => {
     expect(
-      pressureCompliancePct({
-        lowPressureCount: -3,
-        pressureHistogram: histogram([10]),
-      }),
+      pressureCompliancePct({ lowPressureCount: -3, junctionCount: 10 }),
     ).toBe(100);
   });
 });

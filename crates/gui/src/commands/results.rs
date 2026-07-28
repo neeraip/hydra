@@ -61,59 +61,6 @@ fn energy_totals_from_record(
     (total_kwh, total_cost)
 }
 
-/// Read the total simulation duration (seconds) from a `.out` prolog header.
-///
-/// `OutMetadata` does not expose the prolog's duration field, so read the
-/// INT4 at byte offset 56 directly (the header layout is fixed; see
-/// `OutProlog`). Callers should have validated the file via
-/// `read_metadata_checked` first.
-fn out_duration_secs(out_path: &std::path::Path) -> Result<f64, String> {
-    use std::io::{Read, Seek, SeekFrom};
-    let mut f = std::fs::File::open(out_path).map_err(|e| e.to_string())?;
-    f.seek(SeekFrom::Start(56)).map_err(|e| e.to_string())?;
-    let mut buf = [0u8; 4];
-    f.read_exact(&mut buf).map_err(|e| e.to_string())?;
-    Ok(i32::from_le_bytes(buf) as f64)
-}
-
-/// Collect per-pump energy from a completed simulation session.
-///
-/// `has_price_info` must be computed from the network *before* it is moved
-/// into the simulation (see [`network_has_energy_price`]); when `false`,
-/// `total_cost` is `None` for every pump.
-pub(crate) fn collect_pump_energy(
-    sim: &hydra::Simulation,
-    duration_seconds: f64,
-    has_price_info: bool,
-) -> Vec<PumpEnergyDto> {
-    sim.pump_ids()
-        .into_iter()
-        .filter_map(|id| {
-            let pe = sim.get_pump_energy(id).ok()?;
-            let pct_online = if duration_seconds > 0.0 {
-                (pe.time_online / duration_seconds * 100.0).min(100.0)
-            } else {
-                0.0
-            };
-            let avg_kw = if pe.time_online > 0.0 {
-                pe.kwh / (pe.time_online / 3600.0)
-            } else {
-                0.0
-            };
-            Some(PumpEnergyDto {
-                id: id.to_string(),
-                pct_online,
-                avg_efficiency: pe.avg_efficiency() * 100.0,
-                avg_kwh_per_flow: pe.kwh_per_flow,
-                avg_kw,
-                peak_kw: pe.max_kw,
-                total_kwh: pe.kwh,
-                total_cost: has_price_info.then_some(pe.total_cost),
-            })
-        })
-        .collect()
-}
-
 /// Build `PumpEnergyDto` entries from the energy section of a `.out` file.
 /// Returns an empty vec on any read error (energy data is non-critical).
 fn pump_energy_from_out(
@@ -125,7 +72,7 @@ fn pump_energy_from_out(
         Ok(e) => e,
         Err(_) => return Vec::new(),
     };
-    let duration_secs = out_duration_secs(out_path).unwrap_or(0.0);
+    let duration_secs = meta.duration;
     let has_price_info = network_has_energy_price(network);
     energy
         .pumps
@@ -244,38 +191,51 @@ pub struct WorstNodeDto {
 #[serde(rename_all = "camelCase")]
 pub struct ResultAnalyticsDto {
     pub period_count: u32,
-    pub node_count: u32,
-    pub link_count: u32,
+    /// Junctions carrying finite pressure data — the exact population every
+    /// pressure figure below is drawn from, and the sum of
+    /// `pressure_histogram`'s bucket counts. Reservoirs and tanks are excluded
+    /// (their head − elevation is not a service pressure), as are junctions the
+    /// run produced no finite value for.
+    pub junction_count: u32,
+    /// Pipes — the population `velocity_histogram` and `top_pipes` are drawn
+    /// from. Pumps and valves are excluded: they have no pipe velocity, and
+    /// counting them piled thousands of zeroes into the stagnant bucket.
+    pub pipe_count: u32,
     pub mass_balance: MassBalanceDto,
-    /// Node ID with the lowest minimum pressure across all periods.
-    /// Absent (omitted from the JSON) when no node has a finite pressure
+    /// Junction ID with the lowest minimum pressure across all periods.
+    /// Absent (omitted from the JSON) when no junction has a finite pressure
     /// value — the frontend renders "—" for missing fields.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub min_pressure_node_id: Option<String>,
-    /// Lowest minimum-pressure value (m) across all nodes and periods.
+    /// Lowest minimum-pressure value (m) across all junctions and periods.
     /// Absent together with `min_pressure_node_id`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub min_pressure_m: Option<f64>,
-    /// Number of nodes whose worst-case pressure is below the minimum-pressure
-    /// criterion (`min_pressure` request param; default 14 m).
+    /// Number of junctions whose worst-case pressure is below the
+    /// minimum-pressure criterion (`min_pressure` request param; default 14 m).
+    /// Always ≤ `junction_count`, so `(junction_count − low_pressure_count) /
+    /// junction_count` is a well-defined compliance fraction.
     pub low_pressure_count: u32,
     /// Junctions with the lowest worst-case pressure, ascending (up to 10).
     /// A ranked "problem nodes" list; empty when no junction has finite data.
     pub worst_nodes: Vec<WorstNodeDto>,
-    /// Link ID with the highest peak velocity across all periods.
-    /// Absent when every link's peak velocity is zero or NaN (the scan's
+    /// Pipe ID with the highest peak velocity across all periods.
+    /// Absent when every pipe's peak velocity is zero or NaN (the scan's
     /// "no data" default), i.e. there is no meaningful maximum.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_velocity_link_id: Option<String>,
-    /// Highest peak velocity (m/s) across all links and periods.
+    /// Highest peak velocity (m/s) across all pipes and periods.
     /// Absent together with `max_velocity_link_id`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_velocity_ms: Option<f64>,
-    /// Histogram of per-node minimum pressure (7 fixed bins, m).
+    /// Histogram of per-junction minimum pressure (8 fixed bins, m). The first
+    /// bucket is unbounded below so negative pressures are counted, not
+    /// dropped; bucket counts sum to `junction_count`.
     pub pressure_histogram: Vec<HistogramBucketDto>,
-    /// Histogram of per-link maximum velocity (5 fixed bins, m/s).
+    /// Histogram of per-pipe maximum velocity (5 fixed bins, m/s). Bucket
+    /// counts sum to `pipe_count`.
     pub velocity_histogram: Vec<HistogramBucketDto>,
-    /// Top 5 links ordered by peak velocity descending.
+    /// Top 5 pipes ordered by peak velocity descending.
     pub top_pipes: Vec<TopPipeDto>,
     /// Head-over-time series for every tank node.
     pub tank_series: Vec<TankHeadSeriesDto>,
@@ -434,7 +394,7 @@ pub(crate) fn network_for_target(
     state: &NetworkState,
     project_id: &str,
     scenario_id: Option<&str>,
-) -> Result<hydra::Network, String> {
+) -> Result<std::sync::Arc<hydra::Network>, String> {
     // Decide (and clone) under the lock; all file IO happens after release.
     {
         let guard = state.0.lock();
@@ -453,7 +413,9 @@ pub(crate) fn network_for_target(
     }
     let model_path = model_path_for(app_data, project_id, scenario_id);
     let raw = std::fs::read(&model_path).map_err(|e| format!("Cannot read model: {e}"))?;
-    hydra::io::parse(&raw).map_err(format_inp_parse_error)
+    hydra::io::parse(&raw)
+        .map(std::sync::Arc::new)
+        .map_err(format_inp_parse_error)
 }
 
 /// Topology digest of the CURRENT model for `(project_id, scenario_id)`.
@@ -553,101 +515,75 @@ pub struct SeriesDto {
     pub fields: Vec<SeriesFieldDto>,
 }
 
-/// Build the per-element time series by streaming the `.out` file one period
-/// at a time (`read_period` seeks; the file is never loaded whole).
+/// Field order presented to the frontend, per element kind. `quality` is
+/// dropped when the run carried no quality data.
+const NODE_FIELDS: &[&str] = &["pressure", "head", "demand", "quality"];
+const LINK_FIELDS: &[&str] = &["flow", "velocity", "headloss", "status", "quality"];
+
+/// Build the per-element time series by addressing each value directly in the
+/// `.out` file (`read_element_series`; model spec §4.5.8).
 ///
 /// `kind` is `"node"` or `"link"`; `index` is the element's network-order
 /// index (0-based), bounds-checked against the result file's counts. Values
 /// are returned exactly as stored in `results.out` — the same SI display
 /// units (m, L/s, m/s) the `get_period_results` path returns, because the
 /// file is always written with `FlowUnits::Lps` (no conversion needed).
+///
+/// The previous implementation called `read_period` per period, which
+/// materialises every node and link array to keep one column: selecting an
+/// element on a 46k-element network over a week-long run read hundreds of
+/// megabytes to produce a few kilobytes of series.
 fn element_series_from_out(
     out_path: &std::path::Path,
     kind: &str,
     index: u32,
 ) -> Result<SeriesDto, String> {
+    use hydra::io::out_reader::ElementKind;
+
     let meta = hydra::io::out_reader::read_metadata_checked(out_path).map_err(|e| e.to_string())?;
     let idx = index as usize;
     let has_quality = meta.quality_flag != 0;
 
-    // Field names in wire order, checked against the result's counts.
-    let field_names: Vec<&str> = match kind {
-        "node" => {
-            if idx >= meta.n_nodes {
-                return Err(format!(
-                    "node index {idx} out of range: results hold {} nodes",
-                    meta.n_nodes
-                ));
-            }
-            let mut f = vec!["pressure", "head", "demand"];
-            if has_quality {
-                f.push("quality");
-            }
-            f
-        }
-        "link" => {
-            if idx >= meta.n_links {
-                return Err(format!(
-                    "link index {idx} out of range: results hold {} links",
-                    meta.n_links
-                ));
-            }
-            let mut f = vec!["flow", "velocity", "headloss", "status"];
-            if has_quality {
-                f.push("quality");
-            }
-            f
-        }
+    let (element_kind, count, wire_fields) = match kind {
+        "node" => (ElementKind::Node, meta.n_nodes, NODE_FIELDS),
+        "link" => (ElementKind::Link, meta.n_links, LINK_FIELDS),
         other => {
             return Err(format!(
                 "unknown element kind {other:?}: expected \"node\" or \"link\""
             ))
         }
     };
-
-    let mut columns: Vec<Vec<f64>> = field_names
-        .iter()
-        .map(|_| Vec::with_capacity(meta.n_periods))
-        .collect();
-    for period in 0..meta.n_periods {
-        let pr = hydra::io::out_reader::read_period(out_path, &meta, period)?;
-        let values: Vec<f64> = if kind == "node" {
-            let mut v = vec![
-                pr.node_pressure[idx] as f64,
-                pr.node_head[idx] as f64,
-                pr.node_demand[idx] as f64,
-            ];
-            if has_quality {
-                v.push(pr.node_quality[idx] as f64);
-            }
-            v
-        } else {
-            let mut v = vec![
-                pr.link_flow[idx] as f64,
-                pr.link_velocity[idx] as f64,
-                pr.link_headloss[idx] as f64,
-                pr.link_status[idx] as f64,
-            ];
-            if has_quality {
-                v.push(pr.link_quality[idx] as f64);
-            }
-            v
-        };
-        for (col, v) in columns.iter_mut().zip(values) {
-            col.push(v);
-        }
+    if idx >= count {
+        return Err(format!(
+            "{kind} index {idx} out of range: results hold {count} {kind}s"
+        ));
     }
 
-    Ok(SeriesDto {
-        times: meta.snapshot_times().iter().map(|&t| t as u32).collect(),
-        fields: field_names
-            .into_iter()
-            .zip(columns)
-            .map(|(name, values)| SeriesFieldDto {
+    let series = hydra::io::out_reader::read_element_series(out_path, &meta, element_kind, idx)?;
+    let column = |name: &str| -> Option<Vec<f64>> {
+        series
+            .series
+            .iter()
+            .find(|s| s.variable == name)
+            .map(|s| s.values.iter().map(|&v| v as f64).collect())
+    };
+
+    // Present the frontend's field order, dropping quality when absent. The
+    // engine returns every variable the file holds, in file order.
+    let fields = wire_fields
+        .iter()
+        .filter(|name| has_quality || **name != "quality")
+        .filter_map(|&name| {
+            Some(SeriesFieldDto {
                 name: name.to_string(),
-                values,
+                values: column(name)?,
             })
-            .collect(),
+        })
+        .collect();
+
+    Ok(SeriesDto {
+        times: series.times.iter().map(|&t| t as u32).collect(),
+        fields,
     })
 }
 
@@ -677,12 +613,16 @@ pub fn get_element_series(
     element_series_from_out(&out_path, &kind, index).map(Some)
 }
 
-/// Index and value of the smallest **finite** entry in `values`; `None` when
-/// no entry is finite (the analytics scan initialises per-node minimum
-/// pressure to `f64::INFINITY`, so an untouched array means "no data").
-fn min_finite_with_index(values: &[f64]) -> Option<(usize, f64)> {
+/// Index and value of the smallest **finite** entry in `values` among the
+/// positions `include` marks; `None` when no included entry is finite (the
+/// analytics scan initialises per-node minimum pressure to `f64::INFINITY`,
+/// so an untouched entry means "no data").
+fn min_finite_with_index(values: &[f64], include: &[bool]) -> Option<(usize, f64)> {
     let mut best: Option<(usize, f64)> = None;
     for (i, &v) in values.iter().enumerate() {
+        if !include.get(i).copied().unwrap_or(false) {
+            continue;
+        }
         if v.is_finite() && best.is_none_or(|(_, bv)| v < bv) {
             best = Some((i, v));
         }
@@ -690,18 +630,184 @@ fn min_finite_with_index(values: &[f64]) -> Option<(usize, f64)> {
     best
 }
 
-/// Index and value of the largest **strictly positive** entry in `values`;
-/// `None` when every entry is zero, negative, or NaN (the analytics scan
-/// initialises per-link maximum velocity to `0.0`, so an all-zero array means
-/// "no data").
-fn max_positive_with_index(values: &[f64]) -> Option<(usize, f64)> {
+/// Index and value of the largest **strictly positive** entry in `values`
+/// among the positions `include` marks; `None` when every included entry is
+/// zero, negative, or NaN (the analytics scan initialises per-link maximum
+/// velocity to `0.0`, so an all-zero array means "no data").
+fn max_positive_with_index(values: &[f64], include: &[bool]) -> Option<(usize, f64)> {
     let mut best: Option<(usize, f64)> = None;
     for (i, &v) in values.iter().enumerate() {
+        if !include.get(i).copied().unwrap_or(false) {
+            continue;
+        }
         if v > 0.0 && best.is_none_or(|(_, bv)| v > bv) {
             best = Some((i, v));
         }
     }
     best
+}
+
+/// Pressure-distribution bins (m), shared with the frontend's bin labels.
+///
+/// The first bucket is **unbounded below**. Bins starting at 0 silently
+/// dropped every junction with a negative minimum pressure: on a model with a
+/// real pressure deficit that is a large fraction of the network, and the
+/// chart then showed a population smaller than its own "N junctions" badge
+/// while compliance was divided by the shrunken total.
+const PRESSURE_BINS: &[(f64, f64)] = &[
+    (f64::MIN, 0.0),
+    (0.0, 10.0),
+    (10.0, 20.0),
+    (20.0, 30.0),
+    (30.0, 40.0),
+    (40.0, 50.0),
+    (50.0, 60.0),
+    (60.0, f64::MAX),
+];
+
+/// Velocity-distribution bins (m/s), shared with the frontend's bin labels.
+const VELOCITY_BINS: &[(f64, f64)] = &[
+    (0.0, 0.1),
+    (0.1, 0.3),
+    (0.3, 0.6),
+    (0.6, 1.0),
+    (1.0, f64::MAX),
+];
+
+/// Bucketed pressure distribution plus the population it was drawn from.
+struct PressureStats {
+    histogram: Vec<HistogramBucketDto>,
+    /// Junctions with finite data — equals the sum of the bucket counts.
+    junction_count: u32,
+    /// Junctions below the criterion; always ≤ `junction_count`.
+    low_pressure_count: u32,
+}
+
+/// Bucket per-junction minimum pressure and count those below `threshold`.
+///
+/// `include[i]` selects the junctions: reservoir/tank "pressure" is head −
+/// elevation, not a service pressure, and counting it inflated every figure
+/// on the Analysis panel under a label that said "junctions".
+fn pressure_stats(values: &[f64], include: &[bool], threshold: f64) -> PressureStats {
+    let mut histogram: Vec<HistogramBucketDto> = PRESSURE_BINS
+        .iter()
+        .map(|&(lo, hi)| HistogramBucketDto { lo, hi, count: 0 })
+        .collect();
+    let mut junction_count = 0u32;
+    let mut low_pressure_count = 0u32;
+    for (idx, &p) in values.iter().enumerate() {
+        if !include.get(idx).copied().unwrap_or(false) || !p.is_finite() {
+            continue;
+        }
+        junction_count += 1;
+        if p < threshold {
+            low_pressure_count += 1;
+        }
+        for bin in &mut histogram {
+            if p >= bin.lo && p < bin.hi {
+                bin.count += 1;
+                break;
+            }
+        }
+    }
+    PressureStats {
+        histogram,
+        junction_count,
+        low_pressure_count,
+    }
+}
+
+/// Bucketed velocity distribution plus the population it was drawn from.
+struct VelocityStats {
+    histogram: Vec<HistogramBucketDto>,
+    /// Pipes counted — equals the sum of the bucket counts.
+    pipe_count: u32,
+}
+
+/// Bucket per-pipe maximum velocity. `include[i]` selects the pipes: pumps and
+/// valves have no pipe velocity, and counting their zeroes piled thousands of
+/// entries into the stagnant bucket under a "pipes" label.
+fn velocity_stats(values: &[f64], include: &[bool]) -> VelocityStats {
+    let mut histogram: Vec<HistogramBucketDto> = VELOCITY_BINS
+        .iter()
+        .map(|&(lo, hi)| HistogramBucketDto { lo, hi, count: 0 })
+        .collect();
+    let mut pipe_count = 0u32;
+    for (idx, &v) in values.iter().enumerate() {
+        if !include.get(idx).copied().unwrap_or(false) {
+            continue;
+        }
+        pipe_count += 1;
+        for bin in &mut histogram {
+            if v >= bin.lo && v < bin.hi {
+                bin.count += 1;
+                break;
+            }
+        }
+    }
+    VelocityStats {
+        histogram,
+        pipe_count,
+    }
+}
+
+/// Identity of a `.out` file for the analytics-scan cache: the path plus the
+/// size and mtime it had when scanned. A re-run replaces `results.out`
+/// wholesale (temp file + rename), so any new run changes at least the mtime
+/// and the cached scan is discarded.
+#[derive(PartialEq, Eq)]
+struct ScanCacheKey {
+    path: std::path::PathBuf,
+    len: u64,
+    modified: Option<std::time::SystemTime>,
+}
+
+fn scan_cache_key(path: &std::path::Path) -> Option<ScanCacheKey> {
+    let meta = std::fs::metadata(path).ok()?;
+    Some(ScanCacheKey {
+        path: path.to_path_buf(),
+        len: meta.len(),
+        modified: meta.modified().ok(),
+    })
+}
+
+/// Single-entry cache for the last `.out` analytics scan.
+///
+/// The scan streams every reporting period, so it is by far the most
+/// expensive part of `get_result_analytics` — and the pressure criterion the
+/// user edits in the Analysis panel changes nothing the scan produces, only
+/// how its output is bucketed and counted. Without this, typing a new
+/// criterion re-read the whole results file. One entry is enough: the panel
+/// looks at one target at a time.
+#[allow(clippy::type_complexity)]
+static ANALYTICS_SCAN_CACHE: parking_lot::Mutex<
+    Option<(
+        ScanCacheKey,
+        std::sync::Arc<hydra::io::out_reader::AnalyticsScan>,
+    )>,
+> = parking_lot::Mutex::new(None);
+
+/// The cross-period scan for `out_path`, served from [`ANALYTICS_SCAN_CACHE`]
+/// when the file is byte-identical to the cached one.
+fn cached_scan_analytics(
+    out_path: &std::path::Path,
+    meta: &hydra::io::out_reader::OutMetadata,
+) -> Result<std::sync::Arc<hydra::io::out_reader::AnalyticsScan>, String> {
+    let key = scan_cache_key(out_path);
+    if let Some(key) = &key {
+        if let Some((cached_key, scan)) = &*ANALYTICS_SCAN_CACHE.lock() {
+            if cached_key == key {
+                return Ok(scan.clone());
+            }
+        }
+    }
+    // Scan outside the lock — it is slow, and holding the mutex would
+    // serialise concurrent analytics requests for different targets.
+    let scan = std::sync::Arc::new(hydra::io::out_reader::scan_analytics(out_path, meta)?);
+    if let Some(key) = key {
+        *ANALYTICS_SCAN_CACHE.lock() = Some((key, scan.clone()));
+    }
+    Ok(scan)
 }
 
 /// Compute cross-period analytics by streaming the `.out` file one period at a
@@ -739,27 +845,35 @@ pub fn get_result_analytics(
     let n_periods = meta.n_periods;
     let tank_start = n_nodes.saturating_sub(n_tanks);
 
-    let scan = hydra::io::out_reader::scan_analytics(&out_path, &meta)?;
-    let node_min_pressure = scan.node_min_pressure;
-    let link_max_velocity = scan.link_max_velocity;
-    let mb_series = scan.mb_series;
+    let scan = cached_scan_analytics(&out_path, &meta)?;
+    let node_min_pressure = &scan.node_min_pressure;
+    let link_max_velocity = &scan.link_max_velocity;
+    let mb_series = scan.mb_series.clone();
     let total_inflow = scan.total_inflow;
     let total_outflow = scan.total_outflow;
-    let tank_head = scan.tank_head;
+    let tank_head = &scan.tank_head;
 
-    // ── Pressure histogram (same 7 bins as the frontend) ─────────────────────
-    const PRESSURE_BINS: &[(f64, f64)] = &[
-        (0.0, 10.0),
-        (10.0, 20.0),
-        (20.0, 30.0),
-        (30.0, 40.0),
-        (40.0, 50.0),
-        (50.0, 60.0),
-        (60.0, f64::MAX),
-    ];
-    let mut pressure_histogram: Vec<HistogramBucketDto> = PRESSURE_BINS
-        .iter()
-        .map(|&(lo, hi)| HistogramBucketDto { lo, hi, count: 0 })
+    // Pressure analytics cover junctions only, and velocity analytics cover
+    // pipes only. A reservoir's or tank's "pressure" (head − elevation) is not
+    // a service-pressure metric, and a valve or pump has no pipe velocity —
+    // including them inflated every count under a label that said "junctions"
+    // or "pipes". `worst_nodes` already filtered this way; these masks make the
+    // rest of the analytics agree with it.
+    let is_junction: Vec<bool> = (0..n_nodes)
+        .map(|idx| {
+            network
+                .nodes
+                .get(idx)
+                .is_some_and(|n| matches!(n.kind, hydra::NodeKind::Junction(_)))
+        })
+        .collect();
+    let is_pipe: Vec<bool> = (0..n_links)
+        .map(|idx| {
+            network
+                .links
+                .get(idx)
+                .is_some_and(|l| matches!(l.kind, hydra::LinkKind::Pipe(_)))
+        })
         .collect();
 
     // Configurable minimum-pressure criterion (default 14 m, the historical
@@ -768,33 +882,18 @@ pub fn get_result_analytics(
         Some(v) if v.is_finite() => v,
         _ => 14.0,
     };
-    let mut low_pressure_count = 0u32;
-
-    for &p in node_min_pressure.iter() {
-        if p.is_finite() {
-            if p < low_pressure_threshold {
-                low_pressure_count += 1;
-            }
-            for bin in &mut pressure_histogram {
-                if p >= bin.lo && p < bin.hi {
-                    bin.count += 1;
-                    break;
-                }
-            }
-        }
-    }
-    let min_pressure_stat = min_finite_with_index(&node_min_pressure);
+    let PressureStats {
+        histogram: pressure_histogram,
+        junction_count,
+        low_pressure_count,
+    } = pressure_stats(node_min_pressure, &is_junction, low_pressure_threshold);
+    let min_pressure_stat = min_finite_with_index(node_min_pressure, &is_junction);
 
     // ── Worst junctions by lowest worst-case pressure (top 10) ────────────────
-    // Restricted to junctions: reservoir/tank "pressure" (head − elevation) is
-    // not a service-pressure metric and would otherwise dominate the list.
     let mut worst_node_idxs: Vec<usize> = (0..n_nodes)
         .filter(|&idx| {
             node_min_pressure.get(idx).is_some_and(|p| p.is_finite())
-                && network
-                    .nodes
-                    .get(idx)
-                    .is_some_and(|n| matches!(n.kind, hydra::NodeKind::Junction(_)))
+                && is_junction.get(idx).copied().unwrap_or(false)
         })
         .collect();
     worst_node_idxs.sort_unstable_by(|&a, &b| {
@@ -814,31 +913,16 @@ pub fn get_result_analytics(
         })
         .collect();
 
-    // ── Velocity histogram (same 5 bins as the frontend) ─────────────────────
-    const VELOCITY_BINS: &[(f64, f64)] = &[
-        (0.0, 0.1),
-        (0.1, 0.3),
-        (0.3, 0.6),
-        (0.6, 1.0),
-        (1.0, f64::MAX),
-    ];
-    let mut velocity_histogram: Vec<HistogramBucketDto> = VELOCITY_BINS
-        .iter()
-        .map(|&(lo, hi)| HistogramBucketDto { lo, hi, count: 0 })
+    let VelocityStats {
+        histogram: velocity_histogram,
+        pipe_count,
+    } = velocity_stats(link_max_velocity, &is_pipe);
+    let max_velocity = max_positive_with_index(link_max_velocity, &is_pipe);
+
+    // ── Top 5 pipes by peak velocity ─────────────────────────────────────────
+    let mut sorted_link_idxs: Vec<usize> = (0..n_links)
+        .filter(|&idx| is_pipe.get(idx).copied().unwrap_or(false))
         .collect();
-
-    for &v in link_max_velocity.iter() {
-        for bin in &mut velocity_histogram {
-            if v >= bin.lo && v < bin.hi {
-                bin.count += 1;
-                break;
-            }
-        }
-    }
-    let max_velocity = max_positive_with_index(&link_max_velocity);
-
-    // ── Top 5 links by peak velocity ─────────────────────────────────────────
-    let mut sorted_link_idxs: Vec<usize> = (0..n_links).collect();
     sorted_link_idxs.sort_unstable_by(|&a, &b| {
         link_max_velocity[b]
             .partial_cmp(&link_max_velocity[a])
@@ -916,8 +1000,8 @@ pub fn get_result_analytics(
 
     Ok(Some(ResultAnalyticsDto {
         period_count: n_periods as u32,
-        node_count: n_nodes as u32,
-        link_count: n_links as u32,
+        junction_count,
+        pipe_count,
         mass_balance: MassBalanceDto {
             inflow_m3,
             outflow_m3,
@@ -1236,6 +1320,7 @@ Duration  0
 
         let mut inner = loaded_state();
         if let NetworkStateInner::Loaded { network, dirty, .. } = &mut inner {
+            let network = std::sync::Arc::make_mut(network);
             // Add a junction the way create_node does (id + topology change).
             let mut node = network.nodes[0].clone();
             node.base.id = "J-NEW".into();
@@ -1469,31 +1554,139 @@ Duration  0
 
     // ── analytics absent markers ──────────────────────────────────────────
 
+    /// All positions included — the pre-mask behaviour.
+    fn all(n: usize) -> Vec<bool> {
+        vec![true; n]
+    }
+
     #[test]
     fn min_finite_with_index_ignores_non_finite_and_keeps_first_tie() {
-        assert_eq!(min_finite_with_index(&[]), None);
+        assert_eq!(min_finite_with_index(&[], &[]), None);
         assert_eq!(
-            min_finite_with_index(&[f64::INFINITY, f64::NAN, f64::NEG_INFINITY]),
+            min_finite_with_index(&[f64::INFINITY, f64::NAN, f64::NEG_INFINITY], &all(3)),
             None
         );
         assert_eq!(
-            min_finite_with_index(&[f64::INFINITY, 3.0, -2.0, f64::NAN]),
+            min_finite_with_index(&[f64::INFINITY, 3.0, -2.0, f64::NAN], &all(4)),
             Some((2, -2.0))
         );
         // Equal minima: the first index wins (matches the previous loop).
-        assert_eq!(min_finite_with_index(&[5.0, 1.0, 1.0]), Some((1, 1.0)));
+        assert_eq!(
+            min_finite_with_index(&[5.0, 1.0, 1.0], &all(3)),
+            Some((1, 1.0))
+        );
     }
 
     #[test]
     fn max_positive_with_index_treats_all_zero_as_absent() {
-        assert_eq!(max_positive_with_index(&[]), None);
+        assert_eq!(max_positive_with_index(&[], &[]), None);
         // 0.0 is the scan's "no data" default — an all-zero array means no
         // link ever had a valid velocity.
-        assert_eq!(max_positive_with_index(&[0.0, 0.0]), None);
-        assert_eq!(max_positive_with_index(&[f64::NAN, -1.0]), None);
-        assert_eq!(max_positive_with_index(&[0.0, 2.5, 1.0]), Some((1, 2.5)));
+        assert_eq!(max_positive_with_index(&[0.0, 0.0], &all(2)), None);
+        assert_eq!(max_positive_with_index(&[f64::NAN, -1.0], &all(2)), None);
+        assert_eq!(
+            max_positive_with_index(&[0.0, 2.5, 1.0], &all(3)),
+            Some((1, 2.5))
+        );
         // Equal maxima: the first index wins.
-        assert_eq!(max_positive_with_index(&[3.0, 3.0]), Some((0, 3.0)));
+        assert_eq!(
+            max_positive_with_index(&[3.0, 3.0], &all(2)),
+            Some((0, 3.0))
+        );
+    }
+
+    /// The mask is what scopes pressure stats to junctions and velocity stats
+    /// to pipes: an excluded position must never win, however extreme.
+    #[test]
+    fn masked_extremes_skip_excluded_positions() {
+        // The true minimum sits at an excluded position (a tank).
+        assert_eq!(
+            min_finite_with_index(&[-500.0, 12.0, 3.0], &[false, true, true]),
+            Some((2, 3.0))
+        );
+        // Every included position is non-finite → no data.
+        assert_eq!(
+            min_finite_with_index(&[1.0, f64::INFINITY], &[false, true]),
+            None
+        );
+        // The fastest link is an excluded valve.
+        assert_eq!(
+            max_positive_with_index(&[90.0, 1.5, 0.2], &[false, true, true]),
+            Some((1, 1.5))
+        );
+        // A mask shorter than the values array excludes the tail rather than
+        // panicking (the arrays come from independent sources).
+        assert_eq!(min_finite_with_index(&[5.0, 1.0], &[true]), Some((0, 5.0)));
+    }
+
+    // ── histogram bucketing ───────────────────────────────────────────────
+
+    /// The regression this change exists for: a junction whose worst pressure
+    /// is negative belongs in the first bucket, not nowhere. With bins
+    /// starting at 0 it matched no bucket and vanished — the chart's counts
+    /// then summed to less than the population, and the compliance percentage
+    /// derived from that sum was wrong by the same factor.
+    #[test]
+    fn pressure_stats_counts_negative_pressures_in_the_first_bucket() {
+        let values = [-708.6, -0.001, 0.0, 5.0, 75.0];
+        let stats = pressure_stats(&values, &all(5), 14.0);
+        assert_eq!(stats.histogram[0].count, 2, "both negatives in bucket 0");
+        assert_eq!(stats.histogram[1].count, 2, "0.0 and 5.0 in 0–10");
+        assert_eq!(stats.histogram[7].count, 1, "75.0 in ≥60");
+        // The invariant the frontend's compliance maths depends on.
+        let total: u32 = stats.histogram.iter().map(|b| b.count).sum();
+        assert_eq!(total, stats.junction_count);
+        assert_eq!(stats.junction_count, 5);
+        assert_eq!(stats.low_pressure_count, 4, "everything under 14 m");
+    }
+
+    #[test]
+    fn pressure_stats_excludes_non_junctions_and_no_data_entries() {
+        // idx 1 is a tank (excluded), idx 3 never got a finite value.
+        let values = [20.0, -500.0, 5.0, f64::INFINITY];
+        let stats = pressure_stats(&values, &[true, false, true, true], 14.0);
+        assert_eq!(stats.junction_count, 2, "one tank and one no-data dropped");
+        assert_eq!(stats.low_pressure_count, 1);
+        let total: u32 = stats.histogram.iter().map(|b| b.count).sum();
+        assert_eq!(total, 2);
+        assert_eq!(stats.histogram[0].count, 0, "the tank's -500 is not here");
+    }
+
+    #[test]
+    fn pressure_stats_threshold_is_the_caller_criterion() {
+        let values = [5.0, 15.0, 25.0];
+        assert_eq!(pressure_stats(&values, &all(3), 14.0).low_pressure_count, 1);
+        assert_eq!(pressure_stats(&values, &all(3), 24.0).low_pressure_count, 2);
+        // Exactly at the criterion counts as compliant (strict <).
+        assert_eq!(pressure_stats(&values, &all(3), 5.0).low_pressure_count, 0);
+    }
+
+    #[test]
+    fn velocity_stats_counts_pipes_only() {
+        // idx 1 is a valve, idx 3 a pump — both sit at 0 m/s and used to pile
+        // into the stagnant bucket under a "pipes" label.
+        let values = [0.05, 0.0, 1.4, 0.0];
+        let stats = velocity_stats(&values, &[true, false, true, false]);
+        assert_eq!(stats.pipe_count, 2);
+        assert_eq!(stats.histogram[0].count, 1, "only the real 0.05 pipe");
+        assert_eq!(stats.histogram[4].count, 1, "1.4 m/s in >1");
+        let total: u32 = stats.histogram.iter().map(|b| b.count).sum();
+        assert_eq!(total, stats.pipe_count);
+    }
+
+    #[test]
+    fn histogram_bins_are_contiguous_and_cover_the_real_line() {
+        // Every value must land in exactly one bucket — the property the
+        // "counts sum to the population" invariant rests on.
+        assert_eq!(PRESSURE_BINS[0].0, f64::MIN);
+        assert_eq!(PRESSURE_BINS[PRESSURE_BINS.len() - 1].1, f64::MAX);
+        for pair in PRESSURE_BINS.windows(2) {
+            assert_eq!(pair[0].1, pair[1].0, "pressure bins must not gap");
+        }
+        for pair in VELOCITY_BINS.windows(2) {
+            assert_eq!(pair[0].1, pair[1].0, "velocity bins must not gap");
+        }
+        assert_eq!(VELOCITY_BINS[VELOCITY_BINS.len() - 1].1, f64::MAX);
     }
 
     fn analytics_dto_with_summary(
@@ -1510,8 +1703,8 @@ Duration  0
         };
         ResultAnalyticsDto {
             period_count: 0,
-            node_count: 0,
-            link_count: 0,
+            junction_count: 0,
+            pipe_count: 0,
             mass_balance: MassBalanceDto {
                 inflow_m3: 0.0,
                 outflow_m3: 0.0,

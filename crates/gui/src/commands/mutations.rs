@@ -21,7 +21,7 @@ use super::simulation::emit_or_warn;
 const NETWORK_CHANGED_EVENT: &str = "network-changed";
 
 /// Apply a single field mutation to a `Network` in place. Shared between
-/// `patch_element` / `patch_elements` (which commit to state) and
+/// `patch_elements` (which commits to state) and
 /// `preview_patches` (dry-run, never touches state).
 ///
 /// `kind`  — `"junction"` | `"reservoir"` | `"tank"` | `"pipe"` | `"pump"` | `"valve"`
@@ -298,8 +298,7 @@ pub(crate) fn apply_patch_to_network(
     Ok(())
 }
 
-/// Updated element DTO returned by `patch_element` — exactly one of `node` /
-/// `link` is set. Also used as the entry type of the `network-changed` event's
+/// One updated element — exactly one of `node` / `link` is set. Also used as the entry type of the `network-changed` event's
 /// delta payload so every window can update the element in place instead of
 /// refetching the full snapshot.
 #[derive(Debug, Clone, Serialize)]
@@ -314,8 +313,7 @@ pub struct PatchedElementDto {
 /// Payload for the `network-changed` event.
 ///
 /// `elements` lists the updated element DTOs when the mutation was limited to
-/// known elements (`patch_element` / `patch_elements` /
-/// `patch_node_position`); the frontend patches its local arrays in place.
+/// known elements (`patch_elements` / `patch_node_position`); the frontend patches its local arrays in place.
 /// Structural mutations (create/delete/pattern/curve/control commands) emit a
 /// `null` payload, which the frontend treats as "refetch the full snapshot".
 #[derive(Debug, Clone, Serialize)]
@@ -424,7 +422,9 @@ where
             dto,
             ..
         } => {
-            f(network)?;
+            // `make_mut` copies only while another reader still holds the
+            // previous version; the common case is an in-place mutation.
+            f(std::sync::Arc::make_mut(network))?;
             *dirty = true;
             *dto = network_to_dto(network);
             Ok(())
@@ -447,50 +447,6 @@ where
     let result = apply_structural_mutation(&mut guard, f);
     if result.is_ok() {
         emit_or_warn(app, NETWORK_CHANGED_EVENT, ());
-    }
-    drop(guard);
-    result
-}
-
-#[tauri::command(async)]
-/// Apply a single property edit to the in-memory network.
-///
-/// Returns only the patched element's updated DTO (not the whole network) and
-/// emits a `network-changed` event carrying the same delta so all windows can
-/// update in place.
-pub fn patch_element(
-    app: tauri::AppHandle,
-    state: tauri::State<'_, NetworkState>,
-    kind: String,
-    id: String,
-    field: String,
-    value: serde_json::Value,
-) -> Result<PatchedElementDto, String> {
-    // Lock held across the emit below (see `NETWORK_CHANGED_EVENT`).
-    let mut guard = state.0.lock();
-    let result = {
-        match &mut *guard {
-            NetworkStateInner::Loaded {
-                dirty,
-                network,
-                dto,
-                ..
-            } => {
-                apply_patch_to_network(network, &kind, &id, &field, value)?;
-                *dirty = true;
-                refresh_element_dto(network, dto, &kind, &id)
-            }
-            NetworkStateInner::Empty => Err("no network loaded".into()),
-        }
-    };
-    if let Ok(patched) = &result {
-        emit_or_warn(
-            &app,
-            NETWORK_CHANGED_EVENT,
-            NetworkChangedPayload {
-                elements: vec![patched.clone()],
-            },
-        );
     }
     drop(guard);
     result
@@ -534,7 +490,7 @@ pub fn patch_elements(
                 let mut touched: Vec<(String, String)> = Vec::new();
                 for patch in patches {
                     match apply_patch_to_network(
-                        network,
+                        std::sync::Arc::make_mut(network),
                         &patch.kind,
                         &patch.id,
                         &patch.field,
@@ -576,7 +532,7 @@ pub fn patch_elements(
 }
 
 /// Move a node to a new coordinate position in a single write (avoids two
-/// serial `patch_element` calls and two INP re-serialisations). Fails when
+/// serial coordinate patches and two INP re-serialisations). Fails when
 /// `id` names no existing node.
 #[tauri::command(async)]
 pub fn patch_node_position(
@@ -602,7 +558,10 @@ pub fn patch_node_position(
                 if !network.nodes.iter().any(|n| n.base.id == id) {
                     return Err(format!("node '{id}' not found"));
                 }
-                let entry = network.coordinates.entry(id.clone()).or_insert((0.0, 0.0));
+                let entry = std::sync::Arc::make_mut(network)
+                    .coordinates
+                    .entry(id.clone())
+                    .or_insert((0.0, 0.0));
                 entry.0 = x;
                 entry.1 = y;
                 let mut moved: Option<NodeDto> = None;
@@ -1676,10 +1635,12 @@ pub fn preview_patches(
     state: tauri::State<'_, NetworkState>,
     patches: Vec<PatchItem>,
 ) -> Result<String, String> {
-    let mut network = {
+    // A genuine deep copy: the preview mutates a throwaway network and must
+    // never touch the cached one.
+    let mut network: hydra::Network = {
         let guard = state.0.lock();
         match &*guard {
-            NetworkStateInner::Loaded { network, .. } => network.clone(),
+            NetworkStateInner::Loaded { network, .. } => (**network).clone(),
             NetworkStateInner::Empty => return Err("no network loaded".into()),
         }
     };
@@ -1850,7 +1811,7 @@ pub fn validate_network(
 
     // Clone from the cache when it holds exactly this target (dirty allowed —
     // see the doc comment); otherwise fall back to the on-disk model.
-    let cached: Option<hydra::Network> = {
+    let cached: Option<std::sync::Arc<hydra::Network>> = {
         let guard = state.0.lock();
         match &*guard {
             NetworkStateInner::Loaded {
@@ -1870,7 +1831,7 @@ pub fn validate_network(
             let app_data = app_data_dir(&app)?;
             let model_path = model_path_for(&app_data, &project_id, scenario_id.as_deref());
             let raw = std::fs::read(&model_path).map_err(|e| format!("Cannot read model: {e}"))?;
-            hydra::io::parse(&raw).map_err(format_inp_parse_error)?
+            std::sync::Arc::new(hydra::io::parse(&raw).map_err(format_inp_parse_error)?)
         }
     };
     Ok(validation_findings(&network))
@@ -2023,6 +1984,7 @@ mod tests {
     fn refresh_element_dto_updates_single_link_in_place() {
         let mut state = loaded_state();
         if let NetworkStateInner::Loaded { network, dto, .. } = &mut state {
+            let network = std::sync::Arc::make_mut(network);
             let p2_before = dto.links.iter().find(|l| l.id == "P2").unwrap().clone();
             apply_patch_to_network(network, "pipe", "P1", "roughness", serde_json::json!(123.0))
                 .unwrap();
@@ -2051,6 +2013,7 @@ mod tests {
     fn refresh_element_dto_updates_single_node_in_place() {
         let mut state = loaded_state();
         if let NetworkStateInner::Loaded { network, dto, .. } = &mut state {
+            let network = std::sync::Arc::make_mut(network);
             apply_patch_to_network(
                 network,
                 "junction",
@@ -2088,6 +2051,7 @@ mod tests {
         let NetworkStateInner::Loaded { network, dto, .. } = &mut state else {
             panic!("state must be loaded");
         };
+        let network = std::sync::Arc::make_mut(network);
 
         // Give P1 a polyline and a closed status, then patch a scalar field.
         network
@@ -2125,6 +2089,7 @@ mod tests {
     fn refresh_element_dto_unknown_element_errors() {
         let mut state = loaded_state();
         if let NetworkStateInner::Loaded { network, dto, .. } = &mut state {
+            let network = std::sync::Arc::make_mut(network);
             assert!(refresh_element_dto(network, dto, "pipe", "NOPE").is_err());
             assert!(refresh_element_dto(network, dto, "widget", "P1").is_err());
         } else {
@@ -2140,6 +2105,7 @@ mod tests {
         let NetworkStateInner::Loaded { network, dto, .. } = &mut state else {
             panic!("state must be loaded");
         };
+        let network = std::sync::Arc::make_mut(network);
         let t1 = network.nodes.iter().find(|n| n.base.id == "T1").unwrap();
         let internal_before = t1.base.elevation;
         let min_level = match &t1.kind {

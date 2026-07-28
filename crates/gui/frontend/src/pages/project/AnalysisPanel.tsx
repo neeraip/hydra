@@ -89,7 +89,7 @@ export function AnalysisPanel() {
 
       {/* Panel 2: Two-column histograms */}
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20 }}>
-        <PressureHistogram analytics={analytics} />
+        <PressureHistogram analytics={analytics} minPressureM={minPressure} />
         <VelocityHistogram analytics={analytics} />
       </div>
 

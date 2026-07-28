@@ -7,6 +7,7 @@
 //! [`tokens`], [`validate`], and [`proxy`] for details.
 
 pub mod catalog;
+pub mod pool;
 pub mod proxy;
 pub mod tokens;
 pub mod validate;

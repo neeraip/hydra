@@ -37,7 +37,7 @@
 //! |---|---|---|
 //! | `simulation_progress` | `SimulationProgressDto` | on each whole-percent progress bucket or ≥125 ms since the last emit + always on completion/failure |
 //! | `run_queue_update` | `String` — the affected project's id; the frontend refetches items via `get_run_queue` | on every queue state change |
-//! | `network-changed` | `NetworkChangedPayload` (delta) or `null` | on every mutating command, emitted while the mutator still holds the `NetworkState` lock so event order matches mutation commit order. Element-scoped edits (`patch_element`, `patch_elements`, `patch_node_position`) carry a `NetworkChangedPayload` whose `elements` are the updated element DTOs so the frontend can patch in place; structural mutations emit `null`, which triggers a full snapshot refetch. |
+//! | `network-changed` | `NetworkChangedPayload` (delta) or `null` | on every mutating command, emitted while the mutator still holds the `NetworkState` lock so event order matches mutation commit order. Element-scoped edits (`patch_elements`, `patch_node_position`) carry a `NetworkChangedPayload` whose `elements` are the updated element DTOs so the frontend can patch in place; structural mutations emit `null`, which triggers a full snapshot refetch. |
 //!
 //! # Run queue
 //!
