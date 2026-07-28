@@ -11,7 +11,7 @@ use typst::foundations::{Bytes, Datetime};
 use typst::syntax::{FileId, Source};
 use typst::text::{Font, FontBook};
 use typst::utils::LazyHash;
-use typst::{Library, World};
+use typst::{Library, LibraryExt as _, World};
 
 use super::chart_svg::chart_svg;
 use super::value_human;
@@ -35,7 +35,7 @@ impl std::error::Error for PdfError {}
 pub fn render_pdf(doc: &ReportDocument) -> Result<Vec<u8>, PdfError> {
     let (source, charts) = typst_source(doc);
     let world = ReportWorld::new(source, charts);
-    let compiled: typst::layout::PagedDocument =
+    let compiled: typst_layout::PagedDocument =
         typst::compile(&world).output.map_err(|diagnostics| {
             let message = diagnostics
                 .iter()
@@ -238,7 +238,7 @@ impl World for ReportWorld {
         if id == self.source.id() {
             Ok(self.source.clone())
         } else {
-            Err(FileError::NotFound(id.vpath().as_rootless_path().into()))
+            Err(FileError::NotFound(id.vpath().get_without_slash().into()))
         }
     }
 
@@ -246,9 +246,9 @@ impl World for ReportWorld {
         // Serve chart SVGs referenced as `chart-<index>.svg`.
         let name = id
             .vpath()
-            .as_rootless_path()
-            .file_name()
-            .and_then(|n| n.to_str())
+            .get_without_slash()
+            .rsplit('/')
+            .next()
             .unwrap_or_default();
         if let Some(index) = name
             .strip_prefix("chart-")
@@ -259,14 +259,14 @@ impl World for ReportWorld {
                 return Ok(bytes.clone());
             }
         }
-        Err(FileError::NotFound(id.vpath().as_rootless_path().into()))
+        Err(FileError::NotFound(id.vpath().get_without_slash().into()))
     }
 
     fn font(&self, index: usize) -> Option<Font> {
         self.fonts.get(index).cloned()
     }
 
-    fn today(&self, _offset: Option<i64>) -> Option<Datetime> {
+    fn today(&self, _offset: Option<typst::foundations::Duration>) -> Option<Datetime> {
         None
     }
 }

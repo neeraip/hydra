@@ -1,0 +1,5 @@
+# cargo-audit configuration (the scheduled cargo-audit workflow and
+# `just audit`). Keep in sync with deny.toml [advisories].ignore — the
+# rationale lives there.
+[advisories]
+ignore = ["RUSTSEC-2026-0194", "RUSTSEC-2026-0195"]

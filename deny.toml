@@ -11,6 +11,19 @@ all-features = false
 version = 2
 unmaintained = "workspace"
 yanked = "warn"
+ignore = [
+    # quick-xml 0.38 DoS advisories (quadratic attribute checking; unbounded
+    # namespace allocation). Patched in 0.39+, but every dependent pins ^0.38
+    # (zbus D-Bus stack via tauri on Linux, rstest proc-macros dev-only,
+    # citationberg/hayagriva via typst-library) so the lockfile cannot move
+    # until upstreams release. Exposure: none of these paths parse
+    # attacker-controlled XML in Hydra (local D-Bus introspection data, CSL
+    # citation styles we never load, dev-time macros), and both advisories
+    # are denial-of-service class. Remove once dependents adopt quick-xml
+    # >= 0.39.
+    { id = "RUSTSEC-2026-0194", reason = "DoS-only; no untrusted XML reaches quick-xml 0.38 dependents; awaiting upstream bumps" },
+    { id = "RUSTSEC-2026-0195", reason = "DoS-only; no untrusted XML reaches quick-xml 0.38 dependents; awaiting upstream bumps" },
+]
 
 # ── Licences ──────────────────────────────────────────────────────────────────
 [licenses]

@@ -16,12 +16,13 @@ categories = ["science", "simulation"]
 [features]
 # PDF rendering embeds the Typst typesetting engine and fonts — a
 # heavyweight dependency the text formats never pay for (spec §4.5).
-pdf = ["dep:typst", "dep:typst-pdf", "dep:typst-assets"]
+pdf = ["dep:typst", "dep:typst-pdf", "dep:typst-assets", "dep:typst-layout"]
 
 [dependencies]
 hydra-common = { path = "../common", version = "2.2.0" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-typst = { version = "0.13", optional = true }
-typst-pdf = { version = "0.13", optional = true }
-typst-assets = { version = "0.13", features = ["fonts"], optional = true }
+typst = { version = "0.15", optional = true }
+typst-pdf = { version = "0.15", optional = true }
+typst-layout = { version = "0.15", optional = true }
+typst-assets = { version = "0.15", features = ["fonts"], optional = true }
