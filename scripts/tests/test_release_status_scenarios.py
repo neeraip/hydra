@@ -333,3 +333,57 @@ class TestReleaseStatusScenarios(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestTrackCoverage(unittest.TestCase):
+    """Every published crate must belong to exactly one release track.
+
+    A crate absent from TRACKS is not merely mis-labelled — `release-status`
+    assigns commits by the files they touch, so its commits land in no track
+    and produce no bump signal. `crates/report` and `crates/common` were both
+    missing, which silently swallowed a BREAKING CHANGE to `hydra-report`.
+    """
+
+    @staticmethod
+    def _crate_dirs():
+        for manifest in sorted((ROOT / "crates").glob("*/Cargo.toml")):
+            yield manifest.parent.name, manifest.read_text()
+
+    def test_library_track_covers_every_workspace_versioned_crate(self):
+        library_paths = dict(
+            (name, paths) for name, _, paths, _ in release_status.TRACKS
+        )["Library"]
+        for crate, text in self._crate_dirs():
+            if "version.workspace = true" not in text:
+                continue  # own version — belongs to its own track
+            self.assertIn(
+                f"crates/{crate}",
+                library_paths,
+                f"crates/{crate} shares the workspace version but is not on the "
+                "Library track, so its commits would signal no release",
+            )
+
+    def test_every_published_crate_belongs_to_some_track(self):
+        tracked = {p for _, _, paths, _ in release_status.TRACKS for p in paths}
+        for crate, text in self._crate_dirs():
+            if "publish = false" in text:
+                continue  # not released; no track needed
+            self.assertIn(
+                f"crates/{crate}",
+                tracked,
+                f"crates/{crate} is published but belongs to no release track",
+            )
+
+    def test_tracks_do_not_overlap(self):
+        seen = {}
+        for name, _, paths, _ in release_status.TRACKS:
+            for path in paths:
+                if path == "Cargo.toml":
+                    continue  # workspace manifest is the Library's by design
+                self.assertNotIn(
+                    path,
+                    seen,
+                    f"{path} is on both {seen.get(path)} and {name}; a commit "
+                    "touching it would double-count its signal",
+                )
+                seen[path] = name

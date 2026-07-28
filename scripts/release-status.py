@@ -156,8 +156,24 @@ LEVEL_COLOR = {"major": "1;31", "minor": "33", "none": None}
 # foreground (no wrapping) so it stands out against the dimmed/highlighted ones.
 COMMIT_COLOR = {"dev": "2", "mixed": "33"}
 
+# The Library track must list EVERY crate that inherits the workspace version
+# (`version.workspace = true`), because they are all published together under
+# the one `v{version}` tag. A crate missing from this list is invisible to
+# release-status: its commits — including breaking ones — are assigned to no
+# track and produce no bump signal at all. `test_library_track_covers_every_
+# workspace_versioned_crate` enforces this against the actual manifests.
+LIBRARY_PATHS = [
+    "Cargo.toml",
+    "crates/common",
+    "crates/engine-och",
+    "crates/engine-uds",
+    "crates/engine-wds",
+    "crates/report",
+    "crates/sdk",
+]
+
 TRACKS = [
-    ("Library", "v[0-9]*.[0-9]*.[0-9]*", ["Cargo.toml", "crates/engine-wds", "crates/sdk"], "just bump"),
+    ("Library", "v[0-9]*.[0-9]*.[0-9]*", LIBRARY_PATHS, "just bump"),
     ("CLI", "cli-v[0-9]*.[0-9]*.[0-9]*", ["crates/cli"], "just bump-cli"),
     ("GUI", "gui-v[0-9]*.[0-9]*.[0-9]*", ["crates/gui"], "just bump-gui"),
 ]
