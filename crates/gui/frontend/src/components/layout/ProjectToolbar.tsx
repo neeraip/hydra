@@ -25,15 +25,19 @@ import { PrimaryButton } from "../ui/PrimaryButton";
    selection (a "Base" pill always present and selected by default when
    activeScenarioId === null) plus the run controls.
 
-   The strip is a LINEAGE view, not the whole tree: it renders only the
-   active path Base → … → active scenario, so every arrow connector is a true
-   parent→child edge. Branching is reachable in place: chips with siblings
-   grow a ▾ "+N" segment opening a sibling picker, and when the active
-   scenario (or Base) has children a trailing ▾ stub lets the user descend.
-   Everything else lives in the Manage modal.
+   The strip shows the variant row plus the active path, not the whole tree.
+
+   Parentless scenarios are variants OF the base model rather than
+   descendants of it, so they render beside Base as peers — all of them, with
+   no arrow between (that edge is not descent) and no sibling picker (nothing
+   is hidden to reveal). Below that row the tree is genuine descent, so it
+   renders as lineage exactly as before: one chip per level, a true
+   parent→child arrow between each, a ▾ "+N" segment on chips with siblings,
+   and a trailing ▾ stub to walk down from the active scenario. Everything
+   else lives in the Manage modal.
 
    Layout (left → right):
-     [Base pill] → [lineage chip → …] → [▾ children stub] · Manage | [Simulate ▸ ⚙]
+     [Base pill] [variant chips…] → [descendant chip → …] → [▾ children stub] · Manage | [Simulate ▸ ⚙]
 */
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -134,6 +138,14 @@ export function ProjectToolbar() {
     () => activeLineage(rawDtos, activeScenarioId),
     [rawDtos, activeScenarioId],
   );
+  // Parentless scenarios are variants OF the base model, not descendants of
+  // it, so they sit beside it as peers rather than hiding behind one chip's
+  // sibling picker. Everything below them is genuine descent and still
+  // renders as lineage.
+  const variants = useMemo(() => scenarioChildren(rawDtos, null), [rawDtos]);
+  // The active path below the variant row: the path minus its own root, which
+  // that row already shows.
+  const descentPath = useMemo(() => lineage.slice(1), [lineage]);
   // Children of the active scenario (or of Base when none is active) — they
   // drive the trailing ▾ stub that lets the user walk DOWN a branch.
   const activeChildren = useMemo(
@@ -374,7 +386,7 @@ export function ProjectToolbar() {
       </button>
 
       {/* Scrollable lineage strip with right-edge fade */}
-      {(lineage.length > 0 || activeChildren.length > 0) && (
+      {(variants.length > 0 || activeChildren.length > 0) && (
         <div
           style={{
             flex: 1,
@@ -394,7 +406,26 @@ export function ProjectToolbar() {
               paddingRight: 24,
             }}
           >
-            {lineage.map((s) => {
+            {/* Variant row — peers of Base. No arrow, because this is not
+                descent, and no sibling picker, because nothing is hidden. */}
+            {variants.map((s) => (
+              <ScenarioChip
+                key={s.id}
+                scenario={s}
+                isActive={s.id === activeScenarioId}
+                isAncestor={lineage.length > 1 && lineage[0].id === s.id}
+                isStale={isEdited(project.id, s.id) || s.state === "stale"}
+                accent={accent}
+                siblingCount={0}
+                pickerOpen={false}
+                onClick={() => setActiveScenarioId(s.id)}
+                onTogglePicker={() => {}}
+              />
+            ))}
+
+            {/* Below a variant it is genuine descent, so arrows and sibling
+                pickers stay exactly as they were. */}
+            {descentPath.map((s) => {
               const siblingCount = scenarioChildren(
                 rawDtos,
                 s.parentScenarioId ?? null,
@@ -405,6 +436,7 @@ export function ProjectToolbar() {
                   <ScenarioChip
                     scenario={s}
                     isActive={s.id === activeScenarioId}
+                    isAncestor={s.id !== activeScenarioId}
                     isStale={isEdited(project.id, s.id) || s.state === "stale"}
                     accent={accent}
                     siblingCount={siblingCount}
@@ -750,6 +782,7 @@ export function ProjectToolbar() {
 function ScenarioChip({
   scenario,
   isActive,
+  isAncestor = false,
   isStale,
   accent,
   siblingCount,
@@ -759,6 +792,12 @@ function ScenarioChip({
 }: {
   scenario: ScenarioDto;
   isActive: boolean;
+  /** On the active path but not the active scenario. Only the variant row
+   * can be this: every chip after it descends from the active one, so before
+   * that row existed every chip in the strip was on the path by
+   * construction. Without it, a strip reading `[Base] [A] [B] [C] → …` gives
+   * no clue which variant the arrow descends from. */
+  isAncestor?: boolean;
   isStale: boolean;
   accent: string;
   siblingCount: number;
@@ -773,6 +812,9 @@ function ScenarioChip({
   const isRunning = state === "running";
   const titleSuffix = isStale ? " · network edited since last run" : "";
   const textColor = isActive ? accent : "var(--text-primary)";
+  // Ancestors take the accent border without the fill: present on the path,
+  // but not the thing selected.
+  const borderColor = isActive || isAncestor ? accent : "var(--border)";
 
   return (
     <span
@@ -780,7 +822,7 @@ function ScenarioChip({
         flexShrink: 0,
         display: "inline-flex",
         alignItems: "stretch",
-        border: isActive ? `1px solid ${accent}` : "1px solid var(--border)",
+        border: `1px solid ${borderColor}`,
         borderRadius: 14,
         background: isActive ? `${accent}22` : "var(--bg-card)",
         overflow: "hidden",
