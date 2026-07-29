@@ -524,9 +524,10 @@ export function ScenariosPanel({
               (deleteCascade ? (
                 <>
                   {" "}
-                  All {survivingCount} scenario
-                  {survivingCount === 1 ? "" : "s"} branched from it will be
-                  deleted too, with their own networks and results.
+                  {survivingCount === 1
+                    ? "The scenario beneath it"
+                    : `All ${survivingCount} scenarios beneath it`}{" "}
+                  will be deleted too, with their own networks and results.
                 </>
               ) : (
                 // Deliberately without a count. The checkbox already
@@ -545,7 +546,14 @@ export function ScenariosPanel({
         option={
           survivingCount > 0
             ? {
-                label: `Also delete the ${survivingCount} scenario${survivingCount === 1 ? "" : "s"} branched from it`,
+                // "beneath it" rather than "branched from it": the latter
+                // reads as the direct children, while the count spans the
+                // whole subtree. The panel draws that subtree indented, so
+                // the spatial word matches what is on screen.
+                label:
+                  survivingCount === 1
+                    ? "Also delete the scenario beneath it"
+                    : `Also delete all ${survivingCount} scenarios beneath it`,
                 checked: deleteCascade,
                 onChange: setDeleteCascade,
               }
