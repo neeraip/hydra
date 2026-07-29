@@ -200,6 +200,7 @@ pub fn create_project(
     std::fs::create_dir_all(&scenarios_dir).map_err(|e| e.to_string())?;
 
     let meta = meta::ProjectMeta {
+        version: 1,
         name,
         engine,
         source_crs: "EPSG:4326".into(),
@@ -556,6 +557,35 @@ pub(crate) fn validate_target_ids(
         validate_id(sid)?;
     }
     Ok(())
+}
+
+/// The project's analysis criteria, or `null` when it has none saved.
+///
+/// Never fails: a project that has never had criteria edited simply has no
+/// file, which is the normal state, and a corrupt one reads as absent.
+#[tauri::command]
+pub fn get_project_criteria(
+    app: tauri::AppHandle,
+    project_id: String,
+) -> Result<Option<meta::ProjectCriteria>, String> {
+    validate_id(&project_id)?;
+    let app_data = app_data_dir(&app)?;
+    Ok(meta::read_project_criteria(&bundle::project_dir(
+        &app_data,
+        &project_id,
+    )))
+}
+
+/// Persist the project's analysis criteria.
+#[tauri::command]
+pub fn update_project_criteria(
+    app: tauri::AppHandle,
+    project_id: String,
+    criteria: meta::ProjectCriteria,
+) -> Result<(), String> {
+    validate_id(&project_id)?;
+    let app_data = app_data_dir(&app)?;
+    meta::write_project_criteria(&bundle::project_dir(&app_data, &project_id), &criteria)
 }
 
 /// `results.out` path for a project's base model (`scenario_id == None`) or
@@ -1500,6 +1530,75 @@ mod tests {
         assert_eq!(label, "2mo ago");
     }
 
+    // ── project criteria ─────────────────────────────────────────────────
+
+    #[test]
+    fn criteria_default_when_the_file_is_absent_or_corrupt() {
+        let dir = tempfile::tempdir().unwrap();
+        let project = bundle::project_dir(dir.path(), "p1");
+        std::fs::create_dir_all(&project).unwrap();
+
+        // Never edited — the normal state, reported as absent so callers can
+        // tell it apart from a saved file holding the same values.
+        assert!(meta::read_project_criteria(&project).is_none());
+
+        // A corrupt file reads as absent rather than taking the project's
+        // analysis view down with it.
+        bundle::atomic_write(&project.join("criteria.json"), b"{ not json").unwrap();
+        assert!(meta::read_project_criteria(&project).is_none());
+
+        // Defaults are still what an absent file means to a caller.
+        let c = meta::ProjectCriteria::default();
+        assert_eq!(c.min_pressure_m, 14.0);
+        assert_eq!(c.velocity.target, 0.5);
+    }
+
+    #[test]
+    fn criteria_round_trip_and_fill_missing_fields() {
+        let dir = tempfile::tempdir().unwrap();
+        let project = bundle::project_dir(dir.path(), "p1");
+        std::fs::create_dir_all(&project).unwrap();
+
+        let c = meta::ProjectCriteria {
+            min_pressure_m: 30.0,
+            velocity: meta::TargetBand {
+                high: 2.0,
+                ..meta::ProjectCriteria::default().velocity
+            },
+            ..meta::ProjectCriteria::default()
+        };
+        meta::write_project_criteria(&project, &c).unwrap();
+
+        let back = meta::read_project_criteria(&project).expect("just written");
+        assert_eq!(back.min_pressure_m, 30.0);
+        assert_eq!(back.velocity.high, 2.0);
+        assert_eq!(back.pressure.required, 35.0);
+
+        // A file written by an older build carries fewer fields; each one
+        // missing falls back on its own rather than discarding the file.
+        bundle::atomic_write(
+            &project.join("criteria.json"),
+            br#"{"version":1,"minPressureM":21.5}"#,
+        )
+        .unwrap();
+        let partial = meta::read_project_criteria(&project).expect("partial file parses");
+        assert_eq!(partial.min_pressure_m, 21.5);
+        assert_eq!(partial.flow.target, 1.0);
+    }
+
+    #[test]
+    fn criteria_live_beside_the_manifest_not_inside_it() {
+        // The manifest gates whether a project is listed at all, so criteria
+        // must not share its file: a bad criteria write cannot be allowed to
+        // hide the project.
+        let dir = tempfile::tempdir().unwrap();
+        let project = bundle::project_dir(dir.path(), "p1");
+        std::fs::create_dir_all(&project).unwrap();
+        meta::write_project_criteria(&project, &meta::ProjectCriteria::default()).unwrap();
+        assert!(project.join("criteria.json").exists());
+        assert!(!project.join("meta.json").exists());
+    }
+
     // ── engine gating ────────────────────────────────────────────────────
 
     #[test]
@@ -1657,6 +1756,7 @@ mod tests {
 
     fn sample_meta(nodes: u32, links: u32) -> meta::ProjectMeta {
         meta::ProjectMeta {
+            version: 1,
             name: "test".into(),
             engine: "wds".into(),
             source_crs: "EPSG:4326".into(),

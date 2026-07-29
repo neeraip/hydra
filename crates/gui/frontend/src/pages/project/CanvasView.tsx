@@ -40,6 +40,7 @@ import {
   saveProjectOnDisk,
   useLinks,
   useNodes,
+  useProjectCriteria,
   useSimParams,
 } from "../../hooks";
 import { useNetworkVersion } from "../../hooks/NetworkVersionContext";
@@ -214,24 +215,49 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
     CANVAS_PREF_DEFAULTS.colorMode,
   );
   // Threshold defaults — seeded from SimulationOptions when loaded; user can still adjust.
-  const [thresholds, setThresholds] = useState<LegendThresholds>({
-    pressure: { low: 24, required: 35, high: 45 }, // m
-    velocity: { low: 0.1, target: 0.5, high: 1.5 }, // m/s
-    flow: { low: 0.1, target: 1.0, high: 10.0 }, // L/s
-  });
-  // Seed pressure thresholds from SimulationOptions when they first arrive.
+  // Threshold bands come from the project's criteria file. Previously they
+  // were component state, so velocity and flow carried across project
+  // switches — the canvas coloured one network against another's bands.
+  const {
+    criteria,
+    setCriteria,
+    saved: criteriaSaved,
+  } = useProjectCriteria(project?.id ?? null);
+  const thresholds: LegendThresholds = useMemo(
+    () => ({
+      pressure: criteria.pressure,
+      velocity: criteria.velocity,
+      flow: criteria.flow,
+    }),
+    [criteria],
+  );
+  const setThresholds = useCallback(
+    (next: LegendThresholds) => {
+      setCriteria({ ...criteria, ...next });
+    },
+    [criteria, setCriteria],
+  );
+  // Seed pressure thresholds from SimulationOptions, but only for a project
+  // that has never had criteria saved. Seeding unconditionally would discard
+  // bands the user deliberately set every time the project loaded.
+  const seededPressureFor = useRef<string | null>(null);
   useEffect(() => {
-    if (!simParams) return;
+    const id = project?.id;
+    // `saved === null` means the fetch is still in flight; seeding then would
+    // treat "not yet known" as "none saved" and overwrite real criteria.
+    if (!id || !simParams || criteriaSaved !== false) return;
+    if (seededPressureFor.current === id) return;
+    seededPressureFor.current = id;
     const min = simParams.pdaMinPressure;
     const req =
       simParams.pdaRequiredPressure > min
         ? simParams.pdaRequiredPressure
         : min + 11;
-    setThresholds((prev) => ({
-      ...prev,
+    setCriteria({
+      ...criteria,
       pressure: { low: min, required: req, high: req + 10 },
-    }));
-  }, [simParams]);
+    });
+  }, [simParams, project?.id, criteriaSaved, criteria, setCriteria]);
   // ── View mode (Map vs Schematic) and basemap style ───────────────────
   // "none" is a *map* basemap (geographic layout, no tiles), distinct from
   // schematic mode (idealised orthogonal layout).

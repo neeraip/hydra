@@ -1,16 +1,13 @@
 import { useEffect, useState } from "react";
 import { useActiveProject, useAppState, useSimulation } from "../../AppContext";
-import {
-  DEFAULT_MIN_PRESSURE_M,
-  setMinPressure,
-  useMinPressure,
-} from "../../analysisCriteria";
 import { MetricChip } from "../../components/ui/MetricChip";
 import { WarningRow } from "../../components/ui/WarningRow";
 import {
+  DEFAULT_MIN_PRESSURE_M,
   getResultAnalytics,
   type PumpEnergyRecord,
   type ResultAnalytics,
+  useProjectCriteria,
 } from "../../hooks";
 import {
   formatQty,
@@ -35,7 +32,11 @@ export function AnalysisPanel() {
   const { project } = useActiveProject();
   const { activeScenarioId, deferredProjectView } = useAppState();
   const visible = deferredProjectView === "analysis";
-  const minPressure = useMinPressure();
+  // The compliance criterion is a property of the project, not of the app:
+  // it was previously a single global value, so reviewing one network against
+  // a 30 m standard silently recomputed every other network's compliance.
+  const { criteria, setCriteria } = useProjectCriteria(project?.id ?? null);
+  const minPressure = criteria.minPressureM;
 
   // Load analytics from the backend — streams the .out file one period at a
   // time so it is safe for arbitrarily large networks.  Re-fetches whenever
@@ -78,7 +79,10 @@ export function AnalysisPanel() {
       }}
     >
       {/* Compliance criterion editor */}
-      <CriteriaBar />
+      <CriteriaBar
+        minPressure={minPressure}
+        onChange={(m) => setCriteria({ ...criteria, minPressureM: m })}
+      />
 
       {/* Panel 1: System Summary */}
       <SystemSummary
@@ -230,9 +234,14 @@ function SystemSummary({
 
 /* ── Compliance criterion editor ─────────────────────────────────────────────── */
 
-function CriteriaBar() {
+function CriteriaBar({
+  minPressure,
+  onChange,
+}: {
+  minPressure: number;
+  onChange: (m: number) => void;
+}) {
   const sys = useUnitSystem();
-  const minPressure = useMinPressure();
   const asDisplay = (m: number) =>
     toDisplay(m, "pressure", sys).toFixed(sys === "si" ? 0 : 1);
   const [draft, setDraft] = useState(asDisplay(minPressure));
@@ -247,7 +256,7 @@ function CriteriaBar() {
   const commit = () => {
     const n = Number(draft);
     if (Number.isFinite(n) && n >= 0) {
-      setMinPressure(fromDisplay(n, "pressure", sys));
+      onChange(fromDisplay(n, "pressure", sys));
     } else {
       setDraft(asDisplay(minPressure));
     }
@@ -305,7 +314,7 @@ function CriteriaBar() {
       {minPressure !== DEFAULT_MIN_PRESSURE_M && (
         <button
           type="button"
-          onClick={() => setMinPressure(DEFAULT_MIN_PRESSURE_M)}
+          onClick={() => onChange(DEFAULT_MIN_PRESSURE_M)}
           style={{
             background: "transparent",
             border: "none",

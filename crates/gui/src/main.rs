@@ -57,6 +57,8 @@ fn main() {
             commands::delete_project,
             commands::delete_simulation,
             commands::delete_all_simulations,
+            commands::get_project_criteria,
+            commands::update_project_criteria,
             commands::rename_project,
             commands::update_project_crs,
             commands::list_crs_catalog_page,

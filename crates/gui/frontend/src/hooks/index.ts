@@ -37,6 +37,7 @@ export {
   pressureColor,
 } from "../types";
 export * from "./basemapProviders";
+export * from "./criteria";
 export * from "./editors";
 export {
   type EngineInfo,
