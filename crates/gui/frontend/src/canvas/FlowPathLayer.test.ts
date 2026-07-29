@@ -48,11 +48,11 @@ describe("FlowPathLayer statics", () => {
     expect(defaults.flowTime).toEqual({ type: "number", value: 0 });
   });
 
-  it("declares getFlowParams as an accessor defaulting to [1, 1, 0]", () => {
+  it("declares getFlowParams as an accessor defaulting to [1, 0]", () => {
     const defaults = FlowPathLayer.defaultProps as Record<string, unknown>;
     expect(defaults.getFlowParams).toEqual({
       type: "accessor",
-      value: [1, 1, 0],
+      value: [1, 0],
     });
   });
 
@@ -66,12 +66,12 @@ describe("FlowPathLayer.getShaders", () => {
   const inject = shaders.inject ?? {};
   const allInjected = Object.values(inject).join("\n");
 
-  it("declares exactly one instanced flow attribute (packed vec3)", () => {
+  it("declares exactly one instanced flow attribute (packed vec2)", () => {
     const vsDecl = inject["vs:#decl"] ?? "";
-    expect(vsDecl).toContain("in vec3 instanceFlowParams");
+    expect(vsDecl).toContain("in vec2 instanceFlowParams");
     // Exactly one instanced attribute declaration across all injections.
     const instanceDecls = allInjected.match(/in\s+vec\d\s+instance\w+/g) ?? [];
-    expect(instanceDecls).toEqual(["in vec3 instanceFlowParams"]);
+    expect(instanceDecls).toEqual(["in vec2 instanceFlowParams"]);
   });
 
   it("does not reintroduce the four legacy per-input attributes", () => {
@@ -88,7 +88,7 @@ describe("FlowPathLayer.getShaders", () => {
     expect(inject["vs:#main-end"]).toContain(
       "vFlowParams = instanceFlowParams",
     );
-    expect(inject["fs:#decl"]).toContain("in vec3 vFlowParams");
+    expect(inject["fs:#decl"]).toContain("in vec2 vFlowParams");
   });
 
   it("includes the flowUniforms module carrying the clock as a UBO", () => {
@@ -109,5 +109,38 @@ describe("FlowPathLayer.getShaders", () => {
     // Sign of vFlowParams.x encodes flow direction (negative = to→from).
     expect(fsColor).toContain("vFlowParams.x < 0.0 ? -1.0 : 1.0");
     expect(fsColor).toContain("abs(vFlowParams.x)");
+  });
+});
+
+// ── Clock wrap ───────────────────────────────────────────────────────────────
+
+describe("flow rate quantisation", () => {
+  /** The shader's `flowRate`, mirrored so the wrap invariant is testable. */
+  const flowRate = (speed: number) =>
+    0.95 + 0.05 * Math.floor(speed * 18 + 0.5);
+
+  const WRAP_SECONDS = 3600;
+
+  it("turns a whole number of cycles before the clock wraps", () => {
+    // The animation clock resets at 3600s. Unless every link's rate completes
+    // an exact number of cycles by then, each one's dashes jump at the wrap —
+    // by a different amount each, once an hour.
+    for (let i = 0; i <= 40; i += 1) {
+      const cycles = flowRate(i / 40) * WRAP_SECONDS;
+      expect(Number.isInteger(Math.round(cycles * 1e6) / 1e6)).toBe(true);
+    }
+  });
+
+  it("keeps every rate inside the intended range", () => {
+    expect(flowRate(0)).toBeCloseTo(0.95, 10);
+    expect(flowRate(1)).toBeCloseTo(1.85, 10);
+  });
+
+  it("resolves finely enough not to band visibly", () => {
+    // 19 steps across the range; adjacent speeds differ by at most one step.
+    const steps = new Set(
+      Array.from({ length: 101 }, (_, i) => flowRate(i / 100)),
+    );
+    expect(steps.size).toBe(19);
   });
 });

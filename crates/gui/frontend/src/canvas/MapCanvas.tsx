@@ -1058,7 +1058,7 @@ export const MapCanvas = memo(function MapCanvas({
                         ? Math.min(1, Math.abs(f) / Math.max(0.01, flowMax))
                         : 0.2;
                   const dir = f != null && f < 0 ? -1 : 1;
-                  return [speed * dir, 1.0, hashStr(d.id) * 6.28318];
+                  return [speed * dir, hashStr(d.id) * 6.28318];
                 },
                 updateTriggers: {
                   getColor: linkColorTriggers,
