@@ -1,6 +1,6 @@
 /**
  * Project hooks + persistence commands (list/create/rename/delete/save),
- * CRS catalog access, DB/filesystem reconciliation, and app versions.
+ * CRS catalog access, and app versions.
  */
 
 import { useEffect, useMemo, useState } from "react";
@@ -253,26 +253,6 @@ export async function saveProjectOnDisk(
     { id, scenarioId: scenarioId ?? null },
     false,
   );
-}
-
-// ── DB / filesystem reconciliation ────────────────────────────────────────
-
-export interface ReconcileReport {
-  /** Number of orphaned on-disk folders recovered into the DB. */
-  recovered: number;
-  /** Project IDs in the DB whose on-disk folder is missing. */
-  folderMissing: string[];
-}
-
-/**
- * Scan `<app_data>/projects/` for orphaned folders and recover them into the
- * DB. Also returns the IDs of DB rows whose folder no longer exists on disk.
- */
-export async function reconcileProjects(): Promise<ReconcileReport> {
-  return tryInvokeOr<ReconcileReport>("reconcile_projects", undefined, {
-    recovered: 0,
-    folderMissing: [],
-  });
 }
 
 // ── App versions ──────────────────────────────────────────────────────────

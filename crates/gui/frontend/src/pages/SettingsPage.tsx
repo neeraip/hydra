@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useAppState } from "../AppContext";
 import { Toggle } from "../components/ui/Toggle";
-import { getVersions, reconcileProjects, type Versions } from "../hooks";
+import { getVersions, type Versions } from "../hooks";
 import { useUpdater } from "../hooks/useUpdater";
 import { setUnitSystem, type UnitSystem, useUnitSystem } from "../units";
 
@@ -231,7 +231,7 @@ function UnitSystemToggle() {
 }
 
 export function SettingsPage() {
-  const { showToast, openBasemapProvidersModal } = useAppState();
+  const { openBasemapProvidersModal } = useAppState();
   const [reducedMotion, setReducedMotionRaw] = useState(() =>
     getBool(SK.reducedMotion, false),
   );
@@ -242,7 +242,6 @@ export function SettingsPage() {
     getBool(SK.restoreSession, true),
   );
   const [versions, setVersions] = useState<Versions | null>(null);
-  const [isReconciling, setIsReconciling] = useState(false);
 
   // Wrap setters to also persist to localStorage.
   const setRestoreSession = (v: boolean) => {
@@ -311,13 +310,18 @@ export function SettingsPage() {
         >
           <Toggle checked={restoreSession} onChange={setRestoreSession} />
         </SettingRow>
-        {/* Appearance */}
+        {/* Appearance — theme, units and basemap are all "how things are
+            shown", and each had its own header for a single row. */}
         <Section>Appearance</Section>
         <SettingRow label="Theme" description="Choose dark or light mode.">
           <ThemeToggle />
         </SettingRow>
-        {/* Map */}
-        <Section>Map</Section>
+        <SettingRow
+          label="Display units"
+          description="How values are shown and entered throughout the app. Files and exports (INP, CSV, GeoJSON) always remain in the model's native/SI units."
+        >
+          <UnitSystemToggle />
+        </SettingRow>
         <SettingRow
           label="Basemap providers"
           description="Connect imagery providers (Mapbox, MapTiler, Esri) and choose which basemap styles appear in the canvas picker."
@@ -338,14 +342,6 @@ export function SettingsPage() {
           >
             Manage providers…
           </button>
-        </SettingRow>
-        {/* Units */}
-        <Section>Units</Section>
-        <SettingRow
-          label="Display units"
-          description="How values are shown and entered throughout the app. Files and exports (INP, CSV, GeoJSON) always remain in the model's native/SI units."
-        >
-          <UnitSystemToggle />
         </SettingRow>
         {/* Accessibility */}
         <Section>Accessibility</Section>
@@ -407,51 +403,6 @@ export function SettingsPage() {
             </span>
           </div>
         </div>
-        {/* Advanced */}
-        <Section>Advanced</Section>
-        <SettingRow
-          label="Repair project library"
-          description="Scan the projects folder for orphaned bundles and re-import them. Also flags projects whose folder is missing."
-        >
-          <button
-            type="button"
-            disabled={isReconciling}
-            onClick={async () => {
-              setIsReconciling(true);
-              try {
-                const report = await reconcileProjects();
-                const parts: string[] = [];
-                if (report.recovered > 0)
-                  parts.push(
-                    `Recovered ${report.recovered} project${report.recovered === 1 ? "" : "s"}`,
-                  );
-                if (report.folderMissing.length > 0)
-                  parts.push(
-                    `${report.folderMissing.length} folder${report.folderMissing.length === 1 ? "" : "s"} missing`,
-                  );
-                showToast(
-                  parts.length > 0 ? parts.join(" \u00b7 ") : "No issues found",
-                );
-              } finally {
-                setIsReconciling(false);
-              }
-            }}
-            style={{
-              padding: "5px 14px",
-              border: "1px solid var(--border-hover)",
-              borderRadius: 6,
-              background: "transparent",
-              color: "var(--text-primary)",
-              cursor: isReconciling ? "not-allowed" : "pointer",
-              fontSize: 13,
-              fontFamily: "var(--font-ui)",
-              opacity: isReconciling ? 0.5 : 1,
-              transition: "opacity var(--t-fast)",
-            }}
-          >
-            {isReconciling ? "Scanning\u2026" : "Repair now"}
-          </button>
-        </SettingRow>
       </div>
     </div>
   );

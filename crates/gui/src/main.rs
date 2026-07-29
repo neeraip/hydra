@@ -112,7 +112,6 @@ fn main() {
             commands::get_versions,
             commands::list_engines,
             commands::updater_supported,
-            commands::reconcile_projects,
             commands::get_run_queue,
             commands::enqueue_runs,
             commands::cancel_run_queue,

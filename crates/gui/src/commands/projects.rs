@@ -1218,30 +1218,6 @@ fn project_to_dto(
     }
 }
 
-/// Summary returned by [`reconcile_projects`].
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ReconcileReport {
-    /// Number of orphaned on-disk project folders that were re-imported.
-    /// Always 0 — the filesystem is the source of truth, so nothing can be
-    /// orphaned; kept for wire-format compatibility.
-    pub recovered: u32,
-    /// Project IDs whose on-disk folder is missing. Always empty; kept for
-    /// wire-format compatibility.
-    pub folder_missing: Vec<String>,
-}
-
-/// No-op reconcile command. The filesystem is now the source of truth, so
-/// there is no DB to sync against. Returns an empty report.
-#[tauri::command]
-/// No-op (returns empty report); the filesystem is always authoritative.
-pub fn reconcile_projects(_app: tauri::AppHandle) -> Result<ReconcileReport, String> {
-    Ok(ReconcileReport {
-        recovered: 0,
-        folder_missing: vec![],
-    })
-}
-
 /// Sort projects most-recently-modified first, by the epoch `modified_at`
 /// (never by the human-readable label, which does not sort chronologically).
 fn sort_projects_most_recent_first(projects: &mut [Project]) {

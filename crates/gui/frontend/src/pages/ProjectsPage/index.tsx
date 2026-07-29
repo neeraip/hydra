@@ -33,7 +33,6 @@ import {
   type Project,
   type ProjectState,
   projectsResultsSize,
-  reconcileProjects,
   renameProjectOnDisk,
   useProjects,
 } from "../../hooks";
@@ -133,11 +132,6 @@ export function ProjectsPage() {
     [openProject],
   );
   const projects = useProjects(projectsVersion);
-
-  // Reconcile DB with filesystem on first mount.
-  useEffect(() => {
-    reconcileProjects().then(() => bumpProjects());
-  }, [bumpProjects]);
 
   const [globalFilter, setGlobalFilter] = useState("");
   const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>([]);

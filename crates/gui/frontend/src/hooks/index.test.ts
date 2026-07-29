@@ -22,7 +22,6 @@ import {
   getVersions,
   type Project,
   projectHasNetwork,
-  reconcileProjects,
   type SimParams,
   updateSimParams,
 } from "./index";
@@ -45,23 +44,6 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.unstubAllGlobals();
-});
-
-// ── reconcileProjects ─────────────────────────────────────────────────────────
-
-describe("reconcileProjects", () => {
-  it("returns the fallback value when not inside a Tauri shell", async () => {
-    // Running in Node → isTauri() returns false → tryInvoke returns null
-    // → reconcileProjects falls back to { recovered: 0, folderMissing: [] }
-    const result = await reconcileProjects();
-    expect(result.recovered).toBe(0);
-    expect(result.folderMissing).toEqual([]);
-  });
-
-  it("fallback folderMissing is an array (not null/undefined)", async () => {
-    const result = await reconcileProjects();
-    expect(Array.isArray(result.folderMissing)).toBe(true);
-  });
 });
 
 // ── getVersions ───────────────────────────────────────────────────────────────
