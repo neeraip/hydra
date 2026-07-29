@@ -6,6 +6,7 @@ import {
   statusColor,
   velocityColor,
 } from "../../../canvas/colors";
+import { statusLabel } from "../../../canvas/MapCanvas/colorUtils";
 import type { LinkVariable, NodeVariable } from "../../../canvas/types";
 import type { Link, Node, ResultRanges } from "../../../hooks";
 import { formatQty, useUnitSystem } from "../../../units";
@@ -45,21 +46,6 @@ export const LINK_TYPE_COLOR: Record<string, string> = {
   pump: "#d4a017",
   valve: "#f97316",
 };
-
-/**
- * Human label for Hydra OUT-file status codes (status_to_f32):
- * 0=XHead, 1=TempClosed, 2=Closed, 3=Open, 4=Active, 6=XFcv, 7=XPressure
- */
-export function statusLabel(s: number | null | undefined): string {
-  if (s === 3) return "Open";
-  if (s === 2) return "Closed";
-  if (s === 4) return "Active";
-  if (s === 0) return "Closed (XHead)";
-  if (s === 1) return "Temp Closed";
-  if (s === 6) return "Active (XFcv)";
-  if (s === 7) return "Active (XPressure)";
-  return "—";
-}
 
 // ── Results cards ─────────────────────────────────────────────────────────────
 

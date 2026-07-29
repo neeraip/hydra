@@ -5,6 +5,7 @@
 
 import type { PeriodResults } from "../hooks";
 import { toDisplay, unitLabel, type useUnitSystem } from "../units";
+import { statusLabel } from "./MapCanvas/colorUtils";
 import type { LinkVariable, NodeVariable } from "./types";
 
 /** What the hover chip is pointing at. `si` indexes the period-result arrays. */
@@ -57,7 +58,11 @@ function hoverTipValue(
         return q(at(pr.linkHeadloss, i), "headloss", 2);
       case "status": {
         const s = at(pr.linkStatus, i);
-        return s == null ? null : s === 0 ? "open" : s === 1 ? "closed" : "cv";
+        // These are OUT-file status codes, not a 0/1 open/closed flag: 3 is
+        // Open and 2 is Closed, so a home-grown mapping here labelled every
+        // ordinary open link "cv" — a value that is not even a simulated
+        // status, only a model-side check-valve flag.
+        return s == null ? null : statusLabel(s);
       }
       case "quality": {
         const v = at(pr.linkQuality, i);

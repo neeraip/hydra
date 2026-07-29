@@ -15,6 +15,7 @@ import {
   nodeTypeRgba,
   qualityRgba,
   sequentialRgba,
+  statusLabel,
   statusRgba,
   velocityRgba,
 } from "./colorUtils";
@@ -284,5 +285,53 @@ describe("nodeRgba", () => {
     expect(rgbaOf(makeNode({ demand: 10 }), "demand")).toEqual([
       255, 0, 0, 220,
     ]);
+  });
+});
+
+// ── statusLabel ──────────────────────────────────────────────────────────────
+
+describe("statusLabel", () => {
+  // The codes come from the engine's `status_to_f32`. They are NOT a 0/1
+  // open/closed flag, which is precisely what a duplicate mapping in the
+  // hover chip assumed — labelling every open link (code 3) as "cv".
+  it("maps every OUT-file status code the writer can emit", () => {
+    expect(statusLabel(0)).toBe("Closed (XHead)");
+    expect(statusLabel(1)).toBe("Temp Closed");
+    expect(statusLabel(2)).toBe("Closed");
+    expect(statusLabel(3)).toBe("Open");
+    expect(statusLabel(4)).toBe("Active");
+    expect(statusLabel(6)).toBe("Active (XFcv)");
+    expect(statusLabel(7)).toBe("Active (XPressure)");
+  });
+
+  it("never reports a check valve, which is not a simulated status", () => {
+    // `cv` is a model-side flag on a pipe; the runtime LinkStatus enum has no
+    // such variant, so no status code may ever produce it as a label. Matched
+    // whole-string, since "Active (XFcv)" legitimately contains those letters.
+    for (const code of [0, 1, 2, 3, 4, 5, 6, 7, 8]) {
+      expect(statusLabel(code).trim().toLowerCase()).not.toBe("cv");
+    }
+  });
+
+  it("falls back for absent or unknown codes", () => {
+    expect(statusLabel(null)).toBe("—");
+    expect(statusLabel(undefined)).toBe("—");
+    expect(statusLabel(5)).toBe("—");
+  });
+
+  it("agrees with statusRgba on which codes are closed, open and active", () => {
+    const closed = [201, 64, 64, 200];
+    const active = [212, 160, 23, 200];
+    const open = [120, 150, 185, 180];
+    for (const c of [0, 1, 2]) {
+      expect(statusLabel(c)).toMatch(/Closed/);
+      expect(statusRgba(c)).toEqual(closed);
+    }
+    expect(statusLabel(3)).toBe("Open");
+    expect(statusRgba(3)).toEqual(open);
+    for (const c of [4, 6, 7]) {
+      expect(statusLabel(c)).toMatch(/Active/);
+      expect(statusRgba(c)).toEqual(active);
+    }
   });
 });

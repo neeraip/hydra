@@ -177,6 +177,26 @@ export function flowMagnitudeRgba(
  * Status RGBA using Hydra OUT-file codes (status_to_f32):
  * 0=XHead, 1=TempClosed, 2=Closed, 3=Open, 4=Active, 6=XFcv, 7=XPressure
  */
+/**
+ * Human label for Hydra OUT-file link status codes (`status_to_f32` in the
+ * engine's out writer): 0=XHead, 1=TempClosed, 2=Closed, 3=Open, 4=Active,
+ * 6=XFcv, 7=XPressure.
+ *
+ * Lives beside `statusRgba` because both decode the same table, and a second
+ * copy of it elsewhere is how the hover chip came to report every open link
+ * as "cv".
+ */
+export function statusLabel(s: number | null | undefined): string {
+  if (s === 3) return "Open";
+  if (s === 2) return "Closed";
+  if (s === 4) return "Active";
+  if (s === 0) return "Closed (XHead)";
+  if (s === 1) return "Temp Closed";
+  if (s === 6) return "Active (XFcv)";
+  if (s === 7) return "Active (XPressure)";
+  return "—";
+}
+
 export function statusRgba(status: number | null | undefined): RGBA {
   if (status === 2 || status === 0 || status === 1) return [201, 64, 64, 200]; // closed variants — red
   if (status === 4 || status === 6 || status === 7) return [212, 160, 23, 200]; // active/controlled — amber
