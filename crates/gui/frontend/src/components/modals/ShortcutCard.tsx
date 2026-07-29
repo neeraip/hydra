@@ -101,7 +101,7 @@ export function ShortcutCard({ onClose }: { onClose: () => void }) {
           <h2
             style={{
               margin: 0,
-              fontSize: 17,
+              fontSize: "var(--text-2xl)",
               fontWeight: 600,
               color: "var(--text-primary)",
             }}
@@ -117,7 +117,7 @@ export function ShortcutCard({ onClose }: { onClose: () => void }) {
               background: "transparent",
               color: "var(--text-tertiary)",
               cursor: "pointer",
-              fontSize: 18,
+              fontSize: "var(--text-2xl)",
               lineHeight: 1,
               padding: "4px 8px",
               borderRadius: 6,
@@ -142,7 +142,7 @@ export function ShortcutCard({ onClose }: { onClose: () => void }) {
             <div key={section.title} style={{ padding: "16px 24px" }}>
               <div
                 style={{
-                  fontSize: 11,
+                  fontSize: "var(--text-sm)",
                   fontWeight: 700,
                   letterSpacing: "0.08em",
                   textTransform: "uppercase",
@@ -159,7 +159,7 @@ export function ShortcutCard({ onClose }: { onClose: () => void }) {
                       <td
                         style={{
                           padding: "5px 0",
-                          fontSize: 13,
+                          fontSize: "var(--text-lg)",
                           color: "var(--text-secondary)",
                           paddingRight: 16,
                         }}

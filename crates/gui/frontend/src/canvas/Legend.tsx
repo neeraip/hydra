@@ -71,7 +71,7 @@ function LocateRow({ onLocate }: { onLocate: (which: "min" | "max") => void }) {
     border: "1px solid var(--border)",
     borderRadius: 4,
     color: "var(--text-secondary)",
-    fontSize: 10,
+    fontSize: "var(--text-xs)",
     fontFamily: "var(--font-ui)",
     padding: "1px 6px",
     cursor: "pointer",
@@ -80,7 +80,9 @@ function LocateRow({ onLocate }: { onLocate: (which: "min" | "max") => void }) {
     <div
       style={{ display: "flex", alignItems: "center", gap: 5, marginTop: 5 }}
     >
-      <span style={{ fontSize: 10, color: "var(--text-tertiary)" }}>
+      <span
+        style={{ fontSize: "var(--text-xs)", color: "var(--text-tertiary)" }}
+      >
         Locate
       </span>
       <button
@@ -156,13 +158,13 @@ function Ramp({
       <div style={{ display: "flex", justifyContent: "space-between" }}>
         <span
           className="mono"
-          style={{ fontSize: 10, color: "var(--text-tertiary)" }}
+          style={{ fontSize: "var(--text-xs)", color: "var(--text-tertiary)" }}
         >
           {min.toFixed(1)}
         </span>
         <span
           className="mono"
-          style={{ fontSize: 10, color: "var(--text-tertiary)" }}
+          style={{ fontSize: "var(--text-xs)", color: "var(--text-tertiary)" }}
         >
           {max.toFixed(1)}
         </span>
@@ -196,7 +198,12 @@ function StatusSwatches() {
                 background: color,
               }}
             />
-            <span style={{ fontSize: 10, color: "var(--text-secondary)" }}>
+            <span
+              style={{
+                fontSize: "var(--text-xs)",
+                color: "var(--text-secondary)",
+              }}
+            >
               {label}
             </span>
           </div>
@@ -211,14 +218,14 @@ const inputStyle: CSSProperties = {
   padding: "4px 6px",
   borderRadius: 6,
   color: "var(--text-primary)",
-  fontSize: 10,
+  fontSize: "var(--text-xs)",
   boxSizing: "border-box",
 };
 
 /** Style for the "< low · target · > high" annotation under a ramp. */
 const THRESHOLD_ANNOTATION_STYLE: CSSProperties = {
   marginTop: 5,
-  fontSize: 10,
+  fontSize: "var(--text-xs)",
   color: "var(--text-tertiary)",
   lineHeight: 1.5,
 };
@@ -226,7 +233,7 @@ const THRESHOLD_ANNOTATION_STYLE: CSSProperties = {
 // ── Legend component ──────────────────────────────────────────────────────────
 
 const SECTION_LABEL_STYLE: React.CSSProperties = {
-  fontSize: 10,
+  fontSize: "var(--text-xs)",
   fontWeight: 600,
   color: "var(--text-secondary)",
   marginBottom: 5,
@@ -239,7 +246,7 @@ const PICKER_BTN_STYLE: React.CSSProperties = {
   gap: 4,
   display: "flex",
   alignItems: "center",
-  fontSize: 11,
+  fontSize: "var(--text-sm)",
   fontWeight: 600,
   fontFamily: "var(--font-ui)",
   color: "var(--text-primary)",
@@ -367,7 +374,7 @@ function PickerButton<T extends string>({
                 color:
                   o.value === value ? "var(--accent)" : "var(--text-secondary)",
                 cursor: "pointer",
-                fontSize: 11,
+                fontSize: "var(--text-sm)",
                 textAlign: "left",
                 fontFamily: "var(--font-ui)",
               }}
@@ -424,7 +431,13 @@ function ThresholdEditorSection<K extends string>({
         }}
       >
         {footLabels.map((l) => (
-          <span key={l} style={{ fontSize: 9, color: "var(--text-disabled)" }}>
+          <span
+            key={l}
+            style={{
+              fontSize: "var(--text-2xs)",
+              color: "var(--text-disabled)",
+            }}
+          >
             {l}
           </span>
         ))}
@@ -701,7 +714,7 @@ export function Legend({
                   padding: "5px 8px",
                   borderRadius: 6,
                   color: "var(--text-secondary)",
-                  fontSize: 10,
+                  fontSize: "var(--text-xs)",
                   cursor: "pointer",
                   fontFamily: "var(--font-ui)",
                 }}
@@ -745,7 +758,7 @@ export function Legend({
                       border: "1px solid rgba(74,144,217,0.4)",
                       background: "rgba(74,144,217,0.22)",
                       color: "var(--text-primary)",
-                      fontSize: 10,
+                      fontSize: "var(--text-xs)",
                       cursor: "pointer",
                       fontFamily: "var(--font-ui)",
                     }}
@@ -774,7 +787,7 @@ export function Legend({
                   borderRadius: 6,
                   color:
                     colorMode === m ? "var(--accent)" : "var(--text-secondary)",
-                  fontSize: 10,
+                  fontSize: "var(--text-xs)",
                   cursor: "pointer",
                   fontFamily: "var(--font-ui)",
                 }}

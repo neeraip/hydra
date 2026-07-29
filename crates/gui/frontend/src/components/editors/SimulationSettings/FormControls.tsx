@@ -5,7 +5,7 @@ export const inputStyle: React.CSSProperties = {
   border: "1px solid var(--border)",
   borderRadius: 4,
   padding: "5px 8px",
-  fontSize: 12,
+  fontSize: "var(--text-md)",
   color: "var(--text-primary)",
   fontFamily: "var(--font-ui)",
   width: "100%",
@@ -19,7 +19,7 @@ export const ghostBtn: React.CSSProperties = {
   color: "var(--text-secondary)",
   borderRadius: 5,
   padding: "5px 10px",
-  fontSize: 11,
+  fontSize: "var(--text-sm)",
   cursor: "pointer",
   fontFamily: "var(--font-ui)",
   display: "inline-flex",
@@ -33,7 +33,7 @@ export const primaryBtn: React.CSSProperties = {
   color: "#fff",
   borderRadius: 5,
   padding: "5px 12px",
-  fontSize: 11,
+  fontSize: "var(--text-sm)",
   fontWeight: 600,
   cursor: "pointer",
   fontFamily: "var(--font-ui)",
@@ -93,7 +93,7 @@ export function Field({
     >
       <div
         style={{
-          fontSize: 11,
+          fontSize: "var(--text-sm)",
           color: "var(--text-tertiary)",
           textTransform: "uppercase",
           letterSpacing: "0.05em",
@@ -106,7 +106,7 @@ export function Field({
       ) : (
         <div
           style={{
-            fontSize: 12,
+            fontSize: "var(--text-md)",
             color: "var(--text-primary)",
             fontFamily: "var(--font-ui)",
             padding: "5px 0",
@@ -125,7 +125,7 @@ export function Field({
 
 export function Empty({ children }: { children: React.ReactNode }) {
   return (
-    <div style={{ color: "var(--text-tertiary)", fontSize: 12 }}>
+    <div style={{ color: "var(--text-tertiary)", fontSize: "var(--text-md)" }}>
       {children}
     </div>
   );

@@ -119,7 +119,7 @@ export function CanvasToolbar({
           background: basemap === id ? "var(--accent-dim)" : "transparent",
           color: basemap === id ? "var(--accent)" : "var(--text-secondary)",
           cursor: "pointer",
-          fontSize: 12,
+          fontSize: "var(--text-md)",
           textAlign: "left",
           fontFamily: "var(--font-ui)",
         }}
@@ -172,7 +172,7 @@ export function CanvasToolbar({
                   viewMode === m ? "var(--accent)" : "var(--text-secondary)",
                 padding: "3px 10px",
                 borderRadius: 4,
-                fontSize: 11,
+                fontSize: "var(--text-sm)",
                 fontWeight: 600,
                 cursor: "pointer",
                 fontFamily: "var(--font-ui)",
@@ -215,7 +215,7 @@ export function CanvasToolbar({
             style={{
               width: "auto",
               padding: "0 8px",
-              fontSize: 12,
+              fontSize: "var(--text-md)",
               gap: 4,
               display: "flex",
               alignItems: "center",
@@ -260,7 +260,7 @@ export function CanvasToolbar({
                   <div
                     style={{
                       padding: "6px 12px 2px",
-                      fontSize: 10,
+                      fontSize: "var(--text-xs)",
                       fontWeight: 600,
                       letterSpacing: "0.06em",
                       textTransform: "uppercase",
@@ -277,7 +277,7 @@ export function CanvasToolbar({
                 <div
                   style={{
                     padding: "7px 12px",
-                    fontSize: 11,
+                    fontSize: "var(--text-sm)",
                     color: "var(--text-tertiary)",
                     fontFamily: "var(--font-ui)",
                   }}
@@ -300,7 +300,7 @@ export function CanvasToolbar({
               >
                 <span
                   style={{
-                    fontSize: 10,
+                    fontSize: "var(--text-xs)",
                     fontWeight: 600,
                     letterSpacing: "0.06em",
                     textTransform: "uppercase",
@@ -331,7 +331,7 @@ export function CanvasToolbar({
                 />
                 <span
                   style={{
-                    fontSize: 10,
+                    fontSize: "var(--text-xs)",
                     color: "var(--text-secondary)",
                     fontFamily: "var(--font-mono)",
                     fontVariantNumeric: "tabular-nums",
@@ -358,7 +358,7 @@ export function CanvasToolbar({
                   background: "transparent",
                   color: "var(--text-secondary)",
                   cursor: "pointer",
-                  fontSize: 12,
+                  fontSize: "var(--text-md)",
                   textAlign: "left",
                   fontFamily: "var(--font-ui)",
                 }}
@@ -381,7 +381,7 @@ export function CanvasToolbar({
             style={{
               width: "auto",
               padding: "0 8px",
-              fontSize: 12,
+              fontSize: "var(--text-md)",
               gap: 4,
               display: "flex",
               alignItems: "center",
@@ -475,7 +475,7 @@ export function CanvasToolbar({
           data-tooltip-pos="bottom"
           aria-label="Measure distance"
           style={{
-            fontSize: 12,
+            fontSize: "var(--text-md)",
             fontWeight: 600,
             ...ICON_BTN_STYLE,
             ...mapOnlyDim,
@@ -493,7 +493,7 @@ export function CanvasToolbar({
             data-tooltip-pos="bottom"
             aria-label="Clear annotations"
             style={{
-              fontSize: 11,
+              fontSize: "var(--text-sm)",
               color: "var(--text-tertiary)",
               ...ICON_BTN_STYLE,
             }}
@@ -523,7 +523,7 @@ export function CanvasToolbar({
           onClick={() => setLayer("nodeLabels", !canvasLayers.nodeLabels)}
           data-tooltip="Toggle node labels"
           data-tooltip-pos="bottom"
-          style={{ fontSize: 11, fontWeight: 600 }}
+          style={{ fontSize: "var(--text-sm)", fontWeight: 600 }}
         >
           Aa
         </button>
@@ -534,7 +534,7 @@ export function CanvasToolbar({
           onClick={() => setLayer("linkLabels", !canvasLayers.linkLabels)}
           data-tooltip="Toggle link labels"
           data-tooltip-pos="bottom"
-          style={{ fontSize: 11, fontWeight: 600 }}
+          style={{ fontSize: "var(--text-sm)", fontWeight: 600 }}
         >
           Ll
         </button>

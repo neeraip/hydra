@@ -194,7 +194,7 @@ export const STATE_COLOR: Record<string, string> = {
 };
 
 export const rowButtonStyle: React.CSSProperties = {
-  fontSize: 11,
+  fontSize: "var(--text-sm)",
   fontWeight: 500,
   padding: "3px 9px",
   border: "1px solid var(--border-hover)",

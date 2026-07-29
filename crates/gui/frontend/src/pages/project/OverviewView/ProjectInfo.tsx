@@ -48,7 +48,7 @@ export function ProjectInfo({
         >
           <span
             style={{
-              fontSize: 11,
+              fontSize: "var(--text-sm)",
               color: "var(--text-tertiary)",
               textTransform: "uppercase",
               letterSpacing: "0.05em",
@@ -66,7 +66,7 @@ export function ProjectInfo({
           >
             <span
               style={{
-                fontSize: 12,
+                fontSize: "var(--text-md)",
                 color: "var(--text-primary)",
                 fontFamily: r.mono ? "var(--font-mono)" : "var(--font-ui)",
                 textAlign: "right",
@@ -92,7 +92,7 @@ export function ProjectInfo({
                   background: "transparent",
                   border: "none",
                   padding: 0,
-                  fontSize: 12,
+                  fontSize: "var(--text-md)",
                   color: "var(--accent)",
                   cursor: "pointer",
                   fontFamily: "var(--font-ui)",

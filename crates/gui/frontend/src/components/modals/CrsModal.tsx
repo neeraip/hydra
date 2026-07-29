@@ -306,7 +306,7 @@ export function CrsModal() {
         >
           <span
             style={{
-              fontSize: 14,
+              fontSize: "var(--text-xl)",
               fontWeight: 600,
               color: "var(--text-primary)",
               fontFamily: "var(--font-ui)",
@@ -316,7 +316,7 @@ export function CrsModal() {
           </span>
           <span
             style={{
-              fontSize: 12,
+              fontSize: "var(--text-md)",
               color: "var(--text-tertiary)",
               fontFamily: "var(--font-ui)",
             }}
@@ -328,7 +328,7 @@ export function CrsModal() {
           {panelView === "select" && dirty && (
             <span
               style={{
-                fontSize: 11,
+                fontSize: "var(--text-sm)",
                 color: "var(--accent)",
                 fontFamily: "var(--font-ui)",
               }}
@@ -355,7 +355,7 @@ export function CrsModal() {
                 width: "auto",
                 height: 24,
                 padding: "0 8px",
-                fontSize: 11,
+                fontSize: "var(--text-sm)",
                 borderRadius: 6,
                 background:
                   panelView === "select" ? "var(--accent-dim)" : "transparent",
@@ -375,7 +375,7 @@ export function CrsModal() {
                 width: "auto",
                 height: 24,
                 padding: "0 8px",
-                fontSize: 11,
+                fontSize: "var(--text-sm)",
                 borderRadius: 6,
                 background:
                   panelView === "custom" ? "var(--accent-dim)" : "transparent",
@@ -464,7 +464,7 @@ export function CrsModal() {
                 }}
                 placeholder="Search by name or EPSG code"
                 style={{
-                  fontSize: 13,
+                  fontSize: "var(--text-lg)",
                   padding: "7px 10px",
                   background: "var(--bg-input, var(--bg-card))",
                   border: "1px solid var(--border)",
@@ -475,7 +475,7 @@ export function CrsModal() {
               />
               <div
                 style={{
-                  fontSize: 11,
+                  fontSize: "var(--text-sm)",
                   color: "var(--text-tertiary)",
                   display: "flex",
                   alignItems: "center",
@@ -536,12 +536,14 @@ export function CrsModal() {
                         : "none",
                     }}
                   >
-                    <span style={{ fontSize: 13 }}>{c.label}</span>
+                    <span style={{ fontSize: "var(--text-lg)" }}>
+                      {c.label}
+                    </span>
                     <span style={{ display: "inline-flex", gap: 6 }}>
                       {c.custom && (
                         <span
                           style={{
-                            fontSize: 10,
+                            fontSize: "var(--text-xs)",
                             fontWeight: 700,
                             letterSpacing: "0.05em",
                             color: "var(--text-tertiary)",
@@ -553,7 +555,7 @@ export function CrsModal() {
                       {active && (
                         <span
                           style={{
-                            fontSize: 11,
+                            fontSize: "var(--text-sm)",
                             fontWeight: 600,
                             letterSpacing: "0.04em",
                           }}
@@ -569,7 +571,7 @@ export function CrsModal() {
                 <div
                   style={{
                     padding: "16px 12px",
-                    fontSize: 13,
+                    fontSize: "var(--text-lg)",
                     color: "var(--text-tertiary)",
                     borderBottom: "1px solid var(--border)",
                   }}
@@ -590,7 +592,12 @@ export function CrsModal() {
                 gap: 8,
               }}
             >
-              <span style={{ fontSize: 11, color: "var(--text-tertiary)" }}>
+              <span
+                style={{
+                  fontSize: "var(--text-sm)",
+                  color: "var(--text-tertiary)",
+                }}
+              >
                 Page {catalogPage.page + 1}
               </span>
               <div style={{ display: "flex", gap: 8 }}>
@@ -603,7 +610,7 @@ export function CrsModal() {
                     width: "auto",
                     height: 24,
                     padding: "0 8px",
-                    fontSize: 11,
+                    fontSize: "var(--text-sm)",
                   }}
                 >
                   Prev
@@ -617,7 +624,7 @@ export function CrsModal() {
                     width: "auto",
                     height: 24,
                     padding: "0 8px",
-                    fontSize: 11,
+                    fontSize: "var(--text-sm)",
                   }}
                 >
                   Next
@@ -646,12 +653,17 @@ export function CrsModal() {
                   gap: 4,
                 }}
               >
-                <span style={{ fontSize: 11, color: "var(--text-tertiary)" }}>
+                <span
+                  style={{
+                    fontSize: "var(--text-sm)",
+                    color: "var(--text-tertiary)",
+                  }}
+                >
                   Selected CRS
                 </span>
                 <span
                   style={{
-                    fontSize: 12,
+                    fontSize: "var(--text-md)",
                     color: "var(--text-primary)",
                     fontFamily: "var(--font-mono)",
                   }}
@@ -661,7 +673,7 @@ export function CrsModal() {
                 {highlightedEntry && (
                   <span
                     style={{
-                      fontSize: 10,
+                      fontSize: "var(--text-xs)",
                       color: "var(--text-tertiary)",
                       fontFamily: "var(--font-ui)",
                     }}
@@ -679,7 +691,7 @@ export function CrsModal() {
                     width: "auto",
                     height: 28,
                     padding: "0 10px",
-                    fontSize: 12,
+                    fontSize: "var(--text-md)",
                   }}
                 >
                   Manage custom CRS
@@ -692,7 +704,7 @@ export function CrsModal() {
                     width: "auto",
                     height: 28,
                     padding: "0 10px",
-                    fontSize: 12,
+                    fontSize: "var(--text-md)",
                   }}
                 >
                   Cancel
@@ -706,7 +718,7 @@ export function CrsModal() {
                     width: "auto",
                     height: 28,
                     padding: "0 10px",
-                    fontSize: 12,
+                    fontSize: "var(--text-md)",
                   }}
                 >
                   {projectSaving ? "Saving..." : "Save CRS"}
@@ -726,7 +738,12 @@ export function CrsModal() {
                 gap: 8,
               }}
             >
-              <span style={{ fontSize: 12, color: "var(--text-tertiary)" }}>
+              <span
+                style={{
+                  fontSize: "var(--text-md)",
+                  color: "var(--text-tertiary)",
+                }}
+              >
                 Save a reusable CRS projection available to all projects.
               </span>
               <button
@@ -737,7 +754,7 @@ export function CrsModal() {
                   width: "auto",
                   height: 26,
                   padding: "0 8px",
-                  fontSize: 11,
+                  fontSize: "var(--text-sm)",
                 }}
               >
                 Back to picker
@@ -761,7 +778,7 @@ export function CrsModal() {
                 onChange={(e) => setCustomName(e.currentTarget.value)}
                 placeholder="Display name (e.g. Utility Grid Local)"
                 style={{
-                  fontSize: 13,
+                  fontSize: "var(--text-lg)",
                   padding: "7px 10px",
                   background: "var(--bg-input, var(--bg-card))",
                   border: "1px solid var(--border)",
@@ -776,7 +793,7 @@ export function CrsModal() {
                 onChange={(e) => setCustomCode(e.currentTarget.value)}
                 placeholder="CRS code (e.g. EPSG:28355 or LOCAL:MYGRID)"
                 style={{
-                  fontSize: 13,
+                  fontSize: "var(--text-lg)",
                   padding: "7px 10px",
                   background: "var(--bg-input, var(--bg-card))",
                   border: "1px solid var(--border)",
@@ -791,7 +808,7 @@ export function CrsModal() {
                 placeholder="Proj4 definition (e.g. +proj=tmerc +lat_0=... )"
                 rows={4}
                 style={{
-                  fontSize: 12,
+                  fontSize: "var(--text-md)",
                   padding: "7px 10px",
                   background: "var(--bg-input, var(--bg-card))",
                   border: "1px solid var(--border)",
@@ -811,7 +828,7 @@ export function CrsModal() {
                     width: "auto",
                     height: 28,
                     padding: "0 10px",
-                    fontSize: 12,
+                    fontSize: "var(--text-md)",
                   }}
                 >
                   Save custom CRS
@@ -819,7 +836,7 @@ export function CrsModal() {
                 {savedCustom.length > 0 && (
                   <div
                     style={{
-                      fontSize: 11,
+                      fontSize: "var(--text-sm)",
                       color: "var(--text-tertiary)",
                       display: "flex",
                       alignItems: "center",
@@ -855,7 +872,7 @@ export function CrsModal() {
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <div
                           style={{
-                            fontSize: 11,
+                            fontSize: "var(--text-sm)",
                             color: "var(--text-primary)",
                             whiteSpace: "nowrap",
                             overflow: "hidden",
@@ -866,7 +883,7 @@ export function CrsModal() {
                         </div>
                         <div
                           style={{
-                            fontSize: 10,
+                            fontSize: "var(--text-xs)",
                             color: "var(--text-tertiary)",
                             fontFamily: "var(--font-mono)",
                           }}
@@ -885,7 +902,7 @@ export function CrsModal() {
                           width: "auto",
                           height: 22,
                           padding: "0 7px",
-                          fontSize: 10,
+                          fontSize: "var(--text-xs)",
                         }}
                       >
                         Select
@@ -898,7 +915,7 @@ export function CrsModal() {
                           background: "transparent",
                           color: "var(--status-error)",
                           cursor: "pointer",
-                          fontSize: 10,
+                          fontSize: "var(--text-xs)",
                           padding: 0,
                         }}
                       >

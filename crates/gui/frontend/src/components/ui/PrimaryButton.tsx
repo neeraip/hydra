@@ -1,8 +1,8 @@
 import type React from "react";
 
 const SIZE_STYLES: Record<"sm" | "md", React.CSSProperties> = {
-  sm: { height: 28, padding: "0 12px", fontSize: 12 },
-  md: { height: 36, padding: "0 20px", fontSize: 14 },
+  sm: { height: 28, padding: "0 12px", fontSize: "var(--text-md)" },
+  md: { height: 36, padding: "0 20px", fontSize: "var(--text-xl)" },
 };
 
 interface PrimaryButtonProps

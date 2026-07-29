@@ -88,7 +88,7 @@ export function RenameElementModal({
         <div style={{ padding: "16px 20px" }}>
           <div
             style={{
-              fontSize: 14,
+              fontSize: "var(--text-xl)",
               fontWeight: 600,
               color: "var(--text-primary)",
               textTransform: "capitalize",
@@ -98,7 +98,7 @@ export function RenameElementModal({
           </div>
           <div
             style={{
-              fontSize: 12,
+              fontSize: "var(--text-md)",
               color: "var(--text-tertiary)",
               marginTop: 2,
             }}
@@ -118,7 +118,7 @@ export function RenameElementModal({
               width: "100%",
               boxSizing: "border-box",
               marginTop: 12,
-              fontSize: 13,
+              fontSize: "var(--text-lg)",
               fontFamily: "var(--font-mono)",
               color: "var(--text-primary)",
               background: "var(--bg-card)",
@@ -130,7 +130,7 @@ export function RenameElementModal({
           />
           <div
             style={{
-              fontSize: 11,
+              fontSize: "var(--text-sm)",
               marginTop: 6,
               minHeight: 14,
               color:
@@ -164,7 +164,7 @@ export function RenameElementModal({
               color: "var(--text-secondary)",
               borderRadius: 5,
               padding: "7px 14px",
-              fontSize: 12,
+              fontSize: "var(--text-md)",
               cursor: "pointer",
               fontFamily: "var(--font-ui)",
             }}
@@ -181,7 +181,7 @@ export function RenameElementModal({
               color: canSubmit ? "#fff" : "var(--text-disabled)",
               borderRadius: 5,
               padding: "7px 16px",
-              fontSize: 12,
+              fontSize: "var(--text-md)",
               fontWeight: 600,
               cursor: canSubmit ? "pointer" : "not-allowed",
               opacity: canSubmit ? 1 : 0.6,

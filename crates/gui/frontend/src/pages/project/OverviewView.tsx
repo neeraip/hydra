@@ -25,7 +25,13 @@ export function OverviewView() {
 
   if (!project) {
     return (
-      <div style={{ color: "var(--text-tertiary)", fontSize: 14, padding: 32 }}>
+      <div
+        style={{
+          color: "var(--text-tertiary)",
+          fontSize: "var(--text-xl)",
+          padding: 32,
+        }}
+      >
         No project selected.
       </div>
     );

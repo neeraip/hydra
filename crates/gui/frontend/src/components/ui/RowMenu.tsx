@@ -214,7 +214,7 @@ export function RowMenu({
                       : item.danger
                         ? "var(--status-error, #e05c5c)"
                         : "var(--text-primary)",
-                    fontSize: 12,
+                    fontSize: "var(--text-md)",
                     fontFamily: "var(--font-ui)",
                     cursor: item.disabled ? "default" : "pointer",
                     lineHeight: 1.45,
@@ -233,7 +233,7 @@ export function RowMenu({
                     <span
                       style={{
                         display: "block",
-                        fontSize: 10.5,
+                        fontSize: "var(--text-xs)",
                         color: "var(--text-tertiary)",
                         marginTop: 1,
                       }}
@@ -245,7 +245,7 @@ export function RowMenu({
                     <span
                       style={{
                         display: "block",
-                        fontSize: 10.5,
+                        fontSize: "var(--text-xs)",
                         color: "var(--text-tertiary)",
                         marginTop: 1,
                       }}

@@ -129,7 +129,7 @@ function FieldChart({
     <div>
       <div
         style={{
-          fontSize: 10,
+          fontSize: "var(--text-xs)",
           color: "var(--text-tertiary)",
           textTransform: "uppercase",
           letterSpacing: "0.06em",
@@ -276,7 +276,7 @@ export function TimeSeriesCard({
         {loading ? (
           <span
             style={{
-              fontSize: 12,
+              fontSize: "var(--text-md)",
               color: "var(--text-secondary)",
               fontFamily: "var(--font-ui)",
             }}
@@ -305,7 +305,7 @@ export function TimeSeriesCard({
                   border: "none",
                   padding: 0,
                   cursor: "pointer",
-                  fontSize: 11,
+                  fontSize: "var(--text-sm)",
                   color: "var(--text-secondary)",
                   fontFamily: "var(--font-ui)",
                   textDecoration: "underline",

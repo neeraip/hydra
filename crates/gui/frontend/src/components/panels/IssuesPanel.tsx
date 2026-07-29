@@ -218,7 +218,7 @@ export function IssuesPanel() {
         >
           <span
             style={{
-              fontSize: 13,
+              fontSize: "var(--text-lg)",
               fontWeight: 600,
               color: "var(--text-primary)",
             }}
@@ -269,7 +269,7 @@ export function IssuesPanel() {
               background: "transparent",
               border: "none",
               color: "var(--text-primary)",
-              fontSize: 12,
+              fontSize: "var(--text-md)",
               fontFamily: "var(--font-ui)",
               outline: "none",
             }}
@@ -319,7 +319,7 @@ export function IssuesPanel() {
                   border: `1px solid ${on ? m.color : "var(--border)"}`,
                   borderRadius: 12,
                   padding: "2px 9px",
-                  fontSize: 11,
+                  fontSize: "var(--text-sm)",
                   cursor: "pointer",
                 }}
               >
@@ -354,7 +354,7 @@ export function IssuesPanel() {
                   border: "1px solid var(--border)",
                   borderRadius: 10,
                   padding: "1px 8px",
-                  fontSize: 10,
+                  fontSize: "var(--text-xs)",
                   cursor: "pointer",
                 }}
               >
@@ -371,7 +371,7 @@ export function IssuesPanel() {
                 background: "transparent",
                 border: "none",
                 color: "var(--accent)",
-                fontSize: 10,
+                fontSize: "var(--text-xs)",
                 cursor: "pointer",
                 fontFamily: "var(--font-ui)",
               }}
@@ -400,7 +400,7 @@ export function IssuesPanel() {
                 justifyContent: "center",
                 gap: 10,
                 color: "var(--text-tertiary)",
-                fontSize: 13,
+                fontSize: "var(--text-lg)",
                 padding: 24,
                 textAlign: "center",
               }}
@@ -417,7 +417,7 @@ export function IssuesPanel() {
                     border: "1px solid var(--border)",
                     borderRadius: 5,
                     color: "var(--text-secondary)",
-                    fontSize: 11,
+                    fontSize: "var(--text-sm)",
                     padding: "4px 10px",
                     cursor: "pointer",
                     fontFamily: "var(--font-ui)",
@@ -536,7 +536,7 @@ function IssueRow({
             display: "flex",
             alignItems: "center",
             gap: 6,
-            fontSize: 12,
+            fontSize: "var(--text-md)",
             color: "var(--text-primary)",
           }}
         >
@@ -544,7 +544,7 @@ function IssueRow({
             <span
               style={{
                 fontFamily: "var(--font-mono)",
-                fontSize: 10,
+                fontSize: "var(--text-xs)",
                 color: m.color,
                 opacity: 0.85,
               }}
@@ -567,7 +567,7 @@ function IssueRow({
             display: "flex",
             gap: 8,
             marginTop: 2,
-            fontSize: 10,
+            fontSize: "var(--text-xs)",
             color: "var(--text-tertiary)",
           }}
         >
@@ -601,7 +601,7 @@ function DetailPane({
         <m.Icon style={{ width: 14, height: 14, color: m.color }} />
         <span
           style={{
-            fontSize: 11,
+            fontSize: "var(--text-sm)",
             fontWeight: 600,
             color: m.color,
             textTransform: "uppercase",
@@ -614,7 +614,7 @@ function DetailPane({
           <span
             style={{
               fontFamily: "var(--font-mono)",
-              fontSize: 11,
+              fontSize: "var(--text-sm)",
               color: "var(--text-tertiary)",
             }}
           >
@@ -622,13 +622,15 @@ function DetailPane({
           </span>
         )}
         <div style={{ flex: 1 }} />
-        <span style={{ fontSize: 10, color: "var(--text-tertiary)" }}>
+        <span
+          style={{ fontSize: "var(--text-xs)", color: "var(--text-tertiary)" }}
+        >
           {SOURCE_LABEL[issue.source]}
         </span>
       </div>
       <div
         style={{
-          fontSize: 13,
+          fontSize: "var(--text-lg)",
           color: "var(--text-primary)",
           fontWeight: 500,
           marginBottom: 6,
@@ -638,7 +640,7 @@ function DetailPane({
       </div>
       <div
         style={{
-          fontSize: 12,
+          fontSize: "var(--text-md)",
           color: "var(--text-secondary)",
           lineHeight: 1.55,
         }}
@@ -659,7 +661,7 @@ function DetailPane({
             border: "1px solid var(--accent)",
             borderRadius: 5,
             padding: "4px 10px",
-            fontSize: 11,
+            fontSize: "var(--text-sm)",
             cursor: "pointer",
             fontFamily: "var(--font-ui)",
           }}
@@ -677,7 +679,7 @@ function CountChip({ n, color }: { n: number; color: string }) {
   return (
     <span
       style={{
-        fontSize: 10,
+        fontSize: "var(--text-xs)",
         fontFamily: "var(--font-mono)",
         fontWeight: 600,
         background: `${color}1f`,

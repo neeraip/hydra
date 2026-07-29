@@ -1401,7 +1401,7 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
                 >
                   <span
                     style={{
-                      fontSize: 12,
+                      fontSize: "var(--text-md)",
                       color: "var(--text-secondary)",
                       fontFamily: "var(--font-ui)",
                     }}
@@ -1611,7 +1611,12 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
             className="timeline-bar"
             style={{ justifyContent: "center", gap: 8 }}
           >
-            <span style={{ color: "var(--text-tertiary)", fontSize: 12 }}>
+            <span
+              style={{
+                color: "var(--text-tertiary)",
+                fontSize: "var(--text-md)",
+              }}
+            >
               {resultMetaLoading
                 ? "Loading simulation state..."
                 : isSteadyState

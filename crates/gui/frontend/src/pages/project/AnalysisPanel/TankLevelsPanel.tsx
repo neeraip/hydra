@@ -79,7 +79,7 @@ export function TankLevelsPanel({
       >
         <div
           style={{
-            fontSize: 11,
+            fontSize: "var(--text-sm)",
             color: "var(--text-tertiary)",
             marginBottom: 10,
           }}
@@ -101,7 +101,7 @@ export function TankLevelsPanel({
               <div key={tank.nodeId}>
                 <div
                   style={{
-                    fontSize: 11,
+                    fontSize: "var(--text-sm)",
                     fontFamily: "var(--font-mono)",
                     color: "var(--text-secondary)",
                     marginBottom: 4,
@@ -129,7 +129,12 @@ export function TankLevelsPanel({
                     decimals={decimals}
                   />
                 ) : (
-                  <div style={{ fontSize: 11, color: "var(--text-tertiary)" }}>
+                  <div
+                    style={{
+                      fontSize: "var(--text-sm)",
+                      color: "var(--text-tertiary)",
+                    }}
+                  >
                     No data
                   </div>
                 )}
@@ -140,7 +145,7 @@ export function TankLevelsPanel({
         {hiddenCount > 0 && (
           <div
             style={{
-              fontSize: 11,
+              fontSize: "var(--text-sm)",
               color: "var(--text-tertiary)",
               marginTop: 12,
             }}

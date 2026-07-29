@@ -124,13 +124,17 @@ export function AnnotationSummary({
     measurePts.length === 0
   ) {
     body = (
-      <span style={{ fontSize: 12, color: "var(--text-tertiary)" }}>
+      <span
+        style={{ fontSize: "var(--text-md)", color: "var(--text-tertiary)" }}
+      >
         Click two points on the canvas to measure.
       </span>
     );
   } else if (measuring && !hasResult) {
     body = (
-      <span style={{ fontSize: 12, color: "var(--text-tertiary)" }}>
+      <span
+        style={{ fontSize: "var(--text-md)", color: "var(--text-tertiary)" }}
+      >
         Click a second point…
       </span>
     );
@@ -142,7 +146,9 @@ export function AnnotationSummary({
           return pixelDistance(a.x, a.y, b.x, b.y);
         })();
     body = (
-      <span style={{ fontSize: 12, color: "var(--text-secondary)" }}>
+      <span
+        style={{ fontSize: "var(--text-md)", color: "var(--text-secondary)" }}
+      >
         Distance:{" "}
         <span
           style={{
@@ -185,7 +191,7 @@ export function AnnotationSummary({
     >
       <span
         style={{
-          fontSize: 10,
+          fontSize: "var(--text-xs)",
           fontWeight: 700,
           letterSpacing: "0.06em",
           color: "#d4a017",
@@ -208,7 +214,7 @@ export function AnnotationSummary({
             color: "var(--text-tertiary)",
             borderRadius: 5,
             padding: "3px 8px",
-            fontSize: 11,
+            fontSize: "var(--text-sm)",
             cursor: "pointer",
             fontFamily: "var(--font-ui)",
           }}

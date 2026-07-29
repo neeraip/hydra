@@ -50,7 +50,7 @@ const linkBtn: React.CSSProperties = {
   background: "transparent",
   border: "none",
   padding: 0,
-  fontSize: 11,
+  fontSize: "var(--text-sm)",
   cursor: "pointer",
   fontFamily: "var(--font-ui)",
 };
@@ -95,7 +95,7 @@ function ScenarioRow({
       <span
         style={{
           flex: 1,
-          fontSize: 13,
+          fontSize: "var(--text-lg)",
           color: "var(--text-primary)",
           fontFamily: "var(--font-ui)",
         }}
@@ -284,7 +284,7 @@ export function RunModal() {
         >
           <span
             style={{
-              fontSize: 11,
+              fontSize: "var(--text-sm)",
               fontWeight: 700,
               letterSpacing: "0.06em",
               color: ACCENT,
@@ -299,14 +299,19 @@ export function RunModal() {
           <div style={{ flex: 1 }}>
             <div
               style={{
-                fontSize: 14,
+                fontSize: "var(--text-xl)",
                 fontWeight: 600,
                 color: "var(--text-primary)",
               }}
             >
               Run Simulation
             </div>
-            <div style={{ fontSize: 12, color: "var(--text-tertiary)" }}>
+            <div
+              style={{
+                fontSize: "var(--text-md)",
+                color: "var(--text-tertiary)",
+              }}
+            >
               {project?.name ?? "(no project)"}
             </div>
           </div>
@@ -340,12 +345,14 @@ export function RunModal() {
                 borderRadius: 6,
                 padding: "10px 12px",
                 marginBottom: 16,
-                fontSize: 12,
+                fontSize: "var(--text-md)",
                 color: "var(--text-secondary)",
                 lineHeight: 1.6,
               }}
             >
-              <span style={{ flexShrink: 0, fontSize: 14 }}>ℹ</span>
+              <span style={{ flexShrink: 0, fontSize: "var(--text-xl)" }}>
+                ℹ
+              </span>
               <span>
                 This project has no network yet. Import a model file or build
                 one in the editor before running a simulation.
@@ -410,7 +417,7 @@ export function RunModal() {
                   <div
                     style={{
                       padding: "5px 12px",
-                      fontSize: 10,
+                      fontSize: "var(--text-xs)",
                       fontWeight: 700,
                       letterSpacing: "0.06em",
                       color: "var(--text-tertiary)",
@@ -455,7 +462,7 @@ export function RunModal() {
                 border: "none",
                 padding: 0,
                 color: "var(--accent)",
-                fontSize: 11,
+                fontSize: "var(--text-sm)",
                 cursor: "pointer",
                 fontFamily: "var(--font-ui)",
                 display: "inline-flex",
@@ -471,7 +478,12 @@ export function RunModal() {
           {params ? (
             <SummaryGrid params={params} />
           ) : (
-            <div style={{ fontSize: 12, color: "var(--text-tertiary)" }}>
+            <div
+              style={{
+                fontSize: "var(--text-md)",
+                color: "var(--text-tertiary)",
+              }}
+            >
               {!activeProjectId
                 ? "No project selected."
                 : paramsLoading
@@ -502,7 +514,7 @@ export function RunModal() {
               color: "var(--text-secondary)",
               borderRadius: 5,
               padding: "7px 14px",
-              fontSize: 12,
+              fontSize: "var(--text-md)",
               cursor: "pointer",
               fontFamily: "var(--font-ui)",
             }}
@@ -526,7 +538,7 @@ export function RunModal() {
               color: canRun ? "#fff" : "var(--text-disabled)",
               borderRadius: 5,
               padding: "7px 16px",
-              fontSize: 12,
+              fontSize: "var(--text-md)",
               fontWeight: 600,
               cursor: canRun ? "pointer" : "not-allowed",
               opacity: canRun ? 1 : 0.6,
@@ -539,7 +551,7 @@ export function RunModal() {
             <PlayIcon style={{ width: 14, height: 14 }} /> {runLabel}
             <span
               style={{
-                fontSize: 10,
+                fontSize: "var(--text-xs)",
                 opacity: 0.85,
                 fontFamily: "var(--font-mono)",
               }}

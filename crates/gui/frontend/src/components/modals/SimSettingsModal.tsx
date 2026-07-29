@@ -41,7 +41,7 @@ function SubHeading({ children }: { children: React.ReactNode }) {
   return (
     <div
       style={{
-        fontSize: 11,
+        fontSize: "var(--text-sm)",
         fontWeight: 700,
         letterSpacing: "0.06em",
         textTransform: "uppercase",
@@ -214,7 +214,7 @@ export function SimSettingsModal() {
         >
           <span
             style={{
-              fontSize: 11,
+              fontSize: "var(--text-sm)",
               fontWeight: 700,
               letterSpacing: "0.06em",
               color: ACCENT,
@@ -229,7 +229,7 @@ export function SimSettingsModal() {
           <div style={{ flex: 1 }}>
             <div
               style={{
-                fontSize: 14,
+                fontSize: "var(--text-xl)",
                 fontWeight: 600,
                 color: "var(--text-primary)",
                 display: "inline-flex",
@@ -240,7 +240,12 @@ export function SimSettingsModal() {
               <Cog6ToothIcon style={{ width: 14, height: 14 }} />
               Simulation Settings
             </div>
-            <div style={{ fontSize: 12, color: "var(--text-tertiary)" }}>
+            <div
+              style={{
+                fontSize: "var(--text-md)",
+                color: "var(--text-tertiary)",
+              }}
+            >
               {project?.name ?? "(no project)"}
             </div>
           </div>
@@ -289,7 +294,13 @@ export function SimSettingsModal() {
             background: "rgba(0,0,0,0.18)",
           }}
         >
-          <div style={{ flex: 1, fontSize: 11, color: "var(--text-tertiary)" }}>
+          <div
+            style={{
+              flex: 1,
+              fontSize: "var(--text-sm)",
+              color: "var(--text-tertiary)",
+            }}
+          >
             {dirty
               ? "Saving rewrites every scenario and marks results stale."
               : ""}
@@ -303,7 +314,7 @@ export function SimSettingsModal() {
               color: "var(--text-secondary)",
               borderRadius: 5,
               padding: "7px 14px",
-              fontSize: 12,
+              fontSize: "var(--text-md)",
               cursor: "pointer",
               fontFamily: "var(--font-ui)",
             }}
@@ -321,7 +332,7 @@ export function SimSettingsModal() {
               color: !saving && dirty ? "#fff" : "var(--text-disabled)",
               borderRadius: 5,
               padding: "7px 16px",
-              fontSize: 12,
+              fontSize: "var(--text-md)",
               fontWeight: 600,
               cursor: !saving && dirty ? "pointer" : "not-allowed",
               opacity: !saving && dirty ? 1 : 0.6,
@@ -334,7 +345,7 @@ export function SimSettingsModal() {
             {saving ? "Saving…" : "Save"}
             <span
               style={{
-                fontSize: 10,
+                fontSize: "var(--text-xs)",
                 opacity: 0.85,
                 fontFamily: "var(--font-mono)",
               }}

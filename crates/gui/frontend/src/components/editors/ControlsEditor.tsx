@@ -64,7 +64,7 @@ const inputStyle: React.CSSProperties = {
   padding: "0 6px",
   color: "var(--text-primary)",
   fontFamily: "var(--font-ui)",
-  fontSize: 12,
+  fontSize: "var(--text-md)",
   outline: "none",
 };
 
@@ -391,7 +391,7 @@ export function ControlsEditor({ accent }: { accent: string }) {
             borderRadius: 5,
             padding: "0 10px",
             height: 28,
-            fontSize: 12,
+            fontSize: "var(--text-md)",
             fontFamily: "var(--font-ui)",
             cursor: "pointer",
           }}
@@ -408,7 +408,7 @@ export function ControlsEditor({ accent }: { accent: string }) {
             borderRadius: 5,
             padding: "0 10px",
             height: 28,
-            fontSize: 12,
+            fontSize: "var(--text-md)",
             fontFamily: "var(--font-ui)",
             cursor: "pointer",
           }}
@@ -525,7 +525,7 @@ export function ControlsEditor({ accent }: { accent: string }) {
               textAlign: "center",
               padding: 32,
               color: "var(--text-tertiary)",
-              fontSize: 13,
+              fontSize: "var(--text-lg)",
             }}
           >
             No controls defined. Use "+ New control" or "+ New rule" to create
@@ -611,7 +611,7 @@ function Segmented({
               border: "none",
               background: active ? `${accent}26` : "transparent",
               color: active ? accent : "var(--text-secondary)",
-              fontSize: 12,
+              fontSize: "var(--text-md)",
               fontFamily: "var(--font-ui)",
               cursor: "pointer",
               whiteSpace: "nowrap",
@@ -678,7 +678,7 @@ function CardShell({
         >
           <span
             style={{
-              fontSize: 10,
+              fontSize: "var(--text-xs)",
               padding: "2px 6px",
               background: `${accent}26`,
               color: accent,
@@ -693,7 +693,7 @@ function CardShell({
           <span
             style={{
               fontFamily: "var(--font-mono)",
-              fontSize: 12,
+              fontSize: "var(--text-md)",
               color: "var(--text-primary)",
               overflow: "hidden",
               textOverflow: "ellipsis",
@@ -742,7 +742,9 @@ function Field({
 }) {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
-      <span style={{ fontSize: 10, color: "var(--text-tertiary)" }}>
+      <span
+        style={{ fontSize: "var(--text-xs)", color: "var(--text-tertiary)" }}
+      >
         {label}
       </span>
       {children}
@@ -1275,7 +1277,9 @@ function ActionRow({
         />
       )}
       {unit && action.setting != null && (
-        <span style={{ fontSize: 10, color: "var(--text-tertiary)" }}>
+        <span
+          style={{ fontSize: "var(--text-xs)", color: "var(--text-tertiary)" }}
+        >
           {unit}
         </span>
       )}
@@ -1401,7 +1405,11 @@ function RuleCard({
       </div>
 
       <div
-        style={{ fontSize: 10, color: "var(--text-tertiary)", marginBottom: 4 }}
+        style={{
+          fontSize: "var(--text-xs)",
+          color: "var(--text-tertiary)",
+          marginBottom: 4,
+        }}
       >
         IF
       </div>
@@ -1436,7 +1444,7 @@ function RuleCard({
           border: "none",
           color: accent,
           cursor: "pointer",
-          fontSize: 11,
+          fontSize: "var(--text-sm)",
           padding: "6px 0",
         }}
       >
@@ -1445,7 +1453,7 @@ function RuleCard({
 
       <div
         style={{
-          fontSize: 10,
+          fontSize: "var(--text-xs)",
           color: "var(--text-tertiary)",
           margin: "10px 0 4px",
         }}
@@ -1483,7 +1491,7 @@ function RuleCard({
           border: "none",
           color: accent,
           cursor: "pointer",
-          fontSize: 11,
+          fontSize: "var(--text-sm)",
           padding: "6px 0",
         }}
       >
@@ -1492,7 +1500,7 @@ function RuleCard({
 
       <div
         style={{
-          fontSize: 10,
+          fontSize: "var(--text-xs)",
           color: "var(--text-tertiary)",
           margin: "10px 0 4px",
         }}
@@ -1530,7 +1538,7 @@ function RuleCard({
           border: "none",
           color: accent,
           cursor: "pointer",
-          fontSize: 11,
+          fontSize: "var(--text-sm)",
           padding: "6px 0",
         }}
       >

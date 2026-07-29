@@ -298,7 +298,7 @@ export function Timeline({
       >
         <span
           style={{
-            fontSize: 17,
+            fontSize: "var(--text-2xl)",
             fontFamily: "var(--font-mono)",
             color: "var(--text-primary)",
             fontWeight: 600,
@@ -309,7 +309,7 @@ export function Timeline({
         </span>
         <span
           style={{
-            fontSize: 10,
+            fontSize: "var(--text-xs)",
             color: "var(--text-tertiary)",
             fontFamily: "var(--font-mono)",
           }}
@@ -426,7 +426,7 @@ export function Timeline({
             display: "flex",
             justifyContent: "space-between",
             marginTop: 4,
-            fontSize: 9,
+            fontSize: "var(--text-2xs)",
             color: "var(--text-tertiary)",
             fontFamily: "var(--font-mono)",
             pointerEvents: "none",
@@ -450,7 +450,7 @@ export function Timeline({
               border: "1px solid var(--border)",
               borderRadius: 4,
               padding: "3px 6px",
-              fontSize: 10,
+              fontSize: "var(--text-xs)",
               fontFamily: "var(--font-mono)",
               color: "var(--text-primary)",
               pointerEvents: "none",

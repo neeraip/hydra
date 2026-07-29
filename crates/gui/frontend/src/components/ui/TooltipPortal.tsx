@@ -257,7 +257,7 @@ export function TooltipPortal() {
     whiteSpace: "nowrap",
     background: "var(--tooltip-bg, #1e1e2a)",
     color: "var(--tooltip-text, #e2e2ec)",
-    fontSize: 12,
+    fontSize: "var(--text-md)",
     padding: "4px 8px",
     borderRadius: 5,
     border: "1px solid var(--border-hover)",

@@ -2,14 +2,38 @@ import { ChevronDownIcon, ChevronUpIcon } from "@heroicons/react/16/solid";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import type React from "react";
 import { memo, useRef, useState } from "react";
+import { readTextScale } from "../../../textScale";
 import { parseNumericInput } from "../../../units";
 import { shouldUseRefDatalist } from "./tableSearch";
 
 /* ── Row virtualization ──────────────────────────────────────────────────────── */
 
-/** Row height used to estimate virtualizer offsets. Matches the ~7px vertical
- * cell padding + ~13px line-height used by these tables' cells. */
-export const EDITOR_ROW_HEIGHT = 30;
+/** Top + bottom of a cell's `padding: "7px 10px"`. Literal pixels, so this
+ * part of the row height does not move with the text scale. */
+const CELL_PADDING_Y = 14;
+/** Row height at text scale 1: the padding above plus the ~16px line box of
+ * 13px cell text. */
+const ROW_HEIGHT_AT_SCALE_1 = 30;
+
+/**
+ * Height of one editor row at the current text scale.
+ *
+ * These tables are the only virtualised list in the app that estimates row
+ * height rather than measuring it, and `ElementsEditor` also multiplies by it
+ * to scroll to a row that isn't mounted yet. So the value has to track the
+ * text scale: the error repeats once per row, and these tables run to tens of
+ * thousands of rows — a few pixels off becomes a scrollbar that doesn't reach
+ * the end and a "reveal element" that centres the wrong row.
+ *
+ * Only the cell's text scales; its padding is fixed. So the row grows by less
+ * than the scale factor, and interpolating just the text portion is exact
+ * rather than merely closer than a constant.
+ */
+export function editorRowHeight(scale: number): number {
+  return Math.round(
+    CELL_PADDING_Y + (ROW_HEIGHT_AT_SCALE_1 - CELL_PADDING_Y) * scale,
+  );
+}
 
 /**
  * Shared virtualization for the Editor's element tables, so only the rows
@@ -24,10 +48,13 @@ export function useVirtualRows<T>(
   rows: T[],
   scrollRef: React.RefObject<HTMLDivElement | null>,
 ) {
+  // Read once per render rather than inside `estimateSize`, which the
+  // virtualizer calls per row — on a 46k-row table that would be 46k reads.
+  const rowHeight = editorRowHeight(readTextScale());
   const virtualizer = useVirtualizer({
     count: rows.length,
     getScrollElement: () => scrollRef.current,
-    estimateSize: () => EDITOR_ROW_HEIGHT,
+    estimateSize: () => rowHeight,
     overscan: 12,
   });
   const virtualItems = virtualizer.getVirtualItems();
@@ -185,7 +212,7 @@ export function EditableCell({
     <td
       style={{
         padding: 0,
-        fontSize: 12,
+        fontSize: "var(--text-md)",
         fontFamily: "var(--font-mono)",
         borderBottom: "1px solid var(--border)",
         textAlign: align ?? "left",
@@ -236,7 +263,7 @@ export function EditableCell({
               ? "var(--text-tertiary)"
               : "var(--text-primary)",
           fontFamily: "var(--font-mono)",
-          fontSize: 12,
+          fontSize: "var(--text-md)",
           textAlign: align ?? "left",
         }}
       />
@@ -288,7 +315,7 @@ export function SelectCell({
     <td
       style={{
         padding: 0,
-        fontSize: 12,
+        fontSize: "var(--text-md)",
         fontFamily: "var(--font-mono)",
         borderBottom: "1px solid var(--border)",
         textAlign: align ?? "left",
@@ -327,7 +354,7 @@ export function SelectCell({
           borderRadius: 0,
           color: "var(--text-primary)",
           fontFamily: "var(--font-mono)",
-          fontSize: 12,
+          fontSize: "var(--text-md)",
           textAlign: align ?? "left",
           cursor: "pointer",
         }}
@@ -449,7 +476,7 @@ export function RefInputCell({
     <td
       style={{
         padding: 0,
-        fontSize: 12,
+        fontSize: "var(--text-md)",
         fontFamily: "var(--font-mono)",
         borderBottom: "1px solid var(--border)",
         textAlign: align ?? "left",
@@ -496,7 +523,7 @@ export function RefInputCell({
           borderRadius: 0,
           color: isError ? "rgba(220,80,80,0.9)" : "var(--text-primary)",
           fontFamily: "var(--font-mono)",
-          fontSize: 12,
+          fontSize: "var(--text-md)",
           textAlign: align ?? "left",
         }}
       />
@@ -528,7 +555,7 @@ export function SortTh({
     <th
       aria-sort={isActive ? (sortAsc ? "ascending" : "descending") : "none"}
       style={{
-        fontSize: 11,
+        fontSize: "var(--text-sm)",
         fontWeight: 500,
         color: isActive ? "var(--text-secondary)" : "var(--text-tertiary)",
         textAlign: align ?? "left",
@@ -558,7 +585,7 @@ export function SortTh({
         {isActive && (
           <span
             style={{
-              fontSize: 10,
+              fontSize: "var(--text-xs)",
               display: "inline-flex",
               alignItems: "center",
             }}

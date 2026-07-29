@@ -142,14 +142,14 @@ export function CreateNodeModal({
     border: "1px solid var(--border)",
     borderRadius: 6,
     padding: "6px 10px",
-    fontSize: 13,
+    fontSize: "var(--text-lg)",
     color: "var(--text-primary)",
     outline: "none",
     width: "100%",
     boxSizing: "border-box",
   };
   const labelStyle: React.CSSProperties = {
-    fontSize: 11,
+    fontSize: "var(--text-sm)",
     color: "var(--text-tertiary)",
     textTransform: "uppercase",
     letterSpacing: "0.06em",
@@ -187,7 +187,7 @@ export function CreateNodeModal({
         <span
           style={{
             fontWeight: 600,
-            fontSize: 14,
+            fontSize: "var(--text-xl)",
             color: "var(--text-primary)",
           }}
         >
@@ -207,7 +207,7 @@ export function CreateNodeModal({
                   flex: 1,
                   padding: "5px 0",
                   borderRadius: 6,
-                  fontSize: 12,
+                  fontSize: "var(--text-md)",
                   fontWeight: 500,
                   border:
                     kind === t.value
@@ -251,7 +251,7 @@ export function CreateNodeModal({
           {errorMsg && (
             <span
               style={{
-                fontSize: 11,
+                fontSize: "var(--text-sm)",
                 color: "rgba(220,60,60,0.9)",
                 marginTop: 2,
               }}
@@ -323,7 +323,7 @@ export function CreateNodeModal({
         {/* Coordinates (read-only info) */}
         <div
           style={{
-            fontSize: 11,
+            fontSize: "var(--text-sm)",
             color: "var(--text-tertiary)",
             fontFamily: "var(--font-mono)",
           }}
@@ -338,7 +338,7 @@ export function CreateNodeModal({
             className="tool-btn"
             onClick={onCancel}
             disabled={submitting}
-            style={{ fontSize: 12 }}
+            style={{ fontSize: "var(--text-md)" }}
           >
             Cancel
           </button>
@@ -348,7 +348,7 @@ export function CreateNodeModal({
             disabled={!canSubmit}
             onClick={handleSubmit}
             style={{
-              fontSize: 12,
+              fontSize: "var(--text-md)",
               background: canSubmit ? "var(--accent)" : undefined,
               color: canSubmit ? "#fff" : undefined,
               opacity: canSubmit ? 1 : 0.5,

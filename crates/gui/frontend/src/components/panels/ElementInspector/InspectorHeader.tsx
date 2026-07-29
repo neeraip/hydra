@@ -79,7 +79,7 @@ export function Header({
             style={{
               width: "100%",
               boxSizing: "border-box",
-              fontSize: 14,
+              fontSize: "var(--text-xl)",
               fontWeight: 600,
               color: "var(--text-primary)",
               background: "var(--bg-panel)",
@@ -112,7 +112,7 @@ export function Header({
           >
             <span
               style={{
-                fontSize: 14,
+                fontSize: "var(--text-xl)",
                 fontWeight: 600,
                 color: "var(--text-primary)",
                 overflow: "hidden",
@@ -136,7 +136,7 @@ export function Header({
         ) : (
           <div
             style={{
-              fontSize: 14,
+              fontSize: "var(--text-xl)",
               fontWeight: 600,
               color: "var(--text-primary)",
               overflow: "hidden",
@@ -158,7 +158,7 @@ export function Header({
           <TypeBadge type={subtitle} />
           <span
             style={{
-              fontSize: 11,
+              fontSize: "var(--text-sm)",
               color: "var(--text-tertiary)",
               textTransform: "capitalize",
             }}

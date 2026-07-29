@@ -217,7 +217,7 @@ export function PatternEditor({ accent }: { accent: string }) {
                   display: "flex",
                   alignItems: "center",
                   gap: 6,
-                  fontSize: 13,
+                  fontSize: "var(--text-lg)",
                   fontWeight: 500,
                   fontFamily: "var(--font-mono)",
                 }}
@@ -238,7 +238,7 @@ export function PatternEditor({ accent }: { accent: string }) {
               </div>
               <div
                 style={{
-                  fontSize: 11,
+                  fontSize: "var(--text-sm)",
                   color: "var(--text-tertiary)",
                   marginTop: 2,
                 }}
@@ -281,7 +281,7 @@ export function PatternEditor({ accent }: { accent: string }) {
                   padding: "0 6px",
                   color: "var(--text-primary)",
                   fontFamily: "var(--font-mono)",
-                  fontSize: 12,
+                  fontSize: "var(--text-md)",
                   outline: "none",
                   boxSizing: "border-box",
                 }}
@@ -289,7 +289,7 @@ export function PatternEditor({ accent }: { accent: string }) {
               {createError && (
                 <div
                   style={{
-                    fontSize: 11,
+                    fontSize: "var(--text-sm)",
                     color: "var(--status-error)",
                     marginTop: 3,
                   }}
@@ -304,7 +304,7 @@ export function PatternEditor({ accent }: { accent: string }) {
                   style={{
                     flex: 1,
                     height: 24,
-                    fontSize: 11,
+                    fontSize: "var(--text-sm)",
                     background: "var(--accent)",
                     color: "#fff",
                     border: "none",
@@ -324,7 +324,7 @@ export function PatternEditor({ accent }: { accent: string }) {
                   style={{
                     flex: 1,
                     height: 24,
-                    fontSize: 11,
+                    fontSize: "var(--text-sm)",
                     background: "var(--nav-hover)",
                     color: "var(--text-secondary)",
                     border: "none",
@@ -347,7 +347,7 @@ export function PatternEditor({ accent }: { accent: string }) {
                 background: "transparent",
                 color: "var(--text-tertiary)",
                 cursor: "pointer",
-                fontSize: 12,
+                fontSize: "var(--text-md)",
                 fontFamily: "var(--font-ui)",
                 textAlign: "left",
               }}
@@ -446,7 +446,7 @@ export function PatternEditor({ accent }: { accent: string }) {
             alignItems: "center",
             justifyContent: "center",
             color: "var(--text-tertiary)",
-            fontSize: 13,
+            fontSize: "var(--text-lg)",
           }}
         >
           No time patterns defined. Use "+ New pattern" to create one.
@@ -510,7 +510,7 @@ function PatternHeader({
           }
         }}
         style={{
-          fontSize: 16,
+          fontSize: "var(--text-2xl)",
           fontWeight: 600,
           color: "var(--text-primary)",
           fontFamily: "var(--font-mono)",
@@ -531,7 +531,7 @@ function PatternHeader({
           marginLeft: "auto",
           display: "flex",
           gap: 16,
-          fontSize: 11,
+          fontSize: "var(--text-sm)",
           color: "var(--text-tertiary)",
         }}
       >
@@ -586,13 +586,17 @@ function Stat({
       }}
     >
       <span
-        style={{ fontSize: 9, textTransform: "uppercase", letterSpacing: 0.4 }}
+        style={{
+          fontSize: "var(--text-2xs)",
+          textTransform: "uppercase",
+          letterSpacing: 0.4,
+        }}
       >
         {label}
       </span>
       <span
         style={{
-          fontSize: 13,
+          fontSize: "var(--text-lg)",
           fontFamily: "var(--font-mono)",
           color: accent ?? "var(--text-primary)",
         }}
@@ -709,7 +713,7 @@ function PatternBars({
                   top: -18,
                   left: "50%",
                   transform: "translateX(-50%)",
-                  fontSize: 10,
+                  fontSize: "var(--text-xs)",
                   fontFamily: "var(--font-mono)",
                   color: accent,
                   background: "var(--bg-overlay)",
@@ -728,7 +732,7 @@ function PatternBars({
                   bottom: -16,
                   left: "50%",
                   transform: "translateX(-50%)",
-                  fontSize: 9,
+                  fontSize: "var(--text-2xs)",
                   color: "var(--text-tertiary)",
                   fontFamily: "var(--font-mono)",
                 }}
@@ -808,7 +812,7 @@ function PatternEnvelope({
           right: 8,
           display: "flex",
           justifyContent: "space-between",
-          fontSize: 9,
+          fontSize: "var(--text-2xs)",
           color: "var(--text-tertiary)",
           fontFamily: "var(--font-mono)",
         }}
@@ -847,7 +851,7 @@ function PatternRow({
           display: "flex",
           alignItems: "center",
           marginBottom: 6,
-          fontSize: 11,
+          fontSize: "var(--text-sm)",
           fontWeight: 500,
           color: "var(--text-tertiary)",
           textTransform: "uppercase",
@@ -881,7 +885,7 @@ function PatternRow({
             cursor: isOverridden ? "pointer" : "not-allowed",
             padding: "3px 8px",
             borderRadius: 4,
-            fontSize: 11,
+            fontSize: "var(--text-sm)",
             fontFamily: "var(--font-ui)",
             textTransform: "none",
             letterSpacing: 0,
@@ -935,7 +939,7 @@ function GridCell({
     <label style={{ display: "flex", flexDirection: "column", gap: 2 }}>
       <span
         style={{
-          fontSize: 9,
+          fontSize: "var(--text-2xs)",
           color: "var(--text-tertiary)",
           fontFamily: "var(--font-mono)",
         }}
@@ -957,7 +961,7 @@ function GridCell({
           border: "1px solid var(--border)",
           borderRadius: 4,
           color: "var(--text-primary)",
-          fontSize: 12,
+          fontSize: "var(--text-md)",
           fontFamily: "var(--font-mono)",
           padding: "0 6px",
           outline: "none",
@@ -1065,7 +1069,7 @@ function PatternStepControls({
     border: "1px solid var(--border)",
     borderRadius: 4,
     color: "var(--text-secondary)",
-    fontSize: 11,
+    fontSize: "var(--text-sm)",
     padding: "3px 8px",
     cursor: "pointer",
   };
@@ -1081,7 +1085,7 @@ function PatternStepControls({
         display: "flex",
         alignItems: "center",
         gap: 8,
-        fontSize: 11,
+        fontSize: "var(--text-sm)",
         color: "var(--text-tertiary)",
       }}
     >
@@ -1121,7 +1125,7 @@ function PatternStepControls({
           border: "1px solid var(--border)",
           borderRadius: 4,
           color: "var(--text-primary)",
-          fontSize: 11,
+          fontSize: "var(--text-sm)",
           fontFamily: "var(--font-mono)",
           padding: "3px 6px",
         }}

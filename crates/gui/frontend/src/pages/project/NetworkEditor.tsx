@@ -182,7 +182,7 @@ function NetworkEditorInner() {
                     ? "var(--text-primary)"
                     : "var(--text-secondary)",
                   cursor: "pointer",
-                  fontSize: 13,
+                  fontSize: "var(--text-lg)",
                   fontFamily: "var(--font-ui)",
                   textAlign: "left",
                   transition: "background var(--t-fast)",
@@ -204,7 +204,7 @@ function NetworkEditorInner() {
                   )}
                   <span
                     style={{
-                      fontSize: 11,
+                      fontSize: "var(--text-sm)",
                       fontFamily: "var(--font-mono)",
                       color: active ? "var(--accent)" : "var(--text-tertiary)",
                     }}
@@ -284,7 +284,7 @@ function NetworkEditorInner() {
           padding: "6px 16px",
           borderTop: `1px solid ${dirtyCount > 0 ? "rgba(220, 160, 40, 0.3)" : "var(--border)"}`,
           flexShrink: 0,
-          fontSize: 12,
+          fontSize: "var(--text-md)",
           background: dirtyCount > 0 ? "rgba(220, 160, 40, 0.07)" : undefined,
           transition: "background 200ms",
         }}
@@ -321,7 +321,7 @@ function NetworkEditorInner() {
                 background: "transparent",
                 color: "var(--text-secondary)",
                 fontFamily: "var(--font-ui)",
-                fontSize: 12,
+                fontSize: "var(--text-md)",
                 cursor: "pointer",
                 transition:
                   "background var(--t-fast), border-color var(--t-fast), color var(--t-fast)",
@@ -356,7 +356,7 @@ function NetworkEditorInner() {
                 background: "transparent",
                 color: "var(--text-secondary)",
                 fontFamily: "var(--font-ui)",
-                fontSize: 12,
+                fontSize: "var(--text-md)",
                 cursor: "pointer",
                 transition:
                   "background var(--t-fast), border-color var(--t-fast), color var(--t-fast)",
@@ -388,7 +388,7 @@ function NetworkEditorInner() {
                 background: "rgba(220, 160, 40, 0.12)",
                 color: "rgba(220, 160, 40, 0.95)",
                 fontFamily: "var(--font-ui)",
-                fontSize: 12,
+                fontSize: "var(--text-md)",
                 fontWeight: 500,
                 cursor: isSaving ? "default" : "pointer",
                 opacity: isSaving ? 0.7 : 1,

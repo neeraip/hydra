@@ -246,7 +246,7 @@ export function TaskTray() {
         >
           <span
             style={{
-              fontSize: 13,
+              fontSize: "var(--text-lg)",
               fontWeight: 600,
               color: "var(--text-primary)",
               flexShrink: 0,
@@ -259,7 +259,7 @@ export function TaskTray() {
           {showBatchProgress && (
             <span
               style={{
-                fontSize: 12,
+                fontSize: "var(--text-md)",
                 color: "var(--text-tertiary)",
                 fontVariantNumeric: "tabular-nums",
               }}
@@ -275,12 +275,22 @@ export function TaskTray() {
 
           {/* Quiet counts when idle */}
           {!showBatchProgress && completedCount > 0 && failedCount === 0 && (
-            <span style={{ fontSize: 11, color: "var(--status-success)" }}>
+            <span
+              style={{
+                fontSize: "var(--text-sm)",
+                color: "var(--status-success)",
+              }}
+            >
               {completedCount} done
             </span>
           )}
           {!showBatchProgress && failedCount > 0 && (
-            <span style={{ fontSize: 11, color: "var(--status-error)" }}>
+            <span
+              style={{
+                fontSize: "var(--text-sm)",
+                color: "var(--status-error)",
+              }}
+            >
               {failedCount} failed
               {completedCount > 0 ? ` · ${completedCount} done` : ""}
             </span>
@@ -307,7 +317,7 @@ export function TaskTray() {
                 cursor: "pointer",
                 padding: "2px 8px",
                 borderRadius: 5,
-                fontSize: 11,
+                fontSize: "var(--text-sm)",
                 fontFamily: "var(--font-ui)",
                 transition: "border-color var(--t-fast), color var(--t-fast)",
               }}
@@ -337,7 +347,7 @@ export function TaskTray() {
                 cursor: "pointer",
                 padding: "2px 6px",
                 borderRadius: 5,
-                fontSize: 11,
+                fontSize: "var(--text-sm)",
                 fontFamily: "var(--font-ui)",
                 transition: "color var(--t-fast)",
               }}
@@ -390,7 +400,7 @@ export function TaskTray() {
               padding: "32px 16px",
               textAlign: "center",
               color: "var(--text-tertiary)",
-              fontSize: 13,
+              fontSize: "var(--text-lg)",
             }}
           >
             No tasks
@@ -418,7 +428,7 @@ export function TaskTray() {
                   <div
                     style={{
                       padding: "5px 14px 4px",
-                      fontSize: 10,
+                      fontSize: "var(--text-xs)",
                       fontWeight: 700,
                       letterSpacing: "0.06em",
                       textTransform: "uppercase",
@@ -446,7 +456,7 @@ export function TaskTray() {
               <div
                 style={{
                   padding: "5px 14px 4px",
-                  fontSize: 10,
+                  fontSize: "var(--text-xs)",
                   fontWeight: 700,
                   letterSpacing: "0.06em",
                   textTransform: "uppercase",
@@ -480,7 +490,7 @@ export function TaskTray() {
               <div
                 style={{
                   padding: "8px 14px",
-                  fontSize: 11,
+                  fontSize: "var(--text-sm)",
                   fontStyle: "italic",
                   color: "var(--text-tertiary)",
                   borderTop: "1px solid var(--border)",

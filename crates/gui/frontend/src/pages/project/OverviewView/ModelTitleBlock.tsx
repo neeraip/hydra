@@ -88,7 +88,7 @@ export function ModelTitleBlock() {
             border: "1px solid var(--border)",
             borderRadius: 6,
             color: "var(--text-secondary)",
-            fontSize: 12,
+            fontSize: "var(--text-md)",
             fontFamily: "var(--font-ui)",
             lineHeight: 1.5,
             padding: "6px 8px",
@@ -137,7 +137,7 @@ export function ModelTitleBlock() {
           padding: "4px 6px",
           margin: "0 -6px",
           cursor: "text",
-          fontSize: 12,
+          fontSize: "var(--text-md)",
           color: "var(--text-tertiary)",
           lineHeight: 1.5,
           fontFamily: "var(--font-ui)",
@@ -154,7 +154,7 @@ export function ModelTitleBlock() {
           onClick={() => setExpanded((v) => !v)}
           style={{
             ...iconBtn,
-            fontSize: 11,
+            fontSize: "var(--text-sm)",
             color: "var(--accent)",
             padding: 0,
             marginTop: 2,

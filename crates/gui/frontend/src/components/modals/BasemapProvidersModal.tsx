@@ -29,7 +29,7 @@ function Badge({ text, accent = false }: { text: string; accent?: boolean }) {
   return (
     <span
       style={{
-        fontSize: 10,
+        fontSize: "var(--text-xs)",
         fontWeight: 700,
         letterSpacing: "0.05em",
         textTransform: "uppercase",
@@ -156,7 +156,7 @@ function ProviderCard({
       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
         <span
           style={{
-            fontSize: 13,
+            fontSize: "var(--text-lg)",
             fontWeight: 600,
             color: "var(--text-primary)",
             fontFamily: "var(--font-ui)",
@@ -189,7 +189,7 @@ function ProviderCard({
 
       <div
         style={{
-          fontSize: 11,
+          fontSize: "var(--text-sm)",
           color: "var(--text-tertiary)",
           fontFamily: "var(--font-ui)",
           lineHeight: 1.4,
@@ -203,7 +203,7 @@ function ProviderCard({
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
           <span
             style={{
-              fontSize: 12,
+              fontSize: "var(--text-md)",
               color: "var(--text-secondary)",
               fontFamily: "var(--font-mono)",
             }}
@@ -219,7 +219,7 @@ function ProviderCard({
               width: "auto",
               height: 24,
               padding: "0 8px",
-              fontSize: 11,
+              fontSize: "var(--text-sm)",
             }}
           >
             Replace
@@ -233,7 +233,7 @@ function ProviderCard({
               width: "auto",
               height: 24,
               padding: "0 8px",
-              fontSize: 11,
+              fontSize: "var(--text-sm)",
               color: "var(--status-error)",
             }}
           >
@@ -253,7 +253,7 @@ function ProviderCard({
             <label
               htmlFor={`basemap-token-${provider.id}`}
               style={{
-                fontSize: 11,
+                fontSize: "var(--text-sm)",
                 color: "var(--text-secondary)",
                 fontFamily: "var(--font-ui)",
                 whiteSpace: "nowrap",
@@ -273,7 +273,7 @@ function ProviderCard({
                 background: "transparent",
                 color: "var(--accent)",
                 cursor: "pointer",
-                fontSize: 11,
+                fontSize: "var(--text-sm)",
                 fontFamily: "var(--font-ui)",
                 padding: 0,
               }}
@@ -297,7 +297,7 @@ function ProviderCard({
               placeholder={`Paste your ${provider.tokenLabel?.toLowerCase() ?? "token"}`}
               style={{
                 flex: 1,
-                fontSize: 12,
+                fontSize: "var(--text-md)",
                 padding: "6px 10px",
                 background: "var(--bg-input, var(--bg-card))",
                 border: "1px solid var(--border)",
@@ -315,7 +315,7 @@ function ProviderCard({
                 width: "auto",
                 height: 28,
                 padding: "0 10px",
-                fontSize: 12,
+                fontSize: "var(--text-md)",
               }}
             >
               {connecting ? "Validating…" : "Connect"}
@@ -333,7 +333,7 @@ function ProviderCard({
                   width: "auto",
                   height: 28,
                   padding: "0 10px",
-                  fontSize: 12,
+                  fontSize: "var(--text-md)",
                 }}
               >
                 Cancel
@@ -366,7 +366,7 @@ function ProviderCard({
             >
               <span
                 style={{
-                  fontSize: 12,
+                  fontSize: "var(--text-md)",
                   color: hidden
                     ? "var(--text-tertiary)"
                     : "var(--text-primary)",
@@ -464,7 +464,7 @@ export function BasemapProvidersModal() {
         >
           <span
             style={{
-              fontSize: 14,
+              fontSize: "var(--text-xl)",
               fontWeight: 600,
               color: "var(--text-primary)",
               fontFamily: "var(--font-ui)",
@@ -474,7 +474,7 @@ export function BasemapProvidersModal() {
           </span>
           <span
             style={{
-              fontSize: 12,
+              fontSize: "var(--text-md)",
               color: "var(--text-tertiary)",
               fontFamily: "var(--font-ui)",
             }}
@@ -517,7 +517,7 @@ export function BasemapProvidersModal() {
             <div
               style={{
                 padding: "16px 12px",
-                fontSize: 13,
+                fontSize: "var(--text-lg)",
                 color: "var(--text-tertiary)",
                 fontFamily: "var(--font-ui)",
               }}

@@ -228,7 +228,7 @@ export function ReportView() {
               border: "1px solid var(--border-hover)",
               background: "var(--bg-app)",
               color: "var(--text-primary)",
-              fontSize: 13,
+              fontSize: "var(--text-lg)",
               fontFamily: "var(--font-ui)",
             }}
           />
@@ -265,7 +265,7 @@ export function ReportView() {
                   <span
                     style={{
                       flex: 1,
-                      fontSize: 13,
+                      fontSize: "var(--text-lg)",
                       color: checked
                         ? "var(--text-primary)"
                         : "var(--text-tertiary)",
@@ -311,7 +311,7 @@ export function ReportView() {
             background: exporting ? "var(--bg-elevated)" : ACCENT,
             color: exporting ? "var(--text-tertiary)" : "#ffffff",
             cursor: exporting ? "default" : "pointer",
-            fontSize: 13,
+            fontSize: "var(--text-lg)",
             fontWeight: 600,
             fontFamily: "var(--font-ui)",
           }}
@@ -357,7 +357,7 @@ export function ReportView() {
                   background: active ? `${ACCENT}1a` : "transparent",
                   color: active ? ACCENT : "var(--text-secondary)",
                   cursor: "pointer",
-                  fontSize: 12,
+                  fontSize: "var(--text-md)",
                   fontWeight: active ? 600 : 400,
                   fontFamily: "var(--font-ui)",
                   transition: "all var(--t-fast)",
@@ -377,7 +377,7 @@ export function ReportView() {
                 maxWidth: 380,
                 textAlign: "center",
                 color: "var(--text-tertiary)",
-                fontSize: 13,
+                fontSize: "var(--text-lg)",
                 lineHeight: 1.6,
               }}
             >
@@ -388,7 +388,7 @@ export function ReportView() {
               style={{
                 margin: "auto",
                 color: "var(--text-tertiary)",
-                fontSize: 13,
+                fontSize: "var(--text-lg)",
               }}
             >
               Generating preview…
@@ -430,7 +430,7 @@ export function ReportView() {
                     padding: "20px 24px",
                     overflow: "auto",
                     fontFamily: "var(--font-mono)",
-                    fontSize: 12,
+                    fontSize: "var(--text-md)",
                     lineHeight: 1.5,
                     color: "#1a222c",
                     whiteSpace: "pre",
@@ -451,7 +451,7 @@ function FieldLabel({ children }: { children: React.ReactNode }) {
   return (
     <div
       style={{
-        fontSize: 10,
+        fontSize: "var(--text-xs)",
         fontWeight: 700,
         letterSpacing: "0.08em",
         textTransform: "uppercase",

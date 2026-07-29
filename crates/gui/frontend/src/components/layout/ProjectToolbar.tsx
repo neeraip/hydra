@@ -175,7 +175,7 @@ function ChildrenStub({
         borderRadius: 14,
         background: open ? "var(--nav-hover)" : "transparent",
         color: "var(--text-tertiary)",
-        fontSize: 11,
+        fontSize: "var(--text-sm)",
         fontWeight: 500,
         cursor: "pointer",
         fontFamily: "var(--font-ui)",
@@ -393,7 +393,7 @@ export function ProjectToolbar() {
       {/* Section label — names the whole selector (Base model + scenarios) */}
       <span
         style={{
-          fontSize: 10,
+          fontSize: "var(--text-xs)",
           fontWeight: 600,
           letterSpacing: "0.07em",
           textTransform: "uppercase",
@@ -441,7 +441,7 @@ export function ProjectToolbar() {
           borderRadius: 14,
           background: baseActive ? `${accent}22` : "var(--bg-card)",
           color: baseActive ? accent : "var(--text-secondary)",
-          fontSize: 11,
+          fontSize: "var(--text-sm)",
           fontWeight: 700,
           cursor: "pointer",
           fontFamily: "var(--font-ui)",
@@ -683,7 +683,7 @@ export function ProjectToolbar() {
             style={{
               margin: 8,
               padding: "5px 8px",
-              fontSize: 12,
+              fontSize: "var(--text-md)",
               background: "var(--bg-input, var(--bg-card))",
               border: "1px solid var(--border)",
               borderRadius: 5,
@@ -697,7 +697,7 @@ export function ProjectToolbar() {
               <div
                 style={{
                   padding: "10px 12px",
-                  fontSize: 11,
+                  fontSize: "var(--text-sm)",
                   color: "var(--text-tertiary)",
                   fontFamily: "var(--font-ui)",
                 }}
@@ -801,7 +801,7 @@ export function ProjectToolbar() {
           color: "var(--text-secondary)",
           borderRadius: 5,
           padding: "0 8px",
-          fontSize: 11,
+          fontSize: "var(--text-sm)",
           fontWeight: 600,
           cursor: "pointer",
           fontFamily: "var(--font-ui)",
@@ -955,7 +955,7 @@ function ScenarioChip({
           border: "none",
           background: "transparent",
           color: textColor,
-          fontSize: 11,
+          fontSize: "var(--text-sm)",
           fontWeight: isActive ? 700 : 500,
           cursor: "pointer",
           fontFamily: "var(--font-ui)",
@@ -1013,7 +1013,7 @@ function ScenarioChip({
               : "1px solid var(--border)",
             background: pickerOpen ? "var(--nav-hover)" : "transparent",
             color: isActive ? accent : "var(--text-tertiary)",
-            fontSize: 10,
+            fontSize: "var(--text-xs)",
             fontWeight: 600,
             cursor: "pointer",
             fontFamily: "var(--font-ui)",
@@ -1070,7 +1070,7 @@ function PickerRow({
         background: "transparent",
         color: isActive ? "var(--accent)" : "var(--text-primary)",
         cursor: "pointer",
-        fontSize: 12,
+        fontSize: "var(--text-md)",
         textAlign: "left",
         fontFamily: "var(--font-ui)",
         transition: "background var(--t-fast)",
@@ -1101,7 +1101,7 @@ function PickerRow({
           <span
             style={{
               display: "block",
-              fontSize: 10,
+              fontSize: "var(--text-xs)",
               color: "var(--text-tertiary)",
               overflow: "hidden",
               textOverflow: "ellipsis",
@@ -1115,7 +1115,7 @@ function PickerRow({
       </span>
       <span
         style={{
-          fontSize: 10,
+          fontSize: "var(--text-xs)",
           color: "var(--text-tertiary)",
           flexShrink: 0,
         }}

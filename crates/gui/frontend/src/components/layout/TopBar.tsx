@@ -79,7 +79,7 @@ export function TopBar() {
               background: "transparent",
               color: "var(--text-tertiary)",
               cursor: "pointer",
-              fontSize: 13,
+              fontSize: "var(--text-lg)",
               fontFamily: "var(--font-ui)",
               padding: "2px 4px",
               borderRadius: 4,
@@ -96,19 +96,31 @@ export function TopBar() {
           >
             Projects
           </button>
-          <span style={{ color: "var(--text-disabled)", fontSize: 13 }}>/</span>
+          <span
+            style={{
+              color: "var(--text-disabled)",
+              fontSize: "var(--text-lg)",
+            }}
+          >
+            /
+          </span>
 
           <ProjectSwitcher />
 
           {viewLabel && (
             <>
-              <span style={{ color: "var(--text-disabled)", fontSize: 13 }}>
+              <span
+                style={{
+                  color: "var(--text-disabled)",
+                  fontSize: "var(--text-lg)",
+                }}
+              >
                 /
               </span>
               <span
                 style={{
                   color: "var(--text-primary)",
-                  fontSize: 13,
+                  fontSize: "var(--text-lg)",
                   fontWeight: 500,
                 }}
               >
@@ -121,7 +133,7 @@ export function TopBar() {
         // ── Plain page label ───────────────────────────────────────────────
         <span
           style={{
-            fontSize: 13,
+            fontSize: "var(--text-lg)",
             fontWeight: 500,
             color: "var(--text-primary)",
           }}

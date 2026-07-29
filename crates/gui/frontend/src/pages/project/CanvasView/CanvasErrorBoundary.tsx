@@ -31,7 +31,7 @@ export class CanvasErrorBoundary extends Component<
           />
           <span
             style={{
-              fontSize: 14,
+              fontSize: "var(--text-xl)",
               fontWeight: 600,
               color: "var(--text-primary)",
             }}
@@ -40,7 +40,7 @@ export class CanvasErrorBoundary extends Component<
           </span>
           <span
             style={{
-              fontSize: 12,
+              fontSize: "var(--text-md)",
               color: "var(--text-tertiary)",
               maxWidth: 320,
               textAlign: "center",

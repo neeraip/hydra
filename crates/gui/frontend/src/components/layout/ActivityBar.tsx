@@ -164,7 +164,7 @@ export function ActivityBar() {
           justifyContent: "center",
           marginBottom: 4,
           flexShrink: 0,
-          fontSize: 11,
+          fontSize: "var(--text-sm)",
           fontFamily: "var(--font-mono)",
         }}
       >

@@ -132,7 +132,7 @@ export function ContextMenu({
                   borderRadius: 4,
                   background: "var(--bg-input)",
                   color: "var(--text-primary)",
-                  fontSize: 13,
+                  fontSize: "var(--text-lg)",
                   fontFamily: "var(--font-ui)",
                   outline: "none",
                 }}

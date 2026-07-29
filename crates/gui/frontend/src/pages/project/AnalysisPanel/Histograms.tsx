@@ -63,7 +63,7 @@ export function PressureHistogram({
       <div className="insights-card">
         <span
           style={{
-            fontSize: 13,
+            fontSize: "var(--text-lg)",
             fontWeight: 500,
             color: "var(--text-primary)",
           }}
@@ -71,7 +71,11 @@ export function PressureHistogram({
           Pressure Adequacy
         </span>
         <div
-          style={{ marginTop: 16, color: "var(--text-tertiary)", fontSize: 13 }}
+          style={{
+            marginTop: 16,
+            color: "var(--text-tertiary)",
+            fontSize: "var(--text-lg)",
+          }}
         >
           Run a simulation to see the pressure distribution.
         </div>
@@ -115,7 +119,7 @@ export function PressureHistogram({
       <div style={{ display: "flex", alignItems: "center", marginBottom: 12 }}>
         <span
           style={{
-            fontSize: 13,
+            fontSize: "var(--text-lg)",
             fontWeight: 500,
             color: "var(--text-primary)",
             flex: 1,
@@ -125,7 +129,7 @@ export function PressureHistogram({
         </span>
         <span
           style={{
-            fontSize: 10,
+            fontSize: "var(--text-xs)",
             background: "var(--bg-app)",
             border: "1px solid var(--border)",
             borderRadius: 10,
@@ -139,7 +143,11 @@ export function PressureHistogram({
       </div>
       <HorizontalBarChart bars={bars} maxCount={maxCount} />
       <div
-        style={{ fontSize: 12, color: "var(--text-tertiary)", marginTop: 10 }}
+        style={{
+          fontSize: "var(--text-md)",
+          color: "var(--text-tertiary)",
+          marginTop: 10,
+        }}
       >
         {belowThreshold > 0
           ? `${belowThreshold} junction${belowThreshold > 1 ? "s" : ""} below minimum (${thresholdLabel}) at worst hour`
@@ -160,7 +168,7 @@ export function VelocityHistogram({
       <div className="insights-card">
         <span
           style={{
-            fontSize: 13,
+            fontSize: "var(--text-lg)",
             fontWeight: 500,
             color: "var(--text-primary)",
           }}
@@ -168,7 +176,11 @@ export function VelocityHistogram({
           Velocity Distribution
         </span>
         <div
-          style={{ marginTop: 16, color: "var(--text-tertiary)", fontSize: 13 }}
+          style={{
+            marginTop: 16,
+            color: "var(--text-tertiary)",
+            fontSize: "var(--text-lg)",
+          }}
         >
           Run a simulation to see the velocity distribution.
         </div>
@@ -201,7 +213,7 @@ export function VelocityHistogram({
       <div style={{ display: "flex", alignItems: "center", marginBottom: 12 }}>
         <span
           style={{
-            fontSize: 13,
+            fontSize: "var(--text-lg)",
             fontWeight: 500,
             color: "var(--text-primary)",
             flex: 1,
@@ -211,7 +223,7 @@ export function VelocityHistogram({
         </span>
         <span
           style={{
-            fontSize: 10,
+            fontSize: "var(--text-xs)",
             background: "var(--bg-app)",
             border: "1px solid var(--border)",
             borderRadius: 10,
@@ -225,7 +237,11 @@ export function VelocityHistogram({
       </div>
       <HorizontalBarChart bars={bars} maxCount={maxCount} />
       <div
-        style={{ fontSize: 12, color: "var(--text-tertiary)", marginTop: 10 }}
+        style={{
+          fontSize: "var(--text-md)",
+          color: "var(--text-tertiary)",
+          marginTop: 10,
+        }}
       >
         {highVelocityCount > 0
           ? `${highVelocityCount} pipe${highVelocityCount > 1 ? "s" : ""} exceed ${highVelLabel}; check for head loss`

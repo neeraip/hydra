@@ -114,7 +114,7 @@ function useDebouncedValue<T>(value: T, delayMs: number): T {
 const TH: React.CSSProperties = {
   padding: "5px 8px",
   textAlign: "left",
-  fontSize: 10,
+  fontSize: "var(--text-xs)",
   fontWeight: 600,
   letterSpacing: "0.05em",
   textTransform: "uppercase",
@@ -140,7 +140,7 @@ const BADGE_CELL_PADDING = "4px 4px";
 
 const TD: React.CSSProperties = {
   padding: "4px 8px",
-  fontSize: 11,
+  fontSize: "var(--text-sm)",
   borderBottom: "1px solid rgba(255,255,255,0.04)",
   whiteSpace: "nowrap",
   overflow: "hidden",
@@ -473,7 +473,7 @@ function NodesTab({
         <div
           style={{
             padding: 14,
-            fontSize: 11,
+            fontSize: "var(--text-sm)",
             color: "var(--text-tertiary)",
             fontStyle: "italic",
           }}
@@ -790,7 +790,7 @@ function LinksTab({
         <div
           style={{
             padding: 14,
-            fontSize: 11,
+            fontSize: "var(--text-sm)",
             color: "var(--text-tertiary)",
             fontStyle: "italic",
           }}
@@ -829,7 +829,7 @@ function PatternsTab({
         style={{
           padding: 14,
           color: "var(--text-tertiary)",
-          fontSize: 11,
+          fontSize: "var(--text-sm)",
           fontStyle: "italic",
         }}
       >
@@ -921,7 +921,7 @@ function PatternCard({
     >
       <div
         style={{
-          fontSize: 11,
+          fontSize: "var(--text-sm)",
           color: "var(--text-secondary)",
           marginBottom: 6,
         }}
@@ -956,7 +956,7 @@ function PatternCard({
       </svg>
       <div
         style={{
-          fontSize: 10,
+          fontSize: "var(--text-xs)",
           color: "var(--text-tertiary)",
           marginTop: 4,
         }}
@@ -1072,7 +1072,7 @@ export function NetworkInspectorHome({
         <div style={{ flex: 1, minWidth: 0 }}>
           <div
             style={{
-              fontSize: 13,
+              fontSize: "var(--text-lg)",
               fontWeight: 600,
               color: "var(--text-primary)",
             }}
@@ -1126,7 +1126,7 @@ export function NetworkInspectorHome({
             border: "1px solid var(--border)",
             background: "rgba(255,255,255,0.04)",
             color: "var(--text-primary)",
-            fontSize: 11,
+            fontSize: "var(--text-sm)",
             outline: "none",
             boxSizing: "border-box",
           }}
@@ -1158,7 +1158,7 @@ export function NetworkInspectorHome({
               <span
                 style={{
                   marginLeft: 4,
-                  fontSize: 10,
+                  fontSize: "var(--text-xs)",
                   padding: "1px 4px",
                   borderRadius: 4,
                   background: active

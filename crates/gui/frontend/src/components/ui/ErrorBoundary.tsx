@@ -170,7 +170,7 @@ export class ErrorBoundary extends Component<Props, State> {
         <div style={{ textAlign: "center", maxWidth: 480, marginBottom: 32 }}>
           <div
             style={{
-              fontSize: 11,
+              fontSize: "var(--text-sm)",
               fontWeight: 600,
               letterSpacing: "0.08em",
               textTransform: "uppercase",
@@ -182,7 +182,7 @@ export class ErrorBoundary extends Component<Props, State> {
           </div>
           <h1
             style={{
-              fontSize: 20,
+              fontSize: "var(--text-3xl)",
               fontWeight: 700,
               color: "var(--text-primary, #e8e8ec)",
               margin: "0 0 12px",
@@ -193,7 +193,7 @@ export class ErrorBoundary extends Component<Props, State> {
           </h1>
           <p
             style={{
-              fontSize: 13,
+              fontSize: "var(--text-lg)",
               color: "var(--text-secondary, #9898a6)",
               lineHeight: 1.7,
               margin: 0,
@@ -225,7 +225,7 @@ export class ErrorBoundary extends Component<Props, State> {
               border: "1px solid rgba(201,64,64,0.35)",
               background: "rgba(201,64,64,0.1)",
               color: "#e07070",
-              fontSize: 13,
+              fontSize: "var(--text-lg)",
               fontFamily: "inherit",
               cursor: "pointer",
               fontWeight: 500,
@@ -248,7 +248,7 @@ export class ErrorBoundary extends Component<Props, State> {
               color: copied
                 ? "var(--text-secondary, #9898a6)"
                 : "var(--text-tertiary, #6e6e7c)",
-              fontSize: 13,
+              fontSize: "var(--text-lg)",
               fontFamily: "inherit",
               cursor: "pointer",
             }}
@@ -285,7 +285,7 @@ export class ErrorBoundary extends Component<Props, State> {
                 background: "transparent",
                 border: "none",
                 color: "#c94040",
-                fontSize: 11,
+                fontSize: "var(--text-sm)",
                 fontWeight: 600,
                 letterSpacing: "0.07em",
                 textTransform: "uppercase",
@@ -295,7 +295,7 @@ export class ErrorBoundary extends Component<Props, State> {
               }}
             >
               <span>Developer details</span>
-              <span style={{ fontSize: 14, lineHeight: 1 }}>
+              <span style={{ fontSize: "var(--text-xl)", lineHeight: 1 }}>
                 {devExpanded ? "▲" : "▼"}
               </span>
             </button>
@@ -311,7 +311,7 @@ export class ErrorBoundary extends Component<Props, State> {
                 <div
                   style={{
                     fontFamily: "var(--font-mono, monospace)",
-                    fontSize: 12,
+                    fontSize: "var(--text-md)",
                     color: "#e07070",
                     marginBottom: 12,
                     wordBreak: "break-all",
@@ -328,7 +328,7 @@ export class ErrorBoundary extends Component<Props, State> {
                   <>
                     <div
                       style={{
-                        fontSize: 10,
+                        fontSize: "var(--text-xs)",
                         fontWeight: 600,
                         letterSpacing: "0.07em",
                         textTransform: "uppercase",
@@ -341,7 +341,7 @@ export class ErrorBoundary extends Component<Props, State> {
                     <pre
                       style={{
                         fontFamily: "var(--font-mono, monospace)",
-                        fontSize: 11,
+                        fontSize: "var(--text-sm)",
                         color: "var(--text-tertiary, #6e6e7c)",
                         margin: 0,
                         whiteSpace: "pre-wrap",
@@ -365,7 +365,7 @@ export class ErrorBoundary extends Component<Props, State> {
                   <>
                     <div
                       style={{
-                        fontSize: 10,
+                        fontSize: "var(--text-xs)",
                         fontWeight: 600,
                         letterSpacing: "0.07em",
                         textTransform: "uppercase",
@@ -378,7 +378,7 @@ export class ErrorBoundary extends Component<Props, State> {
                     <pre
                       style={{
                         fontFamily: "var(--font-mono, monospace)",
-                        fontSize: 11,
+                        fontSize: "var(--text-sm)",
                         color: "var(--text-tertiary, #6e6e7c)",
                         margin: 0,
                         whiteSpace: "pre-wrap",

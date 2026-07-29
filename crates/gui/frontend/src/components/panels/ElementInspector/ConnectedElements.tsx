@@ -52,7 +52,7 @@ export function ConnectedLink({
       />
       <span
         style={{
-          fontSize: 11,
+          fontSize: "var(--text-sm)",
           fontFamily: "var(--font-mono)",
           color: "var(--text-primary)",
           flex: 1,
@@ -65,7 +65,7 @@ export function ConnectedLink({
       </span>
       <span
         style={{
-          fontSize: 10,
+          fontSize: "var(--text-xs)",
           color: "var(--text-tertiary)",
           textTransform: "capitalize",
         }}
@@ -75,7 +75,7 @@ export function ConnectedLink({
       {link.diameter > 0 && (
         <span
           style={{
-            fontSize: 10,
+            fontSize: "var(--text-xs)",
             fontFamily: "var(--font-mono)",
             color: "var(--text-secondary)",
           }}
@@ -90,7 +90,7 @@ export function ConnectedLink({
       {hasFlow && (
         <span
           style={{
-            fontSize: 10,
+            fontSize: "var(--text-xs)",
             fontFamily: "var(--font-mono)",
             color: flowColor(flow, 0),
           }}
@@ -141,7 +141,7 @@ export function ConnectedNodeChip({
     >
       <span
         style={{
-          fontSize: 10,
+          fontSize: "var(--text-xs)",
           color: "var(--text-tertiary)",
           textTransform: "uppercase",
           letterSpacing: "0.06em",
@@ -151,7 +151,7 @@ export function ConnectedNodeChip({
       </span>
       <span
         style={{
-          fontSize: 12,
+          fontSize: "var(--text-md)",
           fontFamily: "var(--font-mono)",
           color: "var(--text-primary)",
           fontWeight: 500,
@@ -162,7 +162,7 @@ export function ConnectedNodeChip({
       {node?.pressure != null && (
         <span
           style={{
-            fontSize: 11,
+            fontSize: "var(--text-sm)",
             fontFamily: "var(--font-mono)",
             color: pressureColor(node.pressure),
           }}
@@ -173,7 +173,7 @@ export function ConnectedNodeChip({
       {node?.type && (
         <span
           style={{
-            fontSize: 10,
+            fontSize: "var(--text-xs)",
             color: "var(--text-tertiary)",
             textTransform: "capitalize",
           }}

@@ -17,7 +17,7 @@ export function SectionHeader({
     <div
       style={{
         padding: inline ? "0" : "0 16px 4px",
-        fontSize: 11,
+        fontSize: "var(--text-sm)",
         fontWeight: 600,
         letterSpacing: "0.08em",
         textTransform: "uppercase" as const,

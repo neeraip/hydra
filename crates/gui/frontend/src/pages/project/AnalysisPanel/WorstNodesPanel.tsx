@@ -38,7 +38,7 @@ export function WorstNodesPanel({
   );
 
   const thStyle: React.CSSProperties = {
-    fontSize: 11,
+    fontSize: "var(--text-sm)",
     fontWeight: 500,
     color: "var(--text-tertiary)",
     textAlign: "left",
@@ -48,7 +48,7 @@ export function WorstNodesPanel({
   };
   const tdStyle: React.CSSProperties = {
     padding: "7px 8px",
-    fontSize: 12,
+    fontSize: "var(--text-md)",
     borderBottom: "1px solid var(--border)",
     fontFamily: "var(--font-mono)",
   };
@@ -59,7 +59,7 @@ export function WorstNodesPanel({
         <div
           style={{
             marginBottom: 8,
-            fontSize: 13,
+            fontSize: "var(--text-lg)",
             fontWeight: 500,
             color: "var(--text-primary)",
           }}
@@ -76,7 +76,7 @@ export function WorstNodesPanel({
       <div style={{ marginBottom: 12 }}>
         <div
           style={{
-            fontSize: 13,
+            fontSize: "var(--text-lg)",
             fontWeight: 500,
             color: "var(--text-primary)",
           }}
@@ -84,7 +84,11 @@ export function WorstNodesPanel({
           Lowest-Pressure Junctions
         </div>
         <div
-          style={{ fontSize: 11, color: "var(--text-tertiary)", marginTop: 2 }}
+          style={{
+            fontSize: "var(--text-sm)",
+            color: "var(--text-tertiary)",
+            marginTop: 2,
+          }}
         >
           Worst-case pressure over the run · click a row to locate on the map
         </div>

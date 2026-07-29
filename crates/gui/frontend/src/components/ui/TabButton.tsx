@@ -27,7 +27,7 @@ export function TabButton({
           background: "transparent",
           color: active ? "var(--text-primary)" : "var(--text-secondary)",
           cursor: "pointer",
-          fontSize: 12,
+          fontSize: "var(--text-md)",
           fontWeight: active ? 600 : 500,
           fontFamily: "var(--font-ui)",
           borderBottom: active
@@ -43,7 +43,7 @@ export function TabButton({
           border: "none",
           borderRadius: 0,
           padding: "5px 12px",
-          fontSize: 12,
+          fontSize: "var(--text-md)",
           fontFamily: "var(--font-ui)",
           cursor: "pointer",
           background: active ? "var(--accent-dim)" : "transparent",
@@ -78,7 +78,7 @@ export function TabButton({
       {badge !== undefined && (
         <span
           style={{
-            fontSize: 10,
+            fontSize: "var(--text-xs)",
             fontWeight: 700,
             background: badgeColor ?? "var(--accent)",
             color: "#fff",
