@@ -83,14 +83,22 @@ export async function openScenarioFolder(
   await tryInvoke<void>("open_scenario_folder", { projectId, scenarioId });
 }
 
+/**
+ * Delete a scenario, optionally with every scenario descended from it.
+ *
+ * Resolves to how many were removed, or 0 when the id was not found. Without
+ * `cascade` the descendants survive — each is a complete copy of its parent's
+ * model, so the link is lineage only — which is why the caller must opt in.
+ */
 export async function deleteScenario(
   projectId: string,
   scenarioId: string,
-): Promise<boolean> {
-  return tryInvokeOr<boolean>(
+  cascade = false,
+): Promise<number> {
+  return tryInvokeOr<number>(
     "delete_scenario",
-    { projectId, scenarioId },
-    false,
+    { projectId, scenarioId, cascade },
+    0,
   );
 }
 

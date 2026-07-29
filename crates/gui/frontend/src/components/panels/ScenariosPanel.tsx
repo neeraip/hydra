@@ -82,6 +82,10 @@ export function ScenariosPanel({
   const [deletingId, setDeletingId] = useState<string | null>(null);
   /** Scenario awaiting delete confirmation (trash click → confirm → delete). */
   const [pendingDelete, setPendingDelete] = useState<FlatScenario | null>(null);
+  /** Opt-in on the delete prompt. Reset every time it opens — a remembered
+   * checkbox on a destructive dialog is how someone deletes a whole branch by
+   * accident. */
+  const [deleteCascade, setDeleteCascade] = useState(false);
   const [runningId, setRunningId] = useState<string | null>(null);
   const renameInputRef = useRef<HTMLInputElement>(null);
 
@@ -183,20 +187,41 @@ export function ScenariosPanel({
   );
 
   const handleDelete = useCallback(
-    async (s: FlatScenario) => {
+    async (s: FlatScenario, cascade: boolean) => {
       if (!project) return;
       setDeletingId(s.id);
-      const ok = await deleteScenario(project.id, s.id);
+      const removed = await deleteScenario(project.id, s.id, cascade);
       setDeletingId(null);
-      if (ok) {
-        bumpScenarios();
-        if (activeScenarioId === s.id) setActiveScenarioId(null);
-        showToast(`"${s.name}" deleted`, "info");
-      } else {
+      if (removed === 0) {
         showToast("Delete failed", "error");
+        return;
       }
+      bumpScenarios();
+      // The active scenario may have been a descendant rather than the one
+      // clicked, so fall back to Base whenever it no longer exists.
+      if (
+        activeScenarioId === s.id ||
+        (cascade &&
+          activeScenarioId != null &&
+          descendants(rawDtos, s.id).some((d) => d.id === activeScenarioId))
+      ) {
+        setActiveScenarioId(null);
+      }
+      showToast(
+        removed === 1
+          ? `"${s.name}" deleted`
+          : `"${s.name}" and ${removed - 1} branched scenario${removed === 2 ? "" : "s"} deleted`,
+        "info",
+      );
     },
-    [project, activeScenarioId, bumpScenarios, setActiveScenarioId, showToast],
+    [
+      project,
+      activeScenarioId,
+      rawDtos,
+      bumpScenarios,
+      setActiveScenarioId,
+      showToast,
+    ],
   );
 
   const handleRun = useCallback(
@@ -453,7 +478,10 @@ export function ScenariosPanel({
                   })
                 }
                 onRun={() => handleRun(s)}
-                onDelete={() => setPendingDelete(s)}
+                onDelete={() => {
+                  setDeleteCascade(false);
+                  setPendingDelete(s);
+                }}
                 onOpenFolder={() => handleOpenFolder(s)}
               />
 
@@ -492,32 +520,50 @@ export function ScenariosPanel({
             </strong>
             ? Its network changes and simulation results will be permanently
             removed.
-            {survivingCount > 0 && (
-              <>
-                {" "}
-                {survivingCount} scenario{survivingCount === 1 ? "" : "s"}{" "}
-                branched from it {survivingCount === 1 ? "is" : "are"} untouched
-                — each is a complete model of its own.{" "}
-                {survivingCount === promotedCount ? (
-                  <>
-                    {promotedCount === 1 ? "It" : "They"} will move to the top
-                    level.
-                  </>
-                ) : (
-                  <>
-                    The {promotedCount} branched directly from it will move to
-                    the top level.
-                  </>
-                )}
-              </>
-            )}
+            {survivingCount > 0 &&
+              (deleteCascade ? (
+                <>
+                  {" "}
+                  All {survivingCount} scenario
+                  {survivingCount === 1 ? "" : "s"} branched from it will be
+                  deleted too, with their own networks and results.
+                </>
+              ) : (
+                <>
+                  {" "}
+                  {survivingCount} scenario{survivingCount === 1 ? "" : "s"}{" "}
+                  branched from it {survivingCount === 1 ? "is" : "are"}{" "}
+                  untouched — each is a complete model of its own.{" "}
+                  {survivingCount === promotedCount ? (
+                    <>
+                      {promotedCount === 1 ? "It" : "They"} will move to the top
+                      level.
+                    </>
+                  ) : (
+                    <>
+                      The {promotedCount} branched directly from it will move to
+                      the top level.
+                    </>
+                  )}
+                </>
+              ))}
           </>
+        }
+        option={
+          survivingCount > 0
+            ? {
+                label: `Also delete the ${survivingCount} scenario${survivingCount === 1 ? "" : "s"} branched from it`,
+                checked: deleteCascade,
+                onChange: setDeleteCascade,
+              }
+            : undefined
         }
         onCancel={() => setPendingDelete(null)}
         onConfirm={() => {
           const s = pendingDelete;
+          const cascade = deleteCascade;
           setPendingDelete(null);
-          if (s) void handleDelete(s);
+          if (s) void handleDelete(s, cascade);
         }}
       />
     </div>

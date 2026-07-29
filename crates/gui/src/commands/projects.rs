@@ -1013,24 +1013,80 @@ fn scenario_meta_to_dto(
     }
 }
 
+/// Scenarios descended from `scenario_id`, at any depth, read from the bundle.
+///
+/// Enumerated from disk rather than accepted from the caller for the same
+/// reason `delete_all_simulations` reads its own target list: a frontend list
+/// that had gone stale would leave behind exactly the scenarios the
+/// confirmation promised to remove.
+///
+/// Walks with a visited set. Parent links live in each scenario's own
+/// `meta.json` and nothing enforces acyclicity across them, so a cycle is
+/// representable on disk and a naive walk would not terminate.
+fn scenario_descendants(
+    app_data: &std::path::Path,
+    project_id: &str,
+    scenario_id: &str,
+) -> Result<Vec<String>, String> {
+    let mut children: std::collections::HashMap<String, Vec<String>> =
+        std::collections::HashMap::new();
+    for id in scenario_ids(app_data, project_id)? {
+        let dir = bundle::scenario_dir(app_data, project_id, &id);
+        if let Ok(meta) = meta::read_scenario_meta(&dir) {
+            if let Some(parent) = meta.parent_scenario_id {
+                children.entry(parent).or_default().push(id);
+            }
+        }
+    }
+    let mut found = Vec::new();
+    let mut seen = std::collections::HashSet::from([scenario_id.to_string()]);
+    let mut queue = vec![scenario_id.to_string()];
+    while let Some(id) = queue.pop() {
+        for child in children.get(&id).cloned().unwrap_or_default() {
+            if seen.insert(child.clone()) {
+                found.push(child.clone());
+                queue.push(child);
+            }
+        }
+    }
+    Ok(found)
+}
+
 /// Permanently delete a scenario and its on-disk bundle.
-/// Returns `true` when the directory was removed, `false` when the id was not found.
+///
+/// With `cascade`, every scenario descended from it goes too. Without it they
+/// survive: each is a complete copy of its parent's model rather than a delta,
+/// so the link is lineage only — which is why cascading is opt-in and the
+/// caller defaults it off.
+///
+/// Descendants are removed before their parent, so an interrupted cascade
+/// leaves the parent standing with the remainder of its subtree still
+/// attached, rather than a set of orphans promoted to roots.
+///
+/// Returns how many scenarios were removed; `0` when the id was not found.
 #[tauri::command]
-/// Remove the scenario directory tree.
+/// Remove the scenario directory tree, optionally with its descendants.
 pub fn delete_scenario(
     app: tauri::AppHandle,
     project_id: String,
     scenario_id: String,
-) -> Result<bool, String> {
+    cascade: bool,
+) -> Result<u32, String> {
     validate_id(&project_id)?;
     validate_id(&scenario_id)?;
     let app_data = app_data_dir(&app)?;
-    let dir = bundle::scenario_dir(&app_data, &project_id, &scenario_id);
-    if !dir.exists() {
-        return Ok(false);
+    if !bundle::scenario_dir(&app_data, &project_id, &scenario_id).exists() {
+        return Ok(0);
+    }
+    let mut removed = 0u32;
+    if cascade {
+        for id in scenario_descendants(&app_data, &project_id, &scenario_id)? {
+            bundle::delete_scenario_dir(&app_data, &project_id, &id).map_err(|e| e.to_string())?;
+            removed += 1;
+        }
     }
     bundle::delete_scenario_dir(&app_data, &project_id, &scenario_id).map_err(|e| e.to_string())?;
-    Ok(true)
+    Ok(removed + 1)
 }
 
 /// Rename a scenario. Returns `true` on success, `false` if not found.
@@ -1611,6 +1667,55 @@ mod tests {
     fn format_modified_two_months() {
         let label = format_modified(meta::now_secs() - 65 * 86_400); // ~2 months ago
         assert_eq!(label, "2mo ago");
+    }
+
+    // ── scenario cascade ─────────────────────────────────────────────────
+
+    /// Write a scenario directory with the given parent link.
+    fn put_scenario(app_data: &std::path::Path, project: &str, id: &str, parent: Option<&str>) {
+        let dir = bundle::scenario_dir(app_data, project, id);
+        std::fs::create_dir_all(&dir).unwrap();
+        meta::write_scenario_meta(
+            &dir,
+            &meta::ScenarioMeta {
+                name: id.to_string(),
+                parent_scenario_id: parent.map(str::to_string),
+            },
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn descendants_reach_every_depth_from_disk() {
+        let dir = tempfile::tempdir().unwrap();
+        // a → b → c, a → d, plus an unrelated root.
+        put_scenario(dir.path(), "p1", "a", None);
+        put_scenario(dir.path(), "p1", "b", Some("a"));
+        put_scenario(dir.path(), "p1", "c", Some("b"));
+        put_scenario(dir.path(), "p1", "d", Some("a"));
+        put_scenario(dir.path(), "p1", "z", None);
+
+        let mut found = scenario_descendants(dir.path(), "p1", "a").unwrap();
+        found.sort();
+        assert_eq!(found, ["b", "c", "d"]);
+        assert!(scenario_descendants(dir.path(), "p1", "c")
+            .unwrap()
+            .is_empty());
+    }
+
+    #[test]
+    fn descendants_terminate_on_a_parent_cycle() {
+        // Parent links live in each scenario's own meta.json and nothing
+        // enforces acyclicity across them, so a cycle is representable on
+        // disk. A naive walk would hang the command.
+        let dir = tempfile::tempdir().unwrap();
+        put_scenario(dir.path(), "p1", "a", Some("b"));
+        put_scenario(dir.path(), "p1", "b", Some("a"));
+        put_scenario(dir.path(), "p1", "c", Some("b"));
+
+        let mut found = scenario_descendants(dir.path(), "p1", "a").unwrap();
+        found.sort();
+        assert_eq!(found, ["b", "c"]);
     }
 
     // ── project criteria ─────────────────────────────────────────────────

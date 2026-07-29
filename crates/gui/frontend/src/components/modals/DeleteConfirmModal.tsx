@@ -43,6 +43,17 @@ interface DeleteConfirmModalProps {
   message?: ReactNode;
   /** Overrides the destructive button label (default "Delete"). */
   confirmLabel?: string;
+  /**
+   * An extra opt-in shown above the buttons — for a wider action the user may
+   * want but must ask for. Always render it unchecked when the dialog opens:
+   * a remembered checkbox on a destructive prompt is how someone deletes more
+   * than they meant to.
+   */
+  option?: {
+    label: string;
+    checked: boolean;
+    onChange: (checked: boolean) => void;
+  };
   onConfirm: () => void;
   onCancel: () => void;
 }
@@ -54,6 +65,7 @@ export function DeleteConfirmModal({
   title,
   message,
   confirmLabel = "Delete",
+  option,
   onConfirm,
   onCancel,
 }: DeleteConfirmModalProps) {
@@ -156,6 +168,36 @@ export function DeleteConfirmModal({
             </p>
           </div>
         </div>
+
+        {option && (
+          <label
+            style={{
+              display: "flex",
+              alignItems: "flex-start",
+              gap: 8,
+              marginBottom: 16,
+              fontSize: 12,
+              lineHeight: 1.5,
+              color: "var(--text-secondary)",
+              cursor: "pointer",
+            }}
+          >
+            <input
+              type="checkbox"
+              checked={option.checked}
+              onChange={(e) => option.onChange(e.target.checked)}
+              style={{
+                accentColor: "var(--status-error, #e05c5c)",
+                width: 13,
+                height: 13,
+                marginTop: 1,
+                flexShrink: 0,
+                cursor: "pointer",
+              }}
+            />
+            {option.label}
+          </label>
+        )}
 
         {/* Actions */}
         <div
