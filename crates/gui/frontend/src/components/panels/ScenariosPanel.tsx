@@ -529,22 +529,17 @@ export function ScenariosPanel({
                   deleted too, with their own networks and results.
                 </>
               ) : (
+                // That the branches survive is already said by the unchecked
+                // option below, so only the part it cannot convey is stated:
+                // the direct children get promoted, and the tree visibly
+                // rearranges around them.
                 <>
                   {" "}
-                  {survivingCount} scenario{survivingCount === 1 ? "" : "s"}{" "}
-                  branched from it {survivingCount === 1 ? "is" : "are"}{" "}
-                  untouched — each is a complete model of its own.{" "}
-                  {survivingCount === promotedCount ? (
-                    <>
-                      {promotedCount === 1 ? "It" : "They"} will move to the top
-                      level.
-                    </>
-                  ) : (
-                    <>
-                      The {promotedCount} branched directly from it will move to
-                      the top level.
-                    </>
-                  )}
+                  {promotedCount === 1
+                    ? "The scenario"
+                    : `The ${promotedCount} scenarios`}{" "}
+                  branched {survivingCount === promotedCount ? "" : "directly "}
+                  from it will move to the top level.
                 </>
               ))}
           </>
