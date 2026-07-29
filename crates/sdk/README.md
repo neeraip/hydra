@@ -5,7 +5,7 @@
 
 Water distribution network simulator — EPANET-compatible extended-period simulation.
 
-`hydra-sdk` is the user-facing library crate for [Hydra](https://github.com/neeraip/hydra). It re-exports the complete public API of `hydra-engine-wds` as a single stable dependency, with all internal crate versions pre-pinned.
+`hydra-sdk` is the user-facing library crate for [Hydra](https://github.com/neeraip/hydra). It is the single dependency you add to build on Hydra: it re-exports the water-distribution engine (`hydra-engine-wds`), the shared foundation contracts (`hydra-common` — engine identity and the reportable-output contract), and report generation (`hydra-report` — templates, document assembly, and the txt/csv/html/pdf renderers), with all internal crate versions pre-pinned.
 
 **[→ Full documentation](https://neeraip.github.io/hydra/sdk/overview.html)**
 
@@ -13,7 +13,7 @@ Water distribution network simulator — EPANET-compatible extended-period simul
 
 ```toml
 [dependencies]
-hydra-sdk = "1"
+hydra-sdk = "2"
 ```
 
 ## Quick start
@@ -41,6 +41,7 @@ for t in sim.snapshot_times() {
 - Pressure-driven and demand-driven demand models
 - Conservative and reactive constituent transport (water quality, age, source tracing)
 - EPANET 2.3 `.inp` format input; binary `.out` and plain-text `.rpt` output
+- Report generation from saved templates (txt, csv, html, and optional pdf)
 
 Hydra does **not** model pressure transients, water-hammer, or multi-phase flow.
 

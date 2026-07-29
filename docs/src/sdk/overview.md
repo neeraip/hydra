@@ -4,10 +4,10 @@
 
 ```toml
 [dependencies]
-hydra-sdk = "1"
+hydra-sdk = "2"
 ```
 
-It re-exports every type needed to parse networks, run simulations, query results, and run post-simulation analytics — with all internal dependency versions pre-pinned.
+It re-exports every type needed to parse networks, run simulations, query results, run post-simulation analytics, and generate reports — with all internal dependency versions pre-pinned.
 
 ## Modules and Key Types
 
@@ -75,6 +75,48 @@ use hydra_sdk::io;
 | `io::out_reader` | Read and inspect existing `.out` files |
 | `io::analysis_io` | Read/write serialised analysis-artifact files |
 | `io::compute_network_digest` | Stable content digest of a `Network` (also re-exported at the crate root) |
+
+### Engine Identity
+
+```rust
+use hydra_sdk::common;
+```
+
+Every Hydra engine publishes an immutable descriptor. Applications resolve a
+project's stored engine key against the registry rather than hardcoding
+names, colours, or file filters.
+
+| Type / function | Purpose |
+|---|---|
+| `common::ENGINES` | Every engine compiled into this distribution, in presentation order |
+| `common::engine_by_key(key)` | Resolve a key to its descriptor, or an `UnknownEngineError` |
+| `common::EngineDescriptor` | `key`, `label`, `pill`, `accent`, `summary`, `status`, `import` |
+| `common::EngineStatus` | `Available` or `Planned` — a planned engine is registered but has no implementation |
+| `common::ImportFormat` | A source-model format the engine reads: `label` plus `extensions` |
+
+`import` is a file-picker filter, never a validity test — `wds` and `uds` both
+claim `.inp` with incompatible contents, so only the owning engine's parser
+can decide whether a file really is its model.
+
+### Reports
+
+```rust
+use hydra_sdk::{report, report_catalog, produce_report_block};
+```
+
+Report generation is split in two: the engine produces neutral content
+fragments, and `report` turns them into documents. The report layer knows
+nothing about engines.
+
+| Type / function | Purpose |
+|---|---|
+| `report_catalog()` | The engine's block catalog — queryable without running a simulation |
+| `produce_report_block(id, out_path, network, options)` | Materialise one block for a completed run |
+| `report::ReportTemplate` | An ordered list of block references plus a document title (JSON) |
+| `report::assemble(template, catalog, context, produce)` | Pair a template with a producer to build a render-ready document |
+| `report::render_txt` / `render_csv` / `render_html` | Deterministic renderers — identical inputs give byte-identical output |
+| `report::render_pdf` | Typeset PDF; behind hydra-sdk's `report-pdf` feature, and the only renderer that can fail (`PdfError`) |
+| `common::BlockDescriptor` / `Fragment` | The catalog entry and produced-content types the two halves exchange |
 
 ### Also re-exported
 

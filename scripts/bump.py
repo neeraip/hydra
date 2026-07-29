@@ -7,6 +7,14 @@ pin in hydra-cli and the hydra-engine-wds dep pin in hydra-sdk.
 Usage: scripts/bump.py <patch|minor|major> [--push|--no-push]
 """
 
+# Docs that tell users which hydra-sdk version to depend on. Cargo reads a bare
+# `"1"` as `^1.0`, which EXCLUDES every later major — so a stale pin here does
+# not merely look old, it silently resolves readers onto an ancient release.
+# These went a whole major cycle stale precisely because nothing updated them,
+# so the bump owns them now; `test_documented_sdk_pin_matches_workspace_major`
+# fails the build if they ever drift again.
+SDK_PIN_DOCS = ("README.md", "crates/sdk/README.md", "docs/src/sdk/overview.md")
+
 import pathlib
 import re
 import sys
@@ -40,6 +48,16 @@ def main():
         p = pathlib.Path(crate)
         p.write_text(re.sub(r'(hydra-common[^\n]+version = ")\d+\.\d+\.\d+"', rf'\g<1>{version}"', p.read_text()))
 
+    # Only the MAJOR is documented: a caret pin already admits every
+    # compatible minor and patch, so narrowing it would just create churn.
+    major = version.split(".")[0]
+    for doc in SDK_PIN_DOCS:
+        p = pathlib.Path(doc)
+        text, n = re.subn(r'(hydra-sdk = ")\d+(")', rf'\g<1>{major}\g<2>', p.read_text())
+        if n != 1:
+            raise SystemExit(f"error: expected exactly one hydra-sdk pin in {doc}, found {n}")
+        p.write_text(text)
+
     commit_and_tag(
         [
             "Cargo.toml",
@@ -48,6 +66,7 @@ def main():
             "crates/sdk/Cargo.toml",
             "crates/engine-wds/Cargo.toml",
             "crates/report/Cargo.toml",
+            *SDK_PIN_DOCS,
         ],
         f"chore: bump library version to {version}",
         f"v{version}",
