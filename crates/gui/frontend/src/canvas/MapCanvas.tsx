@@ -37,7 +37,13 @@ import {
 import { FlowPathLayer } from "./FlowPathLayer";
 import { HoverChip, type HoverTip } from "./HoverChip";
 import { useCanvasLayers } from "./layers-context";
-import { hashStr, linkRgba, nodeRgba, type RGBA } from "./MapCanvas/colorUtils";
+import {
+  hashStr,
+  linkRgba,
+  NO_RESULT_RGBA,
+  nodeRgba,
+  type RGBA,
+} from "./MapCanvas/colorUtils";
 import {
   fitMapExtents,
   geoBounds,
@@ -701,6 +707,19 @@ export const MapCanvas = memo(function MapCanvas({
       };
     }, [links, nodes, viewMode, schematicCoords, geoCoords]);
 
+  // Whether usable period results exist for the CURRENT topology. Guards
+  // against a topology change racing ahead of the results that describe it —
+  // the flat arrays are indexed by network position, so a length mismatch
+  // would attach one element's values to another.
+  //
+  // Lifted to component scope because both the layer builder and the
+  // flow-animation loop need it, and they must agree: a loop that ran while
+  // the layers rendered neutral would burn frames animating nothing.
+  const hasPeriodResults =
+    periodResult != null &&
+    periodResult.nodePressure.length === nodes.length &&
+    periodResult.linkFlow.length === links.length;
+
   const buildLayers = useCallback((): Layer[] => {
     const isSchematic = viewMode === "schematic";
     const coordSystem = isSchematic
@@ -752,13 +771,8 @@ export const MapCanvas = memo(function MapCanvas({
       drag ? nd.find((n) => n.id === id) : nodeDatumById.get(id);
 
     // Period results are flat arrays in network order, looked up by each
-    // datum's `si`. Guard against topology changes racing ahead of results.
-    const pr =
-      periodResult &&
-      periodResult.nodePressure.length === nodes.length &&
-      periodResult.linkFlow.length === links.length
-        ? periodResult
-        : null;
+    // datum's `si` (see `hasPeriodResults` for the topology guard).
+    const pr = hasPeriodResults ? periodResult : null;
     const nodeSim = <T extends Node & { si: number }>(d: T): T =>
       pr
         ? {
@@ -783,7 +797,13 @@ export const MapCanvas = memo(function MapCanvas({
 
     // Shared colour accessors — used by BOTH the main node/link layers and
     // the hover/selection glow rings so halos always match the element.
+    // Every node variable, and every link variable but Status, is derived
+    // from results. Without them there is nothing to encode, so the network
+    // renders neutral rather than showing a ramp colour for a value that
+    // does not exist — the legend is hidden in this state too, so a colour
+    // here would have nothing to explain it.
     const nodeColor = (d: (typeof nodeData)[number]): RGBA => {
+      if (!pr) return NO_RESULT_RGBA;
       return nodeRgba(
         nodeSim(d),
         nodeVar,
@@ -797,6 +817,9 @@ export const MapCanvas = memo(function MapCanvas({
       );
     };
     const linkColor = (d: (typeof linkData)[number]): RGBA => {
+      // Status is the exception: it falls back to the model's initial
+      // status, which is real data before any run.
+      if (!pr && linkVar !== "status") return NO_RESULT_RGBA;
       return linkRgba(
         linkSim(d),
         linkVar,
@@ -997,7 +1020,7 @@ export const MapCanvas = memo(function MapCanvas({
         // ids for the same class-transfer reason as above. FlowPathLayer is
         // already a PathLayer, so it renders the full polyline in both the
         // straight and vertex cases under its single id.
-        ...(animateLinks && (linkVar === "flow" || linkVar === "velocity")
+        ...(animateLinks && pr && (linkVar === "flow" || linkVar === "velocity")
           ? [
               new FlowPathLayer({
                 id: "links-flow",
@@ -1314,8 +1337,10 @@ export const MapCanvas = memo(function MapCanvas({
     nodeDatumById,
     anyLinkVertices,
     periodResult,
-    nodes,
-    links,
+    // `nodes`/`links` are no longer read here — the length guard they served
+    // moved into `hasPeriodResults`, and `nodeData`/`linkData` below already
+    // change whenever the network does.
+    hasPeriodResults,
     viewMode,
     nodeVar,
     linkVar,
@@ -1651,8 +1676,12 @@ export const MapCanvas = memo(function MapCanvas({
     markFirstFrame("schematic");
   }, [buildLayers, isActive, markFirstFrame, viewMode]);
 
+  // Mirrors the flow layer's own condition — with no results there is no
+  // flow layer to drive, so the loop must not run either.
   const linkAnimationActive =
-    animateLinks && (linkVar === "flow" || linkVar === "velocity");
+    animateLinks &&
+    hasPeriodResults &&
+    (linkVar === "flow" || linkVar === "velocity");
 
   // Flow-animation loop — one RAF effect drives both view modes, pushing
   // fresh layers to the schematic deck or the map overlay. The clock resets

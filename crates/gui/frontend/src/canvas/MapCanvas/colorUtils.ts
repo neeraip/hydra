@@ -119,6 +119,17 @@ export function nodeRgba(
 
 // ── Link variable colour functions ────────────────────────────────────────────
 
+/**
+ * Colour for an element whose value is unknown, as distinct from zero.
+ *
+ * Several ramps already fall back to this grey for a null value; it is named
+ * here because the whole network uses it before a simulation exists. The
+ * distinction matters most for velocity, whose ramp takes a non-nullable
+ * number — an unsimulated link would otherwise render the definite colour of
+ * "0 m/s" for a value nobody has computed.
+ */
+export const NO_RESULT_RGBA: RGBA = [100, 100, 100, 200];
+
 export function velocityRgba(
   v: number,
   thresholds?: { low: number; target: number; high: number },
