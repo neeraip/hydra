@@ -266,8 +266,10 @@ interface PickerOption<T extends string> {
 // ── Picker glyphs ─────────────────────────────────────────────────────────────
 // Micro-icons distinguishing the two variable pickers: a filled dot matching
 // how junction nodes render on the canvas, and a short pipe segment for
-// links. Both use var(--text-tertiary) so they track the legend's existing
-// micro-label colour in light and dark themes alike.
+// links. Both use var(--text-secondary) so they track the legend's micro-label
+// colour (SECTION_LABEL_STYLE) in every theme — they previously used
+// --text-tertiary, one step dimmer than the label they sit beside, which left
+// them hard to make out against the panel.
 
 function NodeGlyph() {
   return (
@@ -278,7 +280,7 @@ function NodeGlyph() {
       aria-hidden="true"
       style={{ flexShrink: 0 }}
     >
-      <circle cx={5} cy={5} r={3.2} fill="var(--text-tertiary)" />
+      <circle cx={5} cy={5} r={3.2} fill="var(--text-secondary)" />
     </svg>
   );
 }
@@ -297,7 +299,7 @@ function LinkGlyph() {
         y1={8.5}
         x2={8.5}
         y2={1.5}
-        stroke="var(--text-tertiary)"
+        stroke="var(--text-secondary)"
         strokeWidth={2}
         strokeLinecap="round"
       />
