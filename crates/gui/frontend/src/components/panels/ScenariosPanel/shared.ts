@@ -190,3 +190,19 @@ export const iconButtonStyle: React.CSSProperties = {
   padding: 0,
   transition: "background 0.1s, color 0.1s",
 };
+
+/**
+ * Scenarios branched directly from `scenarioId`.
+ *
+ * Deliberately direct children only, not all descendants. Deleting a scenario
+ * removes one directory; `buildScenarioTree` then promotes rows whose parent
+ * id no longer resolves to roots. Only the immediate children are orphaned
+ * that way — a grandchild still resolves its own parent and keeps its place —
+ * so these are exactly the rows whose lineage the deletion changes.
+ */
+export function directChildren(
+  dtos: ScenarioDto[],
+  scenarioId: string,
+): ScenarioDto[] {
+  return dtos.filter((d) => d.parentScenarioId === scenarioId);
+}

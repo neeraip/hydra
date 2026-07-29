@@ -23,7 +23,11 @@ import { formatIpcError } from "../../hooks/ipc";
 import { formatBytes } from "../../units";
 import { DeleteConfirmModal } from "../modals/DeleteConfirmModal";
 import { BaseRow, CreateRow, ScenarioRow } from "./ScenariosPanel/Rows";
-import { type FlatScenario, flattenScenarios } from "./ScenariosPanel/shared";
+import {
+  directChildren,
+  type FlatScenario,
+  flattenScenarios,
+} from "./ScenariosPanel/shared";
 
 // ── Main component ───────────────────────────────────────────────────────────
 
@@ -145,6 +149,14 @@ export function ScenariosPanel({
   /** "Frees 12.4 MB", or nothing while unmeasured or with nothing to free. */
   const freed = (bytes: number | undefined) =>
     bytes ? `Frees ${formatBytes(bytes)}` : undefined;
+
+  // Scenarios branched directly from the one pending deletion. They survive
+  // it — each is a full copy, not a delta — but `buildScenarioTree` promotes
+  // them to roots once their parent id stops resolving, so the confirmation
+  // has to say so rather than letting the tree silently rearrange.
+  const orphanedCount = pendingDelete
+    ? directChildren(rawDtos, pendingDelete.id).length
+    : 0;
 
   // ── handlers ─────────────────────────────────────────────────────────────
 
@@ -474,6 +486,14 @@ export function ScenariosPanel({
             </strong>
             ? Its network changes and simulation results will be permanently
             removed.
+            {orphanedCount > 0 && (
+              <>
+                {" "}
+                {orphanedCount} scenario{orphanedCount === 1 ? "" : "s"}{" "}
+                branched from it will remain — each is a complete model of its
+                own — but will no longer show as branched.
+              </>
+            )}
           </>
         }
         onCancel={() => setPendingDelete(null)}

@@ -3,6 +3,7 @@ import type { ScenarioDto } from "../../../hooks";
 import {
   activeLineage,
   buildScenarioTree,
+  directChildren,
   flattenScenarios,
   flattenSubtrees,
   lineageLabel,
@@ -164,5 +165,40 @@ describe("lineageLabel", () => {
 
   it("returns an empty string for unknown ids", () => {
     expect(lineageLabel(FOREST, "nope")).toBe("");
+  });
+});
+
+// ── directChildren ───────────────────────────────────────────────────────────
+
+describe("directChildren", () => {
+  const dto = (id: string, parentScenarioId: string | null): ScenarioDto => ({
+    id,
+    projectId: "p1",
+    parentScenarioId,
+    name: id,
+    state: "not-run",
+  });
+
+  // base → a → b → c, plus a second child of a.
+  const forest = [dto("a", null), dto("b", "a"), dto("c", "b"), dto("d", "a")];
+
+  it("returns only the immediate children", () => {
+    // `c` is a grandchild: deleting `a` leaves it parented to `b`, which
+    // still exists, so its lineage is untouched.
+    expect(directChildren(forest, "a").map((s) => s.id)).toEqual(["b", "d"]);
+  });
+
+  it("returns nothing for a leaf", () => {
+    expect(directChildren(forest, "c")).toEqual([]);
+  });
+
+  it("returns nothing for an unknown id", () => {
+    expect(directChildren(forest, "nope")).toEqual([]);
+  });
+
+  it("never counts a root's null parent as a match", () => {
+    // A root carries parentScenarioId === null; nothing should treat that as
+    // being a child of some scenario.
+    expect(directChildren(forest, "")).toEqual([]);
   });
 });
