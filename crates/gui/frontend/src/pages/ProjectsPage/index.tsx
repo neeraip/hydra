@@ -15,15 +15,19 @@ import {
   getPaginationRowModel,
   getSortedRowModel,
   type PaginationState,
+  type RowSelectionState,
   type SortingState,
   useReactTable,
 } from "@tanstack/react-table";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAppState } from "../../AppContext";
+import { DeleteConfirmModal } from "../../components/modals/DeleteConfirmModal";
 import { DeleteProjectModal } from "../../components/modals/DeleteProjectModal";
 import { NewProjectWizard } from "../../components/modals/NewProjectWizard";
 import { PrimaryButton } from "../../components/ui/PrimaryButton";
+import { RowMenu } from "../../components/ui/RowMenu";
 import {
+  deleteAllSimulations,
   deleteProjectOnDisk,
   openBaseFolder,
   type Project,
@@ -32,6 +36,7 @@ import {
   renameProjectOnDisk,
   useProjects,
 } from "../../hooks";
+import { formatIpcError } from "../../hooks/ipc";
 import { PROJECTS_SEARCH_INPUT_ID } from "../../shortcuts";
 import { ContextMenu, type ContextMenuState } from "./ContextMenu";
 
@@ -57,11 +62,66 @@ const STATE_COLORS: Record<ProjectState, string> = {
 
 const col = createColumnHelper<Project>();
 
+const CHECKBOX_STYLE: React.CSSProperties = {
+  accentColor: "var(--accent)",
+  width: 13,
+  height: 13,
+  cursor: "pointer",
+  verticalAlign: "middle",
+};
+
 // ── Main page ────────────────────────────────────────────────────────────────
 
 export function ProjectsPage() {
-  const { projectsVersion, openProject, bumpProjects } = useAppState();
+  const { projectsVersion, openProject, bumpProjects, showToast } =
+    useAppState();
   const [showWizard, setShowWizard] = useState(false);
+
+  // ── Bulk actions on the checkbox selection ───────────────────────────────
+  const runBulk = useCallback(
+    async (kind: "clear" | "delete", targets: Project[]) => {
+      setPendingBulk(null);
+      // Sequential rather than concurrent: each project's work touches the
+      // filesystem, and a failure part-way should leave a comprehensible
+      // state rather than an arbitrary interleaving.
+      let done = 0;
+      const failures: string[] = [];
+      for (const project of targets) {
+        try {
+          if (kind === "clear") {
+            await deleteAllSimulations(project.id);
+          } else if (!(await deleteProjectOnDisk(project.id))) {
+            // The list is a filesystem scan, so a row that cannot be deleted
+            // is a genuine failure rather than an already-absent project.
+            failures.push(`${project.name}: could not be deleted`);
+            continue;
+          }
+          done += 1;
+        } catch (err) {
+          // Reported per project, not as one opaque failure: the usual cause
+          // is a simulation still running for that target, which names the
+          // project the user has to deal with.
+          failures.push(`${project.name}: ${formatIpcError(err)}`);
+        }
+      }
+      setRowSelection({});
+      bumpProjects();
+
+      const noun = kind === "clear" ? "cleared" : "deleted";
+      if (failures.length === 0) {
+        showToast(
+          `${done} project${done === 1 ? "" : "s"} ${noun}`,
+          done === 0 ? "info" : "success",
+        );
+      } else {
+        showToast(
+          `${done} ${noun}, ${failures.length} failed — ${failures[0]}`,
+          "error",
+        );
+      }
+    },
+    [bumpProjects, showToast],
+  );
 
   const handleOpenProject = useCallback(
     (id: string) => {
@@ -87,6 +147,13 @@ export function ProjectsPage() {
     pageIndex: 0,
     pageSize: 20,
   });
+  // Keyed by project id (see `getRowId`), so a selection survives sorting,
+  // filtering and paging instead of following row positions.
+  const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
+  /** Pending bulk action awaiting confirmation. */
+  const [pendingBulk, setPendingBulk] = useState<"clear" | "delete" | null>(
+    null,
+  );
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
   const [pendingDeleteProject, setPendingDeleteProject] =
     useState<Project | null>(null);
@@ -108,6 +175,35 @@ export function ProjectsPage() {
 
   const columns = useMemo(
     () => [
+      col.display({
+        id: "select",
+        header: ({ table }) => (
+          <input
+            type="checkbox"
+            aria-label="Select all projects"
+            checked={table.getIsAllRowsSelected()}
+            ref={(el) => {
+              // Indeterminate is not an attribute — it only exists on the DOM
+              // node, so it has to be set imperatively.
+              if (el) el.indeterminate = table.getIsSomeRowsSelected();
+            }}
+            onChange={table.getToggleAllRowsSelectedHandler()}
+            style={CHECKBOX_STYLE}
+          />
+        ),
+        cell: (info) => (
+          <input
+            type="checkbox"
+            aria-label={`Select ${info.row.original.name}`}
+            checked={info.row.getIsSelected()}
+            onChange={info.row.getToggleSelectedHandler()}
+            // The row itself opens the project on click; a checkbox that
+            // bubbled would open it too.
+            onClick={(e) => e.stopPropagation()}
+            style={CHECKBOX_STYLE}
+          />
+        ),
+      }),
       col.accessor("name", {
         header: "Name",
         cell: (info) => {
@@ -262,7 +358,12 @@ export function ProjectsPage() {
       columnFilters: effectiveFilters,
       sorting,
       pagination,
+      rowSelection,
     },
+    // Without this, TanStack keys selection by row index — sorting or
+    // filtering would then silently move the selection to different projects.
+    getRowId: (p) => p.id,
+    onRowSelectionChange: setRowSelection,
     onGlobalFilterChange: setGlobalFilter,
     onColumnFiltersChange: setColumnFilters,
     onSortingChange: setSorting,
@@ -273,6 +374,10 @@ export function ProjectsPage() {
     getPaginationRowModel: getPaginationRowModel(),
     globalFilterFn: "includesString",
   });
+
+  const selectedProjects = table
+    .getSelectedRowModel()
+    .rows.map((r) => r.original);
 
   const { rows } = table.getRowModel();
   const pageCount = table.getPageCount();
@@ -378,13 +483,61 @@ export function ProjectsPage() {
           + New project
         </PrimaryButton>
 
-        {/* Row count */}
-        <span
-          style={{ fontSize: 12, color: "var(--text-tertiary)", flexShrink: 0 }}
-        >
-          {table.getFilteredRowModel().rows.length} project
-          {table.getFilteredRowModel().rows.length !== 1 ? "s" : ""}
-        </span>
+        {/* Selection actions — replace the row count while a selection is
+            live, so the toolbar does not grow a permanently empty slot. */}
+        {selectedProjects.length > 0 ? (
+          <span
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 8,
+              flexShrink: 0,
+              fontSize: 12,
+              color: "var(--text-secondary)",
+            }}
+          >
+            {selectedProjects.length} selected
+            <button
+              type="button"
+              className="btn-link"
+              style={{ fontSize: 11 }}
+              onClick={() => setRowSelection({})}
+            >
+              Clear
+            </button>
+            <RowMenu
+              label="Actions for selected projects"
+              items={[
+                {
+                  label: "Clear simulation results",
+                  onSelect: () => setPendingBulk("clear"),
+                  disabled: !selectedProjects.some(
+                    (p) => p.state === "simulated",
+                  ),
+                  disabledReason: "None of these have been simulated",
+                  danger: true,
+                },
+                {
+                  label: "Delete projects",
+                  onSelect: () => setPendingBulk("delete"),
+                  danger: true,
+                },
+              ]}
+            />
+          </span>
+        ) : (
+          /* Row count */
+          <span
+            style={{
+              fontSize: 12,
+              color: "var(--text-tertiary)",
+              flexShrink: 0,
+            }}
+          >
+            {table.getFilteredRowModel().rows.length} project
+            {table.getFilteredRowModel().rows.length !== 1 ? "s" : ""}
+          </span>
+        )}
 
         {/* Page size */}
         <select
@@ -646,6 +799,46 @@ export function ProjectsPage() {
           setPendingDeleteProject(null);
           deleteProjectOnDisk(id).then(() => bumpProjects());
         }}
+      />
+
+      <DeleteConfirmModal
+        open={pendingBulk !== null}
+        elementKind="projects"
+        elementId={`${selectedProjects.length} projects`}
+        title={
+          pendingBulk === "clear"
+            ? "Clear Simulation Results"
+            : "Delete Projects"
+        }
+        message={
+          pendingBulk === "clear" ? (
+            <>
+              Delete the simulation results for the base model and every
+              scenario in{" "}
+              <strong style={{ color: "var(--text-primary)" }}>
+                {selectedProjects.length} project
+                {selectedProjects.length === 1 ? "" : "s"}
+              </strong>
+              ? The networks themselves are not changed, so the runs can be
+              repeated.
+            </>
+          ) : (
+            <>
+              Permanently delete{" "}
+              <strong style={{ color: "var(--text-primary)" }}>
+                {selectedProjects.length} project
+                {selectedProjects.length === 1 ? "" : "s"}
+              </strong>
+              , including every scenario, network and result they contain? This
+              cannot be undone.
+            </>
+          )
+        }
+        confirmLabel={pendingBulk === "clear" ? "Clear results" : "Delete"}
+        onConfirm={() => {
+          if (pendingBulk) void runBulk(pendingBulk, selectedProjects);
+        }}
+        onCancel={() => setPendingBulk(null)}
       />
 
       {showWizard && (
