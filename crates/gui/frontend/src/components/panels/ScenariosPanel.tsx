@@ -24,6 +24,7 @@ import { formatBytes } from "../../units";
 import { DeleteConfirmModal } from "../modals/DeleteConfirmModal";
 import { BaseRow, CreateRow, ScenarioRow } from "./ScenariosPanel/Rows";
 import {
+  descendants,
   directChildren,
   type FlatScenario,
   flattenScenarios,
@@ -150,11 +151,16 @@ export function ScenariosPanel({
   const freed = (bytes: number | undefined) =>
     bytes ? `Frees ${formatBytes(bytes)}` : undefined;
 
-  // Scenarios branched directly from the one pending deletion. They survive
-  // it — each is a full copy, not a delta — but `buildScenarioTree` promotes
-  // them to roots once their parent id stops resolving, so the confirmation
-  // has to say so rather than letting the tree silently rearrange.
-  const orphanedCount = pendingDelete
+  // Two different counts, because they answer two different questions.
+  // Everything beneath the doomed scenario *survives* — each is a full copy
+  // of its parent's model, not a delta — so that total is the reassuring
+  // one. Only the direct children visibly *move*: `buildScenarioTree`
+  // promotes them to roots once their parent id stops resolving, while a
+  // grandchild still resolves its own parent and keeps its place.
+  const survivingCount = pendingDelete
+    ? descendants(rawDtos, pendingDelete.id).length
+    : 0;
+  const promotedCount = pendingDelete
     ? directChildren(rawDtos, pendingDelete.id).length
     : 0;
 
@@ -486,12 +492,23 @@ export function ScenariosPanel({
             </strong>
             ? Its network changes and simulation results will be permanently
             removed.
-            {orphanedCount > 0 && (
+            {survivingCount > 0 && (
               <>
                 {" "}
-                {orphanedCount} scenario{orphanedCount === 1 ? "" : "s"}{" "}
-                branched from it will remain — each is a complete model of its
-                own — but will no longer show as branched.
+                {survivingCount} scenario{survivingCount === 1 ? "" : "s"}{" "}
+                branched from it {survivingCount === 1 ? "is" : "are"} untouched
+                — each is a complete model of its own.{" "}
+                {survivingCount === promotedCount ? (
+                  <>
+                    {promotedCount === 1 ? "It" : "They"} will move to the top
+                    level.
+                  </>
+                ) : (
+                  <>
+                    The {promotedCount} branched directly from it will move to
+                    the top level.
+                  </>
+                )}
               </>
             )}
           </>

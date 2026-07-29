@@ -206,3 +206,42 @@ export function directChildren(
 ): ScenarioDto[] {
   return dtos.filter((d) => d.parentScenarioId === scenarioId);
 }
+
+/**
+ * Every scenario descended from `scenarioId`, at any depth.
+ *
+ * Distinct from {@link directChildren}, and both are needed to describe a
+ * deletion honestly: the whole subtree *survives* it — each scenario is a
+ * complete copy of its parent's model, not a delta — while only the direct
+ * children visibly move, since a grandchild still resolves its own parent.
+ *
+ * Walks with a visited set rather than recursing on parent links. The raw
+ * rows can contain parent cycles (see {@link buildScenarioTree}, which
+ * defends against the same thing), and a naive walk would not terminate.
+ */
+export function descendants(
+  dtos: ScenarioDto[],
+  scenarioId: string,
+): ScenarioDto[] {
+  const byParent = new Map<string, ScenarioDto[]>();
+  for (const d of dtos) {
+    if (!d.parentScenarioId) continue;
+    const siblings = byParent.get(d.parentScenarioId);
+    if (siblings) siblings.push(d);
+    else byParent.set(d.parentScenarioId, [d]);
+  }
+  const found: ScenarioDto[] = [];
+  const seen = new Set<string>([scenarioId]);
+  const queue = [scenarioId];
+  while (queue.length > 0) {
+    // biome-ignore lint/style/noNonNullAssertion: guarded by queue.length.
+    const id = queue.shift()!;
+    for (const child of byParent.get(id) ?? []) {
+      if (seen.has(child.id)) continue;
+      seen.add(child.id);
+      found.push(child);
+      queue.push(child.id);
+    }
+  }
+  return found;
+}

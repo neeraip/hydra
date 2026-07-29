@@ -3,6 +3,7 @@ import type { ScenarioDto } from "../../../hooks";
 import {
   activeLineage,
   buildScenarioTree,
+  descendants,
   directChildren,
   flattenScenarios,
   flattenSubtrees,
@@ -200,5 +201,55 @@ describe("directChildren", () => {
     // A root carries parentScenarioId === null; nothing should treat that as
     // being a child of some scenario.
     expect(directChildren(forest, "")).toEqual([]);
+  });
+});
+
+// ── descendants ──────────────────────────────────────────────────────────────
+
+describe("descendants", () => {
+  const dto = (id: string, parentScenarioId: string | null): ScenarioDto => ({
+    id,
+    projectId: "p1",
+    parentScenarioId,
+    name: id,
+    state: "not-run",
+  });
+
+  it("reaches every depth, not just the immediate children", () => {
+    // a → b → c, and a → d. Deleting `a` leaves all three standing; only
+    // b and d move.
+    const forest = [
+      dto("a", null),
+      dto("b", "a"),
+      dto("c", "b"),
+      dto("d", "a"),
+    ];
+    expect(
+      descendants(forest, "a")
+        .map((s) => s.id)
+        .sort(),
+    ).toEqual(["b", "c", "d"]);
+    expect(directChildren(forest, "a").map((s) => s.id)).toEqual(["b", "d"]);
+  });
+
+  it("returns nothing for a leaf or an unknown id", () => {
+    const forest = [dto("a", null), dto("b", "a")];
+    expect(descendants(forest, "b")).toEqual([]);
+    expect(descendants(forest, "nope")).toEqual([]);
+  });
+
+  it("terminates on a parent cycle", () => {
+    // The raw rows can carry cycles; buildScenarioTree defends against them
+    // and so must this, or the confirmation would hang the panel.
+    const cyclic = [dto("a", "b"), dto("b", "a"), dto("c", "b")];
+    const found = descendants(cyclic, "a")
+      .map((s) => s.id)
+      .sort();
+    expect(found).toEqual(["b", "c"]);
+  });
+
+  it("never revisits a scenario reachable by two paths", () => {
+    const forest = [dto("a", null), dto("b", "a"), dto("c", "b")];
+    expect(descendants(forest, "a")).toHaveLength(2);
   });
 });
