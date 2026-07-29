@@ -529,17 +529,15 @@ export function ScenariosPanel({
                   deleted too, with their own networks and results.
                 </>
               ) : (
-                // That the branches survive is already said by the unchecked
-                // option below, so only the part it cannot convey is stated:
-                // the direct children get promoted, and the tree visibly
-                // rearranges around them.
+                // Deliberately without a count. The checkbox already
+                // carries one, and two numbers over overlapping sets — 6
+                // branches, of which 2 move — is arithmetic to do at the
+                // moment of a destructive decision. The consequence is worth
+                // stating; the sum is not.
                 <>
                   {" "}
-                  {promotedCount === 1
-                    ? "The scenario"
-                    : `The ${promotedCount} scenarios`}{" "}
-                  branched {survivingCount === promotedCount ? "" : "directly "}
-                  from it will move to the top level.
+                  Its {promotedCount === 1 ? "branch" : "branches"} will move up
+                  to take its place.
                 </>
               ))}
           </>
