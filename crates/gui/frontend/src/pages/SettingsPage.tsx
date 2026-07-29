@@ -353,7 +353,7 @@ export function SettingsPage() {
         <Section>Accessibility</Section>
         <SettingRow
           label="Reduce motion"
-          description="Suppress non-essential animations, including panel transitions and the canvas flow animation. Takes precedence over the canvas animation control."
+          description="Suppress non-essential animations, including panel transitions and the canvas link animation. Takes precedence over the canvas animation control."
         >
           <Toggle checked={reducedMotion} onChange={setReducedMotion} />
         </SettingRow>
