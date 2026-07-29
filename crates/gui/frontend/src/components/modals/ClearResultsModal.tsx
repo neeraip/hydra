@@ -12,9 +12,16 @@
  * confirmed, never fired straight from a menu click.
  */
 
+import { useEffect, useState } from "react";
 import { useAppState, useSimulation } from "../../AppContext";
-import { deleteAllSimulations, deleteSimulation } from "../../hooks";
+import {
+  allSimulationResultsSize,
+  deleteAllSimulations,
+  deleteSimulation,
+  simulationResultsSize,
+} from "../../hooks";
 import { formatIpcError } from "../../hooks/ipc";
+import { formatBytes } from "../../units";
 import { DeleteConfirmModal } from "./DeleteConfirmModal";
 
 export function ClearResultsModal() {
@@ -28,9 +35,39 @@ export function ClearResultsModal() {
   } = useAppState();
   const { setResultMeta, setPumpEnergy } = useSimulation();
 
+  // Measured while the prompt is open rather than passed in: the callers
+  // request a clear, they do not know what it costs, and a stale figure
+  // would understate what is about to be deleted.
+  const [bytes, setBytes] = useState<number | null>(null);
+  const scope = request?.scope;
+  const projectId = request?.projectId;
+  const scenarioId = request?.scenarioId ?? null;
+  useEffect(() => {
+    if (!projectId || !scope) {
+      setBytes(null);
+      return;
+    }
+    let cancelled = false;
+    setBytes(null);
+    const pending =
+      scope === "all"
+        ? allSimulationResultsSize(projectId)
+        : simulationResultsSize(projectId, scenarioId);
+    void pending.then((n) => {
+      if (!cancelled) setBytes(n);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [projectId, scenarioId, scope]);
+
   if (!request) return null;
 
   const all = request.scope === "all";
+  // Omitted until measured, so the prompt never shows "0 bytes" for results
+  // that simply have not been sized yet.
+  const freed =
+    bytes === null ? null : ` This frees ${formatBytes(bytes)} of disk space.`;
   // Only some callers know the count; the Scenarios panel has the scenario
   // list in hand, the command palette does not. Omit the sentence rather
   // than defaulting to a number, which would state something untrue.
@@ -94,7 +131,7 @@ export function ClearResultsModal() {
               </>
             )}
             The networks themselves are not changed, so the runs can be
-            repeated.
+            repeated.{freed}
           </>
         ) : (
           <>
@@ -103,7 +140,7 @@ export function ClearResultsModal() {
               {request.name}
             </strong>
             ? It returns to an unsimulated state. The network itself is not
-            changed, so the run can be repeated.
+            changed, so the run can be repeated.{freed}
           </>
         )
       }

@@ -135,3 +135,26 @@ export async function deleteSimulation(
 export async function deleteAllSimulations(projectId: string): Promise<number> {
   return await invoke<number>("delete_all_simulations", { projectId });
 }
+
+/**
+ * Bytes a clear would reclaim for one target — its `results.out` plus the
+ * `warnings.json` beside it, both of which the clear removes. Zero when the
+ * target has never been simulated.
+ */
+export async function simulationResultsSize(
+  projectId: string,
+  scenarioId: string | null,
+): Promise<number> {
+  return tryInvokeOr<number>(
+    "simulation_results_size",
+    { projectId, scenarioId },
+    0,
+  );
+}
+
+/** Bytes a project-wide clear would reclaim: base model and every scenario. */
+export async function allSimulationResultsSize(
+  projectId: string,
+): Promise<number> {
+  return tryInvokeOr<number>("all_simulation_results_size", { projectId }, 0);
+}

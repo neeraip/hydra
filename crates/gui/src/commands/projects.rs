@@ -630,13 +630,64 @@ pub fn delete_simulation(
     remove_results_file(&path)
 }
 
-/// Remove one `results.out`, treating "already absent" as success.
+/// Remove one run's artifacts, treating "already absent" as success.
+///
+/// Takes `warnings.json` with the results it describes. The warnings writer
+/// maintains the invariant that "warnings can never exist without results";
+/// deleting only `results.out` would leave the previous run's warnings being
+/// served for a target that now reports as unsimulated.
 fn remove_results_file(path: &std::path::Path) -> Result<bool, String> {
-    match std::fs::remove_file(path) {
-        Ok(()) => Ok(true),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
-        Err(e) => Err(format!("Cannot delete simulation results: {e}")),
+    let removed = match std::fs::remove_file(path) {
+        Ok(()) => true,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => false,
+        Err(e) => return Err(format!("Cannot delete simulation results: {e}")),
+    };
+    // Best-effort, like every other write of this file: an orphaned warnings
+    // file is a diagnostic annoyance, not a reason to fail the clear.
+    let _ = std::fs::remove_file(super::simulation::run_warnings_path(path));
+    Ok(removed)
+}
+
+/// Bytes on disk for one target's run artifacts — `results.out` plus the
+/// `warnings.json` beside it. Zero when the target has never been simulated.
+///
+/// Counts exactly what a clear would remove, so the figure shown before
+/// confirming is the space actually reclaimed.
+fn results_bytes(path: &std::path::Path) -> u64 {
+    let file_len = |p: &std::path::Path| std::fs::metadata(p).map(|m| m.len()).unwrap_or(0);
+    file_len(path) + file_len(&super::simulation::run_warnings_path(path))
+}
+
+/// Bytes a `delete_simulation` on this target would reclaim.
+#[tauri::command(async)]
+pub fn simulation_results_size(
+    app: tauri::AppHandle,
+    project_id: String,
+    scenario_id: Option<String>,
+) -> Result<u64, String> {
+    validate_target_ids(&project_id, scenario_id.as_deref())?;
+    let app_data = app_data_dir(&app)?;
+    Ok(results_bytes(&results_path_for(
+        &app_data,
+        &project_id,
+        scenario_id.as_deref(),
+    )))
+}
+
+/// Bytes a `delete_all_simulations` on this project would reclaim — the base
+/// model and every scenario.
+#[tauri::command(async)]
+pub fn all_simulation_results_size(
+    app: tauri::AppHandle,
+    project_id: String,
+) -> Result<u64, String> {
+    validate_id(&project_id)?;
+    let app_data = app_data_dir(&app)?;
+    let mut total = results_bytes(&results_path_for(&app_data, &project_id, None));
+    for sid in scenario_ids(&app_data, &project_id)? {
+        total += results_bytes(&results_path_for(&app_data, &project_id, Some(&sid)));
     }
+    Ok(total)
 }
 
 /// Scenario ids of `project_id`, discovered from the bundle directory.
@@ -1689,6 +1740,38 @@ mod tests {
         let mut ids = scenario_ids(dir.path(), "p1").unwrap();
         ids.sort();
         assert_eq!(ids, ["s1", "s2"]);
+    }
+
+    #[test]
+    fn clearing_results_takes_the_warnings_with_them() {
+        // The warnings writer maintains "warnings can never exist without
+        // results". Deleting only results.out would leave the last run's
+        // warnings being served for a target that now reports unsimulated.
+        let dir = tempfile::tempdir().unwrap();
+        let results = results_path_for(dir.path(), "p1", None);
+        let warnings = results.with_file_name("warnings.json");
+        bundle::atomic_write(&results, b"out").unwrap();
+        bundle::atomic_write(&warnings, b"[]").unwrap();
+
+        assert!(remove_results_file(&results).unwrap());
+        assert!(!results.exists());
+        assert!(!warnings.exists(), "warnings outlived their results");
+    }
+
+    #[test]
+    fn results_size_counts_exactly_what_a_clear_removes() {
+        let dir = tempfile::tempdir().unwrap();
+        let results = results_path_for(dir.path(), "p1", None);
+        assert_eq!(results_bytes(&results), 0, "never simulated → nothing");
+
+        bundle::atomic_write(&results, &[0u8; 500]).unwrap();
+        bundle::atomic_write(&results.with_file_name("warnings.json"), &[0u8; 24]).unwrap();
+        // Both files go, so both are counted — the figure shown before
+        // confirming is the space actually reclaimed.
+        assert_eq!(results_bytes(&results), 524);
+
+        remove_results_file(&results).unwrap();
+        assert_eq!(results_bytes(&results), 0);
     }
 
     // ── starter model ────────────────────────────────────────────────────

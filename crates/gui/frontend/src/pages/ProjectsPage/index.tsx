@@ -27,6 +27,7 @@ import { NewProjectWizard } from "../../components/modals/NewProjectWizard";
 import { PrimaryButton } from "../../components/ui/PrimaryButton";
 import { RowMenu } from "../../components/ui/RowMenu";
 import {
+  allSimulationResultsSize,
   deleteAllSimulations,
   deleteProjectOnDisk,
   openBaseFolder,
@@ -38,6 +39,7 @@ import {
 } from "../../hooks";
 import { formatIpcError } from "../../hooks/ipc";
 import { PROJECTS_SEARCH_INPUT_ID } from "../../shortcuts";
+import { formatBytes } from "../../units";
 import { ContextMenu, type ContextMenuState } from "./ContextMenu";
 
 const STATE_LABELS: Record<ProjectState, string> = {
@@ -378,6 +380,38 @@ export function ProjectsPage() {
   const selectedProjects = table
     .getSelectedRowModel()
     .rows.map((r) => r.original);
+  // `getSelectedRowModel` rebuilds its array every render, so the sizing
+  // effect below is keyed on the ids' *contents* — otherwise it would refire
+  // on every keystroke in the search box. Derived from the row model rather
+  // than the selection state so ids whose project no longer exists are
+  // already dropped.
+  const selectedKey = selectedProjects.map((p) => p.id).join(",");
+  const selectedIds = useMemo(
+    () => (selectedKey === "" ? [] : selectedKey.split(",")),
+    [selectedKey],
+  );
+
+  // Sized only for a pending clear: deleting projects removes their networks
+  // too, so a results-only figure would understate it and reporting the whole
+  // bundle is a bigger job than this prompt needs.
+  const [bulkBytes, setBulkBytes] = useState<number | null>(null);
+  const clearTargets = pendingBulk === "clear" ? selectedIds : null;
+  useEffect(() => {
+    if (!clearTargets) {
+      setBulkBytes(null);
+      return;
+    }
+    let cancelled = false;
+    setBulkBytes(null);
+    void Promise.all(clearTargets.map(allSimulationResultsSize)).then(
+      (sizes) => {
+        if (!cancelled) setBulkBytes(sizes.reduce((a, b) => a + b, 0));
+      },
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [clearTargets]);
 
   const { rows } = table.getRowModel();
   const pageCount = table.getPageCount();
@@ -821,6 +855,9 @@ export function ProjectsPage() {
               </strong>
               ? The networks themselves are not changed, so the runs can be
               repeated.
+              {bulkBytes === null
+                ? ""
+                : ` This frees ${formatBytes(bulkBytes)} of disk space.`}
             </>
           ) : (
             <>

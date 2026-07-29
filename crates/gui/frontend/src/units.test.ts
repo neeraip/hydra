@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   defaultDecimals,
+  formatBytes,
   formatDistance,
   formatQty,
   formatQtyRaw,
@@ -234,5 +235,41 @@ describe("parseNumericInput", () => {
   it("treats whitespace-only input as empty, not zero", () => {
     expect(parseNumericInput("")).toEqual({ kind: "empty" });
     expect(parseNumericInput("   ")).toEqual({ kind: "empty" });
+  });
+});
+
+// ── formatBytes ──────────────────────────────────────────────────────────────
+
+describe("formatBytes", () => {
+  it("reports small sizes in whole bytes", () => {
+    expect(formatBytes(0)).toBe("0 bytes");
+    expect(formatBytes(1)).toBe("1 bytes");
+    expect(formatBytes(999)).toBe("999 bytes");
+  });
+
+  it("uses decimal units so figures match the OS file browser", () => {
+    // 1 kB = 1000 B, not 1024 — a binary scale would read ~7% smaller than
+    // Finder/Explorer for the same file.
+    expect(formatBytes(1000)).toBe("1.0 kB");
+    expect(formatBytes(1_500_000)).toBe("1.5 MB");
+    expect(formatBytes(12_400_000)).toBe("12 MB");
+    expect(formatBytes(2_000_000_000)).toBe("2.0 GB");
+  });
+
+  it("drops the decimal once the number is large enough not to need it", () => {
+    expect(formatBytes(9_900_000)).toBe("9.9 MB");
+    expect(formatBytes(10_000_000)).toBe("10 MB");
+  });
+
+  it("treats absent or nonsensical sizes as nothing", () => {
+    expect(formatBytes(-1)).toBe("0 bytes");
+    expect(formatBytes(Number.NaN)).toBe("0 bytes");
+  });
+
+  it("caps at the largest unit rather than inventing one", () => {
+    expect(formatBytes(5e12)).toBe("5.0 TB");
+    // Beyond TB it keeps counting in TB rather than reaching for PB, which
+    // no results file will ever need.
+    expect(formatBytes(5e15)).toBe("5000 TB");
   });
 });

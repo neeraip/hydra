@@ -114,7 +114,7 @@ pub(crate) fn collect_run_warnings(sim: &hydra::Simulation) -> Vec<RunWarningDto
 }
 
 /// `warnings.json` path for the run whose results live at `results_path`.
-fn run_warnings_path(results_path: &std::path::Path) -> std::path::PathBuf {
+pub(crate) fn run_warnings_path(results_path: &std::path::Path) -> std::path::PathBuf {
     results_path.with_file_name("warnings.json")
 }
 

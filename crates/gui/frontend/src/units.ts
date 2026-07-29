@@ -276,3 +276,27 @@ export function parseNumericInput(raw: string): NumericInput {
   if (!Number.isFinite(value)) return { kind: "invalid" };
   return { kind: "number", value };
 }
+
+// ── Byte sizes ────────────────────────────────────────────────────────────────
+
+/**
+ * Human-readable file size, e.g. "84 bytes", "12.4 MB".
+ *
+ * Decimal units (1 kB = 1000 bytes) to match what macOS and Windows report,
+ * so a figure shown here agrees with the one in Finder or Explorer rather
+ * than being ~7% smaller. Unit-system independent: bytes are bytes.
+ */
+export function formatBytes(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes <= 0) return "0 bytes";
+  if (bytes < 1000) return `${Math.round(bytes)} bytes`;
+  const units = ["kB", "MB", "GB", "TB"];
+  let value = bytes / 1000;
+  let unit = 0;
+  while (value >= 1000 && unit < units.length - 1) {
+    value /= 1000;
+    unit += 1;
+  }
+  // One decimal below 10 (12.4 MB reads better than 12 MB); none above, where
+  // the extra digit is noise.
+  return `${value < 10 ? value.toFixed(1) : Math.round(value)} ${units[unit]}`;
+}
