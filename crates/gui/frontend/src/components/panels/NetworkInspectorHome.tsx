@@ -317,6 +317,9 @@ function NodesTab({
                       "transparent";
                 }}
               >
+                <td style={TD}>
+                  <TypeBadge type={node.type} />
+                </td>
                 <td
                   style={{
                     ...TD,
@@ -346,9 +349,6 @@ function NodesTab({
                       : "—"}
                   </td>
                 )}
-                <td style={TD}>
-                  <TypeBadge type={node.type} />
-                </td>
                 {onZoomTo && (
                   <td
                     style={{
@@ -599,6 +599,9 @@ function LinksTab({
                       "transparent";
                 }}
               >
+                <td style={TD}>
+                  <TypeBadge type={link.type} />
+                </td>
                 <td
                   style={{
                     ...TD,
@@ -642,9 +645,6 @@ function LinksTab({
                       : "—"}
                   </td>
                 )}
-                <td style={TD}>
-                  <TypeBadge type={link.type} />
-                </td>
                 {onZoomTo && (
                   <td
                     style={{

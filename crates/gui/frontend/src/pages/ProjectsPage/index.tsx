@@ -199,8 +199,8 @@ export function ProjectsPage() {
             aria-label={`Select ${info.row.original.name}`}
             checked={info.row.getIsSelected()}
             onChange={info.row.getToggleSelectedHandler()}
-            // The row itself opens the project on click; a checkbox that
-            // bubbled would open it too.
+            // The row toggles selection too, so a bubbling checkbox click
+            // would toggle twice and land back where it started.
             onClick={(e) => e.stopPropagation()}
             style={CHECKBOX_STYLE}
           />
@@ -216,7 +216,11 @@ export function ProjectsPage() {
             >
               <button
                 type="button"
-                onClick={() => !p.folderMissing && handleOpenProject(p.id)}
+                onClick={(e) => {
+                  // The row toggles selection; opening is a different intent.
+                  e.stopPropagation();
+                  if (!p.folderMissing) handleOpenProject(p.id);
+                }}
                 style={{
                   background: "none",
                   border: "none",
@@ -336,6 +340,7 @@ export function ProjectsPage() {
             aria-label={`Actions for ${info.row.original.name}`}
             aria-haspopup="menu"
             onClick={(e) => {
+              e.stopPropagation();
               const rect = e.currentTarget.getBoundingClientRect();
               setContextMenu({
                 project: info.row.original,
@@ -450,6 +455,11 @@ export function ProjectsPage() {
           gap: 10,
         }}
       >
+        {/* New Project button */}
+        <PrimaryButton size="sm" onClick={() => setShowWizard(true)}>
+          + New project
+        </PrimaryButton>
+
         {/* Global search */}
         <div style={{ position: "relative", flex: "0 1 280px" }}>
           <MagnifyingGlassIcon
@@ -509,11 +519,6 @@ export function ProjectsPage() {
         </select>
 
         <div style={{ flex: 1 }} />
-
-        {/* New Project button */}
-        <PrimaryButton size="sm" onClick={() => setShowWizard(true)}>
-          + New project
-        </PrimaryButton>
 
         {/* Selection actions — replace the row count while a selection is
             live, so the toolbar does not grow a permanently empty slot. */}
@@ -720,6 +725,7 @@ export function ProjectsPage() {
                       i % 2 === 0 ? "var(--bg-app)" : "var(--bg-panel)";
                   }}
                   onContextMenu={(e) => handleRowContextMenu(e, row.original)}
+                  onClick={() => row.toggleSelected()}
                 >
                   {row.getVisibleCells().map((cell) => (
                     <td
