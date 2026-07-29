@@ -175,8 +175,7 @@ export function useCrsReprojection({
       if (outOfRange) {
         return {
           nodes: rawPositionNodes,
-          error:
-            "Coordinates are outside WGS84 range. Set the source CRS in the toolbar.",
+          error: "Coordinates are outside WGS84 range.",
         } as { nodes: typeof rawPositionNodes; error: string | null };
       }
       return { nodes: rawPositionNodes, error: null as string | null };
