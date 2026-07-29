@@ -16,6 +16,11 @@
 
   /* Layout */
   --activity-w: 56px;
+  /* Width of the canvas' right-hand element inspector. Canvas overlays that
+     must stay clear of it offset by `--inspector-effective-w`, which CanvasView
+     sets to this value while the panel is open and 0px otherwise — the same
+     arrangement as `--rail-effective-w` on the left. */
+  --inspector-w: 288px;
   --rail-transition: 200ms cubic-bezier(0.4, 0, 0.2, 1);
 
   /* Backgrounds */
@@ -725,7 +730,7 @@ body,
 
 /* ── Inspector panel ─────────────────────────────────────────────────────────*/
 .inspector-panel {
-  width: 288px;
+  width: var(--inspector-w);
   height: 100%;
   background: rgba(13, 13, 18, 0.97);
   backdrop-filter: blur(14px) saturate(1.3);

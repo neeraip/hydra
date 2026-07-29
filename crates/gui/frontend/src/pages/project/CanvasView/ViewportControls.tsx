@@ -12,6 +12,10 @@ const ICON_14: CSSProperties = { width: 14, height: 14 };
  * Floating zoom / reset-north / fit-network button cluster in the canvas'
  * bottom-right corner. Stateless: each button just fires its callback (the
  * caller bumps the matching MapCanvas trigger key).
+ *
+ * Offsets by `--inspector-effective-w` so the element inspector doesn't cover
+ * it, the same way the legend and canvas toolbar clear the left rail via
+ * `--rail-effective-w`.
  */
 export function ViewportControls({
   mapOnly,
@@ -36,7 +40,7 @@ export function ViewportControls({
       className="canvas-toolbar"
       style={{
         position: "absolute",
-        right: 12,
+        right: "calc(var(--inspector-effective-w, 0px) + 12px)",
         bottom: 12,
         zIndex: 11,
         flexDirection: "column",

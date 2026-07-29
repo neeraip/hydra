@@ -960,6 +960,26 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
     if (activeTool !== "select") setInspectorView("closed");
   }, [activeTool, setInspectorView]);
 
+  // Publish the inspector's occupied width so canvas overlays pinned to the
+  // right edge can stay clear of it — the mirror of `--rail-effective-w` on the
+  // left. The condition must match the panel's own render condition below, or
+  // overlays shift for a panel that never appears.
+  const inspectorOccupies =
+    (inspectorView === "node" && stableSelectedNode != null) ||
+    (inspectorView === "link" && stableSelectedLink != null);
+  useEffect(() => {
+    document.documentElement.style.setProperty(
+      "--inspector-effective-w",
+      inspectorOccupies ? "var(--inspector-w)" : "0px",
+    );
+    return () => {
+      document.documentElement.style.setProperty(
+        "--inspector-effective-w",
+        "0px",
+      );
+    };
+  }, [inspectorOccupies]);
+
   // Reset to Select when switching to Schematic if the active tool is map-only.
   useEffect(() => {
     if (
