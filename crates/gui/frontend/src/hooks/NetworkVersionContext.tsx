@@ -33,19 +33,20 @@ interface NetworkVersionCtx {
   version: number;
   bumpNetwork: () => void;
   /** Scenario IDs (or null for base model) whose network was edited after the last run. */
-  editedScenarioIds: ReadonlySet<string | null>;
   /** Mark a scenario's results as stale because its network was edited. */
-  markEdited: (scenarioId: string | null) => void;
+  markEdited: (projectId: string, scenarioId: string | null) => void;
   /** Clear the stale flag after a successful simulation run for that scenario. */
-  clearEdited: (scenarioId: string | null) => void;
+  clearEdited: (projectId: string, scenarioId: string | null) => void;
+  /** Whether that target has edits since its last run. */
+  isEdited: (projectId: string | null, scenarioId: string | null) => boolean;
 }
 
 const Ctx = createContext<NetworkVersionCtx>({
   version: 0,
   bumpNetwork: () => {},
-  editedScenarioIds: new Set(),
   markEdited: () => {},
   clearEdited: () => {},
+  isEdited: () => false,
 });
 
 /**
@@ -69,11 +70,37 @@ export function makeCoalescedScheduler(fn: () => void): () => void {
   };
 }
 
+/**
+ * Key for the edited-targets set.
+ *
+ * Project-qualified because the base model's scenario id is `null` in every
+ * project: an unqualified set marked one project's base model as edited and
+ * every other project's base model along with it, showing a false "stale"
+ * badge and preflight warning after a switch.
+ *
+ * Keyed rather than reset on project change deliberately — the toolbar
+ * re-seeds this set from persisted state when a project loads, so a reset
+ * would have to be ordered against that seeding, and losing the race would
+ * silently discard the new project's real stale flags.
+ */
+export function editedKey(
+  projectId: string,
+  scenarioId: string | null,
+): string {
+  // Scenarios carry an `s:` marker so no scenario id can ever equal the base
+  // sentinel. Ids are UUIDs today, so a scenario literally called "base" is
+  // impossible — but "that value can't collide" is the assumption `null` broke
+  // in the first place, so the encoding does not rely on it.
+  return scenarioId === null
+    ? `${projectId}:base`
+    : `${projectId}:s:${scenarioId}`;
+}
+
 export function NetworkVersionProvider({ children }: { children: ReactNode }) {
   const [version, setVersion] = useState(0);
-  const [editedScenarioIds, setEditedScenarioIds] = useState<
-    ReadonlySet<string | null>
-  >(new Set());
+  const [editedTargets, setEditedTargets] = useState<ReadonlySet<string>>(
+    new Set(),
+  );
 
   // Coalesce bumps arriving in the same tick into a single version increment
   // (see makeCoalescedScheduler). useMemo keeps the callback identity stable
@@ -108,33 +135,47 @@ export function NetworkVersionProvider({ children }: { children: ReactNode }) {
     };
   }, [bumpNetwork]);
 
-  const markEdited = useCallback((scenarioId: string | null) => {
-    setEditedScenarioIds((prev) => {
-      if (prev.has(scenarioId)) return prev;
-      const next = new Set(prev);
-      next.add(scenarioId);
-      return next;
-    });
-  }, []);
+  const markEdited = useCallback(
+    (projectId: string, scenarioId: string | null) => {
+      const key = editedKey(projectId, scenarioId);
+      setEditedTargets((prev) => {
+        if (prev.has(key)) return prev;
+        const next = new Set(prev);
+        next.add(key);
+        return next;
+      });
+    },
+    [],
+  );
 
-  const clearEdited = useCallback((scenarioId: string | null) => {
-    setEditedScenarioIds((prev) => {
-      if (!prev.has(scenarioId)) return prev;
-      const next = new Set(prev);
-      next.delete(scenarioId);
-      return next;
-    });
-  }, []);
+  const clearEdited = useCallback(
+    (projectId: string, scenarioId: string | null) => {
+      const key = editedKey(projectId, scenarioId);
+      setEditedTargets((prev) => {
+        if (!prev.has(key)) return prev;
+        const next = new Set(prev);
+        next.delete(key);
+        return next;
+      });
+    },
+    [],
+  );
+
+  const isEdited = useCallback(
+    (projectId: string | null, scenarioId: string | null) =>
+      projectId != null && editedTargets.has(editedKey(projectId, scenarioId)),
+    [editedTargets],
+  );
 
   const value = useMemo<NetworkVersionCtx>(
     () => ({
       version,
       bumpNetwork,
-      editedScenarioIds,
       markEdited,
       clearEdited,
+      isEdited,
     }),
-    [version, bumpNetwork, editedScenarioIds, markEdited, clearEdited],
+    [version, bumpNetwork, markEdited, clearEdited, isEdited],
   );
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;

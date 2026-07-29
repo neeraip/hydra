@@ -135,8 +135,8 @@ export function SimSettingsModal() {
       // re-read [TIMES]/[OPTIONS].
       bumpSimParams();
       // Mark base and every scenario stale so the Run button turns amber.
-      markEdited(null);
-      for (const s of scenariosRef.current) markEdited(s.id);
+      markEdited(activeProjectId, null);
+      for (const s of scenariosRef.current) markEdited(activeProjectId, s.id);
       showToast(
         "Simulation settings saved. Existing results marked stale.",
         "success",

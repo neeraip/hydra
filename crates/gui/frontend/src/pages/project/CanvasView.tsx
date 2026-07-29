@@ -80,6 +80,22 @@ interface CanvasPrefs {
   colorMode: "relative" | "threshold";
 }
 
+/**
+ * Defaults for every persisted canvas preference.
+ *
+ * Shared by the initial state and by the project-switch restore: a project
+ * with no saved prefs must be reset to these, not left holding whatever the
+ * previously open project was showing.
+ */
+const CANVAS_PREF_DEFAULTS: CanvasPrefs = {
+  viewMode: "map",
+  basemap: "streets",
+  basemapOpacity: 1,
+  nodeVar: "pressure",
+  linkVar: "velocity",
+  colorMode: "relative",
+};
+
 // Allowlists so corrupt/stale localStorage can never inject invalid state.
 // (Basemap ids are validated structurally via isValidBasemapId instead — the
 // provider catalog is open-ended.)
@@ -144,8 +160,12 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
   } = useCanvasSelection();
   const [activeTool, setActiveTool] = useState<CanvasTool>("select");
   const [currentHour, setCurrentHour] = useState(0);
-  const [nodeVar, setNodeVar] = useState<NodeVariable>("pressure");
-  const [linkVar, setLinkVar] = useState<LinkVariable>("velocity");
+  const [nodeVar, setNodeVar] = useState<NodeVariable>(
+    CANVAS_PREF_DEFAULTS.nodeVar,
+  );
+  const [linkVar, setLinkVar] = useState<LinkVariable>(
+    CANVAS_PREF_DEFAULTS.linkVar,
+  );
   // ── Link animation (Flow/Velocity pulse) — user toggle, persisted, and
   // forced off entirely while the "Reduce motion" accessibility setting is on.
   const [linkAnimation, setLinkAnimationRaw] = useState(
@@ -191,7 +211,7 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
   }, [setZoomCallbacks]);
   // ── Colour scale mode and per-variable thresholds ─────────────────────────
   const [colorMode, setColorMode] = useState<"relative" | "threshold">(
-    "relative",
+    CANVAS_PREF_DEFAULTS.colorMode,
   );
   // Threshold defaults — seeded from SimulationOptions when loaded; user can still adjust.
   const [thresholds, setThresholds] = useState<LegendThresholds>({
@@ -215,9 +235,15 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
   // ── View mode (Map vs Schematic) and basemap style ───────────────────
   // "none" is a *map* basemap (geographic layout, no tiles), distinct from
   // schematic mode (idealised orthogonal layout).
-  const [viewMode, setViewMode] = useState<ViewMode>("map");
-  const [basemap, setBasemap] = useState<BasemapId>("streets");
-  const [basemapOpacity, setBasemapOpacity] = useState(1);
+  const [viewMode, setViewMode] = useState<ViewMode>(
+    CANVAS_PREF_DEFAULTS.viewMode,
+  );
+  const [basemap, setBasemap] = useState<BasemapId>(
+    CANVAS_PREF_DEFAULTS.basemap,
+  );
+  const [basemapOpacity, setBasemapOpacity] = useState(
+    CANVAS_PREF_DEFAULTS.basemapOpacity,
+  );
 
   // ── Per-project canvas prefs: restore on project switch, persist on change.
   // `prefsLoadedFor` gates persisting so the write effect (which also re-runs
@@ -228,25 +254,25 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
     const id = project?.id;
     if (!id) return;
     const prefs = readCanvasPrefs(id);
-    if (prefs) {
-      if (prefs.viewMode && PREF_VIEW_MODES.includes(prefs.viewMode)) {
-        setViewMode(prefs.viewMode);
-      }
-      if (prefs.basemap && isValidBasemapId(prefs.basemap)) {
-        setBasemap(prefs.basemap);
-      }
-      // Clamp handles missing/corrupt values (→ 1), so always applied.
-      setBasemapOpacity(clampBasemapOpacity(prefs.basemapOpacity));
-      if (prefs.nodeVar && PREF_NODE_VARS.includes(prefs.nodeVar)) {
-        setNodeVar(prefs.nodeVar);
-      }
-      if (prefs.linkVar && PREF_LINK_VARS.includes(prefs.linkVar)) {
-        setLinkVar(prefs.linkVar);
-      }
-      if (prefs.colorMode && PREF_COLOR_MODES.includes(prefs.colorMode)) {
-        setColorMode(prefs.colorMode);
-      }
-    }
+    // Every preference is assigned unconditionally, falling back to the
+    // shared default. Applying a value only when the stored one is present
+    // and valid left the previous project's setting in place for any project
+    // that had never saved prefs — and the persist effect below then wrote it
+    // under the new project's key, making the bleed permanent.
+    const pick = <K extends keyof CanvasPrefs>(
+      key: K,
+      valid: (v: CanvasPrefs[K]) => boolean,
+    ): CanvasPrefs[K] => {
+      const v = prefs?.[key];
+      return v !== undefined && valid(v) ? v : CANVAS_PREF_DEFAULTS[key];
+    };
+    setViewMode(pick("viewMode", (v) => PREF_VIEW_MODES.includes(v)));
+    setBasemap(pick("basemap", (v) => isValidBasemapId(v)));
+    // Clamp already maps missing/corrupt values to the default.
+    setBasemapOpacity(clampBasemapOpacity(prefs?.basemapOpacity));
+    setNodeVar(pick("nodeVar", (v) => PREF_NODE_VARS.includes(v)));
+    setLinkVar(pick("linkVar", (v) => PREF_LINK_VARS.includes(v)));
+    setColorMode(pick("colorMode", (v) => PREF_COLOR_MODES.includes(v)));
     setPrefsLoadedFor(id);
   }, [project?.id]);
   // Cold-load gate: until the project row has arrived (an async fetch — it
@@ -939,7 +965,7 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
         });
       }
       await saveProjectOnDisk(project.id, activeScenarioId);
-      markEdited(activeScenarioId);
+      markEdited(project.id, activeScenarioId);
       // No bumpNetwork(): the backend emits `network-changed`, which already
       // bumps the version — a manual bump doubled the full-snapshot refetch.
     },
@@ -964,7 +990,7 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
       });
     }
     await saveProjectOnDisk(project.id, activeScenarioId);
-    markEdited(activeScenarioId);
+    markEdited(project.id, activeScenarioId);
     // No bumpNetwork(): backend event already bumps (see handleNodeMoved).
   }, [pendingDelete, project, activeScenarioId, markEdited, clearSelection]);
 
@@ -1072,7 +1098,7 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
         },
       });
       await saveProjectOnDisk(project.id, activeScenarioId);
-      markEdited(activeScenarioId);
+      markEdited(project.id, activeScenarioId);
       // No bumpNetwork(): backend event already bumps (see handleNodeMoved).
     },
     [pendingCreateNode, project, activeScenarioId, markEdited, sourceCrs],
@@ -1096,7 +1122,7 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
         },
       });
       await saveProjectOnDisk(project.id, activeScenarioId);
-      markEdited(activeScenarioId);
+      markEdited(project.id, activeScenarioId);
       // No bumpNetwork(): backend event already bumps (see handleNodeMoved).
     },
     [pendingCreateLink, project, activeScenarioId, markEdited],

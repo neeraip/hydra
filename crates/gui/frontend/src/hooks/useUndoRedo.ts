@@ -109,7 +109,7 @@ export function useUndoRedo(): { undo: () => void; redo: () => void } {
           // Persist whatever was applied (partial failures included) so the
           // on-disk INP matches in-memory state, like every commit path.
           await saveProjectOnDisk(activeProjectId, activeScenarioId ?? null);
-          markEdited(activeScenarioId ?? null);
+          markEdited(activeProjectId, activeScenarioId ?? null);
         }
         busyRef.current = false;
       }

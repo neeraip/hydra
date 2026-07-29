@@ -124,7 +124,7 @@ export function ProjectToolbar() {
     scenariosVersion,
   } = useAppState();
   const { project, accent } = useActiveProject();
-  const { editedScenarioIds, markEdited } = useNetworkVersion();
+  const { isEdited, markEdited } = useNetworkVersion();
 
   const rawDtos = useScenarios(project?.id ?? null, scenariosVersion);
 
@@ -184,17 +184,18 @@ export function ProjectToolbar() {
     }
   }, [rawDtos, activeScenarioId, setActiveScenarioId]);
 
-  // Seed editedScenarioIds from DB-persisted stale state so the amber
+  // Seed the edited set from DB-persisted stale state so the amber
   // indicators survive app restarts. markEdited is idempotent.
   useEffect(() => {
+    if (!project?.id) return;
     for (const s of rawDtos) {
-      if (s.state === "stale") markEdited(s.id);
+      if (s.state === "stale") markEdited(project.id, s.id);
     }
-  }, [rawDtos, markEdited]);
+  }, [rawDtos, markEdited, project?.id]);
 
   useEffect(() => {
-    if (project?.state === "stale") markEdited(null);
-  }, [project?.state, markEdited]);
+    if (project?.state === "stale") markEdited(project.id, null);
+  }, [project?.state, project?.id, markEdited]);
 
   if (!project) return null;
 
@@ -232,7 +233,7 @@ export function ProjectToolbar() {
   })();
 
   const baseActive = activeScenarioId === null;
-  const baseStale = editedScenarioIds.has(null) || project.state === "stale";
+  const baseStale = isEdited(project.id, null) || project.state === "stale";
   const baseState = (project.state ?? "draft") as ScenarioState;
   const baseEffectiveColor = baseStale
     ? STALE_COLOR
@@ -244,7 +245,7 @@ export function ProjectToolbar() {
   const activeIsStale =
     activeScenarioId === null
       ? baseStale
-      : editedScenarioIds.has(activeScenarioId) ||
+      : isEdited(project.id, activeScenarioId) ||
         activeScenario?.state === "stale";
   const activeIsSimulated =
     !activeIsStale &&
@@ -404,7 +405,7 @@ export function ProjectToolbar() {
                   <ScenarioChip
                     scenario={s}
                     isActive={s.id === activeScenarioId}
-                    isStale={editedScenarioIds.has(s.id) || s.state === "stale"}
+                    isStale={isEdited(project.id, s.id) || s.state === "stale"}
                     accent={accent}
                     siblingCount={siblingCount}
                     pickerOpen={
@@ -506,7 +507,7 @@ export function ProjectToolbar() {
               key={s.id}
               scenario={s}
               depth={s.depth}
-              isStale={editedScenarioIds.has(s.id) || s.state === "stale"}
+              isStale={isEdited(project.id, s.id) || s.state === "stale"}
               onSelect={() => selectScenario(s.id)}
             />
           ))}
@@ -574,7 +575,7 @@ export function ProjectToolbar() {
                 key={s.id}
                 scenario={s}
                 subtitle={lineageLabel(rawDtos, s.id)}
-                isStale={editedScenarioIds.has(s.id) || s.state === "stale"}
+                isStale={isEdited(project.id, s.id) || s.state === "stale"}
                 isActive={s.id === activeScenarioId}
                 onSelect={() => selectScenario(s.id)}
               />

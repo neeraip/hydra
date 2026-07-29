@@ -126,7 +126,7 @@ export function SimulationProvider({ children }: { children: ReactNode }) {
   } = useAppState();
   const {
     clearEdited,
-    editedScenarioIds,
+    isEdited,
     version: networkVersion,
   } = useNetworkVersion();
   const { coordStatus, coordMissingCount, coordTotalCount } = useCanvasStatus();
@@ -343,7 +343,7 @@ export function SimulationProvider({ children }: { children: ReactNode }) {
       });
     }
 
-    if (editedScenarioIds.has(activeScenarioId ?? null)) {
+    if (isEdited(activeProjectId, activeScenarioId ?? null)) {
       pushIssue({
         id: `preflight-stale-${activeScenarioId ?? "base"}`,
         severity: "warn",
@@ -391,7 +391,7 @@ export function SimulationProvider({ children }: { children: ReactNode }) {
     coordMissingCount,
     coordStatus,
     coordTotalCount,
-    editedScenarioIds,
+    isEdited,
     networkLoadFailure,
     resultMeta,
     resultsTopologyStale,
@@ -697,7 +697,7 @@ export function SimulationProvider({ children }: { children: ReactNode }) {
         // Clear the stale-results flag for every scenario that just completed
         // successfully.
         for (const item of items) {
-          if (item.status === "done") clearEdited(item.targetId);
+          if (item.status === "done") clearEdited(projectId, item.targetId);
         }
 
         // The queue is the authority on completion, and for a fast run its

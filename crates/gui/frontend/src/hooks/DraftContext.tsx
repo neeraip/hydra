@@ -607,7 +607,7 @@ export function DraftProvider({ children }: { children: ReactNode }) {
         if (project?.id) {
           try {
             await saveProjectOnDisk(project.id, activeScenarioId);
-            markEdited(activeScenarioId ?? null);
+            markEdited(project.id, activeScenarioId ?? null);
           } catch {
             // Non-fatal: in-memory network state is already correct; the next
             // successful save (or app action that persists) will catch up.

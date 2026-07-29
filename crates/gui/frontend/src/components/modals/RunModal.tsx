@@ -120,7 +120,7 @@ export function RunModal() {
     showToast,
   } = useAppState();
   const { project, engine } = useActiveProject();
-  const { editedScenarioIds } = useNetworkVersion();
+  const { isEdited } = useNetworkVersion();
 
   const dbScenarios = useScenarios(activeProjectId ?? null, scenariosVersion);
   const scenarios: ScenarioOption[] = useMemo(
@@ -128,17 +128,17 @@ export function RunModal() {
       {
         id: null,
         label: "Base",
-        state: editedScenarioIds.has(null)
+        state: isEdited(project?.id ?? null, null)
           ? "stale"
           : (project?.state ?? "not-run"),
       },
       ...dbScenarios.map((s) => ({
         id: s.id,
         label: s.name,
-        state: editedScenarioIds.has(s.id) ? "stale" : s.state,
+        state: isEdited(project?.id ?? null, s.id) ? "stale" : s.state,
       })),
     ],
-    [dbScenarios, project?.state, editedScenarioIds],
+    [dbScenarios, project?.id, project?.state, isEdited],
   );
 
   // Checked set — stored as the same id representation used in scenarios list.

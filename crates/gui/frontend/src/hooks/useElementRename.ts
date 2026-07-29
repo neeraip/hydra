@@ -37,8 +37,8 @@ export function useElementRename(): (
         if (activeProjectId) {
           clearStacks(stackKey(activeProjectId, activeScenarioId ?? null));
           await saveProjectOnDisk(activeProjectId, activeScenarioId);
+          markEdited(activeProjectId, activeScenarioId);
         }
-        markEdited(activeScenarioId);
         showToast(
           `Renamed ${oldId} → ${newId}. Undo history cleared; results marked stale.`,
           "success",
