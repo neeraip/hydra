@@ -164,7 +164,13 @@ export function AnnotationSummary({
       style={{
         position: "absolute",
         bottom: 12,
-        left: 12,
+        // Bottom-centre rather than bottom-left: the legend owns the
+        // bottom-left corner and covered this box whenever results were
+        // loaded. Centred within the *visible* canvas — this container runs
+        // full-width underneath the left rail and right inspector, so a plain
+        // 50% would drift off-centre whenever either is open.
+        left: "calc(var(--rail-effective-w, 0px) + (100% - var(--rail-effective-w, 0px) - var(--inspector-effective-w, 0px)) / 2)",
+        transform: "translateX(-50%)",
         zIndex: 10,
         background: "var(--bg-panel)",
         border: `1px solid rgba(212,160,23,0.4)`,
@@ -174,6 +180,7 @@ export function AnnotationSummary({
         alignItems: "center",
         gap: 12,
         boxShadow: "var(--shadow-2)",
+        whiteSpace: "nowrap",
       }}
     >
       <span
