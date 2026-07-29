@@ -15,6 +15,7 @@ import {
   ArrowLeftIcon,
   ArrowRightIcon,
   CheckIcon,
+  XMarkIcon,
 } from "@heroicons/react/16/solid";
 import { ClockIcon } from "@heroicons/react/24/outline";
 import { useEffect, useState } from "react";
@@ -143,8 +144,26 @@ export function NewProjectWizard({ onClose }: Props) {
     >
       <div
         className="wizard-card"
-        style={{ width: "100%", maxWidth: step === 1 ? 760 : 580 }}
+        style={{
+          position: "relative",
+          width: "100%",
+          maxWidth: step === 1 ? 760 : 580,
+        }}
       >
+        {/* Always-available exit. The footer only offers "Cancel" on step 1 —
+            from any later step the leftmost control is "Back", so leaving
+            meant stepping backwards until one appeared. */}
+        <button
+          type="button"
+          className="tl-btn"
+          onClick={onClose}
+          aria-label="Close"
+          data-tooltip="Close (Esc)"
+          style={{ position: "absolute", top: 14, right: 14 }}
+        >
+          <XMarkIcon style={{ width: 14, height: 14 }} />
+        </button>
+
         <StepCount step={step} />
 
         {/* ── Step 1: Modelling domain ───────────────────────────────────── */}
