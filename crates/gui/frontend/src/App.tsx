@@ -6,6 +6,7 @@ import {
   useAppState,
 } from "./AppContext";
 import { registerCustomCrsDefinitions } from "./canvas/coords";
+import { useCanvasSelection } from "./canvas/selection-context";
 import { ActivityBar } from "./components/layout/ActivityBar";
 import { StatusBar } from "./components/layout/StatusBar";
 import { TopBar } from "./components/layout/TopBar";
@@ -99,6 +100,21 @@ export function App() {
     toggleIssuesPanel,
     closeIssuesPanel,
   } = useAppState();
+
+  // Selection is provider state mounted above AppProvider, so it survives
+  // every project switch on its own — nothing but deleting an element ever
+  // cleared it. Leaving it set meant the inspector stayed open on an element
+  // from the project you just left, showing another project's data under it
+  // whenever the id happened to exist in both.
+  //
+  // Cleared here because App is the only always-mounted component inside both
+  // the selection provider and AppProvider; the provider itself sits outside
+  // AppProvider and cannot read the active project.
+  const { clearSelection } = useCanvasSelection();
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the project id is the intentional reset trigger; clearSelection is stable.
+  useEffect(() => {
+    clearSelection();
+  }, [activeProjectId]);
 
   const { undo, redo } = useUndoRedo();
   const [shortcutCardOpen, setShortcutCardOpen] = useState(false);
