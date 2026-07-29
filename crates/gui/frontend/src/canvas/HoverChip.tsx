@@ -4,6 +4,7 @@
 // are loaded and something is hovered.
 
 import type { PeriodResults } from "../hooks";
+import { elementTypeBadge } from "../types/elementTypes";
 import { toDisplay, unitLabel, type useUnitSystem } from "../units";
 import { statusLabel } from "./MapCanvas/colorUtils";
 import type { LinkVariable, NodeVariable } from "./types";
@@ -13,6 +14,9 @@ export interface HoverTip {
   x: number;
   y: number;
   kind: "node" | "link";
+  /** Specific element type ("junction", "pump", …) — drives the letter badge.
+   * `kind` alone cannot: it only distinguishes nodes from links. */
+  type: string;
   si: number;
   id: string;
 }
@@ -90,6 +94,7 @@ export function HoverChip({
   const value = periodResult
     ? hoverTipValue(tip, periodResult, nodeVar, linkVar, sys)
     : null;
+  const badge = elementTypeBadge(tip.type);
   return (
     <div
       style={{
@@ -112,6 +117,27 @@ export function HoverChip({
         textOverflow: "ellipsis",
       }}
     >
+      <span
+        style={{
+          display: "inline-flex",
+          alignItems: "center",
+          justifyContent: "center",
+          minWidth: 14,
+          height: 13,
+          padding: "0 2px",
+          marginRight: 5,
+          borderRadius: 3,
+          fontSize: 8.5,
+          fontWeight: 700,
+          verticalAlign: "text-bottom",
+          color: badge.color,
+          background: `${badge.color}1f`,
+          border: `1px solid ${badge.color}55`,
+          boxSizing: "border-box",
+        }}
+      >
+        {badge.label}
+      </span>
       <span style={{ fontWeight: 600 }}>{tip.id}</span>
       {value != null && (
         <span style={{ color: "var(--text-secondary)" }}> · {value}</span>

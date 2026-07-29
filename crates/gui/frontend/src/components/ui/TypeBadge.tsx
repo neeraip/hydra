@@ -1,21 +1,10 @@
-/** Compact letter badge per element type — colours match the canvas' type
- * colours (reservoir blue, tank green, pump amber; the rest neutral). Pump is
- * "Pu" because pipe already owns "P" and colour alone must not be the only
- * differentiator. Tooltips carry the full name. */
-const TYPE_BADGE_META: Record<string, { label: string; color: string }> = {
-  junction: { label: "J", color: "#8a93a3" },
-  reservoir: { label: "R", color: "#4a90d9" },
-  tank: { label: "T", color: "#3daf75" },
-  pipe: { label: "P", color: "#8a93a3" },
-  pump: { label: "Pu", color: "#d4a017" },
-  valve: { label: "V", color: "#8a93a3" },
-};
+import { elementTypeBadge } from "../../types/elementTypes";
 
+/** Compact letter badge per element type. Letters and colours come from the
+ * shared table so the panels, the network list and the canvas hover chip can
+ * never disagree; tooltips carry the full name. */
 export function TypeBadge({ type }: { type: string }) {
-  const meta = TYPE_BADGE_META[type] ?? {
-    label: type.charAt(0).toUpperCase(),
-    color: "#8a93a3",
-  };
+  const meta = elementTypeBadge(type);
   return (
     <span
       data-tooltip={type.charAt(0).toUpperCase() + type.slice(1)}

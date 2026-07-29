@@ -943,13 +943,22 @@ export const MapCanvas = memo(function MapCanvas({
         x?: number;
         y?: number;
       }) => {
-        const obj = info.object as { id: string; si: number } | undefined;
+        const obj = info.object as
+          | { id: string; si: number; type: string }
+          | undefined;
         const id = obj ? obj.id : null;
         hoveredLinkIdRef.current = id;
         setHoveredLinkId(id);
         setHoverTip(
           obj && info.x != null && info.y != null
-            ? { x: info.x, y: info.y, kind: "link", si: obj.si, id: obj.id }
+            ? {
+                x: info.x,
+                y: info.y,
+                kind: "link",
+                type: obj.type,
+                si: obj.si,
+                id: obj.id,
+              }
             : null,
         );
       };
@@ -1109,13 +1118,22 @@ export const MapCanvas = memo(function MapCanvas({
           // Measure works on raw map clicks — node picking is dead cost there.
           pickable: tool !== "measure",
           onHover: (info) => {
-            const obj = info.object as { id: string; si: number } | undefined;
+            const obj = info.object as
+              | { id: string; si: number; type: string }
+              | undefined;
             const id = obj ? obj.id : null;
             hoveredNodeIdRef.current = id;
             setHoveredNodeId(id);
             setHoverTip(
               obj && info.x != null && info.y != null
-                ? { x: info.x, y: info.y, kind: "node", si: obj.si, id: obj.id }
+                ? {
+                    x: info.x,
+                    y: info.y,
+                    kind: "node",
+                    type: obj.type,
+                    si: obj.si,
+                    id: obj.id,
+                  }
                 : null,
             );
           },
