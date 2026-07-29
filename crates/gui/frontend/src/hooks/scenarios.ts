@@ -65,6 +65,15 @@ export async function createScenarioOnDisk(args: {
 }
 
 /**
+ * Reveal the application data directory — the root holding every project
+ * bundle and `custom_crs.json` — in the system file manager. No-op outside
+ * Tauri.
+ */
+export async function openDataFolder(): Promise<void> {
+  await tryInvoke<void>("open_data_folder");
+}
+
+/**
  * Open the base model directory for `projectId` in the system file manager
  * (Finder on macOS, Explorer on Windows). No-op outside Tauri.
  */

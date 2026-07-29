@@ -1130,6 +1130,27 @@ pub fn open_base_folder(app: tauri::AppHandle, project_id: String) -> Result<(),
         .map_err(|e| e.to_string())
 }
 
+/// Reveal the application data directory in the system file manager.
+///
+/// This is the root every bundle lives under — `projects/<id>/` with each
+/// project's manifest, criteria and models, plus `custom_crs.json`. Nothing
+/// else in the app can reach it, so inspecting a project's files previously
+/// meant knowing the Tauri identifier and typing the path by hand.
+#[tauri::command]
+/// Open the app data directory in the OS file manager.
+pub fn open_data_folder(app: tauri::AppHandle) -> Result<(), String> {
+    use tauri_plugin_opener::OpenerExt;
+    let app_data = app_data_dir(&app)?;
+    // A fresh install has no directory until the first project is created,
+    // and revealing nothing would look like a broken button.
+    if !app_data.exists() {
+        std::fs::create_dir_all(&app_data).map_err(|e| e.to_string())?;
+    }
+    app.opener()
+        .reveal_item_in_dir(&app_data)
+        .map_err(|e| e.to_string())
+}
+
 /// Open the scenario directory for `scenario_id` in the system file manager.
 #[tauri::command]
 /// Open a scenario bundle directory in the OS file manager.

@@ -73,6 +73,7 @@ fn main() {
             commands::delete_scenario,
             commands::rename_scenario,
             commands::open_base_folder,
+            commands::open_data_folder,
             commands::open_scenario_folder,
             commands::open_and_load_network,
             commands::get_network_snapshot,

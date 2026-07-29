@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useAppState } from "../AppContext";
 import { Toggle } from "../components/ui/Toggle";
-import { getVersions, type Versions } from "../hooks";
+import { getVersions, openDataFolder, type Versions } from "../hooks";
 import { useUpdater } from "../hooks/useUpdater";
 import { setUnitSystem, type UnitSystem, useUnitSystem } from "../units";
 
@@ -366,6 +366,27 @@ export function SettingsPage() {
         {/* About */}
         <Section>About</Section>
         <UpdatesRow />
+        <SettingRow
+          label="Data folder"
+          description="Projects, scenarios, models and results are stored here, alongside your custom CRS definitions."
+        >
+          <button
+            type="button"
+            onClick={() => void openDataFolder()}
+            style={{
+              padding: "5px 14px",
+              border: "1px solid var(--border-hover)",
+              borderRadius: 6,
+              background: "transparent",
+              color: "var(--text-primary)",
+              cursor: "pointer",
+              fontSize: 13,
+              fontFamily: "var(--font-ui)",
+            }}
+          >
+            Reveal…
+          </button>
+        </SettingRow>
         <div
           style={{
             padding: "12px 0",
