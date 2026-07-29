@@ -8,7 +8,7 @@ use crate::meta::{self, bundle};
 
 use super::binary_codec::{encode_network_snapshot, encode_network_snapshot_absent};
 use super::network_dto::{
-    format_inp_parse_error, network_to_dto, NetworkDto, NetworkState, NetworkStateInner,
+    format_read_error, network_to_dto, NetworkDto, NetworkState, NetworkStateInner,
 };
 use super::simulation::try_acquire_run_target;
 
@@ -1335,7 +1335,7 @@ pub async fn open_and_load_network(
     let network = match descriptor.key {
         "wds" => {
             let (network, _validation_errors) =
-                hydra::io::parse_tolerant(&bytes).map_err(format_inp_parse_error)?;
+                hydra::io::parse_tolerant(&bytes).map_err(format_read_error)?;
             network
         }
         other => return Err(format!("no importer for engine {other:?}")),
@@ -1492,7 +1492,7 @@ pub fn load_project_network(
     // Runs still use the strict `parse`, so an unsimulable network cannot
     // reach the solver.
     let (network, _validation_errors) =
-        hydra::io::parse_tolerant(&bytes).map_err(format_inp_parse_error)?;
+        hydra::io::parse_tolerant(&bytes).map_err(format_read_error)?;
     let dto = network_to_dto(&network);
     // Encode before taking the state lock — serialisation work happens
     // outside the mutex, and (unlike the old JSON path) no nodes/links clone

@@ -341,9 +341,27 @@ impl NetworkStateInner {
 #[derive(Default)]
 pub struct NetworkState(pub parking_lot::Mutex<NetworkStateInner>);
 
+/// Render a read failure for display.
+///
+/// A foreign dialect is deliberately worded as an engine mismatch rather than a
+/// fault: the file is a sound model, just not one this engine reads, and
+/// telling the user their network is invalid would be simply untrue (model spec
+/// §4.1.2).
+pub(crate) fn format_read_error(err: hydra::io::ReadError) -> String {
+    match err {
+        hydra::io::ReadError::ForeignDialect { tool, section } => format!(
+            "This is a {tool} model, not a water-distribution one. \
+             It declares a [{section}] section, which EPANET has no concept of. \
+             Choose the {tool} engine to open it."
+        ),
+        other => other.to_string(),
+    }
+}
+
 pub(crate) fn format_inp_parse_error(err: hydra::io::ParseError) -> String {
     match err {
-        hydra::io::ParseError::ValidationFailed(errors) => {
+        hydra::io::ParseError::Read(err) => format_read_error(err),
+        hydra::io::ParseError::NotSimulable(errors) => {
             if errors.is_empty() {
                 return "validation failed".to_string();
             }
@@ -370,7 +388,6 @@ pub(crate) fn format_inp_parse_error(err: hydra::io::ParseError) -> String {
                 format!("validation failed: {}", preview.join("; "))
             }
         }
-        other => other.to_string(),
     }
 }
 
@@ -1503,7 +1520,7 @@ Duration  0
     #[test]
     fn format_inp_parse_error_previews_generic_validation_errors() {
         assert_eq!(
-            format_inp_parse_error(hydra::io::ParseError::ValidationFailed(vec![])),
+            format_inp_parse_error(hydra::io::ParseError::NotSimulable(vec![])),
             "validation failed"
         );
 
@@ -1521,7 +1538,7 @@ Duration  0
                 node_index: 9,
             },
         ];
-        let msg = format_inp_parse_error(hydra::io::ParseError::ValidationFailed(errs));
+        let msg = format_inp_parse_error(hydra::io::ParseError::NotSimulable(errs));
         assert!(
             msg.starts_with("validation failed (3 errors):"),
             "got: {msg}"
