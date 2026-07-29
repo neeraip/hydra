@@ -29,8 +29,6 @@ pub struct ProjectMeta {
     pub node_count: u32,
     #[serde(default)]
     pub link_count: u32,
-    #[serde(default)]
-    pub analysis_options: Option<serde_json::Value>,
 }
 
 fn default_crs() -> String {

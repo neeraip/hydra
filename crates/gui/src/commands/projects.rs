@@ -205,7 +205,6 @@ pub fn create_project(
         source_crs: "EPSG:4326".into(),
         node_count,
         link_count,
-        analysis_options: None,
     };
     meta::write_project_meta(&project_dir, &meta)?;
 
@@ -1449,8 +1448,10 @@ mod tests {
 
     #[test]
     fn meta_with_removed_description_field_still_parses() {
-        // Older meta.json files carried a (never-displayed) description
-        // field; serde ignores unknown fields, so they must keep loading.
+        // Older meta.json files carried a never-displayed `description`
+        // field and an `analysisOptions` field that was never once populated
+        // — always null, never read. Both are gone from the struct; serde
+        // ignores unknown fields, so those files must keep loading.
         let json = r#"{"name":"Legacy","description":"old text","sourceCrs":"EPSG:4326","nodeCount":1,"linkCount":2,"analysisOptions":null}"#;
         let m: meta::ProjectMeta = serde_json::from_str(json).unwrap();
         assert_eq!(m.name, "Legacy");
@@ -1661,7 +1662,6 @@ mod tests {
             source_crs: "EPSG:4326".into(),
             node_count: nodes,
             link_count: links,
-            analysis_options: None,
         }
     }
 
