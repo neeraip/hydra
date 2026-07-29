@@ -1,4 +1,8 @@
-import { MagnifyingGlassPlusIcon, XMarkIcon } from "@heroicons/react/16/solid";
+import {
+  MagnifyingGlassPlusIcon,
+  TagIcon,
+  XMarkIcon,
+} from "@heroicons/react/16/solid";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Link, Node, Pattern } from "../../hooks";
@@ -232,15 +236,21 @@ function NodesTab({
         </colgroup>
         <thead>
           <tr>
-            {/* Badge column, first to match the cells: self-labelling, so
-                the header is just the sort affordance — "Type" was wider than
-                the 40px column itself. */}
+            {/* Badge column, first to match the cells. A tag glyph rather
+                than a word: the column is sized to the badge, and no label
+                fits — "Type" is wider than the column, and the single letter
+                "T" would sit directly above a column of J/R/T/P/Pu/V, where
+                T already means Tank. The tooltip carries the full name. */}
             <th
               style={{ ...TH, textAlign: "center", padding: "5px 4px" }}
               onClick={() => toggleSort("type")}
               data-tooltip="Element type — click to sort"
               data-tooltip-pos="bottom"
             >
+              <TagIcon
+                style={{ width: 10, height: 10, verticalAlign: "middle" }}
+                aria-label="Element type"
+              />
               <SortIndicator col="type" sortCol={sortCol} sortDir={sortDir} />
             </th>
             {(["id", "elevation", "baseDemand"] as const).map((col) => {
@@ -519,15 +529,21 @@ function LinksTab({
         </colgroup>
         <thead>
           <tr>
-            {/* Badge column, first to match the cells: self-labelling, so
-                the header is just the sort affordance — "Type" was wider than
-                the 40px column itself. */}
+            {/* Badge column, first to match the cells. A tag glyph rather
+                than a word: the column is sized to the badge, and no label
+                fits — "Type" is wider than the column, and the single letter
+                "T" would sit directly above a column of J/R/T/P/Pu/V, where
+                T already means Tank. The tooltip carries the full name. */}
             <th
               style={{ ...TH, textAlign: "center", padding: "5px 4px" }}
               onClick={() => toggleSort("type")}
               data-tooltip="Element type — click to sort"
               data-tooltip-pos="bottom"
             >
+              <TagIcon
+                style={{ width: 10, height: 10, verticalAlign: "middle" }}
+                aria-label="Element type"
+              />
               <SortIndicator col="type" sortCol={sortCol} sortDir={sortDir} />
             </th>
             {(["id", "status", "diameter"] as const).map((col) => {
