@@ -280,6 +280,12 @@ export function SettingsPage() {
       <div
         style={{
           maxWidth: 680,
+          // Centred rather than left-aligned: the column is deliberately
+          // narrow so each control stays beside its label, but pinning it left
+          // pushed all the slack to one side, which read as a layout fault
+          // rather than a margin. Matches the report preview's constrained
+          // page.
+          margin: "0 auto",
           padding: "40px 48px",
         }}
       >
