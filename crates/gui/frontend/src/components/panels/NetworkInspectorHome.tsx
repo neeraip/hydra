@@ -151,6 +151,33 @@ const TD: React.CSSProperties = {
   userSelect: "none",
 };
 
+/**
+ * Element-type cell for the nodes/links tables.
+ *
+ * The badge is centred as a *box* rather than aligned on the row's text
+ * baseline. `TypeBadge` is an inline-flex box, so inline layout aligns it by
+ * the baseline of the letter inside it — and that letter's baseline sits below
+ * the badge's own centre, which dragged the whole badge about a pixel below the
+ * centre of the row. A block-level flex container has no baseline to align to,
+ * and `vertical-align: middle` on the cell centres that block in the row, so
+ * the result no longer depends on font metrics.
+ */
+function BadgeCell({ type }: { type: string }) {
+  return (
+    <td style={{ ...TD, padding: BADGE_CELL_PADDING, verticalAlign: "middle" }}>
+      <span
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+        }}
+      >
+        <TypeBadge type={type} />
+      </span>
+    </td>
+  );
+}
+
 function SortIndicator({
   col,
   sortCol,
@@ -242,20 +269,28 @@ function NodesTab({
                 "T" would sit directly above a column of J/R/T/P/Pu/V, where
                 T already means Tank. The tooltip carries the full name. */}
             <th
-              style={{ ...TH, textAlign: "center", padding: "5px 4px" }}
+              style={{
+                ...TH,
+                textAlign: "center",
+                padding: "5px 4px",
+                verticalAlign: "middle",
+              }}
               onClick={() => toggleSort("type")}
               data-tooltip="Element type — click to sort"
               data-tooltip-pos="bottom"
             >
-              {/* Flex rather than inline: the glyph is an SVG box and the
-                  sort arrow is a text character, so leaving them inline
-                  aligned one to the line box and the other to the baseline,
-                  and the icon rode high. */}
+              {/* Block-level flex, not inline-flex: the glyph is an SVG box and
+                  the sort arrow is a text character, so an inline box aligned
+                  one to the line box and the other to the baseline. Going
+                  block-level removes the line box from the question entirely —
+                  the cell's `vertical-align: middle` then centres this row of
+                  content, matching how BadgeCell centres the badges below. */}
               <span
                 style={{
-                  display: "inline-flex",
+                  display: "flex",
                   alignItems: "center",
                   justifyContent: "center",
+                  lineHeight: 1,
                 }}
               >
                 <TagIcon
@@ -348,9 +383,7 @@ function NodesTab({
                       "transparent";
                 }}
               >
-                <td style={{ ...TD, padding: BADGE_CELL_PADDING }}>
-                  <TypeBadge type={node.type} />
-                </td>
+                <BadgeCell type={node.type} />
                 <td
                   style={{
                     ...TD,
@@ -547,7 +580,12 @@ function LinksTab({
                 "T" would sit directly above a column of J/R/T/P/Pu/V, where
                 T already means Tank. The tooltip carries the full name. */}
             <th
-              style={{ ...TH, textAlign: "center", padding: "5px 4px" }}
+              style={{
+                ...TH,
+                textAlign: "center",
+                padding: "5px 4px",
+                verticalAlign: "middle",
+              }}
               onClick={() => toggleSort("type")}
               data-tooltip="Element type — click to sort"
               data-tooltip-pos="bottom"
@@ -648,9 +686,7 @@ function LinksTab({
                       "transparent";
                 }}
               >
-                <td style={{ ...TD, padding: BADGE_CELL_PADDING }}>
-                  <TypeBadge type={link.type} />
-                </td>
+                <BadgeCell type={link.type} />
                 <td
                   style={{
                     ...TD,
@@ -1043,23 +1079,15 @@ export function NetworkInspectorHome({
           >
             Network
           </div>
-          <div
-            style={{
-              fontSize: 11,
-              color: "var(--text-tertiary)",
-              marginTop: 1,
-            }}
-          >
-            {allNodes.length} nodes · {allLinks.length} links
-          </div>
         </div>
+        {/* Element counts deliberately absent: the tab strip below already
+            carries one per tab, and repeating them here said the same thing
+            twice while pushing the header to two lines. */}
         <div
           style={{
             display: "flex",
             alignItems: "center",
             gap: 8,
-            alignSelf: "flex-start",
-            marginTop: 1,
           }}
         >
           {onClose && (
