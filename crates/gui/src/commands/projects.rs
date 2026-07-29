@@ -1277,6 +1277,10 @@ fn format_modified(modified_at: i64) -> String {
 /// hardcoded, but the filter is only a filter: `wds` and `uds` both claim
 /// `.inp` (hydra-common spec §2.2), so the parse below is what actually
 /// decides whether the file is the right kind of model.
+///
+/// Fails only on a model that cannot be read at all; one that is readable but
+/// not yet simulable imports, and its validation errors surface in the Issues
+/// panel (see the parse call below).
 #[tauri::command]
 /// Open a native file-picker, parse the chosen model file, and hold it in `NetworkState`.
 pub async fn open_and_load_network(
@@ -1317,8 +1321,23 @@ pub async fn open_and_load_network(
     // with an implementation. Matching on the key rather than calling the wds
     // parser unconditionally makes the next engine a compile-time decision
     // instead of a silently wrong parse.
+    //
+    // Tolerant (model spec §4.1.2), matching `load_network`. Importing
+    // strictly meant a network that is readable but not yet simulable could be
+    // *reopened* once it was already a project, yet could not be imported to
+    // become one — so the file a user most needs to open in order to fix was
+    // the one the wizard refused. The recovered validation errors are not
+    // discarded: `validate_network` reports them to the Issues panel from the
+    // network this stores, exactly as it does on reopen.
+    //
+    // Runs still use the strict `parse`, so an unsimulable network cannot
+    // reach the solver.
     let network = match descriptor.key {
-        "wds" => hydra::io::parse(&bytes).map_err(format_inp_parse_error)?,
+        "wds" => {
+            let (network, _validation_errors) =
+                hydra::io::parse_tolerant(&bytes).map_err(format_inp_parse_error)?;
+            network
+        }
         other => return Err(format!("no importer for engine {other:?}")),
     };
 
@@ -1943,6 +1962,44 @@ mod tests {
         // "one junction" is not a smaller valid model — it is an invalid one.
         let inp = b"[JUNCTIONS]\n J1  10\n\n[OPTIONS]\n Units LPS\n\n[END]\n";
         assert!(hydra::io::parse(inp).is_err());
+    }
+
+    // ── import tolerance (model spec §4.1.2) ─────────────────────────────
+
+    #[test]
+    fn import_reads_a_model_that_is_not_yet_simulable() {
+        // The parse `open_and_load_network` performs. A lone unreachable
+        // junction is the resting state of a network under construction, and
+        // the wizard is now the only way in — importing strictly meant the
+        // file a user most needs to open in order to fix it was the one they
+        // could not open.
+        let inp = b"[JUNCTIONS]\n J1  10\n\n[OPTIONS]\n Units LPS\n\n[END]\n";
+        let (network, errors) =
+            hydra::io::parse_tolerant(inp).expect("an unsimulable model must still import");
+        assert_eq!(network.nodes.len(), 1);
+        assert!(
+            !errors.is_empty(),
+            "the reason it is unsimulable must be reported, not swallowed"
+        );
+    }
+
+    #[test]
+    fn import_still_refuses_a_model_that_cannot_be_read() {
+        // The other side of the line: tolerance extends to networks that are
+        // readable but incomplete, never to bytes no network can be built
+        // from. A duplicated id makes every reference to it ambiguous, so
+        // there is no well-defined network to be tolerant *with*.
+        let dup = b"[JUNCTIONS]\n J1  10\n J1  20\n\n[RESERVOIRS]\n R1  100\n\n[PIPES]\n P1  R1  J1  100  300  100  0  Open\n\n[OPTIONS]\n Units LPS\n\n[END]\n";
+        assert!(
+            hydra::io::parse_tolerant(dup).is_err(),
+            "a duplicate id must fail even the tolerant parse"
+        );
+
+        let swmm = b"[TITLE]\n\n[SUBCATCHMENTS]\n S1  RG1  J1  10  50  500  0.5  0\n\n[END]\n";
+        assert!(
+            hydra::io::parse_tolerant(swmm).is_err(),
+            "another tool's dialect must fail even the tolerant parse"
+        );
     }
 
     #[test]
