@@ -448,6 +448,10 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
   // never load all periods at once.
   const [fetchedPeriodResult, setFetchedPeriodResult] =
     useState<PeriodResults | null>(null);
+  // Which target the held arrays were fetched for. Only needed to tell "this
+  // scrub failed, keep what's on screen" apart from "this scenario failed to
+  // load at all, so stop showing the last one's colours".
+  const loadedTargetRef = useRef<string | null>(null);
 
   // Topology-stale gate: the loaded results' digest no longer matches the
   // live model (nodes/links added, removed, or renamed), so the flat arrays
@@ -457,12 +461,23 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
   // (pre-digest .out files) pass through ungated.
   const currentPeriodResult = resultsTopologyStale ? null : fetchedPeriodResult;
 
-  // On project or scenario change, discard stale period results immediately.
-  // This guarantees overlays never show data from a previously active scenario.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: `project?.id` and `activeScenarioId` are intentional triggers to discard stale period data on switch.
+  // On project change, discard stale period results immediately: a different
+  // project is a different network, so the flat arrays cannot be reinterpreted
+  // against it at all.
+  //
+  // Deliberately NOT on scenario change. Clearing there repainted the whole
+  // network in the unsimulated grey scheme for the few frames until the new
+  // arrays arrived — reading as "this scenario was never run" — while
+  // `stableResultMeta` latched and kept the legend showing simulated. The two
+  // are meant to move together; the fetch effect below now latches the period
+  // data the same way, and `NetworkDataContext` holds the previous nodes until
+  // the new snapshot lands, so the held arrays stay paired with the geometry
+  // they were computed for.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `project?.id` is the intentional reset trigger.
   useEffect(() => {
     setFetchedPeriodResult(null);
-  }, [project?.id, activeScenarioId]);
+    loadedTargetRef.current = null;
+  }, [project?.id]);
 
   // Keyed on a value-stable digest of resultMeta rather than its object
   // identity: run completion publishes two fresh (equal) meta objects, which
@@ -475,12 +490,22 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
     ? `${resultGeneration}:${resultMeta.times.length}:${resultMeta.times[resultMeta.times.length - 1] ?? 0}:${resultMeta.qualityMode}`
     : null;
   useEffect(() => {
-    if (resultMetaKey == null || !project?.id) {
-      // No simulation exists for this scenario — discard any stale period result
-      // so the canvas and inspector show the "no results" state.
+    if (!project?.id) {
       setFetchedPeriodResult(null);
       return;
     }
+    if (resultMetaKey == null) {
+      // Metadata is null either because this scenario has no simulation, or
+      // because it hasn't loaded yet. Only the settled case means "no results":
+      // clearing while still loading is what produced the grey flash on every
+      // scenario switch. Mirrors the `stableResultMeta` latch above.
+      if (!resultMetaLoading) {
+        setFetchedPeriodResult(null);
+        loadedTargetRef.current = null;
+      }
+      return;
+    }
+    const target = `${project.id}:${activeScenarioId ?? "base"}`;
     let cancelled = false;
     // Clamp: on switching to a shorter result set this effect can run before
     // the playhead-clamp effect corrects currentHour, and an out-of-range
@@ -493,11 +518,19 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
       .then((r) => {
         if (!cancelled) {
           setFetchedPeriodResult(r);
+          loadedTargetRef.current = target;
         }
       })
-      // Decode failures reject (already console.error'd in getPeriodResults);
-      // keep the previous period visible rather than crashing the effect.
-      .catch(() => {});
+      // Decode failures reject (already console.error'd in getPeriodResults).
+      // Scrubbing within a target can keep the period already on screen. A
+      // target we have never loaded cannot: since the switch no longer clears
+      // eagerly, keeping it would leave the previous scenario's colours up for
+      // as long as the user stayed here.
+      .catch(() => {
+        if (!cancelled && loadedTargetRef.current !== target) {
+          setFetchedPeriodResult(null);
+        }
+      });
     return () => {
       cancelled = true;
     };
@@ -505,6 +538,7 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
     project?.id,
     currentHour,
     resultMetaKey,
+    resultMetaLoading,
     activeScenarioId,
     resultMeta?.times.length,
   ]);
