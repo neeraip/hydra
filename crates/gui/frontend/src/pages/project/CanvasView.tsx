@@ -7,12 +7,7 @@ import {
   clampBasemapOpacity,
   isValidBasemapId,
 } from "../../canvas/Basemap";
-import {
-  haversineMeters,
-  pickCoordSample,
-  setPendingCrsSuggestionSample,
-  wgs84ToSourceCrs,
-} from "../../canvas/coords";
+import { haversineMeters, wgs84ToSourceCrs } from "../../canvas/coords";
 import { Legend, type LegendThresholds } from "../../canvas/Legend";
 import { MapCanvas } from "../../canvas/MapCanvas";
 import { CurrentPeriodProvider } from "../../canvas/period-context";
@@ -1334,20 +1329,7 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
                 reprojected. Suppressed while a catalog proj4 def is still being
                 fetched for a persisted CRS (avoids a spurious cold-start flash). */}
             {prefsReady && viewMode === "map" && crsError && !crsResolving && (
-              <InvalidCrsOverlay
-                // Auto-suggestion only makes sense for the out-of-range case
-                // (coords look projected while CRS is the EPSG:4326 default) —
-                // with a non-default CRS the error is a proj4 failure, not a
-                // wrong-guess situation.
-                showSuggest={sourceCrs === "EPSG:4326"}
-                onSetCrs={openCrsModal}
-                onSuggestCrs={() => {
-                  setPendingCrsSuggestionSample(
-                    pickCoordSample(rawPositionNodes),
-                  );
-                  openCrsModal();
-                }}
-              />
+              <InvalidCrsOverlay onSetCrs={openCrsModal} />
             )}
 
             {/* Legacy SVG annotation overlays (schematic mode only).

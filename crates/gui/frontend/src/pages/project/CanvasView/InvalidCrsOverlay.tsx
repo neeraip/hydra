@@ -7,15 +7,11 @@ import { GlobeAltIcon } from "@heroicons/react/16/solid";
  * only.
  */
 export function InvalidCrsOverlay({
-  showSuggest,
   onSetCrs,
-  onSuggestCrs,
 }: {
   /** Offer the "Suggest CRS" flow — only meaningful while the CRS is still
    * the EPSG:4326 default (out-of-range coords, not a proj4 failure). */
-  showSuggest: boolean;
   onSetCrs: () => void;
-  onSuggestCrs: () => void;
 }) {
   return (
     <div
@@ -84,23 +80,6 @@ export function InvalidCrsOverlay({
           >
             Set source CRS
           </button>
-          {showSuggest && (
-            <button
-              type="button"
-              className="tool-btn"
-              onClick={onSuggestCrs}
-              style={{
-                pointerEvents: "auto",
-                // See "Set source CRS" — size to content, not 30×30.
-                width: "auto",
-                border: "1px solid var(--border)",
-                padding: "0 12px",
-                fontSize: 12,
-              }}
-            >
-              Suggest CRS…
-            </button>
-          )}
         </div>
       </div>
     </div>
