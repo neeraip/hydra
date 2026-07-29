@@ -125,6 +125,15 @@ const TH: React.CSSProperties = {
   zIndex: 1,
 };
 
+/** Width of the element-type badge column: the badge is ~20px wide (18px
+ * minimum, a little more for the two-character "Pu"), plus 4px each side. The
+ * shared TD padding of 8px would otherwise make the column twice the width of
+ * the thing in it. */
+const BADGE_COL_WIDTH = 28;
+
+/** Cell padding for that column — the shared horizontal padding, halved. */
+const BADGE_CELL_PADDING = "4px 4px";
+
 const TD: React.CSSProperties = {
   padding: "4px 8px",
   fontSize: 11,
@@ -214,11 +223,11 @@ function NodesTab({
             (the list is virtualized); only the intrinsically-sized columns
             are pinned — the ID/data columns share the remaining rail width. */}
         <colgroup>
+          <col style={{ width: BADGE_COL_WIDTH }} />
           <col />
           <col />
           <col />
           {hasResults && <col />}
-          <col style={{ width: 40 }} />
           {onZoomTo && <col style={{ width: 22 }} />}
         </colgroup>
         <thead>
@@ -317,7 +326,7 @@ function NodesTab({
                       "transparent";
                 }}
               >
-                <td style={TD}>
+                <td style={{ ...TD, padding: BADGE_CELL_PADDING }}>
                   <TypeBadge type={node.type} />
                 </td>
                 <td
@@ -501,11 +510,11 @@ function LinksTab({
         {/* Same scheme as the nodes table: fixed layout, pinned narrow
             columns, flexing ID/data columns. */}
         <colgroup>
+          <col style={{ width: BADGE_COL_WIDTH }} />
           <col />
           <col style={{ width: 36 }} />
           <col />
           {hasResults && <col />}
-          <col style={{ width: 40 }} />
           {onZoomTo && <col style={{ width: 22 }} />}
         </colgroup>
         <thead>
@@ -599,7 +608,7 @@ function LinksTab({
                       "transparent";
                 }}
               >
-                <td style={TD}>
+                <td style={{ ...TD, padding: BADGE_CELL_PADDING }}>
                   <TypeBadge type={link.type} />
                 </td>
                 <td
