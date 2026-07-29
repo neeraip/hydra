@@ -110,6 +110,36 @@ export function scenarioChildren(
   );
 }
 
+/** What the project toolbar's strip shows immediately after a variant chip. */
+export type VariantTail =
+  | { kind: "none" }
+  | { kind: "child"; child: ScenarioDto }
+  | { kind: "dropdown"; count: number };
+
+/**
+ * Summarise one variant's subtree for the toolbar strip.
+ *
+ * The strip stays one level deep per variant, so a subtree collapses to at most
+ * one trailing entry: nothing when there is nothing below, the child itself
+ * when the whole subtree *is* that one child, and a picker otherwise. A lone
+ * child that has children of its own still gets the picker — inlining it would
+ * imply the branch ended there.
+ */
+export function variantTail(
+  dtos: ScenarioDto[],
+  variantId: string,
+): VariantTail {
+  const children = scenarioChildren(dtos, variantId);
+  if (children.length === 0) return { kind: "none" };
+  if (
+    children.length === 1 &&
+    scenarioChildren(dtos, children[0].id).length === 0
+  ) {
+    return { kind: "child", child: children[0] };
+  }
+  return { kind: "dropdown", count: children.length };
+}
+
 /**
  * DFS-flatten the subtrees rooted at `rootIds` (each root at depth 0), in
  * the order the ids are given. Unknown ids are skipped. Built on

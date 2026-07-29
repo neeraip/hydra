@@ -17,6 +17,7 @@ import {
   flattenSubtrees,
   lineageLabel,
   scenarioChildren,
+  variantTail,
 } from "../panels/ScenariosPanel/shared";
 import { PrimaryButton } from "../ui/PrimaryButton";
 
@@ -25,19 +26,30 @@ import { PrimaryButton } from "../ui/PrimaryButton";
    selection (a "Base" pill always present and selected by default when
    activeScenarioId === null) plus the run controls.
 
-   The strip shows the variant row plus the active path, not the whole tree.
+   The strip shows Base, every variant, and a one-level summary of what is
+   below each variant — not the whole tree.
 
-   Parentless scenarios are variants OF the base model rather than
-   descendants of it, so they render beside Base as peers — all of them, with
-   no arrow between (that edge is not descent) and no sibling picker (nothing
-   is hidden to reveal). Below that row the tree is genuine descent, so it
-   renders as lineage exactly as before: one chip per level, a true
-   parent→child arrow between each, a ▾ "+N" segment on chips with siblings,
-   and a trailing ▾ stub to walk down from the active scenario. Everything
-   else lives in the Manage modal.
+   Parentless scenarios are variants OF the base model rather than descendants
+   of it, so they render beside Base as peers, with no arrow between (that edge
+   is not descent) and no sibling picker (nothing is hidden to reveal). Each
+   variant then carries a summary of its own subtree, separated from the next
+   variant by a divider:
+
+     no children        → nothing
+     one leaf child     → → [that child]      (a chip is cheaper than a click)
+     anything else      → → [▾ N children]
+
+   One exception keeps the strip able to answer "where am I". The pickers list
+   each child with all of its descendants, so a single click can activate a
+   scenario at any depth — which a fixed two-level summary could never show. So
+   the variant whose subtree holds the active scenario expands instead to the
+   real path down to it: one chip per level, a true parent→child arrow between
+   each, a ▾ "+N" segment on chips with siblings, and a trailing ▾ stub to keep
+   descending. Every other variant stays summarised. Everything else lives in
+   the Manage modal.
 
    Layout (left → right):
-     [Base pill] [variant chips…] → [descendant chip → …] → [▾ children stub] · Manage | [Simulate ▸ ⚙]
+     [Base pill] [variant] → [summary] │ [variant] → [active path… → ▾ stub] · Manage | [Simulate ▸ ⚙]
 */
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -116,6 +128,67 @@ function LineageArrow() {
   );
 }
 
+/** Divider between one variant's group and the next. Variants are peers with
+ * no arrow between them, so once a group can carry a trailing child or picker
+ * the eye needs a boundary — otherwise `[a] → [a1] [b]` reads as though `b`
+ * hung off `a1`. */
+function VariantSeparator() {
+  return (
+    <span
+      aria-hidden
+      style={{
+        flexShrink: 0,
+        width: 1,
+        height: 16,
+        background: "var(--border)",
+        margin: "0 2px",
+      }}
+    />
+  );
+}
+
+/** Trailing "▾ N children" segment: opens a picker listing that branch point's
+ * children with all their descendants, indented. */
+function ChildrenStub({
+  count,
+  open,
+  onToggle,
+}: {
+  count: number;
+  open: boolean;
+  onToggle: (rect: DOMRect) => void;
+}) {
+  return (
+    <button
+      type="button"
+      data-scenario-picker
+      data-tooltip="Descend to a child scenario"
+      data-tooltip-pos="bottom"
+      onClick={(e) => onToggle(e.currentTarget.getBoundingClientRect())}
+      style={{
+        flexShrink: 0,
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 4,
+        padding: "4px 9px",
+        border: "1px dashed var(--border-hover)",
+        borderRadius: 14,
+        background: open ? "var(--nav-hover)" : "transparent",
+        color: "var(--text-tertiary)",
+        fontSize: 11,
+        fontWeight: 500,
+        cursor: "pointer",
+        fontFamily: "var(--font-ui)",
+        whiteSpace: "nowrap",
+        transition: "background var(--t-fast)",
+      }}
+    >
+      <ChevronDownIcon style={{ width: 10, height: 10 }} />
+      {count} {count === 1 ? "child" : "children"}
+    </button>
+  );
+}
+
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export function ProjectToolbar() {
@@ -140,21 +213,30 @@ export function ProjectToolbar() {
   );
   // Parentless scenarios are variants OF the base model, not descendants of
   // it, so they sit beside it as peers rather than hiding behind one chip's
-  // sibling picker. Everything below them is genuine descent and still
-  // renders as lineage.
+  // sibling picker.
   const variants = useMemo(() => scenarioChildren(rawDtos, null), [rawDtos]);
-  // The active path below the variant row: the path minus its own root, which
-  // that row already shows.
-  const descentPath = useMemo(() => lineage.slice(1), [lineage]);
-  // Children of the active scenario (or of Base when none is active) — they
-  // drive the trailing ▾ stub that lets the user walk DOWN a branch.
+
+  // The variant whose subtree holds the active scenario, when the active
+  // scenario is deeper than the variant itself. That one group expands to the
+  // real path; every other group stays summarised. Without this the strip
+  // caps out at depth 2 and a deep active scenario would appear nowhere in
+  // it — no "you are here", and no ancestor chips to climb back up.
+  const expandedVariantId = lineage.length > 1 ? lineage[0].id : null;
+
+  // What each *unexpanded* variant shows after itself. Precomputed per variant
+  // so the render pass doesn't re-scan the scenario list per chip.
+  const variantTails = useMemo(
+    () => new Map(variants.map((v) => [v.id, variantTail(rawDtos, v.id)])),
+    [rawDtos, variants],
+  );
+
+  // Children of the active scenario — the trailing ▾ stub that continues the
+  // expanded branch downward. Only meaningful inside that branch: computed for
+  // Base it would list the variants again, duplicating the row beside it.
   const activeChildren = useMemo(
     () =>
-      scenarioChildren(
-        rawDtos,
-        lineage.length > 0 ? (activeScenarioId ?? null) : null,
-      ),
-    [rawDtos, lineage, activeScenarioId],
+      expandedVariantId ? scenarioChildren(rawDtos, activeScenarioId) : [],
+    [rawDtos, activeScenarioId, expandedVariantId],
   );
 
   // One picker open at a time; anchored via fixed coordinates captured from
@@ -385,8 +467,9 @@ export function ProjectToolbar() {
         Base
       </button>
 
-      {/* Scrollable lineage strip with right-edge fade */}
-      {(variants.length > 0 || activeChildren.length > 0) && (
+      {/* Scrollable lineage strip with right-edge fade. Every group hangs off a
+          variant, so no variants means nothing to show. */}
+      {variants.length > 0 && (
         <div
           style={{
             flex: 1,
@@ -406,96 +489,116 @@ export function ProjectToolbar() {
               paddingRight: 24,
             }}
           >
-            {/* Variant row — peers of Base. No arrow, because this is not
-                descent, and no sibling picker, because nothing is hidden. */}
-            {variants.map((s) => (
-              <ScenarioChip
-                key={s.id}
-                scenario={s}
-                isActive={s.id === activeScenarioId}
-                isAncestor={lineage.length > 1 && lineage[0].id === s.id}
-                isStale={isEdited(project.id, s.id) || s.state === "stale"}
-                accent={accent}
-                siblingCount={0}
-                pickerOpen={false}
-                onClick={() => setActiveScenarioId(s.id)}
-                onTogglePicker={() => {}}
-              />
-            ))}
-
-            {/* Below a variant it is genuine descent, so arrows and sibling
-                pickers stay exactly as they were. */}
-            {descentPath.map((s) => {
-              const siblingCount = scenarioChildren(
-                rawDtos,
-                s.parentScenarioId ?? null,
-              ).filter((x) => x.id !== s.id).length;
+            {/* One group per variant: the variant chip, then either a summary
+                of what is below it, or — for the one branch the user is
+                actually in — the real path to the active scenario. */}
+            {variants.map((v, i) => {
+              const expanded = v.id === expandedVariantId;
+              const tail = expanded ? null : variantTails.get(v.id);
               return (
-                <Fragment key={s.id}>
-                  <LineageArrow />
+                <Fragment key={v.id}>
+                  {i > 0 && <VariantSeparator />}
                   <ScenarioChip
-                    scenario={s}
-                    isActive={s.id === activeScenarioId}
-                    isAncestor={s.id !== activeScenarioId}
-                    isStale={isEdited(project.id, s.id) || s.state === "stale"}
+                    scenario={v}
+                    isActive={v.id === activeScenarioId}
+                    isAncestor={expanded}
+                    isStale={isEdited(project.id, v.id) || v.state === "stale"}
                     accent={accent}
-                    siblingCount={siblingCount}
-                    pickerOpen={
-                      picker?.kind === "siblings" && picker.id === s.id
-                    }
-                    onClick={() => setActiveScenarioId(s.id)}
-                    onTogglePicker={(rect) =>
-                      togglePicker({ kind: "siblings", id: s.id }, rect)
-                    }
+                    siblingCount={0}
+                    pickerOpen={false}
+                    onClick={() => setActiveScenarioId(v.id)}
+                    onTogglePicker={() => {}}
                   />
+
+                  {/* Expanded branch. Below a variant it is genuine descent, so
+                      arrows and sibling pickers apply as before. */}
+                  {expanded &&
+                    lineage.slice(1).map((s) => {
+                      const siblingCount = scenarioChildren(
+                        rawDtos,
+                        s.parentScenarioId ?? null,
+                      ).filter((x) => x.id !== s.id).length;
+                      return (
+                        <Fragment key={s.id}>
+                          <LineageArrow />
+                          <ScenarioChip
+                            scenario={s}
+                            isActive={s.id === activeScenarioId}
+                            isAncestor={s.id !== activeScenarioId}
+                            isStale={
+                              isEdited(project.id, s.id) || s.state === "stale"
+                            }
+                            accent={accent}
+                            siblingCount={siblingCount}
+                            pickerOpen={
+                              picker?.kind === "siblings" && picker.id === s.id
+                            }
+                            onClick={() => setActiveScenarioId(s.id)}
+                            onTogglePicker={(rect) =>
+                              togglePicker({ kind: "siblings", id: s.id }, rect)
+                            }
+                          />
+                        </Fragment>
+                      );
+                    })}
+
+                  {/* Continue the expanded branch downward. Without this,
+                      walking into a child you just left would need the Manage
+                      modal. */}
+                  {expanded && activeChildren.length > 0 && (
+                    <>
+                      <LineageArrow />
+                      <ChildrenStub
+                        count={activeChildren.length}
+                        open={
+                          picker?.kind === "children" &&
+                          picker.id === activeScenarioId
+                        }
+                        onToggle={(rect) =>
+                          togglePicker(
+                            { kind: "children", id: activeScenarioId },
+                            rect,
+                          )
+                        }
+                      />
+                    </>
+                  )}
+
+                  {/* Summary for a branch the user is not in. */}
+                  {tail?.kind === "child" && (
+                    <>
+                      <LineageArrow />
+                      <ScenarioChip
+                        scenario={tail.child}
+                        isActive={tail.child.id === activeScenarioId}
+                        isAncestor={false}
+                        isStale={
+                          isEdited(project.id, tail.child.id) ||
+                          tail.child.state === "stale"
+                        }
+                        accent={accent}
+                        siblingCount={0}
+                        pickerOpen={false}
+                        onClick={() => setActiveScenarioId(tail.child.id)}
+                        onTogglePicker={() => {}}
+                      />
+                    </>
+                  )}
+                  {tail?.kind === "dropdown" && (
+                    <>
+                      <LineageArrow />
+                      <ChildrenStub
+                        count={tail.count}
+                        open={picker?.kind === "children" && picker.id === v.id}
+                        onToggle={(rect) =>
+                          togglePicker({ kind: "children", id: v.id }, rect)
+                        }
+                      />
+                    </>
+                  )}
                 </Fragment>
               );
             })}
-
-            {/* Descend stub — children of the active scenario (or of Base).
-                Without it, walking DOWN a branch you just left would require
-                the Manage modal. */}
-            {activeChildren.length > 0 && (
-              <>
-                <LineageArrow />
-                <button
-                  type="button"
-                  data-scenario-picker
-                  data-tooltip="Descend to a child scenario"
-                  data-tooltip-pos="bottom"
-                  onClick={(e) =>
-                    togglePicker(
-                      { kind: "children", id: activeScenarioId },
-                      e.currentTarget.getBoundingClientRect(),
-                    )
-                  }
-                  style={{
-                    flexShrink: 0,
-                    display: "inline-flex",
-                    alignItems: "center",
-                    gap: 4,
-                    padding: "4px 9px",
-                    border: "1px dashed var(--border-hover)",
-                    borderRadius: 14,
-                    background:
-                      picker?.kind === "children"
-                        ? "var(--nav-hover)"
-                        : "transparent",
-                    color: "var(--text-tertiary)",
-                    fontSize: 11,
-                    fontWeight: 500,
-                    cursor: "pointer",
-                    fontFamily: "var(--font-ui)",
-                    whiteSpace: "nowrap",
-                    transition: "background var(--t-fast)",
-                  }}
-                >
-                  <ChevronDownIcon style={{ width: 10, height: 10 }} />
-                  {activeChildren.length}{" "}
-                  {activeChildren.length === 1 ? "child" : "children"}
-                </button>
-              </>
-            )}
           </div>
           {/* Right fade overlay */}
           <div
