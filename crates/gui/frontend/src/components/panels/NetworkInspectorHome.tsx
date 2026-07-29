@@ -247,11 +247,23 @@ function NodesTab({
               data-tooltip="Element type — click to sort"
               data-tooltip-pos="bottom"
             >
-              <TagIcon
-                style={{ width: 10, height: 10, verticalAlign: "middle" }}
-                aria-label="Element type"
-              />
-              <SortIndicator col="type" sortCol={sortCol} sortDir={sortDir} />
+              {/* Flex rather than inline: the glyph is an SVG box and the
+                  sort arrow is a text character, so leaving them inline
+                  aligned one to the line box and the other to the baseline,
+                  and the icon rode high. */}
+              <span
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                }}
+              >
+                <TagIcon
+                  style={{ width: 10, height: 10 }}
+                  aria-label="Element type"
+                />
+                <SortIndicator col="type" sortCol={sortCol} sortDir={sortDir} />
+              </span>
             </th>
             {(["id", "elevation", "baseDemand"] as const).map((col) => {
               const meta = {
@@ -540,11 +552,23 @@ function LinksTab({
               data-tooltip="Element type — click to sort"
               data-tooltip-pos="bottom"
             >
-              <TagIcon
-                style={{ width: 10, height: 10, verticalAlign: "middle" }}
-                aria-label="Element type"
-              />
-              <SortIndicator col="type" sortCol={sortCol} sortDir={sortDir} />
+              {/* Flex rather than inline: the glyph is an SVG box and the
+                  sort arrow is a text character, so leaving them inline
+                  aligned one to the line box and the other to the baseline,
+                  and the icon rode high. */}
+              <span
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                }}
+              >
+                <TagIcon
+                  style={{ width: 10, height: 10 }}
+                  aria-label="Element type"
+                />
+                <SortIndicator col="type" sortCol={sortCol} sortDir={sortDir} />
+              </span>
             </th>
             {(["id", "status", "diameter"] as const).map((col) => {
               const meta = {
