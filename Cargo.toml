@@ -41,6 +41,7 @@ opt-level = 2
 # you need clean debugger stepping through hydra-gui.
 [profile.dev.package.hydra-gui]
 opt-level = 2
+codegen-units = 1
 
 [profile.release]
 lto = "fat"
