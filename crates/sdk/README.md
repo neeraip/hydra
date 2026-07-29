@@ -13,7 +13,7 @@ Water distribution network simulator — EPANET-compatible extended-period simul
 
 ```toml
 [dependencies]
-hydra-sdk = "2"
+hydra-sdk = "3"
 ```
 
 ## Quick start
