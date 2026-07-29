@@ -157,10 +157,19 @@ pub use hydra_engine_wds::{
 /// - [`io::out_writer`] / [`io::rpt_writer`] — write binary `.out` and text `.rpt` output.
 /// - [`io::units`] — unit-conversion factors ([`io::units::Ucf`]) for
 ///   interpreting raw result values in display units.
+///
+/// Reading has three outcomes, and an integrator offering more than one engine
+/// needs all three kept apart (model spec §4.1.2):
+/// [`io::ReadError::ForeignDialect`] means the file is a sound model belonging
+/// to a different tool and should be routed there, not reported as broken;
+/// other [`io::ReadError`]s mean no network could be built at all; and
+/// [`io::ParseError::NotSimulable`] means a network was recovered that cannot
+/// be run yet — which [`io::parse_tolerant`] hands back rather than rejecting,
+/// hence its narrower [`io::ReadError`] failure type.
 pub mod io {
     pub use hydra_engine_wds::io::{
         analysis_io, compute_network_digest, out_reader, out_writer, parse, parse_tolerant,
-        rpt_writer, units, write_inp, ParseError,
+        rpt_writer, units, write_inp, ParseError, ReadError,
     };
 }
 
@@ -204,6 +213,9 @@ mod tests {
     fn umbrella_reexports_common_io_parse() {
         let bytes = b"{\"invalid\":true}";
         let err = io::parse(bytes).expect_err("invalid model bytes should fail parse");
-        assert!(matches!(err, io::ParseError::UnrecognisedFormat));
+        assert!(matches!(
+            err,
+            io::ParseError::Read(io::ReadError::UnrecognisedFormat)
+        ));
     }
 }

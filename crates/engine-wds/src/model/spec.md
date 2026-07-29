@@ -463,19 +463,24 @@ Detecting a foreign dialect is not the same as supporting it. Rejection here say
 
 ### 4.1.2 Strict and Tolerant Parsing
 
-Reading a model file has two outcomes that must not be conflated:
+Reading a model file has three outcomes that must not be conflated. They differ in what reading established about the file, and each calls for a different response from the application.
 
-- **Structurally unreadable** — the bytes do not describe a network at all: an unrecognised format (§4.1), another tool's dialect (§4.1.1), a malformed data line, a duplicate identifier, an out-of-range option. Nothing can be produced, so these always fail.
+- **Another tool's model** — the file is a coherent model, but not one this engine reads (§4.1.1). This is a statement about which engine the file belongs to, not about whether the model is sound: the same bytes may be a flawless model in the tool that owns them. An application offering several engines can act on this outcome — routing the file to the engine that does read it — and cannot if it arrives indistinguishable from a damaged file.
+- **Unreadable** — no well-defined network can be constructed from the bytes: an unrecognised format (§4.1), a malformed data line, a duplicate identifier, an out-of-range option. A duplicated identifier belongs here rather than with the constraint violations below because every reference to it is ambiguous — there is no single network the file could be describing, so there is nothing to hand back and nothing to repair.
 - **Readable but not simulable** — a complete network was recovered, and it violates one or more §2.9 constraints: no fixed-grade node, a junction unreachable from a source, an illegal valve placement.
+
+The first two always fail. Only the third is recoverable, and only it describes a network that exists.
 
 The second case is the normal resting state of a network under construction. A model gains its source, its junctions and the pipes joining them in separate steps, and every intermediate state fails validation — a junction exists for some interval before anything connects it. An editor that could not read such a file back could not let one be built, and an editor that wrote one it could not re-read would destroy work.
 
 Parsing therefore offers both:
 
 - **Strict** — the default. Yields a network only when it is simulable; §2.9 violations are a parse failure. Everything that consumes a model in order to *run* it uses this, so an unsimulable network can never reach the solver.
-- **Tolerant** — yields the recovered network *together with* its validation errors, and fails only on the structurally unreadable cases above. The caller is responsible for treating the result as unfinished: it must not be simulated, and the errors must be surfaced rather than discarded.
+- **Tolerant** — yields the recovered network *together with* its validation errors, and fails only on the first two outcomes above. The caller is responsible for treating the result as unfinished: it must not be simulated, and the errors must be surfaced rather than discarded.
 
-Both modes perform identical work; they differ only in whether §2.9 violations are fatal. A tolerant parse of a valid model returns no errors and is indistinguishable from a strict one.
+Both modes perform identical work; they differ only in whether §2.9 violations are fatal. A tolerant parse of a valid model returns no errors and is indistinguishable from a strict one. Because a §2.9 violation is never a reason for a tolerant read to fail, the two modes' failures are not the same set, and reporting must keep them apart.
+
+All three outcomes must remain distinguishable by the caller — not merely described differently in prose, but separable without inspecting human-readable text. An interface that collapses them misreports every case it merges: it tells the user their network is invalid when the file was another tool's, or offers to repair a network that was never constructed.
 
 ### 4.2 Parse Complexity
 
