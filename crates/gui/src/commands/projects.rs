@@ -1463,7 +1463,17 @@ pub fn load_project_network(
         return Ok(tauri::ipc::Response::new(encode_network_snapshot_absent()));
     }
     let bytes = std::fs::read(&path).map_err(|e| e.to_string())?;
-    let network = hydra::io::parse(&bytes).map_err(format_inp_parse_error)?;
+    // Tolerant (model spec §4.1.2): a network under construction is not
+    // simulable — a junction exists for some interval before anything
+    // connects it — and refusing to load one would mean the editor could not
+    // reopen work it had itself saved. The validation errors are not
+    // discarded: `validate_network` reports them to the Issues panel from the
+    // same in-memory network this stores.
+    //
+    // Runs still use the strict `parse`, so an unsimulable network cannot
+    // reach the solver.
+    let (network, _validation_errors) =
+        hydra::io::parse_tolerant(&bytes).map_err(format_inp_parse_error)?;
     let dto = network_to_dto(&network);
     // Encode before taking the state lock — serialisation work happens
     // outside the mutex, and (unlike the old JSON path) no nodes/links clone

@@ -461,6 +461,22 @@ The check is deliberately **positive** — it fires on the presence of a foreign
 
 Detecting a foreign dialect is not the same as supporting it. Rejection here says only that this engine cannot read the file; whether another Hydra engine can is the application's business, not this engine's.
 
+### 4.1.2 Strict and Tolerant Parsing
+
+Reading a model file has two outcomes that must not be conflated:
+
+- **Structurally unreadable** — the bytes do not describe a network at all: an unrecognised format (§4.1), another tool's dialect (§4.1.1), a malformed data line, a duplicate identifier, an out-of-range option. Nothing can be produced, so these always fail.
+- **Readable but not simulable** — a complete network was recovered, and it violates one or more §2.9 constraints: no fixed-grade node, a junction unreachable from a source, an illegal valve placement.
+
+The second case is the normal resting state of a network under construction. A model gains its source, its junctions and the pipes joining them in separate steps, and every intermediate state fails validation — a junction exists for some interval before anything connects it. An editor that could not read such a file back could not let one be built, and an editor that wrote one it could not re-read would destroy work.
+
+Parsing therefore offers both:
+
+- **Strict** — the default. Yields a network only when it is simulable; §2.9 violations are a parse failure. Everything that consumes a model in order to *run* it uses this, so an unsimulable network can never reach the solver.
+- **Tolerant** — yields the recovered network *together with* its validation errors, and fails only on the structurally unreadable cases above. The caller is responsible for treating the result as unfinished: it must not be simulated, and the errors must be surfaced rather than discarded.
+
+Both modes perform identical work; they differ only in whether §2.9 violations are fatal. A tolerant parse of a valid model returns no errors and is indistinguishable from a strict one.
+
 ### 4.2 Parse Complexity
 
 The parser must complete in **at most two sequential passes** over the input, with no re-reads.

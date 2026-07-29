@@ -14,7 +14,8 @@ use crate::{
     Node, NodeBase, NodeKind, Pattern, Pipe, Premise, PremiseAttribute, PremiseObject,
     PremiseOperator, Pump, PumpCurveType, QualityMode, QualitySource, ReportFieldOption,
     ReportOptions, ReportSelection, ReportStatus, Reservoir, Rule, RuleAction, SimpleControl,
-    SimulationOptions, SourceType, StatisticType, Tank, TriggerType, Valve, ValveType, WallOrder,
+    SimulationOptions, SourceType, StatisticType, Tank, TriggerType, ValidationError, Valve,
+    ValveType, WallOrder,
 };
 
 /// EPANET shutoff head factor for single-point pump curve expansion.
@@ -175,6 +176,15 @@ where
 /// `hydra-gui` typically use the higher-level [`crate::io::parse`] wrapper
 /// which handles format detection.
 pub fn parse_inp(bytes: &[u8]) -> Result<Network, ParseError> {
+    let network = build_network(bytes)?;
+    network.validate().map_err(ParseError::ValidationFailed)?;
+    Ok(network)
+}
+
+/// Read an INP file into a `Network` without applying the §2.9 validation
+/// pass. Shared by both parse modes (spec §4.1.2) so they cannot drift: the
+/// only difference between them is what each does with `Network::validate`.
+fn build_network(bytes: &[u8]) -> Result<Network, ParseError> {
     let text = String::from_utf8_lossy(bytes);
 
     let sections = split_sections(&text);
@@ -576,9 +586,25 @@ pub fn parse_inp(bytes: &[u8]) -> Result<Network, ParseError> {
         link_tags,
     };
     network.build_pattern_index();
-
-    network.validate().map_err(ParseError::ValidationFailed)?;
     Ok(network)
+}
+
+/// Parse an INP file tolerantly (spec §4.1.2): return the recovered network
+/// together with its §2.9 validation errors instead of failing on them.
+///
+/// Fails only where nothing can be recovered — an unreadable format, another
+/// tool's dialect, a malformed line, a duplicate id. A network that merely
+/// violates §2.9 is returned, because that is the normal resting state of one
+/// under construction: a junction exists for some interval before anything
+/// connects it to a source.
+///
+/// The caller owns the consequence. The returned network **must not be
+/// simulated** when the error list is non-empty, and those errors must be
+/// surfaced rather than dropped.
+pub fn parse_inp_tolerant(bytes: &[u8]) -> Result<(Network, Vec<ValidationError>), ParseError> {
+    let network = build_network(bytes)?;
+    let errors = network.validate().err().unwrap_or_default();
+    Ok((network, errors))
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -2781,6 +2807,75 @@ mod tests {
     /// `SecLine` shape produced by `split_sections`.
     fn secs<'a>(lines: &[&'a str]) -> Vec<SecLine<'a>> {
         lines.iter().enumerate().map(|(i, &l)| (i + 1, l)).collect()
+    }
+
+    // ── Tolerant parsing (spec §4.1.2) ───────────────────────────────────────
+
+    /// A network under construction: a junction placed before anything
+    /// connects it to the reservoir. Strict parsing rejects it; an editor
+    /// must still be able to read it back.
+    const UNFINISHED_INP: &str = "\
+[JUNCTIONS]
+J1  10  5
+
+[RESERVOIRS]
+R1  100
+
+[OPTIONS]
+Units  LPS
+";
+
+    #[test]
+    fn tolerant_parse_recovers_a_network_strict_parse_rejects() {
+        assert!(
+            matches!(
+                parse_inp(UNFINISHED_INP.as_bytes()),
+                Err(ParseError::ValidationFailed(_))
+            ),
+            "strict parse must still refuse an unsimulable network"
+        );
+
+        let (network, errors) = parse_inp_tolerant(UNFINISHED_INP.as_bytes()).expect("recoverable");
+        // The network is fully built, not a partial husk — the editor has to
+        // be able to show and fix it.
+        assert_eq!(network.nodes.len(), 2);
+        assert!(!errors.is_empty(), "the reason must come back with it");
+    }
+
+    #[test]
+    fn tolerant_parse_reports_no_errors_for_a_valid_model() {
+        let inp = "\
+[JUNCTIONS]
+J1  0  10
+[RESERVOIRS]
+R1  100
+[PIPES]
+P1  R1  J1  1000  12  100  0  Open
+[OPTIONS]
+Units  LPS
+";
+        let (network, errors) = parse_inp_tolerant(inp.as_bytes()).unwrap();
+        assert!(errors.is_empty());
+        // Indistinguishable from a strict parse of the same bytes.
+        let strict = parse_inp(inp.as_bytes()).unwrap();
+        assert_eq!(network.nodes.len(), strict.nodes.len());
+        assert_eq!(network.links.len(), strict.links.len());
+    }
+
+    #[test]
+    fn tolerance_does_not_extend_to_unreadable_input() {
+        // Only §2.9 violations are recoverable. Anything that leaves no
+        // network to hand back must still fail in both modes.
+        for bad in [
+            "[JUNCTIONS]\nJ1  not-a-number  10\n",
+            "[JUNCTIONS]\nJ1  0  10\nJ1  0  20\n",
+            "[CONDUITS]\nC1  J1  J2  400  0.01  0  0  0\n",
+        ] {
+            assert!(
+                parse_inp_tolerant(bad.as_bytes()).is_err(),
+                "must not recover from: {bad:?}"
+            );
+        }
     }
 
     // ── Dialect rejection (spec §4.1.1) ──────────────────────────────────────

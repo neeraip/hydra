@@ -151,13 +151,16 @@ pub use hydra_engine_wds::{
 /// Parsing and output-writing utilities.
 ///
 /// - [`io::parse`] — parse EPANET `.inp` bytes into a [`Network`].
+/// - [`io::parse_tolerant`] — the same, but recovering a network that is
+///   readable yet not simulable, together with its validation errors (model
+///   spec §4.1.2). For editors; never for a model about to be run.
 /// - [`io::out_writer`] / [`io::rpt_writer`] — write binary `.out` and text `.rpt` output.
 /// - [`io::units`] — unit-conversion factors ([`io::units::Ucf`]) for
 ///   interpreting raw result values in display units.
 pub mod io {
     pub use hydra_engine_wds::io::{
-        analysis_io, compute_network_digest, out_reader, out_writer, parse, rpt_writer, units,
-        write_inp, ParseError,
+        analysis_io, compute_network_digest, out_reader, out_writer, parse, parse_tolerant,
+        rpt_writer, units, write_inp, ParseError,
     };
 }
 

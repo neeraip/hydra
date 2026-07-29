@@ -126,16 +126,41 @@ impl std::error::Error for ParseError {
 /// `;` the input is treated as an EPANET 2.3 INP file. Anything else is an
 /// error.
 pub fn parse(bytes: &[u8]) -> Result<Network, ParseError> {
+    match detect_format(bytes) {
+        Some(()) => inp_reader::parse_inp(bytes),
+        None => Err(ParseError::UnrecognisedFormat),
+    }
+}
+
+/// Parse a model file tolerantly (model spec §4.1.2): return the recovered
+/// network together with its §2.9 validation errors, instead of failing on
+/// them.
+///
+/// For callers that must read a model which is not yet simulable — an editor
+/// loading a network under construction, where a junction exists for some
+/// interval before anything connects it to a source. Structurally unreadable
+/// input still fails: an unknown format, another tool's dialect, a malformed
+/// line, a duplicate id.
+///
+/// A non-empty error list means the network **must not be simulated**. Use
+/// [`parse`] anywhere a model is read in order to run it, so an unsimulable
+/// network cannot reach the solver.
+pub fn parse_tolerant(bytes: &[u8]) -> Result<(Network, Vec<ValidationError>), ParseError> {
+    match detect_format(bytes) {
+        Some(()) => inp_reader::parse_inp_tolerant(bytes),
+        None => Err(ParseError::UnrecognisedFormat),
+    }
+}
+
+/// Content-based format detection (§4.1): `Some(())` when the bytes look like
+/// an INP file. Shared so both parse modes sniff identically.
+fn detect_format(bytes: &[u8]) -> Option<()> {
     let first = bytes
         .iter()
         .find(|&&b| !b.is_ascii_whitespace())
         .copied()
         .unwrap_or(0);
-
-    match first {
-        b'[' | b';' => inp_reader::parse_inp(bytes),
-        _ => Err(ParseError::UnrecognisedFormat),
-    }
+    matches!(first, b'[' | b';').then_some(())
 }
 
 // ── Result types (moved from hydra-simulation) ────────────────────────────────
