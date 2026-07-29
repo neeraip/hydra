@@ -136,25 +136,36 @@ export async function deleteAllSimulations(projectId: string): Promise<number> {
   return await invoke<number>("delete_all_simulations", { projectId });
 }
 
+/** Run-artifact sizes for every target in a project, in bytes. */
+export interface ProjectResultsSizes {
+  base: number;
+  /** Scenario id → bytes. */
+  scenarios: Record<string, number>;
+  /** Base plus every scenario. */
+  total: number;
+}
+
 /**
- * Bytes a clear would reclaim for one target — its `results.out` plus the
- * `warnings.json` beside it, both of which the clear removes. Zero when the
- * target has never been simulated.
+ * Sizes for all of a project's targets in one call.
+ *
+ * Batched because the scenarios panel labels a clear action per row; the work
+ * is two `stat` calls per target, so this is metadata only — a 650 MB result
+ * costs the same to size as an empty one.
  */
-export async function simulationResultsSize(
+export async function projectResultsSizes(
   projectId: string,
-  scenarioId: string | null,
-): Promise<number> {
-  return tryInvokeOr<number>(
-    "simulation_results_size",
-    { projectId, scenarioId },
-    0,
+): Promise<ProjectResultsSizes> {
+  return tryInvokeOr<ProjectResultsSizes>(
+    "project_results_sizes",
+    { projectId },
+    { base: 0, scenarios: {}, total: 0 },
   );
 }
 
-/** Bytes a project-wide clear would reclaim: base model and every scenario. */
-export async function allSimulationResultsSize(
-  projectId: string,
+/** Bytes a clear across several projects would reclaim — one call for the
+ * whole selection, which can be arbitrarily large. */
+export async function projectsResultsSize(
+  projectIds: string[],
 ): Promise<number> {
-  return tryInvokeOr<number>("all_simulation_results_size", { projectId }, 0);
+  return tryInvokeOr<number>("projects_results_size", { projectIds }, 0);
 }

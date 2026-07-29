@@ -15,10 +15,12 @@ import {
   enqueueRuns,
   openScenarioFolder,
   projectHasNetwork,
+  projectResultsSizes,
   renameScenario,
   useScenarios,
 } from "../../hooks";
 import { formatIpcError } from "../../hooks/ipc";
+import { formatBytes } from "../../units";
 import { DeleteConfirmModal } from "../modals/DeleteConfirmModal";
 import { BaseRow, CreateRow, ScenarioRow } from "./ScenariosPanel/Rows";
 import { type FlatScenario, flattenScenarios } from "./ScenariosPanel/shared";
@@ -114,6 +116,35 @@ export function ScenariosPanel({
       showToast("Failed to create scenario", "error");
     }
   }, [createName, createParentId, project, bumpScenarios, showToast]);
+
+  // One call for every target in the project — each row menu labels its clear
+  // with what it reclaims, and a per-row command would cost a round trip
+  // each. Refetched on `scenariosVersion`, which bumps when a run finishes or
+  // results are cleared.
+  const [sizes, setSizes] = useState<{
+    base: number;
+    scenarios: Record<string, number>;
+    total: number;
+  } | null>(null);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `scenariosVersion` is not read here — it is the intentional refetch trigger, bumped when a run finishes or results are cleared.
+  useEffect(() => {
+    const id = project?.id;
+    if (!id) {
+      setSizes(null);
+      return;
+    }
+    let cancelled = false;
+    void projectResultsSizes(id).then((next) => {
+      if (!cancelled) setSizes(next);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [project?.id, scenariosVersion]);
+
+  /** "Frees 12.4 MB", or nothing while unmeasured or with nothing to free. */
+  const freed = (bytes: number | undefined) =>
+    bytes ? `Frees ${formatBytes(bytes)}` : undefined;
 
   // ── handlers ─────────────────────────────────────────────────────────────
 
@@ -285,6 +316,8 @@ export function ScenariosPanel({
             }}
             canBranch={hasNetwork}
             simulated={project?.state === "simulated"}
+            clearDetail={freed(sizes?.base)}
+            clearAllDetail={freed(sizes?.total)}
             onClearResults={() =>
               project &&
               requestClearResults({
@@ -391,6 +424,7 @@ export function ScenariosPanel({
                   setRenameValue("");
                 }}
                 onBranch={() => handleBranch(s)}
+                clearDetail={freed(sizes?.scenarios[s.id])}
                 onClearResults={() =>
                   project &&
                   requestClearResults({

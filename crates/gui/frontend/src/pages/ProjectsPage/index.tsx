@@ -27,12 +27,12 @@ import { NewProjectWizard } from "../../components/modals/NewProjectWizard";
 import { PrimaryButton } from "../../components/ui/PrimaryButton";
 import { RowMenu } from "../../components/ui/RowMenu";
 import {
-  allSimulationResultsSize,
   deleteAllSimulations,
   deleteProjectOnDisk,
   openBaseFolder,
   type Project,
   type ProjectState,
+  projectsResultsSize,
   reconcileProjects,
   renameProjectOnDisk,
   useProjects,
@@ -391,27 +391,25 @@ export function ProjectsPage() {
     [selectedKey],
   );
 
-  // Sized only for a pending clear: deleting projects removes their networks
-  // too, so a results-only figure would understate it and reporting the whole
-  // bundle is a bigger job than this prompt needs.
+  // Sized whenever a selection exists, because the figure now labels the menu
+  // entry rather than the confirmation. One call for the whole selection: the
+  // stat work is negligible, round trips are not, and a selection is
+  // unbounded.
   const [bulkBytes, setBulkBytes] = useState<number | null>(null);
-  const clearTargets = pendingBulk === "clear" ? selectedIds : null;
   useEffect(() => {
-    if (!clearTargets) {
+    if (selectedIds.length === 0) {
       setBulkBytes(null);
       return;
     }
     let cancelled = false;
     setBulkBytes(null);
-    void Promise.all(clearTargets.map(allSimulationResultsSize)).then(
-      (sizes) => {
-        if (!cancelled) setBulkBytes(sizes.reduce((a, b) => a + b, 0));
-      },
-    );
+    void projectsResultsSize(selectedIds).then((n) => {
+      if (!cancelled) setBulkBytes(n);
+    });
     return () => {
       cancelled = true;
     };
-  }, [clearTargets]);
+  }, [selectedIds]);
 
   const { rows } = table.getRowModel();
   const pageCount = table.getPageCount();
@@ -544,6 +542,10 @@ export function ProjectsPage() {
               items={[
                 {
                   label: "Clear simulation results",
+                  detail:
+                    bulkBytes === null
+                      ? undefined
+                      : `Frees ${formatBytes(bulkBytes)}`,
                   onSelect: () => setPendingBulk("clear"),
                   disabled: !selectedProjects.some(
                     (p) => p.state === "simulated",
@@ -855,9 +857,6 @@ export function ProjectsPage() {
               </strong>
               ? The networks themselves are not changed, so the runs can be
               repeated.
-              {bulkBytes === null
-                ? ""
-                : ` This frees ${formatBytes(bulkBytes)} of disk space.`}
             </>
           ) : (
             <>

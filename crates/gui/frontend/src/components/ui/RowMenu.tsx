@@ -42,6 +42,11 @@ export interface RowMenuItem {
   disabled?: boolean;
   /** Shown under the label when disabled — say why, not just that. */
   disabledReason?: string;
+  /** Shown under the label regardless of state — a consequence worth knowing
+   * before choosing, such as how much disk a clear reclaims. Suppressed while
+   * `disabledReason` is showing, since an unavailable action has no
+   * consequence to report. */
+  detail?: string;
 }
 
 const MENU_WIDTH = 210;
@@ -224,6 +229,18 @@ export function RowMenu({
                   }}
                 >
                   {item.label}
+                  {!item.disabled && item.detail && (
+                    <span
+                      style={{
+                        display: "block",
+                        fontSize: 10.5,
+                        color: "var(--text-tertiary)",
+                        marginTop: 1,
+                      }}
+                    >
+                      {item.detail}
+                    </span>
+                  )}
                   {item.disabled && item.disabledReason && (
                     <span
                       style={{

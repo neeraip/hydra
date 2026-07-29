@@ -658,38 +658,6 @@ fn results_bytes(path: &std::path::Path) -> u64 {
     file_len(path) + file_len(&super::simulation::run_warnings_path(path))
 }
 
-/// Bytes a `delete_simulation` on this target would reclaim.
-#[tauri::command(async)]
-pub fn simulation_results_size(
-    app: tauri::AppHandle,
-    project_id: String,
-    scenario_id: Option<String>,
-) -> Result<u64, String> {
-    validate_target_ids(&project_id, scenario_id.as_deref())?;
-    let app_data = app_data_dir(&app)?;
-    Ok(results_bytes(&results_path_for(
-        &app_data,
-        &project_id,
-        scenario_id.as_deref(),
-    )))
-}
-
-/// Bytes a `delete_all_simulations` on this project would reclaim — the base
-/// model and every scenario.
-#[tauri::command(async)]
-pub fn all_simulation_results_size(
-    app: tauri::AppHandle,
-    project_id: String,
-) -> Result<u64, String> {
-    validate_id(&project_id)?;
-    let app_data = app_data_dir(&app)?;
-    let mut total = results_bytes(&results_path_for(&app_data, &project_id, None));
-    for sid in scenario_ids(&app_data, &project_id)? {
-        total += results_bytes(&results_path_for(&app_data, &project_id, Some(&sid)));
-    }
-    Ok(total)
-}
-
 /// Scenario ids of `project_id`, discovered from the bundle directory.
 ///
 /// Read straight from disk rather than taken from the caller: this backs a
@@ -754,6 +722,70 @@ pub fn delete_all_simulations(app: tauri::AppHandle, project_id: String) -> Resu
         }
     }
     Ok(removed)
+}
+/// Every target's run-artifact size for one project, in bytes.
+///
+/// Batched deliberately: the scenarios panel labels one clear action per row,
+/// and a per-row command would cost an IPC round trip each. The work itself is
+/// two `stat` calls per target — metadata only, never opening the file — so a
+/// 650 MB result costs the same as an empty one.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectResultsSizes {
+    /// Bytes held by the base model's run.
+    pub base: u64,
+    /// Scenario id → bytes held by that scenario's run.
+    pub scenarios: std::collections::HashMap<String, u64>,
+    /// Base plus every scenario — what a project-wide clear reclaims.
+    pub total: u64,
+}
+
+#[tauri::command(async)]
+pub fn project_results_sizes(
+    app: tauri::AppHandle,
+    project_id: String,
+) -> Result<ProjectResultsSizes, String> {
+    validate_id(&project_id)?;
+    let app_data = app_data_dir(&app)?;
+    let base = results_bytes(&results_path_for(&app_data, &project_id, None));
+    let mut scenarios = std::collections::HashMap::new();
+    for sid in scenario_ids(&app_data, &project_id)? {
+        let bytes = results_bytes(&results_path_for(&app_data, &project_id, Some(&sid)));
+        scenarios.insert(sid, bytes);
+    }
+    let total = base + scenarios.values().sum::<u64>();
+    Ok(ProjectResultsSizes {
+        base,
+        scenarios,
+        total,
+    })
+}
+
+/// Bytes a clear across `project_ids` would reclaim.
+///
+/// Takes the whole selection so a bulk action costs one round trip rather
+/// than one per project — selections are unbounded, round trips are not free,
+/// and the `stat` work behind them is.
+///
+/// Unknown or unreadable ids contribute zero rather than failing: a stale id
+/// in a selection should not deny the user a figure for the rest.
+#[tauri::command(async)]
+pub fn projects_results_size(
+    app: tauri::AppHandle,
+    project_ids: Vec<String>,
+) -> Result<u64, String> {
+    let app_data = app_data_dir(&app)?;
+    let mut total = 0u64;
+    for project_id in project_ids {
+        if validate_id(&project_id).is_err() {
+            continue;
+        }
+        total += results_bytes(&results_path_for(&app_data, &project_id, None));
+        for sid in scenario_ids(&app_data, &project_id).unwrap_or_default() {
+            total += results_bytes(&results_path_for(&app_data, &project_id, Some(&sid)));
+        }
+    }
+    Ok(total)
 }
 
 /// `model.inp` path for a project's base model (`scenario_id == None`) or

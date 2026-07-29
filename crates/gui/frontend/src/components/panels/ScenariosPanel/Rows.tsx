@@ -23,8 +23,10 @@ export function BaseRow({
   canBranch,
   simulated,
   onClearResults,
+  clearDetail,
   clearAllCount,
   onClearAllResults,
+  clearAllDetail,
 }: {
   isActive: boolean;
   accent: string;
@@ -35,6 +37,8 @@ export function BaseRow({
   /** Whether the base model currently holds simulation results. */
   simulated: boolean;
   onClearResults: () => void;
+  /** e.g. "Frees 12.4 MB" — what clearing the base model reclaims. */
+  clearDetail?: string;
   /**
    * How many targets across the whole project hold results. Zero disables
    * the clear-all entry rather than removing it — inside a labelled menu an
@@ -42,6 +46,8 @@ export function BaseRow({
    */
   clearAllCount: number;
   onClearAllResults: () => void;
+  /** What a project-wide clear reclaims. */
+  clearAllDetail?: string;
 }) {
   // Mirrors the scenario rows' derivation so both read from one vocabulary.
   const baseState = simulated ? "simulated" : "not-run";
@@ -159,6 +165,7 @@ export function BaseRow({
         items={[
           {
             label: "Clear results",
+            detail: clearDetail,
             onSelect: onClearResults,
             disabled: !simulated,
             disabledReason: "The base model has not been simulated",
@@ -166,6 +173,7 @@ export function BaseRow({
           },
           {
             label: "Clear all results",
+            detail: clearAllDetail,
             onSelect: onClearAllResults,
             disabled: clearAllCount === 0,
             disabledReason: "Nothing in this project has been simulated",
@@ -195,6 +203,7 @@ export function ScenarioRow({
   onBranch,
   onRun,
   onClearResults,
+  clearDetail,
   onDelete,
   onOpenFolder,
 }: {
@@ -215,6 +224,8 @@ export function ScenarioRow({
   onBranch: () => void;
   onRun: () => void;
   onClearResults: () => void;
+  /** e.g. "Frees 12.4 MB" — what clearing this scenario reclaims. */
+  clearDetail?: string;
   onDelete: () => void;
   onOpenFolder: () => void;
 }) {
@@ -416,6 +427,7 @@ export function ScenarioRow({
               { label: "Open in Finder", onSelect: onOpenFolder },
               {
                 label: "Clear results",
+                detail: clearDetail,
                 onSelect: onClearResults,
                 disabled: !hasResults,
                 disabledReason: "This scenario has not been simulated",
