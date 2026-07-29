@@ -8,12 +8,28 @@
  *
  * Implemented with two spans rather than a JS character budget so it stays
  * correct at any column width, with any font, with no measurement pass: the
- * head flexes and ellipsises, the tail never shrinks. When the whole string
- * fits, nothing is elided and the output is indistinguishable from plain text.
+ * head flexes and ellipsises down to a floor that keeps the ellipsis visible,
+ * the tail never shrinks. When the whole string fits, nothing is elided and
+ * the output is indistinguishable from plain text.
  */
 
 /** Characters kept visible at the end. Long enough for a numeric suffix. */
 const DEFAULT_TAIL = 6;
+
+/**
+ * Floor on the eliding head, wide enough to always paint the ellipsis.
+ *
+ * With `min-width: 0` the head is a flex item that shrinks to nothing at a
+ * narrow column, and `text-overflow: ellipsis` needs room for the glyph — so
+ * it painted nothing at all. `WMTR-G1209` then rendered as `-G1209`,
+ * indistinguishable from an id that is genuinely six characters long. An
+ * ellipsis that disappears is worse than one that crowds: it turns a
+ * truncation into a lie.
+ *
+ * In `ch` so it tracks the font: the ids render in the monospace face, where
+ * one `ch` is one character.
+ */
+const MIN_HEAD = "2ch";
 
 export function MiddleTruncate({
   text,
@@ -43,7 +59,7 @@ export function MiddleTruncate({
           overflow: "hidden",
           textOverflow: "ellipsis",
           whiteSpace: "nowrap",
-          minWidth: 0,
+          minWidth: MIN_HEAD,
         }}
       >
         {head}
