@@ -36,7 +36,11 @@
 
   /* Text */
   --text-primary: #e2e2ec;
-  --text-secondary: #78788c;
+  /* 4.69:1 on --bg-app. #78788c measured 4.43:1 — under the 4.5:1 WCAG AA
+     floor for normal text, which matters because this is the token body
+     copy uses (settings descriptions, table sub-labels). */
+  --text-secondary: #7c7c90;
+  /* 2.36:1 — decorative only. Never use for text a reader must parse. */
   --text-tertiary: #4e4e62;
   --text-disabled: #3a3a4c;
 

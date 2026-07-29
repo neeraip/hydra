@@ -17,10 +17,15 @@ function getBool(key: string, fallback: boolean): boolean {
   return v === null ? fallback : v === "true";
 }
 
+/** Section heading. A real `<h2>` rather than a styled div: the page has one
+ * `<h1>` and seven visually obvious groups, none of which existed for a
+ * screen reader navigating by heading. */
 function Section({ children }: { children: React.ReactNode }) {
   return (
-    <div
+    <h2
       style={{
+        // The element's own defaults would fight the type scale below.
+        margin: 0,
         marginTop: 32,
         marginBottom: 2,
         fontSize: 11,
@@ -31,7 +36,7 @@ function Section({ children }: { children: React.ReactNode }) {
       }}
     >
       {children}
-    </div>
+    </h2>
   );
 }
 
@@ -69,7 +74,7 @@ function SettingRow({
           <div
             style={{
               fontSize: 12,
-              color: "var(--text-tertiary)",
+              color: "var(--text-secondary)",
               marginTop: 2,
               lineHeight: 1.5,
             }}
