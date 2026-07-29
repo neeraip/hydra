@@ -1784,7 +1784,7 @@ fn validation_finding(err: &hydra::ValidationError) -> ValidationFindingDto {
 }
 
 /// Run the engine's network validation and map every finding to its wire DTO.
-fn validation_findings(network: &hydra::Network) -> Vec<ValidationFindingDto> {
+pub(crate) fn validation_findings(network: &hydra::Network) -> Vec<ValidationFindingDto> {
     match network.validate() {
         Ok(()) => Vec::new(),
         Err(errors) => errors.iter().map(validation_finding).collect(),

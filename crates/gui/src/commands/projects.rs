@@ -7,6 +7,7 @@ use tauri::Manager;
 use crate::meta::{self, bundle};
 
 use super::binary_codec::{encode_network_snapshot, encode_network_snapshot_absent};
+use super::mutations::{validation_findings, ValidationFindingDto};
 use super::network_dto::{
     format_read_error, network_to_dto, NetworkDto, NetworkState, NetworkStateInner,
 };
@@ -1267,9 +1268,26 @@ fn format_modified(modified_at: i64) -> String {
     }
 }
 
+/// A model just read by the import dialog, with whatever stands between it and
+/// being simulable.
+///
+/// The findings travel with the network rather than being fetched afterwards
+/// because at this point there is no project to fetch them for —
+/// `validate_network` is addressed by project and scenario, and neither exists
+/// until the user finishes the wizard.
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImportedModel {
+    /// The recovered network.
+    pub network: NetworkDto,
+    /// §2.9 violations, empty when the model is ready to run. Non-empty means
+    /// the project will open with these listed in the Issues panel.
+    pub findings: Vec<ValidationFindingDto>,
+}
+
 /// Open a native file-open dialog filtered to `engine`'s source-model
 /// formats, parse the chosen file with that engine, store the result in
-/// managed state, and return the `NetworkDto` to the caller.
+/// managed state, and return it to the caller.
 ///
 /// Returns `null` to the frontend when the dialog is cancelled.
 ///
@@ -1279,15 +1297,16 @@ fn format_modified(modified_at: i64) -> String {
 /// decides whether the file is the right kind of model.
 ///
 /// Fails only on a model that cannot be read at all; one that is readable but
-/// not yet simulable imports, and its validation errors surface in the Issues
-/// panel (see the parse call below).
+/// not yet simulable imports, and the reasons come back alongside it as
+/// `findings` so the wizard can say so before the user commits to creating the
+/// project.
 #[tauri::command]
 /// Open a native file-picker, parse the chosen model file, and hold it in `NetworkState`.
 pub async fn open_and_load_network(
     state: tauri::State<'_, NetworkState>,
     app: tauri::AppHandle,
     engine: String,
-) -> Result<Option<NetworkDto>, String> {
+) -> Result<Option<ImportedModel>, String> {
     use tauri_plugin_dialog::DialogExt;
 
     let descriptor = require_available_engine(&engine)?;
@@ -1326,9 +1345,7 @@ pub async fn open_and_load_network(
     // strictly meant a network that is readable but not yet simulable could be
     // *reopened* once it was already a project, yet could not be imported to
     // become one — so the file a user most needs to open in order to fix was
-    // the one the wizard refused. The recovered validation errors are not
-    // discarded: `validate_network` reports them to the Issues panel from the
-    // network this stores, exactly as it does on reopen.
+    // the one the wizard refused.
     //
     // Runs still use the strict `parse`, so an unsimulable network cannot
     // reach the solver.
@@ -1341,6 +1358,12 @@ pub async fn open_and_load_network(
         other => return Err(format!("no importer for engine {other:?}")),
     };
 
+    // Re-derived from the network rather than mapped from the errors the parse
+    // returned, so these are the same DTOs — same codes, same element ids —
+    // that the Issues panel will list once the project opens. The wizard's
+    // count and the panel's contents cannot disagree.
+    let findings = validation_findings(&network);
+
     let mut dto = network_to_dto(&network);
     dto.file_stem = file_stem;
 
@@ -1352,7 +1375,10 @@ pub async fn open_and_load_network(
         owner_project_id: None,
         owner_scenario_id: None,
     };
-    Ok(Some(dto))
+    Ok(Some(ImportedModel {
+        network: dto,
+        findings,
+    }))
 }
 
 /// Persist the currently loaded network (`NetworkState`) back into the named

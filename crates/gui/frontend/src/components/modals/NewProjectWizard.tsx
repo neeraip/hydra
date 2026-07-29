@@ -15,6 +15,7 @@ import {
   ArrowLeftIcon,
   ArrowRightIcon,
   CheckIcon,
+  ExclamationTriangleIcon,
   XMarkIcon,
 } from "@heroicons/react/16/solid";
 import { ClockIcon } from "@heroicons/react/24/outline";
@@ -30,6 +31,7 @@ import {
   type Project,
   useEngines,
   useNetworkVersion,
+  type ValidationFinding,
 } from "../../hooks";
 import { NetworkThumbnail } from "../ui/NetworkThumbnail";
 import { PrimaryButton } from "../ui/PrimaryButton";
@@ -52,6 +54,13 @@ export function NewProjectWizard({ onClose }: Props) {
   const [fileDetected, setFileDetected] = useState(false);
   const [detectedNodeCount, setDetectedNodeCount] = useState(0);
   const [detectedLinkCount, setDetectedLinkCount] = useState(0);
+  // Why the imported model is not yet simulable, empty when it is. Kept so the
+  // review step can say so before the user commits: the model imports either
+  // way, and finding out only after landing in the project is a worse surprise
+  // than being told here.
+  const [detectedFindings, setDetectedFindings] = useState<ValidationFinding[]>(
+    [],
+  );
 
   const engine = engines.find((e) => e.key === engineKey) ?? null;
 
@@ -72,6 +81,7 @@ export function NewProjectWizard({ onClose }: Props) {
     setFileDetected(false);
     setDetectedNodeCount(0);
     setDetectedLinkCount(0);
+    setDetectedFindings([]);
   }
 
   async function handleBrowse() {
@@ -80,12 +90,13 @@ export function NewProjectWizard({ onClose }: Props) {
     try {
       const result = await openAndLoadNetwork(engine.key);
       if (result) {
-        setDetectedNodeCount(result.nodes.length);
-        setDetectedLinkCount(result.links.length);
+        setDetectedNodeCount(result.network.nodes.length);
+        setDetectedLinkCount(result.network.links.length);
+        setDetectedFindings(result.findings);
         setFileDetected(true);
         bumpNetwork();
-        if (!projectName.trim() && result.fileStem) {
-          setProjectName(result.fileStem);
+        if (!projectName.trim() && result.network.fileStem) {
+          setProjectName(result.network.fileStem);
         }
       }
     } catch (err) {
@@ -296,18 +307,35 @@ export function NewProjectWizard({ onClose }: Props) {
                 </div>
               ) : fileDetected ? (
                 <div>
-                  <CheckIcon
-                    style={{
-                      width: 24,
-                      height: 24,
-                      marginBottom: 10,
-                      color: "var(--status-success)",
-                    }}
-                  />
+                  {/* An unfinished model still loads (model spec §4.1.2), so
+                      this is a caveat on a success, not a failure: the heading
+                      stays affirmative and the tone shifts to warning. */}
+                  {detectedFindings.length > 0 ? (
+                    <ExclamationTriangleIcon
+                      style={{
+                        width: 24,
+                        height: 24,
+                        marginBottom: 10,
+                        color: "var(--status-warning)",
+                      }}
+                    />
+                  ) : (
+                    <CheckIcon
+                      style={{
+                        width: 24,
+                        height: 24,
+                        marginBottom: 10,
+                        color: "var(--status-success)",
+                      }}
+                    />
+                  )}
                   <div
                     style={{
                       fontSize: "var(--text-xl)",
-                      color: "var(--status-success)",
+                      color:
+                        detectedFindings.length > 0
+                          ? "var(--status-warning)"
+                          : "var(--status-success)",
                       fontWeight: 600,
                       marginBottom: 4,
                     }}
@@ -323,6 +351,24 @@ export function NewProjectWizard({ onClose }: Props) {
                     {detectedNodeCount.toLocaleString()} nodes ·{" "}
                     {detectedLinkCount.toLocaleString()} links
                   </div>
+                  {detectedFindings.length > 0 && (
+                    <div
+                      style={{
+                        fontSize: "var(--text-md)",
+                        color: "var(--text-secondary)",
+                        marginTop: 8,
+                        lineHeight: 1.5,
+                        maxWidth: 320,
+                      }}
+                    >
+                      {detectedFindings.length === 1
+                        ? "1 issue must be resolved before this model can be simulated."
+                        : `${detectedFindings.length} issues must be resolved before this model can be simulated.`}{" "}
+                      The project will open with{" "}
+                      {detectedFindings.length === 1 ? "it" : "them"} listed in
+                      Issues &amp; Notifications.
+                    </div>
+                  )}
                 </div>
               ) : (
                 <div>

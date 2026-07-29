@@ -597,10 +597,18 @@ export function CommandPalette() {
         // engine — `.inp` alone does not say which model format a file is.
         if (!activeProjectEngine) return;
         openAndLoadNetwork(activeProjectEngine)
-          .then((net) => {
-            if (net) {
+          .then((imported) => {
+            if (imported) {
               bumpNetwork();
-              showToast(`Loaded ${net.nodes.length} nodes`, "success");
+              const { network, findings } = imported;
+              // A model that read but is not yet simulable must not report as
+              // a plain success — the Issues panel is where it gets resolved.
+              showToast(
+                findings.length > 0
+                  ? `Loaded ${network.nodes.length} nodes · ${findings.length} issue${findings.length === 1 ? "" : "s"} to resolve`
+                  : `Loaded ${network.nodes.length} nodes`,
+                findings.length > 0 ? "warn" : "success",
+              );
             }
           })
           .catch((err) => {
