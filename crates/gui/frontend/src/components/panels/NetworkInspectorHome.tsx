@@ -223,6 +223,17 @@ function NodesTab({
         </colgroup>
         <thead>
           <tr>
+            {/* Badge column, first to match the cells: self-labelling, so
+                the header is just the sort affordance — "Type" was wider than
+                the 40px column itself. */}
+            <th
+              style={{ ...TH, textAlign: "center", padding: "5px 4px" }}
+              onClick={() => toggleSort("type")}
+              data-tooltip="Element type — click to sort"
+              data-tooltip-pos="bottom"
+            >
+              <SortIndicator col="type" sortCol={sortCol} sortDir={sortDir} />
+            </th>
             {(["id", "elevation", "baseDemand"] as const).map((col) => {
               const meta = {
                 id: { label: "ID", tip: "Node ID" },
@@ -267,17 +278,6 @@ function NodesTab({
                 />
               </th>
             )}
-            {/* Badge column: the cells are self-labelling, so the header is
-                just the sort affordance — the "Type" text was wider than the
-                40px column itself. */}
-            <th
-              style={{ ...TH, textAlign: "center", padding: "5px 4px" }}
-              onClick={() => toggleSort("type")}
-              data-tooltip="Element type — click to sort"
-              data-tooltip-pos="bottom"
-            >
-              <SortIndicator col="type" sortCol={sortCol} sortDir={sortDir} />
-            </th>
             {onZoomTo && <th style={TH} />}
           </tr>
         </thead>
@@ -510,6 +510,17 @@ function LinksTab({
         </colgroup>
         <thead>
           <tr>
+            {/* Badge column, first to match the cells: self-labelling, so
+                the header is just the sort affordance — "Type" was wider than
+                the 40px column itself. */}
+            <th
+              style={{ ...TH, textAlign: "center", padding: "5px 4px" }}
+              onClick={() => toggleSort("type")}
+              data-tooltip="Element type — click to sort"
+              data-tooltip-pos="bottom"
+            >
+              <SortIndicator col="type" sortCol={sortCol} sortDir={sortDir} />
+            </th>
             {(["id", "status", "diameter"] as const).map((col) => {
               const meta = {
                 id: { label: "ID", tip: "Link ID" },
@@ -547,17 +558,6 @@ function LinksTab({
                 <SortIndicator col="flow" sortCol={sortCol} sortDir={sortDir} />
               </th>
             )}
-            {/* Badge column: the cells are self-labelling, so the header is
-                just the sort affordance — the "Type" text was wider than the
-                40px column itself. */}
-            <th
-              style={{ ...TH, textAlign: "center", padding: "5px 4px" }}
-              onClick={() => toggleSort("type")}
-              data-tooltip="Element type — click to sort"
-              data-tooltip-pos="bottom"
-            >
-              <SortIndicator col="type" sortCol={sortCol} sortDir={sortDir} />
-            </th>
             {onZoomTo && <th style={TH} />}
           </tr>
         </thead>
