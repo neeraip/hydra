@@ -458,6 +458,40 @@ export function SimulationProvider({ children }: { children: ReactNode }) {
     activeScenarioIdRef.current = activeScenarioId;
   }, [activeScenarioId]);
 
+  /**
+   * Reload the loaded-result metadata and pump energy for one target.
+   *
+   * Shared by the two independent ways a finished run becomes observable —
+   * the terminal `simulation_progress` event and the `run_queue_update`
+   * snapshot — because either can be the only one that arrives. A fast run
+   * can complete before the progress listener sees its terminal event, which
+   * left the legend and timeline hidden until the project was reopened.
+   *
+   * The target is re-checked when the fetch resolves rather than guarded by a
+   * cancellation flag: the risk is not a stale render but applying one
+   * scenario's results while a different one is on screen.
+   */
+  /** Run ids whose completion has already refreshed results. `run_queue_update`
+   * re-sends the whole queue on every change, so a finished run appears in
+   * many snapshots; without this each one would refetch. */
+  const refreshedRunsRef = useRef<Set<string>>(new Set());
+
+  const refreshResultsFor = useCallback((pid: string, sid: string | null) => {
+    void loadResultMeta(pid, sid).then((meta) => {
+      if (!meta) return;
+      if (activeProjectIdRef.current !== pid) return;
+      if (activeScenarioIdRef.current !== sid) return;
+      setResultMeta(meta);
+      setResultGeneration((g) => g + 1);
+    });
+    void getPumpEnergy(pid, sid).then((energy) => {
+      if (!energy) return;
+      if (activeProjectIdRef.current !== pid) return;
+      if (activeScenarioIdRef.current !== sid) return;
+      setPumpEnergy(energy);
+    });
+  }, []);
+
   // Subscribe to backend simulation_progress events and pipe them into the
   // running task so the TaskTray shows live %, phase label, and progress bar.
   useEffect(() => {
@@ -623,17 +657,10 @@ export function SimulationProvider({ children }: { children: ReactNode }) {
       // AnalysisView and other views update immediately on completion rather
       // than waiting for the user to navigate away and back.
       if ((ev.done || ev.failed) && activeProjectIdRef.current) {
-        const pid = activeProjectIdRef.current;
-        const sid = activeScenarioIdRef.current;
-        loadResultMeta(pid, sid).then((meta) => {
-          if (!cancelled && meta) {
-            setResultMeta(meta);
-            setResultGeneration((g) => g + 1);
-          }
-        });
-        getPumpEnergy(pid, sid).then((energy) => {
-          if (!cancelled && energy) setPumpEnergy(energy);
-        });
+        refreshResultsFor(
+          activeProjectIdRef.current,
+          activeScenarioIdRef.current,
+        );
       }
     })
       .then((fn) => {
@@ -651,7 +678,7 @@ export function SimulationProvider({ children }: { children: ReactNode }) {
       cancelled = true;
       unlisten?.();
     };
-  }, []);
+  }, [refreshResultsFor]);
 
   // Subscribe to run_queue_update events emitted by the backend queue processor.
   // When the queue for the active project changes, fetch the latest items and
@@ -671,6 +698,26 @@ export function SimulationProvider({ children }: { children: ReactNode }) {
         // successfully.
         for (const item of items) {
           if (item.status === "done") clearEdited(item.targetId);
+        }
+
+        // The queue is the authority on completion, and for a fast run its
+        // snapshot may be the only place the finish is ever observed — the
+        // task-merge below already compensates for a missed terminal progress
+        // event, but the results themselves were left unrefreshed, so the
+        // legend and timeline stayed hidden until the project was reopened.
+        const activePid = activeProjectIdRef.current;
+        const activeSid = activeScenarioIdRef.current;
+        if (activePid !== null && projectId === activePid) {
+          const finished = items.filter(
+            (i) =>
+              i.status === "done" &&
+              i.targetId === activeSid &&
+              !refreshedRunsRef.current.has(i.id),
+          );
+          if (finished.length > 0) {
+            for (const i of finished) refreshedRunsRef.current.add(i.id);
+            refreshResultsFor(activePid, activeSid);
+          }
         }
         setTasks((prev) => {
           // Only (re)create task entries for items that are actively queued or
@@ -794,7 +841,7 @@ export function SimulationProvider({ children }: { children: ReactNode }) {
       cancelled = true;
       unlisten?.();
     };
-  }, [clearEdited, bumpScenarios, bumpProjects]);
+  }, [clearEdited, bumpScenarios, bumpProjects, refreshResultsFor]);
 
   const dismissTask = useCallback((id: string) => {
     setTasks((prev) => prev.filter((t) => t.id !== id));
