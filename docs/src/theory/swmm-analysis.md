@@ -103,6 +103,7 @@ This document provides a self-contained, mathematical and conceptual description
     - [Input](#input)
       - [File Grammar](#file-grammar)
       - [Sections](#sections)
+      - [Semantic Validation](#semantic-validation)
     - [Interface Files](#interface-files)
     - [Output](#output)
       - [Report File Structure](#report-file-structure)
@@ -1203,6 +1204,27 @@ The 57 recognised section keywords, what each configures, and where this documen
 The remaining nine — `[MAP]`, `[COORDINATES]`, `[VERTICES]`, `[POLYGONS]`, `[SYMBOLS]`, `[LABELS]`, `[BACKDROP]`, `[TAGS]`, `[PROFILES]` — are display metadata for the desktop interface. The engine **recognises them and discards their contents**: they are listed in the keyword table, so they neither raise an error nor swallow the sections that follow, but the parser has no case for them and reads nothing. A successor must therefore tolerate and preserve them without needing to interpret them.
 
 Global **process switches** (`IGNORE_RAINFALL/SNOWMELT/GWATER/RDII/ROUTING/QUALITY`, plus `ROUTE_MODEL NONE`) disable whole subsystems — quality ignoring also strips all pollutant variables from the binary output — and subsystems with no objects are ignored automatically. Time steps interlock at validation: the report step must be ≥ the routing step (fatal otherwise), the dry step is raised to the wet step, and the routing step is clamped to the wet step. Date/time conventions: INP dates are M/D/Y with `-`/`/` separators (3-letter month names accepted), times decimal-hours or h:m:s; decoded times round to the nearest second; every conversion of elapsed time to a calendar date adds **+1 ms** (so each reporting timestamp and date-driven lookup sits 1 ms past nominal); and elapsed-time labels measure from *report* start.
+
+#### Semantic Validation
+
+Beyond the topology rules of §4 and the per-object parameter checks described alongside each object, validation enforces a set of cross-object consistency rules whose violation is fatal. They are worth stating together because each marks a model a successor must reject rather than silently accept:
+
+| Rule | Condition |
+|---|---|
+| Ambiguous subcatchment outlet | the outlet identifier resolves to both a node and a subcatchment |
+| Ground elevation below water table | a subcatchment's surface elevation is below its aquifer's initial water table |
+| Initial depth above maximum | a node's initial depth exceeds its full depth *plus* any surcharge depth |
+| Negative storage volume | a storage node's area relation, integrated to its full depth, yields a negative volume — reachable when a tabular curve's final segment slopes downward steeply enough that the §6.3 extrapolation drives the integral below zero |
+| Ambiguous gage station | two rain gages naming the same station ID in different files |
+| Inconsistent co-gage format | two gages sharing a time series but declaring different data types (intensity, volume, cumulative) |
+| Gage series shared with another object | a rain gage's time series is also referenced by an inflow, outfall stage, or other consumer |
+| Recording interval too coarse | a gage's declared recording interval exceeds its time series' own interval |
+| Transect with no depth | a transect's station elevations are all equal, giving zero depth |
+| Unit hydrograph time base | a negative time-to-peak, or three monthly $R$ values summing above 1.01 (§3.6) |
+| Cyclic treatment dependency | treatment expressions at a node whose pollutant removals reference each other in a cycle (§9.4) |
+| Curve or series out of sequence | non-increasing $x$-values in a curve, or non-increasing timestamps in a time series |
+
+A thirteenth error code exists for a conduit whose elevation drop exceeds its length, but no code path raises it: that case is handled as the warning and fallback of §1.4 instead, leaving the error declared and unreachable.
 
 ### Interface Files
 
