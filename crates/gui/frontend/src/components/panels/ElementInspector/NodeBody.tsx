@@ -4,6 +4,7 @@ import { useLinksConnectedTo } from "../../../hooks";
 import { formatQty, formatQtyRaw, useUnitSystem } from "../../../units";
 import { SectionLabel } from "../../ui/SectionLabel";
 import { ConnectedLink } from "./ConnectedElements";
+import { PatternPreview } from "./PatternPreview";
 import { PropRow } from "./primitives";
 import { NodeResultsCard } from "./ResultsCards";
 import { TimeSeriesCard } from "./TimeSeriesCard";
@@ -137,6 +138,16 @@ export function NodeBody({
                 >
                   {headPattern}
                 </button>
+              </td>
+            </tr>
+          )}
+          {/* Spans both columns: the profile needs the full width, and it
+              belongs with the reference above it rather than as another card
+              competing with the results chart further down. */}
+          {headPattern && (
+            <tr>
+              <td colSpan={2} style={{ padding: "2px 0 6px" }}>
+                <PatternPreview patternId={headPattern} stroke={accent} />
               </td>
             </tr>
           )}
