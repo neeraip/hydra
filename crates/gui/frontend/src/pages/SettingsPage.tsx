@@ -184,11 +184,21 @@ function UpdatesRow() {
               ? `Downloading version ${updater.version}…`
               : updater.phase === "ready"
                 ? `Version ${updater.version} is ready to install.`
-                : updater.phase === "error"
-                  ? `Update failed: ${updater.message}`
-                  : "Check if a newer version of Hydra is available.";
+                : updater.phase === "installing"
+                  ? `Installing version ${updater.version}…`
+                  : updater.phase === "installedNeedsRestart"
+                    ? `Version ${updater.version} is installed. Reopen Hydra to finish.`
+                    : updater.phase === "error"
+                      ? `Update failed: ${updater.message}`
+                      : "Check if a newer version of Hydra is available.";
 
-  const busy = updater.phase === "checking" || updater.phase === "downloading";
+  // `installing` is included: the button sits over an installer that is already
+  // running, and a second press would start a second one.
+  const busy =
+    updater.phase === "checking" ||
+    updater.phase === "downloading" ||
+    updater.phase === "installing" ||
+    updater.phase === "installedNeedsRestart";
   const label =
     updater.phase === "checking"
       ? "Checking…"
@@ -200,9 +210,13 @@ function UpdatesRow() {
             : "Downloading…"
           : updater.phase === "ready"
             ? "Restart to update"
-            : updater.phase === "error"
-              ? "Retry download"
-              : "Check for updates";
+            : updater.phase === "installing"
+              ? "Installing…"
+              : updater.phase === "installedNeedsRestart"
+                ? "Reopen to finish"
+                : updater.phase === "error"
+                  ? "Retry download"
+                  : "Check for updates";
   const onClick =
     updater.phase === "available" || updater.phase === "error"
       ? install

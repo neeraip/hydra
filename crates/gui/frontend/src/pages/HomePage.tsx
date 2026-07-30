@@ -111,7 +111,12 @@ function UpdateRow({
     return null;
   }
 
-  const actionable = updater.phase !== "downloading";
+  // Not actionable while an installer is running, nor once it has finished and
+  // only a manual reopen is left — pressing again would start a second one.
+  const actionable =
+    updater.phase !== "downloading" &&
+    updater.phase !== "installing" &&
+    updater.phase !== "installedNeedsRestart";
   const label =
     updater.phase === "available"
       ? `Update available — v${updater.version}`
@@ -121,15 +126,21 @@ function UpdateRow({
           }`
         : updater.phase === "ready"
           ? "Restart to update"
-          : "Update failed — retry";
+          : updater.phase === "installing"
+            ? `Installing v${updater.version}…`
+            : updater.phase === "installedNeedsRestart"
+              ? `v${updater.version} installed — reopen Hydra`
+              : "Update failed — retry";
   const sublabel =
     updater.phase === "available"
       ? "Download and install"
       : updater.phase === "ready"
         ? `v${updater.version} is ready to install`
-        : updater.phase === "error"
-          ? updater.message
-          : null;
+        : updater.phase === "installedNeedsRestart"
+          ? "The update is applied and takes effect on next launch"
+          : updater.phase === "error"
+            ? updater.message
+            : null;
 
   return (
     <button

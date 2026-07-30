@@ -33,6 +33,10 @@ export type UpdaterState =
   | { phase: "available"; version: string }
   | { phase: "downloading"; version: string; percent: number | null }
   | { phase: "ready"; version: string }
+  | { phase: "installing"; version: string }
+  /** Installed, but the automatic restart did not happen. The update *is*
+   * applied — only a manual restart is outstanding. */
+  | { phase: "installedNeedsRestart"; version: string }
   | { phase: "error"; version: string; message: string };
 
 // ── Pure helpers (unit-tested) ───────────────────────────────────────────────
@@ -98,13 +102,19 @@ async function runCheck(): Promise<void> {
   if (
     state.phase === "checking" ||
     state.phase === "downloading" ||
-    state.phase === "ready"
+    state.phase === "ready" ||
+    state.phase === "installing" ||
+    state.phase === "installedNeedsRestart"
   ) {
     return;
   }
 
   const mock = readMockVersion();
   if (mock !== null) {
+    // Drop any handle from an earlier real check: `install()` picks its branch
+    // by whether this is set, so a stale one would run the real installer for a
+    // version that does not exist.
+    pendingUpdate = null;
     setSupported(true);
     setState({ phase: "available", version: mock });
     return;
@@ -160,7 +170,13 @@ async function install(): Promise<void> {
   let total: number | null = null;
   let downloaded = 0;
   try {
-    await pendingUpdate.downloadAndInstall((event) => {
+    // Download only. `downloadAndInstall` also runs the installer, and on
+    // Windows that installer is launched with NSIS `/R` (restart) and the
+    // plugin then calls `process::exit(0)` — so the app was replaced and
+    // relaunched the moment the download finished, and the "ready" phase and
+    // its "Restart to update" button were unreachable there. Installing is
+    // deferred to `restart()`, which is what the user actually clicks.
+    await pendingUpdate.download((event) => {
       if (event.event === "Started") {
         total = event.data.contentLength ?? null;
         downloaded = 0;
@@ -185,6 +201,7 @@ async function install(): Promise<void> {
 
 async function restart(): Promise<void> {
   if (state.phase !== "ready") return;
+  const version = state.version;
   if (pendingUpdate === null) {
     // Mock mode: drop the marker and reload in place.
     try {
@@ -195,14 +212,29 @@ async function restart(): Promise<void> {
     window.location.reload();
     return;
   }
+  // Marks the phase before awaiting: the button stays visible throughout the
+  // install, and a second click would run the installer a second time.
+  setState({ phase: "installing", version });
   try {
-    await relaunch();
+    // Install swaps the bundle. On Windows it hands off to the NSIS installer
+    // and exits the process, so nothing below runs there — the installer
+    // restarts the app itself.
+    await pendingUpdate.install();
   } catch (err) {
     setState({
       phase: "error",
-      version: state.version,
+      version,
       message: err instanceof Error ? err.message : String(err),
     });
+    return;
+  }
+  try {
+    await relaunch();
+  } catch {
+    // The install already succeeded — only the restart did not happen. Calling
+    // this an error would tell the user the update failed when it is applied
+    // and waiting for them to reopen the app.
+    setState({ phase: "installedNeedsRestart", version });
   }
 }
 
