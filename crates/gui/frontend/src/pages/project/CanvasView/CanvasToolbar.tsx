@@ -452,16 +452,19 @@ export function CanvasToolbar({
         >
           <MapPinIcon style={ICON_14} />
         </button>
+        {/* Not map-only, unlike its neighbours: a link carries no coordinates of
+            its own — `create_link` takes two node ids — so the schematic's
+            synthetic positions are irrelevant to it. Connecting nodes is often
+            easier there, where the layout makes connectivity legible. */}
 
         <button
           type="button"
           className={`tool-btn${activeTool === "add-link" ? " active" : ""}`}
-          disabled={mapOnly}
           onClick={() => onToolChange("add-link")}
-          data-tooltip={mapOnlyTooltip("Add link (L)")}
+          data-tooltip="Add link (L)"
           data-tooltip-pos="bottom"
           aria-label="Add link"
-          style={{ ...ICON_BTN_STYLE, ...mapOnlyDim }}
+          style={ICON_BTN_STYLE}
         >
           <LinkIcon style={ICON_14} />
         </button>

@@ -696,14 +696,19 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
             clearAnnotations();
           }
           break;
+        // Map-only tools are gated here as well as on their buttons: the
+        // shortcut was the one way to reach them in schematic view, where a
+        // placed or moved node would take a coordinate from the synthetic BFS
+        // layout rather than the network's own geometry.
         case "e":
         case "E":
-          setActiveTool("edit");
+          if (viewMode === "map") setActiveTool("edit");
           break;
         case "n":
         case "N":
-          setActiveTool("add-node");
+          if (viewMode === "map") setActiveTool("add-node");
           break;
+        // Not gated: creating a link writes only its two node ids.
         case "l":
         case "L":
           setActiveTool("add-link");
@@ -1027,12 +1032,18 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
   }, [inspectorOccupies]);
 
   // Reset to Select when switching to Schematic if the active tool is map-only.
+  //
+  // What makes a tool map-only is that it reads or writes a *coordinate*:
+  // `add-node` and `edit` place one, and the schematic's positions are synthetic
+  // BFS output rather than the network's own geometry; `measure` reports a
+  // distance, which is meaningless in that space. `add-link` writes only its two
+  // node ids, so it works anywhere — and schematic is arguably where connecting
+  // nodes is easiest to see.
   useEffect(() => {
     if (
       viewMode === "schematic" &&
       (activeTool === "edit" ||
         activeTool === "add-node" ||
-        activeTool === "add-link" ||
         activeTool === "measure")
     ) {
       setActiveTool("select");
