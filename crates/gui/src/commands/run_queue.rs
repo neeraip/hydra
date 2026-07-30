@@ -6,8 +6,8 @@ use tauri::Manager;
 
 use crate::meta::{self, bundle};
 
-use super::network_dto::format_inp_parse_error;
-use super::projects::{app_data_dir, results_path_for, validate_id};
+use super::network_dto::{format_inp_parse_error, format_read_error};
+use super::projects::{app_data_dir, read_model_bytes, results_path_for, validate_id};
 use super::simulation::{
     emit_or_warn, progress_percent, run_loop_outcome, run_sim_loops, try_acquire_run_target,
     RunLoopError, SimulationProgressDto, SIMULATION_PROGRESS_EVENT,
@@ -294,6 +294,45 @@ pub async fn enqueue_runs(
         validate_id(sid)?;
     }
     let app_data = app_data_dir(&app)?;
+
+    // Refuse up front if any target cannot be simulated.
+    //
+    // The queue would otherwise accept the run, fail on the strict parse before
+    // emitting a single progress event, and record the reason on a queue item
+    // nothing in the UI subscribes to — so the simulation appeared to never
+    // start, with no error anywhere. Checking here puts the reason in the
+    // caller's error path, which is already surfaced as a toast.
+    //
+    // All-or-nothing: a batch that silently dropped its invalid targets would
+    // report success while doing less than asked.
+    for target_id in &targets {
+        let label = target_id.as_deref().unwrap_or("the base model");
+        let path = match target_id.as_deref() {
+            Some(sid) => bundle::scenario_model_path(&app_data, &project_id, sid),
+            None => bundle::base_model_path(&app_data, &project_id),
+        };
+        let Some(raw) = read_model_bytes(&path)? else {
+            return Err(format!("{label} has no model to simulate"));
+        };
+        // Tolerant, then validate explicitly: this reports *which* constraint
+        // fails rather than the strict parse's flat failure, and it keeps
+        // unreadable files distinguishable from unfinished ones.
+        let (_network, validation_errors) =
+            hydra::io::parse_tolerant(&raw).map_err(format_read_error)?;
+        if let Some(first) = validation_errors.first() {
+            let more = validation_errors.len() - 1;
+            return Err(if more > 0 {
+                format!(
+                    "Cannot simulate {label}: {first} (and {more} more issue{}). \
+                     See Issues & Notifications.",
+                    if more == 1 { "" } else { "s" }
+                )
+            } else {
+                format!("Cannot simulate {label}: {first}")
+            });
+        }
+    }
+
     let now = meta::now_secs();
     for target_id in &targets {
         let target_name = target_id.as_deref().and_then(|sid| {
@@ -530,6 +569,39 @@ enum QueueRunResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── pre-flight simulability check ─────────────────────────────────────
+
+    /// The parse+validate `enqueue_runs` performs before queueing anything.
+    fn simulable(inp: &[u8]) -> Result<(), String> {
+        let (_network, errors) = hydra::io::parse_tolerant(inp).map_err(|e| e.to_string())?;
+        match errors.first() {
+            Some(first) => Err(first.to_string()),
+            None => Ok(()),
+        }
+    }
+
+    #[test]
+    fn a_network_missing_a_source_is_refused_before_queueing() {
+        // The reported bug: this used to enqueue, then fail on the strict parse
+        // before emitting any progress event, recording the reason on a queue
+        // item the UI does not subscribe to — so the run silently never started.
+        let inp = b"[JUNCTIONS]\n J1  10\n\n[OPTIONS]\n Units LPS\n\n[END]\n";
+        let err = simulable(inp).expect_err("an unsimulable network must be refused");
+        assert!(
+            !err.is_empty(),
+            "the refusal must name the constraint, not just fail"
+        );
+    }
+
+    #[test]
+    fn a_simulable_network_is_allowed_through() {
+        // The check must not stand in the way of a normal run.
+        let inp = b"[JUNCTIONS]\n J1  10  5\n\n[RESERVOIRS]\n R1  100\n\n\
+                    [PIPES]\n P1  R1  J1  100  300  100  0  Open\n\n\
+                    [OPTIONS]\n Units LPS\n\n[END]\n";
+        assert!(simulable(inp).is_ok(), "a valid network must still run");
+    }
 
     // ── run queue ─────────────────────────────────────────────────────────
 
