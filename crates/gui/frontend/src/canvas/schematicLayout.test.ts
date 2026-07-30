@@ -2,6 +2,13 @@ import { describe, expect, it } from "vitest";
 import type { Link, Node } from "../types";
 import { computeSchematicLayout } from "./schematicLayout";
 
+/** Positions only — most assertions here are about coordinates. */
+const layoutOf = (
+  nodes: Node[],
+  links: Link[],
+  scale?: { x: number; y: number },
+) => computeSchematicLayout(nodes, links, scale).positions;
+
 // ── helpers ────────────────────────────────────────────────────────────────────
 
 function junction(id: string): Node {
@@ -42,7 +49,7 @@ function getLayoutPoint(
 
 describe("computeSchematicLayout – empty input", () => {
   it("returns an empty map for no nodes and no links", () => {
-    const layout = computeSchematicLayout([], []);
+    const layout = layoutOf([], []);
     expect(layout.size).toBe(0);
   });
 });
@@ -51,7 +58,7 @@ describe("computeSchematicLayout – empty input", () => {
 
 describe("computeSchematicLayout – single node", () => {
   it("assigns a position to the lone node", () => {
-    const layout = computeSchematicLayout([junction("j1")], []);
+    const layout = layoutOf([junction("j1")], []);
     expect(layout.has("j1")).toBe(true);
     const [x, y] = getLayoutPoint(layout, "j1");
     expect(typeof x).toBe("number");
@@ -64,7 +71,7 @@ describe("computeSchematicLayout – single node", () => {
 describe("computeSchematicLayout – linear chain R → J1 → J2", () => {
   const nodes = [reservoir("R"), junction("J1"), junction("J2")];
   const links = [pipe("P1", "R", "J1"), pipe("P2", "J1", "J2")];
-  const layout = computeSchematicLayout(nodes, links);
+  const layout = layoutOf(nodes, links);
 
   it("assigns a position to every node", () => {
     expect(layout.size).toBe(3);
@@ -103,7 +110,7 @@ describe("computeSchematicLayout – branching network", () => {
     pipe("P2", "J1", "J2"),
     pipe("P3", "J1", "J3"),
   ];
-  const layout = computeSchematicLayout(nodes, links);
+  const layout = layoutOf(nodes, links);
 
   it("assigns a position to all 4 nodes", () => {
     expect(layout.size).toBe(4);
@@ -133,7 +140,7 @@ describe("computeSchematicLayout – disconnected graph", () => {
     junction("J2"),
   ];
   const links = [pipe("P1", "R1", "J1"), pipe("P2", "R2", "J2")];
-  const layout = computeSchematicLayout(nodes, links);
+  const layout = layoutOf(nodes, links);
 
   it("assigns a position to every node even when disconnected", () => {
     expect(layout.size).toBe(4);
@@ -147,7 +154,7 @@ describe("computeSchematicLayout – reservoir/tank is BFS root", () => {
   it("places the reservoir at x = 0 (depth 0) for a simple chain", () => {
     const nodes = [junction("J1"), junction("J2"), reservoir("R")];
     const links = [pipe("P1", "R", "J1"), pipe("P2", "J1", "J2")];
-    const layout = computeSchematicLayout(nodes, links);
+    const layout = layoutOf(nodes, links);
     const [rX] = getLayoutPoint(layout, "R");
     expect(rX).toBe(0);
   });
@@ -155,7 +162,7 @@ describe("computeSchematicLayout – reservoir/tank is BFS root", () => {
   it("tanks are also valid BFS roots", () => {
     const nodes = [tank("T"), junction("J1")];
     const links = [pipe("P1", "T", "J1")];
-    const layout = computeSchematicLayout(nodes, links);
+    const layout = layoutOf(nodes, links);
     const [tX] = getLayoutPoint(layout, "T");
     const [jX] = getLayoutPoint(layout, "J1");
     expect(tX).toBeLessThan(jX);
@@ -168,7 +175,7 @@ describe("computeSchematicLayout – all junctions (no reservoir/tank)", () => {
   it("still assigns positions to all nodes", () => {
     const nodes = [junction("J1"), junction("J2"), junction("J3")];
     const links = [pipe("P1", "J1", "J2"), pipe("P2", "J2", "J3")];
-    const layout = computeSchematicLayout(nodes, links);
+    const layout = layoutOf(nodes, links);
     expect(layout.size).toBe(3);
     for (const n of nodes) expect(layout.has(n.id)).toBe(true);
   });
@@ -183,8 +190,8 @@ describe("computeSchematicLayout – spacing", () => {
   it("defaults to the layout it has always produced", () => {
     // Anyone who never touches the sliders must see the original layout, so the
     // identity scale has to be exactly 1 rather than merely close to it.
-    const base = computeSchematicLayout(nodes, links);
-    const explicit = computeSchematicLayout(nodes, links, { x: 1, y: 1 });
+    const base = layoutOf(nodes, links);
+    const explicit = layoutOf(nodes, links, { x: 1, y: 1 });
     for (const [id, [x, y]] of base) {
       expect(explicit.get(id)).toEqual([x, y]);
     }
@@ -194,7 +201,7 @@ describe("computeSchematicLayout – spacing", () => {
     // The design rests on this: scaling the spacing constants is the same as
     // scaling the output per axis, so no BFS re-run is needed, and X can move
     // without dragging Y with it.
-    const base = computeSchematicLayout(nodes, links);
+    const base = layoutOf(nodes, links);
     for (const [kx, ky] of [
       [0.25, 1],
       [1, 0.25],
@@ -202,7 +209,7 @@ describe("computeSchematicLayout – spacing", () => {
       [1, 4],
       [0.5, 2],
     ] as const) {
-      const scaled = computeSchematicLayout(nodes, links, { x: kx, y: ky });
+      const scaled = layoutOf(nodes, links, { x: kx, y: ky });
       expect(scaled.size).toBe(base.size);
       for (const [id, [x, y]] of base) {
         const got = scaled.get(id);
@@ -222,19 +229,119 @@ describe("computeSchematicLayout – spacing", () => {
       const h = Math.max(...ys) - Math.min(...ys);
       return h === 0 ? Number.POSITIVE_INFINITY : w / h;
     };
-    const base = extent(computeSchematicLayout(nodes, links));
-    const widened = extent(
-      computeSchematicLayout(nodes, links, { x: 4, y: 1 }),
-    );
-    const heightened = extent(
-      computeSchematicLayout(nodes, links, { x: 1, y: 4 }),
-    );
+    const base = extent(layoutOf(nodes, links));
+    const widened = extent(layoutOf(nodes, links, { x: 4, y: 1 }));
+    const heightened = extent(layoutOf(nodes, links, { x: 1, y: 4 }));
     expect(widened).toBeGreaterThan(base);
     expect(heightened).toBeLessThan(base);
 
-    const uniform = extent(
-      computeSchematicLayout(nodes, links, { x: 3, y: 3 }),
-    );
+    const uniform = extent(layoutOf(nodes, links, { x: 3, y: 3 }));
     expect(uniform).toBeCloseTo(base, 10);
+  });
+});
+
+// ── detached parts form their own group below the network ────────────────────
+
+describe("computeSchematicLayout – detached nodes", () => {
+  const at = (m: Map<string, [number, number]>, id: string) =>
+    m.get(id) ?? [Number.NaN, Number.NaN];
+
+  it("puts an orphaned node right of the connected network, not among the sources", () => {
+    // The case that prompted this: deleting a leaf's only link. At depth 0 it
+    // landed in the leftmost column beside the reservoirs, which on a wide
+    // network reads as the node having vanished.
+    const nodes = [
+      reservoir("R1"),
+      junction("J1"),
+      junction("J2"),
+      junction("ORPHAN"),
+    ];
+    const links = [pipe("P1", "R1", "J1"), pipe("P2", "J1", "J2")];
+    const layout = layoutOf(nodes, links);
+
+    expect(layout.size).toBe(4);
+    const connectedMaxX = Math.max(
+      ...["R1", "J1", "J2"].map((id) => at(layout, id)[0]),
+    );
+    expect(at(layout, "ORPHAN")[0]).toBeGreaterThan(connectedMaxX);
+  });
+
+  it("separates the group by more than a column on a wide network", () => {
+    // A fixed few columns of gap is invisible beside a layout thousands of units
+    // wide — the size at which finding a stray node matters most.
+    const nodes = [reservoir("R1"), junction("ORPHAN")];
+    const links = [];
+    // A 60-deep chain: one very wide connected network.
+    for (let i = 0; i < 60; i++) {
+      nodes.push(junction(`J${i}`));
+      links.push(pipe(`P${i}`, i === 0 ? "R1" : `J${i - 1}`, `J${i}`));
+    }
+    const layout = layoutOf(nodes, links);
+
+    const xs = [...layout.entries()]
+      .filter(([id]) => id !== "ORPHAN")
+      .map(([, [x]]) => x);
+    const connectedMaxX = Math.max(...xs);
+    const connectedWidth = connectedMaxX - Math.min(...xs);
+    const gap = at(layout, "ORPHAN")[0] - connectedMaxX;
+    expect(gap).toBeGreaterThan(connectedWidth * 0.05);
+  });
+
+  it("keeps a detached sub-network's own shape", () => {
+    // A chain with no source is still a chain: it must not collapse into a
+    // single column just because nothing feeds it.
+    const nodes = [
+      reservoir("R1"),
+      junction("J1"),
+      junction("D1"),
+      junction("D2"),
+      junction("D3"),
+    ];
+    const links = [
+      pipe("P1", "R1", "J1"),
+      pipe("D-a", "D1", "D2"),
+      pipe("D-b", "D2", "D3"),
+    ];
+    const layout = layoutOf(nodes, links);
+
+    expect(at(layout, "D2")[0]).toBeGreaterThan(at(layout, "D1")[0]);
+    expect(at(layout, "D3")[0]).toBeGreaterThan(at(layout, "D2")[0]);
+  });
+
+  it("stacks several detached components in shared columns", () => {
+    // Offsetting each component separately would march the group rightwards
+    // once per orphan on a network with many of them.
+    const nodes = [
+      reservoir("R1"),
+      junction("J1"),
+      junction("A"),
+      junction("B"),
+      junction("C"),
+    ];
+    const layout = layoutOf(nodes, [pipe("P1", "R1", "J1")]);
+
+    const xs = ["A", "B", "C"].map((id) => at(layout, id)[0]);
+    expect(new Set(xs).size).toBe(1);
+    const ys = ["A", "B", "C"].map((id) => at(layout, id)[1]);
+    expect(new Set(ys).size).toBe(3);
+  });
+
+  it("anchors the group at the origin when nothing is connected", () => {
+    // No sources and no links: every node is detached, so there is no connected
+    // block to sit beneath.
+    const layout = layoutOf([junction("A"), junction("B")], []);
+    expect(layout.size).toBe(2);
+    for (const [, [x, y]] of layout) {
+      expect(Number.isFinite(x)).toBe(true);
+      expect(Number.isFinite(y)).toBe(true);
+    }
+  });
+
+  it("leaves a fully connected network untouched", () => {
+    // The group must cost nothing when there is nothing detached.
+    const nodes = [reservoir("R1"), junction("J1"), junction("J2")];
+    const links = [pipe("P1", "R1", "J1"), pipe("P2", "J1", "J2")];
+    const layout = layoutOf(nodes, links);
+    expect([...layout.values()].map(([x]) => x)).toEqual([0, 120, 240]);
   });
 });

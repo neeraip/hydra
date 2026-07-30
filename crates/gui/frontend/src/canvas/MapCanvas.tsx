@@ -51,7 +51,10 @@ import {
   roughGeoViewState,
 } from "./MapCanvas/geoUtils";
 import { nearestPointOnPath, type SnapResult } from "./measureSnap";
-import { computeSchematicLayout } from "./schematicLayout";
+import {
+  computeSchematicLayout,
+  type SchematicLayout,
+} from "./schematicLayout";
 import type { CanvasTool, LinkVariable, NodeVariable, ViewMode } from "./types";
 
 maplibregl.setWorkerUrl(maplibreWorkerUrl);
@@ -123,7 +126,10 @@ function sameBasemapStyle(
   return JSON.stringify(a) === JSON.stringify(b);
 }
 
-const EMPTY_SCHEMATIC_COORDS: Map<string, [number, number]> = new Map();
+const EMPTY_SCHEMATIC_LAYOUT: SchematicLayout = {
+  positions: new Map(),
+  detachedIds: new Set(),
+};
 /** Stable default so map-mode callers omitting the prop never invalidate the
  * schematic layout cache. */
 const IDENTITY_SCALE = { x: 1, y: 1 } as const;
@@ -183,6 +189,10 @@ const LINK_MEASURE_GLOW = [
 /** Grab radius for measure snapping. Node dots bottom out at
  * `NODE_RADIUS_MIN_PX`, so without a radius they would be near-unclickable on a
  * whole-network view. */
+/** Padding around the detached group's bounding box, as a share of its own
+ * extent, with a floor for the single-node case. */
+const DETACHED_BOX_PAD_FRACTION = 0.18;
+const DETACHED_BOX_MIN_PAD = 50;
 const MEASURE_SNAP_RADIUS_PX = 10;
 /** Stable empty default so omitting the prop never invalidates a layer diff. */
 const EMPTY_MEASURE_POINTS: readonly [number, number][] = [];
@@ -441,7 +451,7 @@ export const MapCanvas = memo(function MapCanvas({
   const schematicCacheRef = useRef<{
     nodes: Node[];
     links: Link[];
-    coords: Map<string, [number, number]>;
+    layout: SchematicLayout;
     /** Axis scales the cached coords were built at — moving either spacing
      * slider must invalidate them even though nodes/links are unchanged.
      * Compared by value, not object identity, so a caller that rebuilds the
@@ -449,7 +459,7 @@ export const MapCanvas = memo(function MapCanvas({
     scaleX: number;
     scaleY: number;
   } | null>(null);
-  const schematicCoords = useMemo(() => {
+  const schematicLayout = useMemo(() => {
     const cache = schematicCacheRef.current;
     if (
       cache &&
@@ -458,24 +468,26 @@ export const MapCanvas = memo(function MapCanvas({
       cache.scaleX === schematicScale.x &&
       cache.scaleY === schematicScale.y
     ) {
-      return cache.coords;
+      return cache.layout;
     }
     if (viewMode !== "schematic") {
       // Drop a stale cache rather than pinning an obsolete full generation
       // of nodes/links/coords in memory until schematic is next opened.
       schematicCacheRef.current = null;
-      return EMPTY_SCHEMATIC_COORDS;
+      return EMPTY_SCHEMATIC_LAYOUT;
     }
-    const coords = computeSchematicLayout(nodes, links, schematicScale);
+    const layout = computeSchematicLayout(nodes, links, schematicScale);
     schematicCacheRef.current = {
       nodes,
       links,
-      coords,
+      layout,
       scaleX: schematicScale.x,
       scaleY: schematicScale.y,
     };
-    return coords;
+    return layout;
   }, [nodes, links, viewMode, schematicScale]);
+  // Positions alone, for everything that only needs coordinates.
+  const schematicCoords = schematicLayout.positions;
 
   /**
    * Resolve a measure click/hover at screen `(x, y)` to a point to snap to.
@@ -1050,6 +1062,83 @@ export const MapCanvas = memo(function MapCanvas({
 
     const layers: Layer[] = [];
 
+    // Detached group marker (schematic only). The layout parks anything not
+    // reachable from a source in its own region to the right; without a boundary
+    // and a label, that reads as a distant part of the network rather than as
+    // "these are disconnected". Amber is free here: it is the warning colour and
+    // the only other amber on the canvas belongs to the measure tool, which is
+    // map-mode only, so the two can never appear together.
+    if (isSchematic && schematicLayout.detachedIds.size > 0) {
+      let minX = Number.POSITIVE_INFINITY;
+      let minY = Number.POSITIVE_INFINITY;
+      let maxX = Number.NEGATIVE_INFINITY;
+      let maxY = Number.NEGATIVE_INFINITY;
+      for (const id of schematicLayout.detachedIds) {
+        // Read through `schematicLayout` rather than the derived alias, so this
+        // callback captures one value instead of two.
+        const at = schematicLayout.positions.get(id);
+        if (!at) continue;
+        if (at[0] < minX) minX = at[0];
+        if (at[0] > maxX) maxX = at[0];
+        if (at[1] < minY) minY = at[1];
+        if (at[1] > maxY) maxY = at[1];
+      }
+      if (Number.isFinite(minX)) {
+        // Padding from the group's own extent, with a floor so a single
+        // orphaned node still gets a box big enough to read as one.
+        const pad = Math.max(
+          DETACHED_BOX_MIN_PAD,
+          Math.max(maxX - minX, maxY - minY) * DETACHED_BOX_PAD_FRACTION,
+        );
+        const x0 = minX - pad;
+        const y0 = minY - pad;
+        const x1 = maxX + pad;
+        const y1 = maxY + pad;
+        const count = schematicLayout.detachedIds.size;
+        layers.push(
+          new PathLayer({
+            id: "detached-region",
+            data: [
+              [
+                [x0, y0],
+                [x1, y0],
+                [x1, y1],
+                [x0, y1],
+                [x0, y0],
+              ] as [number, number][],
+            ],
+            coordinateSystem: coordSystem,
+            getPath: (d) => d,
+            getColor: [212, 160, 23, 110] as unknown as RGBA,
+            getWidth: 1.5,
+            // Pixels, not world units: a hairline boundary should stay a
+            // hairline at every zoom rather than thickening with the network.
+            widthUnits: "pixels",
+            pickable: false,
+          }) as unknown as Layer,
+          new TextLayer({
+            id: "detached-region-label",
+            data: [{ position: [x0, y0] as [number, number] }],
+            coordinateSystem: coordSystem,
+            getPosition: (d) => d.position,
+            getText: () =>
+              `Not connected to a source · ${count} ${count === 1 ? "node" : "nodes"}`,
+            getSize: 11,
+            getColor: [212, 160, 23, 220] as unknown as RGBA,
+            getTextAnchor: "start",
+            getAlignmentBaseline: "bottom",
+            getPixelOffset: [0, -6],
+            background: false,
+            fontFamily: "monospace",
+            pickable: false,
+            // Not subject to the node/link label cap: this is one string, and it
+            // is the only thing that explains what the region is.
+            updateTriggers: { getText: [count] },
+          }) as unknown as Layer,
+        );
+      }
+    }
+
     if (canvasLayers.model) {
       // ── Glow / halo layers — pushed FIRST so they render beneath links and nodes ──
       // Hover halos are suppressed while the same element is selected.
@@ -1552,6 +1641,7 @@ export const MapCanvas = memo(function MapCanvas({
     velocityThresholds,
     flowThresholds,
     measurePoints,
+    schematicLayout,
   ]);
 
   useEffect(() => {
