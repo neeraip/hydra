@@ -468,7 +468,7 @@ export function ProjectsPage() {
         style={{
           height: 52,
           flexShrink: 0,
-          padding: "0 20px",
+          padding: "0 10px",
           borderBottom: "1px solid var(--border)",
           background: "var(--bg-panel)",
           display: "flex",
