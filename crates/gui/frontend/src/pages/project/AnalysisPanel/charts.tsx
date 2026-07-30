@@ -79,6 +79,9 @@ function formatChartValue(v: number, decimals: number): string {
   return v.toFixed(decimals);
 }
 
+/** Sparkline stroke width; the plot band is inset by half of it. */
+const STROKE_W = 1.5;
+
 /**
  * Compact trend chart.
  *
@@ -115,12 +118,30 @@ export function Sparkline({
   const [hoverIdx, setHoverIdx] = useState<number | null>(null);
   const w = 280;
   const h = height;
-  const span = Math.max(max - min, 1e-9);
+  // A constant series has no range to scale against. Clamping the span to a
+  // tiny epsilon put every point at `y = h` — the bottom edge, with half the
+  // stroke outside the viewBox — so a flat series looked like an empty chart
+  // rather than a flat line. Pad the *geometry* domain only; the min/max labels
+  // below still report the real values.
+  const flat = !(max - min > 1e-9);
+  const lo = flat ? min - 0.5 : min;
+  const hi = flat ? max + 0.5 : max;
+  const span = hi - lo;
+  // Inset the plot band by half a stroke: the line is centred on its y, so a
+  // point sitting exactly at the min or max would lose its outer half beyond
+  // the viewBox edge.
+  const pad = STROKE_W / 2;
   const xAt = (i: number) => (i / Math.max(values.length - 1, 1)) * w;
-  const yAt = (v: number) => h - ((v - min) / span) * h;
-  const pts = values
-    .map((v, i) => `${xAt(i).toFixed(1)},${yAt(v).toFixed(1)}`)
-    .join(" ");
+  const yAt = (v: number) => h - pad - ((v - lo) / span) * (h - 2 * pad);
+  // A one-value series has no segment to stroke, so a plain polyline of one
+  // point renders nothing at all. Span it across the full width instead — a
+  // single-step pattern is a constant, and a flat line says so.
+  const pts =
+    values.length === 1
+      ? `0,${yAt(values[0]).toFixed(1)} ${w},${yAt(values[0]).toFixed(1)}`
+      : values
+          .map((v, i) => `${xAt(i).toFixed(1)},${yAt(v).toFixed(1)}`)
+          .join(" ");
 
   const interactive = times != null && values.length > 0;
 
@@ -159,7 +180,12 @@ export function Sparkline({
             strokeDasharray="3 3"
           />
         )}
-      <polyline points={pts} fill="none" stroke={stroke} strokeWidth={1.5} />
+      <polyline
+        points={pts}
+        fill="none"
+        stroke={stroke}
+        strokeWidth={STROKE_W}
+      />
       {interactive && hoverIdx != null && (
         <>
           <line
