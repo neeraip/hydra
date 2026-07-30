@@ -13,6 +13,23 @@ fn main() {
         )
         .init();
     tauri::Builder::default()
+        .setup(|app| {
+            // Bring the main window forward on every start.
+            //
+            // After a Windows update the app is relaunched by the NSIS
+            // installer (`/R`), not by the user, and it came back minimized —
+            // the update looked like it had closed the app. Nothing else
+            // guarantees the window is visible either, so this is
+            // unconditional rather than gated on the platform or on having
+            // just updated.
+            use tauri::Manager;
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.unminimize();
+                let _ = window.show();
+                let _ = window.set_focus();
+            }
+            Ok(())
+        })
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_process::init())
