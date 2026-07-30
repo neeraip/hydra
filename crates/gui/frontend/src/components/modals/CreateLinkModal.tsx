@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { inpIdError } from "../../inpId";
 import { formatQtyRaw, useUnitSystem } from "../../units";
 
 interface Props {
@@ -69,7 +70,10 @@ export function CreateLinkModal({
   if (!open) return null;
 
   const trimmed = id.trim();
-  const canSubmit = !!trimmed && !submitting;
+  // See CreateNodeModal: inline format check, backend owns collisions.
+  const idError = inpIdError(id);
+  const shownIdError = trimmed !== "" ? idError : null;
+  const canSubmit = idError === null && !submitting;
 
   async function handleSubmit() {
     if (!canSubmit) return;
@@ -191,7 +195,7 @@ export function CreateLinkModal({
             }}
             style={{
               background: "var(--bg-input)",
-              border: `1px solid ${errorMsg ? "rgba(220,60,60,0.6)" : "var(--border)"}`,
+              border: `1px solid ${errorMsg || shownIdError ? "rgba(220,60,60,0.6)" : "var(--border)"}`,
               borderRadius: 6,
               padding: "6px 10px",
               fontSize: "var(--text-lg)",
@@ -200,7 +204,7 @@ export function CreateLinkModal({
             }}
             placeholder="e.g. P1"
           />
-          {errorMsg && (
+          {(errorMsg ?? shownIdError) && (
             <span
               style={{
                 fontSize: "var(--text-sm)",
@@ -208,7 +212,7 @@ export function CreateLinkModal({
                 marginTop: 2,
               }}
             >
-              {errorMsg}
+              {errorMsg ?? shownIdError}
             </span>
           )}
         </label>

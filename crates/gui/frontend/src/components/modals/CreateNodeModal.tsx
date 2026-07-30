@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { inpIdError } from "../../inpId";
 import { fromDisplay, toDisplay, unitLabel, useUnitSystem } from "../../units";
 
 export interface NodeCreatePayload {
@@ -103,7 +104,12 @@ export function CreateNodeModal({
   if (!open) return null;
 
   const trimmedId = id.trim();
-  const canSubmit = !!trimmedId && !submitting;
+  // Format is checked inline so the message lands next to the field; the
+  // backend runs the same rules and owns collisions. Held back until the user
+  // has typed something, so an untouched empty field is not scolded.
+  const idError = inpIdError(id);
+  const shownIdError = trimmedId !== "" ? idError : null;
+  const canSubmit = idError === null && !submitting;
 
   const elevLabel =
     kind === "reservoir"
@@ -244,11 +250,14 @@ export function CreateNodeModal({
             }}
             style={{
               ...fieldStyle,
-              borderColor: errorMsg ? "rgba(220,60,60,0.6)" : "var(--border)",
+              borderColor:
+                errorMsg || shownIdError
+                  ? "rgba(220,60,60,0.6)"
+                  : "var(--border)",
             }}
             placeholder="e.g. J1"
           />
-          {errorMsg && (
+          {(errorMsg ?? shownIdError) && (
             <span
               style={{
                 fontSize: "var(--text-sm)",
@@ -256,7 +265,7 @@ export function CreateNodeModal({
                 marginTop: 2,
               }}
             >
-              {errorMsg}
+              {errorMsg ?? shownIdError}
             </span>
           )}
         </label>

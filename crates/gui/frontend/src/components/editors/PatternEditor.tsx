@@ -10,6 +10,7 @@ import { useAppState } from "../../AppContext";
 import { renamePattern, type TimePattern, usePatterns } from "../../hooks";
 import { useDraft } from "../../hooks/DraftContext";
 import { useNetworkVersion } from "../../hooks/NetworkVersionContext";
+import { inpIdError } from "../../inpId";
 import { DeleteConfirmModal } from "../modals/DeleteConfirmModal";
 import { EditorSidebarList } from "./EditorSidebarList";
 import {
@@ -94,8 +95,11 @@ export function PatternEditor({ accent }: { accent: string }) {
 
   function handleCreate() {
     const trimmed = newId.trim();
-    if (!trimmed) {
-      setCreateError("ID required");
+    // INP cannot represent a space in an id (see inpIdError): accepting one
+    // writes a [PATTERNS] line that reads back as a bad multiplier.
+    const badFormat = inpIdError(newId);
+    if (badFormat) {
+      setCreateError(badFormat);
       return;
     }
     if (rawPatterns.some((p) => p.id === trimmed) || patternAdds.has(trimmed)) {
@@ -140,6 +144,11 @@ export function PatternEditor({ accent }: { accent: string }) {
   async function handleRename(oldId: string, rawNewId: string) {
     const trimmed = rawNewId.trim();
     if (!trimmed || trimmed === oldId) return;
+    const badFormat = inpIdError(trimmed);
+    if (badFormat) {
+      showToast(badFormat, "error");
+      return;
+    }
     if (
       rawPatterns.some((p) => p.id === trimmed) ||
       (patternAdds.has(trimmed) && trimmed !== oldId)

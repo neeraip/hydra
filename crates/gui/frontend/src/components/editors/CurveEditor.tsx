@@ -14,6 +14,7 @@ import {
 } from "../../hooks";
 import { useDraft } from "../../hooks/DraftContext";
 import { useNetworkVersion } from "../../hooks/NetworkVersionContext";
+import { inpIdError } from "../../inpId";
 import {
   EditableCell,
   useVirtualRows,
@@ -131,6 +132,12 @@ export function CurveEditor({
       setNameDraft(oldId);
       return;
     }
+    const badFormat = inpIdError(trimmed);
+    if (badFormat) {
+      showToast(badFormat, "error");
+      setNameDraft(oldId);
+      return;
+    }
     if (
       curves.some((c) => c.id === trimmed) ||
       (curveAdds.has(trimmed) && trimmed !== oldId)
@@ -181,8 +188,9 @@ export function CurveEditor({
 
   function handleCreate() {
     const trimmed = newId.trim();
-    if (!trimmed) {
-      setCreateError("ID required");
+    const badFormat = inpIdError(newId);
+    if (badFormat) {
+      setCreateError(badFormat);
       return;
     }
     if (curves.some((c) => c.id === trimmed) || curveAdds.has(trimmed)) {

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { inpIdError } from "../../inpId";
 import { ModalBackdrop, stopBackdropEvents } from "../ui/ModalBackdrop";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -9,16 +10,6 @@ import { ModalBackdrop, stopBackdropEvents } from "../ui/ModalBackdrop";
 // dialog fires it directly. Format validation mirrors the backend
 // `validate_inp_id`; id collisions are reported by the backend as a toast.
 // ─────────────────────────────────────────────────────────────────────────────
-
-/** Mirror of the backend `validate_inp_id` format rules (collisions are the
- *  backend's job). Returns an error string, or `null` when the format is ok. */
-function formatError(raw: string): string | null {
-  const t = raw.trim();
-  if (!t) return "ID must not be empty";
-  if (/\s/.test(t)) return "ID must not contain spaces";
-  if (/[;"']/.test(t)) return "ID must not contain “ ; ” or quotes";
-  return null;
-}
 
 export function RenameElementModal({
   kind,
@@ -38,7 +29,7 @@ export function RenameElementModal({
     inputRef.current?.select();
   }, []);
 
-  const err = formatError(value);
+  const err = inpIdError(value);
   const unchanged = value.trim() === id;
   const canSubmit = err === null && !unchanged;
 

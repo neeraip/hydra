@@ -957,9 +957,7 @@ pub fn create_node(
     const M_TO_FT: f64 = 1.0 / FT_TO_M;
     let elev_ft = elevation.unwrap_or(0.0) * M_TO_FT;
     mutate_structural(&app, &state, |network| {
-        if id.trim().is_empty() {
-            return Err("ID must not be empty".into());
-        }
+        let id = validate_inp_id(&id, "element")?;
         // Node ids are unique among nodes only — a link may share the id
         // (EPANET keeps node and link namespaces separate; the parser accepts
         // it), so do not reject an id merely because a link holds it.
@@ -1070,9 +1068,7 @@ pub fn create_link(
     to_id: String,
 ) -> Result<(), String> {
     mutate_structural(&app, &state, |network| {
-        if id.trim().is_empty() {
-            return Err("ID must not be empty".into());
-        }
+        let id = validate_inp_id(&id, "element")?;
         // Link ids are unique among links only — a node may share the id
         // (EPANET keeps node and link namespaces separate; the parser accepts
         // it), so do not reject an id merely because a node holds it.
@@ -1127,6 +1123,7 @@ pub fn create_curve(
     id: String,
 ) -> Result<(), String> {
     mutate_structural(&app, &state, |network| {
+        let id = validate_inp_id(&id, "curve")?;
         if network.curves.iter().any(|c| c.id == id) {
             return Err(format!("curve '{}' already exists", id));
         }
@@ -1337,6 +1334,7 @@ pub fn create_pattern(
     id: String,
 ) -> Result<(), String> {
     mutate_structural(&app, &state, |network| {
+        let id = validate_inp_id(&id, "pattern")?;
         if network.patterns.iter().any(|p| p.id == id) {
             return Err(format!("pattern '{}' already exists", id));
         }
@@ -1386,10 +1384,7 @@ pub fn rename_pattern(
     old_id: String,
     new_id: String,
 ) -> Result<(), String> {
-    let trimmed = new_id.trim().to_string();
-    if trimmed.is_empty() {
-        return Err("pattern ID must not be empty".into());
-    }
+    let trimmed = validate_inp_id(&new_id, "pattern")?;
     mutate_structural(&app, &state, |network| {
         if !network.patterns.iter().any(|p| p.id == old_id) {
             return Err(format!("pattern '{}' not found", old_id));
@@ -2492,6 +2487,36 @@ Duration  0
         assert!(validate_inp_id("a'b", "element").is_err());
         // Valid: trims and returns.
         assert_eq!(validate_inp_id("  J-42  ", "element").unwrap(), "J-42");
+    }
+
+    /// Why every id-accepting command routes through `validate_inp_id`: INP is
+    /// whitespace-delimited, so an id holding a space is written as two fields
+    /// and cannot be read back. Accepting one means writing a project file the
+    /// app can no longer open — the corruption surfaces later, at load, far
+    /// from the edit that caused it.
+    #[test]
+    fn an_id_containing_a_space_makes_the_written_inp_unreadable() {
+        let mut network = hydra::io::parse(CASCADE_INP.as_bytes()).unwrap();
+        network.patterns.push(hydra::Pattern {
+            id: "Test Pattern".into(),
+            factors: vec![1.0, 2.68, 2.0],
+        });
+
+        let bytes = hydra::write_inp(&network);
+        let err = hydra::io::parse(&bytes)
+            .expect_err("a pattern id containing a space must not round-trip");
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("Pattern"),
+            "the id's second half should surface as a bad multiplier: {msg}"
+        );
+
+        // The guard that stops it reaching the writer in the first place.
+        assert!(validate_inp_id("Test Pattern", "pattern").is_err());
+        assert_eq!(
+            validate_inp_id("Test_Pattern", "pattern").unwrap(),
+            "Test_Pattern"
+        );
     }
 
     #[test]
