@@ -224,7 +224,7 @@ export function ProjectsPage() {
                     ? "var(--text-disabled)"
                     : "var(--accent)",
                   fontFamily: "var(--font-ui)",
-                  fontSize: 13,
+                  fontSize: "var(--text-lg)",
                   fontWeight: 500,
                   textAlign: "left",
                   opacity: p.folderMissing ? 0.5 : 1,
@@ -235,7 +235,7 @@ export function ProjectsPage() {
               {p.folderMissing && (
                 <span
                   style={{
-                    fontSize: 10,
+                    fontSize: "var(--text-xs)",
                     fontWeight: 700,
                     letterSpacing: "0.05em",
                     padding: "1px 5px",
@@ -258,7 +258,9 @@ export function ProjectsPage() {
         cell: (info) => {
           const s = info.getValue();
           return (
-            <span style={{ fontSize: 12, color: STATE_COLORS[s] }}>
+            <span
+              style={{ fontSize: "var(--text-md)", color: STATE_COLORS[s] }}
+            >
               {s === "simulated" || s === "running" ? "● " : "○ "}
               {STATE_LABELS[s]}
             </span>
@@ -270,7 +272,12 @@ export function ProjectsPage() {
       col.accessor("nodeCount", {
         header: "Nodes",
         cell: (info) => (
-          <span style={{ fontFamily: "var(--font-mono)", fontSize: 12 }}>
+          <span
+            style={{
+              fontFamily: "var(--font-mono)",
+              fontSize: "var(--text-md)",
+            }}
+          >
             {info.getValue().toLocaleString()}
           </span>
         ),
@@ -279,7 +286,12 @@ export function ProjectsPage() {
       col.accessor("linkCount", {
         header: "Links",
         cell: (info) => (
-          <span style={{ fontFamily: "var(--font-mono)", fontSize: 12 }}>
+          <span
+            style={{
+              fontFamily: "var(--font-mono)",
+              fontSize: "var(--text-md)",
+            }}
+          >
             {info.getValue().toLocaleString()}
           </span>
         ),
@@ -288,7 +300,12 @@ export function ProjectsPage() {
       col.accessor("scenarioCount", {
         header: "Scenarios",
         cell: (info) => (
-          <span style={{ fontFamily: "var(--font-mono)", fontSize: 12 }}>
+          <span
+            style={{
+              fontFamily: "var(--font-mono)",
+              fontSize: "var(--text-md)",
+            }}
+          >
             {info.getValue()}
           </span>
         ),
@@ -302,7 +319,12 @@ export function ProjectsPage() {
         id: "modified",
         header: "Modified",
         cell: (info) => (
-          <span style={{ fontSize: 12, color: "var(--text-secondary)" }}>
+          <span
+            style={{
+              fontSize: "var(--text-md)",
+              color: "var(--text-secondary)",
+            }}
+          >
             {info.row.original.modifiedLabel}
           </span>
         ),
@@ -314,7 +336,12 @@ export function ProjectsPage() {
         id: "lastRun",
         header: "Last run",
         cell: (info) => (
-          <span style={{ fontSize: 12, color: "var(--text-tertiary)" }}>
+          <span
+            style={{
+              fontSize: "var(--text-md)",
+              color: "var(--text-tertiary)",
+            }}
+          >
             {info.row.original.lastRunLabel ?? "—"}
           </span>
         ),
@@ -441,7 +468,7 @@ export function ProjectsPage() {
         style={{
           height: 52,
           flexShrink: 0,
-          padding: "0 20px",
+          padding: "0 10px",
           borderBottom: "1px solid var(--border)",
           background: "var(--bg-panel)",
           display: "flex",
@@ -482,7 +509,7 @@ export function ProjectsPage() {
               borderRadius: 5,
               background: "var(--bg-input)",
               color: "var(--text-primary)",
-              fontSize: 12,
+              fontSize: "var(--text-md)",
               fontFamily: "var(--font-ui)",
               outline: "none",
               boxSizing: "border-box",
@@ -523,7 +550,7 @@ export function ProjectsPage() {
               alignItems: "center",
               gap: 8,
               flexShrink: 0,
-              fontSize: 12,
+              fontSize: "var(--text-md)",
               color: "var(--text-secondary)",
             }}
           >
@@ -531,7 +558,7 @@ export function ProjectsPage() {
             <button
               type="button"
               className="btn-link"
-              style={{ fontSize: 11 }}
+              style={{ fontSize: "var(--text-sm)" }}
               onClick={() => setRowSelection({})}
             >
               Clear
@@ -564,7 +591,7 @@ export function ProjectsPage() {
           /* Row count */
           <span
             style={{
-              fontSize: 12,
+              fontSize: "var(--text-md)",
               color: "var(--text-tertiary)",
               flexShrink: 0,
             }}
@@ -594,7 +621,7 @@ export function ProjectsPage() {
           style={{
             width: "100%",
             borderCollapse: "collapse",
-            fontSize: 13,
+            fontSize: "var(--text-lg)",
           }}
         >
           <thead>
@@ -640,7 +667,7 @@ export function ProjectsPage() {
                         padding: "8px 14px",
                         textAlign: "left",
                         fontWeight: 600,
-                        fontSize: 11,
+                        fontSize: "var(--text-sm)",
                         letterSpacing: "0.05em",
                         textTransform: "uppercase",
                         color: "var(--text-tertiary)",
@@ -691,7 +718,7 @@ export function ProjectsPage() {
                     padding: "40px 14px",
                     textAlign: "center",
                     color: "var(--text-tertiary)",
-                    fontSize: 13,
+                    fontSize: "var(--text-lg)",
                   }}
                 >
                   {projects.length === 0
@@ -767,7 +794,7 @@ export function ProjectsPage() {
               <span
                 key={`ellipsis-${items[i - 1] ?? "start"}-${items[i + 1] ?? "end"}`}
                 style={{
-                  fontSize: 12,
+                  fontSize: "var(--text-md)",
                   color: "var(--text-disabled)",
                   padding: "0 2px",
                 }}
@@ -798,7 +825,7 @@ export function ProjectsPage() {
 
           <span
             style={{
-              fontSize: 12,
+              fontSize: "var(--text-md)",
               color: "var(--text-tertiary)",
               marginLeft: 4,
             }}
@@ -930,7 +957,7 @@ const selectStyle: React.CSSProperties = {
   borderRadius: 5,
   background: "var(--bg-input)",
   color: "var(--text-secondary)",
-  fontSize: 12,
+  fontSize: "var(--text-md)",
   fontFamily: "var(--font-ui)",
   cursor: "pointer",
   outline: "none",

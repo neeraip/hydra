@@ -233,6 +233,19 @@ export function formatCoordValue(v: number): string {
 }
 
 /**
+ * Format a WGS84 position for display, latitude first: `42.36789, -71.05673`.
+ *
+ * Five decimals is ~1.1 m of latitude — finer than the click that produced the
+ * point, and short enough to sit two of them side by side. `formatCoordValue`
+ * cannot be reused: its two decimals are sub-millimetre in the projected CRS
+ * units it was written for, but in degrees they are over a kilometre.
+ */
+export function formatLatLng(lng: number, lat: number): string {
+  if (!Number.isFinite(lng) || !Number.isFinite(lat)) return "—";
+  return `${lat.toFixed(5)}, ${lng.toFixed(5)}`;
+}
+
+/**
  * Measure-tool distance readout: m/km in SI, ft/mi in US customary.
  * Input is always metres.
  */

@@ -65,7 +65,7 @@ export function ScenarioList({
             background: "transparent",
             border: "none",
             color: "var(--accent)",
-            fontSize: 12,
+            fontSize: "var(--text-md)",
             textAlign: "left",
             padding: "6px 0",
             cursor: "pointer",
@@ -104,7 +104,7 @@ function ScenarioRow({
       <Dot color={ran ? "var(--status-success)" : "var(--text-tertiary)"} />
       <span
         style={{
-          fontSize: 13,
+          fontSize: "var(--text-lg)",
           color: "var(--text-primary)",
           flex: 1,
           minWidth: 0,
@@ -115,7 +115,9 @@ function ScenarioRow({
       >
         {scenario.name}
       </span>
-      <span style={{ fontSize: 11, color: "var(--text-tertiary)" }}>
+      <span
+        style={{ fontSize: "var(--text-sm)", color: "var(--text-tertiary)" }}
+      >
         {ran ? "simulated" : "not run"}
       </span>
     </div>

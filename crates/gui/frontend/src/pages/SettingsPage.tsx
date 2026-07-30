@@ -3,6 +3,7 @@ import { useAppState } from "../AppContext";
 import { Toggle } from "../components/ui/Toggle";
 import { getVersions, openDataFolder, type Versions } from "../hooks";
 import { useUpdater } from "../hooks/useUpdater";
+import { readTextScale, setTextScale, TEXT_SCALES } from "../textScale";
 import { setUnitSystem, type UnitSystem, useUnitSystem } from "../units";
 
 const SK = {
@@ -28,7 +29,7 @@ function Section({ children }: { children: React.ReactNode }) {
         margin: 0,
         marginTop: 32,
         marginBottom: 2,
-        fontSize: 11,
+        fontSize: "var(--text-sm)",
         fontWeight: 600,
         letterSpacing: "0.08em",
         textTransform: "uppercase",
@@ -63,7 +64,7 @@ function SettingRow({
       <div>
         <div
           style={{
-            fontSize: 13,
+            fontSize: "var(--text-lg)",
             color: "var(--text-primary)",
             fontWeight: 500,
           }}
@@ -73,7 +74,7 @@ function SettingRow({
         {description && (
           <div
             style={{
-              fontSize: 12,
+              fontSize: "var(--text-md)",
               color: "var(--text-secondary)",
               marginTop: 2,
               lineHeight: 1.5,
@@ -105,7 +106,7 @@ function ThemeToggle() {
             background: theme === t ? "var(--accent-dim)" : "transparent",
             color: theme === t ? "var(--accent)" : "var(--text-secondary)",
             cursor: "pointer",
-            fontSize: 13,
+            fontSize: "var(--text-lg)",
             fontFamily: "var(--font-ui)",
             fontWeight: theme === t ? 500 : 400,
             transition: "all var(--t-fast)",
@@ -113,6 +114,49 @@ function ThemeToggle() {
           }}
         >
           {t}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/** Segmented text-size control. Applies immediately — the whole app resizes
+ * live, so the effect of each step is visible while choosing it, including on
+ * this control's own labels. */
+function TextSizeToggle() {
+  const [scale, setScale] = useState(readTextScale);
+  return (
+    <div style={{ display: "flex", gap: 6 }}>
+      {TEXT_SCALES.map((option) => (
+        <button
+          type="button"
+          key={option.label}
+          onClick={() => {
+            setTextScale(option.value);
+            setScale(option.value);
+          }}
+          aria-pressed={scale === option.value}
+          style={{
+            padding: "5px 14px",
+            border: "1px solid",
+            borderColor:
+              scale === option.value ? "var(--accent)" : "var(--border-hover)",
+            borderRadius: 6,
+            background:
+              scale === option.value ? "var(--accent-dim)" : "transparent",
+            color:
+              scale === option.value
+                ? "var(--accent)"
+                : "var(--text-secondary)",
+            cursor: "pointer",
+            fontSize: "var(--text-lg)",
+            fontFamily: "var(--font-ui)",
+            fontWeight: scale === option.value ? 500 : 400,
+            transition: "all var(--t-fast)",
+            whiteSpace: "nowrap",
+          }}
+        >
+          {option.label}
         </button>
       ))}
     </div>
@@ -179,7 +223,7 @@ function UpdatesRow() {
           background: "transparent",
           color: busy ? "var(--text-tertiary)" : "var(--text-primary)",
           cursor: busy ? "default" : "pointer",
-          fontSize: 13,
+          fontSize: "var(--text-lg)",
           fontFamily: "var(--font-ui)",
           fontVariantNumeric: "tabular-nums",
         }}
@@ -217,7 +261,7 @@ function UnitSystemToggle() {
                 ? "var(--accent)"
                 : "var(--text-secondary)",
             cursor: "pointer",
-            fontSize: 13,
+            fontSize: "var(--text-lg)",
             fontFamily: "var(--font-ui)",
             fontWeight: unitSystem === o.value ? 500 : 400,
             transition: "all var(--t-fast)",
@@ -292,7 +336,7 @@ export function SettingsPage() {
         <h1
           style={{
             margin: "0 0 4px",
-            fontSize: 22,
+            fontSize: "var(--text-3xl)",
             fontWeight: 700,
             letterSpacing: "-0.015em",
           }}
@@ -303,7 +347,7 @@ export function SettingsPage() {
           style={{
             margin: "0 0 4px",
             color: "var(--text-secondary)",
-            fontSize: 14,
+            fontSize: "var(--text-xl)",
           }}
         >
           Appearance, accessibility, and maintenance tools.
@@ -342,7 +386,7 @@ export function SettingsPage() {
               background: "transparent",
               color: "var(--text-primary)",
               cursor: "pointer",
-              fontSize: 13,
+              fontSize: "var(--text-lg)",
               fontFamily: "var(--font-ui)",
             }}
           >
@@ -351,6 +395,12 @@ export function SettingsPage() {
         </SettingRow>
         {/* Accessibility */}
         <Section>Accessibility</Section>
+        <SettingRow
+          label="Text size"
+          description="Scale text throughout the app. Hydra cannot follow your system text-size setting, so this control is independent of it."
+        >
+          <TextSizeToggle />
+        </SettingRow>
         <SettingRow
           label="Reduce motion"
           description="Suppress non-essential animations, including panel transitions and the canvas link animation. Takes precedence over the canvas animation control."
@@ -380,7 +430,7 @@ export function SettingsPage() {
               background: "transparent",
               color: "var(--text-primary)",
               cursor: "pointer",
-              fontSize: 13,
+              fontSize: "var(--text-lg)",
               fontFamily: "var(--font-ui)",
             }}
           >
@@ -399,7 +449,7 @@ export function SettingsPage() {
             style={{
               display: "flex",
               justifyContent: "space-between",
-              fontSize: 13,
+              fontSize: "var(--text-lg)",
             }}
           >
             <span style={{ color: "var(--text-secondary)" }}>Application</span>
@@ -416,7 +466,7 @@ export function SettingsPage() {
             style={{
               display: "flex",
               justifyContent: "space-between",
-              fontSize: 13,
+              fontSize: "var(--text-lg)",
             }}
           >
             <span style={{ color: "var(--text-secondary)" }}>Hydra engine</span>

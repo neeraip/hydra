@@ -64,7 +64,7 @@ export function StatusBar() {
         borderTop: "1px solid var(--border)",
         display: "flex",
         alignItems: "stretch",
-        fontSize: 11,
+        fontSize: "var(--text-sm)",
         fontFamily: "var(--font-ui)",
         color: "var(--text-secondary)",
         position: "relative",
@@ -109,7 +109,7 @@ export function StatusBar() {
           cursor: project ? "pointer" : "not-allowed",
           opacity: project ? undefined : 0.45,
           fontFamily: "var(--font-ui)",
-          fontSize: 11,
+          fontSize: "var(--text-sm)",
         }}
       >
         <IconCount
@@ -184,7 +184,7 @@ export function StatusBar() {
             cursor: "pointer",
             borderLeft: "1px solid var(--border)",
             fontFamily: "var(--font-mono)",
-            fontSize: 11,
+            fontSize: "var(--text-sm)",
           }}
           data-tooltip="Simulation info"
         >
@@ -252,7 +252,7 @@ function IconCount({
         gap: 3,
         color: n > 0 ? color : "var(--text-disabled)",
         fontFamily: "var(--font-mono)",
-        fontSize: 11,
+        fontSize: "var(--text-sm)",
       }}
     >
       <Icon style={{ width: 12, height: 12 }} />
@@ -321,7 +321,7 @@ function SolverHistoryPopover({
     >
       <div
         style={{
-          fontSize: 10,
+          fontSize: "var(--text-xs)",
           fontWeight: 600,
           color: "var(--text-tertiary)",
           textTransform: "uppercase",
@@ -333,7 +333,7 @@ function SolverHistoryPopover({
       </div>
       <div
         style={{
-          fontSize: 12,
+          fontSize: "var(--text-md)",
           color: "var(--text-primary)",
           fontFamily: "var(--font-mono)",
         }}
@@ -341,7 +341,11 @@ function SolverHistoryPopover({
         {timestepCount} timestep{timestepCount !== 1 ? "s" : ""} computed
       </div>
       <div
-        style={{ fontSize: 11, color: "var(--text-tertiary)", marginTop: 4 }}
+        style={{
+          fontSize: "var(--text-sm)",
+          color: "var(--text-tertiary)",
+          marginTop: 4,
+        }}
       >
         Detailed solver diagnostics will be available in a future update.
       </div>
@@ -350,7 +354,7 @@ function SolverHistoryPopover({
         onClick={onClose}
         style={{
           marginTop: 10,
-          fontSize: 11,
+          fontSize: "var(--text-sm)",
           color: accent,
           background: "transparent",
           border: "none",

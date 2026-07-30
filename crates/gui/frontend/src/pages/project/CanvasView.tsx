@@ -1,7 +1,6 @@
 import { XMarkIcon } from "@heroicons/react/16/solid";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useActiveProject, useAppState, useSimulation } from "../../AppContext";
-import { AnnotationSummary, MeasureOverlay } from "../../canvas/Annotations";
 import {
   type BasemapId,
   clampBasemapOpacity,
@@ -10,12 +9,17 @@ import {
 import { haversineMeters, wgs84ToSourceCrs } from "../../canvas/coords";
 import { Legend, type LegendThresholds } from "../../canvas/Legend";
 import { MapCanvas } from "../../canvas/MapCanvas";
+import type { MeasurePoint } from "../../canvas/measureSnap";
 import { CurrentPeriodProvider } from "../../canvas/period-context";
+import {
+  ASPECT_SLIDER_DEFAULT,
+  aspectScales,
+  clampSliderValue,
+} from "../../canvas/schematicAspect";
 import { useCanvasSelection } from "../../canvas/selection-context";
 import { Timeline } from "../../canvas/Timeline";
 import type {
   CanvasTool,
-  ClickPoint,
   LinkVariable,
   NodeVariable,
   ViewMode,
@@ -54,6 +58,7 @@ import { useReducedMotion } from "../../hooks/useReducedMotion";
 import { CanvasErrorBoundary } from "./CanvasView/CanvasErrorBoundary";
 import { CanvasToolbar } from "./CanvasView/CanvasToolbar";
 import { InvalidCrsOverlay } from "./CanvasView/InvalidCrsOverlay";
+import { SchematicAspectSlider } from "./CanvasView/SchematicAspectSlider";
 import { useCrsReprojection } from "./CanvasView/useCrsReprojection";
 import { ViewportControls } from "./CanvasView/ViewportControls";
 
@@ -79,6 +84,9 @@ interface CanvasPrefs {
   nodeVar: NodeVariable;
   linkVar: LinkVariable;
   colorMode: "relative" | "threshold";
+  /** Schematic layout aspect slider position. Missing in older prefs →
+   * defaults to the midpoint, i.e. the layout's native 120:80 spacing. */
+  schematicAspect: number;
 }
 
 /**
@@ -95,6 +103,7 @@ const CANVAS_PREF_DEFAULTS: CanvasPrefs = {
   nodeVar: "pressure",
   linkVar: "velocity",
   colorMode: "relative",
+  schematicAspect: ASPECT_SLIDER_DEFAULT,
 };
 
 // Allowlists so corrupt/stale localStorage can never inject invalid state.
@@ -270,6 +279,18 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
   const [basemapOpacity, setBasemapOpacity] = useState(
     CANVAS_PREF_DEFAULTS.basemapOpacity,
   );
+  // Schematic-only layout aspect. Persisted per project so a network tuned to
+  // be readable stays that way on reopen; the midpoint default means a project
+  // that never touched it is laid out exactly as before.
+  const [schematicAspect, setSchematicAspect] = useState(
+    CANVAS_PREF_DEFAULTS.schematicAspect,
+  );
+  // Memoised: MapCanvas keys its layout cache off this, and a fresh object per
+  // render would re-lay out the whole network every render.
+  const schematicScale = useMemo(
+    () => aspectScales(schematicAspect),
+    [schematicAspect],
+  );
 
   // ── Per-project canvas prefs: restore on project switch, persist on change.
   // `prefsLoadedFor` gates persisting so the write effect (which also re-runs
@@ -299,6 +320,8 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
     setNodeVar(pick("nodeVar", (v) => PREF_NODE_VARS.includes(v)));
     setLinkVar(pick("linkVar", (v) => PREF_LINK_VARS.includes(v)));
     setColorMode(pick("colorMode", (v) => PREF_COLOR_MODES.includes(v)));
+    // Clamp already maps missing/corrupt values to the default.
+    setSchematicAspect(clampSliderValue(prefs?.schematicAspect ?? Number.NaN));
     setPrefsLoadedFor(id);
   }, [project?.id]);
   // Cold-load gate: until the project row has arrived (an async fetch — it
@@ -318,6 +341,7 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
       nodeVar,
       linkVar,
       colorMode,
+      schematicAspect,
     };
     try {
       localStorage.setItem(canvasPrefsKey(id), JSON.stringify(prefs));
@@ -333,6 +357,7 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
     nodeVar,
     linkVar,
     colorMode,
+    schematicAspect,
   ]);
 
   useEffect(() => {
@@ -361,18 +386,33 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
   const [resetNorthKey, setResetNorthKey] = useState(0);
 
   // ── Measure clicks ──────────────────────────────────────────
-  // In map mode: geo points { lng, lat }. In schematic mode: SVG ClickPoints.
-  const [measureGeoPts, setMeasureGeoPts] = useState<
-    { lng: number; lat: number }[]
-  >([]);
-  const [measurePts, setMeasurePts] = useState<ClickPoint[]>([]);
-  const svgRef = useRef<SVGSVGElement | null>(null);
+  // Map mode only (the tool is disabled in schematic). Each entry is a snapped
+  // `[lng, lat]` plus what it snapped to, appended once per click — the canvas
+  // keeps no hidden anchor of its own, which is what made the old two-point
+  // reconstruction lose the first point and then measure from the wrong origin.
+  const [measurePoints, setMeasurePoints] = useState<MeasurePoint[]>([]);
 
-  /** Discard measure points in both coordinate spaces. */
   const clearAnnotations = useCallback(() => {
-    setMeasurePts([]);
-    setMeasureGeoPts([]);
+    setMeasurePoints([]);
   }, []);
+
+  // Positions alone for the canvas overlay; it does not need the snap targets.
+  const measurePointPositions = useMemo(
+    () => measurePoints.map((p) => p.position),
+    [measurePoints],
+  );
+
+  /** Append a click, restarting once a pair is complete. */
+  const handleMeasurePoint = useCallback(
+    (position: [number, number], target: MeasurePoint["target"]) => {
+      setMeasurePoints((prev) =>
+        prev.length >= 2
+          ? [{ position, target }]
+          : [...prev, { position, target }],
+      );
+    },
+    [],
+  );
 
   useEffect(() => {
     function onToolCommand(e: Event) {
@@ -448,6 +488,10 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
   // never load all periods at once.
   const [fetchedPeriodResult, setFetchedPeriodResult] =
     useState<PeriodResults | null>(null);
+  // Which target the held arrays were fetched for. Only needed to tell "this
+  // scrub failed, keep what's on screen" apart from "this scenario failed to
+  // load at all, so stop showing the last one's colours".
+  const loadedTargetRef = useRef<string | null>(null);
 
   // Topology-stale gate: the loaded results' digest no longer matches the
   // live model (nodes/links added, removed, or renamed), so the flat arrays
@@ -457,12 +501,23 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
   // (pre-digest .out files) pass through ungated.
   const currentPeriodResult = resultsTopologyStale ? null : fetchedPeriodResult;
 
-  // On project or scenario change, discard stale period results immediately.
-  // This guarantees overlays never show data from a previously active scenario.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: `project?.id` and `activeScenarioId` are intentional triggers to discard stale period data on switch.
+  // On project change, discard stale period results immediately: a different
+  // project is a different network, so the flat arrays cannot be reinterpreted
+  // against it at all.
+  //
+  // Deliberately NOT on scenario change. Clearing there repainted the whole
+  // network in the unsimulated grey scheme for the few frames until the new
+  // arrays arrived — reading as "this scenario was never run" — while
+  // `stableResultMeta` latched and kept the legend showing simulated. The two
+  // are meant to move together; the fetch effect below now latches the period
+  // data the same way, and `NetworkDataContext` holds the previous nodes until
+  // the new snapshot lands, so the held arrays stay paired with the geometry
+  // they were computed for.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `project?.id` is the intentional reset trigger.
   useEffect(() => {
     setFetchedPeriodResult(null);
-  }, [project?.id, activeScenarioId]);
+    loadedTargetRef.current = null;
+  }, [project?.id]);
 
   // Keyed on a value-stable digest of resultMeta rather than its object
   // identity: run completion publishes two fresh (equal) meta objects, which
@@ -475,12 +530,22 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
     ? `${resultGeneration}:${resultMeta.times.length}:${resultMeta.times[resultMeta.times.length - 1] ?? 0}:${resultMeta.qualityMode}`
     : null;
   useEffect(() => {
-    if (resultMetaKey == null || !project?.id) {
-      // No simulation exists for this scenario — discard any stale period result
-      // so the canvas and inspector show the "no results" state.
+    if (!project?.id) {
       setFetchedPeriodResult(null);
       return;
     }
+    if (resultMetaKey == null) {
+      // Metadata is null either because this scenario has no simulation, or
+      // because it hasn't loaded yet. Only the settled case means "no results":
+      // clearing while still loading is what produced the grey flash on every
+      // scenario switch. Mirrors the `stableResultMeta` latch above.
+      if (!resultMetaLoading) {
+        setFetchedPeriodResult(null);
+        loadedTargetRef.current = null;
+      }
+      return;
+    }
+    const target = `${project.id}:${activeScenarioId ?? "base"}`;
     let cancelled = false;
     // Clamp: on switching to a shorter result set this effect can run before
     // the playhead-clamp effect corrects currentHour, and an out-of-range
@@ -493,11 +558,19 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
       .then((r) => {
         if (!cancelled) {
           setFetchedPeriodResult(r);
+          loadedTargetRef.current = target;
         }
       })
-      // Decode failures reject (already console.error'd in getPeriodResults);
-      // keep the previous period visible rather than crashing the effect.
-      .catch(() => {});
+      // Decode failures reject (already console.error'd in getPeriodResults).
+      // Scrubbing within a target can keep the period already on screen. A
+      // target we have never loaded cannot: since the switch no longer clears
+      // eagerly, keeping it would leave the previous scenario's colours up for
+      // as long as the user stayed here.
+      .catch(() => {
+        if (!cancelled && loadedTargetRef.current !== target) {
+          setFetchedPeriodResult(null);
+        }
+      });
     return () => {
       cancelled = true;
     };
@@ -505,6 +578,7 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
     project?.id,
     currentHour,
     resultMetaKey,
+    resultMetaLoading,
     activeScenarioId,
     resultMeta?.times.length,
   ]);
@@ -613,17 +687,28 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
           break;
         case "d":
         case "D":
-          setActiveTool("measure");
-          clearAnnotations();
+          // Map mode only, matching the toolbar button's `disabled` state.
+          // Without this the shortcut was the one way into measure mode in
+          // schematic view, where it has no meaningful coordinate space to
+          // measure in.
+          if (viewMode === "map") {
+            setActiveTool("measure");
+            clearAnnotations();
+          }
           break;
+        // Map-only tools are gated here as well as on their buttons: the
+        // shortcut was the one way to reach them in schematic view, where a
+        // placed or moved node would take a coordinate from the synthetic BFS
+        // layout rather than the network's own geometry.
         case "e":
         case "E":
-          setActiveTool("edit");
+          if (viewMode === "map") setActiveTool("edit");
           break;
         case "n":
         case "N":
-          setActiveTool("add-node");
+          if (viewMode === "map") setActiveTool("add-node");
           break;
+        // Not gated: creating a link writes only its two node ids.
         case "l":
         case "L":
           setActiveTool("add-link");
@@ -648,7 +733,7 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [clearAnnotations, maxStep, projectView]);
+  }, [clearAnnotations, maxStep, projectView, viewMode]);
 
   const baseNodes = useNodes();
   const baseLinks = useLinks();
@@ -926,20 +1011,45 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
     if (activeTool !== "select") setInspectorView("closed");
   }, [activeTool, setInspectorView]);
 
+  // Publish the inspector's occupied width so canvas overlays pinned to the
+  // right edge can stay clear of it — the mirror of `--rail-effective-w` on the
+  // left. The condition must match the panel's own render condition below, or
+  // overlays shift for a panel that never appears.
+  const inspectorOccupies =
+    (inspectorView === "node" && stableSelectedNode != null) ||
+    (inspectorView === "link" && stableSelectedLink != null);
+  useEffect(() => {
+    document.documentElement.style.setProperty(
+      "--inspector-effective-w",
+      inspectorOccupies ? "var(--inspector-w)" : "0px",
+    );
+    return () => {
+      document.documentElement.style.setProperty(
+        "--inspector-effective-w",
+        "0px",
+      );
+    };
+  }, [inspectorOccupies]);
+
   // Reset to Select when switching to Schematic if the active tool is map-only.
+  //
+  // What makes a tool map-only is that it reads or writes a *coordinate*:
+  // `add-node` and `edit` place one, and the schematic's positions are synthetic
+  // BFS output rather than the network's own geometry; `measure` reports a
+  // distance, which is meaningless in that space. `add-link` writes only its two
+  // node ids, so it works anywhere — and schematic is arguably where connecting
+  // nodes is easiest to see.
   useEffect(() => {
     if (
       viewMode === "schematic" &&
       (activeTool === "edit" ||
         activeTool === "add-node" ||
-        activeTool === "add-link" ||
         activeTool === "measure")
     ) {
       setActiveTool("select");
     }
   }, [viewMode, activeTool]);
 
-  const svgCursor = activeTool === "measure" ? "crosshair" : "default";
   const canvasIsActive = isActive && projectView === "canvas";
 
   // Shared styling for toolbar controls that only work in map mode.
@@ -1156,53 +1266,15 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
 
   // Compute measure distance: geo in map mode, pixel-scaled in schematic.
   const measureDistanceM = useMemo(() => {
-    if (viewMode === "map" && measureGeoPts.length === 2) {
-      const [a, b] = measureGeoPts;
+    if (measurePoints.length === 2) {
+      const [a, b] = measurePoints.map((p) => ({
+        lng: p.position[0],
+        lat: p.position[1],
+      }));
       return haversineMeters(a.lng, a.lat, b.lng, b.lat);
     }
     return null;
-  }, [viewMode, measureGeoPts]);
-
-  const handleMeasurePoint = useCallback((lng: number, lat: number) => {
-    setMeasureGeoPts((prev) => {
-      if (prev.length >= 1) {
-        // Second click completes the measurement.
-        return [prev[0], { lng, lat }];
-      }
-      // Should not happen (MapCanvas manages first-click anchor),
-      // but guard just in case.
-      return [{ lng, lat }];
-    });
-  }, []);
-  // Convert a mouse event to SVG user-space coordinates (via the screen CTM)
-  // so measure points stay anchored to the network even when the SVG is scaled.
-  const eventToSvgPoint = useCallback(
-    (e: React.MouseEvent<SVGSVGElement>): ClickPoint | null => {
-      const svg = svgRef.current;
-      if (!svg) return null;
-      const pt = svg.createSVGPoint();
-      pt.x = e.clientX;
-      pt.y = e.clientY;
-      const ctm = svg.getScreenCTM();
-      if (!ctm) return null;
-      const local = pt.matrixTransform(ctm.inverse());
-      return { x: local.x, y: local.y };
-    },
-    [],
-  ); // svgRef is a stable ref
-
-  const handleSvgClick = useCallback(
-    (e: React.MouseEvent<SVGSVGElement>) => {
-      setShowBasemapDropdown(false);
-      if (activeTool === "measure") {
-        const p = eventToSvgPoint(e);
-        if (!p) return;
-        // Measure is two-point. Third click resets and starts a new one.
-        setMeasurePts((prev) => (prev.length >= 2 ? [p] : [...prev, p]));
-      }
-    },
-    [activeTool, eventToSvgPoint],
-  );
+  }, [measurePoints]);
 
   // Global click-outside: close any open toolbar dropdown when the user clicks
   // anywhere outside the toolbar.
@@ -1259,6 +1331,10 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
                   periodResult={currentPeriodResult}
                   isActive={canvasIsActive}
                   viewMode={viewMode}
+                  // The slider carries a track position; the layout wants per-axis
+                  // multipliers. Converting here keeps the geometric mapping in
+                  // one place instead of duplicating it in the canvas.
+                  schematicScale={schematicScale}
                   nodeVar={nodeVar}
                   linkVar={linkVar}
                   animateLinks={animateLinks}
@@ -1284,6 +1360,7 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
                   onCreateNodeRequest={handleCreateNodeRequest}
                   onCreateLinkRequest={handleCreateLinkRequest}
                   onMeasurePoint={handleMeasurePoint}
+                  measurePoints={measurePointPositions}
                   flyToNodeId={flyToState.nodeId}
                   flyToLinkId={flyToState.linkId}
                   flyToKey={flyToState.key}
@@ -1347,7 +1424,7 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
                 >
                   <span
                     style={{
-                      fontSize: 12,
+                      fontSize: "var(--text-md)",
                       color: "var(--text-secondary)",
                       fontFamily: "var(--font-ui)",
                     }}
@@ -1384,30 +1461,6 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
               <InvalidCrsOverlay onSetCrs={openCrsModal} />
             )}
 
-            {/* Legacy SVG annotation overlays (schematic mode only).
-               pointer-events: none — deck.gl handles all interaction. */}
-            {viewMode === "schematic" && (
-              // biome-ignore lint/a11y/useKeyWithClickEvents: SVG overlay handles pointer measurement gestures.
-              <svg
-                ref={svgRef}
-                width="100%"
-                height="100%"
-                viewBox="0 0 800 560"
-                preserveAspectRatio="xMidYMid meet"
-                style={{
-                  position: "absolute",
-                  inset: 0,
-                  pointerEvents: activeTool === "measure" ? "all" : "none",
-                  cursor: svgCursor,
-                }}
-                onClick={handleSvgClick}
-              >
-                <title>Schematic annotations overlay</title>
-                {/* Annotation overlays */}
-                <MeasureOverlay points={measurePts} />
-              </svg>
-            )}
-
             {/* Toolbar overlay — left offset tracks the floating rail width */}
             <CanvasToolbar
               viewMode={viewMode}
@@ -1427,32 +1480,43 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
               onOpenBasemapProviders={openBasemapProvidersModal}
               activeTool={activeTool}
               onToolChange={setActiveTool}
-              hasAnnotations={measureGeoPts.length > 0 || measurePts.length > 0}
+              measurePoints={measurePoints}
+              measureDistanceM={measureDistanceM}
               onClearAnnotations={clearAnnotations}
             />
 
-            {/* Annotation summary (measure) */}
-            {(activeTool === "measure" ||
-              measureGeoPts.length > 0 ||
-              measurePts.length > 0) && (
-              <AnnotationSummary
-                tool={activeTool}
-                measurePts={measurePts}
-                measureGeoPts={measureGeoPts}
-                measureDistanceM={measureDistanceM}
-                viewMode={viewMode}
-                onClear={clearAnnotations}
+            {/* Bottom-right control stack. One positioned column so each strip
+                sits above the last without an offset derived from its
+                neighbour's height, and so the inspector offset is applied once
+                for the whole stack rather than per strip. */}
+            <div
+              style={{
+                position: "absolute",
+                right: "calc(var(--inspector-effective-w, 0px) + 12px)",
+                bottom: 12,
+                zIndex: 11,
+                display: "flex",
+                flexDirection: "column",
+                alignItems: "flex-end",
+                gap: 8,
+              }}
+            >
+              {/* Schematic only: the geographic layout's spacing is the
+                  network's real geometry, not ours to redistribute. */}
+              {viewMode === "schematic" && (
+                <SchematicAspectSlider
+                  value={schematicAspect}
+                  onChange={setSchematicAspect}
+                />
+              )}
+              <ViewportControls
+                mapOnly={mapOnly}
+                onZoomIn={() => setZoomInKey((k) => k + 1)}
+                onZoomOut={() => setZoomOutKey((k) => k + 1)}
+                onResetNorth={() => setResetNorthKey((k) => k + 1)}
+                onFit={() => setMapFitKey((k) => k + 1)}
               />
-            )}
-
-            {/* Floating viewport controls */}
-            <ViewportControls
-              mapOnly={mapOnly}
-              onZoomIn={() => setZoomInKey((k) => k + 1)}
-              onZoomOut={() => setZoomOutKey((k) => k + 1)}
-              onResetNorth={() => setResetNorthKey((k) => k + 1)}
-              onFit={() => setMapFitKey((k) => k + 1)}
-            />
+            </div>
 
             {/* Inspector panel — node or link detail view */}
             {inspectorView === "node" && stableSelectedNode && (
@@ -1557,7 +1621,12 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
             className="timeline-bar"
             style={{ justifyContent: "center", gap: 8 }}
           >
-            <span style={{ color: "var(--text-tertiary)", fontSize: 12 }}>
+            <span
+              style={{
+                color: "var(--text-tertiary)",
+                fontSize: "var(--text-md)",
+              }}
+            >
               {resultMetaLoading
                 ? "Loading simulation state..."
                 : isSteadyState

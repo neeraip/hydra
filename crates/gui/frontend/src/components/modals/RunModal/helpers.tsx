@@ -57,12 +57,17 @@ export function SummaryGrid({ params }: { params: SimParams }) {
             minWidth: 0,
           }}
         >
-          <span style={{ fontSize: 11, color: "var(--text-tertiary)" }}>
+          <span
+            style={{
+              fontSize: "var(--text-sm)",
+              color: "var(--text-tertiary)",
+            }}
+          >
             {r.label}
           </span>
           <span
             style={{
-              fontSize: 12,
+              fontSize: "var(--text-md)",
               color: "var(--text-primary)",
               overflow: "hidden",
               textOverflow: "ellipsis",
@@ -82,7 +87,7 @@ export function Label({ children }: { children: React.ReactNode }) {
   return (
     <span
       style={{
-        fontSize: 11,
+        fontSize: "var(--text-sm)",
         color: "var(--text-tertiary)",
         textTransform: "uppercase",
         letterSpacing: "0.05em",
@@ -112,7 +117,7 @@ export function SimStateBadge({ state }: { state: string }) {
   return (
     <span
       style={{
-        fontSize: 10,
+        fontSize: "var(--text-xs)",
         fontWeight: 600,
         letterSpacing: "0.04em",
         color: meta.color,
@@ -130,7 +135,7 @@ export function ActiveBadge() {
   return (
     <span
       style={{
-        fontSize: 10,
+        fontSize: "var(--text-xs)",
         fontWeight: 600,
         letterSpacing: "0.04em",
         color: "var(--accent)",

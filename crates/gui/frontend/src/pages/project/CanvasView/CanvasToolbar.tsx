@@ -2,11 +2,9 @@ import {
   ArrowsRightLeftIcon,
   ChevronUpDownIcon,
   CursorArrowRaysIcon,
-  EyeIcon,
   LinkIcon,
   MapPinIcon,
   PencilSquareIcon,
-  XMarkIcon,
 } from "@heroicons/react/16/solid";
 import type { CSSProperties, Dispatch, SetStateAction } from "react";
 import {
@@ -16,12 +14,14 @@ import {
   clampBasemapOpacity,
 } from "../../../canvas/Basemap";
 import { useCanvasLayers } from "../../../canvas/layers-context";
+import type { MeasurePoint } from "../../../canvas/measureSnap";
 import type { CanvasTool, ViewMode } from "../../../canvas/types";
 import {
   useBasemapProviders,
   useBasemapVisibility,
 } from "../../../hooks/basemapProviders";
 import { CoordStatusIndicator } from "./CoordStatusIndicator";
+import { MeasurePopover } from "./MeasurePopover";
 
 /** Fixed-size square icon button so toolbar entries align on one grid. */
 const ICON_BTN_STYLE: CSSProperties = {
@@ -60,7 +60,8 @@ export function CanvasToolbar({
   onOpenBasemapProviders,
   activeTool,
   onToolChange,
-  hasAnnotations,
+  measurePoints,
+  measureDistanceM,
   onClearAnnotations,
 }: {
   viewMode: ViewMode;
@@ -82,8 +83,10 @@ export function CanvasToolbar({
   onOpenBasemapProviders: () => void;
   activeTool: CanvasTool;
   onToolChange: (t: CanvasTool) => void;
-  /** True when measure annotations exist (shows the clear button). */
-  hasAnnotations: boolean;
+  /** Committed measure points — drives the readout under the measure button. */
+  measurePoints: readonly MeasurePoint[];
+  /** Measured distance in metres, once two points exist. */
+  measureDistanceM: number | null;
   onClearAnnotations: () => void;
 }) {
   const { layers: canvasLayers, setLayer } = useCanvasLayers();
@@ -119,7 +122,7 @@ export function CanvasToolbar({
           background: basemap === id ? "var(--accent-dim)" : "transparent",
           color: basemap === id ? "var(--accent)" : "var(--text-secondary)",
           cursor: "pointer",
-          fontSize: 12,
+          fontSize: "var(--text-md)",
           textAlign: "left",
           fontFamily: "var(--font-ui)",
         }}
@@ -172,7 +175,7 @@ export function CanvasToolbar({
                   viewMode === m ? "var(--accent)" : "var(--text-secondary)",
                 padding: "3px 10px",
                 borderRadius: 4,
-                fontSize: 11,
+                fontSize: "var(--text-sm)",
                 fontWeight: 600,
                 cursor: "pointer",
                 fontFamily: "var(--font-ui)",
@@ -215,7 +218,7 @@ export function CanvasToolbar({
             style={{
               width: "auto",
               padding: "0 8px",
-              fontSize: 12,
+              fontSize: "var(--text-md)",
               gap: 4,
               display: "flex",
               alignItems: "center",
@@ -260,7 +263,7 @@ export function CanvasToolbar({
                   <div
                     style={{
                       padding: "6px 12px 2px",
-                      fontSize: 10,
+                      fontSize: "var(--text-xs)",
                       fontWeight: 600,
                       letterSpacing: "0.06em",
                       textTransform: "uppercase",
@@ -277,7 +280,7 @@ export function CanvasToolbar({
                 <div
                   style={{
                     padding: "7px 12px",
-                    fontSize: 11,
+                    fontSize: "var(--text-sm)",
                     color: "var(--text-tertiary)",
                     fontFamily: "var(--font-ui)",
                   }}
@@ -300,7 +303,7 @@ export function CanvasToolbar({
               >
                 <span
                   style={{
-                    fontSize: 10,
+                    fontSize: "var(--text-xs)",
                     fontWeight: 600,
                     letterSpacing: "0.06em",
                     textTransform: "uppercase",
@@ -331,7 +334,7 @@ export function CanvasToolbar({
                 />
                 <span
                   style={{
-                    fontSize: 10,
+                    fontSize: "var(--text-xs)",
                     color: "var(--text-secondary)",
                     fontFamily: "var(--font-mono)",
                     fontVariantNumeric: "tabular-nums",
@@ -358,7 +361,7 @@ export function CanvasToolbar({
                   background: "transparent",
                   color: "var(--text-secondary)",
                   cursor: "pointer",
-                  fontSize: 12,
+                  fontSize: "var(--text-md)",
                   textAlign: "left",
                   fontFamily: "var(--font-ui)",
                 }}
@@ -381,7 +384,7 @@ export function CanvasToolbar({
             style={{
               width: "auto",
               padding: "0 8px",
-              fontSize: 12,
+              fontSize: "var(--text-md)",
               gap: 4,
               display: "flex",
               alignItems: "center",
@@ -449,72 +452,102 @@ export function CanvasToolbar({
           <MapPinIcon style={ICON_14} />
         </button>
 
+        {/* Not map-only, unlike its neighbours: a link carries no coordinates of
+            its own — `create_link` takes two node ids — so the schematic's
+            synthetic positions are irrelevant to it. Connecting nodes is often
+            easier there, where the layout makes connectivity legible. */}
         <button
           type="button"
           className={`tool-btn${activeTool === "add-link" ? " active" : ""}`}
-          disabled={mapOnly}
           onClick={() => onToolChange("add-link")}
-          data-tooltip={mapOnlyTooltip("Add link (L)")}
+          data-tooltip="Add link (L)"
           data-tooltip-pos="bottom"
           aria-label="Add link"
-          style={{ ...ICON_BTN_STYLE, ...mapOnlyDim }}
+          style={ICON_BTN_STYLE}
         >
           <LinkIcon style={ICON_14} />
         </button>
 
-        {/* Measure distance */}
-        <button
-          type="button"
-          className={`tool-btn${activeTool === "measure" ? " active" : ""}`}
-          disabled={mapOnly}
-          onClick={() => {
-            onToolChange("measure");
-            onClearAnnotations();
-          }}
-          data-tooltip={mapOnlyTooltip("Measure distance (D)")}
-          data-tooltip-pos="bottom"
-          aria-label="Measure distance"
-          style={{
-            fontSize: 12,
-            fontWeight: 600,
-            ...ICON_BTN_STYLE,
-            ...mapOnlyDim,
-          }}
-        >
-          <ArrowsRightLeftIcon style={ICON_14} />
-        </button>
-
-        {hasAnnotations && viewMode === "map" && (
+        {/* Measure distance, with its readout anchored underneath */}
+        <div style={{ position: "relative", display: "inline-flex" }}>
           <button
             type="button"
-            className="tool-btn"
-            onClick={onClearAnnotations}
-            data-tooltip="Clear annotations"
+            className={`tool-btn${activeTool === "measure" ? " active" : ""}`}
+            disabled={mapOnly}
+            onClick={() => {
+              onToolChange("measure");
+              onClearAnnotations();
+            }}
+            data-tooltip={mapOnlyTooltip("Measure distance (D)")}
             data-tooltip-pos="bottom"
-            aria-label="Clear annotations"
+            aria-label="Measure distance"
             style={{
-              fontSize: 11,
-              color: "var(--text-tertiary)",
+              fontSize: "var(--text-md)",
+              fontWeight: 600,
               ...ICON_BTN_STYLE,
+              ...mapOnlyDim,
             }}
           >
-            <XMarkIcon style={ICON_14} />
+            <ArrowsRightLeftIcon style={ICON_14} />
           </button>
-        )}
+          {activeTool === "measure" && (
+            <MeasurePopover
+              points={measurePoints}
+              distanceM={measureDistanceM}
+              onExit={() => {
+                onClearAnnotations();
+                onToolChange("select");
+              }}
+            />
+          )}
+        </div>
 
         <div className="tool-divider" />
 
-        {/* Layer visibility toggles */}
+        {/* Layer visibility toggles.
+            Nodes and links toggle independently: one "base model" switch could
+            only turn the network off wholesale, and the useful move is dropping
+            one so the other is legible — links in a dense area, or nodes when
+            tracing connectivity. The glyphs match the inspector's convention, a
+            dot for a node and a bar for a link. */}
         <button
           type="button"
-          className={`tool-btn${canvasLayers.model ? " active" : ""}`}
-          onClick={() => setLayer("model", !canvasLayers.model)}
-          data-tooltip="Toggle base model"
+          className={`tool-btn${canvasLayers.nodes ? " active" : ""}`}
+          onClick={() => setLayer("nodes", !canvasLayers.nodes)}
+          data-tooltip="Toggle nodes"
           data-tooltip-pos="bottom"
-          aria-label="Toggle base model"
+          aria-label="Toggle nodes"
           style={ICON_BTN_STYLE}
         >
-          <EyeIcon style={ICON_14} />
+          <span
+            aria-hidden
+            style={{
+              width: 9,
+              height: 9,
+              borderRadius: "50%",
+              background: "currentColor",
+            }}
+          />
+        </button>
+
+        <button
+          type="button"
+          className={`tool-btn${canvasLayers.links ? " active" : ""}`}
+          onClick={() => setLayer("links", !canvasLayers.links)}
+          data-tooltip="Toggle links"
+          data-tooltip-pos="bottom"
+          aria-label="Toggle links"
+          style={ICON_BTN_STYLE}
+        >
+          <span
+            aria-hidden
+            style={{
+              width: 13,
+              height: 2.5,
+              borderRadius: 2,
+              background: "currentColor",
+            }}
+          />
         </button>
 
         <button
@@ -523,7 +556,7 @@ export function CanvasToolbar({
           onClick={() => setLayer("nodeLabels", !canvasLayers.nodeLabels)}
           data-tooltip="Toggle node labels"
           data-tooltip-pos="bottom"
-          style={{ fontSize: 11, fontWeight: 600 }}
+          style={{ fontSize: "var(--text-sm)", fontWeight: 600 }}
         >
           Aa
         </button>
@@ -534,7 +567,7 @@ export function CanvasToolbar({
           onClick={() => setLayer("linkLabels", !canvasLayers.linkLabels)}
           data-tooltip="Toggle link labels"
           data-tooltip-pos="bottom"
-          style={{ fontSize: 11, fontWeight: 600 }}
+          style={{ fontSize: "var(--text-sm)", fontWeight: 600 }}
         >
           Ll
         </button>

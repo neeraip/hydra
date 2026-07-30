@@ -73,7 +73,7 @@ function MassBalanceAudit({
           <>
             <div
               style={{
-                fontSize: 11,
+                fontSize: "var(--text-sm)",
                 color: "var(--text-tertiary)",
                 marginBottom: 6,
               }}
@@ -168,7 +168,7 @@ function EnergyAudit({ periodCount }: { periodCount: number | null }) {
         {pumpEnergy.length === 0 && (
           <div
             style={{
-              fontSize: 11,
+              fontSize: "var(--text-sm)",
               color: "var(--text-tertiary)",
               marginTop: 12,
               lineHeight: 1.4,

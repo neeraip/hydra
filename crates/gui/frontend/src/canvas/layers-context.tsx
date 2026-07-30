@@ -16,7 +16,17 @@ import {
 } from "react";
 
 export interface CanvasLayers {
-  model: boolean; // Base model nodes + links
+  // Nodes and links toggle separately. One "base model" switch could only turn
+  // the network off wholesale, and the common want is to drop one so the other
+  // is legible — links in a dense area, or nodes when tracing connectivity.
+  //
+  // Deliberately node/link rather than element type: that is the one split that
+  // carries over to a drainage network, which also has nodes (junctions,
+  // outfalls, storage) and links (conduits, weirs, orifices). Filtering by type
+  // or attribute needs the element schema `hydra-common` defers until a second
+  // engine exists.
+  nodes: boolean;
+  links: boolean;
   nodeLabels: boolean; // Node label text
   linkLabels: boolean; // Link label text
   pressZone: boolean; // Pressure zone overlay (future)
@@ -29,7 +39,8 @@ interface CanvasLayersCtx {
 }
 
 const DEFAULT: CanvasLayers = {
-  model: true,
+  nodes: true,
+  links: true,
   nodeLabels: false,
   linkLabels: false,
   pressZone: false,

@@ -141,7 +141,7 @@ export function DeleteConfirmModal({
               id="delete-modal-title"
               style={{
                 margin: 0,
-                fontSize: 14,
+                fontSize: "var(--text-xl)",
                 fontWeight: 600,
                 color: "var(--text-primary)",
               }}
@@ -151,7 +151,7 @@ export function DeleteConfirmModal({
             <p
               style={{
                 margin: "4px 0 0",
-                fontSize: 12,
+                fontSize: "var(--text-md)",
                 color: "var(--text-secondary)",
                 lineHeight: 1.5,
               }}
@@ -176,7 +176,7 @@ export function DeleteConfirmModal({
               alignItems: "flex-start",
               gap: 8,
               marginBottom: 16,
-              fontSize: 12,
+              fontSize: "var(--text-md)",
               lineHeight: 1.5,
               color: "var(--text-secondary)",
               cursor: "pointer",
@@ -216,7 +216,7 @@ export function DeleteConfirmModal({
               border: "1px solid var(--border)",
               borderRadius: 6,
               padding: "6px 14px",
-              fontSize: 12,
+              fontSize: "var(--text-md)",
               fontWeight: 500,
               color: "var(--text-secondary)",
               cursor: "pointer",
@@ -240,7 +240,7 @@ export function DeleteConfirmModal({
               border: "none",
               borderRadius: 6,
               padding: "6px 14px",
-              fontSize: 12,
+              fontSize: "var(--text-md)",
               fontWeight: 600,
               color: "#fff",
               cursor: "pointer",

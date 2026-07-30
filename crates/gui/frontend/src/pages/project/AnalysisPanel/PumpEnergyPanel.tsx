@@ -34,7 +34,9 @@ export function PumpEnergyPanel() {
     return (
       <div className="insights-card">
         <SectionHeader>Pump Energy</SectionHeader>
-        <div style={{ fontSize: 12, color: "var(--text-tertiary)" }}>
+        <div
+          style={{ fontSize: "var(--text-md)", color: "var(--text-tertiary)" }}
+        >
           All pumps are offline or have zero power.
         </div>
       </div>
@@ -79,7 +81,7 @@ export function PumpEnergyPanel() {
           >
             <span
               style={{
-                fontSize: 12,
+                fontSize: "var(--text-md)",
                 color: "var(--text-secondary)",
                 minWidth: 48,
               }}
@@ -107,7 +109,7 @@ export function PumpEnergyPanel() {
             </div>
             <span
               style={{
-                fontSize: 12,
+                fontSize: "var(--text-md)",
                 fontFamily: "var(--font-mono)",
                 color: "var(--text-primary)",
                 minWidth: 80,
@@ -122,7 +124,7 @@ export function PumpEnergyPanel() {
       {hiddenCount > 0 && (
         <div
           style={{
-            fontSize: 11,
+            fontSize: "var(--text-sm)",
             fontStyle: "italic",
             color: "var(--text-tertiary)",
             marginBottom: 8,
@@ -146,7 +148,7 @@ export function PumpEnergyPanel() {
         >
           <span
             style={{
-              fontSize: 12,
+              fontSize: "var(--text-md)",
               fontWeight: 600,
               color: "var(--text-secondary)",
             }}
@@ -155,7 +157,7 @@ export function PumpEnergyPanel() {
           </span>
           <span
             style={{
-              fontSize: 12,
+              fontSize: "var(--text-md)",
               fontFamily: "var(--font-mono)",
               color: "var(--text-primary)",
               textAlign: "right",

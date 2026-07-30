@@ -54,7 +54,7 @@ export function Header({
           <h1
             style={{
               margin: 0,
-              fontSize: 22,
+              fontSize: "var(--text-3xl)",
               fontWeight: 600,
               color: "var(--text-primary)",
               lineHeight: 1.3,
@@ -76,7 +76,7 @@ export function Header({
           >
             <span
               style={{
-                fontSize: 10,
+                fontSize: "var(--text-xs)",
                 fontWeight: 700,
                 letterSpacing: "0.06em",
                 padding: "2px 7px",
@@ -89,10 +89,15 @@ export function Header({
               {engine?.pill ?? "??"}
             </span>
             <Dot color={stateColor} />
-            <span style={{ fontSize: 12, color: stateColor }}>
+            <span style={{ fontSize: "var(--text-md)", color: stateColor }}>
               {stateLabel}
             </span>
-            <span style={{ fontSize: 12, color: "var(--text-tertiary)" }}>
+            <span
+              style={{
+                fontSize: "var(--text-md)",
+                color: "var(--text-tertiary)",
+              }}
+            >
               · {project.scenarioCount} scenario
               {project.scenarioCount !== 1 ? "s" : ""}
             </span>

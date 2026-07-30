@@ -103,7 +103,7 @@ export function NodeBody({
             <tr>
               <td
                 style={{
-                  fontSize: 12,
+                  fontSize: "var(--text-md)",
                   color: "var(--text-tertiary)",
                   padding: "4px 0",
                   width: "45%",
@@ -129,7 +129,7 @@ export function NodeBody({
                     borderRadius: 4,
                     background: `${accent}14`,
                     color: accent,
-                    fontSize: 11,
+                    fontSize: "var(--text-sm)",
                     fontFamily: "var(--font-mono)",
                     cursor: onOpenPattern ? "pointer" : "default",
                     fontWeight: 500,

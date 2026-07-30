@@ -274,7 +274,7 @@ function CriteriaBar({
     >
       <span
         style={{
-          fontSize: 11,
+          fontSize: "var(--text-sm)",
           fontWeight: 600,
           letterSpacing: "0.05em",
           textTransform: "uppercase",
@@ -283,7 +283,9 @@ function CriteriaBar({
       >
         Criterion
       </span>
-      <span style={{ fontSize: 12, color: "var(--text-secondary)" }}>
+      <span
+        style={{ fontSize: "var(--text-md)", color: "var(--text-secondary)" }}
+      >
         Min service pressure
       </span>
       <input
@@ -301,14 +303,16 @@ function CriteriaBar({
           border: "1px solid var(--border)",
           borderRadius: 4,
           color: "var(--text-primary)",
-          fontSize: 12,
+          fontSize: "var(--text-md)",
           fontFamily: "var(--font-mono)",
           padding: "3px 6px",
           textAlign: "right",
           outline: "none",
         }}
       />
-      <span style={{ fontSize: 12, color: "var(--text-tertiary)" }}>
+      <span
+        style={{ fontSize: "var(--text-md)", color: "var(--text-tertiary)" }}
+      >
         {unitLabel("pressure", sys)}
       </span>
       {minPressure !== DEFAULT_MIN_PRESSURE_M && (
@@ -319,7 +323,7 @@ function CriteriaBar({
             background: "transparent",
             border: "none",
             color: "var(--accent)",
-            fontSize: 11,
+            fontSize: "var(--text-sm)",
             cursor: "pointer",
             fontFamily: "var(--font-ui)",
           }}

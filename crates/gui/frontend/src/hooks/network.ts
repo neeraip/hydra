@@ -7,6 +7,7 @@ import { listen } from "@tauri-apps/api/event";
 import { useEffect, useMemo, useState } from "react";
 import type { Link, LinkType, Node, NodeType, Pattern } from "../types";
 import { invoke, isTauri, tryInvoke, tryInvokeOr } from "./ipc";
+import type { ValidationFinding } from "./issues";
 import type { NetworkSummary } from "./NetworkDataContext";
 import { useNetworkData } from "./NetworkDataContext";
 import { useNetworkVersion } from "./NetworkVersionContext";
@@ -315,17 +316,30 @@ export async function fetchNetworkSnapshot(): Promise<{
  * `engine` is required rather than defaulting: the picker filter and the
  * parser both depend on it, and every `.inp` looks alike from here.
  */
-export async function openAndLoadNetwork(engine: string): Promise<{
-  nodes: Node[];
-  links: Link[];
-  fileStem: string;
-} | null> {
+export async function openAndLoadNetwork(
+  engine: string,
+): Promise<ImportedModel | null> {
   if (!isTauri()) return null;
-  return await invoke<{
+  return await invoke<ImportedModel | null>("open_and_load_network", {
+    engine,
+  });
+}
+
+/**
+ * A model just read by the import dialog.
+ *
+ * `findings` is empty when the model is ready to run. Non-empty means it was
+ * read but is not yet simulable, and these are the very findings the Issues
+ * panel will list once the project opens — the wizard reports the count rather
+ * than importing silently.
+ */
+export interface ImportedModel {
+  network: {
     nodes: Node[];
     links: Link[];
     fileStem: string;
-  } | null>("open_and_load_network", { engine });
+  };
+  findings: ValidationFinding[];
 }
 
 /** Convert backend/Tauri import errors into concise toast-safe text. */

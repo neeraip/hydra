@@ -43,7 +43,7 @@ export function AnalysisView() {
               onClick={() => setActiveTab(tab.id)}
               style={{
                 padding: "10px 16px 9px",
-                fontSize: 12,
+                fontSize: "var(--text-md)",
                 fontWeight: isActive ? 600 : 500,
                 fontFamily: "var(--font-ui)",
                 color: isActive

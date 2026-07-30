@@ -597,10 +597,18 @@ export function CommandPalette() {
         // engine — `.inp` alone does not say which model format a file is.
         if (!activeProjectEngine) return;
         openAndLoadNetwork(activeProjectEngine)
-          .then((net) => {
-            if (net) {
+          .then((imported) => {
+            if (imported) {
               bumpNetwork();
-              showToast(`Loaded ${net.nodes.length} nodes`, "success");
+              const { network, findings } = imported;
+              // A model that read but is not yet simulable must not report as
+              // a plain success — the Issues panel is where it gets resolved.
+              showToast(
+                findings.length > 0
+                  ? `Loaded ${network.nodes.length} nodes · ${findings.length} issue${findings.length === 1 ? "" : "s"} to resolve`
+                  : `Loaded ${network.nodes.length} nodes`,
+                findings.length > 0 ? "warn" : "success",
+              );
             }
           })
           .catch((err) => {
@@ -984,14 +992,14 @@ export function CommandPalette() {
               border: "none",
               background: "transparent",
               color: "var(--text-primary)",
-              fontSize: 14,
+              fontSize: "var(--text-xl)",
               fontFamily: "var(--font-ui)",
               outline: "none",
             }}
           />
           <kbd
             style={{
-              fontSize: 11,
+              fontSize: "var(--text-sm)",
               color: "var(--text-tertiary)",
               background: "var(--bg-input)",
               border: "1px solid var(--border-hover)",
@@ -1015,7 +1023,7 @@ export function CommandPalette() {
                 padding: "24px 16px",
                 textAlign: "center",
                 color: "var(--text-tertiary)",
-                fontSize: 13,
+                fontSize: "var(--text-lg)",
               }}
             >
               {findMode ? (
@@ -1029,7 +1037,7 @@ export function CommandPalette() {
               <div
                 style={{
                   padding: "8px 16px 4px",
-                  fontSize: 11,
+                  fontSize: "var(--text-sm)",
                   color: "var(--text-tertiary)",
                   fontWeight: 600,
                   letterSpacing: "0.06em",
@@ -1073,7 +1081,7 @@ export function CommandPalette() {
                       <div
                         style={{
                           fontFamily: "var(--font-mono)",
-                          fontSize: 13,
+                          fontSize: "var(--text-lg)",
                           color: "var(--text-primary)",
                         }}
                       >
@@ -1081,7 +1089,7 @@ export function CommandPalette() {
                         <span
                           style={{
                             marginLeft: 8,
-                            fontSize: 11,
+                            fontSize: "var(--text-sm)",
                             color: "var(--text-tertiary)",
                             fontFamily: "var(--font-ui)",
                           }}
@@ -1091,7 +1099,7 @@ export function CommandPalette() {
                       </div>
                       <div
                         style={{
-                          fontSize: 12,
+                          fontSize: "var(--text-md)",
                           color: "var(--text-tertiary)",
                           fontFamily: "var(--font-mono)",
                           marginTop: 1,
@@ -1115,7 +1123,7 @@ export function CommandPalette() {
                   <div
                     style={{
                       padding: "6px 16px 2px",
-                      fontSize: 11,
+                      fontSize: "var(--text-sm)",
                       fontWeight: 600,
                       letterSpacing: "0.07em",
                       textTransform: "uppercase",
@@ -1152,7 +1160,7 @@ export function CommandPalette() {
                           justifyContent: "space-between",
                           gap: 12,
                           fontFamily: "var(--font-ui)",
-                          fontSize: 13,
+                          fontSize: "var(--text-lg)",
                           transition:
                             "background var(--t-fast), color var(--t-fast)",
                         }}
@@ -1171,7 +1179,7 @@ export function CommandPalette() {
                           {cmd.description && (
                             <div
                               style={{
-                                fontSize: 12,
+                                fontSize: "var(--text-md)",
                                 color: "var(--text-tertiary)",
                                 marginTop: 1,
                                 whiteSpace: "nowrap",
@@ -1186,7 +1194,7 @@ export function CommandPalette() {
                         {cmd.shortcut && (
                           <kbd
                             style={{
-                              fontSize: 11,
+                              fontSize: "var(--text-sm)",
                               color: "var(--text-tertiary)",
                               background: "var(--bg-input)",
                               border: "1px solid var(--border)",
@@ -1217,7 +1225,7 @@ export function CommandPalette() {
             display: "flex",
             gap: 16,
             color: "var(--text-tertiary)",
-            fontSize: 11,
+            fontSize: "var(--text-sm)",
           }}
         >
           {[
@@ -1236,7 +1244,7 @@ export function CommandPalette() {
                   borderRadius: 3,
                   padding: "1px 4px",
                   fontFamily: "var(--font-mono)",
-                  fontSize: 11,
+                  fontSize: "var(--text-sm)",
                 }}
               >
                 {key}

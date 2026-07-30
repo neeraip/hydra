@@ -360,13 +360,28 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   // Tauri window-close guard: prompt when editor drafts are dirty. Outside a
   // Tauri shell (plain vite dev server) this effect is a no-op.
+  //
+  // Registering this listener makes the webview solely responsible for
+  // closing the window. Tauri's Rust side prevents the close as soon as *any*
+  // JS listener for the event exists, and its API wrapper only calls
+  // `window.destroy()` when the handler leaves `preventDefault` unset — which
+  // also means `core:window:allow-destroy` must stay in the app's capability
+  // set (it is not part of `core:window:default`). Without it `destroy()` is
+  // denied and the window cannot be closed at all.
   useEffect(() => {
     if (!isTauri()) return;
     let disposed = false;
     let unlisten: (() => void) | null = null;
     getCurrentWindow()
       .onCloseRequested((event) => {
-        if (!confirmDiscardDrafts("Close")) event.preventDefault();
+        // Fail open. A throw here would skip `destroy()` and wedge the window
+        // shut for the rest of the session — the user's only way out being to
+        // kill the process. Losing staged edits is the lesser harm.
+        try {
+          if (!confirmDiscardDrafts("Close")) event.preventDefault();
+        } catch (err) {
+          console.warn("[app] close guard failed; allowing close:", err);
+        }
       })
       .then((fn) => {
         // StrictMode double-mount: dispose a late-resolving listener instead

@@ -293,14 +293,19 @@ export function ScenariosPanel({
         >
           <span
             style={{
-              fontSize: 14,
+              fontSize: "var(--text-xl)",
               fontWeight: 600,
               color: "var(--text-primary)",
             }}
           >
             Scenarios
           </span>
-          <span style={{ fontSize: 12, color: "var(--text-tertiary)" }}>
+          <span
+            style={{
+              fontSize: "var(--text-md)",
+              color: "var(--text-tertiary)",
+            }}
+          >
             {scenarios.length} scenario{scenarios.length !== 1 ? "s" : ""}
           </span>
 
@@ -325,7 +330,7 @@ export function ScenariosPanel({
               borderRadius: 6,
               background: `${accent}22`,
               color: accent,
-              fontSize: 12,
+              fontSize: "var(--text-md)",
               fontWeight: 500,
               cursor: hasNetwork ? "pointer" : "default",
               opacity: hasNetwork ? 1 : 0.45,
@@ -404,7 +409,7 @@ export function ScenariosPanel({
                 padding: "32px 20px",
                 textAlign: "center",
                 color: "var(--text-tertiary)",
-                fontSize: 13,
+                fontSize: "var(--text-lg)",
                 borderTop: "1px solid var(--border)",
               }}
             >
@@ -423,7 +428,7 @@ export function ScenariosPanel({
                     border: "none",
                     color: accent,
                     cursor: "pointer",
-                    fontSize: 13,
+                    fontSize: "var(--text-lg)",
                     padding: 0,
                     fontFamily: "var(--font-ui)",
                     textDecoration: "underline",

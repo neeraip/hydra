@@ -13,7 +13,7 @@ export function PropRow({
     <tr>
       <td
         style={{
-          fontSize: 12,
+          fontSize: "var(--text-md)",
           color: "var(--text-tertiary)",
           padding: "4px 0",
           width: "45%",
@@ -23,7 +23,7 @@ export function PropRow({
       </td>
       <td
         style={{
-          fontSize: 12,
+          fontSize: "var(--text-md)",
           padding: "4px 0",
           fontFamily: "var(--font-mono)",
           color: accent ?? "var(--text-primary)",
@@ -57,7 +57,7 @@ export function BigValue({
     >
       <span
         style={{
-          fontSize: 22,
+          fontSize: "var(--text-3xl)",
           fontWeight: 700,
           fontFamily: "var(--font-mono)",
           color,
@@ -68,7 +68,7 @@ export function BigValue({
       </span>
       <span
         style={{
-          fontSize: 10,
+          fontSize: "var(--text-xs)",
           color: "var(--text-tertiary)",
           textTransform: "uppercase",
           letterSpacing: "0.07em",
@@ -103,7 +103,7 @@ export function SecondaryCell({
     >
       <span
         style={{
-          fontSize: 10,
+          fontSize: "var(--text-xs)",
           color: "var(--text-tertiary)",
           textTransform: "uppercase",
           letterSpacing: "0.06em",
@@ -113,7 +113,7 @@ export function SecondaryCell({
       </span>
       <span
         style={{
-          fontSize: 13,
+          fontSize: "var(--text-lg)",
           fontWeight: 600,
           fontFamily: "var(--font-mono)",
           color: color ?? "var(--text-primary)",

@@ -49,7 +49,9 @@ const MODAL_COMPONENTS: Components = {
   h5: ({ children }) => <div style={headingStyle(12)}>{children}</div>,
   h6: ({ children }) => <div style={headingStyle(12)}>{children}</div>,
   p: ({ children }) => (
-    <p style={{ margin: "0 0 8px", fontSize: 12.5, lineHeight: 1.6 }}>
+    <p
+      style={{ margin: "0 0 8px", fontSize: "var(--text-md)", lineHeight: 1.6 }}
+    >
       {children}
     </p>
   ),
@@ -60,7 +62,9 @@ const MODAL_COMPONENTS: Components = {
     <ol style={{ margin: "0 0 8px", paddingLeft: 18 }}>{children}</ol>
   ),
   li: ({ children }) => (
-    <li style={{ fontSize: 12.5, lineHeight: 1.6, marginBottom: 2 }}>
+    <li
+      style={{ fontSize: "var(--text-md)", lineHeight: 1.6, marginBottom: 2 }}
+    >
       {children}
     </li>
   ),
@@ -68,7 +72,7 @@ const MODAL_COMPONENTS: Components = {
     <code
       style={{
         fontFamily: "var(--font-mono)",
-        fontSize: 11.5,
+        fontSize: "var(--text-sm)",
         background: "var(--bg-input, rgba(127,127,127,0.12))",
         borderRadius: 3,
         padding: "1px 4px",
@@ -86,7 +90,7 @@ const MODAL_COMPONENTS: Components = {
         border: "1px solid var(--border)",
         borderRadius: 6,
         overflowX: "auto",
-        fontSize: 11.5,
+        fontSize: "var(--text-sm)",
         lineHeight: 1.5,
       }}
     >
@@ -120,7 +124,7 @@ function NewBadge() {
   return (
     <span
       style={{
-        fontSize: 9,
+        fontSize: "var(--text-2xs)",
         fontWeight: 700,
         letterSpacing: "0.07em",
         textTransform: "uppercase",
@@ -250,7 +254,7 @@ export function ReleaseNotesModal({
         >
           <span
             style={{
-              fontSize: 14,
+              fontSize: "var(--text-xl)",
               fontWeight: 600,
               color: "var(--text-primary)",
               fontFamily: "var(--font-ui)",
@@ -260,7 +264,7 @@ export function ReleaseNotesModal({
           </span>
           <span
             style={{
-              fontSize: 12,
+              fontSize: "var(--text-md)",
               color: "var(--text-tertiary)",
               fontFamily: "var(--font-ui)",
             }}
@@ -322,15 +326,19 @@ export function ReleaseNotesModal({
                 >
                   <span
                     style={{
-                      fontSize: 12,
+                      fontSize: "var(--text-md)",
                       fontWeight: 600,
                       color: "var(--text-secondary)",
                     }}
                   >
                     v{r.version}
                   </span>
-                  {r.date && <span style={{ fontSize: 11 }}>{r.date}</span>}
-                  <span style={{ fontSize: 11 }}>· No release notes</span>
+                  {r.date && (
+                    <span style={{ fontSize: "var(--text-sm)" }}>{r.date}</span>
+                  )}
+                  <span style={{ fontSize: "var(--text-sm)" }}>
+                    · No release notes
+                  </span>
                   {isUnseen && <NewBadge />}
                   <div style={{ flex: 1 }} />
                   {r.releaseUrl && <OpenReleaseButton url={r.releaseUrl} />}
@@ -372,7 +380,7 @@ export function ReleaseNotesModal({
                     />
                     <span
                       style={{
-                        fontSize: 13,
+                        fontSize: "var(--text-lg)",
                         fontWeight: 700,
                         color: "var(--text-primary)",
                       }}
@@ -381,7 +389,10 @@ export function ReleaseNotesModal({
                     </span>
                     {r.date && (
                       <span
-                        style={{ fontSize: 11, color: "var(--text-tertiary)" }}
+                        style={{
+                          fontSize: "var(--text-sm)",
+                          color: "var(--text-tertiary)",
+                        }}
                       >
                         {r.date}
                       </span>
@@ -426,7 +437,7 @@ export function ReleaseNotesModal({
               padding: 0,
               color: "var(--accent)",
               cursor: "pointer",
-              fontSize: 12,
+              fontSize: "var(--text-md)",
               fontFamily: "var(--font-ui)",
             }}
           >

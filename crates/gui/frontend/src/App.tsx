@@ -390,7 +390,7 @@ function PageLoader() {
         alignItems: "center",
         justifyContent: "center",
         color: "var(--text-tertiary)",
-        fontSize: 13,
+        fontSize: "var(--text-lg)",
       }}
     >
       Loading…

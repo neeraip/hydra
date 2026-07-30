@@ -298,7 +298,7 @@ export function CurveEditor({
                   display: "flex",
                   alignItems: "center",
                   gap: 6,
-                  fontSize: 13,
+                  fontSize: "var(--text-lg)",
                   fontWeight: 500,
                   fontFamily: "var(--font-mono)",
                 }}
@@ -319,7 +319,7 @@ export function CurveEditor({
               </div>
               <div
                 style={{
-                  fontSize: 11,
+                  fontSize: "var(--text-sm)",
                   color: "var(--text-tertiary)",
                   marginTop: 2,
                 }}
@@ -362,7 +362,7 @@ export function CurveEditor({
                   padding: "0 6px",
                   color: "var(--text-primary)",
                   fontFamily: "var(--font-mono)",
-                  fontSize: 12,
+                  fontSize: "var(--text-md)",
                   outline: "none",
                   boxSizing: "border-box",
                 }}
@@ -370,7 +370,7 @@ export function CurveEditor({
               {createError && (
                 <div
                   style={{
-                    fontSize: 11,
+                    fontSize: "var(--text-sm)",
                     color: "var(--status-error)",
                     marginTop: 3,
                   }}
@@ -385,7 +385,7 @@ export function CurveEditor({
                   style={{
                     flex: 1,
                     height: 24,
-                    fontSize: 11,
+                    fontSize: "var(--text-sm)",
                     background: "var(--accent)",
                     color: "#fff",
                     border: "none",
@@ -405,7 +405,7 @@ export function CurveEditor({
                   style={{
                     flex: 1,
                     height: 24,
-                    fontSize: 11,
+                    fontSize: "var(--text-sm)",
                     background: "var(--nav-hover)",
                     color: "var(--text-secondary)",
                     border: "none",
@@ -428,7 +428,7 @@ export function CurveEditor({
                 background: "transparent",
                 color: "var(--text-tertiary)",
                 cursor: "pointer",
-                fontSize: 12,
+                fontSize: "var(--text-md)",
                 fontFamily: "var(--font-ui)",
                 textAlign: "left",
               }}
@@ -483,7 +483,7 @@ export function CurveEditor({
               spellCheck={false}
               title="Rename curve (updates every pump/tank/valve that references it)"
               style={{
-                fontSize: 16,
+                fontSize: "var(--text-2xl)",
                 fontWeight: 600,
                 color: "var(--text-primary)",
                 fontFamily: "var(--font-mono)",
@@ -495,7 +495,12 @@ export function CurveEditor({
                 width: 160,
               }}
             />
-            <div style={{ fontSize: 12, color: "var(--text-tertiary)" }}>
+            <div
+              style={{
+                fontSize: "var(--text-md)",
+                color: "var(--text-tertiary)",
+              }}
+            >
               {curve.pumpId ? (
                 <>
                   attached to{" "}
@@ -533,7 +538,7 @@ export function CurveEditor({
             {curve.bep != null && (
               <div
                 style={{
-                  fontSize: 11,
+                  fontSize: "var(--text-sm)",
                   color: "var(--text-tertiary)",
                   marginLeft: "auto",
                 }}
@@ -612,7 +617,7 @@ export function CurveEditor({
                   style={{
                     padding: 12,
                     borderTop: "1px solid var(--border)",
-                    fontSize: 12,
+                    fontSize: "var(--text-md)",
                     color: "var(--text-tertiary)",
                     lineHeight: 1.5,
                   }}
@@ -631,7 +636,7 @@ export function CurveEditor({
             alignItems: "center",
             justifyContent: "center",
             color: "var(--text-tertiary)",
-            fontSize: 13,
+            fontSize: "var(--text-lg)",
           }}
         >
           No pump curves defined. Use "+ New curve" to create one.
@@ -894,7 +899,7 @@ function PointsTable({
       <div
         style={{
           padding: "10px 12px",
-          fontSize: 11,
+          fontSize: "var(--text-sm)",
           fontWeight: 500,
           color: "var(--text-tertiary)",
           textTransform: "uppercase",
@@ -911,7 +916,7 @@ function PointsTable({
           onClick={onAddPoint}
           style={{
             marginLeft: "auto",
-            fontSize: 11,
+            fontSize: "var(--text-sm)",
             fontFamily: "var(--font-ui)",
             textTransform: "none",
             letterSpacing: 0,
@@ -929,7 +934,7 @@ function PointsTable({
         style={{
           width: "100%",
           borderCollapse: "collapse",
-          fontSize: 12,
+          fontSize: "var(--text-md)",
           fontFamily: "var(--font-mono)",
         }}
       >
@@ -994,7 +999,7 @@ function PointsTable({
                       border: "none",
                       color: "var(--text-tertiary)",
                       cursor: "pointer",
-                      fontSize: 13,
+                      fontSize: "var(--text-lg)",
                       lineHeight: 1,
                       padding: "2px 4px",
                     }}
@@ -1014,7 +1019,7 @@ function PointsTable({
 
 const thStyle: React.CSSProperties = {
   padding: "6px 10px",
-  fontSize: 10,
+  fontSize: "var(--text-xs)",
   fontWeight: 500,
   color: "var(--text-tertiary)",
   borderBottom: "1px solid var(--border)",

@@ -16,7 +16,7 @@ export function TypeBadge({ type }: { type: string }) {
         height: 16,
         padding: "0 3px",
         borderRadius: 4,
-        fontSize: 9.5,
+        fontSize: "var(--text-2xs)",
         fontWeight: 700,
         letterSpacing: "0.02em",
         fontFamily: "var(--font-ui)",

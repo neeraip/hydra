@@ -38,7 +38,7 @@ export function QueuedRow({
       {/* Queue position badge */}
       <span
         style={{
-          fontSize: 9,
+          fontSize: "var(--text-2xs)",
           fontWeight: 700,
           color: "var(--text-disabled)",
           background: "var(--bg-card)",
@@ -54,7 +54,7 @@ export function QueuedRow({
       <div style={{ flex: 1, overflow: "hidden" }}>
         <div
           style={{
-            fontSize: 12,
+            fontSize: "var(--text-md)",
             color: "var(--text-secondary)",
             whiteSpace: "nowrap",
             overflow: "hidden",
@@ -150,7 +150,7 @@ export function CompletedRow({
         <div style={{ flex: 1, overflow: "hidden" }}>
           <div
             style={{
-              fontSize: 12,
+              fontSize: "var(--text-md)",
               color: "var(--text-secondary)",
               whiteSpace: "nowrap",
               overflow: "hidden",
@@ -175,7 +175,7 @@ export function CompletedRow({
               background: "none",
               padding: 0,
               color: "var(--accent)",
-              fontSize: 11,
+              fontSize: "var(--text-sm)",
               cursor: "pointer",
               fontFamily: "var(--font-ui)",
               flexShrink: 0,
@@ -256,7 +256,12 @@ export function CompletedRow({
               />
             )}
           </div>
-          <div style={{ fontSize: 11, color: "var(--text-tertiary)" }}>
+          <div
+            style={{
+              fontSize: "var(--text-sm)",
+              color: "var(--text-tertiary)",
+            }}
+          >
             {task.timeLabel}
           </div>
           {historyEntries.length > 0 && (
@@ -268,7 +273,7 @@ export function CompletedRow({
                     display: "grid",
                     gridTemplateColumns: "68px 1fr",
                     gap: 6,
-                    fontSize: 10,
+                    fontSize: "var(--text-xs)",
                     color: "var(--text-disabled)",
                   }}
                 >
@@ -324,7 +329,7 @@ export function FailedRow({
         <div style={{ flex: 1, overflow: "hidden" }}>
           <div
             style={{
-              fontSize: 12,
+              fontSize: "var(--text-md)",
               color: "var(--text-secondary)",
               whiteSpace: "nowrap",
               overflow: "hidden",
@@ -367,7 +372,7 @@ export function FailedRow({
       {task.errorMessage && (
         <div
           style={{
-            fontSize: 11,
+            fontSize: "var(--text-sm)",
             color: "var(--status-error)",
             background: "rgba(201, 64, 64, 0.08)",
             border: "1px solid rgba(201, 64, 64, 0.18)",

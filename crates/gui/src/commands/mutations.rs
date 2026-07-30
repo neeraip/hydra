@@ -6,9 +6,9 @@
 use serde::{Deserialize, Serialize};
 
 use super::network_dto::{
-    control_from_dto, format_inp_parse_error, link_to_dto, network_to_dto, node_to_dto,
-    rule_from_dto, ControlDto, LinkDto, NetworkDto, NetworkState, NetworkStateInner, NodeDto,
-    RuleDto, CFS_TO_LPS, FT_TO_M, FT_TO_MM,
+    control_from_dto, format_read_error, link_to_dto, network_to_dto, node_to_dto, rule_from_dto,
+    ControlDto, LinkDto, NetworkDto, NetworkState, NetworkStateInner, NodeDto, RuleDto, CFS_TO_LPS,
+    FT_TO_M, FT_TO_MM,
 };
 use super::projects::{app_data_dir, model_path_for, read_model_bytes, validate_target_ids};
 use super::simulation::emit_or_warn;
@@ -1784,7 +1784,7 @@ fn validation_finding(err: &hydra::ValidationError) -> ValidationFindingDto {
 }
 
 /// Run the engine's network validation and map every finding to its wire DTO.
-fn validation_findings(network: &hydra::Network) -> Vec<ValidationFindingDto> {
+pub(crate) fn validation_findings(network: &hydra::Network) -> Vec<ValidationFindingDto> {
     match network.validate() {
         Ok(()) => Vec::new(),
         Err(errors) => errors.iter().map(validation_finding).collect(),
@@ -1835,7 +1835,14 @@ pub fn validate_network(
             let Some(raw) = read_model_bytes(&model_path)? else {
                 return Ok(Vec::new());
             };
-            std::sync::Arc::new(hydra::io::parse(&raw).map_err(format_inp_parse_error)?)
+            // Tolerant: reporting *why* a network is not simulable is this
+            // command's whole purpose, so a strict parse made it fail on
+            // precisely the models it exists to describe.
+            std::sync::Arc::new(
+                hydra::io::parse_tolerant(&raw)
+                    .map_err(format_read_error)?
+                    .0,
+            )
         }
     };
     Ok(validation_findings(&network))

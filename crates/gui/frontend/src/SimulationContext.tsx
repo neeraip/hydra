@@ -142,6 +142,12 @@ export function SimulationProvider({ children }: { children: ReactNode }) {
   const [liveNetworkDigest, setLiveNetworkDigest] = useState<string | null>(
     null,
   );
+  // Whether that digest is currently being refetched. Needed because the
+  // digest and `resultMeta` are independent async states with no target tag:
+  // mid-switch, one can already describe the incoming scenario while the other
+  // still describes the outgoing one, and comparing across that pair yields a
+  // verdict about no scenario at all.
+  const [digestLoading, setDigestLoading] = useState(false);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [issues, setIssues] = useState<Issue[]>([]);
   // Backend `validate_network` findings, already mapped to Issue shape.
@@ -182,12 +188,18 @@ export function SimulationProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (!activeProjectId) {
       setLiveNetworkDigest(null);
+      setDigestLoading(false);
       return;
     }
     let cancelled = false;
-    getNetworkDigest(activeProjectId, activeScenarioId).then((digest) => {
-      if (!cancelled) setLiveNetworkDigest(digest);
-    });
+    setDigestLoading(true);
+    getNetworkDigest(activeProjectId, activeScenarioId)
+      .then((digest) => {
+        if (!cancelled) setLiveNetworkDigest(digest);
+      })
+      .finally(() => {
+        if (!cancelled) setDigestLoading(false);
+      });
     return () => {
       cancelled = true;
     };
@@ -195,9 +207,19 @@ export function SimulationProvider({ children }: { children: ReactNode }) {
 
   // Stale exactly when both digests are known and differ; unknown (either
   // side missing) keeps today's ungated behaviour for pre-digest results.
+  //
+  // Suppressed while either side is reloading. `resultMeta` is deliberately not
+  // cleared on a scenario switch (see below), so mid-switch it still holds the
+  // outgoing scenario's digest while the live digest may already describe the
+  // incoming one — comparing those flashed the "results predate the network"
+  // banner and blanked the canvas colours on every switch between scenarios
+  // whose topologies differ. Both loads are triggered by the same target
+  // change, so waiting for both to settle compares like with like.
   const resultsTopologyStale =
+    !resultMetaLoading &&
+    !digestLoading &&
     compareTopologyDigests(resultMeta?.networkDigest, liveNetworkDigest) ===
-    "stale";
+      "stale";
 
   // Fetch the last run's solver warnings whenever the active project/scenario
   // changes or fresh results land (`resultGeneration` bumps on every

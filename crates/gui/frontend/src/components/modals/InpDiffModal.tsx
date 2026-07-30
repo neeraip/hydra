@@ -58,7 +58,7 @@ export function InpDiffModal({ patches, onClose }: InpDiffModalProps) {
     width: "30%",
     padding: "6px 12px",
     fontFamily: "var(--font-mono)",
-    fontSize: 12,
+    fontSize: "var(--text-md)",
     color: "var(--text-primary)",
     borderBottom: "1px solid var(--border)",
   };
@@ -66,7 +66,7 @@ export function InpDiffModal({ patches, onClose }: InpDiffModalProps) {
     width: "35%",
     padding: "6px 12px",
     fontFamily: "var(--font-ui)",
-    fontSize: 12,
+    fontSize: "var(--text-md)",
     color: "var(--text-secondary)",
     borderBottom: "1px solid var(--border)",
   };
@@ -74,14 +74,14 @@ export function InpDiffModal({ patches, onClose }: InpDiffModalProps) {
     width: "35%",
     padding: "6px 12px",
     fontFamily: "var(--font-mono)",
-    fontSize: 12,
+    fontSize: "var(--text-md)",
     color: "var(--text-primary)",
     borderBottom: "1px solid var(--border)",
   };
   const TH: React.CSSProperties = {
     padding: "5px 12px",
     fontFamily: "var(--font-ui)",
-    fontSize: 11,
+    fontSize: "var(--text-sm)",
     fontWeight: 600,
     textAlign: "left",
     color: "var(--text-tertiary)",
@@ -123,7 +123,7 @@ export function InpDiffModal({ patches, onClose }: InpDiffModalProps) {
         >
           <span
             style={{
-              fontSize: 14,
+              fontSize: "var(--text-xl)",
               fontWeight: 600,
               color: "var(--text-primary)",
               flex: 1,
@@ -131,7 +131,12 @@ export function InpDiffModal({ patches, onClose }: InpDiffModalProps) {
           >
             Preview changes
           </span>
-          <span style={{ fontSize: 12, color: "var(--text-tertiary)" }}>
+          <span
+            style={{
+              fontSize: "var(--text-md)",
+              color: "var(--text-tertiary)",
+            }}
+          >
             {patches.length} staged change{patches.length !== 1 ? "s" : ""}
           </span>
           <button
@@ -171,7 +176,7 @@ export function InpDiffModal({ patches, onClose }: InpDiffModalProps) {
               style={{
                 padding: "24px 32px",
                 color: "var(--text-tertiary)",
-                fontSize: 13,
+                fontSize: "var(--text-lg)",
                 textAlign: "center",
               }}
             >
@@ -187,7 +192,7 @@ export function InpDiffModal({ patches, onClose }: InpDiffModalProps) {
               <div
                 style={{
                   padding: "0 16px 6px",
-                  fontSize: 11,
+                  fontSize: "var(--text-sm)",
                   fontWeight: 600,
                   letterSpacing: "0.06em",
                   textTransform: "uppercase",
@@ -230,7 +235,7 @@ export function InpDiffModal({ patches, onClose }: InpDiffModalProps) {
                         colSpan={3}
                         style={{
                           padding: "8px 12px",
-                          fontSize: 12,
+                          fontSize: "var(--text-md)",
                           fontStyle: "italic",
                           color: "var(--text-tertiary)",
                           borderBottom: "1px solid var(--border)",

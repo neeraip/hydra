@@ -60,7 +60,7 @@ export function ScenariosModal() {
         >
           <span
             style={{
-              fontSize: 14,
+              fontSize: "var(--text-xl)",
               fontWeight: 600,
               color: "var(--text-primary)",
               fontFamily: "var(--font-ui)",
@@ -70,7 +70,7 @@ export function ScenariosModal() {
           </span>
           <span
             style={{
-              fontSize: 12,
+              fontSize: "var(--text-md)",
               color: "var(--text-tertiary)",
               fontFamily: "var(--font-ui)",
             }}

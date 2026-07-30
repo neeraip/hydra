@@ -50,7 +50,11 @@ import {
   orthoCenterFromMap,
   roughGeoViewState,
 } from "./MapCanvas/geoUtils";
-import { computeSchematicLayout } from "./schematicLayout";
+import { nearestPointOnPath, type SnapResult } from "./measureSnap";
+import {
+  computeSchematicLayout,
+  type SchematicLayout,
+} from "./schematicLayout";
 import type { CanvasTool, LinkVariable, NodeVariable, ViewMode } from "./types";
 
 maplibregl.setWorkerUrl(maplibreWorkerUrl);
@@ -122,7 +126,18 @@ function sameBasemapStyle(
   return JSON.stringify(a) === JSON.stringify(b);
 }
 
-const EMPTY_SCHEMATIC_COORDS: Map<string, [number, number]> = new Map();
+const EMPTY_SCHEMATIC_LAYOUT: SchematicLayout = {
+  positions: new Map(),
+  detachedIds: new Set(),
+};
+/** Stable empties for hidden layers, so toggling visibility off does not hand
+ * deck.gl a fresh array identity on every rebuild. */
+const EMPTY_LINK_DATA: never[] = [];
+const EMPTY_NODE_DATA: never[] = [];
+
+/** Stable default so map-mode callers omitting the prop never invalidate the
+ * schematic layout cache. */
+const IDENTITY_SCALE = { x: 1, y: 1 } as const;
 
 // Glow/halo ring tables (outer → inner) for the hover/selection highlight
 // layers built in buildLayers. Alphas/widths/radius pads are visual tuning —
@@ -149,6 +164,25 @@ const NODE_SELECTION_GLOW = [
   { suffix: "inner", alpha: 140, radiusPad: 5 },
 ];
 
+// Measure-mode snap highlight. Deliberately not a tint of the element's own
+// colour, and deliberately not the tool's amber: both pressure and velocity
+// ramps run through yellow, so an amber halo on an amber element was invisible.
+// A dark→light→dark sandwich reads against any fill and either basemap, because
+// it separates by luminance rather than by hue — there is no element colour it
+// can collide with.
+const MEASURE_HALO_DARK: [number, number, number] = [10, 12, 16];
+const MEASURE_HALO_LIGHT: [number, number, number] = [255, 255, 255];
+const NODE_MEASURE_GLOW = [
+  { suffix: "outer", alpha: 130, radiusPad: 13, rgb: MEASURE_HALO_DARK },
+  { suffix: "mid", alpha: 230, radiusPad: 8, rgb: MEASURE_HALO_LIGHT },
+  { suffix: "inner", alpha: 150, radiusPad: 3, rgb: MEASURE_HALO_DARK },
+];
+const LINK_MEASURE_GLOW = [
+  { suffix: "outer", alpha: 130, width: 16, rgb: MEASURE_HALO_DARK },
+  { suffix: "mid", alpha: 230, width: 10, rgb: MEASURE_HALO_LIGHT },
+  { suffix: "inner", alpha: 150, width: 5, rgb: MEASURE_HALO_DARK },
+];
+
 // ── Element sizing: world-space, zoom-scaled, pixel-clamped ──────────────────
 //
 // Node radius and link width are expressed in world units (metres on the geo
@@ -157,6 +191,17 @@ const NODE_SELECTION_GLOW = [
 // clamps keep elements visible when zoomed out and stop them ballooning when
 // zoomed in. Base sizes are the literals at each layer (junction/special
 // radius, link/hit width); tune these bounds to taste.
+/** Grab radius for measure snapping. Node dots bottom out at
+ * `NODE_RADIUS_MIN_PX`, so without a radius they would be near-unclickable on a
+ * whole-network view. */
+/** Padding around the detached group's bounding box, as a share of its own
+ * extent, with a floor for the single-node case. */
+const DETACHED_BOX_PAD_FRACTION = 0.18;
+const DETACHED_BOX_MIN_PAD = 50;
+const MEASURE_SNAP_RADIUS_PX = 10;
+/** Stable empty default so omitting the prop never invalidates a layer diff. */
+const EMPTY_MEASURE_POINTS: readonly [number, number][] = [];
+const MEASURE_AMBER: [number, number, number, number] = [212, 160, 23, 255];
 const NODE_RADIUS_MIN_PX = 2.5;
 const NODE_RADIUS_MAX_PX = 13;
 const NODE_GLOW_MAX_PX = 26;
@@ -179,6 +224,12 @@ interface MapCanvasProps {
   nodes: Node[];
   links: Link[];
   viewMode: ViewMode;
+  /** Per-axis schematic spacing multipliers (`{x: 1, y: 1}` = the layout's
+   * native 120:80). Scales distances between nodes only — radii and link widths
+   * are layer properties and are deliberately untouched. Only the *ratio*
+   * matters: scaling both equally is arithmetically the same as zooming, and
+   * the camera refit below removes it. Ignored in map mode. */
+  schematicScale?: { x: number; y: number };
   nodeVar: NodeVariable;
   linkVar: LinkVariable;
   /** Animate the Flow/Velocity pulse effect. Already accounts for the user
@@ -224,8 +275,15 @@ interface MapCanvasProps {
     x: number,
     y: number,
   ) => undefined | boolean | Promise<undefined | boolean>;
-  /** Called when the user clicks a point in measure mode. */
-  onMeasurePoint?: (lng: number, lat: number) => void;
+  /** Called for **every** measure click, first included, with the snapped
+   * position and what it snapped to (`null` for empty space). The parent owns
+   * the point list — this component keeps no hidden anchor. */
+  onMeasurePoint?: (
+    position: [number, number],
+    target: SnapResult["target"],
+  ) => void;
+  /** Committed measure points, in click order. Drives the rubber band. */
+  measurePoints?: readonly [number, number][];
   /** Called when the user clicks empty canvas in add-node mode. */
   onCreateNodeRequest?: (lng: number, lat: number) => void;
   /** Called when the user selects two nodes in add-link mode. */
@@ -256,6 +314,7 @@ export const MapCanvas = memo(function MapCanvas({
   nodes,
   links,
   viewMode,
+  schematicScale = IDENTITY_SCALE,
   nodeVar,
   linkVar,
   animateLinks = true,
@@ -282,6 +341,7 @@ export const MapCanvas = memo(function MapCanvas({
   onCreateNodeRequest,
   onCreateLinkRequest,
   onMeasurePoint,
+  measurePoints = EMPTY_MEASURE_POINTS,
   flyToNodeId,
   flyToLinkId,
   flyToKey,
@@ -319,8 +379,9 @@ export const MapCanvas = memo(function MapCanvas({
     to: [number, number];
   } | null>(null);
   // Measure tool: point A anchor + live cursor position for rubber-band line.
-  const measureAnchorRef = useRef<[number, number] | null>(null);
   const measureCursorRef = useRef<[number, number] | null>(null);
+  /** What the cursor is over while measuring, for the measure-only highlight. */
+  const measureHoverRef = useRef<SnapResult["target"]>(null);
   // Seeded lazily on first render: roughGeoViewState scans every node, so it
   // must not run as a useRef initializer argument (those are evaluated on
   // every render even though only the first value is kept).
@@ -395,23 +456,98 @@ export const MapCanvas = memo(function MapCanvas({
   const schematicCacheRef = useRef<{
     nodes: Node[];
     links: Link[];
-    coords: Map<string, [number, number]>;
+    layout: SchematicLayout;
+    /** Axis scales the cached coords were built at — moving either spacing
+     * slider must invalidate them even though nodes/links are unchanged.
+     * Compared by value, not object identity, so a caller that rebuilds the
+     * scale object without changing it does not force a re-layout. */
+    scaleX: number;
+    scaleY: number;
   } | null>(null);
-  const schematicCoords = useMemo(() => {
+  const schematicLayout = useMemo(() => {
     const cache = schematicCacheRef.current;
-    if (cache && cache.nodes === nodes && cache.links === links) {
-      return cache.coords;
+    if (
+      cache &&
+      cache.nodes === nodes &&
+      cache.links === links &&
+      cache.scaleX === schematicScale.x &&
+      cache.scaleY === schematicScale.y
+    ) {
+      return cache.layout;
     }
     if (viewMode !== "schematic") {
       // Drop a stale cache rather than pinning an obsolete full generation
       // of nodes/links/coords in memory until schematic is next opened.
       schematicCacheRef.current = null;
-      return EMPTY_SCHEMATIC_COORDS;
+      return EMPTY_SCHEMATIC_LAYOUT;
     }
-    const coords = computeSchematicLayout(nodes, links);
-    schematicCacheRef.current = { nodes, links, coords };
-    return coords;
-  }, [nodes, links, viewMode]);
+    const layout = computeSchematicLayout(nodes, links, schematicScale);
+    schematicCacheRef.current = {
+      nodes,
+      links,
+      layout,
+      scaleX: schematicScale.x,
+      scaleY: schematicScale.y,
+    };
+    return layout;
+  }, [nodes, links, viewMode, schematicScale]);
+  // Positions alone, for everything that only needs coordinates.
+  const schematicCoords = schematicLayout.positions;
+
+  /**
+   * Resolve a measure click/hover at screen `(x, y)` to a point to snap to.
+   *
+   * Node before link before empty space: a node sitting on a link is the more
+   * specific target, and its exact coordinates are what someone measuring
+   * between two junctions wants. A link snaps to the nearest point along its
+   * path rather than its midpoint — on a long main the midpoint can be a
+   * kilometre from the click, which answers a different question.
+   */
+  const measureSnapAt = useCallback(
+    (x: number, y: number, cursor: [number, number]): SnapResult => {
+      const overlay = overlayRef.current;
+      if (!overlay) return { position: cursor, target: null };
+      const pick = (layerIds: string[]) => {
+        try {
+          return overlay.pickObject({
+            x,
+            y,
+            radius: MEASURE_SNAP_RADIUS_PX,
+            layerIds,
+          });
+        } catch {
+          // A layer id that is not currently mounted (vertex-free networks omit
+          // the "-path" variants) must not take the tool down with it.
+          return null;
+        }
+      };
+      const node = pick(["nodes"]);
+      const nodeObj = node?.object as
+        | { id: string; type: string; position: [number, number] }
+        | undefined;
+      if (nodeObj) {
+        return {
+          position: [nodeObj.position[0], nodeObj.position[1]],
+          target: { kind: "node", id: nodeObj.id, type: nodeObj.type },
+        };
+      }
+      const link = pick(["links-hittarget-path", "links-hittarget"]);
+      const linkObj = link?.object as
+        | { id: string; type: string; path?: [number, number][] }
+        | undefined;
+      if (linkObj?.path) {
+        const snapped = nearestPointOnPath(linkObj.path, cursor);
+        if (snapped) {
+          return {
+            position: snapped,
+            target: { kind: "link", id: linkObj.id, type: linkObj.type },
+          };
+        }
+      }
+      return { position: cursor, target: null };
+    },
+    [],
+  );
 
   const markFirstFrame = useCallback((source: "map" | "schematic") => {
     if (!firstFramePendingRef.current) return;
@@ -552,8 +688,8 @@ export const MapCanvas = memo(function MapCanvas({
   // When switching away from measure mode, clear the anchor and cursor.
   useEffect(() => {
     if (tool === "measure") return;
-    measureAnchorRef.current = null;
     measureCursorRef.current = null;
+    measureHoverRef.current = null;
   }, [tool]);
 
   // Set crosshair cursor for placement tools.
@@ -765,6 +901,15 @@ export const MapCanvas = memo(function MapCanvas({
         n.id === drag.id ? { ...n, position: dragPos } : n,
       );
     }
+    // Visibility is applied to the layer *data*, after the drag adjustment
+    // above. Every link and node layer reads these two arrays, so one gate here
+    // covers rendering, labels and picking together: an empty array draws
+    // nothing and picks nothing, so a hidden element cannot be clicked. Gating
+    // the layer list instead would mean threading a condition through a dozen
+    // conditional spreads for no additional effect.
+    if (!canvasLayers.links) ld = EMPTY_LINK_DATA as typeof ld;
+    if (!canvasLayers.nodes) nd = EMPTY_NODE_DATA as typeof nd;
+
     const linkDatum = (id: string) =>
       drag ? ld.find((l) => l.id === id) : linkDatumById.get(id);
     const nodeDatum = (id: string) =>
@@ -836,7 +981,12 @@ export const MapCanvas = memo(function MapCanvas({
     const linkGlowLayers = (
       linkId: string | null,
       idPrefix: string,
-      rings: typeof LINK_HOVER_GLOW,
+      rings: readonly {
+        suffix: string;
+        alpha: number;
+        width: number;
+        rgb?: readonly [number, number, number];
+      }[],
     ): Layer[] => {
       if (!linkId) return [];
       const glowDatum = linkDatum(linkId);
@@ -856,11 +1006,16 @@ export const MapCanvas = memo(function MapCanvas({
         data: [link],
       };
       return rings.map(
-        ({ suffix, alpha, width }) =>
+        ({ suffix, alpha, width, rgb }) =>
           new PathLayer({
             ...base,
             id: `${idPrefix}-${suffix}`,
-            getColor: [r, g, b, alpha] as unknown as RGBA,
+            getColor: [
+              rgb?.[0] ?? r,
+              rgb?.[1] ?? g,
+              rgb?.[2] ?? b,
+              alpha,
+            ] as unknown as RGBA,
             getWidth: width,
             // Per-ring pixel floor: each ring's nominal width doubles as its
             // minimum, so the halo keeps its full pad around the (clamped)
@@ -875,7 +1030,12 @@ export const MapCanvas = memo(function MapCanvas({
     const nodeGlowLayers = (
       nodeId: string | null,
       idPrefix: string,
-      rings: typeof NODE_HOVER_GLOW,
+      rings: readonly {
+        suffix: string;
+        alpha: number;
+        radiusPad: number;
+        rgb?: readonly [number, number, number];
+      }[],
     ): Layer[] => {
       if (!nodeId) return [];
       const glowDatum = nodeDatum(nodeId);
@@ -894,12 +1054,17 @@ export const MapCanvas = memo(function MapCanvas({
         data: [node],
       };
       return rings.map(
-        ({ suffix, alpha, radiusPad }) =>
+        ({ suffix, alpha, radiusPad, rgb }) =>
           new ScatterplotLayer({
             ...base,
             id: `${idPrefix}-${suffix}`,
             getRadius: baseR + radiusPad,
-            getFillColor: [r, g, b, alpha] as unknown as RGBA,
+            getFillColor: [
+              rgb?.[0] ?? r,
+              rgb?.[1] ?? g,
+              rgb?.[2] ?? b,
+              alpha,
+            ] as unknown as RGBA,
             // Per-ring pixel floor: keep the ring's pad visible around the
             // (clamped) node at far zooms. Sharing the node's own floor here
             // made the rings converge with the node and selection became
@@ -911,29 +1076,137 @@ export const MapCanvas = memo(function MapCanvas({
 
     const layers: Layer[] = [];
 
-    if (canvasLayers.model) {
+    // Detached group marker (schematic only). The layout parks anything not
+    // reachable from a source in its own region to the right; without a boundary
+    // and a label, that reads as a distant part of the network rather than as
+    // "these are disconnected". Amber is free here: it is the warning colour and
+    // the only other amber on the canvas belongs to the measure tool, which is
+    // map-mode only, so the two can never appear together.
+    if (isSchematic && schematicLayout.detachedIds.size > 0) {
+      let minX = Number.POSITIVE_INFINITY;
+      let minY = Number.POSITIVE_INFINITY;
+      let maxX = Number.NEGATIVE_INFINITY;
+      let maxY = Number.NEGATIVE_INFINITY;
+      for (const id of schematicLayout.detachedIds) {
+        // Read through `schematicLayout` rather than the derived alias, so this
+        // callback captures one value instead of two.
+        const at = schematicLayout.positions.get(id);
+        if (!at) continue;
+        if (at[0] < minX) minX = at[0];
+        if (at[0] > maxX) maxX = at[0];
+        if (at[1] < minY) minY = at[1];
+        if (at[1] > maxY) maxY = at[1];
+      }
+      if (Number.isFinite(minX)) {
+        // Padding from the group's own extent, with a floor so a single
+        // orphaned node still gets a box big enough to read as one.
+        const pad = Math.max(
+          DETACHED_BOX_MIN_PAD,
+          Math.max(maxX - minX, maxY - minY) * DETACHED_BOX_PAD_FRACTION,
+        );
+        const x0 = minX - pad;
+        const y0 = minY - pad;
+        const x1 = maxX + pad;
+        const y1 = maxY + pad;
+        const count = schematicLayout.detachedIds.size;
+        layers.push(
+          new PathLayer({
+            id: "detached-region",
+            data: [
+              [
+                [x0, y0],
+                [x1, y0],
+                [x1, y1],
+                [x0, y1],
+                [x0, y0],
+              ] as [number, number][],
+            ],
+            coordinateSystem: coordSystem,
+            getPath: (d) => d,
+            getColor: [212, 160, 23, 110] as unknown as RGBA,
+            getWidth: 1.5,
+            // Pixels, not world units: a hairline boundary should stay a
+            // hairline at every zoom rather than thickening with the network.
+            widthUnits: "pixels",
+            pickable: false,
+          }) as unknown as Layer,
+          new TextLayer({
+            id: "detached-region-label",
+            data: [{ position: [x0, y0] as [number, number] }],
+            coordinateSystem: coordSystem,
+            getPosition: (d) => d.position,
+            getText: () =>
+              `Not connected to a source · ${count} ${count === 1 ? "node" : "nodes"}`,
+            getSize: 11,
+            getColor: [212, 160, 23, 220] as unknown as RGBA,
+            getTextAnchor: "start",
+            getAlignmentBaseline: "bottom",
+            getPixelOffset: [0, -6],
+            background: false,
+            fontFamily: "monospace",
+            pickable: false,
+            // Not subject to the node/link label cap: this is one string, and it
+            // is the only thing that explains what the region is.
+            updateTriggers: { getText: [count] },
+          }) as unknown as Layer,
+        );
+      }
+    }
+
+    // Nodes and links are gated separately. A halo belongs to the element it
+    // surrounds, so each kind's glows follow that kind's visibility — a
+    // selection ring left floating where its link is hidden reads as a bug.
+    const showNodes = canvasLayers.nodes;
+    const showLinks = canvasLayers.links;
+    if (showNodes || showLinks) {
       // ── Glow / halo layers — pushed FIRST so they render beneath links and nodes ──
       // Hover halos are suppressed while the same element is selected.
       layers.push(
-        ...linkGlowLayers(
-          hoveredLinkId !== selectedLinkId ? hoveredLinkId : null,
-          "hover-link-glow",
-          LINK_HOVER_GLOW,
-        ),
-        ...linkGlowLayers(
-          selectedLinkId,
-          "selection-link-glow",
-          LINK_SELECTION_GLOW,
-        ),
+        ...(showLinks
+          ? linkGlowLayers(
+              hoveredLinkId !== selectedLinkId ? hoveredLinkId : null,
+              "hover-link-glow",
+              LINK_HOVER_GLOW,
+            )
+          : []),
+        ...(showLinks
+          ? linkGlowLayers(
+              selectedLinkId,
+              "selection-link-glow",
+              LINK_SELECTION_GLOW,
+            )
+          : []),
         ...nodeGlowLayers(
-          hoveredNodeId !== selectedNodeId ? hoveredNodeId : null,
+          showNodes && hoveredNodeId !== selectedNodeId ? hoveredNodeId : null,
           "hover-glow",
           NODE_HOVER_GLOW,
         ),
         ...nodeGlowLayers(
-          selectedNodeId,
+          showNodes ? selectedNodeId : null,
           "selection-glow",
           NODE_SELECTION_GLOW,
+        ),
+        // Measure snap preview. Routed through the same helpers so it scales
+        // with zoom exactly as the hover and selection halos do — a bespoke
+        // pixel-sized ring stayed the same size at every zoom and read as a
+        // different kind of thing.
+        ...nodeGlowLayers(
+          showNodes &&
+            tool === "measure" &&
+            measureHoverRef.current?.kind === "node"
+            ? measureHoverRef.current.id
+            : null,
+          "measure-glow",
+          NODE_MEASURE_GLOW,
+        ),
+        ...linkGlowLayers(
+          showLinks &&
+            tool === "measure" &&
+            measureHoverRef.current?.kind === "link"
+            ? measureHoverRef.current.id
+            : null,
+          "measure-link-glow",
+          LINK_MEASURE_GLOW,
         ),
       );
 
@@ -943,6 +1216,8 @@ export const MapCanvas = memo(function MapCanvas({
         x?: number;
         y?: number;
       }) => {
+        // See the node layer's onHover: measure owns its own highlight.
+        if (toolRef.current === "measure") return;
         const obj = info.object as
           | { id: string; si: number; type: string }
           | undefined;
@@ -963,6 +1238,8 @@ export const MapCanvas = memo(function MapCanvas({
         );
       };
       const onLinkClick = (info: { object?: unknown }) => {
+        // Measure consumes clicks in the map handler — see the node layer.
+        if (toolRef.current === "measure") return;
         if (info.object) {
           const id = (info.object as { id: string }).id;
           onSelectLink(id === selectedLinkId ? null : id);
@@ -980,7 +1257,12 @@ export const MapCanvas = memo(function MapCanvas({
       ];
       // Link hover/click is only meaningful in select/edit; skipping the
       // pick pass for other tools halves per-mousemove GPU picking cost.
-      const linksPickable = tool === "select" || tool === "edit";
+      // Measure snaps to links, so they must be pickable there too — the
+      // handlers below no-op in measure mode and all of its interaction goes
+      // through the map's own click/mousemove, which is where the snap radius
+      // and the pick order (node before link) live.
+      const linksPickable =
+        tool === "select" || tool === "edit" || tool === "measure";
       layers.push(
         // LineLayer cannot render polylines, so networks with link vertices
         // use PathLayer-based variants. Those get their OWN ids
@@ -1115,9 +1397,13 @@ export const MapCanvas = memo(function MapCanvas({
           radiusUnits: nodeRadiusUnits,
           radiusMinPixels: NODE_RADIUS_MIN_PX,
           radiusMaxPixels: NODE_RADIUS_MAX_PX,
-          // Measure works on raw map clicks — node picking is dead cost there.
-          pickable: tool !== "measure",
+          // Pickable in measure mode too: snapping to a node needs it. The
+          // hover/click handlers below bail out in measure mode.
+          pickable: true,
           onHover: (info) => {
+            // Measure draws its own highlight and its own readout; the normal
+            // hover ring and value chip would compete with both.
+            if (toolRef.current === "measure") return;
             const obj = info.object as
               | { id: string; si: number; type: string }
               | undefined;
@@ -1143,6 +1429,9 @@ export const MapCanvas = memo(function MapCanvas({
               return;
             }
             if (toolRef.current === "edit") return;
+            // Measure consumes clicks in the map handler, so that one place
+            // decides the snap. Handling them here too would double-count.
+            if (toolRef.current === "measure") return;
             if (!info.object) return;
             const id = info.object.id as string;
             if (toolRef.current === "add-link") {
@@ -1294,31 +1583,25 @@ export const MapCanvas = memo(function MapCanvas({
       );
     }
 
-    // Measure rubber-band: anchor dot + dashed line to cursor.
-    const mAnchor = measureAnchorRef.current;
-    const mCursor = measureCursorRef.current;
-    if (mAnchor) {
-      layers.push(
-        new ScatterplotLayer({
-          id: "measure-anchor",
-          data: [mAnchor],
-          coordinateSystem: coordSystem,
-          getPosition: (d) => d,
-          getRadius: 5,
-          radiusUnits: "pixels",
-          getFillColor: [212, 160, 23, 255] as unknown as RGBA,
-          getLineColor: [0, 0, 0, 180] as unknown as RGBA,
-          stroked: true,
-          lineWidthUnits: "pixels",
-          getLineWidth: 1,
-          pickable: false,
-        }) as unknown as Layer,
-      );
-      if (mCursor) {
+    // Measure overlay: committed points, the line between them (or to the
+    // cursor while the second point is pending), and a highlight for whatever
+    // the cursor is snapped to. All pixel-sized, so it reads the same at any
+    // zoom.
+    if (tool === "measure") {
+      const committed = measurePoints;
+      const rubberEnd =
+        committed.length === 1 ? measureCursorRef.current : null;
+      const segment =
+        committed.length >= 2
+          ? { from: committed[0], to: committed[1] }
+          : rubberEnd
+            ? { from: committed[0], to: rubberEnd }
+            : null;
+      if (segment) {
         layers.push(
           new LineLayer({
             id: "measure-line",
-            data: [{ from: mAnchor, to: mCursor }],
+            data: [segment],
             coordinateSystem: coordSystem,
             getSourcePosition: (d) => d.from,
             getTargetPosition: (d) => d.to,
@@ -1328,15 +1611,18 @@ export const MapCanvas = memo(function MapCanvas({
             pickable: false,
           }) as unknown as Layer,
         );
+      }
+      const dots = rubberEnd ? [...committed, rubberEnd] : [...committed];
+      if (dots.length > 0) {
         layers.push(
           new ScatterplotLayer({
-            id: "measure-cursor",
-            data: [mCursor],
+            id: "measure-points",
+            data: dots,
             coordinateSystem: coordSystem,
             getPosition: (d) => d,
             getRadius: 5,
             radiusUnits: "pixels",
-            getFillColor: [212, 160, 23, 255] as unknown as RGBA,
+            getFillColor: MEASURE_AMBER as unknown as RGBA,
             getLineColor: [0, 0, 0, 180] as unknown as RGBA,
             stroked: true,
             lineWidthUnits: "pixels",
@@ -1346,7 +1632,6 @@ export const MapCanvas = memo(function MapCanvas({
         );
       }
     }
-
     return layers;
   }, [
     linkData,
@@ -1382,6 +1667,8 @@ export const MapCanvas = memo(function MapCanvas({
     pressureThresholds,
     velocityThresholds,
     flowThresholds,
+    measurePoints,
+    schematicLayout,
   ]);
 
   useEffect(() => {
@@ -1564,7 +1851,13 @@ export const MapCanvas = memo(function MapCanvas({
         }
       }
       if (toolRef.current === "measure") {
-        measureCursorRef.current = [lng, lat];
+        // The cursor drives both the rubber band and the snap preview, so the
+        // highlight shows exactly where a click would land.
+        const snapped = measureSnapAt(e.point.x, e.point.y, [lng, lat]);
+        measureHoverRef.current = snapped.target;
+        measureCursorRef.current = snapped.position;
+        // A pointer cursor is the affordance that says "this click will snap".
+        map.getCanvas().style.cursor = snapped.target ? "pointer" : "crosshair";
         overlayRef.current?.setProps({ layers: buildLayersRef.current() });
       }
     });
@@ -1624,16 +1917,13 @@ export const MapCanvas = memo(function MapCanvas({
     map.on("click", (e) => {
       const { lng, lat } = e.lngLat;
       if (toolRef.current === "measure") {
-        if (!measureAnchorRef.current) {
-          // First click — set anchor, clear any stale cursor.
-          measureAnchorRef.current = [lng, lat];
-          measureCursorRef.current = null;
-        } else {
-          // Second click — report and reset for next measurement.
-          onMeasurePointRef.current?.(lng, lat);
-          measureAnchorRef.current = null;
-          measureCursorRef.current = null;
-        }
+        // Every click is reported, first included. The previous design kept the
+        // first point in a ref here and never sent it, so the parent had one
+        // point where it needed two: the first measurement showed nothing, and
+        // every later one measured from the *previous* measurement's endpoint.
+        const snapped = measureSnapAt(e.point.x, e.point.y, [lng, lat]);
+        measureCursorRef.current = null;
+        onMeasurePointRef.current?.(snapped.position, snapped.target);
         overlayRef.current?.setProps({ layers: buildLayersRef.current() });
         return;
       }
@@ -1668,15 +1958,42 @@ export const MapCanvas = memo(function MapCanvas({
       deckCanvasRef.current = null;
       mapRef.current = null;
     };
-  }, [markFirstFrame, scheduleLabelRefresh]);
+  }, [markFirstFrame, measureSnapAt, scheduleLabelRefresh]);
 
+  // Frames the network on arrival and when the network itself changes — and
+  // otherwise leaves the camera exactly where the user put it.
+  //
+  // Reframing on every layout change would reset pan and zoom each time the
+  // aspect slider moved, throwing away the view someone had set up to look at.
+  // The reshape is visible without reframing, because the aspect slider holds
+  // the two scales' product at 1: the layout's area is preserved, so it changes
+  // proportions in place rather than growing off-screen.
+  //
+  // (Two independent per-axis sliders could not have had this. Their pair
+  // carried a uniform component, which is only visible as a size change — so
+  // holding the camera was the only way to see it, and reframing collapsed the
+  // two tracks onto one degree of freedom.)
+  const framedForRef = useRef<{ nodes: Node[]; links: Link[] } | null>(null);
+  const inSchematicRef = useRef(false);
   useEffect(() => {
+    // Reset before the `isActive` guard, so returning to schematic re-frames.
+    if (viewMode !== "schematic") {
+      inSchematicRef.current = false;
+      return;
+    }
     if (!isActive) return;
-    if (viewMode !== "schematic") return;
     const deck = ensureDeck();
     if (!deck) return;
-    const { target, zoom } = orthoCenterFromMap(schematicCoords);
-    const vs = { target, zoom };
+    const framed = framedForRef.current;
+    const reframe =
+      !inSchematicRef.current ||
+      framed?.nodes !== nodes ||
+      framed?.links !== links;
+    inSchematicRef.current = true;
+    framedForRef.current = { nodes, links };
+    const vs = reframe
+      ? orthoCenterFromMap(schematicCoords)
+      : (viewStateRef.current as SchematicViewState);
     viewStateRef.current = vs;
     deck.setProps({
       views: orthoViewRef.current,
@@ -1685,7 +2002,15 @@ export const MapCanvas = memo(function MapCanvas({
     });
     markFirstFrame("schematic");
     if (deckCanvasRef.current) deckCanvasRef.current.style.display = "";
-  }, [ensureDeck, isActive, markFirstFrame, schematicCoords, viewMode]);
+  }, [
+    ensureDeck,
+    isActive,
+    links,
+    markFirstFrame,
+    nodes,
+    schematicCoords,
+    viewMode,
+  ]);
 
   useEffect(() => {
     const deck = deckRef.current;

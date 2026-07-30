@@ -97,7 +97,7 @@ export function DeleteProjectModal({
               id="delete-project-modal-title"
               style={{
                 margin: 0,
-                fontSize: 14,
+                fontSize: "var(--text-xl)",
                 fontWeight: 600,
                 color: "var(--text-primary)",
               }}
@@ -107,7 +107,7 @@ export function DeleteProjectModal({
             <p
               style={{
                 margin: "4px 0 0",
-                fontSize: 12,
+                fontSize: "var(--text-md)",
                 color: "var(--text-secondary)",
                 lineHeight: 1.5,
               }}
@@ -138,7 +138,7 @@ export function DeleteProjectModal({
               border: "1px solid var(--border)",
               borderRadius: 6,
               padding: "6px 14px",
-              fontSize: 12,
+              fontSize: "var(--text-md)",
               fontWeight: 500,
               color: "var(--text-secondary)",
               cursor: "pointer",
@@ -162,7 +162,7 @@ export function DeleteProjectModal({
               border: "none",
               borderRadius: 6,
               padding: "6px 14px",
-              fontSize: 12,
+              fontSize: "var(--text-md)",
               fontWeight: 600,
               color: "#fff",
               cursor: "pointer",

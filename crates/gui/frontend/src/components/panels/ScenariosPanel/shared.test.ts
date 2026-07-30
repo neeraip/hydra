@@ -9,6 +9,7 @@ import {
   flattenSubtrees,
   lineageLabel,
   scenarioChildren,
+  variantTail,
 } from "./shared";
 
 function dto(
@@ -251,5 +252,42 @@ describe("descendants", () => {
   it("never revisits a scenario reachable by two paths", () => {
     const forest = [dto("a", null), dto("b", "a"), dto("c", "b")];
     expect(descendants(forest, "a")).toHaveLength(2);
+  });
+});
+
+describe("variantTail", () => {
+  it("shows nothing below a variant with no children", () => {
+    const forest = [dto("a", null)];
+    expect(variantTail(forest, "a")).toEqual({ kind: "none" });
+  });
+
+  it("inlines a lone leaf child", () => {
+    const forest = [dto("a", null), dto("a1", "a")];
+    expect(variantTail(forest, "a")).toEqual({
+      kind: "child",
+      child: dto("a1", "a"),
+    });
+  });
+
+  it("hides a lone child that has children of its own", () => {
+    // Inlining it would imply the branch ended at that chip.
+    const forest = [dto("a", null), dto("a1", "a"), dto("a1a", "a1")];
+    expect(variantTail(forest, "a")).toEqual({ kind: "dropdown", count: 1 });
+  });
+
+  it("counts only direct children in the picker, not the whole subtree", () => {
+    const forest = [
+      dto("a", null),
+      dto("a1", "a"),
+      dto("a2", "a"),
+      dto("a1a", "a1"),
+      dto("a1b", "a1"),
+    ];
+    expect(variantTail(forest, "a")).toEqual({ kind: "dropdown", count: 2 });
+  });
+
+  it("ignores scenarios in a sibling variant's subtree", () => {
+    const forest = [dto("a", null), dto("b", null), dto("b1", "b")];
+    expect(variantTail(forest, "a")).toEqual({ kind: "none" });
   });
 });

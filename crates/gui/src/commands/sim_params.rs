@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::meta::bundle;
 
-use super::network_dto::{format_inp_parse_error, NetworkState, NetworkStateInner, FT_TO_M};
+use super::network_dto::{format_read_error, NetworkState, NetworkStateInner, FT_TO_M};
 use super::projects::{app_data_dir, list_scenario_ids, validate_id};
 
 // ── Simulation parameters (TIMES + OPTIONS, INP-canonical) ────────────────────
@@ -236,7 +236,11 @@ pub fn get_sim_params(
         return Ok(None);
     }
     let bytes = std::fs::read(&path).map_err(|e| e.to_string())?;
-    let network = hydra::io::parse(&bytes).map_err(format_inp_parse_error)?;
+    // Tolerant: simulation options are readable regardless of whether the
+    // network is finished, and refusing here blocked the settings dialog on a
+    // model the editor can open.
+    let (network, _validation_errors) =
+        hydra::io::parse_tolerant(&bytes).map_err(format_read_error)?;
     Ok(Some(options_to_dto(&network.options)))
 }
 
@@ -324,7 +328,10 @@ pub fn update_sim_params(
         }
         None => {
             let bytes = std::fs::read(&base_path).map_err(|e| e.to_string())?;
-            let mut network = hydra::io::parse(&bytes).map_err(format_inp_parse_error)?;
+            // Tolerant, matching `get_sim_params`: editing options must not
+            // require a simulable network.
+            let (mut network, _validation_errors) =
+                hydra::io::parse_tolerant(&bytes).map_err(format_read_error)?;
             apply_dto_to_options(&mut network.options, &params)?;
             let new_bytes = hydra::write_inp(&network);
             bundle::atomic_write(&base_path, &new_bytes).map_err(|e| e.to_string())?;
@@ -372,12 +379,12 @@ pub fn update_sim_params(
                 continue;
             }
         };
-        let mut network = match hydra::io::parse(&bytes) {
-            Ok(n) => n,
+        let mut network = match hydra::io::parse_tolerant(&bytes) {
+            Ok((n, _validation_errors)) => n,
             Err(e) => {
                 tracing::warn!(
                     scenario_id = %sc_id,
-                    error = %format_inp_parse_error(e),
+                    error = %format_read_error(e),
                     "sim-params propagation skipped scenario: cannot parse model"
                 );
                 continue;

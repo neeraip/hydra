@@ -35,7 +35,7 @@ export function Section({
           <h2
             style={{
               margin: 0,
-              fontSize: 11,
+              fontSize: "var(--text-sm)",
               fontWeight: 600,
               color: "var(--text-tertiary)",
               textTransform: "uppercase",
@@ -50,7 +50,7 @@ export function Section({
         {right != null && (
           <span
             style={{
-              fontSize: 11,
+              fontSize: "var(--text-sm)",
               color: "var(--text-tertiary)",
               whiteSpace: "nowrap",
               flexShrink: 0,
@@ -104,7 +104,7 @@ export function Kpi({
     >
       <div
         style={{
-          fontSize: 10,
+          fontSize: "var(--text-xs)",
           fontWeight: 600,
           letterSpacing: "0.06em",
           color: "var(--text-tertiary)",
@@ -116,7 +116,7 @@ export function Kpi({
       <div
         style={{
           marginTop: 4,
-          fontSize: 18,
+          fontSize: "var(--text-2xl)",
           fontWeight: 600,
           fontFamily: "var(--font-mono)",
           color: muted
@@ -134,7 +134,7 @@ export function Kpi({
       <div
         style={{
           marginTop: 4,
-          fontSize: 11,
+          fontSize: "var(--text-sm)",
           color: warn ? "var(--status-warning)" : "var(--text-tertiary)",
           whiteSpace: "nowrap",
           overflow: "hidden",
@@ -169,7 +169,9 @@ export function EmptyState({
         borderRadius: 8,
       }}
     >
-      <span style={{ fontSize: 12, color: "var(--text-tertiary)" }}>
+      <span
+        style={{ fontSize: "var(--text-md)", color: "var(--text-tertiary)" }}
+      >
         {message}
       </span>
       <button
@@ -191,7 +193,7 @@ export function EmptyState({
           border: "1px solid rgba(18, 54, 92, 0.2)",
           borderRadius: 6,
           padding: "5px 10px",
-          fontSize: 12,
+          fontSize: "var(--text-md)",
           fontWeight: 500,
           cursor: "pointer",
           fontFamily: "var(--font-ui)",
@@ -250,7 +252,7 @@ export function PrimaryButton({
         border: "1px solid rgba(18, 54, 92, 0.2)",
         borderRadius: 7,
         padding: "6px 12px",
-        fontSize: 12,
+        fontSize: "var(--text-md)",
         fontWeight: 500,
         cursor: "pointer",
         fontFamily: "var(--font-ui)",
@@ -298,7 +300,7 @@ export function SecondaryButton({
         border: "1px solid var(--border)",
         borderRadius: 7,
         padding: "6px 12px",
-        fontSize: 12,
+        fontSize: "var(--text-md)",
         fontWeight: 500,
         cursor: "pointer",
         fontFamily: "var(--font-ui)",

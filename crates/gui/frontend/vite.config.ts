@@ -6,6 +6,16 @@ export default defineConfig({
   plugins: [react(), tailwindcss()],
   clearScreen: false,
   server: {
+    // A literal address, not the default `localhost`. Node resolves names
+    // verbatim since v17, so binding "localhost" can produce an IPv6-only
+    // listener on `[::1]` depending on DNS and /etc/hosts. Tauri's webview
+    // then resolves its devUrl to 127.0.0.1, finds nothing listening, and
+    // opens a window that never loads the app — a blank window rather than an
+    // error, so it reads as "the GUI didn't start". Whether it happened
+    // depended on the machine's resolver state, which made it intermittent.
+    // `tauri.conf.json`'s devUrl uses the same literal address; both must
+    // agree, and neither should name a host.
+    host: "127.0.0.1",
     port: 5174,
     strictPort: true,
     watch: {

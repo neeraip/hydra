@@ -45,7 +45,7 @@ const HELP_LINKS = [
 
 const TEASER_TEXT: React.CSSProperties = {
   margin: "0 0 3px",
-  fontSize: 12,
+  fontSize: "var(--text-md)",
   lineHeight: 1.55,
 };
 
@@ -70,7 +70,9 @@ const TEASER_COMPONENTS: Components = {
   table: () => null,
   hr: () => null,
   code: ({ children }) => (
-    <code style={{ fontFamily: "var(--font-mono)", fontSize: 11 }}>
+    <code
+      style={{ fontFamily: "var(--font-mono)", fontSize: "var(--text-sm)" }}
+    >
       {children}
     </code>
   ),
@@ -79,7 +81,7 @@ const TEASER_COMPONENTS: Components = {
 const TEASER_HEADING: React.CSSProperties = {
   fontWeight: 700,
   color: "var(--text-primary)",
-  fontSize: 12,
+  fontSize: "var(--text-md)",
   margin: "4px 0 2px",
   lineHeight: 1.5,
 };
@@ -162,12 +164,12 @@ function UpdateRow({
           display: "flex",
           alignItems: "center",
           gap: 6,
-          fontSize: 12,
+          fontSize: "var(--text-md)",
           fontWeight: 600,
           color: ACCENT,
         }}
       >
-        <span aria-hidden style={{ fontSize: 13, lineHeight: 1 }}>
+        <span aria-hidden style={{ fontSize: "var(--text-lg)", lineHeight: 1 }}>
           {updater.phase === "ready" ? "↻" : "↓"}
         </span>
         <span>{label}</span>
@@ -176,7 +178,7 @@ function UpdateRow({
         <div
           style={{
             marginTop: 3,
-            fontSize: 11,
+            fontSize: "var(--text-sm)",
             color: "var(--text-tertiary)",
             overflow: "hidden",
             textOverflow: "ellipsis",
@@ -218,7 +220,7 @@ function SidebarSection({ title }: { title: string }) {
   return (
     <div
       style={{
-        fontSize: 10,
+        fontSize: "var(--text-xs)",
         fontWeight: 700,
         letterSpacing: "0.1em",
         textTransform: "uppercase",
@@ -327,7 +329,7 @@ export function HomePage() {
         >
           <div
             style={{
-              fontSize: 72,
+              fontSize: "var(--text-display)",
               fontWeight: 800,
               color: "var(--text-primary)",
               letterSpacing: "-0.04em",
@@ -339,7 +341,7 @@ export function HomePage() {
           </div>
           <div
             style={{
-              fontSize: 15,
+              fontSize: "var(--text-xl)",
               color: "var(--text-secondary)",
               marginBottom: 40,
               letterSpacing: "0.01em",
@@ -375,7 +377,7 @@ export function HomePage() {
           {recentProjects.length === 0 ? (
             <div
               style={{
-                fontSize: 13,
+                fontSize: "var(--text-lg)",
                 color: "var(--text-tertiary)",
                 lineHeight: 1.5,
               }}
@@ -416,7 +418,7 @@ export function HomePage() {
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div
                         style={{
-                          fontSize: 13,
+                          fontSize: "var(--text-lg)",
                           fontWeight: 500,
                           color: "var(--text-primary)",
                           overflow: "hidden",
@@ -428,7 +430,7 @@ export function HomePage() {
                       </div>
                       <div
                         style={{
-                          fontSize: 11,
+                          fontSize: "var(--text-sm)",
                           color: "var(--text-tertiary)",
                           marginTop: 1,
                         }}
@@ -439,7 +441,7 @@ export function HomePage() {
                     <span
                       title={engine ? engine.label : "Unsupported engine"}
                       style={{
-                        fontSize: 10,
+                        fontSize: "var(--text-xs)",
                         fontWeight: 700,
                         letterSpacing: "0.06em",
                         color: engine?.accent ?? "var(--text-tertiary)",
@@ -471,7 +473,7 @@ export function HomePage() {
           {notes.status === "loading" && (
             <div
               style={{
-                fontSize: 13,
+                fontSize: "var(--text-lg)",
                 color: "var(--text-tertiary)",
                 lineHeight: 1.5,
               }}
@@ -482,7 +484,7 @@ export function HomePage() {
           {notes.status === "unavailable" && (
             <div
               style={{
-                fontSize: 13,
+                fontSize: "var(--text-lg)",
                 color: "var(--text-tertiary)",
                 lineHeight: 1.5,
               }}
@@ -522,7 +524,7 @@ export function HomePage() {
                   display: "flex",
                   alignItems: "center",
                   gap: 6,
-                  fontSize: 12,
+                  fontSize: "var(--text-md)",
                   fontWeight: 600,
                   color: "var(--text-secondary)",
                 }}
@@ -534,7 +536,7 @@ export function HomePage() {
                 {unseen.length > 0 && (
                   <span
                     style={{
-                      fontSize: 9,
+                      fontSize: "var(--text-2xs)",
                       fontWeight: 700,
                       letterSpacing: "0.07em",
                       textTransform: "uppercase",
@@ -556,7 +558,7 @@ export function HomePage() {
                 <div
                   style={{
                     marginTop: 7,
-                    fontSize: 12,
+                    fontSize: "var(--text-md)",
                     color: "var(--text-tertiary)",
                     lineHeight: 1.55,
                   }}
@@ -602,14 +604,20 @@ export function HomePage() {
                 </div>
               )}
 
-              <div style={{ marginTop: 5, fontSize: 11, color: ACCENT }}>
+              <div
+                style={{
+                  marginTop: 5,
+                  fontSize: "var(--text-sm)",
+                  color: ACCENT,
+                }}
+              >
                 Read more
               </div>
               {earlierCount > 0 && (
                 <div
                   style={{
                     marginTop: 3,
-                    fontSize: 11,
+                    fontSize: "var(--text-sm)",
                     color: "var(--text-tertiary)",
                   }}
                 >
@@ -657,10 +665,20 @@ export function HomePage() {
                     "transparent";
                 }}
               >
-                <span style={{ fontSize: 13, color: "var(--text-secondary)" }}>
+                <span
+                  style={{
+                    fontSize: "var(--text-lg)",
+                    color: "var(--text-secondary)",
+                  }}
+                >
                   {label}
                 </span>
-                <span style={{ fontSize: 12, color: "var(--text-tertiary)" }}>
+                <span
+                  style={{
+                    fontSize: "var(--text-md)",
+                    color: "var(--text-tertiary)",
+                  }}
+                >
                   ↗
                 </span>
               </button>

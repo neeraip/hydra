@@ -61,7 +61,7 @@ export function PipeTable({
   const sys = useUnitSystem();
   const tdStyle: React.CSSProperties = {
     padding: "7px 10px",
-    fontSize: 12,
+    fontSize: "var(--text-md)",
     fontFamily: "var(--font-mono)",
     borderBottom: "1px solid var(--border)",
   };
@@ -86,7 +86,11 @@ export function PipeTable({
         <RefOptionsDatalist id={NODE_LIST_ID} options={nodeOptions} />
       )}
       <table
-        style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}
+        style={{
+          width: "100%",
+          borderCollapse: "collapse",
+          fontSize: "var(--text-lg)",
+        }}
       >
         <thead>
           <tr>

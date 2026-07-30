@@ -185,7 +185,7 @@ export function ProjectSwitcher() {
           background: open ? "var(--bg-card)" : "transparent",
           color: "var(--text-secondary)",
           cursor: "pointer",
-          fontSize: 13,
+          fontSize: "var(--text-lg)",
           fontWeight: 400,
           fontFamily: "var(--font-ui)",
           padding: "2px 4px 2px 6px",
@@ -237,7 +237,7 @@ export function ProjectSwitcher() {
           >
             <span
               style={{
-                fontSize: 10,
+                fontSize: "var(--text-xs)",
                 fontWeight: 700,
                 letterSpacing: "0.06em",
                 textTransform: "uppercase",
@@ -268,7 +268,7 @@ export function ProjectSwitcher() {
                   borderRadius: 4,
                   color: "var(--text-primary)",
                   font: "inherit",
-                  fontSize: 13,
+                  fontSize: "var(--text-lg)",
                   padding: "2px 6px",
                   outline: "none",
                 }}
@@ -279,7 +279,7 @@ export function ProjectSwitcher() {
                   style={{
                     flex: 1,
                     minWidth: 0,
-                    fontSize: 13,
+                    fontSize: "var(--text-lg)",
                     fontWeight: 600,
                     color: "var(--text-primary)",
                     overflow: "hidden",
@@ -352,7 +352,7 @@ export function ProjectSwitcher() {
                   border: "none",
                   color: "var(--text-primary)",
                   font: "inherit",
-                  fontSize: 12,
+                  fontSize: "var(--text-md)",
                   outline: "none",
                 }}
               />
@@ -365,7 +365,7 @@ export function ProjectSwitcher() {
               <div
                 style={{
                   padding: "10px 12px",
-                  fontSize: 12,
+                  fontSize: "var(--text-md)",
                   color: "var(--text-tertiary)",
                 }}
               >
@@ -387,7 +387,7 @@ export function ProjectSwitcher() {
                     background: "transparent",
                     color: "var(--text-primary)",
                     cursor: "pointer",
-                    fontSize: 13,
+                    fontSize: "var(--text-lg)",
                     fontFamily: "var(--font-ui)",
                     textAlign: "left",
                   }}
@@ -411,7 +411,7 @@ export function ProjectSwitcher() {
                   </span>
                   <span
                     style={{
-                      fontSize: 11,
+                      fontSize: "var(--text-sm)",
                       color: "var(--text-disabled)",
                       flexShrink: 0,
                     }}
@@ -425,7 +425,7 @@ export function ProjectSwitcher() {
               <div
                 style={{
                   padding: "6px 12px",
-                  fontSize: 11,
+                  fontSize: "var(--text-sm)",
                   color: "var(--text-tertiary)",
                 }}
               >
@@ -460,7 +460,7 @@ export function ProjectSwitcher() {
             <div style={{ padding: "18px 20px" }}>
               <div
                 style={{
-                  fontSize: 14,
+                  fontSize: "var(--text-xl)",
                   fontWeight: 600,
                   color: "var(--text-primary)",
                   marginBottom: 6,
@@ -470,7 +470,7 @@ export function ProjectSwitcher() {
               </div>
               <div
                 style={{
-                  fontSize: 13,
+                  fontSize: "var(--text-lg)",
                   color: "var(--text-secondary)",
                   lineHeight: 1.5,
                 }}
@@ -502,7 +502,7 @@ export function ProjectSwitcher() {
                   color: "var(--text-secondary)",
                   borderRadius: 5,
                   padding: "7px 14px",
-                  fontSize: 12,
+                  fontSize: "var(--text-md)",
                   cursor: "pointer",
                   fontFamily: "var(--font-ui)",
                 }}
@@ -522,7 +522,7 @@ export function ProjectSwitcher() {
                   color: "var(--status-error, #ef4444)",
                   borderRadius: 5,
                   padding: "7px 14px",
-                  fontSize: 12,
+                  fontSize: "var(--text-md)",
                   cursor: "pointer",
                   fontFamily: "var(--font-ui)",
                 }}
@@ -538,7 +538,7 @@ export function ProjectSwitcher() {
                   color: "#fff",
                   borderRadius: 5,
                   padding: "7px 14px",
-                  fontSize: 12,
+                  fontSize: "var(--text-md)",
                   fontWeight: 600,
                   cursor: "pointer",
                   fontFamily: "var(--font-ui)",

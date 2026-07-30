@@ -44,7 +44,7 @@ export function InvalidCrsOverlay({
         />
         <span
           style={{
-            fontSize: 14,
+            fontSize: "var(--text-xl)",
             fontWeight: 600,
             color: "var(--text-primary)",
             fontFamily: "var(--font-ui)",
@@ -54,7 +54,7 @@ export function InvalidCrsOverlay({
         </span>
         <span
           style={{
-            fontSize: 12,
+            fontSize: "var(--text-md)",
             color: "var(--text-secondary)",
             fontFamily: "var(--font-ui)",
             lineHeight: 1.6,
@@ -75,7 +75,7 @@ export function InvalidCrsOverlay({
               width: "auto",
               border: "1px solid var(--border)",
               padding: "0 12px",
-              fontSize: 12,
+              fontSize: "var(--text-md)",
             }}
           >
             Set source CRS

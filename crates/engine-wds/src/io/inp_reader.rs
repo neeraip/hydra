@@ -7,7 +7,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use super::{units::make_ucf, ParseError};
+use super::{units::make_ucf, ParseError, ReadError};
 use crate::{
     ActionValue, Curve, CurveKind, CurvePoint, DemandCategory, DemandModel, FlowUnits,
     HeadLossFormula, Junction, Link, LinkBase, LinkKind, LinkStatus, LogicOp, MixModel, Network,
@@ -136,12 +136,12 @@ const SWMM_ONLY_SECTIONS: &[&str] = &[
 /// on the absence of an expected one — an EPANET model is not required to
 /// contain any particular section, so an absence test would reject
 /// legitimate sparse networks.
-fn check_dialect(sections: &HashMap<String, Vec<SecLine<'_>>>) -> Result<(), ParseError> {
+fn check_dialect(sections: &HashMap<String, Vec<SecLine<'_>>>) -> Result<(), ReadError> {
     // Iterate the constant, not the parsed sections, so the reported section
     // is the same for a given file regardless of HashMap ordering.
     for &name in SWMM_ONLY_SECTIONS {
         if sections.contains_key(name) {
-            return Err(ParseError::ForeignDialect {
+            return Err(ReadError::ForeignDialect {
                 tool: "SWMM",
                 section: name,
             });
@@ -152,13 +152,9 @@ fn check_dialect(sections: &HashMap<String, Vec<SecLine<'_>>>) -> Result<(), Par
 
 /// Iterate a section's data lines, attaching the section name and the line's
 /// 1-based source line number to any error produced by `f`.
-fn for_each_line<F>(
-    lines: &[SecLine<'_>],
-    section: &'static str,
-    mut f: F,
-) -> Result<(), ParseError>
+fn for_each_line<F>(lines: &[SecLine<'_>], section: &'static str, mut f: F) -> Result<(), ReadError>
 where
-    F: FnMut(&str) -> Result<(), ParseError>,
+    F: FnMut(&str) -> Result<(), ReadError>,
 {
     for &(line_no, line) in lines {
         f(line).map_err(|e| e.at_line(section, line_no))?;
@@ -177,14 +173,14 @@ where
 /// which handles format detection.
 pub fn parse_inp(bytes: &[u8]) -> Result<Network, ParseError> {
     let network = build_network(bytes)?;
-    network.validate().map_err(ParseError::ValidationFailed)?;
+    network.validate().map_err(ParseError::NotSimulable)?;
     Ok(network)
 }
 
 /// Read an INP file into a `Network` without applying the §2.9 validation
 /// pass. Shared by both parse modes (spec §4.1.2) so they cannot drift: the
 /// only difference between them is what each does with `Network::validate`.
-fn build_network(bytes: &[u8]) -> Result<Network, ParseError> {
+fn build_network(bytes: &[u8]) -> Result<Network, ReadError> {
     let text = String::from_utf8_lossy(bytes);
 
     let sections = split_sections(&text);
@@ -601,7 +597,7 @@ fn build_network(bytes: &[u8]) -> Result<Network, ParseError> {
 /// The caller owns the consequence. The returned network **must not be
 /// simulated** when the error list is non-empty, and those errors must be
 /// surfaced rather than dropped.
-pub fn parse_inp_tolerant(bytes: &[u8]) -> Result<(Network, Vec<ValidationError>), ParseError> {
+pub fn parse_inp_tolerant(bytes: &[u8]) -> Result<(Network, Vec<ValidationError>), ReadError> {
     let network = build_network(bytes)?;
     let errors = network.validate().err().unwrap_or_default();
     Ok((network, errors))
@@ -613,7 +609,7 @@ pub fn parse_inp_tolerant(bytes: &[u8]) -> Result<(Network, Vec<ValidationError>
 
 // ── Patterns ──────────────────────────────────────────────────────────────────
 
-fn parse_patterns(lines: &[SecLine<'_>]) -> Result<Vec<Pattern>, ParseError> {
+fn parse_patterns(lines: &[SecLine<'_>]) -> Result<Vec<Pattern>, ReadError> {
     // INP patterns: continuation lines with the same ID are concatenated.
     let mut map: HashMap<String, Vec<f64>> = HashMap::new();
     let mut order: Vec<String> = Vec::new();
@@ -646,7 +642,7 @@ fn parse_patterns(lines: &[SecLine<'_>]) -> Result<Vec<Pattern>, ParseError> {
 
 // ── Curves ────────────────────────────────────────────────────────────────────
 
-fn parse_curves(lines: &[SecLine<'_>]) -> Result<Vec<Curve>, ParseError> {
+fn parse_curves(lines: &[SecLine<'_>]) -> Result<Vec<Curve>, ReadError> {
     // Curves: continuation lines with the same ID add more points.
     // Curve type is inferred later based on usage context.
     let mut map: HashMap<String, Vec<CurvePoint>> = HashMap::new();
@@ -684,7 +680,7 @@ fn parse_curves(lines: &[SecLine<'_>]) -> Result<Vec<Curve>, ParseError> {
 
 // ── Options ───────────────────────────────────────────────────────────────────
 
-fn parse_options(lines: &[SecLine<'_>]) -> Result<SimulationOptions, ParseError> {
+fn parse_options(lines: &[SecLine<'_>]) -> Result<SimulationOptions, ReadError> {
     let mut opts = SimulationOptions::default();
     // Track whether HTOL/QTOL were explicitly set so we can convert them
     // from user units to internal (SI) units. Default values are
@@ -711,7 +707,7 @@ fn parse_options(lines: &[SecLine<'_>]) -> Result<SimulationOptions, ParseError>
                         "D-W" => HeadLossFormula::DarcyWeisbach,
                         "C-M" => HeadLossFormula::ChezyManning,
                         _ => {
-                            return Err(ParseError::InvalidField {
+                            return Err(ReadError::InvalidField {
                                 field: "OPTIONS.Headloss".into(),
                                 reason: format!("unknown formula '{val}'"),
                             });
@@ -734,7 +730,7 @@ fn parse_options(lines: &[SecLine<'_>]) -> Result<SimulationOptions, ParseError>
                 // 0/negative/NaN into 0, silently disabling the solver loop.
                 let v = opt_f64(&fields, 1, "OPTIONS.Trials")?;
                 if v.is_nan() || v < 1.0 {
-                    return Err(ParseError::InvalidField {
+                    return Err(ReadError::InvalidField {
                         field: "OPTIONS.Trials".into(),
                         reason: format!("must be >= 1, got '{v}'"),
                     });
@@ -776,7 +772,7 @@ fn parse_options(lines: &[SecLine<'_>]) -> Result<SimulationOptions, ParseError>
                         "DDA" => DemandModel::DemandDriven,
                         "PDA" => DemandModel::PressureDriven,
                         _ => {
-                            return Err(ParseError::InvalidField {
+                            return Err(ReadError::InvalidField {
                                 field: "OPTIONS.Demand Model".into(),
                                 reason: format!("unknown demand model '{val}'"),
                             });
@@ -832,7 +828,7 @@ fn parse_options(lines: &[SecLine<'_>]) -> Result<SimulationOptions, ParseError>
                 // Spec §2.1: check_freq ≥ 1 (see TRIALS note above).
                 let v = opt_f64(&fields, 1, "OPTIONS.CHECKFREQ")?;
                 if v.is_nan() || v < 1.0 {
-                    return Err(ParseError::InvalidField {
+                    return Err(ReadError::InvalidField {
                         field: "OPTIONS.CHECKFREQ".into(),
                         reason: format!("must be >= 1, got '{v}'"),
                     });
@@ -843,7 +839,7 @@ fn parse_options(lines: &[SecLine<'_>]) -> Result<SimulationOptions, ParseError>
                 // Spec §2.1: max_check ≥ check_freq ≥ 1.
                 let v = opt_f64(&fields, 1, "OPTIONS.MAXCHECK")?;
                 if v.is_nan() || v < 1.0 {
-                    return Err(ParseError::InvalidField {
+                    return Err(ReadError::InvalidField {
                         field: "OPTIONS.MAXCHECK".into(),
                         reason: format!("must be >= 1, got '{v}'"),
                     });
@@ -874,7 +870,7 @@ fn parse_options(lines: &[SecLine<'_>]) -> Result<SimulationOptions, ParseError>
                         "YES" => opts.emitter_backflow = true,
                         "NO" => opts.emitter_backflow = false,
                         _ => {
-                            return Err(ParseError::InvalidField {
+                            return Err(ReadError::InvalidField {
                                 field: "OPTIONS.BACKFLOW ALLOWED".into(),
                                 reason: format!("expected YES or NO, got '{val}'"),
                             });
@@ -908,7 +904,7 @@ fn parse_options(lines: &[SecLine<'_>]) -> Result<SimulationOptions, ParseError>
 
 // ── Times ─────────────────────────────────────────────────────────────────────
 
-fn apply_times(opts: &mut SimulationOptions, lines: &[SecLine<'_>]) -> Result<(), ParseError> {
+fn apply_times(opts: &mut SimulationOptions, lines: &[SecLine<'_>]) -> Result<(), ReadError> {
     for_each_line(lines, "TIMES", |line| {
         let fields: Vec<&str> = line.split_whitespace().collect();
         if fields.is_empty() {
@@ -971,7 +967,7 @@ fn apply_times(opts: &mut SimulationOptions, lines: &[SecLine<'_>]) -> Result<()
 
 // ── Reactions ─────────────────────────────────────────────────────────────────
 
-fn apply_reactions(opts: &mut SimulationOptions, lines: &[SecLine<'_>]) -> Result<(), ParseError> {
+fn apply_reactions(opts: &mut SimulationOptions, lines: &[SecLine<'_>]) -> Result<(), ReadError> {
     for_each_line(lines, "REACTIONS", |line| {
         let fields: Vec<&str> = line.split_whitespace().collect();
         if fields.len() < 2 {
@@ -1033,7 +1029,7 @@ fn apply_per_element_reactions(
     node_map: &HashMap<String, usize>,
     links: &mut [Link],
     link_map: &HashMap<String, usize>,
-) -> Result<(), ParseError> {
+) -> Result<(), ReadError> {
     for_each_line(lines, "REACTIONS", |line| {
         let fields: Vec<&str> = line.split_whitespace().collect();
         if fields.len() < 3 {
@@ -1073,7 +1069,7 @@ fn apply_per_element_reactions(
 
 // ── Energy ────────────────────────────────────────────────────────────────────
 
-fn apply_energy(opts: &mut SimulationOptions, lines: &[SecLine<'_>]) -> Result<(), ParseError> {
+fn apply_energy(opts: &mut SimulationOptions, lines: &[SecLine<'_>]) -> Result<(), ReadError> {
     for_each_line(lines, "ENERGY", |line| {
         let fields: Vec<&str> = line.split_whitespace().collect();
         if fields.len() < 2 {
@@ -1115,7 +1111,7 @@ fn apply_pump_energy(
     links: &mut [Link],
     link_id_to_idx: &HashMap<String, usize>,
     curves: &mut [Curve],
-) -> Result<(), ParseError> {
+) -> Result<(), ReadError> {
     // One-time curve id → index map to avoid a linear scan per PUMP line.
     let curve_index: HashMap<String, usize> = curves
         .iter()
@@ -1169,18 +1165,18 @@ fn parse_junctions(
     lines: &[SecLine<'_>],
     nodes: &mut Vec<Node>,
     id_map: &mut HashMap<String, usize>,
-) -> Result<(), ParseError> {
+) -> Result<(), ReadError> {
     for_each_line(lines, "JUNCTIONS", |line| {
         let fields: Vec<&str> = line.split_whitespace().collect();
         if fields.len() < 2 {
-            return Err(ParseError::InvalidField {
+            return Err(ReadError::InvalidField {
                 field: "JUNCTIONS".into(),
                 reason: format!("need at least 2 fields (ID Elev), got {}", fields.len()),
             });
         }
         let id = fields[0].to_string();
         if id_map.contains_key(&id) {
-            return Err(ParseError::DuplicateId { object: "node", id });
+            return Err(ReadError::DuplicateId { object: "node", id });
         }
         let elevation = parse_f64(fields[1], "JUNCTIONS.Elev")?;
         let base_demand = if fields.len() > 2 {
@@ -1231,18 +1227,18 @@ fn parse_reservoirs(
     lines: &[SecLine<'_>],
     nodes: &mut Vec<Node>,
     id_map: &mut HashMap<String, usize>,
-) -> Result<(), ParseError> {
+) -> Result<(), ReadError> {
     for_each_line(lines, "RESERVOIRS", |line| {
         let fields: Vec<&str> = line.split_whitespace().collect();
         if fields.len() < 2 {
-            return Err(ParseError::InvalidField {
+            return Err(ReadError::InvalidField {
                 field: "RESERVOIRS".into(),
                 reason: format!("need at least 2 fields (ID Head), got {}", fields.len()),
             });
         }
         let id = fields[0].to_string();
         if id_map.contains_key(&id) {
-            return Err(ParseError::DuplicateId { object: "node", id });
+            return Err(ReadError::DuplicateId { object: "node", id });
         }
         let head = parse_f64(fields[1], "RESERVOIRS.Head")?;
         let pattern = if fields.len() > 2 && !fields[2].is_empty() {
@@ -1276,18 +1272,18 @@ fn parse_tanks(
     lines: &[SecLine<'_>],
     nodes: &mut Vec<Node>,
     id_map: &mut HashMap<String, usize>,
-) -> Result<(), ParseError> {
+) -> Result<(), ReadError> {
     for_each_line(lines, "TANKS", |line| {
         let fields: Vec<&str> = line.split_whitespace().collect();
         if fields.len() < 2 {
-            return Err(ParseError::InvalidField {
+            return Err(ReadError::InvalidField {
                 field: "TANKS".into(),
                 reason: format!("need at least 2 fields (ID Elev), got {}", fields.len()),
             });
         }
         let id = fields[0].to_string();
         if id_map.contains_key(&id) {
-            return Err(ParseError::DuplicateId { object: "node", id });
+            return Err(ReadError::DuplicateId { object: "node", id });
         }
         let elevation = parse_f64(fields[1], "TANKS.Elevation")?;
         // Fields beyond ID and Elev default to 0 when omitted (EPANET compat).
@@ -1370,7 +1366,7 @@ fn apply_demands(
     lines: &[SecLine<'_>],
     nodes: &mut [Node],
     id_map: &HashMap<String, usize>,
-) -> Result<(), ParseError> {
+) -> Result<(), ReadError> {
     // Track which junctions have had their first DEMANDS entry processed.
     // EPANET behaviour: the first [DEMANDS] entry for a junction REPLACES
     // the demand category created in [JUNCTIONS]; subsequent entries append.
@@ -1379,7 +1375,7 @@ fn apply_demands(
     for_each_line(lines, "DEMANDS", |line| {
         let fields: Vec<&str> = line.split_whitespace().collect();
         if fields.len() < 2 {
-            return Err(ParseError::InvalidField {
+            return Err(ReadError::InvalidField {
                 field: "DEMANDS".into(),
                 reason: format!(
                     "need at least 2 fields (Junction Demand), got {}",
@@ -1428,11 +1424,11 @@ fn apply_emitters(
     lines: &[SecLine<'_>],
     nodes: &mut [Node],
     id_map: &HashMap<String, usize>,
-) -> Result<(), ParseError> {
+) -> Result<(), ReadError> {
     for_each_line(lines, "EMITTERS", |line| {
         let fields: Vec<&str> = line.split_whitespace().collect();
         if fields.len() < 2 {
-            return Err(ParseError::InvalidField {
+            return Err(ReadError::InvalidField {
                 field: "EMITTERS".into(),
                 reason: format!(
                     "need at least 2 fields (Junction Coefficient), got {}",
@@ -1456,7 +1452,7 @@ fn apply_quality(
     lines: &[SecLine<'_>],
     nodes: &mut [Node],
     id_map: &HashMap<String, usize>,
-) -> Result<(), ParseError> {
+) -> Result<(), ReadError> {
     // Pre-parse each node ID as a number once, instead of re-parsing every
     // node ID for every range-format line.
     let numeric_ids: Vec<(usize, i64)> = nodes
@@ -1468,7 +1464,7 @@ fn apply_quality(
     for_each_line(lines, "QUALITY", |line| {
         let fields: Vec<&str> = line.split_whitespace().collect();
         if fields.len() < 2 {
-            return Err(ParseError::InvalidField {
+            return Err(ReadError::InvalidField {
                 field: "QUALITY".into(),
                 reason: format!(
                     "need at least 2 fields (Node InitQual), got {}",
@@ -1520,11 +1516,11 @@ fn apply_mixing(
     lines: &[SecLine<'_>],
     nodes: &mut [Node],
     id_map: &HashMap<String, usize>,
-) -> Result<(), ParseError> {
+) -> Result<(), ReadError> {
     for_each_line(lines, "MIXING", |line| {
         let fields: Vec<&str> = line.split_whitespace().collect();
         if fields.len() < 2 {
-            return Err(ParseError::InvalidField {
+            return Err(ReadError::InvalidField {
                 field: "MIXING".into(),
                 reason: format!("need at least 2 fields (Tank Model), got {}", fields.len()),
             });
@@ -1536,7 +1532,7 @@ fn apply_mixing(
             "FIFO" => MixModel::Fifo,
             "LIFO" => MixModel::Lifo,
             other => {
-                return Err(ParseError::InvalidField {
+                return Err(ReadError::InvalidField {
                     field: "MIXING.Model".into(),
                     reason: format!("unknown mix model '{other}'"),
                 });
@@ -1563,11 +1559,11 @@ fn apply_sources(
     lines: &[SecLine<'_>],
     nodes: &mut [Node],
     id_map: &HashMap<String, usize>,
-) -> Result<(), ParseError> {
+) -> Result<(), ReadError> {
     for_each_line(lines, "SOURCES", |line| {
         let fields: Vec<&str> = line.split_whitespace().collect();
         if fields.len() < 2 {
-            return Err(ParseError::InvalidField {
+            return Err(ReadError::InvalidField {
                 field: "SOURCES".into(),
                 reason: format!(
                     "need at least 2 fields (Node Type/Quality), got {}",
@@ -1590,7 +1586,7 @@ fn apply_sources(
                 if fields[1].parse::<f64>().is_ok() {
                     (SourceType::Concentration, 1)
                 } else {
-                    return Err(ParseError::InvalidField {
+                    return Err(ReadError::InvalidField {
                         field: "SOURCES.Type".into(),
                         reason: format!("unknown source type '{}'", fields[1]),
                     });
@@ -1626,11 +1622,11 @@ fn parse_pipes(
     links: &mut Vec<Link>,
     link_map: &mut HashMap<String, usize>,
     node_map: &HashMap<String, usize>,
-) -> Result<(), ParseError> {
+) -> Result<(), ReadError> {
     for_each_line(lines, "PIPES", |line| {
         let fields: Vec<&str> = line.split_whitespace().collect();
         if fields.len() < 6 {
-            return Err(ParseError::InvalidField {
+            return Err(ReadError::InvalidField {
                 field: "PIPES".into(),
                 reason: format!(
                     "need at least 6 fields (ID Node1 Node2 Length Diameter Roughness), got {}",
@@ -1640,7 +1636,7 @@ fn parse_pipes(
         }
         let id = fields[0].to_string();
         if link_map.contains_key(&id) {
-            return Err(ParseError::DuplicateId { object: "link", id });
+            return Err(ReadError::DuplicateId { object: "link", id });
         }
         let from_node = resolve_node(node_map, fields[1])? + 1;
         let to_node = resolve_node(node_map, fields[2])? + 1;
@@ -1712,11 +1708,11 @@ fn parse_pumps(
     links: &mut Vec<Link>,
     link_map: &mut HashMap<String, usize>,
     node_map: &HashMap<String, usize>,
-) -> Result<(), ParseError> {
+) -> Result<(), ReadError> {
     for_each_line(lines, "PUMPS", |line| {
         let fields: Vec<&str> = line.split_whitespace().collect();
         if fields.len() < 4 {
-            return Err(ParseError::InvalidField {
+            return Err(ReadError::InvalidField {
                 field: "PUMPS".into(),
                 reason: format!(
                     "need at least 4 fields (ID Node1 Node2 Parameters...), got {}",
@@ -1726,7 +1722,7 @@ fn parse_pumps(
         }
         let id = fields[0].to_string();
         if link_map.contains_key(&id) {
-            return Err(ParseError::DuplicateId { object: "link", id });
+            return Err(ReadError::DuplicateId { object: "link", id });
         }
         let from_node = resolve_node(node_map, fields[1])? + 1;
         let to_node = resolve_node(node_map, fields[2])? + 1;
@@ -1812,11 +1808,11 @@ fn parse_valves(
     links: &mut Vec<Link>,
     link_map: &mut HashMap<String, usize>,
     node_map: &HashMap<String, usize>,
-) -> Result<(), ParseError> {
+) -> Result<(), ReadError> {
     for_each_line(lines, "VALVES", |line| {
         let fields: Vec<&str> = line.split_whitespace().collect();
         if fields.len() < 6 {
-            return Err(ParseError::InvalidField {
+            return Err(ReadError::InvalidField {
                 field: "VALVES".into(),
                 reason: format!(
                     "need at least 6 fields (ID Node1 Node2 Diameter Type Setting), got {}",
@@ -1826,7 +1822,7 @@ fn parse_valves(
         }
         let id = fields[0].to_string();
         if link_map.contains_key(&id) {
-            return Err(ParseError::DuplicateId { object: "link", id });
+            return Err(ReadError::DuplicateId { object: "link", id });
         }
         let from_node = resolve_node(node_map, fields[1])? + 1;
         let to_node = resolve_node(node_map, fields[2])? + 1;
@@ -1886,11 +1882,11 @@ fn apply_status(
     lines: &[SecLine<'_>],
     links: &mut [Link],
     link_map: &HashMap<String, usize>,
-) -> Result<(), ParseError> {
+) -> Result<(), ReadError> {
     for_each_line(lines, "STATUS", |line| {
         let fields: Vec<&str> = line.split_whitespace().collect();
         if fields.len() < 2 {
-            return Err(ParseError::InvalidField {
+            return Err(ReadError::InvalidField {
                 field: "STATUS".into(),
                 reason: format!(
                     "need at least 2 fields (ID Status/Setting), got {}",
@@ -1934,11 +1930,11 @@ fn apply_leakage(
     lines: &[SecLine<'_>],
     links: &mut [Link],
     link_map: &HashMap<String, usize>,
-) -> Result<(), ParseError> {
+) -> Result<(), ReadError> {
     for_each_line(lines, "LEAKAGE", |line| {
         let fields: Vec<&str> = line.split_whitespace().collect();
         if fields.len() < 3 {
-            return Err(ParseError::InvalidField {
+            return Err(ReadError::InvalidField {
                 field: "LEAKAGE".into(),
                 reason: format!(
                     "need at least 3 fields (PipeID Coeff1 Coeff2), got {}",
@@ -1965,7 +1961,7 @@ fn parse_controls(
     lines: &[SecLine<'_>],
     node_map: &HashMap<String, usize>,
     link_map: &HashMap<String, usize>,
-) -> Result<Vec<SimpleControl>, ParseError> {
+) -> Result<Vec<SimpleControl>, ReadError> {
     let mut controls = Vec::new();
 
     for_each_line(lines, "CONTROLS", |line| {
@@ -2001,7 +1997,7 @@ fn parse_controls(
                 "ABOVE" => TriggerType::HiLevel,
                 "BELOW" => TriggerType::LowLevel,
                 other => {
-                    return Err(ParseError::InvalidField {
+                    return Err(ReadError::InvalidField {
                         field: "CONTROLS".into(),
                         reason: format!("expected ABOVE or BELOW, got '{other}'"),
                     });
@@ -2052,7 +2048,7 @@ fn parse_controls(
     Ok(controls)
 }
 
-fn parse_control_action(s: &str) -> Result<(Option<LinkStatus>, Option<f64>), ParseError> {
+fn parse_control_action(s: &str) -> Result<(Option<LinkStatus>, Option<f64>), ReadError> {
     match s.to_ascii_uppercase().as_str() {
         "OPEN" => Ok((Some(LinkStatus::Open), None)),
         "CLOSED" | "CLOSE" => Ok((Some(LinkStatus::Closed), None)),
@@ -2075,7 +2071,7 @@ fn parse_rules(
     lines: &[SecLine<'_>],
     node_map: &HashMap<String, usize>,
     link_map: &HashMap<String, usize>,
-) -> Result<Vec<Rule>, ParseError> {
+) -> Result<Vec<Rule>, ReadError> {
     let mut rules = Vec::new();
     let mut current_premises: Vec<Premise> = Vec::new();
     let mut current_then: Vec<RuleAction> = Vec::new();
@@ -2148,7 +2144,7 @@ fn parse_rule_premise(
     connective: Option<LogicOp>,
     node_map: &HashMap<String, usize>,
     link_map: &HashMap<String, usize>,
-) -> Result<Premise, ParseError> {
+) -> Result<Premise, ReadError> {
     // Forms:
     //   NODE <id> <attribute> <op> <value>
     //   LINK <id> <attribute> <op> <value>
@@ -2156,7 +2152,7 @@ fn parse_rule_premise(
     //   SYSTEM TIME <op> <value>
     //   SYSTEM DEMAND <op> <value>
     if fields.is_empty() {
-        return Err(ParseError::InvalidField {
+        return Err(ReadError::InvalidField {
             field: "RULES premise".into(),
             reason: "empty premise".into(),
         });
@@ -2166,7 +2162,7 @@ fn parse_rule_premise(
     match obj_type.as_str() {
         "NODE" | "JUNC" | "JUNCTION" | "RESERV" | "RESERVOIR" | "TANK" => {
             if fields.len() < 5 {
-                return Err(ParseError::InvalidField {
+                return Err(ReadError::InvalidField {
                     field: "RULES premise".into(),
                     reason: "need: NODE <id> <attr> <op> <value>".into(),
                 });
@@ -2185,7 +2181,7 @@ fn parse_rule_premise(
         }
         "LINK" | "PIPE" | "PUMP" | "VALVE" => {
             if fields.len() < 5 {
-                return Err(ParseError::InvalidField {
+                return Err(ReadError::InvalidField {
                     field: "RULES premise".into(),
                     reason: "need: LINK <id> <attr> <op> <value>".into(),
                 });
@@ -2204,7 +2200,7 @@ fn parse_rule_premise(
         }
         "SYSTEM" => {
             if fields.len() < 4 {
-                return Err(ParseError::InvalidField {
+                return Err(ReadError::InvalidField {
                     field: "RULES premise".into(),
                     reason: "need: SYSTEM <attr> <op> <value>".into(),
                 });
@@ -2228,7 +2224,7 @@ fn parse_rule_premise(
                 connective,
             })
         }
-        _ => Err(ParseError::InvalidField {
+        _ => Err(ReadError::InvalidField {
             field: "RULES premise".into(),
             reason: format!("unknown object type '{obj_type}'"),
         }),
@@ -2238,7 +2234,7 @@ fn parse_rule_premise(
 fn parse_rule_action(
     fields: &[&str],
     link_map: &HashMap<String, usize>,
-) -> Result<RuleAction, ParseError> {
+) -> Result<RuleAction, ReadError> {
     // Forms:
     //   LINK <id> <status_or_setting> = <value>
     //   LINK <id> STATUS = OPEN/CLOSED
@@ -2248,7 +2244,7 @@ fn parse_rule_action(
     //   PIPE <id> STATUS = OPEN/CLOSED
     //   VALVE <id> SETTING = <value>
     if fields.len() < 4 {
-        return Err(ParseError::InvalidField {
+        return Err(ReadError::InvalidField {
             field: "RULES action".into(),
             reason: "need: LINK <id> <property> = <value>".into(),
         });
@@ -2277,7 +2273,7 @@ fn parse_rule_action(
             ActionValue::Setting(v)
         }
         _ => {
-            return Err(ParseError::InvalidField {
+            return Err(ReadError::InvalidField {
                 field: "RULES action".into(),
                 reason: format!("unknown property '{prop}'"),
             });
@@ -2291,8 +2287,8 @@ fn parse_rule_action(
 // Helpers
 // ═══════════════════════════════════════════════════════════════════════════════
 
-fn parse_f64(s: &str, ctx: &str) -> Result<f64, ParseError> {
-    s.parse::<f64>().map_err(|_| ParseError::InvalidField {
+fn parse_f64(s: &str, ctx: &str) -> Result<f64, ReadError> {
+    s.parse::<f64>().map_err(|_| ReadError::InvalidField {
         field: ctx.to_string(),
         reason: format!("cannot parse '{s}' as a number"),
     })
@@ -2343,35 +2339,31 @@ fn adjust_timesteps(opts: &mut SimulationOptions) {
     }
 }
 
-fn opt_f64(fields: &[&str], idx: usize, ctx: &str) -> Result<f64, ParseError> {
+fn opt_f64(fields: &[&str], idx: usize, ctx: &str) -> Result<f64, ReadError> {
     fields
         .get(idx)
-        .ok_or_else(|| ParseError::InvalidField {
+        .ok_or_else(|| ReadError::InvalidField {
             field: ctx.to_string(),
             reason: "missing value".into(),
         })
         .and_then(|s| parse_f64(s, ctx))
 }
 
-fn resolve_node(map: &HashMap<String, usize>, id: &str) -> Result<usize, ParseError> {
-    map.get(id)
-        .copied()
-        .ok_or_else(|| ParseError::InvalidField {
-            field: "node reference".into(),
-            reason: format!("unknown node ID '{id}'"),
-        })
+fn resolve_node(map: &HashMap<String, usize>, id: &str) -> Result<usize, ReadError> {
+    map.get(id).copied().ok_or_else(|| ReadError::InvalidField {
+        field: "node reference".into(),
+        reason: format!("unknown node ID '{id}'"),
+    })
 }
 
-fn resolve_link(map: &HashMap<String, usize>, id: &str) -> Result<usize, ParseError> {
-    map.get(id)
-        .copied()
-        .ok_or_else(|| ParseError::InvalidField {
-            field: "link reference".into(),
-            reason: format!("unknown link ID '{id}'"),
-        })
+fn resolve_link(map: &HashMap<String, usize>, id: &str) -> Result<usize, ReadError> {
+    map.get(id).copied().ok_or_else(|| ReadError::InvalidField {
+        field: "link reference".into(),
+        reason: format!("unknown link ID '{id}'"),
+    })
 }
 
-fn parse_flow_units(s: &str) -> Result<FlowUnits, ParseError> {
+fn parse_flow_units(s: &str) -> Result<FlowUnits, ReadError> {
     match s.to_ascii_uppercase().as_str() {
         "CFS" => Ok(FlowUnits::Cfs),
         "GPM" => Ok(FlowUnits::Gpm),
@@ -2384,26 +2376,26 @@ fn parse_flow_units(s: &str) -> Result<FlowUnits, ParseError> {
         "CMH" => Ok(FlowUnits::Cmh),
         "CMD" => Ok(FlowUnits::Cmd),
         "CMS" => Ok(FlowUnits::Cms),
-        _ => Err(ParseError::InvalidField {
+        _ => Err(ReadError::InvalidField {
             field: "OPTIONS.Units".into(),
             reason: format!("unknown flow unit '{s}'"),
         }),
     }
 }
 
-fn parse_link_status_inp(s: &str) -> Result<LinkStatus, ParseError> {
+fn parse_link_status_inp(s: &str) -> Result<LinkStatus, ReadError> {
     match s.to_ascii_uppercase().as_str() {
         "OPEN" | "" => Ok(LinkStatus::Open),
         "CLOSED" | "CLOSE" => Ok(LinkStatus::Closed),
         "CV" => Ok(LinkStatus::Active), // Check valve sentinel.
-        _ => Err(ParseError::InvalidField {
+        _ => Err(ReadError::InvalidField {
             field: "status".into(),
             reason: format!("unknown status '{s}'"),
         }),
     }
 }
 
-fn parse_valve_type_inp(s: &str) -> Result<ValveType, ParseError> {
+fn parse_valve_type_inp(s: &str) -> Result<ValveType, ReadError> {
     match s.to_ascii_uppercase().as_str() {
         "PRV" => Ok(ValveType::Prv),
         "PSV" => Ok(ValveType::Psv),
@@ -2412,7 +2404,7 @@ fn parse_valve_type_inp(s: &str) -> Result<ValveType, ParseError> {
         "GPV" => Ok(ValveType::Gpv),
         "PCV" => Ok(ValveType::Pcv),
         "PBV" => Ok(ValveType::Pbv),
-        _ => Err(ParseError::InvalidField {
+        _ => Err(ReadError::InvalidField {
             field: "VALVES.Type".into(),
             reason: format!("unknown valve type '{s}'"),
         }),
@@ -2421,9 +2413,9 @@ fn parse_valve_type_inp(s: &str) -> Result<ValveType, ParseError> {
 
 /// Parse an EPANET time value. Accepts:
 ///   `H:MM`, `H:MM:SS`, or decimal hours, or decimal seconds.
-fn parse_time_value(fields: &[&str], ctx: &str) -> Result<f64, ParseError> {
+fn parse_time_value(fields: &[&str], ctx: &str) -> Result<f64, ReadError> {
     if fields.is_empty() {
-        return Err(ParseError::InvalidField {
+        return Err(ReadError::InvalidField {
             field: ctx.to_string(),
             reason: "missing time value".into(),
         });
@@ -2433,25 +2425,25 @@ fn parse_time_value(fields: &[&str], ctx: &str) -> Result<f64, ParseError> {
         // H:MM or H:MM:SS
         let hours: f64 = s[..colon_pos]
             .parse()
-            .map_err(|_| ParseError::InvalidField {
+            .map_err(|_| ReadError::InvalidField {
                 field: ctx.to_string(),
                 reason: format!("invalid hours in '{s}'"),
             })?;
         let rest = &s[colon_pos + 1..];
         let (minutes, seconds) = if let Some(pos2) = rest.find(':') {
-            let m: f64 = rest[..pos2].parse().map_err(|_| ParseError::InvalidField {
+            let m: f64 = rest[..pos2].parse().map_err(|_| ReadError::InvalidField {
                 field: ctx.to_string(),
                 reason: format!("invalid minutes in '{s}'"),
             })?;
             let sec: f64 = rest[pos2 + 1..]
                 .parse()
-                .map_err(|_| ParseError::InvalidField {
+                .map_err(|_| ReadError::InvalidField {
                     field: ctx.to_string(),
                     reason: format!("invalid seconds in '{s}'"),
                 })?;
             (m, sec)
         } else {
-            let m: f64 = rest.parse().map_err(|_| ParseError::InvalidField {
+            let m: f64 = rest.parse().map_err(|_| ReadError::InvalidField {
                 field: ctx.to_string(),
                 reason: format!("invalid minutes in '{s}'"),
             })?;
@@ -2508,7 +2500,7 @@ fn parse_clocktime(fields: &[&str]) -> f64 {
     base
 }
 
-fn parse_premise_attr(s: &str) -> Result<PremiseAttribute, ParseError> {
+fn parse_premise_attr(s: &str) -> Result<PremiseAttribute, ReadError> {
     match s.to_ascii_uppercase().as_str() {
         "HEAD" | "GRADE" => Ok(PremiseAttribute::Head),
         "PRESSURE" => Ok(PremiseAttribute::Pressure),
@@ -2522,14 +2514,14 @@ fn parse_premise_attr(s: &str) -> Result<PremiseAttribute, ParseError> {
         "DRAINTIME" | "DRAIN_TIME" => Ok(PremiseAttribute::DrainTime),
         "CLOCKTIME" | "CLOCK_TIME" => Ok(PremiseAttribute::ClockTime),
         "TIME" => Ok(PremiseAttribute::Time),
-        _ => Err(ParseError::InvalidField {
+        _ => Err(ReadError::InvalidField {
             field: "premise attribute".into(),
             reason: format!("unknown attribute '{s}'"),
         }),
     }
 }
 
-fn parse_premise_op(s: &str) -> Result<PremiseOperator, ParseError> {
+fn parse_premise_op(s: &str) -> Result<PremiseOperator, ReadError> {
     match s.to_ascii_uppercase().as_str() {
         "=" | "==" | "IS" | "EQUALS" => Ok(PremiseOperator::Eq),
         "<>" | "!=" | "NOT" => Ok(PremiseOperator::Neq),
@@ -2537,14 +2529,14 @@ fn parse_premise_op(s: &str) -> Result<PremiseOperator, ParseError> {
         ">" | "ABOVE" => Ok(PremiseOperator::Gt),
         "<=" => Ok(PremiseOperator::Le),
         ">=" => Ok(PremiseOperator::Ge),
-        _ => Err(ParseError::InvalidField {
+        _ => Err(ReadError::InvalidField {
             field: "premise operator".into(),
             reason: format!("unknown operator '{s}'"),
         }),
     }
 }
 
-fn parse_premise_value(s: &str, attr: &PremiseAttribute) -> Result<f64, ParseError> {
+fn parse_premise_value(s: &str, attr: &PremiseAttribute) -> Result<f64, ReadError> {
     match attr {
         PremiseAttribute::Status => {
             // STATUS can be OPEN, CLOSED, or ACTIVE.
@@ -2569,7 +2561,7 @@ fn parse_premise_value(s: &str, attr: &PremiseAttribute) -> Result<f64, ParseErr
 fn parse_coordinates(
     lines: &[SecLine<'_>],
     node_id_to_idx: &HashMap<String, usize>,
-) -> Result<HashMap<String, (f64, f64)>, ParseError> {
+) -> Result<HashMap<String, (f64, f64)>, ReadError> {
     let mut coords = HashMap::new();
     for_each_line(lines, "COORDINATES", |line| {
         let fields: Vec<&str> = line.split_whitespace().collect();
@@ -2597,7 +2589,7 @@ fn parse_coordinates(
 fn parse_vertices(
     lines: &[SecLine<'_>],
     link_id_to_idx: &HashMap<String, usize>,
-) -> Result<HashMap<String, Vec<(f64, f64)>>, ParseError> {
+) -> Result<HashMap<String, Vec<(f64, f64)>>, ReadError> {
     let mut verts: HashMap<String, Vec<(f64, f64)>> = HashMap::new();
     for_each_line(lines, "VERTICES", |line| {
         let fields: Vec<&str> = line.split_whitespace().collect();
@@ -2623,7 +2615,7 @@ fn parse_tags(
     lines: &[SecLine<'_>],
     node_id_to_idx: &HashMap<String, usize>,
     link_id_to_idx: &HashMap<String, usize>,
-) -> Result<TagMaps, ParseError> {
+) -> Result<TagMaps, ReadError> {
     let mut node_tags = HashMap::new();
     let mut link_tags = HashMap::new();
     for_each_line(lines, "TAGS", |line| {
@@ -2676,7 +2668,7 @@ const REPORT_FIELD_NAMES: &[&str] = &[
 /// NOTE: the parsed options are stored in `Network::report` for API
 /// completeness, but `rpt_writer` does not yet consult them — node/link
 /// report tables and field filtering are not implemented.
-fn parse_report(lines: &[SecLine<'_>]) -> Result<ReportOptions, ParseError> {
+fn parse_report(lines: &[SecLine<'_>]) -> Result<ReportOptions, ReadError> {
     let mut report = ReportOptions::default();
     for_each_line(lines, "REPORT", |line| {
         let fields: Vec<&str> = line.split_whitespace().collect();
@@ -2830,7 +2822,7 @@ Units  LPS
         assert!(
             matches!(
                 parse_inp(UNFINISHED_INP.as_bytes()),
-                Err(ParseError::ValidationFailed(_))
+                Err(ParseError::NotSimulable(_))
             ),
             "strict parse must still refuse an unsimulable network"
         );
@@ -2912,9 +2904,10 @@ J2   400.0 0.0
 
     #[test]
     fn swmm_input_is_rejected_rather_than_silently_misread() {
-        let err = parse_inp(SWMM_INP.as_bytes()).expect_err("SWMM input must not parse");
+        let err = parse_inp_tolerant(SWMM_INP.as_bytes())
+            .expect_err("SWMM input must not parse, even tolerantly");
         match err {
-            ParseError::ForeignDialect { tool, section } => {
+            ReadError::ForeignDialect { tool, section } => {
                 assert_eq!(tool, "SWMM");
                 // CONDUITS sorts first among the foreign sections present.
                 assert_eq!(section, "CONDUITS");
@@ -2953,8 +2946,8 @@ J2   400.0 0.0
     fn every_listed_foreign_section_triggers_rejection_on_its_own() {
         for &name in SWMM_ONLY_SECTIONS {
             let inp = format!("[JUNCTIONS]\nJ1  0  10\n[{name}]\n");
-            match parse_inp(inp.as_bytes()) {
-                Err(ParseError::ForeignDialect { section, .. }) => assert_eq!(section, name),
+            match parse_inp_tolerant(inp.as_bytes()) {
+                Err(ReadError::ForeignDialect { section, .. }) => assert_eq!(section, name),
                 Err(other) => panic!("[{name}] produced {other:?}"),
                 Ok(_) => panic!("[{name}] must be rejected on its own"),
             }
@@ -3127,13 +3120,13 @@ Quality    Fluoride mg/L
     // ═══════════════════════════════════════════════════════════════════════════
 
     /// Unwrap an `AtLine` error, returning `(section, line, inner)`.
-    fn unwrap_at_line(err: ParseError) -> (String, usize, ParseError) {
+    fn unwrap_at_line(err: ParseError) -> (String, usize, ReadError) {
         match err {
-            ParseError::AtLine {
+            ParseError::Read(ReadError::AtLine {
                 section,
                 line,
                 source,
-            } => (section, line, *source),
+            }) => (section, line, *source),
             other => panic!("expected AtLine error, got: {other}"),
         }
     }
@@ -3160,7 +3153,7 @@ Headloss    H-W
         assert_eq!(section, "JUNCTIONS");
         assert_eq!(line, 3);
         assert!(
-            matches!(inner, ParseError::DuplicateId { object: "node", ref id } if id == "J1"),
+            matches!(inner, ReadError::DuplicateId { object: "node", ref id } if id == "J1"),
             "unexpected inner error: {inner}"
         );
     }
@@ -3189,7 +3182,7 @@ Headloss    H-W
         let (section, _line, inner) = unwrap_at_line(err);
         assert_eq!(section, "TANKS");
         assert!(
-            matches!(inner, ParseError::DuplicateId { object: "node", ref id } if id == "N1"),
+            matches!(inner, ReadError::DuplicateId { object: "node", ref id } if id == "N1"),
             "unexpected inner error: {inner}"
         );
     }
@@ -3216,7 +3209,7 @@ Headloss    H-W
         let (section, _line, inner) = unwrap_at_line(err);
         assert_eq!(section, "PIPES");
         assert!(
-            matches!(inner, ParseError::DuplicateId { object: "link", ref id } if id == "P1"),
+            matches!(inner, ReadError::DuplicateId { object: "link", ref id } if id == "P1"),
             "unexpected inner error: {inner}"
         );
     }
@@ -3246,7 +3239,7 @@ Headloss    H-W
         let (section, _line, inner) = unwrap_at_line(err);
         assert_eq!(section, "VALVES");
         assert!(
-            matches!(inner, ParseError::DuplicateId { object: "link", ref id } if id == "L1"),
+            matches!(inner, ReadError::DuplicateId { object: "link", ref id } if id == "L1"),
             "unexpected inner error: {inner}"
         );
     }
@@ -4967,7 +4960,7 @@ Headloss    H-W
                    [OPTIONS]\nUnits    CMS\nHeadloss    H-W\n";
         let err = parse_inp(inp.as_bytes()).expect_err("no fixed-grade node rejected");
         match err {
-            ParseError::ValidationFailed(errors) => {
+            ParseError::NotSimulable(errors) => {
                 assert!(
                     errors
                         .iter()
@@ -4975,7 +4968,7 @@ Headloss    H-W
                     "expected NoReservoir, got: {errors:?}"
                 );
             }
-            other => panic!("expected ValidationFailed, got: {other}"),
+            other => panic!("expected NotSimulable, got: {other}"),
         }
     }
 
@@ -4987,7 +4980,7 @@ Headloss    H-W
                    [OPTIONS]\nUnits    CMS\nHeadloss    H-W\n";
         let err = parse_inp(inp.as_bytes()).expect_err("self-loop rejected");
         match err {
-            ParseError::ValidationFailed(errors) => {
+            ParseError::NotSimulable(errors) => {
                 assert!(
                     errors
                         .iter()
@@ -4995,7 +4988,7 @@ Headloss    H-W
                     "expected LinkSelfLoop, got: {errors:?}"
                 );
             }
-            other => panic!("expected ValidationFailed, got: {other}"),
+            other => panic!("expected NotSimulable, got: {other}"),
         }
     }
 
@@ -5006,7 +4999,7 @@ Headloss    H-W
                    [OPTIONS]\nUnits    CMS\nHeadloss    H-W\n";
         let err = parse_inp(inp.as_bytes()).expect_err("undefined pattern rejected");
         match err {
-            ParseError::ValidationFailed(errors) => {
+            ParseError::NotSimulable(errors) => {
                 assert!(
                     errors.iter().any(|e| matches!(
                         e,
@@ -5016,7 +5009,7 @@ Headloss    H-W
                     "expected UnknownPatternRef for PAT9, got: {errors:?}"
                 );
             }
-            other => panic!("expected ValidationFailed, got: {other}"),
+            other => panic!("expected NotSimulable, got: {other}"),
         }
     }
 
@@ -5028,7 +5021,7 @@ Headloss    H-W
                    [OPTIONS]\nUnits    CMS\nHeadloss    H-W\n";
         let err = parse_inp(inp.as_bytes()).expect_err("undefined volume curve rejected");
         match err {
-            ParseError::ValidationFailed(errors) => {
+            ParseError::NotSimulable(errors) => {
                 assert!(
                     errors.iter().any(|e| matches!(
                         e,
@@ -5038,7 +5031,7 @@ Headloss    H-W
                     "expected UnknownCurveRef for VC9, got: {errors:?}"
                 );
             }
-            other => panic!("expected ValidationFailed, got: {other}"),
+            other => panic!("expected NotSimulable, got: {other}"),
         }
     }
 }

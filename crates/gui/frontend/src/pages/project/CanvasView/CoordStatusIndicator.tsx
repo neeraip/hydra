@@ -106,7 +106,7 @@ export function CoordStatusIndicator({
             </div>
             <span
               style={{
-                fontSize: 13,
+                fontSize: "var(--text-lg)",
                 fontWeight: 700,
                 color: "var(--text-primary)",
               }}
@@ -119,7 +119,7 @@ export function CoordStatusIndicator({
           <p
             style={{
               margin: 0,
-              fontSize: 12,
+              fontSize: "var(--text-md)",
               color: "var(--text-secondary)",
               lineHeight: 1.6,
             }}
@@ -131,7 +131,7 @@ export function CoordStatusIndicator({
                 <code
                   style={{
                     fontFamily: "var(--font-mono)",
-                    fontSize: 11,
+                    fontSize: "var(--text-sm)",
                     background: bgPop,
                     padding: "1px 4px",
                     borderRadius: 3,
@@ -149,7 +149,7 @@ export function CoordStatusIndicator({
                 <code
                   style={{
                     fontFamily: "var(--font-mono)",
-                    fontSize: 11,
+                    fontSize: "var(--text-sm)",
                     background: bgPop,
                     padding: "1px 4px",
                     borderRadius: 3,
@@ -173,7 +173,7 @@ export function CoordStatusIndicator({
               borderRadius: 5,
               color: "var(--text-secondary)",
               cursor: "pointer",
-              fontSize: 11,
+              fontSize: "var(--text-sm)",
               padding: "3px 10px",
               fontFamily: "var(--font-ui)",
             }}

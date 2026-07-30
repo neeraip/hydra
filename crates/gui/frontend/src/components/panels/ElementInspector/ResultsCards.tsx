@@ -30,7 +30,7 @@ function EmptyStateCard() {
     >
       <span
         style={{
-          fontSize: 12,
+          fontSize: "var(--text-md)",
           color: "var(--text-secondary)",
           fontFamily: "var(--font-ui)",
         }}

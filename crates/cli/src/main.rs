@@ -232,13 +232,28 @@ fn run(cli: &Cli) -> i32 {
 
     let network = match io::parse(&bytes) {
         Ok(n) => n,
-        Err(io::ParseError::ValidationFailed(errs)) => {
+        Err(io::ParseError::NotSimulable(errs)) => {
             for e in &errs {
                 emit_error("validation/network", &e.to_string(), None, None);
             }
             return EXIT_INPUT;
         }
-        Err(io::ParseError::UnrecognisedFormat) => {
+        // A sound model belonging to another tool is not a damaged file, and
+        // gets its own code so a caller can route it rather than report it as
+        // bad input (model spec §4.1.2).
+        Err(io::ParseError::Read(io::ReadError::ForeignDialect { tool, section })) => {
+            emit_error(
+                "input/engine",
+                &format!(
+                    "this is a {tool} model, not an EPANET one \
+                     (it declares a [{section}] section)"
+                ),
+                None,
+                None,
+            );
+            return EXIT_INPUT;
+        }
+        Err(io::ParseError::Read(io::ReadError::UnrecognisedFormat)) => {
             emit_error("input/format", "unrecognised file format", None, None);
             return EXIT_INPUT;
         }

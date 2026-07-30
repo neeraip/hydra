@@ -80,7 +80,7 @@ export function BaseRow({
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
           <span
             style={{
-              fontSize: 13,
+              fontSize: "var(--text-lg)",
               fontWeight: 600,
               color: isActive ? accent : "var(--text-primary)",
             }}
@@ -90,7 +90,7 @@ export function BaseRow({
           {isActive && (
             <span
               style={{
-                fontSize: 10,
+                fontSize: "var(--text-xs)",
                 fontWeight: 600,
                 color: accent,
                 background: `${accent}22`,
@@ -107,7 +107,7 @@ export function BaseRow({
               not require inferring it from which actions are available. */}
           <span
             style={{
-              fontSize: 10,
+              fontSize: "var(--text-xs)",
               fontWeight: 600,
               color: baseStateColor,
               background: `${baseStateColor}22`,
@@ -119,7 +119,11 @@ export function BaseRow({
           </span>
         </div>
         <div
-          style={{ fontSize: 11, color: "var(--text-tertiary)", marginTop: 2 }}
+          style={{
+            fontSize: "var(--text-sm)",
+            color: "var(--text-tertiary)",
+            marginTop: 2,
+          }}
         >
           {canBranch
             ? "Canonical network. All scenarios branch from here."
@@ -294,7 +298,7 @@ export function ScenarioRow({
                 if (e.key === "Escape") onRenameCancel();
               }}
               style={{
-                fontSize: 13,
+                fontSize: "var(--text-lg)",
                 fontFamily: "var(--font-ui)",
                 background: "var(--bg-input)",
                 border: `1px solid ${accent}`,
@@ -333,7 +337,7 @@ export function ScenarioRow({
           >
             <span
               style={{
-                fontSize: 13,
+                fontSize: "var(--text-lg)",
                 fontWeight: 500,
                 color: isActive ? accent : "var(--text-primary)",
               }}
@@ -344,7 +348,7 @@ export function ScenarioRow({
             {isActive && (
               <span
                 style={{
-                  fontSize: 10,
+                  fontSize: "var(--text-xs)",
                   fontWeight: 600,
                   color: accent,
                   background: `${accent}22`,
@@ -358,7 +362,7 @@ export function ScenarioRow({
 
             <span
               style={{
-                fontSize: 10,
+                fontSize: "var(--text-xs)",
                 fontWeight: 600,
                 color: stateColor,
                 background: `${stateColor}22`,
@@ -374,7 +378,7 @@ export function ScenarioRow({
         {!isRenaming && parentName !== null && (
           <div
             style={{
-              fontSize: 11,
+              fontSize: "var(--text-sm)",
               color: "var(--text-tertiary)",
               marginTop: 2,
             }}
@@ -517,7 +521,7 @@ export const CreateRow = React.forwardRef<
         }
         style={{
           flex: 1,
-          fontSize: 13,
+          fontSize: "var(--text-lg)",
           fontFamily: "var(--font-ui)",
           background: "var(--bg-input)",
           border: "1px solid var(--border-hover)",

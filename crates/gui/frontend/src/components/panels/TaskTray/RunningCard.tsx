@@ -87,7 +87,7 @@ export function PhaseBar({
       >
         <span
           style={{
-            fontSize: 9,
+            fontSize: "var(--text-2xs)",
             fontWeight: 700,
             letterSpacing: "0.05em",
             textTransform: "uppercase",
@@ -98,7 +98,7 @@ export function PhaseBar({
         </span>
         <span
           style={{
-            fontSize: 9,
+            fontSize: "var(--text-2xs)",
             fontVariantNumeric: "tabular-nums",
             color: statusColor,
             fontWeight: 600,
@@ -131,7 +131,7 @@ export function PhaseBar({
         durationSeconds > 0 && (
           <div
             style={{
-              fontSize: 10,
+              fontSize: "var(--text-xs)",
               color: "var(--text-disabled)",
               fontVariantNumeric: "tabular-nums",
               marginTop: 2,
@@ -172,7 +172,7 @@ export function RunningCard({
         <div style={{ flex: 1, overflow: "hidden" }}>
           <div
             style={{
-              fontSize: 13,
+              fontSize: "var(--text-lg)",
               fontWeight: 500,
               color: "var(--text-primary)",
               whiteSpace: "nowrap",
@@ -187,7 +187,13 @@ export function RunningCard({
             </span>
             {task.scenarioName}
           </div>
-          <div style={{ fontSize: 11, color: "var(--accent)", marginTop: 1 }}>
+          <div
+            style={{
+              fontSize: "var(--text-sm)",
+              color: "var(--accent)",
+              marginTop: 1,
+            }}
+          >
             {task.progressMessage ?? "Solving…"}
           </div>
         </div>

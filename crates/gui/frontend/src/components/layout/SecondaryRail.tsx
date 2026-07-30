@@ -230,7 +230,7 @@ export function SecondaryRail() {
           justifyContent: "center",
           borderRadius: "0 5px 5px 0",
           padding: 0,
-          fontSize: 10,
+          fontSize: "var(--text-xs)",
           lineHeight: 1,
           transition: "color var(--t-fast), background var(--t-fast)",
         }}

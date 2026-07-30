@@ -14,7 +14,7 @@ export function NoDataCard({ message }: { message: string }) {
         alignItems: "center",
         justifyContent: "center",
         color: "var(--text-tertiary)",
-        fontSize: 13,
+        fontSize: "var(--text-lg)",
       }}
     >
       {message}
@@ -42,7 +42,7 @@ export function AuditMetric({
     >
       <div
         style={{
-          fontSize: 14,
+          fontSize: "var(--text-xl)",
           fontWeight: 600,
           color: valueColor ?? "var(--text-primary)",
           fontFamily: "var(--font-mono)",
@@ -51,7 +51,11 @@ export function AuditMetric({
         {value}
       </div>
       <div
-        style={{ fontSize: 11, color: "var(--text-tertiary)", marginTop: 2 }}
+        style={{
+          fontSize: "var(--text-sm)",
+          color: "var(--text-tertiary)",
+          marginTop: 2,
+        }}
       >
         {label}
       </div>
@@ -182,7 +186,7 @@ export function Sparkline({
   const axisLabel: CSSProperties = {
     position: "absolute",
     left: 2,
-    fontSize: 9,
+    fontSize: "var(--text-2xs)",
     lineHeight: 1,
     color: "var(--text-tertiary)",
     fontFamily: "var(--font-mono)",

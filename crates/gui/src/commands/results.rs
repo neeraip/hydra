@@ -6,9 +6,7 @@ use serde::{Deserialize, Serialize};
 use crate::meta::{self, bundle};
 
 use super::binary_codec::encode_period_results;
-use super::network_dto::{
-    format_inp_parse_error, NetworkState, NetworkStateInner, FT3_TO_M3, FT_TO_MM,
-};
+use super::network_dto::{format_read_error, NetworkState, NetworkStateInner, FT3_TO_M3, FT_TO_MM};
 use super::projects::{
     app_data_dir, model_path_for, read_model_bytes, results_path_for, validate_target_ids,
 };
@@ -415,9 +413,13 @@ pub(crate) fn network_for_target(
     }
     let model_path = model_path_for(app_data, project_id, scenario_id);
     let raw = std::fs::read(&model_path).map_err(|e| format!("Cannot read model: {e}"))?;
-    hydra::io::parse(&raw)
-        .map(std::sync::Arc::new)
-        .map_err(format_inp_parse_error)
+    // Tolerant (model spec §4.1.2): a network under construction is not
+    // simulable, and this is a read-only inspection — failing here surfaced a
+    // "Backend error" toast for a model the editor is perfectly able to show.
+    // Runs still use the strict parse, so nothing unsimulable reaches the solver.
+    let (network, _validation_errors) =
+        hydra::io::parse_tolerant(&raw).map_err(format_read_error)?;
+    Ok(std::sync::Arc::new(network))
 }
 
 /// Topology digest of the CURRENT model for `(project_id, scenario_id)`.
@@ -457,7 +459,12 @@ fn live_network_digest(
     let Some(raw) = read_model_bytes(&model_path)? else {
         return Ok(None);
     };
-    let network = hydra::io::parse(&raw).map_err(format_inp_parse_error)?;
+    // Tolerant (model spec §4.1.2): a network under construction is not
+    // simulable, and this is a read-only inspection — failing here surfaced a
+    // "Backend error" toast for a model the editor is perfectly able to show.
+    // Runs still use the strict parse, so nothing unsimulable reaches the solver.
+    let (network, _validation_errors) =
+        hydra::io::parse_tolerant(&raw).map_err(format_read_error)?;
     Ok(Some(hydra::compute_network_digest(&network)))
 }
 

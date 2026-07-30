@@ -15,6 +15,7 @@ import {
   ArrowLeftIcon,
   ArrowRightIcon,
   CheckIcon,
+  ExclamationTriangleIcon,
   XMarkIcon,
 } from "@heroicons/react/16/solid";
 import { ClockIcon } from "@heroicons/react/24/outline";
@@ -30,6 +31,7 @@ import {
   type Project,
   useEngines,
   useNetworkVersion,
+  type ValidationFinding,
 } from "../../hooks";
 import { NetworkThumbnail } from "../ui/NetworkThumbnail";
 import { PrimaryButton } from "../ui/PrimaryButton";
@@ -52,6 +54,13 @@ export function NewProjectWizard({ onClose }: Props) {
   const [fileDetected, setFileDetected] = useState(false);
   const [detectedNodeCount, setDetectedNodeCount] = useState(0);
   const [detectedLinkCount, setDetectedLinkCount] = useState(0);
+  // Why the imported model is not yet simulable, empty when it is. Kept so the
+  // review step can say so before the user commits: the model imports either
+  // way, and finding out only after landing in the project is a worse surprise
+  // than being told here.
+  const [detectedFindings, setDetectedFindings] = useState<ValidationFinding[]>(
+    [],
+  );
 
   const engine = engines.find((e) => e.key === engineKey) ?? null;
 
@@ -72,6 +81,7 @@ export function NewProjectWizard({ onClose }: Props) {
     setFileDetected(false);
     setDetectedNodeCount(0);
     setDetectedLinkCount(0);
+    setDetectedFindings([]);
   }
 
   async function handleBrowse() {
@@ -80,12 +90,13 @@ export function NewProjectWizard({ onClose }: Props) {
     try {
       const result = await openAndLoadNetwork(engine.key);
       if (result) {
-        setDetectedNodeCount(result.nodes.length);
-        setDetectedLinkCount(result.links.length);
+        setDetectedNodeCount(result.network.nodes.length);
+        setDetectedLinkCount(result.network.links.length);
+        setDetectedFindings(result.findings);
         setFileDetected(true);
         bumpNetwork();
-        if (!projectName.trim() && result.fileStem) {
-          setProjectName(result.fileStem);
+        if (!projectName.trim() && result.network.fileStem) {
+          setProjectName(result.network.fileStem);
         }
       }
     } catch (err) {
@@ -240,7 +251,7 @@ export function NewProjectWizard({ onClose }: Props) {
                   background: "var(--bg-input)",
                   border: "1px solid var(--border-hover)",
                   color: "var(--text-primary)",
-                  fontSize: 14,
+                  fontSize: "var(--text-xl)",
                   fontFamily: "var(--font-ui)",
                   outline: "none",
                   boxSizing: "border-box",
@@ -251,7 +262,7 @@ export function NewProjectWizard({ onClose }: Props) {
             <div style={fieldLabelStyle}>Source model (optional)</div>
             <p
               style={{
-                fontSize: 12,
+                fontSize: "var(--text-md)",
                 color: "var(--text-tertiary)",
                 margin: "-2px 0 8px",
                 lineHeight: 1.6,
@@ -285,40 +296,85 @@ export function NewProjectWizard({ onClose }: Props) {
                       color: "var(--text-tertiary)",
                     }}
                   />
-                  <div style={{ fontSize: 13, color: "var(--text-secondary)" }}>
+                  <div
+                    style={{
+                      fontSize: "var(--text-lg)",
+                      color: "var(--text-secondary)",
+                    }}
+                  >
                     Opening file…
                   </div>
                 </div>
               ) : fileDetected ? (
                 <div>
-                  <CheckIcon
-                    style={{
-                      width: 24,
-                      height: 24,
-                      marginBottom: 10,
-                      color: "var(--status-success)",
-                    }}
-                  />
+                  {/* An unfinished model still loads (model spec §4.1.2), so
+                      this is a caveat on a success, not a failure: the heading
+                      stays affirmative and the tone shifts to warning. */}
+                  {detectedFindings.length > 0 ? (
+                    <ExclamationTriangleIcon
+                      style={{
+                        width: 24,
+                        height: 24,
+                        marginBottom: 10,
+                        color: "var(--status-warning)",
+                      }}
+                    />
+                  ) : (
+                    <CheckIcon
+                      style={{
+                        width: 24,
+                        height: 24,
+                        marginBottom: 10,
+                        color: "var(--status-success)",
+                      }}
+                    />
+                  )}
                   <div
                     style={{
-                      fontSize: 14,
-                      color: "var(--status-success)",
+                      fontSize: "var(--text-xl)",
+                      color:
+                        detectedFindings.length > 0
+                          ? "var(--status-warning)"
+                          : "var(--status-success)",
                       fontWeight: 600,
                       marginBottom: 4,
                     }}
                   >
                     Model loaded
                   </div>
-                  <div style={{ fontSize: 12, color: "var(--text-tertiary)" }}>
+                  <div
+                    style={{
+                      fontSize: "var(--text-md)",
+                      color: "var(--text-tertiary)",
+                    }}
+                  >
                     {detectedNodeCount.toLocaleString()} nodes ·{" "}
                     {detectedLinkCount.toLocaleString()} links
                   </div>
+                  {detectedFindings.length > 0 && (
+                    <div
+                      style={{
+                        fontSize: "var(--text-md)",
+                        color: "var(--text-secondary)",
+                        marginTop: 8,
+                        lineHeight: 1.5,
+                        maxWidth: 320,
+                      }}
+                    >
+                      {detectedFindings.length === 1
+                        ? "1 issue must be resolved before this model can be simulated."
+                        : `${detectedFindings.length} issues must be resolved before this model can be simulated.`}{" "}
+                      The project will open with{" "}
+                      {detectedFindings.length === 1 ? "it" : "them"} listed in
+                      Issues &amp; Notifications.
+                    </div>
+                  )}
                 </div>
               ) : (
                 <div>
                   <div
                     style={{
-                      fontSize: 14,
+                      fontSize: "var(--text-xl)",
                       color: "var(--text-secondary)",
                       marginBottom: 4,
                     }}
@@ -327,7 +383,7 @@ export function NewProjectWizard({ onClose }: Props) {
                   </div>
                   <div
                     style={{
-                      fontSize: 12,
+                      fontSize: "var(--text-md)",
                       color: "var(--text-tertiary)",
                       fontFamily: "var(--font-mono)",
                       marginBottom: 12,
@@ -358,12 +414,14 @@ export function NewProjectWizard({ onClose }: Props) {
                 borderRadius: 7,
                 padding: "10px 12px",
                 marginBottom: 20,
-                fontSize: 12,
+                fontSize: "var(--text-md)",
                 color: "var(--text-tertiary)",
                 lineHeight: 1.6,
               }}
             >
-              <span style={{ flexShrink: 0, fontSize: 14 }}>ℹ</span>
+              <span style={{ flexShrink: 0, fontSize: "var(--text-xl)" }}>
+                ℹ
+              </span>
               <span>
                 Hydra uses its own solver. Results for an imported model may
                 differ slightly from the tool it came from — this is expected.
@@ -413,7 +471,7 @@ export function NewProjectWizard({ onClose }: Props) {
               <div style={{ padding: "12px 16px" }}>
                 <div
                   style={{
-                    fontSize: 14,
+                    fontSize: "var(--text-xl)",
                     fontWeight: 600,
                     color: "var(--text-primary)",
                     marginBottom: 8,
@@ -535,7 +593,7 @@ function EngineCard({
           background: `${engine.accent}26`,
           border: `1px solid ${engine.accent}55`,
           color: engine.accent,
-          fontSize: 13,
+          fontSize: "var(--text-lg)",
           fontWeight: 700,
           letterSpacing: "0.03em",
         }}
@@ -545,7 +603,7 @@ function EngineCard({
 
       <span
         style={{
-          fontSize: 14,
+          fontSize: "var(--text-xl)",
           fontWeight: 600,
           color: "var(--text-primary)",
           lineHeight: 1.3,
@@ -556,7 +614,7 @@ function EngineCard({
 
       <span
         style={{
-          fontSize: 12,
+          fontSize: "var(--text-md)",
           color: "var(--text-secondary)",
           lineHeight: 1.55,
         }}
@@ -569,7 +627,7 @@ function EngineCard({
       {available ? (
         <span
           style={{
-            fontSize: 11,
+            fontSize: "var(--text-sm)",
             color: "var(--text-tertiary)",
             fontFamily: "var(--font-mono)",
           }}
@@ -579,7 +637,11 @@ function EngineCard({
       ) : (
         <span
           className="badge"
-          style={{ fontSize: 10, fontWeight: 600, letterSpacing: "0.04em" }}
+          style={{
+            fontSize: "var(--text-xs)",
+            fontWeight: 600,
+            letterSpacing: "0.04em",
+          }}
         >
           Coming soon
         </span>
@@ -594,7 +656,7 @@ function StepCount({ step }: { step: number }) {
   return (
     <div
       style={{
-        fontSize: 11,
+        fontSize: "var(--text-sm)",
         fontWeight: 600,
         color: "var(--text-tertiary)",
         textTransform: "uppercase",
@@ -649,13 +711,13 @@ function NextLabel() {
 
 const headingStyle: React.CSSProperties = {
   margin: "0 0 8px",
-  fontSize: 22,
+  fontSize: "var(--text-3xl)",
   fontWeight: 700,
   color: "var(--text-primary)",
 };
 
 const subheadingStyle: React.CSSProperties = {
-  fontSize: 13,
+  fontSize: "var(--text-lg)",
   color: "var(--text-secondary)",
   margin: "0 0 24px",
   lineHeight: 1.6,
@@ -663,7 +725,7 @@ const subheadingStyle: React.CSSProperties = {
 
 const fieldLabelStyle: React.CSSProperties = {
   display: "block",
-  fontSize: 11,
+  fontSize: "var(--text-sm)",
   fontWeight: 600,
   color: "var(--text-tertiary)",
   textTransform: "uppercase",
@@ -678,7 +740,7 @@ const ghostButtonStyle: React.CSSProperties = {
   cursor: "pointer",
   padding: "6px 14px",
   borderRadius: 6,
-  fontSize: 13,
+  fontSize: "var(--text-lg)",
   fontFamily: "var(--font-ui)",
   transition: "background var(--t-fast), color var(--t-fast)",
 };

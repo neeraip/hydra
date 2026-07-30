@@ -19,6 +19,7 @@ import {
 } from "../../../hooks";
 import { ELEMENT_TEMP_ID_PREFIX, useDraft } from "../../../hooks/DraftContext";
 import { useElementRename } from "../../../hooks/useElementRename";
+import { readTextScale } from "../../../textScale";
 import {
   collectDirtyKinds,
   type ElementKind,
@@ -28,7 +29,7 @@ import { PipeTable } from "./PipeTable";
 import { PumpTable } from "./PumpTable";
 import { ReservoirTable } from "./ReservoirTable";
 import type { RowAction } from "./RowActionsCell";
-import { EDITOR_ROW_HEIGHT } from "./TablePrimitives";
+import { editorRowHeight } from "./TablePrimitives";
 import { TankTable } from "./TankTable";
 import {
   compareIds,
@@ -141,7 +142,7 @@ export function ElementsEditor({
 
   // General "reveal element" jump: switch to the element's kind tab, select
   // it, clear the search, and scroll its row to centre. Uniform row height
-  // (EDITOR_ROW_HEIGHT) lets us scroll by index without the target row being
+  // (`editorRowHeight`) lets us scroll by index without the target row being
   // mounted yet (virtualised rows off-screen are absent from the DOM).
   useEffect(() => {
     if (focusToken == null || focusToken === appliedFocusToken.current) return;
@@ -174,10 +175,9 @@ export function ElementsEditor({
         return;
       }
       if (idx < 0) return;
+      const rowHeight = editorRowHeight(readTextScale());
       const target =
-        idx * EDITOR_ROW_HEIGHT -
-        container.clientHeight / 2 +
-        EDITOR_ROW_HEIGHT / 2;
+        idx * rowHeight - container.clientHeight / 2 + rowHeight / 2;
       container.scrollTop = Math.max(0, target);
     };
     requestAnimationFrame(tryScroll);
@@ -723,7 +723,8 @@ export function ElementsEditor({
     const pinnedIndex = pendingAdds
       .filter((p) => p.kind === added.kind)
       .findIndex((p) => p.tempId === tempId);
-    container.scrollTop = Math.max(0, pinnedIndex) * EDITOR_ROW_HEIGHT;
+    container.scrollTop =
+      Math.max(0, pinnedIndex) * editorRowHeight(readTextScale());
     requestAnimationFrame(() => {
       const input = container.querySelector<HTMLInputElement>(
         `tr[data-row-id="${CSS.escape(tempId)}"] input`,
@@ -934,7 +935,7 @@ export function ElementsEditor({
             padding: "0 8px",
             color: "var(--text-primary)",
             fontFamily: "var(--font-ui)",
-            fontSize: 13,
+            fontSize: "var(--text-lg)",
             outline: "none",
           }}
         />
@@ -950,7 +951,7 @@ export function ElementsEditor({
             borderRadius: 5,
             padding: "0 10px",
             height: 28,
-            fontSize: 12,
+            fontSize: "var(--text-md)",
             fontFamily: "var(--font-ui)",
             cursor: "pointer",
             marginLeft: 6,
@@ -1077,7 +1078,7 @@ export function ElementsEditor({
           padding: "6px 16px",
           borderTop: "1px solid var(--border)",
           flexShrink: 0,
-          fontSize: 12,
+          fontSize: "var(--text-md)",
         }}
       >
         <span style={{ color: "var(--text-tertiary)" }}>
