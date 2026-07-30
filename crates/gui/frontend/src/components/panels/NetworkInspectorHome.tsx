@@ -5,18 +5,12 @@ import {
 } from "@heroicons/react/16/solid";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { Link, Node, Pattern } from "../../hooks";
-import { useLinks, useNodes, usePatterns } from "../../hooks";
+import type { Link, Node } from "../../hooks";
+import { useLinks, useNodes } from "../../hooks";
 import { perfTrace } from "../../perfTrace";
 import { toDisplay, unitLabel, useUnitSystem } from "../../units";
-import { downsampleMinMax } from "../editors/patternDownsample";
 import { MiddleTruncate } from "../ui/MiddleTruncate";
 import { TypeBadge } from "../ui/TypeBadge";
-
-/** Preview strip is 220 units wide; more bars than half that cannot render
- * visibly distinct, so longer patterns are bucket-max downsampled — an
- * hourly-for-a-year pattern would otherwise mount 8,760 `<rect>`s per card. */
-const MAX_PREVIEW_BARS = 110;
 
 // ── Sort / filter hook ────────────────────────────────────────────────────────
 
@@ -24,6 +18,25 @@ type SortDir = "asc" | "desc";
 
 function hasNodeCoordinates(node: Node): boolean {
   return !(node.x === 0 && node.y === 0);
+}
+
+/**
+ * Case-insensitive substring match over `searchKeys`.
+ *
+ * Shared by the tab lists and by the tab-strip counts: computing "how many
+ * match" separately from "which ones show" is how a badge ends up claiming 12
+ * results over a list of 9.
+ */
+export function matchesQuery<T>(
+  item: T,
+  searchKeys: (keyof T)[],
+  loweredQuery: string,
+): boolean {
+  return searchKeys.some((k) =>
+    String((item as Record<string, unknown>)[k as string] ?? "")
+      .toLowerCase()
+      .includes(loweredQuery),
+  );
 }
 
 function useSortedFiltered<T>(
@@ -55,13 +68,7 @@ function useSortedFiltered<T>(
     const t0 = performance.now();
     const q = query.toLowerCase();
     let arr = q
-      ? items.filter((item) =>
-          searchKeys.some((k) =>
-            String((item as Record<string, unknown>)[k as string] ?? "")
-              .toLowerCase()
-              .includes(q),
-          ),
-        )
+      ? items.filter((item) => matchesQuery(item, searchKeys, q))
       : items;
     if (sortCol) {
       arr = [...arr].sort((a, b) => {
@@ -804,173 +811,11 @@ function LinksTab({
 
 // ── Patterns tab ──────────────────────────────────────────────────────────────
 
-function PatternsTab({
-  patterns,
-  onSelect,
-}: {
-  patterns: Pattern[];
-  onSelect?: (id: string) => void;
-}) {
-  // Virtualized like the nodes/links tabs: networks can carry thousands of
-  // patterns (e.g. per-junction demand patterns), and one card each — with
-  // an SVG preview inside — is the Issues-panel freeze class.
-  const scrollRef = useRef<HTMLDivElement | null>(null);
-  const virtualizer = useVirtualizer({
-    count: patterns.length,
-    getScrollElement: () => scrollRef.current,
-    estimateSize: () => 104,
-    overscan: 8,
-    getItemKey: (index) => patterns[index].id,
-  });
-
-  if (patterns.length === 0) {
-    return (
-      <div
-        style={{
-          padding: 14,
-          color: "var(--text-tertiary)",
-          fontSize: "var(--text-sm)",
-          fontStyle: "italic",
-        }}
-      >
-        No patterns defined in this network.
-      </div>
-    );
-  }
-
-  return (
-    <div
-      ref={scrollRef}
-      style={{
-        padding: "10px 12px",
-        overflowY: "auto",
-        flex: 1,
-      }}
-    >
-      <div style={{ height: virtualizer.getTotalSize(), position: "relative" }}>
-        {virtualizer.getVirtualItems().map((vi) => (
-          <div
-            key={vi.key}
-            ref={virtualizer.measureElement}
-            data-index={vi.index}
-            style={{
-              position: "absolute",
-              top: 0,
-              left: 0,
-              width: "100%",
-              transform: `translateY(${vi.start}px)`,
-              paddingBottom: 16,
-            }}
-          >
-            <PatternCard pattern={patterns[vi.index]} onSelect={onSelect} />
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function PatternCard({
-  pattern,
-  onSelect,
-}: {
-  pattern: Pattern;
-  onSelect?: (id: string) => void;
-}) {
-  const VW = 220;
-  const H = 44;
-  // Bucket-max downsampling caps the `<rect>` count per preview while
-  // preserving every peak (see downsampleMinMax).
-  const bars = useMemo(
-    () => downsampleMinMax(pattern.multipliers, MAX_PREVIEW_BARS),
-    [pattern.multipliers],
-  );
-  const peak = bars.reduce((acc, b) => Math.max(acc, b.max), 0);
-  const max = Math.max(peak, 1);
-  const barW = Math.max(1, VW / bars.length - 1);
-
-  return (
-    <button
-      type="button"
-      onClick={() => onSelect?.(pattern.id)}
-      onKeyDown={(e) => {
-        if (!onSelect) return;
-        if (e.key === "Enter" || e.key === " ") {
-          e.preventDefault();
-          onSelect(pattern.id);
-        }
-      }}
-      style={{
-        cursor: onSelect ? "pointer" : undefined,
-        border: "none",
-        textAlign: "left",
-        background: "transparent",
-        borderRadius: 4,
-        padding: "4px 6px",
-        width: "100%",
-        transition: "background 0.1s",
-      }}
-      onMouseEnter={(e) => {
-        if (onSelect)
-          (e.currentTarget as HTMLButtonElement).style.background =
-            "var(--bg-hover, rgba(255,255,255,0.06))";
-      }}
-      onMouseLeave={(e) => {
-        (e.currentTarget as HTMLButtonElement).style.background = "";
-      }}
-    >
-      <div
-        style={{
-          fontSize: "var(--text-sm)",
-          color: "var(--text-secondary)",
-          marginBottom: 6,
-        }}
-      >
-        {pattern.id}
-      </div>
-      <svg
-        width="100%"
-        height={H}
-        viewBox={`0 0 ${VW} ${H}`}
-        preserveAspectRatio="none"
-        style={{ display: "block" }}
-      >
-        <title>
-          {pattern.id ? `${pattern.id} preview` : "Pattern preview"}
-        </title>
-        {bars.map((bucket, i) => {
-          const x = i * (barW + 1);
-          const bh = (bucket.max / max) * H;
-          return (
-            <rect
-              key={`${pattern.id}-${x}`}
-              x={x}
-              y={H - bh}
-              width={barW}
-              height={bh}
-              fill="var(--accent)"
-              opacity={0.75}
-            />
-          );
-        })}
-      </svg>
-      <div
-        style={{
-          fontSize: "var(--text-xs)",
-          color: "var(--text-tertiary)",
-          marginTop: 4,
-        }}
-      >
-        {pattern.multipliers.length} step
-        {pattern.multipliers.length === 1 ? "" : "s"} · peak {peak.toFixed(2)}
-      </div>
-    </button>
-  );
-}
-
-// ── Main component ────────────────────────────────────────────────────────────
-
-type HomeTab = "nodes" | "links" | "patterns";
+/** Patterns deliberately absent: they have no position, so nothing about them
+ * appears on the canvas this panel accompanies, and the Editor already has a
+ * Patterns section where they can actually be edited. The tab here rendered
+ * cards with no click handler wired at all. */
+type HomeTab = "nodes" | "links";
 
 interface Props {
   /** When omitted the close button is hidden (e.g. when rendered inside the rail). */
@@ -978,7 +823,6 @@ interface Props {
   onSelectNode: (id: string) => void;
   onSelectLink: (id: string) => void;
   /** When provided, pattern cards are clickable and navigate to the editor. */
-  onSelectPattern?: (id: string) => void;
   /** Override the internal `useNodes()` call (e.g. pass merged sim-result nodes). */
   nodes?: Node[];
   /** Override the internal `useLinks()` call (e.g. pass merged sim-result links). */
@@ -1002,7 +846,6 @@ export function NetworkInspectorHome({
   onClose,
   onSelectNode,
   onSelectLink,
-  onSelectPattern,
   nodes: nodesProp,
   links: linksProp,
   activeNodeId,
@@ -1022,16 +865,36 @@ export function NetworkInspectorHome({
     () => new Set(internalNodes.filter(hasNodeCoordinates).map((n) => n.id)),
     [internalNodes],
   );
-  const patterns = usePatterns();
 
   const [tab, setTab] = useState<HomeTab>("nodes");
   const [queryInput, setQueryInput] = useState("");
   const query = useDebouncedValue(queryInput, 120);
 
-  const counts: Record<HomeTab, number> = {
+  // While searching, the badges count *matches* rather than totals — that is
+  // what tells you a query typed on the Nodes tab found something in Links.
+  // Without it the only feedback is an empty list, which reads as "no results"
+  // rather than "no results here".
+  //
+  // Computed from the debounced query, so a keystroke does not trigger a pass
+  // over both collections; the same `matchesQuery` the lists use, so a badge
+  // cannot disagree with the rows under it.
+  const counts: Record<HomeTab, number> = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return { nodes: allNodes.length, links: allLinks.length };
+    let nodes = 0;
+    for (const n of allNodes) {
+      if (matchesQuery(n, NODE_SEARCH_KEYS, q)) nodes++;
+    }
+    let links = 0;
+    for (const l of allLinks) {
+      if (matchesQuery(l, LINK_SEARCH_KEYS, q)) links++;
+    }
+    return { nodes, links };
+  }, [allNodes, allLinks, query]);
+  const searching = query.trim().length > 0;
+  const totals: Record<HomeTab, number> = {
     nodes: allNodes.length,
     links: allLinks.length,
-    patterns: patterns.length,
   };
 
   return (
@@ -1069,25 +932,44 @@ export function NetworkInspectorHome({
           flexShrink: 0,
         }}
       >
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div
-            style={{
-              fontSize: "var(--text-lg)",
-              fontWeight: 600,
-              color: "var(--text-primary)",
-            }}
-          >
-            Network
-          </div>
+        {/* Title does not flex: the search field takes the slack instead, so a
+            narrow rail shrinks the field rather than squeezing the label into
+            an ellipsis. Element counts are deliberately absent — the tab strip
+            below already carries one per tab. */}
+        <div
+          style={{
+            fontSize: "var(--text-lg)",
+            fontWeight: 600,
+            color: "var(--text-primary)",
+            flexShrink: 0,
+          }}
+        >
+          Network
         </div>
-        {/* Element counts deliberately absent: the tab strip below already
-            carries one per tab, and repeating them here said the same thing
-            twice while pushing the header to two lines. */}
+        <input
+          value={queryInput}
+          onChange={(e) => setQueryInput(e.target.value)}
+          placeholder="Search…"
+          aria-label="Search network elements"
+          style={{
+            flex: 1,
+            minWidth: 0,
+            padding: "4px 8px",
+            borderRadius: 6,
+            border: "1px solid var(--border)",
+            background: "rgba(255,255,255,0.04)",
+            color: "var(--text-primary)",
+            fontSize: "var(--text-sm)",
+            outline: "none",
+            boxSizing: "border-box",
+          }}
+        />
         <div
           style={{
             display: "flex",
             alignItems: "center",
             gap: 8,
+            flexShrink: 0,
           }}
         >
           {onClose && (
@@ -1113,26 +995,6 @@ export function NetworkInspectorHome({
         </div>
       </div>
 
-      {/* Search */}
-      <div style={{ padding: "8px 12px 0", flexShrink: 0 }}>
-        <input
-          value={queryInput}
-          onChange={(e) => setQueryInput(e.target.value)}
-          placeholder="Search…"
-          style={{
-            width: "100%",
-            padding: "5px 8px",
-            borderRadius: 6,
-            border: "1px solid var(--border)",
-            background: "rgba(255,255,255,0.04)",
-            color: "var(--text-primary)",
-            fontSize: "var(--text-sm)",
-            outline: "none",
-            boxSizing: "border-box",
-          }}
-        />
-      </div>
-
       {/* Tab strip */}
       <div
         style={{
@@ -1155,7 +1017,17 @@ export function NetworkInspectorHome({
               className={`inspector-tab${active ? " active" : ""}`}
             >
               <span style={{ textTransform: "capitalize" }}>{t}</span>
+              {/* While searching, an inactive tab holding matches is accented:
+                  the whole point is to be noticed from the other tab. A tab
+                  with none is dimmed to the disabled colour so "nothing here"
+                  reads differently from "nothing anywhere". */}
               <span
+                data-tooltip={
+                  searching
+                    ? `${counts[t]} of ${totals[t]} match`
+                    : `${totals[t]} ${t}`
+                }
+                data-tooltip-pos="bottom"
                 style={{
                   marginLeft: 4,
                   fontSize: "var(--text-xs)",
@@ -1163,8 +1035,16 @@ export function NetworkInspectorHome({
                   borderRadius: 4,
                   background: active
                     ? "rgba(79,142,247,0.18)"
-                    : "var(--bg-card)",
-                  color: active ? "var(--accent)" : "var(--text-tertiary)",
+                    : searching && counts[t] > 0
+                      ? "rgba(212,160,23,0.18)"
+                      : "var(--bg-card)",
+                  color: active
+                    ? "var(--accent)"
+                    : searching
+                      ? counts[t] > 0
+                        ? "#d4a017"
+                        : "var(--text-disabled)"
+                      : "var(--text-tertiary)",
                   fontFamily: "var(--font-mono)",
                 }}
               >
@@ -1194,9 +1074,6 @@ export function NetworkInspectorHome({
           onZoomTo={onZoomToLink}
           activeId={activeLinkId}
         />
-      )}
-      {tab === "patterns" && (
-        <PatternsTab patterns={patterns} onSelect={onSelectPattern} />
       )}
     </div>
   );
