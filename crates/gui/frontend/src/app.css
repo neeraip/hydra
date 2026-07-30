@@ -556,6 +556,12 @@ body,
   -webkit-backdrop-filter: blur(16px) saturate(1.4);
   border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 10px;
+  /* Chrome text is never worth selecting, and dragging on the canvas used to
+     highlight the toolbar's labels. The -webkit- form is required as well:
+     WKWebView does not honour the unprefixed property here (same reason the
+     element tables set both). */
+  -webkit-user-select: none;
+  user-select: none;
   box-shadow:
     0 4px 20px rgba(0, 0, 0, 0.4),
     0 1px 0 rgba(255, 255, 255, 0.04) inset;
