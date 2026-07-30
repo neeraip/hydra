@@ -784,7 +784,20 @@ Captured flow transfers from the street conduit's downstream (bypass) node to th
 
 ### 9.1 Pollutants and Sources
 
-A **pollutant** is any constituent expressible as an additive concentration (mass or organism counts per volume) — which deliberately excludes pH, conductivity, turbidity, and colour. Each carries optional background concentrations in rainfall, groundwater, RDII, and dry-weather flow; a first-order decay coefficient (days⁻¹) active in the conveyance system — which may be *negative* to model growth, though growth is inert on the steady-flow path; a snow-only buildup flag (de-icing chemicals); and an optional **co-pollutant** relation $C_{total,i} = C_i + f_{ij}C_j$ — the HSPF-style potency factor, applying to buildup/washoff loads only, with $f_{ij}$ free to exceed 1 since it bridges the two constituents' units. The complete source inventory: direct wet deposition (a constant rain concentration applied to the *precipitation* volume and mixed into the ponded store — despite the manual's legacy §2.4 wording, it is neither runoff-rate-scaled nor a concentration floor), surface buildup/washoff by land use, groundwater and RDII at constant concentrations, pattern-modulated dry-weather flow, and external time series (which may specify mass loads directly, needing no flow).
+A **pollutant** is any constituent expressible as an additive concentration (mass or organism counts per volume) — which deliberately excludes pH, conductivity, turbidity, and colour. Each carries optional background concentrations in rainfall, groundwater, RDII, and dry-weather flow; a first-order decay coefficient (days⁻¹) active in the conveyance system — which may be *negative* to model growth, though growth is inert on the steady-flow path; a snow-only buildup flag (de-icing chemicals); and an optional **co-pollutant** relation $C_{total,i} = C_i + f_{ij}C_j$ — the HSPF-style potency factor, applying to buildup/washoff loads only, with $f_{ij}$ free to exceed 1 since it bridges the two constituents' units. Mass enters the conveyance system at a node through exactly eight paths, assembled in this order at the start of each routing step:
+
+| Source | Concentration carried | See |
+|---|---|---|
+| Surface runoff | the subcatchment's computed washoff concentration, itself the mixture of buildup washoff and the ponded store | §9.3 |
+| Direct wet deposition | a constant rain concentration applied to the *precipitation* volume and mixed into the ponded store — despite the manual's legacy §2.4 wording, neither runoff-rate-scaled nor a concentration floor | §9.3 |
+| LID underdrain | the parent subcatchment's washoff concentration interpolated between runoff steps, less any per-pollutant drain removal | §10.6 |
+| Groundwater | a constant per-pollutant concentration | §3.4 |
+| RDII | a constant per-pollutant concentration | §3.6 |
+| Dry-weather flow | a constant concentration on a pattern-modulated flow | §1.3 |
+| External inflow | a time series, as a concentration on the accompanying flow or as a mass load needing no flow at all | §1.3 |
+| Routing interface file | the per-node, per-constituent series read from the file, interpolated in time | §14 |
+
+Two further paths move mass *within* the system rather than into it: an inflowing link delivers its previous-step concentration to its downstream node (§9.4), and street inlets transfer captured mass from a bypass node to a sewer capture node — with sewer surcharge returning it as backflow — at the donating node's previous-step concentration (§8.4).
 
 ### 9.2 Buildup and Street Sweeping
 
