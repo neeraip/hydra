@@ -130,6 +130,11 @@ const EMPTY_SCHEMATIC_LAYOUT: SchematicLayout = {
   positions: new Map(),
   detachedIds: new Set(),
 };
+/** Stable empties for hidden layers, so toggling visibility off does not hand
+ * deck.gl a fresh array identity on every rebuild. */
+const EMPTY_LINK_DATA: never[] = [];
+const EMPTY_NODE_DATA: never[] = [];
+
 /** Stable default so map-mode callers omitting the prop never invalidate the
  * schematic layout cache. */
 const IDENTITY_SCALE = { x: 1, y: 1 } as const;
@@ -896,6 +901,15 @@ export const MapCanvas = memo(function MapCanvas({
         n.id === drag.id ? { ...n, position: dragPos } : n,
       );
     }
+    // Visibility is applied to the layer *data*, after the drag adjustment
+    // above. Every link and node layer reads these two arrays, so one gate here
+    // covers rendering, labels and picking together: an empty array draws
+    // nothing and picks nothing, so a hidden element cannot be clicked. Gating
+    // the layer list instead would mean threading a condition through a dozen
+    // conditional spreads for no additional effect.
+    if (!canvasLayers.links) ld = EMPTY_LINK_DATA as typeof ld;
+    if (!canvasLayers.nodes) nd = EMPTY_NODE_DATA as typeof nd;
+
     const linkDatum = (id: string) =>
       drag ? ld.find((l) => l.id === id) : linkDatumById.get(id);
     const nodeDatum = (id: string) =>
@@ -1139,27 +1153,36 @@ export const MapCanvas = memo(function MapCanvas({
       }
     }
 
-    if (canvasLayers.model) {
+    // Nodes and links are gated separately. A halo belongs to the element it
+    // surrounds, so each kind's glows follow that kind's visibility — a
+    // selection ring left floating where its link is hidden reads as a bug.
+    const showNodes = canvasLayers.nodes;
+    const showLinks = canvasLayers.links;
+    if (showNodes || showLinks) {
       // ── Glow / halo layers — pushed FIRST so they render beneath links and nodes ──
       // Hover halos are suppressed while the same element is selected.
       layers.push(
-        ...linkGlowLayers(
-          hoveredLinkId !== selectedLinkId ? hoveredLinkId : null,
-          "hover-link-glow",
-          LINK_HOVER_GLOW,
-        ),
-        ...linkGlowLayers(
-          selectedLinkId,
-          "selection-link-glow",
-          LINK_SELECTION_GLOW,
-        ),
+        ...(showLinks
+          ? linkGlowLayers(
+              hoveredLinkId !== selectedLinkId ? hoveredLinkId : null,
+              "hover-link-glow",
+              LINK_HOVER_GLOW,
+            )
+          : []),
+        ...(showLinks
+          ? linkGlowLayers(
+              selectedLinkId,
+              "selection-link-glow",
+              LINK_SELECTION_GLOW,
+            )
+          : []),
         ...nodeGlowLayers(
-          hoveredNodeId !== selectedNodeId ? hoveredNodeId : null,
+          showNodes && hoveredNodeId !== selectedNodeId ? hoveredNodeId : null,
           "hover-glow",
           NODE_HOVER_GLOW,
         ),
         ...nodeGlowLayers(
-          selectedNodeId,
+          showNodes ? selectedNodeId : null,
           "selection-glow",
           NODE_SELECTION_GLOW,
         ),
@@ -1168,14 +1191,18 @@ export const MapCanvas = memo(function MapCanvas({
         // pixel-sized ring stayed the same size at every zoom and read as a
         // different kind of thing.
         ...nodeGlowLayers(
-          tool === "measure" && measureHoverRef.current?.kind === "node"
+          showNodes &&
+            tool === "measure" &&
+            measureHoverRef.current?.kind === "node"
             ? measureHoverRef.current.id
             : null,
           "measure-glow",
           NODE_MEASURE_GLOW,
         ),
         ...linkGlowLayers(
-          tool === "measure" && measureHoverRef.current?.kind === "link"
+          showLinks &&
+            tool === "measure" &&
+            measureHoverRef.current?.kind === "link"
             ? measureHoverRef.current.id
             : null,
           "measure-link-glow",

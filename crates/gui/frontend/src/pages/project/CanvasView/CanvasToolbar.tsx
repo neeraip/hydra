@@ -2,7 +2,6 @@ import {
   ArrowsRightLeftIcon,
   ChevronUpDownIcon,
   CursorArrowRaysIcon,
-  EyeIcon,
   LinkIcon,
   MapPinIcon,
   PencilSquareIcon,
@@ -452,11 +451,11 @@ export function CanvasToolbar({
         >
           <MapPinIcon style={ICON_14} />
         </button>
+
         {/* Not map-only, unlike its neighbours: a link carries no coordinates of
             its own — `create_link` takes two node ids — so the schematic's
             synthetic positions are irrelevant to it. Connecting nodes is often
             easier there, where the layout makes connectivity legible. */}
-
         <button
           type="button"
           className={`tool-btn${activeTool === "add-link" ? " active" : ""}`}
@@ -505,17 +504,50 @@ export function CanvasToolbar({
 
         <div className="tool-divider" />
 
-        {/* Layer visibility toggles */}
+        {/* Layer visibility toggles.
+            Nodes and links toggle independently: one "base model" switch could
+            only turn the network off wholesale, and the useful move is dropping
+            one so the other is legible — links in a dense area, or nodes when
+            tracing connectivity. The glyphs match the inspector's convention, a
+            dot for a node and a bar for a link. */}
         <button
           type="button"
-          className={`tool-btn${canvasLayers.model ? " active" : ""}`}
-          onClick={() => setLayer("model", !canvasLayers.model)}
-          data-tooltip="Toggle base model"
+          className={`tool-btn${canvasLayers.nodes ? " active" : ""}`}
+          onClick={() => setLayer("nodes", !canvasLayers.nodes)}
+          data-tooltip="Toggle nodes"
           data-tooltip-pos="bottom"
-          aria-label="Toggle base model"
+          aria-label="Toggle nodes"
           style={ICON_BTN_STYLE}
         >
-          <EyeIcon style={ICON_14} />
+          <span
+            aria-hidden
+            style={{
+              width: 9,
+              height: 9,
+              borderRadius: "50%",
+              background: "currentColor",
+            }}
+          />
+        </button>
+
+        <button
+          type="button"
+          className={`tool-btn${canvasLayers.links ? " active" : ""}`}
+          onClick={() => setLayer("links", !canvasLayers.links)}
+          data-tooltip="Toggle links"
+          data-tooltip-pos="bottom"
+          aria-label="Toggle links"
+          style={ICON_BTN_STYLE}
+        >
+          <span
+            aria-hidden
+            style={{
+              width: 13,
+              height: 2.5,
+              borderRadius: 2,
+              background: "currentColor",
+            }}
+          />
         </button>
 
         <button
