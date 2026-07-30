@@ -9,13 +9,25 @@ import type { Link, Node } from "../hooks";
  *
  * Returns a Map from node id → [x, y] in an arbitrary Cartesian coordinate
  * space suitable for OrthographicView.
+ *
+ * `scale` stretches the two spacings independently — `{x: 1, y: 1}` is the
+ * layout this function has always produced. Radii and link widths are layer
+ * properties and are untouched, so only the layout's proportions move.
+ *
+ * Scaling both axes equally is not worth exposing: it is arithmetically the
+ * same as zooming (see `schematicSpacing`). The ratio between them is the part
+ * zoom cannot reach, and it is what turns a tall thin spike or a wide flat fan
+ * into something readable.
  */
 export function computeSchematicLayout(
   nodes: Node[],
   links: Link[],
+  scale: { x: number; y: number } = { x: 1, y: 1 },
 ): Map<string, [number, number]> {
-  const SPACING_X = 120; // horizontal distance between depth layers
-  const SPACING_Y = 80; // vertical distance between siblings
+  // Every position below is linear in these two constants, so scaling them is
+  // equivalent to scaling the output per axis — no re-running the BFS.
+  const SPACING_X = 120 * scale.x; // horizontal distance between depth layers
+  const SPACING_Y = 80 * scale.y; // vertical distance between siblings
 
   // Build adjacency list (undirected — flow direction not known at layout time)
   const adj = new Map<string, Set<string>>();

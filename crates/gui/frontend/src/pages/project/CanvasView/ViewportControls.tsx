@@ -9,13 +9,15 @@ import type { CSSProperties } from "react";
 const ICON_14: CSSProperties = { width: 14, height: 14 };
 
 /**
- * Floating zoom / reset-north / fit-network button cluster in the canvas'
- * bottom-right corner. Stateless: each button just fires its callback (the
- * caller bumps the matching MapCanvas trigger key).
+ * Floating zoom / reset-north / fit-network button cluster. Stateless: each
+ * button just fires its callback (the caller bumps the matching MapCanvas
+ * trigger key).
  *
- * Offsets by `--inspector-effective-w` so the element inspector doesn't cover
- * it, the same way the legend and canvas toolbar clear the left rail via
- * `--rail-effective-w`.
+ * Positioned by its parent rather than by itself, so the strips that stack
+ * above it in the same corner need no offset derived from this one's height —
+ * see `CanvasView`'s bottom-right column, which also carries the
+ * `--inspector-effective-w` offset that keeps the whole stack clear of the
+ * element inspector.
  */
 export function ViewportControls({
   mapOnly,
@@ -39,12 +41,13 @@ export function ViewportControls({
     <div
       className="canvas-toolbar"
       style={{
-        position: "absolute",
-        right: "calc(var(--inspector-effective-w, 0px) + 12px)",
-        bottom: 12,
-        zIndex: 11,
         flexDirection: "column",
         gap: 8,
+        // Overrides `.canvas-toolbar`'s uniform 4px: a little more vertical
+        // room, matching the aspect slider's box above so the pair reads as one
+        // stack. Horizontal padding stays 4px, which is what makes both boxes
+        // the same width.
+        padding: "8px 4px",
       }}
     >
       <div style={{ display: "flex", flexDirection: "column", gap: 0 }}>

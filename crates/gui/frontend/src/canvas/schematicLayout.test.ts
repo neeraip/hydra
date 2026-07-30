@@ -173,3 +173,68 @@ describe("computeSchematicLayout – all junctions (no reservoir/tank)", () => {
     for (const n of nodes) expect(layout.has(n.id)).toBe(true);
   });
 });
+
+// ── spacing multiplier ───────────────────────────────────────────────────────
+
+describe("computeSchematicLayout – spacing", () => {
+  const nodes = [reservoir("R1"), junction("J1"), junction("J2")];
+  const links = [pipe("P1", "R1", "J1"), pipe("P2", "R1", "J2")];
+
+  it("defaults to the layout it has always produced", () => {
+    // Anyone who never touches the sliders must see the original layout, so the
+    // identity scale has to be exactly 1 rather than merely close to it.
+    const base = computeSchematicLayout(nodes, links);
+    const explicit = computeSchematicLayout(nodes, links, { x: 1, y: 1 });
+    for (const [id, [x, y]] of base) {
+      expect(explicit.get(id)).toEqual([x, y]);
+    }
+  });
+
+  it("scales each axis independently and linearly", () => {
+    // The design rests on this: scaling the spacing constants is the same as
+    // scaling the output per axis, so no BFS re-run is needed, and X can move
+    // without dragging Y with it.
+    const base = computeSchematicLayout(nodes, links);
+    for (const [kx, ky] of [
+      [0.25, 1],
+      [1, 0.25],
+      [4, 1],
+      [1, 4],
+      [0.5, 2],
+    ] as const) {
+      const scaled = computeSchematicLayout(nodes, links, { x: kx, y: ky });
+      expect(scaled.size).toBe(base.size);
+      for (const [id, [x, y]] of base) {
+        const got = scaled.get(id);
+        expect(got?.[0]).toBeCloseTo(x * kx, 10);
+        expect(got?.[1]).toBeCloseTo(y * ky, 10);
+      }
+    }
+  });
+
+  it("reshapes the layout — an equal scale would only be a zoom", () => {
+    // Stretching one axis must change the bounding box's proportions. Scaling
+    // both equally cannot: that is exactly what zoom already does.
+    const extent = (m: Map<string, [number, number]>) => {
+      const xs = [...m.values()].map(([x]) => x);
+      const ys = [...m.values()].map(([, y]) => y);
+      const w = Math.max(...xs) - Math.min(...xs);
+      const h = Math.max(...ys) - Math.min(...ys);
+      return h === 0 ? Number.POSITIVE_INFINITY : w / h;
+    };
+    const base = extent(computeSchematicLayout(nodes, links));
+    const widened = extent(
+      computeSchematicLayout(nodes, links, { x: 4, y: 1 }),
+    );
+    const heightened = extent(
+      computeSchematicLayout(nodes, links, { x: 1, y: 4 }),
+    );
+    expect(widened).toBeGreaterThan(base);
+    expect(heightened).toBeLessThan(base);
+
+    const uniform = extent(
+      computeSchematicLayout(nodes, links, { x: 3, y: 3 }),
+    );
+    expect(uniform).toBeCloseTo(base, 10);
+  });
+});

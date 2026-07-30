@@ -1,7 +1,6 @@
 import { XMarkIcon } from "@heroicons/react/16/solid";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useActiveProject, useAppState, useSimulation } from "../../AppContext";
-import { AnnotationSummary, MeasureOverlay } from "../../canvas/Annotations";
 import {
   type BasemapId,
   clampBasemapOpacity,
@@ -10,12 +9,17 @@ import {
 import { haversineMeters, wgs84ToSourceCrs } from "../../canvas/coords";
 import { Legend, type LegendThresholds } from "../../canvas/Legend";
 import { MapCanvas } from "../../canvas/MapCanvas";
+import type { MeasurePoint } from "../../canvas/measureSnap";
 import { CurrentPeriodProvider } from "../../canvas/period-context";
+import {
+  ASPECT_SLIDER_DEFAULT,
+  aspectScales,
+  clampSliderValue,
+} from "../../canvas/schematicAspect";
 import { useCanvasSelection } from "../../canvas/selection-context";
 import { Timeline } from "../../canvas/Timeline";
 import type {
   CanvasTool,
-  ClickPoint,
   LinkVariable,
   NodeVariable,
   ViewMode,
@@ -54,6 +58,7 @@ import { useReducedMotion } from "../../hooks/useReducedMotion";
 import { CanvasErrorBoundary } from "./CanvasView/CanvasErrorBoundary";
 import { CanvasToolbar } from "./CanvasView/CanvasToolbar";
 import { InvalidCrsOverlay } from "./CanvasView/InvalidCrsOverlay";
+import { SchematicAspectSlider } from "./CanvasView/SchematicAspectSlider";
 import { useCrsReprojection } from "./CanvasView/useCrsReprojection";
 import { ViewportControls } from "./CanvasView/ViewportControls";
 
@@ -79,6 +84,9 @@ interface CanvasPrefs {
   nodeVar: NodeVariable;
   linkVar: LinkVariable;
   colorMode: "relative" | "threshold";
+  /** Schematic layout aspect slider position. Missing in older prefs →
+   * defaults to the midpoint, i.e. the layout's native 120:80 spacing. */
+  schematicAspect: number;
 }
 
 /**
@@ -95,6 +103,7 @@ const CANVAS_PREF_DEFAULTS: CanvasPrefs = {
   nodeVar: "pressure",
   linkVar: "velocity",
   colorMode: "relative",
+  schematicAspect: ASPECT_SLIDER_DEFAULT,
 };
 
 // Allowlists so corrupt/stale localStorage can never inject invalid state.
@@ -270,6 +279,18 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
   const [basemapOpacity, setBasemapOpacity] = useState(
     CANVAS_PREF_DEFAULTS.basemapOpacity,
   );
+  // Schematic-only layout aspect. Persisted per project so a network tuned to
+  // be readable stays that way on reopen; the midpoint default means a project
+  // that never touched it is laid out exactly as before.
+  const [schematicAspect, setSchematicAspect] = useState(
+    CANVAS_PREF_DEFAULTS.schematicAspect,
+  );
+  // Memoised: MapCanvas keys its layout cache off this, and a fresh object per
+  // render would re-lay out the whole network every render.
+  const schematicScale = useMemo(
+    () => aspectScales(schematicAspect),
+    [schematicAspect],
+  );
 
   // ── Per-project canvas prefs: restore on project switch, persist on change.
   // `prefsLoadedFor` gates persisting so the write effect (which also re-runs
@@ -299,6 +320,8 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
     setNodeVar(pick("nodeVar", (v) => PREF_NODE_VARS.includes(v)));
     setLinkVar(pick("linkVar", (v) => PREF_LINK_VARS.includes(v)));
     setColorMode(pick("colorMode", (v) => PREF_COLOR_MODES.includes(v)));
+    // Clamp already maps missing/corrupt values to the default.
+    setSchematicAspect(clampSliderValue(prefs?.schematicAspect ?? Number.NaN));
     setPrefsLoadedFor(id);
   }, [project?.id]);
   // Cold-load gate: until the project row has arrived (an async fetch — it
@@ -318,6 +341,7 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
       nodeVar,
       linkVar,
       colorMode,
+      schematicAspect,
     };
     try {
       localStorage.setItem(canvasPrefsKey(id), JSON.stringify(prefs));
@@ -333,6 +357,7 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
     nodeVar,
     linkVar,
     colorMode,
+    schematicAspect,
   ]);
 
   useEffect(() => {
@@ -361,18 +386,33 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
   const [resetNorthKey, setResetNorthKey] = useState(0);
 
   // ── Measure clicks ──────────────────────────────────────────
-  // In map mode: geo points { lng, lat }. In schematic mode: SVG ClickPoints.
-  const [measureGeoPts, setMeasureGeoPts] = useState<
-    { lng: number; lat: number }[]
-  >([]);
-  const [measurePts, setMeasurePts] = useState<ClickPoint[]>([]);
-  const svgRef = useRef<SVGSVGElement | null>(null);
+  // Map mode only (the tool is disabled in schematic). Each entry is a snapped
+  // `[lng, lat]` plus what it snapped to, appended once per click — the canvas
+  // keeps no hidden anchor of its own, which is what made the old two-point
+  // reconstruction lose the first point and then measure from the wrong origin.
+  const [measurePoints, setMeasurePoints] = useState<MeasurePoint[]>([]);
 
-  /** Discard measure points in both coordinate spaces. */
   const clearAnnotations = useCallback(() => {
-    setMeasurePts([]);
-    setMeasureGeoPts([]);
+    setMeasurePoints([]);
   }, []);
+
+  // Positions alone for the canvas overlay; it does not need the snap targets.
+  const measurePointPositions = useMemo(
+    () => measurePoints.map((p) => p.position),
+    [measurePoints],
+  );
+
+  /** Append a click, restarting once a pair is complete. */
+  const handleMeasurePoint = useCallback(
+    (position: [number, number], target: MeasurePoint["target"]) => {
+      setMeasurePoints((prev) =>
+        prev.length >= 2
+          ? [{ position, target }]
+          : [...prev, { position, target }],
+      );
+    },
+    [],
+  );
 
   useEffect(() => {
     function onToolCommand(e: Event) {
@@ -647,8 +687,14 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
           break;
         case "d":
         case "D":
-          setActiveTool("measure");
-          clearAnnotations();
+          // Map mode only, matching the toolbar button's `disabled` state.
+          // Without this the shortcut was the one way into measure mode in
+          // schematic view, where it has no meaningful coordinate space to
+          // measure in.
+          if (viewMode === "map") {
+            setActiveTool("measure");
+            clearAnnotations();
+          }
           break;
         case "e":
         case "E":
@@ -682,7 +728,7 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [clearAnnotations, maxStep, projectView]);
+  }, [clearAnnotations, maxStep, projectView, viewMode]);
 
   const baseNodes = useNodes();
   const baseLinks = useLinks();
@@ -993,7 +1039,6 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
     }
   }, [viewMode, activeTool]);
 
-  const svgCursor = activeTool === "measure" ? "crosshair" : "default";
   const canvasIsActive = isActive && projectView === "canvas";
 
   // Shared styling for toolbar controls that only work in map mode.
@@ -1210,53 +1255,15 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
 
   // Compute measure distance: geo in map mode, pixel-scaled in schematic.
   const measureDistanceM = useMemo(() => {
-    if (viewMode === "map" && measureGeoPts.length === 2) {
-      const [a, b] = measureGeoPts;
+    if (measurePoints.length === 2) {
+      const [a, b] = measurePoints.map((p) => ({
+        lng: p.position[0],
+        lat: p.position[1],
+      }));
       return haversineMeters(a.lng, a.lat, b.lng, b.lat);
     }
     return null;
-  }, [viewMode, measureGeoPts]);
-
-  const handleMeasurePoint = useCallback((lng: number, lat: number) => {
-    setMeasureGeoPts((prev) => {
-      if (prev.length >= 1) {
-        // Second click completes the measurement.
-        return [prev[0], { lng, lat }];
-      }
-      // Should not happen (MapCanvas manages first-click anchor),
-      // but guard just in case.
-      return [{ lng, lat }];
-    });
-  }, []);
-  // Convert a mouse event to SVG user-space coordinates (via the screen CTM)
-  // so measure points stay anchored to the network even when the SVG is scaled.
-  const eventToSvgPoint = useCallback(
-    (e: React.MouseEvent<SVGSVGElement>): ClickPoint | null => {
-      const svg = svgRef.current;
-      if (!svg) return null;
-      const pt = svg.createSVGPoint();
-      pt.x = e.clientX;
-      pt.y = e.clientY;
-      const ctm = svg.getScreenCTM();
-      if (!ctm) return null;
-      const local = pt.matrixTransform(ctm.inverse());
-      return { x: local.x, y: local.y };
-    },
-    [],
-  ); // svgRef is a stable ref
-
-  const handleSvgClick = useCallback(
-    (e: React.MouseEvent<SVGSVGElement>) => {
-      setShowBasemapDropdown(false);
-      if (activeTool === "measure") {
-        const p = eventToSvgPoint(e);
-        if (!p) return;
-        // Measure is two-point. Third click resets and starts a new one.
-        setMeasurePts((prev) => (prev.length >= 2 ? [p] : [...prev, p]));
-      }
-    },
-    [activeTool, eventToSvgPoint],
-  );
+  }, [measurePoints]);
 
   // Global click-outside: close any open toolbar dropdown when the user clicks
   // anywhere outside the toolbar.
@@ -1313,6 +1320,10 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
                   periodResult={currentPeriodResult}
                   isActive={canvasIsActive}
                   viewMode={viewMode}
+                  // The slider carries a track position; the layout wants per-axis
+                  // multipliers. Converting here keeps the geometric mapping in
+                  // one place instead of duplicating it in the canvas.
+                  schematicScale={schematicScale}
                   nodeVar={nodeVar}
                   linkVar={linkVar}
                   animateLinks={animateLinks}
@@ -1338,6 +1349,7 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
                   onCreateNodeRequest={handleCreateNodeRequest}
                   onCreateLinkRequest={handleCreateLinkRequest}
                   onMeasurePoint={handleMeasurePoint}
+                  measurePoints={measurePointPositions}
                   flyToNodeId={flyToState.nodeId}
                   flyToLinkId={flyToState.linkId}
                   flyToKey={flyToState.key}
@@ -1438,30 +1450,6 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
               <InvalidCrsOverlay onSetCrs={openCrsModal} />
             )}
 
-            {/* Legacy SVG annotation overlays (schematic mode only).
-               pointer-events: none — deck.gl handles all interaction. */}
-            {viewMode === "schematic" && (
-              // biome-ignore lint/a11y/useKeyWithClickEvents: SVG overlay handles pointer measurement gestures.
-              <svg
-                ref={svgRef}
-                width="100%"
-                height="100%"
-                viewBox="0 0 800 560"
-                preserveAspectRatio="xMidYMid meet"
-                style={{
-                  position: "absolute",
-                  inset: 0,
-                  pointerEvents: activeTool === "measure" ? "all" : "none",
-                  cursor: svgCursor,
-                }}
-                onClick={handleSvgClick}
-              >
-                <title>Schematic annotations overlay</title>
-                {/* Annotation overlays */}
-                <MeasureOverlay points={measurePts} />
-              </svg>
-            )}
-
             {/* Toolbar overlay — left offset tracks the floating rail width */}
             <CanvasToolbar
               viewMode={viewMode}
@@ -1481,32 +1469,43 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
               onOpenBasemapProviders={openBasemapProvidersModal}
               activeTool={activeTool}
               onToolChange={setActiveTool}
-              hasAnnotations={measureGeoPts.length > 0 || measurePts.length > 0}
+              measurePoints={measurePoints}
+              measureDistanceM={measureDistanceM}
               onClearAnnotations={clearAnnotations}
             />
 
-            {/* Annotation summary (measure) */}
-            {(activeTool === "measure" ||
-              measureGeoPts.length > 0 ||
-              measurePts.length > 0) && (
-              <AnnotationSummary
-                tool={activeTool}
-                measurePts={measurePts}
-                measureGeoPts={measureGeoPts}
-                measureDistanceM={measureDistanceM}
-                viewMode={viewMode}
-                onClear={clearAnnotations}
+            {/* Bottom-right control stack. One positioned column so each strip
+                sits above the last without an offset derived from its
+                neighbour's height, and so the inspector offset is applied once
+                for the whole stack rather than per strip. */}
+            <div
+              style={{
+                position: "absolute",
+                right: "calc(var(--inspector-effective-w, 0px) + 12px)",
+                bottom: 12,
+                zIndex: 11,
+                display: "flex",
+                flexDirection: "column",
+                alignItems: "flex-end",
+                gap: 8,
+              }}
+            >
+              {/* Schematic only: the geographic layout's spacing is the
+                  network's real geometry, not ours to redistribute. */}
+              {viewMode === "schematic" && (
+                <SchematicAspectSlider
+                  value={schematicAspect}
+                  onChange={setSchematicAspect}
+                />
+              )}
+              <ViewportControls
+                mapOnly={mapOnly}
+                onZoomIn={() => setZoomInKey((k) => k + 1)}
+                onZoomOut={() => setZoomOutKey((k) => k + 1)}
+                onResetNorth={() => setResetNorthKey((k) => k + 1)}
+                onFit={() => setMapFitKey((k) => k + 1)}
               />
-            )}
-
-            {/* Floating viewport controls */}
-            <ViewportControls
-              mapOnly={mapOnly}
-              onZoomIn={() => setZoomInKey((k) => k + 1)}
-              onZoomOut={() => setZoomOutKey((k) => k + 1)}
-              onResetNorth={() => setResetNorthKey((k) => k + 1)}
-              onFit={() => setMapFitKey((k) => k + 1)}
-            />
+            </div>
 
             {/* Inspector panel — node or link detail view */}
             {inspectorView === "node" && stableSelectedNode && (

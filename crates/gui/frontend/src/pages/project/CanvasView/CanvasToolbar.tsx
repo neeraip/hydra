@@ -6,7 +6,6 @@ import {
   LinkIcon,
   MapPinIcon,
   PencilSquareIcon,
-  XMarkIcon,
 } from "@heroicons/react/16/solid";
 import type { CSSProperties, Dispatch, SetStateAction } from "react";
 import {
@@ -16,12 +15,14 @@ import {
   clampBasemapOpacity,
 } from "../../../canvas/Basemap";
 import { useCanvasLayers } from "../../../canvas/layers-context";
+import type { MeasurePoint } from "../../../canvas/measureSnap";
 import type { CanvasTool, ViewMode } from "../../../canvas/types";
 import {
   useBasemapProviders,
   useBasemapVisibility,
 } from "../../../hooks/basemapProviders";
 import { CoordStatusIndicator } from "./CoordStatusIndicator";
+import { MeasurePopover } from "./MeasurePopover";
 
 /** Fixed-size square icon button so toolbar entries align on one grid. */
 const ICON_BTN_STYLE: CSSProperties = {
@@ -60,7 +61,8 @@ export function CanvasToolbar({
   onOpenBasemapProviders,
   activeTool,
   onToolChange,
-  hasAnnotations,
+  measurePoints,
+  measureDistanceM,
   onClearAnnotations,
 }: {
   viewMode: ViewMode;
@@ -82,8 +84,10 @@ export function CanvasToolbar({
   onOpenBasemapProviders: () => void;
   activeTool: CanvasTool;
   onToolChange: (t: CanvasTool) => void;
-  /** True when measure annotations exist (shows the clear button). */
-  hasAnnotations: boolean;
+  /** Committed measure points — drives the readout under the measure button. */
+  measurePoints: readonly MeasurePoint[];
+  /** Measured distance in metres, once two points exist. */
+  measureDistanceM: number | null;
   onClearAnnotations: () => void;
 }) {
   const { layers: canvasLayers, setLayer } = useCanvasLayers();
@@ -462,45 +466,39 @@ export function CanvasToolbar({
           <LinkIcon style={ICON_14} />
         </button>
 
-        {/* Measure distance */}
-        <button
-          type="button"
-          className={`tool-btn${activeTool === "measure" ? " active" : ""}`}
-          disabled={mapOnly}
-          onClick={() => {
-            onToolChange("measure");
-            onClearAnnotations();
-          }}
-          data-tooltip={mapOnlyTooltip("Measure distance (D)")}
-          data-tooltip-pos="bottom"
-          aria-label="Measure distance"
-          style={{
-            fontSize: "var(--text-md)",
-            fontWeight: 600,
-            ...ICON_BTN_STYLE,
-            ...mapOnlyDim,
-          }}
-        >
-          <ArrowsRightLeftIcon style={ICON_14} />
-        </button>
-
-        {hasAnnotations && viewMode === "map" && (
+        {/* Measure distance, with its readout anchored underneath */}
+        <div style={{ position: "relative", display: "inline-flex" }}>
           <button
             type="button"
-            className="tool-btn"
-            onClick={onClearAnnotations}
-            data-tooltip="Clear annotations"
+            className={`tool-btn${activeTool === "measure" ? " active" : ""}`}
+            disabled={mapOnly}
+            onClick={() => {
+              onToolChange("measure");
+              onClearAnnotations();
+            }}
+            data-tooltip={mapOnlyTooltip("Measure distance (D)")}
             data-tooltip-pos="bottom"
-            aria-label="Clear annotations"
+            aria-label="Measure distance"
             style={{
-              fontSize: "var(--text-sm)",
-              color: "var(--text-tertiary)",
+              fontSize: "var(--text-md)",
+              fontWeight: 600,
               ...ICON_BTN_STYLE,
+              ...mapOnlyDim,
             }}
           >
-            <XMarkIcon style={ICON_14} />
+            <ArrowsRightLeftIcon style={ICON_14} />
           </button>
-        )}
+          {activeTool === "measure" && (
+            <MeasurePopover
+              points={measurePoints}
+              distanceM={measureDistanceM}
+              onExit={() => {
+                onClearAnnotations();
+                onToolChange("select");
+              }}
+            />
+          )}
+        </div>
 
         <div className="tool-divider" />
 

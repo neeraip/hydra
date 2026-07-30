@@ -34,6 +34,11 @@
 
   /* Layout */
   --activity-w: 56px;
+  /* Icon-button footprint. Shared so anything that has to line up with a
+     `.tool-btn` — the schematic aspect slider's track, which must give its
+     container the same width as the viewport-control box — tracks it instead of
+     hardcoding the number. */
+  --tool-btn-size: 30px;
   /* Width of the canvas' right-hand element inspector. Canvas overlays that
      must stay clear of it offset by `--inspector-effective-w`, which CanvasView
      sets to this value while the panel is open and 0px otherwise — the same
@@ -551,17 +556,17 @@ body,
 
 /* ── Canvas toolbar ──────────────────────────────────────────────────────────*/
 .canvas-toolbar {
-  background: rgba(11, 11, 14, 0.72);
-  backdrop-filter: blur(16px) saturate(1.4);
-  -webkit-backdrop-filter: blur(16px) saturate(1.4);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 10px;
   /* Chrome text is never worth selecting, and dragging on the canvas used to
      highlight the toolbar's labels. The -webkit- form is required as well:
      WKWebView does not honour the unprefixed property here (same reason the
      element tables set both). */
   -webkit-user-select: none;
   user-select: none;
+  background: rgba(11, 11, 14, 0.72);
+  backdrop-filter: blur(16px) saturate(1.4);
+  -webkit-backdrop-filter: blur(16px) saturate(1.4);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 10px;
   box-shadow:
     0 4px 20px rgba(0, 0, 0, 0.4),
     0 1px 0 rgba(255, 255, 255, 0.04) inset;
@@ -572,8 +577,8 @@ body,
 }
 
 .tool-btn {
-  width: 30px;
-  height: 30px;
+  width: var(--tool-btn-size);
+  height: var(--tool-btn-size);
   display: flex;
   align-items: center;
   justify-content: center;
