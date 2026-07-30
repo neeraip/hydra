@@ -1,19 +1,19 @@
 {
-  "version": "2.6.0",
-  "notes": "Hydra GUI 2.6.0 \u2014 release notes: https://github.com/neeraip/hydra/releases/tag/gui-v2.6.0",
-  "pub_date": "2026-07-29T15:30:52Z",
+  "version": "2.7.0",
+  "notes": "Hydra GUI 2.7.0 \u2014 release notes: https://github.com/neeraip/hydra/releases/tag/gui-v2.7.0",
+  "pub_date": "2026-07-30T13:30:50Z",
   "platforms": {
     "darwin-aarch64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSQ2ZZY0l5ZXpXV2g5cFNiUXJFMjdhMmFDWmVWRU9Yd01xalBzcmVHaW9KWnkvMHIvT3JyV3VKSE8vZFhUbjdYbDEzUDc2UTRxdUpPVG9ObThLa05Fcm5Md05sUnRVU2dRPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg1MzM0OTA3CWZpbGU6SHlkcmEuYXBwLnRhci5negpsSlYzbjNOcUE4R2wyVlRlcm0ycWROSGlWZDYvTUNIZzZ5OWgvWXZJeVR3TFF1akU3Y1lxSk1LNFpEY204dVhoQ2NlN2lXU3BrQkk5ZnJ4cm9wWkJCZz09Cg==",
-      "url": "https://github.com/neeraip/hydra/releases/download/gui-v2.6.0/hydra-gui-2.6.0-aarch64-apple-darwin.app.tar.gz"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSQ2ZZY0l5ZXpXV213cXRoUE8yUXpoZC9CK3AveW5nS2x4dDRqVkIrRjNMYlFMdDdxdUN2QWswaFRSeHk1OWtkM2ZqQnZTN3ZtdjJHVGJVT2xydHVKMlNFTUppeHIwbUFnPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg1Mzg3OTI5CWZpbGU6SHlkcmEuYXBwLnRhci5negptL3NNNjRpMnoxZTk4VnVEQjAzQ0hyRG41QlhaOXpqN3M1OThHQWl1OXZpTlBWVHBhZjdIbkRkT3Q2QlRweWxUL1lMWnUvOTJ4dWZsSHVrWGZmODRCZz09Cg==",
+      "url": "https://github.com/neeraip/hydra/releases/download/gui-v2.7.0/hydra-gui-2.7.0-aarch64-apple-darwin.app.tar.gz"
     },
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSQ2ZZY0l5ZXpXV20wZ0d2R1doTERpVUlZWEkxNkVrc28rYklMcHROZ1RrT0JwQnlGdW9NNTdBb2NyRU51ZUo4SldzcWxuNTJFWDJUWjNGYnVWTklTdkpoREhTZndpWVFrPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg1MzM0Mjk1CWZpbGU6SHlkcmFfMi42LjBfeDY0LXNldHVwLmV4ZQpjSG5XNzdRU3ZoOUxwVGptTEI2NkpMbFdtSzhzbEdidmJvZDNpMVJ4R0hrU1Bvcyt2TVZqN1VuM0FabmtPdlZsU0ZjcXdlVHl2RXRKVlZ4ODBiOThCZz09Cg==",
-      "url": "https://github.com/neeraip/hydra/releases/download/gui-v2.6.0/hydra-gui-2.6.0-x86_64-pc-windows-msvc.exe"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSQ2ZZY0l5ZXpXV2pUUHAyOHh5aURISXRpQVh0MlU0TCtPQTNwVmhzeWZ4NEQvUDZ0ZzQwUzNjSS80MTdWbzJZU1VodXpoeDB5V3BmaXdzYWdlb0V6VUhCMEV0K2NUZGdzPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg1Mzg4MjU3CWZpbGU6SHlkcmFfMi43LjBfeDY0LXNldHVwLmV4ZQoydTYyd01JZ3BlSjE1ZjhMcys0WE9xQzFja1g5QlBMRnRwQ20yOGQ3K1ZCa1JwdHhUZmlTcVdES01HUkZucU16TkxDdjRDSmtTbzlkRGRaT252RUtBUT09Cg==",
+      "url": "https://github.com/neeraip/hydra/releases/download/gui-v2.7.0/hydra-gui-2.7.0-x86_64-pc-windows-msvc.exe"
     },
     "linux-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSQ2ZZY0l5ZXpXV255bzhSOGxnMWpXNytLaGpOdFZZdUF3L0tyd0s2QVowS2YxTU5aaDJFUjhoQklROXNvelZYdFpDR0dnRUIyTXk4c2ZCRFRHSFVsdThPZ1JBTnhmT0FVPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg1MzM0MDg0CWZpbGU6SHlkcmFfMi42LjBfYW1kNjQuQXBwSW1hZ2UKOU1mQk9QM1FBM0RNK0ZhWW9LUUkyVm0vSERjSXZESzNWSjdLek1TcnZZVG1ONGF6WlNYUjllM2wycnRqRXF6alFuelpkYkVSdVJ2Njl4RlFEY2FEREE9PQo=",
-      "url": "https://github.com/neeraip/hydra/releases/download/gui-v2.6.0/hydra-gui-2.6.0-x86_64-unknown-linux-gnu.AppImage"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSQ2ZZY0l5ZXpXV2g4czNoOGpwVGZ6bkVLWmsxdXVIOTRNTFBSRGFnSzZmWkF1M3VkeFo3VGRVY2V5MXV5V3dtWkgyUUFRNjZyRmo2ek9iaWNNNURLOGdNQUI3YnRxb0FrPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg1Mzg3ODQyCWZpbGU6SHlkcmFfMi43LjBfYW1kNjQuQXBwSW1hZ2UKUWxhbFV0MEFrcTB5ZFpMdVhBamphanFZZWNSUlIzZjM4MzhabWhmWFYrcFZUZytQNURQSVVLL0lmZE9GZ2N1VEhuUWl3Rit5M044bm1vaExWK1lyRFE9PQo=",
+      "url": "https://github.com/neeraip/hydra/releases/download/gui-v2.7.0/hydra-gui-2.7.0-x86_64-unknown-linux-gnu.AppImage"
     }
   }
 }
