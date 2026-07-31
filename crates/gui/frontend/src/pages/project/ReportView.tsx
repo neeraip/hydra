@@ -443,13 +443,6 @@ export function ReportView() {
                       ]),
                   },
                   {
-                    label: "Clear all settings",
-                    detail: "Keeps the sections and their order",
-                    disabled: customisedCount === 0,
-                    disabledReason: "No section has custom settings",
-                    onSelect: clearCustomisations,
-                  },
-                  {
                     label: allExpanded
                       ? "Collapse all settings"
                       : "Expand all settings",
@@ -485,6 +478,14 @@ export function ReportView() {
                       setSections((prev) =>
                         prev.filter((id) => !barren.includes(id)),
                       ),
+                  },
+                  {
+                    label: "Clear all settings",
+                    detail: "Discards every heading and option",
+                    danger: true,
+                    disabled: customisedCount === 0,
+                    disabledReason: "No section has custom settings",
+                    onSelect: clearCustomisations,
                   },
                   {
                     label: "Remove all sections",
