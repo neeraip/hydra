@@ -170,7 +170,7 @@ neutral content fragments for one completed simulation.
 
 | Block id | Content | Available when |
 |---|---|---|
-| `wds.run-summary` | Network size (junction / tank-and-reservoir / link / pump counts), reporting window (start, step, final report time, period count), flow and pressure units, quality mode. | always |
+| `wds.run-summary` | Network size counted **by element kind** — junctions, reservoirs, tanks, pipes, pumps, valves — reporting window (start, step, final report time, period count), flow and pressure units, quality mode. | always |
 | `wds.result-extremes` | Global minimum and maximum of nodal pressure, head, and demand, and of link flow and velocity — plus quality when present — over the reporting horizon. | the file holds ≥ 1 reporting period |
 | `wds.pump-energy` | Per-pump table: utilization, average efficiency, average and peak power, average daily cost; plus the network demand charge. | the network has ≥ 1 pump |
 | `wds.quality-summary` | Quality mode and global quality extremes with the mode's display unit. | the run produced water-quality results |
@@ -270,9 +270,19 @@ id is a compatibility break.
 ### 4.2 Production contract
 
 **Inputs:** the persisted `.out` results file, the corresponding loaded
-network, and the optional per-block options value (§4.1.1). Counts and result values come from the `.out` file
-(result-authoritative); element identifiers and declared display units come
-from the network. Production is read-only and deterministic: identical
+network, and the optional per-block options value (§4.1.1). Result values and
+the reporting window come from the `.out` file (result-authoritative);
+element identifiers, declared display units, and counts **by element kind**
+come from the network.
+
+Counts are taken from the network rather than the results file because the
+results file cannot express them: its node grouping stores reservoirs inside
+the tank group, and it records no link-type breakdown at all. Reporting a
+combined "tanks and reservoirs" figure would describe the file's storage
+layout rather than the network — and the two are not interchangeable, a
+reservoir being an infinite-source boundary and a tank being finite storage
+on a mass balance. The engine's own run-log report separates all six, so
+collapsing them here would also make one engine disagree with itself. Production is read-only and deterministic: identical
 inputs always yield identical fragments.
 
 **Extremes sampling:** `wds.result-extremes` and the quality extremes reuse

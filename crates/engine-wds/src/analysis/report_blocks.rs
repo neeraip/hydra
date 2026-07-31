@@ -18,7 +18,7 @@ use super::demand_reliability::{
 };
 use super::service_compliance::{compute_service_compliance_from_out, ServiceComplianceThresholds};
 use crate::io::out_reader::{self, OutMetadata};
-use crate::{FlowUnits, Network};
+use crate::{FlowUnits, LinkKind, Network, NodeKind};
 
 /// Sample budget for the range scan (analysis spec §4.2). Matches the
 /// `scan_ranges` guidance keeping scans under ~50 ms on long simulations.
@@ -250,11 +250,30 @@ fn run_summary(out_path: &Path, network: &Network) -> Result<Fragment, BlockErro
     let final_report_time =
         meta.report_start + meta.report_step * (meta.n_periods.max(1) - 1) as f64;
 
+    // Counted from the network, not the results file: the `.out` prolog puts
+    // reservoirs inside its tank group and carries no link-type breakdown, so
+    // it can only report a combined figure. A reservoir is an infinite-source
+    // boundary and a tank is finite storage — reporting them as one number
+    // describes the file's layout rather than the network, and would make this
+    // block disagree with the engine's own run-log summary (spec §4.2).
+    let count_nodes =
+        |f: fn(&NodeKind) -> bool| int(network.nodes.iter().filter(|n| f(&n.kind)).count());
+    let count_links =
+        |f: fn(&LinkKind) -> bool| int(network.links.iter().filter(|l| f(&l.kind)).count());
+
     let entries = vec![
-        entry("Junctions", int(meta.n_nodes.saturating_sub(meta.n_tanks))),
-        entry("Tanks & reservoirs", int(meta.n_tanks)),
-        entry("Links", int(meta.n_links)),
-        entry("Pumps", int(meta.n_pumps)),
+        entry(
+            "Junctions",
+            count_nodes(|k| matches!(k, NodeKind::Junction(_))),
+        ),
+        entry(
+            "Reservoirs",
+            count_nodes(|k| matches!(k, NodeKind::Reservoir(_))),
+        ),
+        entry("Tanks", count_nodes(|k| matches!(k, NodeKind::Tank(_)))),
+        entry("Pipes", count_links(|k| matches!(k, LinkKind::Pipe(_)))),
+        entry("Pumps", count_links(|k| matches!(k, LinkKind::Pump(_)))),
+        entry("Valves", count_links(|k| matches!(k, LinkKind::Valve(_)))),
         entry(
             "Flow units",
             text(flow_unit_label(network.options.flow_units)),
@@ -1709,10 +1728,15 @@ mod tests {
                     .unwrap_or_else(|| panic!("missing entry {label:?}"))
                     .value
             };
+            // The fixture is 2 junctions + 1 RESERVOIR and 2 pipes: the
+            // reservoir must not surface as a tank, which is exactly what the
+            // `.out` prolog's combined tank group would have reported.
             assert_eq!(get("Junctions"), &int(2));
-            assert_eq!(get("Tanks & reservoirs"), &int(1));
-            assert_eq!(get("Links"), &int(2));
+            assert_eq!(get("Reservoirs"), &int(1));
+            assert_eq!(get("Tanks"), &int(0));
+            assert_eq!(get("Pipes"), &int(2));
             assert_eq!(get("Pumps"), &int(0));
+            assert_eq!(get("Valves"), &int(0));
             assert_eq!(get("Flow units"), &text("LPS"));
             assert_eq!(get("Pressure units"), &text("m"));
             assert_eq!(get("Quality mode"), &text("None"));
