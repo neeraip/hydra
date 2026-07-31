@@ -72,15 +72,25 @@ const TRIGGER_GAP = 4;
  */
 export type RowMenuPlacement = "bottom-end" | "right-start";
 
+/** How the trigger presents itself.
+ *
+ * `ghost` is right in a list, where a menu sits on every row and drawing a
+ * border on each would out-shout the content. `solid` is right when the menu
+ * stands alone beside other buttons — a borderless control next to a bordered
+ * one reads as secondary, or as not a button at all. */
+export type RowMenuVariant = "ghost" | "solid";
+
 export function RowMenu({
   items,
   label = "More actions",
   placement = "bottom-end",
+  variant = "ghost",
 }: {
   items: RowMenuItem[];
   /** Accessible name for the trigger. */
   label?: string;
   placement?: RowMenuPlacement;
+  variant?: RowMenuVariant;
 }) {
   const [open, setOpen] = useState(false);
   // Stable identity: `exclusiveOpen` recognises a holder by this reference,
@@ -189,9 +199,16 @@ export function RowMenu({
           justifyContent: "center",
           width: 24,
           height: 24,
-          border: "1px solid transparent",
+          border:
+            variant === "solid"
+              ? "1px solid var(--border)"
+              : "1px solid transparent",
           borderRadius: 5,
-          background: open ? "var(--nav-hover)" : "transparent",
+          background: open
+            ? "var(--nav-hover)"
+            : variant === "solid"
+              ? "var(--bg-elevated)"
+              : "transparent",
           color: open ? "var(--text-primary)" : "var(--text-secondary)",
           cursor: "pointer",
           padding: 0,

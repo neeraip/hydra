@@ -1,4 +1,8 @@
-import { DocumentArrowDownIcon, PlusIcon } from "@heroicons/react/16/solid";
+import {
+  ChevronRightIcon,
+  DocumentArrowDownIcon,
+  PlusIcon,
+} from "@heroicons/react/16/solid";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useAppState } from "../../AppContext";
 import { RowMenu } from "../../components/ui/RowMenu";
@@ -88,7 +92,7 @@ export function ReportView() {
   const [availability, setAvailability] = useState<BlockAvailability[]>([]);
   const [adding, setAdding] = useState(false);
   // Which sections show their settings. Held here rather than in the list so
-  // the Sections menu can open or close all of them at once.
+  // the header's disclosure button can open or close all of them at once.
   const [openSections, setOpenSections] = useState<Set<string>>(new Set());
   const [format, setFormat] = useState<ReportFormat>("html");
   useEffect(() => {
@@ -460,8 +464,55 @@ export function ReportView() {
                 <PlusIcon style={{ width: 11, height: 11 }} />
                 Add
               </button>
+              {/* Out of the overflow menu and into the row: expanding the
+                  outline is a view toggle used while reading it, not a
+                  one-shot edit like the actions it sat among, and a menu is a
+                  poor home for something you flip back and forth.
+                  Icon-only, because the row already carries a labelled
+                  button and a second one would crowd it — and the rotating
+                  chevron is the same disclosure vocabulary each section row
+                  uses, so it reads as "all of those at once". */}
+              <button
+                type="button"
+                aria-label={
+                  allExpanded ? "Collapse all settings" : "Expand all settings"
+                }
+                data-tooltip={
+                  allExpanded ? "Collapse all settings" : "Expand all settings"
+                }
+                disabled={sections.length === 0}
+                onClick={() =>
+                  setOpenSections(allExpanded ? new Set() : new Set(sections))
+                }
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  width: 24,
+                  height: 24,
+                  padding: 0,
+                  borderRadius: 5,
+                  border: "1px solid var(--border)",
+                  background: "var(--bg-elevated)",
+                  color: "var(--text-secondary)",
+                  cursor: sections.length === 0 ? "default" : "pointer",
+                  opacity: sections.length === 0 ? 0.5 : 1,
+                }}
+              >
+                <ChevronRightIcon
+                  style={{
+                    width: 12,
+                    height: 12,
+                    transform: allExpanded ? "rotate(90deg)" : undefined,
+                    transition: "transform var(--t-fast)",
+                  }}
+                />
+              </button>
               <RowMenu
                 label="Section actions"
+                // Solid, to match the buttons it sits beside: a borderless
+                // trigger next to bordered ones reads as secondary.
+                variant="solid"
                 // Beside the trigger rather than below it: this menu sits in
                 // the Sections header, and dropping downward would cover the
                 // outline it acts on.
@@ -486,20 +537,6 @@ export function ReportView() {
                     onSelect: () =>
                       setSections((prev) =>
                         withRecommendedPlacement(catalog, prev, catalogIds),
-                      ),
-                  },
-                  {
-                    label: allExpanded
-                      ? "Collapse all settings"
-                      : "Expand all settings",
-                    detail: allExpanded
-                      ? undefined
-                      : "Shows every section's heading and options",
-                    disabled: sections.length === 0,
-                    disabledReason: "The report has no sections",
-                    onSelect: () =>
-                      setOpenSections(
-                        allExpanded ? new Set() : new Set(sections),
                       ),
                   },
                   {
