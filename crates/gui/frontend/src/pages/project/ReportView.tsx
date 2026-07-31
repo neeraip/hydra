@@ -18,9 +18,11 @@ import {
   type ReportBlockInfo,
   type ReportFormat,
   type ReportOptionInfo,
+  readStoredFormat,
   recommendedOrder,
   sameOrder,
   saveReportTemplate,
+  writeStoredFormat,
 } from "../../hooks/reports";
 import { AddSectionPalette } from "./ReportView/AddSectionPalette";
 import type { OptionValues } from "./ReportView/BlockOptions";
@@ -31,10 +33,10 @@ const PREVIEW_DEBOUNCE_MS = 350;
 const SAVE_DEBOUNCE_MS = 800;
 
 const FORMATS: { id: ReportFormat; label: string }[] = [
-  { id: "html", label: "HTML" },
   { id: "pdf", label: "PDF" },
-  { id: "txt", label: "Text" },
+  { id: "html", label: "HTML" },
   { id: "csv", label: "CSV" },
+  { id: "txt", label: "Text" },
 ];
 
 /**
@@ -82,6 +84,19 @@ export function ReportView() {
   // the Sections menu can open or close all of them at once.
   const [openSections, setOpenSections] = useState<Set<string>>(new Set());
   const [format, setFormat] = useState<ReportFormat>("html");
+  useEffect(() => {
+    if (!activeProjectId) return;
+    setFormat(readStoredFormat(activeProjectId, "html"));
+  }, [activeProjectId]);
+
+  /** Choose a format and remember it for this project. Written here rather
+   * than in an effect on `format`: an effect would also fire when the project
+   * changes, and it would still be holding the OUTGOING project's format —
+   * storing one project's choice under the next project's key. */
+  function chooseFormat(next: ReportFormat) {
+    setFormat(next);
+    if (activeProjectId) writeStoredFormat(activeProjectId, next);
+  }
   const [initialised, setInitialised] = useState(false);
 
   // Tagged with the format it was generated for: a tab switch must show
@@ -554,7 +569,7 @@ export function ReportView() {
               <button
                 type="button"
                 key={f.id}
-                onClick={() => setFormat(f.id)}
+                onClick={() => chooseFormat(f.id)}
                 style={{
                   padding: "4px 12px",
                   borderRadius: 6,
@@ -601,12 +616,19 @@ export function ReportView() {
             </div>
           ) : (
             /* The document as it exports: a light "paper" page whatever
-               the app theme (the artifact itself is theme-less). */
+               the app theme (the artifact itself is theme-less).
+
+               Only PDF is width-constrained. It is the one format laid out
+               for a physical page, so showing it any wider than the paper
+               would misrepresent where its lines break. The others reflow to
+               whatever they are given — a spreadsheet and a web page have no
+               page width, and pinning them to A4 only forced horizontal
+               scrolling on tables that would otherwise have fitted. */
             <div
               style={{
                 flex: 1,
                 minWidth: 0,
-                maxWidth: 860,
+                maxWidth: format === "pdf" ? 860 : undefined,
                 margin: "0 auto",
                 background: "#ffffff",
                 borderRadius: 4,

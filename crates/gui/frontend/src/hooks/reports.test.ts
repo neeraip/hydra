@@ -4,13 +4,16 @@ import {
   builderStateFromTemplate,
   buildTemplateJson,
   customisedSummary,
+  type FormatStore,
   insertionFromPointer,
   insertionToIndex,
   moveSection,
   type ReportBlockInfo,
+  readStoredFormat,
   recommendedOrder,
   rowShift,
   sameOrder,
+  writeStoredFormat,
 } from "./reports";
 
 const CATALOG: ReportBlockInfo[] = [
@@ -383,5 +386,64 @@ describe("rowShift", () => {
     // Rows are wildly uneven once a settings panel is open; the space freed
     // is always the LIFTED row's, so one displacement fits every row.
     expect(rowShift(1, 0, 1, 200)).toBe(-200);
+  });
+});
+
+describe("remembered preview format", () => {
+  function fakeStore(seed: Record<string, string> = {}): FormatStore & {
+    map: Map<string, string>;
+  } {
+    const map = new Map(Object.entries(seed));
+    return {
+      map,
+      getItem: (k) => map.get(k) ?? null,
+      setItem: (k, v) => {
+        map.set(k, v);
+      },
+    };
+  }
+
+  it("falls back when the project has no stored format", () => {
+    expect(readStoredFormat("p1", "html", fakeStore())).toBe("html");
+  });
+
+  it("round-trips a chosen format", () => {
+    const store = fakeStore();
+    writeStoredFormat("p1", "csv", store);
+    expect(readStoredFormat("p1", "html", store)).toBe("csv");
+  });
+
+  it("keeps projects apart", () => {
+    // The format belongs to the report you are producing, so two projects
+    // must not share one.
+    const store = fakeStore();
+    writeStoredFormat("p1", "csv", store);
+    writeStoredFormat("p2", "pdf", store);
+    expect(readStoredFormat("p1", "html", store)).toBe("csv");
+    expect(readStoredFormat("p2", "html", store)).toBe("pdf");
+  });
+
+  it("ignores a stored value this build does not offer", () => {
+    // How a format retired between releases stops resolving, instead of
+    // selecting a tab that no longer exists.
+    const store = fakeStore({ "hydra2-report-format:p1": "xlsx" });
+    expect(readStoredFormat("p1", "html", store)).toBe("html");
+  });
+
+  it("degrades to the fallback with no storage at all", () => {
+    expect(readStoredFormat("p1", "txt", undefined)).toBe("txt");
+    expect(() => writeStoredFormat("p1", "txt", undefined)).not.toThrow();
+  });
+
+  it("does not throw when storage refuses to write", () => {
+    // Private browsing and a full quota both throw on setItem; losing a
+    // preference must not interrupt the report.
+    const store: FormatStore = {
+      getItem: () => null,
+      setItem: () => {
+        throw new Error("quota exceeded");
+      },
+    };
+    expect(() => writeStoredFormat("p1", "csv", store)).not.toThrow();
   });
 });

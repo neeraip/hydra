@@ -256,6 +256,60 @@ export function moveSection(
   return next;
 }
 
+// ── Remembered preview format ────────────────────────────────────────────────
+
+/** Minimal storage surface, so the helpers below are testable without a DOM
+ * and degrade to a no-op where storage is unavailable or blocked. */
+export interface FormatStore {
+  getItem(key: string): string | null;
+  setItem(key: string, value: string): void;
+}
+
+const FORMAT_KEY_PREFIX = "hydra2-report-format:";
+
+const FORMATS: readonly ReportFormat[] = ["txt", "csv", "html", "pdf"];
+
+/** Keyed by PROJECT, not scenario: the format is a property of the report you
+ * are producing, and switching between a project's scenarios to compare them
+ * should not change what you are looking at. */
+function formatKey(projectId: string): string {
+  return `${FORMAT_KEY_PREFIX}${projectId}`;
+}
+
+/** The format last chosen for this project, or `fallback` when there is none
+ * — or when the stored value is not one this build offers, which is how a
+ * format retired between releases stops resolving. */
+export function readStoredFormat(
+  projectId: string,
+  fallback: ReportFormat,
+  store: FormatStore | undefined = safeStorage(),
+): ReportFormat {
+  const raw = store?.getItem(formatKey(projectId)) ?? null;
+  return FORMATS.find((f) => f === raw) ?? fallback;
+}
+
+/** Remember `format` for this project. Failure is ignored: a preference not
+ * persisting is not worth interrupting a report for. */
+export function writeStoredFormat(
+  projectId: string,
+  format: ReportFormat,
+  store: FormatStore | undefined = safeStorage(),
+): void {
+  try {
+    store?.setItem(formatKey(projectId), format);
+  } catch {
+    // Private browsing, a full quota, or storage disabled entirely.
+  }
+}
+
+function safeStorage(): FormatStore | undefined {
+  try {
+    return globalThis.localStorage ?? undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /** How far row `index` steps aside while row `from` is being dragged to
  * `dest`, in pixels.
  *
