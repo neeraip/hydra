@@ -64,11 +64,24 @@ const ROW_GAP = 2;
 const SHIFT_MS = 160;
 const DISCLOSE_MS = 120;
 
+// The two lines of a row's title block. Declared once because the block's
+// reserved height is computed from them below — a copy would drift and the
+// reservation would quietly stop matching what it reserves for.
+const FAINT_FONT = "var(--text-xs)";
+const FAINT_LINE_HEIGHT = 1.1;
+const FAINT_GAP_PX = 1;
+const TITLE_FONT = "var(--text-lg)";
+const TITLE_LINE_HEIGHT = 1.2;
+
+/** Height of a renamed row's two-line title block, which every row reserves
+ * so renaming one does not make it taller than its neighbours. */
+const TITLE_BLOCK_MIN_H = `calc(${FAINT_FONT} * ${FAINT_LINE_HEIGHT} + ${FAINT_GAP_PX}px + ${TITLE_FONT} * ${TITLE_LINE_HEIGHT})`;
+
 /** The section's real name, shown above a heading that has replaced it. */
 const faintLine: React.CSSProperties = {
-  fontSize: "var(--text-xs)",
+  fontSize: FAINT_FONT,
   color: "var(--text-tertiary)",
-  lineHeight: 1.1,
+  lineHeight: FAINT_LINE_HEIGHT,
   overflow: "hidden",
   textOverflow: "ellipsis",
   whiteSpace: "nowrap",
@@ -119,21 +132,16 @@ function SectionTitle({
   const renamed = heading.trim();
   return (
     <>
-      <span
-        aria-hidden={renamed ? undefined : true}
-        style={{
-          ...faintLine,
-          marginBottom: 1,
-          visibility: renamed ? undefined : "hidden",
-        }}
-      >
-        {block.title}
-      </span>
+      {renamed ? (
+        <span style={{ ...faintLine, marginBottom: FAINT_GAP_PX }}>
+          {block.title}
+        </span>
+      ) : null}
       <span
         style={{
-          fontSize: "var(--text-lg)",
+          fontSize: TITLE_FONT,
           color: "var(--text-primary)",
-          lineHeight: 1.2,
+          lineHeight: TITLE_LINE_HEIGHT,
           overflow: "hidden",
           textOverflow: "ellipsis",
           whiteSpace: "nowrap",
@@ -385,6 +393,12 @@ export function SectionList({
                     minWidth: 0,
                     display: "flex",
                     flexDirection: "column",
+                    justifyContent: "center",
+                    // Every row stands as tall as a renamed one, so renaming a
+                    // section no longer makes it taller than its neighbours —
+                    // and a single-line title centres in that space instead of
+                    // sitting at the bottom of it.
+                    minHeight: TITLE_BLOCK_MIN_H,
                     overflow: "hidden",
                   }}
                 >
@@ -636,6 +650,8 @@ function DragGhost({
           minWidth: 0,
           display: "flex",
           flexDirection: "column",
+          justifyContent: "center",
+          minHeight: TITLE_BLOCK_MIN_H,
           overflow: "hidden",
         }}
       >
