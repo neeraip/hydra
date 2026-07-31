@@ -82,7 +82,7 @@ fn typst_source(doc: &ReportDocument) -> (String, Vec<String>) {
          #set text(size: 10pt)\n\
          #set table(stroke: 0.5pt + luma(180), inset: 5pt)\n\
          #show heading.where(level: 1): set text(size: 17pt)\n\
-         #show heading.where(level: 2): it => block(above: 1.4em, below: 0.7em)[#it]\n",
+         #show heading.where(level: 2): it => block(above: 1.4em, below: 0.7em, sticky: true)[#it]\n",
     );
 
     let _ = writeln!(s, "= #{}", quoted(&doc.title));
@@ -323,6 +323,139 @@ mod tests {
                     reason: "the network has no pumps".into(),
                 },
             ],
+        }
+    }
+
+    /// Every text run on a page, with its absolute y, so a test can ask what
+    /// landed at the bottom. Groups carry their own coordinate space, so their
+    /// origin has to be folded in.
+    fn page_text(
+        frame: &typst::layout::Frame,
+        origin: typst::layout::Point,
+    ) -> Vec<(f64, f64, String)> {
+        let mut out = Vec::new();
+        for (pos, item) in frame.items() {
+            let at = origin + *pos;
+            match item {
+                typst::layout::FrameItem::Text(text) => {
+                    out.push((at.y.to_pt(), at.x.to_pt(), text.text.to_string()))
+                }
+                typst::layout::FrameItem::Group(group) => out.extend(page_text(&group.frame, at)),
+                _ => {}
+            }
+        }
+        out
+    }
+
+    /// The bottom-most line of a page, reassembled from its runs.
+    ///
+    /// Whole lines, not runs: a run can be a single glyph, and asking whether
+    /// a heading "contains" one matches a table cell holding the digit 3.
+    fn bottom_line(frame: &typst::layout::Frame) -> String {
+        let runs = page_text(frame, typst::layout::Point::zero());
+        let Some(bottom) = runs
+            .iter()
+            .map(|(y, _, _)| *y)
+            .fold(None, |acc: Option<f64>, y| {
+                Some(acc.map_or(y, |a| a.max(y)))
+            })
+        else {
+            return String::new();
+        };
+        let mut line: Vec<&(f64, f64, String)> = runs
+            .iter()
+            // One line's runs share a baseline; the tolerance absorbs the
+            // sub-point differences between glyph runs of one line.
+            .filter(|(y, _, _)| (y - bottom).abs() < 0.5)
+            .collect();
+        line.sort_by(|a, b| a.1.total_cmp(&b.1));
+        line.iter()
+            .map(|(_, _, t)| t.as_str())
+            .collect::<String>()
+            .trim()
+            .to_string()
+    }
+
+    /// Spec §4.5: a section heading is never the last thing on a page.
+    ///
+    /// Typst already guarantees this — its heading show-set rule sets
+    /// `block.sticky`, and this passes with or without the explicit `sticky`
+    /// in our own show rule. The test is here for the guarantee, not for our
+    /// spelling of it: it would catch a Typst upgrade that changed the
+    /// default, or a rewrite of the heading rule that wrapped the heading in
+    /// a block that defeated it, which is the failure Typst's own docs warn
+    /// custom heading show rules about.
+    ///
+    /// Checked against the laid-out pages rather than the preamble string,
+    /// which would only restate the implementation.
+    #[test]
+    fn a_section_heading_is_never_stranded_at_the_foot_of_a_page() {
+        // Enough sections of enough length to force several page breaks, so
+        // that without the keep-with-next some heading would land last.
+        let sections: Vec<Section> = (1..=14)
+            .map(|n| {
+                Section::Content(Fragment {
+                    title: format!("Section {n:02}"),
+                    items: vec![FragmentItem::Table {
+                        table: Table {
+                            columns: vec![
+                                Column {
+                                    name: "Node".into(),
+                                    unit: None,
+                                    kind: ValueKind::Text,
+                                },
+                                Column {
+                                    name: "Value".into(),
+                                    unit: None,
+                                    kind: ValueKind::Number,
+                                },
+                            ],
+                            rows: (0..6)
+                                .map(|r| {
+                                    vec![
+                                        Value::Text {
+                                            value: format!("J{r}"),
+                                        },
+                                        Value::Number {
+                                            value: f64::from(r),
+                                            unit: None,
+                                        },
+                                    ]
+                                })
+                                .collect(),
+                        },
+                    }],
+                })
+            })
+            .collect();
+        let titles: Vec<String> = (1..=14).map(|n| format!("Section {n:02}")).collect();
+        let doc = ReportDocument {
+            title: "Pagination".into(),
+            generated_at: None,
+            source: vec![],
+            sections,
+        };
+
+        let (source, charts) = typst_source(&doc);
+        let world = ReportWorld::new(source, charts);
+        let compiled: typst_layout::PagedDocument =
+            typst::compile(&world).output.expect("compiles");
+
+        // Without breaks there is nothing to strand, so a single-page render
+        // would make every assertion below vacuous.
+        assert!(
+            compiled.pages().len() > 1,
+            "fixture no longer spans pages: {} page(s)",
+            compiled.pages().len()
+        );
+
+        for (index, page) in compiled.pages().iter().enumerate() {
+            let last = bottom_line(&page.frame);
+            assert!(
+                !titles.contains(&last),
+                "page {} ends with section heading {last:?}",
+                index + 1,
+            );
         }
     }
 

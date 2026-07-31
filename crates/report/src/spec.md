@@ -172,6 +172,16 @@ other renderers. All user text passes through string context — content
 can never inject markup. No creation timestamp is embedded, preserving
 byte-determinism for identical documents.
 
+**Pagination.** A section heading is never the last thing on a page: it
+is kept with the content that follows it. A table that continues onto a
+further page repeats its column header there.
+
+Neither guarantee stops a section spanning pages. A table longer than a
+page must break somewhere, and it breaks where it lands — the guarantees
+are only that a break never strands a heading from its content, nor a row
+from its column names. Starting each section on a fresh page is a
+presentation choice this format does not currently offer.
+
 Unlike the text renderers, PDF rendering **may fail** (typesetting
 diagnostics); it returns the document bytes or a typed error carrying the
 diagnostic text.
