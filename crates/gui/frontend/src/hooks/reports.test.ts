@@ -15,6 +15,7 @@ import {
   rowShift,
   sameOrder,
   unproducibleSections,
+  withRecommendedPlacement,
   writeStoredFormat,
 } from "./reports";
 
@@ -492,5 +493,65 @@ describe("unproducibleSections", () => {
       ["b", "failed"],
     ]);
     expect(unproducibleSections(["b", "a"], map)).toEqual(["b", "a"]);
+  });
+});
+
+describe("withRecommendedPlacement", () => {
+  const ids = CATALOG.map((b) => b.id);
+  const [SUMMARY, BALANCE, TANKS] = ids;
+
+  it("places an added section where the catalog recommends, not at the end", () => {
+    // The whole point: appending would put Run Summary below Tank Levels.
+    expect(withRecommendedPlacement(CATALOG, [TANKS], [SUMMARY])).toEqual([
+      SUMMARY,
+      TANKS,
+    ]);
+  });
+
+  it("adds every missing section in reading order", () => {
+    expect(
+      withRecommendedPlacement(CATALOG, [TANKS], [SUMMARY, BALANCE]),
+    ).toEqual([SUMMARY, BALANCE, TANKS]);
+  });
+
+  it("never reorders the sections already in the report", () => {
+    // A hand-arranged report survives: tanks stays before balance.
+    const hand = [TANKS, BALANCE];
+    const out = withRecommendedPlacement(CATALOG, hand, [SUMMARY]);
+    expect(out.filter((id) => hand.includes(id))).toEqual(hand);
+    expect(out).toEqual([SUMMARY, TANKS, BALANCE]);
+  });
+
+  it("ignores ids already present rather than moving them", () => {
+    expect(
+      withRecommendedPlacement(CATALOG, [TANKS, SUMMARY], [SUMMARY]),
+    ).toEqual([TANKS, SUMMARY]);
+  });
+
+  it("sorts an unranked id to the end, matching recommendedOrder", () => {
+    expect(withRecommendedPlacement(CATALOG, [SUMMARY], ["x.unknown"])).toEqual(
+      [SUMMARY, "x.unknown"],
+    );
+  });
+
+  it("places a ranked id before an unranked one already present", () => {
+    expect(withRecommendedPlacement(CATALOG, ["x.unknown"], [SUMMARY])).toEqual(
+      [SUMMARY, "x.unknown"],
+    );
+  });
+
+  it("adding everything to an empty report equals the recommended order", () => {
+    expect(withRecommendedPlacement(CATALOG, [], ids)).toEqual(
+      recommendedOrder(CATALOG, ids),
+    );
+  });
+
+  it("returns a new array and leaves its inputs alone", () => {
+    const sections = [TANKS];
+    const added = [SUMMARY];
+    const out = withRecommendedPlacement(CATALOG, sections, added);
+    expect(out).not.toBe(sections);
+    expect(sections).toEqual([TANKS]);
+    expect(added).toEqual([SUMMARY]);
   });
 });

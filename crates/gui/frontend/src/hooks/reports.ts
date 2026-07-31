@@ -372,6 +372,50 @@ export function sameOrder(a: readonly string[], b: readonly string[]): boolean {
   return a.length === b.length && a.every((id, i) => id === b[i]);
 }
 
+/** `sections` with `added` inserted where the catalog recommends, leaving the
+ * sections already present in the order the user put them.
+ *
+ * Appending instead would be simpler and consistently wrong: adding every
+ * section to a report holding only Pipe Criticality would put Run Summary
+ * *below* it, and the catalog order exists precisely because summary → results
+ * → diagnostics is the order the sections read in.
+ *
+ * Each added id lands immediately after the last section already placed that
+ * the catalog ranks before it — or at the front when none does. Existing
+ * sections are never moved relative to one another, so a hand-arranged report
+ * survives; only the new sections are positioned by recommendation. Added ids
+ * are processed in catalog order, so they also come out correctly ordered
+ * among themselves.
+ *
+ * An id the catalog does not rank sorts to the end, matching
+ * [`recommendedOrder`]. Ids already present are ignored rather than moved. */
+export function withRecommendedPlacement(
+  catalog: readonly ReportBlockInfo[],
+  sections: readonly string[],
+  added: readonly string[],
+): string[] {
+  const rank = new Map(catalog.map((block, i) => [block.id, i]));
+  const rankOf = (id: string) => rank.get(id) ?? Number.POSITIVE_INFINITY;
+
+  const result = [...sections];
+  const incoming = added
+    .filter((id) => !result.includes(id))
+    .sort((a, b) => rankOf(a) - rankOf(b));
+
+  for (const id of incoming) {
+    const r = rankOf(id);
+    // Scan the whole list rather than stopping at the first higher-ranked
+    // entry: the existing order may contradict the catalog, and the last
+    // lower-ranked section is the one this belongs behind.
+    let at = 0;
+    for (let i = 0; i < result.length; i++) {
+      if (rankOf(result[i]) < r) at = i + 1;
+    }
+    result.splice(at, 0, id);
+  }
+  return result;
+}
+
 /** Human labels for everything customised on a section, for showing WHY it is
  * marked as changed. Empty when the section is entirely at its defaults.
  *

@@ -23,6 +23,7 @@ import {
   sameOrder,
   saveReportTemplate,
   unproducibleSections,
+  withRecommendedPlacement,
   writeStoredFormat,
 } from "../../hooks/reports";
 import { useSimulation } from "../../SimulationContext";
@@ -475,13 +476,17 @@ export function ReportView() {
                   },
                   {
                     label: "Add every section",
+                    detail:
+                      "New sections go where they read; existing ones stay put",
                     disabled: sections.length === catalogIds.length,
                     disabledReason: "Every section is already in the report",
+                    // Placed by recommendation rather than appended: adding
+                    // everything to a report holding only Pipe Criticality
+                    // would otherwise put Run Summary underneath it.
                     onSelect: () =>
-                      setSections((prev) => [
-                        ...prev,
-                        ...catalogIds.filter((id) => !prev.includes(id)),
-                      ]),
+                      setSections((prev) =>
+                        withRecommendedPlacement(catalog, prev, catalogIds),
+                      ),
                   },
                   {
                     label: allExpanded
