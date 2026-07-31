@@ -20,6 +20,61 @@ pub fn list_report_blocks() -> &'static [hydra::common::BlockDescriptor] {
     hydra::report_catalog()
 }
 
+/// Whether one block can be produced for a target, and why not when it cannot.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BlockAvailabilityDto {
+    pub id: String,
+    /// `"ok"`, `"unavailable"`, or `"failed"`.
+    pub status: &'static str,
+    /// Engine-authored explanation; absent when `status` is `"ok"`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
+/// Which catalog blocks apply to this target's completed run.
+///
+/// The builder shows this so a section that cannot render is visible in the
+/// outline rather than discovered as placeholder prose in the preview. It is
+/// one full production pass — the same work the preview already does — so
+/// callers should run it per target, not per edit.
+///
+/// A target with no results yields an empty list: nothing can be produced, and
+/// flagging every block as broken would be noise rather than information.
+#[tauri::command(async)]
+pub fn probe_report_blocks(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, NetworkState>,
+    project_id: String,
+    scenario_id: Option<String>,
+) -> Result<Vec<BlockAvailabilityDto>, String> {
+    validate_target_ids(&project_id, scenario_id.as_deref())?;
+    let app_data = app_data_dir(&app)?;
+    let out_path = results_path_for(&app_data, &project_id, scenario_id.as_deref());
+    if !out_path.exists() {
+        return Ok(Vec::new());
+    }
+    let network = network_for_target(&app_data, &state, &project_id, scenario_id.as_deref())?;
+    Ok(hydra::report_catalog()
+        .iter()
+        .map(|block| {
+            let (status, reason) =
+                match hydra::produce_report_block(block.id, &out_path, &network, None) {
+                    Ok(_) => ("ok", None),
+                    Err(hydra::common::BlockError::Unavailable { reason }) => {
+                        ("unavailable", Some(reason))
+                    }
+                    Err(err) => ("failed", Some(err.to_string())),
+                };
+            BlockAvailabilityDto {
+                id: block.id.to_string(),
+                status,
+                reason,
+            }
+        })
+        .collect())
+}
+
 /// The options `block_id` accepts, resolved against the target's network.
 ///
 /// Resolved per target rather than served from a static table because the

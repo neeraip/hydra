@@ -143,6 +143,7 @@ fn main() {
             commands::export_results_csv,
             commands::list_report_blocks,
             commands::get_report_block_options,
+            commands::probe_report_blocks,
             commands::get_report_template,
             commands::save_report_template,
             commands::generate_report,

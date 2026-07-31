@@ -1,14 +1,10 @@
-import {
-  ArrowDownIcon,
-  ArrowUpIcon,
-  Cog6ToothIcon,
-  DocumentArrowDownIcon,
-} from "@heroicons/react/16/solid";
+import { DocumentArrowDownIcon, PlusIcon } from "@heroicons/react/16/solid";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useAppState } from "../../AppContext";
 import { ACCENT } from "../../hooks";
 import { formatIpcError } from "../../hooks/ipc";
 import {
+  type BlockAvailability,
   builderStateFromTemplate,
   buildTemplateJson,
   exportReport,
@@ -16,12 +12,16 @@ import {
   getReportBlockOptions,
   getReportTemplate,
   listReportBlocks,
+  moveSection,
+  probeReportBlocks,
   type ReportBlockInfo,
   type ReportFormat,
   type ReportOptionInfo,
   saveReportTemplate,
 } from "../../hooks/reports";
-import { BlockOptions, type OptionValues } from "./ReportView/BlockOptions";
+import { AddSectionPalette } from "./ReportView/AddSectionPalette";
+import type { OptionValues } from "./ReportView/BlockOptions";
+import { SectionList } from "./ReportView/SectionList";
 
 const PREVIEW_DEBOUNCE_MS = 350;
 const SAVE_DEBOUNCE_MS = 800;
@@ -38,10 +38,15 @@ const FORMATS: { id: ReportFormat; label: string }[] = [
  *
  * The report target is the app's ACTIVE scenario (the scenario strip in
  * the project toolbar is the one selection mechanism — this view adds no
- * second picker); the document's provenance line names it. The rail's
- * state — title, block order, enabled set — IS the template; it
- * round-trips through the same JSON format `hydra report --template`
- * consumes, persisted per project. The preview shows the SELECTED format
+ * second picker); the document's provenance line names it.
+ *
+ * The rail is an OUTLINE of the document rather than a list of switches:
+ * it holds exactly the sections in the report, in order, because that is
+ * what the template records — there is no disabled state in the format, so
+ * there is none in the UI. Its state — title, section order, per-section
+ * heading and options — IS the template; it round-trips through the same
+ * JSON format `hydra report --template` consumes, persisted per project.
+ * The preview shows the SELECTED format
  * exactly as it exports (html rendered in a sandboxed frame; txt/csv as
  * the literal bytes), without a timestamp so re-renders are stable;
  * the single Export button stamps the generation time and saves via the
@@ -52,19 +57,22 @@ export function ReportView() {
 
   const [catalog, setCatalog] = useState<ReportBlockInfo[]>([]);
   const [title, setTitle] = useState("Simulation Report");
-  const [order, setOrder] = useState<string[]>([]);
-  const [enabled, setEnabled] = useState<Set<string>>(new Set());
+  // Exactly the sections in the report, in document order — membership is
+  // the list, matching the template format, which has no disabled state.
+  const [sections, setSections] = useState<string[]>([]);
+  // Per-block heading overrides, blank meaning "keep the default".
+  const [headingById, setHeadingById] = useState<Record<string, string>>({});
   // Per-block options. Held opaquely so a key this build cannot render — a
   // hand-authored one, or one from a newer engine — survives the round-trip
-  // even though the editor below only shows described keys.
+  // even though the editor only shows described keys.
   const [optionsById, setOptionsById] = useState<Record<string, unknown>>({});
-  // Which block's options are open. One at a time: the rail is narrow and
-  // the forms are the only thing in it that scrolls.
-  const [openOptionsFor, setOpenOptionsFor] = useState<string | null>(null);
   // Engine-described options per block id, resolved for the active target.
   const [descriptorsById, setDescriptorsById] = useState<
     Record<string, ReportOptionInfo[]>
   >({});
+  // Which blocks can actually be produced for this run.
+  const [availability, setAvailability] = useState<BlockAvailability[]>([]);
+  const [adding, setAdding] = useState(false);
   const [format, setFormat] = useState<ReportFormat>("html");
   const [initialised, setInitialised] = useState(false);
 
@@ -91,12 +99,13 @@ export function ReportView() {
       const restored = saved ? builderStateFromTemplate(saved, blocks) : null;
       if (restored) {
         setTitle(restored.title);
-        setOrder(restored.order);
-        setEnabled(restored.enabled);
+        setSections(restored.sections);
+        setHeadingById(restored.headingById);
         setOptionsById(restored.optionsById);
       } else {
-        setOrder(blocks.map((b) => b.id));
-        setEnabled(new Set(blocks.map((b) => b.id)));
+        // A project with no template starts with every section, which is the
+        // most useful default: subtract what you do not want.
+        setSections(blocks.map((b) => b.id));
       }
       setInitialised(true);
     })();
@@ -131,9 +140,25 @@ export function ReportView() {
     };
   }, [activeProjectId, activeScenarioId, catalog]);
 
+  // Which sections can render for this run. One production pass, so it is
+  // keyed to the target rather than re-run on every edit.
+  useEffect(() => {
+    if (!activeProjectId) return;
+    const projectId = activeProjectId;
+    const scenarioId = activeScenarioId ?? null;
+    let cancelled = false;
+    void (async () => {
+      const probed = await probeReportBlocks(projectId, scenarioId);
+      if (!cancelled) setAvailability(probed);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [activeProjectId, activeScenarioId]);
+
   const templateJson = useMemo(
-    () => buildTemplateJson(title, order, enabled, optionsById),
-    [title, order, enabled, optionsById],
+    () => buildTemplateJson({ title, sections, headingById, optionsById }),
+    [title, sections, headingById, optionsById],
   );
 
   // ── Live preview (debounced; regenerates on scenario/format change) ────
@@ -175,26 +200,33 @@ export function ReportView() {
   }, [activeProjectId, initialised, templateJson]);
 
   // ── Actions ────────────────────────────────────────────────────────────
-  function toggle(id: string) {
-    setEnabled((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) {
-        next.delete(id);
-      } else {
-        next.add(id);
-      }
-      return next;
-    });
+  function addSection(id: string) {
+    setSections((prev) => (prev.includes(id) ? prev : [...prev, id]));
   }
 
-  function move(id: string, delta: -1 | 1) {
-    setOrder((prev) => {
-      const index = prev.indexOf(id);
-      const target = index + delta;
-      if (index < 0 || target < 0 || target >= prev.length) return prev;
-      const next = [...prev];
-      [next[index], next[target]] = [next[target], next[index]];
-      return next;
+  /** Remove from the document, keeping the section's heading and options in
+   * memory so re-adding it during this session restores how it was
+   * configured — pulling a section out to see the report without it should
+   * not be destructive. Neither is written to the template while the section
+   * is absent, so the configuration does not survive a reload. */
+  function removeSection(id: string) {
+    setSections((prev) => prev.filter((s) => s !== id));
+  }
+
+  function reorder(from: number, to: number) {
+    setSections((prev) => moveSection(prev, from, to));
+  }
+
+  function setHeading(id: string, heading: string) {
+    setHeadingById((prev) => ({ ...prev, [id]: heading }));
+  }
+
+  function setOptions(id: string, next: OptionValues) {
+    setOptionsById((prev) => {
+      const updated = { ...prev };
+      if (next === undefined) delete updated[id];
+      else updated[id] = next;
+      return updated;
     });
   }
 
@@ -219,6 +251,10 @@ export function ReportView() {
   const blockById = useMemo(
     () => new Map(catalog.map((b) => [b.id, b])),
     [catalog],
+  );
+  const availabilityById = useMemo(
+    () => new Map(availability.map((a) => [a.id, a])),
+    [availability],
   );
   const formatLabel =
     FORMATS.find((f) => f.id === format)?.label ?? format.toUpperCase();
@@ -273,98 +309,61 @@ export function ReportView() {
         </div>
 
         <div style={{ flex: 1 }}>
-          <FieldLabel>Sections</FieldLabel>
-          <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-            {order.map((id, index) => {
-              const block = blockById.get(id);
-              if (!block) return null;
-              const checked = enabled.has(id);
-              const descriptors = descriptorsById[id] ?? [];
-              const open = openOptionsFor === id;
-              const configured =
-                Object.keys(
-                  (optionsById[id] as Record<string, unknown> | undefined) ??
-                    {},
-                ).length > 0;
-              return (
-                <div key={id}>
-                  <div
-                    title={block.summary}
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 8,
-                      padding: "6px 8px",
-                      borderRadius: 6,
-                      background: checked
-                        ? "var(--bg-elevated)"
-                        : "transparent",
-                      border: "1px solid",
-                      borderColor: checked ? "var(--border)" : "transparent",
-                    }}
-                  >
-                    <input
-                      type="checkbox"
-                      checked={checked}
-                      onChange={() => toggle(id)}
-                      style={{ accentColor: ACCENT, flexShrink: 0 }}
-                    />
-                    <span
-                      style={{
-                        flex: 1,
-                        fontSize: "var(--text-lg)",
-                        color: checked
-                          ? "var(--text-primary)"
-                          : "var(--text-tertiary)",
-                        overflow: "hidden",
-                        textOverflow: "ellipsis",
-                        whiteSpace: "nowrap",
-                      }}
-                    >
-                      {block.title}
-                    </span>
-                    {descriptors.length > 0 ? (
-                      <RowButton
-                        label={open ? "Hide settings" : "Settings"}
-                        active={open || configured}
-                        onClick={() => setOpenOptionsFor(open ? null : id)}
-                      >
-                        <Cog6ToothIcon style={{ width: 12, height: 12 }} />
-                      </RowButton>
-                    ) : null}
-                    <RowButton
-                      label="Move up"
-                      disabled={index === 0}
-                      onClick={() => move(id, -1)}
-                    >
-                      <ArrowUpIcon style={{ width: 12, height: 12 }} />
-                    </RowButton>
-                    <RowButton
-                      label="Move down"
-                      disabled={index === order.length - 1}
-                      onClick={() => move(id, 1)}
-                    >
-                      <ArrowDownIcon style={{ width: 12, height: 12 }} />
-                    </RowButton>
-                  </div>
-                  {open ? (
-                    <BlockOptions
-                      descriptors={descriptors}
-                      values={optionsById[id] as OptionValues}
-                      onChange={(next) =>
-                        setOptionsById((prev) => {
-                          const updated = { ...prev };
-                          if (next === undefined) delete updated[id];
-                          else updated[id] = next;
-                          return updated;
-                        })
-                      }
-                    />
-                  ) : null}
-                </div>
-              );
-            })}
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              marginBottom: 4,
+            }}
+          >
+            <FieldLabel>Sections</FieldLabel>
+            <button
+              type="button"
+              onClick={() => setAdding((v) => !v)}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 3,
+                padding: "2px 6px",
+                borderRadius: 5,
+                border: "1px solid var(--border)",
+                background: "var(--bg-elevated)",
+                color: "var(--text-secondary)",
+                cursor: "pointer",
+                fontSize: "var(--text-sm)",
+                fontFamily: "var(--font-ui)",
+              }}
+            >
+              <PlusIcon style={{ width: 11, height: 11 }} />
+              Add
+            </button>
           </div>
+
+          {adding ? (
+            <div style={{ marginBottom: 8 }}>
+              <AddSectionPalette
+                catalog={catalog}
+                sections={sections}
+                availabilityById={availabilityById}
+                onAdd={addSection}
+                onClose={() => setAdding(false)}
+              />
+            </div>
+          ) : null}
+
+          <SectionList
+            sections={sections}
+            blockById={blockById}
+            descriptorsById={descriptorsById}
+            optionsById={optionsById}
+            headingById={headingById}
+            availabilityById={availabilityById}
+            onReorder={reorder}
+            onRemove={removeSection}
+            onOptionsChange={setOptions}
+            onHeadingChange={setHeading}
+          />
         </div>
 
         <button
@@ -532,51 +531,5 @@ function FieldLabel({ children }: { children: React.ReactNode }) {
     >
       {children}
     </div>
-  );
-}
-
-function RowButton({
-  label,
-  disabled = false,
-  active = false,
-  onClick,
-  children,
-}: {
-  label: string;
-  disabled?: boolean;
-  /** Tints the button — used to show a block carries non-default settings
-   * even while its form is collapsed. */
-  active?: boolean;
-  onClick: () => void;
-  children: React.ReactNode;
-}) {
-  return (
-    <button
-      type="button"
-      aria-label={label}
-      title={label}
-      disabled={disabled}
-      onClick={onClick}
-      style={{
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        width: 20,
-        height: 20,
-        padding: 0,
-        borderRadius: 4,
-        border: "none",
-        background: "transparent",
-        color: disabled
-          ? "var(--text-tertiary)"
-          : active
-            ? ACCENT
-            : "var(--text-secondary)",
-        cursor: disabled ? "default" : "pointer",
-        opacity: disabled ? 0.4 : 1,
-      }}
-    >
-      {children}
-    </button>
   );
 }

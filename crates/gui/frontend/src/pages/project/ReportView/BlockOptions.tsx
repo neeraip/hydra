@@ -329,16 +329,11 @@ export function BlockOptions({
   values: OptionValues;
   onChange: (next: OptionValues) => void;
 }) {
+  // No container of its own: the caller owns the settings panel, so options
+  // and the heading field sit in one visual group rather than two.
   if (descriptors.length === 0) return null;
   return (
-    <div
-      style={{
-        padding: "8px 8px 2px 30px",
-        borderLeft: "2px solid var(--border)",
-        marginLeft: 10,
-        marginBottom: 4,
-      }}
-    >
+    <>
       {descriptors.map((descriptor) => (
         <OptionControl
           key={descriptor.key}
@@ -349,6 +344,6 @@ export function BlockOptions({
           }
         />
       ))}
-    </div>
+    </>
   );
 }

@@ -58,6 +58,26 @@ export interface ReportOptionInfo {
   unit: string | null;
 }
 
+/** Whether a block can be produced for the current target. */
+export interface BlockAvailability {
+  id: string;
+  status: "ok" | "unavailable" | "failed";
+  reason?: string;
+}
+
+/** Which catalog blocks apply to this target's run. Empty when the target has
+ * no results yet — nothing can be produced, so nothing is flagged. */
+export async function probeReportBlocks(
+  projectId: string,
+  scenarioId: string | null,
+): Promise<BlockAvailability[]> {
+  return tryInvokeOr<BlockAvailability[]>(
+    "probe_report_blocks",
+    { projectId, scenarioId },
+    [],
+  );
+}
+
 /** The options `blockId` accepts for this target. Empty when the block takes
  * none, or when the backend cannot describe it. */
 export async function getReportBlockOptions(
@@ -127,46 +147,55 @@ export async function exportReport(args: {
   });
 }
 
-/** Build the template JSON for the builder's current state: enabled block
- * ids in display order, carrying any per-block options. Options are held
- * opaquely so values the builder cannot render — a hand-authored key, or one
- * from a newer engine — still survive the round-trip. Matches
- * `crates/report` template format v1. */
-export function buildTemplateJson(
-  title: string,
-  orderedIds: string[],
-  enabled: ReadonlySet<string>,
-  optionsById: Readonly<Record<string, unknown>> = {},
-): string {
+/** The builder's state: exactly the sections in the report, in order, with
+ * any per-section heading override and options. A block that is not listed
+ * is simply not in the report — there is no separate enabled flag, because
+ * the template format has no such concept either. */
+export interface BuilderState {
+  title: string;
+  /** Block ids in document order. */
+  sections: string[];
+  /** Per-block heading override, replacing the block's default heading. */
+  headingById: Record<string, string>;
+  /** Per-block options, opaque. */
+  optionsById: Record<string, unknown>;
+}
+
+/** Serialise builder state to template JSON (`crates/report` format v1) —
+ * the same file `hydra report --template` consumes. Options and headings are
+ * written only when set, so a report left at its defaults produces the same
+ * bytes a hand-authored default template would. */
+export function buildTemplateJson(state: BuilderState): string {
   return JSON.stringify(
     {
       version: 1,
-      title,
-      blocks: orderedIds
-        .filter((id) => enabled.has(id))
-        .map((id) =>
-          id in optionsById ? { id, options: optionsById[id] } : { id },
-        ),
+      title: state.title,
+      blocks: state.sections.map((id) => {
+        const heading = state.headingById[id]?.trim();
+        return {
+          id,
+          ...(heading ? { title: heading } : {}),
+          ...(id in state.optionsById
+            ? { options: state.optionsById[id] }
+            : {}),
+        };
+      }),
     },
     null,
     2,
   );
 }
 
-/** Parse a saved template into builder state against the current catalog:
- * returns the title, the full id order (template order first, then any
- * catalog blocks the template omitted), and the enabled set (only ids the
- * template listed). Unknown template ids are dropped — the catalog is the
- * authority on what exists. */
+/** Restore builder state from saved template JSON, or null when the file is
+ * not a template this build reads.
+ *
+ * Ids the catalog does not know are dropped: a template may outlive the block
+ * it names, and keeping it would put a row in the outline that can never
+ * render. Duplicates collapse to their first occurrence. */
 export function builderStateFromTemplate(
   templateJson: string,
   catalog: ReportBlockInfo[],
-): {
-  title: string;
-  order: string[];
-  enabled: Set<string>;
-  optionsById: Record<string, unknown>;
-} | null {
+): BuilderState | null {
   try {
     const parsed: unknown = JSON.parse(templateJson);
     if (
@@ -179,31 +208,69 @@ export function builderStateFromTemplate(
     }
     const raw = (parsed as { blocks?: unknown }).blocks;
     const listed = (Array.isArray(raw) ? raw : [])
-      .map((b) => b as { id?: unknown; options?: unknown })
-      .filter((b): b is { id: string; options?: unknown } => {
+      .map((b) => b as { id?: unknown; title?: unknown; options?: unknown })
+      .filter((b): b is { id: string; title?: unknown; options?: unknown } => {
         return typeof b.id === "string";
       });
     const known = new Set(catalog.map((b) => b.id));
-    const order: string[] = [];
+    const sections: string[] = [];
+    const headingById: Record<string, string> = {};
     const optionsById: Record<string, unknown> = {};
     for (const block of listed) {
-      if (!known.has(block.id) || order.includes(block.id)) continue;
-      order.push(block.id);
+      if (!known.has(block.id) || sections.includes(block.id)) continue;
+      sections.push(block.id);
+      if (typeof block.title === "string") headingById[block.id] = block.title;
       if (block.options !== undefined) optionsById[block.id] = block.options;
-    }
-    const enabled = new Set(order);
-    for (const block of catalog) {
-      if (!order.includes(block.id)) {
-        order.push(block.id);
-      }
     }
     return {
       title: (parsed as { title: string }).title,
-      order,
-      enabled,
+      sections,
+      headingById,
       optionsById,
     };
   } catch {
     return null;
   }
+}
+
+/** Move `from` to `to`, returning a new array. Out-of-range indices leave the
+ * list untouched, so a drop outside the list is a no-op rather than a
+ * reordering nobody asked for. */
+export function moveSection(
+  sections: readonly string[],
+  from: number,
+  to: number,
+): string[] {
+  if (
+    from === to ||
+    from < 0 ||
+    to < 0 ||
+    from >= sections.length ||
+    to >= sections.length
+  ) {
+    return [...sections];
+  }
+  const next = [...sections];
+  const [moved] = next.splice(from, 1);
+  next.splice(to, 0, moved);
+  return next;
+}
+
+/** Catalog entries not yet in the report, in catalog order, narrowed by a
+ * case-insensitive match on title or summary. */
+export function addableBlocks(
+  catalog: readonly ReportBlockInfo[],
+  sections: readonly string[],
+  query: string,
+): ReportBlockInfo[] {
+  const inReport = new Set(sections);
+  const needle = query.trim().toLowerCase();
+  return catalog.filter((block) => {
+    if (inReport.has(block.id)) return false;
+    if (needle === "") return true;
+    return (
+      block.title.toLowerCase().includes(needle) ||
+      block.summary.toLowerCase().includes(needle)
+    );
+  });
 }
