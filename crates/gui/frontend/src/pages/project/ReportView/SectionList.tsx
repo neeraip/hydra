@@ -102,6 +102,12 @@ const rowButton: React.CSSProperties = {
   flexShrink: 0,
 };
 
+/** How long a row waits before explaining itself: the app default (350ms)
+ * plus 500. The whole card is the anchor now, so a pointer merely crossing the
+ * outline on its way to a control would otherwise trip a wide panel open in
+ * front of the rows it was heading for. */
+const ROW_TOOLTIP_DELAY_MS = 850;
+
 /** One size for every icon in a row. They had drifted across four values
  * (11, 12, 13), which is invisible per icon and exactly why the cluster never
  * quite settled. */
@@ -326,6 +332,7 @@ export function SectionList({
               // tooltip still wins over this one.
               data-tooltip={block.summary}
               data-tooltip-pos="right"
+              data-tooltip-delay={ROW_TOOLTIP_DELAY_MS}
               style={{
                 display: "flex",
                 alignItems: "center",
