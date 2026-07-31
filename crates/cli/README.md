@@ -7,16 +7,26 @@ Command-line interface for [Hydra](https://github.com/neeraip/hydra), the water 
 
 **[→ Full documentation](https://neeraip.github.io/hydra/getting-started/cli.html)**
 
-## Breaking changes (next release)
+## Breaking changes in 3.0
 
-The next published version contains two breaking CLI changes:
+The argument surface was redesigned so it can carry more than one engine.
 
-- **`-v` no longer means `--version`.** The short version flag is now `-V`
-  (GNU/clap convention). `-v` is rejected with exit code `1` and a hint
-  suggesting `-V` (version) or `-q`/`--quiet` — it is not silently
-  repurposed, so scripts using the old flag fail loudly.
-- **Internal errors now exit with code `4`.** They previously reused exit
-  code `2`, the solver-error code. Codes `0`–`3` are unchanged.
+- **Subcommands.** `hydra run <model>`, `hydra report`, `hydra engines`.
+  A bare `hydra <model>` prints a hint naming the replacement.
+- **The EPANET positional triple is gone.** `hydra net.inp net.rpt net.out`
+  becomes `hydra run net.inp --summary net.rpt --results net.out`. The old
+  order encoded one engine and one pair of artifacts; every added engine
+  made it less true.
+- **One name per concept.** The model is `<MODEL>`, the binary time series
+  is `--results`, the native run log is `--summary`. Previously `--output`
+  meant the binary results while `hydra report`'s `--out` meant the report
+  document — one letter apart, opposite meanings.
+- **`--engine`**, defaulting to detection from the model's contents. There is
+  no default engine; an unidentifiable model is an error, never a guess.
+- **`-v` is verbosity** (repeatable), reclaimed at this major boundary. `-V`
+  remains `--version`.
+- **Internal errors exit `4`**, no longer reusing `2` (solver). `0`–`3`
+  unchanged.
 
 ## Install
 
@@ -40,29 +50,44 @@ cargo install hydra-cli
 ## Usage
 
 ```sh
-# Run a simulation — report goes to stdout
-hydra network.inp
+# Run a simulation — summary goes to stdout
+hydra run network.inp
 
-# Write report and binary output to files
-hydra network.inp report.rpt output.out
+# Write the summary and the binary time-series results
+hydra run network.inp --summary report.rpt --results output.out
 
-# Named flags (equivalent)
-hydra --input network.inp --report report.rpt --output output.out
+# JSON summary (chosen by the .json suffix)
+hydra run network.inp --summary report.json
 
-# Accept an HTTP URL as input (redirects are followed, up to 10; plain
-# http:// is accepted; response bodies up to 1 GiB; 10 s connect / 300 s
-# overall timeout)
-hydra https://example.com/network.inp
+# Accept an HTTP URL as the model (redirects followed, up to 10; plain
+# http:// accepted; bodies up to 1 GiB; 10 s connect / 300 s overall timeout)
+hydra run https://example.com/network.inp
 
-# JSON report
-hydra network.inp --report report.json
+# Name the engine instead of detecting it from the model
+hydra run network.inp --engine wds
 
-# Suppress progress output
-hydra -q network.inp
+# What engines does this build provide?
+hydra engines
+
+# Build a report document from a finished run
+hydra report --model network.inp --results output.out -o report.html
+
+# Suppress progress output / add detail
+hydra run network.inp -q
+hydra run network.inp -v
 
 # Print version
 hydra -V
 ```
+
+### Engine selection
+
+The engine is decided by the model's **contents**, never its extension —
+`.inp` belongs to both EPANET and SWMM. Exactly one engine must identify the
+model for it to run. If none does, or the file is only shaped like some
+engine's format without identifying it, Hydra stops and asks for `--engine`
+rather than guessing: routing a stormwater model to a pressurised-pipe solver
+would return a confident wrong answer instead of an error.
 
 ## Exit codes
 

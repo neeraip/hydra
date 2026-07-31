@@ -9,18 +9,12 @@
 
 use std::path::Path;
 
-use clap::Parser;
 use hydra::report::{assemble, render_csv, render_html, render_txt, ReportContext, ReportTemplate};
 
 use crate::{EXIT_INPUT, EXIT_INTERNAL, EXIT_IO, EXIT_OK};
 
-#[derive(Parser, Debug)]
-#[command(
-    name = "hydra report",
-    about = "Generate a report document (txt/csv/html) from simulation results",
-    disable_version_flag = true
-)]
-struct ReportCli {
+#[derive(clap::Args, Debug)]
+pub struct ReportArgs {
     /// Model INP file the results were produced from.
     #[arg(long, value_name = "PATH")]
     model: String,
@@ -58,31 +52,49 @@ enum Format {
 
 /// Run the subcommand with the arguments following `hydra report`.
 /// Returns the process exit code.
-pub fn run<I: IntoIterator<Item = String>>(args: I) -> i32 {
-    let cli =
-        match ReportCli::try_parse_from(std::iter::once("hydra report".to_string()).chain(args)) {
-            Ok(cli) => cli,
-            Err(e) => {
-                let _ = e.print();
-                return match e.kind() {
-                    clap::error::ErrorKind::DisplayHelp => EXIT_OK,
-                    _ => EXIT_INPUT,
-                };
-            }
-        };
+pub fn run(cli: &ReportArgs, verbosity: &u8) -> i32 {
+    let _ = verbosity;
 
     // ── Load the model (identifiers and declared units come from it) ──────
     let model_bytes = match std::fs::read(&cli.model) {
         Ok(bytes) => bytes,
         Err(e) => {
-            eprintln!("error: cannot read model {}: {e}", cli.model);
+            crate::emit_error("io/fetch", &format!("cannot read model: {e}"), None, None);
             return EXIT_INPUT;
         }
     };
     let network = match hydra::io::parse(&model_bytes) {
         Ok(network) => network,
+        // Each failure gets the code the simulation path would give it, so a
+        // caller can treat both commands' stderr identically. Validation
+        // errors are listed individually: ParseError's Display reports only a
+        // count, which names nothing the user can act on.
+        Err(hydra::io::ParseError::NotSimulable(errors)) => {
+            for e in &errors {
+                crate::emit_error("validation/network", &e.to_string(), None, None);
+            }
+            return EXIT_INPUT;
+        }
+        Err(hydra::io::ParseError::Read(hydra::io::ReadError::ForeignDialect {
+            tool,
+            section,
+        })) => {
+            crate::emit_error(
+                "input/engine",
+                &format!(
+                    "this is a {tool} model, not an EPANET one (it declares a [{section}] section)"
+                ),
+                None,
+                None,
+            );
+            return EXIT_INPUT;
+        }
+        Err(hydra::io::ParseError::Read(hydra::io::ReadError::UnrecognisedFormat)) => {
+            crate::emit_error("input/format", "unrecognised file format", None, None);
+            return EXIT_INPUT;
+        }
         Err(e) => {
-            eprintln!("error: cannot parse model {}: {e:?}", cli.model);
+            crate::emit_error("input/parse", &e.to_string(), None, None);
             return EXIT_INPUT;
         }
     };
@@ -93,14 +105,19 @@ pub fn run<I: IntoIterator<Item = String>>(args: I) -> i32 {
             let json = match std::fs::read_to_string(path) {
                 Ok(json) => json,
                 Err(e) => {
-                    eprintln!("error: cannot read template {path}: {e}");
+                    crate::emit_error(
+                        "io/fetch",
+                        &format!("cannot read template {path}: {e}"),
+                        None,
+                        None,
+                    );
                     return EXIT_INPUT;
                 }
             };
             match ReportTemplate::from_json(&json) {
                 Ok(template) => template,
                 Err(e) => {
-                    eprintln!("error: {e}");
+                    crate::emit_error("input/parse", &e.to_string(), None, None);
                     return EXIT_INPUT;
                 }
             }

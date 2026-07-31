@@ -47,9 +47,10 @@ cargo install hydra-cli
 **Basic usage:**
 
 ```sh
-hydra network.inp                                         # report to stdout
-hydra network.inp report.rpt output.out                   # write report + binary output
-hydra https://example.com/network.inp --report report.json  # HTTP input, JSON report
+hydra run network.inp                                     # summary to stdout
+hydra run network.inp --summary report.rpt --results output.out
+hydra run https://example.com/network.inp --summary report.json
+hydra engines                                             # engines this build provides
 ```
 
 See [crates/cli/README.md](crates/cli/README.md) for the full option reference.

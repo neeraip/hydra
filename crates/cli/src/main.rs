@@ -43,116 +43,159 @@ enum CliRunError {
     Io(std::io::Error),
 }
 
-/// Hydra — water infrastructure simulation. Runs the water distribution engine
-/// on EPANET models; other engines are planned and not yet available.
+/// Hydra — water infrastructure simulation.
 #[derive(Parser, Debug)]
 #[command(
     name = "hydra",
     disable_version_flag = true,
     about,
-    override_usage = "hydra [OPTIONS] <INPUT> [REPORT] [OUTPUT]\n       hydra [OPTIONS] --input <PATH>\n       hydra report --model <PATH> --results <PATH> [OPTIONS]"
+    long_about = "Hydra — water infrastructure simulation.\n\n\
+                  Hydra is a suite of domain engines. The engine that owns a model is \
+                  detected from the model itself, never from its file extension: `.inp` \
+                  belongs to both EPANET and SWMM. Pass --engine to name one explicitly."
 )]
 struct Cli {
-    /// Model file path, and optionally report and output file paths.
-    /// Follows the EPANET convention: `hydra <input> <report> <output>`.
-    /// The input may also be an http:// or https:// URL (redirects are
-    /// followed, up to 10; bodies up to 1 GiB are accepted).
-    #[arg(value_name = "INPUT [REPORT] [OUTPUT]")]
-    positional: Vec<String>,
+    #[command(subcommand)]
+    command: Option<Command>,
 
-    /// Path (or http:// / https:// URL) of the model file
-    /// (alternative to positional argument).
-    #[arg(long = "input", value_name = "PATH")]
-    input_named: Option<String>,
-
-    /// Path for the report file (plain text by default; JSON if path ends in .json).
-    /// If omitted, the report is written to stdout.
-    #[arg(long, value_name = "PATH")]
-    report: Option<String>,
-
-    /// Path for the binary output file.
-    /// If omitted, no binary output is created.
-    #[arg(long, value_name = "PATH")]
-    output: Option<String>,
+    /// Print Hydra and CLI version information and exit.
+    #[arg(short = 'V', long = "version", global = true)]
+    version: bool,
 
     /// Suppress progress output. Progress is also suppressed automatically
     /// when stderr is not a terminal (e.g. when piping or redirecting).
-    #[arg(short = 'q', long = "quiet")]
+    /// Errors and diagnostics are never suppressed.
+    #[arg(short = 'q', long = "quiet", global = true, conflicts_with = "verbose")]
     quiet: bool,
 
-    /// Print Hydra and CLI version information and exit.
-    #[arg(short = 'V', long = "version")]
-    version: bool,
-
-    /// Removed flag: `-v` used to mean `--version` but no longer does.
-    /// Kept as a hidden flag so we can reject it with a targeted hint
-    /// instead of clap's generic "unexpected argument" error.
-    #[arg(short = 'v', hide = true)]
-    v_removed: bool,
+    /// Increase detail. Repeat for more: -v adds per-stage notes, -vv adds
+    /// timing and internals.
+    #[arg(short = 'v', action = clap::ArgAction::Count, global = true)]
+    verbose: u8,
 }
 
-impl Cli {
-    /// Resolve the input path from positional args or --input flag.
-    fn input(&self) -> Option<&str> {
-        self.input_named
-            .as_deref()
-            .or(self.positional.first().map(|s| s.as_str()))
-    }
+#[derive(clap::Subcommand, Debug)]
+enum Command {
+    /// Run a simulation on a model.
+    Run(RunArgs),
+    /// Build a report document from a completed run's results.
+    Report(report_cmd::ReportArgs),
+    /// List the simulation engines this build provides.
+    Engines,
+}
 
-    /// Resolve the report path. Named flag takes precedence over positional.
-    fn report(&self) -> Option<&str> {
-        self.report
-            .as_deref()
-            .or(self.positional.get(1).map(|s| s.as_str()))
-    }
+#[derive(clap::Args, Debug)]
+struct RunArgs {
+    /// Path of the model to run. May be a local path or an http:// or
+    /// https:// URL (redirects followed, up to 10; bodies up to 1 GiB).
+    #[arg(value_name = "MODEL")]
+    model: String,
 
-    /// Resolve the output path. Named flag takes precedence over positional.
-    fn output(&self) -> Option<&str> {
-        self.output
-            .as_deref()
-            .or(self.positional.get(2).map(|s| s.as_str()))
-    }
+    /// Engine to run the model with (e.g. `wds`). Omit to detect the engine
+    /// from the model's contents — there is no default engine.
+    #[arg(long, value_name = "KEY")]
+    engine: Option<String>,
+
+    /// Path for the binary time-series results (`.out`). Omitted, no results
+    /// file is written.
+    #[arg(long, value_name = "PATH")]
+    results: Option<String>,
+
+    /// Path for the run summary in the engine's native format (`.rpt`, or
+    /// `.json` when the path ends in `.json`). Omitted, it goes to stdout.
+    #[arg(long, value_name = "PATH")]
+    summary: Option<String>,
 }
 
 fn main() {
-    // Subcommand dispatch ahead of the legacy EPANET-positional grammar:
-    // `hydra report …` generates a report document from existing results.
-    // (A model file literally named `report` must be passed as `./report`.)
-    let mut raw_args = std::env::args();
-    if raw_args.nth(1).as_deref() == Some("report") {
-        process::exit(report_cmd::run(raw_args));
-    }
-
-    // clap's default `parse()` exits with code 2 on usage errors, but this
-    // CLI reserves 2 for solver errors. Map usage errors to exit 1 while
-    // keeping clap's rendered output verbatim on the stream clap chose
-    // (help/version go to stdout and exit 0; errors go to stderr).
     let cli = match Cli::try_parse() {
         Ok(cli) => cli,
         Err(e) => {
+            // A bare model path was the pre-3.0 grammar. Say so, rather than
+            // letting clap call it an unknown subcommand — every existing
+            // script hits this exact error on first run after upgrading.
+            if let Some(hint) = legacy_grammar_hint(&e) {
+                emit_usage_error(&hint);
+                process::exit(EXIT_INPUT);
+            }
             let code = clap_error_exit_code(&e);
             let _ = e.print();
             process::exit(code);
         }
     };
-    if cli.v_removed {
-        emit_usage_error(V_REMOVED_HINT);
-        process::exit(EXIT_INPUT);
-    }
+
     if cli.version {
         print_version_info();
         process::exit(EXIT_OK);
     }
-    let exit_code = run(&cli);
+
+    let exit_code = match &cli.command {
+        Some(Command::Run(args)) => run(args, &cli),
+        Some(Command::Report(args)) => report_cmd::run(args, &cli.verbose_level()),
+        Some(Command::Engines) => list_engines(),
+        None => {
+            let _ = Cli::command().print_help();
+            println!();
+            EXIT_INPUT
+        }
+    };
     process::exit(exit_code);
 }
 
-/// Error message for the removed `-v` short flag. `-v` used to mean
-/// `--version`; the version flag is now `-V`, matching GNU/clap convention.
-/// `-v` is rejected (rather than silently repurposed) so scripts that relied
-/// on the old meaning fail loudly.
-const V_REMOVED_HINT: &str =
-    "unexpected argument '-v': did you mean '-V' (--version) or '-q' (--quiet)?";
+impl Cli {
+    /// Verbosity as a level, after `--quiet` has had its say.
+    fn verbose_level(&self) -> u8 {
+        if self.quiet {
+            0
+        } else {
+            self.verbose
+        }
+    }
+}
+
+/// Recognise the pre-3.0 `hydra <model> [report] [output]` invocation and
+/// produce a migration hint naming the replacement.
+///
+/// Keyed on clap's own parse failure rather than on argument position, so it
+/// fires wherever the stray token appears — `hydra -q net.inp` included.
+fn legacy_grammar_hint(e: &clap::Error) -> Option<String> {
+    use clap::error::{ContextKind, ContextValue, ErrorKind};
+    if e.kind() != ErrorKind::InvalidSubcommand {
+        return None;
+    }
+    let ContextValue::String(token) = e.get(ContextKind::InvalidSubcommand)? else {
+        return None;
+    };
+    // Only claim it if the token plausibly names a model; a genuine
+    // subcommand typo deserves clap's own "did you mean" output.
+    let looks_like_a_path = token.contains('.')
+        || token.contains('/')
+        || token.contains('\\')
+        || token.starts_with("http");
+    if !looks_like_a_path {
+        return None;
+    }
+    Some(format!(
+        "'hydra {token}' is no longer a command: running a model now needs the \
+         'run' subcommand.\n       Use: hydra run {token}\n       \
+         The report and output positionals became --summary and --results."
+    ))
+}
+
+/// `hydra engines` — the registry, including engines that are not yet usable.
+fn list_engines() -> i32 {
+    let mut out = std::io::stdout().lock();
+    for engine in hydra::common::ENGINES {
+        let status = if engine.is_available() {
+            "available"
+        } else {
+            "planned"
+        };
+        let _ = writeln!(out, "{:<5} {:<20} {status}", engine.key, engine.label);
+        let _ = writeln!(out, "      {}", engine.summary);
+    }
+    EXIT_OK
+}
 
 /// Exit code for a clap parse error: 0 for help/version display, 1 for
 /// genuine usage errors (never clap's default 2, which is reserved for
@@ -182,6 +225,64 @@ fn print_version_info() {
     }
 }
 
+/// Decide which engine owns a model: the one the user named, or the one the
+/// model itself identifies (common spec §2.5.1).
+///
+/// Returns the exit code to fail with rather than an error type, because
+/// every failure here is terminal and already reported.
+fn resolve_engine(
+    requested: Option<&str>,
+    bytes: &[u8],
+) -> Result<&'static hydra::common::EngineDescriptor, i32> {
+    if let Some(key) = requested {
+        let engine = match hydra::common::engine_by_key(key) {
+            Ok(e) => e,
+            Err(_) => {
+                let known: Vec<_> = hydra::common::ENGINES.iter().map(|e| e.key).collect();
+                emit_error(
+                    "input/engine",
+                    &format!("unknown engine {key:?} (known: {})", known.join(", ")),
+                    None,
+                    None,
+                );
+                return Err(EXIT_INPUT);
+            }
+        };
+        // A planned engine resolves but cannot run: distinct from unknown,
+        // and worth saying so plainly (common spec §2.3).
+        if !engine.is_available() {
+            emit_error(
+                "input/engine",
+                &format!(
+                    "the {} engine ({}) is registered but not yet implemented",
+                    engine.label, engine.key
+                ),
+                None,
+                None,
+            );
+            return Err(EXIT_INPUT);
+        }
+        return Ok(engine);
+    }
+
+    match hydra::engines::route(bytes) {
+        Ok(engine) => Ok(engine),
+        Err(e) => {
+            // Both outcomes are terminal; only the ambiguous one is worth
+            // suggesting --engine for, since naming an engine is exactly the
+            // evidence routing lacked.
+            let suggest = matches!(e, hydra::engines::RouteError::Ambiguous { .. });
+            let message = if suggest {
+                format!("{e} — name one with --engine")
+            } else {
+                e.to_string()
+            };
+            emit_error("input/engine", &message, None, None);
+            Err(EXIT_INPUT)
+        }
+    }
+}
+
 /// Drives the full simulation lifecycle.
 ///
 /// Session lifecycle:
@@ -199,24 +300,8 @@ fn print_version_info() {
 ///
 /// Returns an exit code (0=ok, 1=input error, 2=solver error, 3=I/O error,
 /// 4=internal error).
-fn run(cli: &Cli) -> i32 {
-    // ── Validate positional arg count ──────────────────────────────────────────
-    if cli.positional.len() > 3 {
-        emit_usage_error(&format!(
-            "expected at most 3 positional arguments, got {}",
-            cli.positional.len()
-        ));
-        return EXIT_INPUT;
-    }
-
-    // ── Resolve input path ────────────────────────────────────────────────────
-    let input_path = match cli.input() {
-        Some(p) => p,
-        None => {
-            emit_usage_error("no input file specified");
-            return EXIT_INPUT;
-        }
-    };
+fn run(args: &RunArgs, cli: &Cli) -> i32 {
+    let input_path = args.model.as_str();
 
     // ── Load network from file (§3.1) ─────────────────────────────────────────
     let bytes = match fetch(input_path) {
@@ -230,6 +315,19 @@ fn run(cli: &Cli) -> i32 {
             return EXIT_IO;
         }
     };
+
+    // ── Decide which engine owns this model ───────────────────────────────────
+    // Never by extension: `.inp` belongs to EPANET and SWMM alike. Either the
+    // user named an engine, or the model itself has to identify one — there
+    // is deliberately no default (common spec §2.5.1).
+    match resolve_engine(args.engine.as_deref(), &bytes) {
+        Ok(engine) => {
+            if cli.verbose_level() > 0 {
+                eprintln!("engine: {} ({})", engine.label, engine.key);
+            }
+        }
+        Err(code) => return code,
+    }
 
     let network = match io::parse(&bytes) {
         Ok(n) => n,
@@ -285,8 +383,8 @@ fn run(cli: &Cli) -> i32 {
         }
     };
 
-    let mut out_stream = if let Some(out_path) = cli.output() {
-        let report_path = cli.report().unwrap_or("");
+    let mut out_stream = if let Some(out_path) = args.results.as_deref() {
+        let report_path = args.summary.as_deref().unwrap_or("");
         let stream_result = (|| -> anyhow::Result<CliOutWriter> {
             let f = std::io::BufWriter::new(std::fs::File::create(out_path)?);
             let mut stream =
@@ -364,10 +462,10 @@ fn run(cli: &Cli) -> i32 {
     // ── Write report ──────────────────────────────────────────────────────────
     // When the report goes to stdout and progress was printed on stderr,
     // add a blank separator line so the two don't visually run together.
-    if cli.report().is_none() && progress.enabled {
+    if args.summary.is_none() && progress.enabled {
         let _ = writeln!(std::io::stderr());
     }
-    if let Err(e) = write_report(&session, cli.report()) {
+    if let Err(e) = write_report(&session, args.summary.as_deref()) {
         emit_error("io/report", &e.to_string(), None, None);
         return EXIT_IO;
     }
@@ -685,7 +783,12 @@ fn usage_text() -> String {
 /// Write a structured JSON-line diagnostic to stderr.
 ///
 /// Format: `{"level":"error","code":"<code>","message":"...","object_id":...,"time_step":...}`
-fn emit_error(code: &str, message: &str, object_id: Option<&str>, time_step: Option<f64>) {
+pub(crate) fn emit_error(
+    code: &str,
+    message: &str,
+    object_id: Option<&str>,
+    time_step: Option<f64>,
+) {
     let line = serde_json::json!({
         "level": "error",
         "code": code,
@@ -746,144 +849,139 @@ mod tests {
         Cli::try_parse_from(args).expect("parse failed")
     }
 
-    // ── Positional arguments ──────────────────────────────────────────────
-
-    #[test]
-    fn positional_input_only() {
-        let cli = parse(&["hydra", "net1.inp"]);
-        assert_eq!(cli.input(), Some("net1.inp"));
-        assert_eq!(cli.report(), None);
-        assert_eq!(cli.output(), None);
+    fn run_args(cli: &Cli) -> &RunArgs {
+        match cli.command.as_ref().expect("no subcommand") {
+            Command::Run(a) => a,
+            other => panic!("expected run, got {other:?}"),
+        }
     }
 
     #[test]
-    fn positional_input_and_report() {
-        let cli = parse(&["hydra", "net1.inp", "net1.rpt"]);
-        assert_eq!(cli.input(), Some("net1.inp"));
-        assert_eq!(cli.report(), Some("net1.rpt"));
-        assert_eq!(cli.output(), None);
+    fn run_takes_the_model_positionally() {
+        let cli = parse(&["hydra", "run", "net1.inp"]);
+        let a = run_args(&cli);
+        assert_eq!(a.model, "net1.inp");
+        assert_eq!(a.results, None);
+        assert_eq!(a.summary, None);
+        assert_eq!(a.engine, None);
     }
 
     #[test]
-    fn positional_input_report_output() {
-        let cli = parse(&["hydra", "net1.inp", "net1.rpt", "net1.out"]);
-        assert_eq!(cli.input(), Some("net1.inp"));
-        assert_eq!(cli.report(), Some("net1.rpt"));
-        assert_eq!(cli.output(), Some("net1.out"));
-    }
-
-    // ── Named flags ──────────────────────────────────────────────────────
-
-    #[test]
-    fn named_input_only() {
-        let cli = parse(&["hydra", "--input", "net1.inp"]);
-        assert_eq!(cli.input(), Some("net1.inp"));
-        assert_eq!(cli.report(), None);
-        assert_eq!(cli.output(), None);
-    }
-
-    #[test]
-    fn named_all_flags() {
-        let cli = parse(&[
-            "hydra", "--input", "net1.inp", "--report", "r.json", "--output", "o.bin",
-        ]);
-        assert_eq!(cli.input(), Some("net1.inp"));
-        assert_eq!(cli.report(), Some("r.json"));
-        assert_eq!(cli.output(), Some("o.bin"));
-    }
-
-    // ── Named flags override positionals ─────────────────────────────────
-
-    #[test]
-    fn named_input_overrides_positional() {
-        let cli = parse(&["hydra", "pos.inp", "--input", "named.inp"]);
-        assert_eq!(cli.input(), Some("named.inp"));
-    }
-
-    #[test]
-    fn named_report_overrides_positional() {
-        let cli = parse(&["hydra", "net1.inp", "pos.rpt", "--report", "named.rpt"]);
-        assert_eq!(cli.report(), Some("named.rpt"));
-    }
-
-    #[test]
-    fn named_output_overrides_positional() {
+    fn run_names_its_artifacts() {
         let cli = parse(&[
             "hydra",
+            "run",
             "net1.inp",
-            "net1.rpt",
-            "pos.out",
-            "--output",
-            "named.out",
+            "--summary",
+            "r.rpt",
+            "--results",
+            "o.out",
         ]);
-        assert_eq!(cli.output(), Some("named.out"));
+        let a = run_args(&cli);
+        assert_eq!(a.summary.as_deref(), Some("r.rpt"));
+        assert_eq!(a.results.as_deref(), Some("o.out"));
     }
 
-    // ── Missing input ────────────────────────────────────────────────────
+    /// The pre-3.0 grammar was `hydra <input> <report> <output>`, where the
+    /// second and third positionals were the report and binary output. There
+    /// is now exactly one positional, so the old form cannot be misread as a
+    /// valid new one.
+    #[test]
+    fn the_legacy_positional_triple_is_gone() {
+        assert!(Cli::try_parse_from(["hydra", "run", "net1.inp", "r.rpt", "o.out"]).is_err());
+    }
 
     #[test]
-    fn no_args_yields_no_input() {
-        let cli = parse(&["hydra"]);
-        assert_eq!(cli.input(), None);
+    fn engine_is_never_defaulted_at_the_parse_layer() {
+        // Absent means "detect", not "wds". If this ever gains a default the
+        // no-fallback rule (common spec §2.5.1) is silently broken.
+        assert_eq!(run_args(&parse(&["hydra", "run", "n.inp"])).engine, None);
+        assert_eq!(
+            run_args(&parse(&["hydra", "run", "n.inp", "--engine", "wds"]))
+                .engine
+                .as_deref(),
+            Some("wds")
+        );
     }
-
-    // ── Too many positional args ─────────────────────────────────────────
 
     #[test]
-    fn four_positional_args_rejected() {
-        // clap will still parse them; run() rejects at runtime
-        let cli = parse(&["hydra", "a", "b", "c", "d"]);
-        assert_eq!(cli.positional.len(), 4);
-        // run() would return exit code 1 for this case
+    fn a_bare_model_path_gets_a_migration_hint_not_a_subcommand_error() {
+        let err = Cli::try_parse_from(["hydra", "net1.inp"]).unwrap_err();
+        let hint = legacy_grammar_hint(&err).expect("no hint for a bare model path");
+        assert!(hint.contains("hydra run net1.inp"), "{hint}");
+        assert!(hint.contains("--summary"), "{hint}");
     }
 
-    // ── Usage-error exit codes ───────────────────────────────────────────
+    #[test]
+    fn the_migration_hint_fires_regardless_of_flag_position() {
+        // Keyed on clap's parse failure, not on argv position — the old
+        // dispatch missed `hydra --quiet report ...` for exactly this reason.
+        let err = Cli::try_parse_from(["hydra", "-q", "net1.inp"]).unwrap_err();
+        assert!(legacy_grammar_hint(&err).is_some());
+    }
+
+    #[test]
+    fn a_genuine_subcommand_typo_keeps_claps_own_error() {
+        // "reprot" names no file, so clap's "did you mean report?" is more
+        // useful than a migration hint.
+        let err = Cli::try_parse_from(["hydra", "reprot"]).unwrap_err();
+        assert!(legacy_grammar_hint(&err).is_none());
+    }
+
+    #[test]
+    fn a_global_flag_before_the_subcommand_still_dispatches() {
+        // The pre-3.0 argv sniff only looked at position 1, so
+        // `hydra --quiet report ...` failed with "unexpected argument".
+        let cli = parse(&[
+            "hydra",
+            "--quiet",
+            "report",
+            "--model",
+            "m.inp",
+            "--results",
+            "r.out",
+        ]);
+        assert!(cli.quiet);
+        assert!(matches!(cli.command, Some(Command::Report(_))));
+    }
+
+    #[test]
+    fn verbosity_counts_and_quiet_conflicts_with_it() {
+        assert_eq!(parse(&["hydra", "run", "n.inp"]).verbose_level(), 0);
+        assert_eq!(parse(&["hydra", "run", "n.inp", "-v"]).verbose_level(), 1);
+        assert_eq!(parse(&["hydra", "run", "n.inp", "-vv"]).verbose_level(), 2);
+        assert!(Cli::try_parse_from(["hydra", "run", "n.inp", "-v", "-q"]).is_err());
+    }
+
+    #[test]
+    fn lower_v_is_verbosity_now_not_a_rejected_flag() {
+        // Reclaimed at the 3.0 major boundary; -V remains version.
+        let cli = parse(&["hydra", "run", "n.inp", "-v"]);
+        assert!(!cli.version);
+        assert_eq!(cli.verbose, 1);
+        assert!(parse(&["hydra", "-V"]).version);
+        assert!(parse(&["hydra", "--version"]).version);
+    }
+
+    #[test]
+    fn engines_subcommand_parses() {
+        assert!(matches!(
+            parse(&["hydra", "engines"]).command,
+            Some(Command::Engines)
+        ));
+    }
 
     #[test]
     fn unknown_flag_maps_to_exit_1_not_clap_default_2() {
-        let err = Cli::try_parse_from(["hydra", "--no-such-flag"])
-            .expect_err("unknown flag should fail to parse");
-        assert_eq!(clap_error_exit_code(&err), 1);
+        let err = Cli::try_parse_from(["hydra", "run", "n.inp", "--nope"]).unwrap_err();
+        assert_eq!(clap_error_exit_code(&err), EXIT_INPUT);
     }
 
     #[test]
     fn help_display_maps_to_exit_0() {
-        let err = Cli::try_parse_from(["hydra", "--help"]).expect_err("--help renders as Err");
-        assert_eq!(clap_error_exit_code(&err), 0);
+        let err = Cli::try_parse_from(["hydra", "--help"]).unwrap_err();
+        assert_eq!(clap_error_exit_code(&err), EXIT_OK);
     }
-
-    // ── Version flag (-V) and removed -v ─────────────────────────────────
-
-    #[test]
-    fn short_upper_v_sets_version() {
-        let cli = parse(&["hydra", "-V"]);
-        assert!(cli.version);
-        assert!(!cli.v_removed);
-    }
-
-    #[test]
-    fn long_version_sets_version() {
-        let cli = parse(&["hydra", "--version"]);
-        assert!(cli.version);
-    }
-
-    #[test]
-    fn short_lower_v_parses_as_removed_flag() {
-        // -v must still parse (so main() can reject it with a targeted hint
-        // instead of clap's generic unknown-argument error), but it must not
-        // mean --version any more.
-        let cli = parse(&["hydra", "-v"]);
-        assert!(cli.v_removed);
-        assert!(!cli.version);
-    }
-
-    #[test]
-    fn v_removed_hint_mentions_both_replacements() {
-        assert!(V_REMOVED_HINT.contains("-V"), "hint: {V_REMOVED_HINT}");
-        assert!(V_REMOVED_HINT.contains("--quiet"), "hint: {V_REMOVED_HINT}");
-    }
-
-    // ── Exit-code contract ───────────────────────────────────────────────
 
     /// The documented exit-code contract (module doc, cli.md, README):
     /// 0=ok, 1=usage/input, 2=solver, 3=I/O, 4=internal. Internal errors
@@ -945,11 +1043,12 @@ mod tests {
     }
 
     #[test]
-    fn usage_text_contains_usage_and_input_forms() {
+    fn usage_text_contains_usage() {
         let usage = usage_text();
-        assert!(usage.contains("Usage:"));
-        assert!(usage.contains("hydra [OPTIONS] <INPUT> [REPORT] [OUTPUT]"));
-        assert!(usage.contains("hydra [OPTIONS] --input <PATH>"));
+        assert!(usage.contains("Usage:"), "{usage}");
+        // Usage is now clap-derived from the subcommands rather than a hand
+        // written override, so it cannot drift from the real grammar.
+        assert!(usage.contains("hydra"), "{usage}");
     }
 
     // ── End-to-end simulation ────────────────────────────────────────────────

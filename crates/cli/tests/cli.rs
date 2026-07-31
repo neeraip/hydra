@@ -37,11 +37,18 @@ fn hydra() -> Command {
     Command::cargo_bin("hydra").expect("hydra binary builds")
 }
 
+/// `hydra run` — the simulation entry point since 3.0.
+fn hydra_run() -> Command {
+    let mut c = hydra();
+    c.arg("run");
+    c
+}
+
 // ── Happy path ───────────────────────────────────────────────────────────────
 
 #[test]
 fn valid_inp_writes_report_to_stdout_with_exit_0() {
-    hydra()
+    hydra_run()
         .arg(fixture_path("four_node_loop.inp"))
         .assert()
         .success()
@@ -55,9 +62,11 @@ fn valid_inp_writes_rpt_and_out_files() {
     let rpt = dir.path().join("net.rpt");
     let out = dir.path().join("net.out");
 
-    hydra()
+    hydra_run()
         .arg(fixture_path("four_node_loop.inp"))
+        .arg("--summary")
         .arg(&rpt)
+        .arg("--results")
         .arg(&out)
         .assert()
         .success();
@@ -85,10 +94,9 @@ fn json_report_is_valid_json() {
     let dir = tempfile::tempdir().expect("tempdir");
     let json_path = dir.path().join("net.json");
 
-    hydra()
-        .arg("--input")
+    hydra_run()
         .arg(fixture_path("four_node_loop.inp"))
-        .arg("--report")
+        .arg("--summary")
         .arg(&json_path)
         .assert()
         .success();
@@ -99,14 +107,14 @@ fn json_report_is_valid_json() {
 }
 
 #[test]
-fn positional_json_report_is_valid_json() {
-    // The `.json` suffix must select JSON output through the positional
-    // report path too, not just the --report flag.
+fn summary_json_suffix_selects_json() {
+    // The `.json` suffix selects JSON output for the run summary.
     let dir = tempfile::tempdir().expect("tempdir");
     let json_path = dir.path().join("net.json");
 
-    hydra()
+    hydra_run()
         .arg(fixture_path("four_node_loop.inp"))
+        .arg("--summary")
         .arg(&json_path)
         .assert()
         .success();
@@ -120,6 +128,7 @@ fn positional_json_report_is_valid_json() {
 fn quiet_flag_is_accepted() {
     hydra()
         .arg("-q")
+        .arg("run")
         .arg(fixture_path("four_node_loop.inp"))
         .assert()
         .success()
@@ -156,23 +165,68 @@ fn short_upper_v_prints_version_and_exits_0() {
 }
 
 #[test]
-fn short_lower_v_is_an_error_with_hint() {
-    // -v used to mean --version; it is now rejected with a hint pointing at
-    // -V (version) and -q/--quiet, and must NOT print version info.
-    hydra()
+fn short_lower_v_is_verbosity_and_names_the_engine() {
+    // -v was reclaimed at the 3.0 boundary: it is verbosity now, not the
+    // removed version alias. -V remains version.
+    hydra_run()
+        .arg(fixture_path("four_node_loop.inp"))
         .arg("-v")
         .assert()
-        .code(1)
+        .success()
         .stdout(predicate::str::contains("Hydra version").not())
-        .stderr(predicate::str::contains("-V"))
-        .stderr(predicate::str::contains("--quiet"));
+        .stderr(predicate::str::contains("Water Distribution"));
+}
+
+#[test]
+fn a_bare_model_path_gets_a_migration_hint() {
+    // The pre-3.0 grammar. Every existing script hits this on first run, so
+    // it must name the replacement rather than say "unknown subcommand".
+    hydra()
+        .arg(fixture_path("four_node_loop.inp"))
+        .assert()
+        .code(1)
+        .stderr(predicate::str::contains("hydra run"))
+        .stderr(predicate::str::contains("--summary"));
+}
+
+#[test]
+fn engines_lists_the_registry_with_status() {
+    hydra()
+        .arg("engines")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("wds"))
+        .stdout(predicate::str::contains("available"))
+        .stdout(predicate::str::contains("planned"));
+}
+
+#[test]
+fn a_planned_engine_is_refused_rather_than_run() {
+    hydra_run()
+        .arg(fixture_path("four_node_loop.inp"))
+        .arg("--engine")
+        .arg("uds")
+        .assert()
+        .code(1)
+        .stderr(predicate::str::contains("not yet implemented"));
+}
+
+#[test]
+fn an_unknown_engine_is_refused() {
+    hydra_run()
+        .arg(fixture_path("four_node_loop.inp"))
+        .arg("--engine")
+        .arg("nope")
+        .assert()
+        .code(1)
+        .stderr(predicate::str::contains("input/engine"));
 }
 
 // ── Usage/input errors (exit 1) ──────────────────────────────────────────────
 
 #[test]
 fn missing_input_file_exits_1() {
-    hydra()
+    hydra_run()
         .arg("definitely/not/a/real/file.inp")
         .assert()
         .code(1)
@@ -191,20 +245,21 @@ fn unknown_flag_exits_1() {
 }
 
 #[test]
-fn no_input_specified_exits_1() {
+fn no_subcommand_prints_help_and_exits_1() {
     hydra()
         .assert()
         .code(1)
-        .stderr(predicate::str::contains("no input file specified"));
+        .stdout(predicate::str::contains("Usage:"));
 }
 
 #[test]
-fn too_many_positional_args_exits_1() {
-    hydra()
-        .args(["a.inp", "b.rpt", "c.out", "d.extra"])
+fn the_legacy_positional_triple_is_rejected() {
+    // `hydra run net.inp net.rpt net.out` was the pre-3.0 shape; run now
+    // takes exactly one positional, so the extras are a usage error.
+    hydra_run()
+        .args(["a.inp", "b.rpt", "c.out"])
         .assert()
-        .code(1)
-        .stderr(predicate::str::contains("at most 3 positional arguments"));
+        .code(1);
 }
 
 #[test]
@@ -221,7 +276,7 @@ fn validation_failing_inp_exits_1() {
     )
     .expect("write INP");
 
-    hydra()
+    hydra_run()
         .arg(&bad)
         .assert()
         .code(1)
@@ -243,7 +298,7 @@ fn duplicate_id_inp_exits_1_and_names_the_id() {
     )
     .expect("write INP");
 
-    hydra()
+    hydra_run()
         .arg(&bad)
         .assert()
         .code(1)
@@ -257,7 +312,7 @@ fn unparseable_inp_exits_1() {
     let bad = dir.path().join("garbage.inp");
     std::fs::write(&bad, b"\x00\x01\x02 this is not an INP file").expect("write garbage");
 
-    hydra()
+    hydra_run()
         .arg(&bad)
         .assert()
         .code(1)
@@ -271,8 +326,9 @@ fn report_to_missing_directory_exits_3() {
     let dir = tempfile::tempdir().expect("tempdir");
     let rpt = dir.path().join("no/such/dir/net.rpt");
 
-    hydra()
+    hydra_run()
         .arg(fixture_path("four_node_loop.inp"))
+        .arg("--summary")
         .arg(&rpt)
         .assert()
         .code(3)
@@ -284,10 +340,9 @@ fn output_to_missing_directory_exits_3() {
     let dir = tempfile::tempdir().expect("tempdir");
     let out = dir.path().join("no/such/dir/net.out");
 
-    hydra()
-        .arg("--input")
+    hydra_run()
         .arg(fixture_path("four_node_loop.inp"))
-        .arg("--output")
+        .arg("--results")
         .arg(&out)
         .assert()
         .code(3)
@@ -337,7 +392,7 @@ fn http_input_from_localhost_server_succeeds() {
     let inp = std::fs::read(fixture_path("four_node_loop.inp")).expect("read fixture");
     let (url, server) = one_shot_http_server("200 OK", inp);
 
-    hydra()
+    hydra_run()
         .arg(&url)
         .assert()
         .success()
@@ -350,7 +405,7 @@ fn http_input_from_localhost_server_succeeds() {
 fn http_404_exits_1() {
     let (url, server) = one_shot_http_server("404 Not Found", Vec::new());
 
-    hydra()
+    hydra_run()
         .arg(&url)
         .assert()
         .code(1)
@@ -364,7 +419,7 @@ fn http_500_exits_3() {
     // 5xx is a server-side failure, classified as I/O (exit 3), not input.
     let (url, server) = one_shot_http_server("500 Internal Server Error", Vec::new());
 
-    hydra()
+    hydra_run()
         .arg(&url)
         .assert()
         .code(3)
