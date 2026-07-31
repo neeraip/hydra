@@ -12,7 +12,7 @@ members = [
 resolver = "2"
 
 [workspace.package]
-version = "4.0.1"
+version = "5.0.0"
 edition = "2021"
 rust-version = "1.95"
 authors = ["Matthew Downs <matthew@neer.ai>"]
