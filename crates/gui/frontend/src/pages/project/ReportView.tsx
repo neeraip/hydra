@@ -468,7 +468,20 @@ export function ReportView() {
             </div>
           ) : null}
 
-          <div style={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
+          <div
+            style={{
+              flex: 1,
+              minHeight: 0,
+              overflowY: "auto",
+              // Reserve the scrollbar's track whether or not one is showing.
+              // app.css styles ::-webkit-scrollbar, which opts out of macOS's
+              // overlay scrollbars, so the bar takes real width on every
+              // platform — and expanding a section far enough to overflow
+              // would otherwise narrow every row by 5px, then widen them
+              // again on collapse.
+              scrollbarGutter: "stable",
+            }}
+          >
             <SectionList
               sections={sections}
               blockById={blockById}

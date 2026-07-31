@@ -275,20 +275,6 @@ export function SectionList({
                   fontFamily: "var(--font-ui)",
                 }}
               >
-                {/* Leads the button, so the thing that expands announces
-                    itself at the edge the content starts from. Rotated rather
-                    than swapped for a down-chevron: the turn is what conveys
-                    that this row did the opening. */}
-                <ChevronRightIcon
-                  style={{
-                    width: 11,
-                    height: 11,
-                    flexShrink: 0,
-                    color: "var(--text-tertiary)",
-                    transform: open ? "rotate(90deg)" : undefined,
-                    transition: `transform ${DISCLOSE_MS}ms ease`,
-                  }}
-                />
                 <span
                   style={{
                     fontSize: "var(--text-sm)",
@@ -341,6 +327,20 @@ export function SectionList({
                     }}
                   />
                 ) : null}
+                {/* Sits where the gear did, next to the row's other controls.
+                    Rotated rather than swapped for a down-chevron: the turn is
+                    what conveys that this row did the opening, where a swap
+                    would just be a different icon appearing. */}
+                <ChevronRightIcon
+                  style={{
+                    width: 11,
+                    height: 11,
+                    flexShrink: 0,
+                    color: "var(--text-tertiary)",
+                    transform: open ? "rotate(90deg)" : undefined,
+                    transition: `transform ${DISCLOSE_MS}ms ease`,
+                  }}
+                />
               </button>
               <button
                 type="button"
