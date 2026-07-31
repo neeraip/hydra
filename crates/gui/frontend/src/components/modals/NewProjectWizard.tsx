@@ -115,6 +115,9 @@ export function NewProjectWizard({ onClose }: Props) {
       id,
       name,
       engine: engine.key,
+      // Only adopt the loaded network when this wizard imported one. Managed
+      // state may still hold a previously-opened project's model.
+      importLoadedNetwork: fileDetected,
     });
 
     const project: Project = persisted ?? {

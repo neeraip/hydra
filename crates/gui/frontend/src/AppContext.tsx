@@ -525,6 +525,18 @@ export function AppProvider({ children }: { children: ReactNode }) {
           return;
         }
 
+        // A base-model load that comes back absent is not a failure: the
+        // project has no model yet (freshly created and never imported).
+        // Prime an empty snapshot so the store leaves the loading state that
+        // `clearNetworkData` entered — without this the app sits in
+        // `loading` forever and consumers keep rendering whatever was there.
+        if (scenarioId === null) {
+          primeNetworkData({ nodes: [], links: [] });
+          setNetworkLoadFailure(null);
+          bumpNetwork();
+          return;
+        }
+
         // Recover to base model if a scenario-specific load fails.
         if (scenarioId !== null) {
           const baseNet = await loadWithRetry(null);

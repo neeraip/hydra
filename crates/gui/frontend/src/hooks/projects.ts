@@ -154,11 +154,20 @@ export function useProject(
 /**
  * Persist a new project bundle on disk via the Tauri backend.
  *
- * The backend captures whatever network is currently loaded in managed state
- * (from a prior `openAndLoadNetwork()`) and writes it into the bundle as the
- * project's canonical INP. Returns the persisted manifest as a `Project`,
- * or `null` when running outside a Tauri shell so the caller can fall back to
- * a purely in-memory project.
+ * `importLoadedNetwork` states the caller's intent explicitly. Pass `true`
+ * only when the user imported a model in this flow (which left it in managed
+ * state via `openAndLoadNetwork()`); the backend then writes those bytes into
+ * the bundle as the project's canonical INP. Pass `false` for an empty
+ * project and the backend writes its starter model instead.
+ *
+ * The flag is not optional by design: managed state holds whichever network
+ * was last opened and is not cleared by leaving a project, so letting the
+ * backend infer the intent wrote the previous project's model into a project
+ * the user asked to be empty.
+ *
+ * Returns the persisted manifest as a `Project`, or `null` when running
+ * outside a Tauri shell so the caller can fall back to a purely in-memory
+ * project.
  *
  * `engine` is persisted into the bundle and never rewritten; the backend
  * rejects a key it cannot run, so a project can never be created for an
@@ -168,6 +177,7 @@ export async function createProjectOnDisk(args: {
   id: string;
   name: string;
   engine: string;
+  importLoadedNetwork: boolean;
 }): Promise<Project | null> {
   return tryInvokeOr<Project | null>("create_project", args, null);
 }

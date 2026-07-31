@@ -153,13 +153,47 @@ const STARTER_INP: &[u8] = b"\
 /// `starter_inp_is_a_valid_minimal_network`, so the two cannot drift.
 const STARTER_NODE_COUNT: u32 = 1;
 
+/// Choose the base model for a new project, and the element counts that
+/// describe it.
+///
+/// Returns the loaded network's bytes only when `import` is true **and** a
+/// network is actually loaded; otherwise the starter model. The counts always
+/// describe the bytes returned — they are what `state` ("draft" vs "ready")
+/// and every has-a-network check downstream are derived from, so a mismatch
+/// would mislabel the project.
+///
+/// Split out of `create_project` so the choice can be tested without a Tauri
+/// handle: this is the decision that, when inferred from managed state alone,
+/// copied a previously-opened project into a project asked to be empty.
+fn new_project_model(import: bool, guard: &mut NetworkStateInner) -> (Vec<u8>, u32, u32) {
+    if !import {
+        return (STARTER_INP.to_vec(), STARTER_NODE_COUNT, 0);
+    }
+    // `up_to_date_raw_bytes` re-serialises first when in-memory edits have
+    // not been flushed yet.
+    let bytes = guard.up_to_date_raw_bytes().cloned();
+    match (&*guard, bytes) {
+        (NetworkStateInner::Loaded { dto, .. }, Some(bytes)) => {
+            (bytes, dto.nodes.len() as u32, dto.links.len() as u32)
+        }
+        _ => (STARTER_INP.to_vec(), STARTER_NODE_COUNT, 0),
+    }
+}
+
 /// Persist a new project. Called from the frontend's "New Project" wizard.
 ///
-/// The INP bytes currently held in managed state are copied into the bundle
-/// as the project's canonical base model, so the bundle is self-contained on
-/// disk even if the original source file is later moved or deleted. When
-/// nothing was imported, [`STARTER_INP`] is written instead — a project
-/// always has a model.
+/// `import_loaded_network` states the caller's **intent** and is never
+/// inferred. When true, the INP bytes currently held in managed state are
+/// copied into the bundle as its canonical base model, so the bundle is
+/// self-contained even if the original source file is later moved or deleted.
+/// When false — or when nothing is loaded — [`STARTER_INP`] is written
+/// instead; a project always has a model.
+///
+/// The flag exists because managed state is ambient: it holds whichever
+/// network was last opened and is not cleared by leaving a project. Deriving
+/// "the user imported something" from "a network is loaded" silently wrote a
+/// previously-opened project's model into a project the user asked to be
+/// empty.
 #[tauri::command(async)]
 /// Create a new project directory with `meta.json` and `base/` subdirectories.
 pub fn create_project(
@@ -168,6 +202,7 @@ pub fn create_project(
     id: String,
     name: String,
     engine: String,
+    import_loaded_network: bool,
 ) -> Result<Project, String> {
     validate_id(&id)?;
     // The engine key is persisted into meta.json and never rewritten, so a
@@ -176,23 +211,8 @@ pub fn create_project(
     require_available_engine(&engine)?;
     let app_data = app_data_dir(&app)?;
 
-    // Snapshot the currently loaded network (if any). `up_to_date_raw_bytes`
-    // re-serialises first when in-memory edits have not been flushed yet.
-    let imported = {
-        let mut guard = state.0.lock();
-        let bytes = guard.up_to_date_raw_bytes().cloned();
-        match (&*guard, bytes) {
-            (NetworkStateInner::Loaded { dto, .. }, Some(bytes)) => {
-                Some((bytes, dto.nodes.len() as u32, dto.links.len() as u32))
-            }
-            _ => None,
-        }
-    };
-    // Counts must describe the bytes actually written, starter model included
-    // — they are what `state` ("draft" vs "ready") and every has-a-network
-    // check downstream are derived from.
     let (inp_bytes, node_count, link_count) =
-        imported.unwrap_or_else(|| (STARTER_INP.to_vec(), STARTER_NODE_COUNT, 0));
+        new_project_model(import_loaded_network, &mut state.0.lock());
 
     let project_dir = bundle::project_dir(&app_data, &id);
     let base_dir = bundle::base_dir(&app_data, &id);
@@ -1964,6 +1984,67 @@ mod tests {
     }
 
     // ── starter model ────────────────────────────────────────────────────
+
+    #[test]
+    fn a_project_asked_to_be_empty_never_adopts_the_loaded_network() {
+        // The reported bug: open a project, return to the projects page, then
+        // create an "empty" project — and it came back holding the previous
+        // project's model. Managed state still held that network, and the
+        // command inferred "a network is loaded" to mean "the user imported
+        // one". The intent is now explicit, so a loaded network is ignored.
+        const LOADED_INP: &str = "\
+[JUNCTIONS]
+J1  10  5
+
+[RESERVOIRS]
+R1  100
+
+[PIPES]
+P1  R1  J1  1000  12  100  0  Open
+
+[COORDINATES]
+J1  1.0  2.0
+R1  0.0  0.0
+
+[OPTIONS]
+ Units      LPS
+ Headloss   H-W
+
+[END]
+";
+        let network = hydra::io::parse(LOADED_INP.as_bytes()).expect("fixture must parse");
+        let dto = network_to_dto(&network);
+        let mut loaded = NetworkStateInner::Loaded {
+            raw_bytes: LOADED_INP.as_bytes().to_vec(),
+            dirty: false,
+            network: std::sync::Arc::new(network),
+            dto,
+            owner_project_id: Some("previously-open-project".into()),
+            owner_scenario_id: None,
+        };
+
+        let (bytes, nodes, links) = new_project_model(false, &mut loaded);
+        assert_eq!(
+            bytes, STARTER_INP,
+            "an empty project gets the starter model"
+        );
+        assert_eq!((nodes, links), (STARTER_NODE_COUNT, 0));
+
+        // Counts must describe the bytes written: reporting the loaded
+        // network's counts here would mark the project "ready" and make every
+        // has-a-network check downstream disagree with the file on disk.
+        let (bytes, nodes, links) = new_project_model(true, &mut loaded);
+        assert_eq!(bytes, LOADED_INP.as_bytes(), "an import gets those bytes");
+        assert_eq!((nodes, links), (2, 1));
+    }
+
+    #[test]
+    fn importing_with_nothing_loaded_falls_back_to_the_starter_model() {
+        let mut empty = NetworkStateInner::Empty;
+        let (bytes, nodes, links) = new_project_model(true, &mut empty);
+        assert_eq!(bytes, STARTER_INP);
+        assert_eq!((nodes, links), (STARTER_NODE_COUNT, 0));
+    }
 
     #[test]
     fn starter_inp_is_a_valid_minimal_network() {
