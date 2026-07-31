@@ -329,7 +329,10 @@ export function ReportView() {
       ]).size,
     [optionsById, headingById],
   );
-  const atDefaults = sameOrder(sections, catalogIds) && customisedCount === 0;
+  // The state "Reset report to every section" restores: the whole catalog in
+  // catalog order, with nothing customised.
+  const atEverySection =
+    sameOrder(sections, catalogIds) && customisedCount === 0;
   // "All open" is judged against the CURRENT sections: the set can still hold
   // ids of sections since removed, and those must not decide the label.
   const allExpanded =
@@ -663,11 +666,19 @@ export function ReportView() {
                     onSelect: () => setSections([]),
                   },
                   {
-                    label: "Reset report to defaults",
-                    detail: "Every section, recommended order, no settings",
+                    // Named for what it does rather than "defaults": this
+                    // restores the whole catalog, which is a fixed thing, and
+                    // is deliberately NOT filtered by what the current run can
+                    // produce. Availability is empty until a run is probed, so
+                    // a run-aware reset would empty the report on exactly the
+                    // project most likely to reach for it — and "defaults"
+                    // would name something that changed with the network.
+                    label: "Reset report to every section",
+                    detail: "In recommended order, with no custom settings",
                     danger: true,
-                    disabled: atDefaults,
-                    disabledReason: "The report is already at its defaults",
+                    disabled: atEverySection,
+                    disabledReason:
+                      "The report already holds every section, unmodified",
                     onSelect: resetEverything,
                   },
                 ]}
