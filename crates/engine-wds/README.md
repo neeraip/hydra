@@ -3,7 +3,9 @@
 [![Crates.io](https://img.shields.io/crates/v/hydra-engine-wds)](https://crates.io/crates/hydra-engine-wds)
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](https://github.com/neeraip/hydra/blob/main/LICENSE)
 
-Core simulation engine for [Hydra](https://github.com/neeraip/hydra) — water distribution network data model, EPANET INP/OUT/RPT I/O, Global Gradient Algorithm hydraulic solver, Lagrangian water quality engine, simulation session API, and post-simulation analytics.
+The water distribution engine (`wds`) of [Hydra](https://github.com/neeraip/hydra), the water infrastructure simulation platform — water distribution network data model, EPANET INP/OUT/RPT I/O, Global Gradient Algorithm hydraulic solver, Lagrangian water quality engine, simulation session API, and post-simulation analytics.
+
+It is one of Hydra's domain engines and the only one implemented today; urban drainage (`hydra-engine-uds`) and open channel (`hydra-engine-och`) are published scaffolds awaiting development.
 
 > **Most users should depend on [`hydra-sdk`](https://crates.io/crates/hydra-sdk) instead.** `hydra-sdk` re-exports the complete public API of this crate as a single stable umbrella dependency.
 

@@ -1,8 +1,15 @@
-//! Hydra — water distribution network simulation engine.
+//! Hydra — water infrastructure simulation.
 //!
 //! This crate is the published library for the Hydra workspace. It re-exports the
 //! complete user-facing API so that downstream users depend on a single crate
 //! with all internal dependency versions pre-pinned and known to be compatible.
+//!
+//! Hydra is a suite of domain engines. Water distribution (`wds`) is the engine
+//! implemented today and the source of every simulation type re-exported below;
+//! urban drainage (`uds`) and open channel (`och`) are registered in
+//! [`common::ENGINES`] as [`common::EngineStatus::Planned`] — reserved and
+//! presentable, but with no implementation behind them. Resolve an engine
+//! through the registry rather than assuming which one a project uses.
 //!
 //! # Quick start
 //!
