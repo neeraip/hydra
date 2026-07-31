@@ -1,19 +1,21 @@
 //! `hydra-engine-wds` — complete water distribution simulation engine.
 //!
-//! Hydra simulates the hydraulic behaviour and water quality dynamics of
-//! pressurised water distribution networks over time. Its output is the complete
-//! time history of flows, pressures, and constituent concentrations at every
-//! point in the network.
+//! This is Hydra's water distribution engine (`wds`), the one domain engine
+//! implemented today. It simulates the hydraulic behaviour and water quality
+//! dynamics of pressurised water distribution networks over time. Its output is
+//! the complete time history of flows, pressures, and constituent
+//! concentrations at every point in the network.
 //!
 //! # Scope
 //!
-//! Hydra models:
+//! This engine models:
 //! - Extended-period steady-state hydraulics
 //! - Pressure-driven and demand-driven demand models
 //! - Conservative and reactive constituent transport (water quality, age, source tracing)
 //!
-//! Hydra does **not** model pressure transients, water-hammer effects, or
-//! multi-phase (gas/liquid) flow.
+//! It does **not** model pressure transients, water-hammer effects, or
+//! multi-phase (gas/liquid) flow. Other domains belong to other engines — see
+//! `hydra_common::ENGINES` — not to this crate.
 //!
 //! # Correctness criteria
 //!
