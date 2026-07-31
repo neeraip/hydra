@@ -1,5 +1,15 @@
 # EPANET: A Conceptual and Mathematical Analysis
 
+> **This document analyses EPANET, not Hydra.** It is a **pinned snapshot**: it
+> describes EPANET 2.3.5 at tag `v2.3.5` faithfully, defects included. Where it
+> records a bug or an inconsistency, that is a finding about EPANET — not a
+> Hydra issue to file.
+>
+> Hydra's [water distribution engine](../engines.md) was derived from this
+> analysis but is a distinct solver, not a reimplementation. Its own
+> authoritative behaviour is defined by the
+> [specifications](../architecture/specs.md).
+
 ## Introduction
 
 [OWA-EPANET](https://github.com/OpenWaterAnalytics/EPANET) is a computational engine for simulating the hydraulic and water quality behaviour of pressurised water distribution networks over time. It represents a network as a directed graph of nodes connected by links and advances a time-stepped extended-period simulation, solving at each step for pressures, flows, and constituent concentrations throughout the system. The solver combines rigorous physical models — empirical head-loss formulas, Newton–Raphson linearisation, sparse direct linear algebra, and Lagrangian advection-reaction transport — with flexible engineering constructs such as demand patterns, operational controls, and tank mixing models.

@@ -1,5 +1,15 @@
 # SWMM: A Conceptual and Mathematical Analysis
 
+<!-- PLANNED-ENGINE: uds — drop the first paragraph of this banner when the urban drainage engine ships. -->
+> **Hydra implements none of this yet.** This document analyses SWMM itself. It
+> is groundwork for the [urban drainage engine](../engines.md), which is
+> registered but **planned** — no implementation exists behind it, and nothing
+> below describes behaviour you can run in Hydra today.
+>
+> It is also a **pinned snapshot**: it describes SWMM 5.2.4 at tag `OWA_v5.2.4`
+> faithfully, defects included. Where it records a bug or an inconsistency, that
+> is a finding about SWMM — not a Hydra issue to file.
+
 ## Introduction
 
 [SWMM](https://github.com/pyswmm/Stormwater-Management-Model) (Storm Water Management Model) is a computational engine for simulating the quantity and quality of runoff from urban catchments and its conveyance through drainage systems — storm sewers, sanitary and combined sewers, open channels, storage units, and flow regulators — over single events or continuous multi-year periods. Where a water distribution engine solves for a pressurised network in hydraulic equilibrium at each time step, SWMM is a **rainfall-runoff-routing** model: precipitation falls on subcatchments, becomes runoff after losses to infiltration, evaporation, and depression storage, and the resulting hydrographs and pollutographs are routed through a free-surface conveyance network by solving forms of the Saint-Venant equations. Flows may be driven by gravity or pumped, conduits may transition between open-channel and pressurised (surcharged) states, and the network may include backwater, flow reversal, ponding, and tidal boundary conditions.
