@@ -3,6 +3,8 @@ import {
   addableBlocks,
   builderStateFromTemplate,
   buildTemplateJson,
+  insertionFromPointer,
+  insertionToIndex,
   moveSection,
   type ReportBlockInfo,
 } from "./reports";
@@ -192,5 +194,59 @@ describe("builderStateFromTemplate", () => {
 
   it("rejects malformed JSON", () => {
     expect(builderStateFromTemplate("{not json", CATALOG)).toBeNull();
+  });
+});
+
+describe("insertionToIndex", () => {
+  it("leaves an upward move alone", () => {
+    // Dropping row 3 into the gap before row 1 lands at index 1.
+    expect(insertionToIndex(3, 1)).toBe(1);
+  });
+
+  it("shifts a downward move down by one", () => {
+    // Row 0 dropped into the gap before row 2: once it is lifted out, that
+    // gap is index 1. Without this the row lands one short of the target.
+    expect(insertionToIndex(0, 2)).toBe(1);
+  });
+
+  it("maps a drop at the end to the last index", () => {
+    expect(insertionToIndex(0, 4)).toBe(3);
+  });
+
+  it("is a no-op for the row's own slots", () => {
+    expect(insertionToIndex(2, 2)).toBe(2);
+    expect(insertionToIndex(2, 3)).toBe(2);
+  });
+});
+
+describe("insertionFromPointer", () => {
+  // Four 20px rows starting at y=0.
+  const rows = [
+    { top: 0, height: 20 },
+    { top: 20, height: 20 },
+    { top: 40, height: 20 },
+    { top: 60, height: 20 },
+  ];
+
+  it("targets the gap before a row while above its midpoint", () => {
+    expect(insertionFromPointer(rows, 5)).toBe(0);
+    expect(insertionFromPointer(rows, 25)).toBe(1);
+  });
+
+  it("targets the gap after a row once past its midpoint", () => {
+    expect(insertionFromPointer(rows, 15)).toBe(1);
+    expect(insertionFromPointer(rows, 55)).toBe(3);
+  });
+
+  it("returns the end slot below the last row", () => {
+    expect(insertionFromPointer(rows, 999)).toBe(4);
+  });
+
+  it("clamps to the first slot above the list", () => {
+    expect(insertionFromPointer(rows, -50)).toBe(0);
+  });
+
+  it("has no slots for an empty list", () => {
+    expect(insertionFromPointer([], 10)).toBe(0);
   });
 });

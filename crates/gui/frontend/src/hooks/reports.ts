@@ -256,6 +256,31 @@ export function moveSection(
   return next;
 }
 
+/** Convert a drop slot into the destination index [`moveSection`] expects.
+ *
+ * A drop targets a GAP: slot `i` means "before row i", and slot `n` means
+ * "at the end". Once the dragged row is lifted out, every slot after it
+ * shifts down by one — so dropping row 0 into slot 2 lands at index 1, not
+ * 2. Getting this wrong makes a downward drag land one row short. */
+export function insertionToIndex(from: number, insertion: number): number {
+  return insertion > from ? insertion - 1 : insertion;
+}
+
+/** The drop slot for a pointer at `y`, given each row's bounds in order.
+ *
+ * Rows are split at their midpoint: above it the pointer targets the gap
+ * before the row, below it the gap after. Returns `rows.length` when the
+ * pointer is past the last midpoint. */
+export function insertionFromPointer(
+  rows: readonly { top: number; height: number }[],
+  y: number,
+): number {
+  for (let i = 0; i < rows.length; i++) {
+    if (y < rows[i].top + rows[i].height / 2) return i;
+  }
+  return rows.length;
+}
+
 /** Catalog entries not yet in the report, in catalog order, narrowed by a
  * case-insensitive match on title or summary. */
 export function addableBlocks(

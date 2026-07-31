@@ -5,9 +5,12 @@
  * template format records — a block is listed or it is not. Rows carry the
  * document's own numbering so the outline reads as the report reads.
  *
- * Drag-reorder uses native HTML5 drag events rather than a library: the list
- * is short, vertical, and single-column, which is the one case native drag
- * handles well.
+ * Drag-reorder is built on POINTER events, not HTML5 drag-and-drop. Tauri's
+ * window claims OS drag events for file-drop (`dragDropEnabled`, on by
+ * default), so `dragstart` never reaches the webview reliably — and turning
+ * that off to suit one list would cost the whole app its ability to accept a
+ * dropped model file. Pointer events are also platform-uniform and work with
+ * touch, at the cost of computing the drop slot ourselves.
  */
 
 import {
@@ -16,12 +19,14 @@ import {
   ExclamationTriangleIcon,
   XMarkIcon,
 } from "@heroicons/react/16/solid";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { ACCENT } from "../../../hooks";
-import type {
-  BlockAvailability,
-  ReportBlockInfo,
-  ReportOptionInfo,
+import {
+  type BlockAvailability,
+  insertionFromPointer,
+  insertionToIndex,
+  type ReportBlockInfo,
+  type ReportOptionInfo,
 } from "../../../hooks/reports";
 import { BlockOptions, type OptionValues } from "./BlockOptions";
 
@@ -66,8 +71,43 @@ export function SectionList({
   onHeadingChange,
 }: SectionListProps) {
   const [openFor, setOpenFor] = useState<Set<string>>(new Set());
-  const [dragging, setDragging] = useState<number | null>(null);
-  const [dropTarget, setDropTarget] = useState<number | null>(null);
+  // Which row is being dragged, and the gap it would drop into.
+  const [drag, setDrag] = useState<{ from: number; insertion: number } | null>(
+    null,
+  );
+  // Row bounds, measured once at grab: the list does not reflow during a
+  // drag (the indicator moves, the rows do not), so re-measuring per move
+  // would be wasted work and would fight the pointer.
+  const rowRects = useRef<{ top: number; height: number }[]>([]);
+  const rowRefs = useRef<(HTMLDivElement | null)[]>([]);
+
+  function beginDrag(index: number, e: React.PointerEvent) {
+    e.preventDefault();
+    // Slice to the live rows: refs for removed sections stay in the array,
+    // and measuring them would add phantom slots below the list.
+    rowRects.current = rowRefs.current.slice(0, sections.length).map((el) => {
+      const r = el?.getBoundingClientRect();
+      return { top: r?.top ?? 0, height: r?.height ?? 0 };
+    });
+    e.currentTarget.setPointerCapture(e.pointerId);
+    setDrag({ from: index, insertion: index });
+  }
+
+  function moveDrag(e: React.PointerEvent) {
+    if (!drag) return;
+    setDrag({
+      from: drag.from,
+      insertion: insertionFromPointer(rowRects.current, e.clientY),
+    });
+  }
+
+  function endDrag() {
+    if (drag) {
+      const to = insertionToIndex(drag.from, drag.insertion);
+      if (to !== drag.from) onReorder(drag.from, to);
+    }
+    setDrag(null);
+  }
 
   if (sections.length === 0) {
     return (
@@ -107,26 +147,24 @@ export function SectionList({
         const availability = availabilityById.get(id);
         const problem = availability && availability.status !== "ok";
         const heading = headingById[id] ?? "";
-        const isDropTarget = dropTarget === index && dragging !== index;
+        // The indicator sits in the gap the row would drop into, and is
+        // hidden when that gap is where the row already is.
+        const showGap =
+          drag !== null &&
+          drag.insertion === index &&
+          insertionToIndex(drag.from, drag.insertion) !== drag.from;
 
         return (
           <div
             key={id}
-            onDragOver={(e) => {
-              e.preventDefault();
-              setDropTarget(index);
-            }}
-            onDrop={(e) => {
-              e.preventDefault();
-              if (dragging !== null) onReorder(dragging, index);
-              setDragging(null);
-              setDropTarget(null);
+            ref={(el) => {
+              rowRefs.current[index] = el;
             }}
             style={{
-              borderTop: isDropTarget
+              borderTop: showGap
                 ? `2px solid ${ACCENT}`
                 : "2px solid transparent",
-              opacity: dragging === index ? 0.4 : 1,
+              opacity: drag?.from === index ? 0.45 : 1,
             }}
           >
             <div
@@ -141,19 +179,21 @@ export function SectionList({
               }}
             >
               <span
-                draggable
-                onDragStart={() => setDragging(index)}
-                onDragEnd={() => {
-                  setDragging(null);
-                  setDropTarget(null);
-                }}
+                onPointerDown={(e) => beginDrag(index, e)}
+                onPointerMove={moveDrag}
+                onPointerUp={endDrag}
+                onPointerCancel={endDrag}
                 aria-label="Drag to reorder"
                 title="Drag to reorder"
                 style={{
                   display: "flex",
                   color: "var(--text-tertiary)",
-                  cursor: "grab",
+                  cursor: drag ? "grabbing" : "grab",
                   flexShrink: 0,
+                  // Stops the gesture being stolen by scrolling on touch and
+                  // by text selection with a mouse.
+                  touchAction: "none",
+                  userSelect: "none",
                 }}
               >
                 <Bars3Icon style={{ width: 12, height: 12 }} />
@@ -281,6 +321,18 @@ export function SectionList({
           </div>
         );
       })}
+      {/* Slot after the last row: it belongs to no row, so it needs its own
+          indicator or dropping at the end reads as nothing happening. */}
+      <div
+        style={{
+          borderTop:
+            drag !== null &&
+            drag.insertion === sections.length &&
+            drag.from !== sections.length - 1
+              ? `2px solid ${ACCENT}`
+              : "2px solid transparent",
+        }}
+      />
     </div>
   );
 }
