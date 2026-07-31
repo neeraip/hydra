@@ -94,6 +94,57 @@ const rowButton: React.CSSProperties = {
  * quite settled. */
 const ICON_PX = 12;
 
+/** A section's name, with the name it replaced faintly above it when renamed.
+ *
+ * The faint line is always rendered — hidden rather than omitted when there is
+ * no override — so every row stands the same height whether or not it has been
+ * renamed. Omitting it made renamed rows taller than their neighbours, which
+ * broke the list's rhythm and moved every drop target below them the moment a
+ * section was renamed.
+ *
+ * Reserved by rendering the real title invisibly rather than by a fixed
+ * minHeight: the space then matches what the shown case actually occupies, and
+ * follows the font if it ever changes.
+ *
+ * Shared by the row and the drag ghost, which is a copy of the row under the
+ * cursor — two copies of this markup would eventually disagree, and the ghost
+ * would change height the instant it was lifted. */
+function SectionTitle({
+  block,
+  heading,
+}: {
+  block: ReportBlockInfo;
+  heading: string;
+}) {
+  const renamed = heading.trim();
+  return (
+    <>
+      <span
+        aria-hidden={renamed ? undefined : true}
+        style={{
+          ...faintLine,
+          marginBottom: 1,
+          visibility: renamed ? undefined : "hidden",
+        }}
+      >
+        {block.title}
+      </span>
+      <span
+        style={{
+          fontSize: "var(--text-lg)",
+          color: "var(--text-primary)",
+          lineHeight: 1.2,
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+          whiteSpace: "nowrap",
+        }}
+      >
+        {renamed || block.title}
+      </span>
+    </>
+  );
+}
+
 export function SectionList({
   sections,
   blockById,
@@ -331,23 +382,7 @@ export function SectionList({
                     overflow: "hidden",
                   }}
                 >
-                  {heading.trim() ? (
-                    <span style={{ ...faintLine, marginBottom: 1 }}>
-                      {block.title}
-                    </span>
-                  ) : null}
-                  <span
-                    style={{
-                      fontSize: "var(--text-lg)",
-                      color: "var(--text-primary)",
-                      lineHeight: 1.2,
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                      whiteSpace: "nowrap",
-                    }}
-                  >
-                    {heading.trim() || block.title}
-                  </span>
+                  <SectionTitle block={block} heading={heading} />
                 </span>
                 {problem ? (
                   <span
@@ -598,21 +633,7 @@ function DragGhost({
           overflow: "hidden",
         }}
       >
-        {heading.trim() ? (
-          <span style={{ ...faintLine, marginBottom: 1 }}>{block.title}</span>
-        ) : null}
-        <span
-          style={{
-            fontSize: "var(--text-lg)",
-            color: "var(--text-primary)",
-            lineHeight: 1.2,
-            overflow: "hidden",
-            textOverflow: "ellipsis",
-            whiteSpace: "nowrap",
-          }}
-        >
-          {heading.trim() || block.title}
-        </span>
+        <SectionTitle block={block} heading={heading} />
       </span>
     </div>,
     document.body,
