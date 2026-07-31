@@ -280,7 +280,7 @@ pub struct ResultMetaDto {
 
 /// Format a topology digest as the wire representation shared with the
 /// frontend: 16 lowercase hex characters, zero-padded.
-fn digest_hex(digest: u64) -> String {
+pub(crate) fn digest_hex(digest: u64) -> String {
     format!("{digest:016x}")
 }
 
@@ -322,7 +322,15 @@ pub fn load_result_meta(
     Ok(Some(ResultMetaDto {
         times,
         quality_mode: quality_mode.to_string(),
-        network_digest: meta.network_digest.map(digest_hex),
+        // `run.json` first, the epilog second. New runs record the digest
+        // beside the results because `results.out` is EPANET's format
+        // (model spec §4.4.1); results written by an older Hydra still carry
+        // it inside the file, and must keep working. Absent from both is
+        // "unknown", which the frontend treats as no staleness gating rather
+        // than as stale.
+        network_digest: crate::commands::simulation::read_run_meta(&out_path)
+            .and_then(|run| run.network_digest)
+            .or_else(|| meta.network_digest.map(digest_hex)),
         ranges: ResultRangesDto {
             pressure_min: ranges.pressure_min,
             pressure_max: ranges.pressure_max,
@@ -1484,21 +1492,25 @@ Duration  0
     }
 
     #[test]
-    fn generated_results_carry_the_fixture_network_digest() {
-        // End-to-end: a results.out produced by the streaming run path stores
-        // the digest of the network it was run from, and load_result_meta's
-        // mapping (meta.network_digest → hex) matches get_network_digest's
-        // view of the same unedited model.
+    fn a_run_records_its_digest_beside_the_results_not_inside_them() {
+        // End-to-end through the streaming run path: `results.out` stays
+        // EPANET's format with nothing of Hydra's in it (model spec §4.4.1),
+        // and the digest that detects a since-edited model lands in the
+        // `run.json` sibling instead.
         let dir = tempfile::tempdir().unwrap();
         let out = generated_results_out(dir.path());
-        let meta = hydra::io::out_reader::read_metadata_checked(&out).unwrap();
         let expected =
             hydra::compute_network_digest(&hydra::io::parse(TEST_INP.as_bytes()).unwrap());
-        assert_eq!(meta.network_digest, Some(expected));
+
+        let meta = hydra::io::out_reader::read_metadata_checked(&out).unwrap();
         assert_eq!(
-            meta.network_digest.map(digest_hex),
-            Some(digest_hex(expected))
+            meta.network_digest, None,
+            "the results file must carry no Hydra-specific fields"
         );
+
+        let run = crate::commands::simulation::read_run_meta(&out)
+            .expect("a completed run writes run.json");
+        assert_eq!(run.network_digest, Some(digest_hex(expected)));
     }
 
     // ── get_element_series / element_series_from_out ──────────────────────
@@ -1507,11 +1519,13 @@ Duration  0
     /// path production uses.
     fn generated_results_out(dir: &std::path::Path) -> std::path::PathBuf {
         let out = dir.join("results.out");
+        let digest = hydra::compute_network_digest(&hydra::io::parse(TEST_INP.as_bytes()).unwrap());
         let (_sim, err, _wall, _steps) = run_sim_loops(
             loaded_sim(),
             Some(out.clone()),
             0.0,
             false,
+            digest,
             |_, _, _, _, _| {},
             || false,
         );

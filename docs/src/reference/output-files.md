@@ -20,7 +20,7 @@ How each is produced:
 
 ## `.out` — Binary results
 
-The `.out` file extends the EPANET 2.3 binary output layout, so tools that read EPANET output files can read Hydra's. Values are stored as 32-bit floats (`REAL4`) and 32-bit integers (`INT4`), little-endian; IDs and strings are fixed-width, zero-padded.
+The `.out` file **is** the EPANET 2.3 binary output layout (format version `20012`), so tools that read EPANET output files read Hydra's. Hydra records its own metadata — such as the topology digest that detects a since-edited model — in a `run.json` beside the results rather than inside them, so the results file stays a format EPANET defines. Values are stored as 32-bit floats (`REAL4`) and 32-bit integers (`INT4`), little-endian; IDs and strings are fixed-width, zero-padded.
 
 The file is written in five sections:
 

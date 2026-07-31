@@ -113,6 +113,63 @@ pub(crate) fn collect_run_warnings(sim: &hydra::Simulation) -> Vec<RunWarningDto
         .collect()
 }
 
+/// `run.json` path for the run whose results live at `results_path`.
+pub(crate) fn run_meta_path(results_path: &std::path::Path) -> std::path::PathBuf {
+    results_path.with_file_name("run.json")
+}
+
+/// Hydra's own metadata about a run, kept beside the results rather than
+/// inside them.
+///
+/// `results.out` is EPANET's format, and Hydra writing its own fields into it
+/// cost interchange for nothing — a reader taking the classic 12-byte tail got
+/// a corrupt period count (model spec §4.4.1). This file is where those fields
+/// belong: it is ours, it is versionless, and it can grow without touching a
+/// format someone else defined.
+#[derive(serde::Serialize, serde::Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct RunMeta {
+    /// Topology digest of the network that produced these results, as 16
+    /// lowercase hex chars. Lets a consumer detect that the model has been
+    /// edited since — including edits that leave the file correctly paired
+    /// with its project, which is the case no amount of trusting the pairing
+    /// can catch.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub network_digest: Option<String>,
+}
+
+/// Read the `run.json` beside `results_path`, or `None` when absent or
+/// unreadable — results written before this file existed simply have no
+/// metadata, which callers treat as "unknown" rather than as an error.
+pub(crate) fn read_run_meta(results_path: &std::path::Path) -> Option<RunMeta> {
+    let bytes = std::fs::read(run_meta_path(results_path)).ok()?;
+    serde_json::from_slice(&bytes).ok()
+}
+
+/// Persist or clear the `run.json` sibling, on the same terms as
+/// `sync_run_warnings_file`: metadata must never outlive the results it
+/// describes, or it would describe the next run instead.
+pub(crate) fn sync_run_meta_file(results_path: &std::path::Path, meta: Option<&RunMeta>) {
+    let path = run_meta_path(results_path);
+    match meta {
+        Some(meta) => match serde_json::to_vec(meta) {
+            Ok(bytes) => {
+                if let Err(e) = bundle::atomic_write(&path, &bytes) {
+                    tracing::warn!(error = %e, "could not write run metadata");
+                }
+            }
+            Err(e) => tracing::warn!(error = %e, "could not serialise run metadata"),
+        },
+        None => {
+            if path.is_file() {
+                if let Err(e) = std::fs::remove_file(&path) {
+                    tracing::warn!(error = %e, "could not remove stale run metadata");
+                }
+            }
+        }
+    }
+}
+
 /// `warnings.json` path for the run whose results live at `results_path`.
 pub(crate) fn run_warnings_path(results_path: &std::path::Path) -> std::path::PathBuf {
     results_path.with_file_name("warnings.json")
@@ -272,6 +329,11 @@ pub(crate) fn run_sim_loops<F, C>(
     out_path: Option<std::path::PathBuf>,
     duration_seconds: f64,
     run_quality: bool,
+    // Topology digest of the network being run, recorded beside the results so
+    // a consumer can tell later that the model has been edited since. Passed in
+    // rather than taken from `sim`, which does not expose its network — and the
+    // caller has it in hand before loading it.
+    network_digest: u64,
     emit: F,
     should_cancel: C,
 ) -> (hydra::Simulation, Option<RunLoopError>, u64, u32)
@@ -535,8 +597,19 @@ where
         match warnings_sync_after_run(run_err.as_ref(), streamed, final_path.is_file()) {
             WarningsSync::Write => {
                 sync_run_warnings_file(final_path, Some(&collect_run_warnings(&sim)));
+                // Same lifecycle as the warnings: this describes the results
+                // just published, so it is written and cleared with them.
+                sync_run_meta_file(
+                    final_path,
+                    Some(&RunMeta {
+                        network_digest: Some(crate::commands::results::digest_hex(network_digest)),
+                    }),
+                );
             }
-            WarningsSync::Clear => sync_run_warnings_file(final_path, None),
+            WarningsSync::Clear => {
+                sync_run_warnings_file(final_path, None);
+                sync_run_meta_file(final_path, None);
+            }
             WarningsSync::Keep => {}
         }
     }
@@ -627,6 +700,7 @@ mod tests {
             Some(out.clone()),
             0.0,
             false,
+            0,
             |_, _, _, _, _| {},
             || false,
         );
@@ -651,6 +725,7 @@ mod tests {
             Some(out.clone()),
             0.0,
             false,
+            0,
             |_, _, _, _, _| {},
             || true, // cancel immediately
         );
@@ -749,6 +824,7 @@ mod tests {
             Some(out),
             0.0,
             false,
+            0,
             |_, _, _, _, _| {},
             || false,
         );
@@ -792,7 +868,7 @@ Duration  0
         let dir = tempfile::tempdir().unwrap();
         let out = dir.path().join("results.out");
         let (_sim, err, _wall, _steps) =
-            run_sim_loops(sim, Some(out), 0.0, false, |_, _, _, _, _| {}, || false);
+            run_sim_loops(sim, Some(out), 0.0, false, 0, |_, _, _, _, _| {}, || false);
         assert!(err.is_none(), "run must succeed with a warning: {err:?}");
         let warnings = read_run_warnings_file(&dir.path().join("warnings.json")).unwrap();
         assert!(
@@ -816,6 +892,7 @@ Duration  0
             Some(out),
             0.0,
             false,
+            0,
             |_, _, _, _, _| {},
             || false,
         );

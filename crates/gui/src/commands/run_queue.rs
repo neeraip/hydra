@@ -494,6 +494,10 @@ async fn run_sim_for_queue(
     // item with a clear error if a direct run is currently writing it.
     let _run_guard = try_acquire_run_target(project_id, scenario_id)?;
 
+    // Taken before the network is moved into the session, and recorded beside
+    // the results: `results.out` is EPANET's format and no longer carries
+    // Hydra's own fields (model spec §4.4.1).
+    let network_digest = hydra::compute_network_digest(&network);
     let mut sim = Simulation::create();
     sim.load(network).map_err(|e| format!("{e:?}"))?;
 
@@ -506,6 +510,7 @@ async fn run_sim_for_queue(
             Some(out_path),
             duration_seconds,
             run_quality,
+            network_digest,
             |phase, ss, done, failed, msg| {
                 emit_or_warn(
                     &app_emit,

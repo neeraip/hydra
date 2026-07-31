@@ -47,10 +47,8 @@
 //  │ 4. NETWORK REACTIONS   (16 bytes)                                          │
 //  │   4 × REAL4: avg bulk rate, wall rate, tank rate, source rate (mass/hr)   │
 //  ├───────────────────────────────────────────────────────────────────────────┤
-//  │ 5. EPILOG   (20 bytes since version 20013; 12 bytes in 20012)              │
-//  │   INT4 n_periods, INT4 warn_flag (0=no warnings),                          │
-//  │   u64 network digest (spec §4.5.7; absent in 20012),                       │
-//  │   INT4 magic (516114521)                                                   │
+//  │ 5. EPILOG   (12 bytes)                                                     │
+//  │   INT4 n_periods, INT4 warn_flag (0=no warnings), INT4 magic (516114521)  │
 //  └───────────────────────────────────────────────────────────────────────────┘
 
 use std::io::{Seek, Write};
@@ -65,10 +63,17 @@ use crate::{
 // ── Constants ─────────────────────────────────────────────────────────────────
 
 const MAGIC: i32 = 516114521;
-/// Current `.out` format version (model spec §4.4.1): the EPANET 2.3 layout
-/// plus a 64-bit network digest in the epilog. Version 20012 (no digest) is
-/// still accepted by the reader.
-const VERSION: i32 = 20013;
+/// Current `.out` format version (model spec §4.4.1): the EPANET 2.3 layout,
+/// byte for byte.
+///
+/// Hydra used to write `20013`, which inserted a network digest between the
+/// warning flag and the closing magic. That put Hydra's own metadata inside a
+/// format EPANET defines, and moved the classic 12-byte tail — so a reader
+/// taking the last twelve bytes read half the digest as its period count and
+/// got a wrong answer rather than a refusal. The digest now lives beside the
+/// results instead. The reader still accepts `20013` for files already
+/// written.
+const VERSION: i32 = 20012;
 const MAXID: usize = 32; // MAXID+1 = 32 bytes per ID
 const TITLELEN: usize = 80; // TITLELEN+1 = 80 bytes per title line
 const MAXFNAME: usize = 260; // MAXFNAME+1 = 260 bytes per filename
@@ -87,8 +92,6 @@ pub struct OutStreamWriter<W: Write + Seek> {
     next_rtime: i64,
     next_snapshot_index: usize,
     n_periods: i32,
-    /// Network topology digest written into the epilog (model spec §4.4.7).
-    network_digest: u64,
     /// `Some` when `STATISTIC != NONE`: report periods are folded into a single
     /// aggregated period on `finish` rather than streamed individually (§4.3).
     stats: Option<PeriodStats>,
@@ -128,7 +131,6 @@ impl<W: Write + Seek> OutStreamWriter<W> {
             next_rtime: options.report_start.round() as i64,
             next_snapshot_index: 0,
             n_periods: 0,
-            network_digest: super::compute_network_digest(network),
             stats: if options.statistic == StatisticType::Series {
                 None
             } else {
@@ -192,12 +194,7 @@ impl<W: Write + Seek> OutStreamWriter<W> {
 
         self.writer.seek(std::io::SeekFrom::Start(dynamic_end))?;
         write_network_reactions(&mut self.writer, session)?;
-        write_epilog(
-            &mut self.writer,
-            self.n_periods,
-            epanet_warn_flag(session),
-            self.network_digest,
-        )?;
+        write_epilog(&mut self.writer, self.n_periods, epanet_warn_flag(session))?;
 
         Ok(self.writer)
     }
@@ -831,17 +828,9 @@ fn write_network_reactions<W: Write>(
 
 // ── Epilog ────────────────────────────────────────────────────────────────────
 
-fn write_epilog<W: Write>(
-    w: &mut W,
-    n_periods: i32,
-    warn_flag: i32,
-    network_digest: u64,
-) -> std::io::Result<()> {
+fn write_epilog<W: Write>(w: &mut W, n_periods: i32, warn_flag: i32) -> std::io::Result<()> {
     write_i32(w, n_periods)?;
     write_i32(w, warn_flag)?;
-    // Version ≥ 20013: 64-bit network digest between warn flag and magic
-    // (model spec §4.4.6).
-    w.write_all(&network_digest.to_le_bytes())?;
     write_i32(w, MAGIC)?;
     Ok(())
 }
@@ -1156,8 +1145,8 @@ mod tests {
 
         // Prolog report-statistic code (offset 44) = 1 (Average).
         assert_eq!(i32::from_le_bytes(data[44..48].try_into().unwrap()), 1);
-        // Epilog n_periods (20-byte epilog since v20013) collapsed to 1.
-        let n = i32::from_le_bytes(data[data.len() - 20..data.len() - 16].try_into().unwrap());
+        // Epilog n_periods (12-byte EPANET epilog) collapsed to 1.
+        let n = i32::from_le_bytes(data[data.len() - 12..data.len() - 8].try_into().unwrap());
         assert_eq!(n, 1, "two periods should aggregate to one");
 
         // Series (default) keeps both periods, for contrast.
@@ -1166,7 +1155,7 @@ mod tests {
         write_binary_output(&mut buf, &session, "a.inp", "b.rpt", FlowUnits::Gpm)
             .expect("write output");
         let data = buf.into_inner();
-        let n = i32::from_le_bytes(data[data.len() - 20..data.len() - 16].try_into().unwrap());
+        let n = i32::from_le_bytes(data[data.len() - 12..data.len() - 8].try_into().unwrap());
         assert_eq!(n, 2, "series mode keeps both periods");
     }
 
@@ -1262,18 +1251,36 @@ mod tests {
         }
     }
 
-    /// Written files carry the network topology digest in the epilog
-    /// (spec §4.5.6/§4.5.7), matching `compute_network_digest` exactly.
+    /// Spec §4.4.1: written files are EPANET `20012`, tail included.
+    ///
+    /// The last twelve bytes are what a reader that knows nothing of Hydra
+    /// takes for its period count, warning flag and magic number. Hydra used
+    /// to insert a digest ahead of the magic, which left that reader taking
+    /// half the digest as a period count — a wrong answer, not a refusal.
     #[test]
-    fn out_file_epilog_carries_network_digest() {
+    fn written_files_are_epanet_20012_with_the_classic_tail() {
         let session = mock_session("single_pipe_hw.inp");
-        let expected = crate::io::compute_network_digest(&session.network);
         let mut buf = Cursor::new(Vec::new());
         write_binary_output(&mut buf, &session, "test.inp", "test.rpt", FlowUnits::Gpm)
             .expect("write binary output");
-        let out = crate::io::out_reader::parse(&buf.into_inner()).expect("parse .out");
-        assert_eq!(out.prolog.version, 20013);
-        assert_eq!(out.epilog.network_digest, Some(expected));
+        let data = buf.into_inner();
+
+        let out = crate::io::out_reader::parse(&data).expect("parse .out");
+        assert_eq!(out.prolog.version, 20012);
+        assert_eq!(
+            out.epilog.network_digest, None,
+            "no Hydra bytes in the file"
+        );
+
+        // What a legacy 12-byte-tail reader sees, byte for byte.
+        let tail = &data[data.len() - 12..];
+        let n_periods = i32::from_le_bytes(tail[0..4].try_into().unwrap());
+        let magic = i32::from_le_bytes(tail[8..12].try_into().unwrap());
+        assert_eq!(magic, MAGIC, "magic must be the final four bytes");
+        assert_eq!(
+            n_periods, out.epilog.n_periods,
+            "a 12-byte-tail reader must get the real period count"
+        );
     }
 
     /// Verifies that `write_network_reactions` converts accumulators using 1000
