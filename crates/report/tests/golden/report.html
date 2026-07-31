@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Golden Report</title>
+<style>
+:root { color-scheme: light; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+       margin: 2.5rem auto; padding: 0 1.5rem;
+       color: #1a222c; line-height: 1.5; }
+header { border-bottom: 2px solid #1a222c; margin-bottom: 1.5rem; padding-bottom: 0.75rem; }
+h1 { font-size: 1.5rem; margin: 0 0 0.5rem; }
+h2 { font-size: 1.05rem; margin: 2rem 0 0.6rem; border-bottom: 1px solid #c9d1d9;
+     padding-bottom: 0.25rem; }
+.provenance { font-size: 0.85rem; color: #555f6b; }
+.provenance span { margin-right: 1.25rem; }
+dl { display: grid; grid-template-columns: max-content 1fr; gap: 0.15rem 1rem; margin: 0.6rem 0; }
+dt { color: #555f6b; }
+dd { margin: 0; }
+table { border-collapse: collapse; margin: 0.6rem 0; width: 100%; font-size: 0.9rem; }
+th, td { border: 1px solid #c9d1d9; padding: 0.3rem 0.55rem; text-align: left; }
+th { background: #f2f4f7; }
+td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+p.note { font-size: 0.85rem; color: #555f6b; }
+figure.chart { margin: 0.8rem 0; }
+/* width, not max-width: the SVG carries an intrinsic 640px, so a cap let it
+   shrink but never grow, leaving charts at 640px beside full-width tables.
+   The viewBox makes scaling up lossless. */
+figure.chart svg { width: 100%; height: auto; }
+p.placeholder { font-style: italic; color: #8a6d1f; background: #fdf6e3;
+                border: 1px solid #e8dcb5; border-radius: 4px; padding: 0.4rem 0.6rem; }
+@media print { body { margin: 0; } }
+</style>
+</head>
+<body>
+<header>
+<h1>Golden Report</h1>
+<div class="provenance"><span>Model: network.inp</span><span>Results: output.out</span></div>
+</header>
+<h2>Run Summary</h2>
+<dl>
+<dt>Junctions</dt><dd>4</dd>
+<dt>Duration</dt><dd>24 h</dd>
+<dt>Quality</dt><dd>yes</dd>
+<dt>Started</dt><dd>2026-01-01T00:00:00Z</dd>
+<dt>Not measured</dt><dd>—</dd>
+</dl>
+<p class="note">Values are &lt;reported&gt; at full precision; commas, &quot;quotes&quot; &amp; ampersands are deliberate.</p>
+<h2>Result Extremes</h2>
+<table>
+<thead><tr><th>Node</th><th class="num">Pressure (m)</th><th>Reported</th></tr></thead>
+<tbody>
+<tr><td>J1, the &quot;first&quot; node</td><td class="num">31.845 m</td><td>yes</td></tr>
+<tr><td>J2 &lt;tank &amp; inlet&gt;</td><td class="num">—</td><td>no</td></tr>
+<tr><td>line
+break</td><td class="num">-0.5 m</td><td>—</td></tr>
+</tbody>
+</table>
+<h2>Pressure Distribution</h2>
+<figure class="chart">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 296" width="640" height="296" role="img">
+<line x1="52" y1="250.0" x2="624.0" y2="250.0" stroke="#c3c2b7" stroke-width="1"/>
+<text x="44.0" y="253.5" text-anchor="end" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="10" fill="#898781">0</text>
+<line x1="52" y1="195.0" x2="624.0" y2="195.0" stroke="#e1e0d9" stroke-width="1"/>
+<text x="44.0" y="198.5" text-anchor="end" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="10" fill="#898781">0.5</text>
+<line x1="52" y1="140.0" x2="624.0" y2="140.0" stroke="#e1e0d9" stroke-width="1"/>
+<text x="44.0" y="143.5" text-anchor="end" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="10" fill="#898781">1</text>
+<line x1="52" y1="85.0" x2="624.0" y2="85.0" stroke="#e1e0d9" stroke-width="1"/>
+<text x="44.0" y="88.5" text-anchor="end" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="10" fill="#898781">1.5</text>
+<line x1="52" y1="30.0" x2="624.0" y2="30.0" stroke="#e1e0d9" stroke-width="1"/>
+<text x="44.0" y="33.5" text-anchor="end" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="10" fill="#898781">2</text>
+<path d="M135.3 250.0 V144.0 Q135.3 140.0 139.3 140.0 H155.3 Q159.3 140.0 159.3 144.0 V250.0 Z" fill="#2a78d6"/>
+<text x="147.3" y="135.0" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="11" fill="#52514e">1</text>
+<text x="147.3" y="266.0" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="10" fill="#898781">&lt; 20</text>
+<path d="M326.0 250.0 V34.0 Q326.0 30.0 330.0 30.0 H346.0 Q350.0 30.0 350.0 34.0 V250.0 Z" fill="#2a78d6"/>
+<text x="338.0" y="25.0" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="11" fill="#52514e">2</text>
+<text x="338.0" y="266.0" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="10" fill="#898781">20–40</text>
+<path d="M516.7 250.0 V144.0 Q516.7 140.0 520.7 140.0 H536.7 Q540.7 140.0 540.7 144.0 V250.0 Z" fill="#2a78d6"/>
+<text x="528.7" y="135.0" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="11" fill="#52514e">1</text>
+<text x="528.7" y="266.0" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="10" fill="#898781">&gt; 40</text>
+<text x="6.0" y="14.0" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="10" fill="#898781">Junctions</text>
+<text x="338.0" y="286.0" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="10" fill="#898781">Band (m)</text>
+</svg>
+</figure>
+<figure class="chart">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 296" width="640" height="296" role="img">
+<line x1="52" y1="250.0" x2="552.0" y2="250.0" stroke="#c3c2b7" stroke-width="1"/>
+<text x="44.0" y="253.5" text-anchor="end" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="10" fill="#898781">98</text>
+<line x1="52" y1="176.7" x2="552.0" y2="176.7" stroke="#e1e0d9" stroke-width="1"/>
+<text x="44.0" y="180.2" text-anchor="end" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="10" fill="#898781">99</text>
+<line x1="52" y1="103.3" x2="552.0" y2="103.3" stroke="#e1e0d9" stroke-width="1"/>
+<text x="44.0" y="106.8" text-anchor="end" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="10" fill="#898781">100</text>
+<line x1="52" y1="30.0" x2="552.0" y2="30.0" stroke="#e1e0d9" stroke-width="1"/>
+<text x="44.0" y="33.5" text-anchor="end" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="10" fill="#898781">101</text>
+<text x="52.0" y="266.0" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="10" fill="#898781">0</text>
+<text x="156.2" y="266.0" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="10" fill="#898781">5</text>
+<text x="260.3" y="266.0" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="10" fill="#898781">10</text>
+<text x="364.5" y="266.0" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="10" fill="#898781">15</text>
+<text x="468.7" y="266.0" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="10" fill="#898781">20</text>
+<path d="M52.0 103.3 L302.0 231.7 L552.0 -6.7" fill="none" stroke="#2a78d6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<circle cx="552.0" cy="-6.7" r="4" fill="#2a78d6" stroke="#ffffff" stroke-width="2"/>
+<text x="560.0" y="-2.7" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="11" fill="#52514e">T1</text>
+<text x="6.0" y="14.0" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="10" fill="#898781">Head (m)</text>
+<text x="302.0" y="286.0" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="10" fill="#898781">Time (h)</text>
+</svg>
+</figure>
+<h2>Pump Energy</h2>
+<p class="placeholder">Not available: the network has no pumps</p>
+<h2>wds.nope</h2>
+<p class="placeholder">Failed: unknown report block: &quot;wds.nope&quot;</p>
+</body>
+</html>

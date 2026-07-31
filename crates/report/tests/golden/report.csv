@@ -1,0 +1,34 @@
+# Golden Report
+Model,network.inp
+Results,output.out
+
+# Run Summary
+Junctions,4,
+Duration,24,h
+Quality,true,
+Started,2026-01-01T00:00:00Z,
+Not measured,,
+"Values are <reported> at full precision; commas, ""quotes"" & ampersands are deliberate."
+
+# Result Extremes
+Node,Pressure (m),Reported
+"J1, the ""first"" node",31.845123456789,true
+J2 <tank & inlet>,,false
+"line
+break",-0.5,
+
+# Pressure Distribution
+Band (m),Junctions
+< 20,1
+20–40,2
+> 40,1
+Time (h),T1 (m)
+0,100
+12,98.25
+24,101.5
+
+# Pump Energy
+[not available: the network has no pumps]
+
+# wds.nope
+"[failed: unknown report block: ""wds.nope""]"
