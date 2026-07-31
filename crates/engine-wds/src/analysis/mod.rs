@@ -15,7 +15,7 @@ pub use binning::{
     build_analysis_artifact, build_analysis_artifact_from_out,
     build_analysis_artifact_from_out_with_progress,
     build_analysis_artifact_from_out_with_progress_and_selection, estimate_analysis_runtime_millis,
-    AnalysisSelection,
+    threshold_bands, AnalysisSelection,
 };
 pub use demand_reliability::{
     compute_demand_reliability_from_out, compute_demand_reliability_from_out_with_options,

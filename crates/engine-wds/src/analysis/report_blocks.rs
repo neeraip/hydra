@@ -12,6 +12,7 @@ use hydra_common::{
     LineSeries, Table, Value, ValueKind,
 };
 
+use super::binning::threshold_bands;
 use super::demand_reliability::{
     compute_demand_reliability_from_out_with_options, DemandReliabilityOptions,
 };
@@ -66,12 +67,35 @@ const CATALOG: &[BlockDescriptor] = &[
     BlockDescriptor {
         id: "wds.velocity-distribution",
         title: "Velocity Distribution",
-        summary: "Distribution of each link's maximum velocity over the run.",
+        summary: "Distribution of each pipe's maximum velocity over the run \
+                  (pumps and valves excluded).",
     },
     BlockDescriptor {
         id: "wds.tank-levels",
         title: "Tank Levels",
         summary: "Hydraulic head of each tank over the reporting horizon.",
+    },
+    BlockDescriptor {
+        id: "wds.mass-balance",
+        title: "Mass Balance",
+        summary: "Cumulative network inflow and outflow, closure percentage, and \
+                  per-period closure over the reporting horizon.",
+    },
+    BlockDescriptor {
+        id: "wds.pipe-criticality",
+        title: "Pipe Criticality",
+        summary: "Pipes ranked by peak velocity over the reporting horizon.",
+    },
+    BlockDescriptor {
+        id: "wds.pressure-thresholds",
+        title: "Pressure Thresholds",
+        summary: "Junction minimum pressure counted into caller-supplied threshold \
+                  bands rather than observed-range bins.",
+    },
+    BlockDescriptor {
+        id: "wds.velocity-thresholds",
+        title: "Velocity Thresholds",
+        summary: "Pipe maximum velocity counted into caller-supplied threshold bands.",
     },
 ];
 
@@ -99,6 +123,10 @@ pub fn produce_report_block(
         "wds.pressure-distribution" => pressure_distribution(out_path, network),
         "wds.velocity-distribution" => velocity_distribution(out_path, network),
         "wds.tank-levels" => tank_levels(out_path, network),
+        "wds.mass-balance" => mass_balance(out_path, network),
+        "wds.pipe-criticality" => pipe_criticality(out_path, network, options),
+        "wds.pressure-thresholds" => pressure_thresholds(out_path, network, options),
+        "wds.velocity-thresholds" => velocity_thresholds(out_path, network, options),
         _ => Err(BlockError::UnknownBlock { id: id.into() }),
     }
 }
@@ -790,16 +818,27 @@ fn velocity_distribution(out_path: &Path, network: &Network) -> Result<Fragment,
     let scan = out_reader::scan_analytics(out_path, &meta)
         .map_err(|message| BlockError::Failed { message })?;
     let (_, _, velocity_unit) = unit_labels(network);
+    // Pipes only (analysis spec §7.1.2): a pump or valve has no pipe
+    // velocity, so including them banks one spurious zero per non-pipe link
+    // into the lowest bin. Link order in the `.out` file matches
+    // `network.links`, so the index maps directly.
     let values: Vec<f64> = scan
         .link_max_velocity
         .iter()
-        .copied()
+        .enumerate()
+        .filter(|(i, _)| {
+            network
+                .links
+                .get(*i)
+                .is_some_and(|l| matches!(l.kind, crate::LinkKind::Pipe(_)))
+        })
+        .map(|(_, v)| *v)
         .filter(|v| v.is_finite())
         .collect();
 
     Ok(distribution_fragment(
         "Velocity Distribution",
-        "Links",
+        "Pipes",
         "Maximum velocity",
         velocity_unit,
         &values,
@@ -811,6 +850,318 @@ fn velocity_distribution(out_path: &Path, network: &Network) -> Result<Fragment,
 /// §7.1.2): edges rounded outward to whole display units; a degenerate
 /// range yields a single bin. Table-derivable everywhere per the
 /// foundation contract.
+/// Ascending threshold edges from the `edges` option, or the supplied default
+/// (analysis spec §7.1.1). Validates strict ascent and non-emptiness.
+fn opt_edges(options: Option<&serde_json::Value>, default: &[f64]) -> Result<Vec<f64>, BlockError> {
+    let Some(value) = options.and_then(|o| o.get("edges")) else {
+        return Ok(default.to_vec());
+    };
+    let array = value.as_array().ok_or_else(|| BlockError::Failed {
+        message: "option \"edges\" must be an array of numbers".into(),
+    })?;
+    let mut edges = Vec::with_capacity(array.len());
+    for item in array {
+        let n = item
+            .as_f64()
+            .filter(|v| v.is_finite())
+            .ok_or_else(|| BlockError::Failed {
+                message: "option \"edges\" must contain only finite numbers".into(),
+            })?;
+        edges.push(n);
+    }
+    if edges.is_empty() {
+        return Err(BlockError::Failed {
+            message: "option \"edges\" must contain at least one boundary".into(),
+        });
+    }
+    if edges.windows(2).any(|w| w[1] <= w[0]) {
+        return Err(BlockError::Failed {
+            message: "option \"edges\" must be strictly ascending".into(),
+        });
+    }
+    Ok(edges)
+}
+
+/// Bar chart of threshold-band counts, shared by the two `*-thresholds` blocks.
+fn threshold_fragment(
+    title: &str,
+    element_label: &str,
+    quantity_label: &str,
+    unit: &str,
+    values: &[f64],
+    edges: &[f64],
+) -> Fragment {
+    let counts = threshold_bands(values, edges);
+    let mut categories = Vec::with_capacity(counts.len());
+    categories.push(format!("< {} {unit}", fmt_edge(edges[0])));
+    for w in edges.windows(2) {
+        categories.push(format!("{} – {} {unit}", fmt_edge(w[0]), fmt_edge(w[1])));
+    }
+    categories.push(format!("≥ {} {unit}", fmt_edge(edges[edges.len() - 1])));
+
+    let mut items = vec![FragmentItem::Chart {
+        chart: Chart {
+            x_label: format!("{quantity_label} band"),
+            x_unit: Some(unit.into()),
+            y_label: element_label.into(),
+            y_unit: None,
+            data: ChartData::Bar {
+                categories,
+                values: counts.iter().map(|&c| c as f64).collect(),
+            },
+        },
+    }];
+    if values.is_empty() {
+        items.push(FragmentItem::Note {
+            text: format!(
+                "No {} carry a value for this quantity.",
+                element_label.to_lowercase()
+            ),
+        });
+    }
+    Fragment {
+        title: title.into(),
+        items,
+    }
+}
+
+/// Compact edge label: whole numbers where exact, one decimal otherwise.
+fn fmt_edge(v: f64) -> String {
+    if (v - v.round()).abs() < 1e-9 {
+        format!("{}", v.round() as i64)
+    } else {
+        format!("{v:.1}")
+    }
+}
+
+/// Junction minimum pressures, in the file's pressure display unit.
+fn junction_min_pressures(scan: &out_reader::AnalyticsScan, meta: &OutMetadata) -> Vec<f64> {
+    let junction_count = meta.n_nodes.saturating_sub(meta.n_tanks);
+    scan.node_min_pressure
+        .iter()
+        .take(junction_count)
+        .copied()
+        .filter(|v| v.is_finite())
+        .collect()
+}
+
+/// Per-pipe maximum velocities (pumps and valves excluded, §7.1.2).
+fn pipe_max_velocities(scan: &out_reader::AnalyticsScan, network: &Network) -> Vec<(usize, f64)> {
+    scan.link_max_velocity
+        .iter()
+        .enumerate()
+        .filter(|(i, v)| {
+            v.is_finite()
+                && network
+                    .links
+                    .get(*i)
+                    .is_some_and(|l| matches!(l.kind, crate::LinkKind::Pipe(_)))
+        })
+        .map(|(i, v)| (i, *v))
+        .collect()
+}
+
+fn mass_balance(out_path: &Path, network: &Network) -> Result<Fragment, BlockError> {
+    let meta = read_meta(out_path)?;
+    if meta.n_periods == 0 {
+        return Err(BlockError::Failed {
+            message: "results file holds no reporting periods".into(),
+        });
+    }
+    let scan = out_reader::scan_analytics(out_path, &meta)
+        .map_err(|message| BlockError::Failed { message })?;
+    let (_, _, _) = unit_labels(network);
+
+    // Closure is outflow over inflow; an empty or sourceless run leaves it
+    // undefined rather than dividing by zero, and reports as 100 % closed.
+    let closure = if scan.total_inflow > 0.0 {
+        (scan.total_outflow / scan.total_inflow * 100.0).min(100.0)
+    } else {
+        100.0
+    };
+
+    let entries = vec![
+        entry("Cumulative inflow", num_unit(scan.total_inflow, "m³")),
+        entry("Cumulative outflow", num_unit(scan.total_outflow, "m³")),
+        entry(
+            "Imbalance",
+            num_unit(scan.total_inflow - scan.total_outflow, "m³"),
+        ),
+        entry("Closure", num_unit(closure, "%")),
+    ];
+
+    let points: Vec<[f64; 2]> = scan
+        .mb_series
+        .iter()
+        .enumerate()
+        .map(|(p, &pct)| {
+            let hours = (meta.report_start + meta.report_step * p as f64) / 3600.0;
+            [hours, pct]
+        })
+        .collect();
+
+    Ok(Fragment {
+        title: "Mass Balance".into(),
+        items: vec![
+            FragmentItem::KeyValues { entries },
+            FragmentItem::Chart {
+                chart: Chart {
+                    x_label: "Time".into(),
+                    x_unit: Some("h".into()),
+                    y_label: "Closure".into(),
+                    y_unit: Some("%".into()),
+                    data: ChartData::Line {
+                        series: vec![LineSeries {
+                            name: "Closure".into(),
+                            points,
+                        }],
+                    },
+                },
+            },
+        ],
+    })
+}
+
+const DEFAULT_TOP_COUNT: usize = 5;
+
+fn pipe_criticality(
+    out_path: &Path,
+    network: &Network,
+    options: Option<&serde_json::Value>,
+) -> Result<Fragment, BlockError> {
+    let meta = read_meta(out_path)?;
+    if meta.n_periods == 0 {
+        return Err(BlockError::Failed {
+            message: "results file holds no reporting periods".into(),
+        });
+    }
+    let top_count = opt_usize(options, "topCount")?.unwrap_or(DEFAULT_TOP_COUNT);
+    let scan = out_reader::scan_analytics(out_path, &meta)
+        .map_err(|message| BlockError::Failed { message })?;
+    let (_, _, velocity_unit) = unit_labels(network);
+
+    let mut ranked = pipe_max_velocities(&scan, network);
+    if ranked.is_empty() {
+        return Err(BlockError::Unavailable {
+            reason: "the network has no pipes carrying velocity results".into(),
+        });
+    }
+    // Descending by peak velocity; link index breaks ties so the ordering is
+    // deterministic for equal velocities.
+    ranked.sort_by(|a, b| {
+        b.1.partial_cmp(&a.1)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then(a.0.cmp(&b.0))
+    });
+
+    let rows: Vec<Vec<Value>> = ranked
+        .iter()
+        .take(top_count)
+        .map(|(idx, v)| {
+            let id = network
+                .links
+                .get(*idx)
+                .map(|l| l.base.id.clone())
+                .unwrap_or_default();
+            vec![text(id), num_unit(*v, velocity_unit)]
+        })
+        .collect();
+
+    let shown = rows.len();
+    let mut items = vec![FragmentItem::Table {
+        table: Table {
+            columns: vec![
+                Column {
+                    name: "Pipe".into(),
+                    unit: None,
+                    kind: ValueKind::Text,
+                },
+                Column {
+                    name: "Peak velocity".into(),
+                    unit: Some(velocity_unit.into()),
+                    kind: ValueKind::Number,
+                },
+            ],
+            rows,
+        },
+    }];
+    if ranked.len() > shown {
+        items.push(FragmentItem::Note {
+            text: format!("Showing the {shown} fastest of {} pipes.", ranked.len()),
+        });
+    }
+    Ok(Fragment {
+        title: "Pipe Criticality".into(),
+        items,
+    })
+}
+
+fn pressure_thresholds(
+    out_path: &Path,
+    network: &Network,
+    options: Option<&serde_json::Value>,
+) -> Result<Fragment, BlockError> {
+    let meta = read_meta(out_path)?;
+    if meta.n_periods == 0 {
+        return Err(BlockError::Failed {
+            message: "results file holds no reporting periods".into(),
+        });
+    }
+    // Spec §7.1.1 defaults are SI; US files take the psi-scaled equivalents.
+    let default: &[f64] = if is_si(network.options.flow_units) {
+        &[0.0, 10.0, 20.0, 30.0, 40.0, 50.0, 60.0]
+    } else {
+        &[0.0, 15.0, 30.0, 45.0, 60.0, 75.0, 85.0]
+    };
+    let edges = opt_edges(options, default)?;
+    let scan = out_reader::scan_analytics(out_path, &meta)
+        .map_err(|message| BlockError::Failed { message })?;
+    let (pressure_unit, _, _) = unit_labels(network);
+    let values = junction_min_pressures(&scan, &meta);
+    Ok(threshold_fragment(
+        "Pressure Thresholds",
+        "Junctions",
+        "Minimum pressure",
+        pressure_unit,
+        &values,
+        &edges,
+    ))
+}
+
+fn velocity_thresholds(
+    out_path: &Path,
+    network: &Network,
+    options: Option<&serde_json::Value>,
+) -> Result<Fragment, BlockError> {
+    let meta = read_meta(out_path)?;
+    if meta.n_periods == 0 {
+        return Err(BlockError::Failed {
+            message: "results file holds no reporting periods".into(),
+        });
+    }
+    let default: &[f64] = if is_si(network.options.flow_units) {
+        &[0.1, 0.3, 0.6, 1.0]
+    } else {
+        &[0.3, 1.0, 2.0, 3.3]
+    };
+    let edges = opt_edges(options, default)?;
+    let scan = out_reader::scan_analytics(out_path, &meta)
+        .map_err(|message| BlockError::Failed { message })?;
+    let (_, _, velocity_unit) = unit_labels(network);
+    let values: Vec<f64> = pipe_max_velocities(&scan, network)
+        .into_iter()
+        .map(|(_, v)| v)
+        .collect();
+    Ok(threshold_fragment(
+        "Velocity Thresholds",
+        "Pipes",
+        "Maximum velocity",
+        velocity_unit,
+        &values,
+        &edges,
+    ))
+}
+
 fn distribution_fragment(
     title: &str,
     element_label: &str,
@@ -1301,6 +1652,91 @@ mod tests {
             assert!((total - 2.0).abs() < 1e-12, "bin counts must sum to 2");
             assert_eq!(chart.y_label, "Junctions");
             assert!(matches!(&fragment.items[1], FragmentItem::Note { .. }));
+        });
+    }
+
+    #[test]
+    fn threshold_bands_are_unbounded_at_both_ends() {
+        // Spec §7.1.2: n edges give n+1 bands, outer two unbounded, so every
+        // finite value is counted and the counts sum to the population.
+        let edges = [0.0, 10.0, 20.0];
+        let values = [-5.0, -0.1, 0.0, 9.9, 10.0, 19.9, 20.0, 1000.0];
+        let counts = threshold_bands(&values, &edges);
+        assert_eq!(counts, vec![2, 2, 2, 2]);
+        assert_eq!(counts.iter().sum::<u64>(), values.len() as u64);
+    }
+
+    #[test]
+    fn threshold_bands_place_edge_values_in_the_upper_band() {
+        // Bands are half-open [e_i, e_i+1): a value exactly on an edge belongs
+        // above it, so a junction at exactly 0 m is not counted as in deficit.
+        let counts = threshold_bands(&[0.0], &[0.0]);
+        assert_eq!(counts, vec![0, 1]);
+    }
+
+    #[test]
+    fn edges_option_rejects_non_ascending_and_empty() {
+        let bad = serde_json::json!({ "edges": [10.0, 5.0] });
+        assert!(opt_edges(Some(&bad), &[1.0]).is_err());
+        let empty = serde_json::json!({ "edges": [] });
+        assert!(opt_edges(Some(&empty), &[1.0]).is_err());
+        let not_numbers = serde_json::json!({ "edges": ["a"] });
+        assert!(opt_edges(Some(&not_numbers), &[1.0]).is_err());
+        // Absent option falls back to the supplied default.
+        assert_eq!(opt_edges(None, &[1.0, 2.0]).unwrap(), vec![1.0, 2.0]);
+    }
+
+    #[test]
+    fn velocity_blocks_exclude_pumps_and_valves() {
+        // A pump link must not contribute a zero-velocity sample: spec §7.1.2.
+        const PUMP_INP: &str = "[JUNCTIONS]\nJ1  0  10\nJ2  0  10\n\n\
+            [RESERVOIRS]\nR1  100\n\n\
+            [PIPES]\nP1  J1  J2  800  250  100  0  Open\n\n\
+            [PUMPS]\nPU1  R1  J1  HEAD C1\n\n\
+            [CURVES]\nC1  0  100\nC1  50  80\nC1  100  0\n\n\
+            [OPTIONS]\nUnits  LPS\nHeadloss  H-W\n\n[END]\n";
+        with_inp_out(PUMP_INP, |path, network| {
+            let meta = read_meta(path).expect("meta");
+            let scan = out_reader::scan_analytics(path, &meta).expect("scan");
+            let pipes = pipe_max_velocities(&scan, network);
+            assert_eq!(pipes.len(), 1, "only the pipe should be counted");
+            let pipe_idx = pipes[0].0;
+            assert!(matches!(
+                network.links[pipe_idx].kind,
+                crate::LinkKind::Pipe(_)
+            ));
+        });
+    }
+
+    #[test]
+    fn mass_balance_block_reports_closure_and_a_series() {
+        with_inp_out(FIXTURE_INP, |path, network| {
+            let fragment =
+                produce_report_block("wds.mass-balance", path, network, None).expect("block");
+            assert_eq!(fragment.title, "Mass Balance");
+            let has_chart = fragment
+                .items
+                .iter()
+                .any(|i| matches!(i, FragmentItem::Chart { .. }));
+            let has_kvs = fragment
+                .items
+                .iter()
+                .any(|i| matches!(i, FragmentItem::KeyValues { .. }));
+            assert!(has_chart && has_kvs);
+        });
+    }
+
+    #[test]
+    fn pipe_criticality_ranks_descending_and_honours_top_count() {
+        with_inp_out(FIXTURE_INP, |path, network| {
+            let options = serde_json::json!({ "topCount": 1 });
+            let fragment =
+                produce_report_block("wds.pipe-criticality", path, network, Some(&options))
+                    .expect("block");
+            let FragmentItem::Table { table } = &fragment.items[0] else {
+                panic!("expected a table first");
+            };
+            assert_eq!(table.rows.len(), 1, "topCount must bound the rows");
         });
     }
 

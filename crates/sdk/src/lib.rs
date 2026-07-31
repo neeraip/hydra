@@ -73,8 +73,8 @@ pub use hydra_engine_wds::{
     build_analysis_artifact_from_out_with_progress_and_selection,
     compute_demand_reliability_from_out, compute_demand_reliability_from_out_with_options,
     compute_service_compliance_from_out, decode_analysis_artifact, encode_analysis_artifact,
-    estimate_analysis_runtime_millis, AnalysisBytesError, AnalysisComputeError, AnalysisSelection,
-    DemandReliabilityNode, DemandReliabilityOptions, DemandReliabilityReport,
+    estimate_analysis_runtime_millis, threshold_bands, AnalysisBytesError, AnalysisComputeError,
+    AnalysisSelection, DemandReliabilityNode, DemandReliabilityOptions, DemandReliabilityReport,
     DemandReliabilitySummary, ServiceComplianceNode, ServiceComplianceReport,
     ServiceComplianceSummary, ServiceComplianceThresholds, HYDRA_ANALYSIS_VERSION,
 };
