@@ -88,6 +88,10 @@ export function ReportView() {
   useEffect(() => {
     if (!activeProjectId) return;
     setFormat(readStoredFormat(activeProjectId, "html"));
+    // A different project is a different document: carrying the old offset
+    // over would land the reader at the wrong end of a shorter report. Only
+    // scenario switches, which this preservation exists for, keep it.
+    htmlScrollY.current = 0;
   }, [activeProjectId]);
 
   /** Choose a format and remember it for this project. Written here rather
@@ -108,6 +112,28 @@ export function ReportView() {
     content: string;
   } | null>(null);
   const [previewError, setPreviewError] = useState<string | null>(null);
+
+  // Scroll position of the HTML preview, kept across the document swaps that
+  // a scenario change causes. Each swap is a fresh document with a fresh
+  // window, so the listener is reattached on every load.
+  const htmlFrameRef = useRef<HTMLIFrameElement>(null);
+  const htmlScrollY = useRef(0);
+  const detachHtmlScroll = useRef<(() => void) | null>(null);
+
+  function restoreHtmlScroll() {
+    const win = htmlFrameRef.current?.contentWindow;
+    if (!win) return;
+    detachHtmlScroll.current?.();
+    win.scrollTo(0, htmlScrollY.current);
+    const onScroll = () => {
+      htmlScrollY.current = win.scrollY;
+    };
+    win.addEventListener("scroll", onScroll, { passive: true });
+    detachHtmlScroll.current = () =>
+      win.removeEventListener("scroll", onScroll);
+  }
+
+  useEffect(() => () => detachHtmlScroll.current?.(), []);
   const [exporting, setExporting] = useState(false);
 
   // ── Catalog + saved template ───────────────────────────────────────────
@@ -685,9 +711,32 @@ export function ReportView() {
                 />
               ) : format === "html" ? (
                 <iframe
+                  ref={htmlFrameRef}
                   title="Report preview"
-                  sandbox=""
+                  // ─────────────────────────────────────────────────────────
+                  // NEVER add `allow-scripts` to this list.
+                  //
+                  // `allow-same-origin` is here so the app can read and
+                  // restore this frame's scroll position, which switching
+                  // scenarios would otherwise reset — there is no way to
+                  // reach a frame in an opaque origin. Every other
+                  // restriction still applies: no forms, no popups, no
+                  // top-level navigation, no plugins.
+                  //
+                  // Granting scripts ALONGSIDE same-origin is what defeats a
+                  // sandbox: the framed document could then reach the parent
+                  // and remove this attribute outright. Either token alone is
+                  // safe; the pair is not.
+                  //
+                  // The content is first-party — hydra-report's renderer,
+                  // with every model-derived string escaped — and its
+                  // `is_self_contained_and_scriptless` test asserts the
+                  // output carries no <script, no src=, and no external URL.
+                  // That test is what keeps this safe; it is not incidental.
+                  // ─────────────────────────────────────────────────────────
+                  sandbox="allow-same-origin"
                   srcDoc={previewContent}
+                  onLoad={restoreHtmlScroll}
                   style={{ flex: 1, border: "none", background: "#ffffff" }}
                 />
               ) : format === "csv" ? (

@@ -1,6 +1,14 @@
 //! HTML renderer (spec §4.4): one self-contained document — semantic
 //! markup, inline CSS only, no external resources, no scripts. Neutral
 //! styling that prints acceptably; doubles as the GUI's live preview.
+//!
+//! **The scriptless guarantee is load-bearing, not cosmetic.** The GUI frames
+//! this output with `sandbox="allow-same-origin"` so it can preserve the
+//! reader's scroll position, and that is only safe while the document cannot
+//! execute anything — same-origin *plus* scripting is what lets framed content
+//! escape a sandbox. `is_self_contained_and_scriptless` is the test that holds
+//! that line; every string reaching the page, including the labels inside the
+//! inline chart SVG, goes through an escape first.
 
 use hydra_common::{Fragment, FragmentItem, Table, ValueKind};
 
