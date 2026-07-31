@@ -47,6 +47,14 @@ pub enum RouteError {
 impl fmt::Display for RouteError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            // With a single candidate "it could be wds" invites the obvious
+            // question; say what is actually missing instead.
+            Self::Ambiguous { candidates } if candidates.len() == 1 => write!(
+                f,
+                "this is shaped like a {} model but carries nothing that identifies it as one, \
+                 and its format is shared with other engines",
+                candidates[0]
+            ),
             Self::Ambiguous { candidates } => write!(
                 f,
                 "cannot tell which engine this model belongs to — it could be {}",
@@ -163,7 +171,7 @@ mod tests {
         );
         // Ambiguous must read differently from unrecognised: this one is
         // answered by naming the engine, the other is not.
-        assert!(err.to_string().contains("could be wds"), "{err}");
+        assert!(err.to_string().contains("shaped like a wds model"), "{err}");
     }
 
     #[test]

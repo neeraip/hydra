@@ -6,7 +6,18 @@ This page is for engineers and developers switching from EPANET to Hydra. It cov
 
 ## Your `.inp` Files Work
 
-Hydra parses the EPANET `.inp` format directly — any 2.x release. No conversion is needed. Drop your existing `.inp` file into the CLI or pass it to the library and Hydra will run it.
+Hydra parses the EPANET `.inp` format directly — any 2.x release. No conversion is needed. Pass your existing `.inp` file to the CLI or the library and Hydra will run it.
+
+**The command line is Hydra's own, not EPANET's.** Hydra deliberately does not
+mimic `epanet input.inp report.rpt output.out`: that argument order encodes one
+engine and one pair of artifacts, which stops being true as Hydra adds engines.
+File-format compatibility and command-line compatibility are separate promises,
+and Hydra keeps the first.
+
+| EPANET | Hydra |
+|---|---|
+| `epanet net.inp net.rpt` | `hydra run net.inp --summary net.rpt` |
+| `epanet net.inp net.rpt net.out` | `hydra run net.inp --summary net.rpt --results net.out` |
 
 See [INP Format Support](inp-format.md) for the full section-by-section reference.
 

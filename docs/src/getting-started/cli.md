@@ -1,7 +1,28 @@
 # CLI
 
-<!-- PLANNED-ENGINE: uds,och — drop the last sentence and document engine selection once a second engine is reachable from the CLI. -->
-The `hydra` binary drives Hydra's water distribution [engine](../engines.md): it reads an EPANET `.inp` model, runs an extended-period simulation, and writes `.rpt`, `.out`, and report files. The planned engines are not yet reachable from the CLI.
+The `hydra` binary runs models through Hydra's [engines](../engines.md) and builds report documents from the results.
+
+```
+hydra run <MODEL> [--engine KEY] [--results PATH] [--summary PATH]
+hydra report --model <PATH> --results <PATH> [-o PATH]
+hydra engines
+```
+
+**The engine is detected from the model, never from its extension** — `.inp`
+belongs to both EPANET and SWMM, so the filename cannot decide. There is no
+default engine: if the model does not identify one, Hydra stops and asks you to
+name it with `--engine` rather than guessing. See
+[Engine selection](#engine-selection).
+
+<!-- PLANNED-ENGINE: uds,och — `hydra engines` reports status; revise the surrounding prose as each engine ships. -->
+Only the water distribution engine is implemented today; `hydra engines` lists
+what this build provides.
+
+> **Upgrading from 2.x** — `hydra <model> <report> <output>` is gone. Use
+> `hydra run <model> --summary <report> --results <output>`. Running the old
+> form prints a hint naming the replacement. See
+> [Migrating from EPANET](../reference/migrating-from-epanet.md) for the full
+> mapping.
 
 ## Install
 
@@ -31,63 +52,97 @@ hydra -V
 ## Basic Usage
 
 ```sh
-# Run a simulation — report goes to stdout
-hydra network.inp
+# Run a simulation — summary goes to stdout
+hydra run network.inp
 
-# Save the report to a file
-hydra network.inp report.rpt
+# Save the summary to a file
+hydra run network.inp --summary report.rpt
 
-# Save the report and binary output
-hydra network.inp report.rpt output.out
-
-# Same, using named flags (equivalent to the above)
-hydra --input network.inp --report report.rpt --output output.out
+# Save the summary and the binary time-series results
+hydra run network.inp --summary report.rpt --results output.out
 ```
 
-At most three positional arguments (input, report, output) are accepted; passing more is a usage error (exit `1`). `hydra -V` prints the Hydra engine version and the CLI version on separate lines.
+`hydra run` takes exactly one positional argument: the model. Everything the
+run writes is named by a flag, so nothing depends on argument order.
+`hydra -V` prints the Hydra engine version and the CLI version on separate
+lines.
 
 ## Output Formats
 
-The report path controls what format is written:
+The `--summary` path controls the summary format:
 
 ```sh
-# Plain-text report (EPANET-style .rpt)
-hydra network.inp report.rpt
+# Plain-text summary (EPANET-style .rpt)
+hydra run network.inp --summary report.rpt
 
-# JSON report (useful for scripts and data pipelines)
-hydra network.inp report.json
+# JSON summary (useful for scripts and data pipelines)
+hydra run network.inp --summary report.json
 
-# Binary output (.out) — EPANET-compatible, readable by post-processing tools
-hydra network.inp report.rpt output.out
+# Binary results (.out) — EPANET-compatible, readable by post-processing tools
+hydra run network.inp --summary report.rpt --results output.out
 ```
+
+For configurable report documents (txt, csv, html, pdf) built from a saved
+`.out`, see [Generating a report](#generating-a-report).
 
 ## Running from a URL
 
-Hydra can fetch a network file directly over HTTP or HTTPS:
+The model may be fetched over HTTP or HTTPS:
 
 ```sh
-hydra https://example.com/network.inp
-hydra https://example.com/network.inp report.rpt output.out
+hydra run https://example.com/network.inp
+hydra run https://example.com/network.inp --summary report.rpt --results output.out
 ```
 
-Both `http://` and `https://` are accepted, and a URL may also be given via `--input`. The fetch follows up to 10 redirects, uses a 10-second connect timeout and a 300-second overall timeout, and accepts response bodies up to 1 GiB. An HTTP 4xx response is treated as an input error (exit `1`); a 5xx or network failure is an I/O error (exit `3`).
+Both `http://` and `https://` are accepted. The fetch follows up to 10 redirects, uses a 10-second connect timeout and a 300-second overall timeout, and accepts response bodies up to 1 GiB. An HTTP 4xx response is treated as an input error (exit `1`); a 5xx or network failure is an I/O error (exit `3`).
 
 ## Flags
 
+### `hydra run`
+
 | Flag | Description |
 |---|---|
-| `--input <PATH>` | Path to the `.inp` model file, or an `http(s)://` URL (alternative to positional) |
-| `--report <PATH>` | Report output path (`.rpt` or `.json`); defaults to stdout |
-| `--output <PATH>` | Binary output path (`.out`); omit to skip |
-| `-q`, `--quiet` | Suppress progress output (auto-suppressed when stderr is not a terminal, e.g. when piping or redirecting) |
-| `-V`, `--version` | Print version and exit |
-| `-h`, `--help` | Print help and exit |
+| `<MODEL>` | Path or `http(s)://` URL of the model to run. The only positional |
+| `--engine <KEY>` | Run with a named engine (`wds`). Omit to detect it from the model |
+| `--results <PATH>` | Binary time-series results (`.out`). Omitted, none is written |
+| `--summary <PATH>` | Run summary in the engine's native format (`.rpt`, or `.json` when the path ends in `.json`). Omitted, it goes to stdout |
 
-> **Breaking change** — `-v` previously meant `--version`. The short version
-> flag is now `-V` (GNU/clap convention). `-v` is no longer accepted: it exits
-> with code `1` and a hint suggesting `-V` (version) or `-q`/`--quiet`, rather
-> than being silently repurposed, so scripts that relied on the old meaning
-> fail loudly.
+### Global
+
+| Flag | Description |
+|---|---|
+| `-q`, `--quiet` | Suppress progress output. Progress is also suppressed when stderr is not a terminal. Errors and diagnostics are never suppressed |
+| `-v`, `-vv` | Increase detail. `-v` names the engine and adds per-stage notes; `-vv` adds timing and internals. Conflicts with `--quiet` |
+| `-V`, `--version` | Print Hydra and CLI version information |
+| `-h`, `--help` | Print usage |
+
+Global flags may appear before or after the subcommand.
+
+## Engine selection
+
+A model's engine is decided by its **contents**, not its filename. Each engine
+is asked whether the model is one of its own, and exactly one positive
+identification is required to proceed.
+
+| Situation | Result |
+|---|---|
+| One engine identifies the model | It runs |
+| Nothing identifies it, but it is shaped like some engine's format | Error — name the engine with `--engine` |
+| No engine recognises the format | Error |
+| The owning engine is registered but not implemented | Error naming it, e.g. a SWMM model |
+
+There is deliberately **no fallback**. Handing a stormwater model to a
+pressurised-pipe solver would produce a confident, wrong answer rather than a
+failure, so Hydra stops instead of guessing.
+
+`--engine <KEY>` names the engine explicitly. That is more information than
+detection has, so it is also the escape hatch for a sparse model that carries
+nothing identifying — the named engine parses it under its normal rules.
+
+```bash
+hydra run net.inp --engine wds     # skip detection
+hydra engines                      # what this build provides
+```
 
 ## Generating a report
 
@@ -133,7 +188,7 @@ same inputs produce byte-identical output.
 
 ## Reading the Report
 
-Both report formats are **summary-level**. Per-node and per-link time series are written only to the binary `.out` file (`--output`).
+Both report formats are **summary-level**. Per-node and per-link time series are written only to the binary `.out` file (`--results`).
 
 The text report (`.rpt`) contains:
 
