@@ -17,7 +17,7 @@ import {
   Bars3Icon,
   ChevronRightIcon,
   ExclamationTriangleIcon,
-  MagnifyingGlassCircleIcon,
+  MagnifyingGlassIcon,
   XMarkIcon,
 } from "@heroicons/react/16/solid";
 import { useEffect, useRef, useState } from "react";
@@ -88,6 +88,11 @@ const rowButton: React.CSSProperties = {
   cursor: "pointer",
   flexShrink: 0,
 };
+
+/** One size for every icon in a row. They had drifted across four values
+ * (11, 12, 13), which is invisible per icon and exactly why the cluster never
+ * quite settled. */
+const ICON_PX = 12;
 
 export function SectionList({
   sections,
@@ -269,7 +274,7 @@ export function SectionList({
                   userSelect: "none",
                 }}
               >
-                <Bars3Icon style={{ width: 12, height: 12 }} />
+                <Bars3Icon style={{ width: ICON_PX, height: ICON_PX }} />
               </span>
               {/* Everything between the handle and remove is one button, so
                   the row's body opens the settings. A real button rather than
@@ -352,7 +357,7 @@ export function SectionList({
                     style={{ display: "flex", color: "var(--warn, #c98a1b)" }}
                   >
                     <ExclamationTriangleIcon
-                      style={{ width: 12, height: 12 }}
+                      style={{ width: ICON_PX, height: ICON_PX }}
                     />
                   </span>
                 ) : null}
@@ -378,8 +383,8 @@ export function SectionList({
                     would just be a different icon appearing. */}
                 <ChevronRightIcon
                   style={{
-                    width: 11,
-                    height: 11,
+                    width: ICON_PX,
+                    height: ICON_PX,
                     flexShrink: 0,
                     color: "var(--text-tertiary)",
                     transform: open ? "rotate(90deg)" : undefined,
@@ -400,7 +405,9 @@ export function SectionList({
                     : {}),
                 }}
               >
-                <MagnifyingGlassCircleIcon style={{ width: 13, height: 13 }} />
+                <MagnifyingGlassIcon
+                  style={{ width: ICON_PX, height: ICON_PX }}
+                />
               </button>
               <button
                 type="button"
@@ -409,7 +416,7 @@ export function SectionList({
                 onClick={() => onRemove(id)}
                 style={rowButton}
               >
-                <XMarkIcon style={{ width: 13, height: 13 }} />
+                <XMarkIcon style={{ width: ICON_PX, height: ICON_PX }} />
               </button>
             </div>
 
@@ -561,8 +568,8 @@ function DragGhost({
     >
       <Bars3Icon
         style={{
-          width: 12,
-          height: 12,
+          width: ICON_PX,
+          height: ICON_PX,
           color: "var(--text-tertiary)",
           flexShrink: 0,
         }}
