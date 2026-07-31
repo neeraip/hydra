@@ -314,15 +314,20 @@ export function SimulationProvider({ children }: { children: ReactNode }) {
       });
     }
 
+    // Coordinates are presentation-only — the solver never reads them, so a
+    // model without them simulates normally. Missing *some* coordinates is a
+    // warning below; missing all of them is the same class of problem, not a
+    // worse one, so it must not escalate to an error just because the count
+    // reached the whole network.
     if (coordTotalCount > 0 && coordStatus === "empty") {
       pushIssue({
         id: "data-coords-empty",
-        severity: "error",
+        severity: "warn",
         source: "data",
         code: "COORDS-EMPTY",
         title: "No geospatial coordinates available",
         detail:
-          "All nodes are missing geographic coordinates. Map mode cannot place the network until coordinates are provided or corrected.",
+          "All nodes are missing geographic coordinates. Map mode cannot place the network until coordinates are provided or corrected. Simulation is unaffected.",
       });
     } else if (coordTotalCount > 0 && coordStatus === "partial") {
       pushIssue({
