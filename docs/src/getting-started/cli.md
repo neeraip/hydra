@@ -169,7 +169,7 @@ For full time-series data across all nodes and links, use the binary `.out` form
 
 ## Diagnostics on stderr
 
-Independently of the report, Hydra emits warnings and errors to **stderr** as one JSON object per line, suitable for machine parsing in scripts and pipelines:
+Independently of the report, the simulation command emits warnings and errors to **stderr** as one JSON object per line, suitable for machine parsing in scripts and pipelines:
 
 ```json
 {"level":"warning","code":"warning/negative_pressure","message":"...","object_id":"J1","time_step":3600.0}
@@ -177,3 +177,5 @@ Independently of the report, Hydra emits warnings and errors to **stderr** as on
 ```
 
 Each line has `level` (`warning` or `error`), a `code`, a human-readable `message`, and nullable `object_id` and `time_step` fields. The human-readable progress bar and banner (also on stderr) are suppressed by `-q`/`--quiet` and when stderr is not a terminal; the JSON diagnostics are not.
+
+`hydra report` does not emit these. It shares the same [exit codes](#exit-codes) but reports failures as plain `error: …` lines on stderr.

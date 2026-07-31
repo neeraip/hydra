@@ -2,6 +2,11 @@
 
 Hydra reports problems in three ways: **exit codes** (CLI process status), **structured diagnostics** (machine-readable JSON lines on stderr), and **warnings** (non-fatal issues recorded during a run). This page catalogues each.
 
+> **Scope.** The structured diagnostics below are emitted by the simulation
+> command (`hydra <input>`). The `hydra report` subcommand shares the same exit
+> codes but writes plain `error: …` text to stderr rather than JSON lines, so do
+> not parse its stderr as diagnostics.
+
 ---
 
 ## Exit codes (CLI)
