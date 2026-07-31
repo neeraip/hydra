@@ -5,6 +5,7 @@ import { useActiveProject, useAppState } from "../../AppContext";
 import {
   ACCENT,
   enqueueRuns,
+  fetchValidationFindings,
   getSimParams,
   projectHasNetwork,
   type SimParams,
@@ -21,6 +22,7 @@ import { ModalBackdrop, stopBackdropEvents } from "../ui/ModalBackdrop";
 import {
   ActiveBadge,
   Label,
+  runnableScenarioIds,
   SimStateBadge,
   SummaryGrid,
 } from "./RunModal/helpers";
@@ -60,30 +62,42 @@ function ScenarioRow({
   isChecked,
   isActive,
   isLast,
+  errorCount,
   onToggle,
 }: {
   scenario: ScenarioOption;
   isChecked: boolean;
   isActive: boolean;
   isLast: boolean;
+  /** Blocking validation errors; > 0 means the solver would reject it. */
+  errorCount: number;
   onToggle: () => void;
 }) {
+  const blocked = errorCount > 0;
   return (
     <label
+      title={
+        blocked
+          ? `This model has ${errorCount} error${errorCount === 1 ? "" : "s"} and cannot be simulated. See the Issues panel.`
+          : undefined
+      }
       style={{
         display: "flex",
         alignItems: "center",
         gap: 10,
         padding: "8px 12px",
         borderBottom: isLast ? "none" : "1px solid var(--border)",
-        cursor: "pointer",
-        background: isChecked ? "rgba(100,160,255,0.06)" : "transparent",
+        cursor: blocked ? "not-allowed" : "pointer",
+        background:
+          isChecked && !blocked ? "rgba(100,160,255,0.06)" : "transparent",
+        opacity: blocked ? 0.55 : 1,
         transition: "background 80ms",
       }}
     >
       <input
         type="checkbox"
-        checked={isChecked}
+        checked={isChecked && !blocked}
+        disabled={blocked}
         onChange={onToggle}
         style={{
           accentColor: "var(--accent)",
@@ -96,14 +110,30 @@ function ScenarioRow({
         style={{
           flex: 1,
           fontSize: "var(--text-lg)",
-          color: "var(--text-primary)",
+          color: blocked ? "var(--text-tertiary)" : "var(--text-primary)",
           fontFamily: "var(--font-ui)",
         }}
       >
         {scenario.label}
       </span>
       {isActive && <ActiveBadge />}
-      <SimStateBadge state={scenario.state} />
+      {blocked ? (
+        <span
+          className="badge"
+          style={{
+            color: "var(--status-error)",
+            background:
+              "color-mix(in srgb, var(--status-error) 15%, transparent)",
+            borderColor:
+              "color-mix(in srgb, var(--status-error) 35%, transparent)",
+            fontWeight: 600,
+          }}
+        >
+          {errorCount} error{errorCount === 1 ? "" : "s"}
+        </span>
+      ) : (
+        <SimStateBadge state={scenario.state} />
+      )}
     </label>
   );
 }
@@ -120,7 +150,7 @@ export function RunModal() {
     showToast,
   } = useAppState();
   const { project, engine } = useActiveProject();
-  const { isEdited } = useNetworkVersion();
+  const { isEdited, version: networkVersion } = useNetworkVersion();
 
   const dbScenarios = useScenarios(activeProjectId ?? null, scenariosVersion);
   const scenarios: ScenarioOption[] = useMemo(
@@ -176,16 +206,55 @@ export function RunModal() {
     };
   }, [runModalOpen, activeProjectId]);
 
+  // Blocking validation errors per scenario id. A scenario the solver would
+  // reject cannot be queued, so the modal has to know before offering it —
+  // `validationIssues` in SimulationContext covers only the *active*
+  // scenario, and this modal runs a set.
+  const [errorCounts, setErrorCounts] = useState<Map<string | null, number>>(
+    new Map(),
+  );
+  const scenarioIds = useMemo(() => scenarios.map((s) => s.id), [scenarios]);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `networkVersion` is an intentional retrigger — revalidate after structural edits.
+  useEffect(() => {
+    if (!runModalOpen || !activeProjectId) return;
+    let cancelled = false;
+    void (async () => {
+      const entries = await Promise.all(
+        scenarioIds.map(async (id) => {
+          const findings = await fetchValidationFindings(activeProjectId, id);
+          const errors = findings.filter((f) => f.severity === "error").length;
+          return [id, errors] as const;
+        }),
+      );
+      if (cancelled) return;
+      setErrorCounts(new Map(entries));
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [runModalOpen, activeProjectId, scenarioIds, networkVersion]);
+
+  const errorsFor = useCallback(
+    (id: string | null) => errorCounts.get(id) ?? 0,
+    [errorCounts],
+  );
+  // What will actually be queued: checked, minus anything the solver would
+  // reject.
+  const runnableIds = useMemo(
+    () => runnableScenarioIds(checkedIds, errorCounts),
+    [checkedIds, errorCounts],
+  );
+
   const runSimulation = useCallback(() => {
-    if (!activeProjectId || checkedIds.length === 0) return;
+    if (!activeProjectId || runnableIds.length === 0) return;
     closeRunModal();
     // openTaskTray (not toggle): if the tray is already open, toggling would
     // close it just as the queued runs start.
     setTimeout(() => openTaskTray(), 200);
-    enqueueRuns(activeProjectId, checkedIds).catch((err) => {
+    enqueueRuns(activeProjectId, runnableIds).catch((err) => {
       showToast(`Failed to queue runs: ${formatIpcError(err)}`, "error");
     });
-  }, [activeProjectId, checkedIds, closeRunModal, openTaskTray, showToast]);
+  }, [activeProjectId, runnableIds, closeRunModal, openTaskTray, showToast]);
 
   // Esc closes; Cmd/Ctrl+Enter runs.
   useEffect(() => {
@@ -209,8 +278,11 @@ export function RunModal() {
   const runShortcut = formatShortcut([primaryModifierLabel(), "Enter"]);
 
   // A project with no network has nothing to simulate — the engine would be
-  // handed an empty model and fail at parse time.
-  const canRun = hasNetwork && params != null && checkedIds.length > 0;
+  // handed an empty model and fail at parse time. Scenarios with blocking
+  // validation errors are excluded rather than blocking the whole run: a
+  // sibling's broken model should not stop a valid one being simulated.
+  const canRun = hasNetwork && params != null && runnableIds.length > 0;
+  const excludedCount = checkedIds.length - runnableIds.length;
   const allChecked = scenarios.every((s) => checked.has(s.id));
 
   function toggleScenario(id: string | null) {
@@ -408,6 +480,7 @@ export function RunModal() {
                 isChecked={checked.has(scenarios[0].id)}
                 isActive={scenarios[0].id === activeScenarioId}
                 isLast={scenarios.length === 1}
+                errorCount={errorsFor(scenarios[0].id)}
                 onToggle={() => toggleScenario(scenarios[0].id)}
               />
 
@@ -436,6 +509,7 @@ export function RunModal() {
                       isChecked={checked.has(s.id)}
                       isActive={s.id === activeScenarioId}
                       isLast={i === scenarios.length - 2}
+                      errorCount={errorsFor(s.id)}
                       onToggle={() => toggleScenario(s.id)}
                     />
                   ))}
@@ -504,7 +578,18 @@ export function RunModal() {
             background: "rgba(0,0,0,0.18)",
           }}
         >
-          <div style={{ flex: 1 }} />
+          {/* Say plainly when the run is smaller than what was ticked — the
+              alternative is pressing Simulate for two scenarios and silently
+              getting one. */}
+          <div style={{ flex: 1, fontSize: "var(--text-md)" }}>
+            {excludedCount > 0 && (
+              <span style={{ color: "var(--text-secondary)" }}>
+                {runnableIds.length === 0
+                  ? `${excludedCount === 1 ? "This model has" : "These models have"} errors and cannot be simulated`
+                  : `${runnableIds.length} of ${checkedIds.length} will run — ${excludedCount} ${excludedCount === 1 ? "has" : "have"} errors`}
+              </span>
+            )}
+          </div>
           <button
             type="button"
             onClick={closeRunModal}

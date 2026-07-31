@@ -173,3 +173,21 @@ export function fmtClock(seconds: number): string {
 export function stripTrailingZeros(n: number): string {
   return n.toFixed(3).replace(/\.?0+$/, "");
 }
+
+/** Which of the ticked scenarios will actually be queued.
+ *
+ * A scenario the solver would reject is excluded rather than blocking the
+ * whole run: a sibling's broken model should not stop a valid one being
+ * simulated. Only *errors* exclude — warnings are common on valid models and
+ * must never prevent a run.
+ *
+ * `errorCounts` is keyed by scenario id (`null` = base model); a missing entry
+ * means "not validated yet", which is treated as runnable so the button is not
+ * disabled while the check is still in flight.
+ */
+export function runnableScenarioIds(
+  checkedIds: (string | null)[],
+  errorCounts: Map<string | null, number>,
+): (string | null)[] {
+  return checkedIds.filter((id) => (errorCounts.get(id) ?? 0) === 0);
+}
