@@ -51,14 +51,31 @@ export interface RowMenuItem {
 
 const MENU_WIDTH = 210;
 const VIEWPORT_MARGIN = 8;
+/** Distance between the trigger and the menu it opens. */
+const TRIGGER_GAP = 4;
+
+/**
+ * Where the menu sits relative to its trigger.
+ *
+ * - `bottom-end` — below, right edges aligned. The default, for a menu at the
+ *   end of a row where dropping downward is the obvious motion.
+ * - `right-start` — beside, top edges aligned. For a trigger in a header
+ *   above a list, where opening downward would cover the very rows the menu
+ *   acts on.
+ *
+ * Both flip when the preferred side would leave the viewport.
+ */
+export type RowMenuPlacement = "bottom-end" | "right-start";
 
 export function RowMenu({
   items,
   label = "More actions",
+  placement = "bottom-end",
 }: {
   items: RowMenuItem[];
   /** Accessible name for the trigger. */
   label?: string;
+  placement?: RowMenuPlacement;
 }) {
   const [open, setOpen] = useState(false);
   // Stable identity: `exclusiveOpen` recognises a holder by this reference,
@@ -68,22 +85,42 @@ export function RowMenu({
   const menuRef = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
 
-  // Position against the trigger's viewport rect, flipping above it when the
-  // menu would otherwise run off the bottom of the window.
+  // Position against the trigger's viewport rect, flipping to the opposite
+  // side when the preferred one would leave the window.
   useLayoutEffect(() => {
     if (!open || !triggerRef.current) return;
     const rect = triggerRef.current.getBoundingClientRect();
     const height = menuRef.current?.offsetHeight ?? 0;
-    const below = rect.bottom + 4;
+
+    if (placement === "right-start") {
+      const beside = rect.right + TRIGGER_GAP;
+      const fits = beside + MENU_WIDTH <= window.innerWidth - VIEWPORT_MARGIN;
+      setPos({
+        // Top-aligned with the trigger, then pulled up only as far as
+        // staying on screen requires.
+        top: Math.max(
+          VIEWPORT_MARGIN,
+          Math.min(rect.top, window.innerHeight - height - VIEWPORT_MARGIN),
+        ),
+        left: fits
+          ? beside
+          : Math.max(VIEWPORT_MARGIN, rect.left - MENU_WIDTH - TRIGGER_GAP),
+      });
+      return;
+    }
+
+    const below = rect.bottom + TRIGGER_GAP;
     const flip = below + height > window.innerHeight - VIEWPORT_MARGIN;
     setPos({
-      top: flip ? Math.max(VIEWPORT_MARGIN, rect.top - height - 4) : below,
+      top: flip
+        ? Math.max(VIEWPORT_MARGIN, rect.top - height - TRIGGER_GAP)
+        : below,
       left: Math.min(
         rect.right - MENU_WIDTH,
         window.innerWidth - MENU_WIDTH - VIEWPORT_MARGIN,
       ),
     });
-  }, [open]);
+  }, [open, placement]);
 
   // Hold the exclusive slot for exactly as long as this menu is open, and
   // give it up on unmount so a closing row cannot block the next menu.

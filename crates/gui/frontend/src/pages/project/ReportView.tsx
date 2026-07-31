@@ -414,6 +414,10 @@ export function ReportView() {
               </button>
               <RowMenu
                 label="Section actions"
+                // Beside the trigger rather than below it: this menu sits in
+                // the Sections header, and dropping downward would cover the
+                // outline it acts on.
+                placement="right-start"
                 items={[
                   {
                     label: "Use recommended order",
