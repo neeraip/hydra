@@ -666,15 +666,19 @@ export function ReportView() {
                     onSelect: () => setSections([]),
                   },
                   {
-                    // Named for what it does rather than "defaults": this
-                    // restores the whole catalog, which is a fixed thing, and
-                    // is deliberately NOT filtered by what the current run can
-                    // produce. Availability is empty until a run is probed, so
-                    // a run-aware reset would empty the report on exactly the
-                    // project most likely to reach for it — and "defaults"
-                    // would name something that changed with the network.
-                    label: "Reset report to every section",
-                    detail: "In recommended order, with no custom settings",
+                    // Named for the fact that it discards, which is what
+                    // separates it from everything above: each of those does
+                    // exactly one of membership, order or settings, and this
+                    // does all three. Naming it after the sections it restores
+                    // made it echo "Add every section", whose whole point is
+                    // that it keeps the arrangement and settings this wipes.
+                    //
+                    // Deliberately NOT filtered by what the run can produce:
+                    // availability is empty until a run is probed, so a
+                    // run-aware reset would empty the report on exactly the
+                    // project most likely to reach for it.
+                    label: "Reset the whole report",
+                    detail: "Every section, recommended order, no settings",
                     danger: true,
                     disabled: atEverySection,
                     disabledReason:
