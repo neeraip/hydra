@@ -55,6 +55,7 @@ Example:
 |---|---|---|
 | `io/fetch` | Failed to read the input file or URL | `1` (4xx / not found) or `3` (5xx / network) |
 | `input/format` | Unrecognised input file format | `1` |
+| `input/engine` | The file is a sound `.inp` model, but another engine's — see [Foreign `.inp` dialects](inp-format.md#foreign-inp-dialects) | `1` |
 | `input/parse` | `.inp` parse error (bad field, duplicate ID, syntax at a line) | `1` |
 | `validation/network` | Network validation failed (one line per violation) | `1` |
 | `solver/hydraulic` | The hydraulic solver failed | `2` |

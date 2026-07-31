@@ -42,7 +42,9 @@ contents — `wds` and `uds` both read `.inp`, one an EPANET model and one a SWM
 model. An extension is therefore a file-picker filter, never a validity test:
 only the owning engine's parser can decide whether a file really is one of its
 models. Hydra rejects a mismatched model explicitly rather than loading a
-stormwater network as a plausible-looking pressurised one.
+stormwater network as a plausible-looking pressurised one — see
+[Foreign `.inp` dialects](reference/inp-format.md#foreign-inp-dialects) for what
+that rejection looks like in the CLI, the GUI, and the SDK.
 
 The same separation runs through the codebase. `hydra-common` holds only what
 every engine shares — engine identity and the reportable-output contract — and

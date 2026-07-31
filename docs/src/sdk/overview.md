@@ -67,7 +67,7 @@ use hydra_sdk::io;
 
 | Function / module | Purpose |
 |---|---|
-| `io::parse(&bytes)` | Parse EPANET `.inp` bytes into a `Network`, failing if the result would not be simulable |
+| `io::parse(&bytes)` | Parse EPANET `.inp` bytes into a `Network`, failing if the result would not be simulable. Match `io::ReadError::ForeignDialect` separately: it means the bytes are another engine's model, not a bad file — see [Foreign `.inp` dialects](../reference/inp-format.md#foreign-inp-dialects) |
 | `io::parse_tolerant(&bytes)` | Parse and return the `Network` **with** its validation errors instead of failing — for editors and inspectors that must show an invalid model. A non-empty error list means it must not be simulated |
 | `io::write_inp(&network)` | Serialise a `Network` back to `.inp` bytes |
 | `io::rpt_writer::build_text_report(&sim)` | Build a plain-text `.rpt` report string |
@@ -84,7 +84,8 @@ use hydra_sdk::common;
 
 Every Hydra engine publishes an immutable descriptor. Applications resolve a
 project's stored engine key against the registry rather than hardcoding
-names, colours, or file filters.
+names, colours, or file filters. See [Engines](../engines.md) for the current
+roster and what `Planned` means in practice.
 
 | Type / function | Purpose |
 |---|---|

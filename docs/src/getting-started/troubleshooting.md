@@ -41,6 +41,16 @@ sudo apt install libfuse2
 sudo dnf install fuse-libs
 ```
 
+### "This is a SWMM model, not a water-distribution one"
+
+The `.inp` extension is shared by EPANET and SWMM, so a file picker cannot tell
+them apart — only the parser can. Hydra detected a section the EPANET data model
+has no concept of and stopped rather than misreading the file.
+
+Nothing is wrong with the file. It belongs to the urban drainage engine, which
+is [planned but not yet implemented](../engines.md), so Hydra cannot open it
+today. See [Foreign `.inp` dialects](../reference/inp-format.md#foreign-inp-dialects).
+
 ### Canvas features disappear after changing basemap
 
 This should not happen in current releases, but if the map style reload fails on a specific GPU/driver stack, try:
@@ -84,6 +94,7 @@ Hydra could not read or parse the network file. Common causes:
 - The file path is wrong or the file does not exist.
 - The `.inp` file contains a syntax error. Check the report for the specific line.
 - A URL was provided but the server returned 4xx. Verify the URL is accessible.
+- The file is a **SWMM** `.inp`, not an EPANET one — the diagnostic code is `input/engine` rather than `input/parse`. The file is fine; it belongs to an engine Hydra does not yet ship. See [Foreign `.inp` dialects](../reference/inp-format.md#foreign-inp-dialects).
 
 ### Exit code 2 — Solver did not converge
 

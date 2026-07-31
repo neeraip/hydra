@@ -55,6 +55,37 @@ An `[END]` marker, if present, terminates parsing: any content after the first `
 
 ---
 
+## Foreign `.inp` dialects
+
+The `.inp` extension is not exclusive to EPANET — SWMM uses it too, for a wholly
+different data model. Because the water distribution engine ignores sections it
+does not recognise (above), a SWMM file would otherwise parse "successfully"
+into a network of junctions carrying each node's maximum depth as its demand,
+joined by no links at all: a wrong answer wearing the costume of a right one.
+
+So the parser rejects a foreign dialect up front, before any network is built.
+The test is **positive only** — it fires on the presence of a section EPANET has
+no concept of, never on the absence of one EPANET expects, because a valid
+EPANET model is not required to contain any particular section. The markers are
+a fixed list of SWMM-only section names (`[SUBCATCHMENTS]`, `[CONDUITS]`,
+`[OUTFALLS]`, `[RAINGAGES]`, `[INFILTRATION]`, `[POLLUTANTS]`, `[XSECTIONS]`,
+and roughly two dozen more), matched on the upper-cased name.
+
+This is reported as an **engine mismatch, not a bad file** — the same bytes may
+be a flawless model in the tool that owns them:
+
+| Surface | Behaviour |
+|---|---|
+| CLI | Diagnostic code `input/engine`, exit code `1`: *this is a SWMM model, not an EPANET one (it declares a `[SUBCATCHMENTS]` section)* |
+| GUI | An engine-mismatch message naming the tool and telling you to open it with that engine |
+| SDK | `io::ReadError::ForeignDialect { tool, section }` — matchable separately from every other read error, so an application offering several engines can route the file instead of rejecting it |
+
+Once the [urban drainage engine](../engines.md) lands, such a file becomes
+openable rather than merely diagnosable. Until then the message names an engine
+Hydra cannot yet run.
+
+---
+
 ## OPTIONS Keywords
 
 The `[OPTIONS]` keywords listed below are parsed and applied. A few EPANET keywords are not parsed — notably `PRESSURE` (pressure display units) and `MAP` — and any unknown keyword is silently ignored.
