@@ -10,7 +10,7 @@ use crate::document::{ReportDocument, Section};
 const STYLE: &str = "\
 :root { color-scheme: light; }
 body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-       margin: 2.5rem auto; max-width: 46rem; padding: 0 1.5rem;
+       margin: 2.5rem auto; padding: 0 1.5rem;
        color: #1a222c; line-height: 1.5; }
 header { border-bottom: 2px solid #1a222c; margin-bottom: 1.5rem; padding-bottom: 0.75rem; }
 h1 { font-size: 1.5rem; margin: 0 0 0.5rem; }
@@ -30,7 +30,7 @@ figure.chart { margin: 0.8rem 0; }
 figure.chart svg { max-width: 100%; height: auto; }
 p.placeholder { font-style: italic; color: #8a6d1f; background: #fdf6e3;
                 border: 1px solid #e8dcb5; border-radius: 4px; padding: 0.4rem 0.6rem; }
-@media print { body { margin: 0; max-width: none; } }
+@media print { body { margin: 0; } }
 ";
 
 /// Render the document as a self-contained HTML page (spec §4.4).
