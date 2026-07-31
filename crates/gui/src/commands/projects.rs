@@ -1686,6 +1686,104 @@ pub fn updater_supported() -> bool {
 
 #[cfg(test)]
 mod tests {
+    // ── Frontend registry mirror ─────────────────────────────────────────────
+
+    /// The frontend keeps `FALLBACK_ENGINES`, a hand-written copy of the
+    /// registry, for when it runs outside a Tauri shell (plain `vite` dev
+    /// server) and `list_engines` is unreachable. Nothing makes the copy
+    /// follow the original, so an engine renamed, recoloured, or flipped to
+    /// available in Rust would silently keep its old identity in dev — the
+    /// exact per-engine hardcoding the registry exists to abolish, reintroduced
+    /// one layer up.
+    ///
+    /// Rust is the source of truth; this fails the build when the mirror drifts.
+    #[test]
+    fn frontend_fallback_registry_mirrors_the_rust_registry() {
+        let ts = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/frontend/src/hooks/engines.ts"
+        ))
+        .expect("frontend engines.ts is readable");
+        // Bound the slice to the array literal: everything after it also
+        // contains `key:` and would inflate the count guard below.
+        let after = ts
+            .split("export const FALLBACK_ENGINES")
+            .nth(1)
+            .expect("FALLBACK_ENGINES is declared");
+        let end = after
+            .find("\n];")
+            .expect("FALLBACK_ENGINES array is closed");
+        let fallback = &after[..end];
+
+        // Slice the array into one block per engine, so a value can be
+        // attributed to the engine that declares it. Checking the whole array
+        // for `"planned"` would pass while the wrong engine carried it — with
+        // three engines present the string is in the text either way.
+        let block_for = |key: &str| -> String {
+            let start = fallback
+                .find(&format!("key: \"{key}\""))
+                .unwrap_or_else(|| panic!("engine {key:?} is missing from FALLBACK_ENGINES"));
+            let rest = &fallback[start + 1..];
+            let end = rest
+                .find("key: \"")
+                .map_or(fallback.len(), |e| start + 1 + e);
+            fallback[start..end].to_string()
+        };
+
+        for engine in hydra::common::ENGINES {
+            let block = block_for(engine.key);
+            let status = if engine.is_available() {
+                "available"
+            } else {
+                "planned"
+            };
+            for (field, value) in [
+                ("label", engine.label.to_string()),
+                ("pill", engine.pill.to_string()),
+                ("accent", engine.accent.to_string()),
+                ("status", status.to_string()),
+            ] {
+                assert!(
+                    block.contains(&format!("\"{value}\"")),
+                    "engine {:?}: {field} should be {value:?} in FALLBACK_ENGINES \
+                     (frontend/src/hooks/engines.ts) to match the Rust registry",
+                    engine.key,
+                );
+            }
+            // Summaries wrap across lines in the TS source, so compare on a
+            // distinctive opening slice rather than the whole string.
+            let head: String = engine
+                .summary
+                .split_whitespace()
+                .take(4)
+                .collect::<Vec<_>>()
+                .join(" ");
+            assert!(
+                block.contains(&head),
+                "engine {:?}: summary should start {head:?} in FALLBACK_ENGINES",
+                engine.key,
+            );
+            for format in engine.import {
+                for ext in format.extensions {
+                    assert!(
+                        block.contains(&format!("\"{ext}\"")),
+                        "engine {:?}: import extension {ext:?} is missing from FALLBACK_ENGINES",
+                        engine.key,
+                    );
+                }
+            }
+        }
+
+        // Count guard: the loop above cannot notice an engine the mirror has
+        // but the registry does not.
+        let mirrored = fallback.matches("key:").count();
+        assert_eq!(
+            mirrored,
+            hydra::common::ENGINES.len(),
+            "FALLBACK_ENGINES lists {mirrored} engines, the registry has {}",
+            hydra::common::ENGINES.len(),
+        );
+    }
 
     #[test]
     fn meta_with_removed_description_field_still_parses() {
