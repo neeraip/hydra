@@ -1,11 +1,12 @@
 # Post-Simulation Analytics
 
-After a run, Hydra can derive higher-level metrics from the saved results. There are two distinct surfaces:
+After a run, Hydra can derive higher-level metrics from the saved results. There are three surfaces:
 
 - **Programmatic analytics** (SDK) — two on-demand modules, *demand reliability* and *service compliance*, that read a saved `.out` file and return a structured report.
+- **Report blocks** (SDK) — a catalog of named, self-contained content blocks that render into txt/csv/html/PDF documents. Several of them are built *on* the two modules above, which is how those metrics reach a generated report. See [SDK Overview](../sdk/overview.md#reports).
 - **The GUI Analysis tab** — an interactive dashboard computed separately from the same results.
 
-These are independent: the GUI Analysis tab does **not** call the two SDK modules, and the SDK modules are not exposed by the CLI. Use the SDK for reliability/compliance reports in your own code; use the GUI for interactive exploration.
+The CLI exposes none of the three. The GUI uses report blocks for its generated reports, but its Analysis tab computes its own dashboard rather than calling the two modules directly.
 
 ---
 
@@ -67,7 +68,7 @@ The **Analysis** tab computes its own dashboard from the scenario's results (a h
 | Panel | Shows |
 |---|---|
 | **System Summary** | Metric chips: minimum pressure (and where), maximum velocity (and where), a pressure-compliance percentage, total pump energy, and mass-balance closure |
-| **Histograms** | Distribution of per-node minimum pressure and per-link maximum velocity across the network |
+| **Histograms** | Distribution of per-junction minimum pressure and per-**pipe** maximum velocity. Pumps and valves are excluded from the velocity population — they have no pipe velocity, and counting them would bank a spurious zero each |
 | **Pipe Criticality** | The top pipes ranked by peak velocity, with diameter and end nodes |
 | **Audit Panels** | Mass-balance audit (cumulative inflow/outflow, closure, trend) and energy audit (pump energy, specific energy, peak power) |
 | **Tank Levels** | Per-tank head over the simulation horizon |
@@ -77,8 +78,8 @@ The **Analysis** tab computes its own dashboard from the scenario's results (a h
 
 ## Availability
 
-| Surface | Demand reliability / service compliance | GUI Analysis dashboard |
-|---|---|---|
-| SDK (`hydra-sdk`) | ✅ | — |
-| CLI | ❌ (not exposed) | — |
-| GUI | ❌ (uses its own dashboard) | ✅ |
+| Surface | Reliability / compliance modules | Report blocks | GUI Analysis dashboard |
+|---|---|---|---|
+| SDK (`hydra-sdk`) | ✅ direct | ✅ | — |
+| CLI | ❌ | ❌ | — |
+| GUI | ✅ via report blocks | ✅ | ✅ |

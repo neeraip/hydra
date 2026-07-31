@@ -67,7 +67,8 @@ use hydra_sdk::io;
 
 | Function / module | Purpose |
 |---|---|
-| `io::parse(&bytes)` | Parse EPANET `.inp` bytes into a `Network` |
+| `io::parse(&bytes)` | Parse EPANET `.inp` bytes into a `Network`, failing if the result would not be simulable |
+| `io::parse_tolerant(&bytes)` | Parse and return the `Network` **with** its validation errors instead of failing — for editors and inspectors that must show an invalid model. A non-empty error list means it must not be simulated |
 | `io::write_inp(&network)` | Serialise a `Network` back to `.inp` bytes |
 | `io::rpt_writer::build_text_report(&sim)` | Build a plain-text `.rpt` report string |
 | `io::rpt_writer::build_json_report(&sim)` | Build a JSON report string |
@@ -123,5 +124,6 @@ nothing about engines.
 Beyond the tables above, `hydra-sdk` re-exports several supporting items:
 
 - **Version constants** — `HYDRA_VERSION` and the per-subsystem `HYDRA_*_VERSION` strings.
-- **Runtime estimation** — `estimate_simulation_runtime`, `estimate_simulation_runtime_from_summary`, `RuntimeEstimate`, and the analysis-side `estimate_analysis_runtime_millis`.
+- **Runtime estimation** — `estimate_simulation_runtime`, `estimate_simulation_runtime_from_summary`, `RuntimeEstimate`, and the analysis-side `estimate_analysis_runtime_millis`. The millisecond-level forms `estimate_simulation_runtime_millis_from_summary` and `classify_simulation_runtime_millis` are also available when you want the raw prediction or the bucketing separately.
+- **Threshold binning** — `threshold_bands(values, edges)` counts values into the bands defined by ascending edges, with the outer two unbounded so nothing is dropped. It is the same binning the `wds.*-thresholds` report blocks use, so an interface presenting that view counts identically.
 - **Analysis artifacts** — `build_analysis_artifact` (and `*_from_out` / `*_with_progress` / `*_with_progress_and_selection` variants), `encode_analysis_artifact`, `decode_analysis_artifact`, `AnalysisSelection`, `AnalysisComputeError`, `AnalysisBytesError`.

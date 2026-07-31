@@ -26,15 +26,15 @@ See [INP Format Support](inp-format.md) for the full section-by-section referenc
 
 Hydra and EPANET solve the same physics using the same Global Gradient Algorithm, but they follow independent numerical paths. On most networks you will see differences of less than 0.1% in head and flow values. These are not bugs; they are the expected consequence of floating-point arithmetic being non-associative.
 
-The practical impact depends on network topology:
+The practical impact depends on network topology. Simple, stable networks with
+few controls and no quality agree to well within a rounding error. Differences
+grow with the number of demand nodes and control switches, because a step that
+lands either side of a control threshold changes what happens next.
 
-| Network type | Typical difference |
-|---|---|
-| Simple, stable (few controls, no quality) | < 0.01% (effectively zero) |
-| Medium complexity (KY8/KY9/KY10 scale) | 3–4 individual node/link values at t=0 |
-| Large with quality simulation (D-Town scale) | Flow differences at t=0 can cascade into quality concentration drift of 1–2 orders of magnitude over 100+ periods |
-
-Quality results are more sensitive than hydraulic results because transport errors accumulate over time. If your workflow depends on sub-percent quality agreement with EPANET output, treat both results as independent estimates of the same physical system; neither is more "correct" than the other in an absolute sense.
+Quality results are the most sensitive, and for a structural reason rather than
+a numerical one: quality **integrates** the hydraulic solution. A flow
+difference too small to notice in heads is carried into transport, where it
+compounds across periods. If your workflow depends on sub-percent quality agreement with EPANET output, treat both results as independent estimates of the same physical system; neither is more "correct" than the other in an absolute sense.
 
 **Hydra's result is authoritative.** If you observe a difference and suspect a Hydra bug, open a [GitHub issue](https://github.com/neeraip/hydra/issues) with a minimal reproducer.
 
@@ -46,7 +46,15 @@ Quality results are more sensitive than hydraulic results because transport erro
 
 EPANET halts the simulation when a hydraulic step does not converge within the configured iteration limit (`UNBALANCED STOP`). Hydra honours this setting: when a hydraulic step is genuinely unbalanced (fails to converge), Hydra also halts and records an `UnbalancedHydraulics` warning. The `UNBALANCED CONTINUE N` option is also supported.
 
-In practice this rarely matters, because Hydra's solver is more robust than EPANET's and typically converges for steps where EPANET cannot. On the Richmond network, EPANET halts after 28 of 49 reporting periods; Hydra converges all 49 because it finds valid equilibria for those steps.
+Because the two engines follow independent numerical paths, the step at which
+non-convergence first occurs can differ — so the same model may halt at
+different periods, or converge throughout in one engine and stop partway in the
+other, even though both apply the same rule.
+
+There is a second, harder stop in both engines: if the linear system becomes
+singular and no control valve can be demoted to recover it, the run aborts with
+no result saved for that step. That differs from the unbalanced stop, which
+saves the failing step before ending.
 
 ### Quality timestep handling
 
