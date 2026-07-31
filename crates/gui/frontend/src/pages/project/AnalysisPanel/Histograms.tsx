@@ -1,4 +1,4 @@
-import type { ResultAnalytics } from "../../../hooks";
+import type { HistogramBucket, ResultAnalytics } from "../../../hooks";
 import {
   formatQty,
   type Quantity,
@@ -11,10 +11,9 @@ import { type BarEntry, HorizontalBarChart } from "./charts";
 
 // Histogram buckets arrive from the backend with fixed SI boundaries; only
 // the labels are converted for display — counts and bucket edges stay SI.
-// These must stay in step with PRESSURE_BINS / VELOCITY_BINS in the backend's
+// Labels are derived from the buckets themselves, so nothing here needs to
+// stay in step with PRESSURE_BINS / VELOCITY_BINS in the backend's
 // commands/results.rs.
-const PRESSURE_BIN_EDGES_M = [0, 10, 20, 30, 40, 50, 60];
-const VELOCITY_BIN_EDGES_MS = [0.1, 0.3, 0.6, 1.0];
 
 function fmtEdge(v: number, q: Quantity, sys: UnitSystem): string {
   const conv = toDisplay(v, q, sys);
@@ -24,28 +23,27 @@ function fmtEdge(v: number, q: Quantity, sys: UnitSystem): string {
     : conv.toFixed(1);
 }
 
-/** "< 0 m", "0–10 m", …, "≥ 60 m" (converted for the active display system).
- *  The leading below-zero bucket is where junctions in pressure deficit land;
- *  without it they were dropped from the chart entirely. */
-function pressureBinLabels(sys: UnitSystem): string[] {
-  const u = unitLabel("pressure", sys);
-  const e = PRESSURE_BIN_EDGES_M.map((v) => fmtEdge(v, "pressure", sys));
-  const labels: string[] = [`< ${e[0]} ${u}`];
-  for (let i = 0; i < e.length - 1; i += 1)
-    labels.push(`${e[i]}–${e[i + 1]} ${u}`);
-  labels.push(`≥ ${e[e.length - 1]} ${u}`);
-  return labels;
-}
-
-/** "< 0.1 m/s", …, "> 1.0 m/s" (converted for the active display system). */
-function velocityBinLabels(sys: UnitSystem): string[] {
-  const u = unitLabel("velocity", sys);
-  const e = VELOCITY_BIN_EDGES_MS.map((v) => fmtEdge(v, "velocity", sys));
-  const labels: string[] = [`< ${e[0]} ${u}`];
-  for (let i = 0; i < e.length - 1; i += 1)
-    labels.push(`${e[i]}–${e[i + 1]} ${u}`);
-  labels.push(`> ${e[e.length - 1]} ${u}`);
-  return labels;
+/** Labels derived from the buckets the backend actually produced, rather than
+ *  from a copy of the band edges kept here.  The criteria live in one place
+ *  (the engine's threshold bands, analysis spec §7.1.2); duplicating them in
+ *  TypeScript meant a backend edge change silently mislabelled every bar.
+ *
+ *  The outer bands are unbounded — the leading bucket is where junctions in
+ *  pressure deficit land, and dropping it removed them from the chart
+ *  entirely — so they render as "< x" and "≥ y" from their finite side. */
+function binLabels(
+  buckets: HistogramBucket[],
+  q: Quantity,
+  sys: UnitSystem,
+  topPrefix: "≥" | ">",
+): string[] {
+  const u = unitLabel(q, sys);
+  return buckets.map((b, i) => {
+    if (i === 0) return `< ${fmtEdge(b.hi, q, sys)} ${u}`;
+    if (i === buckets.length - 1)
+      return `${topPrefix} ${fmtEdge(b.lo, q, sys)} ${u}`;
+    return `${fmtEdge(b.lo, q, sys)}–${fmtEdge(b.hi, q, sys)} ${u}`;
+  });
 }
 
 export function PressureHistogram({
@@ -84,7 +82,7 @@ export function PressureHistogram({
   }
 
   const { pressureHistogram, junctionCount } = analytics;
-  const labels = pressureBinLabels(sys);
+  const labels = binLabels(pressureHistogram, "pressure", sys, "≥");
   const maxCount = Math.max(...pressureHistogram.map((b) => b.count), 1);
   // Colour by the bucket's own range against the user's criterion, not by a
   // fixed index: a bucket entirely below the criterion is an error, one that
@@ -189,7 +187,7 @@ export function VelocityHistogram({
   }
 
   const { velocityHistogram, pipeCount } = analytics;
-  const labels = velocityBinLabels(sys);
+  const labels = binLabels(velocityHistogram, "velocity", sys, ">");
   const maxCount = Math.max(...velocityHistogram.map((b) => b.count), 1);
   // Colour by bucket index: stagnant / good / normal / normal / too fast.
   const fillByIndex = [
