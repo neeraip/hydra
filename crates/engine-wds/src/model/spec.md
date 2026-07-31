@@ -521,11 +521,13 @@ All three outcomes must remain distinguishable by the caller — not merely desc
 
 The parser must complete in **at most two sequential passes** over the input, with no re-reads.
 
-### 4.3 INP Format — EPANET 2.3 Compatibility
+### 4.3 INP Format — EPANET Compatibility
 
 The INP format is the plain-text network description format used by EPANET. Supporting it allows existing EPANET networks to be run with Hydra without conversion.
 
-**Supported version:** EPANET 2.3 only. Older EPANET file versions (2.0, 2.2) may use different section names, option keywords, or value encodings. Parsers should reject or warn on constructs not present in EPANET 2.3.
+**Supported version:** EPANET **2.x**. The format is specified against **EPANET 2.3**, whose complete section and keyword set is supported; 2.3 is the newest dialect understood, not a requirement the input must meet. Everything 2.3 added over earlier releases is optional — the `[LEAKAGE]` section (§2.6.2) and the `DISABLED` suffix on a control line — so an older 2.x file that uses none of them loads unchanged and runs.
+
+A construct the parse does not recognise is **skipped, never rejected**: unknown sections and unknown `[OPTIONS]` keywords are ignored (see the deviation notes at the end of this section), and a legacy section superseded by a later column — `[ROUGHNESS]`, whose values moved into the `[PIPES]` roughness column — is accepted as a no-op. Rejection is reserved for input that is not an EPANET model at all (§4.1.1), never for input that is merely older.
 
 **Supported sections:** all sections defined in the EPANET 2.3 input format — `[TITLE]`, `[JUNCTIONS]`, `[RESERVOIRS]`, `[TANKS]`, `[PIPES]`, `[PUMPS]`, `[VALVES]`, `[TAGS]`, `[DEMANDS]`, `[STATUS]`, `[PATTERNS]`, `[CURVES]`, `[CONTROLS]`, `[RULES]`, `[ENERGY]`, `[EMITTERS]`, `[QUALITY]`, `[REACTIONS]`, `[SOURCES]`, `[LEAKAGE]`, `[MIXING]`, `[OPTIONS]`, `[TIMES]`, `[REPORT]`, `[COORDINATES]`, `[VERTICES]`, `[LABELS]`, `[BACKDROP]`, `[END]`.
 

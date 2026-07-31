@@ -23,8 +23,9 @@
 //!   criteria to within the configured tolerances at every hydraulic time step.
 //! - **Physical conservation**: mass balance and energy balance hold across the
 //!   network to within floating-point precision.
-//! - **INP compatibility**: a valid EPANET 2.3 `.inp` file is parsed faithfully
-//!   and its network topology is represented without loss.
+//! - **INP compatibility**: a valid EPANET `.inp` file — any 2.x release, since
+//!   the constructs 2.3 added are optional — is parsed faithfully and its
+//!   network topology is represented without loss.
 //!
 //! Agreement with EPANET's numerical output is not a correctness criterion. On
 //! well-posed networks the two will agree closely because they solve the same

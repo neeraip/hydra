@@ -171,8 +171,11 @@ impl std::error::Error for ParseError {
 /// Parse a model file from raw bytes, returning a fully validated `Network`.
 ///
 /// Format detection is by content: if the first non-whitespace byte is `[` or
-/// `;` the input is treated as an EPANET 2.3 INP file. Anything else is an
-/// error.
+/// `;` the input is treated as an EPANET INP file. Anything else is an error.
+///
+/// Any EPANET 2.x dialect is accepted (model spec §4.3) — 2.3 is the newest
+/// understood, not a requirement — because unrecognised sections and option
+/// keywords are skipped rather than rejected.
 pub fn parse(bytes: &[u8]) -> Result<Network, ParseError> {
     match detect_format(bytes) {
         Some(()) => inp_reader::parse_inp(bytes),
