@@ -172,8 +172,10 @@ other renderers. All user text passes through string context — content
 can never inject markup. No creation timestamp is embedded, preserving
 byte-determinism for identical documents.
 
-**Pagination.** A section heading is never the last thing on a page: it
-is kept with the content that follows it. A table that continues onto a
+**Pagination.** Every page carries its number and the total in the bottom
+margin ("3 / 12"), so a page separated from the report still says where it
+belongs and whether any are missing. A section heading is never the last
+thing on a page: it is kept with the content that follows it. A table that continues onto a
 further page repeats its column header there.
 
 Neither guarantee stops a section spanning pages. A table longer than a

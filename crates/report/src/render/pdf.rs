@@ -31,6 +31,13 @@ impl std::fmt::Display for PdfError {
 
 impl std::error::Error for PdfError {}
 
+/// Page margin, in points. Named because the tests need to tell the body of a
+/// page from its margins — the page number lives in the bottom one — and a
+/// second copy of the number would stop matching the preamble the moment
+/// either moved.
+#[cfg(test)]
+const PAGE_MARGIN_PT: f64 = 2.0 * 28.346_456_692_913_385;
+
 /// Render the document as PDF bytes (spec §4.5).
 pub fn render_pdf(doc: &ReportDocument) -> Result<Vec<u8>, PdfError> {
     let (source, charts) = typst_source(doc);
@@ -78,7 +85,7 @@ fn typst_source(doc: &ReportDocument) -> (String, Vec<String>) {
     let mut charts: Vec<String> = Vec::new();
     let mut s = String::new();
     s.push_str(
-        "#set page(paper: \"a4\", margin: 2cm)\n\
+        "#set page(paper: \"a4\", margin: 2cm, numbering: \"1 / 1\")\n\
          #set text(size: 10pt)\n\
          #set table(stroke: 0.5pt + luma(180), inset: 5pt)\n\
          #show heading.where(level: 1): set text(size: 17pt)\n\
@@ -347,12 +354,21 @@ mod tests {
         out
     }
 
-    /// The bottom-most line of a page, reassembled from its runs.
+    /// The bottom-most line of a page's BODY, reassembled from its runs.
+    ///
+    /// Margins excluded, because the page number now sits in the bottom one:
+    /// including it would make the last line of every page the page number,
+    /// and the stranded-heading test below would pass without ever looking at
+    /// a heading.
     ///
     /// Whole lines, not runs: a run can be a single glyph, and asking whether
     /// a heading "contains" one matches a table cell holding the digit 3.
     fn bottom_line(frame: &typst::layout::Frame) -> String {
-        let runs = page_text(frame, typst::layout::Point::zero());
+        let body_bottom = frame.height().to_pt() - PAGE_MARGIN_PT;
+        let runs: Vec<(f64, f64, String)> = page_text(frame, typst::layout::Point::zero())
+            .into_iter()
+            .filter(|(y, _, _)| *y <= body_bottom)
+            .collect();
         let Some(bottom) = runs
             .iter()
             .map(|(y, _, _)| *y)
@@ -376,20 +392,9 @@ mod tests {
             .to_string()
     }
 
-    /// Spec §4.5: a section heading is never the last thing on a page.
-    ///
-    /// Typst already guarantees this — its heading show-set rule sets
-    /// `block.sticky`, and this passes with or without the explicit `sticky`
-    /// in our own show rule. The test is here for the guarantee, not for our
-    /// spelling of it: it would catch a Typst upgrade that changed the
-    /// default, or a rewrite of the heading rule that wrapped the heading in
-    /// a block that defeated it, which is the failure Typst's own docs warn
-    /// custom heading show rules about.
-    ///
-    /// Checked against the laid-out pages rather than the preamble string,
-    /// which would only restate the implementation.
-    #[test]
-    fn a_section_heading_is_never_stranded_at_the_foot_of_a_page() {
+    /// A document long enough to span pages, for the pagination tests. Uniform
+    /// sections, so a break can fall anywhere in the rhythm.
+    fn long_document() -> ReportDocument {
         // Enough sections of enough length to force several page breaks, so
         // that without the keep-with-next some heading would land last.
         let sections: Vec<Section> = (1..=14)
@@ -428,13 +433,59 @@ mod tests {
                 })
             })
             .collect();
-        let titles: Vec<String> = (1..=14).map(|n| format!("Section {n:02}")).collect();
-        let doc = ReportDocument {
+        ReportDocument {
             title: "Pagination".into(),
             generated_at: None,
             source: vec![],
             sections,
-        };
+        }
+    }
+
+    /// Spec §4.5: every page carries its number and the total.
+    #[test]
+    fn every_page_is_numbered() {
+        let doc = long_document();
+        let (source, charts) = typst_source(&doc);
+        let world = ReportWorld::new(source, charts);
+        let compiled: typst_layout::PagedDocument =
+            typst::compile(&world).output.expect("compiles");
+        let total = compiled.pages().len();
+        assert!(total > 1, "fixture no longer spans pages");
+
+        for (index, page) in compiled.pages().iter().enumerate() {
+            // The number lives in the bottom margin, which `bottom_line`
+            // deliberately excludes — so look at the whole page here.
+            let runs = page_text(&page.frame, typst::layout::Point::zero());
+            let text: String = {
+                let mut sorted = runs.clone();
+                sorted.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.total_cmp(&b.1)));
+                sorted.iter().map(|(_, _, t)| t.as_str()).collect()
+            };
+            let expected = format!("{} / {total}", index + 1);
+            assert!(
+                text.contains(&expected),
+                "page {} does not carry {expected:?}",
+                index + 1,
+            );
+        }
+    }
+
+    /// Spec §4.5: a section heading is never the last thing on a page.
+    ///
+    /// Typst already guarantees this — its heading show-set rule sets
+    /// `block.sticky`, and this passes with or without the explicit `sticky`
+    /// in our own show rule. The test is here for the guarantee, not for our
+    /// spelling of it: it would catch a Typst upgrade that changed the
+    /// default, or a rewrite of the heading rule that wrapped the heading in
+    /// a block that defeated it, which is the failure Typst's own docs warn
+    /// custom heading show rules about.
+    ///
+    /// Checked against the laid-out pages rather than the preamble string,
+    /// which would only restate the implementation.
+    #[test]
+    fn a_section_heading_is_never_stranded_at_the_foot_of_a_page() {
+        let doc = long_document();
+        let titles: Vec<String> = (1..=14).map(|n| format!("Section {n:02}")).collect();
 
         let (source, charts) = typst_source(&doc);
         let world = ReportWorld::new(source, charts);
