@@ -2,7 +2,7 @@
 
 ## 1. Overview
 
-This document is the simulation sub-specification for `hydra-engine`. It defines the control system (§4), time stepper (§5), accounting subsystem (§7), and session API (§8), and references the hydraulic (§3) and quality (§6) subsystem sub-specifications in [hydraulics spec](../hydraulics/spec.md) and [quality spec](../quality/spec.md). It also documents solver characteristics relative to EPANET (§9) and an EPANET comparison reference (§10).
+This document is the simulation sub-specification for `hydra-engine`. It defines the control system (§4), time stepper (§5), accounting subsystem (§7), and session API (§8), and references the hydraulic (§3) and quality (§6) subsystem sub-specifications in [hydraulics spec](../hydraulics/spec.md) and [quality spec](../quality/spec.md). It also documents solver characteristics relative to EPANET (§9).
 
 The network data model consumed by all subsystems is defined in [model spec](../model/spec.md). Hydraulic algorithm details are specified in [hydraulics spec](../hydraulics/spec.md), and quality algorithm details are specified in [quality spec](../quality/spec.md). Throughout this document, bare references to §2 and its sub-sections (e.g., §2.1, §2.7) refer to `../model/spec.md`. For the system-level description of physical scope, see [`README.md`](../../../../README.md); for the unit system contract, see [model spec](../model/spec.md#3-unit-system).
 
@@ -141,9 +141,9 @@ $$\Delta t = \min\!\left(\Delta t_h,\ \Delta t_{\text{report}},\ \Delta t_{\text
 | Term | Definition |
 |---|---|
 | $\Delta t_h$ | User-specified nominal hydraulic time step |
-| $\Delta t_{\text{report}}$ | Time remaining until the next reporting instant. Report instants fall at $t_{\text{rstart}} + k\cdot\Delta t_{\text{rep}}$ (offset by `report_start`, mirroring how the pattern term is offset by `pattern_start`): $\bigl(t_{\text{rstart}} + \lceil (t - t_{\text{rstart}})/\Delta t_{\text{rep}}\rceil\,\Delta t_{\text{rep}}\bigr) - t$, or $t_{\text{rstart}} - t$ before the first instant |
+| $\Delta t_{\text{report}}$ | Time remaining until the next reporting instant. Report instants fall at $t_{\text{rstart}} + k\cdot\Delta t_{\text{rep}}$ (offset by `report_start`, mirroring how the pattern term is offset by `pattern_start`): $\bigl(t_{\text{rstart}} + \lceil (t - t_{\text{rstart}})/\Delta t_{\text{rep}}\rceil\,\Delta t_{\text{rep}}\bigr) - t$, or $t_{\text{rstart}} - t$ before the first instant. When $t$ lands exactly on a reporting instant the expression is zero; the term is then a **full** $\Delta t_{\text{rep}}$, since the boundary sought is the strictly next one |
 | $\Delta t_{\text{tank}}$ | Minimum over all tanks of the time to reach a level limit at the current net flow rate: $\min_{\text{tanks}} \Delta V_{\text{available}} / \lvert Q_{\text{net}} \rvert$ (tanks with $\lvert Q_{\text{net}} \rvert \leq Q_{\text{zero}}$ are skipped; $\Delta t_h$ if no tank qualifies). $Q_{\text{zero}} = 10^{-6}$ m³/s is the negligible-flow threshold (the same value as $Q_0$ in `../hydraulics/spec.md` §3.10); its SI value relative to EPANET's $10^{-6}$ ft³/s is covered by the DEVIATION note in `../hydraulics/spec.md` §3.9 |
-| $\Delta t_{\text{pattern}}$ | Time remaining until the next pattern boundary: $\lceil (t + t_{\text{pstart}}) / \Delta t_p \rceil \cdot \Delta t_p - t - t_{\text{pstart}}$ |
+| $\Delta t_{\text{pattern}}$ | Time remaining until the next pattern boundary: $\lceil (t + t_{\text{pstart}}) / \Delta t_p \rceil \cdot \Delta t_p - t - t_{\text{pstart}}$. As with the reporting term, this is zero whenever $t + t_{\text{pstart}}$ is an exact multiple of $\Delta t_p$ — including $t = 0$ — and the term is then a **full** $\Delta t_p$. Without that guard the step would collapse to zero at every pattern boundary |
 | $\Delta t_{\text{control}}$ | Shortest time until a simple control fires (§5.2.1) |
 | $t_{\text{duration}} - t$ | Time remaining until end of simulation |
 
@@ -279,13 +279,13 @@ where $k_{\text{unit}}$ is the conversion factor from internal power units to kW
 
 $$W_p = 1000 \times 9.81 \times 0.05 \times 20 = 9{,}810 \;\text{W}$$
 $$W_{\text{elec},p} = 9810 / 0.75 = 13{,}080 \;\text{W}$$
-$$\Delta\,\text{kWh} = 13{,}080 \times 3600 \times 10^{-3} = 47{,}088 \;\text{kWh} / 3600 = 13.08 \;\text{kWh}$$
+$$\Delta\,\text{kWh} = \frac{13{,}080 \;\text{W} \times 3600 \;\text{s}}{3.6 \times 10^{6} \;\text{J/kWh}} = 13.08 \;\text{kWh}$$
 
 **Example (US customary):** same pump ($Q_p = 1.766$ ft³/s, $\Delta H_p = 65.6$ ft, $\rho = 1.940$ slug/ft³, $g = 32.174$ ft/s², same $\eta_p$ and $\Delta t$):
 
 $$W_p = 1.940 \times 32.174 \times 1.766 \times 65.6 \approx 7{,}229 \;\text{ft·lb/s}$$
 $$W_{\text{elec},p} = 7229 / 0.75 \approx 9{,}639 \;\text{ft·lb/s}$$
-$$\Delta\,\text{kWh} = 9{,}639 \times 3600 \times 1.356 \times 10^{-3} \approx 13.08 \;\text{kWh} \checkmark$$
+$$\Delta\,\text{kWh} = \frac{9{,}639 \times 1.356 \;\text{W} \times 3600 \;\text{s}}{3.6 \times 10^{6} \;\text{J/kWh}} \approx 13.07 \;\text{kWh} \checkmark$$
 
 **Energy cost** $\text{price}(t)$ at time $t$ ($/kWh) is determined as follows:
 
@@ -363,10 +363,23 @@ The "Dimension" column gives the physical quantity; the unit in which it is deli
 | Flow rate | volume/time | §3 |
 | Mean velocity | length/time | §3 |
 | Unit head loss | length/length | §3 |
-| Friction factor | dimensionless | §3 (Darcy-Weisbach only; else 0) |
+| Friction factor | dimensionless | §3 (derived — see below) |
 | Quality | mass/volume, time, or dimensionless | §6 |
 | Status | enum | §3 |
 | Setting | dimensionless (pump speed) or length (pressure setting) | §3 |
+
+**Friction factor** is a *derived* reporting quantity, not a solver input, and is
+produced for **every pipe whatever head-loss formula is active** — not only
+Darcy-Weisbach. It is back-computed from the head loss the solve actually
+produced, by inverting the Darcy-Weisbach relation:
+
+$$f = \frac{2 g D^{5} \pi^{2}}{16}\cdot\frac{|H_{\text{from}} - H_{\text{to}}|}{L\,Q^{2}}$$
+
+so under Hazen-Williams or Chezy-Manning it reports the equivalent
+Darcy-Weisbach friction factor that would reproduce the observed loss. It is
+zero for non-pipe links (pumps, valves) and for pipes carrying negligible flow,
+those being the cases where the inversion is undefined rather than cases where
+the quantity is suppressed.
 
 **Status annotations (output-only)**: the following status values are computed at reporting time and do not influence the hydraulic solve:
 
@@ -424,7 +437,7 @@ get_mass_balance(session) → MassBalance
 get_flow_balance(session) → FlowBalance
 
 // ── Output serialization ──
-write_binary_output(session, writer, // serialize results to binary format (spec.md §4.3 output)
+write_binary_output(session, writer, // serialize results to binary format (model spec §4.5)
 input_name, // input filename (metadata for prolog)
 report_name, // report filename (metadata for prolog)
 output_units) // flow-unit variant for result values in the output file
@@ -466,9 +479,16 @@ All errors and warnings must be accessible programmatically (not only as printed
 
 ---
 
-## 9. Solver Characteristics and EPANET Comparison
+## 9. Solver Characteristics
 
-Hydra has been exercised against eight real-world hydraulic networks totalling 12,500+ junctions and up to 2,000 demand periods. The following characteristics explain all observed differences between Hydra and EPANET 2.3.5 output. They are properties of Hydra's solver — not bugs, and not deviations from a standard.
+Hydra and EPANET implement the same physics, and on well-posed networks they
+agree closely. Where results differ, the difference is attributable to one of
+the characteristics below. These are properties of Hydra's solver — not bugs,
+and not deviations from a standard.
+
+Specific magnitudes are deliberately not quoted. Both engines' accuracy and
+performance have moved independently, so any particular measured difference
+dates quickly and a specification is the wrong place to pin one.
 
 **Note conventions.** Throughout all sub-specifications, two blockquote note types mark Hydra's relationship to EPANET (the OWA v2.3.5 baseline):
 
@@ -479,12 +499,7 @@ Hydra has been exercised against eight real-world hydraulic networks totalling 1
 
 **System**: EPANET and Hydra both implement the Global Gradient Algorithm (GGA), but starting from different initial flow estimates and applying convergence tolerances independently, they may converge to numerically distinct equilibrium points that differ by 1–10 ULPs in head/flow values.
 
-**Observed consequence**: In heterogeneous networks with many demand nodes (e.g., D-Town 407 junctions), initial flow disparities at t=0 (0.05–0.11 CFS for individual pipes) cascade through subsequent hydraulic time steps and quality transport phases, resulting in downstream quality concentration drifts of 1–2 orders of magnitude when integrated over 100+ periods.
-
-**Impact**: 
-
-- D-Town: ~1,800 flow/head mismatches at t=0 leading to 29,244 cascading quality failures
-- KY8/KY9/KY10: 3–4 small failures per network at t=0
+**Consequence**: in heterogeneous networks with many demand nodes, small initial flow disparities cascade through subsequent hydraulic time steps and into quality transport, where they compound — quality is an integrator, so a difference too small to see in heads can become visible in concentrations over a long run.
 
 **Verdict**: Correct. These differences are inherent to the numerical path — floating-point arithmetic is not associative, and no amount of re-engineering the solver can guarantee byte-level agreement with EPANET's specific convergence trajectory without essentially replicating EPANET's C code line-for-line (including its precision choices, f32 truncations, and sparse matrix libraries). Hydra's GGA convergence path is its own authoritative solution.
 
@@ -499,58 +514,52 @@ Hydra has been exercised against eight real-world hydraulic networks totalling 1
 - `extra_iter` $\geq 0$: a non-convergence warning is attached to the step and the simulation continues, using the unbalanced solution (after the frozen-status extra iterations, if any) — see §8.4.
 - `extra_iter` $= -1$: the non-convergence warning is attached, the step's results are recorded as usual, and the simulation then terminates. No further steps are taken; already-recorded results remain available through the session API (§8.2). This matches EPANET's save-then-halt ordering: the unbalanced step's results appear in the output, and nothing after it does.
 
-**Observed consequence**: because the two engines' iteration trajectories differ (§9.1), the *step at which* non-convergence first occurs can differ, so an `UNBALANCED STOP` run may terminate at different periods in each engine even though both apply the same halt rule.
+**Consequence**: because the two engines' iteration trajectories differ (§9.1), the *step at which* non-convergence first occurs can differ. An `UNBALANCED STOP` run may therefore terminate at a different period in each engine even though both apply the same halt rule — and where one engine converges throughout, it never halts at all while the other stops partway and leaves the remaining periods unwritten.
 
-- Richmond network: Hydra computes 49 periods of full convergence; EPANET halts after 28 periods on a step its solver could not balance. The last 21 periods in EPANET's output file are empty or filled with earlier values; Hydra, converging at every step, never triggers the halt and continues with physically valid equilibria.
+**A second, harder stop path** exists in both engines and is not the one above.
+When Cholesky factorisation breaks down and the failing row does **not** belong to
+an active control valve — so the [hydraulics spec](../hydraulics/spec.md) §3.6
+valve-demotion recovery cannot apply — the
+solve is unrecoverable. EPANET returns its cannot-solve error, which its
+error-propagation macro treats as fatal (only codes above its warning band
+short-circuit the extended-period loop); Hydra returns the equivalent solver
+error from the session. The two stop paths differ observably and should not be
+conflated:
 
-**Verdict**: Correct. The halt rule itself is identical; divergent halt points are a downstream effect of the §9.1 numerical-path differences, not a behavioural deviation.
+| | Trigger | Failing step's results |
+|---|---|---|
+| Unbalanced stop | solve exhausts its iteration budget, `extra_iter = -1` | **saved**, then the run ends |
+| Unrecoverable solve | singular matrix, no valve to demote | **not saved**, the run aborts |
+
+Note that EPANET's non-fatal conditions — negative pressures, a disconnected
+network, pumps out of range, an FCV unable to supply flow — are returned through
+the same channel as errors but fall below the macro's threshold, so they never
+stop the run. That they are non-fatal is a property of that threshold rather
+than an explicit decision in the control flow.
+
+**Verdict**: Correct. Both halt rules are identical between the engines;
+divergent halt points are a downstream effect of the §9.1 numerical-path
+differences, not a behavioural deviation.
 
 ### 9.3 Energy Statistics Differences
 
 **System**: Both Hydra and EPANET accumulate pump electrical power and efficiency statistics according to §7. However, the specific values of per-pump utilization (%), average efficiency (%), and energy intensity (kW per unit flow) depend on the exact hydraulic flow dispatch each step.
 
-**Observed consequence**: 
+**Consequence**: where the two engines dispatch flow differently, every derived energy figure follows. Utilisation is especially sensitive, being a proportion of *time online* — a pump that switches near a control threshold can land on either side of it, so a small flow difference becomes a large utilisation difference.
 
-- BWSN2: Pump utilization values differ by 10–100% (e.g., Hydra reports 10.9% where EPANET reports 1.4% for `pump[0]`); efficiency calculations follow accordingly. The differences arise because Hydra's GGA converges to slightly different flow magnitudes than EPANET.
+**Verdict**: Correct. Energy statistics are *derived* from hydraulic results; if flows differ, energy statistics differ with them.
 
-**Verdict**: Correct. Energy statistics are *derived* from hydraulic results; if hydraulic flows differ, energy statistics will differ proportionally. This is the correct behavior given the upstream flow divergence.
-
-**Scope**: These differences appear only on networks with significant control switching and multiple pump/valve interactions (e.g., BWSN2 with 40+ control events). Simple networks with stable demand patterns (Balerma, L-TOWN) show zero energy discrepancies.
+**Scope**: differences concentrate in networks with substantial control switching and interacting pumps and valves. Networks with stable demand patterns and little switching show none.
 
 ---
 
-## 10. EPANET Comparison Reference
-
-A historical test campaign across eight networks spanning 407–12,900 junctions [Balerma, BWSN2, D-Town, KY8, KY9, KY10, L-TOWN, Richmond] compared Hydra against EPANET 2.3.5 binary output. This data is retained as reference material; it is **not** an active correctness gate.
-
-| Network | Nodes | Links | Periods | Differences | Notes |
-|---|---|---|---|---|---|
-| Balerma | 399 | 449 | 1 | **0** | ✅ Full agreement |
-| BWSN2 | 12,527 | 14,831 | 28/49 | 18 | ℹ️ Energy/period-count (see §9.3, §9.2) |
-| D-Town | 407 | 459 | 2 | 35,968 | ℹ️ Quality drift (see §9.1) |
-| KY8 | 1,046 | 1,134 | 1 | **3** | ℹ️ GGA path (see §9.1) |
-| KY9 | 1,056 | 1,162 | 1 | **4** | ℹ️ GGA path (see §9.1) |
-| KY10 | 1,100 | 1,207 | 1 | **4** | ℹ️ GGA path (see §9.1) |
-| L-TOWN | 3,359 | 3,936 | 73 | **0** | ✅ Full agreement |
-| Richmond | 2,873 | 3,276 | 24/48 | **8** | ℹ️ Period-stop behavior (see §9.2) |
-
-**Summary**:
-
-- **2/8 networks fully agree** (Balerma, L-TOWN)
-- **6/8 networks have well-characterised differences** attributable to §9.1–§9.3
-- **All algorithmic bugs have been resolved** (friction factor output, valve control status, pump efficiency defaults, AGE-mode timing)
-
-Hydra and EPANET implement the same physics; on well-posed networks they naturally agree closely. Where they diverge, the difference is attributable to one of the three solver characteristics above. Hydra's result is the authoritative output.
-
----
-
-## 11. Runtime Estimation API
+## 10. Runtime Estimation API
 
 `hydra-engine` provides a deterministic runtime estimator for hydraulic +
 quality execution cost. The estimator is advisory only and does not influence
 time-step selection, convergence behavior, or any simulation result.
 
-### 11.1 Inputs
+### 10.1 Inputs
 
 The estimator consumes the following static network summary quantities:
 
@@ -564,12 +573,12 @@ The estimator consumes the following static network summary quantities:
 The estimator must not depend on mutable post-run state so the estimate remains
 stable before and after executing a simulation on the same network definition.
 
-### 11.2 Output
+### 10.2 Output
 
 The estimator returns an effort category (`Low`, `Medium`, or `High`; see
 `../model/spec.md` §5).
 
-### 11.3 Estimation Characteristics
+### 10.3 Estimation Characteristics
 
 The estimator should model cost as an increasing function of:
 

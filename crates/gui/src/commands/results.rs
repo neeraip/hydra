@@ -675,6 +675,10 @@ fn max_positive_with_index(values: &[f64], include: &[bool]) -> Option<(usize, f
 /// real pressure deficit that is a large fraction of the network, and the
 /// chart then showed a population smaller than its own "N junctions" badge
 /// while compliance was divided by the shrunken total.
+/// Band boundaries for [`PRESSURE_BINS`] — the same criteria the
+/// `wds.pressure-thresholds` report block defaults to (analysis spec §7.1.1).
+const PRESSURE_EDGES: &[f64] = &[0.0, 10.0, 20.0, 30.0, 40.0, 50.0, 60.0];
+
 const PRESSURE_BINS: &[(f64, f64)] = &[
     (f64::MIN, 0.0),
     (0.0, 10.0),
@@ -687,6 +691,9 @@ const PRESSURE_BINS: &[(f64, f64)] = &[
 ];
 
 /// Velocity-distribution bins (m/s), shared with the frontend's bin labels.
+/// Band boundaries for [`VELOCITY_BINS`].
+const VELOCITY_EDGES: &[f64] = &[0.1, 0.3, 0.6, 1.0];
+
 const VELOCITY_BINS: &[(f64, f64)] = &[
     (0.0, 0.1),
     (0.1, 0.3),
@@ -710,27 +717,26 @@ struct PressureStats {
 /// elevation, not a service pressure, and counting it inflated every figure
 /// on the Analysis panel under a label that said "junctions".
 fn pressure_stats(values: &[f64], include: &[bool], threshold: f64) -> PressureStats {
-    let mut histogram: Vec<HistogramBucketDto> = PRESSURE_BINS
+    let included: Vec<f64> = values
         .iter()
-        .map(|&(lo, hi)| HistogramBucketDto { lo, hi, count: 0 })
+        .enumerate()
+        .filter(|(idx, p)| include.get(*idx).copied().unwrap_or(false) && p.is_finite())
+        .map(|(_, &p)| p)
         .collect();
-    let mut junction_count = 0u32;
-    let mut low_pressure_count = 0u32;
-    for (idx, &p) in values.iter().enumerate() {
-        if !include.get(idx).copied().unwrap_or(false) || !p.is_finite() {
-            continue;
-        }
-        junction_count += 1;
-        if p < threshold {
-            low_pressure_count += 1;
-        }
-        for bin in &mut histogram {
-            if p >= bin.lo && p < bin.hi {
-                bin.count += 1;
-                break;
-            }
-        }
-    }
+    let junction_count = included.len() as u32;
+    let low_pressure_count = included.iter().filter(|&&p| p < threshold).count() as u32;
+    // Bin through the engine's shared helper so the panel and the
+    // `wds.pressure-thresholds` report block count identically (analysis
+    // spec §7.1.2) — including the unbounded outer bands.
+    let histogram: Vec<HistogramBucketDto> = hydra::threshold_bands(&included, PRESSURE_EDGES)
+        .into_iter()
+        .zip(PRESSURE_BINS.iter())
+        .map(|(count, &(lo, hi))| HistogramBucketDto {
+            lo,
+            hi,
+            count: count as u32,
+        })
+        .collect();
     PressureStats {
         histogram,
         junction_count,
@@ -749,23 +755,22 @@ struct VelocityStats {
 /// valves have no pipe velocity, and counting their zeroes piled thousands of
 /// entries into the stagnant bucket under a "pipes" label.
 fn velocity_stats(values: &[f64], include: &[bool]) -> VelocityStats {
-    let mut histogram: Vec<HistogramBucketDto> = VELOCITY_BINS
+    let included: Vec<f64> = values
         .iter()
-        .map(|&(lo, hi)| HistogramBucketDto { lo, hi, count: 0 })
+        .enumerate()
+        .filter(|(idx, _)| include.get(*idx).copied().unwrap_or(false))
+        .map(|(_, &v)| v)
         .collect();
-    let mut pipe_count = 0u32;
-    for (idx, &v) in values.iter().enumerate() {
-        if !include.get(idx).copied().unwrap_or(false) {
-            continue;
-        }
-        pipe_count += 1;
-        for bin in &mut histogram {
-            if v >= bin.lo && v < bin.hi {
-                bin.count += 1;
-                break;
-            }
-        }
-    }
+    let pipe_count = included.len() as u32;
+    let histogram: Vec<HistogramBucketDto> = hydra::threshold_bands(&included, VELOCITY_EDGES)
+        .into_iter()
+        .zip(VELOCITY_BINS.iter())
+        .map(|(count, &(lo, hi))| HistogramBucketDto {
+            lo,
+            hi,
+            count: count as u32,
+        })
+        .collect();
     VelocityStats {
         histogram,
         pipe_count,

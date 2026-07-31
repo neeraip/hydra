@@ -12,7 +12,7 @@ use super::shared::{HydraulicError, PumpCoeffs, SolveResult};
 use super::valve::apply_valve_coefficients;
 use super::{
     apply_emitter_coeffs, apply_favad_leakage_coeffs, apply_pda_demand_coeffs, bad_valve,
-    check_link_status, check_valve_status, leakage_converged, pipe_resistance,
+    check_link_status, check_valve_status, leakage_converged, pda_converged, pipe_resistance,
     update_emitter_flows, update_leakage_flows, update_pda_demand_flows, SparseSolver,
 };
 
@@ -140,6 +140,12 @@ pub struct SolverContext {
     pub(crate) leakage_va_flows: Vec<f64>,
     pub(crate) prev_leakage_flows: Vec<f64>,
     pub(crate) pda_demand_flows: Vec<f64>,
+    /// §3.8: junctions delivering less than full demand at the converged
+    /// heads. Zero under DDA.
+    pub(crate) deficient_nodes: u32,
+    /// §3.8: shortfall as a percentage of those junctions' full demand.
+    /// Zero under DDA.
+    pub(crate) demand_reduction: f64,
     pub(crate) prev_pda_demand_flows: Vec<f64>,
     /// Scratch buffer for O(n_links) net-flow accumulation at end of step.
     /// Zeroed before use; only tank/reservoir entries are read.
@@ -470,6 +476,8 @@ pub fn build_solver_context(
         leakage_va_flows,
         prev_leakage_flows: vec![0.0; n_nodes],
         pda_demand_flows,
+        deficient_nodes: 0,
+        demand_reduction: 0.0,
         prev_pda_demand_flows: vec![0.0; n_nodes],
         net_flow_accum: vec![0.0; n_nodes],
         node_h_min: vec![f64::NEG_INFINITY; n_nodes],
@@ -876,6 +884,27 @@ pub fn solve_hydraulic_step(
                 )
             {
                 continue;
+            }
+
+            // §3.8 PDA secondary check — the leakage check's counterpart.
+            // The demand curve is linearised each iteration, so settled flows
+            // are not necessarily flows that satisfy the curve.
+            if network.options.demand_model == DemandModel::PressureDriven {
+                let pda = pda_converged(
+                    network,
+                    &ctx.node_heads,
+                    &ctx.pda_node_indices,
+                    &ctx.junction_demands,
+                    &ctx.pda_demand_flows,
+                    network.options.pda_min_pressure,
+                    network.options.pda_required_pressure,
+                    network.options.pda_pressure_exponent,
+                );
+                ctx.deficient_nodes = pda.deficient_nodes;
+                ctx.demand_reduction = pda.demand_reduction;
+                if !pda.converged {
+                    continue;
+                }
             }
 
             if status_frozen {

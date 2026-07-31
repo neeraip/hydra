@@ -19,7 +19,7 @@ mod valve;
 
 use demand::{
     apply_emitter_coeffs, apply_favad_leakage_coeffs, apply_pda_demand_coeffs, leakage_converged,
-    update_emitter_flows, update_leakage_flows, update_pda_demand_flows,
+    pda_converged, update_emitter_flows, update_leakage_flows, update_pda_demand_flows,
 };
 pub use headloss::G_DW;
 use headloss::{pipe_resistance, pipe_total_hg, HW_EXP};

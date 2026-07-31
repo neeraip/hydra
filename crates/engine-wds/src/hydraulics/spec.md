@@ -49,15 +49,15 @@ where $\alpha_{\text{HW}}$ takes the following values depending on the unit syst
 
 **Example (US customary):** a 1000 ft pipe, 12 in diameter ($D = 1$ ft), $C = 100$, carrying $Q = 1$ ft³/s:
 
-$$R_{\text{HW}} = \frac{4.727 \times 1000}{100^{1.852} \times 1^{4.871}} \approx \frac{4727}{3981} \approx 1.187 \;\text{ft/(ft}^3\text{/s)}^{1.852}$$
+$$R_{\text{HW}} = \frac{4.727 \times 1000}{100^{1.852} \times 1^{4.871}} \approx \frac{4727}{5058} \approx 0.9345 \;\text{ft/(ft}^3\text{/s)}^{1.852}$$
 
-$$h_f = 1.187 \times 1^{1.852} \approx 1.19 \;\text{ft}$$
+$$h_f = 0.9345 \times 1^{1.852} \approx 0.934 \;\text{ft}$$
 
 **Example (SI):** same pipe expressed in SI ($L = 304.8$ m, $D = 0.3048$ m, $Q = 0.02832$ m³/s):
 
-$$R_{\text{HW}} = \frac{10.67 \times 304.8}{100^{1.852} \times 0.3048^{4.871}} \approx \frac{3252}{3981 \times 0.00802} \approx 102 \;\text{m/(m}^3\text{/s)}^{1.852}$$
+$$R_{\text{HW}} = \frac{10.67 \times 304.8}{100^{1.852} \times 0.3048^{4.871}} \approx \frac{3252}{5058 \times 0.003066} \approx 209.7 \;\text{m/(m}^3\text{/s)}^{1.852}$$
 
-$$h_f = 102 \times 0.02832^{1.852} \approx 0.36 \;\text{m} \;\;(\approx 1.19 \;\text{ft} \checkmark)$$
+$$h_f = 209.7 \times 0.02832^{1.852} \approx 0.285 \;\text{m} \;\;(= 0.934 \;\text{ft} \checkmark)$$
 
 The identical physical head loss is produced by both formulations; only $\alpha_{\text{HW}}$ changes.
 
@@ -103,15 +103,15 @@ The factor $k_M$ arises from the empirical unit conversion embedded in Manning's
 
 **Example (SI):** $L = 100$ m, $D = 0.5$ m, $n_M = 0.013$, $Q = 0.25$ m³/s:
 
-$$R_{\text{CM}} = \frac{0.013^2 \times 100}{1.0^2 \times (0.125)^{4/3} \times (0.1963)^2} \approx \frac{0.169}{1.0 \times 0.06300 \times 0.03854} \approx 69.7 \;\text{m/(m}^3\text{/s)}^2$$
+$$R_{\text{CM}} = \frac{0.013^2 \times 100}{1.0^2 \times (0.125)^{4/3} \times (0.1963)^2} \approx \frac{0.0169}{1.0 \times 0.06250 \times 0.03855} \approx 7.014 \;\text{m/(m}^3\text{/s)}^2$$
 
-$$h_f = 69.7 \times 0.25^2 \approx 4.36 \;\text{m}$$
+$$h_f = 7.014 \times 0.25^2 \approx 0.438 \;\text{m}$$
 
 **Example (US customary):** same pipe ($L = 328.1$ ft, $D = 1.640$ ft, $Q = 8.829$ ft³/s):
 
-$$R_{\text{CM}} = \frac{0.013^2 \times 328.1}{1.486^2 \times (0.4101)^{4/3} \times (2.111)^2} \approx \frac{0.5545}{2.208 \times 0.3239 \times 4.456} \approx 0.174 \;\text{ft/(ft}^3\text{/s)}^2$$
+$$R_{\text{CM}} = \frac{0.013^2 \times 328.1}{1.486^2 \times (0.4101)^{4/3} \times (2.111)^2} \approx \frac{0.05545}{2.208 \times 0.30459 \times 4.462} \approx 0.01847 \;\text{ft/(ft}^3\text{/s)}^2$$
 
-$$h_f = 0.174 \times 8.829^2 \approx 13.56 \;\text{ft} \;\;(\approx 4.13 \;\text{m} \approx 4.36 \;\text{m} \checkmark)$$
+$$h_f = 0.01847 \times 8.829^2 \approx 1.440 \;\text{ft} \;\;(= 0.439 \;\text{m} \approx 0.438 \;\text{m} \checkmark)$$
 
 Flow exponent $n = 2$.
 
@@ -258,7 +258,14 @@ $$\Delta h = \frac{a - b}{2}, \qquad \Delta g = \frac{10^9}{2}\left(1 - \frac{a}
 
 $$\Delta h = \frac{a + b}{2}, \qquad \Delta g = \frac{10^9}{2}\left(1 + \frac{a}{b}\right)$$
 
-$h \mathrel{+}= \Delta h$, $g \mathrel{+}= \Delta g$. When $\delta q \gg 0$, $\Delta h \approx 0$ (feasible region, no correction); when $\delta q \ll 0$, $\Delta h \to -\infty$ with very high stiffness (violation pushed back strongly).
+In both cases $h \mathrel{+}= \Delta h$ and $g \mathrel{+}= \Delta g$. The two barriers are mirror images, so the sign of $\delta q$ means the **opposite** thing in each — the feasible side is $\delta q < 0$ for the upper barrier and $\delta q > 0$ for the lower one:
+
+| Barrier | Feasible side | $\Delta h$, $\Delta g$ | Violating side | $\Delta h$, $\Delta g$ |
+|---|---|---|---|---|
+| Lower ($q \geq q_0$) | $\delta q \gg 0$ | $\approx 0$, $\approx 0$ | $\delta q \ll 0$ | $\to -\infty$, $\to 10^9$ |
+| Upper ($q \leq q_1$) | $\delta q \ll 0$ | $\approx 0$, $\approx 0$ | $\delta q \gg 0$ | $\to +\infty$, $\to 10^9$ |
+
+On the feasible side the correction vanishes and the element behaves as though unconstrained; on the violating side the head loss diverges with a gradient approaching $10^9$, which is what pushes the Newton step back across the bound.
 
 ### 3.4 Linear System Assembly
 
@@ -311,7 +318,14 @@ $$A_{ii} \mathrel{+}= C_{\infty}, \qquad F_i \mathrel{+}= H_s \cdot C_{\infty}$$
 
 $$Y_k = Q_k - \Delta_i$$
 
-A small residual $1/C_{\infty}$ is added to $A_{ij}$ and $A_{jj}$ to preserve matrix connectivity.
+Any **positive** flow excess at $i$ is redistributed to $F_j$ — the mirror of the
+PRV rule above, which redistributes a *negative* excess at $j$ to $F_i$. The
+opposite sign in each case follows from which end the valve pins.
+
+A small residual $1/C_{\infty}$ preserves matrix connectivity across the pinned
+valve, entered with the sign convention of §3.4 ($A_{ij} = -P_k$): it is
+**subtracted** from $A_{ij}$ and **added** to $A_{jj}$, exactly as a conductance
+of that magnitude would be.
 
 **FCV active** (imposes fixed flow $Q_s = s_k$):
 
@@ -377,7 +391,11 @@ where $P_{\text{fa/va}}$ and $Y_{\text{fa/va}}$ are the barrier-adjusted coeffic
 
 The iteration is considered **converged** when all of the following hold simultaneously:
 
-1. **Relative flow accuracy**: let $S_Q = \sum_k |Q_k^{(m+1)}| + \sum_i Q_{e,i}^{(m+1)} + \sum_i D_i^{(m+1)} + \sum_i Q_{\text{leak},i}^{(m+1)}$ (sum of magnitudes over link flows, emitter flows, PDA demand flows, and leakage flows) and $\Delta S_Q$ the corresponding sum of absolute flow changes between iterations. Then:\n\n$$\varepsilon_Q = \begin{cases} \Delta S_Q / S_Q & S_Q > \text{\texttt{flow\_tol}} \\ \Delta S_Q & \text{otherwise (absolute criterion)} \end{cases}$$\n\nConvergence requires $\varepsilon_Q \leq$ `flow_tol`.
+1. **Relative flow accuracy**: let $S_Q = \sum_k |Q_k^{(m+1)}| + \sum_i Q_{e,i}^{(m+1)} + \sum_i D_i^{(m+1)} + \sum_i Q_{\text{leak},i}^{(m+1)}$ (sum of magnitudes over link flows, emitter flows, PDA demand flows, and leakage flows) and $\Delta S_Q$ the corresponding sum of absolute flow changes between iterations. Then:
+
+$$\varepsilon_Q = \begin{cases} \Delta S_Q / S_Q & S_Q > \text{\texttt{flow\_tol}} \\ \Delta S_Q & \text{otherwise (absolute criterion)} \end{cases}$$
+
+Convergence requires $\varepsilon_Q \leq$ `flow_tol`.
 
 2. **Per-link head balance error** (checked only when `head_error_limit > 0`): for each open link $k$ with $P_k > 0$, the head balance residual is the discrepancy between the computed head difference and the linearised head loss:
 
@@ -393,7 +411,39 @@ The condition is $\max_k \epsilon_{H,k} \leq$ `head_error_limit`. If `head_error
 
 $$q_{\text{ref},i} = \sqrt{\max(0,h_i) / c_{\text{fa},i}} + \max(0,h_i / c_{\text{va},i})^{3/2}$$
 
-(terms for absent components are omitted). If $|q_{\text{ref},i} - (q_{\text{fa},i} + q_{\text{va},i})| > Q_{\text{leak-tol}}$ for any junction, the solution is not yet converged and the Newton loop continues. $Q_{\text{leak-tol}}$ is an absolute tolerance in m³/s; the value is $2.83 \times 10^{-6}$ m³/s (= $10^{-4}$ ft³/s, approximately 0.005 gpm or 0.2 lpm). This check is independent of the relative flow accuracy criterion (criterion 1) and must be satisfied simultaneously with the other criteria.
+(terms for absent components are omitted). If $|q_{\text{ref},i} - (q_{\text{fa},i} + q_{\text{va},i})| > Q_{\text{leak-tol}}$ for any junction, the solution is not yet converged and the Newton loop continues. $Q_{\text{leak-tol}}$ is an absolute tolerance in m³/s; the value is $2.83 \times 10^{-6}$ m³/s (= $10^{-4}$ ft³/s, approximately 0.045 gpm or 0.17 lpm). This check is independent of the relative flow accuracy criterion (criterion 1) and must be satisfied simultaneously with the other criteria.
+
+**PDA secondary convergence check**: the exact counterpart of the leakage check
+above, and required for the same reason. Under PDA the demand curve is replaced
+each iteration by its tangent (§3.3.2), so a solution can satisfy criterion 1 —
+the flows have stopped changing — while still sitting off the curve those flows
+are supposed to lie on. Criterion 1 is also *relative* to total network flow, so
+on a large network the absolute discrepancy it tolerates at a single junction can
+far exceed the tolerance below.
+
+After the main criteria are satisfied, re-evaluate the demand equation directly
+at the converged heads. For each junction $i$ with $D_{\text{full},i} > 0$, writing
+$p_i = H_i - z_i$:
+
+$$D_{\text{ref},i} = \begin{cases}
+0 & p_i \leq P_{\min} \\
+D_{\text{full},i} & p_i \geq P_{\text{req}} \\
+D_{\text{full},i}\left(\dfrac{p_i - P_{\min}}{P_{\text{req}} - P_{\min}}\right)^{n_P} & \text{otherwise}
+\end{cases}$$
+
+If $|D_{\text{ref},i} - D_i| > Q_{\text{pda-tol}}$ for any junction, the solution is not
+yet converged and the Newton loop continues. $Q_{\text{pda-tol}}$ is the same
+absolute tolerance the leakage check uses, $2.83 \times 10^{-6}$ m³/s
+($= 10^{-4}$ ft³/s). Note this evaluates the **forward** demand curve, whereas the
+linearisation of §3.3.2 works with its inverse — the two agree only at the
+solution, which is what the check establishes.
+
+The same pass accumulates two reported quantities, since it is the only point at
+which delivered and required demand are both known at the final heads: the count
+of junctions delivering less than their full demand (by more than
+$Q_{\text{pda-tol}}$), and the network **demand reduction**, the shortfall summed
+over those junctions as a percentage of their combined full demand. Both are zero
+under DDA.
 
 **Note**: `head_tol` is not a convergence criterion for the solver iteration. It is used as the absolute tolerance $\varepsilon_H$ in link status transition conditions (§3.9) and as the dead-band on pressure-based simple-control triggers in the post-convergence `pswitch` re-evaluation (below).
 
@@ -432,7 +482,7 @@ For each link incident to a tank node, the link is set to `TEMPCLOSED` (a tempor
 - The tank head $\geq h_{\max}$ **and** `overflow = false` **and** the link is delivering flow **into** the tank.
 - The tank head $\leq h_{\min}$ **and** the link is removing flow **from** the tank.
 
-When `overflow = true`, a full tank does **not** close its inlet links — excess volume exits freely (§5.3). Empty-tank outlet closure applies regardless of the overflow flag. This check runs at every status check iteration, not only after convergence.
+When `overflow = true`, a full tank does **not** close its inlet links — excess volume exits freely ([simulation spec](../simulation/spec.md) §5.3). Empty-tank outlet closure applies regardless of the overflow flag. This check runs at every status check iteration, not only after convergence.
 
 #### PRV Status (tested after every iteration when `damp_limit = 0`, otherwise only when $\varepsilon_Q \leq \text{damp\_limit}$)
 
@@ -466,12 +516,22 @@ Here $H_s = z_{\text{from}(k)} + s_k$ is the absolute upstream setpoint, $H_1 = 
 
 #### FCV Status
 
-| Current | Transition | Condition |
+**Precedence**: unlike the PRV and PSV tables above, the FCV tests are a single
+**ordered chain evaluated regardless of the current status**, not a set of
+per-state transitions. The two demotion tests are checked first and from any
+state; only if both pass is the recovery test reached. A valve already in XFCV
+whose flow has recovered to the setpoint therefore **stays** in XFCV while
+either demotion condition still holds — reading the table as per-state
+transitions would promote it to ACTIVE instead.
+
+| Order | Condition | Result |
 |---|---|---|
-| ACTIVE | → XFCV | $H_1 - H_2 < -\varepsilon_H$ (negative available head) |
-| ACTIVE | → XFCV | $Q < -\varepsilon_Q$ (reverse flow) |
-| ACTIVE | → XFCV | $(H_1 - H_2) / Q^2 < K_m$ (available pressure gradient less than fully-open loss coefficient — valve cannot maintain setpoint) |
-| XFCV | → ACTIVE | $Q \geq Q_s$ (flow meets or exceeds setpoint) |
+| 1 | $H_1 - H_2 < -\varepsilon_H$ (negative available head) | XFCV, from any state |
+| 2 | $Q < -\varepsilon_Q$ (reverse flow) | XFCV, from any state |
+| 3 | current state is XFCV and $Q \geq Q_s$ (flow meets or exceeds setpoint) | ACTIVE |
+| 4 | current state is ACTIVE and $(H_1 - H_2) / Q^2 < K_m$ (available pressure gradient below the fully-open loss coefficient — the valve cannot maintain its setpoint) | XFCV |
+
+Falling through all four leaves the status unchanged.
 
 ### 3.10 Initialisation
 
