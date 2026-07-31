@@ -217,7 +217,7 @@ export function SectionList({
                 onPointerUp={endDrag}
                 onPointerCancel={endDrag}
                 aria-label="Drag to reorder"
-                title="Drag to reorder"
+                data-tooltip="Drag to reorder"
                 style={{
                   display: "flex",
                   color: "var(--text-tertiary)",
@@ -242,7 +242,7 @@ export function SectionList({
                 {index + 1}
               </span>
               <span
-                title={block.summary}
+                data-tooltip={block.summary}
                 style={{
                   flex: 1,
                   fontSize: "var(--text-lg)",
@@ -256,7 +256,9 @@ export function SectionList({
               </span>
               {problem ? (
                 <span
-                  title={availability?.reason ?? "Will not render for this run"}
+                  data-tooltip={
+                    availability?.reason ?? "Will not render for this run"
+                  }
                   style={{ display: "flex", color: "var(--warn, #c98a1b)" }}
                 >
                   <ExclamationTriangleIcon style={{ width: 12, height: 12 }} />
@@ -265,7 +267,7 @@ export function SectionList({
               <button
                 type="button"
                 aria-label={open ? "Hide settings" : "Settings"}
-                title={
+                data-tooltip={
                   customised.length > 0
                     ? `Changed from defaults: ${customised.join(", ")}`
                     : open
@@ -284,27 +286,13 @@ export function SectionList({
               <button
                 type="button"
                 aria-label={`Remove ${block.title}`}
-                title="Remove from report"
+                data-tooltip="Remove from report"
                 onClick={() => onRemove(id)}
                 style={rowButton(false)}
               >
                 <XMarkIcon style={{ width: 13, height: 13 }} />
               </button>
             </div>
-
-            {problem ? (
-              <p
-                style={{
-                  margin: "2px 0 0 34px",
-                  fontSize: "var(--text-xs)",
-                  color: "var(--text-tertiary)",
-                  lineHeight: 1.4,
-                }}
-              >
-                {availability?.reason ??
-                  "This section will not render for this run."}
-              </p>
-            ) : null}
 
             {open ? (
               <div

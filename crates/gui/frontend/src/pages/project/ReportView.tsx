@@ -313,12 +313,15 @@ export function ReportView() {
           background: "var(--bg-panel)",
           display: "flex",
           flexDirection: "column",
-          overflow: "auto",
+          // The rail itself does not scroll: only the section list inside it
+          // does, so the title stays at the top and Export stays reachable at
+          // the bottom however long the report gets.
+          overflow: "hidden",
           padding: "16px 14px",
           gap: 16,
         }}
       >
-        <div>
+        <div style={{ flexShrink: 0 }}>
           <FieldLabel>Report title</FieldLabel>
           <input
             value={title}
@@ -337,13 +340,21 @@ export function ReportView() {
           />
         </div>
 
-        <div style={{ flex: 1 }}>
+        <div
+          style={{
+            flex: 1,
+            minHeight: 0,
+            display: "flex",
+            flexDirection: "column",
+          }}
+        >
           <div
             style={{
               display: "flex",
               alignItems: "center",
               justifyContent: "space-between",
               marginBottom: 4,
+              flexShrink: 0,
             }}
           >
             <FieldLabel>Sections</FieldLabel>
@@ -416,7 +427,7 @@ export function ReportView() {
           </div>
 
           {adding ? (
-            <div style={{ marginBottom: 8 }}>
+            <div style={{ marginBottom: 8, flexShrink: 0 }}>
               <AddSectionPalette
                 catalog={catalog}
                 sections={sections}
@@ -427,18 +438,20 @@ export function ReportView() {
             </div>
           ) : null}
 
-          <SectionList
-            sections={sections}
-            blockById={blockById}
-            descriptorsById={descriptorsById}
-            optionsById={optionsById}
-            headingById={headingById}
-            availabilityById={availabilityById}
-            onReorder={reorder}
-            onRemove={removeSection}
-            onOptionsChange={setOptions}
-            onHeadingChange={setHeading}
-          />
+          <div style={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
+            <SectionList
+              sections={sections}
+              blockById={blockById}
+              descriptorsById={descriptorsById}
+              optionsById={optionsById}
+              headingById={headingById}
+              availabilityById={availabilityById}
+              onReorder={reorder}
+              onRemove={removeSection}
+              onOptionsChange={setOptions}
+              onHeadingChange={setHeading}
+            />
+          </div>
         </div>
 
         <button
@@ -446,6 +459,7 @@ export function ReportView() {
           disabled={exporting}
           onClick={handleExport}
           style={{
+            flexShrink: 0,
             display: "flex",
             alignItems: "center",
             justifyContent: "center",

@@ -246,8 +246,10 @@ with one of three neutral, typed errors:
 
 - **unknown block** — the id is not in this engine's catalog;
 - **unavailable** — the block does not apply to this run, with a
-  human-readable reason supplied by the engine (e.g. "the run has no
-  water-quality results"); an expected condition, not a fault;
+  human-readable reason supplied by the engine, written as a complete
+  sentence because a consumer may show it standing alone rather than after
+  a label (e.g. "The run has no water-quality results."); an expected
+  condition, not a fault;
 - **failed** — reading or deriving from the simulation artifacts failed.
 
 The report layer decides how an unavailable or failed block renders

@@ -306,7 +306,7 @@ fn result_extremes(out_path: &Path, network: &Network) -> Result<Fragment, Block
     let meta = read_meta(out_path)?;
     if meta.n_periods == 0 {
         return Err(BlockError::Failed {
-            message: "results file holds no reporting periods".into(),
+            message: "The results file holds no reporting periods.".into(),
         });
     }
     let ranges = out_reader::scan_ranges(out_path, &meta, MAX_RANGE_SAMPLES)
@@ -384,7 +384,7 @@ fn pump_energy(out_path: &Path, network: &Network) -> Result<Fragment, BlockErro
     let meta = read_meta(out_path)?;
     if meta.n_pumps == 0 {
         return Err(BlockError::Unavailable {
-            reason: "the network has no pumps".into(),
+            reason: "The network has no pumps.".into(),
         });
     }
     let energy = out_reader::read_energy(out_path, &meta)
@@ -462,7 +462,7 @@ fn quality_summary(out_path: &Path) -> Result<Fragment, BlockError> {
     let meta = read_meta(out_path)?;
     if meta.quality_flag == 0 {
         return Err(BlockError::Unavailable {
-            reason: "the run has no water-quality results".into(),
+            reason: "The run has no water-quality results.".into(),
         });
     }
     let ranges = out_reader::scan_ranges(out_path, &meta, MAX_RANGE_SAMPLES)
@@ -631,11 +631,11 @@ fn opt_f64(
         return Ok(None);
     };
     let number = value.as_f64().ok_or_else(|| BlockError::Failed {
-        message: format!("option {field:?} must be a number"),
+        message: format!("Option {field:?} must be a number."),
     })?;
     if !number.is_finite() || (require_non_negative && number < 0.0) {
         return Err(BlockError::Failed {
-            message: format!("option {field:?} must be a finite non-negative number"),
+            message: format!("Option {field:?} must be a finite non-negative number."),
         });
     }
     Ok(Some(number))
@@ -649,7 +649,7 @@ fn opt_usize(
         return Ok(None);
     };
     let number = value.as_u64().ok_or_else(|| BlockError::Failed {
-        message: format!("option {field:?} must be a non-negative integer"),
+        message: format!("Option {field:?} must be a non-negative integer."),
     })?;
     Ok(Some(number as usize))
 }
@@ -670,7 +670,7 @@ fn service_compliance(
     let meta = read_meta(out_path)?;
     if meta.n_periods == 0 {
         return Err(BlockError::Failed {
-            message: "results file holds no reporting periods".into(),
+            message: "The results file holds no reporting periods.".into(),
         });
     }
     let (pressure_unit, _, _) = unit_labels(network);
@@ -828,7 +828,7 @@ fn demand_reliability(
     let meta = read_meta(out_path)?;
     if meta.n_periods == 0 {
         return Err(BlockError::Failed {
-            message: "results file holds no reporting periods".into(),
+            message: "The results file holds no reporting periods.".into(),
         });
     }
     let mut dr_options = DemandReliabilityOptions::default();
@@ -932,7 +932,7 @@ fn pressure_distribution(out_path: &Path, network: &Network) -> Result<Fragment,
     let meta = read_meta(out_path)?;
     if meta.n_periods == 0 {
         return Err(BlockError::Failed {
-            message: "results file holds no reporting periods".into(),
+            message: "The results file holds no reporting periods.".into(),
         });
     }
     let scan = out_reader::scan_analytics(out_path, &meta)
@@ -963,7 +963,7 @@ fn velocity_distribution(out_path: &Path, network: &Network) -> Result<Fragment,
     let meta = read_meta(out_path)?;
     if meta.n_periods == 0 {
         return Err(BlockError::Failed {
-            message: "results file holds no reporting periods".into(),
+            message: "The results file holds no reporting periods.".into(),
         });
     }
     let scan = out_reader::scan_analytics(out_path, &meta)
@@ -1008,7 +1008,7 @@ fn opt_edges(options: Option<&serde_json::Value>, default: &[f64]) -> Result<Vec
         return Ok(default.to_vec());
     };
     let array = value.as_array().ok_or_else(|| BlockError::Failed {
-        message: "option \"edges\" must be an array of numbers".into(),
+        message: "Option \"edges\" must be an array of numbers.".into(),
     })?;
     let mut edges = Vec::with_capacity(array.len());
     for item in array {
@@ -1016,18 +1016,18 @@ fn opt_edges(options: Option<&serde_json::Value>, default: &[f64]) -> Result<Vec
             .as_f64()
             .filter(|v| v.is_finite())
             .ok_or_else(|| BlockError::Failed {
-                message: "option \"edges\" must contain only finite numbers".into(),
+                message: "Option \"edges\" must contain only finite numbers.".into(),
             })?;
         edges.push(n);
     }
     if edges.is_empty() {
         return Err(BlockError::Failed {
-            message: "option \"edges\" must contain at least one boundary".into(),
+            message: "Option \"edges\" must contain at least one boundary.".into(),
         });
     }
     if edges.windows(2).any(|w| w[1] <= w[0]) {
         return Err(BlockError::Failed {
-            message: "option \"edges\" must be strictly ascending".into(),
+            message: "Option \"edges\" must be strictly ascending.".into(),
         });
     }
     Ok(edges)
@@ -1116,7 +1116,7 @@ fn mass_balance(out_path: &Path, network: &Network) -> Result<Fragment, BlockErr
     let meta = read_meta(out_path)?;
     if meta.n_periods == 0 {
         return Err(BlockError::Failed {
-            message: "results file holds no reporting periods".into(),
+            message: "The results file holds no reporting periods.".into(),
         });
     }
     let scan = out_reader::scan_analytics(out_path, &meta)
@@ -1183,7 +1183,7 @@ fn pipe_criticality(
     let meta = read_meta(out_path)?;
     if meta.n_periods == 0 {
         return Err(BlockError::Failed {
-            message: "results file holds no reporting periods".into(),
+            message: "The results file holds no reporting periods.".into(),
         });
     }
     let top_count = opt_usize(options, "topCount")?.unwrap_or(DEFAULT_TOP_COUNT);
@@ -1194,7 +1194,7 @@ fn pipe_criticality(
     let mut ranked = pipe_max_velocities(&scan, network);
     if ranked.is_empty() {
         return Err(BlockError::Unavailable {
-            reason: "the network has no pipes carrying velocity results".into(),
+            reason: "The network has no pipes carrying velocity results.".into(),
         });
     }
     // Descending by peak velocity; link index breaks ties so the ordering is
@@ -1255,7 +1255,7 @@ fn pressure_thresholds(
     let meta = read_meta(out_path)?;
     if meta.n_periods == 0 {
         return Err(BlockError::Failed {
-            message: "results file holds no reporting periods".into(),
+            message: "The results file holds no reporting periods.".into(),
         });
     }
     let edges = opt_edges(
@@ -1284,7 +1284,7 @@ fn velocity_thresholds(
     let meta = read_meta(out_path)?;
     if meta.n_periods == 0 {
         return Err(BlockError::Failed {
-            message: "results file holds no reporting periods".into(),
+            message: "The results file holds no reporting periods.".into(),
         });
     }
     let edges = opt_edges(
@@ -1388,7 +1388,7 @@ fn tank_levels(out_path: &Path, network: &Network) -> Result<Fragment, BlockErro
     let meta = read_meta(out_path)?;
     if meta.n_periods == 0 {
         return Err(BlockError::Failed {
-            message: "results file holds no reporting periods".into(),
+            message: "The results file holds no reporting periods.".into(),
         });
     }
     let scan = out_reader::scan_analytics(out_path, &meta)
@@ -1409,7 +1409,7 @@ fn tank_levels(out_path: &Path, network: &Network) -> Result<Fragment, BlockErro
         .collect();
     if tanks.is_empty() {
         return Err(BlockError::Unavailable {
-            reason: "the network has no tanks".into(),
+            reason: "The network has no tanks.".into(),
         });
     }
 
@@ -1783,7 +1783,7 @@ mod tests {
             assert_eq!(
                 err,
                 BlockError::Unavailable {
-                    reason: "the network has no pumps".into()
+                    reason: "The network has no pumps.".into()
                 }
             );
         });
@@ -2016,7 +2016,7 @@ mod tests {
             assert_eq!(
                 err,
                 BlockError::Unavailable {
-                    reason: "the run has no water-quality results".into()
+                    reason: "The run has no water-quality results.".into()
                 }
             );
         });
