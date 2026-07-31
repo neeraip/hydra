@@ -49,15 +49,15 @@ where $\alpha_{\text{HW}}$ takes the following values depending on the unit syst
 
 **Example (US customary):** a 1000 ft pipe, 12 in diameter ($D = 1$ ft), $C = 100$, carrying $Q = 1$ ft³/s:
 
-$$R_{\text{HW}} = \frac{4.727 \times 1000}{100^{1.852} \times 1^{4.871}} \approx \frac{4727}{3981} \approx 1.187 \;\text{ft/(ft}^3\text{/s)}^{1.852}$$
+$$R_{\text{HW}} = \frac{4.727 \times 1000}{100^{1.852} \times 1^{4.871}} \approx \frac{4727}{5058} \approx 0.9345 \;\text{ft/(ft}^3\text{/s)}^{1.852}$$
 
-$$h_f = 1.187 \times 1^{1.852} \approx 1.19 \;\text{ft}$$
+$$h_f = 0.9345 \times 1^{1.852} \approx 0.934 \;\text{ft}$$
 
 **Example (SI):** same pipe expressed in SI ($L = 304.8$ m, $D = 0.3048$ m, $Q = 0.02832$ m³/s):
 
-$$R_{\text{HW}} = \frac{10.67 \times 304.8}{100^{1.852} \times 0.3048^{4.871}} \approx \frac{3252}{3981 \times 0.00802} \approx 102 \;\text{m/(m}^3\text{/s)}^{1.852}$$
+$$R_{\text{HW}} = \frac{10.67 \times 304.8}{100^{1.852} \times 0.3048^{4.871}} \approx \frac{3252}{5058 \times 0.003066} \approx 209.7 \;\text{m/(m}^3\text{/s)}^{1.852}$$
 
-$$h_f = 102 \times 0.02832^{1.852} \approx 0.36 \;\text{m} \;\;(\approx 1.19 \;\text{ft} \checkmark)$$
+$$h_f = 209.7 \times 0.02832^{1.852} \approx 0.285 \;\text{m} \;\;(= 0.934 \;\text{ft} \checkmark)$$
 
 The identical physical head loss is produced by both formulations; only $\alpha_{\text{HW}}$ changes.
 
@@ -103,15 +103,15 @@ The factor $k_M$ arises from the empirical unit conversion embedded in Manning's
 
 **Example (SI):** $L = 100$ m, $D = 0.5$ m, $n_M = 0.013$, $Q = 0.25$ m³/s:
 
-$$R_{\text{CM}} = \frac{0.013^2 \times 100}{1.0^2 \times (0.125)^{4/3} \times (0.1963)^2} \approx \frac{0.169}{1.0 \times 0.06300 \times 0.03854} \approx 69.7 \;\text{m/(m}^3\text{/s)}^2$$
+$$R_{\text{CM}} = \frac{0.013^2 \times 100}{1.0^2 \times (0.125)^{4/3} \times (0.1963)^2} \approx \frac{0.0169}{1.0 \times 0.06250 \times 0.03855} \approx 7.014 \;\text{m/(m}^3\text{/s)}^2$$
 
-$$h_f = 69.7 \times 0.25^2 \approx 4.36 \;\text{m}$$
+$$h_f = 7.014 \times 0.25^2 \approx 0.438 \;\text{m}$$
 
 **Example (US customary):** same pipe ($L = 328.1$ ft, $D = 1.640$ ft, $Q = 8.829$ ft³/s):
 
-$$R_{\text{CM}} = \frac{0.013^2 \times 328.1}{1.486^2 \times (0.4101)^{4/3} \times (2.111)^2} \approx \frac{0.5545}{2.208 \times 0.3239 \times 4.456} \approx 0.174 \;\text{ft/(ft}^3\text{/s)}^2$$
+$$R_{\text{CM}} = \frac{0.013^2 \times 328.1}{1.486^2 \times (0.4101)^{4/3} \times (2.111)^2} \approx \frac{0.05545}{2.208 \times 0.30459 \times 4.462} \approx 0.01847 \;\text{ft/(ft}^3\text{/s)}^2$$
 
-$$h_f = 0.174 \times 8.829^2 \approx 13.56 \;\text{ft} \;\;(\approx 4.13 \;\text{m} \approx 4.36 \;\text{m} \checkmark)$$
+$$h_f = 0.01847 \times 8.829^2 \approx 1.440 \;\text{ft} \;\;(= 0.439 \;\text{m} \approx 0.438 \;\text{m} \checkmark)$$
 
 Flow exponent $n = 2$.
 
@@ -393,7 +393,7 @@ The condition is $\max_k \epsilon_{H,k} \leq$ `head_error_limit`. If `head_error
 
 $$q_{\text{ref},i} = \sqrt{\max(0,h_i) / c_{\text{fa},i}} + \max(0,h_i / c_{\text{va},i})^{3/2}$$
 
-(terms for absent components are omitted). If $|q_{\text{ref},i} - (q_{\text{fa},i} + q_{\text{va},i})| > Q_{\text{leak-tol}}$ for any junction, the solution is not yet converged and the Newton loop continues. $Q_{\text{leak-tol}}$ is an absolute tolerance in m³/s; the value is $2.83 \times 10^{-6}$ m³/s (= $10^{-4}$ ft³/s, approximately 0.005 gpm or 0.2 lpm). This check is independent of the relative flow accuracy criterion (criterion 1) and must be satisfied simultaneously with the other criteria.
+(terms for absent components are omitted). If $|q_{\text{ref},i} - (q_{\text{fa},i} + q_{\text{va},i})| > Q_{\text{leak-tol}}$ for any junction, the solution is not yet converged and the Newton loop continues. $Q_{\text{leak-tol}}$ is an absolute tolerance in m³/s; the value is $2.83 \times 10^{-6}$ m³/s (= $10^{-4}$ ft³/s, approximately 0.045 gpm or 0.17 lpm). This check is independent of the relative flow accuracy criterion (criterion 1) and must be satisfied simultaneously with the other criteria.
 
 **Note**: `head_tol` is not a convergence criterion for the solver iteration. It is used as the absolute tolerance $\varepsilon_H$ in link status transition conditions (§3.9) and as the dead-band on pressure-based simple-control triggers in the post-convergence `pswitch` re-evaluation (below).
 

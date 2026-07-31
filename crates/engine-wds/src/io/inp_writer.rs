@@ -900,7 +900,11 @@ pub fn write_inp(network: &Network) -> Vec<u8> {
             let _ = writeln!(out, " Diffusivity     {:.6}", opts.diffusivity / DIFFUS);
         }
         let _ = writeln!(out, " Trials          {}", opts.max_iter);
-        let _ = writeln!(out, " Accuracy        {:.6}", opts.flow_tol);
+        // Shortest round-trip decimal form, not fixed precision: a
+        // programmatically-set Accuracy may sit far below any fixed decimal
+        // precision (1e-7 would serialise as "0.000000" and re-read as zero),
+        // the same hazard the HTOL/QTOL/RQTOL writers below avoid (spec §4.3).
+        let _ = writeln!(out, " Accuracy        {}", opts.flow_tol);
         // Status-transition tolerances: written when non-default with the
         // exact inverse of the reader's unit conversion (HTOL/QTOL are divided
         // by the elevation/flow factor at load; RQTOL is stored raw). Shortest

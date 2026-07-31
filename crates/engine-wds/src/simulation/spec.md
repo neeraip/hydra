@@ -141,9 +141,9 @@ $$\Delta t = \min\!\left(\Delta t_h,\ \Delta t_{\text{report}},\ \Delta t_{\text
 | Term | Definition |
 |---|---|
 | $\Delta t_h$ | User-specified nominal hydraulic time step |
-| $\Delta t_{\text{report}}$ | Time remaining until the next reporting instant. Report instants fall at $t_{\text{rstart}} + k\cdot\Delta t_{\text{rep}}$ (offset by `report_start`, mirroring how the pattern term is offset by `pattern_start`): $\bigl(t_{\text{rstart}} + \lceil (t - t_{\text{rstart}})/\Delta t_{\text{rep}}\rceil\,\Delta t_{\text{rep}}\bigr) - t$, or $t_{\text{rstart}} - t$ before the first instant |
+| $\Delta t_{\text{report}}$ | Time remaining until the next reporting instant. Report instants fall at $t_{\text{rstart}} + k\cdot\Delta t_{\text{rep}}$ (offset by `report_start`, mirroring how the pattern term is offset by `pattern_start`): $\bigl(t_{\text{rstart}} + \lceil (t - t_{\text{rstart}})/\Delta t_{\text{rep}}\rceil\,\Delta t_{\text{rep}}\bigr) - t$, or $t_{\text{rstart}} - t$ before the first instant. When $t$ lands exactly on a reporting instant the expression is zero; the term is then a **full** $\Delta t_{\text{rep}}$, since the boundary sought is the strictly next one |
 | $\Delta t_{\text{tank}}$ | Minimum over all tanks of the time to reach a level limit at the current net flow rate: $\min_{\text{tanks}} \Delta V_{\text{available}} / \lvert Q_{\text{net}} \rvert$ (tanks with $\lvert Q_{\text{net}} \rvert \leq Q_{\text{zero}}$ are skipped; $\Delta t_h$ if no tank qualifies). $Q_{\text{zero}} = 10^{-6}$ m³/s is the negligible-flow threshold (the same value as $Q_0$ in `../hydraulics/spec.md` §3.10); its SI value relative to EPANET's $10^{-6}$ ft³/s is covered by the DEVIATION note in `../hydraulics/spec.md` §3.9 |
-| $\Delta t_{\text{pattern}}$ | Time remaining until the next pattern boundary: $\lceil (t + t_{\text{pstart}}) / \Delta t_p \rceil \cdot \Delta t_p - t - t_{\text{pstart}}$ |
+| $\Delta t_{\text{pattern}}$ | Time remaining until the next pattern boundary: $\lceil (t + t_{\text{pstart}}) / \Delta t_p \rceil \cdot \Delta t_p - t - t_{\text{pstart}}$. As with the reporting term, this is zero whenever $t + t_{\text{pstart}}$ is an exact multiple of $\Delta t_p$ — including $t = 0$ — and the term is then a **full** $\Delta t_p$. Without that guard the step would collapse to zero at every pattern boundary |
 | $\Delta t_{\text{control}}$ | Shortest time until a simple control fires (§5.2.1) |
 | $t_{\text{duration}} - t$ | Time remaining until end of simulation |
 
@@ -279,13 +279,13 @@ where $k_{\text{unit}}$ is the conversion factor from internal power units to kW
 
 $$W_p = 1000 \times 9.81 \times 0.05 \times 20 = 9{,}810 \;\text{W}$$
 $$W_{\text{elec},p} = 9810 / 0.75 = 13{,}080 \;\text{W}$$
-$$\Delta\,\text{kWh} = 13{,}080 \times 3600 \times 10^{-3} = 47{,}088 \;\text{kWh} / 3600 = 13.08 \;\text{kWh}$$
+$$\Delta\,\text{kWh} = \frac{13{,}080 \;\text{W} \times 3600 \;\text{s}}{3.6 \times 10^{6} \;\text{J/kWh}} = 13.08 \;\text{kWh}$$
 
 **Example (US customary):** same pump ($Q_p = 1.766$ ft³/s, $\Delta H_p = 65.6$ ft, $\rho = 1.940$ slug/ft³, $g = 32.174$ ft/s², same $\eta_p$ and $\Delta t$):
 
 $$W_p = 1.940 \times 32.174 \times 1.766 \times 65.6 \approx 7{,}229 \;\text{ft·lb/s}$$
 $$W_{\text{elec},p} = 7229 / 0.75 \approx 9{,}639 \;\text{ft·lb/s}$$
-$$\Delta\,\text{kWh} = 9{,}639 \times 3600 \times 1.356 \times 10^{-3} \approx 13.08 \;\text{kWh} \checkmark$$
+$$\Delta\,\text{kWh} = \frac{9{,}639 \times 1.356 \;\text{W} \times 3600 \;\text{s}}{3.6 \times 10^{6} \;\text{J/kWh}} \approx 13.07 \;\text{kWh} \checkmark$$
 
 **Energy cost** $\text{price}(t)$ at time $t$ ($/kWh) is determined as follows:
 

@@ -14,8 +14,7 @@ The quality engine simulates the transport and transformation of a dissolved con
 
 ### 6.1 Simulation Modes
 
-See `QualityMode` in `model/network.rs` for the four modes (`None`, `Chemical`,
-`Age`, `Trace`) and their behavioural semantics. In `AGE` mode the
+Four quality modes exist — `NONE`, `CHEMICAL`, `AGE`, and `TRACE` ([model spec](../model/spec.md) §2.1). In `AGE` mode the
 "concentration" is incremented by $\delta t_q / 3600$ at every sub-step; in
 `TRACE` mode the trace node holds 100 % and all other fixed-grade inflows hold 0 %.
 
@@ -364,7 +363,11 @@ $$W_{\text{source}} \mathrel{+}= \max(m_s, 0)$$
 
 $$R_{\text{bulk}} = \frac{W_{\text{bulk}} \cdot 10^3}{T}, \quad R_{\text{wall}} = \frac{W_{\text{wall}} \cdot 10^3}{T}, \quad R_{\text{tank}} = \frac{W_{\text{tank}} \cdot 10^3}{T}, \quad R_{\text{source}} = \frac{W_{\text{source}} \cdot 10^3}{T}$$
 
-where $T = \max(D / 3600,\, 1)$ and $D$ is the total simulation duration in seconds.
+where $D$ is the total simulation duration in seconds and $T$ is the averaging window in hours:
+
+$$T = \begin{cases} D / 3600, & D > 0 \\ 1, & D = 0 \end{cases}$$
+
+The one-hour value applies **only** to a single-period run ($D = 0$, [model spec](../model/spec.md) §2.1), where no elapsed time exists to average over. It is not a floor: a sub-hour simulation averages over its own true duration, so a 30-minute run reports rates over 0.5 h rather than over 1 h.
 
 ---
 

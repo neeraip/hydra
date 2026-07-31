@@ -738,7 +738,13 @@ fn parse_options(lines: &[SecLine<'_>]) -> Result<SimulationOptions, ReadError> 
                 opts.max_iter = v as u32;
             }
             "ACCURACY" => {
-                opts.flow_tol = opt_f64(&fields, 1, "OPTIONS.Accuracy")?;
+                // Spec §2.1: EPANET silently clamps Accuracy to [1e-5, 0.1] at
+                // the file boundary (input3.c) rather than rejecting it, so a
+                // file carrying an out-of-range value loads and runs. Matched
+                // here for exact behavioural parity; the programmatic path is
+                // bounded more permissively (spec §2.1).
+                let v = opt_f64(&fields, 1, "OPTIONS.Accuracy")?;
+                opts.flow_tol = v.clamp(1e-5, 0.1);
             }
             "UNBALANCED" => {
                 // "Continue N" where N is extra iterations.

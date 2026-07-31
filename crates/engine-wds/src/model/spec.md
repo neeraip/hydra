@@ -22,10 +22,10 @@ Global simulation parameters. All are static after loading.
 
 | Parameter | Description | Constraints |
 |---|---|---|
-| `duration` | Total simulation duration (s) | > 0 |
+| `duration` | Total simulation duration (s). **0 is legal and means a single-period (steady-state) analysis** — it is also EPANET's default when `[TIMES] Duration` is absent | ≥ 0 |
 | `hyd_step` | Nominal hydraulic time step (s) | > 0 |
 | `qual_step` | Quality time step (s); when 0 or unset, defaults to `hyd_step` / 10, then capped at `hyd_step` | > 0; ≤ `hyd_step` |
-| `report_step` | Reporting interval (s) | > 0; ≤ `duration` |
+| `report_step` | Reporting interval (s). Not bounded by `duration`: a single-period run keeps the default 3600 s while `duration` is 0 | > 0 |
 | `report_start` | Time at which reporting begins (s) | ≥ 0 |
 | `pattern_step` | Global pattern time step (s) | > 0 |
 | `pattern_start` | Clock offset applied to pattern indexing (s) | ≥ 0 |
@@ -48,13 +48,13 @@ Global simulation parameters. All are static after loading.
 | `extra_iter` | Extra frozen-status iterations on non-convergence (−1 = halt); default −1 | ≥ −1 |
 | `head_tol` | Head tolerance $\varepsilon_H$ used in link status transitions (m); default 1.524×10⁻⁴ (= 0.0005 ft) | > 0 |
 | `flow_change_tol` | Absolute flow tolerance $\varepsilon_Q$ used in link status transition tests (m³/s); default 2.832×10⁻⁶ (= 0.0001 ft³/s). **Distinct from `flow_tol`**: `flow_tol` governs solver convergence (relative criterion, §3.8); `flow_change_tol` appears only in link status transition conditions (§3.9). | > 0 |
-| `flow_tol` | Relative flow accuracy for convergence ($\text{Hacc}$); default 0.001 | > 0 |
+| `flow_tol` | Relative flow accuracy for convergence ($\text{Hacc}$); default 0.001. Bounded differently by surface — see below | [10⁻⁸, 0.1] |
 | `head_error_limit` | Optional absolute per-link head balance error limit (m); 0 = disabled; default 0 | ≥ 0 |
 | `flow_change_limit` | Optional absolute maximum flow change per iteration (m³/s); 0 = disabled; default 0 | ≥ 0 |
 | `damp_limit` | Relative flow accuracy threshold below which damping + valve checks activate; default 0 (disabled) | ≥ 0 |
 | `rq_tol` | Minimum gradient clamp for emitter/pump coefficient linearisation; default $10^{-7}$ | > 0 |
 | `check_freq` | Status check interval (iterations); default 2 | ≥ 1 |
-| `max_check` | Iteration count after which status checks stop; default 10 | ≥ `check_freq` |
+| `max_check` | Iteration count after which status checks stop; default 10. Independent of `check_freq` — EPANET imposes no relation between them, and `check_freq > max_check` is legal (it disables periodic status checks entirely) | ≥ 1 |
 | `bulk_order` | Global bulk reaction order for pipe segments; default 1.0 | any real |
 | `tank_order` | Tank bulk reaction order; default 1.0. Independent of `bulk_order` — allows different reaction kinetics in tanks vs pipes | any real |
 | `wall_order` | Global wall reaction order (0 or 1) | 0 or 1 |
@@ -68,6 +68,30 @@ Global simulation parameters. All are static after loading.
 | `roughness_reaction_factor` | Global roughness–reaction correlation factor $R_f$ for deriving wall coefficients from pipe roughness (§6.5.4); 0 = disabled; default 0 | any real |
 | `rule_timestep` | Rule evaluation sub-step duration (seconds); default = `hydraulic_timestep` / 10, clamped to `hydraulic_timestep` | > 0 |
 | `quality_tolerance` | Segment merge tolerance $C_{\text{tol}}$ (same units as quality constituent); default 0.01 | ≥ 0 |
+
+**Two bounds on `flow_tol`, one per surface.** EPANET bounds the convergence accuracy differently depending on how it is supplied, and Hydra mirrors that split rather than reconciling it:
+
+| Surface | Bound | Out-of-range value |
+|---|---|---|
+| `[OPTIONS] ACCURACY` in an INP file | [10⁻⁵, 0.1] | silently clamped |
+| Programmatic (`SimulationOptions`) | [10⁻⁸, 0.1] | caller's responsibility |
+
+The split is deliberate. The file bound is a **compatibility surface**: EPANET has always clamped `ACCURACY` at parse time, so a value below 10⁻⁵ in an INP file has never once taken effect, and any file carrying one was authored against clamped behaviour. Honouring it would hand that model results it has never produced. The looser programmatic bound is EPANET's own figure for what its solver can reach (its API rejects outside [10⁻⁸, 0.1]), and applies to a caller setting the tolerance deliberately in code. Because the file path clamps before validation, a parsed model always satisfies the programmatic bound too.
+
+The 0.1 ceiling is common to both and is not optional: accepting a looser convergence criterion than EPANET would make Hydra strictly less accurate than the predecessor on the same input.
+
+> **DEVIATION from EPANET:** the programmatic path is not enforced. EPANET's API returns error 213 outside [10⁻⁸, 0.1]; Hydra treats `SimulationOptions` as a trusted in-process surface and leaves the bound documented rather than checked. A value below the floor risks the convergence ratio stalling in floating-point noise (the criterion is a relative sum over links in `f64`, which floors around 10⁻¹²) and reporting unbalanced.
+
+**Parse-time substitution of non-positive time parameters.** EPANET does not reject a non-positive time setting; it substitutes a default after parsing, so such a file loads and runs. Hydra matches this at the input boundary, and the `> 0` constraints above are therefore invariants of the *loaded* model rather than restrictions on the file:
+
+| `[TIMES]` setting | Supplied value | Substituted with |
+|---|---|---|
+| `Pattern Timestep` | ≤ 0 | 3600 s |
+| `Hydraulic Timestep` | ≤ 0 | 3600 s |
+| `Report Timestep` | 0 | the pattern timestep |
+| `Report Start` | > `duration` | 0 — **not** the duration, so a run configured to begin reporting after it ends reports everything |
+
+The hydraulic timestep is then lowered to the pattern timestep and to the report timestep if it exceeds either, and the quality and rule timesteps are lowered to the hydraulic timestep.
 
 > **DEVIATION from EPANET:** EPANET computes the quality time step with integer arithmetic, so for very small hydraulic steps it can truncate to 0. Hydra keeps the quality time step as a real number and, when it is 0 or unset, defaults it to `hyd_step` / 10, so it never becomes zero. An explicitly set sub-second step is used as given (there is no 1-second floor).
 
@@ -311,8 +335,19 @@ Consecutive premises are joined by `AND` or `OR`. `AND` binds more tightly than 
 
 ### 2.9 Graph Topology Constraints
 
-The full list of constraints and their fatal-error semantics is documented on
-`Network::validate()` in `model/validation.rs`.
+Validation reports **every** violation found rather than stopping at the first, so a caller can surface all problems at once. All of the following must hold; any violation is fatal and the simulation must not proceed:
+
+1. Every node index referenced by a link exists in the node table.
+2. Every curve, pattern, or node ID referenced by any object exists in the corresponding table.
+3. No link connects a node to itself.
+4. The network contains at least one fixed-grade node (reservoir or tank), and every junction is reachable from at least one fixed-grade node via the link graph.
+5. For each tank, `min_level` ≤ `init_level` ≤ `max_level`.
+6. Every pump head curve is strictly decreasing in *y*.
+7. Every curve has strictly increasing *x*-values.
+8. Every pattern has at least one factor.
+9. Every rule action referencing a link references a valid link.
+10. `wall_order` is 0 or 1; no other value is valid.
+11. The §2.9 valve-placement rules: a PRV, PSV, or FCV may not connect to a reservoir or tank, and PRV/PSV/FCV pairs may not share or chain control nodes in the configurations §2.9 forbids (mirroring EPANET's parse-time errors 219 and 220).
 
 **Valve-placement rules.** A PRV, PSV, or FCV replaces ordinary head-loss behaviour with a head- or flow-fixing constraint when it goes active (see [hydraulics spec](../hydraulics/spec.md) §3.5). Certain placements make that constraint structurally unsatisfiable, producing a singular linear system the moment the valve activates. The following placements are therefore **fatal validation errors**, checked in the single post-load validation pass alongside all other constraints (EPANET enforces the identical rules while parsing valve input lines — its errors 219 and 220 — so the accept/reject outcomes are the same):
 
@@ -513,6 +548,7 @@ The INP format is the plain-text network description format used by EPANET. Supp
 - `[LEAKAGE]`: the on-disk values are the FAVAD coefficients C₁ (mm² of fixed leak area per 100 length units of pipe) and C₂ (mm of leak-area expansion per metre of head, per 100 length units of pipe). At load they become the per-pipe discharge coefficients $K_1 = C_d\sqrt{2g} \cdot 10^{-6} \cdot C_1 \cdot L/100$ and $K_2 = C_d\sqrt{2g} \cdot 10^{-3} \cdot C_2 \cdot L/100$ (with $C_d = 0.6$, $L$ in metres; §2.6.2, §2.10); the writer inverts these formulas.
 - `[TIMES]`: duration values are written as `H:MM` when they fall on a whole minute and as `H:MM:SS` otherwise (the parser accepts both; whole-minute rounding would destroy sub-minute steps such as a 20 s quality timestep, and a bare number would be re-read as decimal **hours**). `Pattern Timestep` is written whenever it differs from the parser's default of 3600 s — comparing against the hydraulic timestep instead would silently drop a non-default pattern step that happens to equal the hydraulic step. `Rule Timestep` is always written, since its parser default is derived from the hydraulic timestep and cannot be reconstructed reliably.
 - `[OPTIONS]` `VISCOSITY` / `DIFFUSIVITY`: written in EPANET's **relative-multiplier** form — the stored SI value divided by the reference constants 1.022×10⁻⁶ m²/s (viscosity) and 1.208×10⁻⁹ m²/s (diffusivity). The parser interprets values above 10⁻³ (viscosity) resp. 10⁻⁴ (diffusivity) as multipliers of these references and smaller values as absolute; absolute magnitudes (≈10⁻⁹) are destroyed by fixed-precision decimal formatting, so the writer must never emit the absolute form. Omitted when equal to the reference default.
+- `[OPTIONS]` `ACCURACY`: written in shortest round-trip decimal form, not fixed precision. A programmatically-set value may sit far below any fixed decimal precision — at six decimals 10⁻⁷ serialises as `0.000000` and re-reads as **zero**, which no convergence test can ever satisfy. (Values arriving from a file are already ≥ 10⁻⁵ and would survive fixed precision; the hazard is confined to the programmatic path.)
 - `[OPTIONS]` `HTOL` / `QTOL` / `RQTOL`: written when they differ from the §2.1 defaults (`head_tol` = 1.524×10⁻⁴ m, `flow_change_tol` = 2.832×10⁻⁶ m³/s, `rq_tol` = 10⁻⁷), applying the exact inverse of the load conversion: `HTOL` = `head_tol` × elevation factor, `QTOL` = `flow_change_tol` × flow factor, `RQTOL` unconverted. Values are written in shortest round-trip decimal form (no fixed precision) because these tolerances can be far smaller than any fixed decimal precision.
 - `[RULES]`: premise values for `TIME` and `CLOCKTIME` are always written as `H:MM(:SS)` literals. A bare numeric value would be re-parsed as **hours**, multiplying the stored seconds by 3600 on every save/load cycle. `FILLTIME`/`DRAINTIME` premise values are stored in hours (§2.8.2) and written back unchanged.
 - `[MIXING]`: only tanks with a **non-default** mixing configuration are written. The default is `MIXED` (CSTR) with `mix_fraction` = 1.0 (the parser's default fraction when the column is absent); a tank is written when its model is not CSTR or its fraction is not 1.0. The Fraction column is written for `2COMP` always, and for any other model whenever the fraction differs from 1.0 (so an explicitly-parsed fraction survives).
@@ -536,9 +572,11 @@ The INP parser uses the two-pass strategy described in §4.2.
 
 ### 4.4 Analysis Artifact Format (`analysis.json`)
 
-See `encode_analysis_artifact` / `decode_analysis_artifact` in
-`analysis/artifact.rs` for the file schema and lifecycle (including
-stale-on-edit invalidation).
+A versioned JSON document holding post-simulation analytics for one results file.
+Unlike the INP and `.out` formats, it has no predecessor lineage and is compatible
+only with its own schema version. The schema, the producer's stale-on-edit
+invalidation obligation, and the canonical-encoding and round-trip requirements are
+specified in the [analysis spec](../analysis/spec.md) §3 and §5.
 
 ### 4.5 Binary Results Format (`.out`)
 
@@ -659,6 +697,6 @@ Metadata readers expose the prolog's scalar header fields — including the simu
 
 ## 5. Runtime Estimation Types
 
-See `RuntimeEstimate` in `model/network.rs`. Allowed values: `Low`, `Medium`, `High`.
-The estimate is advisory and deterministic for identical inputs.
+The runtime estimate is a three-valued ordinal — `Low`, `Medium`, `High`. It is
+advisory only and deterministic for identical inputs.
 
