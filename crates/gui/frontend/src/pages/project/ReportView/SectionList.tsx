@@ -17,6 +17,7 @@ import {
   Bars3Icon,
   ChevronRightIcon,
   ExclamationTriangleIcon,
+  MagnifyingGlassCircleIcon,
   XMarkIcon,
 } from "@heroicons/react/16/solid";
 import { useEffect, useRef, useState } from "react";
@@ -34,6 +35,12 @@ import {
 import { BlockOptions, type OptionValues } from "./BlockOptions";
 
 export interface SectionListProps {
+  /** Scroll the preview to this section. */
+  onReveal: (id: string) => void;
+  /** Why revealing is unavailable, or null when it works — the pdf viewer
+   *  cannot be scrolled to a section, and nothing can be until the preview
+   *  for the current format has rendered. */
+  revealBlocked: string | null;
   sections: string[];
   blockById: Map<string, ReportBlockInfo>;
   descriptorsById: Record<string, ReportOptionInfo[]>;
@@ -95,6 +102,8 @@ export function SectionList({
   onRemove,
   onOptionsChange,
   onHeadingChange,
+  onReveal,
+  revealBlocked,
 }: SectionListProps) {
   // The row being dragged, the gap it would drop into, and the geometry the
   // floating copy needs to follow the pointer.
@@ -369,6 +378,21 @@ export function SectionList({
                     transition: `transform ${DISCLOSE_MS}ms ease`,
                   }}
                 />
+              </button>
+              <button
+                type="button"
+                aria-label={`Show ${block.title} in the preview`}
+                data-tooltip={revealBlocked ?? "Show in preview"}
+                disabled={revealBlocked !== null}
+                onClick={() => onReveal(id)}
+                style={{
+                  ...rowButton,
+                  ...(revealBlocked !== null
+                    ? { opacity: 0.4, cursor: "default" }
+                    : {}),
+                }}
+              >
+                <MagnifyingGlassCircleIcon style={{ width: 13, height: 13 }} />
               </button>
               <button
                 type="button"

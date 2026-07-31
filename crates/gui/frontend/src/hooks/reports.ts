@@ -479,3 +479,20 @@ export function addableBlocks(
     );
   });
 }
+
+/** 0-based line of `heading`'s section title in a txt-rendered report, or
+ * `null` when it is not there.
+ *
+ * Matched by title text with an underline check rather than by counting rules:
+ * the txt renderer underlines section titles with a solid run of dashes, but
+ * it also rules table headers with dashes, so the Nth dashed line is not the
+ * Nth section. Requiring the line above to equal the heading exactly
+ * distinguishes them — a table's rule sits under column names, never under a
+ * section title. */
+export function txtHeadingLine(text: string, heading: string): number | null {
+  const lines = text.split("\n");
+  for (let i = 0; i < lines.length - 1; i++) {
+    if (lines[i] === heading && /^-+$/.test(lines[i + 1])) return i;
+  }
+  return null;
+}

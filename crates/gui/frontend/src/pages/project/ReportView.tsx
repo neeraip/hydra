@@ -26,6 +26,7 @@ import {
   recommendedOrder,
   sameOrder,
   saveReportTemplate,
+  txtHeadingLine,
   unproducibleSections,
   withRecommendedPlacement,
   writeStoredFormat,
@@ -33,7 +34,7 @@ import {
 import { useSimulation } from "../../SimulationContext";
 import { AddSectionPalette } from "./ReportView/AddSectionPalette";
 import type { OptionValues } from "./ReportView/BlockOptions";
-import { CsvPreview } from "./ReportView/CsvPreview";
+import { CsvPreview, type CsvPreviewHandle } from "./ReportView/CsvPreview";
 import { SectionList } from "./ReportView/SectionList";
 
 const PREVIEW_DEBOUNCE_MS = 350;
@@ -145,6 +146,9 @@ export function ReportView() {
 
   useEffect(() => () => detachHtmlScroll.current?.(), []);
   const [exporting, setExporting] = useState(false);
+
+  const csvRef = useRef<CsvPreviewHandle>(null);
+  const txtRef = useRef<HTMLPreElement>(null);
 
   // ── Catalog + saved template ───────────────────────────────────────────
   useEffect(() => {
@@ -375,6 +379,48 @@ export function ReportView() {
   // Only render a preview that matches the selected tab.
   const previewContent =
     preview !== null && preview.format === format ? preview.content : null;
+  /** Why the preview cannot be scrolled to a section, or null when it can. */
+  const revealBlocked =
+    preview?.format !== format || previewContent === null
+      ? "The preview is still rendering"
+      : format === "pdf"
+        ? "The PDF viewer cannot be scrolled to a section"
+        : null;
+
+  /** Scroll the preview to the section at `index` in the outline.
+   *
+   * Located by position rather than by any anchor in the output: every
+   * section emits exactly one `<h2>` in html and one `#` row in csv,
+   * whatever its variant, so the Nth of those IS the Nth section. That keeps
+   * the renderers — a compatibility surface with golden tests — untouched.
+   * Only txt lacks a positional handle, because it rules table headers with
+   * the same dashes it underlines titles with, so it matches on the heading
+   * text instead. */
+  function revealSection(index: number) {
+    if (revealBlocked) return;
+    if (format === "html") {
+      const heading =
+        htmlFrameRef.current?.contentDocument?.querySelectorAll("h2")[index];
+      heading?.scrollIntoView({ behavior: "smooth", block: "start" });
+      return;
+    }
+    if (format === "csv") {
+      csvRef.current?.scrollToSection(index);
+      return;
+    }
+    const pre = txtRef.current;
+    const id = sections[index];
+    if (!pre || !id || previewContent === null) return;
+    const title = headingById[id]?.trim() || blockById.get(id)?.title || id;
+    const line = txtHeadingLine(previewContent, title);
+    if (line === null) return;
+    const lineHeight = Number.parseFloat(
+      window.getComputedStyle(pre).lineHeight,
+    );
+    if (!Number.isFinite(lineHeight)) return;
+    pre.scrollTo({ top: line * lineHeight, behavior: "smooth" });
+  }
+
   // Pdf previews arrive as base64 bytes; view them through a blob URL
   // (child-src allows blob:), revoked when replaced.
   const pdfUrl = useMemo(() => {
@@ -643,6 +689,8 @@ export function ReportView() {
               onRemove={removeSection}
               onOptionsChange={setOptions}
               onHeadingChange={setHeading}
+              onReveal={(id) => revealSection(sections.indexOf(id))}
+              revealBlocked={revealBlocked}
             />
           </div>
         </div>
@@ -805,9 +853,10 @@ export function ReportView() {
                   style={{ flex: 1, border: "none", background: "#ffffff" }}
                 />
               ) : format === "csv" ? (
-                <CsvPreview content={previewContent} />
+                <CsvPreview ref={csvRef} content={previewContent} />
               ) : (
                 <pre
+                  ref={txtRef}
                   style={{
                     flex: 1,
                     margin: 0,

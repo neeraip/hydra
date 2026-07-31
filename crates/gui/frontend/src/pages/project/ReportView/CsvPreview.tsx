@@ -11,7 +11,7 @@
  * text.
  */
 
-import { useMemo } from "react";
+import { forwardRef, useImperativeHandle, useMemo, useRef } from "react";
 import {
   columnCount,
   columnName,
@@ -59,153 +59,181 @@ const fillerCell: React.CSSProperties = {
   borderRight: "none",
 };
 
-export function CsvPreview({ content }: { content: string }) {
-  const { rows, columns, truncated, total } = useMemo(() => {
-    const all = parseCsv(content);
-    return {
-      rows: all.slice(0, MAX_ROWS),
-      columns: columnCount(all.slice(0, MAX_ROWS)),
-      truncated: all.length > MAX_ROWS,
-      total: all.length,
-    };
-  }, [content]);
+/** Imperative handle: scrolling the sheet is the parent's to trigger but the
+ *  grid's to perform, since only it knows which row a section landed on. */
+export interface CsvPreviewHandle {
+  /** Scroll the Nth section (0-based) into view. */
+  scrollToSection: (index: number) => void;
+}
 
-  return (
-    <div
-      style={{
-        flex: 1,
-        overflow: "auto",
-        background: "#ffffff",
-        color: INK,
-        fontFamily: "var(--font-ui)",
-      }}
-    >
-      <table
+export const CsvPreview = forwardRef<CsvPreviewHandle, { content: string }>(
+  function CsvPreview({ content }, ref) {
+    const { rows, columns, truncated, total } = useMemo(() => {
+      const all = parseCsv(content);
+      return {
+        rows: all.slice(0, MAX_ROWS),
+        columns: columnCount(all.slice(0, MAX_ROWS)),
+        truncated: all.length > MAX_ROWS,
+        total: all.length,
+      };
+    }, [content]);
+
+    const scrollRef = useRef<HTMLDivElement>(null);
+    useImperativeHandle(ref, () => ({
+      scrollToSection(index: number) {
+        // Skip one: the first `#` row is the document title, not a section.
+        const row = scrollRef.current?.querySelector(
+          `[data-title-row="${index + 1}"]`,
+        );
+        row?.scrollIntoView({ behavior: "smooth", block: "start" });
+      },
+    }));
+
+    // Running ordinal of `#` rows, so a section can be found without
+    // re-deriving which rows are titles at scroll time.
+    let titleOrdinal = -1;
+
+    return (
+      <div
+        ref={scrollRef}
         style={{
-          borderCollapse: "collapse",
-          // Sits at the top-left so the sticky headers have a corner to pin
-          // against rather than floating over centred content.
-          tableLayout: "auto",
-          // Full width so the trailing filler has space to claim; the real
-          // columns keep their content widths because only the filler asks
-          // for any of it.
-          width: "100%",
+          flex: 1,
+          overflow: "auto",
+          background: "#ffffff",
+          color: INK,
+          fontFamily: "var(--font-ui)",
         }}
       >
-        <thead>
-          <tr>
-            <th
-              style={{
-                ...cellBase,
-                position: "sticky",
-                top: 0,
-                left: 0,
-                zIndex: 2,
-                background: HEADER_BG,
-                minWidth: 34,
-              }}
-            />
-            {Array.from({ length: columns }, (_, i) => (
+        <table
+          style={{
+            borderCollapse: "collapse",
+            // Sits at the top-left so the sticky headers have a corner to pin
+            // against rather than floating over centred content.
+            tableLayout: "auto",
+            // Full width so the trailing filler has space to claim; the real
+            // columns keep their content widths because only the filler asks
+            // for any of it.
+            width: "100%",
+          }}
+        >
+          <thead>
+            <tr>
               <th
-                key={columnName(i)}
                 style={{
                   ...cellBase,
                   position: "sticky",
                   top: 0,
-                  zIndex: 1,
+                  left: 0,
+                  zIndex: 2,
                   background: HEADER_BG,
-                  fontWeight: 600,
-                  color: "#54607a",
-                  textAlign: "center",
+                  minWidth: 34,
                 }}
-              >
-                {columnName(i)}
-              </th>
-            ))}
-            <th
-              style={{
-                ...fillerCell,
-                position: "sticky",
-                top: 0,
-                zIndex: 1,
-                background: HEADER_BG,
-              }}
-            />
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((row, r) => {
-            const blank = isBlankRow(row);
-            const title = !blank && isTitleRow(row);
-            return (
-              <tr
-                // Row position is the identity here: the sheet is a fixed
-                // grid, not a keyed list, and rows carry no id of their own.
-                // biome-ignore lint/suspicious/noArrayIndexKey: grid position IS the identity
-                key={r}
-                style={{ height: blank ? 10 : undefined }}
-              >
-                <td
+              />
+              {Array.from({ length: columns }, (_, i) => (
+                <th
+                  key={columnName(i)}
                   style={{
                     ...cellBase,
                     position: "sticky",
-                    left: 0,
+                    top: 0,
                     zIndex: 1,
                     background: HEADER_BG,
+                    fontWeight: 600,
                     color: "#54607a",
-                    textAlign: "right",
-                    fontVariantNumeric: "tabular-nums",
+                    textAlign: "center",
                   }}
                 >
-                  {r + 1}
-                </td>
-                {Array.from({ length: columns }, (_, c) => {
-                  const cell = row[c] ?? "";
-                  return (
-                    <td
-                      // Same reasoning as the row key: a cell is its position.
-                      // biome-ignore lint/suspicious/noArrayIndexKey: grid position IS the identity
-                      key={c}
-                      title={cell.length > 40 ? cell : undefined}
-                      style={{
-                        ...cellBase,
-                        background: title ? "#f6f8fa" : undefined,
-                        fontWeight: title && c === 0 ? 600 : undefined,
-                        textAlign: isNumeric(cell) ? "right" : "left",
-                        fontVariantNumeric: isNumeric(cell)
-                          ? "tabular-nums"
-                          : undefined,
-                      }}
-                    >
-                      {title && c === 0 ? titleText(row) : cell}
-                    </td>
-                  );
-                })}
-                <td
-                  style={{
-                    ...fillerCell,
-                    background: title ? "#f6f8fa" : undefined,
-                  }}
-                />
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
+                  {columnName(i)}
+                </th>
+              ))}
+              <th
+                style={{
+                  ...fillerCell,
+                  position: "sticky",
+                  top: 0,
+                  zIndex: 1,
+                  background: HEADER_BG,
+                }}
+              />
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row, r) => {
+              const blank = isBlankRow(row);
+              const title = !blank && isTitleRow(row);
+              if (title) titleOrdinal += 1;
+              const ordinal = title ? titleOrdinal : undefined;
+              return (
+                <tr
+                  // Row position is the identity here: the sheet is a fixed
+                  // grid, not a keyed list, and rows carry no id of their own.
+                  // biome-ignore lint/suspicious/noArrayIndexKey: grid position IS the identity
+                  key={r}
+                  data-title-row={ordinal}
+                  style={{ height: blank ? 10 : undefined }}
+                >
+                  <td
+                    style={{
+                      ...cellBase,
+                      position: "sticky",
+                      left: 0,
+                      zIndex: 1,
+                      background: HEADER_BG,
+                      color: "#54607a",
+                      textAlign: "right",
+                      fontVariantNumeric: "tabular-nums",
+                    }}
+                  >
+                    {r + 1}
+                  </td>
+                  {Array.from({ length: columns }, (_, c) => {
+                    const cell = row[c] ?? "";
+                    return (
+                      <td
+                        // Same reasoning as the row key: a cell is its position.
+                        // biome-ignore lint/suspicious/noArrayIndexKey: grid position IS the identity
+                        key={c}
+                        title={cell.length > 40 ? cell : undefined}
+                        style={{
+                          ...cellBase,
+                          background: title ? "#f6f8fa" : undefined,
+                          fontWeight: title && c === 0 ? 600 : undefined,
+                          textAlign: isNumeric(cell) ? "right" : "left",
+                          fontVariantNumeric: isNumeric(cell)
+                            ? "tabular-nums"
+                            : undefined,
+                        }}
+                      >
+                        {title && c === 0 ? titleText(row) : cell}
+                      </td>
+                    );
+                  })}
+                  <td
+                    style={{
+                      ...fillerCell,
+                      background: title ? "#f6f8fa" : undefined,
+                    }}
+                  />
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
 
-      {truncated ? (
-        <p
-          style={{
-            margin: 0,
-            padding: "8px 12px",
-            fontSize: "var(--text-sm)",
-            color: "#54607a",
-          }}
-        >
-          Showing the first {MAX_ROWS} of {total} rows. The exported file
-          contains all of them.
-        </p>
-      ) : null}
-    </div>
-  );
-}
+        {truncated ? (
+          <p
+            style={{
+              margin: 0,
+              padding: "8px 12px",
+              fontSize: "var(--text-sm)",
+              color: "#54607a",
+            }}
+          >
+            Showing the first {MAX_ROWS} of {total} rows. The exported file
+            contains all of them.
+          </p>
+        ) : null}
+      </div>
+    );
+  },
+);

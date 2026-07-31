@@ -14,6 +14,7 @@ import {
   recommendedOrder,
   rowShift,
   sameOrder,
+  txtHeadingLine,
   unproducibleSections,
   withRecommendedPlacement,
   writeStoredFormat,
@@ -553,5 +554,50 @@ describe("withRecommendedPlacement", () => {
     expect(out).not.toBe(sections);
     expect(sections).toEqual([TANKS]);
     expect(added).toEqual([SUMMARY]);
+  });
+});
+
+describe("txtHeadingLine", () => {
+  // Shaped like the txt renderer's output: a document title ruled with "=",
+  // section titles ruled with "-", and a table whose column header is ruled
+  // with dashes too — the reason this cannot just count dashed lines.
+  const REPORT = [
+    "Simulation Report",
+    "=================",
+    "Model: net.inp",
+    "",
+    "Run Summary",
+    "-----------",
+    "Junctions: 4",
+    "",
+    "Result Extremes",
+    "---------------",
+    "Node   Pressure",
+    "-----  --------",
+    "J1        31.8",
+  ].join("\n");
+
+  it("finds a section by its heading", () => {
+    expect(txtHeadingLine(REPORT, "Run Summary")).toBe(4);
+    expect(txtHeadingLine(REPORT, "Result Extremes")).toBe(8);
+  });
+
+  it("is not fooled by a table's column rule", () => {
+    // "Node   Pressure" is followed by dashes but is a column header, not a
+    // section. Counting dashed lines would return it as the third section.
+    expect(txtHeadingLine(REPORT, "Node   Pressure")).toBeNull();
+  });
+
+  it("does not match the document title, which is ruled with =", () => {
+    expect(txtHeadingLine(REPORT, "Simulation Report")).toBeNull();
+  });
+
+  it("returns null for a heading that is not there", () => {
+    expect(txtHeadingLine(REPORT, "Pump Energy")).toBeNull();
+  });
+
+  it("requires the whole line to match, not a prefix", () => {
+    // "Run" must not match the "Run Summary" heading.
+    expect(txtHeadingLine(REPORT, "Run")).toBeNull();
   });
 });
