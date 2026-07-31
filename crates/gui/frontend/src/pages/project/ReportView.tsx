@@ -324,7 +324,7 @@ export function ReportView() {
       {/* ── Builder rail ─────────────────────────────────────────────── */}
       <div
         style={{
-          flex: "0 0 280px",
+          flex: "0 0 320px",
           borderRight: "1px solid var(--border)",
           background: "var(--bg-panel)",
           display: "flex",
