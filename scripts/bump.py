@@ -35,18 +35,26 @@ def main():
     cli = pathlib.Path("crates/cli/Cargo.toml")
     cli.write_text(re.sub(r'(hydra-sdk[^\n]+version = ")\d+\.\d+\.\d+"', rf'\g<1>{version}"', cli.read_text()))
 
-    # Update the hydra-engine-wds, hydra-common, and hydra-report dep pins
-    # in hydra-sdk.
-    sdk = pathlib.Path("crates/sdk/Cargo.toml")
-    sdk_text = sdk.read_text()
-    for dep in ("hydra-engine-wds", "hydra-common", "hydra-report"):
-        sdk_text = re.sub(rf'({dep}[^\n]+version = ")\d+\.\d+\.\d+"', rf'\g<1>{version}"', sdk_text)
-    sdk.write_text(sdk_text)
-
-    # Update the hydra-common dep pins in hydra-engine-wds and hydra-report.
-    for crate in ("crates/engine-wds/Cargo.toml", "crates/report/Cargo.toml"):
+    # Update every intra-workspace dep pin. Keyed off the crate name so a new
+    # workspace dependency is picked up by adding it to one list, not by
+    # remembering to add a bespoke regex.
+    WORKSPACE_DEPS = (
+        "hydra-common",
+        "hydra-engine-wds",
+        "hydra-engines",
+        "hydra-report",
+    )
+    for crate in (
+        "crates/sdk/Cargo.toml",
+        "crates/engines/Cargo.toml",
+        "crates/engine-wds/Cargo.toml",
+        "crates/report/Cargo.toml",
+    ):
         p = pathlib.Path(crate)
-        p.write_text(re.sub(r'(hydra-common[^\n]+version = ")\d+\.\d+\.\d+"', rf'\g<1>{version}"', p.read_text()))
+        text = p.read_text()
+        for dep in WORKSPACE_DEPS:
+            text = re.sub(rf'({dep}[^\n]+version = ")\d+\.\d+\.\d+"', rf'\g<1>{version}"', text)
+        p.write_text(text)
 
     # Only the MAJOR is documented: a caret pin already admits every
     # compatible minor and patch, so narrowing it would just create churn.
