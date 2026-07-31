@@ -233,7 +233,7 @@ indistinguishable to a reader. This is why the obligation rests on the producer.
 The module publishes an advisory estimate of how long an **analysis** will take,
 so an interface can warn before starting an expensive one. This is distinct from
 the *simulation* runtime estimate, which models a different cost and is specified
-in the [simulation spec](../simulation/spec.md) §11. The estimate never
+in the [simulation spec](../simulation/spec.md) §10. The estimate never
 influences what is computed, and is deterministic for identical inputs.
 
 **Inputs** are summary metadata plus the module selection of §4 — node count,
