@@ -174,7 +174,11 @@ byte-determinism for identical documents.
 
 **Pagination.** Every page carries its number and the total in the bottom
 margin ("3 / 12"), so a page separated from the report still says where it
-belongs and whether any are missing. A section heading is never the last
+belongs and whether any are missing. Every page after the first carries a
+running header naming the document and what it was produced from, since a
+default title identifies nothing on its own. The first page is exempt: it
+already states both, and repeating them immediately above themselves reads
+as an error rather than a header. A section heading is never the last
 thing on a page: it is kept with the content that follows it. A table that continues onto a
 further page repeats its column header there.
 

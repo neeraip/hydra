@@ -84,8 +84,35 @@ fn quoted(text: &str) -> String {
 fn typst_source(doc: &ReportDocument) -> (String, Vec<String>) {
     let mut charts: Vec<String> = Vec::new();
     let mut s = String::new();
+    // Running header: the title, and what the report was produced from, on
+    // every page but the first. A page that gets separated from its report
+    // then still says which report and which run it belongs to — the default
+    // title ("Simulation Report") identifies nothing on its own, so the
+    // provenance is the half that does the work.
+    //
+    // Suppressed on page 1, which already carries both as its title block;
+    // repeating them a centimetre above themselves reads as a mistake.
+    let header_provenance = doc
+        .source
+        .iter()
+        .map(|(_, value)| value.as_str())
+        .collect::<Vec<_>>()
+        .join(" · ");
+    let _ = writeln!(
+        s,
+        "#set page(paper: \"a4\", margin: 2cm, numbering: \"1 / 1\", header: context {{\n\
+         \x20 if counter(page).get().first() > 1 {{\n\
+         \x20   set text(size: 8pt, fill: luma(120))\n\
+         \x20   grid(columns: (1fr, auto), align: (left, right), [#{}], [#{}])\n\
+         \x20   v(2pt)\n\
+         \x20   line(length: 100%, stroke: 0.4pt + luma(200))\n\
+         \x20 }}\n\
+         }})",
+        quoted(&doc.title),
+        quoted(&header_provenance),
+    );
     s.push_str(
-        "#set page(paper: \"a4\", margin: 2cm, numbering: \"1 / 1\")\n\
+        "\
          #set text(size: 10pt)\n\
          #set table(stroke: 0.5pt + luma(180), inset: 5pt)\n\
          #show heading.where(level: 1): set text(size: 17pt)\n\
@@ -436,8 +463,53 @@ mod tests {
         ReportDocument {
             title: "Pagination".into(),
             generated_at: None,
-            source: vec![],
+            source: vec![("Model".into(), "anytown.inp".into())],
             sections,
+        }
+    }
+
+    /// Spec §4.5: a running header identifies the report on every page but
+    /// the first.
+    ///
+    /// "Pagination" and "anytown.inp" appear in the body only on page 1 — the
+    /// title block — so finding either on a later page is the header and
+    /// nothing else.
+    #[test]
+    fn pages_after_the_first_carry_a_running_header() {
+        let doc = long_document();
+        let (source, charts) = typst_source(&doc);
+        let world = ReportWorld::new(source, charts);
+        let compiled: typst_layout::PagedDocument =
+            typst::compile(&world).output.expect("compiles");
+        assert!(compiled.pages().len() > 1, "fixture no longer spans pages");
+
+        let whole_page = |page: &typst_layout::Page| -> String {
+            page_text(&page.frame, typst::layout::Point::zero())
+                .iter()
+                .map(|(_, _, t)| t.as_str())
+                .collect()
+        };
+
+        // Page 1 carries the title once, as its heading — not twice.
+        let first = whole_page(&compiled.pages()[0]);
+        assert_eq!(
+            first.matches("Pagination").count(),
+            1,
+            "page 1 repeats the title: the header should be suppressed there"
+        );
+
+        for (index, page) in compiled.pages().iter().enumerate().skip(1) {
+            let text = whole_page(page);
+            assert!(
+                text.contains("Pagination"),
+                "page {} carries no running header",
+                index + 1
+            );
+            assert!(
+                text.contains("anytown.inp"),
+                "page {} header omits the provenance",
+                index + 1
+            );
         }
     }
 
