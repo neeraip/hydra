@@ -386,6 +386,37 @@ body,
   position: relative; /* keeps layout expectations intact */
 }
 
+/* ── Report outline rows ─────────────────────────────────────────────────────
+   Find and remove appear on hover, so a long outline reads as a list of
+   sections rather than a wall of buttons.
+
+   Opacity, not display: the controls keep their space, so nothing shifts as
+   the pointer crosses rows and the chevron beside them never moves.
+
+   Also shown while the row is expanded — its settings are open, so it is
+   plainly the row being worked on — and on :focus-within, without which a
+   keyboard user would tab to a control they cannot see.                     */
+.report-row-actions {
+  opacity: 0;
+  transition: opacity var(--t-fast);
+}
+.report-row:hover .report-row-actions,
+.report-row:focus-within .report-row-actions,
+.report-row.is-open .report-row-actions {
+  opacity: 1;
+}
+
+/* Dimmed rather than hidden once revealed, so an unavailable control still
+   explains itself on hover instead of simply not being there. */
+.report-row-actions:disabled {
+  cursor: default;
+}
+.report-row:hover .report-row-actions:disabled,
+.report-row:focus-within .report-row-actions:disabled,
+.report-row.is-open .report-row-actions:disabled {
+  opacity: 0.45;
+}
+
 /* ── Animations ──────────────────────────────────────────────────────────────*/
 @keyframes fadeIn {
   from {

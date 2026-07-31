@@ -305,6 +305,7 @@ export function SectionList({
             }}
           >
             <div
+              className={`report-row${open ? " is-open" : ""}`}
               style={{
                 display: "flex",
                 alignItems: "center",
@@ -388,6 +389,7 @@ export function SectionList({
                     place that still says which block a renamed section is. */}
                 <span
                   data-tooltip={block.summary}
+                  data-tooltip-pos="right"
                   style={{
                     flex: 1,
                     minWidth: 0,
@@ -432,33 +434,18 @@ export function SectionList({
                     }}
                   />
                 ) : null}
-                {/* Sits where the gear did, next to the row's other controls.
-                    Rotated rather than swapped for a down-chevron: the turn is
-                    what conveys that this row did the opening, where a swap
-                    would just be a different icon appearing. */}
-                <ChevronRightIcon
-                  style={{
-                    width: ICON_PX,
-                    height: ICON_PX,
-                    flexShrink: 0,
-                    color: "var(--text-tertiary)",
-                    transform: open ? "rotate(90deg)" : undefined,
-                    transition: `transform ${DISCLOSE_MS}ms ease`,
-                  }}
-                />
               </button>
               <button
                 type="button"
+                className="report-row-actions"
                 aria-label={`Show ${block.title} in the preview`}
                 data-tooltip={revealBlocked ?? "Show in preview"}
                 disabled={revealBlocked !== null}
                 onClick={() => onReveal(id)}
-                style={{
-                  ...rowButton,
-                  ...(revealBlocked !== null
-                    ? { opacity: 0.4, cursor: "default" }
-                    : {}),
-                }}
+                // Dimming lives in CSS, not here: an inline opacity would beat
+                // the stylesheet's hover reveal, and a disabled control would
+                // sit visible on every unhovered row.
+                style={rowButton}
               >
                 <MagnifyingGlassIcon
                   style={{ width: ICON_PX, height: ICON_PX }}
@@ -466,12 +453,36 @@ export function SectionList({
               </button>
               <button
                 type="button"
+                className="report-row-actions"
                 aria-label={`Remove ${block.title}`}
                 data-tooltip="Remove from report"
                 onClick={() => onRemove(id)}
                 style={rowButton}
               >
                 <XMarkIcon style={{ width: ICON_PX, height: ICON_PX }} />
+              </button>
+              {/* Last, and a button of its own: it used to sit inside the
+                  row-wide toggle, where being decorative cost nothing. Out
+                  here it is the one thing on the right that is not an action,
+                  so it has to answer a click itself.
+                  Rotated rather than swapped for a down-chevron — the turn is
+                  what conveys that this row did the opening, where a swap
+                  would just be a different icon appearing. */}
+              <button
+                type="button"
+                aria-label={`${open ? "Collapse" : "Expand"} ${block.title} settings`}
+                aria-expanded={open}
+                onClick={() => onToggleOpen(id)}
+                style={rowButton}
+              >
+                <ChevronRightIcon
+                  style={{
+                    width: ICON_PX,
+                    height: ICON_PX,
+                    transform: open ? "rotate(90deg)" : undefined,
+                    transition: `transform ${DISCLOSE_MS}ms ease`,
+                  }}
+                />
               </button>
             </div>
 
