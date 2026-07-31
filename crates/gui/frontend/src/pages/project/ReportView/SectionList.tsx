@@ -15,6 +15,7 @@
 
 import {
   Bars3Icon,
+  ChevronRightIcon,
   ExclamationTriangleIcon,
   XMarkIcon,
 } from "@heroicons/react/16/solid";
@@ -54,6 +55,7 @@ export interface SectionListProps {
  * one gap, so the two must not be able to drift apart. */
 const ROW_GAP = 2;
 const SHIFT_MS = 160;
+const DISCLOSE_MS = 120;
 
 const rowButton: React.CSSProperties = {
   display: "flex",
@@ -273,6 +275,20 @@ export function SectionList({
                   fontFamily: "var(--font-ui)",
                 }}
               >
+                {/* Leads the button, so the thing that expands announces
+                    itself at the edge the content starts from. Rotated rather
+                    than swapped for a down-chevron: the turn is what conveys
+                    that this row did the opening. */}
+                <ChevronRightIcon
+                  style={{
+                    width: 11,
+                    height: 11,
+                    flexShrink: 0,
+                    color: "var(--text-tertiary)",
+                    transform: open ? "rotate(90deg)" : undefined,
+                    transition: `transform ${DISCLOSE_MS}ms ease`,
+                  }}
+                />
                 <span
                   style={{
                     fontSize: "var(--text-sm)",
