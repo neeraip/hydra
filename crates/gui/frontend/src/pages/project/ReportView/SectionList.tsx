@@ -319,6 +319,13 @@ export function SectionList({
           >
             <div
               className={`report-row${open ? " is-open" : ""}`}
+              // On the card, not the title: positioned "right" the tooltip
+              // opens from its anchor's edge, and the title's edge is mid-row,
+              // so the panel covered the very controls being reached for.
+              // Resolution is by closest ancestor, so each button's own
+              // tooltip still wins over this one.
+              data-tooltip={block.summary}
+              data-tooltip-pos="right"
               style={{
                 display: "flex",
                 alignItems: "center",
@@ -401,8 +408,6 @@ export function SectionList({
                     kept above it, since the outline is otherwise the only
                     place that still says which block a renamed section is. */}
                 <span
-                  data-tooltip={block.summary}
-                  data-tooltip-pos="right"
                   style={{
                     flex: 1,
                     minWidth: 0,
@@ -502,6 +507,7 @@ export function SectionList({
               <button
                 type="button"
                 aria-label={`${open ? "Collapse" : "Expand"} ${block.title} settings`}
+                data-tooltip={open ? "Hide settings" : "Show settings"}
                 aria-expanded={open}
                 onClick={() => onToggleOpen(id)}
                 style={rowButton}
