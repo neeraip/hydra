@@ -8,6 +8,7 @@ Hydra is a multi-crate Rust workspace:
 | `hydra-engine-wds` | Water-distribution engine: data model, parsers, unit conversion, GGA hydraulic solver, Lagrangian quality engine, session API, analytics, report blocks |
 | `hydra-engine-uds` | Urban-drainage engine — a published scaffold, deliberately empty until its development begins |
 | `hydra-engine-och` | Open-channel engine — likewise a published scaffold |
+| `hydra-engines` | Engine dispatch: given a model of unknown provenance, decides which engine owns it. The one layer that sees both the registry and every engine, so the routing policy lives here once instead of in each interface |
 | `hydra-report` | Report generation: templates, document assembly from engine-neutral fragments, and the txt/csv/html/PDF renderers. Knows nothing about any engine — it depends only on `hydra-common` |
 | `hydra-sdk` | Umbrella facade: re-exports the complete user-facing API with all dependency versions pre-pinned |
 | `hydra-cli` | Command-line interface: resolves input, writes output files, generates reports; no simulation logic |

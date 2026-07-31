@@ -196,6 +196,12 @@ pub use hydra_engine_wds::compute_network_digest;
 /// crate spec for the authoritative contract definition.
 pub use hydra_common as common;
 
+/// Engine dispatch: route a model of unknown provenance to the engine that
+/// owns it (`common` spec §2.5.1). An extension cannot answer this — `wds`
+/// and `uds` both claim `.inp` — so ask [`engines::route`] rather than
+/// assuming, and never fall back to a default engine.
+pub use hydra_engines as engines;
+
 /// Report blocks the water-distribution engine can produce, per the
 /// `common` reportable-output contract.
 pub use hydra_engine_wds::{produce_report_block, report_block_options, report_catalog};
