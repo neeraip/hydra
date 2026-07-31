@@ -22,6 +22,7 @@ import {
   recommendedOrder,
   sameOrder,
   saveReportTemplate,
+  unproducibleSections,
   writeStoredFormat,
 } from "../../hooks/reports";
 import { AddSectionPalette } from "./ReportView/AddSectionPalette";
@@ -318,6 +319,11 @@ export function ReportView() {
     () => new Map(availability.map((a) => [a.id, a])),
     [availability],
   );
+  // Sections the engine says cannot render for this target.
+  const barren = useMemo(
+    () => unproducibleSections(sections, availabilityById),
+    [sections, availabilityById],
+  );
   const formatLabel =
     FORMATS.find((f) => f.id === format)?.label ?? format.toUpperCase();
   // Only render a preview that matches the selected tab.
@@ -455,6 +461,29 @@ export function ReportView() {
                     onSelect: () =>
                       setOpenSections(
                         allExpanded ? new Set() : new Set(sections),
+                      ),
+                  },
+                  {
+                    label: "Remove sections with no results",
+                    detail:
+                      barren.length > 0
+                        ? `${barren.length} cannot render for this run`
+                        : undefined,
+                    // Caution, not destructive: it only drops sections the
+                    // outline already marks as producing nothing, so nothing
+                    // that would have appeared in the report is lost.
+                    warning: true,
+                    disabled: barren.length === 0,
+                    // Two different reasons to be unavailable, and saying
+                    // "every section produces results" when nothing has been
+                    // probed would be a claim the app cannot make.
+                    disabledReason:
+                      availability.length === 0
+                        ? "Run a simulation to see which sections have results"
+                        : "Every section produces results for this run",
+                    onSelect: () =>
+                      setSections((prev) =>
+                        prev.filter((id) => !barren.includes(id)),
                       ),
                   },
                   {

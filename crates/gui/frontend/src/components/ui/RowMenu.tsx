@@ -37,8 +37,13 @@ export interface RowMenuItem {
   /** Menu entry label. Also the accessible name. */
   label: string;
   onSelect: () => void;
-  /** Renders in the destructive colour and below a separator. */
+  /** Renders in the destructive colour, in the group below the separator. */
   danger?: boolean;
+  /** Renders in the caution colour, in the same group as `danger` entries.
+   * For an action that removes or discards something, but only something the
+   * user has already been told is not pulling its weight — worth marking,
+   * short of the red reserved for losing work. */
+  warning?: boolean;
   disabled?: boolean;
   /** Shown under the label when disabled — say why, not just that. */
   disabledReason?: string;
@@ -164,7 +169,9 @@ export function RowMenu({
     };
   }, [open]);
 
-  const dangerStart = items.findIndex((i) => i.danger);
+  // The separator opens the group of entries that take something away,
+  // whether they are marked as caution or as destructive.
+  const groupStart = items.findIndex((i) => i.danger || i.warning);
 
   return (
     <>
@@ -221,7 +228,7 @@ export function RowMenu({
                 {/* Separator only when destructive entries actually follow
                     safe ones — a menu that opens with a danger item would
                     otherwise get a stray rule above its first row. */}
-                {item.danger && i === dangerStart && i > 0 && (
+                {(item.danger || item.warning) && i === groupStart && i > 0 && (
                   <div
                     style={{
                       height: 1,
@@ -249,8 +256,10 @@ export function RowMenu({
                     color: item.disabled
                       ? "var(--text-tertiary)"
                       : item.danger
-                        ? "var(--status-error, #e05c5c)"
-                        : "var(--text-primary)",
+                        ? "var(--status-error)"
+                        : item.warning
+                          ? "var(--status-warning)"
+                          : "var(--text-primary)",
                     fontSize: "var(--text-md)",
                     fontFamily: "var(--font-ui)",
                     cursor: item.disabled ? "default" : "pointer",

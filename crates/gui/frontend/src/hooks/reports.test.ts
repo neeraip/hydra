@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   addableBlocks,
+  type BlockAvailability,
   builderStateFromTemplate,
   buildTemplateJson,
   customisedSummary,
@@ -13,6 +14,7 @@ import {
   recommendedOrder,
   rowShift,
   sameOrder,
+  unproducibleSections,
   writeStoredFormat,
 } from "./reports";
 
@@ -445,5 +447,50 @@ describe("remembered preview format", () => {
       },
     };
     expect(() => writeStoredFormat("p1", "csv", store)).not.toThrow();
+  });
+});
+
+describe("unproducibleSections", () => {
+  const availability = (
+    entries: [string, BlockAvailability["status"]][],
+  ): Map<string, BlockAvailability> =>
+    new Map(entries.map(([id, status]) => [id, { id, status }]));
+
+  it("finds the sections that cannot render", () => {
+    const map = availability([
+      ["a", "ok"],
+      ["b", "unavailable"],
+      ["c", "failed"],
+    ]);
+    expect(unproducibleSections(["a", "b", "c"], map)).toEqual(["b", "c"]);
+  });
+
+  it("returns nothing when every section renders", () => {
+    expect(unproducibleSections(["a"], availability([["a", "ok"]]))).toEqual(
+      [],
+    );
+  });
+
+  it("does NOT count a section that was never probed", () => {
+    // A target with no results reports nothing at all. Treating unknown as
+    // broken would offer to empty the entire report for a project that had
+    // simply not been run yet.
+    expect(unproducibleSections(["a", "b"], new Map())).toEqual([]);
+  });
+
+  it("ignores entries for sections not in the report", () => {
+    const map = availability([
+      ["a", "ok"],
+      ["z", "failed"],
+    ]);
+    expect(unproducibleSections(["a"], map)).toEqual([]);
+  });
+
+  it("keeps the report's order", () => {
+    const map = availability([
+      ["a", "failed"],
+      ["b", "failed"],
+    ]);
+    expect(unproducibleSections(["b", "a"], map)).toEqual(["b", "a"]);
   });
 });

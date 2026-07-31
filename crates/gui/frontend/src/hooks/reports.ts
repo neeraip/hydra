@@ -310,6 +310,22 @@ function safeStorage(): FormatStore | undefined {
   }
 }
 
+/** Sections that cannot produce anything for this run.
+ *
+ * A section with no availability entry is NOT counted. Absent means "not
+ * probed" — a target with no results yet reports nothing at all — and
+ * treating unknown as broken would offer to empty the whole report the
+ * moment a project had not been simulated. */
+export function unproducibleSections(
+  sections: readonly string[],
+  availabilityById: ReadonlyMap<string, BlockAvailability>,
+): string[] {
+  return sections.filter((id) => {
+    const availability = availabilityById.get(id);
+    return availability !== undefined && availability.status !== "ok";
+  });
+}
+
 /** How far row `index` steps aside while row `from` is being dragged to
  * `dest`, in pixels.
  *
