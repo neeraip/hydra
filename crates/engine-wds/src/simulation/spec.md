@@ -516,7 +516,29 @@ Hydra has been exercised against eight real-world hydraulic networks totalling 1
 
 - Richmond network: Hydra computes 49 periods of full convergence; EPANET halts after 28 periods on a step its solver could not balance. The last 21 periods in EPANET's output file are empty or filled with earlier values; Hydra, converging at every step, never triggers the halt and continues with physically valid equilibria.
 
-**Verdict**: Correct. The halt rule itself is identical; divergent halt points are a downstream effect of the §9.1 numerical-path differences, not a behavioural deviation.
+**A second, harder stop path** exists in both engines and is not the one above.
+When Cholesky factorisation breaks down and the failing row does **not** belong to
+an active control valve — so the §3.6 valve-demotion recovery cannot apply — the
+solve is unrecoverable. EPANET returns its cannot-solve error, which its
+error-propagation macro treats as fatal (only codes above its warning band
+short-circuit the extended-period loop); Hydra returns the equivalent solver
+error from the session. The two stop paths differ observably and should not be
+conflated:
+
+| | Trigger | Failing step's results |
+|---|---|---|
+| Unbalanced stop | solve exhausts its iteration budget, `extra_iter = -1` | **saved**, then the run ends |
+| Unrecoverable solve | singular matrix, no valve to demote | **not saved**, the run aborts |
+
+Note that EPANET's non-fatal conditions — negative pressures, a disconnected
+network, pumps out of range, an FCV unable to supply flow — are returned through
+the same channel as errors but fall below the macro's threshold, so they never
+stop the run. That they are non-fatal is a property of that threshold rather
+than an explicit decision in the control flow.
+
+**Verdict**: Correct. Both halt rules are identical between the engines;
+divergent halt points are a downstream effect of the §9.1 numerical-path
+differences, not a behavioural deviation.
 
 ### 9.3 Energy Statistics Differences
 
