@@ -15,7 +15,6 @@
 
 import {
   Bars3Icon,
-  Cog6ToothIcon,
   ExclamationTriangleIcon,
   XMarkIcon,
 } from "@heroicons/react/16/solid";
@@ -56,7 +55,7 @@ export interface SectionListProps {
 const ROW_GAP = 2;
 const SHIFT_MS = 160;
 
-const rowButton = (active: boolean): React.CSSProperties => ({
+const rowButton: React.CSSProperties = {
   display: "flex",
   alignItems: "center",
   justifyContent: "center",
@@ -66,10 +65,10 @@ const rowButton = (active: boolean): React.CSSProperties => ({
   borderRadius: 4,
   border: "none",
   background: "transparent",
-  color: active ? ACCENT : "var(--text-tertiary)",
+  color: "var(--text-tertiary)",
   cursor: "pointer",
   flexShrink: 0,
-});
+};
 
 export function SectionList({
   sections,
@@ -251,64 +250,88 @@ export function SectionList({
               >
                 <Bars3Icon style={{ width: 12, height: 12 }} />
               </span>
-              <span
-                style={{
-                  fontSize: "var(--text-sm)",
-                  color: "var(--text-tertiary)",
-                  fontVariantNumeric: "tabular-nums",
-                  flexShrink: 0,
-                }}
-              >
-                {index + 1}
-              </span>
-              <span
-                data-tooltip={block.summary}
-                style={{
-                  flex: 1,
-                  fontSize: "var(--text-lg)",
-                  color: "var(--text-primary)",
-                  overflow: "hidden",
-                  textOverflow: "ellipsis",
-                  whiteSpace: "nowrap",
-                }}
-              >
-                {heading.trim() || block.title}
-              </span>
-              {problem ? (
-                <span
-                  data-tooltip={
-                    availability?.reason ?? "Will not render for this run"
-                  }
-                  style={{ display: "flex", color: "var(--warn, #c98a1b)" }}
-                >
-                  <ExclamationTriangleIcon style={{ width: 12, height: 12 }} />
-                </span>
-              ) : null}
+              {/* Everything between the handle and remove is one button, so
+                  the row's body opens the settings. A real button rather than
+                  a click handler on the row: it carries the expanded state and
+                  keyboard operation without hand-rolled ARIA, and it cannot
+                  swallow the two controls that must do something else. */}
               <button
                 type="button"
-                aria-label={open ? "Hide settings" : "Settings"}
-                data-tooltip={
-                  customised.length > 0
-                    ? `Changed from defaults: ${customised.join(", ")}`
-                    : open
-                      ? "Hide settings"
-                      : "Settings"
-                }
+                aria-expanded={open}
                 onClick={() => onToggleOpen(id)}
-                // Tinted for CUSTOMISED only, never for open: the expanded
-                // panel already shows that it is open, so spending the same
-                // signal on both left the marker meaning nothing in
-                // particular.
-                style={rowButton(customised.length > 0)}
+                style={{
+                  flex: 1,
+                  minWidth: 0,
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 6,
+                  padding: 0,
+                  border: "none",
+                  background: "transparent",
+                  cursor: "pointer",
+                  textAlign: "left",
+                  fontFamily: "var(--font-ui)",
+                }}
               >
-                <Cog6ToothIcon style={{ width: 12, height: 12 }} />
+                <span
+                  style={{
+                    fontSize: "var(--text-sm)",
+                    color: "var(--text-tertiary)",
+                    fontVariantNumeric: "tabular-nums",
+                    flexShrink: 0,
+                  }}
+                >
+                  {index + 1}
+                </span>
+                <span
+                  data-tooltip={block.summary}
+                  style={{
+                    flex: 1,
+                    minWidth: 0,
+                    fontSize: "var(--text-lg)",
+                    color: "var(--text-primary)",
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {heading.trim() || block.title}
+                </span>
+                {problem ? (
+                  <span
+                    data-tooltip={
+                      availability?.reason ?? "Will not render for this run"
+                    }
+                    style={{ display: "flex", color: "var(--warn, #c98a1b)" }}
+                  >
+                    <ExclamationTriangleIcon
+                      style={{ width: 12, height: 12 }}
+                    />
+                  </span>
+                ) : null}
+                {/* The customised marker outlived the gear it used to tint.
+                    It is a plain dot, not a control: opening the settings is
+                    now the row's job, and a second clickable thing here would
+                    just be a smaller target for the same action. */}
+                {customised.length > 0 ? (
+                  <span
+                    data-tooltip={`Changed from defaults: ${customised.join(", ")}`}
+                    style={{
+                      width: 6,
+                      height: 6,
+                      borderRadius: "50%",
+                      background: ACCENT,
+                      flexShrink: 0,
+                    }}
+                  />
+                ) : null}
               </button>
               <button
                 type="button"
                 aria-label={`Remove ${block.title}`}
                 data-tooltip="Remove from report"
                 onClick={() => onRemove(id)}
-                style={rowButton(false)}
+                style={rowButton}
               >
                 <XMarkIcon style={{ width: 13, height: 13 }} />
               </button>
