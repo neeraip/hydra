@@ -25,6 +25,7 @@ import {
   unproducibleSections,
   writeStoredFormat,
 } from "../../hooks/reports";
+import { useSimulation } from "../../SimulationContext";
 import { AddSectionPalette } from "./ReportView/AddSectionPalette";
 import type { OptionValues } from "./ReportView/BlockOptions";
 import { CsvPreview } from "./ReportView/CsvPreview";
@@ -62,6 +63,10 @@ const FORMATS: { id: ReportFormat; label: string }[] = [
  */
 export function ReportView() {
   const { activeProjectId, activeScenarioId, showToast } = useAppState();
+  // Freshness token: bumps when a run lands. Without it the page keeps
+  // whatever it worked out before the run — a project simulated for the first
+  // time goes on reporting that it has no results until it is reloaded.
+  const { resultGeneration } = useSimulation();
 
   const [catalog, setCatalog] = useState<ReportBlockInfo[]>([]);
   const [title, setTitle] = useState("Simulation Report");
@@ -167,6 +172,7 @@ export function ReportView() {
   // Descriptions are model-resolved (defaults and units follow the file's
   // unit system), so they are refetched when the target changes — not
   // cached across scenarios that may declare different units.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `resultGeneration` is an intentional retrigger — option defaults are resolved against the run.
   useEffect(() => {
     if (!activeProjectId || catalog.length === 0) return;
     const projectId = activeProjectId;
@@ -188,10 +194,11 @@ export function ReportView() {
     return () => {
       cancelled = true;
     };
-  }, [activeProjectId, activeScenarioId, catalog]);
+  }, [activeProjectId, activeScenarioId, catalog, resultGeneration]);
 
   // Which sections can render for this run. One production pass, so it is
   // keyed to the target rather than re-run on every edit.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `resultGeneration` is an intentional retrigger — which sections can render depends on the run, so it must be reprobed when one completes.
   useEffect(() => {
     if (!activeProjectId) return;
     const projectId = activeProjectId;
@@ -204,7 +211,7 @@ export function ReportView() {
     return () => {
       cancelled = true;
     };
-  }, [activeProjectId, activeScenarioId]);
+  }, [activeProjectId, activeScenarioId, resultGeneration]);
 
   const templateJson = useMemo(
     () => buildTemplateJson({ title, sections, headingById, optionsById }),
@@ -212,6 +219,7 @@ export function ReportView() {
   );
 
   // ── Live preview (debounced; regenerates on scenario/format change) ────
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `resultGeneration` is an intentional retrigger — the preview renders from the run's results, so a completed run must regenerate it.
   useEffect(() => {
     if (!activeProjectId || !initialised) return;
     const projectId = activeProjectId;
@@ -232,7 +240,14 @@ export function ReportView() {
         });
     }, PREVIEW_DEBOUNCE_MS);
     return () => window.clearTimeout(handle);
-  }, [activeProjectId, initialised, activeScenarioId, templateJson, format]);
+  }, [
+    activeProjectId,
+    initialised,
+    activeScenarioId,
+    templateJson,
+    format,
+    resultGeneration,
+  ]);
 
   // ── Template persistence (debounced, best-effort) ──────────────────────
   const skipFirstSave = useRef(true);
