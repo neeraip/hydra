@@ -541,23 +541,14 @@ pub fn report_block_options(id: &str, network: &Network) -> Vec<OptionDescriptor
             },
             worst_count("junctions"),
         ],
-        "wds.demand-reliability" => vec![
-            OptionDescriptor {
-                key: "deficitTolerance".into(),
-                label: "Deficit tolerance".into(),
-                help: "Shortfalls slower than this are not counted as deficit \
-                       periods. Exists to stop floating-point noise registering \
-                       as service failure; volumes still include them."
-                    .into(),
-                kind: OptionKind::Number {
-                    default: Some(1e-9),
-                    min: Some(0.0),
-                    max: None,
-                },
-                unit: Some("m³/s".into()),
-            },
-            worst_count("junctions"),
-        ],
+        // `deficitTolerance` is deliberately NOT described. It is a
+        // floating-point noise floor rather than an engineering criterion, so
+        // its default is imperceptible in any unit — 1e-9 m³/s is 0.000001 L/s
+        // — and offering a field nobody can pick a value for is worse than
+        // offering none. It remains fully accepted from a hand-authored
+        // template and from the CLI; descriptions are advisory, never the
+        // validation authority (hydra-common spec §3.2.1).
+        "wds.demand-reliability" => vec![worst_count("junctions")],
         "wds.pipe-criticality" => vec![OptionDescriptor {
             key: "topCount".into(),
             label: "Rows in the ranked-pipes table".into(),
@@ -1569,10 +1560,9 @@ mod tests {
                 "wds.service-compliance",
                 &["minPressure", "maxPressure", "worstCount"],
             ),
-            (
-                "wds.demand-reliability",
-                &["deficitTolerance", "worstCount"],
-            ),
+            // deficitTolerance is accepted but deliberately not described:
+            // a noise floor is not a value anyone can be asked to pick.
+            ("wds.demand-reliability", &["worstCount"]),
             ("wds.pipe-criticality", &["topCount"]),
             ("wds.pressure-thresholds", &["edges"]),
             ("wds.velocity-thresholds", &["edges"]),
@@ -1582,6 +1572,18 @@ mod tests {
             let actual: Vec<&str> = described.iter().map(|d| d.key.as_str()).collect();
             assert_eq!(&actual, keys, "described options for {id}");
         }
+    }
+
+    #[test]
+    fn an_undescribed_option_is_still_accepted() {
+        // Descriptions are advisory (hydra-common spec §3.2.1): dropping
+        // `deficitTolerance` from the editor must not stop a hand-authored
+        // template or the CLI from setting it.
+        with_fixture_out(|path, network| {
+            let options = serde_json::json!({ "deficitTolerance": 0.001 });
+            produce_report_block("wds.demand-reliability", path, network, Some(&options))
+                .expect("an undescribed option must still be honoured");
+        });
     }
 
     #[test]

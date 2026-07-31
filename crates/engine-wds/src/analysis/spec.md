@@ -205,8 +205,12 @@ where a magnitude is required) fail production with the foundation
 contract's `failed` error naming the field.
 
 **Descriptions.** This engine implements the foundation contract's option
-description (hydra-common spec §3.2.1) for every option above, resolved against
-a loaded network. The four unit-dependent options — both pressure criteria and
+description (hydra-common spec §3.2.1) for the options above, resolved against
+a loaded network — with one deliberate omission. `deficitTolerance` is accepted
+but never described: it is a floating-point noise floor rather than an
+engineering criterion, so its default is imperceptible in any unit
+($10^{-9}$ m³/s is $10^{-6}$ L/s), and a control nobody can choose a value for
+is worse than no control. It remains settable from a template file. The four unit-dependent options — both pressure criteria and
 both `edges` lists — are described with the default and unit label matching that
 network's declared unit system, so a template-builder UI offering them never
 converts a unit or chooses between the two columns above. Blocks absent from the
