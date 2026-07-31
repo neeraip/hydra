@@ -43,7 +43,8 @@ enum CliRunError {
     Io(std::io::Error),
 }
 
-/// Hydra — water distribution network simulator.
+/// Hydra — water infrastructure simulation. Runs the water distribution engine
+/// on EPANET models; other engines are planned and not yet available.
 #[derive(Parser, Debug)]
 #[command(
     name = "hydra",
