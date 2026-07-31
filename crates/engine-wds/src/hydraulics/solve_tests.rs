@@ -1203,6 +1203,60 @@ fn pda_demand_reduces_below_full_demand() {
 }
 
 #[test]
+fn pda_converged_solution_satisfies_the_demand_curve() {
+    // §3.8: the solver linearises the demand curve each iteration, so flows
+    // that have stopped changing are not necessarily flows that lie on the
+    // curve. After convergence, re-evaluating the forward demand equation at
+    // the solved heads must reproduce the delivered demand.
+    let mut builder = TestNetworkBuilder::new();
+    builder.options_mut().demand_model = DemandModel::PressureDriven;
+    builder.options_mut().pda_min_pressure = 0.0;
+    builder.options_mut().pda_required_pressure = 30.0;
+    builder.options_mut().pda_pressure_exponent = 0.5;
+    let builder = builder
+        .reservoir("R1", 100.0)
+        .junction("J1", 50.0, 100.0)
+        .hw_pipe("P1", "R1", "J1", 1000.0, 12.0, 100.0);
+
+    // Read the thresholds back off the built network rather than reusing the
+    // builder's inputs: they are supplied in user units (psi under GPM) and
+    // converted on build, so the raw 30.0 is not the value the solver uses.
+    let (net, mut ns, mut ls, favad) = builder.build_with_favad();
+    let p_min = net.options.pda_min_pressure;
+    let p_req = net.options.pda_required_pressure;
+    let p_exp = net.options.pda_pressure_exponent;
+    let elev = net.nodes[1].base.elevation;
+    let d_full: f64 = match &net.nodes[1].kind {
+        crate::NodeKind::Junction(j) => j.demands.iter().map(|d| d.base_demand).sum(),
+        _ => unreachable!("node 1 is a junction"),
+    };
+
+    let mut ctx = build_solver_context(&net, &favad).unwrap();
+    let result =
+        solve_hydraulic_step(&net, &favad, &mut ctx, &mut ns, &mut ls, 0.0, no_pswitch).unwrap();
+    assert_eq!(result, SolveResult::Converged);
+
+    // Forward demand curve at the converged head — the inverse of the form the
+    // linearisation works with, so the two agree only at the solution.
+    let p = ns[1].head - elev;
+    let d_ref = if p <= p_min {
+        0.0
+    } else if p >= p_req {
+        d_full
+    } else {
+        d_full * ((p - p_min) / (p_req - p_min)).powf(p_exp)
+    };
+
+    // Same absolute tolerance the leakage check uses (1e-4 cfs in SI).
+    assert!(
+        (d_ref - ns[1].demand_flow).abs() <= 2.83e-6,
+        "delivered demand {} must satisfy the demand curve value {d_ref} at the \
+         converged head",
+        ns[1].demand_flow
+    );
+}
+
+#[test]
 fn leakage_favad_produces_leakage_flow() {
     let builder = TestNetworkBuilder::new()
         .reservoir("R1", 100.0)

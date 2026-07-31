@@ -258,7 +258,14 @@ $$\Delta h = \frac{a - b}{2}, \qquad \Delta g = \frac{10^9}{2}\left(1 - \frac{a}
 
 $$\Delta h = \frac{a + b}{2}, \qquad \Delta g = \frac{10^9}{2}\left(1 + \frac{a}{b}\right)$$
 
-$h \mathrel{+}= \Delta h$, $g \mathrel{+}= \Delta g$. When $\delta q \gg 0$, $\Delta h \approx 0$ (feasible region, no correction); when $\delta q \ll 0$, $\Delta h \to -\infty$ with very high stiffness (violation pushed back strongly).
+In both cases $h \mathrel{+}= \Delta h$ and $g \mathrel{+}= \Delta g$. The two barriers are mirror images, so the sign of $\delta q$ means the **opposite** thing in each — the feasible side is $\delta q < 0$ for the upper barrier and $\delta q > 0$ for the lower one:
+
+| Barrier | Feasible side | $\Delta h$, $\Delta g$ | Violating side | $\Delta h$, $\Delta g$ |
+|---|---|---|---|---|
+| Lower ($q \geq q_0$) | $\delta q \gg 0$ | $\approx 0$, $\approx 0$ | $\delta q \ll 0$ | $\to -\infty$, $\to 10^9$ |
+| Upper ($q \leq q_1$) | $\delta q \ll 0$ | $\approx 0$, $\approx 0$ | $\delta q \gg 0$ | $\to +\infty$, $\to 10^9$ |
+
+On the feasible side the correction vanishes and the element behaves as though unconstrained; on the violating side the head loss diverges with a gradient approaching $10^9$, which is what pushes the Newton step back across the bound.
 
 ### 3.4 Linear System Assembly
 
@@ -377,7 +384,11 @@ where $P_{\text{fa/va}}$ and $Y_{\text{fa/va}}$ are the barrier-adjusted coeffic
 
 The iteration is considered **converged** when all of the following hold simultaneously:
 
-1. **Relative flow accuracy**: let $S_Q = \sum_k |Q_k^{(m+1)}| + \sum_i Q_{e,i}^{(m+1)} + \sum_i D_i^{(m+1)} + \sum_i Q_{\text{leak},i}^{(m+1)}$ (sum of magnitudes over link flows, emitter flows, PDA demand flows, and leakage flows) and $\Delta S_Q$ the corresponding sum of absolute flow changes between iterations. Then:\n\n$$\varepsilon_Q = \begin{cases} \Delta S_Q / S_Q & S_Q > \text{\texttt{flow\_tol}} \\ \Delta S_Q & \text{otherwise (absolute criterion)} \end{cases}$$\n\nConvergence requires $\varepsilon_Q \leq$ `flow_tol`.
+1. **Relative flow accuracy**: let $S_Q = \sum_k |Q_k^{(m+1)}| + \sum_i Q_{e,i}^{(m+1)} + \sum_i D_i^{(m+1)} + \sum_i Q_{\text{leak},i}^{(m+1)}$ (sum of magnitudes over link flows, emitter flows, PDA demand flows, and leakage flows) and $\Delta S_Q$ the corresponding sum of absolute flow changes between iterations. Then:
+
+$$\varepsilon_Q = \begin{cases} \Delta S_Q / S_Q & S_Q > \text{\texttt{flow\_tol}} \\ \Delta S_Q & \text{otherwise (absolute criterion)} \end{cases}$$
+
+Convergence requires $\varepsilon_Q \leq$ `flow_tol`.
 
 2. **Per-link head balance error** (checked only when `head_error_limit > 0`): for each open link $k$ with $P_k > 0$, the head balance residual is the discrepancy between the computed head difference and the linearised head loss:
 
@@ -394,6 +405,38 @@ The condition is $\max_k \epsilon_{H,k} \leq$ `head_error_limit`. If `head_error
 $$q_{\text{ref},i} = \sqrt{\max(0,h_i) / c_{\text{fa},i}} + \max(0,h_i / c_{\text{va},i})^{3/2}$$
 
 (terms for absent components are omitted). If $|q_{\text{ref},i} - (q_{\text{fa},i} + q_{\text{va},i})| > Q_{\text{leak-tol}}$ for any junction, the solution is not yet converged and the Newton loop continues. $Q_{\text{leak-tol}}$ is an absolute tolerance in m³/s; the value is $2.83 \times 10^{-6}$ m³/s (= $10^{-4}$ ft³/s, approximately 0.045 gpm or 0.17 lpm). This check is independent of the relative flow accuracy criterion (criterion 1) and must be satisfied simultaneously with the other criteria.
+
+**PDA secondary convergence check**: the exact counterpart of the leakage check
+above, and required for the same reason. Under PDA the demand curve is replaced
+each iteration by its tangent (§3.3.2), so a solution can satisfy criterion 1 —
+the flows have stopped changing — while still sitting off the curve those flows
+are supposed to lie on. Criterion 1 is also *relative* to total network flow, so
+on a large network the absolute discrepancy it tolerates at a single junction can
+far exceed the tolerance below.
+
+After the main criteria are satisfied, re-evaluate the demand equation directly
+at the converged heads. For each junction $i$ with $D_{\text{full},i} > 0$, writing
+$p_i = H_i - z_i$:
+
+$$D_{\text{ref},i} = \begin{cases}
+0 & p_i \leq P_{\min} \\
+D_{\text{full},i} & p_i \geq P_{\text{req}} \\
+D_{\text{full},i}\left(\dfrac{p_i - P_{\min}}{P_{\text{req}} - P_{\min}}\right)^{n_P} & \text{otherwise}
+\end{cases}$$
+
+If $|D_{\text{ref},i} - D_i| > Q_{\text{pda-tol}}$ for any junction, the solution is not
+yet converged and the Newton loop continues. $Q_{\text{pda-tol}}$ is the same
+absolute tolerance the leakage check uses, $2.83 \times 10^{-6}$ m³/s
+($= 10^{-4}$ ft³/s). Note this evaluates the **forward** demand curve, whereas the
+linearisation of §3.3.2 works with its inverse — the two agree only at the
+solution, which is what the check establishes.
+
+The same pass accumulates two reported quantities, since it is the only point at
+which delivered and required demand are both known at the final heads: the count
+of junctions delivering less than their full demand (by more than
+$Q_{\text{pda-tol}}$), and the network **demand reduction**, the shortfall summed
+over those junctions as a percentage of their combined full demand. Both are zero
+under DDA.
 
 **Note**: `head_tol` is not a convergence criterion for the solver iteration. It is used as the absolute tolerance $\varepsilon_H$ in link status transition conditions (§3.9) and as the dead-band on pressure-based simple-control triggers in the post-convergence `pswitch` re-evaluation (below).
 
@@ -466,12 +509,22 @@ Here $H_s = z_{\text{from}(k)} + s_k$ is the absolute upstream setpoint, $H_1 = 
 
 #### FCV Status
 
-| Current | Transition | Condition |
+**Precedence**: unlike the PRV and PSV tables above, the FCV tests are a single
+**ordered chain evaluated regardless of the current status**, not a set of
+per-state transitions. The two demotion tests are checked first and from any
+state; only if both pass is the recovery test reached. A valve already in XFCV
+whose flow has recovered to the setpoint therefore **stays** in XFCV while
+either demotion condition still holds — reading the table as per-state
+transitions would promote it to ACTIVE instead.
+
+| Order | Condition | Result |
 |---|---|---|
-| ACTIVE | → XFCV | $H_1 - H_2 < -\varepsilon_H$ (negative available head) |
-| ACTIVE | → XFCV | $Q < -\varepsilon_Q$ (reverse flow) |
-| ACTIVE | → XFCV | $(H_1 - H_2) / Q^2 < K_m$ (available pressure gradient less than fully-open loss coefficient — valve cannot maintain setpoint) |
-| XFCV | → ACTIVE | $Q \geq Q_s$ (flow meets or exceeds setpoint) |
+| 1 | $H_1 - H_2 < -\varepsilon_H$ (negative available head) | XFCV, from any state |
+| 2 | $Q < -\varepsilon_Q$ (reverse flow) | XFCV, from any state |
+| 3 | current state is XFCV and $Q \geq Q_s$ (flow meets or exceeds setpoint) | ACTIVE |
+| 4 | current state is ACTIVE and $(H_1 - H_2) / Q^2 < K_m$ (available pressure gradient below the fully-open loss coefficient — the valve cannot maintain its setpoint) | XFCV |
+
+Falling through all four leaves the status unchanged.
 
 ### 3.10 Initialisation
 

@@ -286,6 +286,81 @@ pub(super) fn leakage_converged(
     true
 }
 
+/// Outcome of the PDA secondary convergence check (§3.8).
+pub(super) struct PdaConvergence {
+    /// `true` when every junction's delivered demand matches the demand curve
+    /// evaluated at the converged heads.
+    pub(super) converged: bool,
+    /// Junctions delivering less than their full demand.
+    pub(super) deficient_nodes: u32,
+    /// Shortfall as a percentage of the full demand of those junctions.
+    pub(super) demand_reduction: f64,
+}
+
+/// §3.8 PDA secondary convergence check — the counterpart of
+/// [`leakage_converged`] for pressure-dependent demand.
+///
+/// The solver linearises the demand curve each iteration (§3.3.2), so flows
+/// that have stopped changing are not necessarily flows that satisfy the
+/// curve. This re-evaluates the **forward** demand equation at the converged
+/// heads and requires agreement within the same absolute tolerance the
+/// leakage check uses.
+///
+/// The same pass accumulates the deficient-node count and demand-reduction
+/// percentage, this being the only point where delivered and required demand
+/// are both known at the final heads.
+pub(super) fn pda_converged(
+    network: &Network,
+    node_heads: &[f64],
+    pda_indices: &[usize],
+    junction_demands: &[f64],
+    pda_demand_flows: &[f64],
+    pda_pmin: f64,
+    pda_preq: f64,
+    pda_pexp: f64,
+) -> PdaConvergence {
+    let dp = pda_preq - pda_pmin;
+    let mut converged = true;
+    let mut deficient_nodes = 0u32;
+    let mut total_demand = 0.0f64;
+    let mut total_reduction = 0.0f64;
+
+    for &i in pda_indices {
+        let d_full = junction_demands[i];
+        if d_full <= 0.0 {
+            continue;
+        }
+        let p = node_heads[i] - network.nodes[i].base.elevation;
+        let d_ref = if p <= pda_pmin {
+            0.0
+        } else if p >= pda_preq || dp <= 0.0 {
+            d_full
+        } else {
+            d_full * ((p - pda_pmin) / dp).powf(pda_pexp)
+        };
+
+        let d = pda_demand_flows[i];
+        if (d_ref - d).abs() > Q_LEAK_TOL {
+            converged = false;
+        }
+        if d + Q_LEAK_TOL < d_full {
+            deficient_nodes += 1;
+            total_demand += d_full;
+            total_reduction += d_full - d;
+        }
+    }
+
+    PdaConvergence {
+        converged,
+        deficient_nodes,
+        demand_reduction: if total_demand > 0.0 {
+            total_reduction / total_demand * 100.0
+        } else {
+            0.0
+        },
+    }
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // §3.3.2 — PDA demand coefficients
 // ═══════════════════════════════════════════════════════════════════════════════
