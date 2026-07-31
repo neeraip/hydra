@@ -1,6 +1,7 @@
 import {
   ArrowDownIcon,
   ArrowUpIcon,
+  Cog6ToothIcon,
   DocumentArrowDownIcon,
 } from "@heroicons/react/16/solid";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -12,12 +13,15 @@ import {
   buildTemplateJson,
   exportReport,
   generateReport,
+  getReportBlockOptions,
   getReportTemplate,
   listReportBlocks,
   type ReportBlockInfo,
   type ReportFormat,
+  type ReportOptionInfo,
   saveReportTemplate,
 } from "../../hooks/reports";
+import { BlockOptions, type OptionValues } from "./ReportView/BlockOptions";
 
 const PREVIEW_DEBOUNCE_MS = 350;
 const SAVE_DEBOUNCE_MS = 800;
@@ -50,9 +54,17 @@ export function ReportView() {
   const [title, setTitle] = useState("Simulation Report");
   const [order, setOrder] = useState<string[]>([]);
   const [enabled, setEnabled] = useState<Set<string>>(new Set());
-  // Per-block options carried opaquely from the saved template (no editor
-  // yet — hand-authored options must survive the GUI round-trip).
+  // Per-block options. Held opaquely so a key this build cannot render — a
+  // hand-authored one, or one from a newer engine — survives the round-trip
+  // even though the editor below only shows described keys.
   const [optionsById, setOptionsById] = useState<Record<string, unknown>>({});
+  // Which block's options are open. One at a time: the rail is narrow and
+  // the forms are the only thing in it that scrolls.
+  const [openOptionsFor, setOpenOptionsFor] = useState<string | null>(null);
+  // Engine-described options per block id, resolved for the active target.
+  const [descriptorsById, setDescriptorsById] = useState<
+    Record<string, ReportOptionInfo[]>
+  >({});
   const [format, setFormat] = useState<ReportFormat>("html");
   const [initialised, setInitialised] = useState(false);
 
@@ -92,6 +104,32 @@ export function ReportView() {
       cancelled = true;
     };
   }, [activeProjectId]);
+
+  // Descriptions are model-resolved (defaults and units follow the file's
+  // unit system), so they are refetched when the target changes — not
+  // cached across scenarios that may declare different units.
+  useEffect(() => {
+    if (!activeProjectId || catalog.length === 0) return;
+    const projectId = activeProjectId;
+    const scenarioId = activeScenarioId ?? null;
+    let cancelled = false;
+    void (async () => {
+      const entries = await Promise.all(
+        catalog.map(
+          async (block) =>
+            [
+              block.id,
+              await getReportBlockOptions(projectId, scenarioId, block.id),
+            ] as const,
+        ),
+      );
+      if (cancelled) return;
+      setDescriptorsById(Object.fromEntries(entries));
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [activeProjectId, activeScenarioId, catalog]);
 
   const templateJson = useMemo(
     () => buildTemplateJson(title, order, enabled, optionsById),
@@ -241,55 +279,88 @@ export function ReportView() {
               const block = blockById.get(id);
               if (!block) return null;
               const checked = enabled.has(id);
+              const descriptors = descriptorsById[id] ?? [];
+              const open = openOptionsFor === id;
+              const configured =
+                Object.keys(
+                  (optionsById[id] as Record<string, unknown> | undefined) ??
+                    {},
+                ).length > 0;
               return (
-                <div
-                  key={id}
-                  title={block.summary}
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 8,
-                    padding: "6px 8px",
-                    borderRadius: 6,
-                    background: checked ? "var(--bg-elevated)" : "transparent",
-                    border: "1px solid",
-                    borderColor: checked ? "var(--border)" : "transparent",
-                  }}
-                >
-                  <input
-                    type="checkbox"
-                    checked={checked}
-                    onChange={() => toggle(id)}
-                    style={{ accentColor: ACCENT, flexShrink: 0 }}
-                  />
-                  <span
+                <div key={id}>
+                  <div
+                    title={block.summary}
                     style={{
-                      flex: 1,
-                      fontSize: "var(--text-lg)",
-                      color: checked
-                        ? "var(--text-primary)"
-                        : "var(--text-tertiary)",
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                      whiteSpace: "nowrap",
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 8,
+                      padding: "6px 8px",
+                      borderRadius: 6,
+                      background: checked
+                        ? "var(--bg-elevated)"
+                        : "transparent",
+                      border: "1px solid",
+                      borderColor: checked ? "var(--border)" : "transparent",
                     }}
                   >
-                    {block.title}
-                  </span>
-                  <RowButton
-                    label="Move up"
-                    disabled={index === 0}
-                    onClick={() => move(id, -1)}
-                  >
-                    <ArrowUpIcon style={{ width: 12, height: 12 }} />
-                  </RowButton>
-                  <RowButton
-                    label="Move down"
-                    disabled={index === order.length - 1}
-                    onClick={() => move(id, 1)}
-                  >
-                    <ArrowDownIcon style={{ width: 12, height: 12 }} />
-                  </RowButton>
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={() => toggle(id)}
+                      style={{ accentColor: ACCENT, flexShrink: 0 }}
+                    />
+                    <span
+                      style={{
+                        flex: 1,
+                        fontSize: "var(--text-lg)",
+                        color: checked
+                          ? "var(--text-primary)"
+                          : "var(--text-tertiary)",
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      {block.title}
+                    </span>
+                    {descriptors.length > 0 ? (
+                      <RowButton
+                        label={open ? "Hide settings" : "Settings"}
+                        active={open || configured}
+                        onClick={() => setOpenOptionsFor(open ? null : id)}
+                      >
+                        <Cog6ToothIcon style={{ width: 12, height: 12 }} />
+                      </RowButton>
+                    ) : null}
+                    <RowButton
+                      label="Move up"
+                      disabled={index === 0}
+                      onClick={() => move(id, -1)}
+                    >
+                      <ArrowUpIcon style={{ width: 12, height: 12 }} />
+                    </RowButton>
+                    <RowButton
+                      label="Move down"
+                      disabled={index === order.length - 1}
+                      onClick={() => move(id, 1)}
+                    >
+                      <ArrowDownIcon style={{ width: 12, height: 12 }} />
+                    </RowButton>
+                  </div>
+                  {open ? (
+                    <BlockOptions
+                      descriptors={descriptors}
+                      values={optionsById[id] as OptionValues}
+                      onChange={(next) =>
+                        setOptionsById((prev) => {
+                          const updated = { ...prev };
+                          if (next === undefined) delete updated[id];
+                          else updated[id] = next;
+                          return updated;
+                        })
+                      }
+                    />
+                  ) : null}
                 </div>
               );
             })}
@@ -466,12 +537,16 @@ function FieldLabel({ children }: { children: React.ReactNode }) {
 
 function RowButton({
   label,
-  disabled,
+  disabled = false,
+  active = false,
   onClick,
   children,
 }: {
   label: string;
-  disabled: boolean;
+  disabled?: boolean;
+  /** Tints the button — used to show a block carries non-default settings
+   * even while its form is collapsed. */
+  active?: boolean;
   onClick: () => void;
   children: React.ReactNode;
 }) {
@@ -492,7 +567,11 @@ function RowButton({
         borderRadius: 4,
         border: "none",
         background: "transparent",
-        color: disabled ? "var(--text-tertiary)" : "var(--text-secondary)",
+        color: disabled
+          ? "var(--text-tertiary)"
+          : active
+            ? ACCENT
+            : "var(--text-secondary)",
         cursor: disabled ? "default" : "pointer",
         opacity: disabled ? 0.4 : 1,
       }}

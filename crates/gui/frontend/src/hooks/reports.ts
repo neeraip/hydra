@@ -15,6 +15,63 @@ export interface ReportBlockInfo {
 
 export type ReportFormat = "txt" | "csv" | "html" | "pdf";
 
+/** One selectable item of a `choice` / `multiChoice` option. */
+export interface ChoiceItem {
+  value: string;
+  label: string;
+}
+
+/** Value shape of a describable block option (hydra-common spec §3.2.1).
+ * Discriminated by `type`; bounds and defaults are advisory — the engine
+ * validates independently at production time. */
+export type OptionKind =
+  | {
+      type: "number";
+      default: number | null;
+      min: number | null;
+      max: number | null;
+    }
+  | {
+      type: "integer";
+      default: number | null;
+      min: number | null;
+      max: number | null;
+    }
+  | { type: "boolean"; default: boolean | null }
+  | { type: "text"; default: string | null }
+  | {
+      type: "numberList";
+      default: number[] | null;
+      minLen: number | null;
+      ascending: boolean;
+    }
+  | { type: "choice"; default: string | null; items: ChoiceItem[] }
+  | { type: "multiChoice"; default: string[] | null; items: ChoiceItem[] };
+
+/** One option a block accepts, resolved against the target's model — so
+ * defaults and units already match that model's unit system. */
+export interface ReportOptionInfo {
+  key: string;
+  label: string;
+  help: string;
+  kind: OptionKind;
+  unit: string | null;
+}
+
+/** The options `blockId` accepts for this target. Empty when the block takes
+ * none, or when the backend cannot describe it. */
+export async function getReportBlockOptions(
+  projectId: string,
+  scenarioId: string | null,
+  blockId: string,
+): Promise<ReportOptionInfo[]> {
+  return tryInvokeOr<ReportOptionInfo[]>(
+    "get_report_block_options",
+    { projectId, scenarioId, blockId },
+    [],
+  );
+}
+
 /** The report-block catalog of the project's engine. */
 export async function listReportBlocks(): Promise<ReportBlockInfo[]> {
   return tryInvokeOr<ReportBlockInfo[]>("list_report_blocks", undefined, []);
@@ -71,10 +128,10 @@ export async function exportReport(args: {
 }
 
 /** Build the template JSON for the builder's current state: enabled block
- * ids in display order, carrying any per-block options opaquely (the GUI
- * has no options editor yet, but hand-authored options in the template
- * file must survive the round-trip). Matches `crates/report` template
- * format v1. */
+ * ids in display order, carrying any per-block options. Options are held
+ * opaquely so values the builder cannot render — a hand-authored key, or one
+ * from a newer engine — still survive the round-trip. Matches
+ * `crates/report` template format v1. */
 export function buildTemplateJson(
   title: string,
   orderedIds: string[],

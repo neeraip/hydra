@@ -20,6 +20,30 @@ pub fn list_report_blocks() -> &'static [hydra::common::BlockDescriptor] {
     hydra::report_catalog()
 }
 
+/// The options `block_id` accepts, resolved against the target's network.
+///
+/// Resolved per target rather than served from a static table because the
+/// defaults and unit labels follow the model's declared unit system — the
+/// builder shows `20 psi` on a US model and `14 m` on an SI one without
+/// knowing what either means (hydra-common spec §3.2.1).
+///
+/// An unknown block id yields an empty list rather than an error: descriptions
+/// are advisory, and a template may legitimately reference a block this build
+/// does not describe.
+#[tauri::command(async)]
+pub fn get_report_block_options(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, NetworkState>,
+    project_id: String,
+    scenario_id: Option<String>,
+    block_id: String,
+) -> Result<Vec<hydra::common::OptionDescriptor>, String> {
+    validate_target_ids(&project_id, scenario_id.as_deref())?;
+    let app_data = app_data_dir(&app)?;
+    let network = network_for_target(&app_data, &state, &project_id, scenario_id.as_deref())?;
+    Ok(hydra::report_block_options(&block_id, &network))
+}
+
 fn template_path(app_data: &std::path::Path, project_id: &str) -> std::path::PathBuf {
     bundle::project_dir(app_data, project_id).join("report-template.json")
 }
