@@ -24,6 +24,7 @@ import {
 } from "../../hooks/reports";
 import { AddSectionPalette } from "./ReportView/AddSectionPalette";
 import type { OptionValues } from "./ReportView/BlockOptions";
+import { CsvPreview } from "./ReportView/CsvPreview";
 import { SectionList } from "./ReportView/SectionList";
 
 const PREVIEW_DEBOUNCE_MS = 350;
@@ -49,9 +50,10 @@ const FORMATS: { id: ReportFormat; label: string }[] = [
  * there is none in the UI. Its state — title, section order, per-section
  * heading and options — IS the template; it round-trips through the same
  * JSON format `hydra report --template` consumes, persisted per project.
- * The preview shows the SELECTED format
- * exactly as it exports (html rendered in a sandboxed frame; txt/csv as
- * the literal bytes), without a timestamp so re-renders are stable;
+ * Each format previews as its own consumer would see it: html rendered in
+ * a sandboxed frame, pdf in a viewer, csv as a spreadsheet grid, and text
+ * as literal bytes — because a text file's reader really does read it as
+ * text. Previews carry no timestamp, so re-renders are stable;
  * the single Export button stamps the generation time and saves via the
  * OS dialog in the selected format.
  */
@@ -626,6 +628,8 @@ export function ReportView() {
                   srcDoc={previewContent}
                   style={{ flex: 1, border: "none", background: "#ffffff" }}
                 />
+              ) : format === "csv" ? (
+                <CsvPreview content={previewContent} />
               ) : (
                 <pre
                   style={{

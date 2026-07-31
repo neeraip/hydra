@@ -1,0 +1,174 @@
+/**
+ * Spreadsheet preview for the CSV format.
+ *
+ * The CSV is rendered as a grid rather than as its literal bytes, for the
+ * same reason the HTML preview shows a rendered page rather than its source:
+ * a preview should show the artefact as its consumer will. A CSV's consumer
+ * is a spreadsheet, and raw CSV — quoted fields, ragged section blocks — is
+ * close to unreadable for checking whether the numbers are right.
+ *
+ * Text stays literal, because a text file's consumer really does read it as
+ * text.
+ */
+
+import { useMemo } from "react";
+import {
+  columnCount,
+  columnName,
+  isBlankRow,
+  isNumeric,
+  isTitleRow,
+  parseCsv,
+  titleText,
+} from "./csv";
+
+/** Rows rendered before truncating. A report over this is being scanned, not
+ * read, and a grid of every cell costs far more than it shows. The export is
+ * never truncated — only this preview. */
+const MAX_ROWS = 400;
+
+const HEADER_BG = "#eef1f5";
+const GRID = "#d3d9e0";
+const INK = "#1a222c";
+
+const cellBase: React.CSSProperties = {
+  border: `1px solid ${GRID}`,
+  padding: "3px 7px",
+  fontSize: "var(--text-md)",
+  whiteSpace: "nowrap",
+  maxWidth: 320,
+  overflow: "hidden",
+  textOverflow: "ellipsis",
+};
+
+export function CsvPreview({ content }: { content: string }) {
+  const { rows, columns, truncated, total } = useMemo(() => {
+    const all = parseCsv(content);
+    return {
+      rows: all.slice(0, MAX_ROWS),
+      columns: columnCount(all.slice(0, MAX_ROWS)),
+      truncated: all.length > MAX_ROWS,
+      total: all.length,
+    };
+  }, [content]);
+
+  return (
+    <div
+      style={{
+        flex: 1,
+        overflow: "auto",
+        background: "#ffffff",
+        color: INK,
+        fontFamily: "var(--font-ui)",
+      }}
+    >
+      <table
+        style={{
+          borderCollapse: "collapse",
+          // Sits at the top-left so the sticky headers have a corner to pin
+          // against rather than floating over centred content.
+          tableLayout: "auto",
+        }}
+      >
+        <thead>
+          <tr>
+            <th
+              style={{
+                ...cellBase,
+                position: "sticky",
+                top: 0,
+                left: 0,
+                zIndex: 2,
+                background: HEADER_BG,
+                minWidth: 34,
+              }}
+            />
+            {Array.from({ length: columns }, (_, i) => (
+              <th
+                key={columnName(i)}
+                style={{
+                  ...cellBase,
+                  position: "sticky",
+                  top: 0,
+                  zIndex: 1,
+                  background: HEADER_BG,
+                  fontWeight: 600,
+                  color: "#54607a",
+                  textAlign: "center",
+                }}
+              >
+                {columnName(i)}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row, r) => {
+            const blank = isBlankRow(row);
+            const title = !blank && isTitleRow(row);
+            return (
+              <tr
+                // Row position is the identity here: the sheet is a fixed
+                // grid, not a keyed list, and rows carry no id of their own.
+                // biome-ignore lint/suspicious/noArrayIndexKey: grid position IS the identity
+                key={r}
+                style={{ height: blank ? 10 : undefined }}
+              >
+                <td
+                  style={{
+                    ...cellBase,
+                    position: "sticky",
+                    left: 0,
+                    zIndex: 1,
+                    background: HEADER_BG,
+                    color: "#54607a",
+                    textAlign: "right",
+                    fontVariantNumeric: "tabular-nums",
+                  }}
+                >
+                  {r + 1}
+                </td>
+                {Array.from({ length: columns }, (_, c) => {
+                  const cell = row[c] ?? "";
+                  return (
+                    <td
+                      // Same reasoning as the row key: a cell is its position.
+                      // biome-ignore lint/suspicious/noArrayIndexKey: grid position IS the identity
+                      key={c}
+                      title={cell.length > 40 ? cell : undefined}
+                      style={{
+                        ...cellBase,
+                        background: title ? "#f6f8fa" : undefined,
+                        fontWeight: title && c === 0 ? 600 : undefined,
+                        textAlign: isNumeric(cell) ? "right" : "left",
+                        fontVariantNumeric: isNumeric(cell)
+                          ? "tabular-nums"
+                          : undefined,
+                      }}
+                    >
+                      {title && c === 0 ? titleText(row) : cell}
+                    </td>
+                  );
+                })}
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+
+      {truncated ? (
+        <p
+          style={{
+            margin: 0,
+            padding: "8px 12px",
+            fontSize: "var(--text-sm)",
+            color: "#54607a",
+          }}
+        >
+          Showing the first {MAX_ROWS} of {total} rows. The exported file
+          contains all of them.
+        </p>
+      ) : null}
+    </div>
+  );
+}
