@@ -318,7 +318,14 @@ $$A_{ii} \mathrel{+}= C_{\infty}, \qquad F_i \mathrel{+}= H_s \cdot C_{\infty}$$
 
 $$Y_k = Q_k - \Delta_i$$
 
-A small residual $1/C_{\infty}$ is added to $A_{ij}$ and $A_{jj}$ to preserve matrix connectivity.
+Any **positive** flow excess at $i$ is redistributed to $F_j$ — the mirror of the
+PRV rule above, which redistributes a *negative* excess at $j$ to $F_i$. The
+opposite sign in each case follows from which end the valve pins.
+
+A small residual $1/C_{\infty}$ preserves matrix connectivity across the pinned
+valve, entered with the sign convention of §3.4 ($A_{ij} = -P_k$): it is
+**subtracted** from $A_{ij}$ and **added** to $A_{jj}$, exactly as a conductance
+of that magnitude would be.
 
 **FCV active** (imposes fixed flow $Q_s = s_k$):
 
