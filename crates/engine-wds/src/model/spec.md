@@ -517,6 +517,25 @@ Both modes perform identical work; they differ only in whether §2.9 violations 
 
 All three outcomes must remain distinguishable by the caller — not merely described differently in prose, but separable without inspecting human-readable text. An interface that collapses them misreports every case it merges: it tells the user their network is invalid when the file was another tool's, or offers to repair a network that was never constructed.
 
+#### 4.1.3 Recognition
+
+This engine answers the foundation layer's recognition question (hydra-common spec §2.5) — "are these bytes yours?" — so an application holding a model of unknown provenance can route it without guessing. The verdict is derived from section names alone, requiring no field parsing:
+
+| Condition | Verdict |
+|---|---|
+| §4.1 detects no INP shape | `no` |
+| Any §4.1.1 foreign section is present | `no` |
+| At least one **EPANET-exclusive** section is present | `definite` |
+| Otherwise (INP-shaped, nothing foreign, nothing exclusive) | `plausible` |
+
+The EPANET-exclusive sections are those §4.3 defines that SWMM's input format does not also define:
+
+`[RESERVOIRS]`, `[TANKS]`, `[PIPES]`, `[VALVES]`, `[EMITTERS]`, `[DEMANDS]`, `[STATUS]`, `[ENERGY]`, `[REACTIONS]`, `[SOURCES]`, `[MIXING]`, `[QUALITY]`, `[LEAKAGE]`, `[TIMES]`, `[ROUGHNESS]`.
+
+The sections **excluded** from that list are excluded because SWMM defines them too, and they therefore carry no evidence either way: `[TITLE]`, `[OPTIONS]`, `[JUNCTIONS]`, `[PUMPS]`, `[CURVES]`, `[PATTERNS]`, `[CONTROLS]`, `[REPORT]`, `[TAGS]`, `[COORDINATES]`, `[VERTICES]`, `[LABELS]`, `[BACKDROP]`. A model built only from these is genuinely indistinguishable from a stormwater model by section vocabulary, and `plausible` is the honest answer.
+
+**Recognition is stricter than parsing, deliberately.** §4.1.1's rejection test forbids an absence test because a sparse EPANET model is still an EPANET model, and that remains true: a `plausible` file is parsed exactly as before when this engine is asked to parse it. Recognition governs only *automatic routing*, where a wrong guess silently produces a confident wrong answer. Naming the engine explicitly supplies the evidence recognition lacked, so an explicit instruction always parses under §4.1.1's leniency and never under this section's stricter bar.
+
 ### 4.2 Parse Complexity
 
 The parser must complete in **at most two sequential passes** over the input, with no re-reads.

@@ -1,8 +1,9 @@
 # Hydra Common — Foundation Contract
 
-Status: **v1.3 — ratified 2026-07-28** (v1.1 added opaque per-block options
+Status: **v1.4 — ratified 2026-07-31** (v1.1 added opaque per-block options
 to the production contract, §3.4; v1.2 added the chart fragment item,
-§3.3; v1.3 added engine availability and import formats, §2.1–2.3).
+§3.3; v1.3 added engine availability and import formats, §2.1–2.3; v1.4
+added the recognition contract and its routing rules, §2.5).
 This file is the module documentation
 of the `hydra-common` crate and follows the same spec-first workflow as the
 engine specs: implementation changes flow from changes here, never the
@@ -19,7 +20,8 @@ uniform surface instead of per-engine hardcoded knowledge.
 
 **v1 is deliberately slim.** It defines exactly two contracts:
 
-1. **Engine identity** — what an engine *is* (§2).
+1. **Engine identity** — what an engine *is*, including how it is
+   recognised from a model's bytes (§2).
 2. **Reportable output** — what an engine can contribute to a report (§3).
 
 **Explicit non-goals for v1** (ratified 2026-07-28): a shared element
@@ -113,6 +115,91 @@ state, never as a fallback to a default engine.
 
 v1 ships three registered engines — `wds` (available), `uds` (planned),
 and `och` (planned) — in that order.
+
+### 2.5 Recognition
+
+§2.2 establishes that an extension cannot decide which engine owns a file.
+Recognition is how that question *is* answered: given the bytes of a
+candidate model, each engine reports whether the model is one of its own.
+
+The foundation layer defines only the neutral verdict. It contains no
+section names, no format grammar, and no engine vocabulary of any kind —
+the judgement is authored entirely by the engine, and this layer merely
+gives every engine the same three words to say it in:
+
+| Verdict | Meaning |
+|---|---|
+| `definite` | The bytes carry a marker that belongs to this engine's format and to no other. |
+| `plausible` | The bytes are shaped like this engine's format but carry nothing that distinguishes them from another engine claiming the same shape. |
+| `no` | The bytes are not this engine's, either because the format is unrecognised or because they carry another format's marker. May carry engine-authored text saying what the engine believes the file is instead. |
+
+The optional text on `no` is the same device the reportable-output contract
+uses for an unavailable block (§3.4): the foundation layer holds no words of
+its own, and an engine that can say *"this is a SWMM model, it declares a
+`[SUBCATCHMENTS]` section"* gives an application something far more useful to
+report than a bare refusal. It is advisory — an application must behave
+identically whether or not it is present.
+
+**Recognition is not validation.** It answers "whose is this?", not "can
+this run?". It must be cheap enough to run against every registered
+engine before any model is parsed, so it may inspect only as much of the
+input as identification requires. A `definite` verdict is not a promise
+that the model is well-formed or simulable — that remains the owning
+engine's parse and validation step, which may still reject it.
+
+**Recognition may be stricter than parsing.** An engine may decline to
+claim a file it would nonetheless parse successfully when told to. This
+is deliberate: automatic routing must not guess, whereas an explicit
+instruction from the user carries information routing does not have.
+
+#### 2.5.1 Routing
+
+An application holding a model of unknown provenance resolves it by
+asking every **available** engine (§2.3) and applying, in order:
+
+1. Exactly one `definite` — that engine owns the model.
+2. More than one `definite` — ambiguous. This indicates two engines
+   claiming the same marker and is a defect in one of them; report it as
+   ambiguity rather than choosing.
+3. No `definite`, one or more `plausible` — ambiguous, however few
+   engines answered that way.
+4. Nothing but `no` — unrecognised.
+
+Rule 3 holds **even when exactly one engine answered `plausible`**, and
+even when only one engine is available at all. A `plausible` verdict means
+precisely "I cannot distinguish this from another engine's model", so
+acting on it is the guess this contract exists to prevent — the model may
+belong to an engine that is registered but planned (§2.3), or to one a
+later release adds. An engine that can genuinely identify its own models
+returns `definite`; if it cannot, the shortfall is in its recognition, not
+something routing should paper over.
+
+The two failures are therefore distinguishable and should be reported
+differently: ambiguity means "narrow it down for me" and is answered by
+naming the engine explicitly, whereas unrecognised means no engine here
+reads this format at all.
+
+Routing **must never fall back to a default engine.** Ambiguous and
+unrecognised are terminal outcomes that the application reports, offering
+the user the means to name the engine explicitly. Choosing arbitrarily
+would hand a model to a solver that models different physics and return a
+confident, wrong answer — the failure §2.2 exists to prevent.
+
+Planned engines (§2.3) are not consulted, having no implementation to
+consult. An application that can otherwise identify the model as a
+planned engine's — for example because the owning engine returned `no`
+and named the foreign format — should say so rather than reporting a
+generic failure: "this is a SWMM model, and that engine is not yet
+implemented" is actionable where "unrecognised" is not.
+
+#### 2.5.2 Layering
+
+The registry (§2.4) is inert data and cannot invoke engines: this layer
+depends on nothing, and an engine's recognition lives in the engine. The
+dispatch that consults each engine and applies §2.5.1 therefore belongs
+to a layer that sees both this contract and every engine — never to an
+individual application, which would duplicate the routing policy in every
+interface and let them drift apart.
 
 ---
 

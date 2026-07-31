@@ -7,6 +7,8 @@
 
 use std::collections::{HashMap, HashSet};
 
+use hydra_common::Recognition;
+
 use super::{units::make_ucf, ParseError, ReadError};
 use crate::{
     ActionValue, Curve, CurveKind, CurvePoint, DemandCategory, DemandModel, FlowUnits,
@@ -148,6 +150,71 @@ fn check_dialect(sections: &HashMap<String, Vec<SecLine<'_>>>) -> Result<(), Rea
         }
     }
     Ok(())
+}
+
+/// Sections EPANET defines that SWMM's input format does not (spec §4.1.3).
+///
+/// Presence of any one of these is positive evidence that the file is an
+/// EPANET model. The list is deliberately narrower than "every section
+/// §4.3 supports": `[TITLE]`, `[OPTIONS]`, `[JUNCTIONS]`, `[PUMPS]`,
+/// `[CURVES]`, `[PATTERNS]`, `[CONTROLS]`, `[REPORT]`, `[TAGS]`,
+/// `[COORDINATES]`, `[VERTICES]`, `[LABELS]` and `[BACKDROP]` are omitted
+/// because SWMM declares them too, so they carry no evidence either way.
+///
+/// Kept sorted so a reader can scan it; membership is by exact match on the
+/// upper-cased section name.
+const EPANET_ONLY_SECTIONS: &[&str] = &[
+    "DEMANDS",
+    "EMITTERS",
+    "ENERGY",
+    "LEAKAGE",
+    "MIXING",
+    "PIPES",
+    "QUALITY",
+    "REACTIONS",
+    "RESERVOIRS",
+    "ROUGHNESS",
+    "SOURCES",
+    "STATUS",
+    "TANKS",
+    "TIMES",
+    "VALVES",
+];
+
+/// Judge whether these bytes are an EPANET model (spec §4.1.3).
+///
+/// Section names only — no field is parsed, so this stays cheap enough to
+/// run against every registered engine before any model is read. Callers
+/// reach it through [`super::recognize`], which applies the §4.1 shape test
+/// first.
+pub(super) fn recognize_dialect(bytes: &[u8]) -> Recognition {
+    let text = String::from_utf8_lossy(bytes);
+    let sections = split_sections(&text);
+
+    // A foreign marker settles it, and outranks any shared section that
+    // might otherwise look like evidence for us. Name what we think it is:
+    // §2.5's optional reason turns a bare refusal into something an
+    // application can actually report.
+    if let Some(section) = SWMM_ONLY_SECTIONS
+        .iter()
+        .find(|s| sections.contains_key(**s))
+    {
+        return Recognition::No {
+            reason: Some(format!(
+                "this looks like a SWMM model, not an EPANET one \
+                 (it declares a [{section}] section, which EPANET has no concept of)"
+            )),
+        };
+    }
+    if EPANET_ONLY_SECTIONS
+        .iter()
+        .any(|s| sections.contains_key(*s))
+    {
+        return Recognition::Definite;
+    }
+    // INP-shaped, nothing foreign, nothing exclusive: genuinely
+    // indistinguishable from a stormwater model by section vocabulary.
+    Recognition::Plausible
 }
 
 /// Iterate a section's data lines, attaching the section name and the line's
@@ -4283,6 +4350,87 @@ Headloss    H-W
         let network = parse_inp(inp.as_bytes()).expect("duplicated sections parse");
         assert_eq!(network.nodes.len(), 3);
         assert_eq!(network.links.len(), 2);
+    }
+
+    // ── Recognition (spec §4.1.3) ────────────────────────────────────────────
+
+    #[test]
+    fn recognizes_an_epanet_model_definitely() {
+        // [PIPES] is EPANET-exclusive, so this is positive identification
+        // rather than "INP-shaped and not obviously SWMM".
+        let inp = "[JUNCTIONS]\nJ1 100\n\n[PIPES]\nP1 J1 J2 100 300 100 0 Open\n";
+        assert_eq!(
+            super::super::recognize(inp.as_bytes()),
+            Recognition::Definite
+        );
+    }
+
+    #[test]
+    fn declines_a_swmm_model() {
+        let inp = "[JUNCTIONS]\nJ1 100 3\n\n[SUBCATCHMENTS]\nS1 RG1 J1 10 50 500 0.5 0\n";
+        let verdict = super::super::recognize(inp.as_bytes());
+        assert!(!verdict.claims());
+        // The optional reason (§2.5) is what lets an application report
+        // something better than a bare refusal.
+        let Recognition::No { reason: Some(why) } = verdict else {
+            panic!("a foreign dialect must name what it thinks the file is");
+        };
+        assert!(why.contains("SWMM"), "{why}");
+        assert!(why.contains("SUBCATCHMENTS"), "{why}");
+    }
+
+    #[test]
+    fn a_foreign_marker_outranks_a_shared_section() {
+        // [PUMPS] exists in both formats, so it must not be read as evidence
+        // for us when a SWMM-exclusive section is also present.
+        let inp = "[PUMPS]\nP1 A B\n\n[CONDUITS]\nC1 J1 J2 400 0.01\n";
+        assert!(!super::super::recognize(inp.as_bytes()).claims());
+    }
+
+    #[test]
+    fn shared_sections_alone_are_only_plausible() {
+        // Every section here is declared by SWMM too, so nothing in the file
+        // distinguishes the two formats. Guessing would be the silent-default
+        // failure §2.5.1 exists to prevent.
+        let inp = "[TITLE]\nA network\n\n[JUNCTIONS]\nJ1 100\n\n[COORDINATES]\nJ1 0 0\n";
+        assert_eq!(
+            super::super::recognize(inp.as_bytes()),
+            Recognition::Plausible
+        );
+    }
+
+    #[test]
+    fn declines_bytes_that_are_not_inp_shaped() {
+        assert_eq!(
+            super::super::recognize(b"PK\x03\x04binary"),
+            Recognition::no()
+        );
+        assert_eq!(super::super::recognize(b""), Recognition::no());
+    }
+
+    #[test]
+    fn recognition_is_looser_than_it_looks_parsing_still_accepts_plausible() {
+        // Spec §4.1.3: recognition is stricter than parsing. A `plausible`
+        // file must still parse when this engine is told to read it —
+        // otherwise the explicit --engine escape hatch would not work.
+        let inp = "[TITLE]\nA network\n\n[JUNCTIONS]\nJ1 100\n";
+        assert_eq!(
+            super::super::recognize(inp.as_bytes()),
+            Recognition::Plausible
+        );
+        assert!(parse_inp_tolerant(inp.as_bytes()).is_ok());
+    }
+
+    #[test]
+    fn no_section_is_claimed_by_both_lists() {
+        // A section in both lists would make recognition order-dependent and
+        // the verdict meaningless.
+        for e in EPANET_ONLY_SECTIONS {
+            assert!(
+                !SWMM_ONLY_SECTIONS.contains(e),
+                "section {e:?} is claimed as exclusive by both formats"
+            );
+        }
     }
 
     #[test]

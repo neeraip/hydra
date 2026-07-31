@@ -19,6 +19,48 @@ pub enum EngineStatus {
     Planned,
 }
 
+/// How strongly an engine claims a candidate model as its own (spec §2.5).
+///
+/// This is the whole vocabulary of the recognition contract. The foundation
+/// layer holds no section names and no format grammar — the judgement is
+/// authored entirely by the engine; this type only gives every engine the
+/// same three words to express it in.
+///
+/// Recognition answers "whose is this?", never "can this run?". A
+/// [`Definite`](Self::Definite) verdict is not a promise that the model is
+/// well-formed: the owning engine's parse may still reject it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Recognition {
+    /// The bytes carry a marker belonging to this engine's format and to no
+    /// other.
+    Definite,
+    /// The bytes are shaped like this engine's format but carry nothing
+    /// distinguishing them from another engine claiming the same shape.
+    Plausible,
+    /// Not this engine's — the format is unrecognised, or the bytes carry
+    /// another format's marker.
+    No {
+        /// Optional engine-authored text saying what the engine believes the
+        /// file is instead, e.g. "this looks like a SWMM model". Advisory:
+        /// applications must behave identically without it.
+        reason: Option<String>,
+    },
+}
+
+impl Recognition {
+    /// Whether this verdict is a claim at all (spec §2.5.1 consults
+    /// `definite` before `plausible`, and ignores `no` entirely).
+    pub fn claims(&self) -> bool {
+        !matches!(self, Recognition::No { .. })
+    }
+
+    /// A plain refusal carrying no explanation.
+    pub fn no() -> Self {
+        Recognition::No { reason: None }
+    }
+}
+
 /// One source-model file format an engine imports (spec §2.2).
 ///
 /// This names a format for a file picker's filter. It is **not** a

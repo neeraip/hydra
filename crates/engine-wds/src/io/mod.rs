@@ -24,6 +24,8 @@ pub use inp_writer::write_inp;
 
 use std::fmt;
 
+use hydra_common::Recognition;
+
 use crate::{Network, ValidationError};
 
 // ── Parse entry point (§4 of crates/engine-wds/src/model/spec.md) ───────────
@@ -203,6 +205,26 @@ pub fn parse_tolerant(bytes: &[u8]) -> Result<(Network, Vec<ValidationError>), R
     match detect_format(bytes) {
         Some(()) => inp_reader::parse_inp_tolerant(bytes),
         None => Err(ReadError::UnrecognisedFormat),
+    }
+}
+
+/// Judge whether these bytes are this engine's model (model spec §4.1.3).
+///
+/// This is the water-distribution engine's answer to the foundation layer's
+/// recognition question (hydra-common spec §2.5), letting an application
+/// route a model of unknown provenance without guessing from its extension.
+///
+/// Deliberately **stricter than parsing**: a file this returns
+/// [`Recognition::Plausible`] for is still parsed normally by [`parse`] when
+/// this engine is asked to. Automatic routing must not guess; an explicit
+/// instruction from the user supplies evidence routing does not have.
+///
+/// Cheap by construction — section names only, no field parsing — so it can
+/// be run against every registered engine before any model is read.
+pub fn recognize(bytes: &[u8]) -> Recognition {
+    match detect_format(bytes) {
+        Some(()) => inp_reader::recognize_dialect(bytes),
+        None => Recognition::no(),
     }
 }
 

@@ -7,7 +7,8 @@ mod identity;
 mod report;
 
 pub use identity::{
-    engine_by_key, EngineDescriptor, EngineStatus, ImportFormat, UnknownEngineError, ENGINES,
+    engine_by_key, EngineDescriptor, EngineStatus, ImportFormat, Recognition, UnknownEngineError,
+    ENGINES,
 };
 pub use report::{
     BlockDescriptor, BlockError, Chart, ChartData, ChoiceItem, Column, Fragment, FragmentItem,
