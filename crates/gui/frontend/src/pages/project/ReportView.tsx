@@ -1,6 +1,7 @@
 import { DocumentArrowDownIcon, PlusIcon } from "@heroicons/react/16/solid";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useAppState } from "../../AppContext";
+import { RowMenu } from "../../components/ui/RowMenu";
 import { ACCENT } from "../../hooks";
 import { formatIpcError } from "../../hooks/ipc";
 import {
@@ -17,6 +18,8 @@ import {
   type ReportBlockInfo,
   type ReportFormat,
   type ReportOptionInfo,
+  recommendedOrder,
+  sameOrder,
   saveReportTemplate,
 } from "../../hooks/reports";
 import { AddSectionPalette } from "./ReportView/AddSectionPalette";
@@ -230,6 +233,32 @@ export function ReportView() {
     });
   }
 
+  // ── Bulk actions (the Sections overflow menu) ──────────────────────────
+  const catalogIds = useMemo(() => catalog.map((b) => b.id), [catalog]);
+  const recommended = useMemo(
+    () => recommendedOrder(catalog, sections),
+    [catalog, sections],
+  );
+  const customisedCount = useMemo(
+    () =>
+      new Set([
+        ...Object.keys(optionsById),
+        ...Object.keys(headingById).filter((k) => headingById[k]?.trim()),
+      ]).size,
+    [optionsById, headingById],
+  );
+  const atDefaults = sameOrder(sections, catalogIds) && customisedCount === 0;
+
+  function clearCustomisations() {
+    setHeadingById({});
+    setOptionsById({});
+  }
+
+  function resetEverything() {
+    setSections(catalogIds);
+    clearCustomisations();
+  }
+
   async function handleExport() {
     if (!activeProjectId || exporting) return;
     setExporting(true);
@@ -318,26 +347,72 @@ export function ReportView() {
             }}
           >
             <FieldLabel>Sections</FieldLabel>
-            <button
-              type="button"
-              onClick={() => setAdding((v) => !v)}
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 3,
-                padding: "2px 6px",
-                borderRadius: 5,
-                border: "1px solid var(--border)",
-                background: "var(--bg-elevated)",
-                color: "var(--text-secondary)",
-                cursor: "pointer",
-                fontSize: "var(--text-sm)",
-                fontFamily: "var(--font-ui)",
-              }}
-            >
-              <PlusIcon style={{ width: 11, height: 11 }} />
-              Add
-            </button>
+            <span style={{ display: "flex", alignItems: "center", gap: 2 }}>
+              <button
+                type="button"
+                onClick={() => setAdding((v) => !v)}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 3,
+                  padding: "2px 6px",
+                  borderRadius: 5,
+                  border: "1px solid var(--border)",
+                  background: "var(--bg-elevated)",
+                  color: "var(--text-secondary)",
+                  cursor: "pointer",
+                  fontSize: "var(--text-sm)",
+                  fontFamily: "var(--font-ui)",
+                }}
+              >
+                <PlusIcon style={{ width: 11, height: 11 }} />
+                Add
+              </button>
+              <RowMenu
+                label="Section actions"
+                items={[
+                  {
+                    label: "Use recommended order",
+                    detail: "Reorders what is in the report; adds nothing",
+                    disabled: sameOrder(sections, recommended),
+                    disabledReason: "Already in the recommended order",
+                    onSelect: () => setSections(recommended),
+                  },
+                  {
+                    label: "Add every section",
+                    disabled: sections.length === catalogIds.length,
+                    disabledReason: "Every section is already in the report",
+                    onSelect: () =>
+                      setSections((prev) => [
+                        ...prev,
+                        ...catalogIds.filter((id) => !prev.includes(id)),
+                      ]),
+                  },
+                  {
+                    label: "Clear all settings",
+                    detail: "Keeps the sections and their order",
+                    disabled: customisedCount === 0,
+                    disabledReason: "No section has custom settings",
+                    onSelect: clearCustomisations,
+                  },
+                  {
+                    label: "Remove all sections",
+                    danger: true,
+                    disabled: sections.length === 0,
+                    disabledReason: "The report has no sections",
+                    onSelect: () => setSections([]),
+                  },
+                  {
+                    label: "Reset report to defaults",
+                    detail: "Every section, recommended order, no settings",
+                    danger: true,
+                    disabled: atDefaults,
+                    disabledReason: "The report is already at its defaults",
+                    onSelect: resetEverything,
+                  },
+                ]}
+              />
+            </span>
           </div>
 
           {adding ? (

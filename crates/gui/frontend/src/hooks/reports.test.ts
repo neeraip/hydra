@@ -3,10 +3,13 @@ import {
   addableBlocks,
   builderStateFromTemplate,
   buildTemplateJson,
+  customisedSummary,
   insertionFromPointer,
   insertionToIndex,
   moveSection,
   type ReportBlockInfo,
+  recommendedOrder,
+  sameOrder,
 } from "./reports";
 
 const CATALOG: ReportBlockInfo[] = [
@@ -248,5 +251,100 @@ describe("insertionFromPointer", () => {
 
   it("has no slots for an empty list", () => {
     expect(insertionFromPointer([], 10)).toBe(0);
+  });
+});
+
+describe("customisedSummary", () => {
+  const descriptors = [
+    {
+      key: "worstCount",
+      label: "Rows in the worst-performing table",
+      help: "",
+      kind: { type: "integer", default: 10, min: 1, max: null },
+      unit: null,
+    },
+  ] as const;
+
+  it("reports nothing for a section at its defaults", () => {
+    expect(customisedSummary(descriptors, undefined, "")).toEqual([]);
+    expect(customisedSummary(descriptors, {}, "   ")).toEqual([]);
+  });
+
+  it("names a changed option by its label, not its key", () => {
+    expect(customisedSummary(descriptors, { worstCount: 20 }, "")).toEqual([
+      "Rows in the worst-performing table",
+    ]);
+  });
+
+  it("counts a heading override as a customisation", () => {
+    expect(customisedSummary(descriptors, undefined, "Overview")).toEqual([
+      "Heading",
+    ]);
+  });
+
+  it("falls back to the raw key for an option it cannot describe", () => {
+    // Hand-authored, or from a newer engine — still a customisation, and
+    // claiming the section is untouched would be worse than a raw key.
+    expect(customisedSummary(descriptors, { mystery: 1 }, "")).toEqual([
+      "mystery",
+    ]);
+  });
+
+  it("lists the heading first, then the options", () => {
+    expect(
+      customisedSummary(descriptors, { worstCount: 3 }, "Overview"),
+    ).toEqual(["Heading", "Rows in the worst-performing table"]);
+  });
+});
+
+describe("recommendedOrder", () => {
+  it("puts the report's sections back into catalog order", () => {
+    const shuffled = ["wds.tank-levels", "wds.run-summary", "wds.mass-balance"];
+    expect(recommendedOrder(CATALOG, shuffled)).toEqual([
+      "wds.run-summary",
+      "wds.mass-balance",
+      "wds.tank-levels",
+    ]);
+  });
+
+  it("does not add back sections that were removed", () => {
+    // Reordering must not undo a deliberate removal.
+    expect(recommendedOrder(CATALOG, ["wds.tank-levels"])).toEqual([
+      "wds.tank-levels",
+    ]);
+  });
+
+  it("leaves an already-ordered report untouched", () => {
+    const ids = CATALOG.map((b) => b.id);
+    expect(recommendedOrder(CATALOG, ids)).toEqual(ids);
+  });
+
+  it("sorts unranked ids to the end, keeping their relative order", () => {
+    const result = recommendedOrder(CATALOG, ["x", "wds.mass-balance", "y"]);
+    expect(result).toEqual(["wds.mass-balance", "x", "y"]);
+  });
+
+  it("does not mutate the input", () => {
+    const input = ["wds.tank-levels", "wds.run-summary"];
+    recommendedOrder(CATALOG, input);
+    expect(input).toEqual(["wds.tank-levels", "wds.run-summary"]);
+  });
+});
+
+describe("sameOrder", () => {
+  it("is true for identical lists", () => {
+    expect(sameOrder(["a", "b"], ["a", "b"])).toBe(true);
+  });
+
+  it("is false when the order differs", () => {
+    expect(sameOrder(["a", "b"], ["b", "a"])).toBe(false);
+  });
+
+  it("is false when the lengths differ", () => {
+    expect(sameOrder(["a"], ["a", "b"])).toBe(false);
+  });
+
+  it("is true for two empty lists", () => {
+    expect(sameOrder([], [])).toBe(true);
   });
 });

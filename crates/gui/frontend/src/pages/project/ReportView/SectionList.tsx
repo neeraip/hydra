@@ -24,6 +24,7 @@ import { createPortal } from "react-dom";
 import { ACCENT } from "../../../hooks";
 import {
   type BlockAvailability,
+  customisedSummary,
   insertionFromPointer,
   insertionToIndex,
   type ReportBlockInfo,
@@ -169,13 +170,16 @@ export function SectionList({
         if (!block) return null;
         const descriptors = descriptorsById[id] ?? [];
         const open = openFor.has(id);
-        const configured =
-          Object.keys(
-            (optionsById[id] as Record<string, unknown> | undefined) ?? {},
-          ).length > 0;
         const availability = availabilityById.get(id);
         const problem = availability && availability.status !== "ok";
         const heading = headingById[id] ?? "";
+        // What has been changed from the engine's defaults, by name — the
+        // marker is useless if it cannot say why it is lit.
+        const customised = customisedSummary(
+          descriptors,
+          optionsById[id] as Record<string, unknown> | undefined,
+          heading,
+        );
         // The indicator sits in the gap the row would drop into, and is
         // hidden when that gap is where the row already is.
         const showGap =
@@ -261,9 +265,19 @@ export function SectionList({
               <button
                 type="button"
                 aria-label={open ? "Hide settings" : "Settings"}
-                title={open ? "Hide settings" : "Settings"}
+                title={
+                  customised.length > 0
+                    ? `Changed from defaults: ${customised.join(", ")}`
+                    : open
+                      ? "Hide settings"
+                      : "Settings"
+                }
                 onClick={() => toggleOpen(id)}
-                style={rowButton(open || configured || heading.trim() !== "")}
+                // Tinted for CUSTOMISED only, never for open: the expanded
+                // panel already shows that it is open, so spending the same
+                // signal on both left the marker meaning nothing in
+                // particular.
+                style={rowButton(customised.length > 0)}
               >
                 <Cog6ToothIcon style={{ width: 12, height: 12 }} />
               </button>
@@ -345,6 +359,27 @@ export function SectionList({
                   values={optionsById[id] as OptionValues}
                   onChange={(next) => onOptionsChange(id, next)}
                 />
+                {customised.length > 0 ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onOptionsChange(id, undefined);
+                      onHeadingChange(id, "");
+                    }}
+                    style={{
+                      padding: "2px 0",
+                      marginBottom: 8,
+                      border: "none",
+                      background: "transparent",
+                      color: ACCENT,
+                      cursor: "pointer",
+                      fontSize: "var(--text-sm)",
+                      fontFamily: "var(--font-ui)",
+                    }}
+                  >
+                    Reset to defaults
+                  </button>
+                ) : null}
               </div>
             ) : null}
           </div>

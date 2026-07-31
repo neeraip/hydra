@@ -256,6 +256,52 @@ export function moveSection(
   return next;
 }
 
+/** The report's sections rearranged into catalog order.
+ *
+ * Membership is untouched — this fixes the ORDER of what is already in the
+ * report, and does not add back what was deliberately removed. The catalog's
+ * own order is the recommendation: it runs summary → results → diagnostics,
+ * which is the order the sections read in.
+ *
+ * Ids the catalog does not rank sort to the end, keeping their relative
+ * order, so an unknown section is never silently dropped. */
+export function recommendedOrder(
+  catalog: readonly ReportBlockInfo[],
+  sections: readonly string[],
+): string[] {
+  const rank = new Map(catalog.map((block, i) => [block.id, i]));
+  return [...sections].sort(
+    (a, b) =>
+      (rank.get(a) ?? Number.POSITIVE_INFINITY) -
+      (rank.get(b) ?? Number.POSITIVE_INFINITY),
+  );
+}
+
+/** Whether two section lists hold the same ids in the same order. */
+export function sameOrder(a: readonly string[], b: readonly string[]): boolean {
+  return a.length === b.length && a.every((id, i) => id === b[i]);
+}
+
+/** Human labels for everything customised on a section, for showing WHY it is
+ * marked as changed. Empty when the section is entirely at its defaults.
+ *
+ * Falls back to the raw key when no descriptor matches: an option authored by
+ * hand, or one from an engine newer than this build, is still a customisation
+ * and saying so beats pretending the section is untouched. */
+export function customisedSummary(
+  descriptors: readonly ReportOptionInfo[],
+  values: Readonly<Record<string, unknown>> | undefined,
+  heading: string,
+): string[] {
+  const labels: string[] = [];
+  if (heading.trim() !== "") labels.push("Heading");
+  for (const key of Object.keys(values ?? {})) {
+    const descriptor = descriptors.find((d) => d.key === key);
+    labels.push(descriptor?.label ?? key);
+  }
+  return labels;
+}
+
 /** Convert a drop slot into the destination index [`moveSection`] expects.
  *
  * A drop targets a GAP: slot `i` means "before row i", and slot `n` means
