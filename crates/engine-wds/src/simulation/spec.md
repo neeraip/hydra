@@ -437,7 +437,7 @@ get_mass_balance(session) → MassBalance
 get_flow_balance(session) → FlowBalance
 
 // ── Output serialization ──
-write_binary_output(session, writer, // serialize results to binary format (spec.md §4.3 output)
+write_binary_output(session, writer, // serialize results to binary format (model spec §4.5)
 input_name, // input filename (metadata for prolog)
 report_name, // report filename (metadata for prolog)
 output_units) // flow-unit variant for result values in the output file
@@ -518,7 +518,8 @@ Hydra has been exercised against eight real-world hydraulic networks totalling 1
 
 **A second, harder stop path** exists in both engines and is not the one above.
 When Cholesky factorisation breaks down and the failing row does **not** belong to
-an active control valve — so the §3.6 valve-demotion recovery cannot apply — the
+an active control valve — so the [hydraulics spec](../hydraulics/spec.md) §3.6
+valve-demotion recovery cannot apply — the
 solve is unrecoverable. EPANET returns its cannot-solve error, which its
 error-propagation macro treats as fatal (only codes above its warning band
 short-circuit the extended-period loop); Hydra returns the equivalent solver

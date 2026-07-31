@@ -47,7 +47,7 @@ Global simulation parameters. All are static after loading.
 | `max_iter` | Maximum Newton-Raphson iterations; default 200 | ≥ 1 |
 | `extra_iter` | Extra frozen-status iterations on non-convergence (−1 = halt); default −1 | ≥ −1 |
 | `head_tol` | Head tolerance $\varepsilon_H$ used in link status transitions (m); default 1.524×10⁻⁴ (= 0.0005 ft) | > 0 |
-| `flow_change_tol` | Absolute flow tolerance $\varepsilon_Q$ used in link status transition tests (m³/s); default 2.832×10⁻⁶ (= 0.0001 ft³/s). **Distinct from `flow_tol`**: `flow_tol` governs solver convergence (relative criterion, §3.8); `flow_change_tol` appears only in link status transition conditions (§3.9). | > 0 |
+| `flow_change_tol` | Absolute flow tolerance $\varepsilon_Q$ used in link status transition tests (m³/s); default 2.832×10⁻⁶ (= 0.0001 ft³/s). **Distinct from `flow_tol`**: `flow_tol` governs solver convergence (relative criterion, [hydraulics spec](../hydraulics/spec.md) §3.8); `flow_change_tol` appears only in link status transition conditions (hydraulics spec §3.9). | > 0 |
 | `flow_tol` | Relative flow accuracy for convergence ($\text{Hacc}$); default 0.001. Bounded differently by surface — see below | [10⁻⁸, 0.1] |
 | `head_error_limit` | Optional absolute per-link head balance error limit (m); 0 = disabled; default 0 | ≥ 0 |
 | `flow_change_limit` | Optional absolute maximum flow change per iteration (m³/s); 0 = disabled; default 0 | ≥ 0 |
@@ -65,7 +65,7 @@ Global simulation parameters. All are static after loading.
 | `energy_price_pattern` | Optional pattern ID modulating the global energy price over time | nullable |
 | `energy_efficiency` | Global default pump efficiency fraction; used when a pump has no efficiency curve and no per-pump `default_efficiency` | (0, 1] |
 | `peak_demand_charge` | Global demand charge (cost per peak kW); 0 = disabled; default 0 | ≥ 0 |
-| `roughness_reaction_factor` | Global roughness–reaction correlation factor $R_f$ for deriving wall coefficients from pipe roughness (§6.5.4); 0 = disabled; default 0 | any real |
+| `roughness_reaction_factor` | Global roughness–reaction correlation factor $R_f$ for deriving wall coefficients from pipe roughness ([quality spec](../quality/spec.md) §6.5.4); 0 = disabled; default 0 | any real |
 | `rule_timestep` | Rule evaluation sub-step duration (seconds); default = `hydraulic_timestep` / 10, clamped to `hydraulic_timestep` | > 0 |
 | `quality_tolerance` | Segment merge tolerance $C_{\text{tol}}$ (same units as quality constituent); default 0.01 | ≥ 0 |
 
@@ -364,7 +364,7 @@ Validation reports **every** violation found rather than stopping at the first, 
 
 ### 2.10 FAVAD Load-Time Aggregation
 
-The `leak_coeff_1` ($K_1$) and `leak_coeff_2` ($K_2$) fields on each `Pipe` are **per-pipe input values** representing the full-pipe FAVAD discharge coefficients. Before the first hydraulic solve, they must be aggregated into per-junction resistance coefficients $c_{\text{fa},i}$ and $c_{\text{va},i}$ used by the hydraulic engine (§3.3.3).
+The `leak_coeff_1` ($K_1$) and `leak_coeff_2` ($K_2$) fields on each `Pipe` are **per-pipe input values** representing the full-pipe FAVAD discharge coefficients. Before the first hydraulic solve, they must be aggregated into per-junction resistance coefficients $c_{\text{fa},i}$ and $c_{\text{va},i}$ used by the hydraulic engine ([hydraulics spec](../hydraulics/spec.md) §3.3.3).
 
 For each pipe $p$, compute the contribution to each qualifying end node $v$ (where $v$ is a junction, not a reservoir or tank):
 

@@ -482,7 +482,7 @@ For each link incident to a tank node, the link is set to `TEMPCLOSED` (a tempor
 - The tank head $\geq h_{\max}$ **and** `overflow = false` **and** the link is delivering flow **into** the tank.
 - The tank head $\leq h_{\min}$ **and** the link is removing flow **from** the tank.
 
-When `overflow = true`, a full tank does **not** close its inlet links — excess volume exits freely (§5.3). Empty-tank outlet closure applies regardless of the overflow flag. This check runs at every status check iteration, not only after convergence.
+When `overflow = true`, a full tank does **not** close its inlet links — excess volume exits freely ([simulation spec](../simulation/spec.md) §5.3). Empty-tank outlet closure applies regardless of the overflow flag. This check runs at every status check iteration, not only after convergence.
 
 #### PRV Status (tested after every iteration when `damp_limit = 0`, otherwise only when $\varepsilon_Q \leq \text{damp\_limit}$)
 
