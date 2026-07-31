@@ -599,12 +599,11 @@ The binary results file persists the full time series of a completed simulation.
 
 | Version code | Meaning |
 |---|---|
-| `20012` | EPANET 2.3-compatible baseline layout. No network digest — readers report the digest as *absent*. |
-| `20013` | Hydra extension: identical to `20012` except the epilog (§4.4.6) grows from 12 to 20 bytes, inserting a 64-bit network digest (§4.4.7) between the warning flag and the closing magic number. |
+| `20012` | The EPANET 2.3 layout, byte for byte. The only version written or read. |
 
-Writers produce **`20012`** — the EPANET layout, byte for byte. Readers must accept **both** versions; the only layout difference is the epilog length. Any other version code is rejected as unsupported.
+Writers produce **`20012`** and readers accept only `20012` — the EPANET layout, byte for byte. Any other version code is rejected as unsupported.
 
-`20013` is legacy: Hydra wrote it while the results file was the only artifact guaranteed to travel with a run, so the digest binding results to a topology (§4.4.7) had nowhere else to live. It does not belong there. This file is an **interchange format owned by EPANET**, and a consumer that reads the classic 12-byte tail gets a corrupt period count from a `20013` file — a wrong answer rather than a refusal. Hydra's own metadata belongs in Hydra's own store, beside the results rather than inside them, so writers emit the format they are compatible with and readers keep accepting `20013` for files already on disk.
+Hydra briefly wrote `20013`, which inserted a network digest (§4.4.7) between the warning flag and the closing magic. That put Hydra's own field inside a format EPANET defines, and moved the classic 12-byte tail, so a consumer reading the last twelve bytes took half the digest as its period count — a confident wrong answer rather than a refusal. This file is an **interchange format owned by EPANET**; Hydra's metadata belongs beside the results, not inside them. Readers reject `20013` with a message naming it, since results written by those versions cannot be interpreted without the layout they assumed.
 
 #### 4.4.2 Prolog
 
@@ -675,16 +674,15 @@ Four REAL4 values: average bulk, wall, tank, and source reaction rates (mass/hou
 |---|---|---|
 | number of reporting periods written | INT4 | all |
 | warning flag (0 = no warnings) | INT4 | all |
-| network digest (§4.4.7), unsigned 64-bit little-endian | 8 bytes | ≥ 20013 only |
 | magic number = 516114521 (integrity check) | INT4 | all |
 
-Epilog size: 12 bytes (version 20012), 20 bytes (version 20013). The magic number is always the final 4 bytes of the file.
+Epilog size: 12 bytes. The magic number is always the final 4 bytes of the file, which is what a consumer reading the classic tail depends on.
 
 #### 4.4.7 Network Digest
 
 The network digest binds a set of results to the topology of the network that produced it, so a consumer can detect that results are stale after the model has been edited — including edits that leave the file correctly paired with its model, since the danger is an index-addressed read attaching values to elements that have since moved.
 
-It is **not** written into the `.out` by current writers (§4.4.1); an application records it alongside the results it describes. The algorithm is specified here because reading it back out of a legacy `20013` file requires it, and because every consumer computing it must agree byte for byte. It is the **FNV-1a 64-bit** hash (offset basis 14695981039346656037, prime 1099511628211) of the following byte stream:
+It is **not** written into the `.out` (§4.4.1); an application records it alongside the results it describes. The algorithm is specified here because every consumer computing it must agree byte for byte. It is the **FNV-1a 64-bit** hash (offset basis 14695981039346656037, prime 1099511628211) of the following byte stream:
 
 1. For each node, in network order: the node ID's UTF-8 bytes, then one `0x0A` byte.
 2. A single `0x00` byte (node/link separator).

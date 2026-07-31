@@ -15,8 +15,8 @@
 pub struct OutProlog {
     /// EPANET magic number (must be 516114521).
     pub magic: i32,
-    /// File format version: 20012 (EPANET 2.3 baseline, no digest) or 20013
-    /// (Hydra extension with an epilog network digest). Model spec §4.5.1.
+    /// File format version: always 20012, the EPANET 2.3 layout (model spec
+    /// §4.4.1). Any other value is rejected before a prolog is built.
     pub version: i32,
     /// Number of nodes (junctions + reservoirs + tanks).
     pub n_nodes: usize,
@@ -128,17 +128,15 @@ pub struct OutReactions {
     pub source_rate: f32,
 }
 
-/// The epilog section (model spec §4.4.6): period count, warning flag,
-/// network digest (format version ≥ 20013), and closing magic number.
+/// The epilog section (model spec §4.4.6): period count, warning flag and
+/// closing magic number — the classic 12 bytes a consumer reading the tail
+/// depends on.
 #[derive(Debug, Clone, Copy)]
 pub struct OutEpilog {
     /// Number of reporting periods actually written.
     pub n_periods: i32,
     /// Non-zero if the solver issued warnings during the run.
     pub warning_flag: i32,
-    /// FNV-1a 64-bit network topology digest (model spec §4.4.7).
-    /// `None` for files written in the pre-digest format version 20012.
-    pub network_digest: Option<u64>,
     /// Magic number used to validate file integrity (must equal the prolog magic).
     pub magic: i32,
 }
@@ -189,10 +187,6 @@ pub struct OutMetadata {
     pub duration: f64,
     /// Number of reporting periods written to the file.
     pub n_periods: usize,
-    /// FNV-1a 64-bit network topology digest (model spec §4.4.7) from the
-    /// epilog.  `None` for files written in the pre-digest format version
-    /// 20012 — old files remain fully readable.
-    pub network_digest: Option<u64>,
 }
 
 /// Category for invalid or unreadable `.out` files.
@@ -319,17 +313,26 @@ pub fn read_metadata_checked(path: &std::path::Path) -> Result<OutMetadata, OutV
         });
     }
 
-    // Version 20012 = EPANET 2.3 baseline (12-byte epilog, no digest);
-    // version 20013 = Hydra extension (20-byte epilog with a 64-bit network
-    // digest). Model spec §4.5.1.
+    // Model spec §4.4.1: 20012 is the only version, and the epilog is
+    // EPANET's 12 bytes.
     let version = i32_at(4);
-    if version != 20_012 && version != 20_013 {
+    if version != 20_012 {
         return Err(OutValidityError {
             kind: OutValidityKind::Unsupported,
-            detail: format!("unsupported .out version: {version}"),
+            // 20013 gets its own sentence: Hydra wrote it from v2.0.0 to
+            // v5.1.0, so anyone meeting this is looking at their own old
+            // results and needs to know they are re-runnable, not corrupt.
+            detail: if version == 20_013 {
+                "results were written by Hydra 5.1 or earlier (.out version \
+                 20013), which this build cannot read — re-run the simulation \
+                 to regenerate them"
+                    .to_string()
+            } else {
+                format!("unsupported .out version: {version}")
+            },
         });
     }
-    let epilog_len: u64 = if version == 20_013 { 20 } else { 12 };
+    let epilog_len: u64 = 12;
 
     let n_nodes_i = i32_at(8);
     let n_tanks_i = i32_at(12);
@@ -411,13 +414,6 @@ pub fn read_metadata_checked(path: &std::path::Path) -> Result<OutMetadata, OutV
     }
     let n_periods = n_periods_i as usize;
 
-    // Version ≥ 20013: 64-bit network digest between warn flag and magic.
-    let network_digest = if version == 20_013 {
-        Some(u64::from_le_bytes(epi[8..16].try_into().unwrap()))
-    } else {
-        None
-    };
-
     let magic_off = epilog_len as usize - 4;
     let magic_end = i32::from_le_bytes(epi[magic_off..magic_off + 4].try_into().unwrap());
     if magic_end != 516_114_521 {
@@ -481,7 +477,6 @@ pub fn read_metadata_checked(path: &std::path::Path) -> Result<OutMetadata, OutV
         report_step,
         duration,
         n_periods,
-        network_digest,
     })
 }
 
@@ -1178,12 +1173,10 @@ pub fn parse(data: &[u8]) -> Result<OutFile, String> {
         return Err(format!("too short: {} bytes (minimum 12)", data.len()));
     }
 
-    // Peek the format version to learn the epilog length: 12 bytes for the
-    // 20012 baseline, 20 bytes for ≥ 20013 (which inserts a 64-bit network
-    // digest; model spec §4.4.6).
+    // One format, one epilog length (model spec §4.4.6). The version is still
+    // read here so the length error can name it.
     let version_peek = i32::from_le_bytes(data[4..8].try_into().unwrap());
-    let has_digest = version_peek == 20_013;
-    let epilog_len = if has_digest { 20 } else { 12 };
+    let epilog_len = 12;
     if data.len() < epilog_len {
         return Err(format!(
             "too short: {} bytes (minimum {epilog_len} for a version {version_peek} epilog)",
@@ -1388,11 +1381,6 @@ pub fn parse(data: &[u8]) -> Result<OutFile, String> {
 
     let n_periods_check = cur.read_i32()?;
     let warning_flag = cur.read_i32()?;
-    let network_digest = if has_digest {
-        Some(cur.read_u64()?)
-    } else {
-        None
-    };
     let magic_end = cur.read_i32()?;
     if magic_end != 516_114_521 {
         return Err(format!("unexpected magic at end: {magic_end}"));
@@ -1400,7 +1388,6 @@ pub fn parse(data: &[u8]) -> Result<OutFile, String> {
     let epilog = OutEpilog {
         n_periods: n_periods_check,
         warning_flag,
-        network_digest,
         magic: magic_end,
     };
 
@@ -1444,13 +1431,6 @@ impl<'a> Cursor<'a> {
     fn read_f32(&mut self) -> Result<f32, String> {
         let end = self.checked_end(4, "reading f32")?;
         let v = f32::from_le_bytes(self.data[self.pos..end].try_into().unwrap());
-        self.pos = end;
-        Ok(v)
-    }
-
-    fn read_u64(&mut self) -> Result<u64, String> {
-        let end = self.checked_end(8, "reading u64")?;
-        let v = u64::from_le_bytes(self.data[self.pos..end].try_into().unwrap());
         self.pos = end;
         Ok(v)
     }
@@ -1783,60 +1763,33 @@ mod tests {
         assert_eq!(meta.n_periods, 1);
     }
 
-    /// Legacy (version 20012) files have no digest field: metadata reports
-    /// `None`, and the file remains fully readable.
+    /// Model spec §4.4.1: `20013` is refused, and refused by name.
+    ///
+    /// Hydra wrote that version from v2.0.0 to v5.1.0, so anyone meeting this
+    /// is looking at their own old results. The message has to say they are
+    /// re-runnable rather than corrupt — the alternative is a bare
+    /// "unsupported version" against a file Hydra itself produced.
     #[test]
-    fn read_metadata_digest_is_none_for_legacy_20012_files() {
+    fn a_20013_file_is_refused_with_a_message_naming_it() {
+        // Build one: bump the version, insert the digest ahead of the magic.
         let data = make_minimal_out(3, 1, 2, 0);
-        let path = write_temp_bytes(&data);
-        let meta = read_metadata_checked(&path).expect("legacy file should parse");
-        let _ = std::fs::remove_file(&path);
-        assert_eq!(meta.network_digest, None);
-        // The full parser also reports no digest.
-        let out = parse(&data).expect("full parse of legacy file");
-        assert_eq!(out.epilog.network_digest, None);
-    }
-
-    /// Upgrade a minimal 20012 file to the 20013 layout: bump the version and
-    /// insert the 8-byte digest between the warning flag and the end magic.
-    fn upgrade_to_v20013(mut data: Vec<u8>, digest: u64) -> Vec<u8> {
-        data[4..8].copy_from_slice(&20013_i32.to_le_bytes());
         let magic_off = data.len() - 4;
-        let mut upgraded = data[..magic_off].to_vec();
-        upgraded.extend_from_slice(&digest.to_le_bytes());
-        upgraded.extend_from_slice(&data[magic_off..]);
-        upgraded
-    }
+        let mut legacy = data[..magic_off].to_vec();
+        legacy[4..8].copy_from_slice(&20013_i32.to_le_bytes());
+        legacy.extend_from_slice(&0xDEAD_BEEF_0123_4567_u64.to_le_bytes());
+        legacy.extend_from_slice(&data[magic_off..]);
 
-    /// Version 20013 files carry the digest in the epilog; both the metadata
-    /// path and the full parser must surface it.
-    #[test]
-    fn read_metadata_digest_is_read_from_v20013_epilog() {
-        let digest: u64 = 0xDEAD_BEEF_0123_4567;
-        let data = upgrade_to_v20013(make_minimal_out(3, 1, 2, 0), digest);
-        let path = write_temp_bytes(&data);
-        let meta = read_metadata_checked(&path).expect("v20013 file should parse");
+        let path = write_temp_bytes(&legacy);
+        let err = read_metadata_checked(&path).expect_err("20013 is no longer readable");
         let _ = std::fs::remove_file(&path);
-        assert_eq!(meta.network_digest, Some(digest));
-        assert_eq!(meta.n_nodes, 3);
-        assert_eq!(meta.n_periods, 1);
 
-        let out = parse(&data).expect("full parse of v20013 file");
-        assert_eq!(out.epilog.network_digest, Some(digest));
-        assert_eq!(out.prolog.version, 20013);
-    }
-
-    /// A truncated v20013 file (digest bytes cut off) is classified as
-    /// incomplete, not silently misread.
-    #[test]
-    fn read_metadata_v20013_truncated_digest_is_incomplete() {
-        let digest: u64 = 42;
-        let data = upgrade_to_v20013(make_minimal_out(3, 1, 2, 0), digest);
-        let truncated = &data[..data.len() - 8];
-        let path = write_temp_bytes(truncated);
-        let err = read_metadata_checked(&path).expect_err("expected incomplete classification");
-        let _ = std::fs::remove_file(&path);
-        assert_eq!(err.kind, OutValidityKind::Incomplete);
+        assert_eq!(err.kind, OutValidityKind::Unsupported);
+        assert!(err.detail.contains("20013"), "{}", err.detail);
+        assert!(
+            err.detail.contains("re-run"),
+            "the message must say the results are recoverable: {}",
+            err.detail
+        );
     }
 
     /// The tank/reservoir node index list is readable directly from the
@@ -1886,7 +1839,6 @@ mod tests {
             report_step: 3600.0,
             duration: 18_000.0,
             n_periods: 5,
-            network_digest: None,
         };
         assert_eq!(meta.prolog_bytes(), (884 + 36 * 4 + 52 * 3 + 8 * 2) as u64);
         assert_eq!(meta.energy_bytes(), (28 + 4) as u64);
@@ -1909,7 +1861,6 @@ mod tests {
             report_step: 3600.0,
             duration: 7200.0,
             n_periods: 3,
-            network_digest: None,
         };
         assert_eq!(meta.snapshot_times(), vec![0.0, 3600.0, 7200.0]);
     }

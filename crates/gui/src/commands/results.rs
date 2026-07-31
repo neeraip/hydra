@@ -322,15 +322,12 @@ pub fn load_result_meta(
     Ok(Some(ResultMetaDto {
         times,
         quality_mode: quality_mode.to_string(),
-        // `run.json` first, the epilog second. New runs record the digest
-        // beside the results because `results.out` is EPANET's format
-        // (model spec §4.4.1); results written by an older Hydra still carry
-        // it inside the file, and must keep working. Absent from both is
-        // "unknown", which the frontend treats as no staleness gating rather
-        // than as stale.
+        // From `run.json` beside the results: `results.out` is EPANET's
+        // format and carries none of Hydra's fields (model spec §4.4.1).
+        // Absent is "unknown", which the frontend treats as no staleness
+        // gating rather than as stale.
         network_digest: crate::commands::simulation::read_run_meta(&out_path)
-            .and_then(|run| run.network_digest)
-            .or_else(|| meta.network_digest.map(digest_hex)),
+            .and_then(|run| run.network_digest),
         ranges: ResultRangesDto {
             pressure_min: ranges.pressure_min,
             pressure_max: ranges.pressure_max,
@@ -1502,11 +1499,10 @@ Duration  0
         let expected =
             hydra::compute_network_digest(&hydra::io::parse(TEST_INP.as_bytes()).unwrap());
 
+        // The results file parses as plain EPANET 20012 — it has no field
+        // for a digest to be in any more.
         let meta = hydra::io::out_reader::read_metadata_checked(&out).unwrap();
-        assert_eq!(
-            meta.network_digest, None,
-            "the results file must carry no Hydra-specific fields"
-        );
+        assert_eq!(meta.n_periods, 1);
 
         let run = crate::commands::simulation::read_run_meta(&out)
             .expect("a completed run writes run.json");

@@ -71,8 +71,9 @@ const MAGIC: i32 = 516114521;
 /// format EPANET defines, and moved the classic 12-byte tail — so a reader
 /// taking the last twelve bytes read half the digest as its period count and
 /// got a wrong answer rather than a refusal. The digest now lives beside the
-/// results instead. The reader still accepts `20013` for files already
-/// written.
+/// results instead (`run.json`, written by the application beside the file it
+/// describes), and the reader refuses `20013` by name — those results predate
+/// this build and are re-runnable, which the message says.
 const VERSION: i32 = 20012;
 const MAXID: usize = 32; // MAXID+1 = 32 bytes per ID
 const TITLELEN: usize = 80; // TITLELEN+1 = 80 bytes per title line
@@ -1267,10 +1268,6 @@ mod tests {
 
         let out = crate::io::out_reader::parse(&data).expect("parse .out");
         assert_eq!(out.prolog.version, 20012);
-        assert_eq!(
-            out.epilog.network_digest, None,
-            "no Hydra bytes in the file"
-        );
 
         // What a legacy 12-byte-tail reader sees, byte for byte.
         let tail = &data[data.len() - 12..];
