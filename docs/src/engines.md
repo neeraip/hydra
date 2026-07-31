@@ -7,7 +7,7 @@ and the `hydra-sdk` Rust library.
 
 | Engine | Key | Domain | Source model | Status |
 |---|---|---|---|---|
-| Water Distribution | `wds` | Pressurised supply networks — hydraulics, water quality, energy | EPANET 2.3 `.inp` | **Available** |
+| Water Distribution | `wds` | Pressurised supply networks — hydraulics, water quality, energy | EPANET `.inp` (2.x) | **Available** |
 | Urban Drainage | `uds` | Stormwater and wastewater collection — runoff, routing, water quality | SWMM `.inp` | Planned |
 | Open Channel | `och` | Rivers and open channels — steady and unsteady flow | HEC-RAS project archive | Planned |
 

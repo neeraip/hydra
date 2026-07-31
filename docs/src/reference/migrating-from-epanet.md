@@ -6,7 +6,7 @@ This page is for engineers and developers switching from EPANET to Hydra. It cov
 
 ## Your `.inp` Files Work
 
-Hydra parses the EPANET 2.3 `.inp` format directly. No conversion is needed. Drop your existing `.inp` file into the CLI or pass it to the library and Hydra will run it.
+Hydra parses the EPANET `.inp` format directly — any 2.x release. No conversion is needed. Drop your existing `.inp` file into the CLI or pass it to the library and Hydra will run it.
 
 See [INP Format Support](inp-format.md) for the full section-by-section reference.
 
@@ -64,17 +64,17 @@ This only matters for networks with very short hydraulic timesteps (well under 6
 
 ---
 
-## OWA-EPANET 2.3 Features Worth Knowing
+## Newer EPANET Features Worth Knowing
 
-These features were added in OWA-EPANET 2.3 and are fully supported by Hydra. They are not present in the original EPA EPANET 2.2 distribution.
+Both are fully supported by Hydra, and both are optional — a file that uses neither still loads and runs.
 
-### FAVAD Leakage
+### FAVAD Leakage — OWA-EPANET 2.3
 
-Per-pipe background leakage is modelled using the FAVAD (Fixed and Variable Area Discharge) model, configured via a `[LEAKAGE]` section in the `.inp` file. Standard EPANET 2.2 files (without `[LEAKAGE]`) parse cleanly; leakage is simply zero for all pipes.
+Per-pipe background leakage is modelled using the FAVAD (Fixed and Variable Area Discharge) model, configured via a `[LEAKAGE]` section in the `.inp` file. This section is the one genuine 2.3 addition. Older files (without `[LEAKAGE]`) parse cleanly; leakage is simply zero for all pipes.
 
-### Pressure-Dependent Analysis
+### Pressure-Dependent Analysis — EPA EPANET 2.2
 
-PDA is configured the same way as in EPANET 2.3 (`DEMAND MODEL PDA` in `[OPTIONS]`). No changes needed.
+PDA is configured exactly as in EPANET (`DEMAND MODEL PDA` in `[OPTIONS]`, with `MINIMUM PRESSURE`, `REQUIRED PRESSURE`, and `PRESSURE EXPONENT`). No changes needed.
 
 ---
 

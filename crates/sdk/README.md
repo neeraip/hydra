@@ -43,7 +43,7 @@ for t in sim.snapshot_times() {
 - Extended-period steady-state hydraulics (Global Gradient Algorithm)
 - Pressure-driven and demand-driven demand models
 - Conservative and reactive constituent transport (water quality, age, source tracing)
-- EPANET 2.3 `.inp` format input; binary `.out` and plain-text `.rpt` output
+- EPANET `.inp` format input, any 2.x release; binary `.out` and plain-text `.rpt` output
 - Report generation from saved templates (txt, csv, html, and optional pdf)
 
 It does **not** model pressure transients, water-hammer, or multi-phase flow.

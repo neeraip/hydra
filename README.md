@@ -9,7 +9,7 @@ Hydra is a water infrastructure simulation platform written in Rust. It is built
 
 | Engine | Domain | Source model | Status |
 |---|---|---|---|
-| **Water Distribution** (`wds`) | Pressurised supply networks — hydraulics, water quality, energy | EPANET 2.3 `.inp` | **Available** |
+| **Water Distribution** (`wds`) | Pressurised supply networks — hydraulics, water quality, energy | EPANET `.inp` (2.x) | **Available** |
 | **Urban Drainage** (`uds`) | Stormwater and wastewater collection — runoff, routing, quality | SWMM `.inp` | Planned |
 | **Open Channel** (`och`) | Rivers and channels — steady and unsteady flow | HEC-RAS project | Planned |
 
@@ -26,7 +26,7 @@ Extended-period simulation (EPS) of hydraulic behaviour and water quality dynami
 - **Water quality** — chemical constituent, water age, source tracing; Lagrangian transport; bulk and wall reactions; all EPANET tank mixing models
 - **I/O** — all 11 EPANET flow unit systems; `.out` binary, `.rpt` text, `.json` report output
 
-Inputs are EPANET 2.3 `.inp` files (local or via HTTP URL). Outputs are an EPANET-compatible binary `.out` file and a plain-text or JSON `.rpt` report.
+Inputs are EPANET `.inp` files (local or via HTTP URL) — any 2.x release, since the constructs 2.3 added are optional. Outputs are an EPANET-compatible binary `.out` file and a plain-text or JSON `.rpt` report.
 
 ## Install
 

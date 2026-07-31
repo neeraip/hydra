@@ -1,6 +1,21 @@
 # INP Format Support
 
-Hydra parses the EPANET 2.3 `.inp` file format. This page documents which sections and keywords are supported, which are silently ignored, and where Hydra's behaviour differs from or extends the standard.
+Hydra parses the EPANET `.inp` file format. This page documents which sections and keywords are supported, which are silently ignored, and where Hydra's behaviour differs from or extends the standard.
+
+## Supported EPANET versions
+
+**Any EPANET 2.x file.** The tables below are written against **EPANET 2.3**,
+which is the newest dialect Hydra understands — not a requirement your file has
+to meet. Everything 2.3 added over earlier releases is optional: the
+`[LEAKAGE]` section and the `DISABLED` suffix on a control line. A 2.0 or 2.2
+file that uses neither loads unchanged and runs, with leakage simply zero on
+every pipe.
+
+Older constructs are skipped rather than rejected. A legacy `[ROUGHNESS]`
+section — superseded by the roughness column in `[PIPES]` — is accepted as a
+no-op, as is any section or `[OPTIONS]` keyword Hydra does not recognise.
+Rejection is reserved for a file that is not an EPANET model at all; see
+[Foreign `.inp` dialects](#foreign-inp-dialects).
 
 ---
 

@@ -88,7 +88,7 @@ For a plain-text `.rpt` report, run the exported `.inp` through the [CLI](cli.md
 
 ## Supported Networks
 
-Any EPANET 2.3 `.inp` file works directly — no conversion needed. See [INP Format Support](../reference/inp-format.md) for the full coverage list.
+Any EPANET `.inp` file works directly — any 2.x release, no conversion needed. See [INP Format Support](../reference/inp-format.md) for the full coverage list.
 
 ## Troubleshooting
 
