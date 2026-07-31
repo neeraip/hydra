@@ -78,6 +78,24 @@ the output rather than silently dropped.
 
 Omit `--template` entirely to get every block that applies to the run.
 
+### Formats
+
+The same document renders four ways, and the differences are presentational
+rather than editorial — every format carries the same sections in the same
+order.
+
+| Format | Notes |
+|---|---|
+| `txt` | Fixed-width columns; reads correctly in a monospace viewer |
+| `csv` | RFC 4180 quoting, full numeric precision |
+| `html` | One self-contained file — inline CSS, no external resources, no scripts |
+| `pdf` | A4, numbered `3 / 12` in the bottom margin, and a running header naming the document and what it was produced from on every page after the first |
+
+Only the PDF is typeset, so only it paginates: a section heading is never left
+as the last thing on a page, and a table continuing onto another page repeats
+its column header. A long table still breaks where it falls — sections are not
+forced onto fresh pages.
+
 ---
 
 ## Demand reliability (SDK)
