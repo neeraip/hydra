@@ -41,6 +41,24 @@ const cellBase: React.CSSProperties = {
   textOverflow: "ellipsis",
 };
 
+/** The blank margin right of the last column.
+ *
+ * A content-width table left the rest of the pane plain white, so the sheet
+ * appeared to stop mid-air with no edge. This absorbs the slack instead:
+ * `width: 100%` on one cell makes auto table layout hand it every spare pixel,
+ * leaving the real columns at their natural widths. It carries no column
+ * letter, because it is margin rather than data — padding with lettered
+ * columns would imply the file has more than it does.
+ *
+ * `maxWidth` is unset: `cellBase` caps data cells at 320px, which would stop
+ * this one growing to fill the pane. */
+const fillerCell: React.CSSProperties = {
+  ...cellBase,
+  width: "100%",
+  maxWidth: undefined,
+  borderRight: "none",
+};
+
 export function CsvPreview({ content }: { content: string }) {
   const { rows, columns, truncated, total } = useMemo(() => {
     const all = parseCsv(content);
@@ -68,6 +86,10 @@ export function CsvPreview({ content }: { content: string }) {
           // Sits at the top-left so the sticky headers have a corner to pin
           // against rather than floating over centred content.
           tableLayout: "auto",
+          // Full width so the trailing filler has space to claim; the real
+          // columns keep their content widths because only the filler asks
+          // for any of it.
+          width: "100%",
         }}
       >
         <thead>
@@ -100,6 +122,15 @@ export function CsvPreview({ content }: { content: string }) {
                 {columnName(i)}
               </th>
             ))}
+            <th
+              style={{
+                ...fillerCell,
+                position: "sticky",
+                top: 0,
+                zIndex: 1,
+                background: HEADER_BG,
+              }}
+            />
           </tr>
         </thead>
         <tbody>
@@ -150,6 +181,12 @@ export function CsvPreview({ content }: { content: string }) {
                     </td>
                   );
                 })}
+                <td
+                  style={{
+                    ...fillerCell,
+                    background: title ? "#f6f8fa" : undefined,
+                  }}
+                />
               </tr>
             );
           })}
