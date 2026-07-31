@@ -13,6 +13,7 @@ Hydra is a multi-crate Rust workspace:
 | `hydra-cli` | Command-line interface: resolves input, writes output files, generates reports; no simulation logic |
 | `hydra-gui` | Desktop application: Tauri shell with deck.gl canvas, timeline playback, network editor |
 
+<!-- PLANNED-ENGINE: uds,och — revise the two scaffold rows above and this paragraph as each engine ships. -->
 The two empty engine scaffolds exist so their crate names and versions track the
 workspace from the start, rather than being introduced mid-life — see
 [Engines](../engines.md) for what each engine covers. The split

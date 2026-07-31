@@ -11,6 +11,8 @@
 //! presentable, but with no implementation behind them. Resolve an engine
 //! through the registry rather than assuming which one a project uses.
 //!
+//! PLANNED-ENGINE: uds,och — revise the paragraph above as each engine ships.
+//!
 //! # Quick start
 //!
 //! ```no_run

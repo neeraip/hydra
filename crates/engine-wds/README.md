@@ -5,6 +5,7 @@
 
 The water distribution engine (`wds`) of [Hydra](https://github.com/neeraip/hydra), the water infrastructure simulation platform — water distribution network data model, EPANET INP/OUT/RPT I/O, Global Gradient Algorithm hydraulic solver, Lagrangian water quality engine, simulation session API, and post-simulation analytics.
 
+<!-- PLANNED-ENGINE: uds,och — revise this paragraph as each engine ships. -->
 It is one of Hydra's domain engines and the only one implemented today; urban drainage (`hydra-engine-uds`) and open channel (`hydra-engine-och`) are published scaffolds awaiting development.
 
 > **Most users should depend on [`hydra-sdk`](https://crates.io/crates/hydra-sdk) instead.** `hydra-sdk` re-exports the complete public API of this crate as a single stable umbrella dependency.

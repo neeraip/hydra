@@ -6,6 +6,32 @@ The **water distribution** engine (`wds`) is the only one implemented today: it 
 
 **Urban drainage** (`uds`, SWMM data model) and **open channel** (`och`, HEC-RAS data model) are registered in `hydra-common`'s engine registry as `Planned` — their crate names and engine keys are reserved, but neither is specced or implemented. Never write copy that presents Hydra as water-distribution-only, and never write copy that implies `uds`/`och` already work.
 
+### The `PLANNED-ENGINE` tag
+
+Every disclaimer that exists **only** because an engine is unimplemented carries
+a `PLANNED-ENGINE` tag naming the engine keys it is waiting on, so the full set
+is one grep away when an engine ships:
+
+```sh
+grep -rn "PLANNED-ENGINE" --exclude-dir=target --exclude-dir=node_modules .
+grep -rn "PLANNED-ENGINE: uds" .    # just the urban-drainage ones
+```
+
+Use the comment syntax of the host file — `<!-- … -->` in Markdown, `//` in Rust
+and TypeScript, `#` in TOML — and say what to do when the engine lands, not just
+that the disclaimer exists:
+
+```
+<!-- PLANNED-ENGINE: uds — drop this paragraph when the urban drainage engine ships. -->
+// PLANNED-ENGINE: uds,och — revise the paragraph above as each engine ships.
+```
+
+Tag the *temporary* statement, not the permanent one. "Planned engines cannot be
+selected" is tagged; the engine registry's `EngineStatus::Planned` variant is
+not — it is permanent machinery, and its own tests already guard the status
+values. When adding a disclaimer anywhere, tag it; when shipping an engine,
+start from this grep.
+
 ---
 
 ## Crate Responsibilities

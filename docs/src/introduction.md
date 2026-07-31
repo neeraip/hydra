@@ -8,6 +8,7 @@ Hydra is a water infrastructure simulation platform written in Rust. It is built
 | **Urban Drainage** (`uds`) | Stormwater and wastewater collection — runoff, routing, quality | SWMM `.inp` | Planned |
 | **Open Channel** (`och`) | Rivers and channels — steady and unsteady flow | HEC-RAS project | Planned |
 
+<!-- PLANNED-ENGINE: uds,och — revise the Status column, and the "engine that ships today" framing below, as each engine ships. -->
 See [Engines](engines.md) for what each engine covers and what "planned" means in practice.
 
 ## Water Distribution Engine

@@ -8,6 +8,7 @@ publish = true
 repository.workspace = true
 homepage.workspace = true
 documentation.workspace = true
+# PLANNED-ENGINE: uds — drop the "early scaffold" clause when the engine ships.
 description = "Hydra urban drainage (stormwater and wastewater) simulation engine — early scaffold, not yet functional"
 readme = "README.md"
 keywords = ["water", "hydraulics", "simulation", "engine"]

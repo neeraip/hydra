@@ -11,6 +11,8 @@ and the `hydra-sdk` Rust library.
 | Urban Drainage | `uds` | Stormwater and wastewater collection — runoff, routing, water quality | SWMM `.inp` | Planned |
 | Open Channel | `och` | Rivers and open channels — steady and unsteady flow | HEC-RAS project archive | Planned |
 
+<!-- PLANNED-ENGINE: uds,och — this page is the canonical statement of engine status. Revise the table above and the section below as each engine ships. -->
+
 ## Available vs. planned
 
 Every engine — shipping or not — is registered in Hydra's engine registry with

@@ -7,6 +7,7 @@ Water infrastructure simulation — EPANET-compatible extended-period water dist
 
 `hydra-sdk` is the user-facing library crate for [Hydra](https://github.com/neeraip/hydra). It is the single dependency you add to build on Hydra: it re-exports the water-distribution engine (`hydra-engine-wds`), the shared foundation contracts (`hydra-common` — engine identity and the reportable-output contract), and report generation (`hydra-report` — templates, document assembly, and the txt/csv/html/pdf renderers), with all internal crate versions pre-pinned.
 
+<!-- PLANNED-ENGINE: uds,och — revise this paragraph as each engine ships. -->
 Hydra is built as a suite of domain engines. Water distribution (`wds`) is the one implemented today; urban drainage (`uds`) and open channel (`och`) are registered in the engine registry as **planned** — reserved and presentable, but with no implementation behind them. As each lands, it joins this same umbrella crate.
 
 **[→ Full documentation](https://neeraip.github.io/hydra/sdk/overview.html)**

@@ -8,6 +8,7 @@ publish = true
 repository.workspace = true
 homepage.workspace = true
 documentation.workspace = true
+# PLANNED-ENGINE: och — drop the "early scaffold" clause when the engine ships.
 description = "Hydra open-channel hydraulics simulation engine — early scaffold, not yet functional"
 readme = "README.md"
 keywords = ["water", "hydraulics", "simulation", "engine"]

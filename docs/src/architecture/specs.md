@@ -22,6 +22,8 @@ implementation disagree, the spec wins.
 | [`crates/engine-wds/src/simulation/spec.md`](https://github.com/neeraip/hydra/blob/main/crates/engine-wds/src/simulation/spec.md) | Simulation orchestrator: controls, timestep, accounting, session API |
 | [`crates/engine-wds/src/analysis/spec.md`](https://github.com/neeraip/hydra/blob/main/crates/engine-wds/src/analysis/spec.md) | Post-simulation analytics: demand reliability, service compliance, distributions, the report-block catalog, and the analysis artifact |
 
+<!-- PLANNED-ENGINE: uds,och — replace this section with each engine's real spec table as it lands. -->
+
 ## Urban Drainage (`uds`) and Open Channel (`och`)
 
 Not yet written. Both engines are [registered but planned](../engines.md) — no

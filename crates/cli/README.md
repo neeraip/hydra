@@ -3,7 +3,7 @@
 [![Crates.io](https://img.shields.io/crates/v/hydra-cli)](https://crates.io/crates/hydra-cli)
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](https://github.com/neeraip/hydra/blob/main/LICENSE)
 
-Command-line interface for [Hydra](https://github.com/neeraip/hydra), the water infrastructure simulation platform. It drives Hydra's water distribution engine: reads EPANET `.inp` network descriptions from files or HTTP URLs, runs extended-period hydraulic and water quality simulation, and writes results to `.rpt` and `.out` files. Hydra's other engines — urban drainage and open channel — are planned and not yet available from the CLI.
+Command-line interface for [Hydra](https://github.com/neeraip/hydra), the water infrastructure simulation platform. It drives Hydra's water distribution engine: reads EPANET `.inp` network descriptions from files or HTTP URLs, runs extended-period hydraulic and water quality simulation, and writes results to `.rpt` and `.out` files. <!-- PLANNED-ENGINE: uds,och — drop this sentence and document engine selection as each engine becomes reachable from the CLI. -->Hydra's other engines — urban drainage and open channel — are planned and not yet available from the CLI.
 
 **[→ Full documentation](https://neeraip.github.io/hydra/getting-started/cli.html)**
 
