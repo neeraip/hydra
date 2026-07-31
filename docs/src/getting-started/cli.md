@@ -86,6 +86,34 @@ Both `http://` and `https://` are accepted, and a URL may also be given via `--i
 > than being silently repurposed, so scripts that relied on the old meaning
 > fail loudly.
 
+## Generating a report
+
+`hydra report` builds a report document from a completed run's results. It is a
+separate step from the simulation: you point it at the model and the `.out` file
+the run produced.
+
+```bash
+hydra report --model network.inp --results output.out -o report.html
+```
+
+| Flag | Description |
+|---|---|
+| `--model <PATH>` | The `.inp` file the results were produced from |
+| `--results <PATH>` | The `.out` binary from a completed run |
+| `--template <PATH>` | Report template JSON — which blocks, in what order. Omit to cover every available block |
+| `--format <FORMAT>` | `txt`, `csv`, `html`, or `pdf`. Inferred from the `--out` extension when omitted; defaults to `txt` |
+| `-o`, `--out <PATH>` | Output path; omit to write to stdout |
+| `--no-timestamp` | Omit the generation timestamp so output is byte-reproducible |
+
+The content comes from the engine's **report blocks** — named, self-contained
+sections such as run summary, result extremes, pump energy, service compliance,
+and the distribution charts. A template selects and orders them; without one you
+get everything that applies to the run. See
+[Post-Simulation Analytics](../reference/analytics.md) for what the blocks cover.
+
+`--no-timestamp` exists for diffing and for reproducible builds: with it, the
+same inputs produce byte-identical output.
+
 ## Exit Codes
 
 | Code | Meaning |

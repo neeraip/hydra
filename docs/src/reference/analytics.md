@@ -6,7 +6,7 @@ After a run, Hydra can derive higher-level metrics from the saved results. There
 - **Report blocks** (SDK) — a catalog of named, self-contained content blocks that render into txt/csv/html/PDF documents. Several of them are built *on* the two modules above, which is how those metrics reach a generated report. See [SDK Overview](../sdk/overview.md#reports).
 - **The GUI Analysis tab** — an interactive dashboard computed separately from the same results.
 
-The CLI exposes none of the three. The GUI uses report blocks for its generated reports, but its Analysis tab computes its own dashboard rather than calling the two modules directly.
+The CLI exposes report blocks through its `report` subcommand ([CLI](../getting-started/cli.md#generating-a-report)) but not the two modules directly. The GUI uses report blocks for its generated reports, while its Analysis tab computes its own dashboard rather than calling the two modules.
 
 ---
 
@@ -81,5 +81,5 @@ The **Analysis** tab computes its own dashboard from the scenario's results (a h
 | Surface | Reliability / compliance modules | Report blocks | GUI Analysis dashboard |
 |---|---|---|---|
 | SDK (`hydra-sdk`) | ✅ direct | ✅ | — |
-| CLI | ❌ | ❌ | — |
+| CLI | ✅ via report blocks | ✅ `hydra report` | — |
 | GUI | ✅ via report blocks | ✅ | ✅ |
