@@ -700,3 +700,10 @@ Metadata readers expose the prolog's scalar header fields — including the simu
 The runtime estimate is a three-valued ordinal — `Low`, `Medium`, `High`. It is
 advisory only and deterministic for identical inputs.
 
+Two independent estimators share this type and must not be conflated: the
+*simulation* estimator ([simulation spec](../simulation/spec.md) §11), which
+models solver cost from the duration and time steps, and the *analysis*
+estimator ([analysis spec](../analysis/spec.md) §6), which models scan cost from
+the reporting-period count and the selected modules. They take different inputs
+and answer different questions.
+

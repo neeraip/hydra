@@ -363,10 +363,23 @@ The "Dimension" column gives the physical quantity; the unit in which it is deli
 | Flow rate | volume/time | §3 |
 | Mean velocity | length/time | §3 |
 | Unit head loss | length/length | §3 |
-| Friction factor | dimensionless | §3 (Darcy-Weisbach only; else 0) |
+| Friction factor | dimensionless | §3 (derived — see below) |
 | Quality | mass/volume, time, or dimensionless | §6 |
 | Status | enum | §3 |
 | Setting | dimensionless (pump speed) or length (pressure setting) | §3 |
+
+**Friction factor** is a *derived* reporting quantity, not a solver input, and is
+produced for **every pipe whatever head-loss formula is active** — not only
+Darcy-Weisbach. It is back-computed from the head loss the solve actually
+produced, by inverting the Darcy-Weisbach relation:
+
+$$f = \frac{2 g D^{5} \pi^{2}}{16}\cdot\frac{|H_{\text{from}} - H_{\text{to}}|}{L\,Q^{2}}$$
+
+so under Hazen-Williams or Chezy-Manning it reports the equivalent
+Darcy-Weisbach friction factor that would reproduce the observed loss. It is
+zero for non-pipe links (pumps, valves) and for pipes carrying negligible flow,
+those being the cases where the inversion is undefined rather than cases where
+the quantity is suppressed.
 
 **Status annotations (output-only)**: the following status values are computed at reporting time and do not influence the hydraulic solve:
 

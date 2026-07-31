@@ -230,36 +230,44 @@ indistinguishable to a reader. This is why the obligation rests on the producer.
 
 ## 6. Runtime Estimation API
 
-The engine publishes an advisory estimate of how long a simulation will take, so an
-interface can warn before starting an expensive run. The estimate is **advisory only**:
-it never influences time-step selection, convergence, or any result, and it is
-deterministic for identical inputs.
+The module publishes an advisory estimate of how long an **analysis** will take,
+so an interface can warn before starting an expensive one. This is distinct from
+the *simulation* runtime estimate, which models a different cost and is specified
+in the [simulation spec](../simulation/spec.md) §11. The estimate never
+influences what is computed, and is deterministic for identical inputs.
 
-**Inputs** are summary metadata rather than a full model — node count, link count,
-duration, hydraulic time step, quality time step, and whether quality is enabled — so
-an estimate can be produced without loading a network.
+**Inputs** are summary metadata plus the module selection of §4 — node count,
+link count, reporting-period count, and which distribution modules were
+requested — so an estimate can be produced without reading the results file.
 
-**Cost model.** The estimate is a sum of three proxy terms plus a fixed overhead:
+**Cost model.** Analysis cost is dominated by the per-period scan, so the
+estimate is a **complexity score** rather than a predicted duration:
 
-$$T = T_0 + \underbrace{c_s\,N^2 m}_{\text{setup}} \;+\; \underbrace{S_h\,\tau(N+L)}_{\text{hydraulic}} \;+\; \underbrace{S_q\,c_q(N+L)}_{\text{quality}}$$
+$$C = N_p \cdot \Bigl(N\,m_{\text{node}} + L\,(m_{\text{link}} + w_s)\Bigr) \cdot f_{\text{pass}}$$
 
-where $N$ and $L$ are node and link counts (each floored at 1), $S_h$ and $S_q$ are the
-hydraulic and quality step counts, $m = \operatorname{clamp}(L/N,\ 0.75,\ 2.5)$ is a
-mesh-density factor, and $\tau$ is a per-step cost that grows linearly with $N + L$ and
-is floored at a minimum. The quality term is present only when quality is enabled. Step
-counts are $\lfloor D/\Delta t \rfloor + 1$, floored at 1, so a single-period run costs
-one step rather than none.
+where $N_p$ is the reporting-period count, $N$ and $L$ the node and link counts
+(each floored at 1), $m_{\text{node}}$ the number of selected node modules
+(pressure, head) and $m_{\text{link}}$ the number of selected link modules (flow,
+velocity). The status module contributes a fractional weight $w_s$ rather than a
+whole one, being a counting pass rather than a binning pass. The factor
+$f_{\text{pass}}$ accounts for the **two-pass** structure of §4: when any
+continuous distribution is selected the file is scanned twice — once for ranges,
+once to bin — so the score is scaled accordingly; a selection of only the status
+module needs a single pass and is not scaled.
 
-The **shape** of this model is normative; its coefficients are fitted from benchmarks
-and may be re-fitted without a specification change. What must hold is the ordering
-property: the estimate is **monotonic** in step count, in network size, and in mesh
-density, so a larger or longer simulation never receives a lower estimate than a
-smaller or shorter one.
+Selecting nothing, or a results file with no reporting periods, short-circuits
+to the lowest category without evaluating the model.
 
-**Output** is an ordinal bucket — `Low`, `Medium`, or `High` — obtained by comparing
-the predicted milliseconds against two thresholds. Deliberately coarse: the underlying
-prediction is a proxy, not a measurement, and exposing it as a duration would imply an
-accuracy it does not have.
+The **shape** of this model is normative — the score must rise with period count,
+network size, and the number of selected modules, so a larger analysis never
+receives a lower estimate than a smaller one. The particular weights and the
+category thresholds are fitted and may be re-tuned without a specification
+change.
+
+**Output** is the same three-valued ordinal the simulation estimator returns —
+`Low`, `Medium`, or `High` — obtained by comparing the score against two
+thresholds. Deliberately coarse: the score is a proxy for work, not a
+measurement of time.
 
 ---
 
