@@ -40,6 +40,10 @@ export interface SectionListProps {
   optionsById: Record<string, unknown>;
   headingById: Record<string, string>;
   availabilityById: Map<string, BlockAvailability>;
+  /** Which sections have their settings panel open. Owned by the caller so
+   * the Sections menu can expand or collapse the whole list. */
+  openSections: ReadonlySet<string>;
+  onToggleOpen: (id: string) => void;
   onReorder: (from: number, to: number) => void;
   onRemove: (id: string) => void;
   onOptionsChange: (id: string, next: OptionValues) => void;
@@ -74,12 +78,13 @@ export function SectionList({
   optionsById,
   headingById,
   availabilityById,
+  openSections,
+  onToggleOpen,
   onReorder,
   onRemove,
   onOptionsChange,
   onHeadingChange,
 }: SectionListProps) {
-  const [openFor, setOpenFor] = useState<Set<string>>(new Set());
   // The row being dragged, the gap it would drop into, and the geometry the
   // floating copy needs to follow the pointer.
   const [drag, setDrag] = useState<{
@@ -166,22 +171,13 @@ export function SectionList({
     );
   }
 
-  function toggleOpen(id: string) {
-    setOpenFor((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  }
-
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: ROW_GAP }}>
       {sections.map((id, index) => {
         const block = blockById.get(id);
         if (!block) return null;
         const descriptors = descriptorsById[id] ?? [];
-        const open = openFor.has(id);
+        const open = openSections.has(id);
         const availability = availabilityById.get(id);
         const problem = availability && availability.status !== "ok";
         const heading = headingById[id] ?? "";
@@ -298,7 +294,7 @@ export function SectionList({
                       ? "Hide settings"
                       : "Settings"
                 }
-                onClick={() => toggleOpen(id)}
+                onClick={() => onToggleOpen(id)}
                 // Tinted for CUSTOMISED only, never for open: the expanded
                 // panel already shows that it is open, so spending the same
                 // signal on both left the marker meaning nothing in

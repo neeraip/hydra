@@ -76,6 +76,9 @@ export function ReportView() {
   // Which blocks can actually be produced for this run.
   const [availability, setAvailability] = useState<BlockAvailability[]>([]);
   const [adding, setAdding] = useState(false);
+  // Which sections show their settings. Held here rather than in the list so
+  // the Sections menu can open or close all of them at once.
+  const [openSections, setOpenSections] = useState<Set<string>>(new Set());
   const [format, setFormat] = useState<ReportFormat>("html");
   const [initialised, setInitialised] = useState(false);
 
@@ -224,6 +227,15 @@ export function ReportView() {
     setHeadingById((prev) => ({ ...prev, [id]: heading }));
   }
 
+  function toggleOpen(id: string) {
+    setOpenSections((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
   function setOptions(id: string, next: OptionValues) {
     setOptionsById((prev) => {
       const updated = { ...prev };
@@ -248,6 +260,10 @@ export function ReportView() {
     [optionsById, headingById],
   );
   const atDefaults = sameOrder(sections, catalogIds) && customisedCount === 0;
+  // "All open" is judged against the CURRENT sections: the set can still hold
+  // ids of sections since removed, and those must not decide the label.
+  const allExpanded =
+    sections.length > 0 && sections.every((id) => openSections.has(id));
 
   function clearCustomisations() {
     setHeadingById({});
@@ -407,6 +423,20 @@ export function ReportView() {
                     onSelect: clearCustomisations,
                   },
                   {
+                    label: allExpanded
+                      ? "Collapse all settings"
+                      : "Expand all settings",
+                    detail: allExpanded
+                      ? undefined
+                      : "Shows every section's heading and options",
+                    disabled: sections.length === 0,
+                    disabledReason: "The report has no sections",
+                    onSelect: () =>
+                      setOpenSections(
+                        allExpanded ? new Set() : new Set(sections),
+                      ),
+                  },
+                  {
                     label: "Remove all sections",
                     danger: true,
                     disabled: sections.length === 0,
@@ -446,6 +476,8 @@ export function ReportView() {
               optionsById={optionsById}
               headingById={headingById}
               availabilityById={availabilityById}
+              openSections={openSections}
+              onToggleOpen={toggleOpen}
               onReorder={reorder}
               onRemove={removeSection}
               onOptionsChange={setOptions}
