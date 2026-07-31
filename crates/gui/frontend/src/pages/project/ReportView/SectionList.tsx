@@ -300,6 +300,14 @@ export function SectionList({
                     color: "var(--text-tertiary)",
                     fontVariantNumeric: "tabular-nums",
                     flexShrink: 0,
+                    // Fixed width, right-aligned: the catalog runs past nine,
+                    // so without it every title below the tenth section sits a
+                    // digit further right than the ones above. `ch` with
+                    // tabular figures is exactly one digit wide, and `minWidth`
+                    // rather than `width` so a hundredth section would widen
+                    // the gutter instead of spilling into the title.
+                    minWidth: "2ch",
+                    textAlign: "right",
                   }}
                 >
                   {index + 1}
@@ -565,6 +573,11 @@ function DragGhost({
           color: "var(--text-tertiary)",
           fontVariantNumeric: "tabular-nums",
           flexShrink: 0,
+          // Same gutter as a real row: the ghost is a copy of the row under
+          // the cursor, and a narrower number here would shift its title the
+          // instant the drag began.
+          minWidth: "2ch",
+          textAlign: "right",
         }}
       >
         {drag.from + 1}
