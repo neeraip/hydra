@@ -112,6 +112,7 @@ nothing about engines.
 | Type / function | Purpose |
 |---|---|
 | `report_catalog()` | The engine's block catalog — queryable without running a simulation |
+| `report_block_options(id, network)` | The options a given block accepts, with labels, defaults, and bounds — enough to build an editor without hardcoding them. Advisory: an unknown id or a block with nothing to configure yields an empty list rather than an error |
 | `produce_report_block(id, out_path, network, options)` | Materialise one block for a completed run |
 | `report::ReportTemplate` | An ordered list of block references plus a document title (JSON) |
 | `report::assemble(template, catalog, context, produce)` | Pair a template with a producer to build a render-ready document |

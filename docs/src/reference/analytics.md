@@ -10,6 +10,76 @@ The CLI exposes report blocks through its `report` subcommand ([CLI](../getting-
 
 ---
 
+## Report blocks
+
+The water distribution engine publishes thirteen blocks. Each is self-contained:
+it carries its own heading and renders identically in every output format.
+
+| Block id | Heading | Contents |
+|---|---|---|
+| `wds.run-summary` | Run Summary | Network size, reporting window, units, and quality mode |
+| `wds.result-extremes` | Result Extremes | Global minimum and maximum pressure, head, demand, flow, and velocity |
+| `wds.pump-energy` | Pump Energy | Per-pump utilization, efficiency, power, and cost, plus network totals |
+| `wds.quality-summary` | Water Quality Summary | Quality mode and global quality extremes |
+| `wds.service-compliance` | Pressure Adequacy | Junction-pressure compliance against a minimum (and optional maximum) |
+| `wds.demand-reliability` | Demand Reliability | Delivered-vs-required volumes and the reliability ratio |
+| `wds.pressure-distribution` | Pressure Distribution | Distribution of each junction's minimum pressure |
+| `wds.velocity-distribution` | Velocity Distribution | Distribution of each pipe's maximum velocity |
+| `wds.pressure-thresholds` | Pressure Thresholds | Junction minimum pressure counted into caller-supplied bands |
+| `wds.velocity-thresholds` | Velocity Thresholds | Pipe maximum velocity counted into caller-supplied bands |
+| `wds.tank-levels` | Tank Levels | Hydraulic head of each tank over the reporting horizon |
+| `wds.mass-balance` | Mass Balance | Cumulative inflow and outflow with closure percentage |
+| `wds.pipe-criticality` | Pipe Criticality | Pipes ranked by peak velocity |
+
+A block that does not apply to a run is **not** dropped: it renders as a
+placeholder section under its normal heading, carrying the reason. Asking for
+`wds.pump-energy` on a network with no pumps yields a Pump Energy section
+reading `[not available: the network has no pumps]`. This is deliberate — a
+requested section that silently vanished would be indistinguishable from one
+that was never requested.
+
+Some blocks accept options — the `*-thresholds` pair takes its band `edges`,
+and several take a `worstCount` for their worst-performing tables.
+`report_block_options(id, network)` describes what a given block accepts,
+including labels, defaults, and bounds, so an interface can build an editor for
+it without hardcoding the list.
+
+### Templates
+
+A template is the saved answer to "what goes in my report": a document title
+plus an ordered list of block references. The GUI's template builder and the
+CLI's `--template` flag read the same JSON.
+
+```json
+{
+  "version": 1,
+  "title": "Quarterly hydraulic report",
+  "blocks": [
+    { "id": "wds.run-summary" },
+    { "id": "wds.pump-energy", "title": "Pumping cost" },
+    { "id": "wds.pressure-thresholds", "options": { "edges": [20, 40, 60] } }
+  ]
+}
+```
+
+| Field | Required | Meaning |
+|---|---|---|
+| `version` | yes | Template format version. Must be `1`; any other value is rejected with a typed error |
+| `title` | yes | Document title. Plain text, must not be empty |
+| `blocks` | no | Ordered block references. Defaults to empty, which yields a document with no sections |
+| `blocks[].id` | yes | A block id from the table above |
+| `blocks[].title` | no | Heading override, replacing the block's default heading |
+| `blocks[].options` | no | Per-block options, passed to the engine verbatim — this is how the `*-thresholds` blocks receive their band edges |
+
+Unknown fields are ignored on read, so a template written by a newer Hydra still
+loads. An id that is not in the catalog is **not** an error: it renders as a
+placeholder section headed with the id itself, so a mistyped id is visible in
+the output rather than silently dropped.
+
+Omit `--template` entirely to get every block that applies to the run.
+
+---
+
 ## Demand reliability (SDK)
 
 Measures how well the network delivered the demand that was asked of it, per junction and network-wide.
