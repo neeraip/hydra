@@ -57,6 +57,16 @@ const ROW_GAP = 2;
 const SHIFT_MS = 160;
 const DISCLOSE_MS = 120;
 
+/** The section's real name, shown above a heading that has replaced it. */
+const faintLine: React.CSSProperties = {
+  fontSize: "var(--text-xs)",
+  color: "var(--text-tertiary)",
+  lineHeight: 1.1,
+  overflow: "hidden",
+  textOverflow: "ellipsis",
+  whiteSpace: "nowrap",
+};
+
 const rowButton: React.CSSProperties = {
   display: "flex",
   alignItems: "center",
@@ -285,19 +295,37 @@ export function SectionList({
                 >
                   {index + 1}
                 </span>
+                {/* An overridden heading replaces the section's name in the
+                    document, so it leads here too — with the name it replaced
+                    kept above it, since the outline is otherwise the only
+                    place that still says which block a renamed section is. */}
                 <span
                   data-tooltip={block.summary}
                   style={{
                     flex: 1,
                     minWidth: 0,
-                    fontSize: "var(--text-lg)",
-                    color: "var(--text-primary)",
+                    display: "flex",
+                    flexDirection: "column",
                     overflow: "hidden",
-                    textOverflow: "ellipsis",
-                    whiteSpace: "nowrap",
                   }}
                 >
-                  {heading.trim() || block.title}
+                  {heading.trim() ? (
+                    <span style={{ ...faintLine, marginBottom: 1 }}>
+                      {block.title}
+                    </span>
+                  ) : null}
+                  <span
+                    style={{
+                      fontSize: "var(--text-lg)",
+                      color: "var(--text-primary)",
+                      lineHeight: 1.2,
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    {heading.trim() || block.title}
+                  </span>
                 </span>
                 {problem ? (
                   <span
@@ -520,14 +548,27 @@ function DragGhost({
       <span
         style={{
           flex: 1,
-          fontSize: "var(--text-lg)",
-          color: "var(--text-primary)",
+          minWidth: 0,
+          display: "flex",
+          flexDirection: "column",
           overflow: "hidden",
-          textOverflow: "ellipsis",
-          whiteSpace: "nowrap",
         }}
       >
-        {heading.trim() || block.title}
+        {heading.trim() ? (
+          <span style={{ ...faintLine, marginBottom: 1 }}>{block.title}</span>
+        ) : null}
+        <span
+          style={{
+            fontSize: "var(--text-lg)",
+            color: "var(--text-primary)",
+            lineHeight: 1.2,
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+          }}
+        >
+          {heading.trim() || block.title}
+        </span>
       </span>
     </div>,
     document.body,
