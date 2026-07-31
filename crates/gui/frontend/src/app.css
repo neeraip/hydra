@@ -32,8 +32,17 @@
   --text-3xl: 1.375rem; /*  22px — page headings */
   --text-display: 4.5rem; /* 72px — the home-screen wordmark, nothing else */
 
-  --font-ui:
-    -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Roboto, sans-serif;
+  /* Deliberately the same stack the HTML report carries in its own inline CSS
+     (crates/report/src/render/html.rs). The report preview is an iframe of the
+     exported document, so any difference here shows as the chrome and the
+     document it frames disagreeing — which happened wherever Inter was
+     installed and -apple-system was not, i.e. Windows and Linux.
+
+     Matched by dropping Inter here rather than by adding it there: the
+     rendered html is a compatibility surface pinned by golden files, and the
+     preview is meant to be faithful to the export rather than the export
+     accommodating the chrome. */
+  --font-ui: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   --font-mono:
     "SF Mono", "Cascadia Code", "JetBrains Mono", "Fira Code", monospace;
   --line-height: 1.6;
