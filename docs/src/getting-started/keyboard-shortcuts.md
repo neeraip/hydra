@@ -65,6 +65,13 @@ Active on the Canvas view; the edit/add/measure tools apply in geographic (map) 
 | Return to Select tool | Esc |
 | Delete the selected node/link | Delete or Backspace |
 
+### Canvas mouse
+
+| Action | Gesture |
+|---|---|
+| Select an element | Click |
+| Zoom in / out | Scroll |
+
 ### Timeline playback (single keys)
 
 | Action | Key |
