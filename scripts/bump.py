@@ -22,6 +22,23 @@ import sys
 from _release import commit_and_tag, maybe_push, next_version, parse_level_arg, parse_push_pref, read_version, require_clean_main, set_version
 
 
+# Every manifest carrying intra-workspace dep pins. Used both to rewrite the
+# pins and to stage the result — see commit_and_tag below.
+CRATE_MANIFESTS = (
+    "crates/sdk/Cargo.toml",
+    "crates/engines/Cargo.toml",
+    "crates/engine-wds/Cargo.toml",
+    "crates/report/Cargo.toml",
+)
+
+WORKSPACE_DEPS = (
+    "hydra-common",
+    "hydra-engine-wds",
+    "hydra-engines",
+    "hydra-report",
+)
+
+
 def main():
     args, push_pref = parse_push_pref(sys.argv[1:])
     level = parse_level_arg(args)
@@ -38,18 +55,7 @@ def main():
     # Update every intra-workspace dep pin. Keyed off the crate name so a new
     # workspace dependency is picked up by adding it to one list, not by
     # remembering to add a bespoke regex.
-    WORKSPACE_DEPS = (
-        "hydra-common",
-        "hydra-engine-wds",
-        "hydra-engines",
-        "hydra-report",
-    )
-    for crate in (
-        "crates/sdk/Cargo.toml",
-        "crates/engines/Cargo.toml",
-        "crates/engine-wds/Cargo.toml",
-        "crates/report/Cargo.toml",
-    ):
+    for crate in CRATE_MANIFESTS:
         p = pathlib.Path(crate)
         text = p.read_text()
         for dep in WORKSPACE_DEPS:
@@ -66,14 +72,15 @@ def main():
             raise SystemExit(f"error: expected exactly one hydra-sdk pin in {doc}, found {n}")
         p.write_text(text)
 
+    # One list, used both to rewrite and to stage. Keeping them separate cost
+    # a release once: crates/engines was rewritten but never committed, so the
+    # tag carried pins nothing had updated.
     commit_and_tag(
         [
             "Cargo.toml",
             "Cargo.lock",
             "crates/cli/Cargo.toml",
-            "crates/sdk/Cargo.toml",
-            "crates/engine-wds/Cargo.toml",
-            "crates/report/Cargo.toml",
+            *CRATE_MANIFESTS,
             *SDK_PIN_DOCS,
         ],
         f"chore: bump library version to {version}",
