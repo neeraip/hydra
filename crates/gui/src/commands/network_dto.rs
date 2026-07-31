@@ -347,12 +347,17 @@ pub struct NetworkState(pub parking_lot::Mutex<NetworkStateInner>);
 /// fault: the file is a sound model, just not one this engine reads, and
 /// telling the user their network is invalid would be simply untrue (model spec
 /// §4.1.2).
+///
+/// PLANNED-ENGINE: uds — the engine that owns a SWMM model is registered but
+/// not implemented, so the message says the model is unsupported rather than
+/// telling the user to open it with an engine they cannot select. Restore the
+/// "open it with the {tool} engine" wording once that engine ships.
 pub(crate) fn format_read_error(err: hydra::io::ReadError) -> String {
     match err {
         hydra::io::ReadError::ForeignDialect { tool, section } => format!(
             "This is a {tool} model, not a water-distribution one. \
              It declares a [{section}] section, which EPANET has no concept of. \
-             Choose the {tool} engine to open it."
+             Hydra cannot open {tool} models yet."
         ),
         other => other.to_string(),
     }
