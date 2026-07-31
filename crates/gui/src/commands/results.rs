@@ -542,7 +542,7 @@ const NODE_FIELDS: &[&str] = &["pressure", "head", "demand", "quality"];
 const LINK_FIELDS: &[&str] = &["flow", "velocity", "headloss", "status", "quality"];
 
 /// Build the per-element time series by addressing each value directly in the
-/// `.out` file (`read_element_series`; model spec §4.5.8).
+/// `.out` file (`read_element_series`; model spec §4.4.8).
 ///
 /// `kind` is `"node"` or `"link"`; `index` is the element's network-order
 /// index (0-based), bounds-checked against the result file's counts. Values
@@ -676,7 +676,7 @@ fn max_positive_with_index(values: &[f64], include: &[bool]) -> Option<(usize, f
 /// chart then showed a population smaller than its own "N junctions" badge
 /// while compliance was divided by the shrunken total.
 /// Band boundaries for [`PRESSURE_BINS`] — the same criteria the
-/// `wds.pressure-thresholds` report block defaults to (analysis spec §7.1.1).
+/// `wds.pressure-thresholds` report block defaults to (analysis spec §4.1.1).
 const PRESSURE_EDGES: &[f64] = &[0.0, 10.0, 20.0, 30.0, 40.0, 50.0, 60.0];
 
 const PRESSURE_BINS: &[(f64, f64)] = &[
@@ -797,41 +797,85 @@ fn scan_cache_key(path: &std::path::Path) -> Option<ScanCacheKey> {
     })
 }
 
-/// Single-entry cache for the last `.out` analytics scan.
+/// How many `.out` analytics scans are kept.
+///
+/// A scan holds per-element arrays and per-period series for its whole run, so
+/// this is capped rather than unbounded — otherwise every scenario ever opened
+/// would be retained for the life of the process. Four covers moving back and
+/// forth between a handful of scenarios, which is what the panel is used for.
+const ANALYTICS_SCAN_CACHE_ENTRIES: usize = 4;
+
+/// Cache of recent `.out` analytics scans, least-recently-used at the front.
 ///
 /// The scan streams every reporting period, so it is by far the most
 /// expensive part of `get_result_analytics` — and the pressure criterion the
 /// user edits in the Analysis panel changes nothing the scan produces, only
 /// how its output is bucketed and counted. Without this, typing a new
-/// criterion re-read the whole results file. One entry is enough: the panel
-/// looks at one target at a time.
+/// criterion re-read the whole results file.
+///
+/// Several entries rather than one because the panel is used to *compare*
+/// runs: with a single slot, alternating between two scenarios evicted and
+/// re-scanned on every switch — the one access pattern a cache exists to
+/// serve, and the one the single slot handled worst.
 #[allow(clippy::type_complexity)]
 static ANALYTICS_SCAN_CACHE: parking_lot::Mutex<
-    Option<(
+    Vec<(
         ScanCacheKey,
         std::sync::Arc<hydra::io::out_reader::AnalyticsScan>,
     )>,
-> = parking_lot::Mutex::new(None);
+> = parking_lot::Mutex::new(Vec::new());
+
+/// Take `key`'s entry if present, moving it to the back as most recently used.
+fn scan_cache_take<T>(
+    cache: &mut Vec<(ScanCacheKey, std::sync::Arc<T>)>,
+    key: &ScanCacheKey,
+) -> Option<std::sync::Arc<T>> {
+    let idx = cache.iter().position(|(k, _)| k == key)?;
+    let entry = cache.remove(idx);
+    let value = entry.1.clone();
+    cache.push(entry);
+    Some(value)
+}
+
+/// Store `value` under `key`, evicting from the front once over `cap`.
+///
+/// Any existing entry for the same *path* is dropped first: a re-run rewrites
+/// `results.out` in place, so the superseded scan can never be served again and
+/// would otherwise occupy a slot until it aged out.
+fn scan_cache_store<T>(
+    cache: &mut Vec<(ScanCacheKey, std::sync::Arc<T>)>,
+    key: ScanCacheKey,
+    value: std::sync::Arc<T>,
+    cap: usize,
+) {
+    cache.retain(|(k, _)| k.path != key.path);
+    cache.push((key, value));
+    let overflow = cache.len().saturating_sub(cap);
+    cache.drain(..overflow);
+}
 
 /// The cross-period scan for `out_path`, served from [`ANALYTICS_SCAN_CACHE`]
-/// when the file is byte-identical to the cached one.
+/// when the file is unchanged since it was scanned.
 fn cached_scan_analytics(
     out_path: &std::path::Path,
     meta: &hydra::io::out_reader::OutMetadata,
 ) -> Result<std::sync::Arc<hydra::io::out_reader::AnalyticsScan>, String> {
     let key = scan_cache_key(out_path);
     if let Some(key) = &key {
-        if let Some((cached_key, scan)) = &*ANALYTICS_SCAN_CACHE.lock() {
-            if cached_key == key {
-                return Ok(scan.clone());
-            }
+        if let Some(scan) = scan_cache_take(&mut ANALYTICS_SCAN_CACHE.lock(), key) {
+            return Ok(scan);
         }
     }
     // Scan outside the lock — it is slow, and holding the mutex would
     // serialise concurrent analytics requests for different targets.
     let scan = std::sync::Arc::new(hydra::io::out_reader::scan_analytics(out_path, meta)?);
     if let Some(key) = key {
-        *ANALYTICS_SCAN_CACHE.lock() = Some((key, scan.clone()));
+        scan_cache_store(
+            &mut ANALYTICS_SCAN_CACHE.lock(),
+            key,
+            scan.clone(),
+            ANALYTICS_SCAN_CACHE_ENTRIES,
+        );
     }
     Ok(scan)
 }
@@ -1797,5 +1841,65 @@ Duration  0
         assert!(json.contains("\"minPressureM\":12.5"), "got: {json}");
         assert!(json.contains("\"maxVelocityLinkId\":\"P1\""), "got: {json}");
         assert!(json.contains("\"maxVelocityMs\":1.75"), "got: {json}");
+    }
+
+    // ── analytics scan cache ─────────────────────────────────────────────────
+
+    fn key(path: &str, len: u64) -> ScanCacheKey {
+        ScanCacheKey {
+            path: std::path::PathBuf::from(path),
+            len,
+            modified: None,
+        }
+    }
+
+    #[test]
+    fn scan_cache_serves_a_repeat_lookup() {
+        let mut cache: Vec<(ScanCacheKey, std::sync::Arc<u32>)> = Vec::new();
+        let scan = std::sync::Arc::new(7u32);
+        scan_cache_store(&mut cache, key("a.out", 1), scan.clone(), 4);
+
+        let hit = scan_cache_take(&mut cache, &key("a.out", 1)).expect("cached scan");
+        assert!(std::sync::Arc::ptr_eq(&hit, &scan));
+    }
+
+    #[test]
+    fn scan_cache_holds_several_scenarios_at_once() {
+        // The single-slot regression: alternating between two scenarios used to
+        // evict and re-scan on every switch.
+        let mut cache: Vec<(ScanCacheKey, std::sync::Arc<u32>)> = Vec::new();
+        scan_cache_store(&mut cache, key("a.out", 1), std::sync::Arc::new(1), 4);
+        scan_cache_store(&mut cache, key("b.out", 1), std::sync::Arc::new(2), 4);
+
+        assert!(scan_cache_take(&mut cache, &key("a.out", 1)).is_some());
+        assert!(scan_cache_take(&mut cache, &key("b.out", 1)).is_some());
+    }
+
+    #[test]
+    fn scan_cache_evicts_the_least_recently_used() {
+        let mut cache: Vec<(ScanCacheKey, std::sync::Arc<u32>)> = Vec::new();
+        scan_cache_store(&mut cache, key("a.out", 1), std::sync::Arc::new(1), 2);
+        scan_cache_store(&mut cache, key("b.out", 1), std::sync::Arc::new(2), 2);
+        // Touching `a` makes `b` the eviction candidate, not `a`.
+        scan_cache_take(&mut cache, &key("a.out", 1)).expect("cached scan");
+        scan_cache_store(&mut cache, key("c.out", 1), std::sync::Arc::new(3), 2);
+
+        assert_eq!(cache.len(), 2);
+        assert!(scan_cache_take(&mut cache, &key("a.out", 1)).is_some());
+        assert!(scan_cache_take(&mut cache, &key("b.out", 1)).is_none());
+        assert!(scan_cache_take(&mut cache, &key("c.out", 1)).is_some());
+    }
+
+    #[test]
+    fn scan_cache_drops_the_superseded_scan_after_a_rerun() {
+        // A re-run rewrites results.out in place: same path, new length. The
+        // old scan can never be served again, so it must not hold a slot.
+        let mut cache: Vec<(ScanCacheKey, std::sync::Arc<u32>)> = Vec::new();
+        scan_cache_store(&mut cache, key("a.out", 1), std::sync::Arc::new(1), 4);
+        scan_cache_store(&mut cache, key("a.out", 2), std::sync::Arc::new(2), 4);
+
+        assert_eq!(cache.len(), 1);
+        assert!(scan_cache_take(&mut cache, &key("a.out", 1)).is_none());
+        assert!(scan_cache_take(&mut cache, &key("a.out", 2)).is_some());
     }
 }

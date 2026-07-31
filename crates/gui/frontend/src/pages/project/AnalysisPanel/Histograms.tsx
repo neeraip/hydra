@@ -25,7 +25,7 @@ function fmtEdge(v: number, q: Quantity, sys: UnitSystem): string {
 
 /** Labels derived from the buckets the backend actually produced, rather than
  *  from a copy of the band edges kept here.  The criteria live in one place
- *  (the engine's threshold bands, analysis spec §7.1.2); duplicating them in
+ *  (the engine's threshold bands, analysis spec §4.1.2); duplicating them in
  *  TypeScript meant a backend edge change silently mislabelled every bar.
  *
  *  The outer bands are unbounded — the leading bucket is where junctions in
