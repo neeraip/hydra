@@ -125,9 +125,12 @@ const ICON_PX = 12;
 function SectionTitle({
   block,
   heading,
+  marker,
 }: {
   block: ReportBlockInfo;
   heading: string;
+  /** State indicators, shown against the name they describe. */
+  marker?: React.ReactNode;
 }) {
   const renamed = heading.trim();
   return (
@@ -139,15 +142,25 @@ function SectionTitle({
       ) : null}
       <span
         style={{
-          fontSize: TITLE_FONT,
-          color: "var(--text-primary)",
-          lineHeight: TITLE_LINE_HEIGHT,
-          overflow: "hidden",
-          textOverflow: "ellipsis",
-          whiteSpace: "nowrap",
+          display: "flex",
+          alignItems: "center",
+          gap: 5,
+          minWidth: 0,
         }}
       >
-        {renamed || block.title}
+        <span
+          style={{
+            fontSize: TITLE_FONT,
+            color: "var(--text-primary)",
+            lineHeight: TITLE_LINE_HEIGHT,
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+          }}
+        >
+          {renamed || block.title}
+        </span>
+        {marker}
       </span>
     </>
   );
@@ -404,36 +417,54 @@ export function SectionList({
                     overflow: "hidden",
                   }}
                 >
-                  <SectionTitle block={block} heading={heading} />
-                </span>
-                {problem ? (
-                  <span
-                    data-tooltip={
-                      availability?.reason ?? "Will not render for this run"
+                  <SectionTitle
+                    block={block}
+                    heading={heading}
+                    // Against the name, not among the buttons. They are state
+                    // rather than actions, so they stay visible while find and
+                    // remove fade out — and left in that cluster they were
+                    // stranded mid-row, marooned in the space the hidden
+                    // buttons still occupy. Here they also cost the right-hand
+                    // group no width, so a row with indicators keeps its
+                    // controls aligned with a row without.
+                    marker={
+                      <>
+                        {problem ? (
+                          <span
+                            data-tooltip={
+                              availability?.reason ??
+                              "Will not render for this run"
+                            }
+                            style={{
+                              display: "flex",
+                              flexShrink: 0,
+                              color: "var(--warn, #c98a1b)",
+                            }}
+                          >
+                            <ExclamationTriangleIcon
+                              style={{ width: ICON_PX, height: ICON_PX }}
+                            />
+                          </span>
+                        ) : null}
+                        {/* A plain dot, not a control: opening the settings is
+                            the row's job, and a second clickable thing would
+                            just be a smaller target for the same action. */}
+                        {customised.length > 0 ? (
+                          <span
+                            data-tooltip={`Changed from defaults: ${customised.join(", ")}`}
+                            style={{
+                              width: 6,
+                              height: 6,
+                              borderRadius: "50%",
+                              background: ACCENT,
+                              flexShrink: 0,
+                            }}
+                          />
+                        ) : null}
+                      </>
                     }
-                    style={{ display: "flex", color: "var(--warn, #c98a1b)" }}
-                  >
-                    <ExclamationTriangleIcon
-                      style={{ width: ICON_PX, height: ICON_PX }}
-                    />
-                  </span>
-                ) : null}
-                {/* The customised marker outlived the gear it used to tint.
-                    It is a plain dot, not a control: opening the settings is
-                    now the row's job, and a second clickable thing here would
-                    just be a smaller target for the same action. */}
-                {customised.length > 0 ? (
-                  <span
-                    data-tooltip={`Changed from defaults: ${customised.join(", ")}`}
-                    style={{
-                      width: 6,
-                      height: 6,
-                      borderRadius: "50%",
-                      background: ACCENT,
-                      flexShrink: 0,
-                    }}
                   />
-                ) : null}
+                </span>
               </button>
               <button
                 type="button"
