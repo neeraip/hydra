@@ -19,7 +19,8 @@ import {
   ExclamationTriangleIcon,
   XMarkIcon,
 } from "@heroicons/react/16/solid";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { ACCENT } from "../../../hooks";
 import {
   type BlockAvailability,
@@ -71,15 +72,34 @@ export function SectionList({
   onHeadingChange,
 }: SectionListProps) {
   const [openFor, setOpenFor] = useState<Set<string>>(new Set());
-  // Which row is being dragged, and the gap it would drop into.
-  const [drag, setDrag] = useState<{ from: number; insertion: number } | null>(
-    null,
-  );
+  // The row being dragged, the gap it would drop into, and the geometry the
+  // floating copy needs to follow the pointer.
+  const [drag, setDrag] = useState<{
+    from: number;
+    insertion: number;
+    pointerY: number;
+    /** Where inside the row it was grabbed, so that point stays under the
+     * cursor instead of the copy snapping its top edge to the pointer. */
+    grabOffsetY: number;
+    left: number;
+    width: number;
+  } | null>(null);
   // Row bounds, measured once at grab: the list does not reflow during a
   // drag (the indicator moves, the rows do not), so re-measuring per move
   // would be wasted work and would fight the pointer.
   const rowRects = useRef<{ top: number; height: number }[]>([]);
   const rowRefs = useRef<(HTMLDivElement | null)[]>([]);
+
+  // The cursor otherwise reverts to whatever sits under the pointer once it
+  // leaves the handle, which reads as the drag having been dropped.
+  useEffect(() => {
+    if (!drag) return;
+    const previous = document.body.style.cursor;
+    document.body.style.cursor = "grabbing";
+    return () => {
+      document.body.style.cursor = previous;
+    };
+  }, [drag]);
 
   function beginDrag(index: number, e: React.PointerEvent) {
     e.preventDefault();
@@ -89,14 +109,23 @@ export function SectionList({
       const r = el?.getBoundingClientRect();
       return { top: r?.top ?? 0, height: r?.height ?? 0 };
     });
+    const rect = rowRefs.current[index]?.getBoundingClientRect();
     e.currentTarget.setPointerCapture(e.pointerId);
-    setDrag({ from: index, insertion: index });
+    setDrag({
+      from: index,
+      insertion: index,
+      pointerY: e.clientY,
+      grabOffsetY: e.clientY - (rect?.top ?? e.clientY),
+      left: rect?.left ?? 0,
+      width: rect?.width ?? 0,
+    });
   }
 
   function moveDrag(e: React.PointerEvent) {
     if (!drag) return;
     setDrag({
-      from: drag.from,
+      ...drag,
+      pointerY: e.clientY,
       insertion: insertionFromPointer(rowRects.current, e.clientY),
     });
   }
@@ -333,6 +362,104 @@ export function SectionList({
               : "2px solid transparent",
         }}
       />
+      <DragGhost
+        drag={drag}
+        sections={sections}
+        blockById={blockById}
+        headingById={headingById}
+      />
     </div>
+  );
+}
+
+/**
+ * The row following the cursor while dragging.
+ *
+ * Pointer-based reordering has no native drag image, so the copy is drawn
+ * here. It carries the row's measured width and left edge so it tracks
+ * vertically without drifting sideways, and renders through a portal because
+ * the rail scrolls — a copy inside it would be clipped at the rail's edge the
+ * moment the pointer left the list.
+ *
+ * Deliberately not a pixel-perfect copy: the handle, number and heading are
+ * what identify the row, and reproducing the action buttons would mean
+ * rendering controls that cannot be clicked.
+ */
+function DragGhost({
+  drag,
+  sections,
+  blockById,
+  headingById,
+}: {
+  drag: {
+    from: number;
+    pointerY: number;
+    grabOffsetY: number;
+    left: number;
+    width: number;
+  } | null;
+  sections: string[];
+  blockById: Map<string, ReportBlockInfo>;
+  headingById: Record<string, string>;
+}) {
+  if (!drag) return null;
+  const id = sections[drag.from];
+  const block = id ? blockById.get(id) : undefined;
+  if (!block) return null;
+  const heading = headingById[id] ?? "";
+
+  return createPortal(
+    <div
+      style={{
+        position: "fixed",
+        left: drag.left,
+        top: drag.pointerY - drag.grabOffsetY,
+        width: drag.width,
+        pointerEvents: "none",
+        zIndex: 1000,
+        display: "flex",
+        alignItems: "center",
+        gap: 6,
+        padding: "5px 6px",
+        borderRadius: 6,
+        background: "var(--bg-elevated)",
+        border: `1px solid ${ACCENT}`,
+        boxShadow: "0 6px 16px rgba(0, 0, 0, 0.28)",
+        fontFamily: "var(--font-ui)",
+        opacity: 0.95,
+      }}
+    >
+      <Bars3Icon
+        style={{
+          width: 12,
+          height: 12,
+          color: "var(--text-tertiary)",
+          flexShrink: 0,
+        }}
+      />
+      <span
+        style={{
+          fontSize: "var(--text-sm)",
+          color: "var(--text-tertiary)",
+          fontVariantNumeric: "tabular-nums",
+          flexShrink: 0,
+        }}
+      >
+        {drag.from + 1}
+      </span>
+      <span
+        style={{
+          flex: 1,
+          fontSize: "var(--text-lg)",
+          color: "var(--text-primary)",
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+          whiteSpace: "nowrap",
+        }}
+      >
+        {heading.trim() || block.title}
+      </span>
+    </div>,
+    document.body,
   );
 }
