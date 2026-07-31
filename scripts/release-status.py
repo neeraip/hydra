@@ -168,6 +168,7 @@ LIBRARY_PATHS = [
     "crates/engine-och",
     "crates/engine-uds",
     "crates/engine-wds",
+    "crates/engines",
     "crates/report",
     "crates/sdk",
 ]
