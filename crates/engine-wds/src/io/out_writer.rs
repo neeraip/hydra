@@ -11,7 +11,7 @@
 //  ┌───────────────────────────────────────────────────────────────────────────┐
 //  │ 1. PROLOG                                                                 │
 //  │   15 × INT4 header (60 bytes):                                            │
-//  │     magic (516114521), version (20013), n_nodes, n_tanks, n_links,        │
+//  │     magic (516114521), version (20012), n_nodes, n_tanks, n_links,        │
 //  │     n_pumps, n_valves, quality_flag (0-3), trace_node (1-based),          │
 //  │     flow_units (0-10), pressure_units (0=PSI,1=kPa,2=m),                 │
 //  │     report_statistic (0=Series), report_start, report_step, duration      │
