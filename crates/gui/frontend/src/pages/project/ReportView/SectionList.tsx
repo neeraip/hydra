@@ -356,14 +356,20 @@ export function SectionList({
                     color: "var(--text-tertiary)",
                     fontVariantNumeric: "tabular-nums",
                     flexShrink: 0,
-                    // Fixed width, right-aligned: the catalog runs past nine,
-                    // so without it every title below the tenth section sits a
-                    // digit further right than the ones above. `ch` with
+                    // Fixed-width gutter: the catalog runs past nine, so
+                    // without it every title below the tenth section would sit
+                    // a digit further right than the ones above. `ch` with
                     // tabular figures is exactly one digit wide, and `minWidth`
                     // rather than `width` so a hundredth section would widen
                     // the gutter instead of spilling into the title.
+                    //
+                    // Left-aligned inside that gutter, which keeps the number
+                    // beside the drag handle it belongs with rather than
+                    // drifting toward a title it is not part of. The titles
+                    // line up either way — the gutter is the same width
+                    // whichever edge the digit sits against.
                     minWidth: "2ch",
-                    textAlign: "right",
+                    textAlign: "left",
                   }}
                 >
                   {index + 1}
@@ -616,10 +622,10 @@ function DragGhost({
           fontVariantNumeric: "tabular-nums",
           flexShrink: 0,
           // Same gutter as a real row: the ghost is a copy of the row under
-          // the cursor, and a narrower number here would shift its title the
-          // instant the drag began.
+          // the cursor, and a different number treatment here would shift its
+          // title the instant the drag began.
           minWidth: "2ch",
-          textAlign: "right",
+          textAlign: "left",
         }}
       >
         {drag.from + 1}
