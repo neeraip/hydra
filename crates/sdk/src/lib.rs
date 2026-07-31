@@ -189,7 +189,7 @@ pub use hydra_common as common;
 
 /// Report blocks the water-distribution engine can produce, per the
 /// `common` reportable-output contract.
-pub use hydra_engine_wds::{produce_report_block, report_catalog};
+pub use hydra_engine_wds::{produce_report_block, report_block_options, report_catalog};
 
 /// Report generation: JSON templates, document assembly from engine
 /// fragments, and deterministic txt/csv/html renderers. See the

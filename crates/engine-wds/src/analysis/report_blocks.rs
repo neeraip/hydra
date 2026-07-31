@@ -9,7 +9,7 @@ use std::path::Path;
 
 use hydra_common::{
     BlockDescriptor, BlockError, Chart, ChartData, Column, Fragment, FragmentItem, KeyValue,
-    LineSeries, Table, Value, ValueKind,
+    LineSeries, OptionDescriptor, OptionKind, Table, Value, ValueKind,
 };
 
 use super::binning::threshold_bands;
@@ -464,6 +464,138 @@ fn quality_summary(out_path: &Path) -> Result<Fragment, BlockError> {
         title: "Water Quality Summary".into(),
         items,
     })
+}
+
+// ── Option descriptions (analysis spec §4.1.1, hydra-common spec §3.2.1) ──────
+
+/// Describe the options `id` accepts, resolved for `network`.
+///
+/// Resolved against the model rather than fixed by the catalog because the
+/// defaults and units of half these options follow the file's declared unit
+/// system: `minPressure` is 14 m on an SI model and 20 psi on a US one. A
+/// consumer displays what it is given and computes no units of its own.
+///
+/// Advisory only — production validates independently, so an unknown id or a
+/// block with nothing to configure simply yields an empty list rather than an
+/// error.
+pub fn report_block_options(id: &str, network: &Network) -> Vec<OptionDescriptor> {
+    let si = is_si(network.options.flow_units);
+    let (pressure_unit, _, velocity_unit) = unit_labels(network);
+
+    let worst_count = |what: &str| OptionDescriptor {
+        key: "worstCount".into(),
+        label: "Rows in the worst-performing table".into(),
+        help: format!("How many {what} to list, worst first."),
+        kind: OptionKind::Integer {
+            default: Some(DEFAULT_WORST_COUNT as i64),
+            min: Some(1),
+            max: None,
+        },
+        unit: None,
+    };
+
+    match id {
+        "wds.service-compliance" => vec![
+            OptionDescriptor {
+                key: "minPressure".into(),
+                label: "Minimum acceptable pressure".into(),
+                help: "Junction pressures below this count as a service violation.".into(),
+                kind: OptionKind::Number {
+                    default: Some(if si { 14.0 } else { 20.0 }),
+                    min: Some(0.0),
+                    max: None,
+                },
+                unit: Some(pressure_unit.into()),
+            },
+            OptionDescriptor {
+                key: "maxPressure".into(),
+                label: "Maximum acceptable pressure".into(),
+                help: "Pressures above this count as a violation. Leave empty to \
+                       disable the upper bound entirely."
+                    .into(),
+                kind: OptionKind::Number {
+                    default: None,
+                    min: Some(0.0),
+                    max: None,
+                },
+                unit: Some(pressure_unit.into()),
+            },
+            worst_count("junctions"),
+        ],
+        "wds.demand-reliability" => vec![
+            OptionDescriptor {
+                key: "deficitTolerance".into(),
+                label: "Deficit tolerance".into(),
+                help: "Shortfalls slower than this are not counted as deficit \
+                       periods. Exists to stop floating-point noise registering \
+                       as service failure; volumes still include them."
+                    .into(),
+                kind: OptionKind::Number {
+                    default: Some(1e-9),
+                    min: Some(0.0),
+                    max: None,
+                },
+                unit: Some("m³/s".into()),
+            },
+            worst_count("junctions"),
+        ],
+        "wds.pipe-criticality" => vec![OptionDescriptor {
+            key: "topCount".into(),
+            label: "Rows in the ranked-pipes table".into(),
+            help: "How many pipes to list, highest peak velocity first.".into(),
+            kind: OptionKind::Integer {
+                default: Some(DEFAULT_TOP_COUNT as i64),
+                min: Some(1),
+                max: None,
+            },
+            unit: None,
+        }],
+        "wds.pressure-thresholds" => vec![OptionDescriptor {
+            key: "edges".into(),
+            label: "Band boundaries".into(),
+            help: "Ascending pressure boundaries to count junctions into. The \
+                   outermost bands are unbounded, so no junction is dropped."
+                .into(),
+            kind: OptionKind::NumberList {
+                default: Some(default_pressure_edges(si).to_vec()),
+                min_len: Some(1),
+                ascending: true,
+            },
+            unit: Some(pressure_unit.into()),
+        }],
+        "wds.velocity-thresholds" => vec![OptionDescriptor {
+            key: "edges".into(),
+            label: "Band boundaries".into(),
+            help: "Ascending velocity boundaries to count pipes into. The \
+                   outermost bands are unbounded, so no pipe is dropped."
+                .into(),
+            kind: OptionKind::NumberList {
+                default: Some(default_velocity_edges(si).to_vec()),
+                min_len: Some(1),
+                ascending: true,
+            },
+            unit: Some(velocity_unit.into()),
+        }],
+        _ => Vec::new(),
+    }
+}
+
+/// Spec §4.1.1 default pressure bands; US files take psi-scaled equivalents.
+fn default_pressure_edges(si: bool) -> &'static [f64] {
+    if si {
+        &[0.0, 10.0, 20.0, 30.0, 40.0, 50.0, 60.0]
+    } else {
+        &[0.0, 15.0, 30.0, 45.0, 60.0, 75.0, 85.0]
+    }
+}
+
+/// Spec §4.1.1 default velocity bands; US files take ft/s equivalents.
+fn default_velocity_edges(si: bool) -> &'static [f64] {
+    if si {
+        &[0.1, 0.3, 0.6, 1.0]
+    } else {
+        &[0.3, 1.0, 2.0, 3.3]
+    }
 }
 
 // ── Option parsing (analysis spec §4.1.1) ─────────────────────────────────────
@@ -1107,13 +1239,10 @@ fn pressure_thresholds(
             message: "results file holds no reporting periods".into(),
         });
     }
-    // Spec §4.1.1 defaults are SI; US files take the psi-scaled equivalents.
-    let default: &[f64] = if is_si(network.options.flow_units) {
-        &[0.0, 10.0, 20.0, 30.0, 40.0, 50.0, 60.0]
-    } else {
-        &[0.0, 15.0, 30.0, 45.0, 60.0, 75.0, 85.0]
-    };
-    let edges = opt_edges(options, default)?;
+    let edges = opt_edges(
+        options,
+        default_pressure_edges(is_si(network.options.flow_units)),
+    )?;
     let scan = out_reader::scan_analytics(out_path, &meta)
         .map_err(|message| BlockError::Failed { message })?;
     let (pressure_unit, _, _) = unit_labels(network);
@@ -1139,12 +1268,10 @@ fn velocity_thresholds(
             message: "results file holds no reporting periods".into(),
         });
     }
-    let default: &[f64] = if is_si(network.options.flow_units) {
-        &[0.1, 0.3, 0.6, 1.0]
-    } else {
-        &[0.3, 1.0, 2.0, 3.3]
-    };
-    let edges = opt_edges(options, default)?;
+    let edges = opt_edges(
+        options,
+        default_velocity_edges(is_si(network.options.flow_units)),
+    )?;
     let scan = out_reader::scan_analytics(out_path, &meta)
         .map_err(|message| BlockError::Failed { message })?;
     let (_, _, velocity_unit) = unit_labels(network);
@@ -1352,6 +1479,103 @@ mod tests {
         let err = produce_report_block("wds.nope", Path::new("/nonexistent"), &network, None)
             .expect_err("unknown id must fail");
         assert!(matches!(err, BlockError::UnknownBlock { .. }));
+    }
+
+    // ── option descriptions (hydra-common spec §3.2.1) ───────────────────────
+
+    /// Same INP in US-customary units, so the descriptions can be compared
+    /// across unit systems.
+    const FIXTURE_INP_US: &str = "[JUNCTIONS]\nJ1  0  10\nJ2  0  10\n\n\
+        [RESERVOIRS]\nR1  100\n\n\
+        [PIPES]\nP1  R1  J1  1000  300  100  0  Open\nP2  J1  J2  800  250  100  0  Open\n\n\
+        [OPTIONS]\nUnits  GPM\nHeadloss  H-W\n\n[END]\n";
+
+    fn described(id: &str, inp: &str) -> Vec<OptionDescriptor> {
+        let network = crate::io::parse(inp.as_bytes()).expect("parse network");
+        report_block_options(id, &network)
+    }
+
+    fn by_key(descriptors: &[OptionDescriptor], key: &str) -> OptionDescriptor {
+        descriptors
+            .iter()
+            .find(|d| d.key == key)
+            .unwrap_or_else(|| panic!("option {key:?} must be described"))
+            .clone()
+    }
+
+    #[test]
+    fn described_defaults_follow_the_files_unit_system() {
+        // The reason descriptions are resolved against a model at all: a
+        // consumer must never have to know that 14 m and 20 psi are the same
+        // criterion.
+        let si = by_key(
+            &described("wds.service-compliance", FIXTURE_INP),
+            "minPressure",
+        );
+        assert_eq!(si.unit.as_deref(), Some("m"));
+        assert!(matches!(si.kind, OptionKind::Number { default: Some(d), .. } if d == 14.0));
+
+        let us = by_key(
+            &described("wds.service-compliance", FIXTURE_INP_US),
+            "minPressure",
+        );
+        assert_eq!(us.unit.as_deref(), Some("psi"));
+        assert!(matches!(us.kind, OptionKind::Number { default: Some(d), .. } if d == 20.0));
+    }
+
+    #[test]
+    fn described_edges_match_what_production_defaults_to() {
+        // Guards the drift this pairing is prone to: a description that
+        // advertises bands the block does not actually use.
+        for (inp, si) in [(FIXTURE_INP, true), (FIXTURE_INP_US, false)] {
+            let pressure = by_key(&described("wds.pressure-thresholds", inp), "edges");
+            assert!(
+                matches!(pressure.kind, OptionKind::NumberList { default: Some(d), .. }
+                    if d == default_pressure_edges(si))
+            );
+            let velocity = by_key(&described("wds.velocity-thresholds", inp), "edges");
+            assert!(
+                matches!(velocity.kind, OptionKind::NumberList { default: Some(d), .. }
+                    if d == default_velocity_edges(si))
+            );
+        }
+    }
+
+    #[test]
+    fn described_keys_are_the_keys_production_reads() {
+        // Every described key must be one the block actually consumes, or the
+        // editor offers a control that does nothing.
+        let expected: &[(&str, &[&str])] = &[
+            (
+                "wds.service-compliance",
+                &["minPressure", "maxPressure", "worstCount"],
+            ),
+            (
+                "wds.demand-reliability",
+                &["deficitTolerance", "worstCount"],
+            ),
+            ("wds.pipe-criticality", &["topCount"]),
+            ("wds.pressure-thresholds", &["edges"]),
+            ("wds.velocity-thresholds", &["edges"]),
+        ];
+        for (id, keys) in expected {
+            let described = described(id, FIXTURE_INP);
+            let actual: Vec<&str> = described.iter().map(|d| d.key.as_str()).collect();
+            assert_eq!(&actual, keys, "described options for {id}");
+        }
+    }
+
+    #[test]
+    fn blocks_without_options_describe_none() {
+        let network = crate::io::parse(FIXTURE_INP.as_bytes()).expect("parse network");
+        for id in ["wds.run-summary", "wds.tank-levels", "wds.mass-balance"] {
+            assert!(
+                report_block_options(id, &network).is_empty(),
+                "{id} takes no options"
+            );
+        }
+        // An unknown id is not an error — descriptions are advisory.
+        assert!(report_block_options("wds.nope", &network).is_empty());
     }
 
     #[test]

@@ -151,6 +151,50 @@ Removing a block id, or changing the *meaning* of an existing id, is a
 breaking change to every saved template that references it and must be
 treated with the same gravity as a file-format break.
 
+### 3.2.1 Option descriptors
+
+A block may accept options (§3.4). So that a template-builder UI can offer
+them without knowing any engine, an engine can **describe** the options one
+of its blocks accepts. A description is a list of option descriptors:
+
+| Field | Meaning | Constraints |
+|---|---|---|
+| `key` | Field name in the options object | Stable per block; renaming one is a break, like a block id. |
+| `label` | Human-facing control label | Plain text, engine-authored. |
+| `help` | One or two sentences explaining the option | Plain text, engine-authored. |
+| `kind` | What shape the value takes, and its bounds | Below. |
+| `unit` | Display unit text, or absent | Display text only — never a unit system (§3.3). |
+
+`kind` is one of: **number** (optional default, optional inclusive
+minimum and maximum), **integer** (same), **boolean** (optional default),
+**text** (optional default), **number list** (optional default, optional
+minimum length, and a flag requiring strict ascent — threshold edges),
+**choice** (one of a supplied list of items), or **multi-choice** (any
+subset of one). A choice item is an opaque `value` plus a `label` for
+display.
+
+**Descriptions are resolved against a model, not fixed by the catalog.**
+The catalog (§3.2) is static and model-free, because listing blocks must
+not require a loaded model. Options are the opposite: their permissible
+values and their correct defaults are frequently properties of the model
+in hand — which constituents exist, which land uses, and what unit system
+the file declares. An engine therefore describes a block's options given
+that block's id **and the model**, exactly as it produces a fragment given
+the model (§3.4). Only the description vocabulary lives in this layer; the
+model type is the engine's own and is never named here.
+
+This is why descriptors carry values rather than pre-rendered text: an
+engine resolving `minPressure` for a US-customary model returns a default
+of 20 with unit `psi`, and for an SI model 14 with unit `m`. A consumer
+displays what it is given and computes nothing.
+
+A description is advisory. It tells a UI what to offer; it is **not** the
+validation authority. Production (§3.4) validates independently and remains
+the sole judge of a malformed options value, so an engine is free to accept
+values no description advertised, and a consumer that skips the description
+entirely — as a template authored by hand does — is unaffected. Describing
+no options for a block means a UI offers none, not that none are accepted.
+
 ### 3.3 Fragment model
 
 Fragments are neutral data — no colors, fonts, page geometry, or format
@@ -210,11 +254,12 @@ The report layer decides how an unavailable or failed block renders
 (placeholder, omission) — the engine never does, and the contract carries
 no engine vocabulary for *why* beyond the engine-authored reason text.
 
-Block options arrived in v1.1 as production inputs only — the
-*descriptor* still carries no options schema. How an engine's options are
-discovered and edited by a template-builder UI is deferred; until then,
-options are authored knowingly (documentation, or app-side knowledge of
-specific ids).
+Block options arrived in v1.1 as production inputs only. Since v1.3 an
+engine can additionally **describe** the options a block accepts (§3.2.1),
+so a template-builder UI can offer them generically. Production is
+unchanged by this: it validates the options value it is given regardless of
+what was described, and a hand-authored template that never consults a
+description behaves exactly as before.
 
 ### 3.5 Consumers and dependency rules
 

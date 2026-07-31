@@ -30,6 +30,87 @@ pub struct BlockDescriptor {
     pub summary: &'static str,
 }
 
+/// One selectable item of a [`OptionKind::Choice`] or
+/// [`OptionKind::MultiChoice`] (spec §3.2.1).
+///
+/// `value` is what goes into the options object and is opaque here; `label`
+/// is display text. Both are engine-authored.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChoiceItem {
+    /// Opaque value stored in the options object.
+    pub value: String,
+    /// Human-facing label for this item.
+    pub label: String,
+}
+
+/// Shape and bounds of one describable block option (spec §3.2.1).
+///
+/// Bounds and defaults are advisory — they tell a UI what to offer, and are
+/// never the validation authority. Production validates independently, so an
+/// engine may accept a value no descriptor advertised.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "camelCase")]
+pub enum OptionKind {
+    /// Real number, with optional inclusive bounds.
+    Number {
+        default: Option<f64>,
+        min: Option<f64>,
+        max: Option<f64>,
+    },
+    /// Whole number, with optional inclusive bounds.
+    Integer {
+        default: Option<i64>,
+        min: Option<i64>,
+        max: Option<i64>,
+    },
+    Boolean {
+        default: Option<bool>,
+    },
+    Text {
+        default: Option<String>,
+    },
+    /// Ordered list of reals — threshold edges and the like.
+    NumberList {
+        default: Option<Vec<f64>>,
+        /// Fewest entries the block will accept, when it requires any.
+        min_len: Option<usize>,
+        /// Whether entries must strictly ascend.
+        ascending: bool,
+    },
+    /// Exactly one of `items`.
+    Choice {
+        default: Option<String>,
+        items: Vec<ChoiceItem>,
+    },
+    /// Any subset of `items`.
+    MultiChoice {
+        default: Option<Vec<String>>,
+        items: Vec<ChoiceItem>,
+    },
+}
+
+/// Description of one option a block accepts (spec §3.2.1).
+///
+/// Resolved by an engine **against a model**, because permissible values and
+/// correct defaults are often properties of the model in hand — which
+/// constituents exist, and what unit system the file declares. A consumer
+/// displays what it is given and computes nothing.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OptionDescriptor {
+    /// Field name in the block's options object.
+    pub key: String,
+    /// Human-facing control label.
+    pub label: String,
+    /// One or two sentences explaining what the option does.
+    pub help: String,
+    /// Value shape and bounds.
+    pub kind: OptionKind,
+    /// Display unit text, or `None`. Display only — never a unit system.
+    pub unit: Option<String>,
+}
+
 /// Kind of a [`Value`], used in column descriptors (spec §3.3).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]

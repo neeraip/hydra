@@ -97,10 +97,11 @@ pub use simulation::{
 
 pub use analysis::{
     compute_demand_reliability_from_out, compute_demand_reliability_from_out_with_options,
-    compute_service_compliance_from_out, produce_report_block, report_catalog, threshold_bands,
-    AnalysisComputeError, DemandReliabilityNode, DemandReliabilityOptions, DemandReliabilityReport,
-    DemandReliabilitySummary, ServiceComplianceNode, ServiceComplianceReport,
-    ServiceComplianceSummary, ServiceComplianceThresholds, HYDRA_ANALYSIS_VERSION,
+    compute_service_compliance_from_out, produce_report_block, report_block_options,
+    report_catalog, threshold_bands, AnalysisComputeError, DemandReliabilityNode,
+    DemandReliabilityOptions, DemandReliabilityReport, DemandReliabilitySummary,
+    ServiceComplianceNode, ServiceComplianceReport, ServiceComplianceSummary,
+    ServiceComplianceThresholds, HYDRA_ANALYSIS_VERSION,
 };
 
 // ── I/O helpers ───────────────────────────────────────────────────────────────

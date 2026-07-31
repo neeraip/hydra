@@ -10,6 +10,6 @@ pub use identity::{
     engine_by_key, EngineDescriptor, EngineStatus, ImportFormat, UnknownEngineError, ENGINES,
 };
 pub use report::{
-    BlockDescriptor, BlockError, Chart, ChartData, Column, Fragment, FragmentItem, KeyValue,
-    LineSeries, Table, Value, ValueKind,
+    BlockDescriptor, BlockError, Chart, ChartData, ChoiceItem, Column, Fragment, FragmentItem,
+    KeyValue, LineSeries, OptionDescriptor, OptionKind, Table, Value, ValueKind,
 };

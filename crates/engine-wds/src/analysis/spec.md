@@ -197,12 +197,24 @@ JSON authored per template block; this engine defines:
 | `wds.demand-reliability` | `deficitTolerance` | Deficit flow-rate tolerance (m³/s) below which a per-period shortfall is not counted | 1e-9 |
 | `wds.demand-reliability` | `worstCount` | Rows in the worst-junctions table | 10 |
 | `wds.pipe-criticality` | `topCount` | Rows in the ranked-pipes table | 5 |
-| `wds.pressure-thresholds` | `edges` | Ascending band boundaries in the results file's pressure display unit | `[0, 10, 20, 30, 40, 50, 60]` (SI, m) |
-| `wds.velocity-thresholds` | `edges` | Ascending band boundaries in the velocity display unit | `[0.1, 0.3, 0.6, 1.0]` (SI, m/s) |
+| `wds.pressure-thresholds` | `edges` | Ascending band boundaries in the results file's pressure display unit | `[0, 10, 20, 30, 40, 50, 60]` (SI, m) / `[0, 15, 30, 45, 60, 75, 85]` (US, psi) |
+| `wds.velocity-thresholds` | `edges` | Ascending band boundaries in the velocity display unit | `[0.1, 0.3, 0.6, 1.0]` (SI, m/s) / `[0.3, 1.0, 2.0, 3.3]` (US, ft/s) |
 
 Unknown option fields are ignored; malformed values (wrong type, negative
 where a magnitude is required) fail production with the foundation
 contract's `failed` error naming the field.
+
+**Descriptions.** This engine implements the foundation contract's option
+description (hydra-common spec §3.2.1) for every option above, resolved against
+a loaded network. The four unit-dependent options — both pressure criteria and
+both `edges` lists — are described with the default and unit label matching that
+network's declared unit system, so a template-builder UI offering them never
+converts a unit or chooses between the two columns above. Blocks absent from the
+table describe no options.
+
+A description is advisory and never the validation authority: production
+validates the options value it is given whether or not it was described, so a
+hand-authored template behaves identically to one built from a description.
 
 ### 4.1.2 Distribution binning
 
