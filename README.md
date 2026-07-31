@@ -5,18 +5,27 @@
 [![GUI](https://img.shields.io/github/v/release/neeraip/hydra?filter=gui-v*&label=GUI)](https://github.com/neeraip/hydra/releases?q=Hydra+GUI&expanded=true)
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](LICENSE)
 
-Hydra is a water distribution network simulator written in Rust. It performs extended-period simulation (EPS) of hydraulic behaviour and water quality dynamics across pressurised pipe networks, computing the full time history of flows, pressures, and constituent concentrations at every node and link.
+Hydra is a water infrastructure simulation platform written in Rust. It is built as a suite of domain engines sharing one toolchain: a desktop GUI, a `hydra` CLI, and a Rust SDK.
 
-Inputs are EPANET 2.3 `.inp` files (local or via HTTP URL). Outputs are an EPANET-compatible binary `.out` file and a plain-text or JSON `.rpt` report.
+| Engine | Domain | Source model | Status |
+|---|---|---|---|
+| **Water Distribution** (`wds`) | Pressurised supply networks — hydraulics, water quality, energy | EPANET 2.3 `.inp` | **Available** |
+| **Urban Drainage** (`uds`) | Stormwater and wastewater collection — runoff, routing, quality | SWMM `.inp` | Planned |
+| **Open Channel** (`och`) | Rivers and channels — steady and unsteady flow | HEC-RAS project | Planned |
+
+A planned engine is registered in the shared engine registry, so its key and crate name are reserved and the applications can present the full modelling scope — but it carries no implementation, and Hydra refuses to create projects or run simulations for it. Everything below describes the water distribution engine, the one that ships today.
 
 **[→ Full documentation](https://neeraip.github.io/hydra/)**
 
-## Features
+## Water distribution engine
+
+Extended-period simulation (EPS) of hydraulic behaviour and water quality dynamics across pressurised pipe networks, computing the full time history of flows, pressures, and constituent concentrations at every node and link.
 
 - **Hydraulics** — GGA solver, Hazen-Williams / Darcy-Weisbach / Chezy-Manning head loss, DDA and PDA demand models, pumps, all EPANET valve types, FAVAD leakage, rule-based controls
 - **Water quality** — chemical constituent, water age, source tracing; Lagrangian transport; bulk and wall reactions; all EPANET tank mixing models
 - **I/O** — all 11 EPANET flow unit systems; `.out` binary, `.rpt` text, `.json` report output
-- **Interfaces** — desktop GUI (Windows, macOS, Linux) and a `hydra` CLI binary
+
+Inputs are EPANET 2.3 `.inp` files (local or via HTTP URL). Outputs are an EPANET-compatible binary `.out` file and a plain-text or JSON `.rpt` report.
 
 ## Install
 
@@ -80,6 +89,7 @@ See [CONTRIBUTING.md](.github/CONTRIBUTING.md) for the full development setup.
 
 | | |
 |---|---|
+| [Engines](https://neeraip.github.io/hydra/engines.html) | The domain engines, what each covers, and what ships today |
 | [Getting Started](https://neeraip.github.io/hydra/getting-started/installation.html) | Installation, build, CLI, GUI |
 | [SDK](https://neeraip.github.io/hydra/sdk/overview.html) | Library usage and examples |
 | [Architecture](https://neeraip.github.io/hydra/architecture/crates.html) | Crate layout and specifications |

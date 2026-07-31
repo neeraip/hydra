@@ -14,7 +14,8 @@ Hydra is a multi-crate Rust workspace:
 | `hydra-gui` | Desktop application: Tauri shell with deck.gl canvas, timeline playback, network editor |
 
 The two empty engine scaffolds exist so their crate names and versions track the
-workspace from the start, rather than being introduced mid-life. The split
+workspace from the start, rather than being introduced mid-life — see
+[Engines](../engines.md) for what each engine covers. The split
 between `hydra-common`, the engines, and `hydra-report` is what lets a report be
 assembled from any engine's output: engines emit neutral fragments, and the
 report layer renders them without knowing which engine produced them.

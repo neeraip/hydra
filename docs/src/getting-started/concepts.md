@@ -1,6 +1,8 @@
 # Key Concepts
 
-This page explains the terminology used throughout Hydra's documentation and in `.inp` files. If you are familiar with EPANET, most of these will be review.
+This page explains the terminology of the **water distribution engine** — the vocabulary used throughout Hydra's documentation and in EPANET `.inp` files. If you are familiar with EPANET, most of these will be review.
+
+Each engine brings its own vocabulary; see [Engines](../engines.md) for the full roster.
 
 ---
 

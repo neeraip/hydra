@@ -1,6 +1,6 @@
 [book]
 title = "Hydra Documentation"
-description = "Extended-period hydraulic and water quality simulation for pressurised pipe networks."
+description = "Water infrastructure simulation — a suite of domain engines behind one toolchain."
 authors = ["NEER"]
 language = "en"
 src = "src"

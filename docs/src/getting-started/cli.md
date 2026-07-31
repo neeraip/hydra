@@ -1,5 +1,7 @@
 # CLI
 
+The `hydra` binary drives Hydra's water distribution [engine](../engines.md): it reads an EPANET `.inp` model, runs an extended-period simulation, and writes `.rpt`, `.out`, and report files. The planned engines are not yet reachable from the CLI.
+
 ## Install
 
 For most users, **Cargo install is the recommended path** on macOS, Linux, and Windows.

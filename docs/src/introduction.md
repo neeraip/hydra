@@ -1,8 +1,20 @@
 # Introduction
 
-Hydra is a water distribution network simulator written in Rust. It performs extended-period simulation (EPS) of hydraulic behaviour and water quality dynamics across pressurised pipe networks, computing the full time history of flows, pressures, and constituent concentrations at every node and link.
+Hydra is a water infrastructure simulation platform written in Rust. It is built as a suite of domain engines sharing one toolchain: a desktop GUI, a `hydra` CLI, and a Rust SDK.
 
-## Features
+| Engine | Domain | Source model | Status |
+|---|---|---|---|
+| **Water Distribution** (`wds`) | Pressurised supply networks — hydraulics, water quality, energy | EPANET 2.3 `.inp` | **Available** |
+| **Urban Drainage** (`uds`) | Stormwater and wastewater collection — runoff, routing, quality | SWMM `.inp` | Planned |
+| **Open Channel** (`och`) | Rivers and channels — steady and unsteady flow | HEC-RAS project | Planned |
+
+See [Engines](engines.md) for what each engine covers and what "planned" means in practice.
+
+## Water Distribution Engine
+
+The engine that ships today. It performs extended-period simulation (EPS) of hydraulic behaviour and water quality dynamics across pressurised pipe networks, computing the full time history of flows, pressures, and constituent concentrations at every node and link.
+
+Unless a page says otherwise, the rest of this documentation describes this engine.
 
 ### Hydraulics
 
@@ -30,9 +42,11 @@ Hydra is a water distribution network simulator written in Rust. It performs ext
 - **Output**: EPANET-compatible `.out` binary format, `.rpt` text report, `.json` report
 - **Unit systems**: all 11 EPANET flow unit variants (CFS, GPM, MGD, IMGD, AFD, LPS, LPM, MLD, CMH, CMD, CMS)
 
-## Relationship to EPANET
+### Relationship to EPANET
 
-Hydra's hydraulic and quality engines were derived by studying EPANET's mathematical foundations. Hydra is **not** an EPANET clone or compatibility layer; it is a distinct solver that models the same physics. Where the two diverge, Hydra's result is authoritative.
+The water distribution engine's hydraulic and quality solvers were derived by studying EPANET's mathematical foundations. Hydra is **not** an EPANET clone or compatibility layer; it is a distinct solver that models the same physics. Where the two diverge, Hydra's result is authoritative.
+
+The same principle will apply to each engine Hydra adds: it reads the established source-model format for its domain, and models the physics independently rather than reimplementing the reference tool.
 
 For migration guidance, see [Migrating from EPANET](reference/migrating-from-epanet.md).
 

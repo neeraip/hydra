@@ -1,6 +1,7 @@
 # Summary
 
 [Introduction](introduction.md)
+[Engines](engines.md)
 
 ---
 
@@ -12,7 +13,7 @@
 - [CLI](getting-started/cli.md)
 - [Troubleshooting](getting-started/troubleshooting.md)
 
-# Reference
+# Water Distribution Reference
 - [INP Format Support](reference/inp-format.md)
 - [Controls & Rules](reference/controls-and-rules.md)
 - [Output Files](reference/output-files.md)

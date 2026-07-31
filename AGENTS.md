@@ -1,6 +1,10 @@
 # Hydra — Agent Instructions
 
-Hydra is a water distribution network simulator written in Rust. It implements the Global Gradient Algorithm (GGA) hydraulic solver and a Lagrangian water quality engine, operating on the EPANET 2.3 data model. Correctness is defined by Hydra's own convergence criteria and physical conservation laws.
+Hydra is a water infrastructure simulation platform written in Rust, built as a suite of domain engines behind one shared toolchain (CLI, desktop GUI, Rust SDK).
+
+The **water distribution** engine (`wds`) is the only one implemented today: it implements the Global Gradient Algorithm (GGA) hydraulic solver and a Lagrangian water quality engine, operating on the EPANET 2.3 data model. Correctness is defined by Hydra's own convergence criteria and physical conservation laws.
+
+**Urban drainage** (`uds`, SWMM data model) and **open channel** (`och`, HEC-RAS data model) are registered in `hydra-common`'s engine registry as `Planned` — their crate names and engine keys are reserved, but neither is specced or implemented. Never write copy that presents Hydra as water-distribution-only, and never write copy that implies `uds`/`och` already work.
 
 ---
 
