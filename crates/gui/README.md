@@ -1,6 +1,11 @@
 # hydra-gui
 
-Tauri-based desktop GUI for Hydra.
+Tauri-based desktop GUI for Hydra, the water infrastructure simulation platform.
+
+The GUI is engine-aware: it resolves a project's engine through `hydra-common`'s
+registry rather than assuming water distribution. Planned engines (urban
+drainage, open channel) appear in the registry and are presented as such, but
+projects cannot be created or run against them until their implementations land.
 
 ## Developer diagnostics
 

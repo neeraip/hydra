@@ -359,7 +359,7 @@ export function HomePage() {
               lineHeight: 1.5,
             }}
           >
-            A modern engine for water distribution simulation.
+            A modern platform for water infrastructure simulation.
           </div>
           <div style={{ display: "inline-flex" }}>
             <PrimaryButton onClick={() => setShowWizard(true)}>
