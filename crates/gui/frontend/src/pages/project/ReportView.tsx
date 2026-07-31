@@ -523,14 +523,20 @@ export function ReportView() {
             style={{
               flex: 1,
               minHeight: 0,
-              overflowY: "auto",
-              // Reserve the scrollbar's track whether or not one is showing.
-              // app.css styles ::-webkit-scrollbar, which opts out of macOS's
-              // overlay scrollbars, so the bar takes real width on every
-              // platform — and expanding a section far enough to overflow
-              // would otherwise narrow every row by 5px, then widen them
-              // again on collapse.
-              scrollbarGutter: "stable",
+              // `scroll`, not `auto`, so the scrollbar's track is always laid
+              // out and its width is always reserved: expanding a section far
+              // enough to overflow would otherwise narrow every row by 5px and
+              // widen them again on collapse.
+              //
+              // NOT `scrollbar-gutter: stable`, which looks like the property
+              // for this and does nothing here — app.css styles
+              // ::-webkit-scrollbar, and WebKit honours the gutter only for
+              // its native scrollbar, never a custom one.
+              //
+              // Costs nothing visually: app.css leaves the track transparent
+              // and draws a thumb only when there is something to scroll, so a
+              // reserved-but-unused track is invisible.
+              overflowY: "scroll",
             }}
           >
             <SectionList
