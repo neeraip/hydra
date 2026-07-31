@@ -1,4 +1,5 @@
 import {
+  BarsArrowDownIcon,
   ChevronRightIcon,
   DocumentArrowDownIcon,
   PlusIcon,
@@ -38,6 +39,21 @@ import { AddSectionPalette } from "./ReportView/AddSectionPalette";
 import type { OptionValues } from "./ReportView/BlockOptions";
 import { CsvPreview, type CsvPreviewHandle } from "./ReportView/CsvPreview";
 import { SectionList } from "./ReportView/SectionList";
+
+/** The header row's icon buttons. Shared so the pair cannot drift apart —
+ * they sit side by side, where a pixel of disagreement is obvious. */
+const headerIconButton: React.CSSProperties = {
+  display: "inline-flex",
+  alignItems: "center",
+  justifyContent: "center",
+  width: 24,
+  height: 24,
+  padding: 0,
+  borderRadius: 5,
+  border: "1px solid var(--border)",
+  background: "var(--bg-elevated)",
+  color: "var(--text-secondary)",
+};
 
 const PREVIEW_DEBOUNCE_MS = 350;
 const SAVE_DEBOUNCE_MS = 800;
@@ -321,6 +337,9 @@ export function ReportView() {
     () => recommendedOrder(catalog, sections),
     [catalog, sections],
   );
+  // Whether the outline already reads in the recommended order, which is the
+  // only thing the sort button would change.
+  const orderIsRecommended = sameOrder(sections, recommended);
   const customisedCount = useMemo(
     () =>
       new Set([
@@ -536,6 +555,29 @@ export function ReportView() {
                 <PlusIcon style={{ width: 11, height: 11 }} />
                 Add
               </button>
+              {/* Out of the overflow menu too: restoring the reading order is
+                  a one-shot arrangement of what is already there, and it was
+                  the only item in that menu you might reach for repeatedly
+                  while shuffling sections about. Icon-only, because the row
+                  already carries one labelled button. */}
+              <button
+                type="button"
+                aria-label="Use recommended order"
+                data-tooltip={
+                  orderIsRecommended
+                    ? "Already in the recommended order"
+                    : "Use recommended order"
+                }
+                disabled={orderIsRecommended}
+                onClick={() => setSections(recommended)}
+                style={{
+                  ...headerIconButton,
+                  cursor: orderIsRecommended ? "default" : "pointer",
+                  opacity: orderIsRecommended ? 0.5 : 1,
+                }}
+              >
+                <BarsArrowDownIcon style={{ width: 12, height: 12 }} />
+              </button>
               {/* Out of the overflow menu and into the row: expanding the
                   outline is a view toggle used while reading it, not a
                   one-shot edit like the actions it sat among, and a menu is a
@@ -557,16 +599,7 @@ export function ReportView() {
                   setOpenSections(allExpanded ? new Set() : new Set(sections))
                 }
                 style={{
-                  display: "inline-flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  width: 24,
-                  height: 24,
-                  padding: 0,
-                  borderRadius: 5,
-                  border: "1px solid var(--border)",
-                  background: "var(--bg-elevated)",
-                  color: "var(--text-secondary)",
+                  ...headerIconButton,
                   cursor: sections.length === 0 ? "default" : "pointer",
                   opacity: sections.length === 0 ? 0.5 : 1,
                 }}
@@ -590,13 +623,6 @@ export function ReportView() {
                 // outline it acts on.
                 placement="right-start"
                 items={[
-                  {
-                    label: "Use recommended order",
-                    detail: "Reorders what is in the report; adds nothing",
-                    disabled: sameOrder(sections, recommended),
-                    disabledReason: "Already in the recommended order",
-                    onSelect: () => setSections(recommended),
-                  },
                   {
                     label: "Add every section",
                     detail:
