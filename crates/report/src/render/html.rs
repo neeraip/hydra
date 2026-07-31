@@ -27,7 +27,10 @@ th { background: #f2f4f7; }
 td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 p.note { font-size: 0.85rem; color: #555f6b; }
 figure.chart { margin: 0.8rem 0; }
-figure.chart svg { max-width: 100%; height: auto; }
+/* width, not max-width: the SVG carries an intrinsic 640px, so a cap let it
+   shrink but never grow, leaving charts at 640px beside full-width tables.
+   The viewBox makes scaling up lossless. */
+figure.chart svg { width: 100%; height: auto; }
 p.placeholder { font-style: italic; color: #8a6d1f; background: #fdf6e3;
                 border: 1px solid #e8dcb5; border-radius: 4px; padding: 0.4rem 0.6rem; }
 @media print { body { margin: 0; } }

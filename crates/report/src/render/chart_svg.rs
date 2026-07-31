@@ -28,7 +28,12 @@ const FONT: &str = "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 const WIDTH: f64 = 640.0;
 const PLOT_HEIGHT: f64 = 220.0;
 const MARGIN_LEFT: f64 = 52.0;
-const MARGIN_RIGHT: f64 = 88.0;
+/// Room for the series names a line chart writes past its last point.
+const MARGIN_RIGHT_LINE: f64 = 88.0;
+/// A bar chart labels its bars from above, so it needs only enough room to
+/// keep the last bar off the edge. Reserving the line chart's margin here
+/// left a wide dead strip on every distribution chart in the report.
+const MARGIN_RIGHT_BAR: f64 = 16.0;
 const MARGIN_TOP: f64 = 30.0;
 const MARGIN_BOTTOM: f64 = 46.0;
 
@@ -82,14 +87,14 @@ pub(crate) fn chart_svg(chart: &Chart) -> String {
 
 fn bar_svg(chart: &Chart, categories: &[String], values: &[f64]) -> String {
     let height = MARGIN_TOP + PLOT_HEIGHT + MARGIN_BOTTOM;
-    let plot_w = WIDTH - MARGIN_LEFT - MARGIN_RIGHT;
+    let plot_w = WIDTH - MARGIN_LEFT - MARGIN_RIGHT_BAR;
     let y_max = values.iter().copied().fold(0.0f64, f64::max);
     let y_ticks = ticks(0.0, y_max.max(1.0), 4);
     let y_top = y_ticks.last().copied().unwrap_or(1.0);
     let y = |v: f64| MARGIN_TOP + PLOT_HEIGHT - (v / y_top) * PLOT_HEIGHT;
 
     let mut s = svg_open(height);
-    grid_and_y_axis(&mut s, &y_ticks, y);
+    grid_and_y_axis(&mut s, &y_ticks, y, MARGIN_RIGHT_BAR);
 
     let n = categories.len().max(1);
     let band = plot_w / n as f64;
@@ -129,7 +134,7 @@ fn bar_svg(chart: &Chart, categories: &[String], values: &[f64]) -> String {
         );
     }
 
-    axis_titles(&mut s, chart, height);
+    axis_titles(&mut s, chart, height, MARGIN_RIGHT_BAR);
     s.push_str("</svg>\n");
     s
 }
@@ -140,7 +145,7 @@ fn line_svg(chart: &Chart, series: &[LineSeries]) -> String {
     let legend_h = if series.len() >= 2 { 22.0 } else { 0.0 };
     let height = MARGIN_TOP + legend_h + PLOT_HEIGHT + MARGIN_BOTTOM;
     let plot_top = MARGIN_TOP + legend_h;
-    let plot_w = WIDTH - MARGIN_LEFT - MARGIN_RIGHT;
+    let plot_w = WIDTH - MARGIN_LEFT - MARGIN_RIGHT_LINE;
 
     let xs: Vec<f64> = series
         .iter()
@@ -195,7 +200,7 @@ fn line_svg(chart: &Chart, series: &[LineSeries]) -> String {
         }
     }
 
-    grid_and_y_axis(&mut s, &y_ticks, y);
+    grid_and_y_axis(&mut s, &y_ticks, y, MARGIN_RIGHT_LINE);
 
     // X ticks.
     for tick in ticks(x_min, x_max, 5) {
@@ -272,7 +277,7 @@ fn line_svg(chart: &Chart, series: &[LineSeries]) -> String {
         }
     }
 
-    axis_titles(&mut s, chart, height);
+    axis_titles(&mut s, chart, height, MARGIN_RIGHT_LINE);
     s.push_str("</svg>\n");
     s
 }
@@ -286,14 +291,14 @@ fn svg_open(height: f64) -> String {
     )
 }
 
-fn grid_and_y_axis(s: &mut String, y_ticks: &[f64], y: impl Fn(f64) -> f64) {
+fn grid_and_y_axis(s: &mut String, y_ticks: &[f64], y: impl Fn(f64) -> f64, margin_right: f64) {
     for (i, &tick) in y_ticks.iter().enumerate() {
         let py = y(tick);
         let stroke = if i == 0 { BASELINE } else { GRID };
         let _ = writeln!(
             s,
             r#"<line x1="{MARGIN_LEFT}" y1="{py:.1}" x2="{:.1}" y2="{py:.1}" stroke="{stroke}" stroke-width="1"/>"#,
-            WIDTH - MARGIN_RIGHT,
+            WIDTH - margin_right,
         );
         let _ = writeln!(
             s,
@@ -305,7 +310,7 @@ fn grid_and_y_axis(s: &mut String, y_ticks: &[f64], y: impl Fn(f64) -> f64) {
     }
 }
 
-fn axis_titles(s: &mut String, chart: &Chart, height: f64) {
+fn axis_titles(s: &mut String, chart: &Chart, height: f64, margin_right: f64) {
     // Y title horizontal at top-left (no rotated text — friendlier to the
     // pdf SVG pipeline); X title centered below the category/tick labels.
     let _ = writeln!(
@@ -318,7 +323,7 @@ fn axis_titles(s: &mut String, chart: &Chart, height: f64) {
     let _ = writeln!(
         s,
         r#"<text x="{:.1}" y="{:.1}" text-anchor="middle" font-family="{FONT}" font-size="10" fill="{INK_MUTED}">{}</text>"#,
-        MARGIN_LEFT + (WIDTH - MARGIN_LEFT - MARGIN_RIGHT) / 2.0,
+        MARGIN_LEFT + (WIDTH - MARGIN_LEFT - margin_right) / 2.0,
         height - 10.0,
         esc(&axis_title(&chart.x_label, chart.x_unit.as_deref())),
     );
