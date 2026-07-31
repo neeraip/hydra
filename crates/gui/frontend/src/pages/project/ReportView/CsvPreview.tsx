@@ -81,11 +81,24 @@ export const CsvPreview = forwardRef<CsvPreviewHandle, { content: string }>(
     const scrollRef = useRef<HTMLDivElement>(null);
     useImperativeHandle(ref, () => ({
       scrollToSection(index: number) {
+        const container = scrollRef.current;
         // Skip one: the first `#` row is the document title, not a section.
-        const row = scrollRef.current?.querySelector(
-          `[data-title-row="${index + 1}"]`,
-        );
-        row?.scrollIntoView({ behavior: "smooth", block: "start" });
+        const row = container?.querySelector(`[data-title-row="${index + 1}"]`);
+        if (!container || !row) return;
+
+        // Not `scrollIntoView`: it aligns the row with the top of the
+        // scrolling box, which is precisely where the sticky column-letter
+        // header sits — so the row it was asked to reveal ends up behind it,
+        // one row's height out of sight. Offset by the header's own height
+        // so the section lands just beneath it.
+        const header = container.querySelector("thead");
+        const headerHeight = header?.getBoundingClientRect().height ?? 0;
+        const top =
+          row.getBoundingClientRect().top -
+          container.getBoundingClientRect().top +
+          container.scrollTop -
+          headerHeight;
+        container.scrollTo({ top: Math.max(0, top), behavior: "smooth" });
       },
     }));
 
