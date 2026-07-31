@@ -6,6 +6,12 @@
 :root {
   color-scheme: dark;
 
+  /* Width of the custom scrollbars below. Published as a variable because
+     layouts that reserve the track (overflow: scroll) must inset whatever
+     sits above or beside them by exactly this much to stay aligned — a
+     second hardcoded 5 would drift the moment this one changed. */
+  --scrollbar-w: 5px;
+
   /* Typography.
    *
    * The type scale is rem-relative so a single root font-size governs every
@@ -343,8 +349,8 @@ body,
 
 /* ── Scrollbar ───────────────────────────────────────────────────────────────*/
 ::-webkit-scrollbar {
-  width: 5px;
-  height: 5px;
+  width: var(--scrollbar-w);
+  height: var(--scrollbar-w);
 }
 ::-webkit-scrollbar-track {
   background: transparent;

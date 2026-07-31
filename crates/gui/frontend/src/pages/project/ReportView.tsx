@@ -620,6 +620,14 @@ export function ReportView() {
               // and draws a thumb only when there is something to scroll, so a
               // reserved-but-unused track is invisible.
               overflowY: "scroll",
+              // Reserving the track costs 5px of the list's own width, which
+              // pulled every row left of the title input, the Add palette and
+              // the header buttons above it. Widen the box by exactly that
+              // much so the track sits in the rail's padding and the rows line
+              // up with the rest of the rail again. Insetting those three
+              // instead would fix the symptom and oblige every future sibling
+              // to remember the same 5px.
+              marginRight: "calc(-1 * var(--scrollbar-w))",
             }}
           >
             <SectionList
