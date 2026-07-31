@@ -496,3 +496,19 @@ export function txtHeadingLine(text: string, heading: string): number | null {
   }
   return null;
 }
+
+/** Character offset of the start of 0-based `line` in `text`.
+ *
+ * Lets a caller ask the browser where a line actually sits — a Range over
+ * this offset reports its true position — instead of multiplying a line index
+ * by a line height. That multiplication compounds: any discrepancy between
+ * the computed line height and the laid-out one is multiplied by the line
+ * number, so the top of a document looks right while the bottom drifts. */
+export function lineStartOffset(text: string, line: number): number {
+  let offset = 0;
+  const lines = text.split("\n");
+  for (let i = 0; i < line && i < lines.length; i++) {
+    offset += lines[i].length + 1; // + the newline itself
+  }
+  return offset;
+}

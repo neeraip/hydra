@@ -16,6 +16,7 @@ import {
   generateReport,
   getReportBlockOptions,
   getReportTemplate,
+  lineStartOffset,
   listReportBlocks,
   moveSection,
   probeReportBlocks,
@@ -414,11 +415,26 @@ export function ReportView() {
     const title = headingById[id]?.trim() || blockById.get(id)?.title || id;
     const line = txtHeadingLine(previewContent, title);
     if (line === null) return;
-    const lineHeight = Number.parseFloat(
-      window.getComputedStyle(pre).lineHeight,
-    );
-    if (!Number.isFinite(lineHeight)) return;
-    pre.scrollTo({ top: line * lineHeight, behavior: "smooth" });
+
+    // Ask the browser where the line actually is, rather than multiplying the
+    // line number by a line height. That multiplication compounds every
+    // discrepancy between the computed line height and the laid-out one — and
+    // it ignores the block's top padding — so the first sections land close
+    // enough to look correct while later ones drift steadily past their mark.
+    // A Range over the line's first character reports its true position, which
+    // is exact however the text is laid out.
+    const node = pre.firstChild;
+    if (!(node instanceof Text)) return;
+    const offset = lineStartOffset(previewContent, line);
+    if (offset >= node.length) return;
+    const range = document.createRange();
+    range.setStart(node, offset);
+    range.setEnd(node, offset + 1);
+    const top =
+      range.getBoundingClientRect().top -
+      pre.getBoundingClientRect().top +
+      pre.scrollTop;
+    pre.scrollTo({ top: Math.max(0, top), behavior: "smooth" });
   }
 
   // Pdf previews arrive as base64 bytes; view them through a blob URL

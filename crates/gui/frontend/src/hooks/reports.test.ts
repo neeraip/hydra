@@ -8,6 +8,7 @@ import {
   type FormatStore,
   insertionFromPointer,
   insertionToIndex,
+  lineStartOffset,
   moveSection,
   type ReportBlockInfo,
   readStoredFormat,
@@ -599,5 +600,31 @@ describe("txtHeadingLine", () => {
   it("requires the whole line to match, not a prefix", () => {
     // "Run" must not match the "Run Summary" heading.
     expect(txtHeadingLine(REPORT, "Run")).toBeNull();
+  });
+});
+
+describe("lineStartOffset", () => {
+  const TEXT = "alpha\nbravo\ncharlie";
+
+  it("returns 0 for the first line", () => {
+    expect(lineStartOffset(TEXT, 0)).toBe(0);
+  });
+
+  it("counts the newline that ends each preceding line", () => {
+    // "alpha\n" is six characters, so line 1 starts at 6 — an off-by-one here
+    // would land every jump one character early and drift no further, which
+    // is exactly the kind of thing that looks fine until it does not.
+    expect(lineStartOffset(TEXT, 1)).toBe(6);
+    expect(lineStartOffset(TEXT, 2)).toBe(12);
+    expect(TEXT.slice(lineStartOffset(TEXT, 2))).toBe("charlie");
+  });
+
+  it("handles empty lines", () => {
+    const withBlank = "a\n\nb";
+    expect(withBlank.slice(lineStartOffset(withBlank, 2))).toBe("b");
+  });
+
+  it("clamps past the end rather than running away", () => {
+    expect(lineStartOffset(TEXT, 99)).toBe(TEXT.length + 1);
   });
 });
