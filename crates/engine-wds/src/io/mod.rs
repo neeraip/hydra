@@ -4,9 +4,7 @@
 // generic over `WritableSimulation` so the trait object can be provided by
 // the simulation module without creating a circular module dependency.
 
-/// Analysis artifact I/O — the persisted `analysis.json` schema.
-pub mod analysis_io;
-/// Network topology digest (model spec §4.5.7).
+/// Network topology digest (model spec §4.4.7).
 pub mod digest;
 /// INP (EPANET input file) reader — public entry point is [`parse`].
 pub mod inp_reader;

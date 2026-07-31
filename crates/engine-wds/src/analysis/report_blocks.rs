@@ -1,5 +1,5 @@
 //! Report blocks: the WDS implementation of the foundation layer's
-//! reportable-output contract (analysis spec §7, hydra-common spec §3).
+//! reportable-output contract (analysis spec §4, hydra-common spec §3).
 //!
 //! Counts and result values come from the `.out` file
 //! (result-authoritative); element identifiers and declared display units
@@ -20,7 +20,7 @@ use super::service_compliance::{compute_service_compliance_from_out, ServiceComp
 use crate::io::out_reader::{self, OutMetadata};
 use crate::{FlowUnits, Network};
 
-/// Sample budget for the range scan (analysis spec §7.2). Matches the
+/// Sample budget for the range scan (analysis spec §4.2). Matches the
 /// `scan_ranges` guidance keeping scans under ~50 ms on long simulations.
 const MAX_RANGE_SAMPLES: usize = 2048;
 
@@ -99,14 +99,14 @@ const CATALOG: &[BlockDescriptor] = &[
     },
 ];
 
-/// The water-distribution engine's report-block catalog (analysis spec §7.1).
+/// The water-distribution engine's report-block catalog (analysis spec §4.1).
 pub fn report_catalog() -> &'static [BlockDescriptor] {
     CATALOG
 }
 
 /// Produce the fragment for one catalog block from a persisted `.out`
 /// file, the corresponding loaded network, and the optional per-block
-/// options value (analysis spec §7.1.1/§7.2).
+/// options value (analysis spec §4.1.1/§4.2).
 pub fn produce_report_block(
     id: &str,
     out_path: &Path,
@@ -221,7 +221,7 @@ fn quality_mode_label(flag: i32) -> &'static str {
     }
 }
 
-/// Display unit for quality values by mode flag (analysis spec §7.2):
+/// Display unit for quality values by mode flag (analysis spec §4.2):
 /// chemical concentration reports the file-default mg/L.
 fn quality_unit(flag: i32) -> &'static str {
     match flag {
@@ -232,7 +232,7 @@ fn quality_unit(flag: i32) -> &'static str {
 }
 
 /// Sampling-disclosure note when the period count exceeds the scan budget
-/// (analysis spec §7.2); `None` when the scan was exhaustive.
+/// (analysis spec §4.2); `None` when the scan was exhaustive.
 fn sampling_note(n_periods: usize) -> Option<FragmentItem> {
     (n_periods > MAX_RANGE_SAMPLES).then(|| FragmentItem::Note {
         text: format!(
@@ -274,7 +274,7 @@ fn run_summary(out_path: &Path, network: &Network) -> Result<Fragment, BlockErro
 }
 
 /// (pressure, length, velocity) display labels for the network's declared
-/// unit system (analysis spec §7.2).
+/// unit system (analysis spec §4.2).
 fn unit_labels(network: &Network) -> (&'static str, &'static str, &'static str) {
     if is_si(network.options.flow_units) {
         ("m", "m", "m/s")
@@ -466,7 +466,7 @@ fn quality_summary(out_path: &Path) -> Result<Fragment, BlockError> {
     })
 }
 
-// ── Option parsing (analysis spec §7.1.1) ─────────────────────────────────────
+// ── Option parsing (analysis spec §4.1.1) ─────────────────────────────────────
 //
 // Options are opaque JSON per the foundation contract; unknown fields are
 // ignored, malformed values fail production naming the field.
@@ -503,7 +503,7 @@ fn opt_usize(
     Ok(Some(number as usize))
 }
 
-/// Default worst-junctions table length (analysis spec §7.1.1).
+/// Default worst-junctions table length (analysis spec §4.1.1).
 const DEFAULT_WORST_COUNT: usize = 10;
 
 /// `12.3%` style share text used in narrative values.
@@ -523,7 +523,7 @@ fn service_compliance(
         });
     }
     let (pressure_unit, _, _) = unit_labels(network);
-    // Spec §7.1.1 default criterion: 14 m for SI files, 20 psi for US files.
+    // Spec §4.1.1 default criterion: 14 m for SI files, 20 psi for US files.
     let default_min = if is_si(network.options.flow_units) {
         14.0
     } else {
@@ -787,7 +787,7 @@ fn pressure_distribution(out_path: &Path, network: &Network) -> Result<Fragment,
     let scan = out_reader::scan_analytics(out_path, &meta)
         .map_err(|message| BlockError::Failed { message })?;
     let (pressure_unit, _, _) = unit_labels(network);
-    // Junctions only (analysis spec §7.1.2): tank/reservoir indices sit at
+    // Junctions only (analysis spec §4.1.2): tank/reservoir indices sit at
     // the tail of the node list.
     let junction_count = meta.n_nodes.saturating_sub(meta.n_tanks);
     let values: Vec<f64> = scan
@@ -818,7 +818,7 @@ fn velocity_distribution(out_path: &Path, network: &Network) -> Result<Fragment,
     let scan = out_reader::scan_analytics(out_path, &meta)
         .map_err(|message| BlockError::Failed { message })?;
     let (_, _, velocity_unit) = unit_labels(network);
-    // Pipes only (analysis spec §7.1.2): a pump or valve has no pipe
+    // Pipes only (analysis spec §4.1.2): a pump or valve has no pipe
     // velocity, so including them banks one spurious zero per non-pipe link
     // into the lowest bin. Link order in the `.out` file matches
     // `network.links`, so the index maps directly.
@@ -847,11 +847,11 @@ fn velocity_distribution(out_path: &Path, network: &Network) -> Result<Fragment,
 }
 
 /// Equal-width six-bin distribution as a bar chart (analysis spec
-/// §7.1.2): edges rounded outward to whole display units; a degenerate
+/// §4.1.2): edges rounded outward to whole display units; a degenerate
 /// range yields a single bin. Table-derivable everywhere per the
 /// foundation contract.
 /// Ascending threshold edges from the `edges` option, or the supplied default
-/// (analysis spec §7.1.1). Validates strict ascent and non-emptiness.
+/// (analysis spec §4.1.1). Validates strict ascent and non-emptiness.
 fn opt_edges(options: Option<&serde_json::Value>, default: &[f64]) -> Result<Vec<f64>, BlockError> {
     let Some(value) = options.and_then(|o| o.get("edges")) else {
         return Ok(default.to_vec());
@@ -945,7 +945,7 @@ fn junction_min_pressures(scan: &out_reader::AnalyticsScan, meta: &OutMetadata) 
         .collect()
 }
 
-/// Per-pipe maximum velocities (pumps and valves excluded, §7.1.2).
+/// Per-pipe maximum velocities (pumps and valves excluded, §4.1.2).
 fn pipe_max_velocities(scan: &out_reader::AnalyticsScan, network: &Network) -> Vec<(usize, f64)> {
     scan.link_max_velocity
         .iter()
@@ -1107,7 +1107,7 @@ fn pressure_thresholds(
             message: "results file holds no reporting periods".into(),
         });
     }
-    // Spec §7.1.1 defaults are SI; US files take the psi-scaled equivalents.
+    // Spec §4.1.1 defaults are SI; US files take the psi-scaled equivalents.
     let default: &[f64] = if is_si(network.options.flow_units) {
         &[0.0, 10.0, 20.0, 30.0, 40.0, 50.0, 60.0]
     } else {
@@ -1234,7 +1234,7 @@ fn distribution_fragment(
 }
 
 /// Tank hydraulic head over the reporting horizon as a line chart
-/// (analysis spec §7.1.2): one series per tank in node order, capped at
+/// (analysis spec §4.1.2): one series per tank in node order, capped at
 /// the first [`MAX_TANK_SERIES`] with a disclosure note when more exist.
 const MAX_TANK_SERIES: usize = 8;
 
@@ -1657,7 +1657,7 @@ mod tests {
 
     #[test]
     fn threshold_bands_are_unbounded_at_both_ends() {
-        // Spec §7.1.2: n edges give n+1 bands, outer two unbounded, so every
+        // Spec §4.1.2: n edges give n+1 bands, outer two unbounded, so every
         // finite value is counted and the counts sum to the population.
         let edges = [0.0, 10.0, 20.0];
         let values = [-5.0, -0.1, 0.0, 9.9, 10.0, 19.9, 20.0, 1000.0];
@@ -1688,7 +1688,7 @@ mod tests {
 
     #[test]
     fn velocity_blocks_exclude_pumps_and_valves() {
-        // A pump link must not contribute a zero-velocity sample: spec §7.1.2.
+        // A pump link must not contribute a zero-velocity sample: spec §4.1.2.
         const PUMP_INP: &str = "[JUNCTIONS]\nJ1  0  10\nJ2  0  10\n\n\
             [RESERVOIRS]\nR1  100\n\n\
             [PIPES]\nP1  J1  J2  800  250  100  0  Open\n\n\

@@ -533,9 +533,9 @@ The INP format is the plain-text network description format used by EPANET. Supp
 
 - `[TAGS]`, `[COORDINATES]`, `[VERTICES]`: display/annotation data with no effect on simulation results, but **stored on the network model** and re-serialised from the in-memory data on output — matching EPANET, which likewise rewrites these three sections from memory when regenerating an INP file.
 - `[LABELS]`, `[BACKDROP]`: display no-ops — parsed leniently, never stored (see the deviation note at the end of this section).
-- `[TITLE]`: stored in the data model (`Network.title`) and written to the binary output prolog (§4.5.2). Up to three title lines are preserved.
+- `[TITLE]`: stored in the data model (`Network.title`) and written to the binary output prolog (§4.4.2). Up to three title lines are preserved.
 - `[REPORT]`: controls output filtering and verbosity. These are component-level settings, not simulation parameters.
-- `[TIMES] Statistic`: the `STATISTIC` keyword within `[TIMES]` (values: `NONE`, `AVERAGED`, `MINIMUM`, `MAXIMUM`, `RANGE`) controls how per-timestep results are post-processed before output. `NONE` writes every reporting step individually. The other modes aggregate across all reporting periods into a **single** output period — arithmetic mean over the periods (equal to time-weighted for Hydra's uniform report-step spacing), element-wise minimum/maximum, or max−min range — and the mode is recorded in the prolog report-statistic field (§4.5.2). The binary output writer applies this aggregation with a single streaming accumulator pass (no buffering of all periods). It remains a pure output-boundary transform: the core session still delivers every per-step result regardless of this setting.
+- `[TIMES] Statistic`: the `STATISTIC` keyword within `[TIMES]` (values: `NONE`, `AVERAGED`, `MINIMUM`, `MAXIMUM`, `RANGE`) controls how per-timestep results are post-processed before output. `NONE` writes every reporting step individually. The other modes aggregate across all reporting periods into a **single** output period — arithmetic mean over the periods (equal to time-weighted for Hydra's uniform report-step spacing), element-wise minimum/maximum, or max−min range — and the mode is recorded in the prolog report-statistic field (§4.4.2). The binary output writer applies this aggregation with a single streaming accumulator pass (no buffering of all periods). It remains a pure output-boundary transform: the core session still delivers every per-step result regardless of this setting.
 
 **INP serialisation:** the writer re-serialises a `Network` to INP text, converting every stored SI value back to the user unit system declared by `flow_units` with the **exact inverse** of the load-time conversion (§3), so that a parse → write → parse cycle reproduces the same internal values and a second write is byte-identical (writer idempotence). Conventions that are not obvious from the section column layouts:
 
@@ -570,33 +570,25 @@ The INP format is the plain-text network description format used by EPANET. Supp
 
 The INP parser uses the two-pass strategy described in §4.2.
 
-### 4.4 Analysis Artifact Format (`analysis.json`)
-
-A versioned JSON document holding post-simulation analytics for one results file.
-Unlike the INP and `.out` formats, it has no predecessor lineage and is compatible
-only with its own schema version. The schema, the producer's stale-on-edit
-invalidation obligation, and the canonical-encoding and round-trip requirements are
-specified in the [analysis spec](../analysis/spec.md) §3 and §5.
-
-### 4.5 Binary Results Format (`.out`)
+### 4.4 Binary Results Format (`.out`)
 
 The binary results file persists the full time series of a completed simulation. It is an extension of the EPANET 2.3 binary output format: all integers are 4-byte little-endian (`INT4`), all reals are 4-byte little-endian IEEE 754 (`REAL4`), and string fields are fixed-width, zero-padded byte arrays (IDs: 32 bytes; title lines: 80 bytes; filenames: 260 bytes).
 
-#### 4.5.1 Version History
+#### 4.4.1 Version History
 
 | Version code | Meaning |
 |---|---|
 | `20012` | EPANET 2.3-compatible baseline layout. No network digest — readers report the digest as *absent*. |
-| `20013` | Hydra extension: identical to `20012` except the epilog (§4.5.6) grows from 12 to 20 bytes, inserting a 64-bit network digest (§4.5.7) between the warning flag and the closing magic number. |
+| `20013` | Hydra extension: identical to `20012` except the epilog (§4.4.6) grows from 12 to 20 bytes, inserting a 64-bit network digest (§4.4.7) between the warning flag and the closing magic number. |
 
 Writers always produce the newest version. Readers must accept **both** versions; the only layout difference is the epilog length. Any other version code is rejected as unsupported.
 
-#### 4.5.2 Prolog
+#### 4.4.2 Prolog
 
 | Field | Type / size |
 |---|---|
 | magic number = 516114521 | INT4 |
-| format version (§4.5.1) | INT4 |
+| format version (§4.4.1) | INT4 |
 | node count $N_n$ (junctions + reservoirs + tanks) | INT4 |
 | tank count $N_t$ (reservoirs + tanks) | INT4 |
 | link count $N_l$ (pipes + pumps + valves) | INT4 |
@@ -637,11 +629,11 @@ The two 32-byte chemical fields hold quality-mode-dependent strings. Byte-level 
 
 The `TRACE` name string is genuinely `% from`: EPANET's input parser assigns the percent label to the chemical-name slot for trace analyses, and the units slot in the file is populated from the report quality-units field, which is also `% from` for trace. Both 32-byte fields therefore carry the identical `% from` string.
 
-#### 4.5.3 Energy Section
+#### 4.4.3 Energy Section
 
 One 28-byte record per pump — INT4 link index (1-based), then six REAL4 values: percent of time online, average efficiency (%), average energy intensity (kWh per flow unit), average kW, peak kW, average cost per day — followed by a single trailing REAL4 demand charge. Size: $28 N_p + 4$ bytes.
 
-#### 4.5.4 Dynamic Results
+#### 4.4.4 Dynamic Results
 
 One block per reporting period, laid out column-major (all values of one variable, then the next):
 
@@ -650,22 +642,22 @@ One block per reporting period, laid out column-major (all values of one variabl
 
 Block size: $4(4 N_n + 8 N_l)$ bytes per period.
 
-#### 4.5.5 Network Reactions
+#### 4.4.5 Network Reactions
 
 Four REAL4 values: average bulk, wall, tank, and source reaction rates (mass/hour). Size: 16 bytes.
 
-#### 4.5.6 Epilog
+#### 4.4.6 Epilog
 
 | Field | Type / size | Versions |
 |---|---|---|
 | number of reporting periods written | INT4 | all |
 | warning flag (0 = no warnings) | INT4 | all |
-| network digest (§4.5.7), unsigned 64-bit little-endian | 8 bytes | ≥ 20013 only |
+| network digest (§4.4.7), unsigned 64-bit little-endian | 8 bytes | ≥ 20013 only |
 | magic number = 516114521 (integrity check) | INT4 | all |
 
 Epilog size: 12 bytes (version 20012), 20 bytes (version 20013). The magic number is always the final 4 bytes of the file.
 
-#### 4.5.7 Network Digest
+#### 4.4.7 Network Digest
 
 The network digest binds a results file to the topology of the network that produced it, so a consumer can detect that results are stale after the model has been edited. It is the **FNV-1a 64-bit** hash (offset basis 14695981039346656037, prime 1099511628211) of the following byte stream:
 
@@ -675,15 +667,15 @@ The network digest binds a results file to the topology of the network that prod
 
 The digest is deterministic and **order-sensitive**: reordering nodes or links, renaming any element, or rewiring a link's endpoints all change the digest. It intentionally covers identity and connectivity only — property edits (demands, diameters, options) do not change it.
 
-#### 4.5.8 Random Access
+#### 4.4.8 Random Access
 
 Every section of the file has a size that depends only on the prolog counts, so any individual value is addressable by computation — no scan is required to reach it. Let
 
 $$B_{\text{pro}} = 884 + 36 N_n + 52 N_l + 8 N_t, \qquad B_{\text{ene}} = 28 N_p + 4, \qquad B_{\text{per}} = 4(4 N_n + 8 N_l)$$
 
-be the prolog, energy, and per-period block sizes in bytes (§4.5.2–§4.5.4). The dynamic section begins at $D = B_{\text{pro}} + B_{\text{ene}}$, and reporting period $p$ (0-based) begins at $D + p \cdot B_{\text{per}}$.
+be the prolog, energy, and per-period block sizes in bytes (§4.4.2–§4.4.4). The dynamic section begins at $D = B_{\text{pro}} + B_{\text{ene}}$, and reporting period $p$ (0-based) begins at $D + p \cdot B_{\text{per}}$.
 
-Within a period block the variables are stored column-major (§4.5.4), so the value of node variable $v_n \in \{0,1,2,3\}$ (demand, head, pressure, quality) for the node at 0-based network index $i$ lies at byte offset
+Within a period block the variables are stored column-major (§4.4.4), so the value of node variable $v_n \in \{0,1,2,3\}$ (demand, head, pressure, quality) for the node at 0-based network index $i$ lies at byte offset
 
 $$D + p \cdot B_{\text{per}} + 4 (v_n N_n + i)$$
 
@@ -693,17 +685,14 @@ $$D + p \cdot B_{\text{per}} + 4 (4 N_n + v_l N_l + j).$$
 
 Consequently a reader extracting the full time series of a **single** element must read $N_{\text{per}}$ values of 4 bytes each — one strided read per period — and must never read whole period blocks to do so. Reading the entire block per period is $O(N_{\text{per}} (N_n + N_l))$ where $O(N_{\text{per}})$ suffices, and on large networks that difference is four orders of magnitude.
 
-Metadata readers expose the prolog's scalar header fields — including the simulation duration at the fixed offset given in §4.5.2 — so that consumers never re-derive them by seeking into the header themselves.
+Metadata readers expose the prolog's scalar header fields — including the simulation duration at the fixed offset given in §4.4.2 — so that consumers never re-derive them by seeking into the header themselves.
 
 ## 5. Runtime Estimation Types
 
 The runtime estimate is a three-valued ordinal — `Low`, `Medium`, `High`. It is
 advisory only and deterministic for identical inputs.
 
-Two independent estimators share this type and must not be conflated: the
-*simulation* estimator ([simulation spec](../simulation/spec.md) §10), which
-models solver cost from the duration and time steps, and the *analysis*
-estimator ([analysis spec](../analysis/spec.md) §6), which models scan cost from
-the reporting-period count and the selected modules. They take different inputs
-and answer different questions.
+One estimator uses this type: the *simulation* estimator ([simulation
+spec](../simulation/spec.md) §10), which models solver cost from the duration and
+time steps.
 

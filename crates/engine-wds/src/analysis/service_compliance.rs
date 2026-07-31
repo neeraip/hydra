@@ -29,7 +29,7 @@ impl ServiceComplianceThresholds {
 
 /// Per-junction service-compliance metrics for a single simulation run.
 ///
-/// Only junction nodes are analysed (analysis spec §4.1) — reservoirs and
+/// Only junction nodes are analysed (analysis spec §3.1) — reservoirs and
 /// tanks are excluded, so `node_index` values are not necessarily contiguous.
 #[derive(Debug, Clone, Default)]
 pub struct ServiceComplianceNode {
@@ -83,7 +83,7 @@ pub struct ServiceComplianceSummary {
     /// Number of reporting periods in the simulation.
     pub period_count: usize,
     /// Number of junction nodes included in the analysis (reservoirs and
-    /// tanks are excluded; analysis spec §4.1).
+    /// tanks are excluded; analysis spec §3.1).
     pub node_count: usize,
     /// Total number of (junction, period) pressure samples.
     pub total_samples: usize,
@@ -147,7 +147,7 @@ pub struct ServiceComplianceReport {
 /// - minimum pressure threshold
 /// - optional maximum pressure threshold
 ///
-/// Only **junction** nodes are analysed (analysis spec §4.1): reservoirs sit
+/// Only **junction** nodes are analysed (analysis spec §3.1): reservoirs sit
 /// at ≈ 0 gauge pressure by construction and tanks are storage nodes, so
 /// counting them would register permanent violations and deflate the
 /// compliance ratio on every network. Junction membership is derived from the
@@ -182,7 +182,7 @@ pub fn compute_service_compliance_from_out(
     };
 
     // Junctions = all nodes minus the prolog's tank/reservoir index list
-    // (analysis spec §4.1).
+    // (analysis spec §3.1).
     let tank_indices = out_reader::read_tank_node_indices(out_path, &meta)
         .map_err(AnalysisComputeError::OutRead)?;
     let mut is_junction = vec![true; meta.n_nodes];
@@ -395,7 +395,7 @@ mod tests {
     }
 
     /// A reservoir sits at ≈ 0 gauge pressure permanently; it must not count
-    /// as a violating "node" (analysis spec §4.1: junctions only).
+    /// as a violating "node" (analysis spec §3.1: junctions only).
     #[test]
     fn compliance_excludes_reservoirs_from_samples_and_counts() {
         // R1 (head 100 m, gauge pressure 0) feeding J1 and J2 (pressures

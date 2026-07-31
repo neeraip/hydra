@@ -65,7 +65,7 @@ use crate::{
 // ── Constants ─────────────────────────────────────────────────────────────────
 
 const MAGIC: i32 = 516114521;
-/// Current `.out` format version (model spec §4.5.1): the EPANET 2.3 layout
+/// Current `.out` format version (model spec §4.4.1): the EPANET 2.3 layout
 /// plus a 64-bit network digest in the epilog. Version 20012 (no digest) is
 /// still accepted by the reader.
 const VERSION: i32 = 20013;
@@ -87,7 +87,7 @@ pub struct OutStreamWriter<W: Write + Seek> {
     next_rtime: i64,
     next_snapshot_index: usize,
     n_periods: i32,
-    /// Network topology digest written into the epilog (model spec §4.5.7).
+    /// Network topology digest written into the epilog (model spec §4.4.7).
     network_digest: u64,
     /// `Some` when `STATISTIC != NONE`: report periods are folded into a single
     /// aggregated period on `finish` rather than streamed individually (§4.3).
@@ -530,7 +530,7 @@ fn write_energy_placeholder<W: Write>(w: &mut W, network: &crate::Network) -> st
 
 // ── Dynamic Results ───────────────────────────────────────────────────────────
 
-/// Report-statistic code written into the prolog (model spec §4.5.2 / EPANET
+/// Report-statistic code written into the prolog (model spec §4.4.2 / EPANET
 /// StatisticType): 0=Series, 1=Average, 2=Minimum, 3=Maximum, 4=Range.
 fn statistic_to_code(s: StatisticType) -> i32 {
     match s {
@@ -840,7 +840,7 @@ fn write_epilog<W: Write>(
     write_i32(w, n_periods)?;
     write_i32(w, warn_flag)?;
     // Version ≥ 20013: 64-bit network digest between warn flag and magic
-    // (model spec §4.5.6).
+    // (model spec §4.4.6).
     w.write_all(&network_digest.to_le_bytes())?;
     write_i32(w, MAGIC)?;
     Ok(())

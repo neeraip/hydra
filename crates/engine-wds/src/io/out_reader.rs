@@ -128,7 +128,7 @@ pub struct OutReactions {
     pub source_rate: f32,
 }
 
-/// The epilog section (model spec §4.5.6): period count, warning flag,
+/// The epilog section (model spec §4.4.6): period count, warning flag,
 /// network digest (format version ≥ 20013), and closing magic number.
 #[derive(Debug, Clone, Copy)]
 pub struct OutEpilog {
@@ -136,7 +136,7 @@ pub struct OutEpilog {
     pub n_periods: i32,
     /// Non-zero if the solver issued warnings during the run.
     pub warning_flag: i32,
-    /// FNV-1a 64-bit network topology digest (model spec §4.5.7).
+    /// FNV-1a 64-bit network topology digest (model spec §4.4.7).
     /// `None` for files written in the pre-digest format version 20012.
     pub network_digest: Option<u64>,
     /// Magic number used to validate file integrity (must equal the prolog magic).
@@ -185,11 +185,11 @@ pub struct OutMetadata {
     /// Duration of each reporting period (seconds).
     pub report_step: f64,
     /// Total simulation duration (seconds) from the prolog header
-    /// (model spec §4.5.2). `0` for a steady-state run.
+    /// (model spec §4.4.2). `0` for a steady-state run.
     pub duration: f64,
     /// Number of reporting periods written to the file.
     pub n_periods: usize,
-    /// FNV-1a 64-bit network topology digest (model spec §4.5.7) from the
+    /// FNV-1a 64-bit network topology digest (model spec §4.4.7) from the
     /// epilog.  `None` for files written in the pre-digest format version
     /// 20012 — old files remain fully readable.
     pub network_digest: Option<u64>,
@@ -487,7 +487,7 @@ pub fn read_metadata_checked(path: &std::path::Path) -> Result<OutMetadata, OutV
 
 /// Read the 1-based tank/reservoir node indices from the `.out` prolog.
 ///
-/// Seeks directly to the tank-index array (model spec §4.5.2) and reads
+/// Seeks directly to the tank-index array (model spec §4.4.2) and reads
 /// `n_tanks` INT4 values; total I/O is `4 × n_tanks` bytes regardless of file
 /// size. Junction nodes are exactly those whose 1-based index does **not**
 /// appear in the returned list.
@@ -657,7 +657,7 @@ pub enum ElementKind {
 }
 
 impl ElementKind {
-    /// Variable names in the file's column order (model spec §4.5.4).
+    /// Variable names in the file's column order (model spec §4.4.4).
     pub fn variables(self) -> &'static [&'static str] {
         match self {
             ElementKind::Node => &["demand", "head", "pressure", "quality"],
@@ -695,7 +695,7 @@ pub struct ElementSeries {
 }
 
 /// Read every result variable of a single element across all reporting
-/// periods, addressing each value directly (model spec §4.5.8).
+/// periods, addressing each value directly (model spec §4.4.8).
 ///
 /// Reads `4 × variables × n_periods` bytes total — independent of network
 /// size. The whole-period alternative (`read_period` in a loop) costs
@@ -1180,7 +1180,7 @@ pub fn parse(data: &[u8]) -> Result<OutFile, String> {
 
     // Peek the format version to learn the epilog length: 12 bytes for the
     // 20012 baseline, 20 bytes for ≥ 20013 (which inserts a 64-bit network
-    // digest; model spec §4.5.6).
+    // digest; model spec §4.4.6).
     let version_peek = i32::from_le_bytes(data[4..8].try_into().unwrap());
     let has_digest = version_peek == 20_013;
     let epilog_len = if has_digest { 20 } else { 12 };
@@ -1202,7 +1202,7 @@ pub fn parse(data: &[u8]) -> Result<OutFile, String> {
 
     let mut cur = Cursor::new(data);
 
-    // ── Prolog (model spec §4.5.2) ───────────────────────────────────────────────────────
+    // ── Prolog (model spec §4.4.2) ───────────────────────────────────────────────────────
 
     let magic_start = cur.read_i32()?;
     if magic_start != 516_114_521 {
@@ -1286,7 +1286,7 @@ pub fn parse(data: &[u8]) -> Result<OutFile, String> {
         diameters,
     };
 
-    // ── Energy (model spec §4.5.3) ───────────────────────────────────────────────────────
+    // ── Energy (model spec §4.4.3) ───────────────────────────────────────────────────────
 
     let mut pump_records = Vec::with_capacity(n_pumps);
     for _ in 0..n_pumps {
@@ -1313,7 +1313,7 @@ pub fn parse(data: &[u8]) -> Result<OutFile, String> {
         demand_charge,
     };
 
-    // ── Dynamic results (model spec §4.5.4) ──────────────────────────────────────────────
+    // ── Dynamic results (model spec §4.4.4) ──────────────────────────────────────────────
 
     // Bound the epilog's period count against the bytes actually remaining in
     // the buffer before allocating: a crafted epilog on a tiny file could
@@ -1371,7 +1371,7 @@ pub fn parse(data: &[u8]) -> Result<OutFile, String> {
         });
     }
 
-    // ── Network reactions (model spec §4.5.5) ────────────────────────────────────────────
+    // ── Network reactions (model spec §4.4.5) ────────────────────────────────────────────
 
     let bulk_rate = cur.read_f32()?;
     let wall_rate = cur.read_f32()?;
@@ -1384,7 +1384,7 @@ pub fn parse(data: &[u8]) -> Result<OutFile, String> {
         source_rate,
     };
 
-    // ── Epilog (model spec §4.5.6) ───────────────────────────────────────────────────────
+    // ── Epilog (model spec §4.4.6) ───────────────────────────────────────────────────────
 
     let n_periods_check = cur.read_i32()?;
     let warning_flag = cur.read_i32()?;

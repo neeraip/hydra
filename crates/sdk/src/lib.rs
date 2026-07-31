@@ -68,13 +68,9 @@ pub use hydra_engine_wds::{
 // ── Analytics ─────────────────────────────────────────────────────────────────
 
 pub use hydra_engine_wds::{
-    build_analysis_artifact, build_analysis_artifact_from_out,
-    build_analysis_artifact_from_out_with_progress,
-    build_analysis_artifact_from_out_with_progress_and_selection,
     compute_demand_reliability_from_out, compute_demand_reliability_from_out_with_options,
-    compute_service_compliance_from_out, decode_analysis_artifact, encode_analysis_artifact,
-    estimate_analysis_runtime_millis, threshold_bands, AnalysisBytesError, AnalysisComputeError,
-    AnalysisSelection, DemandReliabilityNode, DemandReliabilityOptions, DemandReliabilityReport,
+    compute_service_compliance_from_out, threshold_bands, AnalysisComputeError,
+    DemandReliabilityNode, DemandReliabilityOptions, DemandReliabilityReport,
     DemandReliabilitySummary, ServiceComplianceNode, ServiceComplianceReport,
     ServiceComplianceSummary, ServiceComplianceThresholds, HYDRA_ANALYSIS_VERSION,
 };
@@ -168,8 +164,8 @@ pub use hydra_engine_wds::{
 /// hence its narrower [`io::ReadError`] failure type.
 pub mod io {
     pub use hydra_engine_wds::io::{
-        analysis_io, compute_network_digest, out_reader, out_writer, parse, parse_tolerant,
-        rpt_writer, units, write_inp, ParseError, ReadError,
+        compute_network_digest, out_reader, out_writer, parse, parse_tolerant, rpt_writer, units,
+        write_inp, ParseError, ReadError,
     };
 }
 
@@ -180,7 +176,7 @@ pub mod io {
 pub use hydra_engine_wds::write_inp;
 
 /// Compute the FNV-1a 64-bit network topology digest stored in `.out` result
-/// files (model spec §4.5.7). Lets consumers detect results that are stale
+/// files (model spec §4.4.7). Lets consumers detect results that are stale
 /// relative to an edited network topology.
 pub use hydra_engine_wds::compute_network_digest;
 

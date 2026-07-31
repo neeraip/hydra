@@ -37,17 +37,16 @@
 //! It does **not** own interface logic (CLI, GUI) and performs no network I/O —
 //! simulation inputs (INP model bytes) are supplied in memory by callers.
 //! One deliberate carve-out exists for local filesystem reads: `io::out_reader`
-//! and `io::analysis_io` expose explicit path-based helpers that stream binary
-//! `.out` result files and analysis artifacts from disk, so large results
-//! never need to be loaded whole. All public types are defined within this
-//! crate.
+//! exposes explicit path-based helpers that stream binary `.out` result files
+//! from disk, so large results never need to be loaded whole. All public types
+//! are defined within this crate.
 //!
 //! # Internal module structure
 //!
 //! | Module | Responsibility |
 //! |---|---|
 //! | `model` | Network data model, state types, validation |
-//! | `io` | Unit conversion, INP/OUT/RPT/analysis parsers and writers |
+//! | `io` | Unit conversion, INP/OUT/RPT parsers and writers |
 //! | `hydraulics` | GGA Newton-Raphson solver (see `hydraulics/spec.md`) |
 //! | `quality` | Lagrangian transport engine (see `quality/spec.md`) |
 //! | `simulation` | Session API, controls, timestep, accounting |
@@ -97,16 +96,11 @@ pub use simulation::{
 // ── Analytics ─────────────────────────────────────────────────────────────────
 
 pub use analysis::{
-    build_analysis_artifact, build_analysis_artifact_from_out,
-    build_analysis_artifact_from_out_with_progress,
-    build_analysis_artifact_from_out_with_progress_and_selection,
     compute_demand_reliability_from_out, compute_demand_reliability_from_out_with_options,
-    compute_service_compliance_from_out, decode_analysis_artifact, encode_analysis_artifact,
-    estimate_analysis_runtime_millis, produce_report_block, report_catalog, threshold_bands,
-    AnalysisBytesError, AnalysisComputeError, AnalysisSelection, DemandReliabilityNode,
-    DemandReliabilityOptions, DemandReliabilityReport, DemandReliabilitySummary,
-    ServiceComplianceNode, ServiceComplianceReport, ServiceComplianceSummary,
-    ServiceComplianceThresholds, HYDRA_ANALYSIS_VERSION,
+    compute_service_compliance_from_out, produce_report_block, report_catalog, threshold_bands,
+    AnalysisComputeError, DemandReliabilityNode, DemandReliabilityOptions, DemandReliabilityReport,
+    DemandReliabilitySummary, ServiceComplianceNode, ServiceComplianceReport,
+    ServiceComplianceSummary, ServiceComplianceThresholds, HYDRA_ANALYSIS_VERSION,
 };
 
 // ── I/O helpers ───────────────────────────────────────────────────────────────
@@ -116,7 +110,7 @@ pub fn write_inp(network: &Network) -> Vec<u8> {
     io::write_inp(network)
 }
 
-/// Compute the FNV-1a 64-bit network topology digest (model spec §4.5.7).
+/// Compute the FNV-1a 64-bit network topology digest (model spec §4.4.7).
 ///
 /// Stored in `.out` result files so consumers can detect results that are
 /// stale relative to an edited network topology.

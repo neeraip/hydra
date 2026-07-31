@@ -1,4 +1,4 @@
-//! Network topology digest (model spec §4.5.7).
+//! Network topology digest (model spec §4.4.7).
 //!
 //! Computes a deterministic, order-sensitive 64-bit fingerprint of a network's
 //! identity and connectivity (node IDs, link IDs, link endpoints). Persisted
@@ -20,7 +20,7 @@ const RECORD_SEP: u8 = 0x0a;
 /// Separator between the node block and the link block (NUL).
 const BLOCK_SEP: u8 = 0x00;
 
-/// Compute the FNV-1a 64-bit network topology digest (model spec §4.5.7).
+/// Compute the FNV-1a 64-bit network topology digest (model spec §4.4.7).
 ///
 /// The hashed byte stream is, in network order:
 ///

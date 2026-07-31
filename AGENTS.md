@@ -9,7 +9,7 @@ Hydra is a water distribution network simulator written in Rust. It implements t
 | Crate | Owns | Does not own |
 |---|---|---|
 | `hydra-common` | Foundation contracts shared by all engines and applications: engine identity (descriptor + registry) and the reportable-output contract (block catalog, neutral fragment model). Depends on nothing in the workspace | Any engine logic; presentation/rendering; shared element schemas and unit systems (deferred by design until a second engine exists) |
-| `hydra-engine-wds` | Complete simulation engine: data model; INP/OUT/RPT parsers and writers; unit conversion; GGA hydraulic solver; Lagrangian quality engine; controls; timestep; accounting; session API (`Simulation`); post-simulation analytics; report blocks implementing the `hydra-common` reportable-output contract; local filesystem reads for `.out`/analysis-artifact files via explicit path-based helpers (`io::out_reader`, `io::analysis_io`) | Interface logic; network I/O; any other filesystem I/O (INP model bytes are supplied in memory by callers) |
+| `hydra-engine-wds` | Complete simulation engine: data model; INP/OUT/RPT parsers and writers; unit conversion; GGA hydraulic solver; Lagrangian quality engine; controls; timestep; accounting; session API (`Simulation`); post-simulation analytics; report blocks implementing the `hydra-common` reportable-output contract; local filesystem reads for `.out` result files via an explicit path-based helper (`io::out_reader`) | Interface logic; network I/O; any other filesystem I/O (INP model bytes are supplied in memory by callers) |
 | `hydra-engine-uds`, `hydra-engine-och` | Nothing yet — published scaffolds for the future urban-drainage and open-channel engines, so their crate names and versions track the workspace from the start | Any functionality (deliberately empty until their development begins) |
 | `hydra-report` | Report generation: JSON report templates, document assembly from engine-neutral fragments, deterministic txt/csv/html renderers | Any engine knowledge (depends only on `hydra-common`); analysis math; file/output-path UX (CLI/GUI) |
 | `hydra-sdk` | **Hydra's public API** — the single crate third parties depend on to build on Hydra; curated re-exports of the full integrator-facing surface | Any new logic |
@@ -24,7 +24,7 @@ Hydra is a water distribution network simulator written in Rust. It implements t
 
 **`hydra-sdk` contains no logic** — only re-exports. Never add functions, structs, or trait implementations to it. (Downstream crates import it under the alias `hydra`.)
 
-**Serialisation and output formatting** belong in `hydra-engine-wds`. Acquiring model bytes (reading INP files from disk, making HTTP calls) does not — that belongs in `hydra-cli` or `hydra-gui`. The one filesystem carve-out inside the engine is the explicit path-based streaming of `.out` result files and analysis artifacts (`io::out_reader`, `io::analysis_io`), which exists so large results never have to be loaded whole.
+**Serialisation and output formatting** belong in `hydra-engine-wds`. Acquiring model bytes (reading INP files from disk, making HTTP calls) does not — that belongs in `hydra-cli` or `hydra-gui`. The one filesystem carve-out inside the engine is the explicit path-based streaming of `.out` result files (`io::out_reader`), which exists so large results never have to be loaded whole.
 
 ---
 

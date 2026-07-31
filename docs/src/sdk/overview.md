@@ -74,7 +74,6 @@ use hydra_sdk::io;
 | `io::rpt_writer::build_json_report(&sim)` | Build a JSON report string |
 | `io::out_writer::write_binary_output(&mut w, &sim, input_file, report_file, units)` | Write EPANET-compatible `.out` binary |
 | `io::out_reader` | Read and inspect existing `.out` files |
-| `io::analysis_io` | Read/write serialised analysis-artifact files |
 | `io::compute_network_digest` | Stable content digest of a `Network` (also re-exported at the crate root) |
 
 ### Engine Identity
@@ -124,6 +123,6 @@ nothing about engines.
 Beyond the tables above, `hydra-sdk` re-exports several supporting items:
 
 - **Version constants** — `HYDRA_VERSION` and the per-subsystem `HYDRA_*_VERSION` strings.
-- **Runtime estimation** — `estimate_simulation_runtime`, `estimate_simulation_runtime_from_summary`, `RuntimeEstimate`, and the analysis-side `estimate_analysis_runtime_millis`. The millisecond-level forms `estimate_simulation_runtime_millis_from_summary` and `classify_simulation_runtime_millis` are also available when you want the raw prediction or the bucketing separately.
+- **Runtime estimation** — `estimate_simulation_runtime`, `estimate_simulation_runtime_from_summary`, and `RuntimeEstimate`. The millisecond-level forms `estimate_simulation_runtime_millis_from_summary` and `classify_simulation_runtime_millis` are also available when you want the raw prediction or the bucketing separately.
 - **Threshold binning** — `threshold_bands(values, edges)` counts values into the bands defined by ascending edges, with the outer two unbounded so nothing is dropped. It is the same binning the `wds.*-thresholds` report blocks use, so an interface presenting that view counts identically.
-- **Analysis artifacts** — `build_analysis_artifact` (and `*_from_out` / `*_with_progress` / `*_with_progress_and_selection` variants), `encode_analysis_artifact`, `decode_analysis_artifact`, `AnalysisSelection`, `AnalysisComputeError`, `AnalysisBytesError`.
+- **Threshold binning** — `threshold_bands`, the shared band-counting used by the `*-thresholds` report blocks, so an interface presenting the same view counts identically.
