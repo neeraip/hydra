@@ -256,6 +256,26 @@ export function moveSection(
   return next;
 }
 
+/** How far row `index` steps aside while row `from` is being dragged to
+ * `dest`, in pixels.
+ *
+ * Rows the dragged row passes on its way down move up by one slot; rows it
+ * passes on the way up move down by one. Everything outside that span, and
+ * the dragged row itself, stays put. `slot` is the space the dragged row
+ * frees — its own height plus the gap — which is the displacement regardless
+ * of how tall the rows being passed happen to be. */
+export function rowShift(
+  index: number,
+  from: number,
+  dest: number,
+  slot: number,
+): number {
+  if (index === from) return 0;
+  if (from < index && index <= dest) return -slot;
+  if (dest <= index && index < from) return slot;
+  return 0;
+}
+
 /** The report's sections rearranged into catalog order.
  *
  * Membership is untouched — this fixes the ORDER of what is already in the

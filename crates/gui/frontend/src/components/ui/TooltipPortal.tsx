@@ -136,12 +136,18 @@ export function TooltipPortal() {
       }
     }
 
-    // Clicking a tooltip anchor almost always opens something (a popup,
-    // dropdown, menu) that the tooltip would otherwise float over or
+    // Pressing a tooltip anchor almost always starts something (a popup,
+    // dropdown, menu, a drag) that the tooltip would otherwise float over or
     // reappear on top of, since the pointer never actually leaves the
-    // anchor. Treat mousedown like an immediate leave: hide/cancel the tip.
+    // anchor. Treat the press like an immediate leave: hide/cancel the tip.
     // It won't reappear until the pointer truly leaves and re-enters, which
     // naturally covers the entire time the popup/dropdown stays open.
+    //
+    // Bound to `pointerdown`, NOT `mousedown`: an anchor that calls
+    // `preventDefault()` on its own pointerdown — as a drag handle must, to
+    // stop the press selecting text — suppresses every compatibility mouse
+    // event that would have followed, so a mousedown listener never fires and
+    // the tip hangs for the whole gesture.
     function onPointerDown() {
       clearShowTimer();
       pendingTargetRef.current = null;
@@ -179,14 +185,14 @@ export function TooltipPortal() {
     // Use capture so we see events on disabled buttons too
     document.addEventListener("mouseenter", onEnter, true);
     document.addEventListener("mouseleave", onLeave, true);
-    document.addEventListener("mousedown", onPointerDown, true);
+    document.addEventListener("pointerdown", onPointerDown, true);
     document.addEventListener("keydown", onKeyDown, true);
     window.addEventListener("blur", onWindowBlur);
     return () => {
       clearShowTimer();
       document.removeEventListener("mouseenter", onEnter, true);
       document.removeEventListener("mouseleave", onLeave, true);
-      document.removeEventListener("mousedown", onPointerDown, true);
+      document.removeEventListener("pointerdown", onPointerDown, true);
       document.removeEventListener("keydown", onKeyDown, true);
       window.removeEventListener("blur", onWindowBlur);
     };

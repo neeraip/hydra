@@ -9,6 +9,7 @@ import {
   moveSection,
   type ReportBlockInfo,
   recommendedOrder,
+  rowShift,
   sameOrder,
 } from "./reports";
 
@@ -346,5 +347,41 @@ describe("sameOrder", () => {
 
   it("is true for two empty lists", () => {
     expect(sameOrder([], [])).toBe(true);
+  });
+});
+
+describe("rowShift", () => {
+  const SLOT = 32;
+
+  it("moves rows the dragged row passes on the way down up one slot", () => {
+    // 0 dragged to 2: rows 1 and 2 step up, row 3 is untouched.
+    expect(rowShift(1, 0, 2, SLOT)).toBe(-SLOT);
+    expect(rowShift(2, 0, 2, SLOT)).toBe(-SLOT);
+    expect(rowShift(3, 0, 2, SLOT)).toBe(0);
+  });
+
+  it("moves rows it passes on the way up down one slot", () => {
+    // 3 dragged to 1: rows 1 and 2 step down, row 0 is untouched.
+    expect(rowShift(1, 3, 1, SLOT)).toBe(SLOT);
+    expect(rowShift(2, 3, 1, SLOT)).toBe(SLOT);
+    expect(rowShift(0, 3, 1, SLOT)).toBe(0);
+  });
+
+  it("never displaces the dragged row itself", () => {
+    // It keeps its slot and renders invisible, so the freed space is real.
+    expect(rowShift(2, 2, 0, SLOT)).toBe(0);
+    expect(rowShift(2, 2, 5, SLOT)).toBe(0);
+  });
+
+  it("displaces nothing when the row is dropped back where it started", () => {
+    for (const i of [0, 1, 2, 3]) {
+      expect(rowShift(i, 2, 2, SLOT)).toBe(0);
+    }
+  });
+
+  it("shifts by the dragged row's slot, not the passed row's height", () => {
+    // Rows are wildly uneven once a settings panel is open; the space freed
+    // is always the LIFTED row's, so one displacement fits every row.
+    expect(rowShift(1, 0, 1, 200)).toBe(-200);
   });
 });

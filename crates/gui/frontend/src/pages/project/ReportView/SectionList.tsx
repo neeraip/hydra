@@ -29,6 +29,7 @@ import {
   insertionToIndex,
   type ReportBlockInfo,
   type ReportOptionInfo,
+  rowShift,
 } from "../../../hooks/reports";
 import { BlockOptions, type OptionValues } from "./BlockOptions";
 
@@ -44,6 +45,12 @@ export interface SectionListProps {
   onOptionsChange: (id: string, next: OptionValues) => void;
   onHeadingChange: (id: string, heading: string) => void;
 }
+
+/** Vertical gap between rows. Shared by the container's `gap` and the
+ * displacement maths — the space a lifted row frees is its own height PLUS
+ * one gap, so the two must not be able to drift apart. */
+const ROW_GAP = 2;
+const SHIFT_MS = 160;
 
 const rowButton = (active: boolean): React.CSSProperties => ({
   display: "flex",
@@ -84,6 +91,10 @@ export function SectionList({
     grabOffsetY: number;
     left: number;
     width: number;
+    /** How far the other rows move: exactly the space this row frees, which
+     * is its own height regardless of how tall its neighbours are (an open
+     * settings panel makes rows wildly uneven). */
+    height: number;
   } | null>(null);
   // Row bounds, measured once at grab: the list does not reflow during a
   // drag (the indicator moves, the rows do not), so re-measuring per move
@@ -119,6 +130,7 @@ export function SectionList({
       grabOffsetY: e.clientY - (rect?.top ?? e.clientY),
       left: rect?.left ?? 0,
       width: rect?.width ?? 0,
+      height: rect?.height ?? 0,
     });
   }
 
@@ -164,7 +176,7 @@ export function SectionList({
   }
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+    <div style={{ display: "flex", flexDirection: "column", gap: ROW_GAP }}>
       {sections.map((id, index) => {
         const block = blockById.get(id);
         if (!block) return null;
@@ -180,12 +192,19 @@ export function SectionList({
           optionsById[id] as Record<string, unknown> | undefined,
           heading,
         );
-        // The indicator sits in the gap the row would drop into, and is
-        // hidden when that gap is where the row already is.
-        const showGap =
-          drag !== null &&
-          drag.insertion === index &&
-          insertionToIndex(drag.from, drag.insertion) !== drag.from;
+        // Rows between the dragged row's origin and its destination step
+        // aside by exactly the space it frees, opening the gap it would drop
+        // into. The dragged row keeps its slot but renders invisible, so that
+        // freed space is real rather than simulated.
+        const dragged = drag?.from === index;
+        const offset = drag
+          ? rowShift(
+              index,
+              drag.from,
+              insertionToIndex(drag.from, drag.insertion),
+              drag.height + ROW_GAP,
+            )
+          : 0;
 
         return (
           <div
@@ -194,10 +213,15 @@ export function SectionList({
               rowRefs.current[index] = el;
             }}
             style={{
-              borderTop: showGap
-                ? `2px solid ${ACCENT}`
-                : "2px solid transparent",
-              opacity: drag?.from === index ? 0.45 : 1,
+              transform: offset === 0 ? undefined : `translateY(${offset}px)`,
+              // Only while dragging: on drop the list re-renders in its new
+              // order, and animating from the old offsets to zero would show
+              // every row sliding back through a position it never held.
+              transition: drag ? `transform ${SHIFT_MS}ms ease` : undefined,
+              opacity: dragged ? 0 : 1,
+              // The lifted row must not swallow pointer events aimed at what
+              // is now visually in its place.
+              pointerEvents: dragged ? "none" : undefined,
             }}
           >
             <div
@@ -373,18 +397,6 @@ export function SectionList({
           </div>
         );
       })}
-      {/* Slot after the last row: it belongs to no row, so it needs its own
-          indicator or dropping at the end reads as nothing happening. */}
-      <div
-        style={{
-          borderTop:
-            drag !== null &&
-            drag.insertion === sections.length &&
-            drag.from !== sections.length - 1
-              ? `2px solid ${ACCENT}`
-              : "2px solid transparent",
-        }}
-      />
       <DragGhost
         drag={drag}
         sections={sections}
