@@ -12,7 +12,7 @@
  * applies the same default a hand-authored template would get.
  */
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ACCENT } from "../../../hooks";
 import type { OptionKind, ReportOptionInfo } from "../../../hooks/reports";
 
@@ -184,6 +184,30 @@ function OptionControl({
   const [error, setError] = useState<string | null>(null);
   useEffect(() => setDraft(null), [descriptor.key]);
 
+  // The draft shadows `value`, so it has to be dropped when `value` is
+  // replaced from outside — otherwise "Reset to defaults" clears the stored
+  // option while the field goes on showing what was typed, and the control
+  // reads as though nothing happened.
+  //
+  // Only for changes this control did not make: clearing on every change
+  // would defeat the draft's purpose, rewriting a half-typed "0, 10," to
+  // "0, 10" on the keystroke after the comma. Comparing against what was last
+  // emitted tells the two apart — serialised because a parsed list is a fresh
+  // array each time and would never be identity-equal to itself.
+  const emitted = useRef(JSON.stringify(value ?? null));
+  const commit = (next: unknown) => {
+    emitted.current = JSON.stringify(next ?? null);
+    onChange(next);
+  };
+  useEffect(() => {
+    const incoming = JSON.stringify(value ?? null);
+    if (incoming !== emitted.current) {
+      emitted.current = incoming;
+      setDraft(null);
+      setError(null);
+    }
+  }, [value]);
+
   if (kind.type === "boolean") {
     return (
       <Row descriptor={descriptor} error={null}>
@@ -192,7 +216,7 @@ function OptionControl({
           checked={
             value === undefined ? (kind.default ?? false) : value === true
           }
-          onChange={(e) => onChange(e.target.checked)}
+          onChange={(e) => commit(e.target.checked)}
           style={{ accentColor: ACCENT }}
         />
       </Row>
@@ -212,7 +236,7 @@ function OptionControl({
           <select
             value={selected ?? ""}
             onChange={(e) =>
-              onChange(e.target.value === "" ? undefined : e.target.value)
+              commit(e.target.value === "" ? undefined : e.target.value)
             }
             style={fieldStyle}
           >
@@ -244,7 +268,7 @@ function OptionControl({
                   const next = new Set(chosen);
                   if (e.target.checked) next.add(item.value);
                   else next.delete(item.value);
-                  onChange(next.size === 0 ? undefined : [...next]);
+                  commit(next.size === 0 ? undefined : [...next]);
                 }}
                 style={{ accentColor: ACCENT }}
               />
@@ -278,7 +302,7 @@ function OptionControl({
               return;
             }
             setError(null);
-            onChange(parsed.values.length === 0 ? undefined : parsed.values);
+            commit(parsed.values.length === 0 ? undefined : parsed.values);
           }}
           style={fieldStyle}
         />
@@ -300,18 +324,18 @@ function OptionControl({
           setDraft(text);
           if (text.trim() === "") {
             setError(null);
-            onChange(undefined);
+            commit(undefined);
             return;
           }
           if (kind.type === "text") {
             setError(null);
-            onChange(text);
+            commit(text);
             return;
           }
           const n = Number(text);
           const issue = numberIssue(n, kind);
           setError(issue);
-          if (!issue) onChange(n);
+          if (!issue) commit(n);
         }}
         style={fieldStyle}
       />
