@@ -20,6 +20,7 @@ import {
   listReportBlocks,
   moveSection,
   probeReportBlocks,
+  producibleSections,
   type ReportBlockInfo,
   type ReportFormat,
   type ReportOptionInfo,
@@ -370,6 +371,12 @@ export function ReportView() {
     () => new Map(availability.map((a) => [a.id, a])),
     [availability],
   );
+  // Catalog sections the engine says DO produce something for this target.
+  // Empty before a run: nothing probed means nothing known to be available.
+  const producible = useMemo(
+    () => producibleSections(catalogIds, availabilityById),
+    [catalogIds, availabilityById],
+  );
   // Sections the engine says cannot render for this target.
   const barren = useMemo(
     () => unproducibleSections(sections, availabilityById),
@@ -599,6 +606,22 @@ export function ReportView() {
                     onSelect: () =>
                       setSections((prev) =>
                         withRecommendedPlacement(catalog, prev, catalogIds),
+                      ),
+                  },
+                  {
+                    label: "Add available sections",
+                    detail: "Only those that produce something for this run",
+                    disabled: producible.every((id) => sections.includes(id)),
+                    // Two different reasons to be unavailable, and "they are
+                    // all in the report already" would be a claim the app
+                    // cannot make before anything has been probed.
+                    disabledReason:
+                      availability.length === 0
+                        ? "Run a simulation to see which sections have results"
+                        : "Every section with results is already in the report",
+                    onSelect: () =>
+                      setSections((prev) =>
+                        withRecommendedPlacement(catalog, prev, producible),
                       ),
                   },
                   {

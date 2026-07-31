@@ -10,6 +10,7 @@ import {
   insertionToIndex,
   lineStartOffset,
   moveSection,
+  producibleSections,
   type ReportBlockInfo,
   readStoredFormat,
   recommendedOrder,
@@ -626,5 +627,45 @@ describe("lineStartOffset", () => {
 
   it("clamps past the end rather than running away", () => {
     expect(lineStartOffset(TEXT, 99)).toBe(TEXT.length + 1);
+  });
+});
+
+describe("producibleSections", () => {
+  const ids = ["a", "b", "c"];
+  const map = (entries: [string, BlockAvailability["status"]][]) =>
+    new Map(entries.map(([id, status]) => [id, { id, status }]));
+
+  it("keeps only the sections that can render", () => {
+    expect(
+      producibleSections(
+        ids,
+        map([
+          ["a", "ok"],
+          ["b", "unavailable"],
+          ["c", "failed"],
+        ]),
+      ),
+    ).toEqual(["a"]);
+  });
+
+  it("treats an unprobed section as not available", () => {
+    // Nothing has been probed, so nothing is KNOWN to produce anything.
+    // Counting unknown as available would add the whole catalog while
+    // claiming to have filtered it.
+    expect(producibleSections(ids, map([]))).toEqual([]);
+  });
+
+  it("is the complement of unproducibleSections over probed sections", () => {
+    const availability = map([
+      ["a", "ok"],
+      ["b", "unavailable"],
+      ["c", "ok"],
+    ]);
+    expect(
+      [
+        ...producibleSections(ids, availability),
+        ...unproducibleSections(ids, availability),
+      ].sort(),
+    ).toEqual(ids);
   });
 });

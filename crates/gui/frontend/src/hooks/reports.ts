@@ -326,6 +326,20 @@ export function unproducibleSections(
   });
 }
 
+/** Sections that produce something for this run.
+ *
+ * The mirror of [`unproducibleSections`], and absent entries are treated the
+ * same way: a section with no availability entry is NOT counted. Absent means
+ * "not probed" — a target with no results reports nothing at all — so counting
+ * unknown as available would offer to add the entire catalog and call it
+ * filtered. */
+export function producibleSections(
+  sections: readonly string[],
+  availabilityById: ReadonlyMap<string, BlockAvailability>,
+): string[] {
+  return sections.filter((id) => availabilityById.get(id)?.status === "ok");
+}
+
 /** How far row `index` steps aside while row `from` is being dragged to
  * `dest`, in pixels.
  *
