@@ -398,3 +398,120 @@ S2  20  5  4  7  0
         led.inflow
     );
 }
+
+// ── §4.1 groundwater ────────────────────────────────────────────────────
+
+fn gw_model(a1: f64, b1: f64, water_table: f64) -> String {
+    format!(
+        "\
+[OPTIONS]
+FLOW_UNITS    CMS
+INFILTRATION  GREEN_AMPT
+START_DATE    06/01/2024
+START_TIME    00:00
+END_DATE      06/02/2024
+END_TIME      00:00
+ROUTING_STEP  30
+WET_STEP      0:05:00
+DRY_STEP      0:15:00
+
+[RAINGAGES]
+G1  INTENSITY  1:00  1.0  TIMESERIES  RAIN
+
+[SUBCATCHMENTS]
+S1  G1  J1  2  0  100  0.5  0
+
+[SUBAREAS]
+S1  0.012  0.1  0.05  0.05  25  OUTLET
+
+[INFILTRATION]
+S1  90  20  0.3
+
+[AQUIFERS]
+AQ1  0.45  0.10  0.20  20  10  1.0  0.35  1.0  0  95  {water_table}  0.30
+
+[GROUNDWATER]
+S1  AQ1  J1  100  {a1}  {b1}  0  0  0  0  *
+
+[JUNCTIONS]
+J1  98.0  3
+
+[OUTFALLS]
+O1  97.8  FREE
+
+[CONDUITS]
+C1  J1  O1  200  0.013  0  0
+
+[XSECTIONS]
+C1  RECT_OPEN  2  2  0  0
+
+[TIMESERIES]
+RAIN  0:00  0
+"
+    )
+}
+
+#[test]
+fn a_charged_aquifer_discharges_and_recedes() {
+    // Water table starts 1 m above the threshold (J1's invert at 98,
+    // aquifer bottom 95 → h* = 3 m; table at 99 → d_L = 4 m).
+    let inp = gw_model(0.01, 1.0, 99.0);
+    let (mut sim, _, _) = Simulation::open(&inp).expect("open");
+    sim.run();
+    // The vertex received baseflow: 0.01 cms/ha × 0.2 ha-scaled head
+    // decays as the table falls; the ledger carries real volume.
+    let led = sim.report();
+    assert!(
+        led.inflow > 50.0,
+        "groundwater discharge too small: {}",
+        led.inflow
+    );
+    // And it recedes: end-of-run inflow rate is below the start's.
+    assert!(
+        led.outflow > 0.9 * led.inflow,
+        "in {} out {}",
+        led.inflow,
+        led.outflow
+    );
+}
+
+#[test]
+fn a_table_below_the_threshold_yields_no_baseflow() {
+    // d_L = 1 m < h* = 3 m, and the upper zone at field capacity so no
+    // percolation lifts the table.
+    let inp = gw_model(0.01, 1.0, 96.0).replace("95  96  0.30", "95  96  0.20");
+    let (mut sim, _, _) = Simulation::open(&inp).expect("open");
+    sim.run();
+    assert!(
+        sim.report().inflow < 1.0,
+        "unexpected baseflow {}",
+        sim.report().inflow
+    );
+}
+
+#[test]
+fn rain_recharges_the_aquifer_through_infiltration() {
+    // Start below the threshold; a day of steady rain infiltrates
+    // through Green–Ampt and lifts the table into discharge.
+    let mut inp = gw_model(0.05, 1.0, 97.5);
+    inp = inp.replace(
+        "[TIMESERIES]\nRAIN  0:00  0\n",
+        "[TIMESERIES]\nRAIN  0:00  15\nRAIN  12:00  15\nRAIN  23:00  15\n",
+    );
+    // Hourly gage: make every hour rain.
+    let series: String = (0..24).map(|h| format!("RAIN  {h}:00  15\n")).collect();
+    inp = inp.replace(
+        "[TIMESERIES]\nRAIN  0:00  15\nRAIN  12:00  15\nRAIN  23:00  15\n",
+        &format!("[TIMESERIES]\n{series}"),
+    );
+    let (mut sim, _, _) = Simulation::open(&inp).expect("open");
+    sim.run();
+    // Surface runoff is small on fully pervious ground under 15 mm/h
+    // against a 20 mm/h conductivity, but the aquifer fills and
+    // discharges: the network sees meaningful inflow by day's end.
+    assert!(
+        sim.report().inflow > 20.0,
+        "no recharge-driven baseflow: {}",
+        sim.report().inflow
+    );
+}

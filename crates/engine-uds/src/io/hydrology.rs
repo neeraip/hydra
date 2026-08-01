@@ -514,15 +514,25 @@ pub(crate) fn parse_groundwater(
             continue;
         }
         if let Some(p) = parcels.get_mut(pc) {
+            // §14.6: the lateral-flow coefficients are defined in the
+            // file's units — flow per area (cfs/acre or cms/ha) against
+            // heads in feet or metres — and convert per their exponents.
+            let gwq = if cv.len < 1.0 {
+                // US file: cfs per acre.
+                0.028_316_846_592 / 4_046.856_422_4
+            } else {
+                // SI file: cms per hectare.
+                1.0e-4
+            };
             p.groundwater = Some(crate::model::GroundwaterLink {
                 aquifer: aq,
                 vertex: vx,
                 surface_elev: x[0] * cv.len,
-                a1: x[1],
+                a1: x[1] * gwq / cv.len.powf(x[2]),
                 b1: x[2],
-                a2: x[3],
+                a2: x[3] * gwq / cv.len.powf(x[4]),
                 b2: x[4],
-                a3: x[5],
+                a3: x[5] * gwq / (cv.len * cv.len),
                 fixed_surface_depth: x[6] * cv.len,
                 threshold_elev: over[0],
                 bottom_elev: over[1],
@@ -723,7 +733,14 @@ TS1  0  0.5  1  0.25
         assert_eq!(gw.aquifer, 0);
         assert_eq!(gw.vertex, 0);
         assert!((gw.surface_elev - 6.0 * 0.3048).abs() < 1e-12);
-        assert_eq!(gw.a1, 0.001, "lateral coefficients stay in file units");
+        // A1 = 0.001 (cfs/ac)/ft², b1 = 2: converted per its exponent
+        // (§14.6) to (m/s)/m².
+        let gwq = 0.028_316_846_592 / 4_046.856_422_4;
+        assert!(
+            (gw.a1 - 0.001 * gwq / 0.3048_f64.powi(2)).abs() < 1e-18,
+            "a1 = {}",
+            gw.a1
+        );
         assert_eq!(gw.threshold_elev, None, "starred slot skipped");
         assert!((gw.bottom_elev.unwrap() - 0.4 * 0.3048).abs() < 1e-12);
         assert_eq!(

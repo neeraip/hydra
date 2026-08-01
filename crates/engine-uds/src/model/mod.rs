@@ -999,15 +999,16 @@ pub struct GroundwaterLink {
     pub vertex: usize,
     /// Ground surface elevation over the aquifer (m).
     pub surface_elev: f64,
-    /// Lateral-relation coefficient A1 (user units, §14.6).
+    /// Lateral-relation coefficient A1, converted per its exponent
+    /// (§14.6): (m/s) per m^B1 of head above the threshold.
     pub a1: f64,
     /// Exponent B1.
     pub b1: f64,
-    /// Coefficient A2 (user units).
+    /// Coefficient A2, converted per its exponent: (m/s) per m^B2.
     pub a2: f64,
     /// Exponent B2.
     pub b2: f64,
-    /// Interaction coefficient A3 (user units).
+    /// Interaction coefficient A3, converted: (m/s) per m².
     pub a3: f64,
     /// Fixed surface-water depth (m); 0 = use the live routed stage.
     pub fixed_surface_depth: f64,

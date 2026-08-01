@@ -176,6 +176,11 @@ struct ParcelState {
     runon_next_vol: f64,
     /// Current outlet runoff (m³/s).
     pub runoff: f64,
+    /// Infiltration rate this step (m/s over the whole parcel).
+    pub infil_rate: f64,
+    /// Pervious surface evaporation exerted this step (m/s over the
+    /// whole parcel).
+    pub evap_rate: f64,
 }
 
 /// The surface compartment: every gage and parcel, advanced on the
@@ -208,8 +213,12 @@ impl Surface {
             return Err(SurfaceRefusal::Unsupported("RDII arrives with §4.3"));
         }
         for p in &net.parcels {
-            if p.groundwater.is_some() {
-                return Err(SurfaceRefusal::Unsupported("groundwater arrives with §4.1"));
+            if let Some(gw) = &p.groundwater {
+                if gw.lateral_expression.is_some() || gw.deep_expression.is_some() {
+                    return Err(SurfaceRefusal::Unsupported(
+                        "custom groundwater expressions arrive with §9.3",
+                    ));
+                }
             }
             if p.snowpack.is_some() {
                 return Err(SurfaceRefusal::Unsupported("snow arrives with §4.2"));
@@ -324,6 +333,8 @@ impl Surface {
                 runon: 0.0,
                 runon_next_vol: 0.0,
                 runoff: 0.0,
+                infil_rate: 0.0,
+                evap_rate: 0.0,
             });
         }
         Ok(Some(Surface {
@@ -444,6 +455,16 @@ impl Surface {
                 self.degraded = true;
             }
             self.losses += f_rate * dt * p.sub[2].area;
+            let area_total: f64 = p.sub.iter().map(|s| s.area).sum();
+            if area_total > 0.0 {
+                p.infil_rate = f_rate * p.sub[2].area / area_total;
+                let wet_perv = p.sub[2].depth > 0.0 || perv_depth > 0.0;
+                p.evap_rate = if wet_perv {
+                    e * p.sub[2].area / area_total
+                } else {
+                    0.0
+                };
+            }
             let total: f64 = runoff.iter().sum();
             p.runoff = total / dt;
 
@@ -471,5 +492,13 @@ impl Surface {
     /// A parcel's current runoff rate (m³/s).
     pub fn parcel_runoff(&self, pi: usize) -> f64 {
         self.parcels.get(pi).map_or(0.0, |p| p.runoff)
+    }
+
+    /// A parcel's infiltration and exerted pervious-evaporation rates
+    /// this step (m/s over the whole parcel).
+    pub fn parcel_infil_evap(&self, pi: usize) -> (f64, f64) {
+        self.parcels
+            .get(pi)
+            .map_or((0.0, 0.0), |p| (p.infil_rate, p.evap_rate))
     }
 }

@@ -13,6 +13,7 @@ use std::collections::HashMap;
 
 use super::time::{civil_from_days, days_from_civil, weekday};
 use crate::hydraulics::routing::{Router, RouterRefusal, RoutingReport};
+use crate::hydrology::groundwater::GwState;
 use crate::hydrology::infiltration::InfilFactors;
 use crate::hydrology::runoff::{Surface, SurfaceRefusal};
 use crate::io::objects::parse_network;
@@ -72,6 +73,8 @@ pub struct Simulation {
     router: Router,
     /// The §3 surface compartment, when the model has one.
     surface: Option<Surface>,
+    /// §4.1 aquifers by parcel index.
+    aquifers: Vec<(usize, GwState)>,
     /// Hydrology clock (s from start).
     hydro_t: f64,
     /// Bracketing hydrology laterals for §10.1 linear interpolation.
@@ -117,6 +120,13 @@ impl Simulation {
         let start_epoch_for_surface =
             days_from_civil(net.options.start_date) as f64 * 86_400.0 + net.options.start_time;
         let surface = Surface::build(&net, start_epoch_for_surface).map_err(OpenError::Surface)?;
+        let mut aquifers = Vec::new();
+        for (pi, p) in net.parcels.iter().enumerate() {
+            if let Some(gw) = &p.groundwater {
+                let invert = net.vertices[gw.vertex].invert;
+                aquifers.push((pi, GwState::build(gw, &net.aquifers[gw.aquifer], invert)));
+            }
+        }
 
         let start_epoch =
             days_from_civil(net.options.start_date) as f64 * 86_400.0 + net.options.start_time;
@@ -169,6 +179,7 @@ impl Simulation {
             Simulation {
                 router,
                 surface,
+                aquifers,
                 hydro_t: 0.0,
                 hydro_prev: (0.0, vec![0.0; nv]),
                 hydro_now: (0.0, vec![0.0; nv]),
@@ -272,11 +283,21 @@ impl Simulation {
             };
             let dry_only = self.net.climate.evaporate_dry_only;
             surface.step(epoch, dt, evap, dry_only, rain_factor, fac);
+            // §4.1: each aquifer advances on the same clock, reading the
+            // routed stage lagged one step (§10.1), its discharge joining
+            // the vertex laterals.
+            let mut lats = surface.vertex_laterals(nv);
+            for (pi, gw) in &mut self.aquifers {
+                let (infil, evap_used) = surface.parcel_infil_evap(*pi);
+                let p = &self.net.parcels[*pi];
+                let frac_perv = 1.0 - p.frac_imperv;
+                let max_evap = evap * frac_perv;
+                let stage = self.net.vertices[gw.vertex].invert + self.router.depth(gw.vertex);
+                let q = gw.step(dt, infil, evap_used, max_evap, stage);
+                lats[gw.vertex] += q * p.area;
+            }
             self.hydro_t += dt;
-            self.hydro_prev = std::mem::replace(
-                &mut self.hydro_now,
-                (self.hydro_t, surface.vertex_laterals(nv)),
-            );
+            self.hydro_prev = std::mem::replace(&mut self.hydro_now, (self.hydro_t, lats));
             if surface.degraded && !self.hydro_degraded_warned {
                 self.hydro_degraded_warned = true;
                 self.notices.push(RuntimeNotice {

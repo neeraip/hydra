@@ -8,5 +8,6 @@
 //! re-routing and parcel run-on. Control measures (§3.4), groundwater
 //! (§4.1), snow (§4.2), and RDII (§4.3) join as they land.
 
+pub mod groundwater;
 pub mod infiltration;
 pub mod runoff;

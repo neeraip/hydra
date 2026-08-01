@@ -1,0 +1,323 @@
+//! Groundwater (§4.1): the two-zone aquifer under each subscribing
+//! parcel — an unsaturated zone of uniform moisture over a saturated
+//! zone — with the six per-area fluxes, the source-authoritative
+//! constitutive relations, and the configurable lateral-discharge power
+//! relation. States advance under the §3.5 embedded-pair integrator.
+
+use crate::model::{Aquifer, GroundwaterLink};
+
+/// §3.5 tolerance on each integrated state (m or fraction).
+const TOL: f64 = 1.0e-5;
+/// Integrator step floor (s).
+const FLOOR: f64 = 1.0e-3;
+/// Clamp margin below porosity and total depth.
+const XTOL: f64 = 0.001 * 0.3048;
+
+/// One parcel's aquifer state.
+pub struct GwState {
+    // Static parameters, SI.
+    porosity: f64,
+    wilting: f64,
+    field_capacity: f64,
+    conductivity: f64,
+    conduct_slope: f64,
+    tension_slope: f64,
+    upper_evap_frac: f64,
+    lower_evap_depth: f64,
+    lower_loss_coeff: f64,
+    /// Ground minus bottom elevation (m).
+    total_depth: f64,
+    /// Threshold height above the bottom for lateral flow (m).
+    h_star: f64,
+    /// Fixed surface-water height above the bottom (m); `None` reads the
+    /// live routed stage.
+    h_sw_fixed: Option<f64>,
+    a1: f64,
+    b1: f64,
+    a2: f64,
+    b2: f64,
+    a3: f64,
+    /// The receiving vertex.
+    pub vertex: usize,
+    /// Bottom elevation (m), for staging the live vertex head.
+    bottom_elev: f64,
+    // State.
+    /// Upper-zone moisture content.
+    pub theta: f64,
+    /// Saturated (lower) zone depth (m).
+    pub lower_depth: f64,
+    /// Lateral discharge from the last step (m/s over the parcel area).
+    pub flow: f64,
+    /// The §3.5 degraded flag for the last step.
+    pub degraded: bool,
+}
+
+/// The per-step fluxes at a given state (m/s each).
+struct Fluxes {
+    upper_evap: f64,
+    lower_evap: f64,
+    upper_perc: f64,
+    lower_loss: f64,
+    gw_flow: f64,
+}
+
+impl GwState {
+    /// Build from a parcel's groundwater link and its aquifer, applying
+    /// the initial-condition overrides.
+    pub fn build(gw: &GroundwaterLink, aq: &Aquifer, vertex_invert: f64) -> GwState {
+        let bottom = gw.bottom_elev.unwrap_or(aq.bottom_elev);
+        let water_table = gw.water_table_elev.unwrap_or(aq.water_table_elev);
+        let total_depth = (gw.surface_elev - bottom).max(0.0);
+        let h_star = match gw.threshold_elev {
+            Some(e) => e - bottom,
+            None => vertex_invert - bottom,
+        };
+        GwState {
+            porosity: aq.porosity,
+            wilting: aq.wilting_point,
+            field_capacity: aq.field_capacity,
+            conductivity: aq.conductivity,
+            conduct_slope: aq.conductivity_slope,
+            tension_slope: aq.tension_slope,
+            upper_evap_frac: aq.upper_evap_frac,
+            lower_evap_depth: aq.lower_evap_depth,
+            lower_loss_coeff: aq.lower_loss_coeff,
+            total_depth,
+            h_star,
+            h_sw_fixed: if gw.fixed_surface_depth > 0.0 {
+                Some(gw.fixed_surface_depth + vertex_invert - bottom)
+            } else {
+                None
+            },
+            a1: gw.a1,
+            b1: gw.b1,
+            a2: gw.a2,
+            b2: gw.b2,
+            a3: gw.a3,
+            vertex: gw.vertex,
+            bottom_elev: bottom,
+            theta: gw.upper_moisture.unwrap_or(aq.upper_moisture),
+            lower_depth: (water_table - bottom).clamp(0.0, total_depth),
+            flow: 0.0,
+            degraded: false,
+        }
+    }
+
+    /// The maximum infiltration volume the unsaturated zone can accept
+    /// next step, as a depth over the pervious fraction (m).
+    pub fn max_infil_depth(&self, frac_perv: f64) -> f64 {
+        if frac_perv <= 0.0 {
+            return f64::MAX;
+        }
+        (self.total_depth - self.lower_depth) * (self.porosity - self.theta) / frac_perv
+    }
+
+    /// Advance one hydrology step. `infil` is the surface infiltration
+    /// rate over the whole parcel area (m/s), `evap_used` the pervious
+    /// surface evaporation already exerted (m/s over the parcel),
+    /// `max_evap` the potential rate scaled to the pervious fraction, and
+    /// `stage_elev` the receiving vertex's water-surface elevation (m).
+    /// Returns the lateral discharge (m/s over the parcel area, positive
+    /// toward the vertex).
+    pub fn step(
+        &mut self,
+        dt: f64,
+        infil: f64,
+        evap_used: f64,
+        max_evap: f64,
+        stage_elev: f64,
+    ) -> f64 {
+        if self.total_depth <= 0.0 {
+            return 0.0;
+        }
+        let avail_evap = (max_evap - evap_used).max(0.0);
+        let h_sw = self
+            .h_sw_fixed
+            .unwrap_or((stage_elev - self.bottom_elev).max(0.0));
+
+        // Per-step flux caps (§4.1): percolation by drainable volume,
+        // outflow by lower-zone storage, inflow by unsaturated
+        // acceptance.
+        let v_upper =
+            ((self.total_depth - self.lower_depth) * (self.theta - self.field_capacity)).max(0.0);
+        let max_perc = v_upper / dt;
+        let max_flow_pos = self.lower_depth * self.porosity / dt;
+        let max_flow_neg =
+            -((self.total_depth - self.lower_depth) * (self.porosity - self.theta) / dt);
+
+        let fluxes = |theta: f64, lower: f64| -> Fluxes {
+            let lower = lower.clamp(0.0, self.total_depth);
+            let upper_depth = self.total_depth - lower;
+
+            // Evapotranspiration: none during surface infiltration, none
+            // below the wilting point; the lower share is complementary
+            // and scaled by water-table reach into the cutoff depth.
+            let (mut upper_evap, mut lower_evap) = (0.0, 0.0);
+            if infil <= 0.0 {
+                if theta > self.wilting {
+                    upper_evap = (self.upper_evap_frac * max_evap).min(avail_evap);
+                }
+                if self.lower_evap_depth > 0.0 {
+                    let frac = ((self.lower_evap_depth - upper_depth) / self.lower_evap_depth)
+                        .clamp(0.0, 1.0);
+                    lower_evap = (frac * (1.0 - self.upper_evap_frac) * max_evap)
+                        .min(avail_evap - upper_evap);
+                }
+            }
+
+            // Percolation: the exponential conductivity with the
+            // suction-gradient factor the manual omits (§4.1).
+            let mut upper_perc = 0.0;
+            if upper_depth > 0.0 && theta > self.field_capacity {
+                let hydcon =
+                    self.conductivity * ((theta - self.porosity) * self.conduct_slope).exp();
+                let dhdz =
+                    1.0 + self.tension_slope * 2.0 * (theta - self.field_capacity) / upper_depth;
+                upper_perc = (hydcon * dhdz).min(max_perc);
+            }
+
+            // Deep percolation: the linear reservoir.
+            let lower_loss = (self.lower_loss_coeff * lower / self.total_depth).min(lower / dt);
+
+            // Lateral discharge: the power relation, zero at or below the
+            // threshold; negative flow zeroed when the interaction term
+            // is in use (§4.1).
+            let mut gw_flow = 0.0;
+            if lower > self.h_star {
+                let t1 = if self.b1 == 0.0 {
+                    self.a1
+                } else {
+                    self.a1 * (lower - self.h_star).powf(self.b1)
+                };
+                let t2 = if self.b2 == 0.0 {
+                    self.a2
+                } else if h_sw > self.h_star {
+                    self.a2 * (h_sw - self.h_star).powf(self.b2)
+                } else {
+                    0.0
+                };
+                let t3 = self.a3 * lower * h_sw;
+                gw_flow = t1 - t2 + t3;
+                if gw_flow < 0.0 && self.a3 != 0.0 {
+                    gw_flow = 0.0;
+                }
+                gw_flow = gw_flow.clamp(max_flow_neg, max_flow_pos);
+            }
+            Fluxes {
+                upper_evap,
+                lower_evap,
+                upper_perc,
+                lower_loss,
+                gw_flow,
+            }
+        };
+
+        // The coupled pair under the §3.5 integrator.
+        let deriv = |theta: f64, lower: f64| -> (f64, f64) {
+            let f = fluxes(theta, lower);
+            let q_upper = infil - f.upper_evap - f.upper_perc;
+            let q_lower = f.upper_perc - f.lower_loss - f.lower_evap - f.gw_flow;
+            let d_upper = self.total_depth - lower;
+            let d_theta = if d_upper > 0.0 {
+                q_upper / d_upper
+            } else {
+                0.0
+            };
+            let deficit = self.porosity - theta;
+            let d_lower = if deficit > 0.0 {
+                q_lower / deficit
+            } else {
+                0.0
+            };
+            (d_theta, d_lower)
+        };
+
+        self.degraded = false;
+        let (mut t, mut h) = (0.0, dt);
+        let (mut th, mut lo) = (self.theta, self.lower_depth);
+        while t < dt - 1e-12 {
+            h = h.min(dt - t);
+            let (th_new, lo_new, err) = cash_karp2(th, lo, h, &deriv);
+            if err <= TOL || h <= FLOOR {
+                if err > TOL {
+                    self.degraded = true;
+                }
+                t += h;
+                th = th_new;
+                lo = lo_new;
+                let grow = if err > 0.0 {
+                    0.9 * (TOL / err).powf(0.2)
+                } else {
+                    5.0
+                };
+                h *= grow.clamp(0.1, 5.0);
+            } else {
+                let shrink = 0.9 * (TOL / err).powf(0.25);
+                h = (h * shrink.clamp(0.1, 5.0)).max(FLOOR);
+            }
+        }
+
+        // Clamp per §4.1: θ within [wilting, porosity), the water table
+        // jumping to the surface at saturation.
+        th = th.max(self.wilting);
+        if th >= self.porosity {
+            th = self.porosity - 1e-6;
+            lo = self.total_depth - XTOL;
+        }
+        lo = lo.clamp(0.0, self.total_depth - XTOL);
+        self.theta = th;
+        self.lower_depth = lo;
+        let f = fluxes(th, lo);
+        self.flow = f.gw_flow;
+        f.gw_flow
+    }
+}
+
+/// The Cash–Karp 4(5) embedded step on the coupled pair; the error is the
+/// larger of the two states'.
+fn cash_karp2(x: f64, y: f64, h: f64, f: &dyn Fn(f64, f64) -> (f64, f64)) -> (f64, f64, f64) {
+    let k1 = f(x, y);
+    let k2 = f(x + h * 0.2 * k1.0, y + h * 0.2 * k1.1);
+    let k3 = f(
+        x + h * (0.075 * k1.0 + 0.225 * k2.0),
+        y + h * (0.075 * k1.1 + 0.225 * k2.1),
+    );
+    let k4 = f(
+        x + h * (0.3 * k1.0 - 0.9 * k2.0 + 1.2 * k3.0),
+        y + h * (0.3 * k1.1 - 0.9 * k2.1 + 1.2 * k3.1),
+    );
+    let k5 = f(
+        x + h * (-11.0 / 54.0 * k1.0 + 2.5 * k2.0 - 70.0 / 27.0 * k3.0 + 35.0 / 27.0 * k4.0),
+        y + h * (-11.0 / 54.0 * k1.1 + 2.5 * k2.1 - 70.0 / 27.0 * k3.1 + 35.0 / 27.0 * k4.1),
+    );
+    let k6 = f(
+        x + h
+            * (1631.0 / 55_296.0 * k1.0
+                + 175.0 / 512.0 * k2.0
+                + 575.0 / 13_824.0 * k3.0
+                + 44_275.0 / 110_592.0 * k4.0
+                + 253.0 / 4096.0 * k5.0),
+        y + h
+            * (1631.0 / 55_296.0 * k1.1
+                + 175.0 / 512.0 * k2.1
+                + 575.0 / 13_824.0 * k3.1
+                + 44_275.0 / 110_592.0 * k4.1
+                + 253.0 / 4096.0 * k5.1),
+    );
+    let fifth = |a: f64, k1: f64, k3: f64, k4: f64, k6: f64| {
+        a + h * (37.0 / 378.0 * k1 + 250.0 / 621.0 * k3 + 125.0 / 594.0 * k4 + 512.0 / 1771.0 * k6)
+    };
+    let fourth = |a: f64, k1: f64, k3: f64, k4: f64, k5: f64, k6: f64| {
+        a + h
+            * (2825.0 / 27_648.0 * k1
+                + 18_575.0 / 48_384.0 * k3
+                + 13_525.0 / 55_296.0 * k4
+                + 277.0 / 14_336.0 * k5
+                + 0.25 * k6)
+    };
+    let x5 = fifth(x, k1.0, k3.0, k4.0, k6.0);
+    let y5 = fifth(y, k1.1, k3.1, k4.1, k6.1);
+    let x4 = fourth(x, k1.0, k3.0, k4.0, k5.0, k6.0);
+    let y4 = fourth(y, k1.1, k3.1, k4.1, k5.1, k6.1);
+    (x5, y5, (x5 - x4).abs().max((y5 - y4).abs()))
+}
