@@ -16,7 +16,7 @@ Hydra is built as a suite of domain engines. Water distribution (`wds`) is the o
 
 ```toml
 [dependencies]
-hydra-sdk = "5"
+hydra-sdk = "6"
 ```
 
 ## Quick start
