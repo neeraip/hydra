@@ -7,4 +7,5 @@
 
 pub mod keywords;
 pub mod lex;
+pub mod options;
 pub mod survey;

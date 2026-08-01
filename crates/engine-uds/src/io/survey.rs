@@ -69,7 +69,7 @@ pub enum LinkKind {
 
 /// A diagnostic from the survey pass. Severity is intrinsic to the kind:
 /// [`DiagnosticKind::is_error`] partitions them.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Diagnostic {
     /// 1-based input line the diagnostic anchors to.
     pub line: usize,
@@ -78,7 +78,7 @@ pub struct Diagnostic {
 }
 
 /// The survey diagnostics.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum DiagnosticKind {
     /// A recognised section header spelled non-canonically — accepted, per
     /// the §14.3 prefix rule, and reported so the typo is visible.
@@ -105,13 +105,60 @@ pub enum DiagnosticKind {
         /// The identifier as written.
         id: String,
     },
+    /// An `[OPTIONS]` keyword matching nothing (§14.4).
+    UnknownOption {
+        /// The token as written.
+        token: String,
+    },
+    /// An option value outside its keyword's accepted vocabulary or range.
+    BadOptionValue {
+        /// The option keyword.
+        keyword: &'static str,
+        /// The offending value token.
+        token: String,
+    },
+    /// A keyword or enumerated value matched by prefix rather than equality
+    /// (§14.3) — accepted, and reported so the typo is visible.
+    PrefixMatched {
+        /// The token as written.
+        token: String,
+        /// The keyword it matched.
+        matched: &'static str,
+    },
+    /// A predecessor behaviour this engine substitutes (§14.4): the run
+    /// notice naming what was requested.
+    SubstitutedOption {
+        /// The option keyword.
+        keyword: &'static str,
+        /// The requested value, as written.
+        requested: String,
+    },
+    /// An option accepted and ignored, with the reason recorded in §14.4
+    /// (the lengthening transform's retirement).
+    IgnoredOption {
+        /// The option keyword.
+        keyword: &'static str,
+    },
+    /// The §14.4 interlock: a report step below the routing step is fatal.
+    ReportStepBelowRoutingStep {
+        /// Report step (s).
+        report: f64,
+        /// Routing step (s).
+        routing: f64,
+    },
 }
 
 impl DiagnosticKind {
     /// Whether this diagnostic refuses the file (the predecessor's errors)
     /// rather than merely reporting on it (this engine's warnings).
     pub fn is_error(&self) -> bool {
-        !matches!(self, DiagnosticKind::NonCanonicalSectionHeader { .. })
+        !matches!(
+            self,
+            DiagnosticKind::NonCanonicalSectionHeader { .. }
+                | DiagnosticKind::PrefixMatched { .. }
+                | DiagnosticKind::SubstitutedOption { .. }
+                | DiagnosticKind::IgnoredOption { .. }
+        )
     }
 }
 
