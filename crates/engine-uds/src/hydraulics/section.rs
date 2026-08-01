@@ -10,8 +10,12 @@
 //! depth); $\Psi_{max}$ and its depth are computed from the geometry, not
 //! taken from fitted multipliers.
 
-use super::GRAVITY;
+use super::{tables, GRAVITY};
 use crate::model::XsectShape;
+
+/// Exact feet-to-metres, for catalogue rows published in US customary
+/// dimensions regardless of the file's unit system (§5.4).
+const FT: f64 = 0.3048;
 
 /// Why a cross-section's geometry was refused — the predecessor's
 /// `xsect_setParams` accept-set, verbatim.
@@ -117,10 +121,23 @@ enum Kind {
         a_bot: f64,
         theta: f64,
     },
-    /// Semi-axes: `a` horizontal, `b` vertical.
+    /// Semi-axes: `a` horizontal, `b` vertical. Catalogue-anchored coded
+    /// sections carry scale factors landing the analytic full-flow values
+    /// on the published ones (§5.4); arbitrary axes carry 1.
     Ellipse {
         a: f64,
         b: f64,
+        area_scale: f64,
+        r_scale: f64,
+    },
+    /// A tabulated family (§5.3): the tables are the shape, anchored by
+    /// the family's full-flow constants or a catalogue row (§5.4).
+    Tabulated {
+        family: TabFamily,
+        a_full: f64,
+        r_full: f64,
+        w_max: f64,
+        yw_max: f64,
     },
     /// Piecewise-linear width against depth (§5.5), already scaled to
     /// metres and closed at the top.
@@ -211,6 +228,169 @@ fn invert(f: &dyn Fn(f64) -> f64, mut a: f64, mut b: f64, target: f64) -> f64 {
         }
     }
     0.5 * (a + b)
+}
+
+/// The tabulated families (§5.3) and the arch (§5.4), keyed to their
+/// provision groups: which properties each tabulates and which it derives.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(missing_docs)] // the names are the shapes
+pub enum TabFamily {
+    Egg,
+    Horseshoe,
+    Gothic,
+    Catenary,
+    SemiElliptical,
+    BasketHandle,
+    SemiCircular,
+    Arch,
+}
+
+impl TabFamily {
+    /// Normalised area against depth, where tabulated.
+    fn a_table(self) -> Option<&'static [f64]> {
+        match self {
+            TabFamily::Egg => Some(&tables::A_EGG),
+            TabFamily::Horseshoe => Some(&tables::A_HORSESHOE),
+            TabFamily::BasketHandle => Some(&tables::A_BASKET_HANDLE),
+            TabFamily::Arch => Some(&tables::A_ARCH),
+            _ => None,
+        }
+    }
+
+    /// Normalised hydraulic radius against depth, where tabulated.
+    fn r_table(self) -> Option<&'static [f64]> {
+        match self {
+            TabFamily::Egg => Some(&tables::R_EGG),
+            TabFamily::Horseshoe => Some(&tables::R_HORSESHOE),
+            TabFamily::BasketHandle => Some(&tables::R_BASKET_HANDLE),
+            TabFamily::Arch => Some(&tables::R_ARCH),
+            _ => None,
+        }
+    }
+
+    /// Normalised depth against area, where tabulated.
+    fn y_table(self) -> Option<&'static [f64]> {
+        match self {
+            TabFamily::Egg => Some(&tables::Y_EGG),
+            TabFamily::Horseshoe => Some(&tables::Y_HORSESHOE),
+            TabFamily::Gothic => Some(&tables::Y_GOTHIC),
+            TabFamily::Catenary => Some(&tables::Y_CATENARY),
+            TabFamily::SemiElliptical => Some(&tables::Y_SEMI_ELLIPTICAL),
+            TabFamily::BasketHandle => Some(&tables::Y_BASKET_HANDLE),
+            TabFamily::SemiCircular => Some(&tables::Y_SEMI_CIRCULAR),
+            TabFamily::Arch => None,
+        }
+    }
+
+    /// Normalised section factor against area, where tabulated.
+    fn s_table(self) -> Option<&'static [f64]> {
+        match self {
+            TabFamily::Egg => Some(&tables::S_EGG),
+            TabFamily::Horseshoe => Some(&tables::S_HORSESHOE),
+            TabFamily::Gothic => Some(&tables::S_GOTHIC),
+            TabFamily::Catenary => Some(&tables::S_CATENARY),
+            TabFamily::SemiElliptical => Some(&tables::S_SEMI_ELLIPTICAL),
+            TabFamily::BasketHandle => Some(&tables::S_BASKET_HANDLE),
+            TabFamily::SemiCircular => Some(&tables::S_SEMI_CIRCULAR),
+            TabFamily::Arch => None,
+        }
+    }
+
+    /// Normalised width against depth.
+    fn w_table(self) -> &'static [f64] {
+        match self {
+            TabFamily::Egg => &tables::W_EGG,
+            TabFamily::Horseshoe => &tables::W_HORSESHOE,
+            TabFamily::Gothic => &tables::W_GOTHIC,
+            TabFamily::Catenary => &tables::W_CATENARY,
+            TabFamily::SemiElliptical => &tables::W_SEMI_ELLIPTICAL,
+            TabFamily::BasketHandle => &tables::W_BASKET_HANDLE,
+            TabFamily::SemiCircular => &tables::W_SEMI_CIRCULAR,
+            TabFamily::Arch => &tables::W_ARCH,
+        }
+    }
+}
+
+/// The predecessor's table interpolation (§5.3): linear over equally
+/// spaced entries, with the quadratic refinement over the two lowest
+/// segments and a floor at zero.
+fn lookup(x: f64, table: &[f64]) -> f64 {
+    let n = table.len();
+    let delta = 1.0 / (n as f64 - 1.0);
+    let i = (x / delta) as usize;
+    if i >= n - 1 {
+        return table[n - 1];
+    }
+    let x0 = i as f64 * delta;
+    let x1 = (i as f64 + 1.0) * delta;
+    let mut y = table[i] + (x - x0) * (table[i + 1] - table[i]) / delta;
+    if i < 2 {
+        let y2 = y
+            + (x - x0) * (x - x1) / (delta * delta)
+                * (table[i] / 2.0 - table[i + 1] + table[i + 2] / 2.0);
+        if y2 > 0.0 {
+            y = y2;
+        }
+    }
+    y.max(0.0)
+}
+
+/// The predecessor's inverse table lookup (§5.3): assumes entries either
+/// strictly increase or peak third from the end (the section-factor
+/// tables); an ambiguous value above the tail is resolved on the tail.
+fn inv_lookup(y: f64, table: &[f64]) -> f64 {
+    let n_items = table.len();
+    let dx = 1.0 / (n_items as f64 - 1.0);
+    let mut n = n_items;
+    if table[n - 3] > table[n - 1] {
+        n -= 2;
+    }
+    let i;
+    if n < n_items && y > table[n_items - 1] {
+        if y >= table[n_items - 3] {
+            return (n as f64 - 1.0) * dx;
+        }
+        if y <= table[n_items - 2] {
+            i = n_items - 2;
+        } else {
+            i = n_items - 3;
+        }
+    } else {
+        i = locate(y, &table[..n]);
+        if i >= n - 1 {
+            return (n as f64 - 1.0) * dx;
+        }
+    }
+    let x0 = i as f64 * dx;
+    let dy = table[i + 1] - table[i];
+    let x = if dy == 0.0 {
+        x0
+    } else {
+        x0 + (y - table[i]) * dx / dy
+    };
+    x.clamp(0.0, 1.0)
+}
+
+/// Bisection locate over a monotone table slice: the highest index whose
+/// entry does not exceed `y`.
+fn locate(y: f64, table: &[f64]) -> usize {
+    let last = table.len() - 1;
+    if y <= table[0] {
+        return 0;
+    }
+    if y >= table[last] {
+        return last;
+    }
+    let (mut j1, mut j2) = (0, last);
+    while j2 - j1 > 1 {
+        let j = (j1 + j2) / 2;
+        if y >= table[j] {
+            j1 = j;
+        } else {
+            j2 = j;
+        }
+    }
+    j1
 }
 
 /// Circle geometry through the filled angle (§5.2), diameter `d`.
@@ -404,18 +584,78 @@ pub fn build_section(
             }
         }
         XsectShape::HorizEllipse | XsectShape::VertEllipse => {
-            // A zero width or an explicit third value selects a
-            // standard-size code — that path arrives with the §5.4
-            // catalogues. Arbitrary axes are the analytic ellipse:
-            // height first, width second, for both orientations.
-            if p[1] <= 0.0 || p[2] > 0.0 {
-                return Err(BuildError::Unsupported(
-                    "standard-size ellipse codes await the §5.4 catalogues",
-                ));
+            // A zero width makes the first value a size code; an explicit
+            // third value is a size code directly (§5.4).
+            let code = if p[1] == 0.0 { p[0] } else { p[2] };
+            if code > 0.0 {
+                let Some(i) = catalogue_index(code, tables::ELLIPSE_MINOR_AXIS_IN.len()) else {
+                    return Err(BuildError::BadGeometry("unknown ellipse size code"));
+                };
+                let minor = tables::ELLIPSE_MINOR_AXIS_IN[i] / 12.0 * FT;
+                let major = tables::ELLIPSE_MAJOR_AXIS_IN[i] / 12.0 * FT;
+                let (h, w) = if shape == XsectShape::HorizEllipse {
+                    (minor, major)
+                } else {
+                    (major, minor)
+                };
+                return Ok(SectionBuild {
+                    section: build_coded_ellipse(
+                        h,
+                        w,
+                        tables::ELLIPSE_A_FULL_FT2[i] * FT * FT,
+                        tables::ELLIPSE_R_FULL_FT[i] * FT,
+                    ),
+                    radius_raised: None,
+                });
             }
+            if p[1] < 0.0 {
+                return Err(BuildError::BadGeometry("negative ellipse axis"));
+            }
+            // Arbitrary axes: the analytic ellipse at the axes the user
+            // wrote — where the predecessor substitutes fixed-proportion
+            // constants (§5.4 CORRESPONDENCE).
             Kind::Ellipse {
                 a: p[1] * len / 2.0,
                 b: p[0] * len / 2.0,
+                area_scale: 1.0,
+                r_scale: 1.0,
+            }
+        }
+        XsectShape::Arch => {
+            let code = if p[1] == 0.0 { p[0] } else { p[2] };
+            if code > 0.0 {
+                let Some(i) = catalogue_index(code, tables::ARCH_Y_FULL_IN.len()) else {
+                    return Err(BuildError::BadGeometry("unknown arch size code"));
+                };
+                let y = tables::ARCH_Y_FULL_IN[i] / 12.0 * FT;
+                let w = tables::ARCH_W_MAX_IN[i] / 12.0 * FT;
+                return Ok(SectionBuild {
+                    section: Section::assemble(
+                        Kind::Tabulated {
+                            family: TabFamily::Arch,
+                            a_full: tables::ARCH_A_FULL_FT2[i] * FT * FT,
+                            r_full: tables::ARCH_R_FULL_FT[i] * FT,
+                            w_max: w,
+                            yw_max: 0.28 * y,
+                        },
+                        y,
+                    ),
+                    radius_raised: None,
+                });
+            }
+            if p[1] < 0.0 {
+                return Err(BuildError::BadGeometry("negative arch span"));
+            }
+            // User dimensions: the predecessor's proportionality constants
+            // over the same tables (§5.4).
+            let y = p[0] * len;
+            let w = p[1] * len;
+            Kind::Tabulated {
+                family: TabFamily::Arch,
+                a_full: 0.7879 * y * w,
+                r_full: 0.2991 * y,
+                w_max: w,
+                yw_max: 0.28 * y,
             }
         }
         XsectShape::Custom => {
@@ -424,17 +664,32 @@ pub fn build_section(
             };
             build_custom(p[0] * len, points)?
         }
-        XsectShape::Arch
-        | XsectShape::Egg
+        XsectShape::Egg
         | XsectShape::Horseshoe
         | XsectShape::Gothic
         | XsectShape::Catenary
         | XsectShape::SemiElliptical
         | XsectShape::BasketHandle
         | XsectShape::SemiCircular => {
-            return Err(BuildError::Unsupported(
-                "tabulated families await the §5.3 transcription",
-            ));
+            // One rise value; the family constants supply the full-flow
+            // anchors (§5.3).
+            let (family, c_a, c_r, c_w, c_yw) = match shape {
+                XsectShape::Egg => (TabFamily::Egg, 0.5105, 0.1931, 2.0 / 3.0, 0.64),
+                XsectShape::Horseshoe => (TabFamily::Horseshoe, 0.8293, 0.2538, 1.0, 0.5),
+                XsectShape::Gothic => (TabFamily::Gothic, 0.6554, 0.2269, 0.84, 0.45),
+                XsectShape::Catenary => (TabFamily::Catenary, 0.70277, 0.23172, 0.9, 0.25),
+                XsectShape::SemiElliptical => (TabFamily::SemiElliptical, 0.785, 0.242, 1.0, 0.15),
+                XsectShape::BasketHandle => (TabFamily::BasketHandle, 0.7862, 0.2464, 0.944, 0.2),
+                _ => (TabFamily::SemiCircular, 1.2697, 0.2946, 1.64, 0.15),
+            };
+            let y = p[0] * len;
+            Kind::Tabulated {
+                family,
+                a_full: c_a * y * y,
+                r_full: c_r * y,
+                w_max: c_w * y,
+                yw_max: c_yw * y,
+            }
         }
         // Routed before the depth gate; kept as an error, not a panic.
         XsectShape::Irregular | XsectShape::Street => {
@@ -447,6 +702,33 @@ pub fn build_section(
         section: Section::assemble(kind, p[0] * len),
         radius_raised,
     })
+}
+
+/// A one-based catalogue size code, bounds-checked.
+fn catalogue_index(code: f64, n: usize) -> Option<usize> {
+    let i = code.floor() as i64 - 1;
+    (0..n as i64).contains(&i).then_some(i as usize)
+}
+
+/// A catalogue ellipse (§5.4): the analytic shape at the catalogue axes,
+/// scaled so the full-flow area and hydraulic radius land on the
+/// published values.
+fn build_coded_ellipse(height: f64, width: f64, a_cat: f64, r_cat: f64) -> Section {
+    let (a, b) = (width / 2.0, height / 2.0);
+    let area_scale = a_cat / (std::f64::consts::PI * a * b);
+    // Full perimeter of the analytic ellipse, for the radius anchor.
+    let f = |t: f64| ((a * t.cos()).powi(2) + (b * t.sin()).powi(2)).sqrt();
+    let p_full = 2.0 * integrate(&f, 0.0, std::f64::consts::PI);
+    let r_scale = r_cat * p_full / a_cat;
+    Section::assemble(
+        Kind::Ellipse {
+            a,
+            b,
+            area_scale,
+            r_scale,
+        },
+        height,
+    )
 }
 
 /// Custom-shape semantics (§5.5): anchored at the origin, truncated above
@@ -525,8 +807,12 @@ impl Section {
             y_at_psi_max: 0.0,
         };
         s.a_full = s.area(y_full);
-        // Full-depth perimeter includes any flat lid.
+        // Full-depth perimeter includes any flat lid; a catalogue-anchored
+        // ellipse lands on its published radius through its scale (§5.4).
         s.r_full = s.a_full / (s.perimeter_open(y_full) + s.lid_width());
+        if let Kind::Ellipse { r_scale, .. } = &s.kind {
+            s.r_full *= r_scale;
+        }
         // Widest point.
         let (yw, ww) = match &s.kind {
             Kind::Circle { .. } | Kind::FilledCircle { .. } | Kind::Ellipse { .. } => {
@@ -546,12 +832,35 @@ impl Section {
                 }
                 (yb, wb)
             }
+            Kind::Tabulated { yw_max, w_max, .. } => (*yw_max, *w_max),
             _ => (y_full, s.top_width(y_full)),
         };
         s.w_max = ww;
         s.y_at_w_max = yw;
         // Ψ peaks below full depth for closed sections (§5.1); open
-        // sections are monotone to the brim.
+        // sections are monotone to the brim. A section-factor table's own
+        // peak is authoritative for the family it defines (§5.3).
+        if let Kind::Tabulated {
+            family,
+            a_full,
+            r_full,
+            ..
+        } = &s.kind
+        {
+            if let Some(t) = family.s_table() {
+                let (mut i_max, mut v_max) = (0, 0.0);
+                for (i, v) in t.iter().enumerate() {
+                    if *v > v_max {
+                        (i_max, v_max) = (i, *v);
+                    }
+                }
+                let s_full = a_full * r_full.powf(2.0 / 3.0);
+                let alpha = i_max as f64 / (t.len() as f64 - 1.0);
+                s.psi_max = s_full * v_max;
+                s.y_at_psi_max = s.depth_of_area(alpha * a_full);
+                return s;
+            }
+        }
         if s.is_closed() {
             let f = |y: f64| s.psi(y);
             let (y, p) = maximise(&f, 1e-9 * y_full, y_full * (1.0 - 1e-9));
@@ -668,9 +977,19 @@ impl Section {
                     w * y_spring + (a_bot - empty)
                 }
             }
-            Kind::Ellipse { a, b } => {
+            Kind::Ellipse {
+                a, b, area_scale, ..
+            } => {
                 let t = 2.0 * ((1.0 - y / b).clamp(-1.0, 1.0)).acos();
-                a * b / 2.0 * (t - t.sin())
+                a * b / 2.0 * (t - t.sin()) * area_scale
+            }
+            Kind::Tabulated { family, a_full, .. } => {
+                let yn = y / self.y_full;
+                match family.a_table() {
+                    Some(t) => a_full * lookup(yn, t),
+                    // No area table: the depth table's inverse (§5.3).
+                    None => a_full * inv_lookup(yn, family.y_table().unwrap_or(&[0.0, 1.0])),
+                }
             }
             Kind::Custom { ys, ws } => {
                 let mut area = 0.0;
@@ -725,9 +1044,12 @@ impl Section {
                     2.0 * (r * r - (hw + c0) * (hw + c0)).max(0.0).sqrt()
                 }
             }
-            Kind::Ellipse { a, b } => {
+            Kind::Ellipse { a, b, .. } => {
                 let t = 2.0 * ((1.0 - y / b).clamp(-1.0, 1.0)).acos();
                 2.0 * a * (t / 2.0).sin()
+            }
+            Kind::Tabulated { family, w_max, .. } => {
+                w_max * lookup(y / self.y_full, family.w_table())
             }
             Kind::Custom { ys, ws } => interp(ys, ws, y),
         }
@@ -822,11 +1144,21 @@ impl Section {
                     w + 2.0 * y_spring + r * (theta - phi)
                 }
             }
-            Kind::Ellipse { a, b } => {
+            Kind::Ellipse { a, b, .. } => {
                 // Arc length by quadrature on the angle parameter.
                 let t_end = ((1.0 - y / b).clamp(-1.0, 1.0)).acos();
                 let f = |t: f64| ((a * t.cos()).powi(2) + (b * t.sin()).powi(2)).sqrt();
                 2.0 * integrate(&f, 0.0, t_end)
+            }
+            Kind::Tabulated { .. } => {
+                // The tables provide R directly (§5.3); perimeter is the
+                // derived quantity here.
+                let r = self.tabulated_radius(y);
+                if r <= 0.0 {
+                    0.0
+                } else {
+                    self.area(y) / r
+                }
             }
             Kind::Custom { ys, ws } => {
                 // Bottom width plus the two side slants.
@@ -855,16 +1187,63 @@ impl Section {
         if y >= self.y_full {
             return self.r_full;
         }
+        if matches!(self.kind, Kind::Tabulated { .. }) {
+            return self.tabulated_radius(y);
+        }
         let p = self.perimeter_open(y);
         if p <= 0.0 {
-            0.0
-        } else {
-            self.area(y) / p
+            return 0.0;
+        }
+        let r = self.area(y) / p;
+        match &self.kind {
+            Kind::Ellipse { r_scale, .. } => r * r_scale,
+            _ => r,
         }
     }
 
-    /// The Manning section factor $\Psi(y) = A R^{2/3}$ (§5.1).
+    /// A tabulated family's hydraulic radius: from its R table where one
+    /// exists, else derived from the section factor as $R = (\Psi/A)^{3/2}$
+    /// (§5.3).
+    fn tabulated_radius(&self, y: f64) -> f64 {
+        let Kind::Tabulated {
+            family,
+            a_full,
+            r_full,
+            ..
+        } = &self.kind
+        else {
+            return 0.0;
+        };
+        if let Some(t) = family.r_table() {
+            return r_full * lookup(y / self.y_full, t);
+        }
+        let a = self.area(y);
+        if a <= 0.0 {
+            return 0.0;
+        }
+        let s_full = a_full * r_full.powf(2.0 / 3.0);
+        let s = match family.s_table() {
+            Some(t) => s_full * lookup(a / a_full, t),
+            None => return 0.0,
+        };
+        (s / a).powf(1.5)
+    }
+
+    /// The Manning section factor $\Psi(y) = A R^{2/3}$ (§5.1). Families
+    /// with a section-factor table read it directly (§5.3).
     pub fn psi(&self, y: f64) -> f64 {
+        if let Kind::Tabulated {
+            family,
+            a_full,
+            r_full,
+            ..
+        } = &self.kind
+        {
+            if let Some(t) = family.s_table() {
+                let s_full = a_full * r_full.powf(2.0 / 3.0);
+                return s_full * lookup(self.area(y) / a_full, t);
+            }
+        }
         let a = self.area(y);
         a * self.hyd_radius(y).powf(2.0 / 3.0)
     }
@@ -883,6 +1262,13 @@ impl Section {
             Kind::Triangle { s } => (a / s).sqrt(),
             Kind::Parabola { k } => (3.0 * a / (4.0 * k)).powf(2.0 / 3.0),
             Kind::Power { h, m } => (a * (m + 1.0) / (2.0 * h)).powf(1.0 / (m + 1.0)),
+            Kind::Tabulated { family, a_full, .. } => match family.y_table() {
+                Some(t) => self.y_full * lookup(a / a_full, t),
+                // No depth table: the area table's inverse (§5.3).
+                None => {
+                    self.y_full * inv_lookup(a / a_full, family.a_table().unwrap_or(&[0.0, 1.0]))
+                }
+            },
             _ => invert(&|y| self.area(y), 0.0, self.y_full, a),
         }
     }
@@ -1143,6 +1529,103 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn egg_anchors_and_peak_follow_the_tables() {
+        let s = build(XsectShape::Egg, [2.0, 0.0, 0.0, 0.0]);
+        // Family constants anchor the full-flow values (§5.3).
+        assert!((s.a_full() - 0.5105 * 4.0).abs() < 1e-12);
+        assert!((s.r_full() - 0.1931 * 2.0).abs() < 1e-12);
+        assert!((s.w_max().1 - 2.0 * 2.0 / 3.0).abs() < 1e-12);
+        // The section-factor table's own peak is Ψ_max — near the
+        // predecessor's fitted 1.065 constant but read from the table.
+        let (y, p) = s.psi_max();
+        let ratio = p / (s.a_full() * s.r_full().powf(2.0 / 3.0));
+        assert!((1.05..1.08).contains(&ratio), "{ratio}");
+        assert!(y < s.y_full());
+        // Depth-from-area and area-from-depth are separately tabulated
+        // inverses; they round-trip only to the tables' own mutual
+        // consistency, worst near the egg's narrow bottom.
+        for f in [0.2, 0.5, 0.8] {
+            let y = f * s.y_full();
+            let back = s.depth_of_area(s.area(y));
+            assert!((back - y).abs() < 0.015 * s.y_full(), "{back} vs {y}");
+        }
+    }
+
+    #[test]
+    fn gothic_radius_derives_from_its_section_factor() {
+        // No R table: R = (Ψ/A)^{3/2} (§5.3), so Ψ and A·R^{2/3} agree
+        // identically.
+        let s = build(XsectShape::Gothic, [3.0, 0.0, 0.0, 0.0]);
+        for f in [0.2, 0.5, 0.9] {
+            let y = f * s.y_full();
+            let via_r = s.area(y) * s.hyd_radius(y).powf(2.0 / 3.0);
+            assert!((s.psi(y) - via_r).abs() < 1e-9 * (1.0 + via_r));
+        }
+        assert!((s.a_full() - 0.6554 * 9.0).abs() < 1e-12);
+    }
+
+    #[test]
+    fn coded_ellipse_lands_on_the_catalogue_row() {
+        use crate::hydraulics::tables;
+        // Size code 1: 14 in × 23 in.
+        let b = build_section(XsectShape::HorizEllipse, [1.0, 0.0, 0.0, 0.0], 1.0, None)
+            .unwrap()
+            .section;
+        let ft = 0.3048;
+        assert!((b.y_full() - tables::ELLIPSE_MINOR_AXIS_IN[0] / 12.0 * ft).abs() < 1e-12);
+        assert!((b.w_max().1 - tables::ELLIPSE_MAJOR_AXIS_IN[0] / 12.0 * ft).abs() < 1e-12);
+        // Full-flow area and radius are the published values, exactly.
+        assert!((b.a_full() - tables::ELLIPSE_A_FULL_FT2[0] * ft * ft).abs() < 1e-12);
+        assert!((b.r_full() - tables::ELLIPSE_R_FULL_FT[0] * ft).abs() < 1e-12);
+        // A vertical ellipse of the same code swaps the axes.
+        let v = build_section(XsectShape::VertEllipse, [1.0, 0.0, 0.0, 0.0], 1.0, None)
+            .unwrap()
+            .section;
+        assert!((v.y_full() - tables::ELLIPSE_MAJOR_AXIS_IN[0] / 12.0 * ft).abs() < 1e-12);
+        assert!((v.a_full() - b.a_full()).abs() < 1e-12);
+        // Catalogue dimensions ignore the file's unit system (§5.4).
+        let si = build_section(XsectShape::HorizEllipse, [1.0, 0.0, 0.0, 0.0], 0.3048, None)
+            .unwrap()
+            .section;
+        assert!((si.a_full() - b.a_full()).abs() < 1e-12);
+        // The catalogues carry 23 and 102 rows.
+        assert_eq!(tables::ELLIPSE_MINOR_AXIS_IN.len(), 23);
+        assert_eq!(tables::ARCH_Y_FULL_IN.len(), 102);
+        assert!(build_section(XsectShape::HorizEllipse, [24.0, 0.0, 0.0, 0.0], 1.0, None).is_err());
+    }
+
+    #[test]
+    fn arch_uses_catalogue_or_proportionality_constants() {
+        use crate::hydraulics::tables;
+        let ft = 0.3048;
+        let coded = build_section(XsectShape::Arch, [1.0, 0.0, 0.0, 0.0], 1.0, None)
+            .unwrap()
+            .section;
+        assert!((coded.y_full() - tables::ARCH_Y_FULL_IN[0] / 12.0 * ft).abs() < 1e-12);
+        assert!((coded.a_full() - tables::ARCH_A_FULL_FT2[0] * ft * ft).abs() < 1e-12);
+        let user = build_section(XsectShape::Arch, [2.0, 3.0, 0.0, 0.0], 1.0, None)
+            .unwrap()
+            .section;
+        assert!((user.a_full() - 0.7879 * 2.0 * 3.0).abs() < 1e-12);
+        assert!((user.r_full() - 0.2991 * 2.0).abs() < 1e-12);
+        // Depth variation from the transcribed tables: monotone area,
+        // consistent inverse.
+        for f in [0.3, 0.6, 0.95] {
+            let y = f * user.y_full();
+            let back = user.depth_of_area(user.area(y));
+            assert!((back - y).abs() < 0.01 * user.y_full());
+        }
+    }
+
+    #[test]
+    fn arbitrary_ellipse_uses_the_axes_the_user_wrote() {
+        // The predecessor would evaluate 1.2692·y² whatever the width;
+        // this engine evaluates the true ellipse (§5.4 CORRESPONDENCE).
+        let s = build(XsectShape::HorizEllipse, [2.0, 4.0, 0.0, 0.0]);
+        assert!((s.a_full() - PI * 1.0 * 2.0).abs() < 1e-12);
     }
 
     #[test]

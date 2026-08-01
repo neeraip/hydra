@@ -180,7 +180,9 @@ user did not author:
 
 **Advisories.** Import additionally flags, without mutating: stub channels
 short enough to Courant-limit the run (§6.5); rules mixing `AND` and `OR`
-whose firing depends on the precedence correction (§9.1); a pattern whose
+whose firing depends on the precedence correction (§9.1); a user-dimensioned
+ellipse cross-section, which the predecessor evaluated at fixed proportions
+regardless of the entered width (§5.4); a pattern whose
 declared type does not match the slot it occupies in a sanitary-inflow line,
 which contributes its own type's multiplier from whatever slot it sits in —
 reproduced exactly, warned because the one silent case yields a constant

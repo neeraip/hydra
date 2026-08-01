@@ -72,9 +72,34 @@ do.
 The horizontal and vertical ellipse and the arch admit selection by standard
 size code — published catalogues of manufactured sections (23 ellipse codes,
 102 arch codes) whose full-flow area and hydraulic radius are engineering
-data, not computable quantities. The catalogues are adopted verbatim.
-Arbitrary user axes fall back to the analytic ellipse (§5.2) and the arch's
-proportionality constants.
+data, not computable quantities. The catalogues are adopted verbatim, always
+in their published US customary dimensions regardless of the file's unit
+system, exactly as the predecessor reads them.
+
+A catalogue row anchors the section's full-flow values: rise, span, area,
+and hydraulic radius. Depth variation follows the shape. A coded ellipse
+*is* an ellipse, so its properties are the §5.2 analytic functions evaluated
+at the catalogue axes and scaled so the full-flow values land on the
+catalogue's — the area by a constant factor, the hydraulic radius likewise.
+The arch has no defining equation, so its normalised area, hydraulic-radius,
+and width tables are transcribed per §5.3 and scaled to the row's full-flow
+values the same way.
+
+Arbitrary user axes fall back to the analytic ellipse (§5.2) — evaluated at
+the axes the user wrote — and, for the arch, to the predecessor's
+proportionality constants $A_{full} = 0.7879\,y_{full} w_{max}$ and
+$R_{full} = 0.2991\,y_{full}$ over the same transcribed tables.
+
+> **CORRESPONDENCE:** two predecessor behaviours are replaced. Its ellipse
+> depth variation comes from one normalised 26-point table per orientation,
+> computed at a single reference aspect ratio and applied to every size —
+> this engine evaluates the true geometry at each section's own axes. And a
+> user-dimensioned ellipse's entered width never reaches its hydraulics: full
+> area and radius come from fixed-proportion constants
+> ($1.2692\,y_{full}^2$, $0.3061\,y_{full}$), so the predecessor solves a
+> fixed-ratio ellipse whatever the user drew — this engine solves the ellipse
+> the user specified, and import (§14) notices user-dimensioned ellipses,
+> whose results differ accordingly.
 
 ### 5.5 Custom Shapes
 
