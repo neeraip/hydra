@@ -168,8 +168,8 @@ Channel slope is the invert drop over the *horizontal* distance,
 $$S_0 = \frac{\Delta z}{\sqrt{L^2 - \Delta z^2}}$$
 
 where $\Delta z$ is the invert drop and $L$ the channel length. Admissibility of
-$\Delta z$ relative to $L$, and the treatment of adverse slopes, are specified
-in §6.
+$\Delta z$ relative to $L$, and the treatment of adverse slopes, are part of
+the validation-and-mutation contract of §14.
 
 **Pumps** raise water between vertices according to a characteristic relating
 delivered flow to wet-well volume, inlet depth, or delivered head, optionally
