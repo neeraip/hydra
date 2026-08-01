@@ -220,9 +220,11 @@ its media pass water.
 hydrology step — an update that is mass-conserving by construction, every
 flux clipped to the volume actually present, with the rate-sampling error
 governed by the wet-step bound of §10.1. The swale, whose geometry varies
-with depth, advances by the iterated trapezoidal method to a stated
-tolerance. This is a deliberate, recorded exception to blanket §3.5
-integration: the cascade's clipped fluxes are discontinuous in state, where
+with depth, advances by the iterated trapezoidal method — depth updated
+with equally weighted start- and end-of-step rates, iterated to a 1 mm
+depth tolerance with at most twenty passes, the final pass accepted as-is
+if the tolerance is still unmet. This is a deliberate, recorded exception
+to blanket §3.5 integration: the cascade's clipped fluxes are discontinuous in state, where
 the embedded-pair integrator presumes smoothness, and the balance form is
 exact for the rates given.
 

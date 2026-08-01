@@ -347,8 +347,15 @@ impl Surface {
         // footprint shrinks the ordinary sub-areas proportionally, and a
         // footprint within 0.1 % of the parcel snaps equal to it.
         for u in &net.lid_usage {
-            let unit = LidUnit::build(&net.lid_controls[u.control], u).map_err(|e| match e {
+            let unit = LidUnit::build(
+                &net.lid_controls[u.control],
+                u,
+                net.parcels[u.parcel].infiltration.as_ref(),
+                net.options.infiltration,
+            )
+            .map_err(|e| match e {
                 super::lid::LidRefusal::Unsupported(m) => SurfaceRefusal::Unsupported(m),
+                super::lid::LidRefusal::Invalid(m) => SurfaceRefusal::Incomplete(m),
             })?;
             parcels[u.parcel].lids.push(unit);
         }
@@ -543,7 +550,7 @@ impl Surface {
                     captured_imp += take_imp;
                     captured_perv += take_perv;
                     let unit_in = imp_precip + (take_imp + take_perv) / dt / u.area;
-                    u.step(unit_in, imp_precip, e, dt);
+                    u.step(unit_in, imp_precip, e, f_rate, fac, dt);
                     self.losses += u.exfiltration * u.area * dt;
                     lid_return += u.overflow * u.area * dt;
                     let drain_vol = u.drain_flow * u.area;

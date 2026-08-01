@@ -6,7 +6,9 @@
 //! exception to §3.5 integration: the clipped fluxes are discontinuous in
 //! state, and the balance form is exact for the rates given.
 
-use crate::model::{LidControl, LidKind, LidUsage};
+use super::infiltration::{InfilFactors, InfilState};
+use crate::io::options::InfiltrationModel;
+use crate::model::{Infiltration, LidControl, LidKind, LidUsage};
 
 /// One deployed unit's state (depths m, moisture as content).
 pub struct LidUnit {
@@ -41,6 +43,14 @@ pub struct LidUnit {
     drain: Option<DrainParams>,
     mat_thick: f64,
     mat_void: f64,
+    /// Trapezoidal geometry, swales only.
+    swale: Option<SwaleGeom>,
+    /// The swale's own Green–Ampt clone of the parent parcel's
+    /// parameters; absent, the parcel's native rate is used (§3.4).
+    swale_infil: Option<InfilState>,
+    /// The swale's converged depth rate from the previous step (m/s),
+    /// the trapezoid's start weight.
+    swale_f_old: f64,
     // State.
     d1: f64,
     theta2: f64,
@@ -53,6 +63,21 @@ pub struct LidUnit {
     pub overflow: f64,
     pub drain_flow: f64,
     pub exfiltration: f64,
+}
+
+/// A swale's trapezoidal section, per deployed unit (§3.4): widths
+/// floored at 0.1524 m with the side slope recomputed to keep the
+/// section consistent.
+#[derive(Clone, Copy)]
+struct SwaleGeom {
+    /// Top width at the berm (m).
+    top: f64,
+    /// Bottom width (m).
+    bot: f64,
+    /// Side slope (run per rise), recomputed if the bottom floors.
+    slope: f64,
+    /// Unit length (m): unit area over top width.
+    len: f64,
 }
 
 struct DrainParams {
@@ -69,18 +94,56 @@ struct DrainParams {
 pub enum LidRefusal {
     /// A configuration this stage does not evaluate yet.
     Unsupported(&'static str),
+    /// A design the data cannot support at all.
+    Invalid(String),
 }
 
 impl LidUnit {
-    /// Build a deployed unit from its design and usage records.
-    pub fn build(ctl: &LidControl, usage: &LidUsage) -> Result<LidUnit, LidRefusal> {
+    /// Build a deployed unit from its design and usage records. A
+    /// vegetative swale also clones the hosting parcel's infiltration
+    /// where that model is (modified) Green–Ampt (§3.4).
+    pub fn build(
+        ctl: &LidControl,
+        usage: &LidUsage,
+        parcel_infil: Option<&Infiltration>,
+        model: InfiltrationModel,
+    ) -> Result<LidUnit, LidRefusal> {
         let kind = ctl.kind.ok_or(LidRefusal::Unsupported(
             "a control measure without a declared type",
         ))?;
+        let mut swale = None;
+        let mut swale_infil = None;
         if kind == LidKind::VegetativeSwale {
-            return Err(LidRefusal::Unsupported(
-                "vegetative swales' depth-varying geometry is a follow-up stage",
-            ));
+            let s = ctl.surface.as_ref();
+            let thickness = s.map_or(0.0, |x| x.thickness);
+            if thickness <= 0.0 || usage.width <= 0.0 {
+                return Err(LidRefusal::Invalid(format!(
+                    "swale design {} needs a positive berm height and unit width",
+                    ctl.id
+                )));
+            }
+            // Widths floor at 0.1524 m; a floored bottom recomputes the
+            // side slope to keep the section consistent (§3.4).
+            let top = usage.width.max(0.1524);
+            let mut slope = s.map_or(0.0, |x| x.side_slope);
+            let mut bot = top - 2.0 * slope * thickness;
+            if bot < 0.1524 {
+                bot = 0.1524;
+                slope = 0.5 * (top - 0.1524) / thickness;
+            }
+            swale = Some(SwaleGeom {
+                top,
+                bot,
+                slope,
+                len: usage.area / top,
+            });
+            if matches!(
+                model,
+                InfiltrationModel::GreenAmpt | InfiltrationModel::ModifiedGreenAmpt
+            ) {
+                swale_infil = parcel_infil
+                    .map(|inf| InfilState::build(inf, InfiltrationModel::ModifiedGreenAmpt));
+            }
         }
         let area = f64::from(usage.count) * usage.area;
         let s = ctl.surface.as_ref();
@@ -142,6 +205,9 @@ impl LidUnit {
                 .drain_mat
                 .as_ref()
                 .map_or(0.0, |x| x.void_frac.max(1e-6)),
+            swale,
+            swale_infil,
+            swale_f_old: 0.0,
             d1,
             theta2,
             d3,
@@ -162,12 +228,23 @@ impl LidUnit {
     /// Advance one hydrology step. `inflow` is direct rain plus captured
     /// runoff (m/s over the unit area); `rain` the parcel's rainfall rate
     /// alone, which drives the rain barrel's dryness clock; `evap` the
-    /// potential rate. Outflow rates land in `overflow`, `drain_flow`,
+    /// potential rate; `native_infil` the parcel's current infiltration
+    /// rate and `fac` its monthly scaling handles, which only the swale
+    /// consumes. Outflow rates land in `overflow`, `drain_flow`,
     /// `exfiltration`.
-    pub fn step(&mut self, inflow: f64, rain: f64, evap: f64, dt: f64) {
+    pub fn step(
+        &mut self,
+        inflow: f64,
+        rain: f64,
+        evap: f64,
+        native_infil: f64,
+        fac: InfilFactors,
+        dt: f64,
+    ) {
         match self.kind {
             LidKind::RooftopDisconnection => self.step_rooftop(inflow, dt),
             LidKind::RainBarrel => self.step_rain_barrel(inflow, rain, dt),
+            LidKind::VegetativeSwale => self.step_swale(inflow, evap, native_infil, fac, dt),
             _ => self.step_layered(inflow, evap, dt),
         }
     }
@@ -216,6 +293,83 @@ impl LidUnit {
         self.d3 = (self.d3 + (intake - q3) * dt / self.stor_void).clamp(0.0, h);
         self.drain_flow = q3;
         self.exfiltration = 0.0;
+    }
+
+    /// Vegetative swale: a trapezoidal channel whose ponded geometry
+    /// varies with depth, advanced by the iterated trapezoidal method —
+    /// equally weighted start- and end-of-step rates, a 1 mm depth
+    /// tolerance, at most twenty passes, the final pass accepted as-is
+    /// (§3.4).
+    fn step_swale(
+        &mut self,
+        inflow: f64,
+        evap: f64,
+        native_infil: f64,
+        fac: InfilFactors,
+        dt: f64,
+    ) {
+        let Some(g) = self.swale else {
+            return;
+        };
+        let berm = self.surf_berm;
+        let unit_area = g.len * g.top;
+        // Infiltration to native soil: the unit's own Green–Ampt clone of
+        // the parcel's parameters, else the parcel's native rate (§3.4).
+        let f_infil = match &mut self.swale_infil {
+            Some(st) => st.step(dt, inflow, self.d1, fac),
+            None => native_infil,
+        };
+        // Flux rate on depth (m/s) plus the outflow components (m³/s) at
+        // a trial depth.
+        let void = self.surf_void;
+        let alpha = self.surf_alpha;
+        let rates = move |d: f64| -> (f64, f64, f64) {
+            let depth = d.min(berm);
+            let surf_width = g.bot + 2.0 * g.slope * depth;
+            let surf_area = g.len * surf_width;
+            let flow_area = depth * (g.bot + g.slope * depth) * void;
+            let volume = g.len * flow_area;
+            let q_in = inflow * unit_area;
+            let q_evap = (evap * surf_area).min(volume / dt);
+            let q_exfil = f_infil * surf_area;
+            let mut q_out = 0.0;
+            if depth > 0.0 && flow_area > 0.0 {
+                let wetted = g.bot + 2.0 * depth * (1.0 + g.slope * g.slope).sqrt();
+                let r = flow_area / wetted;
+                q_out = alpha * flow_area * r.powf(2.0 / 3.0);
+            }
+            let mut dvdt = q_in - q_evap - q_exfil - q_out;
+            // At the berm, any net positive inflow spills onward.
+            if depth >= berm && dvdt > 0.0 {
+                q_out += dvdt;
+                dvdt = 0.0;
+            }
+            (dvdt / surf_area, q_exfil, q_out)
+        };
+        let d_old = self.d1;
+        let f_old = self.swale_f_old;
+        let mut d = d_old;
+        let mut out = (0.0, 0.0, 0.0);
+        for _ in 0..20 {
+            out = rates(d);
+            let d_new = (d_old + 0.5 * (f_old + out.0) * dt).clamp(0.0, berm);
+            let done = (d_new - d).abs() <= 1e-3;
+            d = d_new;
+            if done {
+                break;
+            }
+        }
+        self.swale_f_old = out.0;
+        self.d1 = d;
+        self.overflow = out.2 / unit_area;
+        self.exfiltration = out.1 / unit_area;
+        self.drain_flow = 0.0;
+    }
+
+    /// The swale's current ponded depth (m), for tests.
+    #[cfg(test)]
+    fn swale_depth(&self) -> f64 {
+        self.d1
     }
 
     /// The layered template under the limiter cascade (§3.4).
@@ -359,5 +513,103 @@ impl LidUnit {
         self.overflow = over;
         self.drain_flow = q3;
         self.exfiltration = f3;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::{LidSurface, ParcelOutlet};
+
+    fn swale_control() -> LidControl {
+        LidControl {
+            id: "SW".into(),
+            kind: Some(LidKind::VegetativeSwale),
+            surface: Some(LidSurface {
+                thickness: 0.5,
+                void_frac: 1.0,
+                roughness: 0.1,
+                slope: 0.01,
+                side_slope: 3.0,
+            }),
+            soil: None,
+            pavement: None,
+            storage: None,
+            drain: None,
+            drain_mat: None,
+            removals: Vec::new(),
+        }
+    }
+
+    fn swale_usage() -> LidUsage {
+        LidUsage {
+            parcel: 0,
+            control: 0,
+            count: 1,
+            area: 1000.0,
+            width: 10.0,
+            init_saturation: 0.0,
+            from_impervious: 1.0,
+            from_pervious: 0.0,
+            to_pervious: false,
+            report_file: None,
+            drain_to: None::<ParcelOutlet>,
+        }
+    }
+
+    #[test]
+    fn a_swale_settles_at_the_manning_steady_state() {
+        let mut u = LidUnit::build(
+            &swale_control(),
+            &swale_usage(),
+            None,
+            InfiltrationModel::Horton,
+        )
+        .expect("build");
+        // Constant inflow, no evaporation or infiltration: depth must
+        // settle where trapezoidal Manning outflow balances inflow.
+        let q_in = 2.0e-5;
+        for _ in 0..600 {
+            u.step(q_in, q_in, 0.0, 0.0, InfilFactors::default(), 60.0);
+        }
+        assert!(
+            (u.overflow - q_in).abs() < 0.02 * q_in,
+            "outflow {} vs inflow {q_in}",
+            u.overflow
+        );
+        // The converged depth reproduces the section's Manning rating.
+        let d = u.swale_depth();
+        let g = u.swale.expect("geometry");
+        let a = d * (g.bot + g.slope * d);
+        let p = g.bot + 2.0 * d * (1.0 + g.slope * g.slope).sqrt();
+        let q = 0.01_f64.sqrt() / 0.1 * a * (a / p).powf(2.0 / 3.0);
+        let q_target = q_in * g.len * g.top;
+        assert!(
+            (q - q_target).abs() < 0.03 * q_target,
+            "rating {q} vs {q_target}"
+        );
+    }
+
+    #[test]
+    fn a_full_swale_spills_its_net_inflow_onward() {
+        let mut u = LidUnit::build(
+            &swale_control(),
+            &swale_usage(),
+            None,
+            InfiltrationModel::Horton,
+        )
+        .expect("build");
+        // An extreme inflow overtops the berm; once full, outflow must
+        // carry the entire inflow (nothing else can leave).
+        let q_in = 5.0e-3;
+        for _ in 0..200 {
+            u.step(q_in, q_in, 0.0, 0.0, InfilFactors::default(), 60.0);
+        }
+        assert!((u.swale_depth() - 0.5).abs() < 1e-6, "not full");
+        assert!(
+            (u.overflow - q_in).abs() < 1e-9,
+            "spill {} vs inflow {q_in}",
+            u.overflow
+        );
     }
 }

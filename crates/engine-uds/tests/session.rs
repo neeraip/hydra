@@ -725,6 +725,96 @@ S1  BC1  1  2000  20  0  60  0
 }
 
 #[test]
+fn a_swale_attenuates_and_infiltrates_captured_runoff() {
+    // A fully impervious 2 ha parcel routes all runoff through a
+    // 1000 m² vegetative swale on a Green–Ampt parcel, so the swale
+    // clones the parcel's infiltration parameters.
+    let swale = "
+[LID_CONTROLS]
+SW1  VS
+SW1  SURFACE  500  0  0.24  0.1  3
+
+[LID_USAGE]
+S1  SW1  1  1000  10  0  100  0
+";
+    let base = "\
+[OPTIONS]
+FLOW_UNITS    CMS
+INFILTRATION  GREEN_AMPT
+START_DATE    06/01/2024
+START_TIME    00:00
+END_DATE      06/01/2024
+END_TIME      08:00
+ROUTING_STEP  10
+WET_STEP      0:05:00
+REPORT_STEP   0:15:00
+
+[RAINGAGES]
+G1  INTENSITY  1:00  1.0  TIMESERIES  RAIN
+
+[SUBCATCHMENTS]
+S1  G1  J1  2  100  100  0.5  0
+
+[SUBAREAS]
+S1  0.012  0.1  0.05  0.05  25  OUTLET
+
+[INFILTRATION]
+S1  100  10  0.3
+
+[JUNCTIONS]
+J1  100.4  3
+
+[OUTFALLS]
+O1  100.0  FREE
+
+[CONDUITS]
+C1  J1  O1  200  0.013  0  0
+
+[XSECTIONS]
+C1  RECT_OPEN  2  2  0  0
+
+[TIMESERIES]
+RAIN  0:00  25
+RAIN  1:00  25
+RAIN  2:00  0
+";
+    let (mut plain, _, _) = Simulation::open(base).expect("open plain");
+    while plain.time() < 2.5 * 3600.0 {
+        plain.step();
+    }
+    let plain_early = plain.report().inflow;
+    plain.run();
+    let plain_vol = plain.report().inflow;
+
+    let (mut sim, _, _) = Simulation::open(&format!("{base}{swale}")).expect("open swale");
+    // Shortly after the storm the swale is still holding water back —
+    // its delivered fraction lags the plain model's at the same clock.
+    while sim.time() < 2.5 * 3600.0 {
+        sim.step();
+    }
+    let early = sim.report().inflow;
+    sim.run();
+    let led = sim.report();
+    assert!(
+        early / led.inflow < 0.95 * (plain_early / plain_vol),
+        "no attenuation: swale {early}/{} vs plain {plain_early}/{plain_vol}",
+        led.inflow
+    );
+    // Green–Ampt exfiltration through the swale bed trims the total, but
+    // the swale is a conveyance, not a sink.
+    assert!(
+        led.inflow < 0.98 * plain_vol,
+        "swale infiltrated nothing: {} vs plain {plain_vol}",
+        led.inflow
+    );
+    assert!(
+        led.inflow > 0.5 * plain_vol,
+        "swale swallowed the storm: {} vs plain {plain_vol}",
+        led.inflow
+    );
+}
+
+#[test]
 fn a_rain_barrel_holds_the_storm_then_drains_after_the_delay() {
     let base = runoff_model(100.0, 10.0, "HORTON");
     // Barrels big enough for the whole storm: 1 m deep, covering 400 m²
