@@ -15,6 +15,7 @@ use super::time::{civil_from_days, days_from_civil, weekday};
 use crate::hydraulics::routing::{Router, RouterRefusal, RoutingReport};
 use crate::hydrology::groundwater::GwState;
 use crate::hydrology::infiltration::InfilFactors;
+use crate::hydrology::rdii::RdiiState;
 use crate::hydrology::runoff::{Surface, SurfaceRefusal};
 use crate::hydrology::snow::SnowClimate;
 use crate::io::objects::parse_network;
@@ -76,6 +77,8 @@ pub struct Simulation {
     surface: Option<Surface>,
     /// §4.1 aquifers by parcel index.
     aquifers: Vec<(usize, GwState)>,
+    /// §4.3 sewer-inflow convolutions.
+    rdii: Vec<RdiiState>,
     /// Hydrology clock (s from start).
     hydro_t: f64,
     /// Bracketing hydrology laterals for §10.1 linear interpolation.
@@ -128,6 +131,7 @@ impl Simulation {
                 aquifers.push((pi, GwState::build(gw, &net.aquifers[gw.aquifer], invert)));
             }
         }
+        let rdii = RdiiState::build_all(&net);
 
         let start_epoch =
             days_from_civil(net.options.start_date) as f64 * 86_400.0 + net.options.start_time;
@@ -181,6 +185,7 @@ impl Simulation {
                 router,
                 surface,
                 aquifers,
+                rdii,
                 hydro_t: 0.0,
                 hydro_prev: (0.0, vec![0.0; nv]),
                 hydro_now: (0.0, vec![0.0; nv]),
@@ -259,7 +264,7 @@ impl Simulation {
         let nv = self.net.vertices.len();
         while self.hydro_t < period_end - 1e-9 {
             let epoch = self.start_epoch + self.hydro_t;
-            let wet = surface.is_wet(epoch);
+            let wet = surface.is_wet(epoch) || self.rdii.iter().any(|r| r.flow > 0.0);
             let mut dt = if wet {
                 self.net.options.wet_step
             } else {
@@ -305,6 +310,16 @@ impl Simulation {
                 let stage = self.net.vertices[gw.vertex].invert + self.router.depth(gw.vertex);
                 let q = gw.step(dt, infil, evap_used, max_evap, stage);
                 lats[gw.vertex] += q * p.area;
+            }
+            // §4.3: RDII convolutions on the same clock, with the monthly
+            // rainfall adjustment applied during preprocessing (§3.1).
+            for r in &mut self.rdii {
+                let rain = r
+                    .gage(&self.net)
+                    .map_or(0.0, |g| surface.gage_rate(g, epoch))
+                    * rain_factor;
+                let q = r.step(&self.net, rain, month, dt);
+                lats[r.vertex] += q;
             }
             self.hydro_t += dt;
             self.hydro_prev = std::mem::replace(&mut self.hydro_now, (self.hydro_t, lats));

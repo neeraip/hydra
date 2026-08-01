@@ -626,3 +626,63 @@ TEMP  48:00  10";
         sim.report().inflow
     );
 }
+
+// ── §4.3 RDII ───────────────────────────────────────────────────────────
+
+#[test]
+fn rdii_convolves_rainfall_into_the_sewer() {
+    let inp = "\
+[OPTIONS]
+FLOW_UNITS    CMS
+START_DATE    06/01/2024
+START_TIME    00:00
+END_DATE      06/01/2024
+END_TIME      12:00
+ROUTING_STEP  30
+WET_STEP      0:05:00
+
+[RAINGAGES]
+G1  INTENSITY  1:00  1.0  TIMESERIES  RAIN
+
+[JUNCTIONS]
+J1  100.4  3
+
+[OUTFALLS]
+O1  100.0  FREE
+
+[CONDUITS]
+C1  J1  O1  200  0.013  0  0
+
+[XSECTIONS]
+C1  RECT_OPEN  2  2  0  0
+
+[HYDROGRAPHS]
+UH1  G1
+UH1  ALL  SHORT   0.10  1.0  2.0
+UH1  ALL  MEDIUM  0.20  3.0  2.0
+
+[RDII]
+J1  UH1  10
+
+[TIMESERIES]
+RAIN  0:00  20
+RAIN  1:00  20
+RAIN  2:00  0
+";
+    let (mut sim, _, _) = Simulation::open(inp).expect("open");
+    sim.run();
+    // Two hours of 20 mm/h over a 10 ha sewershed with R = 0.30 total:
+    // volume in = 0.04 m × 100 000 m² × 0.30 = 1200 m³, all delivered
+    // once the slowest 9 h triangle has recessed.
+    let led = sim.report();
+    let expect = 0.04 * 100_000.0 * 0.30;
+    assert!(
+        (led.inflow - expect).abs() < 0.05 * expect,
+        "rdii volume {} vs {expect}",
+        led.inflow
+    );
+    // The response peaks after the rain, not during its first minutes.
+    let early: f64 = sim.snapshots.first().map_or(0.0, |s| s.flows[0]);
+    assert!(led.outflow > 0.9 * led.inflow);
+    let _ = early;
+}

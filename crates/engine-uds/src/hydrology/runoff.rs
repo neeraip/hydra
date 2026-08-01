@@ -206,16 +206,14 @@ impl Surface {
     /// series times anchor at `start_epoch` (s). Parcels invoking
     /// compartments this stage does not evaluate are refused.
     pub fn build(net: &Network, start_epoch: f64) -> Result<Option<Surface>, SurfaceRefusal> {
-        if net.parcels.is_empty() {
+        // RDII-only models still need the gage records resolved.
+        if net.parcels.is_empty() && net.rdii.is_empty() {
             return Ok(None);
         }
         if !net.lid_usage.is_empty() {
             return Err(SurfaceRefusal::Unsupported(
                 "control-measure evaluation arrives with §3.4",
             ));
-        }
-        if !net.rdii.is_empty() {
-            return Err(SurfaceRefusal::Unsupported("RDII arrives with §4.3"));
         }
         for p in &net.parcels {
             if let Some(gw) = &p.groundwater {
@@ -535,6 +533,12 @@ impl Surface {
     /// A parcel's current runoff rate (m³/s).
     pub fn parcel_runoff(&self, pi: usize) -> f64 {
         self.parcels.get(pi).map_or(0.0, |p| p.runoff)
+    }
+
+    /// A gage's rain rate at an absolute epoch time (m/s), for the §4.3
+    /// convolution.
+    pub fn gage_rate(&self, gi: usize, epoch: f64) -> f64 {
+        self.gages.get(gi).map_or(0.0, |g| g.rate(epoch))
     }
 
     /// A parcel's infiltration and exerted pervious-evaporation rates
