@@ -1,0 +1,13 @@
+; An outlet regulating by a head-power relation, whose coefficient is
+; unit-dependent at import.
+[OPTIONS]
+FLOW_UNITS  CFS
+
+[JUNCTIONS]
+J1  100  6
+
+[OUTFALLS]
+O1  97  FREE
+
+[OUTLETS]
+OUT1  J1  O1  0.5  FUNCTIONAL/HEAD  2.5  1.5  NO

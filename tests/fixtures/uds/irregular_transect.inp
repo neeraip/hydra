@@ -1,0 +1,27 @@
+; A natural channel surveyed as a transect: rolling NC roughness state,
+; bank stations, and a meander modifier on the second record.
+[OPTIONS]
+FLOW_UNITS  CFS
+
+[JUNCTIONS]
+J1  100  8
+J2  99   8
+
+[OUTFALLS]
+O1  95  FREE
+
+[CONDUITS]
+C1  J1  J2  500  0.04  0  0
+C2  J2  O1  500  0.04  0  0
+
+[XSECTIONS]
+C1  IRREGULAR  T1
+C2  IRREGULAR  T2
+
+[TRANSECTS]
+NC  0.05  0.06  0.03
+X1  T1  4  10  30  0  0  0    0  0
+GR  8  0   2  10  2  30  8  40
+NC  0     0     0.04
+X1  T2  4  10  30  0  0  1.5  0  0
+GR  6  0   1  10  1  30  6  40

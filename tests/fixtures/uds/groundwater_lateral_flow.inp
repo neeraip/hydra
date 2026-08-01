@@ -1,0 +1,42 @@
+; An aquifer under a subcatchment with a groundwater connection and a
+; custom lateral-flow expression.
+[OPTIONS]
+FLOW_UNITS    CFS
+INFILTRATION  HORTON
+
+[RAINGAGES]
+G1  INTENSITY  1:00  1.0  TIMESERIES  RAIN1
+
+[SUBCATCHMENTS]
+S1  G1  J1  10  25  500  0.5  0
+
+[SUBAREAS]
+S1  0.012  0.1  0.05  0.05  25  OUTLET
+
+[INFILTRATION]
+S1  3.0  0.5  4  7  0
+
+[AQUIFERS]
+AQ1  0.5  0.35  0.20  0.10  10  2.0  1.5  14  3.5  90  85  0.002
+
+[GROUNDWATER]
+S1  AQ1  J1  95  0.01  1.5  0  0  0  0  0
+
+[GWF]
+S1  LATERAL  0.001*(Hgw-Hsw)
+
+[JUNCTIONS]
+J1  90  4
+
+[OUTFALLS]
+O1  88  FREE
+
+[CONDUITS]
+C1  J1  O1  400  0.013  0  0
+
+[XSECTIONS]
+C1  CIRCULAR  1.5  0  0  0
+
+[TIMESERIES]
+RAIN1  0:00  0.5
+RAIN1  1:00  0.0

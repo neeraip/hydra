@@ -1,0 +1,33 @@
+; Dual drainage: a street channel with a combination inlet capturing
+; flow to a sewer junction.
+[OPTIONS]
+FLOW_UNITS  CFS
+
+[JUNCTIONS]
+J1   100  4
+J2   99   4
+SEW  90   8
+
+[OUTFALLS]
+O1  95  FREE
+O2  85  FREE
+
+[CONDUITS]
+GUT1  J1   J2  300  0.016  0  0
+C2    J2   O1  300  0.016  0  0
+SEW1  SEW  O2  300  0.013  0  0
+
+[XSECTIONS]
+GUT1  STREET    ST1
+C2    STREET    ST1
+SEW1  CIRCULAR  1.5  0  0  0
+
+[STREETS]
+ST1  20  0.5  2  0.016  0.1  2  1  10  4  0.02
+
+[INLETS]
+CB1  GRATE  2  2  P_BAR-50
+CB1  CURB   2  0.5  HORIZONTAL
+
+[INLET_USAGE]
+GUT1  CB1  SEW  1  0  0  0  0  ON_GRADE

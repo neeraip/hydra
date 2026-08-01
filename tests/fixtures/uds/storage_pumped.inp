@@ -1,0 +1,25 @@
+; A storage node with tabular geometry drained by a type-1 pump.
+[OPTIONS]
+FLOW_UNITS  CFS
+
+[JUNCTIONS]
+J1  100  4
+
+[OUTFALLS]
+O1  102  FREE
+
+[STORAGE]
+SU1  90  10  0  TABULAR  SC1
+
+[CONDUITS]
+C1  J1  SU1  300  0.013  0  0
+
+[PUMPS]
+P1  SU1  O1  PC1  ON  1  0.5
+
+[XSECTIONS]
+C1  CIRCULAR  1.5  0  0  0
+
+[CURVES]
+SC1  STORAGE  0  100  5  400  10  900
+PC1  PUMP1    0  5    50  4   100  2

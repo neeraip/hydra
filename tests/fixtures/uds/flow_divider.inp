@@ -1,0 +1,24 @@
+; A weir-type flow divider splitting to a diverted link.
+[OPTIONS]
+FLOW_UNITS   CFS
+FLOW_ROUTING KINWAVE
+
+[JUNCTIONS]
+J1  100  4
+
+[DIVIDERS]
+D1  98  C2  WEIR  2  1.5  3.3  4
+
+[OUTFALLS]
+O1  95  FREE
+O2  94  FREE
+
+[CONDUITS]
+C1  J1  D1  300  0.013  0  0
+C2  D1  O1  300  0.013  0  0
+C3  D1  O2  300  0.013  0  0
+
+[XSECTIONS]
+C1  CIRCULAR  1.5  0  0  0
+C2  CIRCULAR  1    0  0  0
+C3  CIRCULAR  1.5  0  0  0

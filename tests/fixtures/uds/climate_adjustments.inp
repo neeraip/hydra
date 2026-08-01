@@ -1,0 +1,37 @@
+; Monthly climate adjustments: temperature and evaporation offsets,
+; rainfall and conductivity multipliers, and a per-parcel pattern.
+[OPTIONS]
+FLOW_UNITS    CFS
+INFILTRATION  HORTON
+
+[RAINGAGES]
+G1  INTENSITY  1:00  1.0  TIMESERIES  RAIN1
+
+[SUBCATCHMENTS]
+S1  G1  O1  10  25  500  0.5  0
+
+[SUBAREAS]
+S1  0.012  0.1  0.05  0.05  25  OUTLET
+
+[INFILTRATION]
+S1  3.0  0.5  4  7  0
+
+[OUTFALLS]
+O1  97  FREE
+
+[EVAPORATION]
+MONTHLY   1 1 2 3 4 5 5 5 4 3 2 1
+DRY_ONLY  YES
+
+[PATTERNS]
+NPERV1  MONTHLY  1 1 1 1 1.2 1.2 1.2 1.2 1 1 1 1
+
+[ADJUSTMENTS]
+TEMPERATURE   0 0 0 0 1 2 2 2 1 0 0 0
+RAINFALL      1 1 1 1 1.1 1.1 1.1 1.1 1 1 1 1
+CONDUCTIVITY  1 1 1 1 1 1 1 1 1 1 1 1
+N-PERV  S1  NPERV1
+
+[TIMESERIES]
+RAIN1  0:00  0.5
+RAIN1  1:00  0.0

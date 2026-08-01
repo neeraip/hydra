@@ -1,0 +1,51 @@
+; One pollutant accumulating on a land use, washing off, and treated at
+; a node by a removal expression.
+[OPTIONS]
+FLOW_UNITS    CFS
+INFILTRATION  HORTON
+
+[RAINGAGES]
+G1  INTENSITY  0:15  1.0  TIMESERIES  RAIN1
+
+[SUBCATCHMENTS]
+S1  G1  J1  10  25  500  0.5  0
+
+[SUBAREAS]
+S1  0.012  0.1  0.05  0.05  25  OUTLET
+
+[INFILTRATION]
+S1  3.0  0.5  4  7  0
+
+[JUNCTIONS]
+J1  100  4
+
+[OUTFALLS]
+O1  98  FREE
+
+[CONDUITS]
+C1  J1  O1  400  0.013  0  0
+
+[XSECTIONS]
+C1  CIRCULAR  1.5  0  0  0
+
+[POLLUTANTS]
+TSS  MG/L  10  0  0  0.1
+
+[LANDUSES]
+RES  0  0  0
+
+[COVERAGES]
+S1  RES  100
+
+[BUILDUP]
+RES  TSS  POW  50  2  1  AREA
+
+[WASHOFF]
+RES  TSS  EXP  0.2  1.2  0  0
+
+[TREATMENT]
+J1  TSS  R = 0.5 * FLOW
+
+[TIMESERIES]
+RAIN1  0:00  1.0
+RAIN1  1:00  0.0
