@@ -246,6 +246,13 @@ pub fn build_section(
     len: f64,
     shape_curve: Option<&[(f64, f64)]>,
 ) -> Result<SectionBuild, BuildError> {
+    // Transect-backed shapes carry no geometry values of their own; route
+    // them before the depth gate.
+    if matches!(shape, XsectShape::Irregular | XsectShape::Street) {
+        return Err(BuildError::Unsupported(
+            "transect-backed sections await §5.6 evaluation",
+        ));
+    }
     let p = geom_user;
     if shape != XsectShape::Dummy && p[0] <= 0.0 {
         return Err(BuildError::BadGeometry("full depth must be positive"));
@@ -429,6 +436,7 @@ pub fn build_section(
                 "tabulated families await the §5.3 transcription",
             ));
         }
+        // Routed before the depth gate; kept as an error, not a panic.
         XsectShape::Irregular | XsectShape::Street => {
             return Err(BuildError::Unsupported(
                 "transect-backed sections await §5.6 evaluation",
