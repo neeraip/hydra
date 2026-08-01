@@ -1,7 +1,7 @@
 # hydra-engine-uds — Hydraulics Specification
 
 This document holds §5–§7 of the urban drainage specification: cross-section
-geometry, network flow, and structures. §5 and §6 are given here; §7 follows.
+geometry, network flow, and structures.
 
 ---
 
@@ -486,3 +486,230 @@ with the average, over its connecting links, of link end depth plus the
 link's upstream offset, at non-outfall, non-storage vertices only; channels
 without an initial flow then take the mean of their end-vertex depths. A
 checkpoint restore (§12) bypasses the seeding entirely.
+
+## 7. Structures
+
+Structures are algebraic head–discharge relations spliced into the network
+graph (§6.1). Each supplies its flow from the current iterate's vertex state,
+its head derivative $\partial Q/\partial H$ to the vertex updates that need
+one, and — where stated — an equivalent surface-area contribution to its end
+vertices. All relations are evaluated in SI with the exact $g$ of §2.11;
+empirical discharge coefficients keep their fitted values. Where a
+coefficient is **dimensional** — the weir and outlet coefficients below — the
+relation is stated with its SI dimensions here, and the interpretation of the
+file's numeric value is the import contract of §14.
+
+> **CORRESPONDENCE:** the predecessor evaluates weir, outlet, and divider
+> relations in the user's unit system, so their coefficients silently change
+> meaning with the flow-unit selection, and its roadway weir rescales a
+> user coefficient by $1/0.552$ under SI — which is nothing but the
+> $\sqrt{\text{ft}\to\text{m}}$ dimensional conversion in disguise. This
+> engine computes in SI throughout; the same conversions happen once,
+> explicitly, at import (§14).
+
+### 7.1 Pumps
+
+A pump's flow comes from its characteristic, in five types plus one
+degenerate. Writing $\omega$ for the speed setting, $V_1$ and $y_1$ for the
+inlet vertex's volume and depth, and $H_1$, $H_2$ for the end heads:
+
+$$Q = \omega\cdot\begin{cases}
+\hat{q}(V_1) & \text{Type 1 — stepwise on wet-well volume}\\
+\hat{q}(y_1) & \text{Type 2 — stepwise on inlet depth}\\
+q(H_2 - H_1) & \text{Type 3 — the centrifugal characteristic}\\
+q(y_1) & \text{Type 4 — an in-line depth profile}\\
+q\!\big((H_2 - H_1)/\omega^2\big) & \text{Type 5 — variable-speed Type 3}\\
+Q_{in} & \text{ideal transfer}
+\end{cases}$$
+
+where $\hat q$ is stepwise lookup — the curve's value at the first point
+whose abscissa exceeds the argument — and the continuous types interpolate
+linearly. Type 5's head division by $\omega^2$ with the flow then scaled by
+$\omega$ is the affinity-law scaling of the rated curve. The head argument is
+floored at zero; reverse flow is never admitted; an ideal pump must be its
+vertex's only outlet. Types 3 and 5 supply $\partial Q/\partial H$ as the
+negated curve slope (scaled by $\omega$), Type 4 by forward difference; the
+stepwise types supply none.
+
+Startup and shutoff depths latch the pump on and off around its
+characteristic. At a storage inlet vertex — and the virtual wet well a Type 1
+pump receives elsewhere — flow is clamped so the vertex cannot be drawn below
+empty, $Q \le Q_{in} + V/\Delta t$; at non-storage vertices, a depth-driven
+pump whose projected end-of-step depth would go negative falls back to
+$Q = Q_{in}$. **This clamp applies to every depth- and head-driven type,
+Type 5 included.**
+
+> **CORRESPONDENCE:** the predecessor omits Type 5 from the negative-depth
+> fallback — Types 2–4 are protected and the variable-speed type is not, an
+> evident oversight from the type's later addition rather than a modelled
+> distinction. This engine protects all of them; a Type 5 pump drawing a
+> shallow non-storage vertex differs accordingly.
+
+Pump energy is tallied from the physics, $P = \rho g\,Q\,\Delta H$, without
+an efficiency factor, replacing the predecessor's chain of US-unit
+conversion constants.
+
+### 7.2 Orifices
+
+An orifice — side or bottom, circular or rectangular, coefficient $C_d$,
+optional flap gate — discharges by Torricelli:
+
+$$Q = C_d A_O \sqrt{2 g H_e}$$
+
+with $A_O$ the opening area and $H_e$ the effective head, free-discharge or
+differential as the tailwater dictates. A partially open setting recomputes
+$A_O$ from the §5 geometry of the opening; an optional open/close rate slews
+the setting.
+
+An **unsubmerged inlet** degrades smoothly to weir behaviour below a
+changeover head, with the weir coefficient *derived* — not user-supplied — by
+requiring the two regimes to agree at the changeover: for a bottom orifice
+the changeover is $h_c = (C_d/0.414)(A_O/P_O)$ with $P_O$ the opening
+perimeter, collapsing to a sharp-crested weir of crest length $P_O$; for a
+side orifice the changeover is the opening height with matching against the
+centre-line head, carrying the user's $C_d$ across rescaled by $\sqrt{g}$.
+Submergence applies the Villemonte factor
+$\big[1 - \big((H_2 - Z_O)/(H_1 - Z_O)\big)^{1.5}\big]^{0.385}$ on the heads
+above the crest. A flap gate charges the Armco loss
+$\Delta H = (4U^2/g)\,e^{-1.15\,U/\sqrt{H_e}}$, subtracted and re-solved.
+
+For vertex-continuity purposes an orifice stands in as an equivalent short
+pipe of length $\max(60.96\ \text{m},\ 2\Delta t\sqrt{g\,y_{full}})$,
+contributing surface area to its end vertices — a bookkeeping device adopted
+because §6.3's assembled area needs a finite contribution from every wet
+link — and supplies the analytic derivative $0.5\,Q/H_e$ submerged,
+$1.5\,Q/(H_1 - Z_O)$ as a weir.
+
+### 7.3 Weirs
+
+Weir types and their head–discharge relations, with $C_W$ the discharge
+coefficient (dimension $\mathrm{m}^{1/2}/\mathrm{s}$ for the transverse
+form; per relation otherwise), $L_e$ the effective crest length, $H_e$ the
+effective head, and $\theta$ the notch angle:
+
+$$Q = C_W L_e H_e^{3/2} \quad \text{(transverse)}, \qquad
+Q = C_W \tan(\theta/2)\,H_e^{5/2} \quad \text{(V-notch)},$$
+
+$$Q = C_W L_e^{0.83} H_e^{1.67} \quad \text{(side-flow, reverting to the
+transverse form under reverse flow)}.$$
+
+The trapezoidal weir is the sum of a rectangular centre and triangular ends
+with **two independent coefficients**, the second applying to the end
+sections alone. Effective crest length subtracts end contractions,
+$L_e = L - 0.1\,n_c H_e$ floored at zero — a heavily contracted weir under
+high head stops flowing rather than reversing. A partially raised crest turns
+a V-notch into a trapezoid. Submergence applies Villemonte with the type's
+own head exponent, except that a trapezoidal weir's end sections always take
+the V-notch exponent. Each type admits exactly one cross-section shape, per
+§2.7; any other is rejected at validation.
+
+Weirs are **surchargeable** by default (the roadway weir excepted): above the
+opening they switch to an equivalent-orifice form $Q = C_O\sqrt{H_e}$, the
+coefficient fixed by evaluating the weir equation at a head equal to the full
+opening height and dividing by $\sqrt{h/2}$, and the orifice form driven by
+the head measured to the opening's mid-height — the centre-line convention
+that makes the regimes agree at the changeover. A weir with surcharge
+disabled caps its head at the opening height and continues weir-equation
+flow. Weirs contribute an equivalent-pipe surface area exactly as orifices
+do, and supply the analytic exponent-scaled derivative per type.
+
+### 7.4 Outlets
+
+An outlet's flow is an arbitrary function of upstream depth or head
+difference — a power relation $Q = a H_e^{b}$ or a tabulated rating —
+scaled by the setting, with flap-gate reversal blocking. The coefficient $a$
+is dimensional whenever $b \neq 1$; its file interpretation is §14's.
+
+### 7.5 Flow Dividers
+
+Under the full dynamic treatment a divider is an ordinary junction: the
+momentum equations determine the split, as they do in the predecessor's own
+dynamic mode. The divider's prescribed split rules are semantics of the
+reduced routing forms and travel with them to the import contract (§14).
+
+### 7.6 Culverts and Roadway Weirs
+
+A channel designated a **culvert** by an FHWA HDS-5 code receives an
+inlet-control capacity check layered on the ordinary §6 solution:
+unsubmerged flow from the form-1 critical-energy equation or the form-2
+power law per the code's published form, submerged flow from the quadratic
+HDS-5 relation, a linear transition between, and the smaller of the
+inlet-control and dynamic solutions governs. The 57 published inlet
+configurations (form, $K$, $M$, $c$, $Y$) are adopted verbatim as FHWA data.
+Slope corrections take their published magnitudes: $-0.5\,S_O$ on the
+headwater ratio for ordinary inlets and $+0.7\,S_O$ for mitered ones, in
+HDS-5's sign convention.
+
+> **CORRESPONDENCE:** the predecessor codes the mitered slope correction at
+> ten times its published magnitude (its convention's $-0.7\,S_O$ entered as
+> $-7.0$), so a mitered culvert on any appreciable slope carries an
+> order-of-magnitude overcorrection. This engine uses the published value;
+> mitered-culvert models differ accordingly, in this engine's favour against
+> the standard the feature claims to implement.
+
+A **roadway weir** applies the FHWA head-dependent coefficient when road
+width and surface are given (otherwise the user's constant), from the
+digitised low-head and submergence tables, with submergence factors floored
+at their published minima. It pairs in parallel with a culvert to model
+embankment overtopping.
+
+### 7.7 Channel Losses and Force Mains
+
+**Minor losses** (entrance, exit, average — velocities evaluated at their
+respective locations) enter the §6.3 denominator as
+$\frac{\Delta t}{2L}\sum K_{m,i}\lvert U_i\rvert$.
+
+**Channel evaporation and seepage** are uniformly distributed lateral
+losses, $q_E = e_t\,W(\bar y)$ and $q_S = s\,f_c\,W^{*}(\bar y)$ — the
+seepage width capped at the depth of maximum width, seepage being vertical —
+bounded by the channel's volume per step. The momentum equation gains
+Strelkoff's lateral-outflow term, entering the §6.3 numerator as
+$+2.5\,\bar U q_L \Delta t/L$ with $L$ the channel's true length; the lost
+volume debits the appropriate vertex.
+
+**Storage units** evaporate at the potential rate times a realisation
+fraction (default 0 — an unconfigured unit does not evaporate) applied to
+the start-of-step surface area, and seep through bottom and sloped-side
+areas separately: a saturated conductivity alone gives a constant rate; the
+full suction/conductivity/deficit triple invokes the Green–Ampt relation of
+§3. The bottom sees the ponded depth, the banks the half-depth convention
+above the elevation where the storage geometry begins widening. **Seepage
+geometry is defined for every storage shape of §2.6**, the elliptical
+paraboloid included.
+
+> **CORRESPONDENCE:** the predecessor's exfiltration initialiser has no case
+> for the elliptical paraboloid — added to storage geometry after
+> exfiltration was written — and no default over an unzeroed allocation, so
+> a paraboloid unit with seepage reads uninitialised geometry. The evident
+> intent of covering every shape is implemented here.
+
+**Force mains** — circular, pressurised — substitute their friction relation
+for Manning's while full: Hazen–Williams, or Darcy–Weisbach with the
+Swamee–Jain friction factor (laminar $64/Re$ below 2000, a linear blend to
+turbulent between 2000 and 4000, the fully rough form at extreme $Re$).
+Partly full, an equivalent Manning coefficient applies, per the
+predecessor's published fits converted to SI. A force main's section factor
+carries the Hazen–Williams exponent ($A R^{0.63}$), which alters its
+normal-flow limit accordingly. The predecessor's force-main lengthening
+compensation lapses with the transform it compensated for (§6.5).
+
+### 7.8 Streets and Inlets
+
+Dual drainage pairs street cross-sections (compiled to §5.6 transects, so
+street channels route as ordinary channels) with HEC-22 inlet capture. The
+HEC-22 relations — gutter spread, frontal-flow ratio with its fixed-point
+solve for depressed gutters, grate frontal and side efficiencies, curb
+full-capture length, and the on-sag weir/orifice forms with their published
+transition depths — are adopted as the published standard defines them, with
+their fitted coefficients intact and $g$ exact per §2.11. Inlet families
+(seven standard grates plus generic, three curb-throat geometries, slotted
+drains, drop inlets, custom-curve inlets, and the implicit combination),
+placement shape-checks, replicate/clogging/cap/local-depression modifiers,
+`AUTOMATIC` on-grade/on-sag resolution, and the capture-transfer semantics —
+captured flow moving from bypass vertex to sewer vertex each routing step
+carrying the bypass concentration, surcharge returning as backflow
+apportioned by open-area ratio — are model semantics and are adopted
+exactly. On-grade capture is computed from the gutter-spread relation at the
+channel's longitudinal slope, as HEC-22 defines it; the method is inherently
+insensitive to backwater, which is a property of the standard, stated rather
+than obscured.
