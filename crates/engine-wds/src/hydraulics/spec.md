@@ -407,6 +407,16 @@ The condition is $\max_k \epsilon_{H,k} \leq$ `head_error_limit`. If `head_error
 
 4. **No link status change** during the most recent iteration (after a full status check; see §3.9).
 
+5. **Nodal mass-balance residual**: with $S_Q$ as in criterion 1 and $\Delta_i^{(m+1)}$ the flow-balance residual at junction $i$ evaluated at the updated flows (the same quantity assembled into the RHS in §3.6),
+
+$$\varepsilon_R = \begin{cases} \sum_i \lvert \Delta_i^{(m+1)} \rvert \,/\, S_Q & S_Q > \text{\texttt{flow\_tol}} \\ \sum_i \lvert \Delta_i^{(m+1)} \rvert & \text{otherwise (absolute criterion)} \end{cases}$$
+
+Convergence requires $\varepsilon_R \leq$ `flow_tol` — the same tolerance as criterion 1, so no new option is introduced.
+
+Criteria 1 and 5 certify different things, and both are required. Criterion 1 is a Cauchy criterion: it certifies that the iterates have stopped moving, which a stalled iteration also satisfies. Criterion 5 certifies that the solution the iterates stopped at actually conserves mass at every junction — the physical statement of "solved". The secondary leakage and PDA checks below play the same residual role for their constitutive relations; criterion 5 plays it for continuity itself.
+
+> **DEVIATION from EPANET:** EPANET accepts convergence on the flow-change criterion alone; nodal continuity is never evaluated directly, so a stalled iteration — or one damped into immobility — can be reported as converged while junctions carry unbalanced flow. Hydra additionally requires the mass-balance residual to pass at the same tolerance. On healthy solves the criterion is satisfied when criterion 1 is and changes nothing; where the two differ, EPANET was reporting an unconverged solution as converged. This is an intentional strengthening, not an oversight.
+
 **Leakage secondary convergence check**: after the main convergence criteria above are satisfied, the leakage solution is validated by directly evaluating the leakage at the converged heads. For each junction $i$ with active leakage:
 
 $$q_{\text{ref},i} = \sqrt{\max(0,h_i) / c_{\text{fa},i}} + \max(0,h_i / c_{\text{va},i})^{3/2}$$
@@ -453,11 +463,27 @@ If convergence is not reached within `max_iter` iterations and `extra_iter > 0`,
 
 **Damping**: when `damp_limit > 0` and $\varepsilon_Q \leq \text{damp\_limit}$, the relaxation factor for flow updates is set to 0.6 and valve status checks are simultaneously activated. The factor is set **after** the current iteration's flow update, so it damps the **next** iteration's flow updates; the valve status checks activate in the current iteration.
 
-**Post-convergence control re-evaluation (`pswitch`)**: when the solver reaches convergence (all four criteria above satisfied), a full status check is performed that includes not only `valvestatus` and `linkstatus` (§3.9) but also a re-evaluation of **simple controls** (`../simulation/spec.md` §4.1) whose trigger is a **junction** head (not a tank level or timer, since those do not change during the Newton iteration). The trigger comparison uses `head_tol` as a dead-band: a low-level control fires when $H \leq \text{grade} + \varepsilon_H$ and a high-level control fires when $H \geq \text{grade} - \varepsilon_H$. If any simple control fires and changes a link's status or setting at this point, the Newton loop resumes from the current iteration count (the counter is **not** reset). Convergence is only accepted when a full status check — including simple controls — produces no changes. During extra iterations (`iter > max_iter`), convergence is accepted immediately without the `pswitch` check.
+**Post-convergence control re-evaluation (`pswitch`)**: when the solver reaches convergence (all five criteria above satisfied), a full status check is performed that includes not only `valvestatus` and `linkstatus` (§3.9) but also a re-evaluation of **simple controls** (`../simulation/spec.md` §4.1) whose trigger is a **junction** head (not a tank level or timer, since those do not change during the Newton iteration). The trigger comparison uses `head_tol` as a dead-band: a low-level control fires when $H \leq \text{grade} + \varepsilon_H$ and a high-level control fires when $H \geq \text{grade} - \varepsilon_H$. If any simple control fires and changes a link's status or setting at this point, the Newton loop resumes from the current iteration count (the counter is **not** reset). Convergence is only accepted when a full status check — including simple controls — produces no changes. During extra iterations (`iter > max_iter`), convergence is accepted immediately without the `pswitch` check.
 
 ### 3.9 Link Status Logic
 
 Status checks are triggered periodically (every `check_freq` iterations, up to `max_check`) and always after convergence is first reached. After a convergence pass that produces any status change, the periodic-check counter is reset so that the next periodic check falls `check_freq` iterations after the current one.
+
+> **Note — a deliberate method choice, revisitable.** This section, together
+> with the damping, `pswitch`, and extra-iteration machinery of §3.8, is a
+> heuristic device: discrete status switching layered onto a smooth Newton
+> iteration, with periodic checks and temporary closures arbitrating between
+> them. It is not a physical requirement. The alternative formulation — check
+> valves, PRVs, PSVs, and tank-boundary closures expressed as complementarity
+> constraints and solved in a single semismooth iteration, with no status loop
+> and no accept-on-exhaustion — is established in the literature and would
+> retire this section wholesale. Hydra **retains the heuristic apparatus as an
+> explicit decision**: it is battle-tested across decades of pathological
+> networks, its failure modes are known and reported (the unbalanced marking of
+> §3.8), and replacing it is solver-rewrite-scale work with correctness risk
+> concentrated in exactly the networks that are hardest to validate. The choice
+> is recorded here so it is revisited as a decision, not rediscovered as an
+> inheritance.
 
 #### Check Valve (CV pipe)
 
