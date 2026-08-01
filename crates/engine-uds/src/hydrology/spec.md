@@ -204,8 +204,14 @@ layer's own conductivity slope; exfiltration is the native soil's saturated
 conductivity, capped by aquifer storability where §4.1 is modelled;
 evapotranspiration cascades top-down with the predecessor's suppression
 rules; the underdrain is the power relation $q_3 = C_{3D} h_3^{\eta_{3D}}$
-with its head regimes, hysteretic open/close thresholds, and optional
-multiplier curve — its coefficients unit-dependent per §14.6.
+with its head regimes — the head is the storage layer's water depth, and
+only once storage is full does it stack upward: first the saturated-excess
+fraction of the soil layer, $(\theta_2 - \theta_{FC})/(\phi_2 -
+\theta_{FC})$ of its thickness, then, only when the soil is fully
+saturated, the ponded surface depth — plus hysteretic open/close
+thresholds on that same stacked head and an optional multiplier curve.
+Its coefficients are unit-dependent per §14.6, the multiplier curve read
+against the offset-relative head in the file's rain-depth unit.
 
 **The limiter cascade is normative.** Each flux is clipped to what its
 source supplies before the layer beneath is asked what it accepts —
@@ -238,8 +244,13 @@ joins infiltration, and drain flow routes separately — to the parcel's
 outlet by default, to another parcel one hydrology step delayed, to a vertex
 interpolated per routing step. Initial saturation pre-fills soil and storage
 and shrinks the Green–Ampt deficit accordingly. Gravel and pavement layers
-may clog on cumulative treated volume, and pavement permeability may
-regenerate on a fixed-day cycle by a stated degree. Outflow concentrations
+may clog on cumulative treated volume: the file's clogging factor scales
+the layer's own void depth — thickness × void fraction, further × the
+pervious paver fraction for pavement — into a treatable depth, and
+conductivity falls linearly to zero as cumulative unit inflow approaches
+it. Pavement permeability may regenerate on a fixed-day cycle by a stated
+degree, the regeneration discounting the pavement's treated-volume account;
+the storage layer's account never regenerates. Outflow concentrations
 are volume-based per the predecessor: load reduction is runoff reduction,
 with optional per-constituent percent removals on drain loads only.
 

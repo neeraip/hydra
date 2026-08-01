@@ -184,6 +184,9 @@ struct ParcelState {
     /// Run-on rate (m/s over the whole parcel), one step delayed.
     runon: f64,
     runon_next_vol: f64,
+    /// This step's arriving run-on volume (m³), for the §3.4
+    /// full-footprint gate.
+    runon_vol: f64,
     /// Current outlet runoff (m³/s).
     pub runoff: f64,
     /// Infiltration rate this step (m/s over the whole parcel).
@@ -198,6 +201,8 @@ struct ParcelState {
 pub struct Surface {
     gages: Vec<GageRain>,
     parcels: Vec<ParcelState>,
+    /// The run's absolute start instant (s), anchoring elapsed clocks.
+    start_epoch: f64,
     /// Whether any §3.5 integration ran degraded this step.
     pub degraded: bool,
     /// Cumulative infiltration + evaporation losses (m³).
@@ -338,6 +343,7 @@ impl Surface {
                 lid_vertex_drain: Vec::new(),
                 runon: 0.0,
                 runon_next_vol: 0.0,
+                runon_vol: 0.0,
                 runoff: 0.0,
                 infil_rate: 0.0,
                 evap_rate: 0.0,
@@ -352,6 +358,8 @@ impl Surface {
                 u,
                 net.parcels[u.parcel].infiltration.as_ref(),
                 net.options.infiltration,
+                &net.curves,
+                net.options.flow_units.is_us(),
             )
             .map_err(|e| match e {
                 super::lid::LidRefusal::Unsupported(m) => SurfaceRefusal::Unsupported(m),
@@ -386,6 +394,7 @@ impl Surface {
         Ok(Some(Surface {
             gages,
             parcels,
+            start_epoch,
             degraded: false,
             losses: 0.0,
             rainfall: 0.0,
@@ -429,10 +438,15 @@ impl Surface {
         snow_cl: Option<&SnowClimate>,
     ) {
         self.degraded = false;
-        // Run-on volumes booked last step arrive as this step's rates.
+        let elapsed_days = (epoch - self.start_epoch) / 86_400.0;
+        // Run-on volumes booked last step arrive as this step's rates,
+        // spread over the non-measure area; the volume is kept for the
+        // §3.4 full-footprint gate.
         for p in &mut self.parcels {
-            p.runon = if p.sub.iter().map(|s| s.area).sum::<f64>() > 0.0 {
-                p.runon_next_vol / dt / p.sub.iter().map(|s| s.area).sum::<f64>()
+            let ordinary: f64 = p.sub.iter().map(|s| s.area).sum();
+            p.runon_vol = p.runon_next_vol;
+            p.runon = if ordinary > 0.0 {
+                p.runon_vol / dt / ordinary
             } else {
                 0.0
             };
@@ -538,6 +552,17 @@ impl Surface {
                 p.lid_vertex_drain.clear();
                 let imp_runoff = runoff[0] + runoff[1];
                 let perv_runoff = runoff[2];
+                // Upstream run-on reaches units only when the footprint
+                // equals the whole parcel — the ordinary sub-areas have
+                // shrunk to nothing, so the volume has nowhere else to
+                // land (§3.4).
+                let ordinary: f64 = p.sub.iter().map(|s| s.area).sum();
+                let lid_area: f64 = p.lids.iter().map(|u| u.area).sum();
+                let runon_rate = if ordinary <= 0.0 && lid_area > 0.0 {
+                    p.runon_vol / dt / lid_area
+                } else {
+                    0.0
+                };
                 let mut captured_imp = 0.0;
                 let mut captured_perv = 0.0;
                 let mut lid_return = 0.0;
@@ -549,8 +574,18 @@ impl Surface {
                     let take_perv = perv_runoff * u.from_perv;
                     captured_imp += take_imp;
                     captured_perv += take_perv;
-                    let unit_in = imp_precip + (take_imp + take_perv) / dt / u.area;
-                    u.step(unit_in, imp_precip, e, f_rate, fac, dt);
+                    let unit_in = imp_precip + runon_rate + (take_imp + take_perv) / dt / u.area;
+                    u.step(
+                        &super::lid::LidForcing {
+                            inflow: unit_in,
+                            rain: imp_precip,
+                            evap: e,
+                            native_infil: f_rate,
+                            fac,
+                            elapsed_days,
+                        },
+                        dt,
+                    );
                     self.losses += u.exfiltration * u.area * dt;
                     lid_return += u.overflow * u.area * dt;
                     let drain_vol = u.drain_flow * u.area;

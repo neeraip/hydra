@@ -815,6 +815,81 @@ RAIN  2:00  0
 }
 
 #[test]
+fn runon_reaches_a_full_footprint_swale_parcel() {
+    // S1 (1 ha, impervious) drains onto S2, whose 1000 m² footprint is
+    // entirely one vegetative swale — the §3.4 gate must hand S1's
+    // run-on to the unit instead of dropping it with the vanished
+    // ordinary sub-areas.
+    let inp = "\
+[OPTIONS]
+FLOW_UNITS    CMS
+INFILTRATION  GREEN_AMPT
+START_DATE    06/01/2024
+START_TIME    00:00
+END_DATE      06/01/2024
+END_TIME      08:00
+ROUTING_STEP  10
+WET_STEP      0:05:00
+REPORT_STEP   0:15:00
+
+[RAINGAGES]
+G1  INTENSITY  1:00  1.0  TIMESERIES  RAIN
+
+[SUBCATCHMENTS]
+S1  G1  S2  1    100  100  0.5  0
+S2  G1  J1  0.1  100  10   0.5  0
+
+[SUBAREAS]
+S1  0.012  0.1  0.05  0.05  25  OUTLET
+S2  0.012  0.1  0.05  0.05  25  OUTLET
+
+[INFILTRATION]
+S1  100  10  0.3
+S2  100  10  0.3
+
+[LID_CONTROLS]
+SW1  VS
+SW1  SURFACE  500  0  0.24  0.1  3
+
+[LID_USAGE]
+S2  SW1  1  1000  10  0  0  0
+
+[JUNCTIONS]
+J1  100.4  3
+
+[OUTFALLS]
+O1  100.0  FREE
+
+[CONDUITS]
+C1  J1  O1  200  0.013  0  0
+
+[XSECTIONS]
+C1  RECT_OPEN  2  2  0  0
+
+[TIMESERIES]
+RAIN  0:00  25
+RAIN  1:00  25
+RAIN  2:00  0
+";
+    let (mut sim, _, _) = Simulation::open(inp).expect("open");
+    sim.run();
+    let led = sim.report();
+    // 500 m³ falls on S1 and 50 m³ directly on the swale. If the gate
+    // dropped run-on, at most the direct 50 m³ could ever arrive.
+    let rain_vol = 0.025 * 2.0 * 11_000.0;
+    assert!(
+        led.inflow > 0.5 * rain_vol,
+        "run-on never traversed the swale: {} of {rain_vol}",
+        led.inflow
+    );
+    assert!(
+        led.inflow < 0.99 * rain_vol,
+        "the swale infiltrated nothing: {} of {rain_vol}",
+        led.inflow
+    );
+}
+
+#[test]
 fn a_rain_barrel_holds_the_storm_then_drains_after_the_delay() {
     let base = runoff_model(100.0, 10.0, "HORTON");
     // Barrels big enough for the whole storm: 1 m deep, covering 400 m²

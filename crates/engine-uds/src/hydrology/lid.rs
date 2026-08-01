@@ -43,6 +43,19 @@ pub struct LidUnit {
     drain: Option<DrainParams>,
     mat_thick: f64,
     mat_void: f64,
+    /// Pavement clogging capacity as a treatable inflow depth (m):
+    /// clogging factor × thickness × void fraction × pervious paver
+    /// fraction. 0 = never clogs.
+    pave_clog: f64,
+    /// Pavement permeability regeneration cycle (days) and degree.
+    regen_days: f64,
+    regen_degree: f64,
+    /// Storage clogging capacity as a treatable inflow depth (m).
+    stor_clog: f64,
+    /// Drain multiplier curve, raw file points; empty = none.
+    drain_curve: Vec<(f64, f64)>,
+    /// The file's rain-depth unit (m), the curve's head abscissa (§14.6).
+    head_unit: f64,
     /// Trapezoidal geometry, swales only.
     swale: Option<SwaleGeom>,
     /// The swale's own Green–Ampt clone of the parent parcel's
@@ -57,6 +70,14 @@ pub struct LidUnit {
     d3: f64,
     drain_open: bool,
     drain_delay_left: f64,
+    /// Cumulative unit inflow depth (m) against the pavement clogging
+    /// account — discounted by each regeneration.
+    vol_treated: f64,
+    /// Cumulative unit inflow depth (m) against the storage clogging
+    /// account — never discounted.
+    total_inflow: f64,
+    /// The next regeneration boundary (elapsed days).
+    next_regen: f64,
     /// Cumulative Green–Ampt-style intake head state: event volume (m).
     f_intake: f64,
     /// Rates from the last step (m/s over the unit area).
@@ -98,15 +119,37 @@ pub enum LidRefusal {
     Invalid(String),
 }
 
+/// Per-step forcing shared by every unit on a parcel (§3.4).
+pub struct LidForcing {
+    /// Direct rain plus captured runoff (m/s over the unit area).
+    pub inflow: f64,
+    /// The parcel's rainfall rate alone (m/s) — the rain barrel's
+    /// dryness clock.
+    pub rain: f64,
+    /// Potential evapotranspiration (m/s).
+    pub evap: f64,
+    /// The parcel's native infiltration rate (m/s) — the swale's
+    /// fallback bed rate.
+    pub native_infil: f64,
+    /// Monthly infiltration scaling handles.
+    pub fac: InfilFactors,
+    /// Elapsed simulation time (days), for regeneration cycles.
+    pub elapsed_days: f64,
+}
+
 impl LidUnit {
     /// Build a deployed unit from its design and usage records. A
     /// vegetative swale also clones the hosting parcel's infiltration
-    /// where that model is (modified) Green–Ampt (§3.4).
+    /// where that model is (modified) Green–Ampt (§3.4); `curves` and
+    /// `us_units` resolve the drain multiplier curve and its file-unit
+    /// head abscissa (§14.6).
     pub fn build(
         ctl: &LidControl,
         usage: &LidUsage,
         parcel_infil: Option<&Infiltration>,
         model: InfiltrationModel,
+        curves: &[crate::model::Curve],
+        us_units: bool,
     ) -> Result<LidUnit, LidRefusal> {
         let kind = ctl.kind.ok_or(LidRefusal::Unsupported(
             "a control measure without a declared type",
@@ -205,6 +248,30 @@ impl LidUnit {
                 .drain_mat
                 .as_ref()
                 .map_or(0.0, |x| x.void_frac.max(1e-6)),
+            // Clogging factors scale each layer's void depth into a
+            // treatable inflow depth (§3.4).
+            pave_clog: ctl.pavement.as_ref().map_or(0.0, |x| {
+                if x.thickness > 0.0 {
+                    x.clog_factor * x.thickness * x.void_frac * (1.0 - x.imperv_frac)
+                } else {
+                    0.0
+                }
+            }),
+            regen_days: ctl.pavement.as_ref().map_or(0.0, |x| x.regen_days),
+            regen_degree: ctl.pavement.as_ref().map_or(0.0, |x| x.regen_degree),
+            stor_clog: stor.map_or(0.0, |x| {
+                if x.thickness > 0.0 {
+                    x.clog_factor * x.thickness * x.void_frac
+                } else {
+                    0.0
+                }
+            }),
+            drain_curve: ctl
+                .drain
+                .as_ref()
+                .and_then(|d| d.curve)
+                .map_or(Vec::new(), |ci| curves[ci].points.clone()),
+            head_unit: if us_units { 0.0254 } else { 0.001 },
             swale,
             swale_infil,
             swale_f_old: 0.0,
@@ -213,6 +280,9 @@ impl LidUnit {
             d3,
             drain_open: false,
             drain_delay_left: 0.0,
+            vol_treated: 0.0,
+            total_inflow: 0.0,
+            next_regen: ctl.pavement.as_ref().map_or(0.0, |x| x.regen_days),
             f_intake: 0.0,
             overflow: 0.0,
             drain_flow: 0.0,
@@ -225,28 +295,21 @@ impl LidUnit {
         self.d1 * self.surf_void + self.theta2 * self.soil_thick + self.d3 * self.stor_void
     }
 
-    /// Advance one hydrology step. `inflow` is direct rain plus captured
-    /// runoff (m/s over the unit area); `rain` the parcel's rainfall rate
-    /// alone, which drives the rain barrel's dryness clock; `evap` the
-    /// potential rate; `native_infil` the parcel's current infiltration
-    /// rate and `fac` its monthly scaling handles, which only the swale
-    /// consumes. Outflow rates land in `overflow`, `drain_flow`,
-    /// `exfiltration`.
-    pub fn step(
-        &mut self,
-        inflow: f64,
-        rain: f64,
-        evap: f64,
-        native_infil: f64,
-        fac: InfilFactors,
-        dt: f64,
-    ) {
+    /// Advance one hydrology step under the shared parcel forcing.
+    /// Outflow rates land in `overflow`, `drain_flow`, `exfiltration`.
+    pub fn step(&mut self, f: &LidForcing, dt: f64) {
         match self.kind {
-            LidKind::RooftopDisconnection => self.step_rooftop(inflow, dt),
-            LidKind::RainBarrel => self.step_rain_barrel(inflow, rain, dt),
-            LidKind::VegetativeSwale => self.step_swale(inflow, evap, native_infil, fac, dt),
-            _ => self.step_layered(inflow, evap, dt),
+            LidKind::RooftopDisconnection => self.step_rooftop(f.inflow, dt),
+            LidKind::RainBarrel => self.step_rain_barrel(f.inflow, f.rain, dt),
+            LidKind::VegetativeSwale => {
+                self.step_swale(f.inflow, f.evap, f.native_infil, f.fac, dt)
+            }
+            _ => self.step_layered(f, dt),
         }
+        // Both clogging accounts run on cumulative unit inflow, booked
+        // after the step so this step's rates saw the old totals (§3.4).
+        self.vol_treated += f.inflow * dt;
+        self.total_inflow += f.inflow * dt;
     }
 
     /// Rooftop disconnection: a lone surface whose gutter-capacity drain
@@ -284,7 +347,11 @@ impl LidUnit {
                 }
             }
             if self.drain_open && self.d3 > d.offset {
-                q3 = d.coeff * (self.d3 - d.offset).powf(d.exponent);
+                let h_rel = self.d3 - d.offset;
+                q3 = d.coeff * h_rel.powf(d.exponent);
+                if !self.drain_curve.is_empty() {
+                    q3 *= curve_multiplier(&self.drain_curve, h_rel / self.head_unit);
+                }
                 q3 = q3.min(self.d3 * self.stor_void / dt);
             }
         }
@@ -373,7 +440,8 @@ impl LidUnit {
     }
 
     /// The layered template under the limiter cascade (§3.4).
-    fn step_layered(&mut self, inflow: f64, evap: f64, dt: f64) {
+    fn step_layered(&mut self, forcing: &LidForcing, dt: f64) {
+        let (inflow, evap) = (forcing.inflow, forcing.evap);
         let has_soil = self.soil_thick > 0.0;
         let has_stor = self.stor_thick > 0.0 || self.mat_thick > 0.0;
         let stor_thick = if self.mat_thick > 0.0 {
@@ -392,7 +460,19 @@ impl LidUnit {
         // pavement's clog-reduced permeability, or the storage limit.
         let avail = inflow + self.d1 * self.surf_void / dt;
         let mut f1 = if self.pave_thick > 0.0 {
-            self.pave_ksat
+            // Clog-reduced permeability: conductivity falls linearly to
+            // zero as the treated-volume account approaches the clogging
+            // capacity; a regeneration boundary discounts the account
+            // first (§3.4).
+            let mut k = self.pave_ksat;
+            if self.pave_clog > 0.0 {
+                if self.regen_days > 0.0 && forcing.elapsed_days >= self.next_regen {
+                    self.vol_treated *= 1.0 - self.regen_degree;
+                    self.next_regen += self.regen_days;
+                }
+                k *= 1.0 - (self.vol_treated / self.pave_clog).min(1.0);
+            }
+            k
         } else if has_soil {
             let deficit = (self.soil_por - self.theta2).max(0.0);
             if deficit <= 0.0 {
@@ -438,8 +518,14 @@ impl LidUnit {
         // A green-roof mat with no roughness passes percolation through.
         let mat_pass = self.mat_thick > 0.0 && self.surf_alpha == 0.0;
 
-        // Exfiltration: the storage bed's saturated conductivity, clipped
+        // Exfiltration: the storage bed's saturated conductivity —
+        // clog-reduced on the never-regenerating inflow account — clipped
         // by delivery plus store; sealed units exfiltrate nothing.
+        let stor_ksat_eff = if self.stor_clog > 0.0 {
+            self.stor_ksat * (1.0 - (self.total_inflow / self.stor_clog).min(1.0))
+        } else {
+            self.stor_ksat
+        };
         let mut f3 = if self.sealed || !has_stor {
             if has_stor {
                 0.0
@@ -450,14 +536,26 @@ impl LidUnit {
                 f2
             }
         } else {
-            self.stor_ksat.min(f2 + self.d3 * stor_void / dt)
+            stor_ksat_eff.min(f2 + self.d3 * stor_void / dt)
         };
 
-        // Underdrain, clipped by standing volume, with hysteresis.
+        // Underdrain, clipped by standing volume, with hysteresis. The
+        // head is the storage depth; only once storage is full does it
+        // stack upward through the saturated-excess soil fraction and,
+        // with the soil fully saturated, the ponded surface (§3.4). The
+        // pavement layer holds no water in this template, so a pavement
+        // above saturated soil caps the stack instead of extending it.
         let mut q3 = 0.0;
         if has_stor {
             if let Some(d) = &self.drain {
-                let head = self.d3;
+                let mut head = self.d3;
+                if self.d3 >= stor_thick && has_soil && self.theta2 > self.soil_fc {
+                    head += (self.theta2 - self.soil_fc) / (self.soil_por - self.soil_fc)
+                        * self.soil_thick;
+                    if self.theta2 >= self.soil_por && self.pave_thick <= 0.0 {
+                        head += self.d1;
+                    }
+                }
                 if self.drain_open {
                     if d.h_close > 0.0 && head <= d.h_close {
                         self.drain_open = false;
@@ -466,7 +564,13 @@ impl LidUnit {
                     self.drain_open = true;
                 }
                 if self.drain_open && head > d.offset {
-                    q3 = d.coeff * (head - d.offset).powf(d.exponent);
+                    let h_rel = head - d.offset;
+                    q3 = d.coeff * h_rel.powf(d.exponent);
+                    // The multiplier curve reads the offset-relative head
+                    // in the file's rain-depth unit (§14.6).
+                    if !self.drain_curve.is_empty() {
+                        q3 *= curve_multiplier(&self.drain_curve, h_rel / self.head_unit);
+                    }
                     q3 = q3.min((self.d3 * stor_void / dt + f2 - f3).max(0.0));
                 }
             } else if mat_pass {
@@ -516,10 +620,39 @@ impl LidUnit {
     }
 }
 
+/// Linear interpolation on the multiplier curve, ends held (§14.6).
+fn curve_multiplier(points: &[(f64, f64)], x: f64) -> f64 {
+    let Some(&(x0, y0)) = points.first() else {
+        return 0.0;
+    };
+    if x <= x0 {
+        return y0;
+    }
+    let (mut x1, mut y1) = (x0, y0);
+    for &(x2, y2) in &points[1..] {
+        if x <= x2 {
+            return y1 + (y2 - y1) * (x - x1) / (x2 - x1);
+        }
+        (x1, y1) = (x2, y2);
+    }
+    y1
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{LidSurface, ParcelOutlet};
+    use crate::model::{LidDrain, LidPavement, LidSoil, LidStorage, LidSurface, ParcelOutlet};
+
+    fn forcing(inflow: f64) -> LidForcing {
+        LidForcing {
+            inflow,
+            rain: inflow,
+            evap: 0.0,
+            native_infil: 0.0,
+            fac: InfilFactors::default(),
+            elapsed_days: 0.0,
+        }
+    }
 
     fn swale_control() -> LidControl {
         LidControl {
@@ -564,13 +697,15 @@ mod tests {
             &swale_usage(),
             None,
             InfiltrationModel::Horton,
+            &[],
+            false,
         )
         .expect("build");
         // Constant inflow, no evaporation or infiltration: depth must
         // settle where trapezoidal Manning outflow balances inflow.
         let q_in = 2.0e-5;
         for _ in 0..600 {
-            u.step(q_in, q_in, 0.0, 0.0, InfilFactors::default(), 60.0);
+            u.step(&forcing(q_in), 60.0);
         }
         assert!(
             (u.overflow - q_in).abs() < 0.02 * q_in,
@@ -597,19 +732,169 @@ mod tests {
             &swale_usage(),
             None,
             InfiltrationModel::Horton,
+            &[],
+            false,
         )
         .expect("build");
         // An extreme inflow overtops the berm; once full, outflow must
         // carry the entire inflow (nothing else can leave).
         let q_in = 5.0e-3;
         for _ in 0..200 {
-            u.step(q_in, q_in, 0.0, 0.0, InfilFactors::default(), 60.0);
+            u.step(&forcing(q_in), 60.0);
         }
         assert!((u.swale_depth() - 0.5).abs() < 1e-6, "not full");
         assert!(
             (u.overflow - q_in).abs() < 1e-9,
             "spill {} vs inflow {q_in}",
             u.overflow
+        );
+    }
+
+    #[test]
+    fn the_multiplier_curve_interpolates_and_holds_its_ends() {
+        let pts = [(0.0, 0.0), (10.0, 1.0), (20.0, 0.5)];
+        assert!((curve_multiplier(&pts, -1.0) - 0.0).abs() < 1e-12);
+        assert!((curve_multiplier(&pts, 5.0) - 0.5).abs() < 1e-12);
+        assert!((curve_multiplier(&pts, 15.0) - 0.75).abs() < 1e-12);
+        assert!((curve_multiplier(&pts, 99.0) - 0.5).abs() < 1e-12);
+    }
+
+    fn pavement_control(clog_factor: f64, regen_days: f64) -> LidControl {
+        LidControl {
+            id: "PP".into(),
+            kind: Some(LidKind::PermeablePavement),
+            surface: Some(LidSurface {
+                thickness: 0.05,
+                void_frac: 1.0,
+                roughness: 0.0,
+                slope: 0.0,
+                side_slope: 0.0,
+            }),
+            soil: None,
+            pavement: Some(LidPavement {
+                thickness: 0.1,
+                void_frac: 0.2,
+                imperv_frac: 0.0,
+                k_sat: 1.0e-4,
+                clog_factor,
+                regen_days,
+                regen_degree: 1.0,
+            }),
+            storage: Some(LidStorage {
+                thickness: 0.3,
+                void_frac: 0.5,
+                k_sat: 1.0e-4,
+                clog_factor: 0.0,
+                covered: false,
+            }),
+            drain: None,
+            drain_mat: None,
+            removals: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn pavement_clogs_on_treated_volume_then_regenerates() {
+        let usage = LidUsage {
+            width: 0.0,
+            ..swale_usage()
+        };
+        let mut u = LidUnit::build(
+            &pavement_control(2.0, 1.0),
+            &usage,
+            None,
+            InfiltrationModel::Horton,
+            &[],
+            false,
+        )
+        .expect("build");
+        // Treatable depth = 2.0 x 0.1 thickness x 0.2 voids = 0.04 m of
+        // cumulative inflow. Feed 6 mm per step: intake dies within a
+        // dozen steps as the account fills.
+        let mut fc = forcing(1.0e-5);
+        for _ in 0..25 {
+            u.step(&fc, 600.0);
+        }
+        assert!(
+            u.overflow > 0.9 * 1.0e-5,
+            "clogged pavement still accepts water: overflow {}",
+            u.overflow
+        );
+        // A regeneration boundary (degree 1) clears the account: the
+        // surface drains into the pavement again.
+        fc.elapsed_days = 1.5;
+        u.step(&fc, 600.0);
+        assert!(
+            u.overflow < 0.5 * 1.0e-5,
+            "regeneration restored nothing: overflow {}",
+            u.overflow
+        );
+    }
+
+    #[test]
+    fn the_drain_head_stacks_only_once_storage_is_full() {
+        let ctl = LidControl {
+            id: "BC".into(),
+            kind: Some(LidKind::BioRetention),
+            surface: Some(LidSurface {
+                thickness: 0.5,
+                void_frac: 1.0,
+                roughness: 0.0,
+                slope: 0.0,
+                side_slope: 0.0,
+            }),
+            soil: Some(LidSoil {
+                thickness: 0.4,
+                porosity: 0.5,
+                field_capacity: 0.2,
+                wilting_point: 0.1,
+                k_sat: 1.0e-5,
+                k_slope: 10.0,
+                suction: 0.05,
+            }),
+            pavement: None,
+            storage: Some(LidStorage {
+                thickness: 0.3,
+                void_frac: 0.5,
+                k_sat: 0.0,
+                clog_factor: 0.0,
+                covered: false,
+            }),
+            drain: Some(LidDrain {
+                coeff: 1.0e-6,
+                exponent: 1.0,
+                offset: 0.0,
+                delay: 0.0,
+                h_open: 0.0,
+                h_close: 0.0,
+                curve: None,
+            }),
+            drain_mat: None,
+            removals: Vec::new(),
+        };
+        let usage = LidUsage {
+            width: 0.0,
+            ..swale_usage()
+        };
+        let build = |sat: f64| {
+            let mut u = LidUnit::build(&ctl, &usage, None, InfiltrationModel::Horton, &[], false)
+                .expect("build");
+            u.d3 = 0.3;
+            u.theta2 = 0.2 + sat * 0.3;
+            u.d1 = 0.2;
+            u.step(&forcing(0.0), 1.0);
+            u.drain_flow
+        };
+        // Full storage, soil at field capacity: head is the storage
+        // depth alone.
+        let q_base = build(0.0);
+        assert!((q_base - 1.0e-6 * 0.3).abs() < 1e-10, "base {q_base}");
+        // Fully saturated soil: the head stacks the soil thickness and
+        // the ponded surface on top.
+        let q_stack = build(1.0);
+        assert!(
+            (q_stack - 1.0e-6 * (0.3 + 0.4 + 0.2)).abs() < 1e-10,
+            "stacked {q_stack}"
         );
     }
 }

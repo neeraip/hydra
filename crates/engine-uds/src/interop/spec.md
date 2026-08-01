@@ -127,7 +127,7 @@ acknowledges — and each entry names its conversion treatment:
 
 | Relation | Treatment at import |
 |---|---|
-| Control-measure underdrain equation (§3) | coefficient converted to SI-dimensional form |
+| Control-measure underdrain equation (§3) | coefficient converted to SI-dimensional form; the optional multiplier curve stays raw and is looked up with the offset-relative head expressed in the file's rain-depth unit — the same boundary-moves-to-the-edges rule as user-written expressions |
 | Groundwater lateral-flow power function (§3) | coefficients converted per their exponents |
 | Weir discharge coefficients, including coefficient curves (§7.3) | converted to the SI dimension of their relation; the embankment weir's published-chart coefficient likewise — the predecessor's $1/0.552$ SI rescale *is* this conversion |
 | Outlet power-function coefficient and rating curves (§7.4) | converted per the exponent; ratings pointwise |
