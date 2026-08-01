@@ -515,3 +515,114 @@ fn rain_recharges_the_aquifer_through_infiltration() {
         sim.report().inflow
     );
 }
+
+// ── §4.2 snow ───────────────────────────────────────────────────────────
+
+fn snow_model(temps: &str) -> String {
+    format!(
+        "\
+[OPTIONS]
+FLOW_UNITS    CMS
+INFILTRATION  HORTON
+START_DATE    01/15/2024
+START_TIME    00:00
+END_DATE      01/17/2024
+END_TIME      00:00
+ROUTING_STEP  30
+WET_STEP      0:05:00
+DRY_STEP      0:15:00
+
+[RAINGAGES]
+G1  INTENSITY  1:00  1.0  TIMESERIES  PRECIP
+
+[SUBCATCHMENTS]
+S1  G1  J1  2  100  100  0.5  0  SP1
+
+[SUBAREAS]
+S1  0.012  0.1  0.05  0.05  25  OUTLET
+
+[INFILTRATION]
+S1  20  5  4  7  0
+
+[SNOWPACKS]
+SP1  PLOWABLE  2  4  0  0.10  0  0  0.0
+SP1  IMPERV    2  4  0  0.10  0  0  1.0
+SP1  PERV      2  4  0  0.10  0  0  1.0
+
+[TEMPERATURE]
+TIMESERIES  TEMP
+SNOWMELT    0.5  0.5  0.6  100  45  -75
+ADC         IMPERV  1 1 1 1 1 1 1 1 1 1
+ADC         PERV    1 1 1 1 1 1 1 1 1 1
+
+[JUNCTIONS]
+J1  100.4  3
+
+[OUTFALLS]
+O1  100.0  FREE
+
+[CONDUITS]
+C1  J1  O1  200  0.013  0  0
+
+[XSECTIONS]
+C1  RECT_OPEN  2  2  0  0
+
+[TIMESERIES]
+{temps}
+PRECIP  0:00  5
+PRECIP  1:00  5
+PRECIP  2:00  5
+PRECIP  3:00  5
+PRECIP  4:00  5
+PRECIP  5:00  5
+"
+    )
+}
+
+#[test]
+fn snow_accumulates_cold_then_melts_warm() {
+    // Six hours of 5 mm/h precipitation at −5 °C: it snows and nothing
+    // runs off. The second day warms to +8 °C and the pack melts out.
+    let temps = "\
+TEMP  0:00   -5
+TEMP  20:00  -5
+TEMP  24:00  8
+TEMP  48:00  8";
+    let inp = snow_model(temps);
+    let (mut sim, _, _) = Simulation::open(&inp).expect("open");
+    // Run through the cold day: snow holds, the network stays dry.
+    while sim.time() < 20.0 * 3600.0 {
+        sim.step();
+    }
+    assert!(
+        sim.report().inflow < 1.0,
+        "runoff during the cold day: {}",
+        sim.report().inflow
+    );
+    // Run through the warm day: the pack melts and drains.
+    sim.run();
+    let total_precip = 0.005 * 6.0 * 20_000.0; // 600 m³
+    assert!(
+        sim.report().inflow > 0.7 * total_precip,
+        "melt runoff {} of snowfall {total_precip}",
+        sim.report().inflow
+    );
+}
+
+#[test]
+fn warm_rain_passes_straight_through_a_snow_parcel() {
+    // The same model at +10 °C throughout: plain rain on the impervious
+    // parcel, most of it arriving as runoff during the storm.
+    let temps = "\
+TEMP  0:00   10
+TEMP  48:00  10";
+    let inp = snow_model(temps);
+    let (mut sim, _, _) = Simulation::open(&inp).expect("open");
+    sim.run();
+    let total_precip = 0.005 * 6.0 * 20_000.0;
+    assert!(
+        sim.report().inflow > 0.85 * total_precip,
+        "rain runoff {} of {total_precip}",
+        sim.report().inflow
+    );
+}

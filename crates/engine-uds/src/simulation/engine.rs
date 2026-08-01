@@ -16,6 +16,7 @@ use crate::hydraulics::routing::{Router, RouterRefusal, RoutingReport};
 use crate::hydrology::groundwater::GwState;
 use crate::hydrology::infiltration::InfilFactors;
 use crate::hydrology::runoff::{Surface, SurfaceRefusal};
+use crate::hydrology::snow::SnowClimate;
 use crate::io::objects::parse_network;
 use crate::io::survey::Diagnostic;
 use crate::io::validate::{validate, ValidationDiagnostic};
@@ -282,7 +283,16 @@ impl Simulation {
                 recovery: 1.0,
             };
             let dry_only = self.net.climate.evaporate_dry_only;
-            surface.step(epoch, dt, evap, dry_only, rain_factor, fac);
+            let snow_cl = self.snow_climate(m);
+            surface.step(
+                epoch,
+                dt,
+                evap,
+                dry_only,
+                rain_factor,
+                fac,
+                snow_cl.as_ref(),
+            );
             // §4.1: each aquifer advances on the same clock, reading the
             // routed stage lagged one step (§10.1), its discharge joining
             // the vertex laterals.
@@ -308,6 +318,46 @@ impl Simulation {
             }
         }
         self.surface = Some(surface);
+    }
+
+    /// The §4.2 snow climate for this step, when the model melts snow:
+    /// air temperature from its series with the monthly offset, wind from
+    /// the monthly averages, and the seasonal melt sweep.
+    fn snow_climate(&mut self, month_index: usize) -> Option<SnowClimate> {
+        use crate::model::{TemperatureSource, WindSource};
+        let sm = self.net.climate.snowmelt.clone()?;
+        let t = self.hydro_t;
+        let ta = match &self.net.climate.temperature {
+            Some(TemperatureSource::Series(ts)) => {
+                let ts = *ts;
+                self.series_value(ts, t, true)
+            }
+            _ => return None,
+        } + self.net.climate.adjust_temperature[month_index];
+        let wind = match &self.net.climate.wind {
+            WindSource::Monthly(w) => w[month_index],
+            WindSource::File => 0.0,
+        };
+        // Day of year for the seasonal sweep.
+        let epoch_days = ((self.start_epoch + t) / 86_400.0).floor() as i64;
+        let date = civil_from_days(epoch_days);
+        let jan1 = crate::io::options::Date {
+            year: date.year,
+            month: 1,
+            day: 1,
+        };
+        let day = (epoch_days - days_from_civil(jan1) + 1) as f64;
+        Some(SnowClimate {
+            ta,
+            wind,
+            snow_temp: sm.snow_temp,
+            ati_weight: sm.ati_weight,
+            rnm: sm.negative_melt_ratio,
+            elevation: sm.elevation,
+            season: (0.017_261_5 * (day - 81.0)).sin(),
+            adc_impervious: self.net.climate.adc_impervious,
+            adc_pervious: self.net.climate.adc_pervious,
+        })
     }
 
     /// The potential surface evaporation rate (m/s) for a month, from the

@@ -5,6 +5,7 @@
 //! follow the predecessor's semantics exactly.
 
 use super::infiltration::{InfilFactors, InfilState};
+use super::snow::{SnowClimate, SnowPack};
 use crate::model::{
     GageSource, Network, ParcelOutlet, RainForm, SeriesTime, SubareaRouting, TimeSeriesSource,
 };
@@ -31,6 +32,8 @@ struct GageRain {
     intervals: Vec<(f64, f64)>,
     /// Recording interval (s).
     interval: f64,
+    /// Snow catch factor.
+    scf: f64,
 }
 
 impl GageRain {
@@ -171,6 +174,8 @@ struct ParcelState {
     infil: Option<InfilState>,
     routing: SubareaRouting,
     frac_routed: f64,
+    /// The §4.2 snow pack, when assigned.
+    snow: Option<SnowPack>,
     /// Run-on rate (m/s over the whole parcel), one step delayed.
     runon: f64,
     runon_next_vol: f64,
@@ -220,9 +225,6 @@ impl Surface {
                     ));
                 }
             }
-            if p.snowpack.is_some() {
-                return Err(SurfaceRefusal::Unsupported("snow arrives with §4.2"));
-            }
         }
 
         // Gage records resolved to absolute intervals and SI rates.
@@ -267,6 +269,7 @@ impl Surface {
             gages.push(GageRain {
                 intervals,
                 interval: g.interval,
+                scf: g.catch_factor,
             });
         }
 
@@ -330,6 +333,9 @@ impl Surface {
                 infil,
                 routing: sa.routing,
                 frac_routed: sa.frac_routed,
+                snow: p
+                    .snowpack
+                    .map(|sp| SnowPack::build(&net.snowpacks[sp], p.frac_imperv)),
                 runon: 0.0,
                 runon_next_vol: 0.0,
                 runoff: 0.0,
@@ -350,10 +356,10 @@ impl Surface {
     /// depression storage — the wet-step condition (§10.1).
     pub fn is_wet(&self, epoch: f64) -> bool {
         self.gages.iter().any(|g| g.rate(epoch) > 0.0)
-            || self
-                .parcels
-                .iter()
-                .any(|p| p.sub.iter().any(|s| s.depth > s.dstore + 1e-9))
+            || self.parcels.iter().any(|p| {
+                p.sub.iter().any(|s| s.depth > s.dstore + 1e-9)
+                    || p.snow.as_ref().is_some_and(|sp| sp.stored_depth() > 0.0)
+            })
     }
 
     /// The earliest gage interval boundary after `epoch` (§10.1 step
@@ -371,6 +377,7 @@ impl Surface {
     /// monthly adjustment. Updates each parcel's runoff rate and hands
     /// run-on one step delayed.
     #[allow(clippy::needless_range_loop)] // paired sub[i]/runoff[i] indexing
+    #[allow(clippy::too_many_arguments)] // the step's climate inputs
     pub fn step(
         &mut self,
         epoch: f64,
@@ -379,6 +386,7 @@ impl Surface {
         dry_only: bool,
         rain_factor: f64,
         fac: InfilFactors,
+        snow_cl: Option<&SnowClimate>,
     ) {
         self.degraded = false;
         // Run-on volumes booked last step arrive as this step's rates.
@@ -392,18 +400,45 @@ impl Surface {
         }
 
         let mut runon_to_parcel = vec![0.0_f64; self.parcels.len()];
+        let mut snow_transfers: Vec<(usize, f64)> = Vec::new();
         for pi in 0..self.parcels.len() {
-            let rain = self.gages[self.parcels[pi].gage].rate(epoch) * rain_factor;
-            self.rainfall += rain * dt * self.parcels[pi].sub.iter().map(|s| s.area).sum::<f64>();
-            let e = if dry_only && rain > 0.0 { 0.0 } else { evap };
+            let gage = &self.gages[self.parcels[pi].gage];
+            let precip = gage.rate(epoch) * rain_factor;
+            let scf = gage.scf;
+            self.rainfall += precip * dt * self.parcels[pi].sub.iter().map(|s| s.area).sum::<f64>();
+            let e = if dry_only && precip > 0.0 { 0.0 } else { evap };
             let p = &mut self.parcels[pi];
-            let input = rain + p.runon;
+            let area_total_pre: f64 = p.sub.iter().map(|s| s.area).sum();
+
+            // §4.2: split precipitation at the rain/snow temperature and
+            // route it through the pack; a parcel without a pack receives
+            // catch-scaled snowfall as immediate liquid.
+            let (imp_precip, perv_precip) = match (&mut p.snow, snow_cl) {
+                (Some(pack), Some(cl)) => {
+                    let (rain, snowf) = if cl.ta <= cl.snow_temp {
+                        (0.0, precip * scf)
+                    } else {
+                        (precip, 0.0)
+                    };
+                    pack.plow(snowf, dt, area_total_pre);
+                    snow_transfers.extend(pack.transfer_out.iter().copied());
+                    let (imp, perv, _) = pack.melt(rain, snowf, dt, cl);
+                    (imp, perv)
+                }
+                (None, Some(cl)) if cl.ta <= cl.snow_temp => {
+                    let liquid = precip * scf;
+                    (liquid, liquid)
+                }
+                _ => (precip, precip),
+            };
+            let input = imp_precip + p.runon;
+            let perv_input = perv_precip + p.runon;
 
             // Pervious infiltration capacity for this step (§3.3).
             let perv_depth = p.sub[2].depth;
             let f_rate = match &mut p.infil {
                 Some(state) if p.sub[2].area > 0.0 => {
-                    state.step(dt, (input - e).max(0.0), perv_depth, fac)
+                    state.step(dt, (perv_input - e).max(0.0), perv_depth, fac)
                 }
                 _ => 0.0,
             };
@@ -411,7 +446,7 @@ impl Surface {
             // Sub-area order honours the internal re-routing direction:
             // the router computes the source first (§3.2).
             let mut degraded = false;
-            let (imp_in, perv_in) = (input, input);
+            let (imp_in, perv_in) = (input, perv_input);
             let mut runoff = [0.0_f64; 3];
             match p.routing {
                 SubareaRouting::Pervious => {
@@ -474,6 +509,14 @@ impl Surface {
         }
         for (pi, vol) in runon_to_parcel.into_iter().enumerate() {
             self.parcels[pi].runon_next_vol += vol;
+        }
+        // Plowed transfers land on their targets' pervious packs for the
+        // next step.
+        for (target, vol) in snow_transfers {
+            let area: f64 = self.parcels[target].sub.iter().map(|s| s.area).sum();
+            if let Some(pack) = &mut self.parcels[target].snow {
+                pack.receive(vol, area);
+            }
         }
     }
 

@@ -11,3 +11,4 @@
 pub mod groundwater;
 pub mod infiltration;
 pub mod runoff;
+pub mod snow;
