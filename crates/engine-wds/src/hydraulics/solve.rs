@@ -16,6 +16,48 @@ use super::{
     update_emitter_flows, update_leakage_flows, update_pda_demand_flows, SparseSolver,
 };
 
+/// §3.8 criterion 5: $\sum_i |\Delta_i|$ over in-step junctions at the
+/// updated flows.
+///
+/// $\Delta_i$ is the *physical* mass balance: net inflow from all incident
+/// links — valves included, unlike the assembly's `xflow`, which routes
+/// active PRVs/PSVs through their own row equations — minus emitter,
+/// leakage, and demand outflows, the demand being the achieved PDA demand
+/// where PDA governs the node and the fixed pattern-scaled demand otherwise.
+pub(super) fn junction_mass_residual_sum(
+    network: &Network,
+    ctx: &mut SolverContext,
+    is_pda: bool,
+) -> f64 {
+    ctx.residual_xflow.fill(0.0);
+    for k in 0..network.links.len() {
+        let q = ctx.flows[k];
+        ctx.residual_xflow[ctx.link_from[k]] -= q;
+        ctx.residual_xflow[ctx.link_to[k]] += q;
+    }
+    let mut sum = 0.0;
+    for (i, node) in network.nodes.iter().enumerate() {
+        if !matches!(node.kind, NodeKind::Junction(_)) {
+            continue;
+        }
+        if ctx.node_junc_step_opt[i].is_none() {
+            continue;
+        }
+        let demand = if is_pda && ctx.junction_demands[i] > 0.0 {
+            ctx.pda_demand_flows[i]
+        } else {
+            ctx.junction_demands[i]
+        };
+        let delta = ctx.residual_xflow[i]
+            - ctx.emitter_flows[i]
+            - ctx.leakage_fa_flows[i]
+            - ctx.leakage_va_flows[i]
+            - demand;
+        sum += delta.abs();
+    }
+    sum
+}
+
 /// Aggregated flow-update convergence metrics from a single link pass.
 struct FlowUpdateResult {
     link_sq: f64,
@@ -130,6 +172,11 @@ pub struct SolverContext {
     pub(super) node_elevations: Vec<f64>,
     pub(super) junction_demands: Vec<f64>,
     pub(super) xflow: Vec<f64>,
+    /// Scratch for the §3.8 criterion-5 mass-balance residual: per-node net
+    /// link inflow at the *updated* flows. Distinct from `xflow`, which holds
+    /// the assembly-time accumulation (valve links excluded) at the flows the
+    /// iteration started from.
+    pub(super) residual_xflow: Vec<f64>,
     pub(super) prev_flows: Vec<f64>,
     pub(crate) flows: Vec<f64>,
     pub(crate) statuses: Vec<LinkStatus>,
@@ -466,6 +513,7 @@ pub fn build_solver_context(
         node_elevations: vec![0.0; n_nodes],
         junction_demands: vec![0.0; n_nodes],
         xflow: vec![0.0; n_nodes],
+        residual_xflow: vec![0.0; n_nodes],
         prev_flows: vec![0.0; n_links],
         flows: vec![0.0; n_links],
         statuses: vec![LinkStatus::Open; n_links],
@@ -809,7 +857,18 @@ pub fn solve_hydraulic_step(
             ds_q
         };
         let flow_converged = rel_err <= options.flow_tol;
-        let converged = flow_converged && flow_result.head_ok && flow_result.flow_ok;
+        let converged = flow_converged && flow_result.head_ok && flow_result.flow_ok && {
+            // §3.8 criterion 5: criteria 1–3 certify the iterates have stopped
+            // moving; this certifies that the point they stopped at actually
+            // conserves mass. Lazy — evaluated only once the others pass.
+            let res_sum = junction_mass_residual_sum(network, ctx, is_pda);
+            let eps_r = if s_q > options.flow_tol {
+                res_sum / s_q
+            } else {
+                res_sum
+            };
+            eps_r <= options.flow_tol
+        };
 
         let phase_started = timing_enabled.then(Instant::now);
         // §3.8/§3.9 damping + valve-check scheduling:

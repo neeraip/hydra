@@ -407,7 +407,7 @@ The condition is $\max_k \epsilon_{H,k} \leq$ `head_error_limit`. If `head_error
 
 4. **No link status change** during the most recent iteration (after a full status check; see §3.9).
 
-5. **Nodal mass-balance residual**: with $S_Q$ as in criterion 1 and $\Delta_i^{(m+1)}$ the flow-balance residual at junction $i$ evaluated at the updated flows (the same quantity assembled into the RHS in §3.6),
+5. **Nodal mass-balance residual**: with $S_Q$ as in criterion 1 and $\Delta_i^{(m+1)}$ the **physical** flow-balance residual at junction $i$ evaluated at the updated flows — the net inflow from *all* incident links, valves included, minus emitter, leakage, and demand outflows, the demand being the achieved $D_i^{(m+1)}$ under PDA and the fixed pattern-scaled demand under DDA. Away from active PRVs and PSVs this coincides with the quantity assembled into the RHS in §3.6; at junctions adjacent to an active valve the assembly deliberately routes the valve through its own row equations rather than the net-inflow sum, so the criterion is defined on the physical balance, not on the assembled RHS. Then
 
 $$\varepsilon_R = \begin{cases} \sum_i \lvert \Delta_i^{(m+1)} \rvert \,/\, S_Q & S_Q > \text{\texttt{flow\_tol}} \\ \sum_i \lvert \Delta_i^{(m+1)} \rvert & \text{otherwise (absolute criterion)} \end{cases}$$
 
