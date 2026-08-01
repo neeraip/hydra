@@ -46,6 +46,14 @@ pub struct Network {
     pub transects: Vec<Transect>,
     /// Aquifers, in registration order.
     pub aquifers: Vec<Aquifer>,
+    /// Snow pack parameter sets, in registration order.
+    pub snowpacks: Vec<Snowpack>,
+    /// Unit-hydrograph groups, in registration order.
+    pub unit_hydrographs: Vec<UnitHydrographGroup>,
+    /// Sewer-inflow (RDII) assignments at vertices.
+    pub rdii: Vec<RdiiInflow>,
+    /// Treatment expressions at vertices.
+    pub treatments: Vec<Treatment>,
     /// Street-section identifiers, in registration order.
     pub street_ids: Vec<String>,
 }
@@ -974,4 +982,120 @@ pub struct GroundwaterLink {
     pub lateral_expression: Option<String>,
     /// Custom deep-percolation expression, replacing the linear reservoir.
     pub deep_expression: Option<String>,
+}
+
+/// A snow pack parameter set (§4.2): per-surface melt parameters over the
+/// three-way split, plus the removal (plowing) rule.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct Snowpack {
+    /// Identifier as written.
+    pub id: String,
+    /// Plowable-surface parameters.
+    pub plowable: Option<SnowSurface>,
+    /// Impervious-surface parameters.
+    pub impervious: Option<SnowSurface>,
+    /// Pervious-surface parameters.
+    pub pervious: Option<SnowSurface>,
+    /// Fraction of impervious area that is plowable (from the plowable
+    /// line's last parameter).
+    pub plow_fraction: f64,
+    /// The removal rule, when supplied.
+    pub removal: Option<SnowRemoval>,
+}
+
+/// One surface's melt parameters (§4.2), SI (°C, m, m/s per °C).
+#[derive(Debug, Clone, PartialEq)]
+pub struct SnowSurface {
+    /// Minimum (21 December) degree-day melt coefficient (m/s per °C).
+    pub dh_min: f64,
+    /// Maximum (21 June) melt coefficient (m/s per °C).
+    pub dh_max: f64,
+    /// Base melt temperature (°C).
+    pub t_base: f64,
+    /// Free-water holding capacity, as a fraction of pack depth.
+    pub fw_frac: f64,
+    /// Initial pack depth, water equivalent (m).
+    pub init_depth: f64,
+    /// Initial free water (m), clamped to capacity at parse as the
+    /// predecessor clamps it.
+    pub init_free_water: f64,
+    /// Depth at 100 % areal cover (m); `None` on the plowable surface,
+    /// which is always fully covered.
+    pub full_cover_depth: Option<f64>,
+}
+
+/// The plowing rule (§4.2): beyond the trigger depth, the surface's whole
+/// depth redistributes by five fractions.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SnowRemoval {
+    /// Trigger depth (m).
+    pub trigger_depth: f64,
+    /// The five redistribution fractions, in the file's order.
+    pub fractions: [f64; 5],
+    /// Receiving parcel for the transfer fraction.
+    pub to_parcel: Option<usize>,
+}
+
+/// A unit-hydrograph group (§4.3): up to three triangular responses per
+/// calendar month, plus the gage assignment.
+#[derive(Debug, Clone, PartialEq)]
+pub struct UnitHydrographGroup {
+    /// Identifier as written.
+    pub id: String,
+    /// The precipitation gage driving the group.
+    pub gage: Option<usize>,
+    /// Per-month responses: `months[m][k]` is month `m+1`'s response of
+    /// duration class `k` (short, medium, long).
+    pub months: Box<[[Option<UhResponse>; 3]; 12]>,
+}
+
+/// One triangular response (§4.3).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct UhResponse {
+    /// Fraction of rainfall volume entering the sewer.
+    pub r: f64,
+    /// Time to peak (s).
+    pub t_peak: f64,
+    /// Recession-to-peak ratio.
+    pub k: f64,
+    /// Initial-abstraction capacity (m).
+    pub ia_max: f64,
+    /// Initial abstraction already depleted at start (m).
+    pub ia_init: f64,
+    /// Abstraction recovery rate, as written (per day).
+    pub ia_recovery: f64,
+}
+
+/// A sewer-inflow assignment (§4.3).
+#[derive(Debug, Clone, PartialEq)]
+pub struct RdiiInflow {
+    /// The receiving vertex.
+    pub vertex: usize,
+    /// The unit-hydrograph group.
+    pub group: usize,
+    /// Sewershed area (m²).
+    pub area: f64,
+}
+
+/// A treatment expression at a vertex (§8.5), retained as written.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Treatment {
+    /// The vertex.
+    pub vertex: usize,
+    /// The constituent treated.
+    pub constituent: usize,
+    /// Result kind: a removal fraction or a resulting concentration.
+    pub kind: TreatmentKind,
+    /// The expression text after the `=`, as written (§14.6: expressions
+    /// evaluate in the file's unit system).
+    pub expression: String,
+}
+
+/// What a treatment expression computes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TreatmentKind {
+    /// A fractional removal applied to the influent.
+    Removal,
+    /// The resulting concentration.
+    Concentration,
 }

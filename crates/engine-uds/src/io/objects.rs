@@ -82,6 +82,39 @@ pub fn parse_network(input: &str) -> (Network, Vec<Diagnostic>) {
         if *sec == Section::Transects {
             net.transects = super::transects::parse_transects(lines, &cv, &mut diagnostics);
         }
+        if *sec == Section::Snowpacks {
+            net.snowpacks = super::snow_rdii::parse_snowpacks(
+                lines,
+                &s,
+                &cv,
+                options.flow_units.is_us(),
+                &mut diagnostics,
+            );
+        }
+        if *sec == Section::Hydrographs {
+            net.unit_hydrographs =
+                super::snow_rdii::parse_unit_hydrographs(lines, &s, &cv, &mut diagnostics);
+        }
+    }
+    for (sec, lines) in &s.sections {
+        match sec {
+            Section::Rdii => {
+                net.rdii.extend(super::snow_rdii::parse_rdii(
+                    lines,
+                    &s,
+                    &cv,
+                    &mut diagnostics,
+                ));
+            }
+            Section::Treatment => {
+                net.treatments.extend(super::snow_rdii::parse_treatment(
+                    lines,
+                    &s,
+                    &mut diagnostics,
+                ));
+            }
+            _ => {}
+        }
     }
     for (sec, lines) in &s.sections {
         let ids = s.ids.get(&ObjectKind::Parcel);
