@@ -1512,7 +1512,7 @@ fn flow_units_conversion_matrix_matches_internal_mass_balance() {
 
 #[test]
 fn closed_prv_status_blocks_valve_flow() {
-    // Mirrors tests/fixtures/valve_status.inp core behavior: a PRV between
+    // Mirrors tests/fixtures/wds/valve_status.inp core behavior: a PRV between
     // J1 and J2 is overridden to CLOSED via STATUS.
     let builder = TestNetworkBuilder::new()
         .junction("J1", 0.0, 100.0)

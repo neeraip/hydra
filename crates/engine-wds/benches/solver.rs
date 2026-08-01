@@ -106,7 +106,7 @@ fn init_link_states(network: &Network) -> Vec<LinkState> {
 // ── Per-network benchmark ─────────────────────────────────────────────────────
 
 fn bench_network(c: &mut Criterion, name: &str) {
-    let inp = workspace_root().join(format!("tests/benchmarks/{name}.inp"));
+    let inp = workspace_root().join(format!("tests/benchmarks/wds/{name}.inp"));
     let bytes = match std::fs::read(&inp) {
         Ok(b) => b,
         Err(_) => {

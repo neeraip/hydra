@@ -1354,7 +1354,7 @@ mod tests {
         let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
         // crates/engine-wds  →  workspace root
         let root = manifest.parent().unwrap().parent().unwrap();
-        root.join("tests/fixtures").join(name)
+        root.join("tests/fixtures/wds").join(name)
     }
 
     /// Parse a fixture, write it back to INP bytes, parse again, and assert
@@ -1900,7 +1900,7 @@ mod tests {
     /// Currently empty: every fixture passes the strict checks.
     const ROUND_TRIP_STRICT_SKIP: &[(&str, &str)] = &[];
 
-    /// Every fixture in tests/fixtures/ must survive parse → write → parse
+    /// Every fixture in tests/fixtures/wds/ must survive parse → write → parse
     /// with structure intact, and the writer must be idempotent. Fixtures on
     /// the two skip lists run reduced checks (see the list docs above).
     #[test]

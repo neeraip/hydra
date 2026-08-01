@@ -104,7 +104,7 @@ mod tests {
 
     fn load_fixture(name: &str) -> crate::Network {
         let path = format!(
-            "{}/../../tests/fixtures/{}.inp",
+            "{}/../../tests/fixtures/wds/{}.inp",
             env!("CARGO_MANIFEST_DIR"),
             name
         );

@@ -1067,7 +1067,7 @@ mod tests {
             .unwrap()
             .parent()
             .unwrap();
-        let inp_path = workspace.join("tests/fixtures/four_node_loop.inp");
+        let inp_path = workspace.join("tests/fixtures/wds/four_node_loop.inp");
         let bytes = match std::fs::read(&inp_path) {
             Ok(b) => b,
             Err(_) => return, // fixture absent in this environment — skip

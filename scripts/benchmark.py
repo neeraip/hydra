@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Benchmark the Hydra CLI end-to-end across the bundled fixture networks.
 
-For each network in ``tests/benchmarks/`` this runs the release ``hydra`` binary
+For each network in ``tests/benchmarks/wds/`` this runs the release ``hydra`` binary
 (parse + full extended-period simulation + summary report) ``--runs`` times after
 a warm-up run and records the best wall-clock time, alongside the network size.
 It prints a Markdown table suitable for pasting into
@@ -32,9 +32,9 @@ import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-BENCH_DIR = ROOT / "tests" / "benchmarks"
+BENCH_DIR = ROOT / "tests" / "benchmarks" / "wds"
 
-# Slug -> display name. Networks absent from tests/benchmarks/ are skipped.
+# Slug -> display name. Networks absent from tests/benchmarks/wds/ are skipped.
 NETWORKS = [
     ("balerma", "Balerma"),
     ("nytunnels", "NY Tunnels"),

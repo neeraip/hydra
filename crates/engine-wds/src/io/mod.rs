@@ -509,7 +509,7 @@ mod tests {
     fn parse_accepts_whitespace_then_inp_section() {
         let inp_path = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../..")
-            .join("tests/fixtures/single_pipe_hw.inp");
+            .join("tests/fixtures/wds/single_pipe_hw.inp");
         let bytes = std::fs::read(inp_path).expect("read fixture inp");
         let mut with_prefix = b"\n\t  ".to_vec();
         with_prefix.extend_from_slice(&bytes);

@@ -23,13 +23,13 @@ use std::path::PathBuf;
 /// Magic number that opens and closes every Hydra binary `.out` file.
 const OUT_MAGIC: i32 = 516114521;
 
-/// Path to a small, stable fixture INP in the workspace-root `tests/fixtures`.
+/// Path to a small, stable fixture INP in the workspace-root `tests/fixtures/wds`.
 fn fixture_path(name: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .and_then(|p| p.parent())
         .expect("workspace root")
-        .join("tests/fixtures")
+        .join("tests/fixtures/wds")
         .join(name)
 }
 
