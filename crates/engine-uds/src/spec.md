@@ -126,6 +126,16 @@ Agreement with the predecessor is evidence, not the objective. A divergence
 that moves results toward the truth satisfies this tier; one that cannot be
 explained does not, and is a defect.
 
+Evidencing correspondence differs from an engine that had a prior
+implementation to difference against: no predecessor-faithful mode exists
+here, and building one would contradict Tier 3. Three instruments serve
+instead: **analytic solutions** where the mathematics admits them;
+**self-convergence**, comparing a coarse-step run against the same model at a
+refined step; and **corpus comparison** against the predecessor's own
+validation networks, with every visible divergence attributed to a stated
+cause. An unattributed divergence is a defect regardless of which engine is
+right.
+
 #### Tier 3 — Method (free)
 
 How the equations of §1.1 are discretised, integrated, and solved is entirely
@@ -165,6 +175,23 @@ so removing one is not a neutral act and its effect is recorded under Tier 2.
 Second, a device that compensates for a deficiency in a scheme this engine does
 not use may still encode a real physical limit; the specification distinguishes
 the two before discarding either.
+
+What replaces a discarded device is held to a positive standard: **every state
+the engine integrates carries a local error estimate, and step control is
+accuracy-driven, with stability as a constraint rather than the criterion.**
+The predecessor error-controls its hydrology — an embedded-pair integrator
+with step rescaling — yet governs its routing clock by stability alone, with
+no measure anywhere of the error committed. That asymmetry is not carried
+forward. Where the engine cannot meet a tolerance at its smallest permitted
+step, it proceeds and says so, per entity: degraded accuracy is reported,
+never silent.
+
+Error control implies rejection, and rejection implies that a time step is a
+**transaction**: a trial that can be discarded with no surviving effect. The
+simulation contract (§10) requires rejectable trial steps as a structural
+property — state designed to be snapshotted and restored — because
+retrofitting reversibility onto a solver that mutates in place is a rewrite,
+and the same property is what a mid-run checkpoint (§12) persists.
 
 ### 1.6 Specification Structure
 
