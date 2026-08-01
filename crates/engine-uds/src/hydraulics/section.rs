@@ -145,6 +145,99 @@ enum Kind {
         ys: Vec<f64>,
         ws: Vec<f64>,
     },
+    /// A surveyed transect (§5.6), evaluated directly from its geometry.
+    Transect(TransectGeom),
+}
+
+/// A transect's evaluation-ready geometry (§5.6): the survey polyline
+/// with vertical end walls, elevations relative to the invert, bank
+/// stations, and the three roughness zones (the channel's meander-inflated).
+#[derive(Debug, Clone, PartialEq)]
+pub struct TransectGeom {
+    xs: Vec<f64>,
+    zs: Vec<f64>,
+    x_left: f64,
+    x_right: f64,
+    n_left: f64,
+    n_right: f64,
+    n_channel: f64,
+}
+
+impl TransectGeom {
+    /// Manning n for the segment between stations `k-1` and `k`, by the
+    /// predecessor's zone rule.
+    fn segment_n(&self, k: usize) -> f64 {
+        if self.xs[k - 1] < self.x_left {
+            self.n_left
+        } else if self.xs[k] > self.x_right {
+            self.n_right
+        } else {
+            self.n_channel
+        }
+    }
+
+    /// Sweep the polyline at depth `y`: total area, top width, geometric
+    /// wetted perimeter, and the conveyance sum over sub-sections — a new
+    /// sub-section at each bank-roughness change and wherever ground
+    /// re-emerges above the water line (§5.6).
+    fn sweep(&self, y: f64) -> (f64, f64, f64, f64) {
+        let (mut area, mut width, mut perim, mut k_sum) = (0.0, 0.0, 0.0, 0.0);
+        // The running sub-section.
+        let (mut a_t, mut p_t) = (0.0, 0.0);
+        let mut flush = |a_t: &mut f64, p_t: &mut f64, n: f64| {
+            if *a_t > 0.0 && *p_t > 0.0 {
+                k_sum += (1.0 / n) * *a_t * (*a_t / *p_t).powf(2.0 / 3.0);
+            }
+            *a_t = 0.0;
+            *p_t = 0.0;
+        };
+        let n = self.xs.len();
+        for k in 1..n {
+            let (z0, z1) = (self.zs[k - 1], self.zs[k]);
+            let (lo, hi) = if z0 <= z1 { (z0, z1) } else { (z1, z0) };
+            let n_seg = self.segment_n(k);
+            if lo < y {
+                let dx = (self.xs[k] - self.xs[k - 1]).abs();
+                let mut w = dx;
+                let mut wp = (dx * dx + (hi - lo) * (hi - lo)).sqrt();
+                let a;
+                if y > hi {
+                    a = dx * ((y - hi) + (y - lo)) / 2.0;
+                } else {
+                    // Partly submerged slice.
+                    let ratio = (y - lo) / (hi - lo);
+                    a = dx * (hi - lo) / 2.0 * ratio * ratio;
+                    w *= ratio;
+                    wp *= ratio;
+                }
+                area += a;
+                width += w;
+                perim += wp;
+                a_t += a;
+                p_t += wp;
+            }
+            // Ground at or above the water line ends the sub-section.
+            if z1 >= y {
+                flush(&mut a_t, &mut p_t, n_seg);
+                continue;
+            }
+            // A bank-roughness change ends it too (a vertical bank wall
+            // stays with its channel side, as the predecessor keeps it).
+            if k + 1 < n {
+                let at_left = self.xs[k] == self.x_left
+                    && self.n_left != self.n_channel
+                    && self.xs[k] != self.xs[k - 1];
+                let at_right = self.xs[k] == self.x_right
+                    && self.n_right != self.n_channel
+                    && self.xs[k] != self.xs[k + 1];
+                if at_left || at_right {
+                    flush(&mut a_t, &mut p_t, n_seg);
+                }
+            }
+        }
+        flush(&mut a_t, &mut p_t, self.segment_n(n - 1));
+        (area, width, perim, k_sum)
+    }
 }
 
 /// Adaptive Simpson quadrature on a smooth integrand: exact evaluation of
@@ -731,6 +824,137 @@ fn build_coded_ellipse(height: f64, width: f64, a_cat: f64, r_cat: f64) -> Secti
     )
 }
 
+/// Build a section from a surveyed transect (§5.6). The accept-set is the
+/// predecessor's: at least two stations, non-decreasing station distances,
+/// a positive channel roughness, ordered bank stations, and a non-flat
+/// profile. Omitted overbank coefficients default to the channel's; the
+/// meander modifier inflates the channel roughness by its square root.
+pub fn build_transect_section(t: &crate::model::Transect) -> Result<SectionBuild, BuildError> {
+    if t.stations.len() < 2 {
+        return Err(BuildError::BadGeometry(
+            "transect needs at least 2 stations",
+        ));
+    }
+    if t.n_channel <= 0.0 {
+        return Err(BuildError::BadGeometry(
+            "channel roughness must be positive",
+        ));
+    }
+    if t.x_left > t.x_right {
+        return Err(BuildError::BadGeometry("bank stations out of order"));
+    }
+    let mut xs: Vec<f64> = Vec::with_capacity(t.stations.len() + 2);
+    let mut zs: Vec<f64> = Vec::with_capacity(t.stations.len() + 2);
+    for w in t.stations.windows(2) {
+        if w[1].1 < w[0].1 {
+            return Err(BuildError::BadGeometry("station distances decrease"));
+        }
+    }
+    let z_min = t.stations.iter().map(|s| s.0).fold(f64::INFINITY, f64::min);
+    let z_max = t
+        .stations
+        .iter()
+        .map(|s| s.0)
+        .fold(f64::NEG_INFINITY, f64::max);
+    if z_min >= z_max {
+        return Err(BuildError::BadGeometry("flat transect"));
+    }
+    let y_full = z_max - z_min;
+    // Vertical end walls to full height on both ends (§5.6).
+    xs.push(t.stations[0].1);
+    zs.push(y_full);
+    for &(z, x) in &t.stations {
+        xs.push(x);
+        zs.push(z - z_min);
+    }
+    xs.push(t.stations[t.stations.len() - 1].1);
+    zs.push(y_full);
+    let n_channel = t.n_channel * t.meander_factor.sqrt();
+    let n_left = if t.n_left > 0.0 { t.n_left } else { n_channel };
+    let n_right = if t.n_right > 0.0 {
+        t.n_right
+    } else {
+        n_channel
+    };
+    Ok(SectionBuild {
+        section: Section::assemble(
+            Kind::Transect(TransectGeom {
+                xs,
+                zs,
+                x_left: t.x_left,
+                x_right: t.x_right,
+                n_left,
+                n_right,
+                n_channel,
+            }),
+            y_full,
+        ),
+        radius_raised: None,
+    })
+}
+
+/// Compile a street cross-section to a transect (§7.8 → §5.6): backing,
+/// curb, depressed gutter, and crown on one or both sides, with the
+/// backing roughness as the overbanks'.
+pub fn build_street_section(st: &crate::model::Street) -> Result<SectionBuild, BuildError> {
+    if st.crown_width <= 0.0 || st.cross_slope <= 0.0 || st.roughness <= 0.0 {
+        return Err(BuildError::BadGeometry("street geometry incomplete"));
+    }
+    let w1 = st.backing_width;
+    let w2 = st.gutter_width;
+    let w3 = st.crown_width;
+    let w4 = w3 - w2;
+    let y3 = st.gutter_depression + st.cross_slope * w2;
+    let y1 = st.curb_height + st.gutter_depression;
+    let y4 = y3 + st.cross_slope * w4;
+    let y_max = (st.backing_slope * w1 + y1).max(y4);
+    // Backing top, curb top, curb bottom, gutter bottom, gutter top,
+    // crown — mirrored for a two-sided street.
+    let mut xs = vec![0.0, w1, w1, w1 + w2, w1 + w3];
+    let mut zs = vec![y_max, y1, 0.0, y3, y4];
+    if st.sides == 1 {
+        xs.push(w1 + w3);
+        zs.push(y_max);
+    } else {
+        xs.extend_from_slice(&[w1 + w3 + w4, w1 + w3 + w4 + w2, w1 + w3 + w4 + w2, {
+            w1 + w3 + w4 + w2 + w1
+        }]);
+        zs.extend_from_slice(&[y3, 0.0, y1, y_max]);
+    }
+    let (n_left, n_right, x_left, x_right);
+    let n_channel = st.roughness;
+    if w1 == 0.0 {
+        n_left = n_channel;
+        n_right = n_channel;
+        x_left = xs[0];
+        x_right = *xs.last().unwrap_or(&0.0);
+    } else {
+        n_left = st.backing_roughness;
+        n_right = n_left;
+        x_left = w1;
+        x_right = if st.sides == 2 {
+            xs[xs.len() - 2]
+        } else {
+            *xs.last().unwrap_or(&0.0)
+        };
+    }
+    Ok(SectionBuild {
+        section: Section::assemble(
+            Kind::Transect(TransectGeom {
+                xs,
+                zs,
+                x_left,
+                x_right,
+                n_left,
+                n_right,
+                n_channel,
+            }),
+            y_max,
+        ),
+        radius_raised: None,
+    })
+}
+
 /// Custom-shape semantics (§5.5): anchored at the origin, truncated above
 /// unit height, extended at the last width if short, closed at the top.
 fn build_custom(y_full: f64, points: &[(f64, f64)]) -> Result<Kind, BuildError> {
@@ -887,6 +1111,7 @@ impl Section {
                 | Kind::Trapezoid { .. }
                 | Kind::Parabola { .. }
                 | Kind::Power { .. }
+                | Kind::Transect(_)
         )
     }
 
@@ -991,6 +1216,7 @@ impl Section {
                     None => a_full * inv_lookup(yn, family.y_table().unwrap_or(&[0.0, 1.0])),
                 }
             }
+            Kind::Transect(t) => t.sweep(y).0,
             Kind::Custom { ys, ws } => {
                 let mut area = 0.0;
                 for i in 1..ys.len() {
@@ -1051,6 +1277,7 @@ impl Section {
             Kind::Tabulated { family, w_max, .. } => {
                 w_max * lookup(y / self.y_full, family.w_table())
             }
+            Kind::Transect(t) => t.sweep(y).1,
             Kind::Custom { ys, ws } => interp(ys, ws, y),
         }
     }
@@ -1160,6 +1387,7 @@ impl Section {
                     self.area(y) / r
                 }
             }
+            Kind::Transect(t) => t.sweep(y).2,
             Kind::Custom { ys, ws } => {
                 // Bottom width plus the two side slants.
                 let mut p = ws[0];
@@ -1189,6 +1417,16 @@ impl Section {
         }
         if matches!(self.kind, Kind::Tabulated { .. }) {
             return self.tabulated_radius(y);
+        }
+        if let Kind::Transect(t) = &self.kind {
+            // Composite roughness by conveyance summation (§5.6): the
+            // effective radius back-computed through the channel n, the
+            // same constant in both directions.
+            let (a, _, _, k) = t.sweep(y);
+            if a <= 0.0 {
+                return 0.0;
+            }
+            return (t.n_channel * k / a).powf(1.5);
         }
         let p = self.perimeter_open(y);
         if p <= 0.0 {
@@ -1626,6 +1864,148 @@ mod tests {
         // this engine evaluates the true ellipse (§5.4 CORRESPONDENCE).
         let s = build(XsectShape::HorizEllipse, [2.0, 4.0, 0.0, 0.0]);
         assert!((s.a_full() - PI * 1.0 * 2.0).abs() < 1e-12);
+    }
+
+    fn simple_transect() -> crate::model::Transect {
+        // A symmetric trapezoidal main channel (2 m deep, bottom 4 m,
+        // 1:1 sides) between flat overbanks 5 m wide at 2 m elevation,
+        // closed by the implicit end walls at 3 m.
+        crate::model::Transect {
+            id: "T".into(),
+            n_left: 0.05,
+            n_right: 0.05,
+            n_channel: 0.03,
+            x_left: 5.0,
+            x_right: 13.0,
+            meander_factor: 1.0,
+            stations: vec![
+                (3.0, 0.0),
+                (2.0, 0.0),
+                (2.0, 5.0),
+                (0.0, 7.0),
+                (0.0, 11.0),
+                (2.0, 13.0),
+                (2.0, 18.0),
+                (3.0, 18.0),
+            ],
+        }
+    }
+
+    #[test]
+    fn transect_geometry_matches_hand_values_below_the_banks() {
+        let s = build_transect_section(&simple_transect()).unwrap().section;
+        assert!((s.y_full() - 3.0).abs() < 1e-12);
+        // At 1 m depth only the trapezoid is wet: A = (4+1)·1 = 5,
+        // W = 6, P = 4 + 2√2.
+        assert!((s.area(1.0) - 5.0).abs() < 1e-12);
+        assert!((s.top_width(1.0) - 6.0).abs() < 1e-12);
+        assert!((s.perimeter(1.0) - (4.0 + 2.0 * 2.0_f64.sqrt())).abs() < 1e-12);
+        // One thread, one roughness: R is the plain A/P.
+        let r = 5.0 / (4.0 + 2.0 * 2.0_f64.sqrt());
+        assert!(
+            (s.hyd_radius(1.0) - r).abs() < 1e-12,
+            "{}",
+            s.hyd_radius(1.0)
+        );
+    }
+
+    #[test]
+    fn composite_radius_follows_conveyance_summation() {
+        let s = build_transect_section(&simple_transect()).unwrap().section;
+        // At 2.5 m the overbanks carry 0.5 m: three conveyance
+        // sub-sections with their own roughness (§5.6).
+        let y = 2.5;
+        // Trapezoid full (bottom 4, top 8, deep 2) plus the 0.5 m layer
+        // over the 8 m channel span.
+        let a_ch = (4.0 + 8.0) * 2.0 / 2.0 + 8.0 * 0.5;
+        let a_ob = 5.0 * 0.5;
+        let p_ob = 5.0 + 0.5; // ground + end wall
+        let p_ch = 4.0 + 2.0 * 8.0_f64.sqrt();
+        let k = |a: f64, p: f64, n: f64| a / n * (a / p).powf(2.0 / 3.0);
+        let k_total = k(a_ch, p_ch, 0.03) + 2.0 * k(a_ob, p_ob, 0.05);
+        let a_total = a_ch + 2.0 * a_ob;
+        assert!((s.area(y) - a_total).abs() < 1e-12);
+        let r_eff = (0.03 * k_total / a_total).powf(1.5);
+        assert!(
+            (s.hyd_radius(y) - r_eff).abs() < 1e-12,
+            "{} vs {r_eff}",
+            s.hyd_radius(y)
+        );
+    }
+
+    #[test]
+    fn meander_inflates_only_the_channel_roughness() {
+        let mut t = simple_transect();
+        t.meander_factor = 2.0;
+        let s = build_transect_section(&t).unwrap().section;
+        let plain = build_transect_section(&simple_transect()).unwrap().section;
+        // Below the banks R_eff = (n_c·K/A)^{3/2} with K ∝ 1/n_c: the
+        // inflation cancels, geometry unchanged.
+        assert!((s.hyd_radius(1.0) - plain.hyd_radius(1.0)).abs() < 1e-12);
+        // Above the banks the overbank terms don't scale, so the
+        // composite differs.
+        assert!((s.hyd_radius(2.5) - plain.hyd_radius(2.5)).abs() > 1e-6);
+    }
+
+    #[test]
+    fn transect_accept_set_is_the_predecessors() {
+        let mut flat = simple_transect();
+        for st in &mut flat.stations {
+            st.0 = 1.0;
+        }
+        assert!(build_transect_section(&flat).is_err());
+        let mut backwards = simple_transect();
+        backwards.stations[3].1 = 20.0;
+        assert!(build_transect_section(&backwards).is_err());
+        let mut banks = simple_transect();
+        banks.x_left = 14.0;
+        assert!(build_transect_section(&banks).is_err());
+        let mut no_n = simple_transect();
+        no_n.n_channel = 0.0;
+        assert!(build_transect_section(&no_n).is_err());
+        // Omitted overbank roughness defaults to the channel's: with all
+        // zones equal, R at overbank depth is the plain A/P of one thread
+        // split only by re-emerging ground — none here, so one thread.
+        let mut defaulted = simple_transect();
+        defaulted.n_left = 0.0;
+        defaulted.n_right = 0.0;
+        let s = build_transect_section(&defaulted).unwrap().section;
+        let y = 2.5;
+        let (a, p) = (s.area(y), s.perimeter(y));
+        assert!((s.hyd_radius(y) - a / p).abs() < 1e-12);
+    }
+
+    #[test]
+    fn street_compiles_to_a_transect() {
+        // A one-sided street: 6 m crown width, 0.15 m curb, 2 % cross
+        // slope, no gutter depression, 2 m backing at 4 %.
+        let st = crate::model::Street {
+            id: "ST".into(),
+            crown_width: 6.0,
+            curb_height: 0.15,
+            cross_slope: 0.02,
+            roughness: 0.016,
+            gutter_depression: 0.0,
+            gutter_width: 0.0,
+            sides: 1,
+            backing_width: 2.0,
+            backing_slope: 0.04,
+            backing_roughness: 0.02,
+        };
+        let s = build_street_section(&st).unwrap().section;
+        // Crown rise 0.12 m stays below the curb top 0.15; backing tops
+        // out at 0.15 + 0.08 = 0.23 = y_full.
+        assert!((s.y_full() - 0.23).abs() < 1e-12);
+        // At the crown depth the road is exactly full: the backing toe
+        // sits at curb-top height and is still dry.
+        let y = 0.12;
+        assert!((s.top_width(y) - 6.0).abs() < 1e-12);
+        // Area at curb-top depth: road triangle full plus backing toe.
+        assert!(s.area(0.15) > 0.5 * 6.0 * 0.12);
+        // A two-sided street doubles the road geometry.
+        let two = crate::model::Street { sides: 2, ..st };
+        let s2 = build_street_section(&two).unwrap().section;
+        assert!((s2.area(0.12) - 2.0 * s.area(0.12)).abs() < 1e-9);
     }
 
     #[test]

@@ -7,9 +7,11 @@
 
 use std::path::PathBuf;
 
-use hydra_engine_uds::hydraulics::section::{build_section, BuildError};
+use hydra_engine_uds::hydraulics::section::{
+    build_section, build_street_section, build_transect_section, BuildError,
+};
 use hydra_engine_uds::io::objects::parse_network;
-use hydra_engine_uds::model::XsectReferent;
+use hydra_engine_uds::model::{XsectReferent, XsectShape};
 
 fn fixture_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/uds")
@@ -44,16 +46,34 @@ fn every_fixture_parses_clean() {
             let Some(xs) = &link.cross_section else {
                 continue;
             };
-            let curve = match xs.referent {
-                Some(XsectReferent::Curve(c)) => Some(net.curves[c].points.as_slice()),
-                _ => None,
+            let built = match (xs.shape, xs.referent) {
+                (XsectShape::Irregular, Some(XsectReferent::Transect(t))) => {
+                    build_transect_section(&net.transects[t])
+                }
+                (XsectShape::Street, Some(XsectReferent::Street(st))) => {
+                    build_street_section(&net.streets[st])
+                }
+                _ => {
+                    let curve = match xs.referent {
+                        Some(XsectReferent::Curve(c)) => Some(net.curves[c].points.as_slice()),
+                        _ => None,
+                    };
+                    build_section(xs.shape, xs.geom_user, len, curve)
+                }
             };
-            match build_section(xs.shape, xs.geom_user, len, curve) {
+            match built {
                 Ok(b) => {
                     let y = 0.5 * b.section.y_full();
                     assert!(b.section.area(y).is_finite());
+                    assert!(b.section.hyd_radius(y).is_finite());
                 }
-                Err(BuildError::Unsupported(_)) => {}
+                Err(BuildError::Unsupported(_)) => {
+                    panic!(
+                        "{} link {}: nothing should stage now",
+                        path.display(),
+                        link.id
+                    )
+                }
                 Err(e) => panic!("{} link {}: {e:?}", path.display(), link.id),
             }
         }
