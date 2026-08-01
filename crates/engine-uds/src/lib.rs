@@ -6,6 +6,10 @@
 //! capability is implemented yet; the crate is published so its name and
 //! versioning track the Hydra workspace from the start. Development
 //! happens at <https://github.com/neeraip/hydra>.
+//!
+//! The specification below is authoritative for this engine's behaviour and is
+//! written ahead of the implementation.
+#![doc = include_str!("spec.md")]
 
 /// The crate version, taken from `Cargo.toml` at compile time.
 pub const HYDRA_ENGINE_UDS_VERSION: &str = env!("CARGO_PKG_VERSION");
