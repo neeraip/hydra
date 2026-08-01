@@ -1223,11 +1223,12 @@ pub struct LidStorage {
     pub covered: bool,
 }
 
-/// Underdrain parameters. Coefficient and exponent stay as written: the
-/// drain relation is unit-dependent (§14.6).
+/// Underdrain parameters. The power-relation coefficient arrives in the
+/// file's rain-rate/rain-depth units and is converted to SI-dimensional
+/// form per its exponent (§14.6).
 #[derive(Debug, Clone, PartialEq)]
 pub struct LidDrain {
-    /// Coefficient, file units.
+    /// Coefficient: m/s per m^exponent of head.
     pub coeff: f64,
     /// Exponent.
     pub exponent: f64,

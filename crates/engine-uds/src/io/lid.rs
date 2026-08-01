@@ -3,8 +3,9 @@
 //!
 //! Depths and heads convert from the surface-depth unit (inches or
 //! millimetres), rates from in/hr or mm/hr, deployment areas from ft² or
-//! m². The underdrain coefficient and exponent stay as written — the drain
-//! relation is unit-dependent (§14.6).
+//! m². The underdrain power-relation coefficient converts to SI-dimensional
+//! form per its exponent (§14.6); its multiplier curve stays in file units,
+//! looked up at file-unit head by the §3 evaluation.
 
 use super::keywords::match_keyword;
 use super::objects::UnitConverter;
@@ -254,6 +255,9 @@ pub(crate) fn parse_lid_controls(
             }
             // DRAIN: coeff, exponent, offset, delay (+ hOpen, hClose,
             // curve). Trailing values are optional and default to zero.
+            // The relation is q = C·h^e in rain-rate/rain-depth units, so
+            // C converts by the rate factor over the depth factor to the
+            // power e (§14.6).
             5 => {
                 if t.len() < 6 {
                     diags.push(err(l, DiagnosticKind::MissingItems));
@@ -289,7 +293,7 @@ pub(crate) fn parse_lid_controls(
                     None
                 };
                 ctrl.drain = Some(LidDrain {
-                    coeff: x[0],
+                    coeff: x[0] * cv.conductivity / cv.rain_depth.powf(x[1]),
                     exponent: x[1],
                     offset: x[2] * cv.rain_depth,
                     delay: x[3] * 3600.0,
@@ -539,8 +543,11 @@ S2  GRF  1  200  8   0  0   0  rpt.txt
         assert!((stor.void_frac - 0.75 / 1.75).abs() < 1e-12);
         assert!(!stor.covered);
         let drain = br.drain.as_ref().unwrap();
-        // Coefficient and exponent stay as written (§14.6).
-        assert_eq!((drain.coeff, drain.exponent), (2.0, 0.5));
+        // q = C·h^e in in/hr and inches converts per the exponent: the
+        // rate factor over the depth factor to the power e (§14.6).
+        assert_eq!(drain.exponent, 0.5);
+        let expect = 2.0 * (0.0254 / 3600.0) / 0.0254_f64.powf(0.5);
+        assert!((drain.coeff - expect).abs() < 1e-15);
         assert!((drain.offset - 6.0 * 0.0254).abs() < 1e-12);
         assert_eq!(drain.curve, Some(0));
         assert_eq!(br.removals, vec![(0, 0.4)]);
