@@ -71,11 +71,13 @@ calibrated model depends on.
 
 Named variables and expressions, treatment relations (§8), and custom
 groundwater relations (§3) share one expression language: three-level
-precedence (addition, multiplication, exponentiation binding tightest),
-unary minus where no operand precedes, scientific-notation literals,
-case-insensitive names resolved through the consumer's vocabulary, and
-nineteen functions (`sin cos tan cot asin acos atan acot sinh cosh tanh coth
-abs sgn sqrt log log10 exp step`).
+precedence (addition, multiplication, exponentiation binding tightest and
+associating rightward, so `a^b^c` is `a^(b^c)`), unary minus where no
+operand precedes — negating the whole multiplicative term it opens, so
+`-a·b^2` is `-(a·b^2)` — scientific-notation literals, case-insensitive
+names resolved through the consumer's vocabulary, and nineteen functions
+(`sin cos tan cot asin acos atan acot sinh cosh tanh coth abs sgn sqrt log
+log10 exp step`).
 
 Evaluation is **total**: roots and logarithms of non-positive arguments,
 powers of non-positive bases, division by zero, and any NaN result evaluate

@@ -128,7 +128,17 @@ impl Simulation {
         for (pi, p) in net.parcels.iter().enumerate() {
             if let Some(gw) = &p.groundwater {
                 let invert = net.vertices[gw.vertex].invert;
-                aquifers.push((pi, GwState::build(gw, &net.aquifers[gw.aquifer], invert)));
+                let state = GwState::build(
+                    gw,
+                    &net.aquifers[gw.aquifer],
+                    invert,
+                    p.area,
+                    net.options.flow_units.is_us(),
+                )
+                .map_err(|e| {
+                    OpenError::Surface(SurfaceRefusal::Incomplete(format!("{}: {e}", p.id)))
+                })?;
+                aquifers.push((pi, state));
             }
         }
         let rdii = RdiiState::build_all(&net);
@@ -310,6 +320,18 @@ impl Simulation {
                 let stage = self.net.vertices[gw.vertex].invert + self.router.depth(gw.vertex);
                 let q = gw.step(dt, infil, evap_used, max_evap, stage);
                 lats[gw.vertex] += q * p.area;
+                // §9.3: a domain-guarded custom relation announces itself
+                // once without changing any result.
+                for which in gw.guard_events.drain(..) {
+                    self.notices.push(RuntimeNotice {
+                        t: self.hydro_t,
+                        message: format!(
+                            "{}: the custom {which} groundwater relation was domain-guarded \
+                             to zero at least once (§9.3)",
+                            p.id
+                        ),
+                    });
+                }
             }
             // §4.3: RDII convolutions on the same clock, with the monthly
             // rainfall adjustment applied during preprocessing (§3.1).

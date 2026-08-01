@@ -5,6 +5,14 @@
 //! relation. States advance under the §3.5 embedded-pair integrator.
 
 use crate::model::{Aquifer, GroundwaterLink};
+use crate::simulation::expression::Expression;
+use std::cell::Cell;
+
+/// The §4.1 expression vocabulary, in slot order: HGW HSW HCB HGS KS K
+/// THETA PHI FI FU A.
+const GW_VOCAB: [&str; 11] = [
+    "hgw", "hsw", "hcb", "hgs", "ks", "k", "theta", "phi", "fi", "fu", "a",
+];
 
 /// §3.5 tolerance on each integrated state (m or fraction).
 const TOL: f64 = 1.0e-5;
@@ -41,6 +49,24 @@ pub struct GwState {
     pub vertex: usize,
     /// Bottom elevation (m), for staging the live vertex head.
     bottom_elev: f64,
+    /// Custom relations (§4.1), compiled per §9.3: deep **replaces** the
+    /// linear reservoir, lateral **adds to** the power relation.
+    lateral_expr: Option<Expression>,
+    deep_expr: Option<Expression>,
+    /// Parcel area (m²), presented to expressions through `A`.
+    area: f64,
+    /// File-unit factors for expression edges (§14.6): metres per length
+    /// unit, m/s per rain-rate unit, m² per land-area unit, and m/s per
+    /// lateral-flow unit.
+    cv_len: f64,
+    cv_rain: f64,
+    cv_area: f64,
+    cv_gwq: f64,
+    /// Once-per-expression §9.3 domain-guard warnings already issued.
+    lateral_warned: bool,
+    deep_warned: bool,
+    /// Guard events pending collection by the session ("lateral"/"deep").
+    pub guard_events: Vec<&'static str>,
     // State.
     /// Upper-zone moisture content.
     pub theta: f64,
@@ -63,8 +89,27 @@ struct Fluxes {
 
 impl GwState {
     /// Build from a parcel's groundwater link and its aquifer, applying
-    /// the initial-condition overrides.
-    pub fn build(gw: &GroundwaterLink, aq: &Aquifer, vertex_invert: f64) -> GwState {
+    /// the initial-condition overrides; `area` is the parcel area (m²)
+    /// and `us_units` the file's unit system, both serving the §4.1
+    /// custom expressions. Compilation failures are returned as text.
+    pub fn build(
+        gw: &GroundwaterLink,
+        aq: &Aquifer,
+        vertex_invert: f64,
+        area: f64,
+        us_units: bool,
+    ) -> Result<GwState, String> {
+        let resolve = |n: &str| GW_VOCAB.iter().position(|v| *v == n);
+        let compile = |label: &str, text: &Option<String>| -> Result<Option<Expression>, String> {
+            match text {
+                Some(t) => Expression::compile(t, resolve)
+                    .map(Some)
+                    .map_err(|e| format!("custom {label} groundwater relation: {e}")),
+                None => Ok(None),
+            }
+        };
+        let lateral_expr = compile("lateral", &gw.lateral_expression)?;
+        let deep_expr = compile("deep-percolation", &gw.deep_expression)?;
         let bottom = gw.bottom_elev.unwrap_or(aq.bottom_elev);
         let water_table = gw.water_table_elev.unwrap_or(aq.water_table_elev);
         let total_depth = (gw.surface_elev - bottom).max(0.0);
@@ -72,7 +117,7 @@ impl GwState {
             Some(e) => e - bottom,
             None => vertex_invert - bottom,
         };
-        GwState {
+        Ok(GwState {
             porosity: aq.porosity,
             wilting: aq.wilting_point,
             field_capacity: aq.field_capacity,
@@ -96,11 +141,25 @@ impl GwState {
             a3: gw.a3,
             vertex: gw.vertex,
             bottom_elev: bottom,
+            lateral_expr,
+            deep_expr,
+            area,
+            cv_len: if us_units { 0.3048 } else { 1.0 },
+            cv_rain: if us_units { 0.0254 } else { 0.001 } / 3600.0,
+            cv_area: if us_units { 4_046.856_422_4 } else { 10_000.0 },
+            cv_gwq: if us_units {
+                0.028_316_846_592 / 4_046.856_422_4
+            } else {
+                1.0e-4
+            },
+            lateral_warned: false,
+            deep_warned: false,
+            guard_events: Vec::new(),
             theta: gw.upper_moisture.unwrap_or(aq.upper_moisture),
             lower_depth: (water_table - bottom).clamp(0.0, total_depth),
             flow: 0.0,
             degraded: false,
-        }
+        })
     }
 
     /// The maximum infiltration volume the unsaturated zone can accept
@@ -145,6 +204,29 @@ impl GwState {
         let max_flow_neg =
             -((self.total_depth - self.lower_depth) * (self.porosity - self.theta) / dt);
 
+        // §9.3 domain guards observed during flux evaluation, folded
+        // into once-per-expression warnings after the step.
+        let lateral_guard = Cell::new(false);
+        let deep_guard = Cell::new(false);
+        // Expression variables in vocabulary order, at the §14.6 file-unit
+        // boundary.
+        let expr_vars = |theta: f64, lower: f64, upper_perc: f64| -> [f64; 11] {
+            let hydcon = self.conductivity * ((theta - self.porosity) * self.conduct_slope).exp();
+            [
+                lower / self.cv_len,
+                h_sw / self.cv_len,
+                self.h_star / self.cv_len,
+                self.total_depth / self.cv_len,
+                self.conductivity / self.cv_rain,
+                hydcon / self.cv_rain,
+                theta,
+                self.porosity,
+                infil / self.cv_rain,
+                upper_perc / self.cv_rain,
+                self.area / self.cv_area,
+            ]
+        };
+
         let fluxes = |theta: f64, lower: f64| -> Fluxes {
             let lower = lower.clamp(0.0, self.total_depth);
             let upper_depth = self.total_depth - lower;
@@ -176,8 +258,19 @@ impl GwState {
                 upper_perc = (hydcon * dhdz).min(max_perc);
             }
 
-            // Deep percolation: the linear reservoir.
-            let lower_loss = (self.lower_loss_coeff * lower / self.total_depth).min(lower / dt);
+            // Deep percolation: the linear reservoir, unless a custom
+            // relation replaces it (§4.1), reading in file rain units.
+            let lower_loss = match &self.deep_expr {
+                Some(e) => {
+                    let (v, guarded) = e.eval(&expr_vars(theta, lower, upper_perc));
+                    if guarded {
+                        deep_guard.set(true);
+                    }
+                    v * self.cv_rain
+                }
+                None => self.lower_loss_coeff * lower / self.total_depth,
+            }
+            .min(lower / dt);
 
             // Lateral discharge: the power relation, zero at or below the
             // threshold; negative flow zeroed when the interaction term
@@ -201,8 +294,18 @@ impl GwState {
                 if gw_flow < 0.0 && self.a3 != 0.0 {
                     gw_flow = 0.0;
                 }
-                gw_flow = gw_flow.clamp(max_flow_neg, max_flow_pos);
             }
+            // A custom lateral relation adds to the power relation —
+            // reading in the lateral-coefficient basis — and the caps
+            // bound the combined flux (§4.1).
+            if let Some(e) = &self.lateral_expr {
+                let (v, guarded) = e.eval(&expr_vars(theta, lower, upper_perc));
+                if guarded {
+                    lateral_guard.set(true);
+                }
+                gw_flow += v * self.cv_gwq;
+            }
+            gw_flow = gw_flow.clamp(max_flow_neg, max_flow_pos);
             Fluxes {
                 upper_evap,
                 lower_evap,
@@ -269,7 +372,17 @@ impl GwState {
         self.lower_depth = lo;
         let f = fluxes(th, lo);
         self.flow = f.gw_flow;
-        f.gw_flow
+        // The first domain-guarded evaluation of each expression warns
+        // once (§9.3).
+        if lateral_guard.get() && !self.lateral_warned {
+            self.lateral_warned = true;
+            self.guard_events.push("lateral");
+        }
+        if deep_guard.get() && !self.deep_warned {
+            self.deep_warned = true;
+            self.guard_events.push("deep-percolation");
+        }
+        self.flow
     }
 }
 

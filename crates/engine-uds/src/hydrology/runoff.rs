@@ -220,15 +220,6 @@ impl Surface {
         if net.parcels.is_empty() && net.rdii.is_empty() {
             return Ok(None);
         }
-        for p in &net.parcels {
-            if let Some(gw) = &p.groundwater {
-                if gw.lateral_expression.is_some() || gw.deep_expression.is_some() {
-                    return Err(SurfaceRefusal::Unsupported(
-                        "custom groundwater expressions arrive with §9.3",
-                    ));
-                }
-            }
-        }
 
         // Gage records resolved to absolute intervals and SI rates.
         let mut gages = Vec::with_capacity(net.gages.len());

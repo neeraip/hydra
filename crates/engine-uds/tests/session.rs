@@ -452,6 +452,63 @@ RAIN  0:00  0
 }
 
 #[test]
+fn a_custom_lateral_relation_adds_to_the_power_relation() {
+    // No built-in coefficients (a1 = 0) and the table exactly at the
+    // threshold: only the §9.3 custom relation discharges — a constant
+    // 0.02 m³/s per hectare over 2 ha is 0.04 m³/s at the vertex.
+    let inp = gw_model(0.0, 1.0, 98.0)
+        + "
+[GWF]
+S1  LATERAL  0.02
+";
+    let (mut sim, _, _) = Simulation::open(&inp).expect("open");
+    sim.run();
+    let q = sim.flow("C1").expect("flow");
+    assert!((q - 0.04).abs() < 0.004, "custom lateral flow {q}");
+    let led = sim.report();
+    let expect = 0.04 * 86_400.0;
+    assert!(
+        (led.inflow - expect).abs() < 0.05 * expect,
+        "volume {} vs {expect}",
+        led.inflow
+    );
+}
+
+#[test]
+fn a_domain_guarded_expression_warns_once_and_reads_zero() {
+    // sqrt of a negative argument is guarded to zero (§9.3): deep
+    // percolation reads zero, and exactly one notice announces it.
+    let inp = gw_model(0.0, 1.0, 98.0)
+        + "
+[GWF]
+S1  DEEP  sqrt ( 0 - 1 )
+";
+    let (mut sim, _, _) = Simulation::open(&inp).expect("open");
+    sim.run();
+    let warnings: Vec<_> = sim
+        .notices
+        .iter()
+        .filter(|n| n.message.contains("deep-percolation"))
+        .collect();
+    assert_eq!(warnings.len(), 1, "{:?}", sim.notices);
+    // Guarded to zero means no deep loss and no discharge: dry network.
+    assert!(sim.report().inflow.abs() < 1.0);
+}
+
+#[test]
+fn an_unknown_expression_name_refuses_the_model() {
+    let inp = gw_model(0.0, 1.0, 98.0)
+        + "
+[GWF]
+S1  LATERAL  0.001 * BOGUS
+";
+    assert!(
+        Simulation::open(&inp).is_err(),
+        "unknown vocabulary name must refuse the model"
+    );
+}
+
+#[test]
 fn a_charged_aquifer_discharges_and_recedes() {
     // Water table starts 1 m above the threshold (J1's invert at 98,
     // aquifer bottom 95 → h* = 3 m; table at 99 → d_L = 4 m).

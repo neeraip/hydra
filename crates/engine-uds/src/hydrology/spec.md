@@ -311,9 +311,18 @@ through the interaction terms — and negative $f_G$ (bank storage) is
 admitted when the interaction term is unused. The flux is bounded by
 aquifer storage, unsaturated-zone acceptance, and vertex supply. Custom
 expressions asymmetrically **replace** deep percolation but **add to**
-lateral discharge, and evaluate per §14.6's expression rule. Coefficients
-are unit-dependent per §14.6. Infiltrate arrives at the vertex clean unless
-a constant concentration is assigned.
+lateral discharge, and evaluate per §14.6's expression rule in the file's
+unit system. Their vocabulary is eleven names: `HGW` water-table height
+and `HSW` surface-water height above the aquifer bottom, `HCB` the
+threshold height $h^*$, `HGS` the total aquifer depth (all in the file's
+length unit); `KS` saturated and `K` current unsaturated conductivity,
+`FI` surface infiltration, and `FU` upper-zone percolation (rain-rate
+unit); `THETA` moisture and `PHI` porosity (dimensionless); and `A` the
+parcel area (land-area unit). The deep-percolation result reads in the
+rain-rate unit; the lateral result in the lateral-coefficient basis of
+§14.6 (ft³/s per acre, m³/s per hectare). Coefficients are unit-dependent
+per §14.6. Infiltrate arrives at the vertex clean unless a constant
+concentration is assigned.
 
 ### 4.2 Snow
 
