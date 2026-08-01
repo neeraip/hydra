@@ -572,10 +572,10 @@ impl Router {
                         OutfallStage::Free => Boundary::Free,
                         OutfallStage::Normal => Boundary::Normal,
                         OutfallStage::Fixed(e) => Boundary::Fixed(*e),
+                        // Tidal and series stages are dynamic fixed
+                        // stages the session updates each period (§10.1).
                         OutfallStage::Tidal { .. } | OutfallStage::Series { .. } => {
-                            return Err(RouterRefusal::Unsupported(
-                                "tidal and series outfall stages arrive with §10 forcing",
-                            ));
+                            Boundary::Fixed(v.invert)
                         }
                     };
                     (f64::MAX, 0.0, 0.0, VertClass::Outfall(b))
@@ -957,6 +957,25 @@ impl Router {
     /// Current simulation time (s).
     pub fn time(&self) -> f64 {
         self.t
+    }
+
+    /// Set a fixed-stage outfall's stage elevation (m) — the session's
+    /// handle for tidal and series boundaries (§10.1).
+    pub fn set_outfall_stage(&mut self, vi: usize, elev: f64) {
+        if let VertClass::Outfall(Boundary::Fixed(e)) = &mut self.verts[vi].class {
+            *e = elev;
+        }
+    }
+
+    /// Advance the clock without routing: the §10.3 between-events freeze.
+    /// State and ledgers hold; the head history resets so the error
+    /// estimate restarts cleanly after the gap.
+    pub fn skip_to(&mut self, t: f64) {
+        if t > self.t {
+            self.t = t;
+            self.hist.clear();
+            self.dt_prev = DT_FLOOR;
+        }
     }
 
     /// Depth at a vertex (m).

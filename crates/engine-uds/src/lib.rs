@@ -20,6 +20,7 @@
 pub mod hydraulics;
 pub mod io;
 pub mod model;
+pub mod simulation;
 
 /// The crate version, taken from `Cargo.toml` at compile time.
 pub const HYDRA_ENGINE_UDS_VERSION: &str = env!("CARGO_PKG_VERSION");
