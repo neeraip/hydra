@@ -2530,7 +2530,7 @@ dependencies = [
 
 [[package]]
 name = "hydra-gui"
-version = "2.9.0"
+version = "2.10.0"
 dependencies = [
  "base64 0.23.0",
  "chrono",
