@@ -43,5 +43,39 @@ class TestReleaseStatusSignal(unittest.TestCase):
         self.assertEqual(release_status.signal(msgs), "none")
 
 
+    def test_signal_ignores_bang_on_non_code_types(self):
+        # A docs/style/test/ci commit cannot break a compiled API; its
+        # breaking marker describes something else (a spec renumbering, a
+        # test-contract change) and must not suggest MAJOR.
+        for kind in ("docs", "style", "test", "ci"):
+            self.assertEqual(
+                release_status.signal([f"{kind}(uds)!: renumber the registry"]),
+                "none",
+            )
+
+    def test_signal_ignores_breaking_footer_under_non_code_subject(self):
+        # Squash merges carry constituent messages in the body; the subject's
+        # type caps severity even when a footer survives inside.
+        msg = (
+            "docs(uds): write the urban drainage specification (#91)\n\n"
+            "docs(uds)!: reframe the specification\n\n"
+            "BREAKING CHANGE: the section registry is renumbered\n"
+        )
+        self.assertEqual(release_status.signal([msg]), "none")
+
+    def test_signal_keeps_bang_on_chore_and_build(self):
+        # Deliberately not exempt: either can carry a genuine break.
+        self.assertEqual(release_status.signal(["chore!: raise MSRV to 1.85"]), "major")
+        self.assertEqual(
+            release_status.signal(["build!: drop the vendored-ssl feature"]), "major"
+        )
+
+    def test_signal_mixed_messages_still_finds_the_code_break(self):
+        self.assertEqual(
+            release_status.signal(["docs(uds)!: renumber", "feat(engine)!: remove API"]),
+            "major",
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

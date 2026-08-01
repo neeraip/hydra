@@ -124,11 +124,26 @@ def has_impactful_change(tag, paths):
     return any(classify_commit(sha, paths) != "dev" for sha in commit_shas_since(tag, paths))
 
 
+# Commit types that cannot alter a compiled artifact's API surface. A
+# breaking marker on one of these describes a break in something other than
+# the released code — a spec renumbering, a test-contract change, a CI
+# policy — and must not drive a semver suggestion. `chore` and `build` are
+# deliberately NOT exempt: either can carry a genuine break (an MSRV raise,
+# a feature-flag removal).
+NON_CODE_TYPES = ("docs", "style", "test", "ci")
+
+
 def signal(messages):
     # Positive evidence only. Returns "major", "minor", or "none".
     result = "none"
     for msg in messages:
         subject = msg.splitlines()[0] if msg else ""
+        m = re.match(r"^([a-z]+)(\([^)]*\))?!?:", subject)
+        if m and m.group(1) in NON_CODE_TYPES:
+            # Squash commits carry their constituent messages (and footers) in
+            # the body; the subject's type is the merge's own statement of
+            # what the change is, and a non-code type caps its severity.
+            continue
         # Conventional Commits: "BREAKING-CHANGE" is a synonym of "BREAKING CHANGE".
         if re.search(r"(^|\n)BREAKING[ -]CHANGE:\s", msg) or re.match(r"^[a-z]+(\([^)]*\))?!:", subject):
             return "major"
