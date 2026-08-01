@@ -139,6 +139,18 @@ pub enum DiagnosticKind {
         /// The option keyword.
         keyword: &'static str,
     },
+    /// A reference to an identifier no namespace registered.
+    UnresolvedReference {
+        /// The identifier as written.
+        id: String,
+    },
+    /// A line with too few items for its section's grammar.
+    MissingItems,
+    /// A value token failing its field's grammar or range.
+    BadValue {
+        /// The offending token.
+        token: String,
+    },
     /// The §14.4 interlock: a report step below the routing step is fatal.
     ReportStepBelowRoutingStep {
         /// Report step (s).

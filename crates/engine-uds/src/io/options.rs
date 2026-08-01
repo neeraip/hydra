@@ -244,8 +244,10 @@ impl Default for AnalysisOptions {
     }
 }
 
-/// ft → m.
-const FT: f64 = 1.0 / 3.2808;
+/// ft → m, exact: the predecessor's US path performs no length conversion
+/// (it computes in feet), so the factor is this engine's own and is exact
+/// per §1.7.
+const FT: f64 = 0.3048;
 
 /// The option keywords, in the predecessor's table order.
 const OPTION_WORDS: &[&str] = &[
@@ -973,14 +975,14 @@ mod tests {
         // apply, because order is arbitrary (§14.4).
         let (o, _) = parse("HEAD_TOLERANCE 0.005\nFLOW_UNITS CFS");
         assert!(
-            (o.head_tol - 0.005 / 3.2808).abs() < 1e-12,
+            (o.head_tol - 0.005 * 0.3048).abs() < 1e-12,
             "{}",
             o.head_tol
         );
         let (o, _) = parse("HEAD_TOLERANCE 0.005\nFLOW_UNITS CMS");
         assert_eq!(o.head_tol, 0.005, "SI file values pass through");
         let (o, _) = parse("MIN_SURFAREA 12.566\nFLOW_UNITS GPM");
-        assert!((o.min_surface_area - 12.566 / (3.2808 * 3.2808)).abs() < 1e-9);
+        assert!((o.min_surface_area - 12.566 * 0.3048 * 0.3048).abs() < 1e-9);
     }
 
     #[test]

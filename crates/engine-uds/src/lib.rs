@@ -18,6 +18,7 @@
 #![doc = include_str!("interop/spec.md")]
 
 pub mod io;
+pub mod model;
 
 /// The crate version, taken from `Cargo.toml` at compile time.
 pub const HYDRA_ENGINE_UDS_VERSION: &str = env!("CARGO_PKG_VERSION");
