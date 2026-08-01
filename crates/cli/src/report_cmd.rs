@@ -99,6 +99,20 @@ pub fn run(cli: &ReportArgs, verbosity: &u8) -> i32 {
         }
     };
 
+    // ── Check the results before producing anything from them ─────────────
+    //
+    // Every block reads this one file, so an unreadable one fails all of them
+    // the same way: a document consisting of thirteen copies of a single
+    // error, written out with a success exit code. `hydra report && publish`
+    // would ship that as a report. Validating here turns it into one stated
+    // error and a non-zero exit, which is what the model path above and every
+    // GUI entry point already do.
+    let results_path = Path::new(&cli.results);
+    if let Err(e) = hydra::io::out_reader::read_metadata_checked(results_path) {
+        crate::emit_error("input/results", &e.to_string(), None, None);
+        return EXIT_INPUT;
+    }
+
     // ── Template: explicit file, or the everything-report default ─────────
     let template = match &cli.template {
         Some(path) => {
@@ -134,7 +148,6 @@ pub fn run(cli: &ReportArgs, verbosity: &u8) -> i32 {
         ],
     };
 
-    let results_path = Path::new(&cli.results);
     let document = assemble(
         &template,
         hydra::report_catalog(),

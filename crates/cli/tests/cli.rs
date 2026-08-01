@@ -427,3 +427,95 @@ fn http_500_exits_3() {
 
     server.join().expect("server thread");
 }
+
+// ── `hydra report` input validation ──────────────────────────────────────────
+
+/// Run the fixture and return `(tempdir, results path)`.
+fn run_for_results() -> (tempfile::TempDir, PathBuf) {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let out = dir.path().join("net.out");
+    hydra_run()
+        .arg(fixture_path("four_node_loop.inp"))
+        .arg("--summary")
+        .arg(dir.path().join("net.rpt"))
+        .arg("--results")
+        .arg(&out)
+        .assert()
+        .success();
+    (dir, out)
+}
+
+#[test]
+fn unreadable_results_are_refused_instead_of_reported_as_failed_sections() {
+    // Every block reads the same .out, so an unreadable one used to yield a
+    // document of thirteen identical failures written with exit 0 — which a
+    // `hydra report && publish` pipeline would ship as a real report.
+    let (dir, out) = run_for_results();
+    let good = std::fs::read(&out).expect("results written");
+    std::fs::write(&out, &good[..good.len() / 4]).expect("truncate");
+
+    let doc = dir.path().join("report.txt");
+    hydra()
+        .args(["report", "--model"])
+        .arg(fixture_path("four_node_loop.inp"))
+        .arg("--results")
+        .arg(&out)
+        .arg("-o")
+        .arg(&doc)
+        .assert()
+        .code(1)
+        .stderr(predicate::str::contains("input/results"));
+
+    assert!(
+        !doc.exists(),
+        "a refused run must not leave a report behind"
+    );
+}
+
+#[test]
+fn a_20013_results_file_is_refused_by_name() {
+    // 5.1-and-earlier results: the version gate must reach the user as one
+    // actionable message, not as text buried in every section.
+    let (dir, out) = run_for_results();
+    let mut bytes = std::fs::read(&out).expect("results written");
+    bytes[4..8].copy_from_slice(&20_013i32.to_le_bytes());
+    std::fs::write(&out, &bytes).expect("rewrite version");
+
+    hydra()
+        .args(["report", "--model"])
+        .arg(fixture_path("four_node_loop.inp"))
+        .arg("--results")
+        .arg(&out)
+        .arg("-o")
+        .arg(dir.path().join("report.txt"))
+        .assert()
+        .code(1)
+        .stderr(predicate::str::contains("20013"))
+        .stderr(predicate::str::contains("re-run the simulation"));
+}
+
+#[test]
+fn readable_results_still_produce_a_report_with_real_sections() {
+    // Guards the check above from over-reaching: the good path must be
+    // untouched, and must carry content rather than failure placeholders.
+    let (dir, out) = run_for_results();
+    let doc = dir.path().join("report.txt");
+
+    hydra()
+        .args(["report", "--model"])
+        .arg(fixture_path("four_node_loop.inp"))
+        .arg("--results")
+        .arg(&out)
+        .arg("--no-timestamp")
+        .arg("-o")
+        .arg(&doc)
+        .assert()
+        .success();
+
+    let text = std::fs::read_to_string(&doc).expect("report written");
+    assert!(text.contains("Run Summary"), "missing section:\n{text}");
+    assert!(
+        !text.contains("[failed:"),
+        "good results must not yield failed sections:\n{text}"
+    );
+}
