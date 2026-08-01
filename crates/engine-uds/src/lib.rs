@@ -17,6 +17,7 @@
 #![doc = include_str!("simulation/spec.md")]
 #![doc = include_str!("interop/spec.md")]
 
+pub mod hydraulics;
 pub mod io;
 pub mod model;
 
