@@ -188,6 +188,8 @@ pub(crate) fn parse_parcels(
             slope: x[3] / 100.0,
             curb_length: x[4] * cv.len,
             snowpack,
+            land_cover: Vec::new(),
+            init_buildup: Vec::new(),
             subareas: None,
             infiltration: None,
         });

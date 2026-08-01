@@ -10,5 +10,6 @@ pub mod keywords;
 pub mod lex;
 pub mod objects;
 pub mod options;
+pub mod quality;
 pub mod survey;
 pub mod tables;

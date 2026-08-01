@@ -106,6 +106,53 @@ pub fn parse_network(input: &str) -> (Network, Vec<Diagnostic>) {
         }
     }
 
+    // Quality objects (§2.8) and inflows — constituents first, since land
+    // uses size their relation tables by the constituent count.
+    for (sec, lines) in &s.sections {
+        if *sec == Section::Pollutants {
+            net.constituents = super::quality::parse_constituents(lines, &s, &mut diagnostics);
+        }
+    }
+    for (sec, lines) in &s.sections {
+        if *sec == Section::LandUses {
+            net.land_uses =
+                super::quality::parse_land_uses(lines, net.constituents.len(), &mut diagnostics);
+        }
+    }
+    for (sec, lines) in &s.sections {
+        match sec {
+            Section::Buildup => {
+                super::quality::parse_buildup(lines, &s, &mut net.land_uses, &mut diagnostics)
+            }
+            Section::Washoff => {
+                super::quality::parse_washoff(lines, &s, &mut net.land_uses, &mut diagnostics)
+            }
+            Section::Coverages => {
+                super::quality::parse_coverages(lines, &s, &mut net, &mut diagnostics)
+            }
+            Section::Loadings => {
+                super::quality::parse_loadings(lines, &s, &mut net, &mut diagnostics)
+            }
+            Section::Inflows => {
+                net.inflows.extend(super::quality::parse_inflows(
+                    lines,
+                    &s,
+                    &cv,
+                    &mut diagnostics,
+                ));
+            }
+            Section::Dwf => {
+                net.dry_weather.extend(super::quality::parse_dry_weather(
+                    lines,
+                    &s,
+                    &cv,
+                    &mut diagnostics,
+                ));
+            }
+            _ => {}
+        }
+    }
+
     // Vertices and links, in file order (identical to registration order).
     for (sec, lines) in &s.sections {
         for line in lines {

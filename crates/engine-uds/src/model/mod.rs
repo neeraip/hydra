@@ -32,6 +32,14 @@ pub struct Network {
     pub patterns: Vec<TimePattern>,
     /// Precipitation gages, in registration order.
     pub gages: Vec<Gage>,
+    /// Constituents, in registration order.
+    pub constituents: Vec<Constituent>,
+    /// Land uses, in registration order.
+    pub land_uses: Vec<LandUse>,
+    /// External inflows at vertices.
+    pub inflows: Vec<ExternalInflow>,
+    /// Sanitary (dry-weather) inflows at vertices.
+    pub dry_weather: Vec<DryWeatherInflow>,
     /// Parcels, in registration order.
     pub parcels: Vec<Parcel>,
     /// Transect identifiers, in registration order.
@@ -617,6 +625,10 @@ pub struct Parcel {
     pub curb_length: f64,
     /// Snow pack parameter set, when assigned.
     pub snowpack: Option<usize>,
+    /// Land-use cover: (land use, fraction) pairs from `[COVERAGES]`.
+    pub land_cover: Vec<(usize, f64)>,
+    /// Initial surface buildup: (constituent, areal load as written).
+    pub init_buildup: Vec<(usize, f64)>,
     /// Sub-area parameters, once `[SUBAREAS]` supplies them.
     pub subareas: Option<Subareas>,
     /// Infiltration parameters, once `[INFILTRATION]` supplies them.
@@ -694,4 +706,173 @@ pub enum Infiltration {
         /// Drying time (s).
         dry_time: f64,
     },
+}
+
+/// A constituent (§2.8). Concentrations stay in their declared unit; the
+/// decay coefficient converts from per-day to per-second.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Constituent {
+    /// Identifier as written.
+    pub id: String,
+    /// Concentration unit.
+    pub units: ConcentrationUnits,
+    /// Background concentration in precipitation.
+    pub c_rain: f64,
+    /// Background concentration in groundwater.
+    pub c_groundwater: f64,
+    /// Background concentration in sewer inflow.
+    pub c_rdii: f64,
+    /// First-order decay coefficient (1/s); negative models growth.
+    pub decay: f64,
+    /// Accumulates only under snow cover.
+    pub snow_only: bool,
+    /// Co-pollutant relation: this constituent's load gains a fraction of
+    /// another's.
+    pub co_constituent: Option<usize>,
+    /// The co-pollutant fraction (may exceed 1: it bridges units).
+    pub co_fraction: f64,
+    /// Background concentration in sanitary flow.
+    pub c_dwf: f64,
+    /// Initial network concentration.
+    pub c_init: f64,
+}
+
+/// Concentration units (independent of the unit system).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConcentrationUnits {
+    /// Milligrams per litre.
+    MgPerL,
+    /// Micrograms per litre.
+    UgPerL,
+    /// Organism counts per litre.
+    CountPerL,
+}
+
+/// A land use (§2.8), owning per-constituent accumulation and mobilisation
+/// relations. Accumulation masses and their normalisers stay in the file's
+/// units — the §8 relations own their interpretation.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LandUse {
+    /// Identifier as written.
+    pub id: String,
+    /// Street-cleaning interval (days); 0 = never.
+    pub sweep_interval: f64,
+    /// Fraction of buildup a cleaning pass can remove.
+    pub sweep_removal: f64,
+    /// Days since the last cleaning at simulation start.
+    pub sweep_days_since: f64,
+    /// Per-constituent accumulation, indexed by constituent.
+    pub buildup: Vec<Option<Buildup>>,
+    /// Per-constituent mobilisation, indexed by constituent.
+    pub washoff: Vec<Option<Washoff>>,
+}
+
+/// An accumulation relation (§8.2), coefficients as written.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Buildup {
+    /// The functional form.
+    pub form: BuildupForm,
+    /// The three coefficients, in the file's column order.
+    pub coeffs: [f64; 3],
+    /// Per-area or per-curb-length normalisation.
+    pub normalizer: BuildupNormalizer,
+}
+
+/// Accumulation forms (§8.2).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BuildupForm {
+    /// No accumulation.
+    None,
+    /// Power growth capped at a maximum.
+    Power,
+    /// Exponential approach to a maximum.
+    Exponential,
+    /// Michaelis–Menten saturation.
+    Saturation,
+    /// A scaled external loading series.
+    External,
+}
+
+/// What accumulation normalises by.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BuildupNormalizer {
+    /// Mass per unit area.
+    PerArea,
+    /// Mass per unit curb length.
+    PerCurb,
+}
+
+/// A mobilisation relation (§8.3), coefficients as written.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Washoff {
+    /// The functional form.
+    pub form: WashoffForm,
+    /// Washoff coefficient.
+    pub coeff: f64,
+    /// Washoff exponent.
+    pub exponent: f64,
+    /// Cleaning removal efficiency (%).
+    pub sweep_efficiency: f64,
+    /// BMP removal efficiency (%).
+    pub bmp_efficiency: f64,
+}
+
+/// Mobilisation forms (§8.3).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WashoffForm {
+    /// No mobilisation.
+    None,
+    /// Source-limited exponential in remaining buildup.
+    Exponential,
+    /// Rating on the land-use share of flow.
+    RatingCurve,
+    /// Constant event-mean concentration.
+    Emc,
+}
+
+/// A direct external inflow at a vertex (§2.6, §8.1).
+#[derive(Debug, Clone, PartialEq)]
+pub struct ExternalInflow {
+    /// The receiving vertex.
+    pub vertex: usize,
+    /// The constituent; `None` is a flow inflow.
+    pub constituent: Option<usize>,
+    /// The supplied series, when given.
+    pub series: Option<usize>,
+    /// How the series and baseline are read.
+    pub kind: InflowKind,
+    /// User units factor (mass inflows).
+    pub units_factor: f64,
+    /// Series scale factor.
+    pub scale: f64,
+    /// Constant baseline — m³/s for flow inflows, concentration or mass
+    /// rate as written otherwise.
+    pub baseline: f64,
+    /// The baseline's periodic modulation.
+    pub base_pattern: Option<usize>,
+}
+
+/// External-inflow interpretations.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InflowKind {
+    /// A water inflow.
+    Flow,
+    /// A concentration riding the accompanying flow.
+    Concentration,
+    /// A mass rate needing no flow.
+    Mass,
+}
+
+/// A sanitary inflow at a vertex (§2.6): an average modulated by up to four
+/// patterns, whose slot-versus-declared-type rules §14.7 flags.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DryWeatherInflow {
+    /// The receiving vertex.
+    pub vertex: usize,
+    /// The constituent; `None` is the flow inflow.
+    pub constituent: Option<usize>,
+    /// Average value — m³/s for flow, concentration as written otherwise.
+    pub average: f64,
+    /// The four pattern slots (monthly, daily, hourly, weekend), as given.
+    pub patterns: [Option<usize>; 4],
 }
