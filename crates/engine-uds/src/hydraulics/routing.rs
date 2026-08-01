@@ -501,6 +501,15 @@ pub struct Router {
     sq: Vec<f64>,
     /// Pump on/off latches (§7.1).
     pump_on: Vec<bool>,
+    /// §9 operational settings per structure: pump speed, orifice/weir
+    /// opening fraction, outlet scale. Default 1.
+    sett: Vec<f64>,
+    /// §9 channel open/closed states. Default open.
+    chan_open: Vec<bool>,
+    /// Time of the last §9 status flip, per structure and per channel
+    /// (router clock s), for the TIMEOPEN/TIMECLOSED premises.
+    struct_flip_t: Vec<f64>,
+    chan_flip_t: Vec<f64>,
     a_mid: Vec<f64>,
     net_flow: Vec<f64>,
     // Head history for the error estimate: the two previous accepted
@@ -895,6 +904,10 @@ impl Router {
             q: vec![0.0; nc],
             sq: vec![0.0; ns],
             pump_on,
+            sett: vec![1.0; ns],
+            chan_open: vec![true; nc],
+            struct_flip_t: vec![0.0; ns],
+            chan_flip_t: vec![0.0; nc],
             a_mid: vec![0.0; nc],
             net_flow: vec![0.0; nv],
             hist: Vec::new(),
@@ -983,6 +996,137 @@ impl Router {
         self.y[v]
     }
 
+    /// The last accepted step size (s), the §9.2 PID clock.
+    pub fn last_dt(&self) -> f64 {
+        self.dt_prev
+    }
+
+    /// Water depth in model link `li` (m): a channel's mid-depth, a
+    /// structure's head above its crest, for the §9.1 premises.
+    pub fn link_depth(&self, li: usize) -> Option<f64> {
+        if let Some((ci, c)) = self.chans.iter().enumerate().find(|(_, c)| c.link == li) {
+            let _ = ci;
+            let y1 = (self.y[c.from] - c.off1).max(0.0);
+            let y2 = (self.y[c.to] - c.off2).max(0.0);
+            return Some((0.5 * (y1 + y2)).min(c.geom.sec.y_full()));
+        }
+        self.structs
+            .iter()
+            .find(|s| s.link == li)
+            .map(|st| (self.y[st.from] - st.off1).max(0.0))
+    }
+
+    /// Flow velocity in channel `li` (m/s); `None` for structures, whose
+    /// premise then reads inapplicable (§9.1).
+    pub fn link_velocity(&self, li: usize) -> Option<f64> {
+        self.chans
+            .iter()
+            .enumerate()
+            .find(|(_, c)| c.link == li)
+            .map(|(ci, c)| {
+                let a = self.a_mid[ci].max(DRY);
+                (self.q[ci] / c.barrels / a).clamp(-V_MAX, V_MAX)
+            })
+    }
+
+    /// Channel-only §9.1 observables: Manning full-section flow, full
+    /// depth, length, and slope.
+    pub fn chan_full_attrs(&self, li: usize) -> Option<(f64, f64, f64, f64)> {
+        self.chans.iter().find(|c| c.link == li).map(|c| {
+            let y_full = c.geom.sec.y_full();
+            let a = c.geom.sec.area(y_full);
+            let r = c.geom.sec.hyd_radius(y_full);
+            let q_full = a * r.powf(2.0 / 3.0) * c.slope.sqrt() / c.n * c.barrels;
+            (q_full, y_full, c.length, c.slope)
+        })
+    }
+
+    /// Stored volume at vertex `vi` (m³): storage geometry, else depth
+    /// times the assembled surface area of the last accepted step.
+    pub fn vertex_volume_now(&self, vi: usize) -> f64 {
+        match &self.verts[vi].class {
+            VertClass::Storage(g) => g.volume(self.y[vi]),
+            _ => {
+                // Junctions hold the §6.3 nominal store.
+                self.y[vi].max(0.0) * self.min_surface_area
+            }
+        }
+    }
+
+    /// The vertex's §14.7 maximum (rim) depth (m).
+    pub fn vertex_max_depth(&self, vi: usize) -> f64 {
+        self.verts[vi].y_max
+    }
+
+    /// The vertex invert elevation (m).
+    pub fn vertex_invert(&self, vi: usize) -> f64 {
+        self.verts[vi].invert
+    }
+
+    /// Set model link `li`'s operational target (§9): pump speed,
+    /// orifice/weir opening fraction, outlet scale, or channel
+    /// open (1) / closed (0). Returns `Some(changed)`, `None` for a link
+    /// the router does not carry.
+    pub fn set_setting(&mut self, li: usize, value: f64) -> Option<bool> {
+        if let Some(ci) = self.chans.iter().position(|c| c.link == li) {
+            let open = value > 0.0;
+            let changed = self.chan_open[ci] != open;
+            if changed {
+                self.chan_open[ci] = open;
+                self.chan_flip_t[ci] = self.t;
+            }
+            return Some(changed);
+        }
+        if let Some(si) = self.structs.iter().position(|s| s.link == li) {
+            let changed = self.sett[si] != value;
+            if changed {
+                if (self.sett[si] > 0.0) != (value > 0.0) {
+                    self.struct_flip_t[si] = self.t;
+                }
+                self.sett[si] = value;
+            }
+            return Some(changed);
+        }
+        None
+    }
+
+    /// Model link `li`'s current §9 setting.
+    pub fn setting(&self, li: usize) -> Option<f64> {
+        if let Some(ci) = self.chans.iter().position(|c| c.link == li) {
+            return Some(if self.chan_open[ci] { 1.0 } else { 0.0 });
+        }
+        self.structs
+            .iter()
+            .position(|s| s.link == li)
+            .map(|si| self.sett[si])
+    }
+
+    /// Time model link `li` has spent in its current open/closed status
+    /// (s), for the TIMEOPEN/TIMECLOSED premises (§9.1). Pump latches
+    /// count as status flips too.
+    pub fn time_in_status(&self, li: usize) -> Option<f64> {
+        if let Some(ci) = self.chans.iter().position(|c| c.link == li) {
+            return Some(self.t - self.chan_flip_t[ci]);
+        }
+        self.structs
+            .iter()
+            .position(|s| s.link == li)
+            .map(|si| self.t - self.struct_flip_t[si])
+    }
+
+    /// Whether model link `li` is currently open: a positive setting,
+    /// and for pumps the §7.1 latch as well.
+    pub fn is_open(&self, li: usize) -> Option<bool> {
+        if let Some(ci) = self.chans.iter().position(|c| c.link == li) {
+            return Some(self.chan_open[ci]);
+        }
+        self.structs.iter().position(|s| s.link == li).map(|si| {
+            let latched_off =
+                matches!(self.structs[si].kind, StructKind::Pump { .. }) && !self.pump_on[si];
+            self.sett[si] > 0.0 && !latched_off
+        })
+    }
+
     /// Flow in the element routed for model link `li` (m³/s), in the
     /// user's orientation.
     pub fn flow(&self, li: usize, net: &Network) -> f64 {
@@ -1004,26 +1148,33 @@ impl Router {
     pub fn advance(&mut self, t_end: f64, lateral: &dyn Fn(f64, &mut [f64])) {
         let mut lat = vec![0.0; self.verts.len()];
         while self.t < t_end - 1e-9 {
-            self.update_pump_latches();
-            let mut dt = self.seed_step().min(t_end - self.t);
             lateral(self.t, &mut lat);
-            loop {
-                let trial = self.run_trial(dt, &lat);
-                let at_floor = dt <= DT_FLOOR + 1e-12;
-                let ok = trial.converged && (self.err_tol <= 0.0 || trial.err <= self.err_tol);
-                if ok || at_floor {
-                    if !ok {
-                        self.report
-                            .degraded
-                            .push((self.t + dt, self.ids[trial.worst_vertex].clone()));
-                    }
-                    self.accept(dt, trial, &lat);
-                    break;
+            self.step_once(t_end, &lat);
+        }
+    }
+
+    /// Advance by exactly one accepted step toward `t_end`, under the
+    /// §6.5 transaction rules, with `lat` the per-vertex lateral inflows
+    /// held for the step. Rule evaluation (§9) sits between calls.
+    pub fn step_once(&mut self, t_end: f64, lat: &[f64]) {
+        self.update_pump_latches();
+        let mut dt = self.seed_step().min(t_end - self.t);
+        loop {
+            let trial = self.run_trial(dt, lat);
+            let at_floor = dt <= DT_FLOOR + 1e-12;
+            let ok = trial.converged && (self.err_tol <= 0.0 || trial.err <= self.err_tol);
+            if ok || at_floor {
+                if !ok {
+                    self.report
+                        .degraded
+                        .push((self.t + dt, self.ids[trial.worst_vertex].clone()));
                 }
-                self.report.rejected += 1;
-                self.quiet_streak = 0;
-                dt = (0.5 * dt).max(DT_FLOOR);
+                self.accept(dt, trial, lat);
+                break;
             }
+            self.report.rejected += 1;
+            self.quiet_streak = 0;
+            dt = (0.5 * dt).max(DT_FLOOR);
         }
     }
 
@@ -1331,9 +1482,11 @@ impl Router {
             let y1 = self.y[st.from];
             if *shutoff > 0.0 && self.pump_on[si] && y1 < *shutoff {
                 self.pump_on[si] = false;
+                self.struct_flip_t[si] = self.t;
             }
             if *startup > 0.0 && !self.pump_on[si] && y1 > *startup {
                 self.pump_on[si] = true;
+                self.struct_flip_t[si] = self.t;
             }
         }
     }
@@ -1365,7 +1518,8 @@ impl Router {
                 (q, 0.0, 0.0)
             }
             StructKind::Pump { kind, .. } => {
-                if !self.pump_on[si] {
+                let speed = self.sett[si];
+                if !self.pump_on[si] || speed <= 0.0 {
                     return (0.0, 0.0, 0.0);
                 }
                 let y1 = y_vert[st.from];
@@ -1377,15 +1531,16 @@ impl Router {
                     PumpKind::Depth(pts) => interval_lookup(pts, y1),
                     PumpKind::InlineDepth(pts) => linear_lookup(pts, y1),
                     PumpKind::Head { points, affinity } => {
-                        // Speed setting is 1 until §9 controls arrive; the
-                        // affinity scaling is then the identity.
-                        let _ = affinity;
-                        let head = (h2v - h1v).max(0.0);
+                        // Type 5 rescales its rated curve by the affinity
+                        // laws: head by ω², flow by ω (§7.1).
+                        let sp = if *affinity { speed } else { 1.0 };
+                        let head = (h2v - h1v).max(0.0) / (sp * sp);
                         linear_lookup(points, head)
                     }
                 };
-                // Reverse flow is never admitted (§7.1).
-                q = q.max(0.0);
+                // Reverse flow is never admitted (§7.1); the speed
+                // setting scales the characteristic (§7.1).
+                q = q.max(0.0) * speed;
                 // Inlet clamps (§7.1): a storage vertex — or the virtual
                 // wet well of a volume-driven pump — cannot be drawn
                 // below empty; other types fall back to the inflow when
@@ -1413,7 +1568,17 @@ impl Router {
                 cd,
                 sec,
                 flap,
-            } => self.orifice_flow(st, *bottom, *cd, sec, *flap, h1v, h2v, y_vert),
+            } => self.orifice_flow(
+                st,
+                *bottom,
+                *cd,
+                sec,
+                *flap,
+                self.sett[si],
+                h1v,
+                h2v,
+                y_vert,
+            ),
             StructKind::Weir {
                 form,
                 cd1,
@@ -1439,6 +1604,7 @@ impl Router {
                         *end_contractions,
                         *can_surcharge,
                         coeff_curve.as_deref(),
+                        self.sett[si],
                         h1v,
                         h2v,
                     )
@@ -1468,7 +1634,8 @@ impl Router {
                         OutRating::Functional { coeff, exponent } => coeff * head.powf(*exponent),
                         OutRating::Table(pts) => linear_lookup(pts, head),
                     };
-                    (dir * q, 0.0, 0.0)
+                    // Scaled by the §9 setting (§7.4).
+                    (dir * q * self.sett[si], 0.0, 0.0)
                 }
             }
         };
@@ -1495,7 +1662,7 @@ impl Router {
 
     /// §7.2: Torricelli with the derived weir transition below the
     /// changeover, Villemonte submergence, and the Armco flap loss.
-    #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::too_many_arguments)] // the §7.2 head assembly
     fn orifice_flow(
         &self,
         st: &Structure,
@@ -1503,6 +1670,7 @@ impl Router {
         cd: f64,
         sec: &Section,
         flap: bool,
+        setting: f64,
         h1v: f64,
         h2v: f64,
         y_vert: &[f64],
@@ -1514,8 +1682,13 @@ impl Router {
             (h2v, h1v, y_vert[st.to])
         };
         let hcrest = self.verts[st.from].invert + st.off1;
-        let opening = sec.y_full();
-        let a_full = sec.a_full();
+        // A partial §9 setting recomputes the opening from the §5
+        // geometry of the open fraction (§7.2).
+        let opening = sec.y_full() * setting.clamp(0.0, 1.0);
+        if opening <= 0.0 {
+            return (0.0, 0.0, 0.0);
+        }
+        let a_full = sec.area(opening);
         let root_2g = (2.0 * GRAVITY).sqrt();
 
         // The changeover height and the derived weir coefficient (§7.2).
@@ -1658,16 +1831,21 @@ impl Router {
         end_contractions: f64,
         can_surcharge: bool,
         coeff_curve: Option<&[(f64, f64)]>,
+        setting: f64,
         h1v: f64,
         h2v: f64,
     ) -> (f64, f64, f64) {
         let dir = if h1v > h2v { 1.0 } else { -1.0 };
         let (h1, h2) = if dir > 0.0 { (h1v, h2v) } else { (h2v, h1v) };
-        let hcrest = self.verts[st.from].invert + st.off1;
-        let opening = sec.y_full();
+        // A partial §9 setting raises the crest by the closed fraction
+        // of the opening; the crown stays put (§7.3).
+        let setting = setting.clamp(0.0, 1.0);
+        let full_opening = sec.y_full();
+        let hcrest = self.verts[st.from].invert + st.off1 + (1.0 - setting) * full_opening;
+        let opening = full_opening * setting;
         let hcrown = hcrest + opening;
         let mut head = h1 - hcrest;
-        if head <= DRY || (flap && dir < 0.0) {
+        if head <= DRY || opening <= 0.0 || (flap && dir < 0.0) {
             return (0.0, 0.0, 0.0);
         }
 
@@ -1705,12 +1883,12 @@ impl Router {
                     }
                 }
                 WeirForm::VNotch => {
-                    let slope = sec.w_max().1 / (2.0 * opening);
+                    let slope = sec.w_max().1 / (2.0 * full_opening);
                     (cd1 * slope * head.powf(2.5), 0.0)
                 }
                 WeirForm::Trapezoidal => {
                     let bottom = sec.top_width(0.0);
-                    let slope = (sec.w_max().1 - bottom) / (2.0 * opening);
+                    let slope = (sec.w_max().1 - bottom) / (2.0 * full_opening);
                     (cd1 * bottom * head.powf(1.5), cd2 * slope * head.powf(2.5))
                 }
             }
@@ -1830,12 +2008,14 @@ impl Router {
         let r_mid = sec.hyd_radius(y_mid);
         let is_full = y1 >= y_full && y2 >= y_full;
 
-        // Dry channels carry no flow this trial (§6.6).
+        // Dry channels carry no flow this trial (§6.6); a channel closed
+        // by operational control behaves identically (§9.1).
         if matches!(
             class,
             FlowClass::Dry | FlowClass::UpDry | FlowClass::DownDry
         ) && !is_full
             || a_mid <= DRY
+            || !self.chan_open[ci]
         {
             return (0.0, 0.5 * (a1 + a2), s1, s2, 0.0);
         }

@@ -646,6 +646,23 @@ impl Surface {
         self.parcels.get(pi).map_or(0.0, |p| p.runoff)
     }
 
+    /// Rainfall depth (m) at gage `gi` over the `n` completed hourly
+    /// buckets before `epoch` (§9.1).
+    pub fn gage_past_depth(&self, gi: usize, epoch: f64, hours: u32) -> f64 {
+        let g = &self.gages[gi];
+        let end = (epoch / 3600.0).floor() * 3600.0;
+        let start = end - f64::from(hours) * 3600.0;
+        let mut v = 0.0;
+        for &(t0, rate) in &g.intervals {
+            let a = t0.max(start);
+            let b = (t0 + g.interval).min(end);
+            if b > a {
+                v += rate * (b - a);
+            }
+        }
+        v
+    }
+
     /// A gage's rain rate at an absolute epoch time (m/s), for the §4.3
     /// convolution.
     pub fn gage_rate(&self, gi: usize, epoch: f64) -> f64 {

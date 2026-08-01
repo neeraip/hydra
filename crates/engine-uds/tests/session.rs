@@ -744,6 +744,237 @@ RAIN  2:00  0
     let _ = early;
 }
 
+// ── §9 operational control ──────────────────────────────────────────────
+
+/// A constant-inflow model with one conduit, ready for rule text.
+fn control_model(controls: &str) -> String {
+    format!(
+        "\
+[OPTIONS]
+FLOW_UNITS    CMS
+START_DATE    06/01/2024
+START_TIME    00:00
+END_DATE      06/01/2024
+END_TIME      04:00
+ROUTING_STEP  10
+REPORT_STEP   0:15:00
+
+[JUNCTIONS]
+J1  100.4  3
+
+[OUTFALLS]
+O1  100.0  FREE
+
+[CONDUITS]
+C1  J1  O1  200  0.013  0  0
+
+[XSECTIONS]
+C1  RECT_OPEN  2  2  0  0
+
+[INFLOWS]
+J1  FLOW  QIN
+
+[TIMESERIES]
+QIN  0:00  0.25
+QIN  9:00  0.25
+
+[CONTROLS]
+{controls}
+"
+    )
+}
+
+#[test]
+fn a_clock_rule_closes_the_conduit_and_water_backs_up() {
+    let inp = control_model(
+        "RULE R1
+IF SIMULATION CLOCKTIME >= 2:00
+THEN CONDUIT C1 STATUS = CLOSED",
+    );
+    let (mut sim, _, _) = Simulation::open(&inp).expect("open");
+    while sim.time() < 1.9 * 3600.0 {
+        sim.step();
+    }
+    assert!(sim.flow("C1").unwrap() > 0.2, "flowing before the rule");
+    let d_before = sim.depth("J1").unwrap();
+    sim.run();
+    // Closed: no flow, and the junction stores the continuing inflow.
+    assert!(sim.flow("C1").unwrap().abs() < 1e-6, "conduit still flows");
+    assert!(
+        sim.depth("J1").unwrap() > d_before + 0.5,
+        "no backup: {} vs {d_before}",
+        sim.depth("J1").unwrap()
+    );
+    // The action log recorded the fired constant action once.
+    let log = sim.control_actions();
+    assert_eq!(log.len(), 1, "{log:?}");
+    assert_eq!(log[0].1, "C1");
+    assert_eq!(log[0].3, "R1");
+}
+
+#[test]
+fn priority_resolves_conflicting_rules_per_link() {
+    // Both rules always fire on the same conduit; the higher priority
+    // wins the pending slot (§9.1).
+    let inp = control_model(
+        "RULE R1
+IF SIMULATION TIME >= 0
+THEN CONDUIT C1 STATUS = CLOSED
+PRIORITY 1
+
+RULE R2
+IF SIMULATION TIME >= 0
+THEN CONDUIT C1 STATUS = OPEN
+PRIORITY 5",
+    );
+    let (mut sim, _, _) = Simulation::open(&inp).expect("open");
+    sim.run();
+    assert!(
+        sim.flow("C1").unwrap() > 0.2,
+        "the higher-priority OPEN lost: {}",
+        sim.flow("C1").unwrap()
+    );
+}
+
+#[test]
+fn a_depth_premise_throttles_an_orifice_with_else() {
+    // The orifice half-closes while the junction is deep, reopens via
+    // the ELSE branch once it drains — with conventional AND/OR
+    // precedence in the premises.
+    let inp = "\
+[OPTIONS]
+FLOW_UNITS    CMS
+START_DATE    06/01/2024
+START_TIME    00:00
+END_DATE      06/01/2024
+END_TIME      04:00
+ROUTING_STEP  10
+REPORT_STEP   0:15:00
+
+[JUNCTIONS]
+J1  100.0  4
+
+[OUTFALLS]
+O1  99.0  FREE
+
+[ORIFICES]
+OR1  J1  O1  SIDE  0  0.65  NO
+
+[XSECTIONS]
+OR1  CIRCULAR  0.5  0  0  0
+
+[INFLOWS]
+J1  FLOW  QIN
+
+[TIMESERIES]
+QIN  0:00  0.30
+QIN  2:00  0.30
+QIN  2:01  0.02
+QIN  9:00  0.02
+
+[CONTROLS]
+RULE R1
+IF NODE J1 DEPTH > 0.2
+THEN ORIFICE OR1 SETTING = 0.25
+ELSE ORIFICE OR1 SETTING = 1.0
+";
+    let (mut sim, _, _) = Simulation::open(inp).expect("open");
+    while sim.time() < 2.0 * 3600.0 {
+        sim.step();
+    }
+    // Deep phase: the throttled orifice passes less than the inflow and
+    // the junction keeps filling.
+    let mid_flow = sim.flow("OR1").unwrap();
+    assert!(
+        mid_flow < 0.30,
+        "throttled orifice passes the whole inflow: {mid_flow}"
+    );
+    assert!(sim.depth("J1").unwrap() > 1.5, "never got deep");
+    sim.run();
+    // Drained phase: the ELSE branch reopened the orifice, so the small
+    // tail inflow passes at a shallow depth.
+    assert!(
+        sim.depth("J1").unwrap() < 0.2,
+        "never drained: {}",
+        sim.depth("J1").unwrap()
+    );
+}
+
+#[test]
+fn a_named_expression_premise_drives_an_action() {
+    // The clock reaches the expression through a named variable: E > 0
+    // exactly when the clock passes 02:00.
+    let inp = control_model(
+        "VARIABLE T = SIMULATION CLOCKTIME
+EXPRESSION E = T * 24 - 2
+
+RULE R1
+IF E > 0
+THEN CONDUIT C1 STATUS = CLOSED",
+    );
+    let (mut sim, _, _) = Simulation::open(&inp).expect("open");
+    while sim.time() < 1.9 * 3600.0 {
+        sim.step();
+    }
+    assert!(sim.flow("C1").unwrap() > 0.2, "closed too early");
+    sim.run();
+    assert!(
+        sim.flow("C1").unwrap().abs() < 1e-6,
+        "expression premise never fired: {}",
+        sim.flow("C1").unwrap()
+    );
+}
+
+#[test]
+fn a_pid_controller_regulates_depth_toward_the_set_point() {
+    // A negative-gain PID throttles the orifice to hold the junction at
+    // the 1 m set-point named by the rule's premise (§9.2).
+    let inp = "\
+[OPTIONS]
+FLOW_UNITS    CMS
+START_DATE    06/01/2024
+START_TIME    00:00
+END_DATE      06/01/2024
+END_TIME      06:00
+ROUTING_STEP  10
+REPORT_STEP   0:15:00
+
+[JUNCTIONS]
+J1  100.0  4
+
+[OUTFALLS]
+O1  99.0  FREE
+
+[ORIFICES]
+OR1  J1  O1  SIDE  0  0.65  NO
+
+[XSECTIONS]
+OR1  CIRCULAR  0.5  0  0  0
+
+[INFLOWS]
+J1  FLOW  QIN
+
+[TIMESERIES]
+QIN  0:00  0.20
+QIN  9:00  0.20
+
+[CONTROLS]
+RULE R1
+IF NODE J1 DEPTH <> 1.0
+THEN ORIFICE OR1 SETTING = PID -0.5 0.1 0
+";
+    let (mut sim, _, _) = Simulation::open(inp).expect("open");
+    sim.run();
+    let d = sim.depth("J1").unwrap();
+    assert!(
+        (d - 1.0).abs() < 0.15,
+        "PID settled at {d} instead of the 1.0 set-point"
+    );
+    // And the orifice is genuinely throttled, not saturated.
+    let q = sim.flow("OR1").unwrap();
+    assert!((q - 0.20).abs() < 0.02, "not at steady throughflow: {q}");
+}
+
 // ── §3.4 control measures ───────────────────────────────────────────────
 
 #[test]

@@ -529,7 +529,10 @@ the trial while retaining a nominal head derivative. The surface-area
 assembly of §6.3 reapportions accordingly: a critical (free-fall) end
 contributes nothing, the far vertex taking the full-length average; a dry end
 contributes only where the channel has no offset there; a channel dry at both
-ends contributes a nominal minimum. Flow out of an essentially dry vertex is
+ends contributes a nominal minimum. A channel **closed** by operational
+control (§9) is treated exactly as a dry channel: zero flow with the
+nominal head derivative retained, while its stored water and surface-area
+contributions persist. Flow out of an essentially dry vertex is
 clamped to $\pm 2.832\times10^{-6}$ m³/s (the predecessor's $10^{-4}$ ft³/s,
 converted) rather than zeroed, and a
 user-supplied flow limit, when given, caps $\lvert Q \rvert$ every iteration.

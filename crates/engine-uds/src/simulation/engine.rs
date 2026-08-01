@@ -41,6 +41,8 @@ pub enum OpenError {
     Routing(RouterRefusal),
     /// The surface compartment cannot serve this model yet.
     Surface(SurfaceRefusal),
+    /// A control rule was refused at compile (§9.1).
+    Controls(String),
 }
 
 /// One recorded reporting boundary: every vertex depth and link flow, by
@@ -99,6 +101,11 @@ pub struct Simulation {
     series_warned: Vec<bool>,
     /// Per-vertex lateral overrides (§12.4 boundary forcing).
     lateral_override: HashMap<usize, f64>,
+    /// The compiled §9 control system, when the model has rules.
+    controls: Option<super::controls::Controls>,
+    /// The next rule-evaluation boundary (s) under the rule-step option;
+    /// zero rule step evaluates every routing step.
+    next_rule_t: f64,
     /// Recorded reporting boundaries.
     pub snapshots: Vec<Snapshot>,
     /// Run-time notices, in time order.
@@ -189,6 +196,16 @@ impl Simulation {
         let n_series = net.timeseries.len();
         let routing_period = net.options.routing_step.max(0.5);
 
+        // §9.1: compile the control rules; never-true premises warn.
+        let mut rule_advisories = Vec::new();
+        let controls = super::controls::Controls::compile(&net, &mut rule_advisories)
+            .map_err(|e| OpenError::Controls(e.0))?;
+        let mut notices: Vec<RuntimeNotice> = rule_advisories
+            .into_iter()
+            .map(|m| RuntimeNotice { t: 0.0, message: m })
+            .collect();
+        let _ = &mut notices;
+
         let nv = net.vertices.len();
         Ok((
             Simulation {
@@ -210,8 +227,10 @@ impl Simulation {
                 link_by_id,
                 series_warned: vec![false; n_series],
                 lateral_override: HashMap::new(),
+                controls,
+                next_rule_t: 0.0,
                 snapshots: Vec::new(),
-                notices: Vec::new(),
+                notices,
                 net,
             },
             diags,
@@ -440,17 +459,40 @@ impl Simulation {
             // times between the bracketing hydrology results.
             let (t0, l0) = (self.hydro_prev.0, self.hydro_prev.1.clone());
             let (t1, l1) = (self.hydro_now.0, self.hydro_now.1.clone());
-            self.router
-                .advance(period_end, &move |tt, lat: &mut [f64]| {
-                    let f = if t1 > t0 {
-                        ((tt - t0) / (t1 - t0)).clamp(0.0, 1.0)
+            let interp = move |tt: f64, lat: &mut [f64]| {
+                let f = if t1 > t0 {
+                    ((tt - t0) / (t1 - t0)).clamp(0.0, 1.0)
+                } else {
+                    1.0
+                };
+                for (i, l) in lat.iter_mut().enumerate() {
+                    *l = base[i] + l0[i] + f * (l1[i] - l0[i]);
+                }
+            };
+            if self.controls.is_some() {
+                // §9.1: rules evaluate at every routing step — or on the
+                // fixed rule-step clock, whose boundaries the stepper
+                // lands on — before the step's trials begin.
+                let rule_step = self.net.options.rule_step;
+                let mut lat = vec![0.0; self.net.vertices.len()];
+                while self.router.time() < period_end - 1e-9 {
+                    let tt = self.router.time();
+                    interp(tt, &mut lat);
+                    let mut cap = period_end;
+                    if rule_step > 0.0 {
+                        if tt + 1e-9 >= self.next_rule_t {
+                            self.apply_controls(tt, &lat);
+                            self.next_rule_t = ((tt / rule_step).floor() + 1.0) * rule_step;
+                        }
+                        cap = cap.min(self.next_rule_t);
                     } else {
-                        1.0
-                    };
-                    for (i, l) in lat.iter_mut().enumerate() {
-                        *l = base[i] + l0[i] + f * (l1[i] - l0[i]);
+                        self.apply_controls(tt, &lat);
                     }
-                });
+                    self.router.step_once(cap, &lat);
+                }
+            } else {
+                self.router.advance(period_end, &interp);
+            }
         } else {
             // Between events the network state freezes and no lateral
             // inflows apply (§10.3).
@@ -507,6 +549,48 @@ impl Simulation {
             }
         };
         pat.factors.get(idx).copied().unwrap_or(1.0)
+    }
+
+    /// Evaluate the §9 rules at the current state and apply the winning
+    /// per-link settings; fired constant actions land in the action log.
+    fn apply_controls(&mut self, t: f64, lat: &[f64]) {
+        let Some(mut controls) = self.controls.take() else {
+            return;
+        };
+        let epoch = self.start_epoch + t;
+        let (month, _, _, _) = self.calendar(t);
+        let rain_factor = self.net.climate.adjust_rainfall[(month - 1) as usize];
+        let surface = self.surface.as_ref();
+        let net = &self.net;
+        let start_epoch = self.start_epoch;
+        let gage_intensity =
+            move |g: usize| surface.map_or(0.0, |s| s.gage_rate(g, epoch)) * rain_factor;
+        let gage_past = move |g: usize, n: u32| {
+            surface.map_or(0.0, |s| s.gage_past_depth(g, epoch, n)) * rain_factor
+        };
+        let series_value = move |si: usize| series_value_pure(net, start_epoch, si, t);
+        let applied = controls.evaluate(&super::controls::ControlView {
+            router: &self.router,
+            net: &self.net,
+            gage_intensity: &gage_intensity,
+            gage_past: &gage_past,
+            laterals: lat,
+            series_value: &series_value,
+            elapsed: t,
+            date_days: (self.start_epoch + t) / 86_400.0,
+            dt: self.router.last_dt(),
+        });
+        for (li, v, ai) in applied {
+            if self.router.set_setting(li, v) == Some(true) {
+                controls.log_action(t, ai, &self.net.links[li].id, v);
+            }
+        }
+        self.controls = Some(controls);
+    }
+
+    /// The §9.1 control-action log: (time s, link, setting, rule).
+    pub fn control_actions(&self) -> &[(f64, String, f64, String)] {
+        self.controls.as_ref().map_or(&[], |c| &c.log)
     }
 
     /// A series value at run time `t` under the §10.1 extension contract.
@@ -669,4 +753,40 @@ fn tidal_stage(points: &[(f64, f64)], secs: f64) -> f64 {
         return v0 + f * (v1 - v0);
     }
     points[0].1
+}
+
+/// A raw series value at run time `t`, ends held — the §9.1 rule-driven
+/// series contract, warning-free.
+fn series_value_pure(net: &Network, start_epoch: f64, si: usize, t: f64) -> f64 {
+    let TimeSeriesSource::Points(points) = &net.timeseries[si].source else {
+        return 0.0;
+    };
+    if points.is_empty() {
+        return 0.0;
+    }
+    let at = |st: &SeriesTime| -> f64 {
+        match st {
+            SeriesTime::Elapsed(s) => *s,
+            SeriesTime::Absolute { date, seconds } => {
+                days_from_civil(*date) as f64 * 86_400.0 + seconds - start_epoch
+            }
+        }
+    };
+    let x = t;
+    if x <= at(&points[0].time) {
+        return points[0].value;
+    }
+    if x >= at(&points[points.len() - 1].time) {
+        return points[points.len() - 1].value;
+    }
+    for w in points.windows(2) {
+        let (t0, t1) = (at(&w[0].time), at(&w[1].time));
+        if x <= t1 {
+            if t1 <= t0 {
+                return w[1].value;
+            }
+            return w[0].value + (w[1].value - w[0].value) * (x - t0) / (t1 - t0);
+        }
+    }
+    points[points.len() - 1].value
 }

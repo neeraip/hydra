@@ -29,6 +29,13 @@ false rather than raising an error — file semantics, adopted — but
 validation warns on a premise that can never hold, rather than leaving it
 silently inert.
 
+Premise comparisons — and the constant values in actions — read in the
+**file's unit system**, the same boundary rule as §14.6's expressions: the
+observed quantity is presented in the units its author wrote the rule for,
+which also keeps the last-compared value pair that curve lookups and PID
+set-points consume in those units. Time-valued quantities compare in days,
+matching the predecessor's clock.
+
 **Boolean structure**: `AND` and `OR` combine premises with conventional
 precedence — `A AND B OR C` means `(A AND B) OR C`.
 
