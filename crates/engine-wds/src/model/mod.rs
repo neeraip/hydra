@@ -54,6 +54,7 @@ mod tests {
             head_error_limit: 0.0,
             flow_change_limit: 0.0,
             rq_tol: 1.0e-7,
+            level_err_tol: 1.0e-3,
             damp_limit: 0.0,
             check_freq: 2,
             max_check: 10,

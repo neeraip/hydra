@@ -266,6 +266,11 @@ pub struct SimulationOptions {
     pub flow_change_limit: f64,
     /// Minimum gradient clamp for emitter/pump coefficient linearisation; default 1e-7.
     pub rq_tol: f64,
+    /// Maximum permitted local error in any tank level per hydraulic step (m),
+    /// governing the tank predictor–corrector and its step rejection (§5.3);
+    /// 0 = disable correction and error control (first-order predecessor
+    /// behaviour); default 1e-3.
+    pub level_err_tol: f64,
     /// Relative flow accuracy threshold below which damping activates; 0 = disabled.
     pub damp_limit: f64,
     /// Status check interval (iterations); default 2.
@@ -344,6 +349,7 @@ impl Default for SimulationOptions {
             head_error_limit: 0.0,
             flow_change_limit: 0.0,
             rq_tol: 1.0e-7,
+            level_err_tol: 1.0e-3,
             damp_limit: 0.0,
             check_freq: 2,
             max_check: 10,

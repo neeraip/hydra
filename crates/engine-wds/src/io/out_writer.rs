@@ -899,6 +899,11 @@ fn epanet_warn_flag(session: &impl WritableSimulation) -> i32 {
             WarningKind::UnbalancedHydraulics => {
                 has_unbalanced = true;
             }
+            // Hydra-specific: has no EPANET warning category, so it does not
+            // contribute to the .out warn flag — that flag reports EPANET's
+            // classes to EPANET-format readers. Hydra's own surfaces (RPT,
+            // JSON, GUI) carry it.
+            WarningKind::TankLevelAccuracy { .. } => {}
         }
     }
     let f = flush(&mut has_unbalanced, &mut has_pressure, &mut has_pump);

@@ -265,6 +265,13 @@ pub enum WarningKind {
         /// Zero-based index of the pump in `Network::links`.
         link_index: usize,
     },
+    /// A hydraulic step at the 1 s rejection floor still exceeded
+    /// `level_err_tol`; the step was accepted with degraded tank-level
+    /// accuracy (§5.3).
+    TankLevelAccuracy {
+        /// Zero-based index of the worst-error tank in `Network::nodes`.
+        node_index: usize,
+    },
 }
 
 /// Node result quantities available via `get_node_result` (§8.2.1).

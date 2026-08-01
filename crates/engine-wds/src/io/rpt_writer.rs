@@ -38,6 +38,14 @@ pub fn describe_warning(
                 Some(link_id.clone()),
             )
         }
+        WarningKind::TankLevelAccuracy { node_index } => {
+            let node_id = &network.nodes[*node_index].base.id;
+            (
+                "warning/tank_level_accuracy".to_string(),
+                format!("tank '{node_id}' level computed with degraded accuracy"),
+                Some(node_id.clone()),
+            )
+        }
     }
 }
 
@@ -430,6 +438,14 @@ pub fn build_text_report(session: &impl WritableSimulation) -> Result<String, st
                 WarningKind::NegativePressure { node_index: _ } => {
                     format!(
                         "  WARNING: Negative pressures at {} hrs.",
+                        fmt_clocktime(w.t)
+                    )
+                }
+                WarningKind::TankLevelAccuracy { node_index } => {
+                    let node_id = &network.nodes[*node_index].base.id;
+                    format!(
+                        "  WARNING: Tank {} level accuracy degraded at {} hrs.",
+                        node_id,
                         fmt_clocktime(w.t)
                     )
                 }

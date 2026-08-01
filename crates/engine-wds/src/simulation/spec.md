@@ -123,12 +123,18 @@ apply simple controls at time t
 solve hydraulics (§3)
 record output snapshot at time t // §8
 Δt ← adaptive_timestep(t) // §5.2
+retry:
 evaluate rule-based controls over [t, t+Δt] // §4.2
-update tank levels over Δt // §5.3
+predict tank levels over Δt // §5.3 predictor
+correct tank levels; estimate level error e_h // §5.3 corrector
+if e_h > level_err_tol and Δt > Δt_floor:
+restore pre-step state; Δt ← max(Δt/2, Δt_floor); goto retry
 compute pump energy for this step (§7)
 run quality sub-steps over [t, t+Δt] // §6
 t ← t + Δt
 ```
+
+Energy accounting and quality transport run only on accepted steps; a rejected trial leaves no trace in either.
 
 The adaptive time step (§5.2) is computed **after** the hydraulic solve so that the current step's flow field — not the previous step's — is used to predict when tank-level-based controls will fire.
 
@@ -137,6 +143,8 @@ The adaptive time step (§5.2) is computed **after** the hydraulic solve so that
 The actual time step used is the minimum of six quantities — the first constraint that would be violated determines the step:
 
 $$\Delta t = \min\!\left(\Delta t_h,\ \Delta t_{\text{report}},\ \Delta t_{\text{tank}},\ \Delta t_{\text{pattern}},\ \Delta t_{\text{control}},\ t_{\text{duration}} - t\right)$$
+
+One further cap applies: when the previous period was accepted only after one or more error rejections (§5.3), $\Delta t$ is additionally capped at twice that period's accepted interval. This prevents the stepper from re-attempting the full nominal step immediately after the error control has just established it is too coarse, and the cap lapses as soon as a period is accepted without rejection.
 
 | Term | Definition |
 |---|---|
@@ -172,13 +180,39 @@ $\Delta t_{\text{control}} = \min_c t_c$ over all applicable controls; $\Delta t
 
 ### 5.3 Tank Level Update
 
-After the time step $\Delta t$ is determined and any rule re-solves are complete, each tank's level is updated:
+Tank volumes are the extended-period simulation's only differential state: the network solve of §3 is algebraic, and the whole system is an index-1 DAE whose differential part is $\mathrm{d}V_j/\mathrm{d}t = Q_{\text{net},j}(H)$ per tank $j$, with
 
-$$V_{\text{new}} = V_{\text{old}} + Q_{\text{net}} \cdot \Delta t$$
+$$Q_{\text{net}} = \sum_{k:\text{to}=\text{tank}} Q_k - \sum_{k:\text{from}=\text{tank}} Q_k.$$
 
-where $Q_{\text{net}} = \sum_{k:\text{to}=\text{tank}} Q_k - \sum_{k:\text{from}=\text{tank}} Q_k$.
+Hydra integrates this state with a **Heun predictor–corrector** carrying a local error estimate, rather than the predecessor's uncontrolled first-order step.
+
+**Predictor.** Over each advance interval $\delta$ — a rule sub-step (§4.2) or the remainder of the hydraulic period — the level is advanced explicitly with the flows of the most recent solve:
+
+$$V^{*} = V_{\text{old}} + Q_{\text{net}}^{t} \cdot \delta$$
+
+This is the trajectory rule-based controls evaluate against (§4.2); it is first-order, and the error control below keeps it within tolerance, which bounds the discrepancy any rule trigger can see.
 
 The update is applied unconditionally: Hydra intentionally does not skip it when $\lvert Q_{\text{net}} \rvert \leq Q_{\text{zero}}$ (as EPANET does) — the update is exact at any flow magnitude, and the difference is numerically negligible.
+
+**Corrector.** At the end of the hydraulic period — after rule evaluation has fixed the actually-advanced interval $\Delta t$ and the predictor has produced $V^{*}$ for every tank — the network equilibrium is solved once more at the predicted tank levels and end-of-period settings, yielding $Q_{\text{net}}^{*}$, and each tank's volume is corrected trapezoidally:
+
+$$V_{\text{new}} = V_{\text{old}} + \frac{\Delta t}{2}\left(Q_{\text{net}}^{t} + Q_{\text{net}}^{*}\right)$$
+
+The corrector solve is an ordinary §3 solve; implementations should warm-start it from the predictor state, from which it typically converges in a small number of iterations. The next hydraulic period's opening solve then proceeds from the corrected volumes, so the algebraic constraint always holds at the state the simulation reports and continues from.
+
+A tank whose predictor level was clamped by boundary enforcement during this period (below) takes its predictor value for the period and is excluded from the error estimate: the trapezoid would otherwise average across the flow discontinuity the clamp introduces, and the adaptive step (§5.2) already lands boundary crossings exactly.
+
+**Local error estimate.** The predictor–corrector gap is a direct estimate of the predictor's local truncation error. Converted to a level error through the local surface area,
+
+$$e_h = \max_{\text{tanks}} \frac{\lvert V_{\text{new}} - V^{*} \rvert}{A(h_{\text{new}})}$$
+
+where $A(h)$ is the tank's surface area at level $h$ (for a volume-curve tank, the local slope $\mathrm{d}V/\mathrm{d}h$ of the active curve segment).
+
+**Acceptance.** If $e_h \leq$ `level_err_tol`, the step is accepted. Otherwise the step is **rejected**: the complete pre-step state — tank volumes, link statuses and settings, rule and accounting state — is restored, the interval is halved, and the period is retried from $t$. Rejection is transactional; no effect of a rejected trial survives. The retry interval is floored at $\Delta t_{\text{floor}} = 1$ s; a step at the floor is accepted unconditionally, and if its estimate still exceeds the tolerance the step is marked with a level-accuracy warning, the analogue of the unbalanced marking in `../hydraulics/spec.md` §3.8.
+
+`level_err_tol` is a session option with default $10^{-3}$ m. Setting it to 0 disables the corrector, the estimate, and rejection entirely, restoring the predecessor's first-order behaviour. Networks with no tanks have no differential state: the corrector solve is skipped and the scheme adds no cost.
+
+> **DEVIATION from EPANET:** EPANET advances tank levels by a single explicit Euler step with the net flow frozen at its start-of-step value, with no error measure of any kind — the only integration-accuracy control available to the user is the hydraulic time step itself, applied uniformly whether or not any tank needs it. Hydra's predictor–corrector is second-order in tank level and carries a per-step local error estimate that adapts the step where — and only where — the tank trajectory demands it. Results differ from EPANET wherever Euler error was material: fast-turnover tanks, coarse hydraulic steps, and level-triggered controls whose firing times shift accordingly. The difference is the removal of an uncontrolled first-order error, and the predecessor's behaviour remains available via `level_err_tol = 0`. This is an intentional improvement, not an oversight.
 
 **Level from volume**:
 - Cylindrical tank: $h_{\text{new}} = h_{\text{old}} + \Delta V / A$ where $A = \pi D^2/4$.

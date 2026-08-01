@@ -28,6 +28,7 @@ impl Simulation {
             neg_pressure_seen: vec![],
             analysis_begun: None,
             analysis_ended: None,
+            post_rejection_dt: None,
         }
     }
 
@@ -82,6 +83,7 @@ impl Simulation {
         self.accounting = Some(accounting);
         self.warnings = vec![];
         self.neg_pressure_seen = vec![false; self.node_states.len()];
+        self.post_rejection_dt = None;
         self.phase = Phase::Loaded;
         Ok(())
     }
@@ -268,6 +270,15 @@ impl Simulation {
             dt = dt_control;
         }
 
+        // §5.2: after a period accepted only through error rejections, cap the
+        // next attempt at twice the accepted interval — re-attempting the full
+        // nominal step immediately after the error control has just shown it
+        // too coarse only buys another round of rejections. Lapses on the
+        // first rejection-free period.
+        if let Some(prev) = self.post_rejection_dt {
+            dt = dt.min(2.0 * prev);
+        }
+
         if dt == 0.0 {
             // Final step: solved and recorded at t=duration, no advance needed.
             // EPANET (nexthyd): when Dur == 0, still accumulates energy with
@@ -316,30 +327,90 @@ impl Simulation {
             .expect("invariant: network set in load()");
         let pump_powers =
             accounting::precompute_pump_powers(network, &self.node_states, &self.link_states);
-        let mut step_overflow: f64 = 0.0;
-        if !network.rules.is_empty() {
-            let rule_step = network.options.rule_timestep;
-            let mut elapsed = 0.0;
+        // §5.3: tank volumes are the only differential state, integrated with
+        // a Heun predictor–corrector under a per-step local error estimate.
+        // The trial below — rule evaluation, predictor, corrector — is
+        // transactional: on rejection every effect is discarded and the
+        // period is retried at half the interval, floored at DT_FLOOR.
+        let level_err_tol = network.options.level_err_tol;
+        let tank_indices: Vec<usize> = network
+            .nodes
+            .iter()
+            .enumerate()
+            .filter_map(|(i, n)| matches!(n.kind, NodeKind::Tank(_)).then_some(i))
+            .collect();
+        let correcting = level_err_tol > 0.0 && !tank_indices.is_empty();
+        let pre_trial = correcting.then(|| (self.node_states.clone(), self.link_states.clone()));
+        let v_pre: Vec<f64> = tank_indices
+            .iter()
+            .map(|&i| self.node_states[i].volume)
+            .collect();
+        let q_t: Vec<f64> = tank_indices
+            .iter()
+            .map(|&i| self.node_states[i].net_flow)
+            .collect();
 
-            // First sub-step aligned to even multiples of rule_step from t=0
-            // (§4.2.1): δ = rule_step − (t mod rule_step), may be < rule_step.
-            let first_dt = {
-                let rem = t % rule_step;
-                let d = rule_step - rem;
-                if d <= 0.0 || d > rule_step {
-                    rule_step
-                } else {
-                    d
+        const DT_FLOOR: f64 = 1.0;
+        let mut step_overflow: f64;
+        let mut rejections = 0u32;
+        loop {
+            step_overflow = 0.0;
+            if !network.rules.is_empty() {
+                let rule_step = network.options.rule_timestep;
+                let mut elapsed = 0.0;
+
+                // First sub-step aligned to even multiples of rule_step from t=0
+                // (§4.2.1): δ = rule_step − (t mod rule_step), may be < rule_step.
+                let first_dt = {
+                    let rem = t % rule_step;
+                    let d = rule_step - rem;
+                    if d <= 0.0 || d > rule_step {
+                        rule_step
+                    } else {
+                        d
+                    }
+                };
+                let mut dt1 = first_dt.min(dt);
+                if dt1 == 0.0 {
+                    dt1 = rule_step.min(dt);
                 }
-            };
-            let mut dt1 = first_dt.min(dt);
-            if dt1 == 0.0 {
-                dt1 = rule_step.min(dt);
-            }
 
-            loop {
-                // Advance tank levels by sub-step.
-                let updates = timestep::update_tank_levels(network, &self.node_states, dt1);
+                loop {
+                    // Advance tank levels by sub-step.
+                    let updates = timestep::update_tank_levels(network, &self.node_states, dt1);
+                    for u in &updates {
+                        let node_state = &mut self.node_states[u.node_index];
+                        node_state.head = u.new_head;
+                        node_state.level = u.new_level;
+                        node_state.volume = u.new_volume;
+                        step_overflow += u.overflow_volume;
+                    }
+                    elapsed += dt1;
+
+                    // Evaluate rules at the sub-stepped time (t + elapsed).
+                    let sub_t = t + elapsed;
+                    if let Some((actions, _then_fired)) =
+                        controls::eval_rules(network, &self.node_states, &self.link_states, sub_t)
+                    {
+                        let any_changed =
+                            controls::apply_link_actions(&mut self.link_states, &actions, network);
+                        if any_changed {
+                            // Rule fired — shorten the hydraulic period to elapsed.
+                            dt = elapsed;
+                            break;
+                        }
+                    }
+
+                    // Update remaining time.
+                    let remaining = dt - elapsed;
+                    if remaining <= 0.0 {
+                        break;
+                    }
+                    dt1 = rule_step.min(remaining);
+                }
+            } else {
+                // No rules — advance tanks by the full dt in one step.
+                let updates = timestep::update_tank_levels(network, &self.node_states, dt);
                 for u in &updates {
                     let node_state = &mut self.node_states[u.node_index];
                     node_state.head = u.new_head;
@@ -347,40 +418,126 @@ impl Simulation {
                     node_state.volume = u.new_volume;
                     step_overflow += u.overflow_volume;
                 }
-                elapsed += dt1;
+            }
 
-                // Evaluate rules at the sub-stepped time (t + elapsed).
-                let sub_t = t + elapsed;
-                if let Some((actions, _then_fired)) =
-                    controls::eval_rules(network, &self.node_states, &self.link_states, sub_t)
-                {
-                    let any_changed =
-                        controls::apply_link_actions(&mut self.link_states, &actions, network);
-                    if any_changed {
-                        // Rule fired — shorten the hydraulic period to elapsed.
-                        dt = elapsed;
-                        break;
+            if !correcting {
+                break;
+            }
+
+            // ── §5.3 corrector: re-solve at the predicted levels and average ──
+            let v_star: Vec<f64> = tank_indices
+                .iter()
+                .map(|&i| self.node_states[i].volume)
+                .collect();
+            {
+                let network = self
+                    .network
+                    .as_ref()
+                    .expect("invariant: network set in load()");
+                let favad = self.favad.as_ref().expect("invariant: favad set in load()");
+                let solver_ctx = self
+                    .solver_ctx
+                    .as_mut()
+                    .expect("invariant: solver_ctx set in load()");
+                // The predictor already wrote V* into the tank heads, so this is
+                // an ordinary solve warm-started from the period's opening state.
+                // An Unbalanced result is not separately warned here: the next
+                // period's opening solve starts from the same state and re-reports
+                // (and halts, under UNBALANCED STOP) if it persists.
+                hydraulics::solve_hydraulic_step(
+                    network,
+                    favad,
+                    solver_ctx,
+                    &mut self.node_states,
+                    &mut self.link_states,
+                    t,
+                    controls::pswitch,
+                )
+                .map_err(SessionError::HydraulicSolve)?;
+            }
+
+            let network = self
+                .network
+                .as_ref()
+                .expect("invariant: network set in load()");
+            let mut e_h_max = 0.0_f64;
+            let mut worst_tank = tank_indices[0];
+            let mut corrected: Vec<(usize, f64)> = Vec::with_capacity(tank_indices.len());
+            for (j, &i) in tank_indices.iter().enumerate() {
+                let NodeKind::Tank(tank) = &network.nodes[i].kind else {
+                    continue;
+                };
+                // A tank clamped by boundary enforcement during the predictor
+                // keeps its predictor value (§5.3): the trapezoid would average
+                // across the clamp's flow discontinuity, and §5.2's Δt_tank term
+                // already lands boundary crossings exactly.
+                let v_raw = v_pre[j] + q_t[j] * dt;
+                if (self.node_states[i].volume - v_raw).abs() > 1e-9 * v_raw.abs().max(1.0) {
+                    continue;
+                }
+                let q_star = self.node_states[i].net_flow;
+                let mut v_corr = v_pre[j] + 0.5 * dt * (q_t[j] + q_star);
+                // Keep the correction inside the tank's physical band; a sliver
+                // above v_max is real outflow on an overflow tank.
+                let v_min = tank.volume_from_level(tank.min_level, &network.curves);
+                let v_max = tank.volume_from_level(tank.max_level, &network.curves);
+                if v_corr > v_max {
+                    if tank.overflow {
+                        step_overflow += v_corr - v_max;
                     }
+                    v_corr = v_max;
+                } else if v_corr < v_min {
+                    v_corr = v_min;
                 }
+                // The estimate is the actual level difference between corrected
+                // and predicted volumes — the spec's e_h through the local
+                // surface area, exact in the tank's own geometry.
+                let level_corr = tank.level_from_volume(v_corr, &network.curves);
+                let level_star = tank.level_from_volume(v_star[j], &network.curves);
+                let e_h = (level_corr - level_star).abs();
+                if e_h > e_h_max {
+                    e_h_max = e_h;
+                    worst_tank = i;
+                }
+                corrected.push((i, v_corr));
+            }
 
-                // Update remaining time.
-                let remaining = dt - elapsed;
-                if remaining <= 0.0 {
-                    break;
+            if e_h_max <= level_err_tol || dt <= DT_FLOOR {
+                // Accept: apply the corrected volumes.
+                for (i, v_corr) in corrected {
+                    let NodeKind::Tank(tank) = &network.nodes[i].kind else {
+                        continue;
+                    };
+                    let level = tank.level_from_volume(v_corr, &network.curves);
+                    let head = tank.head_from_level(network.nodes[i].base.elevation, level);
+                    let ns = &mut self.node_states[i];
+                    ns.volume = v_corr;
+                    ns.level = level;
+                    ns.head = head;
                 }
-                dt1 = rule_step.min(remaining);
+                if e_h_max > level_err_tol {
+                    // At the floor with the tolerance still exceeded: accepted
+                    // with degraded accuracy, and said so (§5.3).
+                    self.warnings.push(SimWarning {
+                        t,
+                        kind: WarningKind::TankLevelAccuracy {
+                            node_index: worst_tank,
+                        },
+                    });
+                }
+                break;
             }
-        } else {
-            // No rules — advance tanks by the full dt in one step.
-            let updates = timestep::update_tank_levels(network, &self.node_states, dt);
-            for u in &updates {
-                let node_state = &mut self.node_states[u.node_index];
-                node_state.head = u.new_head;
-                node_state.level = u.new_level;
-                node_state.volume = u.new_volume;
-                step_overflow += u.overflow_volume;
-            }
+
+            // Reject: restore the complete pre-trial state and retry shorter.
+            let (nodes, links) = pre_trial
+                .as_ref()
+                .expect("invariant: correcting implies a snapshot");
+            self.node_states.clone_from(nodes);
+            self.link_states.clone_from(links);
+            dt = (dt / 2.0).max(DT_FLOOR);
+            rejections += 1;
         }
+        self.post_rejection_dt = (rejections > 0).then_some(dt);
 
         // Accumulate accounting (uses the possibly-shortened dt and pre-computed pump powers).
         let network = self

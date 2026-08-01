@@ -53,6 +53,7 @@ Global simulation parameters. All are static after loading.
 | `flow_change_limit` | Optional absolute maximum flow change per iteration (m³/s); 0 = disabled; default 0 | ≥ 0 |
 | `damp_limit` | Relative flow accuracy threshold below which damping + valve checks activate; default 0 (disabled) | ≥ 0 |
 | `rq_tol` | Minimum gradient clamp for emitter/pump coefficient linearisation; default $10^{-7}$ | > 0 |
+| `level_err_tol` | Maximum permitted local error in any tank level per hydraulic step (m), governing the tank predictor–corrector and its step rejection ([simulation spec](../simulation/spec.md) §5.3); 0 = disable correction and error control (predecessor first-order behaviour); default 10⁻³ | ≥ 0 |
 | `check_freq` | Status check interval (iterations); default 2 | ≥ 1 |
 | `max_check` | Iteration count after which status checks stop; default 10. Independent of `check_freq` — EPANET imposes no relation between them, and `check_freq > max_check` is legal (it disables periodic status checks entirely) | ≥ 1 |
 | `bulk_order` | Global bulk reaction order for pipe segments; default 1.0 | any real |
