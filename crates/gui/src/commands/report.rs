@@ -247,6 +247,15 @@ fn render_for_target(
             "No simulation results exist for this target — run a simulation first".to_string(),
         );
     }
+    // Existing is not the same as readable. Every block reads this one file,
+    // so results this build cannot parse fail all of them identically — and
+    // an export of thirteen copies of one error would be delivered as a
+    // finished document. Surface it once, as a failed export.
+    //
+    // `probe_report_blocks` deliberately does not do this: reporting per-block
+    // status is its purpose, so there the failures are the answer.
+    hydra::io::out_reader::read_metadata_checked(&out_path).map_err(|e| e.to_string())?;
+
     let network = network_for_target(&app_data, state, project_id, scenario_id)?;
 
     let project_name = meta::read_project_meta(&bundle::project_dir(&app_data, project_id))
