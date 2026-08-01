@@ -12,7 +12,7 @@ interpretation, and nothing in it constrains how results are computed.
 ### 14.1 Stance
 
 Import produces a §2 model from a predecessor input file; export writes
-results in forms the predecessor's readers accept. The physics of §3–§13 is
+results in forms the predecessor's readers accept. The physics of §3–§12 is
 defined without reference to either. Where the predecessor's file semantics
 presuppose behaviours this engine does not have — reduced routing forms,
 approximation switches — import maps them onto the model this engine does

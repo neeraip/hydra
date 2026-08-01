@@ -83,6 +83,12 @@ exponent from the wide-channel assumption that hydraulic radius equals
 $d - d_s$. In SI, $\alpha$ carries no unit constant — the predecessor's 1.49
 is the US-customary Manning factor, identified per §2.11.
 
+**Example.** A sub-area of $A = 10^4$ m², $W = 100$ m, $S = 0.01$, and
+$n = 0.1$ has $\alpha = 100\sqrt{0.01}/(10^4 \times 0.1) = 0.01$; at
+1 cm of depth above depression storage the outflow term is
+$0.01 \times 0.01^{5/3} = 4.642\times10^{-6}$ m/s, a drawdown of
+16.71 mm/h.
+
 Each of the three sub-areas integrates its own copy — impervious sub-areas
 share a prorated $\alpha$ over their combined area — under the
 **error-controlled embedded-pair integrator** of §3.5, the filling phase up

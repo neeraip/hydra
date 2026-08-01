@@ -146,6 +146,11 @@ for $y$, with $Q$ the discharge — by exact formula where the section admits
 one (rectangular, triangular, parabolic, power), otherwise by bracketed
 root-finding on $[0,\,y_{full}]$.
 
+**Example.** A rectangular channel of width $b = 2$ m carrying
+$Q = 3$ m³/s has unit discharge $q = 1.5$ m²/s and critical depth
+$y_c = (q^2/g)^{1/3} = (2.25/9.80665)^{1/3} = 0.6122$ m; substituting back,
+$A^3/W = (2 \times 0.6122)^3 / 2 = 0.91774 = Q^2/g$.
+
 **Normal depth** inverts the section factor,
 $\Psi(y_N) = \dfrac{n\,Q}{\sqrt{S_0}}$ in SI form, on the monotone branch
 below the section's $\Psi_{max}$ (§5.1); a demand exceeding $\Psi_{max}$ has
@@ -245,6 +250,12 @@ pipe.
 **Accounting.** Water stored in slots is real stored volume to the continuity
 accounts of §11, reported within channel storage; it is bounded by the
 celerity choice and vanishes as $c \to \infty$.
+
+**Example.** A circular conduit of diameter 1 m has
+$A_{full} = \pi/4 = 0.785398$ m². At the default celerity $c = 50$ m/s the
+slot width is $w_{slot} = 9.80665 \times 0.785398 / 50^2 = 3.081$ mm, and
+each metre of surcharge stores $w_{slot} \times 1\,\text{m} = 0.3923\,\%$
+of the full-flow area — the storage artifact the celerity choice bounds.
 
 > **CORRESPONDENCE:** the predecessor defaults to the EXTRAN treatment — a
 > separate algebraic branch for surcharged vertices, Newton-corrected with a
