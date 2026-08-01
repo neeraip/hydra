@@ -2476,7 +2476,7 @@ checksum = "6dbf3de79e51f3d586ab4cb9d5c3e2c14aa28ed23d180cf89b4df0454a69cc87"
 
 [[package]]
 name = "hydra-cli"
-version = "3.0.1"
+version = "3.0.2"
 dependencies = [
  "anyhow",
  "assert_cmd",
@@ -2491,7 +2491,7 @@ dependencies = [
 
 [[package]]
 name = "hydra-common"
-version = "6.0.0"
+version = "7.0.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -2499,15 +2499,15 @@ dependencies = [
 
 [[package]]
 name = "hydra-engine-och"
-version = "6.0.0"
+version = "7.0.0"
 
 [[package]]
 name = "hydra-engine-uds"
-version = "6.0.0"
+version = "7.0.0"
 
 [[package]]
 name = "hydra-engine-wds"
-version = "6.0.0"
+version = "7.0.0"
 dependencies = [
  "approx",
  "chrono",
@@ -2522,7 +2522,7 @@ dependencies = [
 
 [[package]]
 name = "hydra-engines"
-version = "6.0.0"
+version = "7.0.0"
 dependencies = [
  "hydra-common",
  "hydra-engine-wds",
@@ -2554,7 +2554,7 @@ dependencies = [
 
 [[package]]
 name = "hydra-report"
-version = "6.0.0"
+version = "7.0.0"
 dependencies = [
  "hydra-common",
  "serde",
@@ -2567,7 +2567,7 @@ dependencies = [
 
 [[package]]
 name = "hydra-sdk"
-version = "6.0.0"
+version = "7.0.0"
 dependencies = [
  "hydra-common",
  "hydra-engine-wds",

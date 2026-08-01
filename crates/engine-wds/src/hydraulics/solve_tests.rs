@@ -1585,3 +1585,46 @@ fn halt_on_non_convergence_returns_unbalanced_for_caller_to_handle() {
     // halts or continues accordingly (see §3.6 and crates/simulation/).
     assert_eq!(result, SolveResult::Unbalanced);
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// §3.8 criterion 5 — nodal mass-balance residual
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// A converged solve satisfies the physical mass balance at every junction,
+/// and a perturbed flow surfaces in the residual sum at its exact magnitude.
+///
+/// The perturbation half is what keeps the test honest: a residual function
+/// that summed over no junctions, or read the wrong flow vector, would pass
+/// the first assertion by returning zero — and would then fail the second,
+/// because the injected imbalance could not register.
+#[test]
+fn mass_residual_vanishes_when_converged_and_registers_a_perturbation() {
+    use crate::hydraulics::solve::junction_mass_residual_sum;
+
+    let (net, mut ns, mut ls, favad) = TestNetworkBuilder::new()
+        .reservoir("R1", 100.0)
+        .junction("J1", 0.0, 100.0)
+        .junction("J2", 0.0, 50.0)
+        .hw_pipe("P1", "R1", "J1", 1000.0, 12.0, 100.0)
+        .hw_pipe("P2", "J1", "J2", 800.0, 8.0, 100.0)
+        .build_with_favad();
+    let mut ctx = crate::hydraulics::build_solver_context(&net, &favad).unwrap();
+    let result =
+        solve_hydraulic_step(&net, &favad, &mut ctx, &mut ns, &mut ls, 0.0, no_pswitch).unwrap();
+    assert_eq!(result, SolveResult::Converged);
+
+    let s_q: f64 = ctx.flows.iter().map(|q| q.abs()).sum();
+    let before = junction_mass_residual_sum(&net, &mut ctx, false);
+    assert!(
+        before <= net.options.flow_tol * s_q,
+        "converged residual {before} exceeds tolerance {}",
+        net.options.flow_tol * s_q
+    );
+
+    // Inject a known imbalance into P2: J1's balance loses `bump`, J2's gains
+    // it, so the |·| sum must grow by 2·bump (± the tiny converged residual).
+    let bump = 0.1 * s_q;
+    ctx.flows[1] += bump;
+    let after = junction_mass_residual_sum(&net, &mut ctx, false);
+    assert_relative_eq!(after, 2.0 * bump, epsilon = 2.0 * before + 1e-12);
+}

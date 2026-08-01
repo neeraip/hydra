@@ -91,6 +91,15 @@ pub(crate) fn warning_to_dto(
                 element_id: id,
             }
         }
+        WarningKind::TankLevelAccuracy { node_index } => {
+            let id = node_ids.get(*node_index).map(|s| s.to_string());
+            let name = id.clone().unwrap_or_else(|| format!("#{}", node_index + 1));
+            RunWarningDto {
+                code: "tank-level-accuracy".into(),
+                message: format!("Tank {name} level computed with degraded accuracy at {at}"),
+                element_id: id,
+            }
+        }
         WarningKind::PumpXHead { link_index } => {
             let id = link_ids.get(*link_index).map(|s| s.to_string());
             let name = id.clone().unwrap_or_else(|| format!("#{}", link_index + 1));

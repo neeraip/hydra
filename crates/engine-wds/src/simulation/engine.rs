@@ -81,6 +81,12 @@ pub struct Simulation {
     // Wall-clock timestamps for the report.
     analysis_begun: Option<SystemTime>,
     analysis_ended: Option<SystemTime>,
+
+    /// §5.2: the accepted interval of the previous period, kept only when
+    /// that period was accepted after one or more error rejections (§5.3).
+    /// The next period's Δt is capped at twice this value; `None` as soon
+    /// as a period is accepted without rejection.
+    pub(super) post_rejection_dt: Option<f64>,
 }
 
 /// Lazily-built lookup maps from object ID to 0-based index.
