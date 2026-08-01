@@ -1,7 +1,160 @@
 # hydra-engine-uds — Hydraulics Specification
 
 This document holds §5–§7 of the urban drainage specification: cross-section
-geometry, network flow, and structures. §6 is given here; §5 and §7 follow.
+geometry, network flow, and structures. §5 and §6 are given here; §7 follows.
+
+---
+
+## 5. Cross-Section Geometry
+
+### 5.1 The Section-Property Contract
+
+Every channel cross-section supplies four properties as functions of flow
+depth $y$: area $A(y)$, top width $W(y)$, hydraulic radius $R(y)$, and the
+section factor $\Psi(y) = A R^{2/3}$ used by Manning relations. The
+properties are mutually consistent — $W = \mathrm{d}A/\mathrm{d}y$ — and are
+the *true* geometry; the slot modification of §6.2 is applied on top of them
+by the solver, never baked into them.
+
+For every closed section, $\Psi(y)$ **peaks below full depth** and declines
+toward the crown (for a circle, near $y = 0.94\,y_{full}$): the wetted
+perimeter grows faster than the area near the top. The specification treats
+this honestly rather than clipping it: $\Psi_{max}$ and its depth are
+properties of the section, and the normal-depth inversion of §5.7 operates on
+the monotone branch below the peak. No property is artificially capped or
+frozen short of the crown — the predecessor's 96 % cutoffs existed for its
+surcharge branch, which §6.2 retired.
+
+### 5.2 Analytic Families
+
+Where the geometry has a closed form, the engine evaluates it — no tables,
+no fitted seeds, no iteration caps. Rectangular, triangular, trapezoidal,
+parabolic, and power sections are elementary. The circle is evaluated through
+the filled angle $\theta$:
+
+$$y = \frac{D}{2}\left(1 - \cos\frac{\theta}{2}\right), \qquad
+A = \frac{D^2}{8}(\theta - \sin\theta), \qquad
+R = \frac{D}{4}\left(1 - \frac{\sin\theta}{\theta}\right), \qquad
+W = D\sin\frac{\theta}{2},$$
+
+where $D$ is the diameter, with $\theta(y)$ obtained in closed form and the
+inverse maps of §5.7 solved on these exact relations. The filled ellipse is
+evaluated analytically in the same manner. Closed rectangular, modified
+basket-handle, and the rectangular-triangular and rectangular-round compounds
+compose from the elementary pieces.
+
+> **CORRESPONDENCE:** the predecessor evaluates circular geometry through
+> 51-entry normalised tables with quadratic interpolation over the two lowest
+> depth segments, a fitted-polynomial seed for the near-empty inverse, a
+> 40-pass iteration returning its seed on non-convergence, and a correction
+> clamp whose sign-transfer idiom is inert as written (it bounds the
+> correction in one direction only). All of that is table-era machinery for a
+> function that has a closed form, and none of it is carried. Differences from
+> the tabulated values are bounded by the tables' own interpolation error and
+> are largest in the near-empty regime the quadratic patch existed to serve.
+
+### 5.3 Tabulated Families
+
+The legacy masonry profiles — egg, horseshoe, gothic, catenary,
+semi-elliptical, semi-circular, basket-handle — have no defining equation:
+**their tables are the shape**. These sections are adopted as tabulated
+definitions, transcribed from the predecessor at its stated resolution
+together with its interpolation rule (linear, with the quadratic refinement
+over the two lowest depth segments), because a "more accurate" evaluation of
+a shape that exists only as a table is not a meaningful claim. Each family
+records which properties it tabulates and which it derives — area by inverse
+lookup where no area table exists, hydraulic radius from the section factor
+as $R = (\Psi/A)^{3/2}$ — exactly as the predecessor's four provision groups
+do.
+
+### 5.4 Standard-Size Catalogues
+
+The horizontal and vertical ellipse and the arch admit selection by standard
+size code — published catalogues of manufactured sections (23 ellipse codes,
+102 arch codes) whose full-flow area and hydraulic radius are engineering
+data, not computable quantities. The catalogues are adopted verbatim.
+Arbitrary user axes fall back to the analytic ellipse (§5.2) and the arch's
+proportionality constants.
+
+### 5.5 Custom Shapes
+
+A custom section is defined by a user width-against-depth relation describing
+a unit-height section scaled by the channel's full depth: anchored at the
+origin, truncated above unit height, extended at its last width if it stops
+short, and closed at the top — bottom and top widths both counting as wetted
+perimeter. These semantics are the file contract and are adopted exactly.
+
+Evaluation is direct: a piecewise-linear width relation makes area piecewise
+quadratic and wetted perimeter a sum of segment lengths, all exact. The
+predecessor's resampling of the curve into 51-point normalised tables is not
+carried — the shape the user drew is the shape solved.
+
+### 5.6 Transects
+
+A transect represents a natural channel by surveyed station–elevation pairs
+(up to 1,500 stations, with the survey rescalable by a multiplier and
+offset), with distinct left-overbank, main-channel, and right-overbank
+Manning coefficients; an omitted overbank coefficient defaults to the
+channel's. Vertical end walls close both ends, contributing wetted perimeter.
+
+**Composite roughness** is handled by conveyance summation: a new conveyance
+segment starts at each bank-roughness change and wherever ground re-emerges
+above the water line — multi-thread sections summing correctly — each
+contributing $K_i = (1/n_i)\,A_i R_i^{2/3}$ in SI form, with the effective
+hydraulic radius back-computed from total conveyance,
+$R = (n_C K / A)^{3/2}$, through the **same** constant in both directions.
+
+A **meander modifier** substitutes the shorter valley length for the
+meandering main-channel length as the channel's effective length, inflating
+the main-channel roughness by the modifier's square root so friction loss is
+preserved. The adjustment is a property of the one transect that declared it.
+
+Evaluation is direct from the survey geometry, which is piecewise-analytic;
+no fixed-resolution resampling intervenes.
+
+> **CORRESPONDENCE:** three predecessor behaviours are not carried. Its
+> transect reader treats roughness and the survey buffer as section-scope
+> state driven by the `NC` line, so a transect not followed by an `NC` line is
+> silently left untabulated, surfacing later as an unrelated link error —
+> here a transect is complete when its record ends. Its meander adjustment is
+> applied to the shared roughness state in place and never restored, so the
+> $\sqrt{L}$ inflation compounds into every subsequent transect that inherits
+> the channel coefficient — the code's own saved-and-restored discipline,
+> applied to the record but not the live variable, shows the intent this
+> engine implements. And its conveyance inversion hard-codes a differently
+> rounded Manning constant (1.49) than its forward sum (1.486), leaving every
+> tabulated transect and street hydraulic radius $(1.486/1.49)^{3/2} \approx
+> 0.40\,\%$ low — an intent visible in the code's single named constant, and
+> honoured here by using one constant in both directions.
+
+### 5.7 Inversions and Characteristic Depths
+
+Three inverse problems recur, and each is specified with a guaranteed
+termination:
+
+**Depth from area** inverts $A(y)$ — monotone by construction — by closed
+form where §5.2 provides one, by the tables' own inverse where §5.3 defines
+them, and otherwise by bracketed root-finding on the monotone relation to a
+stated tolerance. A bracketed solve on a monotone function cannot fail;
+there is no iteration cap that silently returns a seed.
+
+**Critical depth**, needed at free outfalls and free-fall ends, solves
+
+$$\frac{A^3}{W} = \frac{Q^2}{g}$$
+
+for $y$, with $Q$ the discharge — by exact formula where the section admits
+one (rectangular, triangular, parabolic, power), otherwise by bracketed
+root-finding on $[0,\,y_{full}]$.
+
+**Normal depth** inverts the section factor,
+$\Psi(y_N) = \dfrac{n\,Q}{\sqrt{S_0}}$ in SI form, on the monotone branch
+below the section's $\Psi_{max}$ (§5.1); a demand exceeding $\Psi_{max}$ has
+no normal depth in the section and reports the section full.
+
+> **CORRESPONDENCE:** the predecessor's characteristic-depth searches carry
+> fixed iteration budgets whose exhaustion returns the initial estimate — a
+> non-converged geometry query silently answering with its seed. Bracketed
+> solves terminate; the failure mode is removed rather than tolerated.
 
 ---
 
