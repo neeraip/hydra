@@ -11,6 +11,7 @@ use hydra_engine_uds::hydraulics::section::{
     build_section, build_street_section, build_transect_section, BuildError,
 };
 use hydra_engine_uds::io::objects::parse_network;
+use hydra_engine_uds::io::validate::validate;
 use hydra_engine_uds::model::{XsectReferent, XsectShape};
 
 fn fixture_dir() -> PathBuf {
@@ -31,9 +32,15 @@ fn every_fixture_parses_clean() {
 
     for path in names {
         let text = std::fs::read_to_string(&path).expect("read fixture");
-        let (net, diags) = parse_network(&text);
+        let (mut net, diags) = parse_network(&text);
         let errors: Vec<_> = diags.iter().filter(|d| d.kind.is_error()).collect();
         assert!(errors.is_empty(), "{} refused: {errors:?}", path.display());
+
+        // The §14.7 pass must accept every fixture; mutations and
+        // advisories are fine, refusals are not.
+        let findings = validate(&mut net);
+        let fatal: Vec<_> = findings.iter().filter(|f| f.kind.is_error()).collect();
+        assert!(fatal.is_empty(), "{} refused: {fatal:?}", path.display());
 
         // Geometry: whatever the §5 build stage supports must construct;
         // staged families (§5.3–§5.6) are tolerated until they land.

@@ -144,6 +144,14 @@ pub enum DiagnosticKind {
         /// The identifier as written.
         id: String,
     },
+    /// A value beyond its accepted range, capped rather than refused —
+    /// the predecessor's mutation, reported (§14.7).
+    CappedValue {
+        /// What was capped.
+        what: &'static str,
+        /// The value as written.
+        token: String,
+    },
     /// A line with too few items for its section's grammar.
     MissingItems,
     /// A value token failing its field's grammar or range.
@@ -170,6 +178,7 @@ impl DiagnosticKind {
                 | DiagnosticKind::PrefixMatched { .. }
                 | DiagnosticKind::SubstitutedOption { .. }
                 | DiagnosticKind::IgnoredOption { .. }
+                | DiagnosticKind::CappedValue { .. }
         )
     }
 }

@@ -954,6 +954,7 @@ fn parse_conduit(
             offset2,
             init_flow: init_flow * cv.flow,
             max_flow: max_flow * cv.flow,
+            reversed: false,
         },
         cross_section: None,
     });

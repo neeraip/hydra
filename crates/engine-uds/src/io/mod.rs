@@ -19,3 +19,4 @@ pub mod streets;
 pub mod survey;
 pub mod tables;
 pub mod transects;
+pub mod validate;

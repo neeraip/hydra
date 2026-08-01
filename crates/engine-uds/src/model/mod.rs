@@ -295,6 +295,10 @@ pub enum LinkKind {
         init_flow: f64,
         /// Maximum-flow limit (m³/s); 0 = none.
         max_flow: f64,
+        /// Validation reversed an adverse-slope channel: `from`/`to` and
+        /// the offsets are swapped, and reported flows carry the direction
+        /// multiplier so output keeps the user's orientation (§14.7).
+        reversed: bool,
     },
     /// A pump (§7.1).
     Pump {

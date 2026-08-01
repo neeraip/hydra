@@ -176,13 +176,21 @@ pub(crate) fn parse_parcels(
             }
             None => None,
         };
+        if x[1] > 100.0 {
+            diags.push(err(
+                l,
+                DiagnosticKind::CappedValue {
+                    what: "imperviousness",
+                    token: t[4].clone(),
+                },
+            ));
+        }
         parcels.push(Parcel {
             id: t[0].clone(),
             gage: *gage,
             outlet,
             area: x[0] * cv.land_area,
-            // Above 100 % capped, not rejected (§14.7) — warned at
-            // validation, which owns the mutation record.
+            // Above 100 % capped, not rejected, and reported (§14.7).
             frac_imperv: (x[1].min(100.0)) / 100.0,
             width: x[2] * cv.len,
             slope: x[3] / 100.0,
