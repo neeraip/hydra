@@ -122,12 +122,32 @@ pub enum ValidationKind {
         /// The new step (s).
         to: f64,
     },
+    /// An inlet placed on a channel its design cannot serve, removed
+    /// (§7.8): custom inlets need a diversion or rating curve, drop
+    /// inlets a trapezoidal or open-rectangular channel, all others a
+    /// street section.
+    InletPlacementRemoved,
     // ── Advisories ───────────────────────────────────────────────────────
     /// A gage recording interval finer than its series' spacing.
     GageIntervalFinerThanSeries,
     /// A user-dimensioned ellipse, which the predecessor evaluated at
     /// fixed proportions regardless of the entered width (§5.4).
     UserDimensionedEllipse,
+    /// A channel short enough to Courant-limit the run at full flow
+    /// (§6.5): its cost is small steps, visible rather than hidden in
+    /// the retired lengthening transform.
+    StubChannel,
+    /// A rule mixing `AND` and `OR` premises: firing may depend on the
+    /// §9.1 precedence correction.
+    RuleMixesAndOr,
+    /// A sanitary-inflow pattern whose declared type does not match the
+    /// slot it occupies — it contributes its own type's multiplier from
+    /// wherever it sits (§14.7).
+    DwfPatternSlotMismatch,
+    /// A tidal outfall under a non-midnight start: this engine indexes
+    /// the tide by clock time where the predecessor used elapsed time,
+    /// so results differ (§14.7).
+    TidalCurveClockIndexed,
 }
 
 impl ValidationKind {
@@ -144,8 +164,13 @@ impl ValidationKind {
                 | ValidationKind::ChannelReversed
                 | ValidationKind::RadiusRaised { .. }
                 | ValidationKind::WetStepReduced { .. }
+                | ValidationKind::InletPlacementRemoved
                 | ValidationKind::GageIntervalFinerThanSeries
                 | ValidationKind::UserDimensionedEllipse
+                | ValidationKind::StubChannel
+                | ValidationKind::RuleMixesAndOr
+                | ValidationKind::DwfPatternSlotMismatch
+                | ValidationKind::TidalCurveClockIndexed
         )
     }
 }
@@ -172,7 +197,107 @@ pub fn validate(net: &mut Network) -> Vec<ValidationDiagnostic> {
     let originals = vertex_depths(net);
     validate_links(net, &mut d);
     validate_vertices(net, &originals, &mut d);
+    validate_inlets(net, &mut d);
+    validate_rules(net, &mut d);
+    validate_dwf(net, &mut d);
+    validate_tidal(net, &mut d);
     d
+}
+
+/// Inlet placements against their channels (§7.8): invalid placements
+/// are removed, each with a notice naming the channel.
+fn validate_inlets(net: &mut Network, d: &mut Vec<ValidationDiagnostic>) {
+    let mut removed = Vec::new();
+    net.inlet_usage.retain(|u| {
+        let design = &net.inlets[u.design];
+        let shape = net.links[u.link].cross_section.as_ref().map(|x| x.shape);
+        let ok = if let Some(c) = design.custom_curve {
+            matches!(
+                net.curves[c].kind,
+                crate::model::CurveKind::Diversion | crate::model::CurveKind::Rating
+            )
+        } else if design.drop_grate || design.drop_curb {
+            matches!(shape, Some(XsectShape::Trapezoidal | XsectShape::RectOpen))
+        } else {
+            shape == Some(XsectShape::Street)
+        };
+        if !ok {
+            removed.push(net.links[u.link].id.clone());
+        }
+        ok
+    });
+    for id in removed {
+        push(d, &id, ValidationKind::InletPlacementRemoved);
+    }
+}
+
+/// Rules mixing `AND` and `OR` among their premises (§9.1 advisory).
+fn validate_rules(net: &Network, d: &mut Vec<ValidationDiagnostic>) {
+    for rule in &net.controls.rules {
+        let (mut in_premises, mut has_and, mut has_or) = (false, false, false);
+        for line in &rule.lines {
+            let first = line
+                .split_whitespace()
+                .next()
+                .unwrap_or("")
+                .to_ascii_uppercase();
+            if first.starts_with("IF") {
+                in_premises = true;
+            } else if first.starts_with("THEN") || first.starts_with("ELSE") {
+                in_premises = false;
+            } else if in_premises {
+                if first.starts_with("AND") {
+                    has_and = true;
+                }
+                if first.starts_with("OR") {
+                    has_or = true;
+                }
+            }
+        }
+        if has_and && has_or {
+            push(d, &rule.name, ValidationKind::RuleMixesAndOr);
+        }
+    }
+}
+
+/// Sanitary-inflow patterns judged against the slots they occupy.
+fn validate_dwf(net: &Network, d: &mut Vec<ValidationDiagnostic>) {
+    use crate::model::PatternKind;
+    const SLOTS: [PatternKind; 4] = [
+        PatternKind::Monthly,
+        PatternKind::Daily,
+        PatternKind::Hourly,
+        PatternKind::Weekend,
+    ];
+    for dwf in &net.dry_weather {
+        for (slot, pat) in dwf.patterns.iter().enumerate() {
+            if let Some(p) = pat {
+                if net.patterns[*p].kind != SLOTS[slot] {
+                    push(
+                        d,
+                        &net.vertices[dwf.vertex].id,
+                        ValidationKind::DwfPatternSlotMismatch,
+                    );
+                }
+            }
+        }
+    }
+}
+
+/// Tidal outfalls under a non-midnight start (§14.7).
+fn validate_tidal(net: &Network, d: &mut Vec<ValidationDiagnostic>) {
+    if net.options.start_time == 0.0 {
+        return;
+    }
+    for v in &net.vertices {
+        if let VertexKind::Outfall {
+            stage: OutfallStage::Tidal { .. },
+            ..
+        } = v.kind
+        {
+            push(d, &v.id, ValidationKind::TidalCurveClockIndexed);
+        }
+    }
 }
 
 /// A comparable scalar for a series timestamp (s).
@@ -694,7 +819,33 @@ fn validate_links(net: &mut Network, d: &mut Vec<ValidationDiagnostic>) {
                     push(d, &id, ValidationKind::SlopeFloored { to: min_slope });
                     slope = min_slope;
                 }
-                let _ = slope;
+                // A stub channel: its full-flow Courant length exceeds
+                // its own length, so it will limit the accuracy-driven
+                // step (§6.5) at the configured routing step.
+                if let Some(sec) = &section {
+                    if sec.y_full() > 0.0 && sec.a_full() > 0.0 {
+                        let LinkKind::Channel { roughness, .. } = &net.links[li].kind else {
+                            unreachable!()
+                        };
+                        let n = if *roughness > 0.0 { *roughness } else { 0.013 };
+                        let y_eff = if sec.is_closed() {
+                            sec.y_full()
+                        } else {
+                            let w = sec.top_width(sec.y_full());
+                            if w > 0.0 {
+                                sec.a_full() / w
+                            } else {
+                                sec.y_full()
+                            }
+                        };
+                        let v_full = sec.psi(sec.y_full()) * slope.sqrt() / (n * sec.a_full());
+                        let courant_len = ((crate::hydraulics::GRAVITY * y_eff).sqrt() + v_full)
+                            * net.options.routing_step;
+                        if courant_len > eff_len {
+                            push(d, &id, ValidationKind::StubChannel);
+                        }
+                    }
+                }
                 // Adverse: reverse the channel internally (§14.7).
                 if elev1 < elev2 && shape != Some(XsectShape::Dummy) {
                     let link = &mut net.links[li];
@@ -1399,6 +1550,124 @@ TS1  1:00  0.0
         assert!(has(&v, "UH1", |k| matches!(
             k,
             ValidationKind::ResponseFractionsAboveUnity
+        )));
+    }
+
+    #[test]
+    fn invalid_inlet_placements_are_removed_with_notice() {
+        // CB1 rides a street (valid); moving it to a circular sewer is
+        // not, and the placement goes away.
+        let inp = "\
+[OPTIONS]
+FLOW_UNITS  CFS
+
+[JUNCTIONS]
+J1   100  4
+SEW  90   8
+
+[OUTFALLS]
+O1  95  FREE
+O2  85  FREE
+
+[CONDUITS]
+GUT1  J1   O1  300  0.016  0  0
+SEW1  SEW  O2  300  0.013  0  0
+
+[XSECTIONS]
+GUT1  STREET    ST1
+SEW1  CIRCULAR  1.5  0  0  0
+
+[STREETS]
+ST1  20  0.5  2  0.016  0  0  1
+
+[INLETS]
+CB1  GRATE  2  2  P_BAR-50
+
+[INLET_USAGE]
+GUT1  CB1  SEW
+";
+        let (net, v) = validated(inp);
+        assert_eq!(net.inlet_usage.len(), 1);
+        assert!(v
+            .iter()
+            .all(|d| !matches!(d.kind, ValidationKind::InletPlacementRemoved)));
+        let moved = inp.replace("GUT1  CB1  SEW", "SEW1  CB1  SEW");
+        let (net, v) = validated(&moved);
+        assert!(net.inlet_usage.is_empty());
+        assert!(has(&v, "SEW1", |k| matches!(
+            k,
+            ValidationKind::InletPlacementRemoved
+        )));
+    }
+
+    #[test]
+    fn remaining_advisories_fire() {
+        let inp = "\
+[OPTIONS]
+FLOW_UNITS  CFS
+START_TIME  06:00
+
+[JUNCTIONS]
+J1  100  4
+
+[OUTFALLS]
+O1  95  TIDAL  TC1
+
+[CONDUITS]
+C1  J1  O1  1  0.013  4  0
+
+[XSECTIONS]
+C1  CIRCULAR  1.5  0  0  0
+
+[CURVES]
+TC1  TIDAL  0  2  6  3  12  2
+
+[PATTERNS]
+HR1  HOURLY  1 1 1 1 1 1 1 1 1 1 1 1
+HR1          1 1 1 1 1 1 1 1 1 1 1 1
+
+[DWF]
+J1  FLOW  0.02  HR1
+
+[CONTROLS]
+RULE  MIXED
+IF    NODE J1 DEPTH > 2
+AND   NODE J1 DEPTH < 4
+OR    SIMULATION TIME > 1:00
+THEN  CONDUIT C1 STATUS = CLOSED
+";
+        let (_, v) = validated(inp);
+        // A 1 ft channel with a 20 s routing step is a stub.
+        assert!(has(&v, "C1", |k| matches!(k, ValidationKind::StubChannel)));
+        // The hourly pattern sits in the monthly slot.
+        assert!(has(&v, "J1", |k| matches!(
+            k,
+            ValidationKind::DwfPatternSlotMismatch
+        )));
+        // AND and OR mix among the premises.
+        assert!(has(&v, "MIXED", |k| matches!(
+            k,
+            ValidationKind::RuleMixesAndOr
+        )));
+        // A tidal outfall under an 06:00 start.
+        assert!(has(&v, "O1", |k| matches!(
+            k,
+            ValidationKind::TidalCurveClockIndexed
+        )));
+        // All of these are advisories, none fatal.
+        assert!(v.iter().all(|d| !d.kind.is_error()), "{v:?}");
+        // A long channel is no stub, and a midnight start quiets the tide.
+        let quiet = inp
+            .replace(
+                "C1  J1  O1  1  0.013  4  0",
+                "C1  J1  O1  1000  0.013  4  0",
+            )
+            .replace("START_TIME  06:00", "START_TIME  00:00");
+        let (_, v) = validated(&quiet);
+        assert!(!has(&v, "C1", |k| matches!(k, ValidationKind::StubChannel)));
+        assert!(!has(&v, "O1", |k| matches!(
+            k,
+            ValidationKind::TidalCurveClockIndexed
         )));
     }
 

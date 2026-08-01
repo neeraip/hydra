@@ -1103,7 +1103,8 @@ impl Section {
         s
     }
 
-    fn is_closed(&self) -> bool {
+    /// Whether the section closes over the flow (a crown or lid exists).
+    pub fn is_closed(&self) -> bool {
         !matches!(
             self.kind,
             Kind::RectOpen { .. }
