@@ -1,158 +1,207 @@
 # hydra-engine-uds — Urban Drainage Specification
 
-This document is §1 of the urban drainage specification. It states the engine's
-purpose and scope, the compatibility obligations every other document inherits,
-the registry that assigns section numbers across the specification, and the
-conventions all of its documents are written to.
+This document is §1 of the urban drainage specification. It states what the
+engine solves, what it owes the predecessor it interoperates with, the registry
+that assigns section numbers, and the conventions the other documents inherit.
 
 ---
 
 ## 1. Overview and Scope
 
-### 1.1 Purpose and Domain
+### 1.1 What This Engine Solves
 
-The urban drainage engine simulates the quantity and quality of runoff from
-urban catchments and its conveyance through drainage systems — storm sewers,
-sanitary and combined sewers, open channels, storage units, and flow regulators
-— over single events or continuous multi-year periods.
+The engine simulates the movement of water and waterborne material through an
+urban drainage system: from precipitation falling on land, through the surface
+and subsurface, into a network of channels, pipes, and structures, and out to
+receiving waters.
 
-Its physics differ in kind from those of the water distribution engine, and the
-distinction is worth stating because it drives every design decision that
-follows. A distribution network is pressurised and solved for equilibrium: every
-node has a head and every link a flow that jointly satisfy conservation at an
-instant. A drainage network is a **rainfall-runoff-routing** system with a free
-surface. Precipitation falls on subcatchments, becomes runoff after losses to
-infiltration, evaporation, and depression storage, and the resulting hydrographs
-are routed through the conveyance network by solving forms of the Saint-Venant
-equations. Flow may be driven by gravity or pumped; conduits may transition
-between open-channel and pressurised (surcharged) states; and the network admits
-backwater, flow reversal, ponding, and tidal boundary conditions.
+Three mathematical problems compose it.
 
-Three consequences follow, and each shapes a later document:
+**Surface and subsurface water balance.** Each parcel of land is a store whose
+depth $d$ evolves under precipitation, evaporation, infiltration, and outflow,
 
-- **The state is a hydrograph, not an equilibrium.** Time is intrinsic. There is
-  no meaningful steady solution to fall back on, and the time step is itself a
-  computed quantity rather than a user setting alone.
-- **The domain has a compartment the distribution engine has no analogue for.**
-  Hydrology — meteorology, infiltration, groundwater, snowmelt, and
-  rainfall-dependent infiltration and inflow — generates the loads that
-  conveyance then routes. It is a peer subsystem, not a boundary condition.
-- **Not every element is a node or a link.** A subcatchment is a surface, and
-  land use, pollutant, and control-rule objects describe behaviour rather than
-  topology. Any shared element schema must accommodate this without forcing a
-  drainage model into a two-kind topology it does not have.
+$$\frac{\mathrm{d}d}{\mathrm{d}t} = i - e - f - q(d)$$
 
-### 1.2 Relationship to SWMM
+where $i$ is the precipitation rate, $e$ the evaporation rate, $f$ the
+infiltration rate, and $q(d)$ the runoff rate from the parcel once its depth
+exceeds the depth retained in surface depressions. Infiltration is the dominant
+subtraction and admits several constitutive forms. Beneath the surface, moisture
+and a water table evolve as a coupled pair, returning part of the infiltrated
+water to the network as interflow. Where snow is present, an energy-balance
+store precedes the water balance. The output is a time series of flow and
+constituent load per parcel.
 
-This engine operates on the SWMM data model, as the water distribution engine
-operates on the EPANET data model. Its conceptual and mathematical reference is
-the accompanying analysis of SWMM 5.2.4, which describes how the predecessor
-engine works: its algorithms, constants, empirical relations, and numerical
-devices.
+**Free-surface flow on a network.** The conveyance system is a directed graph
+whose edges carry the one-dimensional shallow-water equations,
 
-**The analysis is the map of the predecessor; this specification is the design of
-the successor.** They are different documents with different obligations. The
-analysis is faithful to SWMM including its defects, and is pinned to a tagged
-release so that "SWMM-compatible" has a precise meaning. This specification
-draws concepts, mathematics, and algorithms from it but owes it no fidelity
-beyond §1.3. Rewriting SWMM is explicitly not the goal.
+$$\frac{\partial A}{\partial t} + \frac{\partial Q}{\partial x} = q_L,
+\qquad
+\frac{\partial Q}{\partial t}
++ \frac{\partial}{\partial x}\!\left(\frac{Q^2}{A}\right)
++ gA\frac{\partial H}{\partial x}
++ gAS_f = 0$$
 
-Where this specification and the analysis differ, the declarative register is
-used: *the analysis gives X; this specification requires Y*, followed by the
-reason. Never an advisory or apologetic register.
+where $A$ is flow area, $Q$ discharge, $x$ distance along the channel, $q_L$ the
+lateral inflow per unit length supplied by the surface balance, $H$ the
+hydraulic head, $S_f$ the friction slope, and $g$ gravitational acceleration.
+Vertices close the system with continuity between the flows incident on them and
+the rate of change of their stored volume. Pumps, weirs, orifices, and other
+structures enter as internal boundary conditions relating discharge to head
+across a vertex pair; outfalls impose external ones.
 
-### 1.3 Compatibility Commandments
+**Constituent transport.** Material accumulates on surfaces between storms,
+is mobilised by runoff, and is then advected through the network subject to
+decay and treatment. Concentration does not influence flow.
 
-Two obligations bind every document in this specification. They are the only
-respects in which the predecessor constrains the successor.
+**The coupling is a cascade.** The surface balance supplies the network as a
+source term; the network supplies transport as a velocity field. No influence
+runs backwards. This is a structural property of the problem, not of any
+implementation of it, and it is what permits the three to advance on separate
+time scales.
 
-#### 1.3.1 File compatibility is absolute
+### 1.2 What Is Genuinely Difficult
 
-Input and output files must remain compatible with the predecessor's, both
-**structurally** and **functionally**.
+Two features distinguish this problem from a pressurised-network one, and the
+specification is organised around them.
 
-- **Structural** compatibility means the file parses: every section, keyword,
-  field order, and numeric format the predecessor accepts is accepted here, and
-  every file this engine writes is readable by the predecessor's own readers.
-- **Functional** compatibility means the same file describes the same network.
-  A parser that reads every field correctly and then builds a different model
-  has failed this obligation while satisfying the first.
+**Conduits change state.** A conduit may run partly full with a free surface,
+or completely full and pressurised. The shallow-water equations presuppose a
+free surface; a full pipe has none. The transition between the two regimes is
+the central numerical difficulty of network hydraulics, and a large share of the
+predecessor's machinery exists to negotiate it.
 
-Functional compatibility makes every **validation-time mutation** part of the
-file contract rather than an implementation curiosity. The predecessor silently
-adjusts a model as it loads it — raising a weir crest to the downstream invert,
-reversing an adverse-slope conduit, lifting a node's depth to its highest crown,
-compiling a street into a transect, converting offsets, enlarging an infeasible
-radius. Each such mutation is a rule about what the input file *means*, and is
-specified as such rather than left to be rediscovered.
+**The system is driven, not steady.** There is no equilibrium to fall back on.
+Time is intrinsic, the forcing is a measured or synthetic rainfall record, and
+the answer is a hydrograph. Accuracy therefore means accuracy in time — peak
+magnitude, peak timing, and volume — not the residual of a converged snapshot.
 
-This obligation is a floor on behaviour, not a ceiling on capability. It
-constrains what files mean, not how results are computed.
+### 1.3 Relationship to SWMM
 
-#### 1.3.2 The interior is free
+SWMM is this engine's predecessor, and is three distinct things to this
+specification. Distinguishing them is the point of this subsection.
 
-Subject to §1.3.1, any algorithm may be replaced wherever accuracy or
-performance improves. Result values need not match the predecessor's and are
-expected to differ. The standard is that accuracy and performance are at least
-close to, and preferably better than, the predecessor's.
+1. **A domain reference.** SWMM records which phenomena matter in urban
+   drainage and which constitutive relations are established engineering
+   practice — infiltration models, buildup and washoff forms, structure
+   ratings, the vocabulary practitioners model in. This is inherited.
+2. **An interoperability boundary.** Its file formats are how models and
+   results move between this engine and the rest of the world. This is
+   honoured, and is specified in §14.
+3. **A set of numerical methods.** This is *not* inherited. SWMM's solution
+   strategy was shaped by the computing hardware of its era, and this engine is
+   free to solve the same physics by any means that is at least as accurate.
 
-This freedom is exercised with a distinction in mind. The predecessor's numbers
-carry different kinds of authority, and only the first two are binding:
+The accompanying analysis of SWMM 5.2.4 documents the predecessor faithfully,
+including its defects. It is the map of the predecessor; this is the design of
+the successor. Where the two differ, the declarative register is used: *the
+predecessor does X; this engine does Y*, followed by the reason.
 
-| Kind | Example | Obligation |
+### 1.4 Obligations, in Three Tiers
+
+Compatibility with the predecessor is not one obligation but three, of
+decreasing strength. Conflating them is what leads an engine to inherit defects
+in the name of fidelity.
+
+#### Tier 1 — Interoperability (binding)
+
+A model expressed in the predecessor's input format is read, and is understood
+to mean what its author meant. Results are written in formats the predecessor's
+readers accept. This tier is not negotiable: it is the entire reason the formats
+are supported.
+
+It binds **syntax and interpretation** — that a field is accepted, and that its
+value denotes the quantity its author intended. It does not bind the engine to
+reproduce arithmetic, and it does not make the predecessor's incidental
+behaviours part of the model.
+
+#### Tier 2 — Result correspondence (bounded)
+
+Results are at least as accurate as the predecessor's, judged against
+measurement or analytical solution rather than against the predecessor's output.
+Where results differ from the predecessor's in a way a user would notice, the
+difference is attributable to a stated improvement, and is recorded as a
+**CORRESPONDENCE** note at the point where it arises.
+
+Agreement with the predecessor is evidence, not the objective. A divergence
+that moves results toward the truth satisfies this tier; one that cannot be
+explained does not, and is a defect.
+
+#### Tier 3 — Method (free)
+
+How the equations of §1.1 are discretised, integrated, and solved is entirely
+this engine's own. No obligation attaches to the predecessor's choice of scheme,
+iteration strategy, step control, or internal representation.
+
+#### Triage
+
+Every behaviour of the predecessor falls into exactly one of three classes, and
+the class determines its standing here:
+
+| Class | Example | Standing |
 |---|---|---|
-| Physical law | conservation of mass and momentum | Adopt |
-| Empirical fit | roughness relations, buildup and washoff coefficients | Adopt; record provenance |
-| Numerical device | an artificial slot admitting pressurised flow to a free-surface scheme | Free to replace |
-| Legacy workaround | a fixed-interval snap compensating for an integer clock | Replace, and say so |
+| **File syntax** | field order, keyword spelling, record layout | Tier 1 — reproduced |
+| **Model semantics** | what a parameter denotes, what a structure does | Tier 1 — the *intent* is reproduced; an incidental consequence of the predecessor's implementation is not |
+| **Numerical artifact** | stability limiters, iteration schemes, lookup tables, floors that keep a quantity finite | Tier 3 — no standing; evaluated on merit |
 
-Every deliberate divergence carries a **DEVIATION** note at the point of
-divergence, naming what the predecessor does, what this engine does instead, and
-why. A divergence without a note is a defect, not a feature.
+Classifying a behaviour is itself a specification act. Where a behaviour's class
+is disputable, the classification is stated with its reasoning rather than
+assumed.
 
-#### 1.3.3 Extensions are opt-in
+### 1.5 Numerical Devices Are Not Requirements
 
-Capability beyond the predecessor's is welcome where genuinely rewarding, on one
-condition: a file that does not use the extension behaves exactly as it would
-without it. An extension may add meaning to input the predecessor rejects or
-ignores, but may never change the meaning of input the predecessor accepts.
+The predecessor's method carries a body of scaffolding that exists to make its
+particular scheme workable rather than to represent anything physical:
+mechanisms for admitting pressurised flow into a free-surface formulation,
+damping terms that suppress inertia to preserve stability, transformations that
+lengthen short conduits, floors on top width and surface area that keep
+quantities from collapsing, tabulated geometry standing in for closed-form
+evaluation, and fixed-relaxation iteration in place of a convergent solve.
 
-### 1.4 Specification Structure
+None of these is inherited by default. Each is evaluated on whether a scheme
+chosen under §1.4 Tier 3 still needs it, and is adopted only if it does.
+
+Two cautions apply. First, several of these devices **change computed results**,
+so removing one is not a neutral act and its effect is recorded under Tier 2.
+Second, a device that compensates for a deficiency in a scheme this engine does
+not use may still encode a real physical limit; the specification distinguishes
+the two before discarding either.
+
+### 1.6 Specification Structure
 
 The specification is one numbered sequence distributed across several documents.
 Section numbers are **globally unique**: a reference to §7.3 identifies exactly
 one section, from anywhere in the specification, without naming a document.
 
-Each document owns a disjoint, contiguous range of top-level sections:
+Each document owns a disjoint, contiguous range:
 
 | Sections | Document | Subject |
 |---|---|---|
-| 1 | Overview | Purpose, compatibility, structure, conventions |
-| 2–5 | Model | Data model, unit system, file formats, validation |
-| 6–8 | Routing | Cross-section geometry, flow routing, structures and regulators |
-| 9–10 | Hydrology | Runoff, infiltration, groundwater, snowmelt, RDII; LID controls |
-| 11 | Quality | Buildup, washoff, transport, treatment |
-| 12–15 | Simulation | Controls, time stepping, continuity accounting, session API |
-| 16 | Analysis | Post-simulation analytics |
+| 1 | Overview | Purpose, obligations, structure, conventions |
+| 2 | Domain | Entities, state, units |
+| 3–4 | Hydrology | Surface water balance; subsurface and snow |
+| 5–7 | Hydraulics | Cross-section geometry; network flow; structures |
+| 8 | Transport | Constituent buildup, washoff, advection, treatment |
+| 9–12 | Simulation | Operational control; time integration and coupling; conservation; session interface |
+| 13 | Analysis | Post-simulation analytics |
+| 14 | Interoperability | Predecessor file formats, import, and export |
 
-Three rules keep this scheme intact:
+The ordering is deliberate. The physics is specified first, on its own terms;
+interoperability is specified last, as an adapter between the predecessor's
+formats and a model defined independently of them. A reader should be able to
+understand everything this engine computes without reading §14.
+
+Three rules keep the scheme intact:
 
 1. **A new top-level section takes the next free number within its owning
-   document's range.** It never restarts at 1, and never borrows a number from
-   another range.
-2. **Ranges are extended, not reused.** If a document exhausts its range, the
-   registry above is amended — by extending that range and renumbering what
-   follows, or by appending a new range — as a deliberate, reviewable change.
+   document's range.** It never restarts at 1, and never borrows from another
+   range.
+2. **Ranges are extended, not reused.** If a document exhausts its range, this
+   registry is amended as a deliberate, reviewable change.
 3. **Documents are addressed by subject, never by storage location.** Which
-   file a range lives in is a wiring detail. A range may be split across
-   documents, or documents merged, without altering a single cross-reference.
+   file a range occupies is a wiring detail, and a range may move between
+   documents without altering a single cross-reference.
 
-The registry exists because the alternative has been tried. A specification cut
-into per-subsystem documents that each begin at §1 produces duplicate section
-numbers, references that resolve to several candidate sections, and eventual
-citation by file and line — an addressing scheme that has stopped working.
-
-### 1.5 Conventions
+### 1.7 Conventions
 
 **Language.** These documents are language- and platform-agnostic. They specify
 behaviour, not its realisation: no programming language, module layout, data
@@ -164,21 +213,23 @@ defined on first use in an accompanying sentence. Inline mathematics is reserved
 for trivial or auxiliary expressions. Eponymous pairs take an en-dash —
 Green–Ampt, Saint-Venant, Cash–Karp — rather than a hyphen.
 
-**Units.** Quantities are carried internally in SI. Where the predecessor's file
-formats, empirical relations, or reported values are expressed in other units,
-the conversion is specified at the boundary where it occurs, and the boundary
-itself is named. A constant embedding a unit system — a coefficient that differs
-between US customary and SI forms of the same relation — is identified as such
-rather than presented as dimensionless.
+**Units.** Quantities are carried internally in SI. Conversion occurs only at
+boundaries, and each boundary is named where it is specified. A constant that
+embeds a unit system is identified as such rather than presented as
+dimensionless. Physical constants take their exact standard values; a rounded
+constant is adopted only where it is inseparable from an empirical relation
+fitted with it, and then the pairing is stated.
 
-**Worked examples.** A numeric example carries the input values, the intermediate
-quantities, and the result. Where an example is given in both unit systems, each
-is computed independently from the physical quantities; neither is derived from
-the other by conversion. Examples that cross-check only against each other have
-been observed to carry identical errors through review.
+**Worked examples.** A numeric example carries its inputs, intermediate
+quantities, and result. Where an example is given in more than one unit system,
+each is computed independently from the physical quantities; neither is derived
+from the other by conversion. Examples that cross-check only against each other
+have been observed to carry identical errors through review.
 
-**Deviations.** A divergence from the predecessor is recorded as a blockquote
-beginning `**DEVIATION from SWMM:**`, at the point of divergence.
+**Correspondence notes.** A difference from the predecessor that a user would
+observe in results is recorded as a blockquote beginning
+`**CORRESPONDENCE:**`, at the point where it arises, naming what the predecessor
+computes, what this engine computes, and why the difference is an improvement.
 
 **Gaps.** Where a decision is required that this specification does not make,
 that is a defect in the specification. It is recorded and resolved here before
@@ -186,16 +237,15 @@ implementation proceeds — never decided in implementation.
 
 **Concurrency.** Operations that may be performed concurrently are marked **∥**.
 An operation not so marked is specified as sequential, and implementing it
-concurrently is a deviation requiring the same treatment as any other.
+concurrently is a change requiring the same treatment as any other.
 
-### 1.6 Status
+### 1.8 Status
 
 <!-- PLANNED-ENGINE: uds — replace this subsection with the engine's supported
      capability set when the urban drainage engine ships. -->
 
 This specification is under development and the engine is not yet implemented.
 The urban drainage engine is registered as *planned*: its identity and import
-formats are declared, and models cannot yet be opened or simulated. Documents
-outside §1 are written in the order the registry lists them, and a section
+formats are declared, and models cannot yet be opened or simulated. A section
 absent from the specification is unspecified behaviour rather than deferred
 behaviour — it is not implemented until it is specified.
