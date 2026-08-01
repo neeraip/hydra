@@ -336,6 +336,60 @@ enum FlowClass {
     Dry,
 }
 
+/// A channel's friction law (§7.7): Manning, or a pressurised relation
+/// while a force main flows full.
+enum Friction {
+    Manning,
+    /// Hazen–Williams, by the C-factor.
+    HazenWilliams {
+        c: f64,
+    },
+    /// Darcy–Weisbach, by the roughness height (m), with Swamee–Jain.
+    DarcyWeisbach {
+        e: f64,
+    },
+}
+
+/// Kinematic viscosity of water (m²/s) — the predecessor's constant,
+/// converted.
+const VISCOSITY: f64 = 1.1e-5 * 0.3048 * 0.3048;
+
+impl Friction {
+    /// The §6.3 friction denominator term for a full force main, or
+    /// `None` to use Manning.
+    fn pressurised_dq(&self, v: f64, r: f64, dt: f64) -> Option<f64> {
+        match self {
+            Friction::Manning => None,
+            Friction::HazenWilliams { c } => Some(
+                dt * GRAVITY * v.abs().powf(0.852) / (0.849 * c).powf(1.852) / r.powf(1.166_67),
+            ),
+            Friction::DarcyWeisbach { e } => {
+                let re = (4.0 * r * v.abs() / VISCOSITY).max(10.0);
+                let f = swamee_jain(*e, r, re);
+                Some(dt * f * v.abs() / (8.0 * r))
+            }
+        }
+    }
+}
+
+/// The Swamee–Jain friction factor with the predecessor's laminar and
+/// transitional treatment (§7.7).
+fn swamee_jain(e: f64, hrad: f64, re: f64) -> f64 {
+    if re <= 2000.0 {
+        return 64.0 / re;
+    }
+    if re < 4000.0 {
+        let f4000 = swamee_jain(e, hrad, 4000.0);
+        return 0.032 + (f4000 - 0.032) * (re - 2000.0) / 2000.0;
+    }
+    let mut x = e / 3.7 / (4.0 * hrad);
+    if re < 1.0e10 {
+        x += 5.74 / re.powf(0.9);
+    }
+    let l = x.log10();
+    0.25 / (l * l)
+}
+
 struct Chan {
     from: usize,
     to: usize,
@@ -356,6 +410,9 @@ struct Chan {
     loss_outlet: f64,
     loss_avg: f64,
     flap_gate: bool,
+    /// Seepage rate through the bed (m/s).
+    seepage: f64,
+    friction: Friction,
     geom: SlotGeom,
 }
 
@@ -411,6 +468,8 @@ pub struct RoutingReport {
     pub outflow: f64,
     /// Total flooding volume (m³).
     pub flooding: f64,
+    /// Total channel evaporation and seepage volume (m³).
+    pub losses: f64,
 }
 
 /// The §6 router over a validated network.
@@ -444,6 +503,9 @@ pub struct Router {
     hist: Vec<(f64, Vec<f64>)>,
     dt_prev: f64,
     quiet_streak: u32,
+    /// Potential evaporation rate applied to open channels (m/s); set by
+    /// the session forcing (§10), default 0.
+    pub evap_rate: f64,
     /// The report accumulated across `advance` calls.
     pub report: RoutingReport,
 }
@@ -453,6 +515,7 @@ struct Trial {
     y: Vec<f64>,
     q: Vec<f64>,
     sq: Vec<f64>,
+    loss_rate: f64,
     a_mid: Vec<f64>,
     net_flow: Vec<f64>,
     converged: bool,
@@ -537,6 +600,7 @@ impl Router {
                     loss_outlet,
                     loss_avg,
                     flap_gate,
+                    seepage_rate,
                     ..
                 } => {
                     let xs =
@@ -550,11 +614,7 @@ impl Router {
                         // Routed as a pass-through structure below.
                         continue;
                     }
-                    if xs.shape == XsectShape::ForceMain {
-                        return Err(RouterRefusal::Unsupported(
-                            "force-main friction arrives with §7.7",
-                        ));
-                    }
+
                     if xs.culvert_code != 0 {
                         return Err(RouterRefusal::Unsupported(
                             "culvert inlet control arrives with §7.6",
@@ -590,6 +650,37 @@ impl Router {
                         delta / (eff_len * eff_len - delta * delta).sqrt()
                     }
                     .max(net.options.min_slope.max(0.0));
+                    // Force mains: the pressurised relation while full and
+                    // the predecessor's equivalent Manning n otherwise,
+                    // converted to SI (§7.7).
+                    let mut friction = Friction::Manning;
+                    if xs.shape == XsectShape::ForceMain {
+                        let coeff = xs.geom_user[1];
+                        if coeff <= 0.0 {
+                            return Err(RouterRefusal::Geometry(format!(
+                                "{}: force-main coefficient must be positive",
+                                link.id
+                            )));
+                        }
+                        let d = sec.y_full();
+                        match net.options.force_main {
+                            crate::io::options::ForceMainEquation::HazenWilliams => {
+                                n = 1.119 / coeff * (d / slope).powf(0.04);
+                                friction = Friction::HazenWilliams { c: coeff };
+                            }
+                            crate::io::options::ForceMainEquation::DarcyWeisbach => {
+                                let e = coeff
+                                    * if net.options.flow_units.is_us() {
+                                        0.0254
+                                    } else {
+                                        0.001
+                                    };
+                                let f = swamee_jain(e, d / 4.0, 1.0e12);
+                                n = (f / 124.55).sqrt() * d.powf(1.0 / 6.0);
+                                friction = Friction::DarcyWeisbach { e };
+                            }
+                        }
+                    }
                     chans.push(Chan {
                         from: link.from,
                         to: link.to,
@@ -605,6 +696,8 @@ impl Router {
                         loss_outlet: *loss_outlet,
                         loss_avg: *loss_avg,
                         flap_gate: *flap_gate,
+                        seepage: *seepage_rate,
+                        friction,
                         geom: SlotGeom::build(sec, celerity),
                     });
                 }
@@ -801,6 +894,7 @@ impl Router {
             hist: Vec::new(),
             dt_prev: DT_FLOOR,
             quiet_streak: 0,
+            evap_rate: 0.0,
             report: RoutingReport::default(),
         };
         r.seed_initial_state(net);
@@ -995,6 +1089,7 @@ impl Router {
         self.sq = trial.sq;
         self.a_mid = trial.a_mid;
         self.net_flow = trial.net_flow;
+        self.report.losses += trial.loss_rate * dt;
         self.report.accepted += 1;
     }
 
@@ -1011,14 +1106,16 @@ impl Router {
         let mut net_new = vec![0.0; nv];
         let mut flood = vec![0.0; nv];
         let mut surf = vec![0.0; nv];
+        let mut loss_total = 0.0;
 
         for step in 0..self.max_trials {
             // ── Channel phase (∥): flows from the last iterate ─────────
             surf.iter_mut().for_each(|s| *s = 0.0);
             net_new.iter_mut().for_each(|s| *s = 0.0);
             let mut q_next = vec![0.0; nc];
+            loss_total = 0.0;
             for ci in 0..nc {
-                let (qn, a_mid, s1, s2) = self.channel_flow(ci, &y, q[ci], dt, step);
+                let (qn, a_mid, s1, s2, loss) = self.channel_flow(ci, &y, q[ci], dt, step);
                 q_next[ci] = qn;
                 a_mid_new[ci] = a_mid;
                 let c = &self.chans[ci];
@@ -1027,6 +1124,22 @@ impl Router {
                 let qt = qn; // total flow (barrels folded inside)
                 net_new[c.from] -= qt;
                 net_new[c.to] += qt;
+                // Evaporation and seepage debit the end vertices, halved
+                // between them; outfalls do not share (§7.7).
+                if loss > 0.0 {
+                    loss_total += loss;
+                    let out1 = matches!(self.verts[c.from].class, VertClass::Outfall(_));
+                    let out2 = matches!(self.verts[c.to].class, VertClass::Outfall(_));
+                    match (out1, out2) {
+                        (false, false) => {
+                            net_new[c.from] -= loss / 2.0;
+                            net_new[c.to] -= loss / 2.0;
+                        }
+                        (false, true) => net_new[c.from] -= loss,
+                        (true, false) => net_new[c.to] -= loss,
+                        (true, true) => {}
+                    }
+                }
             }
             for (vi, l) in lat.iter().enumerate() {
                 net_new[vi] += l;
@@ -1142,6 +1255,7 @@ impl Router {
             y,
             q,
             sq,
+            loss_rate: loss_total,
             a_mid: a_mid_new,
             net_flow: net_new,
             converged,
@@ -1601,7 +1715,7 @@ impl Router {
 
     /// The §6.3 channel update: one flow value from the last iterate's
     /// heads. Returns (total flow, mid area per barrel, upstream and
-    /// downstream surface-area contributions).
+    /// downstream surface-area contributions, total loss rate).
     #[allow(clippy::too_many_lines)]
     fn channel_flow(
         &self,
@@ -1610,7 +1724,7 @@ impl Router {
         q_total_last: f64,
         dt: f64,
         step: u32,
-    ) -> (f64, f64, f64, f64) {
+    ) -> (f64, f64, f64, f64, f64) {
         let c = &self.chans[ci];
         let sec = &c.geom;
         let y_full = sec.sec.y_full();
@@ -1657,7 +1771,7 @@ impl Router {
         ) && !is_full
             || a_mid <= DRY
         {
-            return (0.0, 0.5 * (a1 + a2), s1, s2);
+            return (0.0, 0.5 * (a1 + a2), s1, s2, 0.0);
         }
 
         // Velocity, capped (§6.3).
@@ -1688,8 +1802,15 @@ impl Router {
             sigma = 0.0;
         }
 
-        // Momentum terms (§6.3).
-        let dq_friction = dt * GRAVITY * c.n * c.n / r_wtd.powf(4.0 / 3.0) * v.abs();
+        // Momentum terms (§6.3); a full force main substitutes its
+        // pressurised relation (§7.7).
+        let dq_friction = if is_full {
+            c.friction
+                .pressurised_dq(v, r_mid, dt)
+                .unwrap_or_else(|| dt * GRAVITY * c.n * c.n / r_wtd.powf(4.0 / 3.0) * v.abs())
+        } else {
+            dt * GRAVITY * c.n * c.n / r_wtd.powf(4.0 / 3.0) * v.abs()
+        };
         let dq_pressure = dt * GRAVITY * a_wtd * (h2 - h1) / c.length;
         let (mut dq_in1, mut dq_in2) = (0.0, 0.0);
         if sigma > 0.0 {
@@ -1712,8 +1833,33 @@ impl Router {
             dq_losses = losses / 2.0 / c.length * dt;
         }
 
+        // Channel evaporation and seepage (§7.7): uniform lateral
+        // losses, capped by the channel's volume this step, with
+        // Strelkoff's lateral-outflow momentum term.
+        let mut loss_rate = 0.0;
+        if c.seepage > 0.0 || self.evap_rate > 0.0 {
+            let mut evap = 0.0;
+            if self.evap_rate > 0.0 && !c.geom.sec.is_closed() {
+                evap = self.evap_rate * c.geom.sec.top_width(y_mid.max(DRY)) * c.length;
+            }
+            let mut seep = 0.0;
+            if c.seepage > 0.0 {
+                // Seepage is vertical: its width caps at the depth of
+                // maximum width.
+                let (yw, _) = c.geom.sec.w_max();
+                let w = c.geom.sec.top_width(y_mid.min(yw).max(DRY));
+                seep = c.seepage * w * c.length;
+            }
+            loss_rate = evap + seep;
+            let cap = a_mid * c.length / dt;
+            if loss_rate > cap {
+                loss_rate = cap;
+            }
+        }
+        let dq_seep = 2.5 * v * loss_rate * dt / c.length;
+
         let denom = 1.0 + dq_friction + dq_losses;
-        let mut q_new = (q_old - dq_pressure + dq_in1 + dq_in2) / denom;
+        let mut q_new = (q_old - dq_pressure + dq_in1 + dq_in2 + dq_seep) / denom;
 
         // Normal-flow limit (§6.6).
         if q_new > 0.0 && y1 < y_full && matches!(class, FlowClass::Subcritical) {
@@ -1742,7 +1888,7 @@ impl Router {
             q_new = -Q_DRY;
         }
 
-        (q_new * c.barrels, a_mid, s1, s2)
+        (q_new * c.barrels, a_mid, s1, s2, loss_rate * c.barrels)
     }
 
     fn flow_class(&self, ci: usize, q: f64, h1: f64, h2: f64, y1: f64, y2: f64) -> FlowClass {
@@ -2450,5 +2596,141 @@ D1  DUMMY  0  0  0  0
         let (_, mut r) = build(inp);
         r.advance(600.0, &inflow_at(0, 0.07));
         assert!((r.sq[0] - 0.07).abs() < 1e-6, "dummy {}", r.sq[0]);
+    }
+}
+
+#[cfg(test)]
+mod loss_and_force_main_tests {
+    use super::tests::{build, inflow_at};
+    use super::*;
+
+    #[test]
+    fn full_hazen_williams_main_balances_its_friction_slope() {
+        let inp = "\
+[OPTIONS]
+FLOW_UNITS    CMS
+ROUTING_STEP  5
+
+[JUNCTIONS]
+J1  100.02  20
+
+[OUTFALLS]
+O1  100.0  FIXED  100.4
+
+[CONDUITS]
+F1  J1  O1  200  0.013  0  0
+
+[XSECTIONS]
+F1  FORCE_MAIN  0.3  120  0  0
+";
+        let (_, mut r) = build(inp);
+        // The fixed tailwater submerges the downstream end, so the main
+        // runs full and the pressurised relation governs.
+        let q_in = 0.15;
+        r.advance(3600.0, &inflow_at(0, q_in));
+        assert!((r.q[0] - q_in).abs() < 0.02 * q_in, "q {}", r.q[0]);
+        assert!(r.y[0] > 0.3, "not full: {}", r.y[0]);
+        // Steady: the head difference matches the SI Hazen–Williams
+        // friction slope over the 200 m run.
+        let a = std::f64::consts::PI * 0.15 * 0.15;
+        let v: f64 = q_in / a;
+        let rr: f64 = 0.075;
+        let sf = (v / (0.849 * 120.0 * rr.powf(0.63))).powf(1.0 / 0.54);
+        let dh = (100.02 + r.y[0]) - 100.4;
+        assert!(
+            (dh - sf * 200.0).abs() < 0.15 * sf * 200.0,
+            "dh {dh} vs Sf·L {}",
+            sf * 200.0
+        );
+    }
+
+    #[test]
+    fn darcy_weisbach_main_uses_swamee_jain() {
+        let inp = "\
+[OPTIONS]
+FLOW_UNITS          CMS
+ROUTING_STEP        5
+FORCE_MAIN_EQUATION D-W
+
+[JUNCTIONS]
+J1  100.02  20
+
+[OUTFALLS]
+O1  100.0  FIXED  100.4
+
+[CONDUITS]
+F1  J1  O1  200  0.013  0  0
+
+[XSECTIONS]
+F1  FORCE_MAIN  0.3  0.25  0  0
+";
+        let (_, mut r) = build(inp);
+        let q_in = 0.15;
+        r.advance(3600.0, &inflow_at(0, q_in));
+        assert!((r.q[0] - q_in).abs() < 0.02 * q_in, "q {}", r.q[0]);
+        // Steady balance against f·v²/(8gR) with the roughness height
+        // 0.25 mm.
+        let a = std::f64::consts::PI * 0.15 * 0.15;
+        let v: f64 = q_in / a;
+        let rr: f64 = 0.075;
+        let re = 4.0 * rr * v / VISCOSITY;
+        let f = swamee_jain(0.25e-3, rr, re);
+        let sf = f * v * v / (8.0 * GRAVITY * rr);
+        let dh = (100.02 + r.y[0]) - 100.4;
+        assert!(
+            (dh - sf * 200.0).abs() < 0.15 * sf * 200.0,
+            "dh {dh} vs Sf·L {}",
+            sf * 200.0
+        );
+    }
+
+    #[test]
+    fn seepage_debits_the_ledger_and_shrinks_outflow() {
+        let inp = "\
+[OPTIONS]
+FLOW_UNITS    CMS
+ROUTING_STEP  10
+
+[JUNCTIONS]
+J1  100.4  3
+J2  100.2  3
+
+[OUTFALLS]
+O1  100.0  FREE
+
+[CONDUITS]
+C1  J1  J2  200  0.013  0  0
+C2  J2  O1  200  0.013  0  0
+
+[XSECTIONS]
+C1  RECT_OPEN  2  2  0  0
+C2  RECT_OPEN  2  2  0  0
+
+[LOSSES]
+C1  0  0  0  NO  36
+";
+        // 36 mm/h of seepage over a 2 m wide, 200 m channel ≈ 4 l/s.
+        let (_, mut r) = build(inp);
+        let q_in = 0.1;
+        r.advance(7200.0, &inflow_at(0, q_in));
+        assert!(r.report.losses > 0.0);
+        // Steady window: inflow = outflow + seepage.
+        let (i0, o0, l0) = (r.report.inflow, r.report.outflow, r.report.losses);
+        r.advance(10_800.0, &inflow_at(0, q_in));
+        let din = r.report.inflow - i0;
+        let dout = r.report.outflow - o0;
+        let dloss = r.report.losses - l0;
+        assert!(dloss > 0.5 * 0.004 * 3600.0, "seepage {dloss}");
+        assert!(
+            (din - dout - dloss).abs() < 0.01 * din,
+            "in {din} out {dout} loss {dloss}"
+        );
+        // Downstream carries less than upstream by the seepage rate.
+        assert!(
+            r.q[0] - r.q[1] > 0.45 * dloss / 3600.0,
+            "q {} {}",
+            r.q[0],
+            r.q[1]
+        );
     }
 }
