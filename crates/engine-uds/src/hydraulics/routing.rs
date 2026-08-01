@@ -16,7 +16,8 @@ use super::section::Section;
 use super::GRAVITY;
 use crate::io::options::NormalFlowCriteria;
 use crate::model::{
-    LinkKind, Network, Offset, OutfallStage, StorageGeometry, VertexKind, XsectShape,
+    CurveKind, LinkKind, Network, Offset, OrificeOrientation, OutfallStage, OutletHeadBasis,
+    OutletRating, StorageGeometry, VertexKind, WeirForm, XsectShape,
 };
 
 /// A storage vertex's area relation, resolved at build.
@@ -52,6 +53,44 @@ impl StoreArea {
             },
             StorageGeometry::Tabular { curve } => {
                 StoreArea::Table(net.curves[*curve].points.clone())
+            }
+        }
+    }
+
+    /// Integrated volume to depth `y` (m³).
+    fn volume(&self, y: f64) -> f64 {
+        let y = y.max(0.0);
+        match self {
+            StoreArea::Functional {
+                coeff,
+                exponent,
+                constant,
+            } => constant * y + coeff * y.powf(exponent + 1.0) / (exponent + 1.0),
+            StoreArea::Shape { a0, a1, a2 } => a0 * y + a1 * y * y / 2.0 + a2 * y * y * y / 3.0,
+            StoreArea::Table(pts) => {
+                let mut vol = 0.0;
+                let mut y0 = 0.0;
+                let mut a0 = pts.first().map_or(0.0, |p| p.1);
+                for &(yy, aa) in pts {
+                    if yy <= 0.0 {
+                        a0 = aa;
+                        continue;
+                    }
+                    let y1 = yy.min(y);
+                    if y1 > y0 {
+                        let a1 = a0 + (aa - a0) * (y1 - y0) / (yy - y0);
+                        vol += 0.5 * (a0 + a1) * (y1 - y0);
+                        y0 = y1;
+                    }
+                    a0 = aa;
+                    if y0 >= y {
+                        break;
+                    }
+                }
+                if y > y0 {
+                    vol += a0 * (y - y0);
+                }
+                vol
             }
         }
     }
@@ -194,6 +233,99 @@ impl SlotGeom {
     }
 }
 
+/// How a pump draws its flow (§7.1).
+enum PumpKind {
+    /// Stepwise on wet-well volume.
+    Volume(Vec<(f64, f64)>),
+    /// Stepwise on inlet depth.
+    Depth(Vec<(f64, f64)>),
+    /// Linear on head difference; `affinity` scales per §7.1 Type 5.
+    Head {
+        points: Vec<(f64, f64)>,
+        affinity: bool,
+    },
+    /// Linear on inlet depth (Type 4).
+    InlineDepth(Vec<(f64, f64)>),
+    /// The ideal transfer pump.
+    Ideal,
+}
+
+/// A §7 structure spliced into the graph.
+enum StructKind {
+    Pump {
+        kind: PumpKind,
+        startup: f64,
+        shutoff: f64,
+    },
+    Orifice {
+        bottom: bool,
+        cd: f64,
+        sec: Section,
+        flap: bool,
+    },
+    Weir {
+        form: WeirForm,
+        cd1: f64,
+        cd2: f64,
+        sec: Section,
+        flap: bool,
+        end_contractions: f64,
+        can_surcharge: bool,
+        coeff_curve: Option<Vec<(f64, f64)>>,
+    },
+    Outlet {
+        rating: OutRating,
+        by_head_difference: bool,
+        flap: bool,
+    },
+    /// A zero-geometry connector: passes its upstream vertex's inflow.
+    Dummy { q_limit: f64 },
+}
+
+enum OutRating {
+    Functional { coeff: f64, exponent: f64 },
+    Table(Vec<(f64, f64)>),
+}
+
+struct Structure {
+    from: usize,
+    to: usize,
+    link: usize,
+    /// Crest offset above the upstream invert (m).
+    off1: f64,
+    /// Equivalent-pipe length (m), §7.2.
+    eq_length: f64,
+    kind: StructKind,
+}
+
+/// Stepwise lookup: the value at the first point whose abscissa exceeds
+/// the argument (§7.1); the last value beyond the table.
+fn interval_lookup(points: &[(f64, f64)], x: f64) -> f64 {
+    for p in points {
+        if p.0 > x {
+            return p.1;
+        }
+    }
+    points.last().map_or(0.0, |p| p.1)
+}
+
+/// Linear interpolation clamped to the table's ends.
+fn linear_lookup(points: &[(f64, f64)], x: f64) -> f64 {
+    if points.is_empty() {
+        return 0.0;
+    }
+    if x <= points[0].0 {
+        return points[0].1;
+    }
+    for w in points.windows(2) {
+        if x <= w[1].0 {
+            let f = (x - w[0].0) / (w[1].0 - w[0].0);
+            return w[0].1 + f * (w[1].1 - w[0].1);
+        }
+    }
+    points[points.len() - 1].1
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum FlowClass {
     Subcritical,
@@ -285,6 +417,7 @@ pub struct RoutingReport {
 pub struct Router {
     chans: Vec<Chan>,
     verts: Vec<Vert>,
+    structs: Vec<Structure>,
     ids: Vec<String>,
     // Options.
     dt_user: f64,
@@ -300,6 +433,10 @@ pub struct Router {
     t: f64,
     y: Vec<f64>,
     q: Vec<f64>,
+    /// Structure flows (m³/s).
+    sq: Vec<f64>,
+    /// Pump on/off latches (§7.1).
+    pump_on: Vec<bool>,
     a_mid: Vec<f64>,
     net_flow: Vec<f64>,
     // Head history for the error estimate: the two previous accepted
@@ -315,6 +452,7 @@ pub struct Router {
 struct Trial {
     y: Vec<f64>,
     q: Vec<f64>,
+    sq: Vec<f64>,
     a_mid: Vec<f64>,
     net_flow: Vec<f64>,
     converged: bool,
@@ -387,6 +525,7 @@ impl Router {
 
         let mut chans = Vec::new();
         for (li, link) in net.links.iter().enumerate() {
+            #[allow(clippy::single_match)] // the other kinds build below
             match &link.kind {
                 LinkKind::Channel {
                     length,
@@ -408,9 +547,8 @@ impl Router {
                                 link.id
                             )))?;
                     if xs.shape == XsectShape::Dummy {
-                        return Err(RouterRefusal::Unsupported(
-                            "dummy channels arrive with the §7 structures",
-                        ));
+                        // Routed as a pass-through structure below.
+                        continue;
                     }
                     if xs.shape == XsectShape::ForceMain {
                         return Err(RouterRefusal::Unsupported(
@@ -470,12 +608,162 @@ impl Router {
                         geom: SlotGeom::build(sec, celerity),
                     });
                 }
-                _ => {
-                    return Err(RouterRefusal::Unsupported(
-                        "pumps, orifices, weirs, and outlets arrive with §7",
-                    ));
-                }
+                _ => {}
             }
+        }
+
+        let mut structs = Vec::new();
+        let mut pump_on = Vec::new();
+        for (li, link) in net.links.iter().enumerate() {
+            let off1 = match &link.kind {
+                LinkKind::Orifice { offset, .. }
+                | LinkKind::Weir { offset, .. }
+                | LinkKind::Outlet { offset, .. } => offset_height(offset),
+                _ => 0.0,
+            };
+            // Equivalent-pipe length from the section, §7.2.
+            let eq_length = |sec: &Section| {
+                (2.0 * net.options.routing_step * (GRAVITY * sec.y_full()).sqrt()).max(60.96)
+            };
+            let kind = match &link.kind {
+                LinkKind::Channel { max_flow, .. } => {
+                    let dummy = link
+                        .cross_section
+                        .as_ref()
+                        .is_some_and(|x| x.shape == XsectShape::Dummy);
+                    if !dummy {
+                        continue;
+                    }
+                    StructKind::Dummy { q_limit: *max_flow }
+                }
+                LinkKind::Pump {
+                    curve,
+                    initial_on,
+                    startup_depth,
+                    shutoff_depth,
+                } => {
+                    let kind = match curve {
+                        None => {
+                            // An ideal pump must be its vertex's only
+                            // outlet (§7.1).
+                            let outlets = net.links.iter().filter(|l| l.from == link.from).count();
+                            if outlets > 1 {
+                                return Err(RouterRefusal::Geometry(format!(
+                                    "{}: an ideal pump must be its vertex's only outlet",
+                                    link.id
+                                )));
+                            }
+                            PumpKind::Ideal
+                        }
+                        Some(c) => {
+                            let pts = net.curves[*c].points.clone();
+                            match net.curves[*c].kind {
+                                CurveKind::Pump1 => PumpKind::Volume(pts),
+                                CurveKind::Pump2 => PumpKind::Depth(pts),
+                                CurveKind::Pump3 => PumpKind::Head {
+                                    points: pts,
+                                    affinity: false,
+                                },
+                                CurveKind::Pump4 => PumpKind::InlineDepth(pts),
+                                CurveKind::Pump5 => PumpKind::Head {
+                                    points: pts,
+                                    affinity: true,
+                                },
+                                _ => {
+                                    return Err(RouterRefusal::Geometry(format!(
+                                        "{}: pump curve has the wrong role",
+                                        link.id
+                                    )));
+                                }
+                            }
+                        }
+                    };
+                    pump_on.push(*initial_on);
+                    structs.push(Structure {
+                        from: link.from,
+                        to: link.to,
+                        link: li,
+                        off1,
+                        eq_length: 0.0,
+                        kind: StructKind::Pump {
+                            kind,
+                            startup: *startup_depth,
+                            shutoff: *shutoff_depth,
+                        },
+                    });
+                    continue;
+                }
+                LinkKind::Orifice {
+                    orientation,
+                    discharge_coeff,
+                    flap_gate,
+                    ..
+                } => {
+                    let sec = build_struct_section(net, li, len, &link.id)?;
+                    StructKind::Orifice {
+                        bottom: *orientation == OrificeOrientation::Bottom,
+                        cd: *discharge_coeff,
+                        flap: *flap_gate,
+                        sec,
+                    }
+                }
+                LinkKind::Weir {
+                    form,
+                    discharge_coeff,
+                    end_coeff,
+                    flap_gate,
+                    end_contractions,
+                    can_surcharge,
+                    coeff_curve,
+                    ..
+                } => {
+                    if *form == WeirForm::Roadway {
+                        return Err(RouterRefusal::Unsupported("roadway weirs arrive with §7.6"));
+                    }
+                    let sec = build_struct_section(net, li, len, &link.id)?;
+                    StructKind::Weir {
+                        form: *form,
+                        cd1: *discharge_coeff,
+                        cd2: *end_coeff,
+                        flap: *flap_gate,
+                        end_contractions: *end_contractions,
+                        can_surcharge: *can_surcharge,
+                        coeff_curve: coeff_curve.map(|c| net.curves[c].points.clone()),
+                        sec,
+                    }
+                }
+                LinkKind::Outlet {
+                    rating,
+                    head_basis,
+                    flap_gate,
+                    ..
+                } => StructKind::Outlet {
+                    rating: match rating {
+                        OutletRating::Functional { coeff, exponent } => OutRating::Functional {
+                            coeff: *coeff,
+                            exponent: *exponent,
+                        },
+                        OutletRating::Tabular { curve } => {
+                            OutRating::Table(net.curves[*curve].points.clone())
+                        }
+                    },
+                    by_head_difference: *head_basis == OutletHeadBasis::Head,
+                    flap: *flap_gate,
+                },
+            };
+            let eq = match &kind {
+                StructKind::Orifice { sec, .. } | StructKind::Weir { sec, .. } => eq_length(sec),
+                _ => 0.0,
+            };
+            pump_on.push(true);
+            structs.push(Structure {
+                from: link.from,
+                to: link.to,
+                link: li,
+                off1,
+                eq_length: eq,
+                kind,
+            });
         }
 
         // Crowns.
@@ -488,9 +776,11 @@ impl Router {
 
         let nv = verts.len();
         let nc = chans.len();
+        let ns = structs.len();
         let mut r = Router {
             chans,
             verts,
+            structs,
             ids: net.vertices.iter().map(|v| v.id.clone()).collect(),
             dt_user: net.options.routing_step,
             courant_factor: net.options.courant_factor,
@@ -504,6 +794,8 @@ impl Router {
             t: 0.0,
             y: vec![0.0; nv],
             q: vec![0.0; nc],
+            sq: vec![0.0; ns],
+            pump_on,
             a_mid: vec![0.0; nc],
             net_flow: vec![0.0; nv],
             hist: Vec::new(),
@@ -572,22 +864,20 @@ impl Router {
         self.y[v]
     }
 
-    /// Flow in the channel routed for model link `li` (m³/s), in the
+    /// Flow in the element routed for model link `li` (m³/s), in the
     /// user's orientation.
     pub fn flow(&self, li: usize, net: &Network) -> f64 {
-        let ci = self
-            .chans
-            .iter()
-            .position(|c| c.link == li)
-            .unwrap_or(usize::MAX);
-        if ci == usize::MAX {
-            return 0.0;
+        if let Some(ci) = self.chans.iter().position(|c| c.link == li) {
+            let q = self.q[ci];
+            return match &net.links[li].kind {
+                LinkKind::Channel { reversed: true, .. } => -q,
+                _ => q,
+            };
         }
-        let q = self.q[ci];
-        match &net.links[li].kind {
-            LinkKind::Channel { reversed: true, .. } => -q,
-            _ => q,
+        if let Some(si) = self.structs.iter().position(|s| s.link == li) {
+            return self.sq[si];
         }
+        0.0
     }
 
     /// Advance to `t_end`, drawing per-vertex lateral inflows (m³/s) from
@@ -595,6 +885,7 @@ impl Router {
     pub fn advance(&mut self, t_end: f64, lateral: &dyn Fn(f64, &mut [f64])) {
         let mut lat = vec![0.0; self.verts.len()];
         while self.t < t_end - 1e-9 {
+            self.update_pump_latches();
             let mut dt = self.seed_step().min(t_end - self.t);
             lateral(self.t, &mut lat);
             loop {
@@ -701,6 +992,7 @@ impl Router {
         self.dt_prev = dt;
         self.y = trial.y;
         self.q = trial.q;
+        self.sq = trial.sq;
         self.a_mid = trial.a_mid;
         self.net_flow = trial.net_flow;
         self.report.accepted += 1;
@@ -713,6 +1005,7 @@ impl Router {
         let nc = self.chans.len();
         let mut y = self.y.clone();
         let mut q = self.q.clone();
+        let mut sq = self.sq.clone();
         let mut a_mid_new = self.a_mid.clone();
         let mut converged = false;
         let mut net_new = vec![0.0; nv];
@@ -738,7 +1031,44 @@ impl Router {
             for (vi, l) in lat.iter().enumerate() {
                 net_new[vi] += l;
             }
+
+            // ── Structure phase: against the last iterate's state ──────
+            // Positive arrivals per vertex from this iterate's channel
+            // flows, the laterals, and the *previous* iterate's structure
+            // flows — no structure sees another's running result (§6.4).
+            let mut pos_in = vec![0.0; nv];
+            for (vi, l) in lat.iter().enumerate() {
+                pos_in[vi] += l.max(0.0);
+            }
+            for (ci, c) in self.chans.iter().enumerate() {
+                let qt = q_next[ci];
+                if qt >= 0.0 {
+                    pos_in[c.to] += qt;
+                } else {
+                    pos_in[c.from] -= qt;
+                }
+            }
+            for (si, st) in self.structs.iter().enumerate() {
+                let qt = sq[si];
+                if qt >= 0.0 {
+                    pos_in[st.to] += qt;
+                } else {
+                    pos_in[st.from] -= qt;
+                }
+            }
+            let mut sq_next = vec![0.0; self.structs.len()];
+            for si in 0..self.structs.len() {
+                let (qn, s1, s2) =
+                    self.structure_flow(si, &y, sq[si], dt, step, &pos_in, &net_new, &surf);
+                sq_next[si] = qn;
+                let st = &self.structs[si];
+                surf[st.from] += s1;
+                surf[st.to] += s2;
+                net_new[st.from] -= qn;
+                net_new[st.to] += qn;
+            }
             q = q_next;
+            sq = sq_next;
 
             // ── Vertex phase ───────────────────────────────────────────
             let mut max_dy = 0.0_f64;
@@ -791,6 +1121,9 @@ impl Router {
             for qi in &q {
                 flow_scale += qi.abs();
             }
+            for qi in &sq {
+                flow_scale += qi.abs();
+            }
             for l in lat {
                 flow_scale += l.abs();
             }
@@ -808,6 +1141,7 @@ impl Router {
         Trial {
             y,
             q,
+            sq,
             a_mid: a_mid_new,
             net_flow: net_new,
             converged,
@@ -843,6 +1177,394 @@ impl Router {
             }
         }
         (e_max, worst)
+    }
+
+    /// §7.1 startup/shutoff latching, evaluated from the accepted state
+    /// so retried trials see the same pump states.
+    fn update_pump_latches(&mut self) {
+        for (si, st) in self.structs.iter().enumerate() {
+            let StructKind::Pump {
+                startup, shutoff, ..
+            } = &st.kind
+            else {
+                continue;
+            };
+            let y1 = self.y[st.from];
+            if *shutoff > 0.0 && self.pump_on[si] && y1 < *shutoff {
+                self.pump_on[si] = false;
+            }
+            if *startup > 0.0 && !self.pump_on[si] && y1 > *startup {
+                self.pump_on[si] = true;
+            }
+        }
+    }
+
+    /// One §7 structure's flow from the last iterate's state. Returns the
+    /// flow and the equivalent-pipe surface-area contributions.
+    #[allow(clippy::too_many_arguments)]
+    fn structure_flow(
+        &self,
+        si: usize,
+        y_vert: &[f64],
+        sq_last: f64,
+        dt: f64,
+        step: u32,
+        pos_in: &[f64],
+        net_chan: &[f64],
+        surf: &[f64],
+    ) -> (f64, f64, f64) {
+        let st = &self.structs[si];
+        let h1v = self.verts[st.from].invert + y_vert[st.from];
+        let h2v = self.verts[st.to].invert + y_vert[st.to];
+
+        let (mut q, s1, s2) = match &st.kind {
+            StructKind::Dummy { q_limit } => {
+                let mut q = pos_in[st.from];
+                if *q_limit > 0.0 {
+                    q = q.min(*q_limit);
+                }
+                (q, 0.0, 0.0)
+            }
+            StructKind::Pump { kind, .. } => {
+                if !self.pump_on[si] {
+                    return (0.0, 0.0, 0.0);
+                }
+                let y1 = y_vert[st.from];
+                let mut q = match kind {
+                    PumpKind::Ideal => pos_in[st.from],
+                    PumpKind::Volume(pts) => {
+                        interval_lookup(pts, self.vertex_volume(st.from, y1, surf))
+                    }
+                    PumpKind::Depth(pts) => interval_lookup(pts, y1),
+                    PumpKind::InlineDepth(pts) => linear_lookup(pts, y1),
+                    PumpKind::Head { points, affinity } => {
+                        // Speed setting is 1 until §9 controls arrive; the
+                        // affinity scaling is then the identity.
+                        let _ = affinity;
+                        let head = (h2v - h1v).max(0.0);
+                        linear_lookup(points, head)
+                    }
+                };
+                // Reverse flow is never admitted (§7.1).
+                q = q.max(0.0);
+                // Inlet clamps (§7.1): a storage vertex — or the virtual
+                // wet well of a volume-driven pump — cannot be drawn
+                // below empty; other types fall back to the inflow when
+                // the projected depth would go negative. The clamp
+                // covers every depth- and head-driven type.
+                let is_storage = matches!(self.verts[st.from].class, VertClass::Storage(_));
+                if is_storage || matches!(kind, PumpKind::Volume(_)) {
+                    let vol = self.vertex_volume(st.from, y1, surf);
+                    q = q.min(pos_in[st.from] + vol / dt).max(0.0);
+                } else if !matches!(kind, PumpKind::Ideal) {
+                    let area = surf[st.from].max(self.min_surface_area);
+                    let net = net_chan[st.from] - q;
+                    let projected =
+                        self.y[st.from] + 0.5 * (self.net_flow[st.from] + net) * dt / area;
+                    if projected <= 0.0 {
+                        q = pos_in[st.from];
+                    }
+                }
+                // Pumps are exempt from relaxation and contribute no
+                // surface area (§7.1, §6.4).
+                return (q, 0.0, 0.0);
+            }
+            StructKind::Orifice {
+                bottom,
+                cd,
+                sec,
+                flap,
+            } => self.orifice_flow(st, *bottom, *cd, sec, *flap, h1v, h2v, y_vert),
+            StructKind::Weir {
+                form,
+                cd1,
+                cd2,
+                sec,
+                flap,
+                end_contractions,
+                can_surcharge,
+                coeff_curve,
+            } => self.weir_flow(
+                st,
+                *form,
+                *cd1,
+                *cd2,
+                sec,
+                *flap,
+                *end_contractions,
+                *can_surcharge,
+                coeff_curve.as_deref(),
+                h1v,
+                h2v,
+            ),
+            StructKind::Outlet {
+                rating,
+                by_head_difference,
+                flap,
+            } => {
+                let dir = if h1v >= h2v { 1.0 } else { -1.0 };
+                let (h1, h2, y1) = if dir > 0.0 {
+                    (h1v, h2v, y_vert[st.from])
+                } else {
+                    (h2v, h1v, y_vert[st.to])
+                };
+                let hcrest = self.verts[st.from].invert + st.off1;
+                let head = if *by_head_difference {
+                    h1 - h2.max(hcrest)
+                } else {
+                    h1 - hcrest
+                };
+                if head <= DRY || y1 <= DRY || (*flap && dir < 0.0) {
+                    (0.0, 0.0, 0.0)
+                } else {
+                    let q = match rating {
+                        OutRating::Functional { coeff, exponent } => coeff * head.powf(*exponent),
+                        OutRating::Table(pts) => linear_lookup(pts, head),
+                    };
+                    (dir * q, 0.0, 0.0)
+                }
+            }
+        };
+
+        // Under-relaxation with the zero-crossing rule; pumps returned
+        // above (§6.4).
+        if step > 0 {
+            q = (1.0 - OMEGA) * sq_last + OMEGA * q;
+            if q * sq_last < 0.0 {
+                q = Q_REVERSAL * q.signum();
+            }
+        }
+        (q, s1, s2)
+    }
+
+    /// A vertex's stored volume: the storage integral, or depth times the
+    /// assembled area for the virtual wet well at a junction.
+    fn vertex_volume(&self, vi: usize, y: f64, surf: &[f64]) -> f64 {
+        match &self.verts[vi].class {
+            VertClass::Storage(g) => g.volume(y),
+            _ => y.max(0.0) * surf[vi].max(self.min_surface_area),
+        }
+    }
+
+    /// §7.2: Torricelli with the derived weir transition below the
+    /// changeover, Villemonte submergence, and the Armco flap loss.
+    #[allow(clippy::too_many_arguments)]
+    fn orifice_flow(
+        &self,
+        st: &Structure,
+        bottom: bool,
+        cd: f64,
+        sec: &Section,
+        flap: bool,
+        h1v: f64,
+        h2v: f64,
+        y_vert: &[f64],
+    ) -> (f64, f64, f64) {
+        let dir = if h1v >= h2v { 1.0 } else { -1.0 };
+        let (h1, h2, y1) = if dir > 0.0 {
+            (h1v, h2v, y_vert[st.from])
+        } else {
+            (h2v, h1v, y_vert[st.to])
+        };
+        let hcrest = self.verts[st.from].invert + st.off1;
+        let opening = sec.y_full();
+        let a_full = sec.a_full();
+        let root_2g = (2.0 * GRAVITY).sqrt();
+
+        // The changeover height and the derived weir coefficient (§7.2).
+        let (h_crit, c_weir);
+        if bottom {
+            let a_over_l = if sec.is_closed() && sec.w_max().1 == opening {
+                // Circular opening.
+                opening / 4.0
+            } else {
+                let w = sec.w_max().1;
+                (opening * w) / (2.0 * (opening + w))
+            };
+            h_crit = cd / 0.414 * a_over_l;
+            c_weir = cd * h_crit.sqrt() * a_full * root_2g;
+        } else {
+            h_crit = opening;
+            c_weir = cd * (opening / 2.0).sqrt() * a_full * root_2g;
+        }
+        let c_orif = cd * a_full * root_2g;
+
+        // Head and submergence fraction.
+        let (head, f);
+        if bottom {
+            head = if h1 < hcrest {
+                0.0
+            } else if h2 > hcrest {
+                h1 - h2
+            } else {
+                h1 - hcrest
+            };
+            f = (head / h_crit).min(1.0);
+        } else {
+            let hcrown = hcrest + opening;
+            let hmid = 0.5 * (hcrest + hcrown);
+            f = if h1 < hcrown && hcrown > hcrest {
+                ((h1 - hcrest) / (hcrown - hcrest)).max(0.0)
+            } else {
+                1.0
+            };
+            head = if f < 1.0 {
+                h1 - hcrest
+            } else if h2 < hmid {
+                h1 - hmid
+            } else {
+                h1 - h2
+            };
+        }
+        if head <= DRY || y1 <= DRY || (flap && dir < 0.0) {
+            let s = DRY * st.eq_length / 2.0;
+            return (0.0, s, s);
+        }
+
+        let flow_at = |head: f64, f: f64| -> f64 {
+            if f < 1.0 {
+                c_weir * f.powf(1.5)
+            } else {
+                c_orif * head.sqrt()
+            }
+        };
+        let mut q = flow_at(head, f);
+        // Armco flap-gate loss, subtracted and re-solved (§7.2).
+        if flap && q > 0.0 {
+            let v = q / a_full;
+            let h_loss = (4.0 / GRAVITY) * v * v * (-1.15 * v / head.sqrt()).exp();
+            if f < 1.0 {
+                q = flow_at(head, (f - h_loss / h_crit).max(0.0));
+            } else {
+                q = flow_at((head - h_loss).max(0.0), f);
+            }
+        }
+        let mut q = dir * q;
+        // Villemonte submergence on the weir regime.
+        if f < 1.0 && h2 > hcrest && h1 > hcrest {
+            let ratio = (h2 - hcrest) / (h1 - hcrest);
+            q *= (1.0 - ratio.powf(1.5)).max(0.0).powf(0.385);
+        }
+
+        // Equivalent-pipe surface area, halved to each end (§7.2); a
+        // storage end supplies its own.
+        let area = if bottom {
+            a_full
+        } else {
+            sec.top_width((f * opening).max(DRY)) * st.eq_length
+        };
+        let mut s1 = area / 2.0;
+        let mut s2 = s1;
+        if matches!(self.verts[st.from].class, VertClass::Storage(_)) {
+            s1 = 0.0;
+        }
+        if matches!(self.verts[st.to].class, VertClass::Storage(_)) {
+            s2 = 0.0;
+        }
+        (q, s1, s2)
+    }
+
+    /// §7.3: the weir families with end contractions, surcharge to the
+    /// equivalent orifice, and Villemonte submergence.
+    #[allow(clippy::too_many_arguments)]
+    fn weir_flow(
+        &self,
+        st: &Structure,
+        form: WeirForm,
+        cd1: f64,
+        cd2: f64,
+        sec: &Section,
+        flap: bool,
+        end_contractions: f64,
+        can_surcharge: bool,
+        coeff_curve: Option<&[(f64, f64)]>,
+        h1v: f64,
+        h2v: f64,
+    ) -> (f64, f64, f64) {
+        let dir = if h1v > h2v { 1.0 } else { -1.0 };
+        let (h1, h2) = if dir > 0.0 { (h1v, h2v) } else { (h2v, h1v) };
+        let hcrest = self.verts[st.from].invert + st.off1;
+        let opening = sec.y_full();
+        let hcrown = hcrest + opening;
+        let mut head = h1 - hcrest;
+        if head <= DRY || (flap && dir < 0.0) {
+            return (0.0, 0.0, 0.0);
+        }
+
+        // Equivalent-pipe surface area from the wetted opening width
+        // (§7.3 — weirs contribute exactly as orifices do).
+        let y_open = opening - (hcrown - h1.min(hcrown));
+        let area = sec.top_width(y_open.max(DRY)) * st.eq_length;
+        let mut s1 = area / 2.0;
+        let mut s2 = s1;
+        if matches!(self.verts[st.from].class, VertClass::Storage(_)) {
+            s1 = 0.0;
+        }
+        if matches!(self.verts[st.to].class, VertClass::Storage(_)) {
+            s2 = 0.0;
+        }
+
+        let eval = |head: f64, dir: f64| -> (f64, f64) {
+            let cd1 = match coeff_curve {
+                Some(pts) => linear_lookup(pts, head),
+                None => cd1,
+            };
+            match form {
+                WeirForm::Transverse | WeirForm::Roadway => {
+                    let le = (sec.w_max().1 - 0.1 * end_contractions * head).max(0.0);
+                    (cd1 * le * head.powf(1.5), 0.0)
+                }
+                WeirForm::SideFlow => {
+                    let le = (sec.w_max().1 - 0.1 * end_contractions * head).max(0.0);
+                    if dir < 0.0 {
+                        // Reverts to the transverse form under reverse
+                        // flow (§7.3).
+                        (cd1 * le * head.powf(1.5), 0.0)
+                    } else {
+                        (cd1 * le.powf(0.83) * head.powf(1.67), 0.0)
+                    }
+                }
+                WeirForm::VNotch => {
+                    let slope = sec.w_max().1 / (2.0 * opening);
+                    (cd1 * slope * head.powf(2.5), 0.0)
+                }
+                WeirForm::Trapezoidal => {
+                    let bottom = sec.top_width(0.0);
+                    let slope = (sec.w_max().1 - bottom) / (2.0 * opening);
+                    (cd1 * bottom * head.powf(1.5), cd2 * slope * head.powf(2.5))
+                }
+            }
+        };
+
+        // Above the crown: the equivalent orifice, its coefficient fixed
+        // by the changeover (§7.3).
+        if h1 >= hcrown {
+            if can_surcharge {
+                let hmid = 0.5 * (hcrest + hcrown);
+                head = if h2 < hmid { h1 - hmid } else { h1 - h2 };
+                let (q1f, q2f) = eval(opening, dir);
+                let c_surcharge = (q1f + q2f) / (opening / 2.0).sqrt();
+                return (dir * c_surcharge * head.max(0.0).sqrt(), s1, s2);
+            }
+            head = opening;
+        }
+
+        let (mut q1, mut q2) = eval(head, dir);
+        // Villemonte submergence, the end sections always on the V-notch
+        // exponent (§7.3).
+        if h2 > hcrest {
+            let ratio = (h2 - hcrest) / (h1 - hcrest);
+            let p = match form {
+                WeirForm::SideFlow => 5.0 / 3.0,
+                WeirForm::VNotch => 2.5,
+                _ => 1.5,
+            };
+            q1 *= (1.0 - ratio.powf(p)).max(0.0).powf(0.385);
+            if q2 > 0.0 {
+                q2 *= (1.0 - ratio.powf(2.5)).max(0.0).powf(0.385);
+            }
+        }
+        (dir * (q1 + q2), s1, s2)
     }
 
     fn outfall_depth(&self, vi: usize, b: &Boundary, q: &[f64]) -> f64 {
@@ -1224,6 +1946,20 @@ impl Router {
     }
 }
 
+/// Build a regulator's opening section.
+fn build_struct_section(
+    net: &Network,
+    li: usize,
+    len: f64,
+    id: &str,
+) -> Result<Section, RouterRefusal> {
+    match crate::io::validate::build_for_link(net, li, len) {
+        Some(Ok(b)) => Ok(b.section),
+        Some(Err(e)) => Err(RouterRefusal::Geometry(format!("{id}: {e:?}"))),
+        None => Err(RouterRefusal::Geometry(format!("{id}: no cross-section"))),
+    }
+}
+
 fn froude(v: f64, a: f64, w: f64) -> f64 {
     if a <= 0.0 || w <= 0.0 {
         return 0.0;
@@ -1244,7 +1980,7 @@ mod tests {
     use crate::io::objects::parse_network;
     use crate::io::validate::validate;
 
-    fn build(input: &str) -> (Network, Router) {
+    pub(super) fn build(input: &str) -> (Network, Router) {
         let (mut net, diags) = parse_network(input);
         assert!(
             !diags.iter().any(|d| d.kind.is_error()),
@@ -1260,7 +1996,7 @@ mod tests {
     }
 
     /// Lateral inflow closure: a constant flow at one vertex.
-    fn inflow_at(v: usize, q: f64) -> impl Fn(f64, &mut [f64]) {
+    pub(super) fn inflow_at(v: usize, q: f64) -> impl Fn(f64, &mut [f64]) {
         move |_t, lat: &mut [f64]| {
             lat.iter_mut().for_each(|l| *l = 0.0);
             lat[v] = q;
@@ -1498,5 +2234,221 @@ C2  CIRCULAR   0.4  0  0  0
             led.inflow,
             led.outflow
         );
+    }
+}
+
+#[cfg(test)]
+mod structure_tests {
+    use super::tests::{build, inflow_at};
+    use super::*;
+
+    #[test]
+    fn transverse_weir_head_follows_its_rating() {
+        let inp = "\
+[OPTIONS]
+FLOW_UNITS    CMS
+ROUTING_STEP  5
+
+[JUNCTIONS]
+J1  100.0  4
+
+[OUTFALLS]
+O1  99.0  FREE
+
+[WEIRS]
+W1  J1  O1  TRANSVERSE  1.0  1.83  NO  0  0  YES
+
+[XSECTIONS]
+W1  RECT_OPEN  1.5  2  0  0
+";
+        let (_, mut r) = build(inp);
+        let q_in = 0.3;
+        r.advance(3600.0, &inflow_at(0, q_in));
+        // Steady: Q = C·L·H^1.5 → H = (Q/(C·L))^(2/3) over the 1 m crest.
+        let h_expect = (q_in / (1.83 * 2.0)).powf(2.0 / 3.0);
+        assert!(
+            (r.y[0] - (1.0 + h_expect)).abs() < 0.01,
+            "depth {} vs {}",
+            r.y[0],
+            1.0 + h_expect
+        );
+        assert!((r.sq[0] - q_in).abs() < 0.01 * q_in);
+        // The ledger closes.
+        let led = &r.report;
+        assert!((led.outflow - led.inflow).abs() < 0.02 * led.inflow);
+    }
+
+    #[test]
+    fn side_orifice_head_follows_torricelli() {
+        let inp = "\
+[OPTIONS]
+FLOW_UNITS    CMS
+ROUTING_STEP  5
+
+[JUNCTIONS]
+J1  100.0  4
+
+[OUTFALLS]
+O1  99.0  FREE
+
+[ORIFICES]
+R1  J1  O1  SIDE  0  0.65  NO  0
+
+[XSECTIONS]
+R1  CIRCULAR  0.2  0  0  0
+";
+        let (_, mut r) = build(inp);
+        let q_in = 0.05;
+        r.advance(3600.0, &inflow_at(0, q_in));
+        // Submerged inlet, free discharge: Q = Cd·A·√(2g·(y − D/2)).
+        let a = std::f64::consts::PI * 0.01;
+        let head = (q_in / (0.65 * a)).powi(2) / (2.0 * GRAVITY);
+        let y_expect = head + 0.1;
+        assert!(
+            (r.y[0] - y_expect).abs() < 0.01,
+            "depth {} vs {y_expect}",
+            r.y[0]
+        );
+        assert!((r.sq[0] - q_in).abs() < 0.01 * q_in);
+    }
+
+    #[test]
+    fn outlet_functional_rating_holds() {
+        let inp = "\
+[OPTIONS]
+FLOW_UNITS    CMS
+ROUTING_STEP  5
+
+[JUNCTIONS]
+J1  100.0  4
+
+[OUTFALLS]
+O1  99.0  FREE
+
+[OUTLETS]
+OUT1  J1  O1  0  FUNCTIONAL/DEPTH  0.1  1.5  NO
+";
+        let (_, mut r) = build(inp);
+        let q_in = 0.05;
+        r.advance(3600.0, &inflow_at(0, q_in));
+        // Q = a·y^b → y = (Q/a)^(1/b).
+        let y_expect = (q_in / 0.1_f64).powf(1.0 / 1.5);
+        assert!(
+            (r.y[0] - y_expect).abs() < 0.01,
+            "depth {} vs {y_expect}",
+            r.y[0]
+        );
+    }
+
+    #[test]
+    fn inline_pump_finds_its_operating_point() {
+        let inp = "\
+[OPTIONS]
+FLOW_UNITS    CMS
+ROUTING_STEP  5
+
+[STORAGE]
+SU1  100.0  3  0  FUNCTIONAL  0  0  20
+
+[JUNCTIONS]
+J2  103.0  2
+
+[OUTFALLS]
+O1  102.5  FREE
+
+[PUMPS]
+P1  SU1  J2  PC  ON  0  0
+
+[CONDUITS]
+C1  J2  O1  50  0.013  0  0
+
+[XSECTIONS]
+C1  CIRCULAR  0.5  0  0  0
+
+[CURVES]
+PC  PUMP4  0  0  2  0.2
+";
+        let (_, mut r) = build(inp);
+        let q_in = 0.05;
+        r.advance(7200.0, &inflow_at(0, q_in));
+        // The type-4 characteristic q = 0.1·y balances the inflow at
+        // y = 0.5 m, lifting water 3 m uphill.
+        assert!((r.y[0] - 0.5).abs() < 0.02, "well depth {}", r.y[0]);
+        assert!((r.sq[0] - q_in).abs() < 0.02 * q_in, "pump {}", r.sq[0]);
+        let led = &r.report;
+        assert!((led.outflow - led.inflow).abs() < 0.05 * led.inflow);
+    }
+
+    #[test]
+    fn pump_latches_cycle_between_startup_and_shutoff() {
+        let inp = "\
+[OPTIONS]
+FLOW_UNITS    CMS
+ROUTING_STEP  5
+
+[STORAGE]
+SU1  100.0  3  0  FUNCTIONAL  0  0  10
+
+[JUNCTIONS]
+J2  102.0  2
+
+[OUTFALLS]
+O1  101.5  FREE
+
+[PUMPS]
+P1  SU1  J2  PC  OFF  1.0  0.2
+
+[CONDUITS]
+C1  J2  O1  50  0.013  0  0
+
+[XSECTIONS]
+C1  CIRCULAR  0.5  0  0  0
+
+[CURVES]
+PC  PUMP2  0  0.2  3  0.2
+";
+        let (_, mut r) = build(inp);
+        // A trickle in, a strong pump: the well fills to the 1 m startup,
+        // empties to the 0.2 m shutoff, and repeats.
+        let mut saw_on = false;
+        let mut saw_off_again = false;
+        let mut t = 0.0;
+        while t < 7200.0 {
+            t += 30.0;
+            r.advance(t, &inflow_at(0, 0.02));
+            if r.pump_on[0] {
+                saw_on = true;
+            } else if saw_on {
+                saw_off_again = true;
+            }
+            assert!(r.y[0] < 1.15, "well overfilled: {}", r.y[0]);
+        }
+        assert!(saw_on && saw_off_again, "no pump cycling");
+        let led = &r.report;
+        assert!((led.outflow - led.inflow).abs() < 0.1 * led.inflow);
+    }
+
+    #[test]
+    fn a_dummy_channel_passes_its_inflow_through() {
+        let inp = "\
+[OPTIONS]
+FLOW_UNITS    CMS
+ROUTING_STEP  5
+
+[JUNCTIONS]
+J1  100.0  2
+
+[OUTFALLS]
+O1  99.5  FREE
+
+[CONDUITS]
+D1  J1  O1  100  0.013  0  0
+
+[XSECTIONS]
+D1  DUMMY  0  0  0  0
+";
+        let (_, mut r) = build(inp);
+        r.advance(600.0, &inflow_at(0, 0.07));
+        assert!((r.sq[0] - 0.07).abs() < 1e-6, "dummy {}", r.sq[0]);
     }
 }
