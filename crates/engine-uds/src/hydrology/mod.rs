@@ -10,6 +10,7 @@
 
 pub mod groundwater;
 pub mod infiltration;
+pub mod lid;
 pub mod rdii;
 pub mod runoff;
 pub mod snow;

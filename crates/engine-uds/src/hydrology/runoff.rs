@@ -5,6 +5,7 @@
 //! follow the predecessor's semantics exactly.
 
 use super::infiltration::{InfilFactors, InfilState};
+use super::lid::LidUnit;
 use super::snow::{SnowClimate, SnowPack};
 use crate::model::{
     GageSource, Network, ParcelOutlet, RainForm, SeriesTime, SubareaRouting, TimeSeriesSource,
@@ -176,6 +177,10 @@ struct ParcelState {
     frac_routed: f64,
     /// The §4.2 snow pack, when assigned.
     snow: Option<SnowPack>,
+    /// §3.4 control measures deployed in the parcel.
+    lids: Vec<LidUnit>,
+    /// Drain flow routed to a vertex this step (m³/s), by vertex.
+    lid_vertex_drain: Vec<(usize, f64)>,
     /// Run-on rate (m/s over the whole parcel), one step delayed.
     runon: f64,
     runon_next_vol: f64,
@@ -209,11 +214,6 @@ impl Surface {
         // RDII-only models still need the gage records resolved.
         if net.parcels.is_empty() && net.rdii.is_empty() {
             return Ok(None);
-        }
-        if !net.lid_usage.is_empty() {
-            return Err(SurfaceRefusal::Unsupported(
-                "control-measure evaluation arrives with §3.4",
-            ));
         }
         for p in &net.parcels {
             if let Some(gw) = &p.groundwater {
@@ -334,12 +334,47 @@ impl Surface {
                 snow: p
                     .snowpack
                     .map(|sp| SnowPack::build(&net.snowpacks[sp], p.frac_imperv)),
+                lids: Vec::new(),
+                lid_vertex_drain: Vec::new(),
                 runon: 0.0,
                 runon_next_vol: 0.0,
                 runoff: 0.0,
                 infil_rate: 0.0,
                 evap_rate: 0.0,
             });
+        }
+        // §3.4 deployment: units attach to their parcels; the combined
+        // footprint shrinks the ordinary sub-areas proportionally, and a
+        // footprint within 0.1 % of the parcel snaps equal to it.
+        for u in &net.lid_usage {
+            let unit = LidUnit::build(&net.lid_controls[u.control], u).map_err(|e| match e {
+                super::lid::LidRefusal::Unsupported(m) => SurfaceRefusal::Unsupported(m),
+            })?;
+            parcels[u.parcel].lids.push(unit);
+        }
+        for (pi, p) in parcels.iter_mut().enumerate() {
+            if p.lids.is_empty() {
+                continue;
+            }
+            let parcel_area = net.parcels[pi].area;
+            let mut foot: f64 = p.lids.iter().map(|u| u.area).sum();
+            if parcel_area > 0.0 && (foot - parcel_area).abs() <= 0.001 * parcel_area {
+                foot = parcel_area;
+            }
+            if foot > parcel_area {
+                return Err(SurfaceRefusal::Incomplete(format!(
+                    "{}: control-measure footprint exceeds the parcel",
+                    net.parcels[pi].id
+                )));
+            }
+            let scale = if parcel_area > 0.0 {
+                (parcel_area - foot) / parcel_area
+            } else {
+                0.0
+            };
+            for s in &mut p.sub {
+                s.area *= scale;
+            }
         }
         Ok(Some(Surface {
             gages,
@@ -488,6 +523,46 @@ impl Surface {
                 self.degraded = true;
             }
             self.losses += f_rate * dt * p.sub[2].area;
+
+            // §3.4: units take their captured share of sub-area runoff
+            // plus direct rainfall; overflow rejoins parcel runoff,
+            // exfiltration joins the losses, drains route separately.
+            if !p.lids.is_empty() {
+                p.lid_vertex_drain.clear();
+                let imp_runoff = runoff[0] + runoff[1];
+                let perv_runoff = runoff[2];
+                let mut captured_imp = 0.0;
+                let mut captured_perv = 0.0;
+                let mut lid_return = 0.0;
+                for u in &mut p.lids {
+                    if u.area <= 0.0 {
+                        continue;
+                    }
+                    let take_imp = imp_runoff * u.from_imperv;
+                    let take_perv = perv_runoff * u.from_perv;
+                    captured_imp += take_imp;
+                    captured_perv += take_perv;
+                    let unit_in = imp_precip + (take_imp + take_perv) / dt / u.area;
+                    u.step(unit_in, imp_precip, e, dt);
+                    self.losses += u.exfiltration * u.area * dt;
+                    lid_return += u.overflow * u.area * dt;
+                    let drain_vol = u.drain_flow * u.area;
+                    match u.drain_to {
+                        Some(ParcelOutlet::Vertex(v)) => {
+                            p.lid_vertex_drain.push((v, drain_vol));
+                        }
+                        Some(ParcelOutlet::Parcel(target)) => {
+                            runon_to_parcel[target] += drain_vol * dt;
+                        }
+                        None => lid_return += drain_vol * dt,
+                    }
+                }
+                runoff[0] -= captured_imp * (runoff[0] / imp_runoff.max(1e-30));
+                runoff[1] -= captured_imp * (runoff[1] / imp_runoff.max(1e-30));
+                runoff[2] -= captured_perv;
+                runoff[2] += 0.0;
+                runoff[0] += lid_return; // overflow and default drains join
+            }
             let area_total: f64 = p.sub.iter().map(|s| s.area).sum();
             if area_total > 0.0 {
                 p.infil_rate = f_rate * p.sub[2].area / area_total;
@@ -525,6 +600,9 @@ impl Surface {
         for p in &self.parcels {
             if let ParcelOutlet::Vertex(v) = p.outlet {
                 lat[v] += p.runoff;
+            }
+            for &(v, q) in &p.lid_vertex_drain {
+                lat[v] += q;
             }
         }
         lat

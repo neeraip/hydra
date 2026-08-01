@@ -686,3 +686,77 @@ RAIN  2:00  0
     assert!(led.outflow > 0.9 * led.inflow);
     let _ = early;
 }
+
+// ── §3.4 control measures ───────────────────────────────────────────────
+
+#[test]
+fn a_bioretention_cell_detains_and_sheds_runoff() {
+    let base = runoff_model(100.0, 25.0, "HORTON");
+    // Deploy a 2000 m² bio-retention cell capturing 60 % of the
+    // impervious runoff.
+    let inp = base
+        + "
+[LID_CONTROLS]
+BC1  BC
+BC1  SURFACE  150  0.1  0.1  1.0  5
+BC1  SOIL     600  0.5  0.2  0.1  50  10  60
+BC1  STORAGE  300  0.6  20  0
+BC1  DRAIN    1.0  0.5  50  0  0  0
+
+[LID_USAGE]
+S1  BC1  1  2000  20  0  60  0
+";
+    let (mut sim, _, _) = Simulation::open(&inp).expect("open");
+    sim.run();
+    let led = sim.report();
+    // The plain model delivers ≈ rain volume; the cell holds back and
+    // exfiltrates a meaningful share.
+    let rain_vol = 0.025 * 2.0 * 20_000.0;
+    assert!(
+        led.inflow < 0.85 * rain_vol,
+        "cell captured nothing: {} of {rain_vol}",
+        led.inflow
+    );
+    assert!(
+        led.inflow > 0.2 * rain_vol,
+        "cell swallowed everything: {}",
+        led.inflow
+    );
+}
+
+#[test]
+fn a_rain_barrel_holds_the_storm_then_drains_after_the_delay() {
+    let base = runoff_model(100.0, 10.0, "HORTON");
+    // Barrels big enough for the whole storm: 1 m deep, covering 400 m²
+    // effective, catching all impervious runoff; drains open an hour
+    // after rain ends.
+    let inp = base
+        + "
+[LID_CONTROLS]
+RB1  RB
+RB1  STORAGE  1000  1000  0  0  YES
+RB1  DRAIN    20   0.5   0  1  0  0
+
+[LID_USAGE]
+S1  RB1  400  1  1  0  100  0
+";
+    let (mut sim, _, _) = Simulation::open(&inp).expect("open");
+    // Through the storm and just past — but before the 1 h drain delay
+    // elapses at t = 3 h: barrels holding, little at the outfall.
+    while sim.time() < 2.5 * 3600.0 {
+        sim.step();
+    }
+    let held = sim.report().inflow;
+    let rain_vol = 0.010 * 2.0 * 20_000.0;
+    assert!(
+        held < 0.25 * rain_vol,
+        "barrels leaked during the storm: {held} of {rain_vol}"
+    );
+    // By run end (8 h) the delayed drains have released the store.
+    sim.run();
+    assert!(
+        sim.report().inflow > 0.7 * rain_vol,
+        "barrels never drained: {} of {rain_vol}",
+        sim.report().inflow
+    );
+}

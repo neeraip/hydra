@@ -184,7 +184,12 @@ with no roughness passing percolation straight through rather than sealing);
 infiltration trenches (no soil layer, one end-limited surface-to-storage
 flux); permeable pavement (a clog-reduced permeability intake in place of
 Green–Ampt, optional soil layer); rain barrels (pure storage, sealed, no
-evaporation, intake limited by freeboard *plus* concurrent drain outflow);
+evaporation, intake limited by freeboard *plus* concurrent drain outflow,
+and a drain held shut until continuously dry weather has outlasted the
+configured delay — dryness judged by the parcel's rainfall rate falling
+below the 0.001 in/hr minimum-runoff threshold, never by the unit's total
+inflow, so the receding Manning tail captured from tributary area cannot
+hold the drain shut indefinitely);
 rooftop disconnection (a lone surface layer whose gutter-capacity drain
 pre-empts overflow); and vegetative swales (trapezoidal depth-varying
 geometry, balance written on volume, widths floored at 0.1524 m with the
