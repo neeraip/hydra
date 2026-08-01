@@ -37,7 +37,6 @@ pub fn parse_network(input: &str) -> (Network, Vec<Diagnostic>) {
 
     let mut net = Network {
         title: s.title.clone(),
-        parcel_ids: ordered_ids(&s, ObjectKind::Parcel),
         transect_ids: ordered_ids(&s, ObjectKind::Transect),
         street_ids: ordered_ids(&s, ObjectKind::Street),
         ..Default::default()
@@ -60,6 +59,48 @@ pub fn parse_network(input: &str) -> (Network, Vec<Diagnostic>) {
             Section::Patterns => {
                 let ids = s.ids.get(&ObjectKind::TimePattern).unwrap_or(&empty);
                 net.patterns = super::tables::parse_patterns(lines, ids, &mut diagnostics);
+            }
+            _ => {}
+        }
+    }
+
+    // Surface compartment (§3): gages first, then parcels, then their
+    // fill-in sections — file order within each is preserved by the survey.
+    for (sec, lines) in &s.sections {
+        if *sec == Section::RainGages {
+            net.gages = super::hydrology::parse_gages(lines, &s, &mut diagnostics);
+        }
+    }
+    for (sec, lines) in &s.sections {
+        if *sec == Section::Subcatchments {
+            net.parcels = super::hydrology::parse_parcels(lines, &s, &cv, &mut diagnostics);
+        }
+    }
+    for (sec, lines) in &s.sections {
+        let ids = s.ids.get(&ObjectKind::Parcel);
+        match sec {
+            Section::Subareas => {
+                if let Some(ids) = ids {
+                    super::hydrology::parse_subareas(
+                        lines,
+                        ids,
+                        &mut net.parcels,
+                        &cv,
+                        &mut diagnostics,
+                    );
+                }
+            }
+            Section::Infiltration => {
+                if let Some(ids) = ids {
+                    super::hydrology::parse_infiltration(
+                        lines,
+                        ids,
+                        &mut net.parcels,
+                        options.infiltration,
+                        &cv,
+                        &mut diagnostics,
+                    );
+                }
             }
             _ => {}
         }
@@ -121,9 +162,13 @@ pub(crate) struct UnitConverter {
     /// m³/s per file flow unit.
     pub(crate) flow: f64,
     /// m per file suction-head unit (inches or millimetres).
-    suction: f64,
+    pub(crate) suction: f64,
     /// m/s per file conductivity unit (in/hr or mm/hr).
-    conductivity: f64,
+    pub(crate) conductivity: f64,
+    /// m² per file land-area unit (acres or hectares).
+    pub(crate) land_area: f64,
+    /// m per file surface-depth unit (inches or millimetres).
+    pub(crate) rain_depth: f64,
     /// Weir-coefficient factor: every weir form's coefficient carries the
     /// dimension (length)^½/time, so one factor serves them all —
     /// 0.3048^½ ≈ 0.552, the predecessor's roadway rescale explained.
@@ -146,6 +191,8 @@ impl UnitConverter {
             },
             suction: if us { 0.0254 } else { 1.0e-3 },
             conductivity: if us { 0.0254 / 3600.0 } else { 1.0e-3 / 3600.0 },
+            land_area: if us { 4_046.856_422_4 } else { 10_000.0 },
+            rain_depth: if us { 0.0254 } else { 1.0e-3 },
             weir_coeff: if us { 0.3048_f64.sqrt() } else { 1.0 },
             offsets,
         }

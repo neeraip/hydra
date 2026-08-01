@@ -30,8 +30,10 @@ pub struct Network {
     pub timeseries: Vec<TimeSeries>,
     /// Time patterns, in registration order.
     pub patterns: Vec<TimePattern>,
-    /// Parcel identifiers, in registration order.
-    pub parcel_ids: Vec<String>,
+    /// Precipitation gages, in registration order.
+    pub gages: Vec<Gage>,
+    /// Parcels, in registration order.
+    pub parcels: Vec<Parcel>,
     /// Transect identifiers, in registration order.
     pub transect_ids: Vec<String>,
     /// Street-section identifiers, in registration order.
@@ -549,4 +551,147 @@ pub enum PatternKind {
     Hourly,
     /// Twenty-four weekend hourly factors.
     Weekend,
+}
+
+/// A precipitation gage (§2.4).
+#[derive(Debug, Clone, PartialEq)]
+pub struct Gage {
+    /// Identifier as written.
+    pub id: String,
+    /// How the record's values are expressed.
+    pub form: RainForm,
+    /// Recording interval (s).
+    pub interval: f64,
+    /// Snow catch factor.
+    pub catch_factor: f64,
+    /// Where the record comes from.
+    pub source: GageSource,
+}
+
+/// Precipitation record forms.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RainForm {
+    /// Rate over each interval.
+    Intensity,
+    /// Depth per interval.
+    Volume,
+    /// Running cumulative depth.
+    Cumulative,
+}
+
+/// A gage's data source.
+#[derive(Debug, Clone, PartialEq)]
+pub enum GageSource {
+    /// A supplied time series.
+    Series {
+        /// The series.
+        series: usize,
+    },
+    /// An external record file; acquiring bytes is the caller's concern.
+    File {
+        /// File name as written.
+        file: String,
+        /// Station identifier within the file.
+        station: String,
+    },
+}
+
+/// A parcel (§2.4), assembled from its three sections.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Parcel {
+    /// Identifier as written.
+    pub id: String,
+    /// The precipitation gage.
+    pub gage: usize,
+    /// Where runoff discharges.
+    pub outlet: ParcelOutlet,
+    /// Area (m²).
+    pub area: f64,
+    /// Impervious fraction, capped at 1 (§14.7).
+    pub frac_imperv: f64,
+    /// Characteristic width (m).
+    pub width: f64,
+    /// Surface slope (fraction).
+    pub slope: f64,
+    /// Curb length (m), for per-curb accumulation normalisation.
+    pub curb_length: f64,
+    /// Snow pack parameter set, when assigned.
+    pub snowpack: Option<usize>,
+    /// Sub-area parameters, once `[SUBAREAS]` supplies them.
+    pub subareas: Option<Subareas>,
+    /// Infiltration parameters, once `[INFILTRATION]` supplies them.
+    pub infiltration: Option<Infiltration>,
+}
+
+/// A parcel's discharge target.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ParcelOutlet {
+    /// A conveyance vertex.
+    Vertex(usize),
+    /// Another parcel (overland cascade).
+    Parcel(usize),
+}
+
+/// The three sub-areas' parameters (§3.2).
+#[derive(Debug, Clone, PartialEq)]
+pub struct Subareas {
+    /// Manning roughness of the impervious sub-areas.
+    pub n_imperv: f64,
+    /// Manning roughness of the pervious sub-area.
+    pub n_perv: f64,
+    /// Depression storage, impervious (m).
+    pub dstore_imperv: f64,
+    /// Depression storage, pervious (m).
+    pub dstore_perv: f64,
+    /// Fraction of the impervious area with no depression storage.
+    pub frac_zero_store: f64,
+    /// Internal re-routing target.
+    pub routing: SubareaRouting,
+    /// Fraction of runoff re-routed (1 = all).
+    pub frac_routed: f64,
+}
+
+/// Internal sub-area re-routing (§3.2): mutually exclusive directions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SubareaRouting {
+    /// Both sub-areas discharge to the outlet (no re-routing).
+    Outlet,
+    /// Pervious runoff routes onto the impervious sub-area.
+    Impervious,
+    /// Impervious runoff routes onto the pervious sub-area.
+    Pervious,
+}
+
+/// Per-parcel infiltration parameters (§3.3), in SI.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Infiltration {
+    /// Horton or modified Horton, per the model selection.
+    Horton {
+        /// Initial capacity (m/s).
+        f0: f64,
+        /// Equilibrium capacity (m/s).
+        f_min: f64,
+        /// Decay coefficient (1/s).
+        decay: f64,
+        /// Drying time (s).
+        dry_time: f64,
+        /// Optional total-volume cap (m); 0 = none.
+        f_max: f64,
+    },
+    /// Green–Ampt or modified Green–Ampt, per the model selection.
+    GreenAmpt {
+        /// Wetting-front suction head (m).
+        suction: f64,
+        /// Saturated conductivity (m/s).
+        conductivity: f64,
+        /// Initial moisture deficit (fraction).
+        initial_deficit: f64,
+    },
+    /// The SCS relation; the curve number is dimensionless.
+    CurveNumber {
+        /// Curve number, clamped to [10, 99] at validation.
+        curve_number: f64,
+        /// Drying time (s).
+        dry_time: f64,
+    },
 }

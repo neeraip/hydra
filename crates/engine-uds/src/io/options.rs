@@ -772,6 +772,12 @@ pub(crate) fn parse_date_token(token: &str) -> Option<Date> {
     parse_date(token)
 }
 
+/// Decimal hours or a clock string, to seconds, rounded — the gage
+/// recording-interval grammar.
+pub(crate) fn clock_or_hours_to_seconds(token: &str) -> Option<f64> {
+    clock_to_seconds(token)
+}
+
 /// A clock-string token (`H:M` or `H:M:S`) to seconds; decimal tokens are
 /// the caller's to interpret.
 pub(crate) fn parse_clock_token(token: &str) -> Option<f64> {
