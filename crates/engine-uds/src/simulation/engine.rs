@@ -13,6 +13,8 @@ use std::collections::HashMap;
 
 use super::time::{civil_from_days, days_from_civil, weekday};
 use crate::hydraulics::routing::{Router, RouterRefusal, RoutingReport};
+use crate::hydrology::infiltration::InfilFactors;
+use crate::hydrology::runoff::{Surface, SurfaceRefusal};
 use crate::io::objects::parse_network;
 use crate::io::survey::Diagnostic;
 use crate::io::validate::{validate, ValidationDiagnostic};
@@ -34,6 +36,8 @@ pub enum OpenError {
     Validation(Vec<ValidationDiagnostic>),
     /// The router cannot serve this model yet.
     Routing(RouterRefusal),
+    /// The surface compartment cannot serve this model yet.
+    Surface(SurfaceRefusal),
 }
 
 /// One recorded reporting boundary: every vertex depth and link flow, by
@@ -66,6 +70,14 @@ struct EventWindow {
 pub struct Simulation {
     net: Network,
     router: Router,
+    /// The §3 surface compartment, when the model has one.
+    surface: Option<Surface>,
+    /// Hydrology clock (s from start).
+    hydro_t: f64,
+    /// Bracketing hydrology laterals for §10.1 linear interpolation.
+    hydro_prev: (f64, Vec<f64>),
+    hydro_now: (f64, Vec<f64>),
+    hydro_degraded_warned: bool,
     /// Epoch instant of simulation start (s).
     start_epoch: f64,
     /// Run duration (s).
@@ -102,6 +114,9 @@ impl Simulation {
             return Err(OpenError::Validation(findings));
         }
         let router = Router::build(&net).map_err(OpenError::Routing)?;
+        let start_epoch_for_surface =
+            days_from_civil(net.options.start_date) as f64 * 86_400.0 + net.options.start_time;
+        let surface = Surface::build(&net, start_epoch_for_surface).map_err(OpenError::Surface)?;
 
         let start_epoch =
             days_from_civil(net.options.start_date) as f64 * 86_400.0 + net.options.start_time;
@@ -149,9 +164,15 @@ impl Simulation {
         let n_series = net.timeseries.len();
         let routing_period = net.options.routing_step.max(0.5);
 
+        let nv = net.vertices.len();
         Ok((
             Simulation {
                 router,
+                surface,
+                hydro_t: 0.0,
+                hydro_prev: (0.0, vec![0.0; nv]),
+                hydro_now: (0.0, vec![0.0; nv]),
+                hydro_degraded_warned: false,
                 start_epoch,
                 duration,
                 report_step,
@@ -215,6 +236,74 @@ impl Simulation {
         true
     }
 
+    /// Advance the §3 surface compartment in whole hydrology steps until
+    /// it covers `period_end` (§10.1): the wet step while precipitation
+    /// or ponded water exists, the dry step otherwise, truncated at gage
+    /// recording boundaries.
+    fn advance_hydrology(&mut self, period_end: f64) {
+        let Some(mut surface) = self.surface.take() else {
+            return;
+        };
+        let nv = self.net.vertices.len();
+        while self.hydro_t < period_end - 1e-9 {
+            let epoch = self.start_epoch + self.hydro_t;
+            let wet = surface.is_wet(epoch);
+            let mut dt = if wet {
+                self.net.options.wet_step
+            } else {
+                self.net.options.dry_step
+            };
+            if let Some(b) = surface.next_gage_boundary(epoch) {
+                let to_boundary = b - epoch;
+                if to_boundary > 1e-9 {
+                    dt = dt.min(to_boundary);
+                }
+            }
+            let month = {
+                let epoch_days = ((self.start_epoch + self.hydro_t) / 86_400.0).floor() as i64;
+                civil_from_days(epoch_days).month
+            };
+            let m = (month - 1) as usize;
+            let evap = self.evaporation_rate(month);
+            let rain_factor = self.net.climate.adjust_rainfall[m];
+            let fac = InfilFactors {
+                conductivity: self.net.climate.adjust_conductivity[m],
+                recovery: 1.0,
+            };
+            let dry_only = self.net.climate.evaporate_dry_only;
+            surface.step(epoch, dt, evap, dry_only, rain_factor, fac);
+            self.hydro_t += dt;
+            self.hydro_prev = std::mem::replace(
+                &mut self.hydro_now,
+                (self.hydro_t, surface.vertex_laterals(nv)),
+            );
+            if surface.degraded && !self.hydro_degraded_warned {
+                self.hydro_degraded_warned = true;
+                self.notices.push(RuntimeNotice {
+                    t: self.hydro_t,
+                    message: "surface integration ran at its floor below tolerance (§3.5)"
+                        .to_string(),
+                });
+            }
+        }
+        self.surface = Some(surface);
+    }
+
+    /// The potential surface evaporation rate (m/s) for a month, from the
+    /// §3.1 sources this stage evaluates, plus the monthly adjustment.
+    fn evaporation_rate(&self, month: u32) -> f64 {
+        use crate::model::EvaporationSource;
+        let m = (month - 1) as usize;
+        let base = match &self.net.climate.evaporation {
+            EvaporationSource::Constant(e) => *e,
+            EvaporationSource::Monthly(ms) => ms[m],
+            // Series, temperature, and climate-file evaporation join with
+            // the §4 climate state.
+            _ => 0.0,
+        };
+        (base + self.net.climate.adjust_evaporation[m]).max(0.0)
+    }
+
     /// Whether run time `t` lies inside an event window; with no events
     /// declared, everything does.
     fn in_event(&self, t: f64) -> bool {
@@ -237,10 +326,22 @@ impl Simulation {
 
         if self.in_event(t) {
             self.update_boundary_stages(t);
-            let lateral = self.assemble_lateral(t);
+            self.advance_hydrology(period_end);
+            let base = self.assemble_lateral(t);
+            // §10.1: hydrology outputs interpolate linearly to routing
+            // times between the bracketing hydrology results.
+            let (t0, l0) = (self.hydro_prev.0, self.hydro_prev.1.clone());
+            let (t1, l1) = (self.hydro_now.0, self.hydro_now.1.clone());
             self.router
-                .advance(period_end, &move |_t, lat: &mut [f64]| {
-                    lat.copy_from_slice(&lateral);
+                .advance(period_end, &move |tt, lat: &mut [f64]| {
+                    let f = if t1 > t0 {
+                        ((tt - t0) / (t1 - t0)).clamp(0.0, 1.0)
+                    } else {
+                        1.0
+                    };
+                    for (i, l) in lat.iter_mut().enumerate() {
+                        *l = base[i] + l0[i] + f * (l1[i] - l0[i]);
+                    }
                 });
         } else {
             // Between events the network state freezes and no lateral

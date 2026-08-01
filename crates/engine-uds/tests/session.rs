@@ -235,3 +235,166 @@ SHORT  0:30  0.2
     // The tail runs dry.
     assert!(sim.flow("C1").unwrap() < 0.01);
 }
+
+// ── §3 rainfall–runoff ──────────────────────────────────────────────────
+
+/// A one-parcel model: `imperv` percent impervious, Horton parameters
+/// hot enough to matter, raining `intensity` mm/h for two hours.
+fn runoff_model(imperv: f64, rain_mm_h: f64, infil: &str) -> String {
+    format!(
+        "\
+[OPTIONS]
+FLOW_UNITS    CMS
+INFILTRATION  {infil}
+START_DATE    06/01/2024
+START_TIME    00:00
+END_DATE      06/01/2024
+END_TIME      08:00
+ROUTING_STEP  10
+WET_STEP      0:05:00
+REPORT_STEP   0:15:00
+
+[RAINGAGES]
+G1  INTENSITY  1:00  1.0  TIMESERIES  RAIN
+
+[SUBCATCHMENTS]
+S1  G1  J1  2  {imperv}  100  0.5  0
+
+[SUBAREAS]
+S1  0.012  0.1  0.05  0.05  25  OUTLET
+
+[INFILTRATION]
+S1  20  5  4  7  0
+
+[JUNCTIONS]
+J1  100.4  3
+
+[OUTFALLS]
+O1  100.0  FREE
+
+[CONDUITS]
+C1  J1  O1  200  0.013  0  0
+
+[XSECTIONS]
+C1  RECT_OPEN  2  2  0  0
+
+[TIMESERIES]
+RAIN  0:00  {rain_mm_h}
+RAIN  1:00  {rain_mm_h}
+RAIN  2:00  0
+"
+    )
+}
+
+#[test]
+fn an_impervious_parcel_converts_rain_to_runoff() {
+    // Fully impervious: everything that falls beyond depression storage
+    // reaches the outfall.
+    let inp = runoff_model(100.0, 25.0, "HORTON");
+    let (mut sim, _, _) = Simulation::open(&inp).expect("open");
+    sim.run();
+    // 25 mm/h over 2 h on 2 ha = 1000 m³; depression storage holds
+    // 0.05 mm × ~15000 m² ≈ 0.75 m³ plus what still ponds.
+    let led = sim.report();
+    let rain_vol = 0.025 * 2.0 * 20_000.0;
+    assert!(
+        led.inflow > 0.9 * rain_vol && led.inflow <= rain_vol * 1.01,
+        "runoff into network {} vs rain {rain_vol}",
+        led.inflow
+    );
+    // And it drains to the outfall by the end.
+    assert!(
+        led.outflow > 0.95 * led.inflow,
+        "in {} out {}",
+        led.inflow,
+        led.outflow
+    );
+}
+
+#[test]
+fn horton_infiltration_swallows_light_rain_on_pervious_ground() {
+    // Fully pervious with Horton f0 = 20 mm/h: 10 mm/h rain infiltrates
+    // whole while capacity lasts.
+    let inp = runoff_model(0.0, 10.0, "HORTON");
+    let (mut sim, _, _) = Simulation::open(&inp).expect("open");
+    sim.run();
+    let led = sim.report();
+    let rain_vol = 0.010 * 2.0 * 20_000.0;
+    assert!(
+        led.inflow < 0.15 * rain_vol,
+        "runoff {} of rain {rain_vol}",
+        led.inflow
+    );
+}
+
+#[test]
+fn heavier_rain_exceeds_capacity_and_runs_off() {
+    // 40 mm/h against a capacity decaying from 20 to 5 mm/h: runoff is
+    // substantial but well below the fully-impervious volume.
+    let inp = runoff_model(0.0, 40.0, "HORTON");
+    let (mut sim, _, _) = Simulation::open(&inp).expect("open");
+    sim.run();
+    let led = sim.report();
+    let rain_vol = 0.040 * 2.0 * 20_000.0;
+    assert!(
+        led.inflow > 0.3 * rain_vol && led.inflow < 0.95 * rain_vol,
+        "runoff {} of rain {rain_vol}",
+        led.inflow
+    );
+}
+
+#[test]
+fn green_ampt_and_curve_number_also_close_their_balances() {
+    for infil in ["GREEN_AMPT", "CURVE_NUMBER"] {
+        let mut inp = runoff_model(0.0, 40.0, infil);
+        if infil == "GREEN_AMPT" {
+            inp = inp.replace("S1  20  5  4  7  0", "S1  90  10  0.25");
+        } else {
+            inp = inp.replace("S1  20  5  4  7  0", "S1  80  0  7");
+        }
+        let (mut sim, _, _) = Simulation::open(&inp).expect(infil);
+        sim.run();
+        let led = sim.report();
+        let rain_vol = 0.040 * 2.0 * 20_000.0;
+        assert!(
+            led.inflow > 0.0 && led.inflow < rain_vol,
+            "{infil}: runoff {} of rain {rain_vol}",
+            led.inflow
+        );
+        assert!(
+            led.outflow > 0.9 * led.inflow,
+            "{infil}: in {} out {}",
+            led.inflow,
+            led.outflow
+        );
+    }
+}
+
+#[test]
+fn parcel_cascades_arrive_one_step_delayed() {
+    // S2 drains onto S1, which drains to the junction: the cascade's
+    // whole volume still arrives.
+    let inp = runoff_model(100.0, 25.0, "HORTON").replace(
+        "[SUBCATCHMENTS]
+S1  G1  J1  2  100  100  0.5  0",
+        "[SUBCATCHMENTS]
+S1  G1  J1  2  100  100  0.5  0
+S2  G1  S1  1  100  100  0.5  0",
+    ) + "
+[SUBAREAS]
+S2  0.012  0.1  0.05  0.05  25  OUTLET
+
+[INFILTRATION]
+S2  20  5  4  7  0
+";
+    let (mut sim, _, _) = Simulation::open(&inp).expect("open");
+    sim.run();
+    let led = sim.report();
+    // Three hectares' worth of rain reaches the network.
+    let rain_vol = 0.025 * 2.0 * 30_000.0;
+    assert!(
+        led.inflow > 0.88 * rain_vol && led.inflow <= rain_vol * 1.01,
+        "cascade inflow {} vs rain {rain_vol}",
+        led.inflow
+    );
+}

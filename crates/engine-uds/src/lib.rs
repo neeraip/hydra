@@ -18,6 +18,7 @@
 #![doc = include_str!("interop/spec.md")]
 
 pub mod hydraulics;
+pub mod hydrology;
 pub mod io;
 pub mod model;
 pub mod simulation;

@@ -8,7 +8,7 @@
 //! load, run, results by identity. Hydrology (§3–§4), transport (§8), and
 //! controls (§9) join the cascade as they land.
 
-mod time;
+pub mod time;
 
 pub mod engine;
 
