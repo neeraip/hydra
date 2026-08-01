@@ -236,6 +236,11 @@ pub fn parse_network(input: &str) -> (Network, Vec<Diagnostic>) {
                 parse_xsection(&mut net, &s, line, &mut diagnostics);
             }
         }
+        if *sec == Section::Losses {
+            for line in lines {
+                parse_losses(&mut net, &s, &cv, line, &mut diagnostics);
+            }
+        }
     }
 
     // Control measures and dual drainage (§3.4, §7.8) — all references
@@ -955,6 +960,11 @@ fn parse_conduit(
             init_flow: init_flow * cv.flow,
             max_flow: max_flow * cv.flow,
             reversed: false,
+            loss_inlet: 0.0,
+            loss_outlet: 0.0,
+            loss_avg: 0.0,
+            flap_gate: false,
+            seepage_rate: 0.0,
         },
         cross_section: None,
     });
@@ -1330,6 +1340,78 @@ const XSECT_SHAPES: &[XsectShape] = &[
     XsectShape::ForceMain,
     XsectShape::Street,
 ];
+
+/// Parse a `[LOSSES]` line: entrance, exit, and distributed local-loss
+/// coefficients, an optional flap gate, and a seepage rate (in/hr or
+/// mm/hr, converted).
+fn parse_losses(
+    net: &mut Network,
+    s: &Survey,
+    cv: &UnitConverter,
+    line: &TokenLine,
+    diags: &mut Vec<Diagnostic>,
+) {
+    let t = &line.tokens;
+    let l = line.line;
+    if !need(t, 4, diags, l) {
+        return;
+    }
+    let Some(li) = resolve(s, ObjectKind::Link, &t[0], diags, l) else {
+        return;
+    };
+    let mut x = [0.0_f64; 3];
+    for (i, xi) in x.iter_mut().enumerate() {
+        match t[1 + i].parse::<f64>() {
+            Ok(v) if v >= 0.0 => *xi = v,
+            _ => {
+                diags.push(err(
+                    l,
+                    DiagnosticKind::BadValue {
+                        token: t[1 + i].clone(),
+                    },
+                ));
+                return;
+            }
+        }
+    }
+    let mut flap = false;
+    if t.len() >= 5 {
+        let Some(k) = keyword(&["NO", "YES"], &t[4], diags, l) else {
+            return;
+        };
+        flap = k == 1;
+    }
+    let mut seep = 0.0;
+    if t.len() >= 6 {
+        match t[5].parse::<f64>() {
+            Ok(v) => seep = v * cv.conductivity,
+            Err(_) => {
+                diags.push(err(
+                    l,
+                    DiagnosticKind::BadValue {
+                        token: t[5].clone(),
+                    },
+                ));
+                return;
+            }
+        }
+    }
+    if let LinkKind::Channel {
+        loss_inlet,
+        loss_outlet,
+        loss_avg,
+        flap_gate,
+        seepage_rate,
+        ..
+    } = &mut net.links[li].kind
+    {
+        *loss_inlet = x[0];
+        *loss_outlet = x[1];
+        *loss_avg = x[2];
+        *flap_gate = flap;
+        *seepage_rate = seep;
+    }
+}
 
 fn parse_xsection(net: &mut Network, s: &Survey, line: &TokenLine, diags: &mut Vec<Diagnostic>) {
     let t = &line.tokens;

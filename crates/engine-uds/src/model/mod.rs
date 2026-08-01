@@ -299,6 +299,16 @@ pub enum LinkKind {
         /// the offsets are swapped, and reported flows carry the direction
         /// multiplier so output keeps the user's orientation (§14.7).
         reversed: bool,
+        /// Entrance local-loss coefficient (`[LOSSES]`).
+        loss_inlet: f64,
+        /// Exit local-loss coefficient.
+        loss_outlet: f64,
+        /// Distributed local-loss coefficient.
+        loss_avg: f64,
+        /// Gate blocking reverse flow.
+        flap_gate: bool,
+        /// Seepage rate through the channel bed (m/s).
+        seepage_rate: f64,
     },
     /// A pump (§7.1).
     Pump {

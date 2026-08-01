@@ -556,8 +556,13 @@ fn resolve_offset(
     }
 }
 
-/// Build the §5 section for a link, routing referents.
-fn build_for_link(net: &Network, li: usize, len: f64) -> Option<Result<SectionBuild, BuildError>> {
+/// Build the §5 section for a link, routing referents. Public because
+/// the §6 router assembles the same geometry.
+pub fn build_for_link(
+    net: &Network,
+    li: usize,
+    len: f64,
+) -> Option<Result<SectionBuild, BuildError>> {
     let xs = net.links[li].cross_section.as_ref()?;
     Some(match (xs.shape, xs.referent) {
         (XsectShape::Irregular, Some(XsectReferent::Transect(t))) => {

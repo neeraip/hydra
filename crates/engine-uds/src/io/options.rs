@@ -193,6 +193,15 @@ pub struct AnalysisOptions {
     /// A scratch directory for applications; the engine performs no
     /// filesystem I/O and never reads it.
     pub temp_dir: Option<String>,
+    /// Pressurisation celerity (m/s), the §6.2 slot's stated wave speed —
+    /// a session option, not a file keyword; default 50, minimum 5.
+    pub pressure_celerity: f64,
+    /// Relative network continuity tolerance per trial (§6.4); a session
+    /// option; default 1e-3.
+    pub continuity_tol: f64,
+    /// Per-step local head-error tolerance (m) for the §6.5 error test;
+    /// 0 disables the test; a session option; default 1e-3.
+    pub routing_err_tol: f64,
 }
 
 impl Default for AnalysisOptions {
@@ -240,6 +249,9 @@ impl Default for AnalysisOptions {
             sweep_end: 365,
             dry_days: 0.0,
             temp_dir: None,
+            pressure_celerity: 50.0,
+            continuity_tol: 1.0e-3,
+            routing_err_tol: 1.0e-3,
         }
     }
 }
