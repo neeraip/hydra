@@ -207,7 +207,7 @@ import (§14). Everything below specifies the full dynamic treatment.
 
 ### 6.2 The Pressurisation Closure
 
-A closed conduit flowing full has no free surface, and the equations of §6.1
+A closed channel flowing full has no free surface, and the equations of §6.1
 presuppose one. This engine closes the gap with a single device, applied
 uniformly: every closed cross-section carries a narrow hypothetical **slot**
 above its crown, so that depth may exceed the crown height and the
@@ -216,7 +216,7 @@ surcharge equation branch, no free-surface/pressurised state machine, and no
 transition band: one equation set governs everywhere.
 
 The slot is not an arbitrary widening — it is the engine's model of
-**pressure-wave celerity**. A slot of width $w$ atop a full conduit propagates
+**pressure-wave celerity**. A slot of width $w$ atop a full channel propagates
 gravity waves at $c = \sqrt{gA_{full}/w}$, which is precisely the acoustic
 celerity of the pressurised pipe it stands in for. The width is therefore
 *derived from* a stated celerity rather than posited:
@@ -251,7 +251,7 @@ pipe.
 accounts of §11, reported within channel storage; it is bounded by the
 celerity choice and vanishes as $c \to \infty$.
 
-**Example.** A circular conduit of diameter 1 m has
+**Example.** A circular channel of diameter 1 m has
 $A_{full} = \pi/4 = 0.785398$ m². At the default celerity $c = 50$ m/s the
 slot width is $w_{slot} = 9.80665 \times 0.785398 / 50^2 = 3.081$ mm, and
 each metre of surcharge stores $w_{slot} \times 1\,\text{m} = 0.3923\,\%$
@@ -327,7 +327,7 @@ $0.5 < Fr < 1$, and $\sigma = 0$ for $Fr \ge 1$.
 radius weighted toward the upstream end by the same Froude-based factor
 (computed before the closed-full override below): no weighting at
 $Fr \le 0.5$, fully upstream at $Fr \ge 1$, applied only in positive,
-non-full, downstream-sloping flow. A closed conduit flowing full takes
+non-full, downstream-sloping flow. A closed channel flowing full takes
 $\sigma = 0$: under the slot's celerity model, inertia of the slot wave is not
 a modelled quantity.
 
@@ -541,8 +541,9 @@ linearly. Type 5's head division by $\omega^2$ with the flow then scaled by
 $\omega$ is the affinity-law scaling of the rated curve. The head argument is
 floored at zero; reverse flow is never admitted; an ideal pump must be its
 vertex's only outlet. Types 3 and 5 supply $\partial Q/\partial H$ as the
-negated curve slope (scaled by $\omega$), Type 4 by forward difference; the
-stepwise types supply none.
+negated curve slope divided by the speed setting, Type 4 by forward
+difference; the stepwise types supply none. Pumps contribute no surface
+area to their end vertices.
 
 Startup and shutoff depths latch the pump on and off around its
 characteristic. At a storage inlet vertex — and the virtual wet well a Type 1
@@ -721,7 +722,8 @@ placement shape-checks, replicate/clogging/cap/local-depression modifiers,
 `AUTOMATIC` on-grade/on-sag resolution, and the capture-transfer semantics —
 captured flow moving from bypass vertex to sewer vertex each routing step
 carrying the bypass concentration, surcharge returning as backflow
-apportioned by open-area ratio — are model semantics and are adopted
+apportioned by open-area ratio among standard inlets and by count among
+custom ones — are model semantics and are adopted
 exactly. On-grade capture is computed from the gutter-spread relation at the
 channel's longitudinal slope, as HEC-22 defines it; the method is inherently
 insensitive to backwater, which is a property of the standard, stated rather

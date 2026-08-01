@@ -12,7 +12,7 @@ interface.
 
 A rule is a prioritised conditional — `IF` premises, `THEN` actions, optional
 `ELSE` actions — evaluated against simulation state and acting on link
-controls only: conduit open/closed, pump on/off or speed, orifice, weir, and
+controls only: channel open/closed, pump on/off or speed, orifice, weir, and
 outlet settings in $[0,\,1]$.
 
 **Premises** take the form *object attribute relation value-or-reference*.
@@ -124,6 +124,15 @@ hydrology step; subsurface elevation and moisture report end-of-step values.
 > offset by an interval from the series that produced the reported runoff.
 > This engine reports the forcing actually applied.
 
+**Series extension** — delivering §2.9's per-consumer contract: outfall
+stage, temperature, and rule-driven series actions **hold** their first or
+last value outside the series' range; external inflows and external
+accumulation loads read **zero** beyond it. An inflow series that ends
+before the simulation therefore falls silently to nothing in the
+predecessor; here the engine warns, once per series, when a consumed series
+is exhausted before the run ends — a modelling error that produces a
+plausible result should announce itself.
+
 **Lateral inflows** are assembled at each routing step's start — hydrology
 terms interpolated to the step time; external, sanitary, and RDII inflows
 evaluated at the step-start date — with near-zero inflows truncated, and a
@@ -173,7 +182,8 @@ Five balances are tallied over the run, each reporting the error statistic
 $$\varepsilon = 100\left(1 - \frac{\mathcal{O}}{\mathcal{I}}\right)$$
 
 (sign-mirrored when a ledger has outflow but no inflow, and zero within an
-agreement threshold), with $\mathcal{I}$ the accumulated inflow side and
+agreement threshold: 0.0283 m³ — the predecessor's 1 ft³ — for the
+volumetric ledgers, 0.001 mass units for the constituent pair), with $\mathcal{I}$ the accumulated inflow side and
 $\mathcal{O}$ the outflow side:
 
 - **Surface**: precipitation, run-on, and initial ponded and snow storage,

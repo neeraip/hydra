@@ -54,7 +54,7 @@ with $T_a$ and $T_r$ the 7-day running average temperature and daily range
 extraterrestrial radiation from latitude and day of year — an empirical fit
 whose constants embed its stated units. A dry-only switch suppresses
 land-surface evaporation during rainfall, leaving channel, storage, and
-subsurface evaporation untouched. **Wind speed** (monthly averages or daily
+subsurface evaporation untouched. **Wind speed** (monthly averages — default zero — or daily
 climate values) enters only the rain-melt relation. Days missing from a
 climate record inherit the most recent recorded values.
 
@@ -143,7 +143,8 @@ throughout. All rain infiltrates until cumulative infiltration reaches
 $F_s = K_s(\psi_s + d)\theta_d/(i_a - K_s)$; capacity thereafter is
 $f_p = K_s\big(1 + (\psi_s + d)\theta_d/F\big)$, integrated over the step in
 cumulative form by a bracketed solve (short steps with established $F$ using
-the point rate), floored at $F + K_s\Delta t$ and capped by availability.
+the point rate), floored at $F + K_s\Delta t$ and capped by availability; a zero moisture
+deficit bypasses the solve for infiltration at exactly $K_s$.
 Recovery tracks the deficit of an upper zone of thickness
 $L_u = 4\sqrt{K_s}$ — an empirical fit in inches with $K_s$ in in/hr,
 identified and converted — regenerating at $k_r = \sqrt{K_s}/75$ per hour,
@@ -233,7 +234,7 @@ and shrinks the Green–Ampt deficit accordingly. Gravel and pavement layers
 may clog on cumulative treated volume, and pavement permeability may
 regenerate on a fixed-day cycle by a stated degree. Outflow concentrations
 are volume-based per the predecessor: load reduction is runoff reduction,
-with optional per-pollutant percent removals on drain loads only.
+with optional per-constituent percent removals on drain loads only.
 
 ### 3.5 Integration
 
@@ -326,7 +327,8 @@ lowering a surface's base temperature.
 **Cold content** must be paid before liquid leaves: an antecedent
 temperature index snapping to air temperature during snowfall above
 0.02 in/hr and otherwise relaxing by the user weight rescaled from its
-6-hour basis to the step; below base temperature the deficit accumulates,
+6-hour basis to the step, the index capped at the surface's base melt
+temperature; below base temperature the deficit accumulates,
 capped by the pack's heat capacity (0.007 water-equivalent per °F per
 *foot* of pack); melt debits the deficit before releasing. A **free-water
 reservoir** of the pack's holding capacity must also fill before release —
@@ -359,6 +361,6 @@ correspond to any parcel.
 Monthly $R$ triples must be non-negative and sum to at most 1, with the
 predecessor's 1 % slack accepted. Sampling uses a processing grid no
 coarser than the wet hydrology step or the shortest kernel limb; results
-are held piecewise-constant during routing, with flows below the
-predecessor's threshold zeroed. Whether the convolution is precomputed or
+are held piecewise-constant during routing, with flows below
+$2.832\times10^{-6}$ m³/s (the predecessor's $10^{-4}$ ft³/s) zeroed. Whether the convolution is precomputed or
 evaluated on demand is implementation freedom; its semantics are as stated.

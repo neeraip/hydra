@@ -72,7 +72,7 @@ process switches (`IGNORE_*`, with an object-free subsystem ignored
 automatically), quality and infiltration selections, and the numerical
 options that survive as this engine's own (`MIN_SURFAREA`,
 `MAX_TRIALS`, `HEAD_TOLERANCE`, `VARIABLE_STEP` — whose value is the Courant
-factor of §6.5 — `MINIMUM_STEP`, `SURCHARGE_DEPTH`, …) convert units and
+factor of §6.5 — `MINIMUM_STEP`, `MIN_SLOPE`, …) convert units and
 carry over. Time-step interlocks
 apply at validation as the predecessor's do: a report step below the routing
 step is fatal, the dry hydrology step is raised to the wet, the routing step
@@ -214,7 +214,8 @@ form.
 ### 14.9 Output
 
 **The binary results file** is written to the predecessor's layout: magic
-number 516114522, version 52004, flow-units code, object counts, identifier
+number 516114522, version 52004 (the pinned predecessor's 5.2.4 encoded as
+major·10⁴ + minor·10³ + patch), flow-units code, object counts, identifier
 tables, pollutant unit codes, static property tables, result-variable code
 lists, the reporting clock, fixed-size per-period records (subcatchment,
 node, link, and the fifteen system series, in user units), and the six-int
