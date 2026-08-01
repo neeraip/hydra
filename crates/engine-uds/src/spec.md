@@ -53,11 +53,15 @@ across a vertex pair; outfalls impose external ones.
 is mobilised by runoff, and is then advected through the network subject to
 decay and treatment. Concentration does not influence flow.
 
-**The coupling is a cascade.** The surface balance supplies the network as a
-source term; the network supplies transport as a velocity field. No influence
-runs backwards. This is a structural property of the problem, not of any
-implementation of it, and it is what permits the three to advance on separate
-time scales.
+**The coupling is a cascade, one step at a time.** The surface balance
+supplies the network as a source term; the network supplies transport as a
+velocity field. Two influences do run backwards — a subsurface discharge
+relation may read the receiving vertex's routed stage, and sewer surcharge
+returns to the street through inlets — but both are lagged one step: within
+any single step the influence graph is loop-free. That per-step
+directedness is a structural property of the problem, not of any
+implementation of it, and it is what permits the three processes to advance
+on separate time scales.
 
 ### 1.2 What Is Genuinely Difficult
 

@@ -237,7 +237,10 @@ apply, except that the top width is floored at $w_{slot}$:
 $\tilde W(y) = \max\!\big(W(y),\, w_{slot}\big)$. A closed section's width
 falls continuously to zero at the crown, so the floor produces a continuous
 transition at the depth where $W(y)$ crosses $w_{slot}$, with no additional
-shape parameter. For $y \ge y_{full}$:
+shape parameter. The slot-modified area integrates the floored width, so the
+consistency $\tilde W = \mathrm{d}\tilde A/\mathrm{d}y$ of §5.1 holds
+through the crown band — the addition over the true area is negligible, but
+it keeps the vertex update and its error estimate well-posed. For $y \ge y_{full}$:
 
 $$\tilde W = w_{slot}, \qquad
 \tilde A(y) = A_{full} + w_{slot}\,(y - y_{full}), \qquad
@@ -359,7 +362,9 @@ Within a trial step the scheme iterates to self-consistency:
 
 1. **∥ Channel phase**: every channel computes its flow update from the
    last iterate's heads. This phase is order-independent by construction and
-   is the specification's parallel region.
+   is the specification's parallel region; accumulation of channel flows
+   into vertex sums is performed in a fixed order regardless of thread
+   count, so results are bit-reproducible under any parallelism.
 2. **Structure phase**: pumps, orifices, weirs, outlets, and zero-length
    connectors compute their flows **against the last iterate's vertex state**.
    The phase is order-independent: no structure sees the running accumulation
@@ -392,8 +397,8 @@ implementation liberty.
 2. the **continuity residual** — the discrepancy between the vertex's net
    inflow and its stored-volume rate,
    $\big\lvert \sum Q - A_S\,(H^{(m)} - H^{t})/\Delta t \big\rvert$ — summed
-   over vertices, not exceeding the same relative tolerance against the sum
-   of flow magnitudes.
+   over vertices, not exceeding `continuity_tol` (relative, default
+   $10^{-3}$) against the network's sum of flow magnitudes.
 
 The first criterion certifies the iterates have settled; the second certifies
 that the state they settled at conserves mass. Iteration runs a minimum of 2
@@ -430,9 +435,28 @@ length**, $\Delta t_{cr}$ is the time for a vertex's head to change by a
 quarter of its crown height at its recent rate (outfalls, near-dry and
 above-crown vertices exempt), and the $2\Delta t_{prev}$ term caps growth at
 twice the previously accepted step. Channels with $Fr \le 0.01$, negligible
-flow, or negligible area are exempt from the Courant term. Steps are
+flow, or negligible area are exempt from the Courant term — and so are
+**closed channels flowing full**: their $\sqrt{g\tilde A/\tilde W}$ is the
+slot celerity $c$ itself, and resolving the slot wave is not the point of the
+closure (§6.2) — an un-exempted slot would pin every surcharged network at
+the step floor during exactly the events the engine exists to compute. The
+predecessor exempts full conduits under both of its surcharge methods; here
+the vertex head-rate constraint and the error test still govern surcharge
+accuracy. Steps are
 real-valued — no quantisation — floored at $\Delta t_{floor}$ = 0.5 s, and
 the run opens at the floor.
+
+**Quiescent growth.** Sustained accuracy margin releases the Courant seed:
+after three consecutive accepted steps whose error estimates stayed below a
+quarter of `routing_err_tol`, $\Delta t_{try}$ may exceed the Courant term —
+never $\Delta t_{user}$, $\Delta t_{cr}$, or $2\Delta t_{prev}$ — and the
+first rejection, or any estimate above that margin, reinstates it. The
+scheme is semi-implicit and iterated, so Courant numbers above 1 are
+usable where the dynamics are quiet; this is the mechanism §10.3 offers in
+place of the predecessor's steady-state skip, with the error estimate — not
+a fixed tolerance on frozen state — certifying the quiet. Long dry-weather
+stretches grow to the user step; the first disturbance collapses the step
+through the ordinary rejection path.
 
 **The error test.** These seeds are constraints, not accuracy statements; the
 accuracy statement is a per-step local error estimate. For each non-outfall

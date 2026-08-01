@@ -89,9 +89,11 @@ without changing any result.
 
 ### 10.1 The Cascade and Its Clocks
 
-Per §1.1 the coupling is a cascade: the surface balance supplies the network
-as a source term; the network supplies transport as a velocity field; nothing
-flows backwards. This is what permits three clocks:
+Per §1.1 the coupling is a cascade, one step at a time: the surface balance
+supplies the network as a source term; the network supplies transport as a
+velocity field; the two backward influences — subsurface discharge reading a
+routed stage, inlet backflow — are lagged one step, so within a step the
+influence graph is loop-free. This is what permits three clocks:
 
 - the **hydrology clock**, split into a *wet* step (while precipitation, snow
   cover, surface runoff, or a draining control measure exists anywhere) and a
