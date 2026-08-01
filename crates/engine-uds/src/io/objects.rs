@@ -37,7 +37,6 @@ pub fn parse_network(input: &str) -> (Network, Vec<Diagnostic>) {
 
     let mut net = Network {
         title: s.title.clone(),
-        street_ids: ordered_ids(&s, ObjectKind::Street),
         ..Default::default()
     };
 
@@ -239,19 +238,42 @@ pub fn parse_network(input: &str) -> (Network, Vec<Diagnostic>) {
         }
     }
 
+    // Control measures and dual drainage (§3.4, §7.8) — all references
+    // resolve through the survey registries, so order is free.
+    for (sec, lines) in &s.sections {
+        match sec {
+            Section::LidControls => {
+                net.lid_controls = super::lid::parse_lid_controls(lines, &s, &cv, &mut diagnostics);
+            }
+            Section::LidUsage => {
+                net.lid_usage.extend(super::lid::parse_lid_usage(
+                    lines,
+                    &s,
+                    &cv,
+                    &mut diagnostics,
+                ));
+            }
+            Section::Streets => {
+                net.streets = super::streets::parse_streets(lines, &s, &cv, &mut diagnostics);
+            }
+            Section::Inlets => {
+                net.inlets = super::streets::parse_inlets(lines, &s, &cv, &mut diagnostics);
+            }
+            Section::InletUsage => {
+                let usage = super::streets::parse_inlet_usage(lines, &s, &cv, &mut diagnostics);
+                for u in usage {
+                    match net.inlet_usage.iter_mut().find(|v| v.link == u.link) {
+                        Some(slot) => *slot = u,
+                        None => net.inlet_usage.push(u),
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
     net.options = options;
     (net, diagnostics)
-}
-
-fn ordered_ids(s: &Survey, kind: ObjectKind) -> Vec<String> {
-    let Some(map) = s.ids.get(&kind) else {
-        return Vec::new();
-    };
-    let mut v = vec![String::new(); map.len()];
-    for (id, &i) in map {
-        v[i].clone_from(id);
-    }
-    v
 }
 
 /// Unit conversion at the import boundary.

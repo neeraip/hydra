@@ -8,10 +8,12 @@
 pub mod hydrology;
 pub mod keywords;
 pub mod lex;
+pub mod lid;
 pub mod objects;
 pub mod options;
 pub mod quality;
 pub mod snow_rdii;
+pub mod streets;
 pub mod survey;
 pub mod tables;
 pub mod transects;

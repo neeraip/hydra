@@ -54,8 +54,16 @@ pub struct Network {
     pub rdii: Vec<RdiiInflow>,
     /// Treatment expressions at vertices.
     pub treatments: Vec<Treatment>,
-    /// Street-section identifiers, in registration order.
-    pub street_ids: Vec<String>,
+    /// Control-measure designs, in registration order.
+    pub lid_controls: Vec<LidControl>,
+    /// Control-measure deployments in parcels.
+    pub lid_usage: Vec<LidUsage>,
+    /// Street sections, in registration order.
+    pub streets: Vec<Street>,
+    /// Inlet designs, in registration order.
+    pub inlets: Vec<InletDesign>,
+    /// Inlet placements on street channels.
+    pub inlet_usage: Vec<InletUsage>,
 }
 
 /// A conveyance vertex (§2.6).
@@ -1098,4 +1106,321 @@ pub enum TreatmentKind {
     Removal,
     /// The resulting concentration.
     Concentration,
+}
+
+/// A control-measure design (§3.4), assembled from its layer lines. Depths
+/// are m, rates m/s; the underdrain coefficient and exponent stay as
+/// written (§14.6).
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct LidControl {
+    /// Identifier as written.
+    pub id: String,
+    /// The unit type.
+    pub kind: Option<LidKind>,
+    /// Surface layer.
+    pub surface: Option<LidSurface>,
+    /// Soil layer.
+    pub soil: Option<LidSoil>,
+    /// Pavement layer.
+    pub pavement: Option<LidPavement>,
+    /// Storage layer.
+    pub storage: Option<LidStorage>,
+    /// Underdrain.
+    pub drain: Option<LidDrain>,
+    /// Green-roof drainage mat.
+    pub drain_mat: Option<LidDrainMat>,
+    /// Per-constituent drain-load removal fractions.
+    pub removals: Vec<(usize, f64)>,
+}
+
+/// The eight unit types (§3.4).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LidKind {
+    /// Bio-retention cell.
+    BioRetention,
+    /// Rain garden.
+    RainGarden,
+    /// Green roof.
+    GreenRoof,
+    /// Infiltration trench.
+    InfiltrationTrench,
+    /// Permeable pavement.
+    PermeablePavement,
+    /// Rain barrel.
+    RainBarrel,
+    /// Rooftop disconnection.
+    RooftopDisconnection,
+    /// Vegetative swale.
+    VegetativeSwale,
+}
+
+/// Surface layer parameters.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LidSurface {
+    /// Berm height (m).
+    pub thickness: f64,
+    /// Void fraction (1 − the file's vegetative volume fraction, as the
+    /// predecessor stores it).
+    pub void_frac: f64,
+    /// Manning roughness.
+    pub roughness: f64,
+    /// Surface slope (fraction).
+    pub slope: f64,
+    /// Swale side slope (run per rise).
+    pub side_slope: f64,
+}
+
+/// Soil layer parameters.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LidSoil {
+    /// Thickness (m).
+    pub thickness: f64,
+    /// Porosity.
+    pub porosity: f64,
+    /// Field capacity.
+    pub field_capacity: f64,
+    /// Wilting point.
+    pub wilting_point: f64,
+    /// Saturated conductivity (m/s).
+    pub k_sat: f64,
+    /// Conductivity slope.
+    pub k_slope: f64,
+    /// Suction head (m).
+    pub suction: f64,
+}
+
+/// Pavement layer parameters.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LidPavement {
+    /// Thickness (m).
+    pub thickness: f64,
+    /// Void fraction (the file's void ratio, converted x/(x+1)).
+    pub void_frac: f64,
+    /// Impervious paver fraction.
+    pub imperv_frac: f64,
+    /// Permeability (m/s).
+    pub k_sat: f64,
+    /// Clogging factor (void volumes of treated inflow); 0 = none.
+    pub clog_factor: f64,
+    /// Regeneration interval (days); 0 = none.
+    pub regen_days: f64,
+    /// Regeneration degree in [0, 1].
+    pub regen_degree: f64,
+}
+
+/// Storage layer parameters.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LidStorage {
+    /// Thickness (m).
+    pub thickness: f64,
+    /// Void fraction (ratio converted x/(x+1)).
+    pub void_frac: f64,
+    /// Native-soil exfiltration rate (m/s).
+    pub k_sat: f64,
+    /// Clogging factor; 0 = none.
+    pub clog_factor: f64,
+    /// Rain barrels: covered against direct rainfall.
+    pub covered: bool,
+}
+
+/// Underdrain parameters. Coefficient and exponent stay as written: the
+/// drain relation is unit-dependent (§14.6).
+#[derive(Debug, Clone, PartialEq)]
+pub struct LidDrain {
+    /// Coefficient, file units.
+    pub coeff: f64,
+    /// Exponent.
+    pub exponent: f64,
+    /// Offset height (m).
+    pub offset: f64,
+    /// Drain delay (s; rain barrels).
+    pub delay: f64,
+    /// Open-threshold head (m); 0 = none.
+    pub h_open: f64,
+    /// Close-threshold head (m); 0 = none.
+    pub h_close: f64,
+    /// Optional flow-multiplier curve against head.
+    pub curve: Option<usize>,
+}
+
+/// Green-roof drainage mat.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LidDrainMat {
+    /// Thickness (m).
+    pub thickness: f64,
+    /// Void fraction.
+    pub void_frac: f64,
+    /// Manning roughness.
+    pub roughness: f64,
+}
+
+/// A control-measure deployment (§3.4).
+#[derive(Debug, Clone, PartialEq)]
+pub struct LidUsage {
+    /// The hosting parcel.
+    pub parcel: usize,
+    /// The design deployed.
+    pub control: usize,
+    /// Replicate units.
+    pub count: u32,
+    /// Area per unit (m²).
+    pub area: f64,
+    /// Surface width per unit (m).
+    pub width: f64,
+    /// Initial saturation (fraction).
+    pub init_saturation: f64,
+    /// Fraction of the parcel's impervious runoff captured.
+    pub from_impervious: f64,
+    /// Fraction of the parcel's pervious runoff captured.
+    pub from_pervious: f64,
+    /// Surface outflow returns to the parcel's pervious sub-area rather
+    /// than leaving the parcel.
+    pub to_pervious: bool,
+    /// Detailed per-unit report file, as written; the caller owns I/O.
+    pub report_file: Option<String>,
+    /// Drain routing override: a parcel or vertex.
+    pub drain_to: Option<ParcelOutlet>,
+}
+
+/// A street cross-section (§7.8), compiled to a transect at validation.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct Street {
+    /// Identifier as written.
+    pub id: String,
+    /// Curb-to-crown width (m).
+    pub crown_width: f64,
+    /// Curb height (m).
+    pub curb_height: f64,
+    /// Roadway cross slope (fraction).
+    pub cross_slope: f64,
+    /// Roadway Manning roughness.
+    pub roughness: f64,
+    /// Depressed-gutter height (m).
+    pub gutter_depression: f64,
+    /// Depressed-gutter width (m).
+    pub gutter_width: f64,
+    /// One- or two-sided (default two).
+    pub sides: u8,
+    /// Backing width (m).
+    pub backing_width: f64,
+    /// Backing slope (fraction).
+    pub backing_slope: f64,
+    /// Backing Manning roughness.
+    pub backing_roughness: f64,
+}
+
+/// An inlet design (§7.8): a combination inlet is one design carrying both
+/// a grate and a curb opening.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct InletDesign {
+    /// Identifier as written.
+    pub id: String,
+    /// Grate opening.
+    pub grate: Option<GrateInlet>,
+    /// Curb opening.
+    pub curb: Option<CurbInlet>,
+    /// Slotted drain.
+    pub slotted: Option<SlottedInlet>,
+    /// Custom capture/diversion curve.
+    pub custom_curve: Option<usize>,
+    /// The grate is a drop inlet.
+    pub drop_grate: bool,
+    /// The curb opening is a drop inlet.
+    pub drop_curb: bool,
+}
+
+/// A grate opening.
+#[derive(Debug, Clone, PartialEq)]
+pub struct GrateInlet {
+    /// Length (m).
+    pub length: f64,
+    /// Width (m).
+    pub width: f64,
+    /// The grate family.
+    pub grate: GrateKind,
+    /// Generic grates: open-area ratio.
+    pub area_ratio: f64,
+    /// Generic grates: splash-over velocity (m/s); 0 = none.
+    pub splash_velocity: f64,
+}
+
+/// The seven standard grate families plus the generic (§7.8).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(missing_docs)] // the names are FHWA designations
+pub enum GrateKind {
+    PBar50,
+    PBar50x100,
+    PBar30,
+    CurvedVane,
+    TiltBar45,
+    TiltBar30,
+    Reticuline,
+    Generic,
+}
+
+/// A curb opening.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CurbInlet {
+    /// Length (m).
+    pub length: f64,
+    /// Opening height (m).
+    pub height: f64,
+    /// Throat geometry.
+    pub throat: ThroatAngle,
+}
+
+/// Curb-opening throat geometries.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ThroatAngle {
+    /// Horizontal throat.
+    Horizontal,
+    /// Inclined throat.
+    Inclined,
+    /// Vertical throat (the default).
+    Vertical,
+}
+
+/// A slotted drain.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SlottedInlet {
+    /// Length (m).
+    pub length: f64,
+    /// Slot width (m).
+    pub width: f64,
+}
+
+/// An inlet placement on a street channel (§7.8).
+#[derive(Debug, Clone, PartialEq)]
+pub struct InletUsage {
+    /// The street channel carrying the inlet.
+    pub link: usize,
+    /// The design.
+    pub design: usize,
+    /// The sewer vertex receiving captured flow.
+    pub capture_vertex: usize,
+    /// Replicate count.
+    pub count: u32,
+    /// Clogged percentage.
+    pub pct_clogged: f64,
+    /// Per-inlet capture cap (m³/s); 0 = none.
+    pub flow_limit: f64,
+    /// Local gutter depression (m).
+    pub local_depression: f64,
+    /// Local depression width (m).
+    pub local_width: f64,
+    /// Placement resolution.
+    pub placement: InletPlacement,
+}
+
+/// Inlet placement (§7.8): automatic resolves by the bypass vertex's
+/// topology at validation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum InletPlacement {
+    /// Resolve at validation.
+    #[default]
+    Automatic,
+    /// Flow-driven capture.
+    OnGrade,
+    /// Depth-driven capture.
+    OnSag,
 }
