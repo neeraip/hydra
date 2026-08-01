@@ -13,7 +13,7 @@
 //! and outfalls; the §7 structures splice in next.
 
 use super::section::Section;
-use super::GRAVITY;
+use super::{tables, GRAVITY};
 use crate::io::options::NormalFlowCriteria;
 use crate::model::{
     CurveKind, LinkKind, Network, Offset, OrificeOrientation, OutfallStage, OutletHeadBasis,
@@ -272,6 +272,9 @@ enum StructKind {
         end_contractions: f64,
         can_surcharge: bool,
         coeff_curve: Option<Vec<(f64, f64)>>,
+        road_width: f64,
+        /// Paved or gravel, when the FHWA coefficient tables apply.
+        road_paved: Option<bool>,
     },
     Outlet {
         rating: OutRating,
@@ -413,6 +416,8 @@ struct Chan {
     /// Seepage rate through the bed (m/s).
     seepage: f64,
     friction: Friction,
+    /// FHWA culvert inlet code; 0 = not a culvert (§7.6).
+    culvert: usize,
     geom: SlotGeom,
 }
 
@@ -615,11 +620,6 @@ impl Router {
                         continue;
                     }
 
-                    if xs.culvert_code != 0 {
-                        return Err(RouterRefusal::Unsupported(
-                            "culvert inlet control arrives with §7.6",
-                        ));
-                    }
                     let built = crate::io::validate::build_for_link(net, li, len)
                         .ok_or(RouterRefusal::Geometry(format!(
                             "{}: no cross-section",
@@ -698,6 +698,7 @@ impl Router {
                         flap_gate: *flap_gate,
                         seepage: *seepage_rate,
                         friction,
+                        culvert: xs.culvert_code as usize,
                         geom: SlotGeom::build(sec, celerity),
                     });
                 }
@@ -808,11 +809,10 @@ impl Router {
                     end_contractions,
                     can_surcharge,
                     coeff_curve,
+                    road_width,
+                    road_surface,
                     ..
                 } => {
-                    if *form == WeirForm::Roadway {
-                        return Err(RouterRefusal::Unsupported("roadway weirs arrive with §7.6"));
-                    }
                     let sec = build_struct_section(net, li, len, &link.id)?;
                     StructKind::Weir {
                         form: *form,
@@ -822,6 +822,12 @@ impl Router {
                         end_contractions: *end_contractions,
                         can_surcharge: *can_surcharge,
                         coeff_curve: coeff_curve.map(|c| net.curves[c].points.clone()),
+                        road_width: *road_width,
+                        road_paved: match road_surface {
+                            crate::model::RoadSurface::Paved => Some(true),
+                            crate::model::RoadSurface::Gravel => Some(false),
+                            crate::model::RoadSurface::Unspecified => None,
+                        },
                         sec,
                     }
                 }
@@ -1398,19 +1404,27 @@ impl Router {
                 end_contractions,
                 can_surcharge,
                 coeff_curve,
-            } => self.weir_flow(
-                st,
-                *form,
-                *cd1,
-                *cd2,
-                sec,
-                *flap,
-                *end_contractions,
-                *can_surcharge,
-                coeff_curve.as_deref(),
-                h1v,
-                h2v,
-            ),
+                road_width,
+                road_paved,
+            } => {
+                if *form == WeirForm::Roadway {
+                    self.roadway_flow(st, *cd1, sec, *flap, *road_width, *road_paved, h1v, h2v)
+                } else {
+                    self.weir_flow(
+                        st,
+                        *form,
+                        *cd1,
+                        *cd2,
+                        sec,
+                        *flap,
+                        *end_contractions,
+                        *can_surcharge,
+                        coeff_curve.as_deref(),
+                        h1v,
+                        h2v,
+                    )
+                }
+            }
             StructKind::Outlet {
                 rating,
                 by_head_difference,
@@ -1576,6 +1590,39 @@ impl Router {
             s2 = 0.0;
         }
         (q, s1, s2)
+    }
+
+    /// §7.6: the roadway weir — FHWA head-dependent coefficient when the
+    /// road width and surface are given, the user's constant otherwise;
+    /// submergence lives in the tables' factors, not Villemonte; never
+    /// surcharges; contributes no surface area (an embankment stores
+    /// nothing).
+    #[allow(clippy::too_many_arguments)]
+    fn roadway_flow(
+        &self,
+        st: &Structure,
+        cd1: f64,
+        sec: &Section,
+        flap: bool,
+        road_width: f64,
+        road_paved: Option<bool>,
+        h1v: f64,
+        h2v: f64,
+    ) -> (f64, f64, f64) {
+        let dir = if h1v > h2v { 1.0 } else { -1.0 };
+        let (h1, h2) = if dir > 0.0 { (h1v, h2v) } else { (h2v, h1v) };
+        let h_road = self.verts[st.from].invert + st.off1;
+        let h_up = h1 - h_road;
+        if h_up <= DRY || (flap && dir < 0.0) {
+            return (0.0, 0.0, 0.0);
+        }
+        let cd = match road_paved {
+            Some(paved) if road_width > 0.0 => {
+                roadway_cd(h_up, (h2 - h_road).max(0.0), road_width, paved)
+            }
+            _ => cd1,
+        };
+        (dir * cd * sec.w_max().1 * h_up.powf(1.5), 0.0, 0.0)
     }
 
     /// §7.3: the weir families with end contractions, surcharge to the
@@ -1861,8 +1908,11 @@ impl Router {
         let denom = 1.0 + dq_friction + dq_losses;
         let mut q_new = (q_old - dq_pressure + dq_in1 + dq_in2 + dq_seep) / denom;
 
-        // Normal-flow limit (§6.6).
-        if q_new > 0.0 && y1 < y_full && matches!(class, FlowClass::Subcritical) {
+        // Culvert inlet control caps positive, non-full flow (§7.6);
+        // otherwise the normal-flow limit applies (§6.6).
+        if q_new > 0.0 && !is_full && c.culvert > 0 && c.culvert < tables::CULVERT_PARAMS.len() {
+            q_new = culvert_inlet_cap(c, q_new / c.barrels, y1) * c.barrels;
+        } else if q_new > 0.0 && y1 < y_full && matches!(class, FlowClass::Subcritical) {
             q_new = self.normal_flow_limit(ci, q_new, y1, y2, a1, r1, fr);
         }
 
@@ -2090,6 +2140,145 @@ impl Router {
         }
         q
     }
+}
+
+/// Exact feet-to-metres, and the HDS-5 dimensionless-group scale: the
+/// published coefficient forms are English-unit, and the group
+/// Q/(A·√(g·D)) is unit-free, so evaluating with `AD = A_full·√(D·0.3048)`
+/// reproduces the English-unit group exactly (g_SI/g_E = 0.3048).
+const FT: f64 = 0.3048;
+
+/// §7.6 culvert inlet control: the smaller of the dynamic and
+/// inlet-control flows governs. `q0` and the result are per barrel; `y`
+/// is the inlet depth above the culvert invert.
+fn culvert_inlet_cap(c: &Chan, q0: f64, y: f64) -> f64 {
+    let (form, k, m, cc, yy) = tables::CULVERT_PARAMS[c.culvert];
+    let y_full = c.geom.sec.y_full();
+    let ad = c.geom.sec.a_full() * (y_full * FT).sqrt();
+    // Slope correction: −0.7·S for mitered inlets (codes 5, 37, 46) at
+    // its published magnitude — the predecessor enters −7.0 (§7.6
+    // CORRESPONDENCE) — and +0.5·S otherwise.
+    let scf = match c.culvert {
+        5 | 37 | 46 => -0.7 * c.slope,
+        _ => 0.5 * c.slope,
+    };
+    // Submerged above the FHWA Q/AD > 4 criterion; unsubmerged below
+    // 95 % full; a linear transition between.
+    let y2 = y_full * (16.0 * cc + yy - scf);
+    let q = if y >= y2 {
+        culvert_submerged(y, y_full, ad, cc, yy, scf)
+    } else {
+        let y1 = 0.95 * y_full;
+        if y <= y1 {
+            culvert_unsubmerged(c, y, y_full, ad, form, k, m, scf)
+        } else {
+            let qa = culvert_unsubmerged(c, y1, y_full, ad, form, k, m, scf);
+            let qb = culvert_submerged(y2, y_full, ad, cc, yy, scf);
+            qa + (qb - qa) * (y - y1) / (y2 - y1)
+        }
+    };
+    q0.min(q)
+}
+
+fn culvert_submerged(y: f64, y_full: f64, ad: f64, cc: f64, yy: f64, scf: f64) -> f64 {
+    let arg = (y / y_full - yy + scf) / cc;
+    if arg <= 0.0 {
+        return f64::MAX;
+    }
+    arg.sqrt() * ad
+}
+
+#[allow(clippy::too_many_arguments)]
+fn culvert_unsubmerged(
+    c: &Chan,
+    y: f64,
+    y_full: f64,
+    ad: f64,
+    form: f64,
+    k: f64,
+    m: f64,
+    scf: f64,
+) -> f64 {
+    if form >= 2.0 {
+        // Form 2: the direct power law.
+        return ad * (y / y_full / k).powf(1.0 / m);
+    }
+    // Form 1: solve the critical-energy equation for critical depth on
+    // [0.01·y, y] by bisection on its bracketed residual; an unbracketed
+    // residual falls back to the endpoint evaluation, stated rather than
+    // silently seeded (§5.7 discipline).
+    let h_plus = y / y_full + scf;
+    let residual = |yc: f64| -> (f64, f64) {
+        let ac = c.geom.sec.area(yc.min(c.geom.sec.y_full()));
+        let wc = c.geom.sec.top_width(yc.min(c.geom.sec.y_full())).max(1e-9);
+        let yh = ac / wc;
+        let qc = ac * (GRAVITY * yh).sqrt();
+        let r = h_plus - yc / y_full - yh / (2.0 * y_full) - k * (qc / ad).powf(m);
+        (r, qc)
+    };
+    let (mut lo, mut hi) = (0.01 * y, y);
+    let (r_lo, q_lo) = residual(lo);
+    let (r_hi, q_hi) = residual(hi);
+    if r_lo * r_hi > 0.0 {
+        return if r_lo.abs() < r_hi.abs() { q_lo } else { q_hi };
+    }
+    let mut q = q_hi;
+    for _ in 0..100 {
+        let mid = 0.5 * (lo + hi);
+        let (r, qc) = residual(mid);
+        q = qc;
+        if r * r_lo > 0.0 {
+            lo = mid;
+        } else {
+            hi = mid;
+        }
+    }
+    q
+}
+
+/// §7.6 roadway-weir coefficient: the FHWA head-dependent value from the
+/// digitised English-unit tables, converted at the boundary, with
+/// submergence factors floored at their published minima by the tables'
+/// own clamped ends.
+fn roadway_cd(h_up: f64, h_down: f64, road_width: f64, paved: bool) -> f64 {
+    let lookup = |t: &[(f64, f64)], x: f64| -> f64 {
+        if x <= t[0].0 {
+            return t[0].1;
+        }
+        for w in t.windows(2) {
+            if x <= w[1].0 {
+                let f = (x - w[0].0) / (w[1].0 - w[0].0);
+                return w[0].1 + f * (w[1].1 - w[0].1);
+            }
+        }
+        t[t.len() - 1].1
+    };
+    let hl = h_up / road_width;
+    let cr_english = if hl <= 0.15 {
+        // The low-head table's abscissa is head in feet.
+        let h_ft = h_up / FT;
+        if paved {
+            lookup(&tables::ROADWAY_CR_LOW_PAVED, h_ft)
+        } else {
+            lookup(&tables::ROADWAY_CR_LOW_GRAVEL, h_ft)
+        }
+    } else if paved {
+        lookup(&tables::ROADWAY_CR_HIGH_PAVED, hl)
+    } else {
+        lookup(&tables::ROADWAY_CR_HIGH_GRAVEL, hl)
+    };
+    let kt = if h_down > 0.0 {
+        let ratio = h_down / h_up;
+        if paved {
+            lookup(&tables::ROADWAY_KT_PAVED, ratio)
+        } else {
+            lookup(&tables::ROADWAY_KT_GRAVEL, ratio)
+        }
+    } else {
+        1.0
+    };
+    // ft^½/s to m^½/s.
+    cr_english * kt * FT.sqrt()
 }
 
 /// Build a regulator's opening section.
@@ -2732,5 +2921,124 @@ C1  0  0  0  NO  36
             r.q[0],
             r.q[1]
         );
+    }
+}
+
+#[cfg(test)]
+mod culvert_and_roadway_tests {
+    use super::tests::{build, inflow_at};
+    use super::*;
+
+    fn culvert_net(code: u32) -> String {
+        format!(
+            "\
+[OPTIONS]
+FLOW_UNITS    CMS
+ROUTING_STEP  5
+
+[JUNCTIONS]
+J1  100.5  10
+
+[OUTFALLS]
+O1  100.0  FREE
+
+[CONDUITS]
+C1  J1  O1  50  0.013  0  0
+
+[XSECTIONS]
+C1  CIRCULAR  0.6  0  0  0  1  {code}
+"
+        )
+    }
+
+    #[test]
+    fn culvert_inlet_control_sets_the_headwater() {
+        // Without a culvert code the short steep barrel passes the flow
+        // at modest headwater; with code 1 (square-edge concrete) inlet
+        // control governs and the headwater rises to the submerged
+        // HDS-5 rating.
+        let (_, mut r) = build(&culvert_net(0));
+        let q_in = 0.9;
+        r.advance(1800.0, &inflow_at(0, q_in));
+        let y_plain = r.y[0];
+
+        let (_, mut r) = build(&culvert_net(1));
+        r.advance(1800.0, &inflow_at(0, q_in));
+        let y_culvert = r.y[0];
+        assert!(
+            y_culvert > y_plain + 0.05,
+            "culvert {y_culvert} vs plain {y_plain}"
+        );
+        // The submerged form inverted for the steady flow:
+        // y = D·(Y − scf + C·(Q/AD)²).
+        let (_, _, _, cc, yy) = tables::CULVERT_PARAMS[1];
+        let d = 0.6;
+        let a = std::f64::consts::PI * d * d / 4.0;
+        let ad = a * (d * FT).sqrt();
+        let slope = 0.5_f64 / (50.0_f64.powi(2) - 0.25).sqrt();
+        let scf = 0.5 * slope;
+        let y_expect = d * (yy - scf + cc * (q_in / ad).powi(2));
+        assert!(
+            (y_culvert - y_expect).abs() < 0.05 * y_expect,
+            "headwater {y_culvert} vs HDS-5 {y_expect}"
+        );
+    }
+
+    #[test]
+    fn mitered_inlets_use_the_published_slope_correction() {
+        // Code 5 is the mitered corrugated-metal inlet: the correction is
+        // −0.7·S at its published magnitude, not the predecessor's −7.0.
+        let (_, mut r) = build(&culvert_net(5));
+        let q_in = 0.9;
+        r.advance(1800.0, &inflow_at(0, q_in));
+        let (_, _, _, cc, yy) = tables::CULVERT_PARAMS[5];
+        let d = 0.6;
+        let a = std::f64::consts::PI * d * d / 4.0;
+        let ad = a * (d * FT).sqrt();
+        let slope = 0.5_f64 / (50.0_f64.powi(2) - 0.25).sqrt();
+        let scf = -0.7 * slope;
+        let y_expect = d * (yy - scf + cc * (q_in / ad).powi(2));
+        assert!(
+            (r.y[0] - y_expect).abs() < 0.05 * y_expect,
+            "headwater {} vs HDS-5 {y_expect}",
+            r.y[0]
+        );
+    }
+
+    #[test]
+    fn roadway_weir_uses_the_fhwa_coefficient() {
+        let inp = "\
+[OPTIONS]
+FLOW_UNITS    CMS
+ROUTING_STEP  5
+
+[JUNCTIONS]
+J1  100.0  4
+
+[OUTFALLS]
+O1  99.0  FREE
+
+[WEIRS]
+W1  J1  O1  ROADWAY  0.5  1.83  NO  0  0  NO  10  PAVED
+
+[XSECTIONS]
+W1  RECT_OPEN  1.0  8  0  0
+";
+        let (_, mut r) = build(inp);
+        let q_in = 0.6;
+        r.advance(3600.0, &inflow_at(0, q_in));
+        // Steady: Q = Cd(h)·L·h^1.5 with the FHWA paved coefficient at
+        // the settled head over the 0.5 m road crest.
+        let h = r.y[0] - 0.5;
+        assert!(h > 0.0);
+        let cd = roadway_cd(h, 0.0, 10.0, true);
+        let q_check = cd * 8.0 * h.powf(1.5);
+        assert!(
+            (q_check - q_in).abs() < 0.02 * q_in,
+            "rating {q_check} vs inflow {q_in} at head {h}"
+        );
+        // The coefficient sits in the converted FHWA band
+        // (≈ 2.85–3.05 ft-units → ≈ 1.57–1.69 SI).
+        assert!((1.5..1.75).contains(&cd), "cd {cd}");
     }
 }
