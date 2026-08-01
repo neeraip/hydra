@@ -13,3 +13,4 @@ pub mod options;
 pub mod quality;
 pub mod survey;
 pub mod tables;
+pub mod transects;

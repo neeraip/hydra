@@ -42,8 +42,10 @@ pub struct Network {
     pub dry_weather: Vec<DryWeatherInflow>,
     /// Parcels, in registration order.
     pub parcels: Vec<Parcel>,
-    /// Transect identifiers, in registration order.
-    pub transect_ids: Vec<String>,
+    /// Transects, in registration order.
+    pub transects: Vec<Transect>,
+    /// Aquifers, in registration order.
+    pub aquifers: Vec<Aquifer>,
     /// Street-section identifiers, in registration order.
     pub street_ids: Vec<String>,
 }
@@ -633,6 +635,8 @@ pub struct Parcel {
     pub subareas: Option<Subareas>,
     /// Infiltration parameters, once `[INFILTRATION]` supplies them.
     pub infiltration: Option<Infiltration>,
+    /// Groundwater connection, once `[GROUNDWATER]` supplies one.
+    pub groundwater: Option<GroundwaterLink>,
 }
 
 /// A parcel's discharge target.
@@ -875,4 +879,99 @@ pub struct DryWeatherInflow {
     pub average: f64,
     /// The four pattern slots (monthly, daily, hourly, weekend), as given.
     pub patterns: [Option<usize>; 4],
+}
+
+/// A surveyed transect (§5.6). Roughness is a property of the transect —
+/// the reader's rolling NC state resolves at parse, a transect is complete
+/// when its record ends, and the meander factor belongs to this transect
+/// alone (the predecessor's shared-state defects, closed by construction).
+#[derive(Debug, Clone, PartialEq)]
+pub struct Transect {
+    /// Identifier as written.
+    pub id: String,
+    /// Left-overbank Manning roughness.
+    pub n_left: f64,
+    /// Right-overbank Manning roughness.
+    pub n_right: f64,
+    /// Main-channel Manning roughness.
+    pub n_channel: f64,
+    /// Left-overbank station (m, multiplier applied).
+    pub x_left: f64,
+    /// Right-overbank station (m, multiplier applied).
+    pub x_right: f64,
+    /// Meander modifier: valley-to-channel length ratio; 1 = none.
+    pub meander_factor: f64,
+    /// Survey points as (elevation, station), both m, multiplier and
+    /// offset applied.
+    pub stations: Vec<(f64, f64)>,
+}
+
+/// An aquifer parameter set (§4.1), SI except the unit-dependent lateral
+/// coefficients, which live on the groundwater link.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Aquifer {
+    /// Identifier as written.
+    pub id: String,
+    /// Porosity (fraction).
+    pub porosity: f64,
+    /// Wilting point (fraction).
+    pub wilting_point: f64,
+    /// Field capacity (fraction).
+    pub field_capacity: f64,
+    /// Saturated conductivity (m/s).
+    pub conductivity: f64,
+    /// Conductivity slope (dimensionless HCO).
+    pub conductivity_slope: f64,
+    /// Tension slope (m).
+    pub tension_slope: f64,
+    /// Upper-zone fraction of potential evapotranspiration.
+    pub upper_evap_frac: f64,
+    /// Lower-zone evapotranspiration cutoff depth (m).
+    pub lower_evap_depth: f64,
+    /// Deep-percolation coefficient (m/s).
+    pub lower_loss_coeff: f64,
+    /// Aquifer bottom elevation (m).
+    pub bottom_elev: f64,
+    /// Initial water-table elevation (m).
+    pub water_table_elev: f64,
+    /// Initial upper-zone moisture (fraction).
+    pub upper_moisture: f64,
+    /// Monthly pattern on the upper evapotranspiration fraction.
+    pub evap_pattern: Option<usize>,
+}
+
+/// A parcel's groundwater connection (§4.1).
+#[derive(Debug, Clone, PartialEq)]
+pub struct GroundwaterLink {
+    /// The aquifer parameter set.
+    pub aquifer: usize,
+    /// The receiving vertex.
+    pub vertex: usize,
+    /// Ground surface elevation over the aquifer (m).
+    pub surface_elev: f64,
+    /// Lateral-relation coefficient A1 (user units, §14.6).
+    pub a1: f64,
+    /// Exponent B1.
+    pub b1: f64,
+    /// Coefficient A2 (user units).
+    pub a2: f64,
+    /// Exponent B2.
+    pub b2: f64,
+    /// Interaction coefficient A3 (user units).
+    pub a3: f64,
+    /// Fixed surface-water depth (m); 0 = use the live routed stage.
+    pub fixed_surface_depth: f64,
+    /// Threshold elevation override (m); `None` = the vertex invert.
+    pub threshold_elev: Option<f64>,
+    /// Aquifer bottom override (m).
+    pub bottom_elev: Option<f64>,
+    /// Initial water-table override (m).
+    pub water_table_elev: Option<f64>,
+    /// Initial moisture override (fraction).
+    pub upper_moisture: Option<f64>,
+    /// Custom lateral-flow expression, added to the power relation
+    /// (§4.1); kept as written, evaluated per §14.6.
+    pub lateral_expression: Option<String>,
+    /// Custom deep-percolation expression, replacing the linear reservoir.
+    pub deep_expression: Option<String>,
 }

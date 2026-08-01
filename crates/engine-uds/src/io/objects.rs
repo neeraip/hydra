@@ -37,7 +37,6 @@ pub fn parse_network(input: &str) -> (Network, Vec<Diagnostic>) {
 
     let mut net = Network {
         title: s.title.clone(),
-        transect_ids: ordered_ids(&s, ObjectKind::Transect),
         street_ids: ordered_ids(&s, ObjectKind::Street),
         ..Default::default()
     };
@@ -77,8 +76,28 @@ pub fn parse_network(input: &str) -> (Network, Vec<Diagnostic>) {
         }
     }
     for (sec, lines) in &s.sections {
+        if *sec == Section::Aquifers {
+            net.aquifers = super::hydrology::parse_aquifers(lines, &s, &cv, &mut diagnostics);
+        }
+        if *sec == Section::Transects {
+            net.transects = super::transects::parse_transects(lines, &cv, &mut diagnostics);
+        }
+    }
+    for (sec, lines) in &s.sections {
         let ids = s.ids.get(&ObjectKind::Parcel);
         match sec {
+            Section::Groundwater => {
+                super::hydrology::parse_groundwater(
+                    lines,
+                    &s,
+                    &mut net.parcels,
+                    &cv,
+                    &mut diagnostics,
+                );
+            }
+            Section::Gwf => {
+                super::hydrology::parse_gwf(lines, &s, &mut net.parcels, &mut diagnostics);
+            }
             Section::Subareas => {
                 if let Some(ids) = ids {
                     super::hydrology::parse_subareas(

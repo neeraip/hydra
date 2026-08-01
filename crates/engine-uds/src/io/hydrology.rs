@@ -192,6 +192,7 @@ pub(crate) fn parse_parcels(
             init_buildup: Vec::new(),
             subareas: None,
             infiltration: None,
+            groundwater: None,
         });
     }
     parcels
@@ -371,6 +372,199 @@ pub(crate) fn parse_infiltration(
     }
 }
 
+/// Parse `[AQUIFERS]`.
+pub(crate) fn parse_aquifers(
+    lines: &[TokenLine],
+    s: &Survey,
+    cv: &UnitConverter,
+    diags: &mut Vec<Diagnostic>,
+) -> Vec<crate::model::Aquifer> {
+    let mut out = Vec::new();
+    for line in lines {
+        let t = &line.tokens;
+        let l = line.line;
+        if t.len() < 13 {
+            diags.push(err(l, DiagnosticKind::MissingItems));
+            continue;
+        }
+        let mut x = [0.0; 12];
+        let mut ok = true;
+        for (i, xi) in x.iter_mut().enumerate() {
+            let Ok(v) = t[1 + i].parse::<f64>() else {
+                diags.push(bad(l, &t[1 + i]));
+                ok = false;
+                break;
+            };
+            *xi = v;
+        }
+        if !ok {
+            continue;
+        }
+        let evap_pattern = match t.get(13) {
+            Some(tok) => {
+                let Some(&p) = s.ids.get(&ObjectKind::TimePattern).and_then(|m| m.get(tok)) else {
+                    diags.push(err(
+                        l,
+                        DiagnosticKind::UnresolvedReference { id: tok.clone() },
+                    ));
+                    continue;
+                };
+                Some(p)
+            }
+            None => None,
+        };
+        out.push(crate::model::Aquifer {
+            id: t[0].clone(),
+            porosity: x[0],
+            wilting_point: x[1],
+            field_capacity: x[2],
+            conductivity: x[3] * cv.conductivity,
+            conductivity_slope: x[4],
+            tension_slope: x[5] * cv.len,
+            upper_evap_frac: x[6],
+            lower_evap_depth: x[7] * cv.len,
+            lower_loss_coeff: x[8] * cv.conductivity,
+            bottom_elev: x[9] * cv.len,
+            water_table_elev: x[10] * cv.len,
+            upper_moisture: x[11],
+            evap_pattern,
+        });
+    }
+    out
+}
+
+/// Fill `[GROUNDWATER]` connections into their parcels.
+pub(crate) fn parse_groundwater(
+    lines: &[TokenLine],
+    s: &Survey,
+    parcels: &mut [Parcel],
+    cv: &UnitConverter,
+    diags: &mut Vec<Diagnostic>,
+) {
+    for line in lines {
+        let t = &line.tokens;
+        let l = line.line;
+        if t.len() < 11 {
+            diags.push(err(l, DiagnosticKind::MissingItems));
+            continue;
+        }
+        let Some(&pc) = s.ids.get(&ObjectKind::Parcel).and_then(|m| m.get(&t[0])) else {
+            diags.push(err(
+                l,
+                DiagnosticKind::UnresolvedReference { id: t[0].clone() },
+            ));
+            continue;
+        };
+        let Some(&aq) = s.ids.get(&ObjectKind::Aquifer).and_then(|m| m.get(&t[1])) else {
+            diags.push(err(
+                l,
+                DiagnosticKind::UnresolvedReference { id: t[1].clone() },
+            ));
+            continue;
+        };
+        let Some(&vx) = s.ids.get(&ObjectKind::Vertex).and_then(|m| m.get(&t[2])) else {
+            diags.push(err(
+                l,
+                DiagnosticKind::UnresolvedReference { id: t[2].clone() },
+            ));
+            continue;
+        };
+        let mut x = [0.0; 7]; // surfElev, a1, b1, a2, b2, a3, fixedDepth
+        let mut ok = true;
+        for (i, xi) in x.iter_mut().enumerate() {
+            let Ok(v) = t[3 + i].parse::<f64>() else {
+                diags.push(bad(l, &t[3 + i]));
+                ok = false;
+                break;
+            };
+            *xi = v;
+        }
+        if !ok {
+            continue;
+        }
+        // Four optional overrides, `*` skipping: threshold, bottom, water
+        // table (lengths), then moisture (a fraction, unconverted).
+        let mut over = [None; 4];
+        for (i, oi) in over.iter_mut().enumerate() {
+            let m = 10 + i;
+            if let Some(tok) = t.get(m) {
+                if tok.starts_with('*') {
+                    continue;
+                }
+                let Ok(v) = tok.parse::<f64>() else {
+                    diags.push(bad(l, tok));
+                    ok = false;
+                    break;
+                };
+                *oi = Some(if i < 3 { v * cv.len } else { v });
+            }
+        }
+        if !ok {
+            continue;
+        }
+        if let Some(p) = parcels.get_mut(pc) {
+            p.groundwater = Some(crate::model::GroundwaterLink {
+                aquifer: aq,
+                vertex: vx,
+                surface_elev: x[0] * cv.len,
+                a1: x[1],
+                b1: x[2],
+                a2: x[3],
+                b2: x[4],
+                a3: x[5],
+                fixed_surface_depth: x[6] * cv.len,
+                threshold_elev: over[0],
+                bottom_elev: over[1],
+                water_table_elev: over[2],
+                upper_moisture: over[3],
+                lateral_expression: None,
+                deep_expression: None,
+            });
+        }
+    }
+}
+
+/// Fill `[GWF]` custom expressions into their parcels' groundwater links.
+/// The expression is retained as written (§14.6: expressions evaluate in
+/// the file's unit system).
+pub(crate) fn parse_gwf(
+    lines: &[TokenLine],
+    s: &Survey,
+    parcels: &mut [Parcel],
+    diags: &mut Vec<Diagnostic>,
+) {
+    for line in lines {
+        let t = &line.tokens;
+        let l = line.line;
+        if t.len() < 3 {
+            diags.push(err(l, DiagnosticKind::MissingItems));
+            continue;
+        }
+        let Some(&pc) = s.ids.get(&ObjectKind::Parcel).and_then(|m| m.get(&t[0])) else {
+            diags.push(err(
+                l,
+                DiagnosticKind::UnresolvedReference { id: t[0].clone() },
+            ));
+            continue;
+        };
+        let expr = t[2..].join(" ");
+        let Some(gw) = parcels.get_mut(pc).and_then(|p| p.groundwater.as_mut()) else {
+            diags.push(err(
+                l,
+                DiagnosticKind::UnresolvedReference { id: t[0].clone() },
+            ));
+            continue;
+        };
+        if t[1].eq_ignore_ascii_case("LATERAL") {
+            gw.lateral_expression = Some(expr);
+        } else if t[1].eq_ignore_ascii_case("DEEP") {
+            gw.deep_expression = Some(expr);
+        } else {
+            diags.push(bad(l, &t[1]));
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::io::objects::parse_network;
@@ -490,6 +684,41 @@ TS1  0  0.5  1  0.25
         assert!((f0 - 3.0 * 0.0254 / 3600.0).abs() < 1e-15);
         assert!((decay - 4.0 / 3600.0).abs() < 1e-15);
         assert_eq!(dry_time, 7.0 * 86_400.0);
+    }
+
+    #[test]
+    fn aquifers_and_groundwater_links_parse_with_overrides() {
+        let (net, diags) = parse_network(
+            "[OPTIONS]\nFLOW_UNITS CFS\n[RAINGAGES]\nG1 VOLUME 1.0 1.0 FILE f.dat\n\
+             [JUNCTIONS]\nJ1 100 3\n[SUBCATCHMENTS]\nS1 G1 J1 10 25 500 0.5 0\n\
+             [SUBAREAS]\nS1 0.01 0.1 0.05 0.05 25 OUTLET\n\
+             [AQUIFERS]\nAQ1 0.5 0.15 0.30 0.5 10 15 0.35 14 0.002 0 10 0.30\n\
+             [GROUNDWATER]\nS1 AQ1 J1 6 0.001 2 0 0 0 0 * 0.4\n\
+             [GWF]\nS1 LATERAL 0.001 * ( Hgw - Hcb )\n",
+        );
+        assert!(
+            !diags.iter().any(|d| d.kind.is_error()),
+            "{:?}",
+            diags
+                .iter()
+                .filter(|d| d.kind.is_error())
+                .collect::<Vec<_>>()
+        );
+        let aq = &net.aquifers[0];
+        // Conductivity 0.5 in/hr -> m/s; tension slope 15 ft -> m.
+        assert!((aq.conductivity - 0.5 * 0.0254 / 3600.0).abs() < 1e-15);
+        assert!((aq.tension_slope - 15.0 * 0.3048).abs() < 1e-12);
+        let gw = net.parcels[0].groundwater.as_ref().unwrap();
+        assert_eq!(gw.aquifer, 0);
+        assert_eq!(gw.vertex, 0);
+        assert!((gw.surface_elev - 6.0 * 0.3048).abs() < 1e-12);
+        assert_eq!(gw.a1, 0.001, "lateral coefficients stay in file units");
+        assert_eq!(gw.threshold_elev, None, "starred slot skipped");
+        assert!((gw.bottom_elev.unwrap() - 0.4 * 0.3048).abs() < 1e-12);
+        assert_eq!(
+            gw.lateral_expression.as_deref(),
+            Some("0.001 * ( Hgw - Hcb )")
+        );
     }
 
     #[test]
