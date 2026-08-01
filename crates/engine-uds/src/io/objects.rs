@@ -272,6 +272,60 @@ pub fn parse_network(input: &str) -> (Network, Vec<Diagnostic>) {
         }
     }
 
+    // Climate, controls, and the administrative sections.
+    let us = options.flow_units.is_us();
+    for (sec, lines) in &s.sections {
+        match sec {
+            Section::Temperature => {
+                super::climate::parse_temperature(
+                    lines,
+                    &s,
+                    &cv,
+                    us,
+                    &mut net.climate,
+                    &mut diagnostics,
+                );
+            }
+            Section::Evaporation => {
+                super::climate::parse_evaporation(
+                    lines,
+                    &s,
+                    us,
+                    &mut net.climate,
+                    &mut diagnostics,
+                );
+            }
+            Section::Adjustments => {
+                super::climate::parse_adjustments(lines, &s, us, &mut net, &mut diagnostics);
+            }
+            Section::Controls => {
+                super::admin::parse_controls(lines, &mut net.controls, &mut diagnostics);
+            }
+            Section::Files => {
+                super::admin::parse_files(lines, &mut net.interface_files, &mut diagnostics);
+            }
+            Section::Report => {
+                super::admin::parse_report(lines, &s, &mut net.report, &mut diagnostics);
+            }
+            Section::Events => {
+                net.events
+                    .extend(super::admin::parse_events(lines, &cv, &mut diagnostics));
+            }
+            _ => {}
+        }
+    }
+
+    // Display metadata survives verbatim under its canonical header, one
+    // entry per section occurrence, in file order (§14.5).
+    for (sec, lines) in &s.sections {
+        if sec.is_display_metadata() && !lines.is_empty() {
+            net.display.push(crate::model::DisplaySection {
+                header: super::keywords::canonical_header(*sec).to_string(),
+                lines: lines.iter().map(|l| l.raw.clone()).collect(),
+            });
+        }
+    }
+
     net.options = options;
     (net, diagnostics)
 }

@@ -181,6 +181,10 @@ pub struct TokenLine {
     pub line: usize,
     /// The line's tokens, comment stripped.
     pub tokens: Vec<String>,
+    /// The line's content as written, comment stripped and end-trimmed —
+    /// for the sections retained as text (`[CONTROLS]` clauses, display
+    /// metadata).
+    pub raw: String,
 }
 
 /// The survey result: identifiers, counts, and the sectioned, tokenised
@@ -367,6 +371,7 @@ pub fn survey(input: &str) -> Survey {
             lines.push(TokenLine {
                 line: line_no,
                 tokens: tokens.iter().map(|t| (*t).to_string()).collect(),
+                raw: content.trim_end().to_string(),
             });
         }
     }
@@ -408,7 +413,16 @@ fn register(s: &mut Survey, section: Section, tokens: &[&str], line_no: usize) {
             }
         }
         Registration::ControlRule => {
-            if tokens[0].eq_ignore_ascii_case("RULE") {
+            // The predecessor's clause keywords match by prefix, with
+            // VARIABLE and EXPRESSION lines tried first.
+            let t = tokens[0];
+            let is_prefix = |k: &str| {
+                t.chars().count() >= k.len()
+                    && k.chars()
+                        .zip(t.chars())
+                        .all(|(a, b)| a.eq_ignore_ascii_case(&b))
+            };
+            if is_prefix("RULE") && !is_prefix("VARIABLE") && !is_prefix("EXPRESSION") {
                 s.rule_count += 1;
             }
         }

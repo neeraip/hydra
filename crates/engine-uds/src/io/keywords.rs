@@ -12,6 +12,14 @@
 //! swallow is visible. Canonical spellings — not the table prefixes, which
 //! are themselves abbreviations (`[JUNC`) — are the equality standard.
 
+/// The canonical header for a section, e.g. `[COORDINATES]`.
+pub fn canonical_header(section: Section) -> &'static str {
+    SECTIONS
+        .iter()
+        .find(|(_, _, s)| *s == section)
+        .map_or("", |(_, canonical, _)| canonical)
+}
+
 /// First-prefix-wins keyword lookup over `table`, case-insensitively.
 ///
 /// Returns the index of the first entry that is a prefix of `token`. The

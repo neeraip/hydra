@@ -193,6 +193,9 @@ pub(crate) fn parse_parcels(
             subareas: None,
             infiltration: None,
             groundwater: None,
+            n_perv_pattern: None,
+            dstore_pattern: None,
+            infil_pattern: None,
         });
     }
     parcels

@@ -5,6 +5,8 @@
 //! Model bytes are supplied in memory by callers; this crate performs no
 //! filesystem or network I/O.
 
+pub mod admin;
+pub mod climate;
 pub mod hydrology;
 pub mod keywords;
 pub mod lex;

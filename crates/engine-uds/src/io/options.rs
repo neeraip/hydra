@@ -105,8 +105,8 @@ pub enum NormalFlowCriteria {
     None,
 }
 
-/// A calendar date, as the file carries it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// A calendar date, as the file carries it. Ordering is calendar order.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Date {
     /// Four-digit year.
     pub year: i32,
@@ -867,6 +867,7 @@ mod tests {
             .map(|(i, l)| TokenLine {
                 line: i + 1,
                 tokens: l.split_whitespace().map(str::to_string).collect(),
+                raw: l.trim_end().to_string(),
             })
             .collect()
     }

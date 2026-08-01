@@ -64,6 +64,20 @@ pub struct Network {
     pub inlets: Vec<InletDesign>,
     /// Inlet placements on street channels.
     pub inlet_usage: Vec<InletUsage>,
+    /// Climate forcing: temperature, evaporation, wind, snowmelt, and
+    /// monthly adjustments (§3).
+    pub climate: Climate,
+    /// Control rules, retained as text until §9.1 compiles them.
+    pub controls: ControlText,
+    /// Interface-file declarations (§14.8).
+    pub interface_files: InterfaceFiles,
+    /// Predecessor-format report selections (§14.5).
+    pub report: ReportOptions,
+    /// Routing event windows (§10.3), in file order.
+    pub events: Vec<EventWindow>,
+    /// Display-metadata sections preserved verbatim for writers (§14.5),
+    /// keyed by canonical header.
+    pub display: Vec<DisplaySection>,
 }
 
 /// A conveyance vertex (§2.6).
@@ -653,6 +667,12 @@ pub struct Parcel {
     pub infiltration: Option<Infiltration>,
     /// Groundwater connection, once `[GROUNDWATER]` supplies one.
     pub groundwater: Option<GroundwaterLink>,
+    /// Monthly pattern scaling pervious Manning roughness (§3).
+    pub n_perv_pattern: Option<usize>,
+    /// Monthly pattern scaling pervious depression storage (§3).
+    pub dstore_pattern: Option<usize>,
+    /// Monthly pattern scaling infiltration conductivity (§3).
+    pub infil_pattern: Option<usize>,
 }
 
 /// A parcel's discharge target.
@@ -1424,4 +1444,253 @@ pub enum InletPlacement {
     OnGrade,
     /// Depth-driven capture.
     OnSag,
+}
+
+/// Climate forcing (§3): temperature and evaporation sources, wind,
+/// snowmelt constants, areal depletion, and monthly adjustments.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Climate {
+    /// Where temperature comes from; `None` when the model needs none.
+    pub temperature: Option<TemperatureSource>,
+    /// Wind speed for the rain-melt relation (m/s).
+    pub wind: WindSource,
+    /// Snowmelt constants, when `[TEMPERATURE] SNOWMELT` supplies them.
+    pub snowmelt: Option<SnowmeltParams>,
+    /// Areal depletion curve for impervious snow cover: ten fractions.
+    pub adc_impervious: Option<[f64; 10]>,
+    /// Areal depletion curve for pervious snow cover.
+    pub adc_pervious: Option<[f64; 10]>,
+    /// The potential-evaporation source.
+    pub evaporation: EvaporationSource,
+    /// Monthly pattern scaling infiltration recovery.
+    pub recovery_pattern: Option<usize>,
+    /// Suppress land-surface evaporation during rainfall.
+    pub evaporate_dry_only: bool,
+    /// Additive monthly temperature offsets (K).
+    pub adjust_temperature: [f64; 12],
+    /// Additive monthly potential-evaporation offsets (m/s).
+    pub adjust_evaporation: [f64; 12],
+    /// Multiplicative monthly gage-rainfall factors.
+    pub adjust_rainfall: [f64; 12],
+    /// Multiplicative monthly conductivity factors.
+    pub adjust_conductivity: [f64; 12],
+}
+
+impl Default for Climate {
+    fn default() -> Self {
+        Climate {
+            temperature: None,
+            wind: WindSource::Monthly([0.0; 12]),
+            snowmelt: None,
+            adc_impervious: None,
+            adc_pervious: None,
+            evaporation: EvaporationSource::Constant(0.0),
+            recovery_pattern: None,
+            evaporate_dry_only: false,
+            adjust_temperature: [0.0; 12],
+            adjust_evaporation: [0.0; 12],
+            adjust_rainfall: [1.0; 12],
+            adjust_conductivity: [1.0; 12],
+        }
+    }
+}
+
+/// Where temperature data comes from (§3).
+#[derive(Debug, Clone, PartialEq)]
+pub enum TemperatureSource {
+    /// A supplied series, linearly interpolated.
+    Series(usize),
+    /// An external daily climate record; the caller owns I/O.
+    File {
+        /// Path as written.
+        name: String,
+        /// Start reading here rather than at the record's start.
+        start: Option<crate::io::options::Date>,
+        /// The record's temperature unit.
+        units: FileTempUnits,
+    },
+}
+
+/// Temperature units of an external climate record.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FileTempUnits {
+    /// Tenths of a degree Celsius.
+    TenthsCelsius,
+    /// Degrees Celsius.
+    Celsius,
+    /// Degrees Fahrenheit.
+    Fahrenheit,
+}
+
+/// Wind-speed source (m/s internally).
+#[derive(Debug, Clone, PartialEq)]
+pub enum WindSource {
+    /// Twelve monthly averages.
+    Monthly([f64; 12]),
+    /// Daily values from the climate file.
+    File,
+}
+
+/// Snowmelt constants (§4.2).
+#[derive(Debug, Clone, PartialEq)]
+pub struct SnowmeltParams {
+    /// Dividing temperature between rain and snow (°C).
+    pub snow_temp: f64,
+    /// Antecedent temperature index weight.
+    pub ati_weight: f64,
+    /// Negative melt ratio.
+    pub negative_melt_ratio: f64,
+    /// Site elevation (m).
+    pub elevation: f64,
+    /// Site latitude (degrees).
+    pub latitude: f64,
+    /// Longitude correction (s).
+    pub longitude_correction: f64,
+}
+
+/// The potential-evaporation source (§3); rates in m/s.
+#[derive(Debug, Clone, PartialEq)]
+pub enum EvaporationSource {
+    /// One rate year-round.
+    Constant(f64),
+    /// Twelve monthly rates.
+    Monthly([f64; 12]),
+    /// A supplied series — a step function, per §3.
+    Series(usize),
+    /// The Hargreaves relation from daily temperatures.
+    Temperature,
+    /// Daily climate-file values scaled by monthly pan coefficients.
+    File {
+        /// Pan coefficients, default 1.
+        pan: [f64; 12],
+    },
+}
+
+/// `[CONTROLS]` retained as text (§9.1 compiles it later): named variables
+/// and expressions, then prioritised rules.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct ControlText {
+    /// `VARIABLE` definition lines, in file order.
+    pub variables: Vec<String>,
+    /// `EXPRESSION` definition lines, in file order.
+    pub expressions: Vec<String>,
+    /// The rules, in file order.
+    pub rules: Vec<ControlRule>,
+}
+
+/// One control rule: its name and clause lines as written.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ControlRule {
+    /// Identifier from the `RULE` line.
+    pub name: String,
+    /// Clause lines (`IF …`, `THEN …`, …), as written.
+    pub lines: Vec<String>,
+}
+
+/// Interface-file declarations (§14.8). One slot per role; a later line
+/// replaces an earlier, as the predecessor's single slots do.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct InterfaceFiles {
+    /// Rainfall interface file.
+    pub rainfall: Option<(FileMode, String)>,
+    /// Runoff interface file.
+    pub runoff: Option<(FileMode, String)>,
+    /// RDII interface file.
+    pub rdii: Option<(FileMode, String)>,
+    /// Hotstart file loaded at start; `USE` and `SAVE` are separate slots
+    /// so one run may both load and save.
+    pub hotstart_use: Option<String>,
+    /// Hotstart file saved at end.
+    pub hotstart_save: Option<String>,
+    /// Routing inflows file (read-only boundary inflows).
+    pub inflows: Option<String>,
+    /// Routing outflows file (written from outlet vertices).
+    pub outflows: Option<String>,
+}
+
+/// Interface-file disposition.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FileMode {
+    /// Not used.
+    No,
+    /// Written and discarded.
+    Scratch,
+    /// Read.
+    Use,
+    /// Written and kept.
+    Save,
+}
+
+/// Predecessor-format report selections (§14.5). They gate the
+/// predecessor-format export only, never this engine's results access.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ReportOptions {
+    /// Suppress the report entirely.
+    pub disabled: bool,
+    /// Echo the input summary.
+    pub input: bool,
+    /// Continuity summaries.
+    pub continuity: bool,
+    /// Flow statistics.
+    pub flow_stats: bool,
+    /// Control-action log.
+    pub control_actions: bool,
+    /// Report period averages rather than instantaneous values.
+    pub averages: bool,
+    /// Which parcels the export carries.
+    pub parcels: ReportSelection,
+    /// Which vertices the export carries.
+    pub vertices: ReportSelection,
+    /// Which links the export carries.
+    pub links: ReportSelection,
+}
+
+impl Default for ReportOptions {
+    fn default() -> Self {
+        ReportOptions {
+            disabled: false,
+            input: false,
+            continuity: true,
+            flow_stats: true,
+            control_actions: false,
+            averages: false,
+            parcels: ReportSelection::None,
+            vertices: ReportSelection::None,
+            links: ReportSelection::None,
+        }
+    }
+}
+
+/// A report object selection.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum ReportSelection {
+    /// No objects.
+    #[default]
+    None,
+    /// Every object.
+    All,
+    /// The listed objects, by index.
+    Ids(Vec<usize>),
+}
+
+/// A routing event window (§10.3).
+#[derive(Debug, Clone, PartialEq)]
+pub struct EventWindow {
+    /// Start date.
+    pub start_date: crate::io::options::Date,
+    /// Start clock time (s past midnight).
+    pub start_time: f64,
+    /// End date.
+    pub end_date: crate::io::options::Date,
+    /// End clock time (s past midnight).
+    pub end_time: f64,
+}
+
+/// A display-metadata section preserved verbatim (§14.5).
+#[derive(Debug, Clone, PartialEq)]
+pub struct DisplaySection {
+    /// Canonical section header, e.g. `[COORDINATES]`.
+    pub header: String,
+    /// Content lines as written, comment stripped.
+    pub lines: Vec<String>,
 }
