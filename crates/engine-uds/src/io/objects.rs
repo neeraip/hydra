@@ -37,15 +37,33 @@ pub fn parse_network(input: &str) -> (Network, Vec<Diagnostic>) {
 
     let mut net = Network {
         title: s.title.clone(),
-        curve_ids: ordered_ids(&s, ObjectKind::Curve),
-        timeseries_ids: ordered_ids(&s, ObjectKind::TimeSeries),
         parcel_ids: ordered_ids(&s, ObjectKind::Parcel),
         transect_ids: ordered_ids(&s, ObjectKind::Transect),
         street_ids: ordered_ids(&s, ObjectKind::Street),
         ..Default::default()
     };
 
-    let cv = Converter::new(options.flow_units, options.link_offsets);
+    let cv = UnitConverter::new(options.flow_units, options.link_offsets);
+
+    // Data objects (§2.9), before the graph that references them.
+    let empty = std::collections::HashMap::new();
+    for (sec, lines) in &s.sections {
+        match sec {
+            Section::Curves => {
+                let ids = s.ids.get(&ObjectKind::Curve).unwrap_or(&empty);
+                net.curves = super::tables::parse_curves(lines, ids, &cv, &mut diagnostics);
+            }
+            Section::TimeSeries => {
+                let ids = s.ids.get(&ObjectKind::TimeSeries).unwrap_or(&empty);
+                net.timeseries = super::tables::parse_timeseries(lines, ids, &mut diagnostics);
+            }
+            Section::Patterns => {
+                let ids = s.ids.get(&ObjectKind::TimePattern).unwrap_or(&empty);
+                net.patterns = super::tables::parse_patterns(lines, ids, &mut diagnostics);
+            }
+            _ => {}
+        }
+    }
 
     // Vertices and links, in file order (identical to registration order).
     for (sec, lines) in &s.sections {
@@ -97,22 +115,26 @@ fn ordered_ids(s: &Survey, kind: ObjectKind) -> Vec<String> {
 }
 
 /// Unit conversion at the import boundary.
-struct Converter {
+pub(crate) struct UnitConverter {
     /// m per file length unit (exact 0.3048 for US-unit files).
-    len: f64,
+    pub(crate) len: f64,
     /// m³/s per file flow unit.
-    flow: f64,
+    pub(crate) flow: f64,
     /// m per file suction-head unit (inches or millimetres).
     suction: f64,
     /// m/s per file conductivity unit (in/hr or mm/hr).
     conductivity: f64,
+    /// Weir-coefficient factor: every weir form's coefficient carries the
+    /// dimension (length)^½/time, so one factor serves them all —
+    /// 0.3048^½ ≈ 0.552, the predecessor's roadway rescale explained.
+    pub(crate) weir_coeff: f64,
     offsets: LinkOffsets,
 }
 
-impl Converter {
+impl UnitConverter {
     fn new(units: FlowUnits, offsets: LinkOffsets) -> Self {
         let us = units.is_us();
-        Converter {
+        UnitConverter {
             len: if us { 0.3048 } else { 1.0 },
             flow: match units {
                 FlowUnits::Cfs => 0.028_316_846_592,
@@ -124,6 +146,7 @@ impl Converter {
             },
             suction: if us { 0.0254 } else { 1.0e-3 },
             conductivity: if us { 0.0254 / 3600.0 } else { 1.0e-3 / 3600.0 },
+            weir_coeff: if us { 0.3048_f64.sqrt() } else { 1.0 },
             offsets,
         }
     }
@@ -275,7 +298,7 @@ fn realign(net: &mut Network, s: &Survey, sec: Section, line: &TokenLine) {
 
 fn parse_junction(
     net: &mut Network,
-    cv: &Converter,
+    cv: &UnitConverter,
     line: &TokenLine,
     diags: &mut Vec<Diagnostic>,
 ) {
@@ -318,7 +341,7 @@ fn parse_junction(
 fn parse_outfall(
     net: &mut Network,
     s: &Survey,
-    cv: &Converter,
+    cv: &UnitConverter,
     line: &TokenLine,
     diags: &mut Vec<Diagnostic>,
 ) {
@@ -399,7 +422,7 @@ fn parse_outfall(
 fn parse_storage(
     net: &mut Network,
     s: &Survey,
-    cv: &Converter,
+    cv: &UnitConverter,
     line: &TokenLine,
     diags: &mut Vec<Diagnostic>,
 ) {
@@ -456,16 +479,17 @@ fn parse_storage(
             };
             let g = match rel {
                 1 => {
-                    // FUNCTIONAL A = c + a·y^b: unit-dependent (§14.6),
-                    // stored as written.
+                    // FUNCTIONAL A = c + a·y^b: unit-dependent, converted
+                    // per its exponent at import (§14.6) — a in
+                    // (length)^(2-b), c in (length)².
                     if y[2] < 0.0 {
                         bad(2, diags);
                         return;
                     }
                     StorageGeometry::Functional {
-                        coeff: y[0],
+                        coeff: y[0] * cv.len.powf(2.0 - y[1]),
                         exponent: y[1],
-                        constant: y[2],
+                        constant: y[2] * cv.len * cv.len,
                     }
                 }
                 _ => {
@@ -558,7 +582,7 @@ fn parse_storage(
 fn parse_divider(
     net: &mut Network,
     s: &Survey,
-    cv: &Converter,
+    cv: &UnitConverter,
     line: &TokenLine,
     diags: &mut Vec<Diagnostic>,
 ) {
@@ -667,7 +691,7 @@ fn link_endpoints(
 fn parse_conduit(
     net: &mut Network,
     s: &Survey,
-    cv: &Converter,
+    cv: &UnitConverter,
     line: &TokenLine,
     diags: &mut Vec<Diagnostic>,
 ) {
@@ -716,7 +740,7 @@ fn parse_conduit(
 fn parse_pump(
     net: &mut Network,
     s: &Survey,
-    cv: &Converter,
+    cv: &UnitConverter,
     line: &TokenLine,
     diags: &mut Vec<Diagnostic>,
 ) {
@@ -777,7 +801,7 @@ fn parse_pump(
 fn parse_orifice(
     net: &mut Network,
     s: &Survey,
-    cv: &Converter,
+    cv: &UnitConverter,
     line: &TokenLine,
     diags: &mut Vec<Diagnostic>,
 ) {
@@ -839,7 +863,7 @@ fn parse_orifice(
 fn parse_weir(
     net: &mut Network,
     s: &Survey,
-    cv: &Converter,
+    cv: &UnitConverter,
     line: &TokenLine,
     diags: &mut Vec<Diagnostic>,
 ) {
@@ -937,10 +961,10 @@ fn parse_weir(
         kind: LinkKind::Weir {
             form,
             offset,
-            discharge_coeff: cd,
+            discharge_coeff: cd * cv.weir_coeff,
             flap_gate,
             end_contractions,
-            end_coeff,
+            end_coeff: end_coeff * cv.weir_coeff,
             can_surcharge,
             road_width,
             road_surface,
@@ -953,7 +977,7 @@ fn parse_weir(
 fn parse_outlet(
     net: &mut Network,
     s: &Survey,
-    cv: &Converter,
+    cv: &UnitConverter,
     line: &TokenLine,
     diags: &mut Vec<Diagnostic>,
 ) {
@@ -1289,19 +1313,23 @@ C1  CIRCULAR  4.0  0  0  0  2
     }
 
     #[test]
-    fn functional_storage_keeps_user_units_per_14_6() {
+    fn functional_storage_converts_per_its_exponent() {
+        // §14.6: A = c + a·y^b with a in (length)^(2-b), c in (length)².
         let (net, _) = parse(FIXTURE);
         let VertexKind::Storage { ref geometry, .. } = net.vertices[2].kind else {
             panic!()
         };
-        assert_eq!(
-            *geometry,
-            StorageGeometry::Functional {
-                coeff: 20.0,
-                exponent: 1.5,
-                constant: 100.0
-            }
-        );
+        let StorageGeometry::Functional {
+            coeff,
+            exponent,
+            constant,
+        } = *geometry
+        else {
+            panic!()
+        };
+        assert_eq!(exponent, 1.5);
+        assert!((coeff - 20.0 * 0.3048_f64.powf(0.5)).abs() < 1e-12);
+        assert!((constant - 100.0 * 0.3048 * 0.3048).abs() < 1e-12);
     }
 
     #[test]

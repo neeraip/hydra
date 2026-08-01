@@ -7,7 +7,7 @@
 //! the four parameters are lengths is a per-shape question §5's geometry
 //! evaluation owns; the field name says so.
 
-use crate::io::options::AnalysisOptions;
+use crate::io::options::{AnalysisOptions, Date};
 
 /// A parsed, reference-resolved drainage network.
 ///
@@ -24,10 +24,12 @@ pub struct Network {
     pub vertices: Vec<Vertex>,
     /// Conveyance links, in registration order.
     pub links: Vec<Link>,
-    /// Curve identifiers, in registration order.
-    pub curve_ids: Vec<String>,
-    /// Time-series identifiers, in registration order.
-    pub timeseries_ids: Vec<String>,
+    /// Curves, in registration order.
+    pub curves: Vec<Curve>,
+    /// Time series, in registration order.
+    pub timeseries: Vec<TimeSeries>,
+    /// Time patterns, in registration order.
+    pub patterns: Vec<TimePattern>,
     /// Parcel identifiers, in registration order.
     pub parcel_ids: Vec<String>,
     /// Transect identifiers, in registration order.
@@ -134,14 +136,13 @@ pub enum StorageGeometry {
         /// The storage curve.
         curve: usize,
     },
-    /// $A = c + a\,y^{b}$ — coefficients in the file's units (§14.6: storage
-    /// relations are unit-dependent; conversion is per-exponent).
+    /// $A = c + a\,y^{b}$ — converted per its exponent at import (§14.6).
     Functional {
-        /// Coefficient $a$ (user units).
+        /// Coefficient $a$ (m^(2−b)).
         coeff: f64,
         /// Exponent $b$.
         exponent: f64,
-        /// Constant $c$ (user units).
+        /// Constant $c$ (m²).
         constant: f64,
     },
     /// An analytical shape, compiled to $A = a_0 + a_1 y + a_2 y^2$ (m).
@@ -200,7 +201,7 @@ pub enum DividerRule {
         min_flow: f64,
         /// Maximum depth (m).
         max_depth: f64,
-        /// Discharge coefficient (user units, §14.6).
+        /// Discharge coefficient (m^½/s, converted per §14.6).
         coeff: f64,
     },
     /// Divert what the non-diverted channel declines.
@@ -283,13 +284,14 @@ pub enum LinkKind {
         form: WeirForm,
         /// Crest offset.
         offset: Offset,
-        /// Discharge coefficient (user units, §14.6).
+        /// Discharge coefficient (m^½/s — every weir form shares the
+        /// dimension, converted per §14.6).
         discharge_coeff: f64,
         /// Gate blocking reverse flow.
         flap_gate: bool,
         /// End-contraction count.
         end_contractions: f64,
-        /// Second coefficient (trapezoidal end sections; user units).
+        /// Second coefficient (trapezoidal end sections; m^½/s).
         end_coeff: f64,
         /// Whether the weir surcharges to its equivalent-orifice form.
         can_surcharge: bool,
@@ -349,12 +351,12 @@ pub enum RoadSurface {
     Gravel,
 }
 
-/// Outlet rating (§7.4). Coefficients are unit-dependent (§14.6).
+/// Outlet rating (§7.4). Coefficients convert per their exponent (§14.6).
 #[derive(Debug, Clone, PartialEq)]
 pub enum OutletRating {
-    /// $Q = a\,H^{b}$ (user units).
+    /// $Q = a\,H^{b}$.
     Functional {
-        /// Coefficient $a$.
+        /// Coefficient $a$ ((m³/s)/m^b).
         coeff: f64,
         /// Exponent $b$.
         exponent: f64,
@@ -433,4 +435,118 @@ pub enum XsectShape {
     Custom,
     ForceMain,
     Street,
+}
+
+/// A tabulated relation (§2.9): the typed role travels with the curve, and
+/// point conversion at import follows the role (§14.6).
+#[derive(Debug, Clone, PartialEq)]
+pub struct Curve {
+    /// Identifier as written.
+    pub id: String,
+    /// The typed role.
+    pub kind: CurveKind,
+    /// The points, converted per the role's units.
+    pub points: Vec<(f64, f64)>,
+}
+
+/// Curve roles, in the predecessor's vocabulary order.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CurveKind {
+    /// Surface area (m²) against depth (m).
+    Storage,
+    /// Diverted flow against inflow (both m³/s).
+    Diversion,
+    /// Stage (m) against hour of day (s).
+    Tidal,
+    /// Outlet discharge (m³/s) against head (m).
+    Rating,
+    /// Control setting against controller variable (both as written).
+    Control,
+    /// Normalised width against depth (dimensionless).
+    Shape,
+    /// Weir coefficient (m^½/s) against head (m).
+    WeirCoeff,
+    /// Pump: flow (m³/s) stepwise against wet-well volume (m³).
+    Pump1,
+    /// Pump: flow stepwise against inlet depth (m).
+    Pump2,
+    /// Pump: flow against head difference (m).
+    Pump3,
+    /// Pump: flow against inlet depth (m).
+    Pump4,
+    /// Pump: flow against head difference at rated speed (m).
+    Pump5,
+}
+
+/// A time series (§2.9). Values are stored as written: their unit depends on
+/// the consumer (precipitation, stage, inflow, evaporation), which converts
+/// at use.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TimeSeries {
+    /// Identifier as written.
+    pub id: String,
+    /// Inline points, or an external-file reference.
+    pub source: TimeSeriesSource,
+}
+
+/// Where a series' data lives.
+#[derive(Debug, Clone, PartialEq)]
+pub enum TimeSeriesSource {
+    /// An external data file, named by the model; acquiring its bytes is the
+    /// caller's concern (this crate performs no filesystem I/O).
+    External {
+        /// The file name as written.
+        file: String,
+    },
+    /// Inline timestamped points.
+    Points(Vec<TimeSeriesPoint>),
+}
+
+/// One series point.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TimeSeriesPoint {
+    /// When.
+    pub time: SeriesTime,
+    /// The value, in the consumer's units, as written.
+    pub value: f64,
+}
+
+/// A series timestamp: elapsed, or anchored to a calendar date. A date seen
+/// on any line anchors every later time until the next date, per the
+/// predecessor's reader.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum SeriesTime {
+    /// Seconds from simulation start.
+    Elapsed(f64),
+    /// A calendar date and seconds past its midnight.
+    Absolute {
+        /// The date.
+        date: Date,
+        /// Seconds past midnight.
+        seconds: f64,
+    },
+}
+
+/// A repeating multiplier set (§2.9).
+#[derive(Debug, Clone, PartialEq)]
+pub struct TimePattern {
+    /// Identifier as written.
+    pub id: String,
+    /// The period.
+    pub kind: PatternKind,
+    /// The multipliers, at most the period's count.
+    pub factors: Vec<f64>,
+}
+
+/// Pattern periods.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PatternKind {
+    /// Twelve monthly factors.
+    Monthly,
+    /// Seven daily factors, Sunday first.
+    Daily,
+    /// Twenty-four hourly factors.
+    Hourly,
+    /// Twenty-four weekend hourly factors.
+    Weekend,
 }

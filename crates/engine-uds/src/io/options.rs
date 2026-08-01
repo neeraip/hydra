@@ -767,6 +767,21 @@ fn set_time(
     }
 }
 
+/// A date token, for consumers whose grammars embed dates (series lines).
+pub(crate) fn parse_date_token(token: &str) -> Option<Date> {
+    parse_date(token)
+}
+
+/// A clock-string token (`H:M` or `H:M:S`) to seconds; decimal tokens are
+/// the caller's to interpret.
+pub(crate) fn parse_clock_token(token: &str) -> Option<f64> {
+    if token.contains(':') {
+        clock_to_seconds(token)
+    } else {
+        None
+    }
+}
+
 const MONTHS: &[&str] = &[
     "JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC",
 ];

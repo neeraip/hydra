@@ -10,3 +10,4 @@ pub mod lex;
 pub mod objects;
 pub mod options;
 pub mod survey;
+pub mod tables;
