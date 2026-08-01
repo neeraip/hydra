@@ -1,0 +1,10 @@
+# Files whose *bytes* are the contract must never be line-ending translated.
+#
+# Git checks text files out as CRLF on Windows when core.autocrlf is set, which
+# the GitHub Actions windows runner does by default. The report renderers emit
+# LF on every platform deliberately — their output is meant to be byte-identical
+# everywhere — so a translated golden file stops matching the output it pins,
+# and the comparison fails on Windows and nowhere else. Checking these out as LF
+# regardless of platform is what makes the goldens mean the same thing on all of
+# them.
+crates/report/tests/golden/** text eol=lf
