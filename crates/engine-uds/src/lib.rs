@@ -11,6 +11,7 @@
 //! written ahead of the implementation.
 #![doc = include_str!("spec.md")]
 #![doc = include_str!("model/spec.md")]
+#![doc = include_str!("hydrology/spec.md")]
 #![doc = include_str!("hydraulics/spec.md")]
 #![doc = include_str!("simulation/spec.md")]
 #![doc = include_str!("interop/spec.md")]
