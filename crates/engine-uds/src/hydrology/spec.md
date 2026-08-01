@@ -116,9 +116,9 @@ coefficient.
 
 **Horton**: capacity decays exponentially from $f_0$ to $f_\infty$ with
 coefficient $k_d$. The state is the **equivalent time** $t_p$ on the curve —
-advanced directly when infiltration ran at capacity, otherwise recovered by
-solving the cumulative curve $F(t_p)$ for the time matching what actually
-infiltrated — and the capacity applied over a step is the **step average of
+advanced directly when infiltration ran at capacity or the curve has
+flattened ($t_p \ge 16/k_d$), otherwise recovered by solving the cumulative
+curve $F(t_p)$ for the time matching what actually infiltrated — and the capacity applied over a step is the **step average of
 the cumulative curve**, floored at $f_\infty$, not the point rate. Dry steps
 recover along an exponential drying curve, $k_r = 3.912/T_{dry}$ for a user
 drying time in days, through the closed-form wetting/drying map. An optional
@@ -312,9 +312,13 @@ During rain above 0.02 in/hr, the saturated radiation-free energy budget
 $$SMELT = \big(0.001167 + 7.5\gamma U_A + 0.007\,i\big)(T_a - 32)
         + 8.5\,U_A(e_a - 0.18)$$
 
-with the wind function, psychrometric factor from site-elevation
-atmospheric pressure (§2.11's fit, sea-level below zero elevation), and
-saturation vapour pressure of §3.1. Otherwise a degree-day law
+with the wind function, saturation vapour pressure of §3.1, and the
+psychrometric factor $\gamma = 0.000359\,p_a$ from the site-elevation
+atmospheric-pressure fit $p_a = 29.9 - 1.02z + 0.0032z^{2.4}$ in Hg, $z$ in
+thousands of feet — an empirical fit in its native units, bypassed for
+$z \le 0$, which takes the sea-level value directly: the fractional power is
+undefined for negative $z$, a domain guard, not a claim that sea level is
+special. Otherwise a degree-day law
 $DHM\,(T_a - T_{base})$, the coefficient sweeping sinusoidally between the
 user's 21 December minimum and 21 June maximum. De-icing is represented by
 lowering a surface's base temperature.

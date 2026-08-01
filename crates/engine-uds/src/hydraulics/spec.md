@@ -348,7 +348,8 @@ the adjacent half-length, reapportioned at critical, dry, and offset ends as
 $w_{slot}$, a surcharged vertex's assembled area is the sum of its slot
 widths' contributions: continuity remains an honest ODE in $H$ with no
 algebraic special case. The assembled area is floored at a documented minimum
-(`min_surface_area`, default 1.167 m², the plan area of a 1.2 m manhole) —
+(`min_surface_area`, default 1.167 m², the plan area of a 1.22 m (4 ft)
+manhole) —
 a physical floor, since a real access structure has real plan area, not a
 numerical fiction.
 
@@ -480,7 +481,8 @@ assembly of §6.3 reapportions accordingly: a critical (free-fall) end
 contributes nothing, the far vertex taking the full-length average; a dry end
 contributes only where the channel has no offset there; a channel dry at both
 ends contributes a nominal minimum. Flow out of an essentially dry vertex is
-clamped to $\pm 3.05\times10^{-5}$ m³/s rather than zeroed, and a
+clamped to $\pm 2.832\times10^{-6}$ m³/s (the predecessor's $10^{-4}$ ft³/s,
+converted) rather than zeroed, and a
 user-supplied flow limit, when given, caps $\lvert Q \rvert$ every iteration.
 
 **Flooding and ponding.** A non-ponded vertex whose head would exceed its

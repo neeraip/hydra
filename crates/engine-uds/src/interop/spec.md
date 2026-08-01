@@ -71,8 +71,9 @@ three-letter month names, decimal-hour or h:m:s times), reporting controls,
 process switches (`IGNORE_*`, with an object-free subsystem ignored
 automatically), quality and infiltration selections, and the numerical
 options that survive as this engine's own (`MIN_SURFAREA`,
-`MAX_TRIALS`, `HEAD_TOLERANCE`, `COURANT_FACTOR`, `MINIMUM_STEP`,
-`SURCHARGE_DEPTH`, …) convert units and carry over. Time-step interlocks
+`MAX_TRIALS`, `HEAD_TOLERANCE`, `VARIABLE_STEP` — whose value is the Courant
+factor of §6.5 — `MINIMUM_STEP`, `SURCHARGE_DEPTH`, …) convert units and
+carry over. Time-step interlocks
 apply at validation as the predecessor's do: a report step below the routing
 step is fatal, the dry hydrology step is raised to the wet, the routing step
 is clamped to the wet.
@@ -105,8 +106,9 @@ sections (`[MAP]`, `[COORDINATES]`, `[VERTICES]`, `[POLYGONS]`, `[SYMBOLS]`,
 they are parsed for well-formedness only and preserved verbatim for writers,
 so applications may consume them and a load-and-save cycle keeps them.
 
-`[REPORT]`'s dual grammar is reproduced: seven yes/no directives and three
-list-valued ones (`SUBCATCHMENTS`, `NODES`, `LINKS`) whose `ALL`/`NONE`/
+`[REPORT]`'s dual grammar is reproduced: six yes/no directives (a seventh,
+`NODESTATS`, is the deprecated form §14.3 honours) and three list-valued
+ones (`SUBCATCHMENTS`, `NODES`, `LINKS`) whose `ALL`/`NONE`/
 identifier lists select which objects a **predecessor-format export**
 carries. They do not restrict this engine's own results access (§12.2).
 
@@ -212,7 +214,7 @@ form.
 ### 14.9 Output
 
 **The binary results file** is written to the predecessor's layout: magic
-number 516114522, version, flow-units code, object counts, identifier
+number 516114522, version 52004, flow-units code, object counts, identifier
 tables, pollutant unit codes, static property tables, result-variable code
 lists, the reporting clock, fixed-size per-period records (subcatchment,
 node, link, and the fifteen system series, in user units), and the six-int
