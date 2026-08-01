@@ -30,10 +30,16 @@ quote or newline — the only way to carry a separator inside a value. Section
 headers are tokens beginning `[`, matched case-insensitively. `[TITLE]`
 accumulates up to three lines.
 
+An **unrecognised section header** leaves the reader sectionless: the
+header is reported, and every subsequent line is discarded until the next
+recognised header — the predecessor's accept-set, reproduced. The report
+carries the count of lines discarded, which the predecessor never states.
+
 The file is read in two passes: the first registers identifiers and counts
 objects, the second parses data. **Forward references are legal** — every
 identifier exists before any parameter is read — and duplicate identifiers
-within a type are rejected.
+within a type are rejected. `[TITLE]` retains its first three lines; further
+title lines are ignored, as the predecessor ignores them.
 
 ### 14.3 Keyword Matching
 
