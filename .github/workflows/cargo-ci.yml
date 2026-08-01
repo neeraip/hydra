@@ -11,7 +11,11 @@ on:
 
 concurrency:
   group: cargo-ci-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  # Cancel superseded runs on PRs only. A cancelled run never reaches its
+  # post-job cache save, and release pushes land in quick succession — with
+  # unconditional cancellation they repeatedly killed the cache-saving run,
+  # leaving every subsequent Windows job a ~20-minute cold build.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
@@ -49,6 +53,11 @@ jobs:
 
       - name: Cache Cargo artifacts
         uses: Swatinem/rust-cache@v2.9.1
+        with:
+          # Restore everywhere, save from main only: the repo cache budget is
+          # 10 GB, one saved trio of OS caches is ~4 GB, and PR/merge-ref
+          # saves were evicting the main caches every run depends on.
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Check dependencies (cargo-deny)
         uses: EmbarkStudios/cargo-deny-action@v2.1.1
@@ -76,6 +85,11 @@ jobs:
 
     env:
       CARGO_TERM_COLOR: always
+      # CI never attaches a debugger: skipping debuginfo roughly halves the
+      # cold Windows build (MSVC PDB generation and linking) and shrinks every
+      # cache. Backtraces still name frames via debug-assertions panics.
+      CARGO_PROFILE_DEV_DEBUG: "0"
+      CARGO_PROFILE_TEST_DEBUG: "0"
 
     steps:
       - name: Checkout repository
@@ -100,6 +114,11 @@ jobs:
 
       - name: Cache Cargo artifacts
         uses: Swatinem/rust-cache@v2.9.1
+        with:
+          # Restore everywhere, save from main only: the repo cache budget is
+          # 10 GB, one saved trio of OS caches is ~4 GB, and PR/merge-ref
+          # saves were evicting the main caches every run depends on.
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Run tests
         run: cargo test --workspace --all-targets --locked
@@ -147,6 +166,7 @@ jobs:
         uses: Swatinem/rust-cache@v2.9.1
         with:
           key: stable
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Run tests (latest stable)
         run: cargo +stable test --workspace --all-targets --locked

@@ -76,6 +76,13 @@ jobs:
           cache: false
 
       - uses: Swatinem/rust-cache@v2.9.1
+        with:
+          # Release runs execute on tag refs. Caches saved under a tag ref can
+          # never be restored by any later run (each release is a new tag), so
+          # they were pure eviction pressure on the 10 GB budget — ~4 GB per
+          # release — pushing out the main-branch caches CI depends on.
+          # Restore from main's caches; never save.
+          save-if: false
 
       - uses: cargo-bins/cargo-binstall@v1.21.1
         if: matrix.cross
@@ -174,6 +181,13 @@ jobs:
           cache: false
 
       - uses: Swatinem/rust-cache@v2.9.1
+        with:
+          # Release runs execute on tag refs. Caches saved under a tag ref can
+          # never be restored by any later run (each release is a new tag), so
+          # they were pure eviction pressure on the 10 GB budget — ~4 GB per
+          # release — pushing out the main-branch caches CI depends on.
+          # Restore from main's caches; never save.
+          save-if: false
 
       - uses: cargo-bins/cargo-binstall@v1.21.1
 
