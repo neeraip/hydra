@@ -1030,6 +1030,20 @@ impl Router {
         matches!(self.verts[vi].class, VertClass::Outfall(_))
     }
 
+    /// Whether vertex `vi` is a storage unit (§8.5 residence time).
+    pub fn is_storage(&self, vi: usize) -> bool {
+        matches!(self.verts[vi].class, VertClass::Storage(_))
+    }
+
+    /// Vertex `vi`'s current free-surface area (m²): the storage
+    /// geometry's, else the §6.3 nominal minimum.
+    pub fn vertex_area_now(&self, vi: usize) -> f64 {
+        match &self.verts[vi].class {
+            VertClass::Storage(g) => g.area(self.y[vi]),
+            _ => self.min_surface_area,
+        }
+    }
+
     /// Water depth in model link `li` (m): a channel's mid-depth, a
     /// structure's head above its crest, for the §9.1 premises.
     pub fn link_depth(&self, li: usize) -> Option<f64> {

@@ -4,9 +4,10 @@
 //!
 //! Currently implemented: §8.2–§8.3 surface quality — mass-state
 //! accumulation, street cleaning, the three mobilisation relations, and
-//! the ponded store — and §8.4 network transport: vertex and channel
+//! the ponded store; §8.4 network transport — vertex and channel
 //! reactors under the robust mixing form with exact exponential decay,
-//! fed by the §8.1 mass sources. Treatment (§8.5) joins as it lands.
+//! fed by the §8.1 mass sources; and §8.5 treatment expressions with
+//! recursive removal references and storage residence time.
 
 pub mod quality;
 pub mod surface;

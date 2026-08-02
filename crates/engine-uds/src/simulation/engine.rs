@@ -208,11 +208,6 @@ impl Simulation {
         // §8: this stage evaluates network transport only; surface
         // accumulation-mobilisation and treatment refuse, typed.
         if !net.constituents.is_empty() {
-            if !net.treatments.is_empty() {
-                return Err(OpenError::Transport(
-                    "treatment expressions arrive with the §8.5 stage".into(),
-                ));
-            }
             let has_external_buildup = net.land_uses.iter().any(|lu| {
                 lu.buildup
                     .iter()
@@ -228,7 +223,10 @@ impl Simulation {
         let quality = if net.constituents.is_empty() {
             None
         } else {
-            Some(crate::transport::NetworkQuality::build(&router, &net))
+            Some(
+                crate::transport::NetworkQuality::build(&router, &net)
+                    .map_err(OpenError::Transport)?,
+            )
         };
         let surface_quality = if net.constituents.is_empty() || net.parcels.is_empty() {
             None

@@ -364,6 +364,12 @@ impl Expression {
     /// domain-guarded operations yield zero; the flag reports whether any
     /// guard fired, for the consumer's once-per-expression warning.
     pub fn eval(&self, vars: &[f64]) -> (f64, bool) {
+        self.eval_by(&mut |i| vars.get(i).copied().unwrap_or(0.0))
+    }
+
+    /// Evaluate with a resolver — the §8.5 treatment consumer computes
+    /// removal variables recursively on demand.
+    pub fn eval_by(&self, var: &mut dyn FnMut(usize) -> f64) -> (f64, bool) {
         let mut stack: Vec<f64> = Vec::with_capacity(8);
         let mut guarded = false;
         // Any non-finite outcome is domain-guarded to zero, subsuming
@@ -379,7 +385,7 @@ impl Expression {
         for op in &self.ops {
             match op {
                 Op::Push(v) => stack.push(*v),
-                Op::Var(i) => stack.push(vars.get(*i).copied().unwrap_or(0.0)),
+                Op::Var(i) => stack.push(var(*i)),
                 Op::Add | Op::Sub | Op::Mul | Op::Div | Op::Pow => {
                     let b = stack.pop().unwrap_or(0.0);
                     let a = stack.pop().unwrap_or(0.0);

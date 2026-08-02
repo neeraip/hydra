@@ -5,7 +5,8 @@
 //! final storage, and evaporation concentrating what remains.
 
 use crate::hydraulics::routing::Router;
-use crate::model::Network;
+use crate::model::{Network, TreatmentKind};
+use crate::simulation::expression::Expression;
 
 /// The §8.4 dry-volume threshold (m³): one litre.
 const ZERO_VOL: f64 = 1.0e-3;
@@ -31,12 +32,21 @@ pub struct NetworkQuality {
     vol_prev: Vec<f64>,
     /// Channel volumes at the previous step (m³).
     chan_vol_prev: Vec<f64>,
+    /// §8.5 treatment: per vertex, the compiled (constituent,
+    /// removal-kind, expression) set; empty for untreated vertices.
+    treatments: Vec<Vec<(usize, bool, Expression)>>,
+    /// §8.5 storage residence time per vertex (s).
+    hrt: Vec<f64>,
+    /// File-unit factors for the §8.5 process variables.
+    cv_len: f64,
+    cv_flow: f64,
 }
 
 impl NetworkQuality {
     /// Seed the state: initial concentrations only on elements wet at
-    /// start (§8.4).
-    pub fn build(router: &Router, net: &Network) -> NetworkQuality {
+    /// start (§8.4), and compile the §8.5 treatment expressions against
+    /// the process-variable and constituent vocabulary.
+    pub fn build(router: &Router, net: &Network) -> Result<NetworkQuality, String> {
         let np = net.constituents.len();
         let nv = net.vertices.len();
         let chans = router.channel_transport();
@@ -67,7 +77,42 @@ impl NetworkQuality {
                     .collect()
             })
             .collect();
-        NetworkQuality {
+        // §8.5 vocabulary: hrt dt flow depth area, then constituent
+        // concentrations, then their removals as `r_<name>`.
+        let mut treatments: Vec<Vec<(usize, bool, Expression)>> = vec![Vec::new(); nv];
+        for t in &net.treatments {
+            let resolve = |name: &str| -> Option<usize> {
+                match name {
+                    "hrt" => Some(0),
+                    "dt" => Some(1),
+                    "flow" => Some(2),
+                    "depth" => Some(3),
+                    "area" => Some(4),
+                    _ => {
+                        if let Some(r) = name.strip_prefix("r_") {
+                            net.constituents
+                                .iter()
+                                .position(|c| c.id.eq_ignore_ascii_case(r))
+                                .map(|ci| 5 + np + ci)
+                        } else {
+                            net.constituents
+                                .iter()
+                                .position(|c| c.id.eq_ignore_ascii_case(name))
+                                .map(|ci| 5 + ci)
+                        }
+                    }
+                }
+            };
+            let expr = Expression::compile(&t.expression, resolve).map_err(|e| {
+                format!(
+                    "{}: treatment of {}: {e}",
+                    net.vertices[t.vertex].id, net.constituents[t.constituent].id
+                )
+            })?;
+            treatments[t.vertex].push((t.constituent, t.kind == TreatmentKind::Removal, expr));
+        }
+        let us = net.options.flow_units.is_us();
+        Ok(NetworkQuality {
             c_vertex,
             c_channel,
             final_storage: vec![0.0; np],
@@ -76,7 +121,18 @@ impl NetworkQuality {
             inflow_mass: vec![0.0; np],
             vol_prev,
             chan_vol_prev,
-        }
+            treatments,
+            hrt: vec![0.0; nv],
+            cv_len: if us { 0.3048 } else { 1.0 },
+            cv_flow: match net.options.flow_units {
+                crate::io::options::FlowUnits::Cfs => 0.028_316_846_592,
+                crate::io::options::FlowUnits::Gpm => 6.309_019_64e-5,
+                crate::io::options::FlowUnits::Mgd => 0.043_812_636_4,
+                crate::io::options::FlowUnits::Cms => 1.0,
+                crate::io::options::FlowUnits::Lps => 1.0e-3,
+                crate::io::options::FlowUnits::Mld => 1.0 / 86.4,
+            },
+        })
     }
 
     /// Advance one accepted routing step (§8.4): `lat_flow` the assembled
@@ -94,6 +150,10 @@ impl NetworkQuality {
         let structs = router.structure_transport();
         let nv = self.vol_prev.len();
         let vol_new: Vec<f64> = (0..nv).map(|v| router.vertex_volume_now(v)).collect();
+        let np = net.constituents.len();
+        // Influent concentrations and inflows retained for §8.5.
+        let mut cin_all = vec![vec![0.0_f64; nv]; np];
+        let mut flow_all = vec![0.0_f64; nv];
 
         for (p, constituent) in net.constituents.iter().enumerate() {
             let decay = (-constituent.decay * dt).exp();
@@ -131,8 +191,15 @@ impl NetworkQuality {
                 }
             }
 
-            // Vertex reactors (§8.4).
+            // Vertex reactors (§8.4). A treatment expression overrides
+            // the constituent's global decay at its vertex (§8.5).
             for v in 0..nv {
+                let treated = self.treatments[v].iter().any(|(ci, _, _)| *ci == p);
+                let decay = if treated { 1.0 } else { decay };
+                if flow_in[v] > 0.0 {
+                    cin_all[p][v] = mass_in[v] / (flow_in[v] * dt);
+                }
+                flow_all[v] = flow_in[v];
                 if router.is_outfall(v) {
                     // Discharge leaves the system at the mixture.
                     let c = if flow_in[v] > 0.0 {
@@ -180,9 +247,16 @@ impl NetworkQuality {
                 }
                 self.c_vertex[p][v] = c_new;
             }
+        }
 
-            // Channel reactors (§8.4), drawing the just-updated upstream
-            // vertex concentration.
+        // §8.5 treatment at each treated vertex, then the channel pass
+        // draws the treated concentrations.
+        self.apply_treatment(router, net, &cin_all, &flow_all, dt);
+
+        // Channel reactors (§8.4), drawing the just-updated upstream
+        // vertex concentration.
+        for (p, constituent) in net.constituents.iter().enumerate() {
+            let decay = (-constituent.decay * dt).exp();
             for (k, &(_, from, to, q, v_new)) in chans.iter().enumerate() {
                 let v_old = self.chan_vol_prev[k];
                 if v_new <= ZERO_VOL {
@@ -205,6 +279,161 @@ impl NetworkQuality {
 
         self.vol_prev = vol_new;
         self.chan_vol_prev = chans.iter().map(|c| c.4).collect();
+    }
+
+    /// The §8.5 treatment pass: per treated vertex, evaluate removals —
+    /// recursively for cross-references, guarded against cycles — and
+    /// revise the vertex concentrations, booking the lost mass as
+    /// reacted.
+    #[allow(clippy::needless_range_loop)] // parallel per-constituent rows
+    fn apply_treatment(
+        &mut self,
+        router: &Router,
+        net: &Network,
+        cin: &[Vec<f64>],
+        flow_in: &[f64],
+        dt: f64,
+    ) {
+        let np = net.constituents.len();
+        for v in 0..self.vol_prev.len() {
+            // Residence time advances at storage vertices (§8.5).
+            if router.is_storage(v) {
+                let vol = self.vol_prev[v];
+                self.hrt[v] = if vol < ZERO_VOL {
+                    0.0
+                } else {
+                    (self.hrt[v] + dt) * vol / (vol + flow_in[v] * dt)
+                };
+            }
+            if self.treatments[v].is_empty() {
+                continue;
+            }
+            let q = flow_in[v];
+            let v_old = self.vol_prev[v];
+            let depth = router.depth(v);
+            let area = router.vertex_area_now(v);
+            // Removal memo: NaN = not computed, ∞ = in progress.
+            let mut removal = vec![f64::NAN; np];
+            for p in 0..np {
+                let has = self.treatments[v].iter().any(|(ci, _, _)| *ci == p);
+                let kind_removal = self.treatments[v]
+                    .iter()
+                    .find(|(ci, _, _)| *ci == p)
+                    .map(|(_, r, _)| *r);
+                if !has {
+                    removal[p] = 0.0;
+                    continue;
+                }
+                // Removal-form yields zero without inflow (§8.5).
+                if kind_removal == Some(true) && q <= 1e-12 {
+                    removal[p] = 0.0;
+                }
+            }
+            let vars_base = [
+                self.hrt[v] / 3600.0,
+                dt,
+                q / self.cv_flow,
+                depth / self.cv_len,
+                area / (self.cv_len * self.cv_len),
+            ];
+            for p in 0..np {
+                self.compute_removal(v, p, &vars_base, cin, &mut removal);
+            }
+            for p in 0..np {
+                let r = removal[p];
+                if r <= 0.0 || !r.is_finite() {
+                    continue;
+                }
+                let kind_removal = self.treatments[v]
+                    .iter()
+                    .find(|(ci, _, _)| *ci == p)
+                    .map(|(_, k, _)| *k);
+                let c_mix = self.c_vertex[p][v];
+                let c_out = match kind_removal {
+                    Some(true) => {
+                        // Applied to the influent, capped by the mixture.
+                        if cin[p][v] == 0.0 {
+                            c_mix
+                        } else {
+                            ((1.0 - r) * cin[p][v]).min(c_mix)
+                        }
+                    }
+                    _ => (1.0 - r) * c_mix,
+                };
+                // Mass lost accounts for initial storage (§8.5).
+                let lost = (cin[p][v] * q * dt + self.c_vertex[p][v] * v_old
+                    - c_out * (q * dt + v_old))
+                    .max(0.0);
+                self.reacted[p] += lost;
+                self.c_vertex[p][v] = c_out;
+            }
+        }
+    }
+
+    /// Resolve constituent `p`'s removal at vertex `v`, memoised;
+    /// recursion serves `r_<name>` references. A cycle — refused at
+    /// validation — reads zero defensively.
+    fn compute_removal(
+        &self,
+        v: usize,
+        p: usize,
+        vars_base: &[f64; 5],
+        cin: &[Vec<f64>],
+        removal: &mut [f64],
+    ) {
+        if !removal[p].is_nan() {
+            return;
+        }
+        let Some((_, is_removal, expr)) = self.treatments[v]
+            .iter()
+            .find(|(ci, _, _)| *ci == p)
+            .map(|(ci, r, e)| (*ci, *r, e.clone()))
+        else {
+            removal[p] = 0.0;
+            return;
+        };
+        removal[p] = f64::INFINITY; // in progress
+        let c0 = self.c_vertex[p][v];
+        if c0 == 0.0 {
+            removal[p] = 0.0;
+            return;
+        }
+        let np = removal.len();
+        let mut var = |i: usize| -> f64 {
+            if i < 5 {
+                vars_base[i]
+            } else if i < 5 + np {
+                let ci = i - 5;
+                // A referenced constituent reads the combined influent
+                // when its own equation here is removal-type or absent,
+                // the mixture otherwise (§8.5).
+                let ref_removal = self.treatments[v]
+                    .iter()
+                    .find(|(c, _, _)| *c == ci)
+                    .map(|(_, r, _)| *r);
+                match ref_removal {
+                    Some(false) => self.c_vertex[ci][v],
+                    _ => cin[ci][v],
+                }
+            } else {
+                let ci = i - 5 - np;
+                if removal[ci].is_infinite() {
+                    // Cyclic reference: zero, defensively.
+                    return 0.0;
+                }
+                if removal[ci].is_nan() {
+                    self.compute_removal(v, ci, vars_base, cin, removal);
+                }
+                removal[ci]
+            }
+        };
+        let (r, _) = expr.eval_by(&mut var);
+        let r = r.max(0.0);
+        removal[p] = if is_removal {
+            r.min(1.0)
+        } else {
+            1.0 - r.min(c0) / c0
+        };
     }
 
     /// The concentration reported for model link `li`: its channel state,

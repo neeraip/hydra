@@ -1203,6 +1203,43 @@ S1  TSS  40
     assert!(m_out > 0.8 * m_in, "discharged {m_out} of {m_in}");
 }
 
+#[test]
+fn a_removal_treatment_halves_the_influent() {
+    let inp = quality_model(0.0)
+        + "
+[TREATMENT]
+J1  TSS  R = 0.5
+";
+    let (mut sim, _, _) = Simulation::open(&inp).expect("open");
+    sim.run();
+    // Half the 100 mg/L influent survives treatment at J1.
+    let c = sim.link_concentration("C1", "TSS").expect("conc");
+    assert!((c - 50.0).abs() < 3.0, "treated concentration {c}");
+    // The removed half books as reacted mass, closing the ledger.
+    let (m_in, m_out, m_react, _) = sim.quality_ledger("TSS").expect("ledger");
+    assert!(
+        (m_react - 0.5 * m_in).abs() < 0.1 * m_in,
+        "reacted {m_react} of {m_in}"
+    );
+    assert!(
+        (m_in - m_out - m_react).abs() < 0.1 * m_in,
+        "ledger gap: in {m_in} out {m_out} reacted {m_react}"
+    );
+}
+
+#[test]
+fn a_concentration_treatment_caps_the_effluent() {
+    let inp = quality_model(0.0)
+        + "
+[TREATMENT]
+J1  TSS  C = 20
+";
+    let (mut sim, _, _) = Simulation::open(&inp).expect("open");
+    sim.run();
+    let c = sim.link_concentration("C1", "TSS").expect("conc");
+    assert!((c - 20.0).abs() < 2.0, "effluent concentration {c}");
+}
+
 // ── §3.4 control measures ───────────────────────────────────────────────
 
 #[test]
