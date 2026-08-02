@@ -329,6 +329,14 @@ impl Survey {
         self.ids.get(&kind).map_or(0, HashMap::len)
     }
 
+    /// Resolve an identifier token in a namespace, case-insensitively
+    /// (§14.2 — the predecessor's hash table ignores case).
+    pub fn resolve(&self, kind: ObjectKind, token: &str) -> Option<&usize> {
+        self.ids
+            .get(&kind)?
+            .get(token.to_ascii_uppercase().as_str())
+    }
+
     /// Whether any diagnostic refuses the file.
     pub fn has_errors(&self) -> bool {
         self.diagnostics.iter().any(|d| d.kind.is_error())
@@ -547,8 +555,12 @@ fn register(s: &mut Survey, section: Section, tokens: &[&str], line_no: usize) {
 }
 
 fn add_id(s: &mut Survey, kind: ObjectKind, id: &str, line_no: usize, duplicate_is_error: bool) {
+    // §14.2: identifiers match case-insensitively, as the predecessor's
+    // hash table does — the registry key is the canonical upper-case
+    // form; objects keep their as-written spelling from the data lines.
+    let key = id.to_ascii_uppercase();
     let registry = s.ids.entry(kind).or_default();
-    if registry.contains_key(id) {
+    if registry.contains_key(&key) {
         if duplicate_is_error {
             s.diagnostics.push(Diagnostic {
                 line: line_no,
@@ -561,7 +573,7 @@ fn add_id(s: &mut Survey, kind: ObjectKind, id: &str, line_no: usize, duplicate_
         return;
     }
     let index = registry.len();
-    registry.insert(id.to_string(), index);
+    registry.insert(key, index);
 }
 
 #[cfg(test)]

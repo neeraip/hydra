@@ -61,7 +61,7 @@ pub(crate) fn parse_snowpacks(
             diags.push(err(l, DiagnosticKind::MissingItems));
             continue;
         }
-        let Some(&idx) = ids.and_then(|m| m.get(&t[0])) else {
+        let Some(&idx) = ids.and_then(|m| m.get(t[0].to_ascii_uppercase().as_str())) else {
             diags.push(unresolved(l, &t[0]));
             continue;
         };
@@ -95,7 +95,7 @@ pub(crate) fn parse_snowpacks(
             // REMOVAL: trigger depth + five fractions + optional parcel.
             let to_parcel = match t.get(8) {
                 Some(tok) => {
-                    let Some(&p) = s.ids.get(&ObjectKind::Parcel).and_then(|m| m.get(tok)) else {
+                    let Some(&p) = s.resolve(ObjectKind::Parcel, tok) else {
                         diags.push(unresolved(l, tok));
                         continue;
                     };
@@ -173,7 +173,7 @@ pub(crate) fn parse_unit_hydrographs(
             diags.push(err(l, DiagnosticKind::MissingItems));
             continue;
         }
-        let Some(&idx) = ids.and_then(|m| m.get(&t[0])) else {
+        let Some(&idx) = ids.and_then(|m| m.get(t[0].to_ascii_uppercase().as_str())) else {
             diags.push(unresolved(l, &t[0]));
             continue;
         };
@@ -183,7 +183,7 @@ pub(crate) fn parse_unit_hydrographs(
         }
         // Two tokens: the gage assignment.
         if t.len() == 2 {
-            let Some(&g) = s.ids.get(&ObjectKind::Gage).and_then(|m| m.get(&t[1])) else {
+            let Some(&g) = s.resolve(ObjectKind::Gage, &t[1]) else {
                 diags.push(unresolved(l, &t[1]));
                 continue;
             };
@@ -311,15 +311,11 @@ pub(crate) fn parse_rdii(
             diags.push(err(l, DiagnosticKind::MissingItems));
             continue;
         }
-        let Some(&vx) = s.ids.get(&ObjectKind::Vertex).and_then(|m| m.get(&t[0])) else {
+        let Some(&vx) = s.resolve(ObjectKind::Vertex, &t[0]) else {
             diags.push(unresolved(l, &t[0]));
             continue;
         };
-        let Some(&g) = s
-            .ids
-            .get(&ObjectKind::UnitHydrographGroup)
-            .and_then(|m| m.get(&t[1]))
-        else {
+        let Some(&g) = s.resolve(ObjectKind::UnitHydrographGroup, &t[1]) else {
             diags.push(unresolved(l, &t[1]));
             continue;
         };
@@ -369,15 +365,11 @@ pub(crate) fn parse_treatment(
             diags.push(err(l, DiagnosticKind::MissingItems));
             continue;
         }
-        let Some(&vx) = s.ids.get(&ObjectKind::Vertex).and_then(|m| m.get(&t[0])) else {
+        let Some(&vx) = s.resolve(ObjectKind::Vertex, &t[0]) else {
             diags.push(unresolved(l, &t[0]));
             continue;
         };
-        let Some(&p) = s
-            .ids
-            .get(&ObjectKind::Constituent)
-            .and_then(|m| m.get(&t[1]))
-        else {
+        let Some(&p) = s.resolve(ObjectKind::Constituent, &t[1]) else {
             diags.push(unresolved(l, &t[1]));
             continue;
         };

@@ -50,7 +50,7 @@ pub(crate) fn parse_streets(
             diags.push(err(l, DiagnosticKind::MissingItems));
             continue;
         }
-        let Some(&idx) = ids.and_then(|m| m.get(&t[0])) else {
+        let Some(&idx) = ids.and_then(|m| m.get(t[0].to_ascii_uppercase().as_str())) else {
             diags.push(unresolved(l, &t[0]));
             continue;
         };
@@ -202,7 +202,7 @@ pub(crate) fn parse_inlets(
             diags.push(err(l, DiagnosticKind::MissingItems));
             continue;
         }
-        let Some(&idx) = ids.and_then(|m| m.get(&t[0])) else {
+        let Some(&idx) = ids.and_then(|m| m.get(t[0].to_ascii_uppercase().as_str())) else {
             diags.push(unresolved(l, &t[0]));
             continue;
         };
@@ -321,7 +321,7 @@ pub(crate) fn parse_inlets(
             }
             _ => {
                 // CUSTOM: a capture/diversion curve reference.
-                match s.ids.get(&ObjectKind::Curve).and_then(|m| m.get(&t[2])) {
+                match s.resolve(ObjectKind::Curve, &t[2]) {
                     Some(&c) => design.custom_curve = Some(c),
                     None => diags.push(unresolved(l, &t[2])),
                 }
@@ -350,16 +350,15 @@ pub(crate) fn parse_inlet_usage(
             diags.push(err(l, DiagnosticKind::MissingItems));
             continue;
         }
-        let Some(&link) = s.ids.get(&ObjectKind::Link).and_then(|m| m.get(&t[0])) else {
+        let Some(&link) = s.resolve(ObjectKind::Link, &t[0]) else {
             diags.push(unresolved(l, &t[0]));
             continue;
         };
-        let Some(&design) = s.ids.get(&ObjectKind::Inlet).and_then(|m| m.get(&t[1])) else {
+        let Some(&design) = s.resolve(ObjectKind::Inlet, &t[1]) else {
             diags.push(unresolved(l, &t[1]));
             continue;
         };
-        let Some(&capture_vertex) = s.ids.get(&ObjectKind::Vertex).and_then(|m| m.get(&t[2]))
-        else {
+        let Some(&capture_vertex) = s.resolve(ObjectKind::Vertex, &t[2]) else {
             diags.push(unresolved(l, &t[2]));
             continue;
         };

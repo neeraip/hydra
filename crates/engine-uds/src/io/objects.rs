@@ -452,7 +452,7 @@ fn resolve(
     diags: &mut Vec<Diagnostic>,
     line: usize,
 ) -> Option<usize> {
-    match s.ids.get(&kind).and_then(|m| m.get(id)) {
+    match s.resolve(kind, id) {
         Some(&i) => Some(i),
         None => {
             diags.push(err(
@@ -504,7 +504,7 @@ fn realign(net: &mut Network, s: &Survey, sec: Section, line: &TokenLine) {
     );
     let id = line.tokens.first().cloned().unwrap_or_default();
     if is_vertex {
-        if let Some(&idx) = s.ids[&ObjectKind::Vertex].get(&id) {
+        if let Some(&idx) = s.ids[&ObjectKind::Vertex].get(id.to_ascii_uppercase().as_str()) {
             if net.vertices.len() == idx {
                 net.vertices.push(Vertex {
                     id,
@@ -518,7 +518,7 @@ fn realign(net: &mut Network, s: &Survey, sec: Section, line: &TokenLine) {
                 });
             }
         }
-    } else if let Some(&idx) = s.ids[&ObjectKind::Link].get(&id) {
+    } else if let Some(&idx) = s.ids[&ObjectKind::Link].get(id.to_ascii_uppercase().as_str()) {
         if net.links.len() == idx {
             net.links.push(Link {
                 id,

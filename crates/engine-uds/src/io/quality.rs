@@ -6,8 +6,6 @@
 //! relations own their interpretation — while decay converts from per-day
 //! to per-second and flow-valued inflows convert to m³/s.
 
-use std::collections::HashMap;
-
 use super::keywords::match_keyword;
 use super::objects::UnitConverter;
 use super::survey::{Diagnostic, DiagnosticKind, ObjectKind, Survey, TokenLine};
@@ -35,10 +33,6 @@ fn unresolved(line: usize, id: &str) -> Diagnostic {
         line,
         DiagnosticKind::UnresolvedReference { id: id.to_string() },
     )
-}
-
-fn lookup(s: &Survey, kind: ObjectKind) -> Option<&HashMap<String, usize>> {
-    s.ids.get(&kind)
 }
 
 /// The predecessor tests the FLOW sentinel with its prefix matcher, but a
@@ -99,7 +93,7 @@ pub(crate) fn parse_constituents(
         let mut co_constituent = None;
         let mut co_fraction = 0.0;
         if t.len() >= 9 && t[7] != "*" {
-            let Some(&co) = lookup(s, ObjectKind::Constituent).and_then(|m| m.get(&t[7])) else {
+            let Some(&co) = s.resolve(ObjectKind::Constituent, &t[7]) else {
                 diags.push(unresolved(l, &t[7]));
                 continue;
             };
@@ -214,11 +208,11 @@ pub(crate) fn parse_buildup(
         if t.len() < 3 {
             continue; // the predecessor ignores short lines here
         }
-        let Some(&lu) = lookup(s, ObjectKind::LandUse).and_then(|m| m.get(&t[0])) else {
+        let Some(&lu) = s.resolve(ObjectKind::LandUse, &t[0]) else {
             diags.push(unresolved(l, &t[0]));
             continue;
         };
-        let Some(&p) = lookup(s, ObjectKind::Constituent).and_then(|m| m.get(&t[1])) else {
+        let Some(&p) = s.resolve(ObjectKind::Constituent, &t[1]) else {
             diags.push(unresolved(l, &t[1]));
             continue;
         };
@@ -255,7 +249,7 @@ pub(crate) fn parse_buildup(
                     }
                 }
                 if ok {
-                    match lookup(s, ObjectKind::TimeSeries).and_then(|m| m.get(&t[5])) {
+                    match s.resolve(ObjectKind::TimeSeries, &t[5]) {
                         Some(&ts) => series = Some(ts),
                         None => {
                             diags.push(unresolved(l, &t[5]));
@@ -320,11 +314,11 @@ pub(crate) fn parse_washoff(
         if t.len() < 3 {
             continue;
         }
-        let Some(&lu) = lookup(s, ObjectKind::LandUse).and_then(|m| m.get(&t[0])) else {
+        let Some(&lu) = s.resolve(ObjectKind::LandUse, &t[0]) else {
             diags.push(unresolved(l, &t[0]));
             continue;
         };
-        let Some(&p) = lookup(s, ObjectKind::Constituent).and_then(|m| m.get(&t[1])) else {
+        let Some(&p) = s.resolve(ObjectKind::Constituent, &t[1]) else {
             diags.push(unresolved(l, &t[1]));
             continue;
         };
@@ -387,14 +381,14 @@ pub(crate) fn parse_coverages(
             diags.push(err(l, DiagnosticKind::MissingItems));
             continue;
         }
-        let Some(&pc) = lookup(s, ObjectKind::Parcel).and_then(|m| m.get(&t[0])) else {
+        let Some(&pc) = s.resolve(ObjectKind::Parcel, &t[0]) else {
             diags.push(unresolved(l, &t[0]));
             continue;
         };
         let mut k = 1;
         while k + 1 < t.len() + 1 {
             let Some(name) = t.get(k) else { break };
-            let Some(&lu) = lookup(s, ObjectKind::LandUse).and_then(|m| m.get(name)) else {
+            let Some(&lu) = s.resolve(ObjectKind::LandUse, name) else {
                 diags.push(unresolved(l, name));
                 break;
             };
@@ -442,13 +436,13 @@ pub(crate) fn parse_loadings(
             diags.push(err(l, DiagnosticKind::MissingItems));
             continue;
         }
-        let Some(&pc) = lookup(s, ObjectKind::Parcel).and_then(|m| m.get(&t[0])) else {
+        let Some(&pc) = s.resolve(ObjectKind::Parcel, &t[0]) else {
             diags.push(unresolved(l, &t[0]));
             continue;
         };
         let mut k = 1;
         while k < t.len() {
-            let Some(&p) = lookup(s, ObjectKind::Constituent).and_then(|m| m.get(&t[k])) else {
+            let Some(&p) = s.resolve(ObjectKind::Constituent, &t[k]) else {
                 diags.push(unresolved(l, &t[k]));
                 break;
             };
@@ -496,14 +490,14 @@ pub(crate) fn parse_inflows(
             diags.push(err(l, DiagnosticKind::MissingItems));
             continue;
         }
-        let Some(&vertex) = lookup(s, ObjectKind::Vertex).and_then(|m| m.get(&t[0])) else {
+        let Some(&vertex) = s.resolve(ObjectKind::Vertex, &t[0]) else {
             diags.push(unresolved(l, &t[0]));
             continue;
         };
         // Constituent lookup first, FLOW-sentinel fallthrough — the
         // predecessor's order, so a constituent named FLOW wins; the
         // sentinel itself is prefix-matched (§14.3).
-        let constituent = match lookup(s, ObjectKind::Constituent).and_then(|m| m.get(&t[1])) {
+        let constituent = match s.resolve(ObjectKind::Constituent, &t[1]) {
             Some(&p) => Some(p),
             None if is_flow_sentinel(&t[1]) => None,
             None => {
@@ -514,7 +508,7 @@ pub(crate) fn parse_inflows(
         let series = if t[2].is_empty() || t[2] == "\"\"" {
             None
         } else {
-            let Some(&ts) = lookup(s, ObjectKind::TimeSeries).and_then(|m| m.get(&t[2])) else {
+            let Some(&ts) = s.resolve(ObjectKind::TimeSeries, &t[2]) else {
                 diags.push(unresolved(l, &t[2]));
                 continue;
             };
@@ -584,7 +578,7 @@ pub(crate) fn parse_inflows(
         }
         let base_pattern = match t.get(7) {
             Some(tok) => {
-                let Some(&pat) = lookup(s, ObjectKind::TimePattern).and_then(|m| m.get(tok)) else {
+                let Some(&pat) = s.resolve(ObjectKind::TimePattern, tok) else {
                     diags.push(unresolved(l, tok));
                     continue;
                 };
@@ -640,14 +634,14 @@ pub(crate) fn parse_dry_weather(
             diags.push(err(l, DiagnosticKind::MissingItems));
             continue;
         }
-        let Some(&vertex) = lookup(s, ObjectKind::Vertex).and_then(|m| m.get(&t[0])) else {
+        let Some(&vertex) = s.resolve(ObjectKind::Vertex, &t[0]) else {
             diags.push(unresolved(l, &t[0]));
             continue;
         };
         // Constituent lookup first, FLOW-sentinel fallthrough — the
         // predecessor's order, so a constituent named FLOW wins; the
         // sentinel itself is prefix-matched (§14.3).
-        let constituent = match lookup(s, ObjectKind::Constituent).and_then(|m| m.get(&t[1])) {
+        let constituent = match s.resolve(ObjectKind::Constituent, &t[1]) {
             Some(&p) => Some(p),
             None if is_flow_sentinel(&t[1]) => None,
             None => {
@@ -669,7 +663,7 @@ pub(crate) fn parse_dry_weather(
             if tok.is_empty() {
                 continue;
             }
-            let Some(&pat) = lookup(s, ObjectKind::TimePattern).and_then(|m| m.get(tok)) else {
+            let Some(&pat) = s.resolve(ObjectKind::TimePattern, tok) else {
                 diags.push(unresolved(l, tok));
                 ok = false;
                 break;

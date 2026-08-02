@@ -266,7 +266,7 @@ pub(crate) fn parse_report(
         };
         let mut ok = true;
         for tok in &t[1..] {
-            match s.ids.get(&kind).and_then(|m| m.get(tok)) {
+            match s.resolve(kind, tok) {
                 Some(&i) => {
                     if !ids.contains(&i) {
                         ids.push(i);

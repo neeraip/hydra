@@ -82,7 +82,7 @@ pub(crate) fn parse_gages(
                 ));
                 continue;
             };
-            let Some(&ts) = map.get(&t[5]) else {
+            let Some(&ts) = map.get(t[5].to_ascii_uppercase().as_str()) else {
                 diags.push(err(
                     l,
                     DiagnosticKind::UnresolvedReference { id: t[5].clone() },
@@ -126,7 +126,7 @@ pub(crate) fn parse_parcels(
             diags.push(err(l, DiagnosticKind::MissingItems));
             continue;
         }
-        let Some(gage) = s.ids.get(&ObjectKind::Gage).and_then(|m| m.get(&t[1])) else {
+        let Some(gage) = s.resolve(ObjectKind::Gage, &t[1]) else {
             diags.push(err(
                 l,
                 DiagnosticKind::UnresolvedReference { id: t[1].clone() },
@@ -134,8 +134,8 @@ pub(crate) fn parse_parcels(
             continue;
         };
         // The outlet may be a vertex or another parcel; either resolves.
-        let vertex = s.ids.get(&ObjectKind::Vertex).and_then(|m| m.get(&t[2]));
-        let parcel = s.ids.get(&ObjectKind::Parcel).and_then(|m| m.get(&t[2]));
+        let vertex = s.resolve(ObjectKind::Vertex, &t[2]);
+        let parcel = s.resolve(ObjectKind::Parcel, &t[2]);
         let outlet = match (vertex, parcel) {
             (Some(&v), _) => ParcelOutlet::Vertex(v),
             (None, Some(&p)) => ParcelOutlet::Parcel(p),
@@ -166,7 +166,7 @@ pub(crate) fn parse_parcels(
         }
         let snowpack = match t.get(8) {
             Some(tok) => {
-                let Some(&sp) = s.ids.get(&ObjectKind::Snowpack).and_then(|m| m.get(tok)) else {
+                let Some(&sp) = s.resolve(ObjectKind::Snowpack, tok) else {
                     diags.push(err(
                         l,
                         DiagnosticKind::UnresolvedReference { id: tok.clone() },
@@ -226,7 +226,7 @@ pub(crate) fn parse_subareas(
             diags.push(err(l, DiagnosticKind::MissingItems));
             continue;
         }
-        let Some(&idx) = ids.get(&t[0]) else {
+        let Some(&idx) = ids.get(t[0].to_ascii_uppercase().as_str()) else {
             diags.push(err(
                 l,
                 DiagnosticKind::UnresolvedReference { id: t[0].clone() },
@@ -308,7 +308,7 @@ pub(crate) fn parse_infiltration(
             diags.push(err(l, DiagnosticKind::MissingItems));
             continue;
         }
-        let Some(&idx) = ids.get(&t[0]) else {
+        let Some(&idx) = ids.get(t[0].to_ascii_uppercase().as_str()) else {
             diags.push(err(
                 l,
                 DiagnosticKind::UnresolvedReference { id: t[0].clone() },
@@ -414,7 +414,7 @@ pub(crate) fn parse_aquifers(
         }
         let evap_pattern = match t.get(13) {
             Some(tok) => {
-                let Some(&p) = s.ids.get(&ObjectKind::TimePattern).and_then(|m| m.get(tok)) else {
+                let Some(&p) = s.resolve(ObjectKind::TimePattern, tok) else {
                     diags.push(err(
                         l,
                         DiagnosticKind::UnresolvedReference { id: tok.clone() },
@@ -460,21 +460,21 @@ pub(crate) fn parse_groundwater(
             diags.push(err(l, DiagnosticKind::MissingItems));
             continue;
         }
-        let Some(&pc) = s.ids.get(&ObjectKind::Parcel).and_then(|m| m.get(&t[0])) else {
+        let Some(&pc) = s.resolve(ObjectKind::Parcel, &t[0]) else {
             diags.push(err(
                 l,
                 DiagnosticKind::UnresolvedReference { id: t[0].clone() },
             ));
             continue;
         };
-        let Some(&aq) = s.ids.get(&ObjectKind::Aquifer).and_then(|m| m.get(&t[1])) else {
+        let Some(&aq) = s.resolve(ObjectKind::Aquifer, &t[1]) else {
             diags.push(err(
                 l,
                 DiagnosticKind::UnresolvedReference { id: t[1].clone() },
             ));
             continue;
         };
-        let Some(&vx) = s.ids.get(&ObjectKind::Vertex).and_then(|m| m.get(&t[2])) else {
+        let Some(&vx) = s.resolve(ObjectKind::Vertex, &t[2]) else {
             diags.push(err(
                 l,
                 DiagnosticKind::UnresolvedReference { id: t[2].clone() },
@@ -562,7 +562,7 @@ pub(crate) fn parse_gwf(
             diags.push(err(l, DiagnosticKind::MissingItems));
             continue;
         }
-        let Some(&pc) = s.ids.get(&ObjectKind::Parcel).and_then(|m| m.get(&t[0])) else {
+        let Some(&pc) = s.resolve(ObjectKind::Parcel, &t[0]) else {
             diags.push(err(
                 l,
                 DiagnosticKind::UnresolvedReference { id: t[0].clone() },

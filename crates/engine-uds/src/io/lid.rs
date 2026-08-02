@@ -94,7 +94,7 @@ pub(crate) fn parse_lid_controls(
             diags.push(err(l, DiagnosticKind::MissingItems));
             continue;
         }
-        let Some(&idx) = ids.and_then(|m| m.get(&t[0])) else {
+        let Some(&idx) = ids.and_then(|m| m.get(t[0].to_ascii_uppercase().as_str())) else {
             diags.push(unresolved(l, &t[0]));
             continue;
         };
@@ -283,7 +283,7 @@ pub(crate) fn parse_lid_controls(
                     continue;
                 }
                 let curve = if t.len() >= 9 {
-                    match s.ids.get(&ObjectKind::Curve).and_then(|m| m.get(&t[8])) {
+                    match s.resolve(ObjectKind::Curve, &t[8]) {
                         Some(&c) => Some(c),
                         None => {
                             diags.push(unresolved(l, &t[8]));
@@ -311,11 +311,7 @@ pub(crate) fn parse_lid_controls(
                 }
                 let mut i = 2;
                 while t.len() > i {
-                    let Some(&p) = s
-                        .ids
-                        .get(&ObjectKind::Constituent)
-                        .and_then(|m| m.get(&t[i]))
-                    else {
+                    let Some(&p) = s.resolve(ObjectKind::Constituent, &t[i]) else {
                         diags.push(unresolved(l, &t[i]));
                         break;
                     };
@@ -372,15 +368,11 @@ pub(crate) fn parse_lid_usage(
             diags.push(err(l, DiagnosticKind::MissingItems));
             continue;
         }
-        let Some(&parcel) = s.ids.get(&ObjectKind::Parcel).and_then(|m| m.get(&t[0])) else {
+        let Some(&parcel) = s.resolve(ObjectKind::Parcel, &t[0]) else {
             diags.push(unresolved(l, &t[0]));
             continue;
         };
-        let Some(&control) = s
-            .ids
-            .get(&ObjectKind::ControlMeasure)
-            .and_then(|m| m.get(&t[1]))
-        else {
+        let Some(&control) = s.resolve(ObjectKind::ControlMeasure, &t[1]) else {
             diags.push(unresolved(l, &t[1]));
             continue;
         };
@@ -409,9 +401,9 @@ pub(crate) fn parse_lid_usage(
         let report_file = (t.len() >= 9 && t[8] != "*").then(|| t[8].clone());
         let drain_to = if t.len() >= 10 && t[9] != "*" {
             // A parcel first, then a vertex — the predecessor's order.
-            if let Some(&p) = s.ids.get(&ObjectKind::Parcel).and_then(|m| m.get(&t[9])) {
+            if let Some(&p) = s.resolve(ObjectKind::Parcel, &t[9]) {
                 Some(ParcelOutlet::Parcel(p))
-            } else if let Some(&v) = s.ids.get(&ObjectKind::Vertex).and_then(|m| m.get(&t[9])) {
+            } else if let Some(&v) = s.resolve(ObjectKind::Vertex, &t[9]) {
                 Some(ParcelOutlet::Vertex(v))
             } else {
                 diags.push(unresolved(l, &t[9]));

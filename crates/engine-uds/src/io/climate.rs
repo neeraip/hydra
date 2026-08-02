@@ -102,11 +102,7 @@ pub(crate) fn parse_temperature(
                     diags.push(err(l, DiagnosticKind::MissingItems));
                     continue;
                 }
-                let Some(&ts) = s
-                    .ids
-                    .get(&ObjectKind::TimeSeries)
-                    .and_then(|m| m.get(&t[1]))
-                else {
+                let Some(&ts) = s.resolve(ObjectKind::TimeSeries, &t[1]) else {
                     diags.push(unresolved(l, &t[1]));
                     continue;
                 };
@@ -276,11 +272,7 @@ pub(crate) fn parse_evaporation(
                 climate.evaporation = EvaporationSource::Monthly(v.map(|x| x * f));
             }
             2 => {
-                let Some(&ts) = s
-                    .ids
-                    .get(&ObjectKind::TimeSeries)
-                    .and_then(|m| m.get(&t[1]))
-                else {
+                let Some(&ts) = s.resolve(ObjectKind::TimeSeries, &t[1]) else {
                     diags.push(unresolved(l, &t[1]));
                     continue;
                 };
@@ -299,11 +291,7 @@ pub(crate) fn parse_evaporation(
                 climate.evaporation = EvaporationSource::File { pan };
             }
             5 => {
-                let Some(&p) = s
-                    .ids
-                    .get(&ObjectKind::TimePattern)
-                    .and_then(|m| m.get(&t[1]))
-                else {
+                let Some(&p) = s.resolve(ObjectKind::TimePattern, &t[1]) else {
                     diags.push(unresolved(l, &t[1]));
                     continue;
                 };
@@ -403,16 +391,11 @@ pub(crate) fn parse_adjustments(
                     diags.push(err(l, DiagnosticKind::MissingItems));
                     continue;
                 }
-                let Some(&parcel) = s.ids.get(&ObjectKind::Parcel).and_then(|m| m.get(&t[1]))
-                else {
+                let Some(&parcel) = s.resolve(ObjectKind::Parcel, &t[1]) else {
                     diags.push(unresolved(l, &t[1]));
                     continue;
                 };
-                let Some(&pat) = s
-                    .ids
-                    .get(&ObjectKind::TimePattern)
-                    .and_then(|m| m.get(&t[2]))
-                else {
+                let Some(&pat) = s.resolve(ObjectKind::TimePattern, &t[2]) else {
                     diags.push(unresolved(l, &t[2]));
                     continue;
                 };

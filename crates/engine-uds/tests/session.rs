@@ -2158,3 +2158,50 @@ W1  RECT_OPEN  1  4  0  0
         "storage depth {d} m, expected ≈ {expected}"
     );
 }
+
+#[test]
+fn identifiers_match_case_insensitively() {
+    // §14.2: the predecessor's hash table ignores case — a reference in a
+    // different case resolves, and a case-only redeclaration is refused
+    // as the duplicate it is.
+    let inp = "\
+[OPTIONS]
+FLOW_UNITS  CFS
+
+[JUNCTIONS]
+Node1  100  4
+
+[OUTFALLS]
+O1  98  FREE
+
+[CONDUITS]
+C1  NODE1  o1  400  0.013  0  0
+
+[XSECTIONS]
+C1  CIRCULAR  1.5  0  0  0
+";
+    let (sim, _, _) = Simulation::open(inp).expect("mixed-case references must resolve");
+    assert!(sim.depth("Node1").is_some());
+
+    let dup = "\
+[OPTIONS]
+FLOW_UNITS  CFS
+
+[JUNCTIONS]
+J1  100  4
+j1  100  4
+
+[OUTFALLS]
+O1  98  FREE
+
+[CONDUITS]
+C1  J1  O1  400  0.013  0  0
+
+[XSECTIONS]
+C1  CIRCULAR  1.5  0  0  0
+";
+    assert!(
+        Simulation::open(dup).is_err(),
+        "a case-only redeclaration is a duplicate"
+    );
+}

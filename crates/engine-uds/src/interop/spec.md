@@ -40,7 +40,11 @@ carries the count of lines discarded, which the predecessor never states.
 The file is read in two passes: the first registers identifiers and counts
 objects, the second parses data. **Forward references are legal** — every
 identifier exists before any parameter is read — and duplicate identifiers
-within a type are rejected. `[TITLE]` retains its first three lines; further
+within a type are rejected. **Identifier matching is case-insensitive**, as
+the predecessor's hash table is: `Node1` and `NODE1` are one identifier,
+references resolve regardless of case, and a case-only re-declaration is
+the duplicate it is everywhere else in the ecosystem. Objects keep their
+as-written spelling for output. `[TITLE]` retains its first three lines; further
 title lines are ignored, as the predecessor ignores them.
 
 A numeric token must parse to a **finite** value: the spellings `nan` and

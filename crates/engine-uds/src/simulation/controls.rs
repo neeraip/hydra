@@ -689,7 +689,7 @@ fn parse_source(
         let g = net
             .gages
             .iter()
-            .position(|x| x.id == id)
+            .position(|x| x.id.eq_ignore_ascii_case(id))
             .ok_or_else(|| format!("unknown gage '{id}'"))?;
         if attr == "INTENSITY" {
             return Ok(Source::GageIntensity(g));
@@ -706,7 +706,7 @@ fn parse_source(
         let v = net
             .vertices
             .iter()
-            .position(|x| x.id == id)
+            .position(|x| x.id.eq_ignore_ascii_case(id))
             .ok_or_else(|| format!("unknown vertex '{id}'"))?;
         return Ok(Source::Vertex(
             v,
@@ -724,7 +724,7 @@ fn parse_source(
     let l = net
         .links
         .iter()
-        .position(|x| x.id == id)
+        .position(|x| x.id.eq_ignore_ascii_case(id))
         .ok_or_else(|| format!("unknown link '{id}'"))?;
     let a = match attr.as_str() {
         "FLOW" => LinkAttr::Flow,
@@ -914,7 +914,7 @@ fn parse_action(
     let link = net
         .links
         .iter()
-        .position(|x| x.id == id)
+        .position(|x| x.id.eq_ignore_ascii_case(id))
         .ok_or_else(|| format!("unknown link '{id}'"))?;
     let attr = toks[2].to_ascii_uppercase();
     if toks[3] != "=" {
@@ -932,7 +932,7 @@ fn parse_action(
                 let ci = net
                     .curves
                     .iter()
-                    .position(|x| x.id == *name && x.kind == CurveKind::Control)
+                    .position(|x| x.id.eq_ignore_ascii_case(name) && x.kind == CurveKind::Control)
                     .ok_or_else(|| format!("unknown control curve '{name}'"))?;
                 ActionValue::Curve(ci)
             }
@@ -941,7 +941,7 @@ fn parse_action(
                 let si = net
                     .timeseries
                     .iter()
-                    .position(|x| x.id == *name)
+                    .position(|x| x.id.eq_ignore_ascii_case(name))
                     .ok_or_else(|| format!("unknown series '{name}'"))?;
                 ActionValue::Series(si)
             }

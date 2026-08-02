@@ -94,7 +94,7 @@ pub(crate) fn parse_curves(
             diags.push(err(l, DiagnosticKind::MissingItems));
             continue;
         }
-        let Some(&idx) = ids.get(&t[0]) else {
+        let Some(&idx) = ids.get(t[0].to_ascii_uppercase().as_str()) else {
             continue; // registration already diagnosed anything amiss
         };
         let mut k = 1;
@@ -170,7 +170,7 @@ pub(crate) fn parse_timeseries(
             diags.push(err(l, DiagnosticKind::MissingItems));
             continue;
         }
-        let Some(&idx) = ids.get(&t[0]) else {
+        let Some(&idx) = ids.get(t[0].to_ascii_uppercase().as_str()) else {
             continue;
         };
         if t[1].eq_ignore_ascii_case("FILE") {
@@ -265,7 +265,7 @@ pub(crate) fn parse_patterns(
             diags.push(err(l, DiagnosticKind::MissingItems));
             continue;
         }
-        let Some(&idx) = ids.get(&t[0]) else {
+        let Some(&idx) = ids.get(t[0].to_ascii_uppercase().as_str()) else {
             continue;
         };
         let mut k = 1;
