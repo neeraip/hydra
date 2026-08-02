@@ -198,6 +198,8 @@ pub struct Simulation {
     quality: Option<crate::transport::NetworkQuality>,
     /// §8.2–§8.3 surface quality, when parcels carry land uses.
     surface_quality: Option<crate::transport::SurfaceQuality>,
+    /// §7.8 street-inlet capture, when the model places inlets.
+    inlets: Option<crate::hydraulics::inlets::Inlets>,
     /// Bracketing hydrology lateral mass rates `[p][v]` (unit·m³/s).
     hydro_mass_prev: Vec<Vec<f64>>,
     hydro_mass_now: Vec<Vec<f64>>,
@@ -330,6 +332,7 @@ impl Simulation {
         } else {
             Some(crate::transport::SurfaceQuality::build(&net))
         };
+        let inlets = crate::hydraulics::inlets::Inlets::build(&net, &router);
 
         // §9.1: compile the control rules; never-true premises warn.
         let mut rule_advisories = Vec::new();
@@ -365,6 +368,7 @@ impl Simulation {
                 controls,
                 quality,
                 surface_quality,
+                inlets,
                 last_lat: vec![0.0; nv],
                 last_ext_total: 0.0,
                 last_dwf_total: 0.0,
@@ -693,7 +697,7 @@ impl Simulation {
                     *l = base[i] + l0[i] + f * (l1[i] - l0[i]);
                 }
             };
-            if self.controls.is_some() || self.quality.is_some() {
+            if self.controls.is_some() || self.quality.is_some() || self.inlets.is_some() {
                 // §9.1: rules evaluate at every routing step — or on the
                 // fixed rule-step clock, whose boundaries the stepper
                 // lands on — before the step's trials begin; §8.4 quality
@@ -707,6 +711,28 @@ impl Simulation {
                 while self.router.time() < period_end - 1e-9 {
                     let tt = self.router.time();
                     interp(tt, &mut lat);
+                    // §7.8: inlets shift lateral flow (and mass) from
+                    // bypass to sewer vertices before the step's trials.
+                    if let Some(mut inlets) = self.inlets.take() {
+                        let f = if mt1 > mt0 {
+                            ((tt - mt0) / (mt1 - mt0)).clamp(0.0, 1.0)
+                        } else {
+                            1.0
+                        };
+                        for p in 0..np {
+                            for v in 0..nv {
+                                let m0 = self.hydro_mass_prev.get(p).map_or(0.0, |x| x[v]);
+                                let m1 = self.hydro_mass_now.get(p).map_or(0.0, |x| x[v]);
+                                mass[p][v] = base_mass[p][v] + m0 + f * (m1 - m0);
+                            }
+                        }
+                        let quality = self.quality.as_ref();
+                        let conc =
+                            move |p: usize, v: usize| quality.map_or(0.0, |q| q.c_vertex[p][v]);
+                        inlets.apply(&self.router, &self.net, &mut lat, &mut mass, &conc);
+                        self.inlets = Some(inlets);
+                        self.last_lat.clone_from(&lat);
+                    }
                     if self.controls.is_some() {
                         let mut cap = period_end;
                         if rule_step > 0.0 {
@@ -724,17 +750,21 @@ impl Simulation {
                     }
                     if let Some(mut q) = self.quality.take() {
                         // §8.1 lateral mass: period-start base plus the
-                        // hydrology terms interpolated like their flows.
-                        let f = if mt1 > mt0 {
-                            ((tt - mt0) / (mt1 - mt0)).clamp(0.0, 1.0)
-                        } else {
-                            1.0
-                        };
-                        for p in 0..np {
-                            for v in 0..nv {
-                                let m0 = self.hydro_mass_prev.get(p).map_or(0.0, |x| x[v]);
-                                let m1 = self.hydro_mass_now.get(p).map_or(0.0, |x| x[v]);
-                                mass[p][v] = base_mass[p][v] + m0 + f * (m1 - m0);
+                        // hydrology terms interpolated like their flows —
+                        // already assembled (and inlet-shifted) when
+                        // inlets ran this step.
+                        if self.inlets.is_none() {
+                            let f = if mt1 > mt0 {
+                                ((tt - mt0) / (mt1 - mt0)).clamp(0.0, 1.0)
+                            } else {
+                                1.0
+                            };
+                            for p in 0..np {
+                                for v in 0..nv {
+                                    let m0 = self.hydro_mass_prev.get(p).map_or(0.0, |x| x[v]);
+                                    let m1 = self.hydro_mass_now.get(p).map_or(0.0, |x| x[v]);
+                                    mass[p][v] = base_mass[p][v] + m0 + f * (m1 - m0);
+                                }
                             }
                         }
                         q.update(&self.router, &self.net, &lat, &mass, self.router.last_dt());

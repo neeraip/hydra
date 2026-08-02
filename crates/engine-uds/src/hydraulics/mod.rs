@@ -7,6 +7,7 @@
 //! catalogues (§5.3–§5.4), custom shapes (§5.5), and the inversions of
 //! §5.7. Transects (§5.6) follow.
 
+pub mod inlets;
 pub mod routing;
 pub mod section;
 pub mod tables;

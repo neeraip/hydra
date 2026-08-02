@@ -550,7 +550,10 @@ pub(crate) fn parse_inflows(
             baseline = v;
         }
         if kind == InflowKind::Flow {
+            // The baseline and the series scale both carry the flow
+            // conversion, so series values (stored raw) land in SI.
             baseline *= cv.flow;
+            scale *= cv.flow;
         }
         let base_pattern = match t.get(7) {
             Some(tok) => {

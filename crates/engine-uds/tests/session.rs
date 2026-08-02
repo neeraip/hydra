@@ -1561,6 +1561,79 @@ RES  TSS  EMC  50  0  0  0
     assert!((v - 0.1).abs() < 0.02, "wet-weather volume {v} ha-m");
 }
 
+// ── §7.8 street inlets ──────────────────────────────────────────────────
+
+#[test]
+fn an_on_grade_inlet_splits_street_flow_to_the_sewer() {
+    // A combination inlet on the street gutter captures part of a 2 cfs
+    // street flow into the sewer; the rest bypasses. HEC-22 on-grade
+    // relations, evaluated in their published units.
+    let inp = "\
+[OPTIONS]
+FLOW_UNITS    CFS
+START_DATE    06/01/2024
+START_TIME    00:00
+END_DATE      06/01/2024
+END_TIME      04:00
+ROUTING_STEP  10
+REPORT_STEP   0:15:00
+
+[JUNCTIONS]
+J1   100  4
+J2   99   4
+SEW  90   8
+
+[OUTFALLS]
+O1  95  FREE
+O2  85  FREE
+
+[CONDUITS]
+GUT1  J1   J2  300  0.016  0  0
+C2    J2   O1  300  0.016  0  0
+SEW1  SEW  O2  300  0.013  0  0
+
+[XSECTIONS]
+GUT1  STREET    ST1
+C2    STREET    ST1
+SEW1  CIRCULAR  1.5  0  0  0
+
+[STREETS]
+ST1  20  0.5  2  0.016  0.1  2  1  10  4  0.02
+
+[INLETS]
+CB1  GRATE  2  2  P_BAR-50
+CB1  CURB   2  0.5  HORIZONTAL
+
+[INLET_USAGE]
+GUT1  CB1  SEW  1  0  0  0  0  ON_GRADE
+
+[INFLOWS]
+J1  FLOW  QIN
+
+[TIMESERIES]
+QIN  0:00  2.0
+QIN  9:00  2.0
+";
+    let (mut sim, _, _) = Simulation::open(inp).expect("open");
+    sim.run();
+    let q_in = 2.0 * 0.028_316_846_592;
+    let q_sewer = sim.flow("SEW1").expect("sewer flow");
+    let q_bypass = sim.flow("C2").expect("bypass flow");
+    assert!(
+        q_sewer > 0.2 * q_in,
+        "inlet captured almost nothing: {q_sewer} of {q_in}"
+    );
+    assert!(
+        q_bypass > 0.01 * q_in,
+        "everything captured, nothing bypassed: {q_bypass}"
+    );
+    // Steady state conserves: sewer + bypass carries the inflow.
+    assert!(
+        (q_sewer + q_bypass - q_in).abs() < 0.05 * q_in,
+        "split does not conserve: {q_sewer} + {q_bypass} vs {q_in}"
+    );
+}
+
 // ── §3.4 control measures ───────────────────────────────────────────────
 
 #[test]
