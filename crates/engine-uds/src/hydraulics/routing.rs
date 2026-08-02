@@ -512,6 +512,8 @@ pub struct Router {
     chan_flip_t: Vec<f64>,
     a_mid: Vec<f64>,
     net_flow: Vec<f64>,
+    /// Per-vertex flooding rate of the last accepted step (m³/s).
+    flood_now: Vec<f64>,
     // Head history for the error estimate: the two previous accepted
     // (time, heads) records, oldest first.
     hist: Vec<(f64, Vec<f64>)>,
@@ -910,6 +912,7 @@ impl Router {
             chan_flip_t: vec![0.0; nc],
             a_mid: vec![0.0; nc],
             net_flow: vec![0.0; nv],
+            flood_now: vec![0.0; nv],
             hist: Vec::new(),
             dt_prev: DT_FLOOR,
             quiet_streak: 0,
@@ -1023,6 +1026,22 @@ impl Router {
             .enumerate()
             .map(|(si, st)| (st.link, st.from, st.to, self.sq[si]))
             .collect()
+    }
+
+    /// Vertex `vi`'s flooding rate at the last accepted step (m³/s).
+    pub fn flood_rate(&self, vi: usize) -> f64 {
+        self.flood_now.get(vi).copied().unwrap_or(0.0)
+    }
+
+    /// The system outflow rate at the last accepted step (m³/s): the sum
+    /// of positive net flows into outfall vertices.
+    pub fn outflow_rate(&self) -> f64 {
+        self.verts
+            .iter()
+            .enumerate()
+            .filter(|(_, v)| matches!(v.class, VertClass::Outfall(_)))
+            .map(|(vi, _)| self.net_flow[vi].max(0.0))
+            .sum()
     }
 
     /// Whether vertex `vi` is an outfall: discharge leaves the system.
@@ -1281,6 +1300,7 @@ impl Router {
             self.report.inflow += l * dt;
             self.report.flooding += trial.flood_rate[vi] * dt;
         }
+        self.flood_now.clone_from(&trial.flood_rate);
         // Outfall discharge integrates the same trapezoid the vertex
         // update used.
         for (vi, v) in self.verts.iter().enumerate() {

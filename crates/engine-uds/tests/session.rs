@@ -1314,6 +1314,65 @@ RAIN  6:00  0
     assert!(m_out > 0.7 * m_in, "discharged {m_out} of {m_in}");
 }
 
+// ── §14.9 binary output ─────────────────────────────────────────────────
+
+#[test]
+fn the_binary_output_writes_the_predecessor_layout() {
+    let inp = quality_model(0.0)
+        + "
+[REPORT]
+NODES  ALL
+LINKS  ALL
+";
+    let (mut sim, _, _) = Simulation::open(&inp).expect("open");
+    sim.run();
+    let mut buf = Vec::new();
+    sim.write_out(&mut buf).expect("write");
+
+    let i32_at = |o: usize| i32::from_le_bytes(buf[o..o + 4].try_into().unwrap());
+    let f32_at = |o: usize| f32::from_le_bytes(buf[o..o + 4].try_into().unwrap());
+
+    // Magic and version open the file; the epilog closes with the magic.
+    assert_eq!(i32_at(0), 516_114_522);
+    assert_eq!(i32_at(4), 52_004);
+    assert_eq!(i32_at(8), 3, "CMS flow-units code");
+    let n = buf.len();
+    assert_eq!(i32_at(n - 4), 516_114_522);
+    assert_eq!(i32_at(n - 8), 0, "error code");
+    let n_periods = i32_at(n - 12) as usize;
+    assert_eq!(n_periods, sim.snapshots.len());
+
+    // Counts: 0 subcatchments, 2 nodes, 1 link, 1 pollutant.
+    assert_eq!(i32_at(12), 0);
+    assert_eq!(i32_at(16), 2);
+    assert_eq!(i32_at(20), 1);
+    assert_eq!(i32_at(24), 1);
+
+    // The epilog's output offset locates the first period; its record is
+    // a date followed by node then link then system floats.
+    let out_start = i32_at(n - 16) as usize;
+    let node_vars = 6 + 1;
+    let link_vars = 5 + 1;
+    let period_bytes = 8 + 4 * (2 * node_vars + link_vars + 15);
+    assert_eq!(n - 24 - out_start, n_periods * period_bytes);
+
+    // First period, first node's depth matches the first snapshot (CMS
+    // files write SI values verbatim).
+    let d = f32_at(out_start + 8);
+    assert!(
+        (f64::from(d) - sim.snapshots[0].depths[0]).abs() < 1e-5,
+        "depth {d} vs {}",
+        sim.snapshots[0].depths[0]
+    );
+    // The link's flow leads its block after both node blocks.
+    let q = f32_at(out_start + 8 + 4 * 2 * node_vars);
+    assert!(
+        (f64::from(q) - sim.snapshots[0].flows[0]).abs() < 1e-4,
+        "flow {q} vs {}",
+        sim.snapshots[0].flows[0]
+    );
+}
+
 // ── §3.4 control measures ───────────────────────────────────────────────
 
 #[test]

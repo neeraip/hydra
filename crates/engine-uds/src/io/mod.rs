@@ -13,6 +13,7 @@ pub mod lex;
 pub mod lid;
 pub mod objects;
 pub mod options;
+pub mod out_writer;
 pub mod quality;
 pub mod snow_rdii;
 pub mod streets;

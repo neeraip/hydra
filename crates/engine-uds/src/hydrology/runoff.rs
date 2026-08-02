@@ -191,6 +191,8 @@ pub struct QStep {
     pub runoff_rate: f64,
     /// Whether snow covers the parcel (snow-only accumulation).
     pub snow_cover: bool,
+    /// Mean snow water equivalent (m), for the §14.9 records.
+    pub snow_depth: f64,
     /// The §10.1 hydrology step length (s).
     pub dt: f64,
 }
@@ -527,6 +529,7 @@ impl Surface {
                 ponded_end: 0.0,
                 runoff_rate: 0.0,
                 snow_cover: p.snow.as_ref().is_some_and(|pk| pk.has_cover()),
+                snow_depth: p.snow.as_ref().map_or(0.0, |pk| pk.mean_depth()),
                 dt,
             };
 

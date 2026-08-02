@@ -47,8 +47,8 @@ pub enum OpenError {
     Transport(String),
 }
 
-/// One recorded reporting boundary: every vertex depth and link flow, by
-/// index into the model (§12.2 serves them by identity).
+/// One recorded reporting boundary: the full §14.9 record set, by index
+/// into the model (§12.2 serves them by identity).
 #[derive(Debug, Clone)]
 pub struct Snapshot {
     /// Simulation time (s from start).
@@ -57,6 +57,50 @@ pub struct Snapshot {
     pub depths: Vec<f64>,
     /// Link flows (m³/s), in the user's orientation.
     pub flows: Vec<f64>,
+    /// Vertex heads (m), volumes (m³), lateral inflows, total inflows,
+    /// and flooding rates (m³/s).
+    pub node_head: Vec<f64>,
+    pub node_volume: Vec<f64>,
+    pub node_lateral: Vec<f64>,
+    pub node_inflow: Vec<f64>,
+    pub node_flooding: Vec<f64>,
+    /// Vertex concentrations `[constituent][vertex]`.
+    pub node_quality: Vec<Vec<f64>>,
+    /// Link depths (m), velocities (m/s), volumes (m³), and capacity
+    /// fractions.
+    pub link_depth: Vec<f64>,
+    pub link_velocity: Vec<f64>,
+    pub link_volume: Vec<f64>,
+    pub link_capacity: Vec<f64>,
+    /// Link concentrations `[constituent][link]`.
+    pub link_quality: Vec<Vec<f64>>,
+    /// Per-parcel surface records.
+    pub subcatch: Vec<SubcatchRecord>,
+    /// The fifteen §14.9 system series, SI.
+    pub system: [f64; 15],
+}
+
+/// One parcel's §14.9 record.
+#[derive(Debug, Clone, Default)]
+pub struct SubcatchRecord {
+    /// Precipitation rate (m/s).
+    pub rain: f64,
+    /// Snow water equivalent (m).
+    pub snow_depth: f64,
+    /// Evaporation rate exerted (m/s).
+    pub evap: f64,
+    /// Infiltration rate (m/s).
+    pub infil: f64,
+    /// Runoff rate (m³/s).
+    pub runoff: f64,
+    /// Subsurface lateral discharge (m³/s).
+    pub gw_flow: f64,
+    /// Water-table elevation (m).
+    pub gw_elev: f64,
+    /// Unsaturated-zone moisture content.
+    pub soil_moisture: f64,
+    /// Runoff concentrations per constituent.
+    pub washoff: Vec<f64>,
 }
 
 /// A run-time notice: the engine reporting on the run as it happens.
@@ -115,6 +159,11 @@ pub struct Simulation {
     /// The next rule-evaluation boundary (s) under the rule-step option;
     /// zero rule step evaluates every routing step.
     next_rule_t: f64,
+    /// The last assembled lateral vector and its category totals
+    /// (external, sanitary), for the §14.9 records.
+    last_lat: Vec<f64>,
+    last_ext_total: f64,
+    last_dwf_total: f64,
     /// Recorded reporting boundaries.
     pub snapshots: Vec<Snapshot>,
     /// Run-time notices, in time order.
@@ -255,6 +304,9 @@ impl Simulation {
                 controls,
                 quality,
                 surface_quality,
+                last_lat: vec![0.0; nv],
+                last_ext_total: 0.0,
+                last_dwf_total: 0.0,
                 hydro_mass_prev: Vec::new(),
                 hydro_mass_now: Vec::new(),
                 next_rule_t: 0.0,
@@ -604,25 +656,163 @@ impl Simulation {
             } else {
                 self.router.advance(period_end, &interp);
             }
+            // Retain the end-of-period laterals for the §14.9 records.
+            let mut lat_now = vec![0.0; self.net.vertices.len()];
+            interp(self.router.time(), &mut lat_now);
+            self.last_lat = lat_now;
         } else {
             // Between events the network state freezes and no lateral
             // inflows apply (§10.3).
             self.router.skip_to(period_end);
+            self.last_lat = vec![0.0; self.net.vertices.len()];
         }
 
         while self.next_report <= self.router.time() + 1e-9 {
-            self.snapshots.push(Snapshot {
-                t: self.next_report,
-                depths: (0..self.net.vertices.len())
-                    .map(|v| self.router.depth(v))
-                    .collect(),
-                flows: (0..self.net.links.len())
-                    .map(|l| self.router.flow(l, &self.net))
-                    .collect(),
-            });
+            let snap = self.record_snapshot(self.next_report);
+            self.snapshots.push(snap);
             self.next_report += self.report_step;
         }
         true
+    }
+
+    /// Assemble the full §14.9 record set at a reporting boundary.
+    fn record_snapshot(&mut self, t: f64) -> Snapshot {
+        let month = self.calendar(t).0;
+        let air_temp = self
+            .snow_climate((month - 1) as usize)
+            .map_or(0.0, |c| c.ta);
+        let nv = self.net.vertices.len();
+        let nl = self.net.links.len();
+        let np = self.net.constituents.len();
+        let r = &self.router;
+        let depths: Vec<f64> = (0..nv).map(|v| r.depth(v)).collect();
+        let flows: Vec<f64> = (0..nl).map(|l| r.flow(l, &self.net)).collect();
+        // Total inflow per vertex: laterals plus arriving link flows.
+        let mut inflow = self.last_lat.clone();
+        for &(_, from, to, q, _) in &r.channel_transport() {
+            if q > 0.0 {
+                inflow[to] += q;
+            } else {
+                inflow[from] += -q;
+            }
+        }
+        for &(_, from, to, q) in &r.structure_transport() {
+            if q > 0.0 {
+                inflow[to] += q;
+            } else {
+                inflow[from] += -q;
+            }
+        }
+        // Link geometry records.
+        let mut link_volume = vec![0.0; nl];
+        let mut link_capacity = vec![0.0; nl];
+        for &(li, _, _, _, vol) in &r.channel_transport() {
+            link_volume[li] = vol;
+            if let Some((_, y_full, _, _)) = r.chan_full_attrs(li) {
+                if y_full > 0.0 {
+                    link_capacity[li] = (r.link_depth(li).unwrap_or(0.0) / y_full).clamp(0.0, 1.0);
+                }
+            }
+        }
+        for &(li, _, _, _) in &r.structure_transport() {
+            link_capacity[li] = r.setting(li).unwrap_or(1.0);
+        }
+        // Surface and subsurface records.
+        let mut subcatch = Vec::with_capacity(self.net.parcels.len());
+        if let Some(surface) = &self.surface {
+            for pi in 0..self.net.parcels.len() {
+                let q = surface.qstep(pi);
+                let (infil, evap) = surface.parcel_infil_evap(pi);
+                let washoff = self
+                    .surface_quality
+                    .as_ref()
+                    .map_or_else(|| vec![0.0; np], |sq| sq.conc[pi].clone());
+                let mut rec = SubcatchRecord {
+                    rain: q.rain_rate,
+                    snow_depth: q.snow_depth,
+                    evap,
+                    infil,
+                    runoff: surface.parcel_runoff(pi),
+                    gw_flow: 0.0,
+                    gw_elev: 0.0,
+                    soil_moisture: 0.0,
+                    washoff,
+                };
+                if let Some((_, gw)) = self.aquifers.iter().find(|(p, _)| *p == pi) {
+                    rec.gw_flow = gw.flow * self.net.parcels[pi].area;
+                    rec.gw_elev = gw.table_elevation();
+                    rec.soil_moisture = gw.theta;
+                }
+                subcatch.push(rec);
+            }
+        }
+        // The fifteen system series (§14.9), SI.
+        let total_area: f64 = self.net.parcels.iter().map(|p| p.area).sum();
+        let wmean = |f: &dyn Fn(&SubcatchRecord, f64) -> f64| -> f64 {
+            if total_area <= 0.0 {
+                return 0.0;
+            }
+            subcatch
+                .iter()
+                .zip(&self.net.parcels)
+                .map(|(rec, p)| f(rec, p.area))
+                .sum::<f64>()
+                / total_area
+        };
+        let system = [
+            air_temp,
+            wmean(&|rec, a| rec.rain * a),
+            wmean(&|rec, a| rec.snow_depth * a),
+            subcatch
+                .iter()
+                .zip(&self.net.parcels)
+                .map(|(rec, p)| rec.infil * p.area)
+                .sum(),
+            subcatch.iter().map(|rec| rec.runoff).sum(),
+            self.last_dwf_total,
+            subcatch.iter().map(|rec| rec.gw_flow).sum(),
+            self.rdii.iter().map(|x| x.flow).sum(),
+            self.last_ext_total,
+            self.last_lat.iter().sum(),
+            (0..nv).map(|v| r.flood_rate(v)).sum(),
+            r.outflow_rate(),
+            (0..nv).map(|v| r.vertex_volume_now(v)).sum::<f64>()
+                + r.channel_transport().iter().map(|c| c.4).sum::<f64>(),
+            wmean(&|rec, a| rec.evap * a),
+            self.evaporation_rate(month),
+        ];
+        Snapshot {
+            t,
+            node_head: (0..nv).map(|v| r.vertex_invert(v) + depths[v]).collect(),
+            node_volume: (0..nv).map(|v| r.vertex_volume_now(v)).collect(),
+            node_lateral: self.last_lat.clone(),
+            node_inflow: inflow,
+            node_flooding: (0..nv).map(|v| r.flood_rate(v)).collect(),
+            node_quality: self
+                .quality
+                .as_ref()
+                .map_or_else(|| vec![vec![0.0; nv]; np], |q| q.c_vertex.clone()),
+            link_depth: (0..nl).map(|l| r.link_depth(l).unwrap_or(0.0)).collect(),
+            link_velocity: (0..nl).map(|l| r.link_velocity(l).unwrap_or(0.0)).collect(),
+            link_volume,
+            link_capacity,
+            link_quality: self.quality.as_ref().map_or_else(
+                || vec![vec![0.0; nl]; np],
+                |q| {
+                    (0..np)
+                        .map(|p| {
+                            (0..nl)
+                                .map(|l| q.link_concentration(r, p, l).unwrap_or(0.0))
+                                .collect()
+                        })
+                        .collect()
+                },
+            ),
+            subcatch,
+            depths,
+            flows,
+            system,
+        }
     }
 
     /// Run to completion.
@@ -697,6 +887,18 @@ impl Simulation {
             }
         }
         self.controls = Some(controls);
+    }
+
+    /// Write the §14.9 binary results to `w`; the caller owns where the
+    /// bytes go (§12.2).
+    pub fn write_out(&self, w: &mut impl std::io::Write) -> std::io::Result<()> {
+        crate::io::out_writer::write_out(
+            &self.net,
+            &self.snapshots,
+            self.start_epoch,
+            self.report_step,
+            w,
+        )
     }
 
     /// The §9.1 control-action log: (time s, link, setting, rule).
@@ -831,6 +1033,7 @@ impl Simulation {
             lat[vertex] += q;
             ext_flow[vertex] += q;
         }
+        self.last_ext_total = ext_flow.iter().sum();
 
         for d in 0..self.net.dry_weather.len() {
             let dwf = &self.net.dry_weather[d];
@@ -845,6 +1048,7 @@ impl Simulation {
             lat[vertex] += q;
             dwf_flow[vertex] += q;
         }
+        self.last_dwf_total = dwf_flow.iter().sum();
 
         // §8.1 mass sources riding those flows: constituent inflows as a
         // concentration on the external flow or a flow-free mass rate,

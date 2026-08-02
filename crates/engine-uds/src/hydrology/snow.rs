@@ -114,6 +114,17 @@ pub struct SnowPack {
 }
 
 impl SnowPack {
+    /// Mean snow water equivalent over the present surfaces (m), the
+    /// §14.9 snow-depth record.
+    pub fn mean_depth(&self) -> f64 {
+        let depths: Vec<f64> = self.surfaces.iter().flatten().map(|sf| sf.wsnow).collect();
+        if depths.is_empty() {
+            0.0
+        } else {
+            depths.iter().sum::<f64>() / depths.len() as f64
+        }
+    }
+
     /// Whether any surface holds snow water equivalent (§8.2).
     pub fn has_cover(&self) -> bool {
         self.surfaces.iter().flatten().any(|sf| sf.wsnow > 1.0e-6)

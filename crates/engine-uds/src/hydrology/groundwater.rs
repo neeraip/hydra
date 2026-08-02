@@ -162,6 +162,11 @@ impl GwState {
         })
     }
 
+    /// The water-table elevation (m), for the §14.9 records.
+    pub fn table_elevation(&self) -> f64 {
+        self.bottom_elev + self.lower_depth
+    }
+
     /// The maximum infiltration volume the unsaturated zone can accept
     /// next step, as a depth over the pervious fraction (m).
     pub fn max_infil_depth(&self, frac_perv: f64) -> f64 {
