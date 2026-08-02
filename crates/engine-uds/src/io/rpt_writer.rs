@@ -7,7 +7,9 @@
 
 use std::io::{self, Write};
 
-use crate::model::Network;
+use crate::hydraulics::routing::{LinkStats, VertexStats};
+use crate::hydrology::runoff::ParcelTotals;
+use crate::model::{LinkKind, Network, VertexKind};
 
 /// The report's fixed volume conversions per unit system.
 struct Rv {
@@ -72,6 +74,17 @@ pub struct ReportInputs<'a> {
     /// Numerical performance: (accepted steps, rejected trials,
     /// degraded-accuracy steps, average step s).
     pub performance: (u64, u64, usize, f64),
+    /// §11.2 per-vertex and per-link statistics.
+    pub vertex_stats: &'a [VertexStats],
+    pub link_stats: &'a [LinkStats],
+    /// Per-parcel §11.2 totals, parallel to the model's parcels.
+    pub parcel_totals: Vec<ParcelTotals>,
+    /// Per-parcel delivered washoff `[parcel][constituent]` (U).
+    pub washoff_by_parcel: Option<Vec<Vec<f64>>>,
+    /// Per-outfall discharged mass `[constituent][vertex]`.
+    pub outfall_loads: Option<Vec<Vec<f64>>>,
+    /// The top worst-error vertices: (id, accepted-step count).
+    pub worst: Vec<(String, u64)>,
 }
 
 /// Write the §14.9 text report.
@@ -279,6 +292,8 @@ pub fn write_rpt(inp: &ReportInputs, w: &mut impl Write) -> io::Result<()> {
         }
     }
 
+    write_summary_tables(inp, &rv, w)?;
+
     // ── Numerical performance ───────────────────────────────────────────
     // Rejections and degraded-accuracy tallies stand in for the retired
     // steady-state skip (§10.3, §14.9).
@@ -290,6 +305,239 @@ pub fn write_rpt(inp: &ReportInputs, w: &mut impl Write) -> io::Result<()> {
     writeln!(w, "  Trials Rejected ..........{rejected:>14}")?;
     writeln!(w, "  Degraded-Accuracy Steps ..{degraded:>14}")?;
     writeln!(w, "  Average Time Step (sec) ..{avg_dt:>14.2}")?;
+    if !inp.worst.is_empty() {
+        writeln!(
+            w,
+            "\n  Most Frequent Governing Vertices (§6.5 error estimate)"
+        )?;
+        for (id, n) in &inp.worst {
+            writeln!(w, "  {id:<20}{n:>10} steps")?;
+        }
+    }
     writeln!(w, "\n  Analysis complete.")?;
     Ok(())
+}
+
+/// The §11.2 per-object summary tables, in the predecessor's grouping.
+#[allow(clippy::too_many_lines)]
+fn write_summary_tables(inp: &ReportInputs, rv: &Rv, w: &mut impl Write) -> io::Result<()> {
+    let hr = |sec: f64| sec / 3600.0;
+    // ── Subcatchment runoff summary ─────────────────────────────────────
+    if !inp.net.parcels.is_empty() {
+        writeln!(w, "\n  ***************************")?;
+        writeln!(w, "  Subcatchment Runoff Summary")?;
+        writeln!(w, "  ***************************")?;
+        writeln!(
+            w,
+            "  {:<16}{:>12}{:>12}{:>12}{:>12}{:>12}{:>12}{:>8}",
+            "Subcatchment", "Precip", "Runon", "Evap", "Infil", "Runoff-Vol", "Peak-Flow", "Coeff"
+        )?;
+        for (p, t) in inp.net.parcels.iter().zip(&inp.parcel_totals) {
+            let coeff = if t.precip > 0.0 {
+                t.runoff / t.precip
+            } else {
+                0.0
+            };
+            writeln!(
+                w,
+                "  {:<16}{:>12.3}{:>12.3}{:>12.3}{:>12.3}{:>12.3}{:>12.3}{:>8.3}",
+                p.id,
+                rv.big(t.precip),
+                rv.big(t.runon),
+                rv.big(t.evap),
+                rv.big(t.infil),
+                rv.big(t.runoff),
+                t.peak_runoff,
+                coeff
+            )?;
+        }
+    }
+    // ── Subcatchment washoff summary ────────────────────────────────────
+    if let Some(loads) = &inp.washoff_by_parcel {
+        if !inp.net.constituents.is_empty() {
+            writeln!(w, "\n  ****************************")?;
+            writeln!(w, "  Subcatchment Washoff Summary")?;
+            writeln!(w, "  ****************************")?;
+            write!(w, "  {:<16}", "Subcatchment")?;
+            for c in &inp.net.constituents {
+                write!(w, "{:>14}", c.id)?;
+            }
+            writeln!(w)?;
+            for (p, row) in inp.net.parcels.iter().zip(loads) {
+                write!(w, "  {:<16}", p.id)?;
+                for v in row {
+                    write!(w, "{v:>14.3}")?;
+                }
+                writeln!(w)?;
+            }
+        }
+    }
+    // ── Node depth / surcharge / flooding summaries ─────────────────────
+    writeln!(w, "\n  ******************")?;
+    writeln!(w, "  Node Depth Summary")?;
+    writeln!(w, "  ******************")?;
+    writeln!(
+        w,
+        "  {:<16}{:>12}{:>12}{:>14}{:>14}",
+        "Node", "Max-Depth", "Max-HGL", "Hr-of-Max", "Surch-Hrs"
+    )?;
+    for (v, st) in inp.net.vertices.iter().zip(inp.vertex_stats) {
+        writeln!(
+            w,
+            "  {:<16}{:>12.3}{:>12.3}{:>14.2}{:>14.2}",
+            v.id,
+            st.max_depth / rvlen(rv),
+            (v.invert + st.max_depth) / rvlen(rv),
+            hr(st.t_max_depth),
+            hr(st.surcharge_time)
+        )?;
+    }
+    let flooded: Vec<_> = inp
+        .net
+        .vertices
+        .iter()
+        .zip(inp.vertex_stats)
+        .filter(|(_, st)| st.flood_time > 0.0)
+        .collect();
+    if !flooded.is_empty() {
+        writeln!(w, "\n  *********************")?;
+        writeln!(w, "  Node Flooding Summary")?;
+        writeln!(w, "  *********************")?;
+        writeln!(
+            w,
+            "  {:<16}{:>12}{:>14}{:>14}",
+            "Node", "Hrs-Flooded", "Max-Rate", "Total-Vol"
+        )?;
+        for (v, st) in flooded {
+            writeln!(
+                w,
+                "  {:<16}{:>12.2}{:>14.3}{:>14.3}",
+                v.id,
+                hr(st.flood_time),
+                st.max_flood,
+                rv.big(st.flood_volume)
+            )?;
+        }
+    }
+    // ── Outfall loading summary ─────────────────────────────────────────
+    let outfalls: Vec<usize> = inp
+        .net
+        .vertices
+        .iter()
+        .enumerate()
+        .filter(|(_, v)| matches!(v.kind, VertexKind::Outfall { .. }))
+        .map(|(i, _)| i)
+        .collect();
+    if !outfalls.is_empty() {
+        writeln!(w, "\n  ***********************")?;
+        writeln!(w, "  Outfall Loading Summary")?;
+        writeln!(w, "  ***********************")?;
+        write!(
+            w,
+            "  {:<16}{:>10}{:>12}{:>14}",
+            "Outfall", "Freq-%", "Max-Flow", "Total-Vol"
+        )?;
+        for c in &inp.net.constituents {
+            write!(w, "{:>14}", c.id)?;
+        }
+        writeln!(w)?;
+        for &vi in &outfalls {
+            let st = &inp.vertex_stats[vi];
+            let freq = if st.obs_time > 0.0 {
+                100.0 * st.out_time / st.obs_time
+            } else {
+                0.0
+            };
+            write!(
+                w,
+                "  {:<16}{:>10.2}{:>12.3}{:>14.3}",
+                inp.net.vertices[vi].id,
+                freq,
+                st.out_peak,
+                rv.big(st.out_volume)
+            )?;
+            if let Some(loads) = &inp.outfall_loads {
+                for row in loads {
+                    write!(w, "{:>14.3}", row[vi])?;
+                }
+            }
+            writeln!(w)?;
+        }
+    }
+    // ── Link flow summary ───────────────────────────────────────────────
+    writeln!(w, "\n  *****************")?;
+    writeln!(w, "  Link Flow Summary")?;
+    writeln!(w, "  *****************")?;
+    writeln!(
+        w,
+        "  {:<16}{:>12}{:>14}{:>12}{:>12}{:>12}",
+        "Link", "Max-Flow", "Hr-of-Max", "Max-Veloc", "Max-Depth", "Full-Hrs"
+    )?;
+    for (l, st) in inp.net.links.iter().zip(inp.link_stats) {
+        writeln!(
+            w,
+            "  {:<16}{:>12.3}{:>14.2}{:>12.2}{:>12.3}{:>12.2}",
+            l.id,
+            st.max_flow,
+            hr(st.t_max_flow),
+            st.max_velocity,
+            st.max_depth / rvlen(rv),
+            hr(st.full_time)
+        )?;
+    }
+    // ── Pumping summary ─────────────────────────────────────────────────
+    let pumps: Vec<_> = inp
+        .net
+        .links
+        .iter()
+        .zip(inp.link_stats)
+        .filter(|(l, _)| matches!(l.kind, LinkKind::Pump { .. }))
+        .collect();
+    if !pumps.is_empty() {
+        writeln!(w, "\n  ***************")?;
+        writeln!(w, "  Pumping Summary")?;
+        writeln!(w, "  ***************")?;
+        writeln!(
+            w,
+            "  {:<16}{:>10}{:>10}{:>10}{:>10}{:>12}{:>12}{:>12}{:>12}",
+            "Pump",
+            "Util-Hrs",
+            "Startups",
+            "Min-Flow",
+            "Max-Flow",
+            "Volume",
+            "kW-hr",
+            "OffLo-Hrs",
+            "OffHi-Hrs"
+        )?;
+        for (l, st) in pumps {
+            let min_q = if st.min_flow == f64::MAX {
+                0.0
+            } else {
+                st.min_flow
+            };
+            writeln!(
+                w,
+                "  {:<16}{:>10.2}{:>10}{:>10.3}{:>10.3}{:>12.3}{:>12.2}{:>12.2}{:>12.2}",
+                l.id,
+                hr(st.on_time),
+                st.startups,
+                min_q,
+                st.max_pump_flow,
+                rv.big(st.volume),
+                st.energy_kwh,
+                hr(st.off_low_time),
+                hr(st.off_high_time)
+            )?;
+        }
+    }
+    Ok(())
+}
+
+fn rvlen(rv: &Rv) -> f64 {
+    if rv.us {
+        0.3048
+    } else {
+        1.0
+    }
 }

@@ -53,6 +53,8 @@ pub struct SurfaceQuality {
     pub initial_buildup: Vec<f64>,
     /// Mass delivered off the parcels into the network (U), §11.1.
     pub washed_off: Vec<f64>,
+    /// §11.2 per-parcel delivered washoff `[parcel][constituent]` (U).
+    pub washed_by_parcel: Vec<Vec<f64>>,
 }
 
 impl SurfaceQuality {
@@ -143,6 +145,7 @@ impl SurfaceQuality {
             to_final: vec![0.0; np],
             initial_buildup,
             washed_off: vec![0.0; np],
+            washed_by_parcel: vec![vec![0.0; np]; n],
         }
     }
 
@@ -253,6 +256,7 @@ impl SurfaceQuality {
                     self.bmp_removed[ci] += c_out * (v_out1 - q.v_out2);
                 }
                 self.washed_off[ci] += c_out * q.v_out2;
+                self.washed_by_parcel[pi][ci] += c_out * q.v_out2;
                 self.conc[pi][ci] = c_out;
             }
 

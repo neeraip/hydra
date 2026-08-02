@@ -528,6 +528,64 @@ pub struct Router {
     pub evap_rate: f64,
     /// The report accumulated across `advance` calls.
     pub report: RoutingReport,
+    /// §11.2 per-vertex statistics.
+    pub vertex_stats: Vec<VertexStats>,
+    /// Pump start-up edge detection.
+    pump_prev_off: Vec<bool>,
+    /// §11.2 per-model-link statistics.
+    pub link_stats: Vec<LinkStats>,
+    /// Worst-error vertex counts for the top-five diagnostics (§11.2).
+    pub worst_counts: Vec<u64>,
+    /// Per-object statistics begin here (s); numerical statistics span
+    /// the whole run (§11.2).
+    pub stats_start: f64,
+}
+
+/// Per-vertex §11.2 statistics, accumulated on accepted steps after
+/// the report start.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct VertexStats {
+    /// Maximum depth (m) and when it occurred (s).
+    pub max_depth: f64,
+    pub t_max_depth: f64,
+    /// Maximum flooding rate (m³/s) and total flooded time (s).
+    pub max_flood: f64,
+    pub flood_time: f64,
+    /// Flooded volume (m³).
+    pub flood_volume: f64,
+    /// Time above the highest connecting crown (s).
+    pub surcharge_time: f64,
+    /// Outfalls: discharge volume (m³), peak (m³/s), and flowing time
+    /// (s) against `steps` for the frequency.
+    pub out_volume: f64,
+    pub out_peak: f64,
+    pub out_time: f64,
+    /// Accepted steps observed and their summed duration (s).
+    pub steps: u64,
+    pub obs_time: f64,
+}
+
+/// Per-link §11.2 statistics.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct LinkStats {
+    /// Maximum |flow| (m³/s) and when it occurred (s).
+    pub max_flow: f64,
+    pub t_max_flow: f64,
+    /// Maximum velocity (m/s) and depth (m) — channels.
+    pub max_velocity: f64,
+    pub max_depth: f64,
+    /// Time flowing full (s) — channels.
+    pub full_time: f64,
+    // Pumps (§11.2): utilisation, startups, flow range, volume, energy,
+    // and off-curve time booked to the correct end for every type.
+    pub on_time: f64,
+    pub startups: u32,
+    pub min_flow: f64,
+    pub max_pump_flow: f64,
+    pub volume: f64,
+    pub energy_kwh: f64,
+    pub off_low_time: f64,
+    pub off_high_time: f64,
 }
 
 /// A candidate state computed by one trial.
@@ -920,6 +978,17 @@ impl Router {
             hist: Vec::new(),
             dt_prev: DT_FLOOR,
             quiet_streak: 0,
+            vertex_stats: vec![VertexStats::default(); nv],
+            pump_prev_off: vec![true; ns],
+            link_stats: vec![
+                LinkStats {
+                    min_flow: f64::MAX,
+                    ..LinkStats::default()
+                };
+                net.links.len()
+            ],
+            worst_counts: vec![0; nv],
+            stats_start: 0.0,
             evap_rate: 0.0,
             report: RoutingReport::default(),
         };
@@ -1400,6 +1469,120 @@ impl Router {
         self.net_flow = trial.net_flow;
         self.report.losses += trial.loss_rate * dt;
         self.report.accepted += 1;
+        self.worst_counts[trial.worst_vertex] += 1;
+        // §11.2: per-object statistics, gated on the report start.
+        if self.t >= self.stats_start {
+            self.accumulate_stats(dt);
+        }
+    }
+
+    /// Accumulate the §11.2 per-object statistics for one accepted step.
+    fn accumulate_stats(&mut self, dt: f64) {
+        let t = self.t;
+        for (vi, v) in self.verts.iter().enumerate() {
+            let st = &mut self.vertex_stats[vi];
+            st.steps += 1;
+            st.obs_time += dt;
+            let y = self.y[vi];
+            if y > st.max_depth {
+                st.max_depth = y;
+                st.t_max_depth = t;
+            }
+            let fl = self.flood_now[vi];
+            if fl > 0.0 {
+                st.flood_time += dt;
+                st.flood_volume += fl * dt;
+                st.max_flood = st.max_flood.max(fl);
+            }
+            if v.crown > 0.0 && y > v.crown && !matches!(v.class, VertClass::Outfall(_)) {
+                st.surcharge_time += dt;
+            }
+            if matches!(v.class, VertClass::Outfall(_)) {
+                let q = self.net_flow[vi].max(0.0);
+                st.out_volume += q * dt;
+                st.out_peak = st.out_peak.max(q);
+                if q > Q_DRY {
+                    st.out_time += dt;
+                }
+            }
+        }
+        for (ci, c) in self.chans.iter().enumerate() {
+            let st = &mut self.link_stats[c.link];
+            let q = self.q[ci].abs();
+            if q > st.max_flow {
+                st.max_flow = q;
+                st.t_max_flow = t;
+            }
+            let a = self.a_mid[ci].max(DRY);
+            st.max_velocity = st.max_velocity.max((q / c.barrels / a).min(V_MAX));
+            let y1 = (self.y[c.from] - c.off1).max(0.0);
+            let y2 = (self.y[c.to] - c.off2).max(0.0);
+            let y_mid = (0.5 * (y1 + y2)).min(c.geom.sec.y_full());
+            st.max_depth = st.max_depth.max(y_mid);
+            if y1 >= c.geom.sec.y_full() && y2 >= c.geom.sec.y_full() {
+                st.full_time += dt;
+            }
+        }
+        for si in 0..self.structs.len() {
+            let link = self.structs[si].link;
+            let (from, to) = (self.structs[si].from, self.structs[si].to);
+            let q = self.sq[si].abs();
+            // Pump quantities computed before the stats row is borrowed.
+            let pump = if let StructKind::Pump { kind, .. } = &self.structs[si].kind {
+                let dh =
+                    (self.verts[to].invert + self.y[to] - self.verts[from].invert - self.y[from])
+                        .max(0.0);
+                // Off-curve time books to the correct end for every pump
+                // type (§11.2).
+                let arg = match kind {
+                    PumpKind::Volume(_) => Some(self.vertex_volume_now(from)),
+                    PumpKind::Depth(_) | PumpKind::InlineDepth(_) => Some(self.y[from]),
+                    PumpKind::Head { .. } => Some(dh),
+                    PumpKind::Ideal => None,
+                };
+                let ends = match kind {
+                    PumpKind::Volume(p)
+                    | PumpKind::Depth(p)
+                    | PumpKind::InlineDepth(p)
+                    | PumpKind::Head { points: p, .. } => {
+                        p.first().zip(p.last()).map(|(a, b)| (a.0, b.0))
+                    }
+                    PumpKind::Ideal => None,
+                };
+                Some((dh, arg.zip(ends)))
+            } else {
+                None
+            };
+            let st = &mut self.link_stats[link];
+            if q > st.max_flow {
+                st.max_flow = q;
+                st.t_max_flow = t;
+            }
+            let Some((dh, off)) = pump else {
+                continue;
+            };
+            if q > 0.0 {
+                if self.pump_prev_off[si] {
+                    st.startups += 1;
+                    self.pump_prev_off[si] = false;
+                }
+                st.on_time += dt;
+                st.volume += q * dt;
+                st.min_flow = st.min_flow.min(q);
+                st.max_pump_flow = st.max_pump_flow.max(q);
+                // Energy: ρgQΔH per §7.1 (§11.2), in kWh.
+                st.energy_kwh += 1000.0 * GRAVITY * q * dh * dt / 3.6e6;
+                if let Some((x, (lo, hi))) = off {
+                    if x < lo {
+                        st.off_low_time += dt;
+                    } else if x > hi {
+                        st.off_high_time += dt;
+                    }
+                }
+            } else {
+                self.pump_prev_off[si] = true;
+            }
+        }
     }
 
     /// One §6.4 trial: iterate channel and vertex phases to

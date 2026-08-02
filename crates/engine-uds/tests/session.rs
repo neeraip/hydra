@@ -1542,6 +1542,11 @@ RES  TSS  EMC  50  0  0  0
         "Continuity Error (%)",
         "Total Precipitation",
         "Wet Weather Inflow",
+        "Subcatchment Runoff Summary",
+        "Subcatchment Washoff Summary",
+        "Node Depth Summary",
+        "Outfall Loading Summary",
+        "Link Flow Summary",
     ] {
         assert!(rpt.contains(needle), "report missing '{needle}':\n{rpt}");
     }

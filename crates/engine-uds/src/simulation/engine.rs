@@ -333,6 +333,12 @@ impl Simulation {
             Some(crate::transport::SurfaceQuality::build(&net))
         };
         let inlets = crate::hydraulics::inlets::Inlets::build(&net, &router);
+        let mut router = router;
+        // §11.2: per-object statistics gate on the report start date.
+        router.stats_start = match net.options.report_start {
+            Some((d, sec)) => days_from_civil(d) as f64 * 86_400.0 + sec - start_epoch_for_surface,
+            None => 0.0,
+        };
 
         // §9.1: compile the control rules; never-true premises warn.
         let mut rule_advisories = Vec::new();
@@ -1504,6 +1510,23 @@ impl Simulation {
         } else {
             0.0
         };
+        // §11.2 top-five governing vertices.
+        let mut worst: Vec<(String, u64)> = self
+            .router
+            .worst_counts
+            .iter()
+            .enumerate()
+            .filter(|(_, &n)| n > 0)
+            .map(|(vi, &n)| (self.net.vertices[vi].id.clone(), n))
+            .collect();
+        worst.sort_by_key(|x| std::cmp::Reverse(x.1));
+        worst.truncate(5);
+        let parcel_totals = match &self.surface {
+            Some(sf) => (0..self.net.parcels.len())
+                .map(|pi| sf.parcel_totals(pi))
+                .collect(),
+            None => Vec::new(),
+        };
         crate::io::rpt_writer::write_rpt(
             &crate::io::rpt_writer::ReportInputs {
                 net: &self.net,
@@ -1513,6 +1536,15 @@ impl Simulation {
                 quality,
                 actions: self.control_actions(),
                 performance: (r.accepted, r.rejected, r.degraded.len(), avg_dt),
+                vertex_stats: &self.router.vertex_stats,
+                link_stats: &self.router.link_stats,
+                parcel_totals,
+                washoff_by_parcel: self
+                    .surface_quality
+                    .as_ref()
+                    .map(|sq| sq.washed_by_parcel.clone()),
+                outfall_loads: self.quality.as_ref().map(|q| q.outfall_load.clone()),
+                worst,
             },
             w,
         )

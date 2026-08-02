@@ -30,6 +30,8 @@ pub struct NetworkQuality {
     pub inflow_mass: Vec<f64>,
     /// Mass present at the start (unit·m³), §11.1.
     pub initial_mass: Vec<f64>,
+    /// §11.2 per-outfall discharged mass `[constituent][vertex]`.
+    pub outfall_load: Vec<Vec<f64>>,
     /// Vertex volumes at the previous step (m³).
     vol_prev: Vec<f64>,
     /// Channel volumes at the previous step (m³).
@@ -135,6 +137,7 @@ impl NetworkQuality {
             reacted: vec![0.0; np],
             inflow_mass: vec![0.0; np],
             initial_mass,
+            outfall_load: vec![vec![0.0; nv]; np],
             vol_prev,
             chan_vol_prev,
             treatments,
@@ -224,6 +227,7 @@ impl NetworkQuality {
                         0.0
                     };
                     self.outfall_mass[p] += mass_in[v];
+                    self.outfall_load[p][v] += mass_in[v];
                     self.c_vertex[p][v] = c;
                     continue;
                 }

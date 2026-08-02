@@ -227,6 +227,19 @@ struct ParcelState {
     pub evap_rate: f64,
     /// The §8 quality context recorded for this step.
     pub qstep: QStep,
+    /// §11.2 per-parcel running totals.
+    pub totals: ParcelTotals,
+}
+
+/// §11.2 per-parcel water-balance totals (m³) and the runoff peak.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ParcelTotals {
+    pub precip: f64,
+    pub runon: f64,
+    pub evap: f64,
+    pub infil: f64,
+    pub runoff: f64,
+    pub peak_runoff: f64,
 }
 
 /// The surface compartment: every gage and parcel, advanced on the
@@ -382,6 +395,7 @@ impl Surface {
                 runon_next_vol: 0.0,
                 runon_vol: 0.0,
                 qstep: QStep::default(),
+                totals: ParcelTotals::default(),
                 runoff: 0.0,
                 infil_rate: 0.0,
                 evap_rate: 0.0,
@@ -572,6 +586,7 @@ impl Surface {
 
             // §11.1: evaporation exerted, approximated per sub-area by
             // availability before the reservoirs advance.
+            let mut evap_this = 0.0;
             for (i, sub) in p.sub.iter().enumerate() {
                 if sub.area <= 0.0 || e <= 0.0 {
                     continue;
@@ -579,7 +594,9 @@ impl Surface {
                 let supply = if i < 2 { input } else { perv_input };
                 let used = e.min(sub.depth / dt + supply.max(0.0));
                 self.evap_vol += used.max(0.0) * dt * sub.area;
+                evap_this += used.max(0.0) * dt * sub.area;
             }
+            p.totals.evap += evap_this;
 
             // Sub-area order honours the internal re-routing direction:
             // the router computes the source first (§3.2).
@@ -710,6 +727,12 @@ impl Surface {
             p.runoff = total / dt;
             p.qstep.v_out2 += total;
             self.runoff_out += p.qstep.v_out2;
+            // §11.2 per-parcel totals.
+            p.totals.precip += p.qstep.rain_vol + p.qstep.lid_rain_vol;
+            p.totals.runon += p.qstep.runon_vol;
+            p.totals.infil += p.qstep.v_infil;
+            p.totals.runoff += p.qstep.v_out2;
+            p.totals.peak_runoff = p.totals.peak_runoff.max(p.qstep.v_out2 / dt);
             p.qstep.ponded_end = p.sub.iter().map(|s| s.depth * s.area).sum();
             let area_q: f64 = p.sub.iter().map(|s| s.area).sum();
             if area_q > 0.0 {
@@ -810,6 +833,11 @@ impl Surface {
             v += p.runon_next_vol;
         }
         v
+    }
+
+    /// §11.2 running totals for parcel `pi`.
+    pub fn parcel_totals(&self, pi: usize) -> ParcelTotals {
+        self.parcels[pi].totals
     }
 
     /// The §8 quality context recorded for parcel `pi`'s last step.
