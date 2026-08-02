@@ -130,8 +130,17 @@ back along the recovery curve in dry weather.
 **Modified Horton**: capacity declines with **cumulative excess
 infiltration** $F_e$ (volume above $f_\infty$),
 $f_p = \max(f_0 - k_d F_e,\ f_\infty)$ — better behaved under light rain —
-fully explicit, with dry-weather decay $F_e \leftarrow F_e e^{-k_r\Delta t}$
-and the predecessor's $F_{max}$ semantics.
+fully explicit, with dry-weather decay $F_e \leftarrow F_e e^{-k_r\Delta t}$.
+The optional $F_{max}$ cap is a **finite store above the steady drainage**:
+the surface seals (zero infiltration) once $F_e$ reaches $F_{max}$, with
+$F_e$ capped there, and the same dry-weather decay reopens it. The steady
+$f_\infty$ share never counts against the cap — that water genuinely
+drains away.
+
+> **DEVIATION from SWMM:** the predecessor's cap line is inverted
+> (`Fe = MAX(Fe, Fmax)` where a minimum is evidently meant), so any wet
+> step under a configured cap instantly seals its surface. The cap's
+> documented meaning is implemented; the defect is not adopted.
 
 For both Horton forms, degenerate parameters ($f_0 = f_\infty$ or
 $k_d = 0$) mean constant capacity $f_0$; but **$f_0 < f_\infty$ yields zero

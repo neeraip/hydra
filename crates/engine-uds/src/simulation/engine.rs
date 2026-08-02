@@ -1080,7 +1080,23 @@ impl Simulation {
             self.last_lat = lat_now;
         } else {
             // Between events the network state freezes and no lateral
-            // inflows apply (§10.3).
+            // inflows apply (§10.3) — but rules are operator forcing,
+            // not routed state: they evaluate on their §9.1 clock
+            // through the gap so time-triggered settings are in place
+            // the instant routing resumes.
+            if self.controls.is_some() {
+                let lat = vec![0.0; self.net.vertices.len()];
+                let rule_step = self.net.options.rule_step;
+                if rule_step > 0.0 {
+                    while self.next_rule_t <= period_end + 1e-9 {
+                        let tt = self.next_rule_t;
+                        self.apply_controls(tt, &lat);
+                        self.next_rule_t = ((tt / rule_step).floor() + 1.0) * rule_step;
+                    }
+                } else {
+                    self.apply_controls(t, &lat);
+                }
+            }
             self.router.skip_to(period_end);
             self.last_lat = vec![0.0; self.net.vertices.len()];
         }

@@ -167,7 +167,12 @@ contract of §12.3 persists; they are one design.
 An event list restricts routing to date windows: between events the routing
 step stretches to the next hydrology or reporting time, no lateral inflows
 apply, and no flow or constituent routing occurs — hydrology continues,
-network state freezes. Overlapping events clip to the next event's start.
+network state freezes. Rules, however, are **operator forcing, not routed
+state**: they evaluate on their §9.1 clock through the gap, their actions
+landing on the frozen settings, so the network resumes in the operating
+state the schedule demands — a time-triggered pump command inside a gap
+fires at its appointed time, never late. Overlapping events clip to the
+next event's start.
 These are user-declared semantics ("only route when it matters") and are
 adopted.
 

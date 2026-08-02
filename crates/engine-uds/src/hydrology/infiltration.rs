@@ -52,10 +52,9 @@ pub enum InfilState {
         kd: f64,
         kr: f64,
         f_max: f64,
-        /// Cumulative excess above `f_min` (m).
+        /// Cumulative excess above `f_min` (m); the §3.3 volume cap
+        /// seals the surface when it reaches `f_max`.
         fe: f64,
-        /// Total cumulative infiltration (m), for the cap.
-        f_total: f64,
     },
     /// Green–Ampt (Mein–Larson), plain or modified.
     GreenAmpt {
@@ -105,7 +104,7 @@ impl InfilState {
     pub fn hotstart_get(&self) -> [f64; 6] {
         match self {
             InfilState::Horton { tp, fe, .. } => [*tp, *fe, 0.0, 0.0, 0.0, 0.0],
-            InfilState::ModHorton { fe, f_total, .. } => [0.0, *fe, *f_total, 0.0, 0.0, 0.0],
+            InfilState::ModHorton { fe, .. } => [0.0, *fe, 0.0, 0.0, 0.0, 0.0],
             InfilState::GreenAmpt {
                 imd, f, fu, sat, t, ..
             } => [*imd, *f, *fu, f64::from(u8::from(*sat)), *t, 0.0],
@@ -128,9 +127,8 @@ impl InfilState {
                 *tp = x[0];
                 *fe = x[1];
             }
-            InfilState::ModHorton { fe, f_total, .. } => {
+            InfilState::ModHorton { fe, .. } => {
                 *fe = x[1];
-                *f_total = x[2];
             }
             InfilState::GreenAmpt {
                 imd, f, fu, sat, t, ..
@@ -184,7 +182,6 @@ impl InfilState {
                         kr,
                         f_max: *f_max,
                         fe: 0.0,
-                        f_total: 0.0,
                     }
                 } else {
                     InfilState::Horton {
@@ -332,7 +329,6 @@ impl InfilState {
                 kr,
                 f_max,
                 fe,
-                f_total,
             } => {
                 let f0 = *f0 * fac.conductivity;
                 let f_min = *f_min * fac.conductivity;
@@ -343,11 +339,15 @@ impl InfilState {
                 }
                 let fa = irate + depth / dt;
                 if fa <= 1e-12 {
-                    // Dry-weather decay of the cumulative excess.
+                    // Dry-weather decay of the cumulative excess reopens
+                    // a sealed surface (§3.3).
                     *fe *= (-kr * dt).exp();
-                    if *f_max > 0.0 {
-                        *f_total = (*f_total - kr * dt * *f_max).max(0.0);
-                    }
+                    return 0.0;
+                }
+                // §3.3: the volume cap is a finite store above the steady
+                // f∞ drainage — the surface seals when the cumulative
+                // *excess* fills it, never on the steady share.
+                if *f_max > 0.0 && *fe >= *f_max {
                     return 0.0;
                 }
                 let mut fp = if df == 0.0 || *kd == 0.0 {
@@ -356,14 +356,12 @@ impl InfilState {
                     (f0 - *kd * *fe).max(f_min)
                 };
                 fp = fp.min(fa).max(0.0);
-                if *f_max > 0.0 {
-                    if *f_total + fp * dt > *f_max {
-                        fp = ((*f_max - *f_total) / dt).max(0.0);
-                    }
-                    *f_total += fp * dt;
-                }
-                // Excess above the equilibrium rate accumulates.
+                // Excess above the equilibrium rate accumulates, capped
+                // at the seal.
                 *fe += (fp - f_min).max(0.0) * dt;
+                if *f_max > 0.0 {
+                    *fe = fe.min(*f_max);
+                }
                 fp
             }
             InfilState::GreenAmpt {
