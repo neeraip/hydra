@@ -242,6 +242,19 @@ pub struct Surface {
     pub losses: f64,
     /// Cumulative rainfall volume (m³).
     pub rainfall: f64,
+    // §11.1 surface-ledger accounts (m³).
+    /// Evaporation exerted (approximated per sub-area availability).
+    pub evap_vol: f64,
+    /// Infiltration, control-measure exfiltration included.
+    pub infil_vol: f64,
+    /// Run-on arriving on parcels.
+    pub runon_in: f64,
+    /// Runoff and drain volume leaving parcels.
+    pub runoff_out: f64,
+    /// Snow ploughed out of the system.
+    pub snow_plowed: f64,
+    /// Ponded, held, and snow storage at start.
+    pub initial_storage: f64,
 }
 
 impl Surface {
@@ -416,14 +429,22 @@ impl Surface {
                 s.area *= scale;
             }
         }
-        Ok(Some(Surface {
+        let mut surface = Surface {
             gages,
             parcels,
             start_epoch,
             degraded: false,
             losses: 0.0,
             rainfall: 0.0,
-        }))
+            evap_vol: 0.0,
+            infil_vol: 0.0,
+            runon_in: 0.0,
+            runoff_out: 0.0,
+            snow_plowed: 0.0,
+            initial_storage: 0.0,
+        };
+        surface.initial_storage = surface.stored_volume();
+        Ok(Some(surface))
     }
 
     /// Whether any gage is raining or any sub-area holds water above its
@@ -463,6 +484,7 @@ impl Surface {
         snow_cl: Option<&SnowClimate>,
     ) {
         self.degraded = false;
+        let mut runon_arrived = 0.0;
         let elapsed_days = (epoch - self.start_epoch) / 86_400.0;
         // Run-on volumes booked last step arrive as this step's rates,
         // spread over the non-measure area; the volume is kept for the
@@ -470,6 +492,7 @@ impl Surface {
         for p in &mut self.parcels {
             let ordinary: f64 = p.sub.iter().map(|s| s.area).sum();
             p.runon_vol = p.runon_next_vol;
+            runon_arrived += p.runon_vol;
             p.runon = if ordinary > 0.0 {
                 p.runon_vol / dt / ordinary
             } else {
@@ -477,6 +500,7 @@ impl Surface {
             };
             p.runon_next_vol = 0.0;
         }
+        self.runon_in += runon_arrived;
 
         let mut runon_to_parcel = vec![0.0_f64; self.parcels.len()];
         let mut snow_transfers: Vec<(usize, f64)> = Vec::new();
@@ -500,6 +524,7 @@ impl Surface {
                         (precip, 0.0)
                     };
                     pack.plow(snowf, dt, area_total_pre);
+                    self.snow_plowed += std::mem::take(&mut pack.exported);
                     snow_transfers.extend(pack.transfer_out.iter().copied());
                     let (imp, perv, _) = pack.melt(rain, snowf, dt, cl);
                     (imp, perv)
@@ -544,6 +569,17 @@ impl Surface {
                 }
                 _ => 0.0,
             };
+
+            // §11.1: evaporation exerted, approximated per sub-area by
+            // availability before the reservoirs advance.
+            for (i, sub) in p.sub.iter().enumerate() {
+                if sub.area <= 0.0 || e <= 0.0 {
+                    continue;
+                }
+                let supply = if i < 2 { input } else { perv_input };
+                let used = e.min(sub.depth / dt + supply.max(0.0));
+                self.evap_vol += used.max(0.0) * dt * sub.area;
+            }
 
             // Sub-area order honours the internal re-routing direction:
             // the router computes the source first (§3.2).
@@ -592,6 +628,7 @@ impl Surface {
                 self.degraded = true;
             }
             self.losses += f_rate * dt * p.sub[2].area;
+            self.infil_vol += f_rate * dt * p.sub[2].area;
             p.qstep.v_infil = f_rate * dt * p.sub[2].area;
             p.qstep.v_outflow = runoff.iter().sum::<f64>();
 
@@ -638,6 +675,7 @@ impl Surface {
                         dt,
                     );
                     self.losses += u.exfiltration * u.area * dt;
+                    self.infil_vol += u.exfiltration * u.area * dt;
                     lid_return += u.overflow * u.area * dt;
                     let drain_vol = u.drain_flow * u.area;
                     drains_out += drain_vol * dt;
@@ -671,6 +709,7 @@ impl Surface {
             let total: f64 = runoff.iter().sum();
             p.runoff = total / dt;
             p.qstep.v_out2 += total;
+            self.runoff_out += p.qstep.v_out2;
             p.qstep.ponded_end = p.sub.iter().map(|s| s.depth * s.area).sum();
             let area_q: f64 = p.sub.iter().map(|s| s.area).sum();
             if area_q > 0.0 {
@@ -712,6 +751,26 @@ impl Surface {
     /// A parcel's current runoff rate (m³/s).
     pub fn parcel_runoff(&self, pi: usize) -> f64 {
         self.parcels.get(pi).map_or(0.0, |p| p.runoff)
+    }
+
+    /// Current surface storage (m³): ponded sub-area water, control
+    /// measures' held water, and snow (§11.1).
+    pub fn stored_volume(&self) -> f64 {
+        let mut v = 0.0;
+        for p in &self.parcels {
+            let area: f64 = p.sub.iter().map(|s| s.area).sum();
+            v += p.sub.iter().map(|s| s.depth * s.area).sum::<f64>();
+            v += p
+                .lids
+                .iter()
+                .map(|u| u.stored_depth() * u.area)
+                .sum::<f64>();
+            if let Some(pack) = &p.snow {
+                v += pack.stored_volume(area);
+            }
+            v += p.runon_next_vol;
+        }
+        v
     }
 
     /// The §8 quality context recorded for parcel `pi`'s last step.

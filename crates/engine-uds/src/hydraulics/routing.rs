@@ -473,6 +473,10 @@ pub struct RoutingReport {
     pub outflow: f64,
     /// Total flooding volume (m³).
     pub flooding: f64,
+    /// Negative laterals booked as outflow by their sign (§11.1).
+    pub negative_out: f64,
+    /// Stored volume at the start of the run (m³).
+    pub initial_storage: f64,
     /// Total channel evaporation and seepage volume (m³).
     pub losses: f64,
 }
@@ -920,6 +924,10 @@ impl Router {
             report: RoutingReport::default(),
         };
         r.seed_initial_state(net);
+        r.report.initial_storage = (0..r.verts.len())
+            .map(|v| r.vertex_volume_now(v))
+            .sum::<f64>()
+            + r.channel_transport().iter().map(|c| c.4).sum::<f64>();
         Ok(r)
     }
 
@@ -1297,7 +1305,12 @@ impl Router {
     fn accept(&mut self, dt: f64, trial: Trial, lat: &[f64]) {
         // Ledger.
         for (vi, l) in lat.iter().enumerate() {
-            self.report.inflow += l * dt;
+            // §11.1: signed sources place by their sign.
+            if *l >= 0.0 {
+                self.report.inflow += l * dt;
+            } else {
+                self.report.negative_out += -l * dt;
+            }
             self.report.flooding += trial.flood_rate[vi] * dt;
         }
         self.flood_now.clone_from(&trial.flood_rate);

@@ -28,6 +28,8 @@ pub struct NetworkQuality {
     pub reacted: Vec<f64>,
     /// Mass admitted from §8.1 sources (unit·m³).
     pub inflow_mass: Vec<f64>,
+    /// Mass present at the start (unit·m³), §11.1.
+    pub initial_mass: Vec<f64>,
     /// Vertex volumes at the previous step (m³).
     vol_prev: Vec<f64>,
     /// Channel volumes at the previous step (m³).
@@ -112,6 +114,19 @@ impl NetworkQuality {
             treatments[t.vertex].push((t.constituent, t.kind == TreatmentKind::Removal, expr));
         }
         let us = net.options.flow_units.is_us();
+        let c_vertex: Vec<Vec<f64>> = c_vertex;
+        let c_channel: Vec<Vec<f64>> = c_channel;
+        let initial_mass: Vec<f64> = (0..np)
+            .map(|p| {
+                let cv: &Vec<f64> = &c_vertex[p];
+                let cc: &Vec<f64> = &c_channel[p];
+                cv.iter().zip(&vol_prev).map(|(c, v)| c * v).sum::<f64>()
+                    + cc.iter()
+                        .zip(&chan_vol_prev)
+                        .map(|(c, v)| c * v)
+                        .sum::<f64>()
+            })
+            .collect();
         Ok(NetworkQuality {
             c_vertex,
             c_channel,
@@ -119,6 +134,7 @@ impl NetworkQuality {
             outfall_mass: vec![0.0; np],
             reacted: vec![0.0; np],
             inflow_mass: vec![0.0; np],
+            initial_mass,
             vol_prev,
             chan_vol_prev,
             treatments,
@@ -434,6 +450,20 @@ impl NetworkQuality {
         } else {
             1.0 - r.min(c0) / c0
         };
+    }
+
+    /// Mass currently in the water (unit·m³) for constituent `p` (§11.1).
+    pub fn stored_mass(&self, p: usize) -> f64 {
+        self.c_vertex[p]
+            .iter()
+            .zip(&self.vol_prev)
+            .map(|(c, v)| c * v)
+            .sum::<f64>()
+            + self.c_channel[p]
+                .iter()
+                .zip(&self.chan_vol_prev)
+                .map(|(c, v)| c * v)
+                .sum::<f64>()
     }
 
     /// The concentration reported for model link `li`: its channel state,

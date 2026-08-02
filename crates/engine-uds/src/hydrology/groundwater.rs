@@ -76,6 +76,13 @@ pub struct GwState {
     pub flow: f64,
     /// The §3.5 degraded flag for the last step.
     pub degraded: bool,
+    // §11.1 subsurface-ledger accounts (m³), integrated per substep.
+    pub infil_in: f64,
+    pub evap_out: f64,
+    pub perc_out: f64,
+    pub lateral_out: f64,
+    /// Stored water at start (m³).
+    pub initial_storage: f64,
 }
 
 /// The per-step fluxes at a given state (m/s each).
@@ -117,7 +124,7 @@ impl GwState {
             Some(e) => e - bottom,
             None => vertex_invert - bottom,
         };
-        Ok(GwState {
+        let mut state = GwState {
             porosity: aq.porosity,
             wilting: aq.wilting_point,
             field_capacity: aq.field_capacity,
@@ -159,7 +166,21 @@ impl GwState {
             lower_depth: (water_table - bottom).clamp(0.0, total_depth),
             flow: 0.0,
             degraded: false,
-        })
+            infil_in: 0.0,
+            evap_out: 0.0,
+            perc_out: 0.0,
+            lateral_out: 0.0,
+            initial_storage: 0.0,
+        };
+        state.initial_storage = state.stored_volume();
+        Ok(state)
+    }
+
+    /// Stored water volume (m³): saturated zone at porosity plus the
+    /// unsaturated zone at its moisture content (§11.1).
+    pub fn stored_volume(&self) -> f64 {
+        (self.lower_depth * self.porosity + (self.total_depth - self.lower_depth) * self.theta)
+            * self.area
     }
 
     /// The water-table elevation (m), for the §14.9 records.
@@ -350,6 +371,13 @@ impl GwState {
                 if err > TOL {
                     self.degraded = true;
                 }
+                // §11.1: integrate the ledger accounts at the substep's
+                // starting fluxes.
+                let fl = fluxes(th, lo);
+                self.infil_in += infil * self.area * h;
+                self.evap_out += (fl.upper_evap + fl.lower_evap) * self.area * h;
+                self.perc_out += fl.lower_loss * self.area * h;
+                self.lateral_out += fl.gw_flow * self.area * h;
                 t += h;
                 th = th_new;
                 lo = lo_new;

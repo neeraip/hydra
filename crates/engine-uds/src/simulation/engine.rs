@@ -103,6 +103,51 @@ pub struct SubcatchRecord {
     pub washoff: Vec<f64>,
 }
 
+/// One §11.1 balance: the accumulated inflow and outflow sides and the
+/// error statistic ε = 100(1 − O/I), sign-mirrored when the ledger has
+/// outflow but no inflow, zero within the agreement threshold.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Ledger {
+    /// The accumulated inflow side.
+    pub inflow: f64,
+    /// The accumulated outflow side.
+    pub outflow: f64,
+    /// The §11.1 error statistic (percent).
+    pub error_percent: f64,
+}
+
+fn balance(inflow: f64, outflow: f64, tol: f64) -> Ledger {
+    let error_percent = if (inflow - outflow).abs() <= tol {
+        0.0
+    } else if inflow > 0.0 {
+        100.0 * (1.0 - outflow / inflow)
+    } else if outflow > 0.0 {
+        -100.0 * (1.0 - inflow / outflow)
+    } else {
+        0.0
+    };
+    Ledger {
+        inflow,
+        outflow,
+        error_percent,
+    }
+}
+
+/// The five §11.1 conservation balances.
+#[derive(Debug, Clone)]
+pub struct Ledgers {
+    /// The surface water balance, where a surface compartment exists.
+    pub surface: Option<Ledger>,
+    /// The subsurface balance, where aquifers exist.
+    pub subsurface: Option<Ledger>,
+    /// The network flow balance.
+    pub network: Ledger,
+    /// The constituent balances, by identity.
+    pub constituents: Vec<(String, Ledger)>,
+    /// The surface-loading balances, by identity.
+    pub loading: Vec<(String, Ledger)>,
+}
+
 /// A run-time notice: the engine reporting on the run as it happens.
 #[derive(Debug, Clone, PartialEq)]
 pub struct RuntimeNotice {
@@ -887,6 +932,78 @@ impl Simulation {
             }
         }
         self.controls = Some(controls);
+    }
+
+    /// The §11.1 conservation ledgers over the run so far.
+    pub fn ledgers(&self) -> Ledgers {
+        const VOL_TOL: f64 = 0.0283;
+        const MASS_TOL: f64 = 0.001;
+        let surface = self.surface.as_ref().map(|s| {
+            balance(
+                s.rainfall + s.runon_in + s.initial_storage,
+                s.evap_vol + s.infil_vol + s.runoff_out + s.snow_plowed + s.stored_volume(),
+                VOL_TOL,
+            )
+        });
+        let subsurface = if self.aquifers.is_empty() {
+            None
+        } else {
+            let (mut i, mut o) = (0.0, 0.0);
+            for (_, gw) in &self.aquifers {
+                i += gw.infil_in + gw.initial_storage;
+                o += gw.evap_out + gw.perc_out + gw.lateral_out + gw.stored_volume();
+            }
+            Some(balance(i, o, VOL_TOL))
+        };
+        let r = &self.router.report;
+        let stored_now: f64 = (0..self.net.vertices.len())
+            .map(|v| self.router.vertex_volume_now(v))
+            .sum::<f64>()
+            + self
+                .router
+                .channel_transport()
+                .iter()
+                .map(|c| c.4)
+                .sum::<f64>();
+        let network = balance(
+            r.inflow + r.initial_storage,
+            r.outflow + r.flooding + r.losses + r.negative_out + stored_now,
+            VOL_TOL,
+        );
+        let mut constituents = Vec::new();
+        if let Some(q) = &self.quality {
+            for (p, c) in self.net.constituents.iter().enumerate() {
+                let mut i = q.initial_mass[p] + q.inflow_mass[p];
+                let mut o =
+                    q.outfall_mass[p] + q.reacted[p] + q.final_storage[p] + q.stored_mass(p);
+                // Count-unit constituents report on the log scale (§11.1).
+                if c.units == crate::model::ConcentrationUnits::CountPerL {
+                    i = i.max(1.0).log10();
+                    o = o.max(1.0).log10();
+                }
+                constituents.push((c.id.clone(), balance(i, o, MASS_TOL)));
+            }
+        }
+        let mut loading = Vec::new();
+        if let Some(sq) = &self.surface_quality {
+            for (p, c) in self.net.constituents.iter().enumerate() {
+                let i = sq.initial_buildup[p] + sq.buildup_in[p] + sq.deposition[p];
+                let o = sq.swept[p]
+                    + sq.infiltrated[p]
+                    + sq.bmp_removed[p]
+                    + sq.washed_off[p]
+                    + sq.to_final[p]
+                    + sq.stored_mass(p);
+                loading.push((c.id.clone(), balance(i, o, MASS_TOL)));
+            }
+        }
+        Ledgers {
+            surface,
+            subsurface,
+            network,
+            constituents,
+            loading,
+        }
     }
 
     /// Write the §14.9 binary results to `w`; the caller owns where the

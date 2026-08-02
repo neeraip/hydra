@@ -111,9 +111,21 @@ pub struct SnowPack {
     removal: Option<(f64, [f64; 5], Option<usize>)>,
     /// Snow plowed to another parcel this step (m³, pervious target).
     pub transfer_out: Vec<(usize, f64)>,
+    /// Snow water removed from the system by ploughing (m³), §11.1.
+    pub exported: f64,
 }
 
 impl SnowPack {
+    /// Stored snow water volume over the parcel (m³), §11.1: water
+    /// equivalent plus free water per surface share.
+    pub fn stored_volume(&self, parcel_area: f64) -> f64 {
+        self.surfaces
+            .iter()
+            .zip(self.f_area)
+            .flat_map(|(sf, f)| sf.as_ref().map(|s| (s.wsnow + s.fw) * f * parcel_area))
+            .sum()
+    }
+
     /// Mean snow water equivalent over the present surfaces (m), the
     /// §14.9 snow-depth record.
     pub fn mean_depth(&self) -> f64 {
@@ -154,6 +166,7 @@ impl SnowPack {
                 .as_ref()
                 .map(|r| (r.trigger_depth, r.fractions, r.to_parcel)),
             transfer_out: Vec::new(),
+            exported: 0.0,
         }
     }
 
@@ -189,7 +202,8 @@ impl SnowPack {
         }
         let exc = plow.wsnow;
         let mut total = fracs[0]; // out of system
-                                  // Onto the other impervious surface.
+        self.exported += fracs[0] * exc * f_plow * parcel_area;
+        // Onto the other impervious surface.
         if self.f_area[1] > 0.0 {
             if let Some(s) = self.surfaces[1].as_mut() {
                 s.wsnow += fracs[1] * exc * f_plow / self.f_area[1];

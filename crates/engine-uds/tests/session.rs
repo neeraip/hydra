@@ -1373,6 +1373,78 @@ LINKS  ALL
     );
 }
 
+// ── §11 conservation ────────────────────────────────────────────────────
+
+#[test]
+fn the_ledgers_close_over_a_storm() {
+    // Rain-driven runoff through the network: the surface and network
+    // balances close within a few percent, judged by their own §11.1
+    // definitions.
+    let inp = runoff_model(50.0, 25.0, "HORTON");
+    let (mut sim, _, _) = Simulation::open(&inp).expect("open");
+    sim.run();
+    let led = sim.ledgers();
+    let surf = led.surface.expect("surface ledger");
+    assert!(
+        surf.error_percent.abs() < 5.0,
+        "surface error {}% (in {} out {})",
+        surf.error_percent,
+        surf.inflow,
+        surf.outflow
+    );
+    assert!(
+        led.network.error_percent.abs() < 2.0,
+        "network error {}% (in {} out {})",
+        led.network.error_percent,
+        led.network.inflow,
+        led.network.outflow
+    );
+}
+
+#[test]
+fn the_constituent_and_loading_ledgers_close() {
+    let inp = washoff_model(
+        "[WASHOFF]
+RES  TSS  EMC  50  0  0  0
+",
+    );
+    let (mut sim, _, _) = Simulation::open(&inp).expect("open");
+    sim.run();
+    let led = sim.ledgers();
+    let (_, tss) = &led.constituents[0];
+    assert!(
+        tss.error_percent.abs() < 5.0,
+        "constituent error {}% (in {} out {})",
+        tss.error_percent,
+        tss.inflow,
+        tss.outflow
+    );
+    let (_, load) = &led.loading[0];
+    assert!(
+        load.error_percent.abs() < 5.0,
+        "loading error {}% (in {} out {})",
+        load.error_percent,
+        load.inflow,
+        load.outflow
+    );
+}
+
+#[test]
+fn the_subsurface_ledger_closes() {
+    let inp = gw_model(0.01, 1.0, 99.0);
+    let (mut sim, _, _) = Simulation::open(&inp).expect("open");
+    sim.run();
+    let led = sim.ledgers();
+    let gw = led.subsurface.expect("subsurface ledger");
+    assert!(
+        gw.error_percent.abs() < 3.0,
+        "subsurface error {}% (in {} out {})",
+        gw.error_percent,
+        gw.inflow,
+        gw.outflow
+    );
+}
+
 // ── §3.4 control measures ───────────────────────────────────────────────
 
 #[test]

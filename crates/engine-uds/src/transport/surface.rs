@@ -49,6 +49,10 @@ pub struct SurfaceQuality {
     pub infiltrated: Vec<f64>,
     pub bmp_removed: Vec<f64>,
     pub to_final: Vec<f64>,
+    /// Buildup present at start (U), §11.1.
+    pub initial_buildup: Vec<f64>,
+    /// Mass delivered off the parcels into the network (U), §11.1.
+    pub washed_off: Vec<f64>,
 }
 
 impl SurfaceQuality {
@@ -115,6 +119,14 @@ impl SurfaceQuality {
             });
         }
         let n = net.parcels.len();
+        let initial_buildup = (0..np)
+            .map(|ci| {
+                parcels
+                    .iter()
+                    .flat_map(|st| st.buildup.iter().map(move |row| row[ci]))
+                    .sum()
+            })
+            .collect();
         SurfaceQuality {
             parcels,
             conc: vec![vec![0.0; np]; n],
@@ -129,7 +141,22 @@ impl SurfaceQuality {
             infiltrated: vec![0.0; np],
             bmp_removed: vec![0.0; np],
             to_final: vec![0.0; np],
+            initial_buildup,
+            washed_off: vec![0.0; np],
         }
+    }
+
+    /// Buildup and ponded mass currently on the surfaces (U), §11.1.
+    pub fn stored_mass(&self, ci: usize) -> f64 {
+        self.parcels
+            .iter()
+            .map(|st| {
+                st.buildup.iter().map(|row| row[ci]).sum::<f64>()
+                    + st.ponded[ci]
+                    + st.runon_mass[ci]
+            })
+            .sum::<f64>()
+            + self.runon_next.iter().map(|row| row[ci]).sum::<f64>()
     }
 
     /// Advance one hydrology step for every parcel. `qsteps[pi]` is the
@@ -197,6 +224,7 @@ impl SurfaceQuality {
                 if q.v_out2 < v_out1 {
                     self.bmp_removed[ci] += c_out * (v_out1 - q.v_out2);
                 }
+                self.washed_off[ci] += c_out * q.v_out2;
                 self.conc[pi][ci] = c_out;
             }
 
