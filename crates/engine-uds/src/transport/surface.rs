@@ -146,6 +146,34 @@ impl SurfaceQuality {
         }
     }
 
+    /// Export parcel `pi`'s §14.8 quality state: ponded masses and, per
+    /// cover slot, the buildup row and last-swept day.
+    pub fn hotstart_get(&self, pi: usize) -> (Vec<f64>, Vec<(Vec<f64>, f64)>) {
+        let st = &self.parcels[pi];
+        (
+            st.ponded.clone(),
+            st.buildup
+                .iter()
+                .zip(&st.last_swept)
+                .map(|(row, sw)| (row.clone(), *sw))
+                .collect(),
+        )
+    }
+
+    /// Restore parcel `pi`'s §14.8 quality state.
+    pub fn hotstart_set(&mut self, pi: usize, ponded: Vec<f64>, slots: Vec<(Vec<f64>, f64)>) {
+        let st = &mut self.parcels[pi];
+        if ponded.len() == st.ponded.len() {
+            st.ponded = ponded;
+        }
+        for (slot, (row, sw)) in slots.into_iter().enumerate() {
+            if slot < st.buildup.len() && row.len() == st.buildup[slot].len() {
+                st.buildup[slot] = row;
+                st.last_swept[slot] = sw;
+            }
+        }
+    }
+
     /// Buildup and ponded mass currently on the surfaces (U), §11.1.
     pub fn stored_mass(&self, ci: usize) -> f64 {
         self.parcels

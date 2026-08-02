@@ -978,6 +978,63 @@ impl Router {
         }
     }
 
+    /// Export the §14.8 hotstart hydraulic state: vertex depths and per
+    /// model link (flow m³/s, depth m, setting).
+    pub fn hotstart_get(&self, n_links: usize) -> (Vec<f64>, Vec<(f64, f64, f64)>) {
+        let depths: Vec<f64> = self.y.clone();
+        let mut links = vec![(0.0, 0.0, 1.0); n_links];
+        for (ci, c) in self.chans.iter().enumerate() {
+            links[c.link] = (
+                self.q[ci],
+                self.link_depth(c.link).unwrap_or(0.0),
+                if self.chan_open[ci] { 1.0 } else { 0.0 },
+            );
+        }
+        for (si, st) in self.structs.iter().enumerate() {
+            links[st.link] = (
+                self.sq[si],
+                self.link_depth(st.link).unwrap_or(0.0),
+                self.sett[si],
+            );
+        }
+        (depths, links)
+    }
+
+    /// Restore the §14.8 hotstart hydraulic state; depths seed the
+    /// vertices, flows the channels and structures, settings the §9
+    /// layer, and the mid-areas re-prime from the restored depths.
+    pub fn hotstart_apply(&mut self, depths: &[f64], links: &[(f64, f64, f64)]) {
+        for (vi, d) in depths.iter().enumerate() {
+            if vi < self.y.len() {
+                self.y[vi] = d.max(0.0);
+            }
+        }
+        for (ci, c) in self.chans.iter().enumerate() {
+            if let Some(&(q, _, setting)) = links.get(c.link) {
+                self.q[ci] = q;
+                self.chan_open[ci] = setting > 0.0;
+            }
+        }
+        for (si, st) in self.structs.iter().enumerate() {
+            if let Some(&(q, _, setting)) = links.get(st.link) {
+                self.sq[si] = q;
+                self.sett[si] = setting;
+            }
+        }
+        for (ci, c) in self.chans.iter().enumerate() {
+            let y1 = (self.y[c.from] - c.off1).max(0.0);
+            let y2 = (self.y[c.to] - c.off2).max(0.0);
+            let y_mid = 0.5 * (y1 + y2);
+            self.a_mid[ci] = c.geom.area(y_mid.max(DRY)).max(DRY);
+        }
+        self.hist.clear();
+        // Restored storage is this run's starting storage (§11.1).
+        self.report.initial_storage = (0..self.verts.len())
+            .map(|v| self.vertex_volume_now(v))
+            .sum::<f64>()
+            + self.channel_transport().iter().map(|c| c.4).sum::<f64>();
+    }
+
     /// Current simulation time (s).
     pub fn time(&self) -> f64 {
         self.t

@@ -753,6 +753,45 @@ impl Surface {
         self.parcels.get(pi).map_or(0.0, |p| p.runoff)
     }
 
+    /// The §14.8 hotstart sub-area depths (m) for parcel `pi`.
+    pub fn subarea_depths(&self, pi: usize) -> [f64; 3] {
+        let p = &self.parcels[pi];
+        [p.sub[0].depth, p.sub[1].depth, p.sub[2].depth]
+    }
+
+    /// Restore parcel `pi`'s §14.8 hotstart surface state.
+    pub fn hotstart_set(&mut self, pi: usize, depths: [f64; 3], runoff: f64) {
+        let p = &mut self.parcels[pi];
+        for (sub, d) in p.sub.iter_mut().zip(depths) {
+            sub.depth = d.max(0.0);
+        }
+        p.runoff = runoff.max(0.0);
+    }
+
+    /// Parcel `pi`'s infiltration state vector (§14.8).
+    pub fn infil_state(&self, pi: usize) -> Option<[f64; 6]> {
+        self.parcels[pi].infil.as_ref().map(|s| s.hotstart_get())
+    }
+
+    /// Restore parcel `pi`'s infiltration state (§14.8).
+    pub fn set_infil_state(&mut self, pi: usize, x: [f64; 6]) {
+        if let Some(s) = &mut self.parcels[pi].infil {
+            s.hotstart_set(x);
+        }
+    }
+
+    /// Parcel `pi`'s snow-pack state (§14.8), when a pack exists.
+    pub fn snow_state(&self, pi: usize) -> Option<[[f64; 5]; 3]> {
+        self.parcels[pi].snow.as_ref().map(|s| s.hotstart_get())
+    }
+
+    /// Restore parcel `pi`'s snow-pack state (§14.8).
+    pub fn set_snow_state(&mut self, pi: usize, x: [[f64; 5]; 3]) {
+        if let Some(s) = &mut self.parcels[pi].snow {
+            s.hotstart_set(x);
+        }
+    }
+
     /// Current surface storage (m³): ponded sub-area water, control
     /// measures' held water, and snow (§11.1).
     pub fn stored_volume(&self) -> f64 {

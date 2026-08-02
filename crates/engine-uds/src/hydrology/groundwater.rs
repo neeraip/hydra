@@ -183,6 +183,24 @@ impl GwState {
             * self.area
     }
 
+    /// The §14.8 hotstart state: (moisture, water-table elevation m,
+    /// lateral flow m/s, unsaturated acceptance m).
+    pub fn hotstart_get(&self) -> (f64, f64, f64, f64) {
+        (
+            self.theta,
+            self.bottom_elev + self.lower_depth,
+            self.flow,
+            (self.total_depth - self.lower_depth) * (self.porosity - self.theta),
+        )
+    }
+
+    /// Restore the §14.8 hotstart state.
+    pub fn hotstart_set(&mut self, theta: f64, table_elev: f64, flow: f64) {
+        self.theta = theta.clamp(self.wilting, self.porosity);
+        self.lower_depth = (table_elev - self.bottom_elev).clamp(0.0, self.total_depth);
+        self.flow = flow;
+    }
+
     /// The water-table elevation (m), for the §14.9 records.
     pub fn table_elevation(&self) -> f64 {
         self.bottom_elev + self.lower_depth

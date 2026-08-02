@@ -1032,6 +1032,346 @@ impl Simulation {
         }
     }
 
+    /// Save a predecessor hotstart file (`SWMM5-HOTSTART4`, §14.8) to
+    /// `w`: the runoff block (sub-area depths, infiltration, subsurface,
+    /// snow, and quality state) then the routing block, in the
+    /// predecessor's internal units — including its multi-pollutant
+    /// buildup write asymmetry, reproduced so its readers behave
+    /// identically on this engine's files.
+    pub fn save_hotstart(&self, w: &mut impl std::io::Write) -> std::io::Result<()> {
+        const FT: f64 = 0.3048;
+        const CFS: f64 = 0.028_316_846_592;
+        let put_i = |w: &mut dyn std::io::Write, v: i32| w.write_all(&v.to_le_bytes());
+        let put_f = |w: &mut dyn std::io::Write, v: f64| w.write_all(&(v as f32).to_le_bytes());
+        let put_d = |w: &mut dyn std::io::Write, v: f64| w.write_all(&v.to_le_bytes());
+        w.write_all(b"SWMM5-HOTSTART4")?;
+        let np = self.net.constituents.len();
+        put_i(w, self.net.parcels.len() as i32)?;
+        put_i(w, self.net.land_uses.len() as i32)?;
+        put_i(w, self.net.vertices.len() as i32)?;
+        put_i(w, self.net.links.len() as i32)?;
+        put_i(w, np as i32)?;
+        put_i(w, self.net.options.flow_units as i32)?;
+
+        // ── Runoff block ────────────────────────────────────────────────
+        if let Some(surface) = &self.surface {
+            for pi in 0..self.net.parcels.len() {
+                let d = surface.subarea_depths(pi);
+                for v in d {
+                    put_d(w, v / FT)?;
+                }
+                put_d(w, surface.parcel_runoff(pi) / CFS)?;
+                let x = surface.infil_state(pi).unwrap_or([0.0; 6]);
+                for (slot, v) in x.into_iter().enumerate() {
+                    put_d(w, v / infil_slot_ft(self.net.options.infiltration, slot))?;
+                }
+                if let Some((_, gw)) = self.aquifers.iter().find(|(p, _)| *p == pi) {
+                    let (theta, elev, flow, accept) = gw.hotstart_get();
+                    put_d(w, theta)?;
+                    put_d(w, elev / FT)?;
+                    put_d(w, flow / FT)?;
+                    put_d(w, accept / FT)?;
+                }
+                if let Some(snow) = surface.snow_state(pi) {
+                    for sf in snow {
+                        put_d(w, sf[0] / FT)?;
+                        put_d(w, sf[1] / FT)?;
+                        put_d(w, sf[2] / FT)?;
+                        put_d(w, sf[3])?;
+                        put_d(w, sf[4])?;
+                    }
+                }
+                if np > 0 {
+                    let (ponded, slots) = self
+                        .surface_quality
+                        .as_ref()
+                        .map(|sq| sq.hotstart_get(pi))
+                        .unwrap_or((vec![0.0; np], Vec::new()));
+                    let conc = self
+                        .surface_quality
+                        .as_ref()
+                        .map(|sq| sq.conc[pi].clone())
+                        .unwrap_or(vec![0.0; np]);
+                    for v in conc {
+                        put_d(w, v)?;
+                    }
+                    for (ci, v) in ponded.iter().enumerate() {
+                        put_d(w, v / self.mass_cv(ci))?;
+                    }
+                    for k in 0..self.net.land_uses.len() {
+                        let (row, swept) = slots.get(k).cloned().unwrap_or((vec![0.0; np], 0.0));
+                        for (ci, b) in row.iter().enumerate() {
+                            // The predecessor writes np doubles per pair.
+                            for _ in 0..np {
+                                put_d(w, b / self.mass_cv(ci))?;
+                            }
+                        }
+                        put_d(w, swept + 25_569.0)?;
+                    }
+                }
+            }
+        }
+
+        // ── Routing block ───────────────────────────────────────────────
+        let (depths, links) = self.router.hotstart_get(self.net.links.len());
+        for (vi, d) in depths.iter().enumerate() {
+            put_f(w, d / FT)?;
+            put_f(w, self.last_lat.get(vi).copied().unwrap_or(0.0) / CFS)?;
+            if self.router.is_storage(vi) {
+                let hrt = self.quality.as_ref().map_or(0.0, |q| q.hrt[vi]);
+                put_f(w, hrt)?;
+            }
+            for p in 0..np {
+                let c = self.quality.as_ref().map_or(0.0, |q| q.c_vertex[p][vi]);
+                put_f(w, c)?;
+            }
+        }
+        for (li, &(q, d, setting)) in links.iter().enumerate() {
+            put_f(w, q / CFS)?;
+            put_f(w, d / FT)?;
+            put_f(w, setting)?;
+            for p in 0..np {
+                let c = self
+                    .quality
+                    .as_ref()
+                    .and_then(|qq| qq.link_concentration(&self.router, p, li))
+                    .unwrap_or(0.0);
+                put_f(w, c)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn mass_cv(&self, ci: usize) -> f64 {
+        use crate::model::ConcentrationUnits;
+        let us = self.net.options.flow_units.is_us();
+        match self.net.constituents[ci].units {
+            ConcentrationUnits::MgPerL => {
+                if us {
+                    453.592_37
+                } else {
+                    1000.0
+                }
+            }
+            ConcentrationUnits::UgPerL => {
+                if us {
+                    453_592.37
+                } else {
+                    1.0e6
+                }
+            }
+            ConcentrationUnits::CountPerL => 1.0e-3,
+        }
+    }
+
+    /// Load a predecessor hotstart file (§14.8), versions 1–4, restoring
+    /// what the format carries; what it cannot carry is named in the
+    /// notices. Object counts must match the model.
+    pub fn load_hotstart(&mut self, bytes: &[u8]) -> Result<(), String> {
+        const FT: f64 = 0.3048;
+        const CFS: f64 = 0.028_316_846_592;
+        let mut pos;
+        let version = if bytes.len() >= 15 && &bytes[..14] == b"SWMM5-HOTSTART" {
+            let v = (bytes[14] as char).to_digit(10);
+            match v {
+                Some(v) => {
+                    pos = 15;
+                    v
+                }
+                None => {
+                    pos = 14;
+                    1
+                }
+            }
+        } else {
+            return Err("not a SWMM5-HOTSTART file".into());
+        };
+        let get_i = |pos: &mut usize| -> Result<i32, String> {
+            let b: [u8; 4] = bytes
+                .get(*pos..*pos + 4)
+                .ok_or("truncated hotstart file")?
+                .try_into()
+                .unwrap();
+            *pos += 4;
+            Ok(i32::from_le_bytes(b))
+        };
+        let np = self.net.constituents.len();
+        let n_sub = if version >= 2 {
+            get_i(&mut pos)? as usize
+        } else {
+            self.net.parcels.len()
+        };
+        let n_land = if version >= 3 {
+            get_i(&mut pos)? as usize
+        } else {
+            self.net.land_uses.len()
+        };
+        let n_nodes = get_i(&mut pos)? as usize;
+        let n_links = get_i(&mut pos)? as usize;
+        let n_pollut = get_i(&mut pos)? as usize;
+        let flow_units = get_i(&mut pos)?;
+        if n_sub != self.net.parcels.len()
+            || n_land != self.net.land_uses.len()
+            || n_nodes != self.net.vertices.len()
+            || n_links != self.net.links.len()
+            || n_pollut != np
+            || flow_units != self.net.options.flow_units as i32
+        {
+            return Err("hotstart object counts do not match the model".into());
+        }
+        let get_d = |pos: &mut usize| -> Result<f64, String> {
+            let b: [u8; 8] = bytes
+                .get(*pos..*pos + 8)
+                .ok_or("truncated hotstart file")?
+                .try_into()
+                .unwrap();
+            *pos += 8;
+            let v = f64::from_le_bytes(b);
+            if v.is_nan() {
+                return Err("hotstart file carries NaN state".into());
+            }
+            Ok(v)
+        };
+        let get_f = |pos: &mut usize| -> Result<f64, String> {
+            let b: [u8; 4] = bytes
+                .get(*pos..*pos + 4)
+                .ok_or("truncated hotstart file")?
+                .try_into()
+                .unwrap();
+            *pos += 4;
+            let v = f32::from_le_bytes(b);
+            if v.is_nan() {
+                return Err("hotstart file carries NaN state".into());
+            }
+            Ok(f64::from(v))
+        };
+
+        // ── Runoff block (version ≥ 3) ──────────────────────────────────
+        if version >= 3 {
+            if let Some(mut surface) = self.surface.take() {
+                for pi in 0..self.net.parcels.len() {
+                    let mut d = [0.0; 3];
+                    for v in &mut d {
+                        *v = get_d(&mut pos)? * FT;
+                    }
+                    let runoff = get_d(&mut pos)? * CFS;
+                    surface.hotstart_set(pi, d, runoff);
+                    let mut x = [0.0; 6];
+                    for (slot, v) in x.iter_mut().enumerate() {
+                        *v = get_d(&mut pos)? * infil_slot_ft(self.net.options.infiltration, slot);
+                    }
+                    surface.set_infil_state(pi, x);
+                    if let Some((_, gw)) = self.aquifers.iter_mut().find(|(p, _)| *p == pi) {
+                        let theta = get_d(&mut pos)?;
+                        let elev = get_d(&mut pos)? * FT;
+                        let flow = get_d(&mut pos)? * FT;
+                        let _accept = get_d(&mut pos)?;
+                        gw.hotstart_set(theta, elev, flow);
+                    }
+                    if surface.snow_state(pi).is_some() {
+                        let mut snow = [[0.0; 5]; 3];
+                        for sf in &mut snow {
+                            sf[0] = get_d(&mut pos)? * FT;
+                            sf[1] = get_d(&mut pos)? * FT;
+                            sf[2] = get_d(&mut pos)? * FT;
+                            sf[3] = get_d(&mut pos)?;
+                            sf[4] = get_d(&mut pos)?;
+                        }
+                        surface.set_snow_state(pi, snow);
+                    }
+                    if np > 0 {
+                        let mut conc = vec![0.0; np];
+                        for v in &mut conc {
+                            *v = get_d(&mut pos)?;
+                        }
+                        let mut ponded = vec![0.0; np];
+                        for (ci, v) in ponded.iter_mut().enumerate() {
+                            *v = get_d(&mut pos)? * self.mass_cv(ci);
+                        }
+                        let mut slots = Vec::new();
+                        for _ in 0..self.net.land_uses.len() {
+                            let mut row = vec![0.0; np];
+                            for (ci, b) in row.iter_mut().enumerate() {
+                                *b = get_d(&mut pos)? * self.mass_cv(ci);
+                            }
+                            let swept = get_d(&mut pos)? - 25_569.0;
+                            slots.push((row, swept));
+                        }
+                        if let Some(sq) = &mut self.surface_quality {
+                            sq.conc[pi] = conc;
+                            sq.hotstart_set(pi, ponded, slots);
+                        }
+                    }
+                }
+                self.surface = Some(surface);
+            }
+        }
+
+        // ── Routing block ───────────────────────────────────────────────
+        let nv = self.net.vertices.len();
+        let mut depths = vec![0.0; nv];
+        for (vi, d) in depths.iter_mut().enumerate() {
+            *d = get_f(&mut pos)? * FT;
+            let _lat = get_f(&mut pos)?;
+            if self.router.is_storage(vi) {
+                let hrt = get_f(&mut pos)?;
+                if let Some(q) = &mut self.quality {
+                    q.hrt[vi] = hrt;
+                }
+            }
+            for p in 0..np {
+                let c = get_f(&mut pos)?;
+                if let Some(q) = &mut self.quality {
+                    q.c_vertex[p][vi] = c;
+                }
+            }
+        }
+        let mut links = vec![(0.0, 0.0, 1.0); self.net.links.len()];
+        let chan_slots: Vec<(usize, usize)> = self
+            .router
+            .channel_transport()
+            .iter()
+            .enumerate()
+            .map(|(k, c)| (c.0, k))
+            .collect();
+        for (li, slot) in links.iter_mut().enumerate() {
+            let q = get_f(&mut pos)? * CFS;
+            let d = get_f(&mut pos)? * FT;
+            let setting = get_f(&mut pos)?;
+            *slot = (q, d, setting);
+            for p in 0..np {
+                let c = get_f(&mut pos)?;
+                if let Some(qq) = &mut self.quality {
+                    if let Some(&(_, k)) = chan_slots.iter().find(|(l, _)| *l == li) {
+                        qq.c_channel[p][k] = c;
+                    }
+                }
+            }
+        }
+        self.router.hotstart_apply(&depths, &links);
+
+        // What the format cannot carry is named (§14.8).
+        if self.net.lid_usage.iter().len() > 0 {
+            self.notices.push(RuntimeNotice {
+                t: 0.0,
+                message: "hotstart restored: the predecessor format carries no \
+                          control-measure layer state; units start from their \
+                          build state (§14.8)"
+                    .to_string(),
+            });
+        }
+        if np > 1 && !self.net.land_uses.is_empty() {
+            self.notices.push(RuntimeNotice {
+                t: 0.0,
+                message: "hotstart restored: the predecessor format does not \
+                          round-trip multi-constituent buildup; buildup beyond \
+                          the first constituent is unreliable (§14.8)"
+                    .to_string(),
+            });
+        }
+        Ok(())
+    }
+
     /// Write the §14.9 binary results to `w`; the caller owns where the
     /// bytes go (§12.2).
     pub fn write_out(&self, w: &mut impl std::io::Write) -> std::io::Result<()> {
@@ -1305,6 +1645,21 @@ fn tidal_stage(points: &[(f64, f64)], secs: f64) -> f64 {
         return v0 + f * (v1 - v0);
     }
     points[0].1
+}
+
+/// The internal-unit scale (metres per foot-based slot) for each §14.8
+/// infiltration state slot under the session's model.
+fn infil_slot_ft(model: crate::io::options::InfiltrationModel, slot: usize) -> f64 {
+    use crate::io::options::InfiltrationModel as M;
+    const FT: f64 = 0.3048;
+    match model {
+        // tp (s), Fe (ft), rest unused.
+        M::Horton | M::ModifiedHorton => [1.0, FT, FT, 1.0, 1.0, 1.0][slot],
+        // IMD (–), F (ft), Fu (ft), Sat flag, T (s), unused.
+        M::GreenAmpt | M::ModifiedGreenAmpt => [1.0, FT, FT, 1.0, 1.0, 1.0][slot],
+        // S, P, F (ft), T (s), Se (ft), f (ft/s).
+        M::CurveNumber => [FT, FT, FT, 1.0, FT, FT][slot],
+    }
 }
 
 /// A raw series value at run time `t` as a step function: each entry's

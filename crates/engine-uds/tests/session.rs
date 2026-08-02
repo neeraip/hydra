@@ -1478,6 +1478,49 @@ EVP  0:00  240
     );
 }
 
+// ── §14.8 hotstart ──────────────────────────────────────────────────────
+
+#[test]
+fn a_hotstart_file_round_trips_the_running_state() {
+    let inp = quality_model(0.0);
+    let (mut a, _, _) = Simulation::open(&inp).expect("open");
+    while a.time() < 2.0 * 3600.0 {
+        a.step();
+    }
+    let mut buf = Vec::new();
+    a.save_hotstart(&mut buf).expect("save");
+    assert_eq!(&buf[..15], b"SWMM5-HOTSTART4");
+
+    let (mut b, _, _) = Simulation::open(&inp).expect("open");
+    b.load_hotstart(&buf).expect("load");
+    // The restored session resumes at the running state: same depth,
+    // flow, and concentration.
+    let (da, db) = (a.depth("J1").unwrap(), b.depth("J1").unwrap());
+    assert!((da - db).abs() < 1e-4, "depth {da} vs {db}");
+    let (qa, qb) = (a.flow("C1").unwrap(), b.flow("C1").unwrap());
+    assert!((qa - qb).abs() < 1e-4, "flow {qa} vs {qb}");
+    let (ca, cb) = (
+        a.link_concentration("C1", "TSS").unwrap(),
+        b.link_concentration("C1", "TSS").unwrap(),
+    );
+    assert!((ca - cb).abs() < 0.5, "conc {ca} vs {cb}");
+    // And it keeps routing from there rather than re-filling.
+    b.step();
+    let q = b.flow("C1").unwrap();
+    assert!((q - qa).abs() < 0.05 * qa.max(0.01), "post-resume flow {q}");
+}
+
+#[test]
+fn a_mismatched_hotstart_is_refused() {
+    let (mut a, _, _) = Simulation::open(&quality_model(0.0)).expect("open");
+    a.run();
+    let mut buf = Vec::new();
+    a.save_hotstart(&mut buf).expect("save");
+    // A model with different object counts refuses the file.
+    let (mut b, _, _) = Simulation::open(&runoff_model(100.0, 25.0, "HORTON")).expect("open");
+    assert!(b.load_hotstart(&buf).is_err());
+}
+
 // ── §3.4 control measures ───────────────────────────────────────────────
 
 #[test]

@@ -38,7 +38,7 @@ pub struct NetworkQuality {
     /// removal-kind, expression) set; empty for untreated vertices.
     treatments: Vec<Vec<(usize, bool, Expression)>>,
     /// §8.5 storage residence time per vertex (s).
-    hrt: Vec<f64>,
+    pub hrt: Vec<f64>,
     /// File-unit factors for the §8.5 process variables.
     cv_len: f64,
     cv_flow: f64,

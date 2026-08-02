@@ -116,6 +116,31 @@ pub struct SnowPack {
 }
 
 impl SnowPack {
+    /// The §14.8 hotstart state per surface, SI: wsnow, fw, coldc, ati,
+    /// awe; absent surfaces read zeros.
+    pub fn hotstart_get(&self) -> [[f64; 5]; 3] {
+        let mut out = [[0.0; 5]; 3];
+        for (j, sf) in self.surfaces.iter().enumerate() {
+            if let Some(s) = sf {
+                out[j] = [s.wsnow, s.fw, s.coldc, s.ati, s.awe];
+            }
+        }
+        out
+    }
+
+    /// Restore the §14.8 hotstart state per surface, SI.
+    pub fn hotstart_set(&mut self, x: [[f64; 5]; 3]) {
+        for (j, sf) in self.surfaces.iter_mut().enumerate() {
+            if let Some(s) = sf {
+                s.wsnow = x[j][0];
+                s.fw = x[j][1];
+                s.coldc = x[j][2];
+                s.ati = x[j][3];
+                s.awe = x[j][4];
+            }
+        }
+    }
+
     /// Stored snow water volume over the parcel (m³), §11.1: water
     /// equivalent plus free water per surface share.
     pub fn stored_volume(&self, parcel_area: f64) -> f64 {

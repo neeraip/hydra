@@ -100,6 +100,66 @@ pub enum InfilState {
 }
 
 impl InfilState {
+    /// The §14.8 hotstart state vector, SI, in the predecessor's slot
+    /// order for the active model.
+    pub fn hotstart_get(&self) -> [f64; 6] {
+        match self {
+            InfilState::Horton { tp, fe, .. } => [*tp, *fe, 0.0, 0.0, 0.0, 0.0],
+            InfilState::ModHorton { fe, f_total, .. } => [0.0, *fe, *f_total, 0.0, 0.0, 0.0],
+            InfilState::GreenAmpt {
+                imd, f, fu, sat, t, ..
+            } => [*imd, *f, *fu, f64::from(u8::from(*sat)), *t, 0.0],
+            InfilState::CurveNumber {
+                s,
+                p,
+                f,
+                t,
+                se,
+                f_prev,
+                ..
+            } => [*s, *p, *f, *t, *se, *f_prev],
+        }
+    }
+
+    /// Restore the §14.8 hotstart state vector, SI.
+    pub fn hotstart_set(&mut self, x: [f64; 6]) {
+        match self {
+            InfilState::Horton { tp, fe, .. } => {
+                *tp = x[0];
+                *fe = x[1];
+            }
+            InfilState::ModHorton { fe, f_total, .. } => {
+                *fe = x[1];
+                *f_total = x[2];
+            }
+            InfilState::GreenAmpt {
+                imd, f, fu, sat, t, ..
+            } => {
+                *imd = x[0];
+                *f = x[1];
+                *fu = x[2];
+                *sat = x[3] != 0.0;
+                *t = x[4];
+            }
+            InfilState::CurveNumber {
+                s,
+                p,
+                f,
+                t,
+                se,
+                f_prev,
+                ..
+            } => {
+                *s = x[0];
+                *p = x[1];
+                *f = x[2];
+                *t = x[3];
+                *se = x[4];
+                *f_prev = x[5];
+            }
+        }
+    }
+
     /// Build the state for a parcel's parameters under the session's
     /// model selection.
     pub fn build(params: &Infiltration, model: InfiltrationModel) -> InfilState {
