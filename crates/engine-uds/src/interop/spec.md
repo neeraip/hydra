@@ -214,12 +214,18 @@ separately so one run may both load and save. Routing interface files:
 inflow files are read-only boundary inflows, outflow files written from
 outlet vertices, one file never serving both roles in a run; values
 interpolate between bracketing periods, unmatched pollutants read as zero,
-and flows convert from the *file's* declared units. A run resumed from a
+and flows convert from the *file's* declared units. Declared counts are
+bounded (100 constituents, 100 000 nodes) — each period allocates their
+product, so an unbounded declaration would let a kilobyte-scale file
+demand gigabytes. A run resumed from a
 runoff interface file starts with cold antecedent state — the file replays
 results, not state — and the engine says so at start-up.
 
-**Predecessor hotstart files** (`SWMM5-HOTSTART` versions 1–4) are an import
-and export format for the checkpoint contract of §12.3. Import recovers what
+**Predecessor hotstart files** (`SWMM5-HOTSTART` versions 3 and 4; the
+1–2 layouts are refused with a typed error, their node-record tails and
+groundwater prefixes being formats this engine does not read) are an import
+and export format for the checkpoint contract of §12.3. The version-4
+storage residence time is read only from version-4 files. Import recovers what
 the format carries and names what it cannot: control-measure layer state is
 absent from the format entirely, and surface buildup is recoverable only for
 single-pollutant models — the predecessor's writer and reader disagree

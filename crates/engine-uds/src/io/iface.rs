@@ -11,6 +11,11 @@ use crate::io::lex::FiniteParse;
 use crate::model::Network;
 use crate::simulation::engine::Snapshot;
 
+/// Declared-count bounds (§14.8): generous against any real model, small
+/// against an allocation attack.
+const MAX_IFACE_CONSTITUENTS: usize = 100;
+const MAX_IFACE_NODES: usize = 100_000;
+
 const FLOW_WORDS: [(&str, f64); 6] = [
     ("CFS", 0.028_316_846_592),
     ("GPM", 6.309_019_64e-5),
@@ -114,6 +119,15 @@ pub fn parse_routing_file(text: &str, net: &Network) -> Result<RoutingInterface,
     if n_con < 1 {
         return Err("interface file declares no FLOW column".into());
     }
+    // §14.8: declared counts are bounded — each period allocates an
+    // n_nodes × n_con matrix, so unbounded counts let a kilobyte-scale
+    // file demand gigabytes.
+    if n_con > 1 + MAX_IFACE_CONSTITUENTS {
+        return Err(format!(
+            "interface file declares {n_con} constituents (limit {})",
+            1 + MAX_IFACE_CONSTITUENTS
+        ));
+    }
     // First constituent line must be FLOW with its unit.
     let flow_line = lines.next().ok_or("missing FLOW line")?;
     let mut it = flow_line.split_whitespace();
@@ -133,6 +147,11 @@ pub fn parse_routing_file(text: &str, net: &Network) -> Result<RoutingInterface,
         constituents.push(net.constituents.iter().position(|c| c.id == name));
     }
     let n_nodes = first_number(lines.next().ok_or("missing node count")?)? as usize;
+    if n_nodes > MAX_IFACE_NODES {
+        return Err(format!(
+            "interface file declares {n_nodes} nodes (limit {MAX_IFACE_NODES})"
+        ));
+    }
     let mut vertices = Vec::new();
     let mut row_of: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
     for i in 0..n_nodes {

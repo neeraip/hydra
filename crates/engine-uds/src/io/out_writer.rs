@@ -217,11 +217,21 @@ pub fn write_out(
                 (4, off(offset, net.vertices[l.from].invert), 0.0, 0.0)
             }
         };
+        // Full depth from the §5 section build (pumps have none, as in
+        // the predecessor's table). The build's factor converts the
+        // file's depth-like geometry to SI.
+        let len_cv = if net.options.flow_units.is_us() {
+            0.3048
+        } else {
+            1.0
+        };
+        let y_full = crate::io::validate::build_for_link(net, li, len_cv)
+            .and_then(|r| r.ok())
+            .map_or(0.0, |b| b.section.y_full());
         put_i32(w, code)?;
         put_f32(w, cv.l(o1))?;
         put_f32(w, cv.l(o2))?;
-        // Full depth is a §5 build product; zero keeps the layout.
-        put_f32(w, 0.0)?;
+        put_f32(w, cv.l(y_full))?;
         put_f32(w, cv.l(length))?;
         pos += 20;
     }

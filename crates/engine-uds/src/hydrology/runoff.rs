@@ -305,6 +305,20 @@ impl Surface {
         // Gage records resolved to absolute intervals and SI rates.
         let mut gages = Vec::with_capacity(net.gages.len());
         for g in &net.gages {
+            // A file-sourced gage (or a series the file left external) has
+            // no data here — running it would be a silently dry model, so
+            // it refuses instead (§1.8 deferral).
+            let file_based = match &g.source {
+                GageSource::File { .. } => true,
+                GageSource::Series { series } => {
+                    !matches!(net.timeseries[*series].source, TimeSeriesSource::Points(_))
+                }
+            };
+            if file_based {
+                return Err(SurfaceRefusal::Unsupported(
+                    "file-sourced rain gages (supply the record as a [TIMESERIES] section)",
+                ));
+            }
             let mut intervals = Vec::new();
             if let GageSource::Series { series } = g.source {
                 if let TimeSeriesSource::Points(points) = &net.timeseries[series].source {

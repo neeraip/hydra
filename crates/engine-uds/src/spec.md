@@ -282,9 +282,10 @@ interoperability (§14).
 Deferred capabilities are typed refusals, never approximations: a model
 needing one is refused with a named reason. Currently deferred: rainfall,
 runoff, and RDII *interface-file formats* (§14.8 specifies routing and
-hotstart files; the other three are declared but not yet served), the
-engine's own native checkpoint format (§12.3 — predecessor hotstart files
-are served), and archival climate-record formats (user-format climate files
-are served). A section absent from the specification remains unspecified
+hotstart files; the other three are declared but not yet served),
+file-sourced rain gages (supply the record as a series), the engine's own
+native checkpoint format (§12.3 — predecessor hotstart files version 3+
+are served), and archival climate-record formats (user-format climate
+files are served). A section absent from the specification remains unspecified
 behaviour rather than deferred behaviour — it is not implemented until it
 is specified.

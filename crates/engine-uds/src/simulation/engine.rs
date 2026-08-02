@@ -824,12 +824,15 @@ impl Simulation {
         };
         let doy = (day - days_from_civil(jan1) + 1) as f64;
         let decl = 0.40928 * (0.017202 * (172.0 - doy)).cos();
+        // §3.1: without a [SNOWMELT] declaration the site latitude is the
+        // predecessor's 40°N default — 0° would flatten day-length (and
+        // Hargreaves ET) seasonally.
         let lat = self
             .net
             .climate
             .snowmelt
             .as_ref()
-            .map_or(0.0, |sm| sm.latitude);
+            .map_or(40.0, |sm| sm.latitude);
         let arg = -decl.tan() * (lat.to_radians()).tan();
         let arg = if arg <= -1.0 {
             std::f64::consts::PI
@@ -1241,6 +1244,35 @@ impl Simulation {
         (date.month, weekday(days), (secs / 3600.0) as u32, secs)
     }
 
+    /// The combined factor of a sanitary-inflow pattern set (§2.9): the
+    /// slots multiply, except that on a weekend day a weekend-hourly
+    /// pattern *replaces* any hourly one — the predecessor's semantics,
+    /// where multiplying both would double-scale weekend flow.
+    fn dwf_pattern_factor(&self, patterns: [Option<usize>; 4], t: f64) -> f64 {
+        let (_, wday, _, _) = self.calendar(t);
+        let weekend = wday == 0 || wday == 6;
+        let has_weekend = patterns.iter().flatten().any(|&p| {
+            matches!(
+                self.net.patterns[p].kind,
+                crate::model::PatternKind::Weekend
+            )
+        });
+        let mut f = 1.0;
+        for p in patterns.iter().flatten() {
+            if weekend
+                && has_weekend
+                && matches!(
+                    self.net.patterns[*p].kind,
+                    crate::model::PatternKind::Hourly
+                )
+            {
+                continue;
+            }
+            f *= self.pattern_factor(Some(*p), t);
+        }
+        f
+    }
+
     /// A pattern's factor at run time `t`; a missing slot is 1.
     fn pattern_factor(&self, pattern: Option<usize>, t: f64) -> f64 {
         let Some(p) = pattern else {
@@ -1539,6 +1571,14 @@ impl Simulation {
         } else {
             return Err("not a SWMM5-HOTSTART file".into());
         };
+        // §14.8: versions 1–2 carry layouts this engine does not read
+        // (per-node constituent tails, version-2 groundwater prefixes);
+        // misreading them would silently misalign every later record.
+        if version < 3 {
+            return Err(format!(
+                "hotstart version {version} is not supported — resave as version 3 or 4"
+            ));
+        }
         let get_i = |pos: &mut usize| -> Result<i32, String> {
             let b: [u8; 4] = bytes
                 .get(*pos..*pos + 4)
@@ -1677,7 +1717,9 @@ impl Simulation {
         for (vi, d) in depths.iter_mut().enumerate() {
             *d = get_f(&mut pos)? * FT;
             let _lat = get_f(&mut pos)?;
-            if self.router.is_storage(vi) {
+            // The storage residence time is a version-4 addition; reading
+            // it from a version-3 file would misalign the stream.
+            if version >= 4 && self.router.is_storage(vi) {
                 let hrt = get_f(&mut pos)?;
                 if let Some(q) = &mut self.quality {
                     q.hrt[vi] = hrt;
@@ -2035,10 +2077,7 @@ impl Simulation {
                 continue;
             }
             let (vertex, average, patterns) = (dwf.vertex, dwf.average, dwf.patterns);
-            let mut q = average;
-            for p in patterns {
-                q *= self.pattern_factor(p, t);
-            }
+            let q = average * self.dwf_pattern_factor(patterns, t);
             lat[vertex] += q;
             dwf_flow[vertex] += q;
         }
@@ -2082,10 +2121,7 @@ impl Simulation {
                     continue;
                 };
                 let (vertex, average, patterns) = (dwf.vertex, dwf.average, dwf.patterns);
-                let mut c = average;
-                for p in patterns {
-                    c *= self.pattern_factor(p, t);
-                }
+                let c = average * self.dwf_pattern_factor(patterns, t);
                 mass[ci][vertex] += c * dwf_flow[vertex];
             }
             for (ci, c) in self.net.constituents.iter().enumerate() {

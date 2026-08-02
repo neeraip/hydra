@@ -33,7 +33,9 @@ solar declination
 $$\delta = 0.40928\cos\!\big(0.017202\,(172 - d)\big), \qquad
 \omega_h = 3.8197\arccos(-\tan\delta\tan\varphi),$$
 
-with $d$ the day of year and $\varphi$ the site latitude, half-sine arcs
+with $d$ the day of year and $\varphi$ the site latitude (the `[SNOWMELT]`
+declaration when present, else the predecessor's default of 40°N — never
+the equator, whose day-length is seasonless), half-sine arcs
 fitted between successive extremes in three branches over the day, the
 overnight limb spanning from the previous day's maximum so days join
 continuously. Saturation vapour pressure follows from the same temperature

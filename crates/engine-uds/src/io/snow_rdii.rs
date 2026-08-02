@@ -224,9 +224,10 @@ pub(crate) fn parse_unit_hydrographs(
                     r: x[0],
                     t_peak: x[1] * 3600.0,
                     k: x[2],
+                    // Predecessor field order: IAmax, IArecovery, IAinit.
                     ia_max: x[3] * cv.rain_depth,
-                    ia_init: x[4] * cv.rain_depth,
-                    ia_recovery: x[5] * cv.rain_depth,
+                    ia_recovery: x[4] * cv.rain_depth,
+                    ia_init: x[5] * cv.rain_depth,
                 })
             };
         let assign = |group: &mut UnitHydrographGroup, class: usize, resp: UhResponse| match month {
@@ -282,9 +283,11 @@ pub(crate) fn parse_unit_hydrographs(
                     r: p[3 * class],
                     t_peak: p[3 * class + 1] * 3600.0,
                     k: p[3 * class + 2],
+                    // Predecessor field order: IAmax, IArecovery, IAinit,
+                    // the recovery rate converting as a depth per day.
                     ia_max: ia[0] * cv.rain_depth,
-                    ia_init: ia[1] * cv.rain_depth,
-                    ia_recovery: ia[2],
+                    ia_recovery: ia[1] * cv.rain_depth,
+                    ia_init: ia[2] * cv.rain_depth,
                 };
                 assign(group, class, resp);
             }
