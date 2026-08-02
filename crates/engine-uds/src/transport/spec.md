@@ -139,7 +139,10 @@ element's remaining mass flushes to final storage and its concentration
 zeroes, unconditionally for channels and absent inflow for vertices;
 initial concentrations seed only elements wet at start. Volume-less links
 pass their upstream vertex concentration through. Evaporation concentrates
-by $1 + V_{evap}/V$, consistently with §8.3.
+by $1 + V_{evap}/V$, consistently with §8.3. Storage-vertex losses (§7.7)
+follow the same rule as channels: seepage carries its volume's share out at
+the mixture concentration, booked to the seepage account, and evaporation
+concentrates what remains.
 
 ### 8.5 Treatment
 

@@ -2118,3 +2118,43 @@ RAIN1  1:00  0.0
         "ledger gap {gap} of {m_in} admitted (out {m_out}, reacted {m_react})"
     );
 }
+
+#[test]
+fn a_storage_unit_evaporates_and_seeps_per_its_declaration() {
+    // §7.7: evaporation at the potential rate times the realisation
+    // fraction, seepage at the declared conductivity, both on the
+    // start-of-step surface area. 4.8 in/day evap + 0.5 in/hr seepage
+    // over two hours ≈ 1.4 in off a constant-area tank.
+    let inp = "\
+[OPTIONS]
+FLOW_UNITS    CFS
+START_DATE    01/01/2004
+START_TIME    00:00:00
+END_TIME      02:00:00
+REPORT_STEP   00:15:00
+ROUTING_STEP  20
+
+[EVAPORATION]
+CONSTANT  4.8
+
+[STORAGE]
+S1  100  10  4  FUNCTIONAL  0  0  1000  0  1.0  0  0.5  0
+
+[OUTFALLS]
+O1  90  FREE
+
+[WEIRS]
+W1  S1  O1  TRANSVERSE  8  3.3
+
+[XSECTIONS]
+W1  RECT_OPEN  1  4  0  0
+";
+    let (mut sim, _, _) = Simulation::open(inp).expect("open");
+    sim.run();
+    let d = sim.depth("S1").expect("depth");
+    let expected = (4.0 - 1.4 / 12.0) * 0.3048;
+    assert!(
+        (d - expected).abs() < 0.01,
+        "storage depth {d} m, expected ≈ {expected}"
+    );
+}

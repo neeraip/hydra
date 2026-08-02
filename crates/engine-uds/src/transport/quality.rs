@@ -278,6 +278,17 @@ impl NetworkQuality {
                 if flood_vol > 0.0 {
                     self.flooded_mass[p] += c_new * flood_vol;
                 }
+                // §8.4: storage-vertex losses mirror the channel rule —
+                // seepage carries its volume's share out at the mixture,
+                // evaporation concentrates what remains.
+                let seep_vol = router.storage_seep_rates().get(v).copied().unwrap_or(0.0) * dt;
+                if seep_vol > 0.0 {
+                    self.seepage_mass[p] += c_new * seep_vol.min(v_old.max(0.0));
+                }
+                let v_evap = router.storage_evap_rates().get(v).copied().unwrap_or(0.0) * dt;
+                if v_evap > 0.0 && vol_new[v] > ZERO_VOL {
+                    c_new *= 1.0 + v_evap / vol_new[v];
+                }
                 // Below the dry thresholds with no inflow, remaining mass
                 // flushes to final storage (§8.4).
                 let depth = router.depth(v);

@@ -14,6 +14,7 @@
 
 use super::section::Section;
 use super::{tables, GRAVITY};
+use crate::hydrology::infiltration::{InfilFactors, InfilState};
 use crate::io::options::NormalFlowCriteria;
 use crate::model::{
     CurveKind, LinkKind, Network, Offset, OrificeOrientation, OutfallStage, OutletHeadBasis,
@@ -541,6 +542,14 @@ pub struct Router {
     /// step (m³/s).
     chan_evap_now: Vec<f64>,
     chan_seep_now: Vec<f64>,
+    /// §7.7 storage losses: per-vertex evaporation realisation fraction,
+    /// constant-seepage conductivity, optional Green–Ampt state, and the
+    /// last accepted step's rates (m³/s).
+    stor_evap_frac: Vec<f64>,
+    stor_seep_ksat: Vec<f64>,
+    stor_ga: Vec<Option<InfilState>>,
+    stor_evap_now: Vec<f64>,
+    stor_seep_now: Vec<f64>,
     // Head history for the error estimate: the two previous accepted
     // (time, heads) records, oldest first.
     hist: Vec<(f64, Vec<f64>)>,
@@ -624,6 +633,9 @@ struct Trial {
     /// Per-channel evaporation and seepage rates (m³/s), for §8.4.
     chan_evap: Vec<f64>,
     chan_seep: Vec<f64>,
+    /// Per-vertex storage evaporation and seepage rates (m³/s), §7.7.
+    stor_evap: Vec<f64>,
+    stor_seep: Vec<f64>,
     worst_vertex: usize,
     err: f64,
 }
@@ -693,6 +705,37 @@ impl Router {
                 gated,
                 class,
             });
+        }
+
+        // §7.7 storage losses: realisation fraction, and constant or
+        // Green–Ampt seepage per storage vertex (the modified form, per
+        // §3.3's designation for storage seepage).
+        let nv_all = net.vertices.len();
+        let mut stor_evap_frac = vec![0.0; nv_all];
+        let mut stor_seep_ksat = vec![0.0; nv_all];
+        let mut stor_ga: Vec<Option<InfilState>> = (0..nv_all).map(|_| None).collect();
+        for (vi, v) in net.vertices.iter().enumerate() {
+            if let VertexKind::Storage {
+                evap_fraction,
+                seepage,
+                ..
+            } = &v.kind
+            {
+                stor_evap_frac[vi] = evap_fraction.clamp(0.0, 1.0);
+                if let Some(sp) = seepage {
+                    stor_seep_ksat[vi] = sp.conductivity.max(0.0);
+                    if sp.suction > 0.0 || sp.initial_deficit > 0.0 {
+                        stor_ga[vi] = Some(InfilState::build(
+                            &crate::model::Infiltration::GreenAmpt {
+                                suction: sp.suction,
+                                conductivity: sp.conductivity,
+                                initial_deficit: sp.initial_deficit,
+                            },
+                            crate::io::options::InfiltrationModel::ModifiedGreenAmpt,
+                        ));
+                    }
+                }
+            }
         }
 
         let mut chans = Vec::new();
@@ -1010,6 +1053,11 @@ impl Router {
             net_flow: vec![0.0; nv],
             flood_now: vec![0.0; nv],
             chan_evap_now: vec![0.0; nc],
+            stor_evap_frac,
+            stor_seep_ksat,
+            stor_ga,
+            stor_evap_now: vec![0.0; nv],
+            stor_seep_now: vec![0.0; nv],
             chan_seep_now: vec![0.0; nc],
             hist: Vec::new(),
             dt_prev: DT_FLOOR,
@@ -1218,6 +1266,18 @@ impl Router {
     /// in `channel_transport` slot order (§8.4).
     pub fn channel_evap_rates(&self) -> &[f64] {
         &self.chan_evap_now
+    }
+
+    /// Per-vertex storage evaporation rates of the last accepted step
+    /// (m³/s), §7.7.
+    pub fn storage_evap_rates(&self) -> &[f64] {
+        &self.stor_evap_now
+    }
+
+    /// Per-vertex storage seepage rates of the last accepted step
+    /// (m³/s), §7.7.
+    pub fn storage_seep_rates(&self) -> &[f64] {
+        &self.stor_seep_now
     }
 
     /// Per-channel seepage rates of the last accepted step (m³/s), in
@@ -1490,6 +1550,25 @@ impl Router {
         self.flood_now.clone_from(&trial.flood_rate);
         self.chan_evap_now.clone_from(&trial.chan_evap);
         self.chan_seep_now.clone_from(&trial.chan_seep);
+        // §7.7: the storage Green–Ampt states advance only on acceptance,
+        // against the start-of-step depths still in `self.y`.
+        for vi in 0..self.verts.len() {
+            if trial.stor_seep[vi] > 0.0 {
+                if let Some(ga) = &mut self.stor_ga[vi] {
+                    ga.step(
+                        dt,
+                        0.0,
+                        self.y[vi],
+                        InfilFactors {
+                            conductivity: 1.0,
+                            recovery: 1.0,
+                        },
+                    );
+                }
+            }
+        }
+        self.stor_evap_now.clone_from(&trial.stor_evap);
+        self.stor_seep_now.clone_from(&trial.stor_seep);
         // Outfall discharge integrates the same trapezoid the vertex
         // update used. §11.1: the system outflow places by its sign, so a
         // reversed net flow — a staged outfall feeding the network — books
@@ -1681,6 +1760,52 @@ impl Router {
         let mut surf = vec![0.0; nv];
         let mut loss_total = 0.0;
 
+        // §7.7 storage losses from the start-of-step state, constant
+        // through the step's trials: evaporation at the potential rate
+        // times the realisation fraction on the start-of-step surface
+        // area; seepage at the constant conductivity, or the probed
+        // (unadvanced) modified Green–Ampt capacity, over the same area.
+        // Both capped together by the stored volume.
+        let mut stor_evap = vec![0.0; nv];
+        let mut stor_seep = vec![0.0; nv];
+        let mut stor_loss_sum = 0.0;
+        for vi in 0..nv {
+            let VertClass::Storage(g) = &self.verts[vi].class else {
+                continue;
+            };
+            let y0 = self.y[vi];
+            if y0 <= DRY {
+                continue;
+            }
+            let area = g.area(y0).max(0.0);
+            let mut evap = self.evap_rate * self.stor_evap_frac[vi] * area;
+            let mut seep = match &self.stor_ga[vi] {
+                Some(ga) => {
+                    let mut probe = ga.clone();
+                    probe.step(
+                        dt,
+                        0.0,
+                        y0,
+                        InfilFactors {
+                            conductivity: 1.0,
+                            recovery: 1.0,
+                        },
+                    ) * area
+                }
+                None => self.stor_seep_ksat[vi] * area,
+            };
+            let cap = g.volume(y0) / dt;
+            let total = evap + seep;
+            if total > cap && total > 0.0 {
+                let scale = cap / total;
+                evap *= scale;
+                seep *= scale;
+            }
+            stor_evap[vi] = evap;
+            stor_seep[vi] = seep;
+            stor_loss_sum += evap + seep;
+        }
+
         for step in 0..self.max_trials {
             // ── Channel phase (∥): flows from the last iterate ─────────
             surf.iter_mut().for_each(|s| *s = 0.0);
@@ -1721,6 +1846,14 @@ impl Router {
             for (vi, l) in lat.iter().enumerate() {
                 net_new[vi] += l;
             }
+            // §7.7 storage losses debit their vertex.
+            for vi in 0..nv {
+                let loss = stor_evap[vi] + stor_seep[vi];
+                if loss > 0.0 {
+                    net_new[vi] -= loss;
+                }
+            }
+            loss_total += stor_loss_sum;
 
             // ── Structure phase: against the last iterate's state ──────
             // Positive arrivals per vertex from this iterate's channel
@@ -1847,6 +1980,8 @@ impl Router {
             flood_rate: flood,
             chan_evap,
             chan_seep,
+            stor_evap,
+            stor_seep,
             worst_vertex: worst,
             err,
         }
