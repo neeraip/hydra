@@ -557,6 +557,14 @@ impl Simulation {
             };
             let dry_only = self.net.climate.evaporate_dry_only;
             let snow_cl = self.snow_climate(m);
+            // §4.1: storability caps on this step's infiltration.
+            let mut infil_caps = vec![f64::MAX; self.net.parcels.len()];
+            for (pi, gw) in &self.aquifers {
+                let frac_perv = 1.0 - self.net.parcels[*pi].frac_imperv;
+                if frac_perv > 0.0 {
+                    infil_caps[*pi] = (gw.max_infil_depth(frac_perv) / dt).max(0.0);
+                }
+            }
             surface.step(
                 epoch,
                 dt,
@@ -565,6 +573,7 @@ impl Simulation {
                 rain_factor,
                 fac,
                 snow_cl.as_ref(),
+                &infil_caps,
             );
             // §4.1: each aquifer advances on the same clock, reading the
             // routed stage lagged one step (§10.1), its discharge joining
@@ -610,9 +619,11 @@ impl Simulation {
                     }
                     // Control-measure drains carry the parent parcel's
                     // concentration, less any drain removal (§8.1).
+                    let removals = surface.lid_drain_removals(pi);
                     for &(v, qd) in surface.lid_drains(pi) {
                         for (ci, row) in mass.iter_mut().enumerate() {
-                            row[v] += sq.conc[pi][ci] * qd;
+                            let keep = 1.0 - removals.get(ci).copied().unwrap_or(0.0);
+                            row[v] += sq.conc[pi][ci] * qd * keep;
                         }
                     }
                 }
@@ -1271,8 +1282,11 @@ impl Simulation {
         if let Some(q) = &self.quality {
             for (p, c) in self.net.constituents.iter().enumerate() {
                 let mut i = q.initial_mass[p] + q.inflow_mass[p];
-                let mut o =
-                    q.outfall_mass[p] + q.reacted[p] + q.final_storage[p] + q.stored_mass(p);
+                let mut o = q.outfall_mass[p]
+                    + q.reacted[p]
+                    + q.final_storage[p]
+                    + q.seepage_mass[p]
+                    + q.stored_mass(p);
                 // Count-unit constituents report on the log scale (§11.1).
                 if c.units == crate::model::ConcentrationUnits::CountPerL {
                     i = i.max(1.0).log10();
@@ -1481,6 +1495,17 @@ impl Simulation {
         let n_links = get_i(&mut pos)? as usize;
         let n_pollut = get_i(&mut pos)? as usize;
         let flow_units = get_i(&mut pos)?;
+        // §14.8: the predecessor's writer and reader disagree on
+        // multi-constituent buildup, so such files misalign everything
+        // after the first land-use block — refuse rather than restore
+        // garbage.
+        if version >= 3 && n_pollut > 1 && n_land > 0 {
+            return Err(
+                "the predecessor hotstart format never round-trips multi-constituent \
+                 buildup; the stream misaligns beyond it, so this restore is refused (§14.8)"
+                    .into(),
+            );
+        }
         if n_sub != self.net.parcels.len()
             || n_land != self.net.land_uses.len()
             || n_nodes != self.net.vertices.len()

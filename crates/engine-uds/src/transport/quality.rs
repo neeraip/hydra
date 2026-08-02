@@ -26,6 +26,8 @@ pub struct NetworkQuality {
     pub outfall_mass: Vec<f64>,
     /// Mass lost to first-order reaction (unit·m³).
     pub reacted: Vec<f64>,
+    /// Mass carried out through bed seepage (unit·m³), §11.1.
+    pub seepage_mass: Vec<f64>,
     /// Mass admitted from §8.1 sources (unit·m³).
     pub inflow_mass: Vec<f64>,
     /// Mass present at the start (unit·m³), §11.1.
@@ -135,6 +137,7 @@ impl NetworkQuality {
             final_storage: vec![0.0; np],
             outfall_mass: vec![0.0; np],
             reacted: vec![0.0; np],
+            seepage_mass: vec![0.0; np],
             inflow_mass: vec![0.0; np],
             initial_mass,
             outfall_load: vec![vec![0.0; nv]; np],
@@ -201,12 +204,18 @@ impl NetworkQuality {
                 }
             }
             // §8.1 lateral sources; negative inflows are outflows and
-            // remove mass at the vertex's concentration below.
+            // remove mass at the vertex's concentration below. Mass
+            // admits independently of flow — a flow-free mass load is
+            // legal (§8.1) — clamped non-negative against the §7.8
+            // inlet transfers.
             for v in 0..nv {
                 if lat_flow[v] > 0.0 {
                     flow_in[v] += lat_flow[v];
-                    mass_in[v] += lat_mass[p][v] * dt;
-                    self.inflow_mass[p] += lat_mass[p][v] * dt;
+                }
+                let m = lat_mass[p][v] * dt;
+                if m > 0.0 {
+                    mass_in[v] += m;
+                    self.inflow_mass[p] += m;
                 }
             }
 
@@ -277,10 +286,12 @@ impl NetworkQuality {
         // vertex concentration.
         for (p, constituent) in net.constituents.iter().enumerate() {
             let decay = (-constituent.decay * dt).exp();
-            for (k, &(_, from, to, q, v_new)) in chans.iter().enumerate() {
+            for (k, &(li, from, to, q, v_new)) in chans.iter().enumerate() {
                 let v_old = self.chan_vol_prev[k];
-                if v_new <= ZERO_VOL {
-                    // Dry channels flush unconditionally (§8.4).
+                let dry_depth = router.link_depth(li).unwrap_or(0.0) <= DRY_DEPTH;
+                if v_new <= ZERO_VOL || dry_depth {
+                    // Dry channels flush unconditionally at either
+                    // threshold (§8.4).
                     self.final_storage[p] += self.c_channel[p][k] * v_old.max(0.0);
                     self.c_channel[p][k] = 0.0;
                     continue;
@@ -293,6 +304,18 @@ impl NetworkQuality {
                 self.reacted[p] += c_old * v_old * (1.0 - decay);
                 let mut c_new = (c_old * v_old * decay + c_in * q_in_vol) / (v_old + q_in_vol);
                 c_new = c_new.min(c_old.max(c_in));
+                // §8.4: evaporation concentrates by 1 + V_evap/V — the
+                // mass stays; seepage carries its volume's share out,
+                // booked to the seepage account (§11.1).
+                let evap_rate = router.channel_evap_rates().get(k).copied().unwrap_or(0.0);
+                let v_evap = evap_rate * dt;
+                if v_evap > 0.0 && v_new > ZERO_VOL {
+                    c_new *= 1.0 + (v_evap / v_new).min(1.0);
+                }
+                let seep_vol = router.channel_seep_rates().get(k).copied().unwrap_or(0.0) * dt;
+                if seep_vol > 0.0 {
+                    self.seepage_mass[p] += c_new * seep_vol.min(v_old.max(0.0));
+                }
                 self.c_channel[p][k] = c_new;
             }
         }

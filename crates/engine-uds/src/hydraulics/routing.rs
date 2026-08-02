@@ -518,6 +518,10 @@ pub struct Router {
     net_flow: Vec<f64>,
     /// Per-vertex flooding rate of the last accepted step (m³/s).
     flood_now: Vec<f64>,
+    /// Per-channel evaporation and seepage rates of the last accepted
+    /// step (m³/s).
+    chan_evap_now: Vec<f64>,
+    chan_seep_now: Vec<f64>,
     // Head history for the error estimate: the two previous accepted
     // (time, heads) records, oldest first.
     hist: Vec<(f64, Vec<f64>)>,
@@ -598,6 +602,9 @@ struct Trial {
     net_flow: Vec<f64>,
     converged: bool,
     flood_rate: Vec<f64>,
+    /// Per-channel evaporation and seepage rates (m³/s), for §8.4.
+    chan_evap: Vec<f64>,
+    chan_seep: Vec<f64>,
     worst_vertex: usize,
     err: f64,
 }
@@ -975,6 +982,8 @@ impl Router {
             a_mid: vec![0.0; nc],
             net_flow: vec![0.0; nv],
             flood_now: vec![0.0; nv],
+            chan_evap_now: vec![0.0; nc],
+            chan_seep_now: vec![0.0; nc],
             hist: Vec::new(),
             dt_prev: DT_FLOOR,
             quiet_streak: 0,
@@ -1176,6 +1185,18 @@ impl Router {
             .filter(|(_, v)| matches!(v.class, VertClass::Outfall(_)))
             .map(|(vi, _)| self.net_flow[vi].max(0.0))
             .sum()
+    }
+
+    /// Per-channel evaporation rates of the last accepted step (m³/s),
+    /// in `channel_transport` slot order (§8.4).
+    pub fn channel_evap_rates(&self) -> &[f64] {
+        &self.chan_evap_now
+    }
+
+    /// Per-channel seepage rates of the last accepted step (m³/s), in
+    /// `channel_transport` slot order (§8.4, §11.1).
+    pub fn channel_seep_rates(&self) -> &[f64] {
+        &self.chan_seep_now
     }
 
     /// Whether vertex `vi` is an outfall: discharge leaves the system.
@@ -1440,6 +1461,8 @@ impl Router {
             self.report.flooding += trial.flood_rate[vi] * dt;
         }
         self.flood_now.clone_from(&trial.flood_rate);
+        self.chan_evap_now.clone_from(&trial.chan_evap);
+        self.chan_seep_now.clone_from(&trial.chan_seep);
         // Outfall discharge integrates the same trapezoid the vertex
         // update used.
         for (vi, v) in self.verts.iter().enumerate() {
@@ -1596,6 +1619,8 @@ impl Router {
         let mut a_mid_new = self.a_mid.clone();
         let mut converged = false;
         let mut net_new = vec![0.0; nv];
+        let mut chan_evap = vec![0.0; nc];
+        let mut chan_seep = vec![0.0; nc];
         let mut flood = vec![0.0; nv];
         let mut surf = vec![0.0; nv];
         let mut loss_total = 0.0;
@@ -1606,8 +1631,12 @@ impl Router {
             net_new.iter_mut().for_each(|s| *s = 0.0);
             let mut q_next = vec![0.0; nc];
             loss_total = 0.0;
+            chan_evap.iter_mut().for_each(|e| *e = 0.0);
+            chan_seep.iter_mut().for_each(|e| *e = 0.0);
             for ci in 0..nc {
-                let (qn, a_mid, s1, s2, loss) = self.channel_flow(ci, &y, q[ci], dt, step);
+                let (qn, a_mid, s1, s2, loss, evap) = self.channel_flow(ci, &y, q[ci], dt, step);
+                chan_evap[ci] = evap;
+                chan_seep[ci] = (loss - evap).max(0.0);
                 q_next[ci] = qn;
                 a_mid_new[ci] = a_mid;
                 let c = &self.chans[ci];
@@ -1752,6 +1781,8 @@ impl Router {
             net_flow: net_new,
             converged,
             flood_rate: flood,
+            chan_evap,
+            chan_seep,
             worst_vertex: worst,
             err,
         }
@@ -2284,7 +2315,7 @@ impl Router {
         q_total_last: f64,
         dt: f64,
         step: u32,
-    ) -> (f64, f64, f64, f64, f64) {
+    ) -> (f64, f64, f64, f64, f64, f64) {
         let c = &self.chans[ci];
         let sec = &c.geom;
         let y_full = sec.sec.y_full();
@@ -2333,7 +2364,7 @@ impl Router {
             || a_mid <= DRY
             || !self.chan_open[ci]
         {
-            return (0.0, 0.5 * (a1 + a2), s1, s2, 0.0);
+            return (0.0, 0.5 * (a1 + a2), s1, s2, 0.0, 0.0);
         }
 
         // Velocity, capped (§6.3).
@@ -2399,6 +2430,7 @@ impl Router {
         // losses, capped by the channel's volume this step, with
         // Strelkoff's lateral-outflow momentum term.
         let mut loss_rate = 0.0;
+        let mut evap_part = 0.0;
         if c.seepage > 0.0 || self.evap_rate > 0.0 {
             let mut evap = 0.0;
             if self.evap_rate > 0.0 && !c.geom.sec.is_closed() {
@@ -2415,8 +2447,11 @@ impl Router {
             loss_rate = evap + seep;
             let cap = a_mid * c.length / dt;
             if loss_rate > cap {
+                let f = cap / loss_rate;
+                evap *= f;
                 loss_rate = cap;
             }
+            evap_part = evap;
         }
         let dq_seep = 2.5 * v * loss_rate * dt / c.length;
 
@@ -2453,7 +2488,14 @@ impl Router {
             q_new = -Q_DRY;
         }
 
-        (q_new * c.barrels, a_mid, s1, s2, loss_rate * c.barrels)
+        (
+            q_new * c.barrels,
+            a_mid,
+            s1,
+            s2,
+            loss_rate * c.barrels,
+            evap_part * c.barrels,
+        )
     }
 
     fn flow_class(&self, ci: usize, q: f64, h1: f64, h2: f64, y1: f64, y2: f64) -> FlowClass {

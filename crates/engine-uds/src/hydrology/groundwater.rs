@@ -230,7 +230,9 @@ impl GwState {
         max_evap: f64,
         stage_elev: f64,
     ) -> f64 {
-        if self.total_depth <= 0.0 {
+        // A micro-thin aquifer (under the clamp margin) cannot hold the
+        // §4.1 state split; it contributes nothing rather than faulting.
+        if self.total_depth <= XTOL {
             return 0.0;
         }
         let avail_evap = (max_evap - evap_used).max(0.0);

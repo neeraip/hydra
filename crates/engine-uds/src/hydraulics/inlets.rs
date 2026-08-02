@@ -219,7 +219,9 @@ impl Inlets {
             lat[inlet.bypass] -= captured_si - backflow_si;
             lat[inlet.capture] += captured_si;
             for (p, row) in mass.iter_mut().enumerate() {
-                let m = captured_si * conc(p, inlet.bypass);
+                // The transfer carries the bypass concentration, clamped
+                // to the lateral mass actually present (§8.1).
+                let m = (captured_si * conc(p, inlet.bypass)).min(row[inlet.bypass].max(0.0));
                 row[inlet.bypass] -= m;
                 row[inlet.capture] += m;
                 row[inlet.bypass] += backflow_si * conc(p, inlet.capture);
@@ -373,7 +375,9 @@ fn single_on_grade(inlet: &InletState, design: &crate::model::InletDesign, q: f6
 /// HEC-22 grate capture, Eqs (4-16)–(4-21).
 fn grate_capture(inlet: &InletState, design: &crate::model::InletDesign, q: f64, t: f64) -> f64 {
     let g = inlet.geo;
-    let grate = design.grate.as_ref().expect("grate");
+    let Some(grate) = design.grate.as_ref() else {
+        return 0.0;
+    };
     let (lg, wg) = (grate.length / FT, grate.width / FT);
     let mut qo = q;
     let (area, mut e_o);
@@ -506,7 +510,9 @@ fn curb_sag_flows(
     l: f64,
 ) -> (f64, f64) {
     let g = inlet.geo;
-    let curb = design.curb.as_ref().expect("curb");
+    let Some(curb) = design.curb.as_ref() else {
+        return (0.0, 0.0);
+    };
     let h = curb.height / FT;
     let mut l = l;
     if l <= 0.0 {

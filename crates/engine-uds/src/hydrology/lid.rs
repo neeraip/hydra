@@ -84,6 +84,16 @@ pub struct LidUnit {
     pub overflow: f64,
     pub drain_flow: f64,
     pub exfiltration: f64,
+    /// Evapotranspiration exerted last step (m/s over the unit area),
+    /// for the §11.1 surface ledger.
+    pub evap_used: f64,
+    /// Per-constituent drain-load removal fractions (§8.1).
+    removals: Vec<(usize, f64)>,
+    /// Green-roof mat Manning factor √S/n over the mat roughness; zero
+    /// means a roughness-free mat passing percolation through (§3.4).
+    mat_alpha: f64,
+    /// Unit top width over area (1/m), the mat's flow-length factor.
+    mat_width_per_area: f64,
 }
 
 /// A swale's trapezoidal section, per deployed unit (§3.4): widths
@@ -287,7 +297,28 @@ impl LidUnit {
             overflow: 0.0,
             drain_flow: 0.0,
             exfiltration: 0.0,
+            evap_used: 0.0,
+            removals: ctl.removals.clone(),
+            mat_alpha: match (ctl.drain_mat.as_ref(), s) {
+                (Some(m), Some(sf)) if m.roughness > 0.0 && sf.slope > 0.0 => {
+                    sf.slope.sqrt() / m.roughness
+                }
+                _ => 0.0,
+            },
+            mat_width_per_area: if usage.area > 0.0 {
+                usage.width / usage.area
+            } else {
+                0.0
+            },
         })
+    }
+
+    /// The drain-load removal fraction for constituent `ci` (§8.1).
+    pub fn drain_removal(&self, ci: usize) -> f64 {
+        self.removals
+            .iter()
+            .find(|(c, _)| *c == ci)
+            .map_or(0.0, |(_, r)| *r)
     }
 
     /// Water currently held per unit area (m).
@@ -298,6 +329,7 @@ impl LidUnit {
     /// Advance one hydrology step under the shared parcel forcing.
     /// Outflow rates land in `overflow`, `drain_flow`, `exfiltration`.
     pub fn step(&mut self, f: &LidForcing, dt: f64) {
+        self.evap_used = 0.0;
         match self.kind {
             LidKind::RooftopDisconnection => self.step_rooftop(f.inflow, dt),
             LidKind::RainBarrel => self.step_rain_barrel(f.inflow, f.rain, dt),
@@ -390,7 +422,7 @@ impl LidUnit {
         // a trial depth.
         let void = self.surf_void;
         let alpha = self.surf_alpha;
-        let rates = move |d: f64| -> (f64, f64, f64) {
+        let rates = move |d: f64| -> (f64, f64, f64, f64) {
             let depth = d.min(berm);
             let surf_width = g.bot + 2.0 * g.slope * depth;
             let surf_area = g.len * surf_width;
@@ -411,12 +443,12 @@ impl LidUnit {
                 q_out += dvdt;
                 dvdt = 0.0;
             }
-            (dvdt / surf_area, q_exfil, q_out)
+            (dvdt / surf_area, q_exfil, q_out, q_evap)
         };
         let d_old = self.d1;
         let f_old = self.swale_f_old;
         let mut d = d_old;
-        let mut out = (0.0, 0.0, 0.0);
+        let mut out = (0.0, 0.0, 0.0, 0.0);
         for _ in 0..20 {
             out = rates(d);
             let d_new = (d_old + 0.5 * (f_old + out.0) * dt).clamp(0.0, berm);
@@ -431,6 +463,7 @@ impl LidUnit {
         self.overflow = out.2 / unit_area;
         self.exfiltration = out.1 / unit_area;
         self.drain_flow = 0.0;
+        self.evap_used = out.3 / unit_area;
     }
 
     /// The swale's current ponded depth (m), for tests.
@@ -515,8 +548,9 @@ impl LidUnit {
             f1
         };
 
-        // A green-roof mat with no roughness passes percolation through.
-        let mat_pass = self.mat_thick > 0.0 && self.surf_alpha == 0.0;
+        // A green-roof mat with no roughness passes percolation through;
+        // a rough mat drains by Manning flow on the surface slope (§3.4).
+        let mat_pass = self.mat_thick > 0.0 && self.mat_alpha == 0.0;
 
         // Exfiltration: the storage bed's saturated conductivity —
         // clog-reduced on the never-regenerating inflow account — clipped
@@ -575,6 +609,11 @@ impl LidUnit {
                 }
             } else if mat_pass {
                 q3 = f2;
+            } else if self.mat_thick > 0.0 {
+                // Manning flow through the drainage mat (§3.4), clipped
+                // by the standing water plus this step's percolation.
+                q3 = self.mat_alpha * self.d3.powf(5.0 / 3.0) * self.mat_width_per_area * stor_void;
+                q3 = q3.min((self.d3 * stor_void / dt + f2 - f3).max(0.0));
             }
             // Percolation re-capped by storage freeboard plus outflow.
             f2 = f2.min((stor_thick - self.d3).max(0.0) * stor_void / dt + f3 + q3);
@@ -617,6 +656,7 @@ impl LidUnit {
         self.overflow = over;
         self.drain_flow = q3;
         self.exfiltration = f3;
+        self.evap_used = e1 + e2 + e3;
     }
 }
 

@@ -78,6 +78,40 @@ impl RdiiState {
     pub fn step(&mut self, net: &Network, rain: f64, month: u32, dt: f64) -> f64 {
         let group = &net.unit_hydrographs[self.group];
         let m = (month - 1) as usize;
+        // §4.3: the processing grid is no coarser than the shortest
+        // kernel limb, so a short triangle is never sampled past itself.
+        let min_limb = group.months[m]
+            .iter()
+            .flatten()
+            .flat_map(|u| {
+                let base = u.t_peak * (1.0 + u.k);
+                [u.t_peak, base - u.t_peak]
+            })
+            .filter(|l| *l > 0.0)
+            .fold(f64::MAX, f64::min);
+        let subs = if min_limb < dt && min_limb > 0.0 {
+            ((dt / min_limb).ceil() as usize).clamp(1, 64)
+        } else {
+            1
+        };
+        let sub_dt = dt / subs as f64;
+        let mut q_avg = 0.0;
+        for step_i in 0..subs {
+            // Rainfall enters once, on the first sub-step, at its full
+            // step depth.
+            let sub_rain = if step_i == 0 { rain * dt / sub_dt } else { 0.0 };
+            q_avg += self.substep(net, sub_rain, m, sub_dt) * sub_dt;
+        }
+        self.flow = q_avg / dt;
+        if self.flow < RDII_TOL {
+            self.flow = 0.0;
+        }
+        self.flow
+    }
+
+    /// One convolution sub-step (§4.3).
+    fn substep(&mut self, net: &Network, rain: f64, m: usize, dt: f64) -> f64 {
+        let group = &net.unit_hydrographs[self.group];
         let mut q_total = 0.0;
         for (slot, tri) in self.triangles.iter_mut().enumerate() {
             let params: Option<&UhResponse> = group.months[m][slot].as_ref();
@@ -120,11 +154,7 @@ impl RdiiState {
             });
             q_total += q;
         }
-        self.flow = q_total * self.area;
-        if self.flow < RDII_TOL {
-            self.flow = 0.0;
-        }
-        self.flow
+        q_total * self.area
     }
 }
 

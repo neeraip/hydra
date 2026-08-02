@@ -225,7 +225,7 @@ pub(crate) fn parse_unit_hydrographs(
                     k: x[2],
                     ia_max: x[3] * cv.rain_depth,
                     ia_init: x[4] * cv.rain_depth,
-                    ia_recovery: x[5],
+                    ia_recovery: x[5] * cv.rain_depth,
                 })
             };
         let assign = |group: &mut UnitHydrographGroup, class: usize, resp: UhResponse| match month {

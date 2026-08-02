@@ -185,6 +185,9 @@ pub struct QStep {
     pub v_outflow: f64,
     /// Outflow volume after control measures, drains included (m³).
     pub v_out2: f64,
+    /// The share of `v_out2` routed to vertices by control-measure
+    /// drains (m³).
+    pub v_vertex_drains: f64,
     /// End-of-step ponded volume on the non-measure area (m³).
     pub ponded_end: f64,
     /// Runoff rate over the parcel before re-routing (m/s).
@@ -212,6 +215,9 @@ struct ParcelState {
     lids: Vec<LidUnit>,
     /// Drain flow routed to a vertex this step (m³/s), by vertex.
     lid_vertex_drain: Vec<(usize, f64)>,
+    /// Flow-weighted mean drain removal per constituent, over the
+    /// routed drain streams this step (§8.1).
+    lid_drain_removal: Vec<f64>,
     /// Run-on rate (m/s over the whole parcel), one step delayed.
     runon: f64,
     runon_next_vol: f64,
@@ -391,6 +397,7 @@ impl Surface {
                     .map(|sp| SnowPack::build(&net.snowpacks[sp], p.frac_imperv)),
                 lids: Vec::new(),
                 lid_vertex_drain: Vec::new(),
+                lid_drain_removal: Vec::new(),
                 runon: 0.0,
                 runon_next_vol: 0.0,
                 runon_vol: 0.0,
@@ -418,6 +425,11 @@ impl Surface {
                 super::lid::LidRefusal::Invalid(m) => SurfaceRefusal::Incomplete(m),
             })?;
             parcels[u.parcel].lids.push(unit);
+        }
+        for p in parcels.iter_mut() {
+            if !p.lids.is_empty() {
+                p.lid_drain_removal = vec![0.0; net.constituents.len()];
+            }
         }
         for (pi, p) in parcels.iter_mut().enumerate() {
             if p.lids.is_empty() {
@@ -496,6 +508,7 @@ impl Surface {
         rain_factor: f64,
         fac: InfilFactors,
         snow_cl: Option<&SnowClimate>,
+        infil_caps: &[f64],
     ) {
         self.degraded = false;
         let mut runon_arrived = 0.0;
@@ -522,7 +535,6 @@ impl Surface {
             let gage = &self.gages[self.parcels[pi].gage];
             let precip = gage.rate(epoch) * rain_factor;
             let scf = gage.scf;
-            self.rainfall += precip * dt * self.parcels[pi].sub.iter().map(|s| s.area).sum::<f64>();
             let e = if dry_only && precip > 0.0 { 0.0 } else { evap };
             let p = &mut self.parcels[pi];
             let area_total_pre: f64 = p.sub.iter().map(|s| s.area).sum();
@@ -549,6 +561,21 @@ impl Surface {
                 }
                 _ => (precip, precip),
             };
+            // §11.1: precipitation books what actually arrives — rain,
+            // or catch-scaled snowfall — over the whole parcel, control
+            // measures included.
+            {
+                let snowing = matches!(
+                    (&p.snow, snow_cl),
+                    (_, Some(cl)) if cl.ta <= cl.snow_temp
+                );
+                let arriving = if snowing { precip * scf } else { precip };
+                let full_area: f64 = p.sub.iter().map(|s| s.area).sum::<f64>()
+                    + p.lids.iter().map(|u| u.area).sum::<f64>();
+                self.rainfall += arriving * dt * full_area;
+                p.totals.precip += arriving * dt * full_area;
+            }
+
             // §8: record the quality context as the step unfolds.
             let a_imp_q = p.sub[0].area + p.sub[1].area;
             let a_perv_q = p.sub[2].area;
@@ -565,6 +592,7 @@ impl Surface {
                 v_infil: 0.0,
                 v_outflow: 0.0,
                 v_out2: 0.0,
+                v_vertex_drains: 0.0,
                 ponded_end: 0.0,
                 runoff_rate: 0.0,
                 snow_cover: p.snow.as_ref().is_some_and(|pk| pk.has_cover()),
@@ -579,7 +607,12 @@ impl Surface {
             let perv_depth = p.sub[2].depth;
             let f_rate = match &mut p.infil {
                 Some(state) if p.sub[2].area > 0.0 => {
-                    state.step(dt, (perv_input - e).max(0.0), perv_depth, fac)
+                    // §4.1: aquifer storability caps what the surface may
+                    // infiltrate; the excess stays ponded.
+                    let cap = infil_caps.get(pi).copied().unwrap_or(f64::MAX);
+                    state
+                        .step(dt, (perv_input - e).max(0.0), perv_depth, fac)
+                        .min(cap)
                 }
                 _ => 0.0,
             };
@@ -671,6 +704,10 @@ impl Surface {
                 let mut captured_perv = 0.0;
                 let mut lid_return = 0.0;
                 let mut drains_out = 0.0;
+                let mut vertex_drains = 0.0;
+                let np_removal = p.lid_drain_removal.len();
+                let mut removal_num = vec![0.0; np_removal];
+                let mut removal_den = 0.0;
                 for u in &mut p.lids {
                     if u.area <= 0.0 {
                         continue;
@@ -695,14 +732,26 @@ impl Surface {
                     self.infil_vol += u.exfiltration * u.area * dt;
                     lid_return += u.overflow * u.area * dt;
                     let drain_vol = u.drain_flow * u.area;
-                    drains_out += drain_vol * dt;
+                    // §11.1: the unit's evapotranspiration is exerted
+                    // water, not storage.
+                    self.evap_vol += u.evap_used * u.area * dt;
+                    p.totals.evap += u.evap_used * u.area * dt;
                     match u.drain_to {
                         Some(ParcelOutlet::Vertex(v)) => {
                             p.lid_vertex_drain.push((v, drain_vol));
+                            drains_out += drain_vol * dt;
+                            vertex_drains += drain_vol * dt;
+                            for (ci, n) in removal_num.iter_mut().enumerate() {
+                                *n += drain_vol * u.drain_removal(ci);
+                            }
+                            removal_den += drain_vol;
                         }
                         Some(ParcelOutlet::Parcel(target)) => {
                             runon_to_parcel[target] += drain_vol * dt;
+                            drains_out += drain_vol * dt;
                         }
+                        // Default drains join the outlet stream and are
+                        // already counted in the sub-area runoff below.
                         None => lid_return += drain_vol * dt,
                     }
                 }
@@ -712,6 +761,14 @@ impl Surface {
                 runoff[2] += 0.0;
                 runoff[0] += lid_return; // overflow and default drains join
                 p.qstep.v_out2 = drains_out;
+                p.qstep.v_vertex_drains = vertex_drains;
+                for (ci, n) in removal_num.into_iter().enumerate() {
+                    p.lid_drain_removal[ci] = if removal_den > 0.0 {
+                        n / removal_den
+                    } else {
+                        0.0
+                    };
+                }
             }
             let area_total: f64 = p.sub.iter().map(|s| s.area).sum();
             if area_total > 0.0 {
@@ -727,8 +784,7 @@ impl Surface {
             p.runoff = total / dt;
             p.qstep.v_out2 += total;
             self.runoff_out += p.qstep.v_out2;
-            // §11.2 per-parcel totals.
-            p.totals.precip += p.qstep.rain_vol + p.qstep.lid_rain_vol;
+            // §11.2 per-parcel totals (precipitation booked above).
             p.totals.runon += p.qstep.runon_vol;
             p.totals.infil += p.qstep.v_infil;
             p.totals.runoff += p.qstep.v_out2;
@@ -849,6 +905,12 @@ impl Surface {
     /// step: (vertex, m³/s).
     pub fn lid_drains(&self, pi: usize) -> &[(usize, f64)] {
         &self.parcels[pi].lid_vertex_drain
+    }
+
+    /// Parcel `pi`'s flow-weighted mean drain removal per constituent
+    /// this step (§8.1); empty when the parcel has no control measures.
+    pub fn lid_drain_removals(&self, pi: usize) -> &[f64] {
+        &self.parcels[pi].lid_drain_removal
     }
 
     /// Rainfall depth (m) at gage `gi` over the `n` completed hourly

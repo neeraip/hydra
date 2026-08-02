@@ -1108,7 +1108,7 @@ pub struct UhResponse {
     pub ia_max: f64,
     /// Initial abstraction already depleted at start (m).
     pub ia_init: f64,
-    /// Abstraction recovery rate, as written (per day).
+    /// Abstraction recovery rate (m/day).
     pub ia_recovery: f64,
 }
 

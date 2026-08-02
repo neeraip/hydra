@@ -103,11 +103,16 @@ impl SurfaceQuality {
                     let init = p.init_buildup.iter().find(|(c, _)| *c == ci);
                     row[ci] = match init {
                         Some(&(_, load)) => load * per_area * mass_cv[ci],
-                        None => land.buildup[ci].as_ref().map_or(0.0, |b| {
-                            buildup_mass(b, net.options.dry_days)
-                                * normalizer(b, per_area, per_curb)
-                                * mass_cv[ci]
-                        }),
+                        // The external form bypasses the mechanism: it
+                        // starts empty absent a user loading (§8.2).
+                        None => land.buildup[ci]
+                            .as_ref()
+                            .filter(|b| b.form != BuildupForm::External)
+                            .map_or(0.0, |b| {
+                                buildup_mass(b, net.options.dry_days)
+                                    * normalizer(b, per_area, per_curb)
+                                    * mass_cv[ci]
+                            }),
                     };
                 }
                 buildup.push(row);
@@ -203,9 +208,15 @@ impl SurfaceQuality {
         series_value: &dyn Fn(usize) -> f64,
     ) {
         let np = net.constituents.len();
-        // Run-on booked last step arrives now.
+        // Run-on booked last step arrives now, accumulating so a parcel
+        // skipped by the guards below keeps its pending mass.
         for (pi, state) in self.parcels.iter_mut().enumerate() {
-            state.runon_mass = std::mem::replace(&mut self.runon_next[pi], vec![0.0; np]);
+            for (ci, m) in std::mem::replace(&mut self.runon_next[pi], vec![0.0; np])
+                .into_iter()
+                .enumerate()
+            {
+                state.runon_mass[ci] += m;
+            }
         }
         for pi in 0..net.parcels.len() {
             let q = &qsteps[pi];
@@ -244,26 +255,45 @@ impl SurfaceQuality {
             // outflow volume, zero when outflow is negligible (§8.3).
             let v_out1 = q.v_outflow + q.lid_rain_vol;
             let has_outflow = q.v_out2 > MIN_RUNOFF * area * dt;
+            let has_lids = net.lid_usage.iter().any(|u| u.parcel == pi);
+            // The parcel-outlet share cascades as run-on when the outlet
+            // is another parcel; only network-bound mass books as
+            // wash-off, so a cascading load counts once (§11.1).
+            let outlet_is_parcel = matches!(parcel.outlet, ParcelOutlet::Parcel(_));
+            let to_network = if outlet_is_parcel {
+                q.v_vertex_drains
+            } else {
+                q.v_out2
+            };
             for ci in 0..np {
-                let c_out = if v_out1 > 0.0 && has_outflow {
-                    outflow_load[ci] / v_out1
+                let load = outflow_load[ci];
+                let c_out = if v_out1 > 0.0 { load / v_out1 } else { 0.0 };
+                if has_outflow {
+                    if q.v_out2 < v_out1 {
+                        self.bmp_removed[ci] += c_out * (v_out1 - q.v_out2);
+                    }
+                    self.washed_off[ci] += c_out * to_network;
+                    self.washed_by_parcel[pi][ci] += c_out * to_network;
+                    self.conc[pi][ci] = c_out;
                 } else {
-                    0.0
-                };
-                // Control measures trim the outflow volume; the trimmed
-                // share books as removal (§8.3).
-                if q.v_out2 < v_out1 {
-                    self.bmp_removed[ci] += c_out * (v_out1 - q.v_out2);
+                    // Nothing leaves: the whole load stays on-site —
+                    // absorbed by the measures when present, written off
+                    // otherwise, so the ledger closes (§8.3, §11.1).
+                    if has_lids {
+                        self.bmp_removed[ci] += load;
+                    } else {
+                        self.to_final[ci] += load;
+                    }
+                    self.conc[pi][ci] = 0.0;
                 }
-                self.washed_off[ci] += c_out * q.v_out2;
-                self.washed_by_parcel[pi][ci] += c_out * q.v_out2;
-                self.conc[pi][ci] = c_out;
             }
 
-            // Loads to another parcel become its run-on next step (§8.3).
+            // Loads to another parcel become its run-on next step (§8.3);
+            // vertex-routed drain mass goes to the network instead.
             if let ParcelOutlet::Parcel(target) = parcel.outlet {
                 for ci in 0..np {
-                    self.runon_next[target][ci] += self.conc[pi][ci] * q.v_out2;
+                    self.runon_next[target][ci] +=
+                        self.conc[pi][ci] * (q.v_out2 - q.v_vertex_drains).max(0.0);
                 }
             }
         }
@@ -378,9 +408,10 @@ impl SurfaceQuality {
                             * (q.v_outflow / (q.runoff_rate * parcel.area * q.dt).max(1e-30))
                     }
                     WashoffForm::RatingCurve => {
-                        // On the land-use share of flow, in file units;
-                        // the load lands in concentration-mass per second.
-                        let q_share = f * q.runoff_rate * parcel.area / self.cv_flow;
+                        // On the land-use share of the actual runoff
+                        // flow, in file units; the load lands in
+                        // concentration-mass per second (§8.3).
+                        let q_share = f * (q.v_outflow / q.dt) / self.cv_flow;
                         w.coeff * q_share.powf(w.exponent) * q.dt / 1000.0
                     }
                     WashoffForm::Emc => {
@@ -497,7 +528,9 @@ fn max_days(b: &Buildup) -> f64 {
             }
         }
         BuildupForm::Saturation => 1000.0 * c2,
-        _ => 0.0,
+        // The external form has no time-to-maximum; its cap applies on
+        // accumulation, never as an initial pin (§8.2).
+        _ => f64::MAX,
     }
 }
 
