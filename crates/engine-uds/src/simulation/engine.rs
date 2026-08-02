@@ -107,6 +107,8 @@ pub struct Simulation {
     controls: Option<super::controls::Controls>,
     /// §8.4 network quality, when the model declares constituents.
     quality: Option<crate::transport::NetworkQuality>,
+    /// §8.2–§8.3 surface quality, when parcels carry land uses.
+    surface_quality: Option<crate::transport::SurfaceQuality>,
     /// Bracketing hydrology lateral mass rates `[p][v]` (unit·m³/s).
     hydro_mass_prev: Vec<Vec<f64>>,
     hydro_mass_now: Vec<Vec<f64>>,
@@ -211,15 +213,15 @@ impl Simulation {
                     "treatment expressions arrive with the §8.5 stage".into(),
                 ));
             }
-            let has_surface_quality = net.land_uses.iter().any(|lu| {
-                lu.buildup.iter().any(Option::is_some) || lu.washoff.iter().any(Option::is_some)
-            }) && net.parcels.iter().any(|p| !p.land_cover.is_empty());
-            let has_rain_conc =
-                net.constituents.iter().any(|c| c.c_rain != 0.0) && !net.parcels.is_empty();
-            let has_init_buildup = net.parcels.iter().any(|p| !p.init_buildup.is_empty());
-            if has_surface_quality || has_rain_conc || has_init_buildup {
+            let has_external_buildup = net.land_uses.iter().any(|lu| {
+                lu.buildup
+                    .iter()
+                    .flatten()
+                    .any(|b| b.form == crate::model::BuildupForm::External)
+            });
+            if has_external_buildup {
                 return Err(OpenError::Transport(
-                    "surface accumulation-mobilisation arrives with the §8.2-§8.3 stage".into(),
+                    "external accumulation series arrive with a follow-up stage".into(),
                 ));
             }
         }
@@ -227,6 +229,11 @@ impl Simulation {
             None
         } else {
             Some(crate::transport::NetworkQuality::build(&router, &net))
+        };
+        let surface_quality = if net.constituents.is_empty() || net.parcels.is_empty() {
+            None
+        } else {
+            Some(crate::transport::SurfaceQuality::build(&net))
         };
 
         // §9.1: compile the control rules; never-true premises warn.
@@ -262,6 +269,7 @@ impl Simulation {
                 lateral_override: HashMap::new(),
                 controls,
                 quality,
+                surface_quality,
                 hydro_mass_prev: Vec::new(),
                 hydro_mass_now: Vec::new(),
                 next_rule_t: 0.0,
@@ -369,6 +377,46 @@ impl Simulation {
             let mut lats = surface.vertex_laterals(nv);
             let np = self.net.constituents.len();
             let mut mass = vec![vec![0.0; lats.len()]; np];
+            // §8.2–§8.3: surface quality advances on the same clock; the
+            // runoff and drain streams join the lateral mass at their
+            // parcels' concentrations.
+            if let Some(sq) = &mut self.surface_quality {
+                let day = (self.start_epoch + self.hydro_t + dt) / 86_400.0;
+                let doy = {
+                    let d = civil_from_days(day as i64);
+                    let jan1 = crate::io::options::Date {
+                        year: d.year,
+                        month: 1,
+                        day: 1,
+                    };
+                    (day as i64 - days_from_civil(jan1) + 1) as u32
+                };
+                let (ss, se) = (self.net.options.sweep_start, self.net.options.sweep_end);
+                let in_season = if ss <= se {
+                    doy >= ss && doy <= se
+                } else {
+                    doy >= ss || doy <= se
+                };
+                let qsteps: Vec<_> = (0..self.net.parcels.len())
+                    .map(|pi| surface.qstep(pi))
+                    .collect();
+                sq.step(&self.net, &qsteps, day, in_season);
+                for (pi, parcel) in self.net.parcels.iter().enumerate() {
+                    let q_out = surface.parcel_runoff(pi);
+                    if let crate::model::ParcelOutlet::Vertex(v) = parcel.outlet {
+                        for (ci, row) in mass.iter_mut().enumerate() {
+                            row[v] += sq.conc[pi][ci] * q_out;
+                        }
+                    }
+                    // Control-measure drains carry the parent parcel's
+                    // concentration, less any drain removal (§8.1).
+                    for &(v, qd) in surface.lid_drains(pi) {
+                        for (ci, row) in mass.iter_mut().enumerate() {
+                            row[v] += sq.conc[pi][ci] * qd;
+                        }
+                    }
+                }
+            }
             for (pi, gw) in &mut self.aquifers {
                 let (infil, evap_used) = surface.parcel_infil_evap(*pi);
                 let p = &self.net.parcels[*pi];

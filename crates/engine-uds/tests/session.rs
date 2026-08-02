@@ -1097,6 +1097,112 @@ J1  BOD   40
     assert!((c - 40.0).abs() < 1.5, "sanitary concentration {c}");
 }
 
+/// A one-parcel storm model with a land use, ready for quality sections.
+fn washoff_model(extra: &str) -> String {
+    format!(
+        "\
+[OPTIONS]
+FLOW_UNITS    CMS
+INFILTRATION  HORTON
+START_DATE    06/01/2024
+START_TIME    00:00
+END_DATE      06/01/2024
+END_TIME      08:00
+ROUTING_STEP  10
+WET_STEP      0:05:00
+REPORT_STEP   0:15:00
+
+[RAINGAGES]
+G1  INTENSITY  1:00  1.0  TIMESERIES  RAIN
+
+[SUBCATCHMENTS]
+S1  G1  J1  2  100  100  0.5  0
+
+[SUBAREAS]
+S1  0.012  0.1  0.05  0.05  25  OUTLET
+
+[INFILTRATION]
+S1  20  5  4  7  0
+
+[JUNCTIONS]
+J1  100.4  3
+
+[OUTFALLS]
+O1  100.0  FREE
+
+[CONDUITS]
+C1  J1  O1  200  0.013  0  0
+
+[XSECTIONS]
+C1  RECT_OPEN  2  2  0  0
+
+[POLLUTANTS]
+TSS  MG/L  0  0  0  0  NO
+
+[LANDUSES]
+RES
+
+[COVERAGES]
+S1  RES  100
+
+{extra}
+[TIMESERIES]
+RAIN  0:00  25
+RAIN  1:00  25
+RAIN  2:00  0
+"
+    )
+}
+
+#[test]
+fn emc_washoff_carries_the_event_mean_concentration() {
+    let inp = washoff_model(
+        "[WASHOFF]
+RES  TSS  EMC  50  0  0  0
+",
+    );
+    let (mut sim, _, _) = Simulation::open(&inp).expect("open");
+    while sim.time() < 1.5 * 3600.0 {
+        sim.step();
+    }
+    // Mid-storm the channel carries the event-mean concentration.
+    let c = sim.link_concentration("C1", "TSS").expect("conc");
+    assert!((c - 50.0).abs() < 5.0, "EMC concentration {c}");
+    sim.run();
+    // The ledger books the EMC load as a simultaneous accumulation
+    // input, so admitted mass ≈ 50 mg/L × the runoff volume.
+    let (m_in, _, _, _) = sim.quality_ledger("TSS").expect("ledger");
+    let expect = 50.0 * 0.025 * 2.0 * 20_000.0;
+    assert!(
+        (m_in - expect).abs() < 0.15 * expect,
+        "admitted {m_in} vs {expect}"
+    );
+}
+
+#[test]
+fn exponential_washoff_depletes_the_initial_loading() {
+    // 40 kg/ha over 2 ha = 80 kg on the surface; hot washoff strips
+    // essentially all of it into the storm.
+    let inp = washoff_model(
+        "[WASHOFF]
+RES  TSS  EXP  0.5  1.2  0  0
+
+[LOADINGS]
+S1  TSS  40
+",
+    );
+    let (mut sim, _, _) = Simulation::open(&inp).expect("open");
+    sim.run();
+    // 80 kg = 80 000 g admitted to the network (U = g for mg/L).
+    let (m_in, m_out, _, _) = sim.quality_ledger("TSS").expect("ledger");
+    assert!(
+        (m_in - 80_000.0).abs() < 0.1 * 80_000.0,
+        "admitted {m_in} of 80000"
+    );
+    // And it reaches the outfall.
+    assert!(m_out > 0.8 * m_in, "discharged {m_out} of {m_in}");
+}
+
 // ── §3.4 control measures ───────────────────────────────────────────────
 
 #[test]

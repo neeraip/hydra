@@ -166,6 +166,35 @@ fn cash_karp(y: f64, h: f64, f: &dyn Fn(f64) -> f64) -> (f64, f64) {
     (y5, (y5 - y4).abs())
 }
 
+/// The per-step volumes §8.2–§8.3 surface quality consumes.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct QStep {
+    /// Precipitation rate on the parcel (m/s), gage-adjusted.
+    pub rain_rate: f64,
+    /// Precipitation volume over the non-measure area (m³).
+    pub rain_vol: f64,
+    /// Precipitation volume over the control-measure footprint (m³).
+    pub lid_rain_vol: f64,
+    /// Ponded-store inflow: run-on + initial ponded + precipitation (m³).
+    pub v_inflow: f64,
+    /// Run-on volume (m³).
+    pub runon_vol: f64,
+    /// Infiltration volume (m³).
+    pub v_infil: f64,
+    /// Runoff volume leaving before control measures (m³).
+    pub v_outflow: f64,
+    /// Outflow volume after control measures, drains included (m³).
+    pub v_out2: f64,
+    /// End-of-step ponded volume on the non-measure area (m³).
+    pub ponded_end: f64,
+    /// Runoff rate over the parcel before re-routing (m/s).
+    pub runoff_rate: f64,
+    /// Whether snow covers the parcel (snow-only accumulation).
+    pub snow_cover: bool,
+    /// The §10.1 hydrology step length (s).
+    pub dt: f64,
+}
+
 /// One parcel's live surface state.
 struct ParcelState {
     gage: usize,
@@ -194,6 +223,8 @@ struct ParcelState {
     /// Pervious surface evaporation exerted this step (m/s over the
     /// whole parcel).
     pub evap_rate: f64,
+    /// The §8 quality context recorded for this step.
+    pub qstep: QStep,
 }
 
 /// The surface compartment: every gage and parcel, advanced on the
@@ -335,6 +366,7 @@ impl Surface {
                 runon: 0.0,
                 runon_next_vol: 0.0,
                 runon_vol: 0.0,
+                qstep: QStep::default(),
                 runoff: 0.0,
                 infil_rate: 0.0,
                 evap_rate: 0.0,
@@ -476,6 +508,28 @@ impl Surface {
                 }
                 _ => (precip, precip),
             };
+            // §8: record the quality context as the step unfolds.
+            let a_imp_q = p.sub[0].area + p.sub[1].area;
+            let a_perv_q = p.sub[2].area;
+            let ponded_start: f64 = p.sub.iter().map(|s| s.depth * s.area).sum();
+            let lid_area_q: f64 = p.lids.iter().map(|u| u.area).sum();
+            p.qstep = QStep {
+                rain_rate: precip,
+                rain_vol: (imp_precip * a_imp_q + perv_precip * a_perv_q) * dt,
+                lid_rain_vol: imp_precip * lid_area_q * dt,
+                v_inflow: p.runon_vol
+                    + ponded_start
+                    + (imp_precip * a_imp_q + perv_precip * a_perv_q) * dt,
+                runon_vol: p.runon_vol,
+                v_infil: 0.0,
+                v_outflow: 0.0,
+                v_out2: 0.0,
+                ponded_end: 0.0,
+                runoff_rate: 0.0,
+                snow_cover: p.snow.as_ref().is_some_and(|pk| pk.has_cover()),
+                dt,
+            };
+
             let input = imp_precip + p.runon;
             let perv_input = perv_precip + p.runon;
 
@@ -535,6 +589,8 @@ impl Surface {
                 self.degraded = true;
             }
             self.losses += f_rate * dt * p.sub[2].area;
+            p.qstep.v_infil = f_rate * dt * p.sub[2].area;
+            p.qstep.v_outflow = runoff.iter().sum::<f64>();
 
             // §3.4: units take their captured share of sub-area runoff
             // plus direct rainfall; overflow rejoins parcel runoff,
@@ -557,6 +613,7 @@ impl Surface {
                 let mut captured_imp = 0.0;
                 let mut captured_perv = 0.0;
                 let mut lid_return = 0.0;
+                let mut drains_out = 0.0;
                 for u in &mut p.lids {
                     if u.area <= 0.0 {
                         continue;
@@ -580,6 +637,7 @@ impl Surface {
                     self.losses += u.exfiltration * u.area * dt;
                     lid_return += u.overflow * u.area * dt;
                     let drain_vol = u.drain_flow * u.area;
+                    drains_out += drain_vol * dt;
                     match u.drain_to {
                         Some(ParcelOutlet::Vertex(v)) => {
                             p.lid_vertex_drain.push((v, drain_vol));
@@ -595,6 +653,7 @@ impl Surface {
                 runoff[2] -= captured_perv;
                 runoff[2] += 0.0;
                 runoff[0] += lid_return; // overflow and default drains join
+                p.qstep.v_out2 = drains_out;
             }
             let area_total: f64 = p.sub.iter().map(|s| s.area).sum();
             if area_total > 0.0 {
@@ -608,6 +667,12 @@ impl Surface {
             }
             let total: f64 = runoff.iter().sum();
             p.runoff = total / dt;
+            p.qstep.v_out2 += total;
+            p.qstep.ponded_end = p.sub.iter().map(|s| s.depth * s.area).sum();
+            let area_q: f64 = p.sub.iter().map(|s| s.area).sum();
+            if area_q > 0.0 {
+                p.qstep.runoff_rate = p.qstep.v_outflow / dt / area_q;
+            }
 
             if let ParcelOutlet::Parcel(target) = p.outlet {
                 runon_to_parcel[target] += total;
@@ -644,6 +709,17 @@ impl Surface {
     /// A parcel's current runoff rate (m³/s).
     pub fn parcel_runoff(&self, pi: usize) -> f64 {
         self.parcels.get(pi).map_or(0.0, |p| p.runoff)
+    }
+
+    /// The §8 quality context recorded for parcel `pi`'s last step.
+    pub fn qstep(&self, pi: usize) -> QStep {
+        self.parcels[pi].qstep
+    }
+
+    /// Parcel `pi`'s control-measure drain flows routed to vertices this
+    /// step: (vertex, m³/s).
+    pub fn lid_drains(&self, pi: usize) -> &[(usize, f64)] {
+        &self.parcels[pi].lid_vertex_drain
     }
 
     /// Rainfall depth (m) at gage `gi` over the `n` completed hourly

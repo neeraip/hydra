@@ -148,6 +148,10 @@ pub enum ValidationKind {
     /// the tide by clock time where the predecessor used elapsed time,
     /// so results differ (§14.7).
     TidalCurveClockIndexed,
+    /// A power accumulation form whose zeroed rate or exponent jumps to
+    /// its maximum after the first dry step — a line written to mean "no
+    /// buildup" produces the opposite (§8.2).
+    BuildupJumpsToMax,
 }
 
 impl ValidationKind {
@@ -171,6 +175,7 @@ impl ValidationKind {
                 | ValidationKind::RuleMixesAndOr
                 | ValidationKind::DwfPatternSlotMismatch
                 | ValidationKind::TidalCurveClockIndexed
+                | ValidationKind::BuildupJumpsToMax
         )
     }
 }
@@ -199,6 +204,7 @@ pub fn validate(net: &mut Network) -> Vec<ValidationDiagnostic> {
     validate_vertices(net, &originals, &mut d);
     validate_inlets(net, &mut d);
     validate_rules(net, &mut d);
+    validate_buildup(net, &mut d);
     validate_dwf(net, &mut d);
     validate_tidal(net, &mut d);
     d
@@ -256,6 +262,21 @@ fn validate_rules(net: &Network, d: &mut Vec<ValidationDiagnostic>) {
         }
         if has_and && has_or {
             push(d, &rule.name, ValidationKind::RuleMixesAndOr);
+        }
+    }
+}
+
+/// The §8.2 power-form trap: zeroed coefficients pin buildup at its
+/// maximum after the first dry step.
+fn validate_buildup(net: &Network, d: &mut Vec<ValidationDiagnostic>) {
+    for lu in &net.land_uses {
+        for b in lu.buildup.iter().flatten() {
+            if b.form == crate::model::BuildupForm::Power
+                && b.coeffs[0] > 0.0
+                && b.coeffs[1] * b.coeffs[2] == 0.0
+            {
+                push(d, &lu.id, ValidationKind::BuildupJumpsToMax);
+            }
         }
     }
 }

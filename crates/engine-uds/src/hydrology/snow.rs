@@ -99,6 +99,9 @@ impl SurfaceState {
 }
 
 /// A parcel's snow pack over its three surfaces.
+///
+/// `has_cover` reports whether any surface currently holds snow, the
+/// §8.2 snow-only accumulation gate.
 pub struct SnowPack {
     /// [plowable, impervious, pervious], with each surface's fraction of
     /// the parcel area.
@@ -111,6 +114,11 @@ pub struct SnowPack {
 }
 
 impl SnowPack {
+    /// Whether any surface holds snow water equivalent (§8.2).
+    pub fn has_cover(&self) -> bool {
+        self.surfaces.iter().flatten().any(|sf| sf.wsnow > 1.0e-6)
+    }
+
     /// Build from the pack parameters and the parcel's impervious split.
     pub fn build(pack: &Snowpack, frac_imperv: f64) -> SnowPack {
         let plow_frac = pack.plow_fraction.clamp(0.0, 1.0);
