@@ -151,6 +151,12 @@ pub struct Controls {
     /// Control actions taken, as (elapsed s, link, setting, rule name);
     /// modulated actions excluded (§9.1).
     pub log: Vec<(f64, String, f64, String)>,
+    /// Per-expression §9.3 domain-guard warnings already issued.
+    expr_warned: Vec<bool>,
+    /// Guard events pending collection by the session: expression names.
+    pub guard_events: Vec<String>,
+    /// The expression names, for the §9.3 warning text.
+    expr_names: Vec<String>,
 }
 
 /// The observable state a rule evaluation reads.
@@ -226,6 +232,9 @@ impl Controls {
             cv_rain_depth: if us { 0.0254 } else { 1.0e-3 },
             cv_vol: if us { 0.028_316_846_592 } else { 1.0 },
             log: Vec::new(),
+            expr_warned: Vec::new(),
+            guard_events: Vec::new(),
+            expr_names: Vec::new(),
         };
 
         // Named variables: `VARIABLE vname = object id attribute`.
@@ -256,7 +265,9 @@ impl Controls {
             let compiled =
                 Expression::compile(body.trim(), |n| var_names.iter().position(|v| v == n))
                     .map_err(|e| ControlError(format!("expression {name}: {e}")))?;
-            expr_names.push(name);
+            expr_names.push(name.clone());
+            c.expr_names.push(name);
+            c.expr_warned.push(false);
             c.expressions.push(compiled);
         }
 
@@ -371,7 +382,8 @@ impl Controls {
             // last-compared premise leaves the (control, set-point) pair.
             let mut fired = false;
             let mut last_pair = (0.0, 0.0);
-            for group in &self.rules[ri].premises {
+            let groups = self.rules[ri].premises.clone();
+            for group in &groups {
                 let mut all = true;
                 for p in group {
                     let (ok, pair) = self.eval_premise(p, view);
@@ -489,7 +501,7 @@ impl Controls {
         }
     }
 
-    fn eval_premise(&self, p: &Premise, view: &ControlView) -> (bool, (f64, f64)) {
+    fn eval_premise(&mut self, p: &Premise, view: &ControlView) -> (bool, (f64, f64)) {
         let lhs = match &p.lhs {
             Lhs::Var(s) => self.source_value(*s, view),
             Lhs::Expr(ei) => {
@@ -498,7 +510,12 @@ impl Controls {
                     .iter()
                     .map(|s| self.source_value(*s, view).unwrap_or(0.0))
                     .collect();
-                Some(self.expressions[*ei].eval(&vars).0)
+                let (v, guarded) = self.expressions[*ei].eval(&vars);
+                if guarded && !self.expr_warned[*ei] {
+                    self.expr_warned[*ei] = true;
+                    self.guard_events.push(self.expr_names[*ei].clone());
+                }
+                Some(v)
             }
         };
         let rhs = match &p.rhs {

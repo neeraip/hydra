@@ -188,17 +188,24 @@ pub fn write_out(
             Offset::Missing => 0.0,
         };
         let (code, o1, o2, length) = match &l.kind {
+            // §14.7: output keeps the user's orientation — a reversed
+            // adverse-slope channel swaps its offsets back.
             LinkKind::Channel {
                 length,
                 offset1,
                 offset2,
+                reversed,
                 ..
-            } => (
-                0,
-                off(offset1, net.vertices[l.from].invert),
-                off(offset2, net.vertices[l.to].invert),
-                *length,
-            ),
+            } => {
+                let (mut o1, mut o2) = (
+                    off(offset1, net.vertices[l.from].invert),
+                    off(offset2, net.vertices[l.to].invert),
+                );
+                if *reversed {
+                    std::mem::swap(&mut o1, &mut o2);
+                }
+                (0, o1, o2, *length)
+            }
             LinkKind::Pump { .. } => (1, 0.0, 0.0, 0.0),
             LinkKind::Orifice { offset, .. } => {
                 (2, off(offset, net.vertices[l.from].invert), 0.0, 0.0)
@@ -244,9 +251,13 @@ pub fn write_out(
 
     // ── Reporting clock ─────────────────────────────────────────────────
     // The stored start date backdates one period when reporting starts
-    // after the simulation (§14.9); our snapshots begin one period in,
-    // so the record preceding the first snapshot is the start itself.
-    let start_days = start_epoch / 86_400.0 + EPOCH_OFFSET_DAYS;
+    // after the simulation (§14.9), so readers computing start + n·step
+    // land on the true record times.
+    let first_snap_epoch = snapshots
+        .first()
+        .map_or(start_epoch + report_step, |s| start_epoch + s.t);
+    let stored_epoch = first_snap_epoch - report_step;
+    let start_days = stored_epoch / 86_400.0 + EPOCH_OFFSET_DAYS;
     put_f64(w, start_days)?;
     put_i32(w, report_step as i32)?;
     pos += 12;
@@ -254,7 +265,9 @@ pub fn write_out(
     // ── Per-period records ──────────────────────────────────────────────
     let output_start = pos;
     for snap in snapshots {
-        put_f64(w, start_days + snap.t / 86_400.0)?;
+        // Record dates are the true instants, independent of the
+        // backdated header start.
+        put_f64(w, (start_epoch + snap.t) / 86_400.0 + EPOCH_OFFSET_DAYS)?;
         for &pi in &subs {
             let r = &snap.subcatch[pi];
             put_f32(w, cv.rain(r.rain))?;
@@ -294,7 +307,8 @@ pub fn write_out(
         put_f32(w, cv.temp(s[0]))?;
         put_f32(w, cv.rain(s[1]))?;
         put_f32(w, cv.depth_small(s[2]))?;
-        put_f32(w, cv.q(s[3]))?;
+        // Infiltration is an area-weighted rate, in the rain unit.
+        put_f32(w, cv.rain(s[3]))?;
         put_f32(w, cv.q(s[4]))?;
         put_f32(w, cv.q(s[5]))?;
         put_f32(w, cv.q(s[6]))?;
@@ -304,7 +318,8 @@ pub fn write_out(
         put_f32(w, cv.q(s[10]))?;
         put_f32(w, cv.q(s[11]))?;
         put_f32(w, cv.vol(s[12]))?;
-        put_f32(w, cv.q(s[13]))?;
+        // Evaporation and PET are rates, in the evaporation unit.
+        put_f32(w, cv.evap(s[13]))?;
         put_f32(w, cv.evap(s[14]))?;
     }
 

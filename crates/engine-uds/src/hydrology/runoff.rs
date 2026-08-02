@@ -204,6 +204,11 @@ pub struct QStep {
 struct ParcelState {
     gage: usize,
     outlet: ParcelOutlet,
+    /// §3.1 monthly pattern hooks: pervious roughness, pervious
+    /// depression storage, and infiltration conductivity.
+    n_perv_pattern: Option<usize>,
+    dstore_pattern: Option<usize>,
+    infil_pattern: Option<usize>,
     /// [impervious with storage, impervious zero-storage, pervious].
     sub: [Subarea; 3],
     infil: Option<InfilState>,
@@ -369,6 +374,9 @@ impl Surface {
             parcels.push(ParcelState {
                 gage: p.gage,
                 outlet: p.outlet,
+                n_perv_pattern: p.n_perv_pattern,
+                dstore_pattern: p.dstore_pattern,
+                infil_pattern: p.infil_pattern,
                 sub: [
                     Subarea {
                         area: a_imp1,
@@ -509,6 +517,7 @@ impl Surface {
         fac: InfilFactors,
         snow_cl: Option<&SnowClimate>,
         infil_caps: &[f64],
+        pattern: &dyn Fn(Option<usize>) -> f64,
     ) {
         self.degraded = false;
         let mut runon_arrived = 0.0;
@@ -603,6 +612,20 @@ impl Surface {
             let input = imp_precip + p.runon;
             let perv_input = perv_precip + p.runon;
 
+            // §3.1 per-parcel monthly patterns: pervious roughness scales
+            // 1/α, depression storage directly, conductivity through the
+            // infiltration factors.
+            let n_factor = pattern(p.n_perv_pattern).max(1e-6);
+            let ds_factor = pattern(p.dstore_pattern);
+            let saved_alpha = p.sub[2].alpha;
+            let saved_dstore = p.sub[2].dstore;
+            p.sub[2].alpha /= n_factor;
+            p.sub[2].dstore *= ds_factor;
+            let fac_p = InfilFactors {
+                conductivity: fac.conductivity * pattern(p.infil_pattern),
+                recovery: fac.recovery,
+            };
+
             // Pervious infiltration capacity for this step (§3.3).
             let perv_depth = p.sub[2].depth;
             let f_rate = match &mut p.infil {
@@ -611,7 +634,7 @@ impl Surface {
                     // infiltrate; the excess stays ponded.
                     let cap = infil_caps.get(pi).copied().unwrap_or(f64::MAX);
                     state
-                        .step(dt, (perv_input - e).max(0.0), perv_depth, fac)
+                        .step(dt, (perv_input - e).max(0.0), perv_depth, fac_p)
                         .min(cap)
                 }
                 _ => 0.0,
@@ -723,7 +746,7 @@ impl Surface {
                             rain: imp_precip,
                             evap: e,
                             native_infil: f_rate,
-                            fac,
+                            fac: fac_p,
                             elapsed_days,
                         },
                         dt,
@@ -798,6 +821,8 @@ impl Surface {
             if let ParcelOutlet::Parcel(target) = p.outlet {
                 runon_to_parcel[target] += total;
             }
+            p.sub[2].alpha = saved_alpha;
+            p.sub[2].dstore = saved_dstore;
         }
         for (pi, vol) in runon_to_parcel.into_iter().enumerate() {
             self.parcels[pi].runon_next_vol += vol;

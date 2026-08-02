@@ -321,7 +321,12 @@ impl Simulation {
         let report_step = net.options.report_step.max(1.0);
         let next_report = match net.options.report_start {
             Some((d, s)) => {
-                (days_from_civil(d) as f64 * 86_400.0 + s - start_epoch).max(report_step)
+                let offset = days_from_civil(d) as f64 * 86_400.0 + s - start_epoch;
+                if offset <= 0.0 {
+                    report_step
+                } else {
+                    offset
+                }
             }
             None => report_step,
         };
@@ -361,17 +366,28 @@ impl Simulation {
 
         // §8: this stage evaluates network transport only; surface
         // accumulation-mobilisation and treatment refuse, typed.
-        if climate_records.is_empty()
-            && matches!(
+        if climate_records.is_empty() {
+            if matches!(
                 net.climate.evaporation,
                 crate::model::EvaporationSource::Temperature
                     | crate::model::EvaporationSource::File { .. }
-            )
-        {
-            return Err(OpenError::Surface(SurfaceRefusal::Unsupported(
-                "Hargreaves and climate-file evaporation need supplied climate records \
-                 (open_with_climate)",
-            )));
+            ) {
+                return Err(OpenError::Surface(SurfaceRefusal::Unsupported(
+                    "Hargreaves and climate-file evaporation need supplied climate records \
+                     (open_with_climate)",
+                )));
+            }
+            if net.climate.snowmelt.is_some()
+                && matches!(
+                    net.climate.temperature,
+                    Some(crate::model::TemperatureSource::File { .. })
+                )
+            {
+                return Err(OpenError::Surface(SurfaceRefusal::Unsupported(
+                    "snowmelt from file temperatures needs supplied climate records \
+                     (open_with_climate)",
+                )));
+            }
         }
         // §14.8: the rainfall, runoff, and RDII interface formats arrive
         // with a follow-up stage; reading them cannot be silently skipped.
@@ -524,7 +540,7 @@ impl Simulation {
     /// it covers `period_end` (§10.1): the wet step while precipitation
     /// or ponded water exists, the dry step otherwise, truncated at gage
     /// recording boundaries.
-    fn advance_hydrology(&mut self, period_end: f64) {
+    fn advance_hydrology(&mut self, period_end: f64, routing_active: bool) {
         let Some(mut surface) = self.surface.take() else {
             return;
         };
@@ -551,9 +567,11 @@ impl Simulation {
             let evap = self.evaporation_rate(month);
             let rain_factor = self.net.climate.adjust_rainfall[m];
             self.update_climate_day(self.hydro_t);
+            // §3.1/§3.3: the monthly conductivity adjustment and the
+            // recovery pattern both ride the infiltration factors.
             let fac = InfilFactors {
                 conductivity: self.net.climate.adjust_conductivity[m],
-                recovery: 1.0,
+                recovery: self.pattern_factor(self.net.climate.recovery_pattern, self.hydro_t),
             };
             let dry_only = self.net.climate.evaporate_dry_only;
             let snow_cl = self.snow_climate(m);
@@ -565,6 +583,8 @@ impl Simulation {
                     infil_caps[*pi] = (gw.max_infil_depth(frac_perv) / dt).max(0.0);
                 }
             }
+            let t_now = self.hydro_t;
+            let patterns = |pat: Option<usize>| self.pattern_factor(pat, t_now);
             surface.step(
                 epoch,
                 dt,
@@ -574,12 +594,15 @@ impl Simulation {
                 fac,
                 snow_cl.as_ref(),
                 &infil_caps,
+                &patterns,
             );
             // §4.1: each aquifer advances on the same clock, reading the
             // routed stage lagged one step (§10.1), its discharge joining
             // the vertex laterals.
             let mut lats = surface.vertex_laterals(nv);
-            self.vol_wet += lats.iter().sum::<f64>() * dt;
+            if routing_active {
+                self.vol_wet += lats.iter().sum::<f64>() * dt;
+            }
             let np = self.net.constituents.len();
             let mut mass = vec![vec![0.0; lats.len()]; np];
             // §8.2–§8.3: surface quality advances on the same clock; the
@@ -628,15 +651,29 @@ impl Simulation {
                     }
                 }
             }
-            for (pi, gw) in &mut self.aquifers {
+            // §4.1 aquifer ET patterns, resolved before the mutable pass.
+            let evap_pats: Vec<f64> = self
+                .aquifers
+                .iter()
+                .map(|(pi, _)| {
+                    let ai = self.net.parcels[*pi]
+                        .groundwater
+                        .as_ref()
+                        .map_or(0, |g| g.aquifer);
+                    self.pattern_factor(self.net.aquifers[ai].evap_pattern, self.hydro_t)
+                })
+                .collect();
+            for (ai, (pi, gw)) in self.aquifers.iter_mut().enumerate() {
                 let (infil, evap_used) = surface.parcel_infil_evap(*pi);
                 let p = &self.net.parcels[*pi];
                 let frac_perv = 1.0 - p.frac_imperv;
                 let max_evap = evap * frac_perv;
                 let stage = self.net.vertices[gw.vertex].invert + self.router.depth(gw.vertex);
-                let q = gw.step(dt, infil, evap_used, max_evap, stage);
+                let q = gw.step(dt, infil, evap_used, max_evap, stage, evap_pats[ai]);
                 lats[gw.vertex] += q * p.area;
-                self.vol_gw += q * p.area * dt;
+                if routing_active {
+                    self.vol_gw += q * p.area * dt;
+                }
                 // §8.1: subsurface inflow at its constant concentration.
                 for (ci, c) in self.net.constituents.iter().enumerate() {
                     mass[ci][gw.vertex] += (q * p.area).max(0.0) * c.c_groundwater;
@@ -663,7 +700,9 @@ impl Simulation {
                     * rain_factor;
                 let q = r.step(&self.net, rain, month, dt);
                 lats[r.vertex] += q;
-                self.vol_rdii += q * dt;
+                if routing_active {
+                    self.vol_rdii += q * dt;
+                }
                 // §8.1: sewer inflow at its constant concentration.
                 for (ci, c) in self.net.constituents.iter().enumerate() {
                     mass[ci][r.vertex] += q * c.c_rdii;
@@ -910,11 +949,19 @@ impl Simulation {
         if t >= self.duration - 1e-9 {
             return false;
         }
-        let period_end = (t + self.routing_period).min(self.duration);
+        let period_end = (t + self.routing_period)
+            .min(self.duration)
+            .min(self.next_report);
 
-        if self.in_event(t) {
+        // §10.3: hydrology (and the climate day-state) continue between
+        // events; only routing freezes.
+        let routing_active = self.in_event(t);
+        self.advance_hydrology(period_end, routing_active);
+        if routing_active {
             self.update_boundary_stages(t);
-            self.advance_hydrology(period_end);
+            // §7.7: channels evaporate at the session's potential rate.
+            let month = self.calendar(t).0;
+            self.router.evap_rate = self.evaporation_rate(month);
             let (base, base_mass) = self.assemble_lateral(t);
             self.vol_dwf += self.last_dwf_total * (period_end - t);
             self.vol_ext += self.last_ext_total * (period_end - t);
@@ -922,6 +969,13 @@ impl Simulation {
             // times between the bracketing hydrology results.
             let (t0, l0) = (self.hydro_prev.0, self.hydro_prev.1.clone());
             let (t1, l1) = (self.hydro_now.0, self.hydro_now.1.clone());
+            // §12.4: an override replaces the vertex's entire lateral,
+            // hydrology terms included.
+            let overrides: Vec<(usize, f64)> = self
+                .lateral_override
+                .iter()
+                .map(|(&v, &q)| (v, q))
+                .collect();
             let interp = move |tt: f64, lat: &mut [f64]| {
                 let f = if t1 > t0 {
                     ((tt - t0) / (t1 - t0)).clamp(0.0, 1.0)
@@ -930,6 +984,11 @@ impl Simulation {
                 };
                 for (i, l) in lat.iter_mut().enumerate() {
                     *l = base[i] + l0[i] + f * (l1[i] - l0[i]);
+                }
+                for &(v, q) in &overrides {
+                    if v < lat.len() {
+                        lat[v] = q;
+                    }
                 }
             };
             if self.controls.is_some() || self.quality.is_some() || self.inlets.is_some() {
@@ -1116,11 +1175,7 @@ impl Simulation {
             air_temp,
             wmean(&|rec, a| rec.rain * a),
             wmean(&|rec, a| rec.snow_depth * a),
-            subcatch
-                .iter()
-                .zip(&self.net.parcels)
-                .map(|(rec, p)| rec.infil * p.area)
-                .sum(),
+            wmean(&|rec, a| rec.infil * a),
             subcatch.iter().map(|rec| rec.runoff).sum(),
             self.last_dwf_total,
             subcatch.iter().map(|rec| rec.gw_flow).sum(),
@@ -1238,6 +1293,15 @@ impl Simulation {
             if self.router.set_setting(li, v) == Some(true) {
                 controls.log_action(t, ai, &self.net.links[li].id, v);
             }
+        }
+        // §9.3: a domain-guarded rule expression announces itself once.
+        for name in controls.guard_events.drain(..) {
+            self.notices.push(RuntimeNotice {
+                t,
+                message: format!(
+                    "rule expression {name} was domain-guarded to zero at least once (§9.3)"
+                ),
+            });
         }
         self.controls = Some(controls);
     }

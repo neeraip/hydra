@@ -229,6 +229,7 @@ impl GwState {
         evap_used: f64,
         max_evap: f64,
         stage_elev: f64,
+        evap_pattern_factor: f64,
     ) -> f64 {
         // A micro-thin aquifer (under the clamp margin) cannot hold the
         // §4.1 state split; it contributes nothing rather than faulting.
@@ -280,16 +281,19 @@ impl GwState {
             // Evapotranspiration: none during surface infiltration, none
             // below the wilting point; the lower share is complementary
             // and scaled by water-table reach into the cutoff depth.
+            // §4.1: the upper share is optionally monthly-patterned; the
+            // lower share is complementary to the *patterned* fraction.
+            let upper_frac = (self.upper_evap_frac * evap_pattern_factor).min(1.0);
             let (mut upper_evap, mut lower_evap) = (0.0, 0.0);
             if infil <= 0.0 {
                 if theta > self.wilting {
-                    upper_evap = (self.upper_evap_frac * max_evap).min(avail_evap);
+                    upper_evap = (upper_frac * max_evap).min(avail_evap);
                 }
                 if self.lower_evap_depth > 0.0 {
                     let frac = ((self.lower_evap_depth - upper_depth) / self.lower_evap_depth)
                         .clamp(0.0, 1.0);
-                    lower_evap = (frac * (1.0 - self.upper_evap_frac) * max_evap)
-                        .min(avail_evap - upper_evap);
+                    lower_evap =
+                        (frac * (1.0 - upper_frac) * max_evap).min(avail_evap - upper_evap);
                 }
             }
 
