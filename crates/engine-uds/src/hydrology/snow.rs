@@ -262,13 +262,18 @@ impl SnowPack {
     }
 
     /// Receive plowed snow onto the pervious surface (m³ over the parcel
-    /// area m²).
-    pub fn receive(&mut self, volume: f64, parcel_area: f64) {
+    /// area m²). Returns the volume the pack could not hold — a pack with
+    /// no pervious surface accepts nothing — so the caller books it
+    /// rather than destroying it (§4.2).
+    #[must_use]
+    pub fn receive(&mut self, volume: f64, parcel_area: f64) -> f64 {
         if self.f_area[2] > 0.0 && parcel_area > 0.0 {
             if let Some(s) = self.surfaces[2].as_mut() {
                 s.wsnow += volume / parcel_area / self.f_area[2];
+                return 0.0;
             }
         }
+        volume
     }
 
     /// Melt the packs and return net precipitation (m/s) per runoff

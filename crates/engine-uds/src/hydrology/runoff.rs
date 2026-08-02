@@ -571,7 +571,12 @@ impl Surface {
             let scf = gage.scf;
             let e = if dry_only && precip > 0.0 { 0.0 } else { evap };
             let p = &mut self.parcels[pi];
-            let area_total_pre: f64 = p.sub.iter().map(|s| s.area).sum();
+            // §4.2: the pack's volume basis is the full parcel — the
+            // control-measure footprint rides the impervious surfaces'
+            // output, so its share of snowfall must be stored on the
+            // same basis it will melt from.
+            let area_total_pre: f64 = p.sub.iter().map(|s| s.area).sum::<f64>()
+                + p.lids.iter().map(|u| u.area).sum::<f64>();
 
             // §4.2: split precipitation at the rain/snow temperature and
             // route it through the pack; a parcel without a pack receives
@@ -861,12 +866,18 @@ impl Surface {
             self.parcels[pi].runon_next_vol += vol;
         }
         // Plowed transfers land on their targets' pervious packs for the
-        // next step.
+        // next step. §4.2: a target that cannot hold snow (no pack or no
+        // pervious surface) passes the volume out of the system with the
+        // plowed export rather than destroying it.
         for (target, vol) in snow_transfers {
-            let area: f64 = self.parcels[target].sub.iter().map(|s| s.area).sum();
-            if let Some(pack) = &mut self.parcels[target].snow {
-                pack.receive(vol, area);
-            }
+            let t = &mut self.parcels[target];
+            let area: f64 = t.sub.iter().map(|s| s.area).sum::<f64>()
+                + t.lids.iter().map(|u| u.area).sum::<f64>();
+            let leftover = match &mut t.snow {
+                Some(pack) => pack.receive(vol, area),
+                None => vol,
+            };
+            self.snow_plowed += leftover;
         }
     }
 
@@ -934,7 +945,8 @@ impl Surface {
     pub fn stored_volume(&self) -> f64 {
         let mut v = 0.0;
         for p in &self.parcels {
-            let area: f64 = p.sub.iter().map(|s| s.area).sum();
+            let area: f64 = p.sub.iter().map(|s| s.area).sum::<f64>()
+                + p.lids.iter().map(|u| u.area).sum::<f64>();
             v += p.sub.iter().map(|s| s.depth * s.area).sum::<f64>();
             v += p
                 .lids

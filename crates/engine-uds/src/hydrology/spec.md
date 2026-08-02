@@ -375,10 +375,18 @@ depletion curves** with Anderson's temporary-curve adjustment after fresh
 snowfall on partial cover; melt and cold-content exchange scale by covered
 fraction. When the plowable surface exceeds its trigger depth (defaulted
 effectively off), its entire depth redistributes by five constant fractions
-— other sub-areas, another parcel, out of system, immediate melt. A pack
-below $10^{-3}$ in flushes as immediate melt. The net per-surface result
-replaces gage rainfall as input to §3.2 and §3.3; snow does not alter
-infiltration or roughness.
+— other sub-areas, another parcel, out of system, immediate melt. A
+transfer to a parcel that cannot hold snow — no pack, or no pervious
+surface — leaves the system with the plowed export rather than vanishing.
+A pack below $10^{-3}$ in flushes as immediate melt. The net per-surface
+result replaces gage rainfall as input to §3.2 and §3.3; snow does not
+alter infiltration or roughness.
+
+The pack's volume basis is the **full parcel area**, control-measure
+footprint included: the footprint receives the impervious surfaces' melt
+output as its precipitation input, so its share of snowfall stores on the
+same basis it later melts from — precipitation booked on arrival, melt
+booked on release, the §11.1 surface ledger closing at every step.
 
 ### 4.3 Sewer Inflow (RDII)
 
