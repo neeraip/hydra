@@ -7,6 +7,7 @@
 
 use std::io::{self, Write};
 
+use crate::io::lex::FiniteParse;
 use crate::model::Network;
 use crate::simulation::engine::Snapshot;
 
@@ -155,13 +156,13 @@ pub fn parse_routing_file(text: &str, net: &Network) -> Result<RoutingInterface,
             month: t[2].parse().map_err(|_| "bad month")?,
             day: t[3].parse().map_err(|_| "bad day")?,
         };
-        let secs: f64 = t[4].parse::<f64>().map_err(|_| "bad hour")? * 3600.0
-            + t[5].parse::<f64>().map_err(|_| "bad minute")? * 60.0
-            + t[6].parse::<f64>().map_err(|_| "bad second")?;
+        let secs: f64 = t[4].finite_f64().map_err(|_| "bad hour")? * 3600.0
+            + t[5].finite_f64().map_err(|_| "bad minute")? * 60.0
+            + t[6].finite_f64().map_err(|_| "bad second")?;
         let epoch = crate::simulation::time::days_from_civil(date) as f64 * 86_400.0 + secs;
         let mut values: Vec<f64> = t[7..]
             .iter()
-            .map(|s| s.parse::<f64>().unwrap_or(0.0))
+            .map(|s| s.finite_f64().unwrap_or(0.0))
             .collect();
         values.resize(n_con, 0.0);
         match records.last_mut() {

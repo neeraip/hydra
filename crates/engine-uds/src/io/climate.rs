@@ -9,6 +9,7 @@ use super::keywords::match_keyword;
 use super::objects::UnitConverter;
 use super::options::parse_date_token;
 use super::survey::{Diagnostic, DiagnosticKind, ObjectKind, Survey, TokenLine};
+use crate::io::lex::FiniteParse;
 use crate::model::{
     Climate, EvaporationSource, FileTempUnits, Network, SnowmeltParams, TemperatureSource,
     WindSource,
@@ -61,7 +62,7 @@ fn twelve(t: &[String], at: usize, diags: &mut Vec<Diagnostic>, l: usize) -> Opt
     }
     let mut x = [0.0; 12];
     for (i, xi) in x.iter_mut().enumerate() {
-        let Ok(v) = t[at + i].parse::<f64>() else {
+        let Ok(v) = t[at + i].finite_f64() else {
             diags.push(bad(l, &t[at + i]));
             return None;
         };
@@ -171,7 +172,7 @@ pub(crate) fn parse_temperature(
                 let mut x = [0.0_f64; 6];
                 let mut ok = true;
                 for (i, xi) in x.iter_mut().enumerate() {
-                    match t[1 + i].parse::<f64>() {
+                    match t[1 + i].finite_f64() {
                         Ok(v) => *xi = v,
                         Err(_) => {
                             diags.push(bad(l, &t[1 + i]));
@@ -207,7 +208,7 @@ pub(crate) fn parse_temperature(
                 let mut v = [0.0_f64; 10];
                 let mut ok = true;
                 for (i, vi) in v.iter_mut().enumerate() {
-                    match t[2 + i].parse::<f64>() {
+                    match t[2 + i].finite_f64() {
                         Ok(x) if (0.0..=1.0).contains(&x) => *vi = x,
                         _ => {
                             diags.push(bad(l, &t[2 + i]));
@@ -262,7 +263,7 @@ pub(crate) fn parse_evaporation(
         }
         match k {
             0 => {
-                let Ok(v) = t[1].parse::<f64>() else {
+                let Ok(v) = t[1].finite_f64() else {
                     diags.push(bad(l, &t[1]));
                     continue;
                 };
@@ -415,7 +416,12 @@ pub(crate) fn parse_adjustments(
                     diags.push(unresolved(l, &t[2]));
                     continue;
                 };
-                let p = &mut net.parcels[parcel];
+                // The survey registry can be ahead of `net.parcels` when a
+                // `[SUBCATCHMENTS]` line failed to parse (the file is
+                // already being refused); indexing would panic.
+                let Some(p) = net.parcels.get_mut(parcel) else {
+                    continue;
+                };
                 match k {
                     4 => p.n_perv_pattern = Some(pat),
                     5 => p.dstore_pattern = Some(pat),
@@ -463,7 +469,7 @@ pub fn parse_climate_file(text: &str) -> Result<Vec<crate::model::DailyClimate>,
             if s == "*" {
                 return Ok(None);
             }
-            s.parse::<f64>()
+            s.finite_f64()
                 .map(Some)
                 .map_err(|_| format!("climate line {}: bad value '{s}'", ln + 1))
         };

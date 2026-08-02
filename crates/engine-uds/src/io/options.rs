@@ -13,6 +13,7 @@
 
 use super::keywords::match_keyword;
 use super::survey::{Diagnostic, DiagnosticKind, TokenLine};
+use crate::io::lex::FiniteParse;
 
 /// Flow-unit selection; per §14.4 it selects the entire unit system of the
 /// file's values.
@@ -407,9 +408,9 @@ pub fn parse_options(lines: &[TokenLine], diagnostics: &mut Vec<Diagnostic>) -> 
             "DRY_DAYS" => set_number(&mut o.dry_days, keyword, value, l, diagnostics, |v| {
                 v >= 0.0
             }),
-            "WET_STEP" => set_step(&mut o.wet_step, keyword, value, l, diagnostics),
-            "DRY_STEP" => set_step(&mut o.dry_step, keyword, value, l, diagnostics),
-            "REPORT_STEP" => set_step(&mut o.report_step, keyword, value, l, diagnostics),
+            "WET_STEP" => set_positive_step(&mut o.wet_step, keyword, value, l, diagnostics),
+            "DRY_STEP" => set_positive_step(&mut o.dry_step, keyword, value, l, diagnostics),
+            "REPORT_STEP" => set_positive_step(&mut o.report_step, keyword, value, l, diagnostics),
             "RULE_STEP" => set_step(&mut o.rule_step, keyword, value, l, diagnostics),
             "ROUTING_STEP" => {
                 // Plain seconds or a clock string, per the predecessor.
@@ -725,7 +726,7 @@ fn set_number(
     diagnostics: &mut Vec<Diagnostic>,
     valid: impl Fn(f64) -> bool,
 ) {
-    match value.parse::<f64>() {
+    match value.finite_f64() {
         Ok(v) if valid(v) => *target = v,
         _ => diagnostics.push(err(line, bad(keyword, value))),
     }
@@ -757,7 +758,7 @@ fn seconds_or_clock(value: &str) -> Option<f64> {
     if value.contains(':') {
         clock_to_seconds(value)
     } else {
-        value.parse::<f64>().ok()
+        value.finite_f64().ok()
     }
 }
 
@@ -770,6 +771,22 @@ fn set_step(
 ) {
     match clock_to_seconds(value) {
         Some(v) if v >= 0.0 => *target = v,
+        _ => diagnostics.push(err(line, bad(keyword, value))),
+    }
+}
+
+/// A step that must be strictly positive: the predecessor refuses zero
+/// wet/dry/report steps (only the rule step may be 0), and a zero step
+/// would stall the hydrology clock.
+fn set_positive_step(
+    target: &mut f64,
+    keyword: &'static str,
+    value: &str,
+    line: usize,
+    diagnostics: &mut Vec<Diagnostic>,
+) {
+    match clock_to_seconds(value) {
+        Some(v) if v > 0.0 => *target = v,
         _ => diagnostics.push(err(line, bad(keyword, value))),
     }
 }

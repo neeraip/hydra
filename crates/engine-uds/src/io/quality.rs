@@ -11,6 +11,7 @@ use std::collections::HashMap;
 use super::keywords::match_keyword;
 use super::objects::UnitConverter;
 use super::survey::{Diagnostic, DiagnosticKind, ObjectKind, Survey, TokenLine};
+use crate::io::lex::FiniteParse;
 use crate::model::{
     Buildup, BuildupForm, BuildupNormalizer, ConcentrationUnits, Constituent, DryWeatherInflow,
     ExternalInflow, InflowKind, LandUse, Network, Washoff, WashoffForm,
@@ -70,7 +71,7 @@ pub(crate) fn parse_constituents(
         let mut x = [0.0; 4]; // c_rain, c_gw, c_rdii, decay
         let mut ok = true;
         for (i, xi) in x.iter_mut().enumerate() {
-            let Ok(v) = t[2 + i].parse::<f64>() else {
+            let Ok(v) = t[2 + i].finite_f64() else {
                 diags.push(bad(l, &t[2 + i]));
                 ok = false;
                 break;
@@ -102,7 +103,7 @@ pub(crate) fn parse_constituents(
                 diags.push(unresolved(l, &t[7]));
                 continue;
             };
-            let Ok(f) = t[8].parse::<f64>() else {
+            let Ok(f) = t[8].finite_f64() else {
                 diags.push(bad(l, &t[8]));
                 continue;
             };
@@ -116,7 +117,7 @@ pub(crate) fn parse_constituents(
         let mut tail = [0.0; 2]; // c_dwf, c_init
         for (i, ti) in tail.iter_mut().enumerate() {
             if let Some(tok) = t.get(9 + i) {
-                let Ok(v) = tok.parse::<f64>() else {
+                let Ok(v) = tok.finite_f64() else {
                     diags.push(bad(l, tok));
                     ok = false;
                     break;
@@ -171,7 +172,7 @@ pub(crate) fn parse_land_uses(
             }
             let mut ok = true;
             for (i, si) in sweep.iter_mut().enumerate() {
-                let Ok(v) = t[1 + i].parse::<f64>() else {
+                let Ok(v) = t[1 + i].finite_f64() else {
                     diags.push(bad(l, &t[1 + i]));
                     ok = false;
                     break;
@@ -244,7 +245,7 @@ pub(crate) fn parse_buildup(
             if form == BuildupForm::External {
                 // Maximum, scale, and the loading series (§8.2).
                 for (i, ci) in coeffs.iter_mut().take(2).enumerate() {
-                    match t[3 + i].parse::<f64>() {
+                    match t[3 + i].finite_f64() {
                         Ok(v) if v >= 0.0 => *ci = v,
                         _ => {
                             diags.push(bad(l, &t[3 + i]));
@@ -264,7 +265,7 @@ pub(crate) fn parse_buildup(
                 }
             } else {
                 for (i, ci) in coeffs.iter_mut().enumerate() {
-                    let Ok(v) = t[3 + i].parse::<f64>() else {
+                    let Ok(v) = t[3 + i].finite_f64() else {
                         diags.push(bad(l, &t[3 + i]));
                         ok = false;
                         break;
@@ -346,7 +347,7 @@ pub(crate) fn parse_washoff(
             let mut ok = true;
             for (i, xi) in x.iter_mut().enumerate() {
                 let Some(tok) = t.get(3 + i) else { break };
-                let Ok(v) = tok.parse::<f64>() else {
+                let Ok(v) = tok.finite_f64() else {
                     diags.push(bad(l, tok));
                     ok = false;
                     break;
@@ -401,7 +402,7 @@ pub(crate) fn parse_coverages(
                 diags.push(err(l, DiagnosticKind::MissingItems));
                 break;
             };
-            let Ok(f) = vtok.parse::<f64>() else {
+            let Ok(f) = vtok.finite_f64() else {
                 diags.push(bad(l, vtok));
                 break;
             };
@@ -442,7 +443,7 @@ pub(crate) fn parse_loadings(
                 diags.push(err(l, DiagnosticKind::MissingItems));
                 break;
             };
-            let Ok(x) = vtok.parse::<f64>() else {
+            let Ok(x) = vtok.finite_f64() else {
                 diags.push(bad(l, vtok));
                 break;
             };
@@ -521,7 +522,7 @@ pub(crate) fn parse_inflows(
             }
             if kind == InflowKind::Mass {
                 if let Some(tok) = t.get(4) {
-                    let Ok(v) = tok.parse::<f64>() else {
+                    let Ok(v) = tok.finite_f64() else {
                         diags.push(bad(l, tok));
                         continue;
                     };
@@ -535,7 +536,7 @@ pub(crate) fn parse_inflows(
         }
         let mut scale = 1.0;
         if let Some(tok) = t.get(5) {
-            let Ok(v) = tok.parse::<f64>() else {
+            let Ok(v) = tok.finite_f64() else {
                 diags.push(bad(l, tok));
                 continue;
             };
@@ -543,7 +544,7 @@ pub(crate) fn parse_inflows(
         }
         let mut baseline = 0.0;
         if let Some(tok) = t.get(6) {
-            let Ok(v) = tok.parse::<f64>() else {
+            let Ok(v) = tok.finite_f64() else {
                 diags.push(bad(l, tok));
                 continue;
             };
@@ -610,7 +611,7 @@ pub(crate) fn parse_dry_weather(
                 continue;
             }
         };
-        let Ok(mut average) = t[2].parse::<f64>() else {
+        let Ok(mut average) = t[2].finite_f64() else {
             diags.push(bad(l, &t[2]));
             continue;
         };

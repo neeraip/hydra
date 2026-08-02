@@ -10,6 +10,7 @@
 use super::keywords::match_keyword;
 use super::objects::UnitConverter;
 use super::survey::{Diagnostic, DiagnosticKind, ObjectKind, Survey, TokenLine};
+use crate::io::lex::FiniteParse;
 use crate::model::{
     LidControl, LidDrain, LidDrainMat, LidKind, LidPavement, LidSoil, LidStorage, LidSurface,
     LidUsage, ParcelOutlet,
@@ -63,7 +64,7 @@ fn numbers<const N: usize>(
 ) -> Option<[f64; N]> {
     let mut x = [0.0; N];
     for (i, xi) in x.iter_mut().enumerate() {
-        let Ok(v) = t[at + i].parse::<f64>() else {
+        let Ok(v) = t[at + i].finite_f64() else {
             diags.push(bad(l, &t[at + i]));
             return None;
         };
@@ -205,7 +206,7 @@ pub(crate) fn parse_lid_controls(
                 };
                 let mut regen_days = 0.0;
                 if t.len() > 7 {
-                    match t[7].parse::<f64>() {
+                    match t[7].finite_f64() {
                         Ok(v) if v >= 0.0 => regen_days = v,
                         _ => {
                             diags.push(bad(l, &t[7]));
@@ -215,7 +216,7 @@ pub(crate) fn parse_lid_controls(
                 }
                 let mut regen_degree = 0.0;
                 if t.len() > 8 {
-                    match t[8].parse::<f64>() {
+                    match t[8].finite_f64() {
                         Ok(v) if (0.0..=1.0).contains(&v) => regen_degree = v,
                         _ => {
                             diags.push(bad(l, &t[8]));
@@ -269,7 +270,7 @@ pub(crate) fn parse_lid_controls(
                     if t.len() <= 2 + i {
                         break;
                     }
-                    match t[2 + i].parse::<f64>() {
+                    match t[2 + i].finite_f64() {
                         Ok(v) if v >= 0.0 => *xi = v,
                         _ => {
                             diags.push(bad(l, &t[2 + i]));
@@ -323,7 +324,7 @@ pub(crate) fn parse_lid_controls(
                         diags.push(err(l, DiagnosticKind::MissingItems));
                         break;
                     }
-                    let rmvl = match t[i].parse::<f64>() {
+                    let rmvl = match t[i].finite_f64() {
                         Ok(v) if (0.0..=100.0).contains(&v) => v,
                         _ => {
                             diags.push(bad(l, &t[i]));
@@ -421,7 +422,7 @@ pub(crate) fn parse_lid_usage(
         };
         let mut from_pervious = 0.0;
         if t.len() >= 11 {
-            match t[10].parse::<f64>() {
+            match t[10].finite_f64() {
                 Ok(v) if (0.0..=100.0).contains(&v) => from_pervious = v / 100.0,
                 _ => {
                     diags.push(bad(l, &t[10]));

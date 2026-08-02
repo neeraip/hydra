@@ -11,6 +11,7 @@
 
 use super::objects::UnitConverter;
 use super::survey::{Diagnostic, DiagnosticKind, TokenLine};
+use crate::io::lex::FiniteParse;
 use crate::model::Transect;
 
 /// The predecessor's station cap per transect.
@@ -55,7 +56,7 @@ pub(crate) fn parse_transects(
                 let mut v = [0.0; 3];
                 let mut ok = true;
                 for (i, vi) in v.iter_mut().enumerate() {
-                    let Ok(x) = t[1 + i].parse::<f64>() else {
+                    let Ok(x) = t[1 + i].finite_f64() else {
                         diags.push(bad(l, &t[1 + i]));
                         ok = false;
                         break;
@@ -89,7 +90,7 @@ pub(crate) fn parse_transects(
                 let mut x = [0.0; 8]; // tok2..tok9
                 let mut ok = true;
                 for (i, xi) in x.iter_mut().enumerate() {
-                    let Ok(v) = t[2 + i].parse::<f64>() else {
+                    let Ok(v) = t[2 + i].finite_f64() else {
                         diags.push(bad(l, &t[2 + i]));
                         ok = false;
                         break;
@@ -129,8 +130,7 @@ pub(crate) fn parse_transects(
                 };
                 let mut k = 1;
                 while k + 1 < t.len() {
-                    let (Ok(elev), Ok(station)) = (t[k].parse::<f64>(), t[k + 1].parse::<f64>())
-                    else {
+                    let (Ok(elev), Ok(station)) = (t[k].finite_f64(), t[k + 1].finite_f64()) else {
                         diags.push(bad(l, &t[k]));
                         break;
                     };

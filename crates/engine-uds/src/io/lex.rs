@@ -86,6 +86,27 @@ pub fn tokenize(content: &str) -> Result<Vec<&str>, LexError> {
     Ok(tokens)
 }
 
+/// Parse a token to a **finite** number (§14.2): the `nan`/`inf` spellings
+/// and magnitudes overflowing the double range are not numbers to this
+/// reader. Sites parse through this extension rather than `str::parse`, so
+/// the refusal cannot be forgotten at any one of them.
+pub trait FiniteParse {
+    /// The token as a finite `f64`, or `Err(())` when it is not a number
+    /// or not finite. The unit error mirrors `str::parse` usage at the
+    /// call sites, where only the failure itself matters.
+    #[allow(clippy::result_unit_err)]
+    fn finite_f64(&self) -> Result<f64, ()>;
+}
+
+impl FiniteParse for str {
+    fn finite_f64(&self) -> Result<f64, ()> {
+        match self.parse::<f64>() {
+            Ok(v) if v.is_finite() => Ok(v),
+            _ => Err(()),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

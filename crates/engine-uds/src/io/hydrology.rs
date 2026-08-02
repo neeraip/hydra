@@ -13,6 +13,7 @@ use super::keywords::match_keyword;
 use super::objects::UnitConverter;
 use super::options::{clock_or_hours_to_seconds, InfiltrationModel};
 use super::survey::{Diagnostic, DiagnosticKind, ObjectKind, Survey, TokenLine};
+use crate::io::lex::FiniteParse;
 use crate::model::{
     Gage, GageSource, Infiltration, Parcel, ParcelOutlet, RainForm, SubareaRouting, Subareas,
 };
@@ -31,7 +32,7 @@ fn bad(line: usize, token: &str) -> Diagnostic {
 }
 
 fn number(t: &[String], i: usize, diags: &mut Vec<Diagnostic>, l: usize) -> Option<f64> {
-    match t[i].parse::<f64>() {
+    match t[i].finite_f64() {
         Ok(v) => Some(v),
         Err(_) => {
             diags.push(bad(l, &t[i]));
@@ -69,7 +70,7 @@ pub(crate) fn parse_gages(
             diags.push(bad(l, &t[2]));
             continue;
         }
-        let Ok(scf) = t[3].parse::<f64>() else {
+        let Ok(scf) = t[3].finite_f64() else {
             diags.push(bad(l, &t[3]));
             continue;
         };
@@ -255,7 +256,7 @@ pub(crate) fn parse_subareas(
         };
         let mut frac_routed = 1.0;
         if let Some(tok) = t.get(7) {
-            let Ok(v) = tok.parse::<f64>() else {
+            let Ok(v) = tok.finite_f64() else {
                 diags.push(bad(l, tok));
                 continue;
             };
@@ -401,7 +402,7 @@ pub(crate) fn parse_aquifers(
         let mut x = [0.0; 12];
         let mut ok = true;
         for (i, xi) in x.iter_mut().enumerate() {
-            let Ok(v) = t[1 + i].parse::<f64>() else {
+            let Ok(v) = t[1 + i].finite_f64() else {
                 diags.push(bad(l, &t[1 + i]));
                 ok = false;
                 break;
@@ -483,7 +484,7 @@ pub(crate) fn parse_groundwater(
         let mut x = [0.0; 7]; // surfElev, a1, b1, a2, b2, a3, fixedDepth
         let mut ok = true;
         for (i, xi) in x.iter_mut().enumerate() {
-            let Ok(v) = t[3 + i].parse::<f64>() else {
+            let Ok(v) = t[3 + i].finite_f64() else {
                 diags.push(bad(l, &t[3 + i]));
                 ok = false;
                 break;
@@ -502,7 +503,7 @@ pub(crate) fn parse_groundwater(
                 if tok.starts_with('*') {
                     continue;
                 }
-                let Ok(v) = tok.parse::<f64>() else {
+                let Ok(v) = tok.finite_f64() else {
                     diags.push(bad(l, tok));
                     ok = false;
                     break;

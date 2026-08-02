@@ -41,6 +41,15 @@ identifier exists before any parameter is read — and duplicate identifiers
 within a type are rejected. `[TITLE]` retains its first three lines; further
 title lines are ignored, as the predecessor ignores them.
 
+A numeric token must parse to a **finite** value: the spellings `nan` and
+`inf` (any casing or sign) and magnitudes overflowing the double range are
+refused as bad values, never admitted. This is a deviation from the
+predecessor, whose `strtod`-based reader can accept them: a non-finite
+parameter poisons every downstream computation while the continuity
+statistics — NaN-blind by construction — still report zero error, which is
+a confident wrong answer of exactly the kind this engine refuses to
+produce.
+
 ### 14.3 Keyword Matching
 
 One rule performs every keyword lookup — section names, option names, and

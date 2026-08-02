@@ -11,6 +11,7 @@ use super::keywords::match_keyword;
 use super::objects::UnitConverter;
 use super::options::Date;
 use super::survey::{Diagnostic, DiagnosticKind, TokenLine};
+use crate::io::lex::FiniteParse;
 use crate::model::{
     Curve, CurveKind, PatternKind, SeriesTime, TimePattern, TimeSeries, TimeSeriesPoint,
     TimeSeriesSource,
@@ -126,7 +127,7 @@ pub(crate) fn parse_curves(
                 diags.push(err(l, DiagnosticKind::MissingItems));
                 break;
             }
-            let (Ok(x), Ok(y)) = (t[k].parse::<f64>(), t[k + 1].parse::<f64>()) else {
+            let (Ok(x), Ok(y)) = (t[k].finite_f64(), t[k + 1].finite_f64()) else {
                 diags.push(bad(l, &t[k]));
                 break;
             };
@@ -199,7 +200,7 @@ pub(crate) fn parse_timeseries(
                 diags.push(err(l, DiagnosticKind::MissingItems));
                 break;
             };
-            let seconds = if let Ok(h) = tok.parse::<f64>() {
+            let seconds = if let Ok(h) = tok.finite_f64() {
                 h * 3600.0
             } else if let Some(s) = super::options::parse_clock_token(tok) {
                 s
@@ -212,7 +213,7 @@ pub(crate) fn parse_timeseries(
                 diags.push(err(l, DiagnosticKind::MissingItems));
                 break;
             };
-            let Ok(value) = vtok.parse::<f64>() else {
+            let Ok(value) = vtok.finite_f64() else {
                 diags.push(bad(l, vtok));
                 break;
             };
@@ -291,7 +292,7 @@ pub(crate) fn parse_patterns(
         }
         let pat = pats[idx].as_mut().expect("just ensured");
         while k < t.len() && pat.factors.len() < 24 {
-            let Ok(v) = t[k].parse::<f64>() else {
+            let Ok(v) = t[k].finite_f64() else {
                 diags.push(bad(l, &t[k]));
                 break;
             };

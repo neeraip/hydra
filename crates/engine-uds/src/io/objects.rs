@@ -11,6 +11,7 @@
 use super::keywords::{match_keyword, Section};
 use super::options::{parse_options, AnalysisOptions, FlowUnits, LinkOffsets};
 use super::survey::{survey, Diagnostic, DiagnosticKind, ObjectKind, Survey, TokenLine};
+use crate::io::lex::FiniteParse;
 use crate::model::{
     CrossSection, DividerRule, Link, LinkKind, Network, Offset, OrificeOrientation, OutfallStage,
     OutletHeadBasis, OutletRating, RoadSurface, StorageGeometry, StorageSeepage, StorageShapeKind,
@@ -409,7 +410,7 @@ fn err(line: usize, kind: DiagnosticKind) -> Diagnostic {
 }
 
 fn number(token: &str, diags: &mut Vec<Diagnostic>, line: usize) -> Option<f64> {
-    match token.parse::<f64>() {
+    match token.finite_f64() {
         Ok(v) => Some(v),
         Err(_) => {
             diags.push(err(
@@ -1375,7 +1376,7 @@ fn parse_losses(
     };
     let mut x = [0.0_f64; 3];
     for (i, xi) in x.iter_mut().enumerate() {
-        match t[1 + i].parse::<f64>() {
+        match t[1 + i].finite_f64() {
             Ok(v) if v >= 0.0 => *xi = v,
             _ => {
                 diags.push(err(
@@ -1397,7 +1398,7 @@ fn parse_losses(
     }
     let mut seep = 0.0;
     if t.len() >= 6 {
-        match t[5].parse::<f64>() {
+        match t[5].finite_f64() {
             Ok(v) => seep = v * cv.conductivity,
             Err(_) => {
                 diags.push(err(
@@ -1529,7 +1530,7 @@ fn parse_xsection(net: &mut Network, s: &Survey, line: &TokenLine, diags: &mut V
 fn barrels(t: &[String], i: usize, diags: &mut Vec<Diagnostic>, l: usize) -> Option<u32> {
     match t.get(i) {
         None => Some(1),
-        Some(tok) => match tok.parse::<f64>() {
+        Some(tok) => match tok.finite_f64() {
             Ok(v) if v >= 1.0 => Some(v as u32),
             _ => {
                 diags.push(err(l, DiagnosticKind::BadValue { token: tok.clone() }));

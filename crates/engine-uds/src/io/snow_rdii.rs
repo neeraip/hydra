@@ -6,6 +6,7 @@
 use super::keywords::match_keyword;
 use super::objects::UnitConverter;
 use super::survey::{Diagnostic, DiagnosticKind, ObjectKind, Survey, TokenLine};
+use crate::io::lex::FiniteParse;
 use crate::model::{
     RdiiInflow, SnowRemoval, SnowSurface, Snowpack, Treatment, TreatmentKind, UhResponse,
     UnitHydrographGroup,
@@ -80,7 +81,7 @@ pub(crate) fn parse_snowpacks(
         let mut x = [0.0; 7];
         let mut ok = true;
         for (i, xi) in x.iter_mut().enumerate().take(n) {
-            let Ok(v) = t[2 + i].parse::<f64>() else {
+            let Ok(v) = t[2 + i].finite_f64() else {
                 diags.push(bad(l, &t[2 + i]));
                 ok = false;
                 break;
@@ -204,7 +205,7 @@ pub(crate) fn parse_unit_hydrographs(
             |from: usize, t: &[String], diags: &mut Vec<Diagnostic>| -> Option<UhResponse> {
                 let mut x = [0.0; 6];
                 for (i, xi) in x.iter_mut().enumerate().take(3) {
-                    let Ok(v) = t.get(from + i)?.parse::<f64>() else {
+                    let Ok(v) = t.get(from + i)?.finite_f64() else {
                         diags.push(bad(l, &t[from + i]));
                         return None;
                     };
@@ -212,7 +213,7 @@ pub(crate) fn parse_unit_hydrographs(
                 }
                 for (i, xi) in x.iter_mut().enumerate().skip(3) {
                     if let Some(tok) = t.get(from + i) {
-                        let Ok(v) = tok.parse::<f64>() else {
+                        let Ok(v) = tok.finite_f64() else {
                             diags.push(bad(l, tok));
                             return None;
                         };
@@ -252,7 +253,7 @@ pub(crate) fn parse_unit_hydrographs(
             let mut p = [0.0; 9];
             let mut ok = true;
             for (i, pi) in p.iter_mut().enumerate() {
-                let Ok(v) = t[2 + i].parse::<f64>() else {
+                let Ok(v) = t[2 + i].finite_f64() else {
                     diags.push(bad(l, &t[2 + i]));
                     ok = false;
                     break;
@@ -265,7 +266,7 @@ pub(crate) fn parse_unit_hydrographs(
             let mut ia = [0.0; 3];
             for (i, ii) in ia.iter_mut().enumerate() {
                 if let Some(tok) = t.get(11 + i) {
-                    let Ok(v) = tok.parse::<f64>() else {
+                    let Ok(v) = tok.finite_f64() else {
                         diags.push(bad(l, tok));
                         ok = false;
                         break;
@@ -319,7 +320,7 @@ pub(crate) fn parse_rdii(
             diags.push(unresolved(l, &t[1]));
             continue;
         };
-        let Ok(area) = t[2].parse::<f64>() else {
+        let Ok(area) = t[2].finite_f64() else {
             diags.push(bad(l, &t[2]));
             continue;
         };

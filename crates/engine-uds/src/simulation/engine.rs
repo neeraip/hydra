@@ -559,6 +559,9 @@ impl Simulation {
                     dt = dt.min(to_boundary);
                 }
             }
+            // §14.4 refuses zero steps, so dt is positive; this floor is a
+            // backstop so no future dt source can stall the clock.
+            let dt = dt.max(1e-9);
             let month = {
                 let epoch_days = ((self.start_epoch + self.hydro_t) / 86_400.0).floor() as i64;
                 civil_from_days(epoch_days).month

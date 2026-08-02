@@ -7,6 +7,7 @@
 use super::keywords::match_keyword;
 use super::objects::UnitConverter;
 use super::survey::{Diagnostic, DiagnosticKind, ObjectKind, Survey, TokenLine};
+use crate::io::lex::FiniteParse;
 use crate::model::{
     CurbInlet, GrateInlet, GrateKind, InletDesign, InletPlacement, InletUsage, SlottedInlet,
     Street, ThroatAngle,
@@ -56,7 +57,7 @@ pub(crate) fn parse_streets(
         // Crown width, curb height, cross slope (%), roughness: all > 0.
         let mut x = [0.0_f64; 11];
         for k in 1..=4 {
-            match t[k].parse::<f64>() {
+            match t[k].finite_f64() {
                 Ok(v) if v > 0.0 => x[k] = v,
                 _ => {
                     diags.push(bad(l, &t[k]));
@@ -67,7 +68,7 @@ pub(crate) fn parse_streets(
         // Optional gutter depression and width: ≥ 0.
         for k in 5..=6 {
             if t.len() > k {
-                match t[k].parse::<f64>() {
+                match t[k].finite_f64() {
                     Ok(v) if v >= 0.0 => x[k] = v,
                     _ => {
                         diags.push(bad(l, &t[k]));
@@ -88,7 +89,7 @@ pub(crate) fn parse_streets(
         }
         // Backing: a positive width demands its slope and roughness.
         if t.len() > 8 {
-            match t[8].parse::<f64>() {
+            match t[8].finite_f64() {
                 Ok(v) if v >= 0.0 => x[8] = v,
                 _ => {
                     diags.push(bad(l, &t[8]));
@@ -101,7 +102,7 @@ pub(crate) fn parse_streets(
                     continue;
                 }
                 for k in 9..=10 {
-                    match t[k].parse::<f64>() {
+                    match t[k].finite_f64() {
                         Ok(v) if v > 0.0 => x[k] = v,
                         _ => {
                             diags.push(bad(l, &t[k]));
@@ -173,7 +174,7 @@ const THROAT_ANGLES: &[&str] = &["HORIZONTAL", "INCLINED", "VERTICAL"];
 fn two_lengths(t: &[String], diags: &mut Vec<Diagnostic>, l: usize) -> Option<(f64, f64)> {
     let mut v = [0.0; 2];
     for (i, vi) in v.iter_mut().enumerate() {
-        match t[2 + i].parse::<f64>() {
+        match t[2 + i].finite_f64() {
             Ok(x) if x > 0.0 => *vi = x,
             _ => {
                 diags.push(bad(l, &t[2 + i]));
@@ -252,7 +253,7 @@ pub(crate) fn parse_inlets(
                         diags.push(err(l, DiagnosticKind::MissingItems));
                         continue;
                     }
-                    match t[5].parse::<f64>() {
+                    match t[5].finite_f64() {
                         Ok(v) if v > 0.0 && v <= 1.0 => area_ratio = v,
                         _ => {
                             diags.push(bad(l, &t[5]));
@@ -260,7 +261,7 @@ pub(crate) fn parse_inlets(
                         }
                     }
                     if t.len() > 6 {
-                        match t[6].parse::<f64>() {
+                        match t[6].finite_f64() {
                             Ok(v) if v >= 0.0 => splash_velocity = v * cv.len,
                             _ => {
                                 diags.push(bad(l, &t[6]));
@@ -374,7 +375,7 @@ pub(crate) fn parse_inlet_usage(
         }
         let mut pct_clogged = 0.0;
         if t.len() > 4 {
-            match t[4].parse::<f64>() {
+            match t[4].finite_f64() {
                 Ok(v) if (0.0..=99.0).contains(&v) => pct_clogged = v,
                 _ => {
                     diags.push(bad(l, &t[4]));
@@ -386,7 +387,7 @@ pub(crate) fn parse_inlet_usage(
         let mut ok = true;
         for (i, xi) in x.iter_mut().enumerate() {
             if t.len() > 5 + i {
-                match t[5 + i].parse::<f64>() {
+                match t[5 + i].finite_f64() {
                     Ok(v) if v >= 0.0 => *xi = v,
                     _ => {
                         diags.push(bad(l, &t[5 + i]));
