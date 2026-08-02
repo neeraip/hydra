@@ -651,16 +651,24 @@ impl Surface {
                 recovery: fac.recovery,
             };
 
-            // Pervious infiltration capacity for this step (§3.3).
+            // Pervious infiltration capacity for this step (§3.3). The
+            // input rate is the §3.2 water supply undiminished by
+            // evaporation — deducting it starved the wetting-front state
+            // under light rain. Curve Number folds run-on into ponded
+            // depth only (§3.3), so its event clock and P accumulator see
+            // rain alone.
             let perv_depth = p.sub[2].depth;
             let f_rate = match &mut p.infil {
                 Some(state) if p.sub[2].area > 0.0 => {
                     // §4.1: aquifer storability caps what the surface may
                     // infiltrate; the excess stays ponded.
                     let cap = infil_caps.get(pi).copied().unwrap_or(f64::MAX);
-                    state
-                        .step(dt, (perv_input - e).max(0.0), perv_depth, fac_p)
-                        .min(cap)
+                    let (irate, idepth) = if matches!(state, InfilState::CurveNumber { .. }) {
+                        (perv_precip, perv_depth + p.runon * dt)
+                    } else {
+                        (perv_input, perv_depth)
+                    };
+                    state.step(dt, irate, idepth, fac_p).min(cap)
                 }
                 _ => 0.0,
             };

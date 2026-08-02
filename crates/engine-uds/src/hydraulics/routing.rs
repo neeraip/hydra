@@ -466,6 +466,9 @@ struct Vert {
     ponded_area: f64,
     /// Highest connecting crown above the invert (m).
     crown: f64,
+    /// A gated outfall: reverse flow through any connecting link is
+    /// blocked (§2.6).
+    gated: bool,
     class: VertClass,
 }
 
@@ -637,6 +640,7 @@ impl Router {
 
         let mut verts = Vec::with_capacity(net.vertices.len());
         for v in &net.vertices {
+            let mut gated = false;
             let (y_max, surcharge, ponded, class) = match &v.kind {
                 VertexKind::Junction {
                     max_depth,
@@ -663,7 +667,10 @@ impl Router {
                 // A divider routes as a junction under the one solver
                 // (§7.5); its rule is an import record.
                 VertexKind::Divider { .. } => (f64::MAX, 0.0, 0.0, VertClass::Junction),
-                VertexKind::Outfall { stage, .. } => {
+                VertexKind::Outfall {
+                    stage, flap_gate, ..
+                } => {
+                    gated = *flap_gate;
                     let b = match stage {
                         OutfallStage::Free => Boundary::Free,
                         OutfallStage::Normal => Boundary::Normal,
@@ -683,6 +690,7 @@ impl Router {
                 surcharge,
                 ponded_area: ponded,
                 crown: 0.0,
+                gated,
                 class,
             });
         }
@@ -2052,6 +2060,11 @@ impl Router {
                 q = Q_REVERSAL * q.signum();
             }
         }
+        // §2.6: an outfall's gate blocks flow entering the network from
+        // the receiving water through this structure.
+        if (q < 0.0 && self.verts[st.to].gated) || (q > 0.0 && self.verts[st.from].gated) {
+            q = 0.0;
+        }
         (q, s1, s2)
     }
 
@@ -2339,7 +2352,29 @@ impl Router {
 
     fn outfall_depth(&self, vi: usize, b: &Boundary, q: &[f64]) -> f64 {
         match b {
-            Boundary::Fixed(stage) => (stage - self.verts[vi].invert).max(0.0),
+            // §2.6: a staged condition governs only where it exceeds the
+            // critical-depth elevation; below that the brink controls,
+            // exactly as for a free outfall.
+            Boundary::Fixed(stage) => {
+                let staged = (stage - self.verts[vi].invert).max(0.0);
+                let yc = self
+                    .chans
+                    .iter()
+                    .enumerate()
+                    .find(|(_, c)| c.from == vi || c.to == vi)
+                    .map_or(0.0, |(ci, c)| {
+                        let per_barrel = (q[ci] / c.barrels).abs();
+                        if per_barrel <= Q_DRY {
+                            0.0
+                        } else {
+                            c.geom
+                                .sec
+                                .critical_depth(per_barrel)
+                                .min(c.geom.sec.y_full())
+                        }
+                    });
+                staged.max(yc)
+            }
             Boundary::Free | Boundary::Normal => {
                 // The single connecting channel governs.
                 let Some((ci, c)) = self
@@ -2545,6 +2580,11 @@ impl Router {
         }
         // Flap gate blocks reverse flow.
         if c.flap_gate && q_new < 0.0 {
+            q_new = 0.0;
+        }
+        // §2.6: an outfall's gate blocks flow the receiving water would
+        // push back into the network, whichever end it connects at.
+        if (q_new < 0.0 && self.verts[c.to].gated) || (q_new > 0.0 && self.verts[c.from].gated) {
             q_new = 0.0;
         }
         // No flow out of a dry vertex (§6.6).
