@@ -238,6 +238,8 @@ pub struct Simulation {
     /// Supplied daily climate records (§3.1), chronological.
     climate_records: Vec<crate::model::DailyClimate>,
     climate_state: ClimateDayState,
+    /// A supplied routing interface inflow file (§14.8).
+    iface_in: Option<crate::io::iface::RoutingInterface>,
     /// Bracketing hydrology lateral mass rates `[p][v]` (unit·m³/s).
     hydro_mass_prev: Vec<Vec<f64>>,
     hydro_mass_now: Vec<Vec<f64>>,
@@ -371,6 +373,27 @@ impl Simulation {
                  (open_with_climate)",
             )));
         }
+        // §14.8: the rainfall, runoff, and RDII interface formats arrive
+        // with a follow-up stage; reading them cannot be silently skipped.
+        for (role, slot) in [
+            ("rainfall", &net.interface_files.rainfall),
+            ("runoff", &net.interface_files.runoff),
+            ("RDII", &net.interface_files.rdii),
+        ] {
+            if matches!(slot, Some((crate::model::FileMode::Use, _))) {
+                return Err(OpenError::Transport(format!(
+                    "{role} interface files arrive with a follow-up stage"
+                )));
+            }
+        }
+        // One routing file never serves both roles in a run (§14.8).
+        if let (Some(a), Some(b)) = (&net.interface_files.inflows, &net.interface_files.outflows) {
+            if a == b {
+                return Err(OpenError::Transport(
+                    "one routing interface file cannot serve both roles (§14.8)".into(),
+                ));
+            }
+        }
         let quality = if net.constituents.is_empty() {
             None
         } else {
@@ -428,6 +451,7 @@ impl Simulation {
                 surface_quality,
                 inlets,
                 climate_records,
+                iface_in: None,
                 climate_state: ClimateDayState {
                     last_day: i64::MIN,
                     ..ClimateDayState::default()
@@ -1619,6 +1643,26 @@ impl Simulation {
         Ok(())
     }
 
+    /// Supply the routing interface inflow file's text (§14.8); the
+    /// caller owns reading it. Values interpolate between bracketing
+    /// periods and add as boundary inflows at their vertices.
+    pub fn supply_routing_inflows(&mut self, text: &str) -> Result<(), String> {
+        self.iface_in = Some(crate::io::iface::parse_routing_file(text, &self.net)?);
+        Ok(())
+    }
+
+    /// Write the routing interface outflow file (§14.8): outlet
+    /// vertices' inflows and concentrations per reporting period.
+    pub fn write_routing_outflows(&self, w: &mut impl std::io::Write) -> std::io::Result<()> {
+        crate::io::iface::write_routing_file(
+            &self.net,
+            &self.snapshots,
+            self.start_epoch,
+            self.report_step,
+            w,
+        )
+    }
+
     /// Write the §14.9 text report to `w`, drawing on the §11 ledgers,
     /// the control-action log, and the routing performance counters.
     pub fn write_report(&self, w: &mut impl std::io::Write) -> std::io::Result<()> {
@@ -1958,6 +2002,16 @@ impl Simulation {
             }
         }
 
+        // §14.8 routing interface inflows, interpolated between the
+        // file's bracketing periods, carrying their concentrations.
+        if let Some(ifc) = &self.iface_in {
+            for (vi, q, conc) in ifc.inflows_at(self.start_epoch + t, np) {
+                lat[vi] += q;
+                for (p, c) in conc.iter().enumerate() {
+                    mass[p][vi] += q.max(0.0) * c;
+                }
+            }
+        }
         for (&v, &q) in &self.lateral_override {
             lat[v] = q;
         }

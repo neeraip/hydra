@@ -1699,6 +1699,55 @@ TEMPERATURE
     assert!(Simulation::open(&inp).is_err());
 }
 
+// ── §14.8 routing interface files ───────────────────────────────────────
+
+#[test]
+fn routing_interface_files_chain_two_models() {
+    // Model A discharges 0.25 m³/s at 100 mg/L; its outflow file drives
+    // model B's boundary inflow, interpolated between periods.
+    let (mut a, _, _) = Simulation::open(&quality_model(0.0)).expect("open A");
+    a.run();
+    let mut iface = Vec::new();
+    a.write_routing_outflows(&mut iface).expect("write");
+    let text = String::from_utf8(iface).expect("utf8");
+    assert!(text.starts_with("SWMM5 Interface File"), "{text}");
+
+    // Model B: same clock, an inflow-less junction fed by the file.
+    let b_inp = "\
+[OPTIONS]
+FLOW_UNITS    CMS
+START_DATE    06/01/2024
+START_TIME    00:00
+END_DATE      06/01/2024
+END_TIME      04:00
+ROUTING_STEP  10
+REPORT_STEP   0:15:00
+
+[JUNCTIONS]
+O1  100.4  3
+
+[OUTFALLS]
+OB  100.0  FREE
+
+[CONDUITS]
+CB  O1  OB  200  0.013  0  0
+
+[XSECTIONS]
+CB  RECT_OPEN  2  2  0  0
+
+[POLLUTANTS]
+TSS  MG/L  0  0  0  0  NO
+";
+    let (mut b, _, _) = Simulation::open(b_inp).expect("open B");
+    b.supply_routing_inflows(&text).expect("supply");
+    b.run();
+    // B's outfall carries A's discharge at A's concentration.
+    let q = b.flow("CB").expect("flow");
+    assert!((q - 0.25).abs() < 0.03, "chained flow {q}");
+    let c = b.link_concentration("CB", "TSS").expect("conc");
+    assert!((c - 100.0).abs() < 8.0, "chained concentration {c}");
+}
+
 // ── §3.4 control measures ───────────────────────────────────────────────
 
 #[test]
