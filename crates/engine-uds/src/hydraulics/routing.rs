@@ -1001,6 +1001,35 @@ impl Router {
         self.dt_prev
     }
 
+    /// Channel transport states for §8.4: (model link, from-vertex,
+    /// to-vertex, flow m³/s in router orientation, stored volume m³).
+    pub fn channel_transport(&self) -> Vec<(usize, usize, usize, f64, f64)> {
+        self.chans
+            .iter()
+            .enumerate()
+            .map(|(ci, c)| {
+                let vol = self.a_mid[ci] * c.length * c.barrels;
+                (c.link, c.from, c.to, self.q[ci], vol)
+            })
+            .collect()
+    }
+
+    /// Structure transport states for §8.4: (model link, from-vertex,
+    /// to-vertex, flow m³/s). Structures hold no volume — they pass their
+    /// upstream vertex's concentration through.
+    pub fn structure_transport(&self) -> Vec<(usize, usize, usize, f64)> {
+        self.structs
+            .iter()
+            .enumerate()
+            .map(|(si, st)| (st.link, st.from, st.to, self.sq[si]))
+            .collect()
+    }
+
+    /// Whether vertex `vi` is an outfall: discharge leaves the system.
+    pub fn is_outfall(&self, vi: usize) -> bool {
+        matches!(self.verts[vi].class, VertClass::Outfall(_))
+    }
+
     /// Water depth in model link `li` (m): a channel's mid-depth, a
     /// structure's head above its crest, for the §9.1 premises.
     pub fn link_depth(&self, li: usize) -> Option<f64> {

@@ -975,6 +975,128 @@ THEN ORIFICE OR1 SETTING = PID -0.5 0.1 0
     assert!((q - 0.20).abs() < 0.02, "not at steady throughflow: {q}");
 }
 
+// ── §8 constituent transport ────────────────────────────────────────────
+
+/// One junction, one conduit, constant inflow at a declared
+/// concentration, with the given decay (per day).
+fn quality_model(decay_per_day: f64) -> String {
+    format!(
+        "\
+[OPTIONS]
+FLOW_UNITS    CMS
+START_DATE    06/01/2024
+START_TIME    00:00
+END_DATE      06/01/2024
+END_TIME      04:00
+ROUTING_STEP  10
+REPORT_STEP   0:15:00
+
+[JUNCTIONS]
+J1  100.4  3
+
+[OUTFALLS]
+O1  100.0  FREE
+
+[CONDUITS]
+C1  J1  O1  200  0.013  0  0
+
+[XSECTIONS]
+C1  RECT_OPEN  2  2  0  0
+
+[POLLUTANTS]
+TSS  MG/L  0  0  0  {decay_per_day}  NO
+
+[INFLOWS]
+J1  FLOW  QIN
+J1  TSS   \"\"  CONCEN  1.0  1.0  100
+
+[TIMESERIES]
+QIN  0:00  0.25
+QIN  9:00  0.25
+"
+    )
+}
+
+#[test]
+fn a_conservative_constituent_arrives_at_its_inflow_concentration() {
+    let inp = quality_model(0.0);
+    let (mut sim, _, _) = Simulation::open(&inp).expect("open");
+    sim.run();
+    // Steady state: the whole path carries the 100 mg/L inflow.
+    let c_link = sim.link_concentration("C1", "TSS").expect("conc");
+    assert!((c_link - 100.0).abs() < 2.0, "link conc {c_link}");
+    let c_out = sim.node_concentration("O1", "TSS").expect("conc");
+    assert!((c_out - 100.0).abs() < 2.0, "outfall conc {c_out}");
+    // The ledger conserves: admitted = discharged + still stored, with
+    // nothing reacted.
+    let (m_in, m_out, m_react, m_final) = sim.quality_ledger("TSS").expect("ledger");
+    assert!(m_react.abs() < 1e-9 && m_final.abs() < 1e-6);
+    assert!(
+        (m_in - m_out) < 0.05 * m_in && m_in > m_out,
+        "ledger: in {m_in} out {m_out}"
+    );
+}
+
+#[test]
+fn first_order_decay_attenuates_along_the_channel() {
+    // 100 per day on a ~450 s residence: a visible, partial loss.
+    let inp = quality_model(100.0);
+    let (mut sim, _, _) = Simulation::open(&inp).expect("open");
+    sim.run();
+    let c_out = sim.node_concentration("O1", "TSS").expect("conc");
+    assert!(
+        c_out > 30.0 && c_out < 90.0,
+        "decayed concentration {c_out} out of range"
+    );
+    // The ledger closes: what came in either left, reacted, or is still
+    // in the water.
+    let (m_in, m_out, m_react, m_final) = sim.quality_ledger("TSS").expect("ledger");
+    assert!(m_react > 0.0, "nothing reacted");
+    let gap = m_in - m_out - m_react - m_final;
+    assert!(
+        gap.abs() < 0.05 * m_in,
+        "ledger gap {gap} of {m_in} admitted"
+    );
+}
+
+#[test]
+fn sanitary_flow_carries_its_declared_concentration() {
+    let inp = "\
+[OPTIONS]
+FLOW_UNITS    CMS
+START_DATE    06/01/2024
+START_TIME    00:00
+END_DATE      06/01/2024
+END_TIME      02:00
+ROUTING_STEP  10
+
+[JUNCTIONS]
+J1  100.4  3
+
+[OUTFALLS]
+O1  100.0  FREE
+
+[CONDUITS]
+C1  J1  O1  200  0.013  0  0
+
+[XSECTIONS]
+C1  RECT_OPEN  2  2  0  0
+
+[POLLUTANTS]
+BOD  MG/L  0  0  0  0  NO
+
+[DWF]
+J1  FLOW  0.1
+J1  BOD   40
+
+[TIMESERIES]
+";
+    let (mut sim, _, _) = Simulation::open(inp).expect("open");
+    sim.run();
+    let c = sim.link_concentration("C1", "BOD").expect("conc");
+    assert!((c - 40.0).abs() < 1.5, "sanitary concentration {c}");
+}
+
 // ── §3.4 control measures ───────────────────────────────────────────────
 
 #[test]

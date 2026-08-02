@@ -43,6 +43,8 @@ pub enum OpenError {
     Surface(SurfaceRefusal),
     /// A control rule was refused at compile (§9.1).
     Controls(String),
+    /// A transport configuration this stage does not evaluate yet (§8).
+    Transport(String),
 }
 
 /// One recorded reporting boundary: every vertex depth and link flow, by
@@ -103,6 +105,11 @@ pub struct Simulation {
     lateral_override: HashMap<usize, f64>,
     /// The compiled §9 control system, when the model has rules.
     controls: Option<super::controls::Controls>,
+    /// §8.4 network quality, when the model declares constituents.
+    quality: Option<crate::transport::NetworkQuality>,
+    /// Bracketing hydrology lateral mass rates `[p][v]` (unit·m³/s).
+    hydro_mass_prev: Vec<Vec<f64>>,
+    hydro_mass_now: Vec<Vec<f64>>,
     /// The next rule-evaluation boundary (s) under the rule-step option;
     /// zero rule step evaluates every routing step.
     next_rule_t: f64,
@@ -196,6 +203,32 @@ impl Simulation {
         let n_series = net.timeseries.len();
         let routing_period = net.options.routing_step.max(0.5);
 
+        // §8: this stage evaluates network transport only; surface
+        // accumulation-mobilisation and treatment refuse, typed.
+        if !net.constituents.is_empty() {
+            if !net.treatments.is_empty() {
+                return Err(OpenError::Transport(
+                    "treatment expressions arrive with the §8.5 stage".into(),
+                ));
+            }
+            let has_surface_quality = net.land_uses.iter().any(|lu| {
+                lu.buildup.iter().any(Option::is_some) || lu.washoff.iter().any(Option::is_some)
+            }) && net.parcels.iter().any(|p| !p.land_cover.is_empty());
+            let has_rain_conc =
+                net.constituents.iter().any(|c| c.c_rain != 0.0) && !net.parcels.is_empty();
+            let has_init_buildup = net.parcels.iter().any(|p| !p.init_buildup.is_empty());
+            if has_surface_quality || has_rain_conc || has_init_buildup {
+                return Err(OpenError::Transport(
+                    "surface accumulation-mobilisation arrives with the §8.2-§8.3 stage".into(),
+                ));
+            }
+        }
+        let quality = if net.constituents.is_empty() {
+            None
+        } else {
+            Some(crate::transport::NetworkQuality::build(&router, &net))
+        };
+
         // §9.1: compile the control rules; never-true premises warn.
         let mut rule_advisories = Vec::new();
         let controls = super::controls::Controls::compile(&net, &mut rule_advisories)
@@ -228,6 +261,9 @@ impl Simulation {
                 series_warned: vec![false; n_series],
                 lateral_override: HashMap::new(),
                 controls,
+                quality,
+                hydro_mass_prev: Vec::new(),
+                hydro_mass_now: Vec::new(),
                 next_rule_t: 0.0,
                 snapshots: Vec::new(),
                 notices,
@@ -331,6 +367,8 @@ impl Simulation {
             // routed stage lagged one step (§10.1), its discharge joining
             // the vertex laterals.
             let mut lats = surface.vertex_laterals(nv);
+            let np = self.net.constituents.len();
+            let mut mass = vec![vec![0.0; lats.len()]; np];
             for (pi, gw) in &mut self.aquifers {
                 let (infil, evap_used) = surface.parcel_infil_evap(*pi);
                 let p = &self.net.parcels[*pi];
@@ -339,6 +377,10 @@ impl Simulation {
                 let stage = self.net.vertices[gw.vertex].invert + self.router.depth(gw.vertex);
                 let q = gw.step(dt, infil, evap_used, max_evap, stage);
                 lats[gw.vertex] += q * p.area;
+                // §8.1: subsurface inflow at its constant concentration.
+                for (ci, c) in self.net.constituents.iter().enumerate() {
+                    mass[ci][gw.vertex] += (q * p.area).max(0.0) * c.c_groundwater;
+                }
                 // §9.3: a domain-guarded custom relation announces itself
                 // once without changing any result.
                 for which in gw.guard_events.drain(..) {
@@ -361,9 +403,14 @@ impl Simulation {
                     * rain_factor;
                 let q = r.step(&self.net, rain, month, dt);
                 lats[r.vertex] += q;
+                // §8.1: sewer inflow at its constant concentration.
+                for (ci, c) in self.net.constituents.iter().enumerate() {
+                    mass[ci][r.vertex] += q * c.c_rdii;
+                }
             }
             self.hydro_t += dt;
             self.hydro_prev = std::mem::replace(&mut self.hydro_now, (self.hydro_t, lats));
+            self.hydro_mass_prev = std::mem::replace(&mut self.hydro_mass_now, mass);
             if surface.degraded && !self.hydro_degraded_warned {
                 self.hydro_degraded_warned = true;
                 self.notices.push(RuntimeNotice {
@@ -454,7 +501,7 @@ impl Simulation {
         if self.in_event(t) {
             self.update_boundary_stages(t);
             self.advance_hydrology(period_end);
-            let base = self.assemble_lateral(t);
+            let (base, base_mass) = self.assemble_lateral(t);
             // §10.1: hydrology outputs interpolate linearly to routing
             // times between the bracketing hydrology results.
             let (t0, l0) = (self.hydro_prev.0, self.hydro_prev.1.clone());
@@ -469,26 +516,53 @@ impl Simulation {
                     *l = base[i] + l0[i] + f * (l1[i] - l0[i]);
                 }
             };
-            if self.controls.is_some() {
+            if self.controls.is_some() || self.quality.is_some() {
                 // §9.1: rules evaluate at every routing step — or on the
                 // fixed rule-step clock, whose boundaries the stepper
-                // lands on — before the step's trials begin.
+                // lands on — before the step's trials begin; §8.4 quality
+                // updates after each accepted step.
                 let rule_step = self.net.options.rule_step;
-                let mut lat = vec![0.0; self.net.vertices.len()];
+                let np = self.net.constituents.len();
+                let nv = self.net.vertices.len();
+                let (mt0, mt1) = (self.hydro_prev.0, self.hydro_now.0);
+                let mut lat = vec![0.0; nv];
+                let mut mass = vec![vec![0.0; nv]; np];
                 while self.router.time() < period_end - 1e-9 {
                     let tt = self.router.time();
                     interp(tt, &mut lat);
-                    let mut cap = period_end;
-                    if rule_step > 0.0 {
-                        if tt + 1e-9 >= self.next_rule_t {
+                    if self.controls.is_some() {
+                        let mut cap = period_end;
+                        if rule_step > 0.0 {
+                            if tt + 1e-9 >= self.next_rule_t {
+                                self.apply_controls(tt, &lat);
+                                self.next_rule_t = ((tt / rule_step).floor() + 1.0) * rule_step;
+                            }
+                            cap = cap.min(self.next_rule_t);
+                        } else {
                             self.apply_controls(tt, &lat);
-                            self.next_rule_t = ((tt / rule_step).floor() + 1.0) * rule_step;
                         }
-                        cap = cap.min(self.next_rule_t);
+                        self.router.step_once(cap, &lat);
                     } else {
-                        self.apply_controls(tt, &lat);
+                        self.router.step_once(period_end, &lat);
                     }
-                    self.router.step_once(cap, &lat);
+                    if let Some(mut q) = self.quality.take() {
+                        // §8.1 lateral mass: period-start base plus the
+                        // hydrology terms interpolated like their flows.
+                        let f = if mt1 > mt0 {
+                            ((tt - mt0) / (mt1 - mt0)).clamp(0.0, 1.0)
+                        } else {
+                            1.0
+                        };
+                        for p in 0..np {
+                            for v in 0..nv {
+                                let m0 = self.hydro_mass_prev.get(p).map_or(0.0, |x| x[v]);
+                                let m1 = self.hydro_mass_now.get(p).map_or(0.0, |x| x[v]);
+                                mass[p][v] = base_mass[p][v] + m0 + f * (m1 - m0);
+                            }
+                        }
+                        q.update(&self.router, &self.net, &lat, &mass, self.router.last_dt());
+                        self.quality = Some(q);
+                    }
                 }
             } else {
                 self.router.advance(period_end, &interp);
@@ -593,6 +667,41 @@ impl Simulation {
         self.controls.as_ref().map_or(&[], |c| &c.log)
     }
 
+    /// Constituent index by identity.
+    fn constituent_index(&self, pollutant: &str) -> Option<usize> {
+        self.net.constituents.iter().position(|c| c.id == pollutant)
+    }
+
+    /// Concentration of `pollutant` at vertex `id`, in its declared unit
+    /// (§8.4, §12.2).
+    pub fn node_concentration(&self, id: &str, pollutant: &str) -> Option<f64> {
+        let q = self.quality.as_ref()?;
+        let p = self.constituent_index(pollutant)?;
+        let v = *self.vertex_by_id.get(id)?;
+        Some(q.c_vertex[p][v])
+    }
+
+    /// Concentration of `pollutant` in link `id` (§8.4, §12.2).
+    pub fn link_concentration(&self, id: &str, pollutant: &str) -> Option<f64> {
+        let q = self.quality.as_ref()?;
+        let p = self.constituent_index(pollutant)?;
+        let l = *self.link_by_id.get(id)?;
+        q.link_concentration(&self.router, p, l)
+    }
+
+    /// The §8 mass ledger for `pollutant`: (admitted, discharged,
+    /// reacted, final storage), each in the declared unit times m³.
+    pub fn quality_ledger(&self, pollutant: &str) -> Option<(f64, f64, f64, f64)> {
+        let q = self.quality.as_ref()?;
+        let p = self.constituent_index(pollutant)?;
+        Some((
+            q.inflow_mass[p],
+            q.outfall_mass[p],
+            q.reacted[p],
+            q.final_storage[p],
+        ))
+    }
+
     /// A series value at run time `t` under the §10.1 extension contract.
     /// `hold_ends` holds the first/last value outside the range (stages);
     /// otherwise the value falls to zero, with a one-time warning when the
@@ -658,14 +767,18 @@ impl Simulation {
     /// Assemble the lateral inflow vector at a period start (§10.1):
     /// external inflows and sanitary base flows, evaluated at the
     /// step-start date, near-zero values truncated; §12.4 overrides win.
-    fn assemble_lateral(&mut self, t: f64) -> Vec<f64> {
+    fn assemble_lateral(&mut self, t: f64) -> (Vec<f64>, Vec<Vec<f64>>) {
         let nv = self.net.vertices.len();
+        let np = self.net.constituents.len();
         let mut lat = vec![0.0; nv];
+        let mut ext_flow = vec![0.0; nv];
+        let mut dwf_flow = vec![0.0; nv];
+        let mut mass = vec![vec![0.0; nv]; np];
 
         for i in 0..self.net.inflows.len() {
             let inflow = &self.net.inflows[i];
             if inflow.kind != InflowKind::Flow {
-                continue; // quality inflows join with §8 transport
+                continue;
             }
             let (vertex, series, scale, baseline, base_pattern) = (
                 inflow.vertex,
@@ -679,6 +792,7 @@ impl Simulation {
                 q += self.series_value(si, t, false) * scale;
             }
             lat[vertex] += q;
+            ext_flow[vertex] += q;
         }
 
         for d in 0..self.net.dry_weather.len() {
@@ -692,6 +806,60 @@ impl Simulation {
                 q *= self.pattern_factor(p, t);
             }
             lat[vertex] += q;
+            dwf_flow[vertex] += q;
+        }
+
+        // §8.1 mass sources riding those flows: constituent inflows as a
+        // concentration on the external flow or a flow-free mass rate,
+        // sanitary flow at its global and per-vertex concentrations.
+        if np > 0 {
+            for i in 0..self.net.inflows.len() {
+                let inflow = &self.net.inflows[i];
+                let Some(ci) = inflow.constituent else {
+                    continue;
+                };
+                let (vertex, series, scale, baseline, base_pattern, kind, units_factor) = (
+                    inflow.vertex,
+                    inflow.series,
+                    inflow.scale,
+                    inflow.baseline,
+                    inflow.base_pattern,
+                    inflow.kind,
+                    inflow.units_factor,
+                );
+                let mut v = baseline * self.pattern_factor(base_pattern, t);
+                if let Some(si) = series {
+                    v += self.series_value(si, t, false) * scale;
+                }
+                match kind {
+                    InflowKind::Concentration => {
+                        mass[ci][vertex] += v * ext_flow[vertex].max(0.0);
+                    }
+                    InflowKind::Mass => {
+                        mass[ci][vertex] += v * units_factor;
+                    }
+                    InflowKind::Flow => {}
+                }
+            }
+            for d in 0..self.net.dry_weather.len() {
+                let dwf = &self.net.dry_weather[d];
+                let Some(ci) = dwf.constituent else {
+                    continue;
+                };
+                let (vertex, average, patterns) = (dwf.vertex, dwf.average, dwf.patterns);
+                let mut c = average;
+                for p in patterns {
+                    c *= self.pattern_factor(p, t);
+                }
+                mass[ci][vertex] += c * dwf_flow[vertex];
+            }
+            for (ci, c) in self.net.constituents.iter().enumerate() {
+                if c.c_dwf != 0.0 {
+                    for v in 0..nv {
+                        mass[ci][v] += c.c_dwf * dwf_flow[v];
+                    }
+                }
+            }
         }
 
         for (&v, &q) in &self.lateral_override {
@@ -702,7 +870,7 @@ impl Simulation {
                 *l = 0.0;
             }
         }
-        lat
+        (lat, mass)
     }
 
     /// Update tidal and series outfall stages for the period (§2.6):
