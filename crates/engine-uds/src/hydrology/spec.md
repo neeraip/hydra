@@ -191,14 +191,21 @@ and a drain held shut until continuously dry weather has outlasted the
 configured delay — dryness judged by the parcel's rainfall rate falling
 below the 0.001 in/hr minimum-runoff threshold, never by the unit's total
 inflow, so the receding Manning tail captured from tributary area cannot
-hold the drain shut indefinitely);
+hold the drain shut indefinitely; a **zero** delay never latches the drain,
+which then discharges during rain; the drain-delay clock starts at the
+configured delay, so a run beginning dry opens the drain only after that
+much dry time; and a **covered** storage layer excludes direct rainfall
+from the barrel's intake and nothing else — cover is the predecessor's
+rain-barrel-only flag, never an exfiltration or evaporation seal);
 rooftop disconnection (a lone surface layer whose gutter-capacity drain
 pre-empts overflow); and vegetative swales (trapezoidal depth-varying
 geometry, balance written on volume, widths floored at 0.1524 m with the
 side slope recomputed to keep the section consistent).
 
 **Constitutive fluxes** echo §3.3 with measure-specific parameters:
-surface-to-soil intake is modified Green–Ampt (with the stated pavement and
+surface outflow above the berm is Manning flow at the §3.2 α — the
+unit's width over its area included, a widthless unit spilling its
+excess directly; surface-to-soil intake is modified Green–Ampt (with the stated pavement and
 swale exceptions, including the swale's dependence on the parent parcel's
 own infiltration model); soil percolation is the exponential
 $K_{2S}e^{-k_{slope}(\phi_2 - \theta_2)}$, zero below field capacity, on the
@@ -241,7 +248,7 @@ and (separately) pervious-area runoff, validated to sum to at most 100 %; a
 combined footprint within 0.1 % of the parcel area snapped equal to it; and
 run-on from upstream reaching units only when the footprint equals the
 whole parcel — the snap is what makes that gate reachable. Direct rainfall
-always lands on the unit. Surface overflow joins parcel runoff, exfiltration
+always lands on the unit (the covered rain barrel excepted). Surface overflow joins parcel runoff, exfiltration
 joins infiltration, and drain flow routes separately — to the parcel's
 outlet by default, to another parcel one hydrology step delayed, to a vertex
 interpolated per routing step. Initial saturation pre-fills soil and storage

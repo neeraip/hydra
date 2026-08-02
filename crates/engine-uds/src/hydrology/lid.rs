@@ -35,11 +35,15 @@ pub struct LidUnit {
     soil_wp: f64,
     soil_ksat: f64,
     soil_kslope: f64,
-    soil_suction: f64,
     stor_thick: f64,
     stor_void: f64,
     stor_ksat: f64,
     sealed: bool,
+    /// The predecessor's rain-barrel-only cover flag: excludes direct
+    /// rainfall from the barrel's intake and nothing else (§3.4).
+    covered: bool,
+    /// Pavement pervious-paver fraction; scales sub-surface ET (§3.4).
+    pave_perv_frac: f64,
     drain: Option<DrainParams>,
     mat_thick: f64,
     mat_void: f64,
@@ -78,8 +82,9 @@ pub struct LidUnit {
     total_inflow: f64,
     /// The next regeneration boundary (elapsed days).
     next_regen: f64,
-    /// Cumulative Green–Ampt-style intake head state: event volume (m).
-    f_intake: f64,
+    /// §3.4 surface-to-soil intake: a modified Green–Ampt state on the
+    /// soil layer's parameters; `None` without a soil layer.
+    soil_ga: Option<InfilState>,
     /// Rates from the last step (m/s over the unit area).
     pub overflow: f64,
     pub drain_flow: f64,
@@ -92,8 +97,9 @@ pub struct LidUnit {
     /// Green-roof mat Manning factor √S/n over the mat roughness; zero
     /// means a roughness-free mat passing percolation through (§3.4).
     mat_alpha: f64,
-    /// Unit top width over area (1/m), the mat's flow-length factor.
-    mat_width_per_area: f64,
+    /// Unit top width over area (1/m): the α scale for surface and
+    /// mat Manning outflow (§3.2, §3.4).
+    width_per_area: f64,
 }
 
 /// A swale's trapezoidal section, per deployed unit (§3.4): widths
@@ -238,13 +244,17 @@ impl LidUnit {
             soil_wp: soil.map_or(0.0, |x| x.wilting_point),
             soil_ksat: soil.map_or(0.0, |x| x.k_sat),
             soil_kslope: soil.map_or(0.0, |x| x.k_slope),
-            soil_suction: soil.map_or(0.0, |x| x.suction),
             stor_thick: stor.map_or(0.0, |x| x.thickness),
             stor_void: stor.map_or(0.0, |x| x.void_frac.max(1e-6)),
             stor_ksat: stor.map_or(0.0, |x| x.k_sat),
-            // Green roofs and rain barrels are sealed (§3.4).
-            sealed: matches!(kind, LidKind::GreenRoof | LidKind::RainBarrel)
-                || stor.is_some_and(|x| x.covered),
+            // Green roofs and rain barrels are sealed (§3.4); cover is
+            // the barrel's rain exclusion, never a seal.
+            sealed: matches!(kind, LidKind::GreenRoof | LidKind::RainBarrel),
+            covered: stor.is_some_and(|x| x.covered),
+            pave_perv_frac: ctl
+                .pavement
+                .as_ref()
+                .map_or(1.0, |x| (1.0 - x.imperv_frac).max(0.0)),
             drain: ctl.drain.as_ref().map(|d| DrainParams {
                 coeff: d.coeff,
                 exponent: d.exponent,
@@ -289,11 +299,27 @@ impl LidUnit {
             theta2,
             d3,
             drain_open: false,
-            drain_delay_left: 0.0,
+            // §3.4: the delay clock starts full, so a run beginning dry
+            // opens the drain only after the configured dry time.
+            drain_delay_left: ctl.drain.as_ref().map_or(0.0, |d| d.delay),
             vol_treated: 0.0,
             total_inflow: 0.0,
             next_regen: ctl.pavement.as_ref().map_or(0.0, |x| x.regen_days),
-            f_intake: 0.0,
+            // §3.4: the intake state is modified Green–Ampt on the soil
+            // layer's parameters, its deficit shrunk by initial
+            // saturation. Pavement units intake through the pavement.
+            soil_ga: match (soil, ctl.pavement.as_ref()) {
+                (Some(so), None) => Some(InfilState::build(
+                    &Infiltration::GreenAmpt {
+                        suction: so.suction,
+                        conductivity: so.k_sat,
+                        initial_deficit: (1.0 - usage.init_saturation.clamp(0.0, 1.0))
+                            * (so.porosity - so.wilting_point).max(0.0),
+                    },
+                    InfiltrationModel::ModifiedGreenAmpt,
+                )),
+                _ => None,
+            },
             overflow: 0.0,
             drain_flow: 0.0,
             exfiltration: 0.0,
@@ -305,7 +331,7 @@ impl LidUnit {
                 }
                 _ => 0.0,
             },
-            mat_width_per_area: if usage.area > 0.0 {
+            width_per_area: if usage.area > 0.0 {
                 usage.width / usage.area
             } else {
                 0.0
@@ -323,7 +349,15 @@ impl LidUnit {
 
     /// Water currently held per unit area (m).
     pub fn stored_depth(&self) -> f64 {
-        self.d1 * self.surf_void + self.theta2 * self.soil_thick + self.d3 * self.stor_void
+        // A swale's ponded volume follows its trapezoidal section, not
+        // the flat-layer product (§11.1 exactness).
+        let surface = match self.swale {
+            Some(g) if g.top > 0.0 => {
+                self.d1 * (g.bot + g.slope * self.d1) * self.surf_void / g.top
+            }
+            _ => self.d1 * self.surf_void,
+        };
+        surface + self.theta2 * self.soil_thick + self.d3 * self.stor_void
     }
 
     /// Advance one hydrology step under the shared parcel forcing.
@@ -331,7 +365,7 @@ impl LidUnit {
     pub fn step(&mut self, f: &LidForcing, dt: f64) {
         self.evap_used = 0.0;
         match self.kind {
-            LidKind::RooftopDisconnection => self.step_rooftop(f.inflow, dt),
+            LidKind::RooftopDisconnection => self.step_rooftop(f.inflow, f.evap, dt),
             LidKind::RainBarrel => self.step_rain_barrel(f.inflow, f.rain, dt),
             LidKind::VegetativeSwale => {
                 self.step_swale(f.inflow, f.evap, f.native_infil, f.fac, dt)
@@ -346,21 +380,44 @@ impl LidUnit {
 
     /// Rooftop disconnection: a lone surface whose gutter-capacity drain
     /// pre-empts overflow (§3.4).
-    fn step_rooftop(&mut self, inflow: f64, dt: f64) {
+    fn step_rooftop(&mut self, inflow: f64, evap: f64, dt: f64) {
+        // §3.4: the lone-surface φ₁ balance — ponding, evaporation, and
+        // Manning outflow — with the gutter-capacity drain pre-empting
+        // overflow.
+        let e1 = evap.min(self.d1 * self.surf_void / dt + inflow).max(0.0);
+        self.d1 = (self.d1 + (inflow - e1) * dt / self.surf_void).max(0.0);
+        let mut over = 0.0;
+        if self.d1 > self.surf_berm {
+            let excess = self.d1 - self.surf_berm;
+            over = if self.surf_alpha > 0.0 && self.width_per_area > 0.0 {
+                (self.surf_alpha * self.width_per_area * excess.powf(5.0 / 3.0))
+                    .min(excess * self.surf_void / dt)
+            } else {
+                excess * self.surf_void / dt
+            };
+            self.d1 -= over * dt / self.surf_void;
+        }
         let cap =
             self.drain
                 .as_ref()
                 .map_or(f64::MAX, |d| if d.coeff > 0.0 { d.coeff } else { f64::MAX });
-        let drained = inflow.min(cap);
+        let drained = over.min(cap);
         self.drain_flow = drained;
-        self.overflow = inflow - drained;
+        self.overflow = over - drained;
         self.exfiltration = 0.0;
-        let _ = dt;
+        self.evap_used = e1;
     }
 
     /// Rain barrel: pure sealed storage; intake limited by freeboard plus
     /// concurrent drain outflow; the drain opens after its dry delay.
     fn step_rain_barrel(&mut self, inflow: f64, rain: f64, dt: f64) {
+        // §3.4: a covered barrel excludes direct rainfall from its
+        // intake — the captured tributary share still enters.
+        let inflow = if self.covered {
+            (inflow - rain).max(0.0)
+        } else {
+            inflow
+        };
         let h = self.stor_thick;
         // Drain state: opens once dry weather has run the delay down.
         // Dryness is judged by the parcel's rainfall alone against the
@@ -369,7 +426,11 @@ impl LidUnit {
         let wet = rain > 7.055_6e-9;
         let mut q3 = 0.0;
         if let Some(d) = &self.drain {
-            if wet {
+            if d.delay <= 0.0 {
+                // §3.4: a zero delay never latches the drain — it
+                // discharges during rain.
+                self.drain_open = true;
+            } else if wet {
                 self.drain_delay_left = d.delay;
                 self.drain_open = false;
             } else if !self.drain_open {
@@ -507,12 +568,15 @@ impl LidUnit {
             }
             k
         } else if has_soil {
-            let deficit = (self.soil_por - self.theta2).max(0.0);
-            if deficit <= 0.0 {
+            // §3.4: surface-to-soil intake is modified Green–Ampt on the
+            // soil layer's parameters; saturated soil passes K₂S.
+            if (self.soil_por - self.theta2).max(0.0) <= 0.0 {
                 self.soil_ksat
             } else {
-                self.f_intake = (self.f_intake + avail.max(0.0) * dt).max(1e-9);
-                self.soil_ksat * (1.0 + (self.soil_suction + self.d1) * deficit / self.f_intake)
+                match &mut self.soil_ga {
+                    Some(ga) => ga.step(dt, inflow.max(0.0), self.d1, forcing.fac),
+                    None => self.soil_ksat,
+                }
             }
         } else {
             // Infiltration trench: one end-limited surface-to-storage flux.
@@ -524,17 +588,23 @@ impl LidUnit {
         let e1 = evap
             .min(self.d1 * self.surf_void / dt + inflow - f1)
             .max(0.0);
+        // §3.4: the predecessor's suppression rules — sub-surface ET
+        // scales by the pervious paver fraction under pavement, and a
+        // green roof's mat still evaporates.
+        let perv = if self.pave_thick > 0.0 {
+            self.pave_perv_frac
+        } else {
+            1.0
+        };
         let mut e2 = 0.0;
         if has_soil {
-            e2 = (evap - e1)
+            e2 = ((evap - e1) * perv)
                 .min((self.theta2 - self.soil_wp).max(0.0) * self.soil_thick / dt)
                 .max(0.0);
         }
-        let e3 = if self.sealed {
-            0.0
-        } else {
-            (evap - e1 - e2).min(self.d3 * stor_void / dt).max(0.0)
-        };
+        let e3 = ((evap - e1 - e2) * perv)
+            .min(self.d3 * stor_void / dt)
+            .max(0.0);
 
         // Soil percolation, clipped by drainable water.
         let mut f2 = if has_soil {
@@ -565,8 +635,10 @@ impl LidUnit {
                 0.0
             } else {
                 // Rain garden: the unconditional equal-flux rule binds
-                // percolation to exfiltration.
-                f2 = f2.min(self.stor_ksat.max(self.soil_ksat));
+                // percolation to exfiltration at the native soil's
+                // conductivity — the storage line's kSat, whose zero
+                // seals the bottom (§3.4).
+                f2 = f2.min(if self.sealed { 0.0 } else { self.stor_ksat });
                 f2
             }
         } else {
@@ -612,7 +684,7 @@ impl LidUnit {
             } else if self.mat_thick > 0.0 {
                 // Manning flow through the drainage mat (§3.4), clipped
                 // by the standing water plus this step's percolation.
-                q3 = self.mat_alpha * self.d3.powf(5.0 / 3.0) * self.mat_width_per_area * stor_void;
+                q3 = self.mat_alpha * self.d3.powf(5.0 / 3.0) * self.width_per_area * stor_void;
                 q3 = q3.min((self.d3 * stor_void / dt + f2 - f3).max(0.0));
             }
             // Percolation re-capped by storage freeboard plus outflow.
@@ -631,9 +703,12 @@ impl LidUnit {
         self.d1 = (self.d1 + net1 * dt / self.surf_void).max(0.0);
         let mut over = 0.0;
         if self.d1 > self.surf_berm {
+            // §3.4: Manning at the §3.2 α — width over area included; a
+            // widthless unit spills its excess directly.
             let excess = self.d1 - self.surf_berm;
-            over = if self.surf_alpha > 0.0 {
-                (self.surf_alpha * excess.powf(5.0 / 3.0)).min(excess * self.surf_void / dt)
+            over = if self.surf_alpha > 0.0 && self.width_per_area > 0.0 {
+                (self.surf_alpha * self.width_per_area * excess.powf(5.0 / 3.0))
+                    .min(excess * self.surf_void / dt)
             } else {
                 excess * self.surf_void / dt
             };
@@ -648,10 +723,6 @@ impl LidUnit {
             self.d3 = (self.d3 + (inflow3 - e3 - f3 - q3) * dt / stor_void).clamp(0.0, stor_thick);
         } else if !has_soil {
             f3 = f1;
-        }
-        // Dry spell resets the intake event state.
-        if inflow <= 0.0 && self.d1 <= 0.0 {
-            self.f_intake = 0.0;
         }
         self.overflow = over;
         self.drain_flow = q3;
