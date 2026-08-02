@@ -262,6 +262,8 @@ enum StructKind {
         cd: f64,
         sec: Section,
         flap: bool,
+        /// Open/close travel time (s); 0 slams instantly (§7.2).
+        orate: f64,
     },
     Weir {
         form: WeirForm,
@@ -506,8 +508,11 @@ pub struct Router {
     /// Pump on/off latches (§7.1).
     pump_on: Vec<bool>,
     /// §9 operational settings per structure: pump speed, orifice/weir
-    /// opening fraction, outlet scale. Default 1.
+    /// opening fraction, outlet scale. Default 1. `sett` is the target;
+    /// `sett_cur` is the acting value, which slews for orifices with an
+    /// open/close rate (§7.2) and follows instantly otherwise.
     sett: Vec<f64>,
+    sett_cur: Vec<f64>,
     /// §9 channel open/closed states. Default open.
     chan_open: Vec<bool>,
     /// Time of the last §9 status flip, per structure and per channel
@@ -871,6 +876,7 @@ impl Router {
                     orientation,
                     discharge_coeff,
                     flap_gate,
+                    open_close_time,
                     ..
                 } => {
                     let sec = build_struct_section(net, li, len, &link.id)?;
@@ -879,6 +885,7 @@ impl Router {
                         cd: *discharge_coeff,
                         flap: *flap_gate,
                         sec,
+                        orate: *open_close_time,
                     }
                 }
                 LinkKind::Weir {
@@ -976,6 +983,7 @@ impl Router {
             sq: vec![0.0; ns],
             pump_on,
             sett: vec![1.0; ns],
+            sett_cur: vec![1.0; ns],
             chan_open: vec![true; nc],
             struct_flip_t: vec![0.0; ns],
             chan_flip_t: vec![0.0; nc],
@@ -1492,6 +1500,23 @@ impl Router {
         self.net_flow = trial.net_flow;
         self.report.losses += trial.loss_rate * dt;
         self.report.accepted += 1;
+        // §7.2: orifice settings slew toward their targets at the
+        // open/close rate; everything else follows instantly.
+        for (si, st) in self.structs.iter().enumerate() {
+            let target = self.sett[si];
+            match &st.kind {
+                StructKind::Orifice { orate, .. } if *orate > 0.0 => {
+                    let delta = target - self.sett_cur[si];
+                    let step = dt / orate;
+                    if step + 0.001 >= delta.abs() {
+                        self.sett_cur[si] = target;
+                    } else {
+                        self.sett_cur[si] += delta.signum() * step;
+                    }
+                }
+                _ => self.sett_cur[si] = target,
+            }
+        }
         self.worst_counts[trial.worst_vertex] += 1;
         // §11.2: per-object statistics, gated on the report start.
         if self.t >= self.stats_start {
@@ -1560,7 +1585,16 @@ impl Router {
                 let arg = match kind {
                     PumpKind::Volume(_) => Some(self.vertex_volume_now(from)),
                     PumpKind::Depth(_) | PumpKind::InlineDepth(_) => Some(self.y[from]),
-                    PumpKind::Head { .. } => Some(dh),
+                    // Type 5 looks its rated curve up at the
+                    // affinity-scaled head (§7.1, §11.2).
+                    PumpKind::Head { affinity, .. } => {
+                        let sp = if *affinity {
+                            self.sett[si].max(1e-6)
+                        } else {
+                            1.0
+                        };
+                        Some(dh / (sp * sp))
+                    }
                     PumpKind::Ideal => None,
                 };
                 let ends = match kind {
@@ -1690,16 +1724,24 @@ impl Router {
                     pos_in[st.from] -= qt;
                 }
             }
+            // Every structure reads the same frozen pre-structure state;
+            // accumulations apply afterwards (§6.4).
+            let net_base = net_new.clone();
+            let surf_base = surf.clone();
             let mut sq_next = vec![0.0; self.structs.len()];
+            let mut areas = vec![(0.0, 0.0); self.structs.len()];
             for si in 0..self.structs.len() {
                 let (qn, s1, s2) =
-                    self.structure_flow(si, &y, sq[si], dt, step, &pos_in, &net_new, &surf);
+                    self.structure_flow(si, &y, sq[si], dt, step, &pos_in, &net_base, &surf_base);
                 sq_next[si] = qn;
+                areas[si] = (s1, s2);
+            }
+            for (si, (s1, s2)) in areas.into_iter().enumerate() {
                 let st = &self.structs[si];
                 surf[st.from] += s1;
                 surf[st.to] += s2;
-                net_new[st.from] -= qn;
-                net_new[st.to] += qn;
+                net_new[st.from] -= sq_next[si];
+                net_new[st.to] += sq_next[si];
             }
             q = q_next;
             sq = sq_next;
@@ -1713,9 +1755,9 @@ impl Router {
                 let v = &self.verts[vi];
                 match &v.class {
                     VertClass::Outfall(b) => {
-                        // Boundary depth from the connecting channel.
+                        // Boundary depth from the connecting channel;
+                        // outfalls sit outside the §6.4 head criterion.
                         let y_new = self.outfall_depth(vi, b, &q);
-                        max_dy = max_dy.max((y_new - y[vi]).abs());
                         y[vi] = y_new;
                     }
                     _ => {
@@ -1915,6 +1957,7 @@ impl Router {
                 cd,
                 sec,
                 flap,
+                ..
             } => self.orifice_flow(
                 st,
                 *bottom,
@@ -2041,8 +2084,8 @@ impl Router {
         // The changeover height and the derived weir coefficient (§7.2).
         let (h_crit, c_weir);
         if bottom {
-            let a_over_l = if sec.is_closed() && sec.w_max().1 == opening {
-                // Circular opening.
+            let a_over_l = if sec.is_closed() && (sec.w_max().1 - sec.y_full()).abs() < 1e-9 {
+                // Circular opening: A/P of the open portion (§7.2).
                 opening / 4.0
             } else {
                 let w = sec.w_max().1;
@@ -2231,7 +2274,15 @@ impl Router {
                 }
                 WeirForm::VNotch => {
                     let slope = sec.w_max().1 / (2.0 * full_opening);
-                    (cd1 * slope * head.powf(2.5), 0.0)
+                    if setting < 1.0 {
+                        // A partially raised crest turns the notch into
+                        // a trapezoid: the cut width becomes the bottom
+                        // (§7.3).
+                        let bottom = sec.w_max().1 * (1.0 - setting);
+                        (cd1 * bottom * head.powf(1.5), cd1 * slope * head.powf(2.5))
+                    } else {
+                        (cd1 * slope * head.powf(2.5), 0.0)
+                    }
                 }
                 WeirForm::Trapezoidal => {
                     let bottom = sec.top_width(0.0);
@@ -2373,6 +2424,8 @@ impl Router {
             v = V_MAX * v.signum();
         }
         let fr = froude(v, a_mid, sec.width(y_mid.max(DRY)));
+        // §6.6: the kinematic-limit criterion reads the *upstream* end.
+        let fr_up = froude(q_last / a1.max(DRY), a1.max(DRY), sec.width(y1.max(DRY)));
 
         // Inertial damping and upstream weighting.
         let mut sigma = if fr <= 0.5 {
@@ -2461,9 +2514,9 @@ impl Router {
         // Culvert inlet control caps positive, non-full flow (§7.6);
         // otherwise the normal-flow limit applies (§6.6).
         if q_new > 0.0 && !is_full && c.culvert > 0 && c.culvert < tables::CULVERT_PARAMS.len() {
-            q_new = culvert_inlet_cap(c, q_new / c.barrels, y1) * c.barrels;
+            q_new = culvert_inlet_cap(c, q_new, y1);
         } else if q_new > 0.0 && y1 < y_full && matches!(class, FlowClass::Subcritical) {
-            q_new = self.normal_flow_limit(ci, q_new, y1, y2, a1, r1, fr);
+            q_new = self.normal_flow_limit(ci, q_new, y1, y2, a1, r1, fr_up);
         }
 
         // Under-relaxation with the zero-crossing rule (§6.4).
@@ -2546,9 +2599,10 @@ impl Router {
         }
     }
 
+    /// Normal and critical depths for a per-barrel flow (§6.6).
     fn char_depths(&self, ci: usize, q: f64) -> (f64, f64) {
         let c = &self.chans[ci];
-        let per_barrel = (q / c.barrels).abs();
+        let per_barrel = q.abs();
         let yn = c
             .geom
             .sec

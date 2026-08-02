@@ -57,6 +57,8 @@ struct Geo {
     tcrown: f64,
     nsides: f64,
     qfactor: f64,
+    /// 1.486·√S/n, the drop-inlet conveyance factor (ft units).
+    beta: f64,
 }
 
 /// One placed inlet, precompiled to HEC-22's units.
@@ -118,6 +120,7 @@ impl Inlets {
                         tcrown: st.crown_width / FT,
                         nsides: f64::from(st.sides.max(1)),
                         qfactor: (0.56 / n) * slope.max(1.0e-5).powf(0.5) * sx.powf(1.67),
+                        beta: 1.486 * slope.max(1.0e-5).sqrt() / n,
                     }
                 }
                 None => Geo {
@@ -129,6 +132,7 @@ impl Inlets {
                     tcrown: f64::MAX,
                     nsides: 1.0,
                     qfactor: (0.56 / roughness) * slope.max(1.0e-5).powf(0.5) * 0.01_f64.powf(1.67),
+                    beta: 1.486 * slope.max(1.0e-5).sqrt() / roughness,
                 },
             };
             // AUTOMATIC resolves by the bypass vertex's topology: any
@@ -204,10 +208,19 @@ impl Inlets {
             let d_ft = router.depth(inlet.bypass) / FT;
             let design = &net.inlets[inlet.design];
             let q_cfs = q_si / CFS;
+            // Drop inlets in ordinary conduits read the link's own flow
+            // geometry rather than a street section (§7.8).
+            let link_state = (
+                router.link_depth(inlet.link).unwrap_or(0.0) / FT,
+                router
+                    .link_velocity(inlet.link)
+                    .map(|v| v.abs() / FT)
+                    .unwrap_or(0.0),
+            );
             let mut captured = if design.custom_curve.is_some() {
                 custom_capture(inlet, design, net, q_si, router.depth(inlet.bypass)) / CFS
             } else if inlet.on_grade {
-                on_grade_capture(inlet, design, q_cfs, d_ft)
+                on_grade_capture(inlet, design, q_cfs, d_ft, link_state)
             } else {
                 on_sag_capture(inlet, design, d_ft)
             };
@@ -319,7 +332,13 @@ fn gutter_area_ratio(g: &Geo, t: f64, wg: f64, area: f64) -> f64 {
 }
 
 /// On-grade capture for one inlet of the design (cfs in, cfs out).
-fn on_grade_capture(inlet: &InletState, design: &crate::model::InletDesign, q: f64, d: f64) -> f64 {
+fn on_grade_capture(
+    inlet: &InletState,
+    design: &crate::model::InletDesign,
+    q: f64,
+    d: f64,
+    link_state: (f64, f64),
+) -> f64 {
     if q < MIN_Q {
         return 0.0;
     }
@@ -327,7 +346,7 @@ fn on_grade_capture(inlet: &InletState, design: &crate::model::InletDesign, q: f
     let mut approach = q / g.nsides;
     let mut captured = 0.0;
     for _ in 0..inlet.count {
-        let qc = single_on_grade(inlet, design, approach, d) * inlet.clog;
+        let qc = single_on_grade(inlet, design, approach, d, link_state) * inlet.clog;
         let qc = qc.min(inlet.q_limit).min(approach);
         captured += qc;
         approach -= qc;
@@ -338,15 +357,20 @@ fn on_grade_capture(inlet: &InletState, design: &crate::model::InletDesign, q: f
     captured * g.nsides
 }
 
-fn single_on_grade(inlet: &InletState, design: &crate::model::InletDesign, q: f64, d: f64) -> f64 {
+fn single_on_grade(
+    inlet: &InletState,
+    design: &crate::model::InletDesign,
+    q: f64,
+    d: f64,
+    link_state: (f64, f64),
+) -> f64 {
     let g = inlet.geo;
     // Drop inlets in non-street conduits operate on their own modes.
     if design.drop_curb {
         return on_sag_single(inlet, design, d).min(q);
     }
     if design.drop_grate {
-        let t = flow_spread(&g, q);
-        return grate_capture(inlet, design, q, t).min(q);
+        return drop_grate_capture(inlet, design, q, link_state).min(q);
     }
     let mut t = flow_spread(&g, q);
     if let Some(s) = &design.slotted {
@@ -370,6 +394,46 @@ fn single_on_grade(inlet: &InletState, design: &crate::model::InletDesign, q: f6
         qc += grate_capture(inlet, design, q1, t);
     }
     qc
+}
+
+/// On-grade drop-grate capture: the frontal-flow ratio from the
+/// conduit's own section, Eo = β(Y·Wg)^1.67/(Wg+2Y)^0.67/Q, with the
+/// grate efficiencies of Eqs (4-18)/(4-19) (§7.8).
+fn drop_grate_capture(
+    inlet: &InletState,
+    design: &crate::model::InletDesign,
+    q: f64,
+    link_state: (f64, f64),
+) -> f64 {
+    let Some(grate) = design.grate.as_ref() else {
+        return 0.0;
+    };
+    if q <= 0.0 {
+        return 0.0;
+    }
+    let g = inlet.geo;
+    let (lg, wg) = (grate.length / FT, grate.width / FT);
+    let (y, v) = link_state;
+    if y <= 0.0 {
+        return 0.0;
+    }
+    let mut e_o = (g.beta * (y * wg).powf(1.67) / (wg + 2.0 * y).powf(0.67) / q).min(1.0);
+    if e_o.is_nan() {
+        e_o = 1.0;
+    }
+    let vo = if grate.grate == GrateKind::Generic {
+        grate.splash_velocity / FT
+    } else {
+        let c = SPLASH[grate_index(grate.grate)];
+        c[0] + c[1] * lg - c[2] * lg * lg + c[3] * lg * lg * lg
+    };
+    let rf = if v > vo { 1.0 - 0.09 * (v - vo) } else { 1.0 };
+    let rs = if e_o < 1.0 {
+        1.0 / (1.0 + 0.15 * v.powf(1.8) / g.sx / lg.powf(2.3))
+    } else {
+        0.0
+    };
+    q * (rf.clamp(0.0, 1.0) * e_o + rs * (1.0 - e_o))
 }
 
 /// HEC-22 grate capture, Eqs (4-16)–(4-21).
