@@ -1639,6 +1639,66 @@ QIN  9:00  2.0
     );
 }
 
+// ── §3.1 climate records ────────────────────────────────────────────────
+
+#[test]
+fn hargreaves_evaporation_runs_from_supplied_climate_records() {
+    // Constant 30/20 °C days at the equator: Hargreaves settles at
+    // ≈ 4.3 mm/day. The records arrive through the caller-owned climate
+    // channel; the parser reads the user format.
+    let climate_text = "\
+STA  2024  5  25  30  20
+STA  2024  6  2   30  20
+";
+    let records = hydra_engine_uds::io::climate::parse_climate_file(climate_text).expect("parse");
+    let inp = runoff_model(100.0, 10.0, "HORTON")
+        + "
+[EVAPORATION]
+TEMPERATURE
+DRY_ONLY  NO
+
+[TEMPERATURE]
+FILE  climate.txt
+";
+    let (mut sim, _, _) =
+        hydra_engine_uds::simulation::Simulation::open_with_climate(&inp, records).expect("open");
+    sim.run();
+    // The surface ledger's evaporation side carries a real volume: the
+    // ponded tail evaporates at the Hargreaves rate.
+    let led = sim.ledgers();
+    let surf = led.surface.expect("ledger");
+    assert!(
+        surf.error_percent.abs() < 5.0,
+        "surface error {}%",
+        surf.error_percent
+    );
+    let mut rpt = Vec::new();
+    sim.write_report(&mut rpt).expect("report");
+    let rpt = String::from_utf8(rpt).unwrap();
+    let line = rpt
+        .lines()
+        .find(|l| l.contains("Evaporation Loss"))
+        .expect("evap line");
+    let v: f64 = line
+        .split_whitespace()
+        .rev()
+        .nth(1)
+        .unwrap()
+        .parse()
+        .expect("volume");
+    assert!(v > 0.0, "no evaporation booked: {line}");
+}
+
+#[test]
+fn missing_climate_records_refuse_hargreaves_at_open() {
+    let inp = runoff_model(100.0, 10.0, "HORTON")
+        + "
+[EVAPORATION]
+TEMPERATURE
+";
+    assert!(Simulation::open(&inp).is_err());
+}
+
 // ── §3.4 control measures ───────────────────────────────────────────────
 
 #[test]

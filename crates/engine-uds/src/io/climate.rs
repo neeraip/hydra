@@ -426,6 +426,56 @@ pub(crate) fn parse_adjustments(
     }
 }
 
+/// Parse a user-format daily climate file (§3.1): one record per line,
+/// `station year month day tmax tmin (evap) (wind)`, `*` for a missing
+/// value. The archival TD-3200, DLY0204, and GHCND formats are refused,
+/// typed, for a follow-up stage.
+pub fn parse_climate_file(text: &str) -> Result<Vec<crate::model::DailyClimate>, String> {
+    let mut out = Vec::new();
+    for (ln, line) in text.lines().enumerate() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with(';') {
+            continue;
+        }
+        if line.starts_with("DLY") || line.starts_with("GHCND") {
+            return Err(
+                "archival climate-file formats (TD-3200/DLY0204/GHCND) arrive with a \
+                 follow-up stage"
+                    .into(),
+            );
+        }
+        let t: Vec<&str> = line.split_whitespace().collect();
+        if t.len() < 6 {
+            return Err(format!("climate line {}: too few values", ln + 1));
+        }
+        let num = |s: &str| -> Result<Option<f64>, String> {
+            if s == "*" {
+                return Ok(None);
+            }
+            s.parse::<f64>()
+                .map(Some)
+                .map_err(|_| format!("climate line {}: bad value '{s}'", ln + 1))
+        };
+        let year: i32 = t[1]
+            .parse()
+            .map_err(|_| format!("climate line {}: bad year", ln + 1))?;
+        let month: u32 = t[2]
+            .parse()
+            .map_err(|_| format!("climate line {}: bad month", ln + 1))?;
+        let day: u32 = t[3]
+            .parse()
+            .map_err(|_| format!("climate line {}: bad day", ln + 1))?;
+        out.push(crate::model::DailyClimate {
+            date: crate::io::options::Date { year, month, day },
+            tmax: num(t[4])?,
+            tmin: num(t[5])?,
+            evap: t.get(6).map(|s| num(s)).transpose()?.flatten(),
+            wind: t.get(7).map(|s| num(s)).transpose()?.flatten(),
+        });
+    }
+    Ok(out)
+}
+
 #[cfg(test)]
 mod tests {
     use crate::io::objects::parse_network;

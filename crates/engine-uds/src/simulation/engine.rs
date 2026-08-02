@@ -157,6 +157,41 @@ pub struct RuntimeNotice {
     pub message: String,
 }
 
+/// The §3.1 day-state over supplied climate records: daily min/max
+/// temperatures with their sinusoidal clock, the 7-day Hargreaves
+/// window, and the pan-scaled file evaporation. All temperatures °F
+/// internally, per the relations' native units.
+#[derive(Debug, Clone, Default)]
+struct ClimateDayState {
+    /// The civil day last analysed.
+    last_day: i64,
+    tmin: f64,
+    tmax: f64,
+    tave: f64,
+    trng: f64,
+    /// Previous day's max minus today's min, the overnight limb.
+    trng1: f64,
+    prev_tmax: Option<f64>,
+    /// Sunrise, effective sunset (3 h early), and their derived spans.
+    hrsr: f64,
+    hrss: f64,
+    hrday: f64,
+    dhrdy: f64,
+    dydif: f64,
+    /// The 7-day moving window on daily average and range.
+    ma_ta: Vec<f64>,
+    ma_tr: Vec<f64>,
+    front: usize,
+    t_ave7: f64,
+    t_rng7: f64,
+    /// Today's Hargreaves rate (m/s).
+    hargreaves: f64,
+    /// Today's file evaporation (m/s), pan-scaled.
+    file_evap: f64,
+    /// Today's wind (same unit the monthly table uses).
+    wind: f64,
+}
+
 struct EventWindow {
     start: f64,
     end: f64,
@@ -200,6 +235,9 @@ pub struct Simulation {
     surface_quality: Option<crate::transport::SurfaceQuality>,
     /// §7.8 street-inlet capture, when the model places inlets.
     inlets: Option<crate::hydraulics::inlets::Inlets>,
+    /// Supplied daily climate records (§3.1), chronological.
+    climate_records: Vec<crate::model::DailyClimate>,
+    climate_state: ClimateDayState,
     /// Bracketing hydrology lateral mass rates `[p][v]` (unit·m³/s).
     hydro_mass_prev: Vec<Vec<f64>>,
     hydro_mass_now: Vec<Vec<f64>>,
@@ -230,6 +268,17 @@ impl Simulation {
     /// both passes are returned alongside the session.
     pub fn open(
         input: &str,
+    ) -> Result<(Simulation, Vec<Diagnostic>, Vec<ValidationDiagnostic>), OpenError> {
+        Simulation::open_with_climate(input, Vec::new())
+    }
+
+    /// Load a model together with daily climate records (§3.1) — the
+    /// caller owns reading the climate file; `io::climate` parses its
+    /// text. Records serve file-sourced temperature, evaporation, wind,
+    /// and the Hargreaves relation.
+    pub fn open_with_climate(
+        input: &str,
+        climate_records: Vec<crate::model::DailyClimate>,
     ) -> Result<(Simulation, Vec<Diagnostic>, Vec<ValidationDiagnostic>), OpenError> {
         let (mut net, diags) = parse_network(input);
         if diags.iter().any(|d| d.kind.is_error()) {
@@ -310,13 +359,16 @@ impl Simulation {
 
         // §8: this stage evaluates network transport only; surface
         // accumulation-mobilisation and treatment refuse, typed.
-        if matches!(
-            net.climate.evaporation,
-            crate::model::EvaporationSource::Temperature
-                | crate::model::EvaporationSource::File { .. }
-        ) {
+        if climate_records.is_empty()
+            && matches!(
+                net.climate.evaporation,
+                crate::model::EvaporationSource::Temperature
+                    | crate::model::EvaporationSource::File { .. }
+            )
+        {
             return Err(OpenError::Surface(SurfaceRefusal::Unsupported(
-                "Hargreaves and climate-file evaporation join with the climate-state stage",
+                "Hargreaves and climate-file evaporation need supplied climate records \
+                 (open_with_climate)",
             )));
         }
         let quality = if net.constituents.is_empty() {
@@ -375,6 +427,11 @@ impl Simulation {
                 quality,
                 surface_quality,
                 inlets,
+                climate_records,
+                climate_state: ClimateDayState {
+                    last_day: i64::MIN,
+                    ..ClimateDayState::default()
+                },
                 last_lat: vec![0.0; nv],
                 last_ext_total: 0.0,
                 last_dwf_total: 0.0,
@@ -469,6 +526,7 @@ impl Simulation {
             let m = (month - 1) as usize;
             let evap = self.evaporation_rate(month);
             let rain_factor = self.net.climate.adjust_rainfall[m];
+            self.update_climate_day(self.hydro_t);
             let fac = InfilFactors {
                 conductivity: self.net.climate.adjust_conductivity[m],
                 recovery: 1.0,
@@ -601,13 +659,18 @@ impl Simulation {
         let ta = match &self.net.climate.temperature {
             Some(TemperatureSource::Series(ts)) => {
                 let ts = *ts;
-                self.series_value(ts, t, true)
+                self.series_value(ts, t, true) + self.net.climate.adjust_temperature[month_index]
+            }
+            // File temperatures interpolate sinusoidally between the
+            // daily extremes (§3.1); the adjustment rode the extremes.
+            Some(TemperatureSource::File { .. }) if !self.climate_records.is_empty() => {
+                self.climate_temperature(t)
             }
             _ => return None,
-        } + self.net.climate.adjust_temperature[month_index];
+        };
         let wind = match &self.net.climate.wind {
             WindSource::Monthly(w) => w[month_index],
-            WindSource::File => 0.0,
+            WindSource::File => self.climate_state.wind,
         };
         // Day of year for the seasonal sweep.
         let epoch_days = ((self.start_epoch + t) / 86_400.0).floor() as i64;
@@ -629,6 +692,138 @@ impl Simulation {
             adc_impervious: self.net.climate.adc_impervious,
             adc_pervious: self.net.climate.adc_pervious,
         })
+    }
+
+    /// Advance the §3.1 climate day-state to the day containing run
+    /// time `t`: pull the daily record (missing values inheriting the
+    /// most recent), place the sinusoidal min/max clock, roll the 7-day
+    /// Hargreaves window, and pan-scale the file evaporation.
+    fn update_climate_day(&mut self, t: f64) {
+        if self.climate_records.is_empty() {
+            return;
+        }
+        let day = ((self.start_epoch + t) / 86_400.0).floor() as i64;
+        if day <= self.climate_state.last_day {
+            return;
+        }
+        let us = self.net.options.flow_units.is_us();
+        let to_f = |v: f64| if us { v } else { v * 1.8 + 32.0 };
+        let date = civil_from_days(day);
+        // The most recent record at or before today, inheriting missing
+        // values from earlier days (§3.1).
+        let (mut tmax, mut tmin, mut evap, mut wind) = (None, None, None, None);
+        for r in &self.climate_records {
+            if days_from_civil(r.date) > day {
+                break;
+            }
+            tmax = r.tmax.or(tmax);
+            tmin = r.tmin.or(tmin);
+            evap = r.evap.or(evap);
+            wind = r.wind.or(wind);
+        }
+        let m = (date.month - 1) as usize;
+        let adj = self.net.climate.adjust_temperature[m];
+        let adj_f = if us { adj } else { adj * 1.8 };
+        let mut lo = to_f(tmin.unwrap_or(0.0)) + adj_f;
+        let mut hi = to_f(tmax.unwrap_or(0.0)) + adj_f;
+        if lo > hi {
+            std::mem::swap(&mut lo, &mut hi);
+        }
+        let st = &mut self.climate_state;
+        st.tmin = lo;
+        st.tmax = hi;
+        st.tave = (lo + hi) / 2.0;
+        st.trng = (hi - lo) / 2.0;
+        st.trng1 = match st.prev_tmax {
+            Some(p) => p - lo,
+            None => hi - lo,
+        };
+        st.prev_tmax = Some(hi);
+        // Min at sunrise, max three hours before sunset (§3.1).
+        let jan1 = crate::io::options::Date {
+            year: date.year,
+            month: 1,
+            day: 1,
+        };
+        let doy = (day - days_from_civil(jan1) + 1) as f64;
+        let decl = 0.40928 * (0.017202 * (172.0 - doy)).cos();
+        let lat = self
+            .net
+            .climate
+            .snowmelt
+            .as_ref()
+            .map_or(0.0, |sm| sm.latitude);
+        let arg = -decl.tan() * (lat.to_radians()).tan();
+        let arg = if arg <= -1.0 {
+            std::f64::consts::PI
+        } else if arg >= 1.0 {
+            0.0
+        } else {
+            arg.acos()
+        };
+        let hrang = 3.8197 * arg;
+        st.hrsr = 12.0 - hrang;
+        st.hrss = 12.0 + hrang - 3.0;
+        st.dhrdy = st.hrsr - st.hrss;
+        st.dydif = 24.0 + st.hrsr - st.hrss;
+        st.hrday = (st.hrsr + st.hrss) / 2.0;
+        st.last_day = day;
+        // The 7-day Hargreaves window (§3.1).
+        let (ta, tr) = ((lo + hi) / 2.0, (hi - lo).abs());
+        if st.ma_ta.len() == 7 {
+            let n = 7.0;
+            st.t_ave7 = (st.t_ave7 * n + ta - st.ma_ta[st.front]) / n;
+            st.t_rng7 = (st.t_rng7 * n + tr - st.ma_tr[st.front]) / n;
+            st.ma_ta[st.front] = ta;
+            st.ma_tr[st.front] = tr;
+            st.front = (st.front + 1) % 7;
+        } else {
+            let n = st.ma_ta.len() as f64;
+            st.t_ave7 = (st.t_ave7 * n + ta) / (n + 1.0);
+            st.t_rng7 = (st.t_rng7 * n + tr) / (n + 1.0);
+            st.ma_ta.push(ta);
+            st.ma_tr.push(tr);
+            st.front = st.ma_ta.len() % 7;
+        }
+        // Hargreaves (§3.1), evaluated in its fitted units.
+        {
+            let a = 2.0 * std::f64::consts::PI / 365.0;
+            let ta_c = (st.t_ave7 - 32.0) * 5.0 / 9.0;
+            let tr_c = st.t_rng7 * 5.0 / 9.0;
+            let lamda = 2.50 - 0.002361 * ta_c;
+            let dr = 1.0 + 0.033 * (a * doy).cos();
+            let phi = lat.to_radians();
+            let del = 0.4093 * (a * (284.0 + doy)).sin();
+            let cos_omega = (-phi.tan() * del.tan()).clamp(-1.0, 1.0);
+            let omega = cos_omega.acos();
+            let ra =
+                37.6 * dr * (omega * phi.sin() * del.sin() + phi.cos() * del.cos() * omega.sin());
+            let e_mm_day = (0.0023 * ra / lamda * tr_c.max(0.0).sqrt() * (ta_c + 17.8)).max(0.0);
+            st.hargreaves = e_mm_day * 1.0e-3 / 86_400.0;
+        }
+        // Pan-scaled file evaporation (§3.1).
+        if let crate::model::EvaporationSource::File { pan } = &self.net.climate.evaporation {
+            let e = evap.unwrap_or(0.0) * pan[m];
+            st.file_evap = e * if us { 0.0254 } else { 1.0e-3 } / 86_400.0;
+        }
+        st.wind = wind.unwrap_or(0.0);
+    }
+
+    /// The climate temperature (°C) at run time `t` from daily records:
+    /// the §3.1 three-branch sinusoidal interpolation, overnight limb
+    /// spanning from the previous day's maximum.
+    fn climate_temperature(&self, t: f64) -> f64 {
+        let st = &self.climate_state;
+        let hour = ((self.start_epoch + t) / 3600.0) % 24.0;
+        let pi = std::f64::consts::PI;
+        let ta_f = if hour < st.hrsr {
+            st.tmin + st.trng1 / 2.0 * (pi / st.dydif * (st.hrsr - hour)).sin()
+        } else if hour <= st.hrss {
+            st.tave + st.trng * (pi / st.dhrdy * (st.hrday - hour)).sin()
+        } else {
+            st.tmax - st.trng * (pi / st.dydif * (hour - st.hrss)).sin()
+        };
+        (ta_f - 32.0) / 1.8
     }
 
     /// The potential surface evaporation rate (m/s) for a month, from the
@@ -656,9 +851,8 @@ impl Simulation {
                     1.0e-3
                 } / 86_400.0
             }
-            // Hargreaves and climate-file evaporation join with the
-            // climate-state stage; open() refuses them, typed.
-            _ => 0.0,
+            EvaporationSource::Temperature => self.climate_state.hargreaves,
+            EvaporationSource::File { .. } => self.climate_state.file_evap,
         };
         (base + self.net.climate.adjust_evaporation[m]).max(0.0)
     }

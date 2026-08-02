@@ -1704,6 +1704,24 @@ pub struct EventWindow {
     pub end_time: f64,
 }
 
+/// One daily climate record (§3.1), values in the file's units —
+/// temperatures °F (US) or °C (SI), evaporation in/day or mm/day, wind
+/// mph or km/h; `None` marks a missing value, which inherits the most
+/// recent recorded one at use.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct DailyClimate {
+    /// Calendar date.
+    pub date: crate::io::options::Date,
+    /// Daily maximum temperature.
+    pub tmax: Option<f64>,
+    /// Daily minimum temperature.
+    pub tmin: Option<f64>,
+    /// Daily pan evaporation.
+    pub evap: Option<f64>,
+    /// Daily average wind speed.
+    pub wind: Option<f64>,
+}
+
 /// A display-metadata section preserved verbatim (§14.5).
 #[derive(Debug, Clone, PartialEq)]
 pub struct DisplaySection {
