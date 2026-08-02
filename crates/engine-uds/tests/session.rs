@@ -1445,6 +1445,39 @@ fn the_subsurface_ledger_closes() {
     );
 }
 
+#[test]
+fn a_series_evaporation_holds_each_rate_stepwise() {
+    // 240 mm/day of evaporation out-competes most of a 25 mm/h storm;
+    // the series is a step function per §3.1.
+    let inp = runoff_model(100.0, 25.0, "HORTON")
+        + "
+[EVAPORATION]
+TIMESERIES  EVP
+DRY_ONLY    NO
+";
+    let inp = inp
+        + "
+[TIMESERIES]
+EVP  0:00  240
+";
+    let (mut sim, _, _) = Simulation::open(&inp).expect("open");
+    sim.run();
+    let rain_vol = 0.025 * 2.0 * 20_000.0;
+    let led = sim.report();
+    assert!(
+        led.inflow < 0.75 * rain_vol,
+        "evaporation removed nothing: {} of {rain_vol}",
+        led.inflow
+    );
+    // And the surface ledger books the evaporated share.
+    let surf = sim.ledgers().surface.expect("ledger");
+    assert!(
+        surf.error_percent.abs() < 5.0,
+        "surface error {}%",
+        surf.error_percent
+    );
+}
+
 // ── §3.4 control measures ───────────────────────────────────────────────
 
 #[test]

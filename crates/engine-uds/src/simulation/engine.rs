@@ -301,6 +301,15 @@ impl Simulation {
 
         // §8: this stage evaluates network transport only; surface
         // accumulation-mobilisation and treatment refuse, typed.
+        if matches!(
+            net.climate.evaporation,
+            crate::model::EvaporationSource::Temperature
+                | crate::model::EvaporationSource::File { .. }
+        ) {
+            return Err(OpenError::Surface(SurfaceRefusal::Unsupported(
+                "Hargreaves and climate-file evaporation join with the climate-state stage",
+            )));
+        }
         let quality = if net.constituents.is_empty() {
             None
         } else {
@@ -600,13 +609,30 @@ impl Simulation {
     /// The potential surface evaporation rate (m/s) for a month, from the
     /// §3.1 sources this stage evaluates, plus the monthly adjustment.
     fn evaporation_rate(&self, month: u32) -> f64 {
+        self.evaporation_rate_at(month, self.hydro_t)
+    }
+
+    /// The potential evaporation rate (m/s) at run time `t`: constant,
+    /// monthly, or the §3.1 step-function series — deliberately holding
+    /// each entry's rate until the next timestamp, where every other
+    /// series interpolates.
+    fn evaporation_rate_at(&self, month: u32, t: f64) -> f64 {
         use crate::model::EvaporationSource;
         let m = (month - 1) as usize;
         let base = match &self.net.climate.evaporation {
             EvaporationSource::Constant(e) => *e,
             EvaporationSource::Monthly(ms) => ms[m],
-            // Series, temperature, and climate-file evaporation join with
-            // the §4 climate state.
+            EvaporationSource::Series(si) => {
+                let raw = series_step_value(&self.net, self.start_epoch, *si, t);
+                // Values are written in the file's evaporation unit.
+                raw * if self.net.options.flow_units.is_us() {
+                    0.0254
+                } else {
+                    1.0e-3
+                } / 86_400.0
+            }
+            // Hargreaves and climate-file evaporation join with the
+            // climate-state stage; open() refuses them, typed.
             _ => 0.0,
         };
         (base + self.net.climate.adjust_evaporation[m]).max(0.0)
@@ -1279,6 +1305,31 @@ fn tidal_stage(points: &[(f64, f64)], secs: f64) -> f64 {
         return v0 + f * (v1 - v0);
     }
     points[0].1
+}
+
+/// A raw series value at run time `t` as a step function: each entry's
+/// value holds until the next timestamp (§3.1 evaporation), zero before
+/// the first and the last value held beyond the end.
+fn series_step_value(net: &Network, start_epoch: f64, si: usize, t: f64) -> f64 {
+    let TimeSeriesSource::Points(points) = &net.timeseries[si].source else {
+        return 0.0;
+    };
+    let at = |st: &SeriesTime| -> f64 {
+        match st {
+            SeriesTime::Elapsed(s) => *s,
+            SeriesTime::Absolute { date, seconds } => {
+                days_from_civil(*date) as f64 * 86_400.0 + seconds - start_epoch
+            }
+        }
+    };
+    let mut v = 0.0;
+    for pt in points {
+        if at(&pt.time) > t {
+            break;
+        }
+        v = pt.value;
+    }
+    v
 }
 
 /// A raw series value at run time `t`, warning-free: ends held for the
