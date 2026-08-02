@@ -205,10 +205,53 @@ fn a_planned_engine_is_refused_rather_than_run() {
     hydra_run()
         .arg(fixture_path("four_node_loop.inp"))
         .arg("--engine")
-        .arg("uds")
+        .arg("och")
         .assert()
         .code(1)
         .stderr(predicate::str::contains("not yet implemented"));
+}
+
+#[test]
+fn a_swmm_model_routes_to_uds_and_runs() {
+    // No --engine: the model's own sections identify it (common spec
+    // §2.5.1), and the uds engine runs it end to end. The fixture has no
+    // END_DATE, so this is a zero-length run — recognition, parsing, and
+    // the output writers are what is under test here.
+    let uds_fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(|p| p.parent())
+        .expect("workspace root")
+        .join("tests/fixtures/uds/buildup_washoff_treatment.inp");
+    let dir = tempfile::tempdir().expect("tempdir");
+    let rpt = dir.path().join("net.rpt");
+    let out = dir.path().join("net.out");
+
+    hydra_run()
+        .arg(&uds_fixture)
+        .arg("--summary")
+        .arg(&rpt)
+        .arg("--results")
+        .arg(&out)
+        .assert()
+        .success();
+
+    let report = std::fs::read_to_string(&rpt).expect("report written");
+    assert!(report.contains("urban drainage engine"), "{report}");
+    assert!(out.metadata().expect("results written").len() > 0);
+}
+
+#[test]
+fn forcing_uds_on_an_epanet_model_is_refused_at_parse() {
+    // Naming an engine skips recognition, not parsing: the uds reader sees
+    // only foreign sections and refuses the file rather than running an
+    // empty model to a confident zero answer.
+    hydra_run()
+        .arg(fixture_path("four_node_loop.inp"))
+        .arg("--engine")
+        .arg("uds")
+        .assert()
+        .code(1)
+        .stderr(predicate::str::contains("input/parse"));
 }
 
 #[test]

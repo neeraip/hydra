@@ -184,6 +184,144 @@ impl ValidationKind {
     }
 }
 
+impl std::fmt::Display for ValidationDiagnostic {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if self.element.is_empty() {
+            write!(f, "{}", self.kind)
+        } else {
+            write!(f, "{}: {}", self.element, self.kind)
+        }
+    }
+}
+
+impl std::fmt::Display for ValidationKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ValidationKind::NonIncreasingCurve => write!(f, "curve abscissae fail to increase"),
+            ValidationKind::NonIncreasingSeries => {
+                write!(f, "series timestamps fail to increase")
+            }
+            ValidationKind::AmbiguousParcelOutlet => {
+                write!(f, "outlet name matches both a node and a subcatchment")
+            }
+            ValidationKind::GroundBelowWaterTable => {
+                write!(f, "ground surface below the initial water table")
+            }
+            ValidationKind::CoGageFormatConflict => {
+                write!(f, "gages sharing a series declare different record forms")
+            }
+            ValidationKind::GageSeriesShared => {
+                write!(f, "gage series also feeds temperature or evaporation")
+            }
+            ValidationKind::GageIntervalCoarserThanSeries => {
+                write!(f, "recording interval coarser than the series it reads")
+            }
+            ValidationKind::NegativeTimeToPeak => {
+                write!(f, "unit-hydrograph response with a negative time to peak")
+            }
+            ValidationKind::ResponseFractionsAboveUnity => {
+                write!(f, "unit-hydrograph fractions sum above 1.01")
+            }
+            ValidationKind::CyclicTreatment => {
+                write!(f, "treatment expressions depend on each other's removals")
+            }
+            ValidationKind::MissingCrossSection => write!(f, "no cross-section"),
+            ValidationKind::BadSectionGeometry(reason) => {
+                write!(f, "refused section geometry: {reason}")
+            }
+            ValidationKind::RegulatorShape => {
+                write!(f, "section shape not accepted for this regulator form")
+            }
+            ValidationKind::StorageDummyOutflow => {
+                write!(f, "storage node drains through a zero-geometry channel")
+            }
+            ValidationKind::BadLength => write!(f, "non-positive length"),
+            ValidationKind::BadRoughness => write!(f, "non-positive roughness"),
+            ValidationKind::InitDepthAboveMax => {
+                write!(f, "initial depth above maximum plus surcharge")
+            }
+            ValidationKind::NegativeStorageVolume => {
+                write!(f, "negative integrated storage volume at full depth")
+            }
+            ValidationKind::BadPumpCurve => write!(f, "missing or invalid pump curve"),
+            ValidationKind::BadPumpDepths => {
+                write!(f, "startup depth at or below the shutoff depth")
+            }
+            ValidationKind::DividerLinkDetached => {
+                write!(f, "diverted link absent or unattached to this divider")
+            }
+            ValidationKind::BadWeirDivider => {
+                write!(f, "weir-divider parameters cannot form a rating")
+            }
+            ValidationKind::MaxDepthRaised { to } => {
+                write!(f, "maximum depth raised to {to:.3} m (highest link crown)")
+            }
+            ValidationKind::CrestRaised { to } => {
+                write!(f, "crest raised to {to:.3} m above the upstream invert")
+            }
+            ValidationKind::NegativeOffsetZeroed => write!(f, "negative invert offset zeroed"),
+            ValidationKind::NegligibleDrop => {
+                write!(f, "negligible elevation drop treated as the minimum")
+            }
+            ValidationKind::DropExceedsLength => {
+                write!(
+                    f,
+                    "elevation drop exceeds length; slope is drop over length"
+                )
+            }
+            ValidationKind::SlopeFloored { to } => write!(f, "slope floored at {to}"),
+            ValidationKind::ChannelReversed => {
+                write!(f, "adverse slope: channel reversed internally")
+            }
+            ValidationKind::RadiusRaised { to } => {
+                write!(f, "bottom radius enlarged to {to:.3} m (geometric minimum)")
+            }
+            ValidationKind::WetStepReduced { to } => {
+                write!(f, "wet-weather step reduced to {to} s (gage interval)")
+            }
+            ValidationKind::InletPlacementRemoved => {
+                write!(
+                    f,
+                    "inlet removed: placed on a channel its design cannot serve"
+                )
+            }
+            ValidationKind::GageIntervalFinerThanSeries => {
+                write!(f, "recording interval finer than the series' spacing")
+            }
+            ValidationKind::UserDimensionedEllipse => {
+                write!(f, "user-dimensioned ellipse evaluates at fixed proportions")
+            }
+            ValidationKind::StubChannel => {
+                write!(f, "channel short enough to Courant-limit the run")
+            }
+            ValidationKind::RuleMixesAndOr => {
+                write!(f, "rule mixes AND and OR; firing depends on precedence")
+            }
+            ValidationKind::DwfPatternSlotMismatch => {
+                write!(f, "sanitary-inflow pattern type does not match its slot")
+            }
+            ValidationKind::TidalCurveClockIndexed => {
+                write!(
+                    f,
+                    "tidal curve indexed by clock time under a non-midnight start"
+                )
+            }
+            ValidationKind::BuildupJumpsToMax => {
+                write!(
+                    f,
+                    "power buildup with zero rate or exponent jumps to maximum"
+                )
+            }
+            ValidationKind::EmptyModel => {
+                write!(
+                    f,
+                    "no conveyance nodes declared — likely not a drainage model"
+                )
+            }
+        }
+    }
+}
+
 fn push(d: &mut Vec<ValidationDiagnostic>, element: &str, kind: ValidationKind) {
     d.push(ValidationDiagnostic {
         element: element.to_string(),

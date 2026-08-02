@@ -145,6 +145,17 @@ pub enum RouterRefusal {
     Geometry(String),
 }
 
+impl std::fmt::Display for RouterRefusal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            RouterRefusal::Unsupported(what) => {
+                write!(f, "the router does not support {what} yet")
+            }
+            RouterRefusal::Geometry(reason) => write!(f, "section geometry refused: {reason}"),
+        }
+    }
+}
+
 /// Slot-modified geometry (§6.2): the section's true properties with the
 /// top width floored at the slot width and the closure band above the
 /// crown, continuous everywhere.

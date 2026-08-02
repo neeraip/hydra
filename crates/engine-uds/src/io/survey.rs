@@ -183,6 +183,90 @@ impl DiagnosticKind {
     }
 }
 
+impl std::fmt::Display for Diagnostic {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "line {}: {}", self.line, self.kind)
+    }
+}
+
+impl std::fmt::Display for DiagnosticKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        use crate::io::keywords::canonical_header;
+        match self {
+            DiagnosticKind::NonCanonicalSectionHeader { token, section } => write!(
+                f,
+                "section header {token:?} accepted as [{}]",
+                canonical_header(*section)
+            ),
+            DiagnosticKind::UnrecognisedSection {
+                token,
+                lines_discarded,
+            } => write!(
+                f,
+                "unrecognised section header {token:?} — {lines_discarded} line(s) discarded"
+            ),
+            DiagnosticKind::Lex(e) => match e {
+                crate::io::lex::LexError::LineTooLong { effective_len } => {
+                    write!(f, "line too long ({effective_len} characters)")
+                }
+                crate::io::lex::LexError::TooManyTokens => write!(f, "too many tokens on line"),
+            },
+            DiagnosticKind::DuplicateIdentifier { kind, id } => {
+                write!(f, "duplicate {} identifier {id:?}", kind.label())
+            }
+            DiagnosticKind::UnknownOption { token } => write!(f, "unknown option {token:?}"),
+            DiagnosticKind::BadOptionValue { keyword, token } => {
+                write!(f, "bad value {token:?} for option {keyword}")
+            }
+            DiagnosticKind::PrefixMatched { token, matched } => {
+                write!(f, "{token:?} matched keyword {matched} by prefix")
+            }
+            DiagnosticKind::SubstitutedOption { keyword, requested } => {
+                write!(f, "option {keyword} {requested:?} substituted")
+            }
+            DiagnosticKind::IgnoredOption { keyword } => {
+                write!(f, "option {keyword} accepted and ignored")
+            }
+            DiagnosticKind::UnresolvedReference { id } => {
+                write!(f, "reference to unknown identifier {id:?}")
+            }
+            DiagnosticKind::CappedValue { what, token } => {
+                write!(f, "{what} {token:?} capped to its accepted range")
+            }
+            DiagnosticKind::MissingItems => write!(f, "too few items for this section's grammar"),
+            DiagnosticKind::BadValue { token } => write!(f, "bad value {token:?}"),
+            DiagnosticKind::ReportStepBelowRoutingStep { report, routing } => write!(
+                f,
+                "report step ({report} s) is below the routing step ({routing} s)"
+            ),
+        }
+    }
+}
+
+impl ObjectKind {
+    /// The namespace's human-facing name, for diagnostics.
+    pub fn label(&self) -> &'static str {
+        match self {
+            ObjectKind::Gage => "rain gage",
+            ObjectKind::Parcel => "subcatchment",
+            ObjectKind::Aquifer => "aquifer",
+            ObjectKind::UnitHydrographGroup => "unit hydrograph group",
+            ObjectKind::Snowpack => "snowpack",
+            ObjectKind::Vertex => "node",
+            ObjectKind::Link => "link",
+            ObjectKind::Constituent => "pollutant",
+            ObjectKind::LandUse => "land use",
+            ObjectKind::TimePattern => "time pattern",
+            ObjectKind::Curve => "curve",
+            ObjectKind::TimeSeries => "time series",
+            ObjectKind::Transect => "transect",
+            ObjectKind::ControlMeasure => "LID control",
+            ObjectKind::Street => "street",
+            ObjectKind::Inlet => "inlet",
+        }
+    }
+}
+
 /// One tokenised data line retained for the parse pass.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TokenLine {

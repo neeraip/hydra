@@ -26,6 +26,17 @@ pub enum SurfaceRefusal {
     Incomplete(String),
 }
 
+impl std::fmt::Display for SurfaceRefusal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SurfaceRefusal::Unsupported(what) => {
+                write!(f, "the hydrology compartment does not support {what} yet")
+            }
+            SurfaceRefusal::Incomplete(reason) => write!(f, "incomplete subcatchment: {reason}"),
+        }
+    }
+}
+
 /// A gage's precipitation record, resolved to absolute seconds and SI
 /// rates at build.
 struct GageRain {
