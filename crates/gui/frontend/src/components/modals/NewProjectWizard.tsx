@@ -27,6 +27,7 @@ import {
   formatInpImportError,
   importExtensionLabel,
   isEngineAvailable,
+  isEngineGuiEditable,
   openAndLoadNetwork,
   type Project,
   useEngines,
@@ -537,7 +538,7 @@ function EngineCard({
   selected: boolean;
   onSelect: () => void;
 }) {
-  const available = isEngineAvailable(engine);
+  const available = isEngineGuiEditable(engine);
   return (
     <button
       type="button"
@@ -646,7 +647,7 @@ function EngineCard({
             letterSpacing: "0.04em",
           }}
         >
-          Coming soon
+          {isEngineAvailable(engine) ? "CLI only" : "Coming soon"}
         </span>
       )}
     </button>
