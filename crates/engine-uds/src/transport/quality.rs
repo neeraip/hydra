@@ -403,10 +403,12 @@ impl NetworkQuality {
                     }
                     _ => (1.0 - r) * c_mix,
                 };
-                // Mass lost accounts for initial storage (§8.5).
-                let lost = (cin[p][v] * q * dt + self.c_vertex[p][v] * v_old
-                    - c_out * (q * dt + v_old))
-                    .max(0.0);
+                // The removed mass is the concentration drop over the
+                // step's inflow-augmented pool (§8.5). The influent is
+                // already inside `c_mix` — mixing precedes treatment — so
+                // an influent term on top would overstate removal by
+                // (c_in − c_mix)·Q·dt whenever storage dilutes the inflow.
+                let lost = ((c_mix - c_out) * (v_old + q * dt)).max(0.0);
                 self.reacted[p] += lost;
                 self.c_vertex[p][v] = c_out;
             }

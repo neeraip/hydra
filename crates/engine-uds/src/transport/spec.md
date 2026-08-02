@@ -162,3 +162,11 @@ most 1; removal-form yields zero without inflow; a treatment expression
 overrides the constituent's global decay at that vertex; co-pollutants
 receive no automatic co-treatment. Cyclic removal references are refused at
 validation (§14.7).
+
+The mass treatment removes is the concentration drop it applies times the
+step's inflow-augmented pool volume, $(c_{mix} - c_{out})(V_{old} +
+Q_{in}\Delta t)$, booked to the reaction account of §11.1. The influent's
+mass is already inside $c_{mix}$ — mixing precedes treatment — so no
+influent term may be added on top: doing so overstates removal by
+$(c_{in} - c_{mix})\,Q_{in}\Delta t$ whenever stored water dilutes the
+influent.

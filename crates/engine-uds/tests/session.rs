@@ -2054,3 +2054,67 @@ S1  RB1  400  1  1  0  100  0
         sim.report().inflow
     );
 }
+
+#[test]
+fn treatment_booking_closes_the_mass_ledger() {
+    // A rain-fed treated junction whose stored water dilutes the influent.
+    // The removal booked must be the concentration drop over the mixed
+    // pool (§8.5), not influent-plus-store — the distinction is worth ~9%
+    // of this model's ledger, since (c_in − c_mix)·Q·dt is positive all
+    // through the rising limb.
+    let inp = "\
+[OPTIONS]
+FLOW_UNITS    CFS
+START_DATE    01/01/2004
+START_TIME    00:00:00
+END_TIME      06:00:00
+REPORT_STEP   00:15:00
+WET_STEP      00:05:00
+ROUTING_STEP  20
+INFILTRATION  HORTON
+
+[RAINGAGES]
+G1  INTENSITY  0:15  1.0  TIMESERIES  RAIN1
+
+[SUBCATCHMENTS]
+S1  G1  J1  10  25  500  0.5  0
+
+[SUBAREAS]
+S1  0.012  0.1  0.05  0.05  25  OUTLET
+
+[INFILTRATION]
+S1  3.0  0.5  4  7  0
+
+[JUNCTIONS]
+J1  100  4
+
+[OUTFALLS]
+O1  98  FREE
+
+[CONDUITS]
+C1  J1  O1  400  0.013  0  0
+
+[XSECTIONS]
+C1  CIRCULAR  1.5  0  0  0
+
+[POLLUTANTS]
+TSS  MG/L  10  0  0  0
+
+[TREATMENT]
+J1  TSS  R = 0.5 * FLOW
+
+[TIMESERIES]
+RAIN1  0:00  1.0
+RAIN1  1:00  0.0
+";
+    let (mut sim, _, _) = Simulation::open(inp).expect("open");
+    sim.run();
+    let (m_in, m_out, m_react, m_final) = sim.quality_ledger("TSS").expect("ledger");
+    assert!(m_react > 0.0, "treatment removed nothing");
+    assert!(m_out > 0.0, "nothing discharged");
+    let gap = m_in - m_out - m_react - m_final;
+    assert!(
+        gap.abs() < 0.01 * m_in,
+        "ledger gap {gap} of {m_in} admitted (out {m_out}, reacted {m_react})"
+    );
+}
