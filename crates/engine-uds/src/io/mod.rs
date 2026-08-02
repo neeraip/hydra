@@ -15,6 +15,7 @@ pub mod objects;
 pub mod options;
 pub mod out_writer;
 pub mod quality;
+pub mod rpt_writer;
 pub mod snow_rdii;
 pub mod streets;
 pub mod survey;

@@ -209,6 +209,13 @@ pub struct Simulation {
     last_lat: Vec<f64>,
     last_ext_total: f64,
     last_dwf_total: f64,
+    /// §14.5 per-category inflow volumes (m³): sanitary, external,
+    /// wet-weather, subsurface, and sewer inflow.
+    vol_dwf: f64,
+    vol_ext: f64,
+    vol_wet: f64,
+    vol_gw: f64,
+    vol_rdii: f64,
     /// Recorded reporting boundaries.
     pub snapshots: Vec<Snapshot>,
     /// Run-time notices, in time order.
@@ -361,6 +368,11 @@ impl Simulation {
                 last_lat: vec![0.0; nv],
                 last_ext_total: 0.0,
                 last_dwf_total: 0.0,
+                vol_dwf: 0.0,
+                vol_ext: 0.0,
+                vol_wet: 0.0,
+                vol_gw: 0.0,
+                vol_rdii: 0.0,
                 hydro_mass_prev: Vec::new(),
                 hydro_mass_now: Vec::new(),
                 next_rule_t: 0.0,
@@ -466,6 +478,7 @@ impl Simulation {
             // routed stage lagged one step (§10.1), its discharge joining
             // the vertex laterals.
             let mut lats = surface.vertex_laterals(nv);
+            self.vol_wet += lats.iter().sum::<f64>() * dt;
             let np = self.net.constituents.len();
             let mut mass = vec![vec![0.0; lats.len()]; np];
             // §8.2–§8.3: surface quality advances on the same clock; the
@@ -520,6 +533,7 @@ impl Simulation {
                 let stage = self.net.vertices[gw.vertex].invert + self.router.depth(gw.vertex);
                 let q = gw.step(dt, infil, evap_used, max_evap, stage);
                 lats[gw.vertex] += q * p.area;
+                self.vol_gw += q * p.area * dt;
                 // §8.1: subsurface inflow at its constant concentration.
                 for (ci, c) in self.net.constituents.iter().enumerate() {
                     mass[ci][gw.vertex] += (q * p.area).max(0.0) * c.c_groundwater;
@@ -546,6 +560,7 @@ impl Simulation {
                     * rain_factor;
                 let q = r.step(&self.net, rain, month, dt);
                 lats[r.vertex] += q;
+                self.vol_rdii += q * dt;
                 // §8.1: sewer inflow at its constant concentration.
                 for (ci, c) in self.net.constituents.iter().enumerate() {
                     mass[ci][r.vertex] += q * c.c_rdii;
@@ -662,6 +677,8 @@ impl Simulation {
             self.update_boundary_stages(t);
             self.advance_hydrology(period_end);
             let (base, base_mass) = self.assemble_lateral(t);
+            self.vol_dwf += self.last_dwf_total * (period_end - t);
+            self.vol_ext += self.last_ext_total * (period_end - t);
             // §10.1: hydrology outputs interpolate linearly to routing
             // times between the bracketing hydrology results.
             let (t0, l0) = (self.hydro_prev.0, self.hydro_prev.1.clone());
@@ -1370,6 +1387,105 @@ impl Simulation {
             });
         }
         Ok(())
+    }
+
+    /// Write the §14.9 text report to `w`, drawing on the §11 ledgers,
+    /// the control-action log, and the routing performance counters.
+    pub fn write_report(&self, w: &mut impl std::io::Write) -> std::io::Result<()> {
+        let led = self.ledgers();
+        let surface = self.surface.as_ref().map(|s| {
+            let err = led.surface.map_or(0.0, |l| l.error_percent);
+            [
+                s.rainfall,
+                s.runon_in,
+                s.evap_vol,
+                s.infil_vol,
+                s.runoff_out,
+                s.snow_plowed,
+                s.initial_storage,
+                s.stored_volume(),
+                err,
+            ]
+        });
+        let subsurface = if self.aquifers.is_empty() {
+            None
+        } else {
+            let (mut infil, mut evap, mut perc, mut lat, mut init, mut fin) =
+                (0.0, 0.0, 0.0, 0.0, 0.0, 0.0);
+            for (_, gw) in &self.aquifers {
+                infil += gw.infil_in;
+                evap += gw.evap_out;
+                perc += gw.perc_out;
+                lat += gw.lateral_out;
+                init += gw.initial_storage;
+                fin += gw.stored_volume();
+            }
+            let err = led.subsurface.map_or(0.0, |l| l.error_percent);
+            Some([infil, evap, perc, lat, init, fin, err])
+        };
+        let r = &self.router.report;
+        let stored_now: f64 = (0..self.net.vertices.len())
+            .map(|v| self.router.vertex_volume_now(v))
+            .sum::<f64>()
+            + self
+                .router
+                .channel_transport()
+                .iter()
+                .map(|c| c.4)
+                .sum::<f64>();
+        let flow = [
+            self.vol_dwf,
+            self.vol_wet,
+            self.vol_gw,
+            self.vol_rdii,
+            self.vol_ext,
+            r.outflow + r.negative_out,
+            r.flooding,
+            r.losses,
+            r.initial_storage,
+            stored_now,
+            led.network.error_percent,
+        ];
+        let mut quality = Vec::new();
+        if let Some(q) = &self.quality {
+            for (p, (id, l)) in self
+                .net
+                .constituents
+                .iter()
+                .map(|c| c.id.clone())
+                .zip(led.constituents.iter().map(|(_, l)| *l))
+                .enumerate()
+            {
+                quality.push((
+                    id,
+                    [
+                        q.initial_mass[p] + q.inflow_mass[p],
+                        q.outfall_mass[p],
+                        q.reacted[p],
+                        q.final_storage[p],
+                        q.stored_mass(p),
+                        l.error_percent,
+                    ],
+                ));
+            }
+        }
+        let avg_dt = if r.accepted > 0 {
+            self.router.time() / r.accepted as f64
+        } else {
+            0.0
+        };
+        crate::io::rpt_writer::write_rpt(
+            &crate::io::rpt_writer::ReportInputs {
+                net: &self.net,
+                surface,
+                subsurface,
+                flow,
+                quality,
+                actions: self.control_actions(),
+                performance: (r.accepted, r.rejected, r.degraded.len(), avg_dt),
+            },
+            w,
+        )
     }
 
     /// Write the §14.9 binary results to `w`; the caller owns where the

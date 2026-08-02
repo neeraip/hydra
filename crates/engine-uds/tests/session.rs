@@ -1521,6 +1521,46 @@ fn a_mismatched_hotstart_is_refused() {
     assert!(b.load_hotstart(&buf).is_err());
 }
 
+#[test]
+fn the_text_report_carries_the_continuity_blocks() {
+    let inp = washoff_model(
+        "[WASHOFF]
+RES  TSS  EMC  50  0  0  0
+",
+    );
+    let (mut sim, _, _) = Simulation::open(&inp).expect("open");
+    sim.run();
+    let mut buf = Vec::new();
+    sim.write_report(&mut buf).expect("report");
+    let rpt = String::from_utf8(buf).expect("utf8");
+    for needle in [
+        "Analysis Options",
+        "Runoff Quantity Continuity",
+        "Flow Routing Continuity",
+        "Quality Routing Continuity : TSS",
+        "Numerical Performance",
+        "Continuity Error (%)",
+        "Total Precipitation",
+        "Wet Weather Inflow",
+    ] {
+        assert!(rpt.contains(needle), "report missing '{needle}':\n{rpt}");
+    }
+    // The wet-weather inflow line carries a real volume: 1000 m³ of rain
+    // mostly delivered, printed in hectare-metres for a CMS file.
+    let line = rpt
+        .lines()
+        .find(|l| l.contains("Wet Weather Inflow"))
+        .expect("line");
+    let v: f64 = line
+        .split_whitespace()
+        .rev()
+        .nth(1)
+        .unwrap()
+        .parse()
+        .expect("volume");
+    assert!((v - 0.1).abs() < 0.02, "wet-weather volume {v} ha-m");
+}
+
 // ── §3.4 control measures ───────────────────────────────────────────────
 
 #[test]
