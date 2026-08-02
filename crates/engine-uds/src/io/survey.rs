@@ -159,6 +159,20 @@ pub enum DiagnosticKind {
         /// The offending token.
         token: String,
     },
+    /// Tokens beyond the 40-token cap, read past and ignored as the
+    /// predecessor ignores them (§14.2) — reported, never a refusal.
+    ExtraTokensIgnored {
+        /// How many tokens were dropped.
+        dropped: usize,
+    },
+    /// A later definition line for the same object and slot replacing an
+    /// earlier one (§14.5) — the predecessor's semantics, reported.
+    OverriddenDefinition {
+        /// The section's object description.
+        what: &'static str,
+        /// The object's identifier as written.
+        id: String,
+    },
     /// The §14.4 interlock: a report step below the routing step is fatal.
     ReportStepBelowRoutingStep {
         /// Report step (s).
@@ -179,6 +193,8 @@ impl DiagnosticKind {
                 | DiagnosticKind::SubstitutedOption { .. }
                 | DiagnosticKind::IgnoredOption { .. }
                 | DiagnosticKind::CappedValue { .. }
+                | DiagnosticKind::OverriddenDefinition { .. }
+                | DiagnosticKind::ExtraTokensIgnored { .. }
         )
     }
 }
@@ -209,8 +225,10 @@ impl std::fmt::Display for DiagnosticKind {
                 crate::io::lex::LexError::LineTooLong { effective_len } => {
                     write!(f, "line too long ({effective_len} characters)")
                 }
-                crate::io::lex::LexError::TooManyTokens => write!(f, "too many tokens on line"),
             },
+            DiagnosticKind::ExtraTokensIgnored { dropped } => {
+                write!(f, "{dropped} token(s) beyond the 40-token cap ignored")
+            }
             DiagnosticKind::DuplicateIdentifier { kind, id } => {
                 write!(f, "duplicate {} identifier {id:?}", kind.label())
             }
@@ -235,6 +253,9 @@ impl std::fmt::Display for DiagnosticKind {
             }
             DiagnosticKind::MissingItems => write!(f, "too few items for this section's grammar"),
             DiagnosticKind::BadValue { token } => write!(f, "bad value {token:?}"),
+            DiagnosticKind::OverriddenDefinition { what, id } => {
+                write!(f, "later {what} line for {id:?} replaces the earlier one")
+            }
             DiagnosticKind::ReportStepBelowRoutingStep { report, routing } => write!(
                 f,
                 "report step ({report} s) is below the routing step ({routing} s)"
@@ -404,16 +425,15 @@ pub fn survey(input: &str) -> Survey {
             continue;
         }
         let content = effective_content(raw);
-        let tokens = match tokenize(content) {
-            Ok(t) => t,
-            Err(e) => {
-                s.diagnostics.push(Diagnostic {
-                    line: line_no,
-                    kind: DiagnosticKind::Lex(e),
-                });
-                continue;
-            }
-        };
+        let (tokens, dropped) = tokenize(content);
+        if dropped > 0 {
+            // §14.2: the predecessor reads the first forty tokens and
+            // ignores the rest — accepted, and said so.
+            s.diagnostics.push(Diagnostic {
+                line: line_no,
+                kind: DiagnosticKind::ExtraTokensIgnored { dropped },
+            });
+        }
         let Some(first) = tokens.first() else {
             continue; // blank or comment-only
         };

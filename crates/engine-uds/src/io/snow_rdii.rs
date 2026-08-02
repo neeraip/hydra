@@ -331,11 +331,25 @@ pub(crate) fn parse_rdii(
             diags.push(bad(l, &t[2]));
             continue;
         }
-        out.push(RdiiInflow {
+        let entry = RdiiInflow {
             vertex: vx,
             group: g,
             area: area * cv.land_area,
-        });
+        };
+        // §14.5: last definition for the vertex wins.
+        match out.iter_mut().find(|e: &&mut RdiiInflow| e.vertex == vx) {
+            Some(e) => {
+                diags.push(Diagnostic {
+                    line: l,
+                    kind: DiagnosticKind::OverriddenDefinition {
+                        what: "sewer-inflow",
+                        id: t[0].clone(),
+                    },
+                });
+                *e = entry;
+            }
+            None => out.push(entry),
+        }
     }
     out
 }
@@ -382,12 +396,30 @@ pub(crate) fn parse_treatment(
             diags.push(bad(l, &t[2]));
             continue;
         };
-        out.push(Treatment {
+        let entry = Treatment {
             vertex: vx,
             constituent: p,
             kind,
             expression: joined[eq + 1..].trim().to_string(),
-        });
+        };
+        // §14.5: last treatment line for the vertex/constituent wins —
+        // both expressions applying would double-treat.
+        match out
+            .iter_mut()
+            .find(|e: &&mut Treatment| e.vertex == vx && e.constituent == p)
+        {
+            Some(e) => {
+                diags.push(Diagnostic {
+                    line: l,
+                    kind: DiagnosticKind::OverriddenDefinition {
+                        what: "treatment",
+                        id: t[0].clone(),
+                    },
+                });
+                *e = entry;
+            }
+            None => out.push(entry),
+        }
     }
     out
 }

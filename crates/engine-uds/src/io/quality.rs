@@ -407,7 +407,20 @@ pub(crate) fn parse_coverages(
                 break;
             };
             if let Some(p) = net.parcels.get_mut(pc) {
-                p.land_cover.push((lu, f / 100.0));
+                // §14.5: last coverage line for the land use wins.
+                match p.land_cover.iter_mut().find(|(u, _)| *u == lu) {
+                    Some(e) => {
+                        diags.push(Diagnostic {
+                            line: l,
+                            kind: DiagnosticKind::OverriddenDefinition {
+                                what: "land-cover",
+                                id: t[0].clone(),
+                            },
+                        });
+                        e.1 = f / 100.0;
+                    }
+                    None => p.land_cover.push((lu, f / 100.0)),
+                }
             }
             k += 2;
         }
@@ -448,7 +461,20 @@ pub(crate) fn parse_loadings(
                 break;
             };
             if let Some(parcel) = net.parcels.get_mut(pc) {
-                parcel.init_buildup.push((p, x));
+                // §14.5: last loading line for the constituent wins.
+                match parcel.init_buildup.iter_mut().find(|(c, _)| *c == p) {
+                    Some(e) => {
+                        diags.push(Diagnostic {
+                            line: l,
+                            kind: DiagnosticKind::OverriddenDefinition {
+                                what: "initial-loading",
+                                id: t[0].clone(),
+                            },
+                        });
+                        e.1 = x;
+                    }
+                    None => parcel.init_buildup.push((p, x)),
+                }
             }
             k += 2;
         }
@@ -566,7 +592,7 @@ pub(crate) fn parse_inflows(
             }
             None => None,
         };
-        out.push(ExternalInflow {
+        let entry = ExternalInflow {
             vertex,
             constituent,
             series,
@@ -575,7 +601,25 @@ pub(crate) fn parse_inflows(
             scale,
             baseline,
             base_pattern,
-        });
+        };
+        // §14.5: a later line for the same vertex and constituent slot
+        // replaces the earlier one, reported.
+        match out
+            .iter_mut()
+            .find(|e: &&mut ExternalInflow| e.vertex == vertex && e.constituent == constituent)
+        {
+            Some(e) => {
+                diags.push(Diagnostic {
+                    line: l,
+                    kind: DiagnosticKind::OverriddenDefinition {
+                        what: "external-inflow",
+                        id: t[0].clone(),
+                    },
+                });
+                *e = entry;
+            }
+            None => out.push(entry),
+        }
     }
     out
 }
@@ -635,12 +679,29 @@ pub(crate) fn parse_dry_weather(
         if !ok {
             continue;
         }
-        out.push(DryWeatherInflow {
+        let entry = DryWeatherInflow {
             vertex,
             constituent,
             average,
             patterns,
-        });
+        };
+        // §14.5: last definition for the vertex/constituent slot wins.
+        match out
+            .iter_mut()
+            .find(|e: &&mut DryWeatherInflow| e.vertex == vertex && e.constituent == constituent)
+        {
+            Some(e) => {
+                diags.push(Diagnostic {
+                    line: l,
+                    kind: DiagnosticKind::OverriddenDefinition {
+                        what: "sanitary-inflow",
+                        id: t[0].clone(),
+                    },
+                });
+                *e = entry;
+            }
+            None => out.push(entry),
+        }
     }
     out
 }

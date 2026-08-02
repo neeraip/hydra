@@ -24,9 +24,11 @@ decision surfaces as a named, per-element notice, never a silent rewrite.
 The lexical layer is reproduced exactly. A line is at most 1024 characters,
 the length re-measured up to the first `;` so overflow entirely within a
 comment is legal; everything from `;` to end of line is cut before
-tokenising; at most 40 tokens per line, separated by spaces, tabs, carriage
-returns and newlines; a token opening with a double quote runs to the next
-quote or newline — the only way to carry a separator inside a value. Section
+tokenising; at most 40 tokens per line are read, separated by spaces, tabs,
+carriage returns and newlines — tokens beyond the fortieth are ignored as
+the predecessor ignores them, with a warning where it says nothing; a token
+opening with a double quote runs to the next quote or newline — the only
+way to carry a separator inside a value. Section
 headers are tokens beginning `[`, matched case-insensitively. `[TITLE]`
 accumulates up to three lines.
 
@@ -75,6 +77,11 @@ warned as deprecated.
 > source and cannot execute; this engine executes it. No working predecessor
 > file is affected: the `YES` form never ran there at all.
 
+> **DEVIATION from SWMM:** the predecessor's grate-type table lists
+> `P_BAR-50` before `P_BAR-50x100`, so its prefix matching resolves the
+> token `P_BAR-50x100` to the *wrong* grate family. The token names a
+> grate; this reader resolves it to the grate it names.
+
 ### 14.4 Options
 
 The full option vocabulary is accepted; every default of the predecessor is
@@ -120,6 +127,12 @@ sections (`[MAP]`, `[COORDINATES]`, `[VERTICES]`, `[POLYGONS]`, `[SYMBOLS]`,
 `[LABELS]`, `[BACKDROP]`, `[TAGS]`, `[PROFILES]`) carry no engine semantics:
 they are parsed for well-formedness only and preserved verbatim for writers,
 so applications may consume them and a load-and-save cycle keeps them.
+
+Within the per-object property sections — external inflows, sanitary
+inflows, sewer inflows, treatment, land cover, and initial loadings — a
+later line for the same object and slot **replaces** the earlier one, as it
+does throughout the predecessor's ecosystem, and each override is reported.
+Accumulating them would silently change what a legal file means.
 
 `[REPORT]`'s dual grammar is reproduced: six yes/no directives (a seventh,
 `NODESTATS`, is the deprecated form §14.3 honours) and three list-valued

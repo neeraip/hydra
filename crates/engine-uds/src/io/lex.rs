@@ -21,8 +21,6 @@ pub enum LexError {
         /// Character count of the offending line up to its first `;`.
         effective_len: usize,
     },
-    /// The line carries more than [`MAX_TOKENS`] tokens.
-    TooManyTokens,
 }
 
 /// The portion of a raw line the parser sees: everything before the first
@@ -50,7 +48,10 @@ pub fn check_line_length(raw: &str) -> Result<(), LexError> {
 /// Separators are spaces, tabs, and carriage returns (line feeds terminate
 /// lines before this layer). A token opening with `"` runs to the next `"`
 /// or the end of the line, quotes excluded from the token's content.
-pub fn tokenize(content: &str) -> Result<Vec<&str>, LexError> {
+/// Returns the tokens and how many beyond [`MAX_TOKENS`] were dropped —
+/// the predecessor reads the first forty and ignores the rest, so surplus
+/// tokens are a warning, never a refusal (§14.2).
+pub fn tokenize(content: &str) -> (Vec<&str>, usize) {
     let mut tokens = Vec::new();
     let bytes = content.as_bytes();
     let mut i = 0;
@@ -78,12 +79,11 @@ pub fn tokenize(content: &str) -> Result<Vec<&str>, LexError> {
             }
             &content[start..i]
         };
-        if tokens.len() == MAX_TOKENS {
-            return Err(LexError::TooManyTokens);
-        }
         tokens.push(token);
     }
-    Ok(tokens)
+    let dropped = tokens.len().saturating_sub(MAX_TOKENS);
+    tokens.truncate(MAX_TOKENS);
+    (tokens, dropped)
 }
 
 /// Parse a token to a **finite** number (§14.2): the `nan`/`inf` spellings
@@ -132,39 +132,40 @@ mod tests {
 
     #[test]
     fn a_comment_may_follow_data_on_the_same_line() {
-        let toks = tokenize(effective_content("J1  10.0  ; invert elevation")).unwrap();
+        let toks = tokenize(effective_content("J1  10.0  ; invert elevation")).0;
         assert_eq!(toks, vec!["J1", "10.0"]);
     }
 
     #[test]
     fn a_line_opening_with_a_comment_is_empty() {
-        let toks = tokenize(effective_content(";; header row")).unwrap();
+        let toks = tokenize(effective_content(";; header row")).0;
         assert!(toks.is_empty());
     }
 
     #[test]
     fn a_quoted_token_carries_separators() {
-        let toks = tokenize(r#"GAGE1 "My Rain File.dat" INTENSITY"#).unwrap();
+        let toks = tokenize(r#"GAGE1 "My Rain File.dat" INTENSITY"#).0;
         assert_eq!(toks, vec!["GAGE1", "My Rain File.dat", "INTENSITY"]);
     }
 
     #[test]
     fn an_unterminated_quote_runs_to_end_of_line() {
-        let toks = tokenize(r#"A "runs to the end"#).unwrap();
+        let toks = tokenize(r#"A "runs to the end"#).0;
         assert_eq!(toks, vec!["A", "runs to the end"]);
     }
 
     #[test]
     fn the_forty_first_token_is_refused() {
         let forty = vec!["t"; MAX_TOKENS].join(" ");
-        assert_eq!(tokenize(&forty).unwrap().len(), MAX_TOKENS);
+        assert_eq!(tokenize(&forty).0.len(), MAX_TOKENS);
         let forty_one = vec!["t"; MAX_TOKENS + 1].join(" ");
-        assert_eq!(tokenize(&forty_one), Err(LexError::TooManyTokens));
+        let (tokens, dropped) = tokenize(&forty_one);
+        assert_eq!((tokens.len(), dropped), (40, 1));
     }
 
     #[test]
     fn tabs_and_carriage_returns_separate_tokens() {
-        let toks = tokenize("A\tB\rC").unwrap();
+        let toks = tokenize("A\tB\rC").0;
         assert_eq!(toks, vec!["A", "B", "C"]);
     }
 }
