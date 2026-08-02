@@ -14,6 +14,8 @@ use crate::model::{LinkKind, Network, VertexKind};
 /// The report's fixed volume conversions per unit system.
 struct Rv {
     us: bool,
+    /// m³/s per file flow unit.
+    flow: f64,
 }
 
 impl Rv {
@@ -33,6 +35,18 @@ impl Rv {
             v * 1.0e-3
         }
     }
+    /// A flow (m³/s) to the user's flow unit.
+    fn q(&self, v: f64) -> f64 {
+        v / self.flow
+    }
+    /// A velocity (m/s) to ft/s | m/s.
+    fn vel(&self, v: f64) -> f64 {
+        if self.us {
+            v / 0.3048
+        } else {
+            v
+        }
+    }
     /// A depth (m) to inches | millimetres.
     fn depth(&self, v: f64) -> f64 {
         if self.us {
@@ -44,12 +58,12 @@ impl Rv {
 }
 
 fn line(w: &mut impl Write, label: &str, a: f64, b: f64) -> io::Result<()> {
-    let dots = ".".repeat(26usize.saturating_sub(label.len() + 3));
+    let dots = ".".repeat(28usize.saturating_sub(label.len() + 4));
     writeln!(w, "  {label} {dots}{a:>14.3}{b:>14.3}")
 }
 
 fn err_line(w: &mut impl Write, e: f64) -> io::Result<()> {
-    writeln!(w, "  Continuity Error (%) .....{e:>14.3}")
+    writeln!(w, "  Continuity Error (%) ......{e:>14.3}")
 }
 
 /// The inputs the report draws on, gathered by the session.
@@ -91,6 +105,14 @@ pub struct ReportInputs<'a> {
 pub fn write_rpt(inp: &ReportInputs, w: &mut impl Write) -> io::Result<()> {
     let rv = Rv {
         us: inp.net.options.flow_units.is_us(),
+        flow: match inp.net.options.flow_units {
+            crate::io::options::FlowUnits::Cfs => 0.028_316_846_592,
+            crate::io::options::FlowUnits::Gpm => 6.309_019_64e-5,
+            crate::io::options::FlowUnits::Mgd => 0.043_812_636_4,
+            crate::io::options::FlowUnits::Cms => 1.0,
+            crate::io::options::FlowUnits::Lps => 1.0e-3,
+            crate::io::options::FlowUnits::Mld => 1.0 / 86.4,
+        },
     };
     let total_area: f64 = inp.net.parcels.iter().map(|p| p.area).sum();
 
@@ -333,11 +355,8 @@ fn write_summary_tables(inp: &ReportInputs, rv: &Rv, w: &mut impl Write) -> io::
             "Subcatchment", "Precip", "Runon", "Evap", "Infil", "Runoff-Vol", "Peak-Flow", "Coeff"
         )?;
         for (p, t) in inp.net.parcels.iter().zip(&inp.parcel_totals) {
-            let coeff = if t.precip > 0.0 {
-                t.runoff / t.precip
-            } else {
-                0.0
-            };
+            let supply = t.precip + t.runon;
+            let coeff = if supply > 0.0 { t.runoff / supply } else { 0.0 };
             writeln!(
                 w,
                 "  {:<16}{:>12.3}{:>12.3}{:>12.3}{:>12.3}{:>12.3}{:>12.3}{:>8.3}",
@@ -347,7 +366,7 @@ fn write_summary_tables(inp: &ReportInputs, rv: &Rv, w: &mut impl Write) -> io::
                 rv.big(t.evap),
                 rv.big(t.infil),
                 rv.big(t.runoff),
-                t.peak_runoff,
+                rv.q(t.peak_runoff),
                 coeff
             )?;
         }
@@ -414,7 +433,7 @@ fn write_summary_tables(inp: &ReportInputs, rv: &Rv, w: &mut impl Write) -> io::
                 "  {:<16}{:>12.2}{:>14.3}{:>14.3}",
                 v.id,
                 hr(st.flood_time),
-                st.max_flood,
+                rv.q(st.max_flood),
                 rv.big(st.flood_volume)
             )?;
         }
@@ -453,7 +472,7 @@ fn write_summary_tables(inp: &ReportInputs, rv: &Rv, w: &mut impl Write) -> io::
                 "  {:<16}{:>10.2}{:>12.3}{:>14.3}",
                 inp.net.vertices[vi].id,
                 freq,
-                st.out_peak,
+                rv.q(st.out_peak),
                 rv.big(st.out_volume)
             )?;
             if let Some(loads) = &inp.outfall_loads {
@@ -478,9 +497,9 @@ fn write_summary_tables(inp: &ReportInputs, rv: &Rv, w: &mut impl Write) -> io::
             w,
             "  {:<16}{:>12.3}{:>14.2}{:>12.2}{:>12.3}{:>12.2}",
             l.id,
-            st.max_flow,
+            rv.q(st.max_flow),
             hr(st.t_max_flow),
-            st.max_velocity,
+            rv.vel(st.max_velocity),
             st.max_depth / rvlen(rv),
             hr(st.full_time)
         )?;
@@ -522,8 +541,8 @@ fn write_summary_tables(inp: &ReportInputs, rv: &Rv, w: &mut impl Write) -> io::
                 l.id,
                 hr(st.on_time),
                 st.startups,
-                min_q,
-                st.max_pump_flow,
+                rv.q(min_q),
+                rv.q(st.max_pump_flow),
                 rv.big(st.volume),
                 st.energy_kwh,
                 hr(st.off_low_time),

@@ -316,7 +316,7 @@ pub(crate) fn parse_infiltration(
         };
         // Per-parcel override: the LAST token naming a model selects it.
         let mut model = global;
-        if let Some(m) = match_keyword(MODELS, t.last().expect("len >= 2")) {
+        if let Some(m) = match_keyword(MODELS, t.last().map_or("", |x| x.as_str())) {
             model = [
                 InfiltrationModel::Horton,
                 InfiltrationModel::ModifiedHorton,

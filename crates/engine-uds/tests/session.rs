@@ -356,10 +356,12 @@ fn green_ampt_and_curve_number_also_close_their_balances() {
         sim.run();
         let led = sim.report();
         let rain_vol = 0.040 * 2.0 * 20_000.0;
+        // Both relations must remove a real share of an 80 mm storm on
+        // pervious ground — neither trickle nor total capture.
+        let ratio = led.inflow / rain_vol;
         assert!(
-            led.inflow > 0.0 && led.inflow < rain_vol,
-            "{infil}: runoff {} of rain {rain_vol}",
-            led.inflow
+            (0.15..=0.85).contains(&ratio),
+            "{infil}: runoff ratio {ratio} of rain {rain_vol}"
         );
         assert!(
             led.outflow > 0.9 * led.inflow,
@@ -523,12 +525,33 @@ fn a_charged_aquifer_discharges_and_recedes() {
         "groundwater discharge too small: {}",
         led.inflow
     );
-    // And it recedes: end-of-run inflow rate is below the start's.
     assert!(
         led.outflow > 0.9 * led.inflow,
         "in {} out {}",
         led.inflow,
         led.outflow
+    );
+    // And it recedes: the peak arrives in the first half of the run and
+    // the final rate sits below it as the table falls.
+    let flows: Vec<f64> = sim.snapshots.iter().map(|s| s.flows[0]).collect();
+    let (peak_i, peak) =
+        flows.iter().enumerate().fold(
+            (0, 0.0_f64),
+            |(bi, bv), (i, &v)| {
+                if v > bv {
+                    (i, v)
+                } else {
+                    (bi, bv)
+                }
+            },
+        );
+    let late = *flows.last().expect("snapshots");
+    // Upper-zone percolation recharges the table, so the recession is
+    // gentle — but a non-decaying constant would hold the peak.
+    assert!(
+        peak_i < flows.len() / 2 && late < 0.95 * peak,
+        "no recession: peak {peak} at {peak_i}/{} vs late {late}",
+        flows.len()
     );
 }
 
@@ -738,10 +761,19 @@ RAIN  2:00  0
         "rdii volume {} vs {expect}",
         led.inflow
     );
-    // The response peaks after the rain, not during its first minutes.
-    let early: f64 = sim.snapshots.first().map_or(0.0, |s| s.flows[0]);
     assert!(led.outflow > 0.9 * led.inflow);
-    let _ = early;
+    // The convolution delays the response: the first reporting period
+    // carries only a small share of the eventual peak.
+    let peak = sim
+        .snapshots
+        .iter()
+        .map(|s| s.flows[0])
+        .fold(0.0_f64, f64::max);
+    let early: f64 = sim.snapshots.first().map_or(0.0, |s| s.flows[0]);
+    assert!(
+        early < 0.6 * peak,
+        "no convolution delay: early {early} vs peak {peak}"
+    );
 }
 
 // ── §9 operational control ──────────────────────────────────────────────
@@ -1686,7 +1718,43 @@ FILE  climate.txt
         .unwrap()
         .parse()
         .expect("volume");
-    assert!(v > 0.0, "no evaporation booked: {line}");
+    // Hargreaves at the equator for constant 30/20 °C days ≈ 4.3 mm/day;
+    // the wet surfaces can only sustain a fraction of the run at that
+    // rate, so the booked volume is bounded, not merely positive.
+    assert!(
+        v > 0.0 && v < 0.05,
+        "evaporation volume {v} ha-m implausible for 4.3 mm/day"
+    );
+}
+
+#[test]
+fn series_evaporation_is_a_step_function_not_interpolated() {
+    // The series jumps 0 → 240 mm/day at 04:00. A step function keeps
+    // evaporation at zero through the storm (00:00–02:00), so the full
+    // rain volume reaches the network; linear interpolation would have
+    // evaporated a visible share during the storm.
+    let inp = runoff_model(100.0, 25.0, "HORTON")
+        + "
+[EVAPORATION]
+TIMESERIES  EVS
+DRY_ONLY    NO
+";
+    let inp = inp
+        + "
+[TIMESERIES]
+EVS  0:00  0
+EVS  4:00  240
+EVS  9:00  240
+";
+    let (mut sim, _, _) = Simulation::open(&inp).expect("open");
+    sim.run();
+    let rain_vol = 0.025 * 2.0 * 20_000.0;
+    let led = sim.report();
+    assert!(
+        led.inflow > 0.9 * rain_vol,
+        "storm-period evaporation should be zero under step semantics: {} of {rain_vol}",
+        led.inflow
+    );
 }
 
 #[test]

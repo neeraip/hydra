@@ -152,6 +152,9 @@ pub enum ValidationKind {
     /// its maximum after the first dry step — a line written to mean "no
     /// buildup" produces the opposite (§8.2).
     BuildupJumpsToMax,
+    /// The file declares no conveyance vertices at all — likely not a
+    /// drainage model.
+    EmptyModel,
 }
 
 impl ValidationKind {
@@ -176,6 +179,7 @@ impl ValidationKind {
                 | ValidationKind::DwfPatternSlotMismatch
                 | ValidationKind::TidalCurveClockIndexed
                 | ValidationKind::BuildupJumpsToMax
+                | ValidationKind::EmptyModel
         )
     }
 }
@@ -205,6 +209,9 @@ pub fn validate(net: &mut Network) -> Vec<ValidationDiagnostic> {
     validate_inlets(net, &mut d);
     validate_rules(net, &mut d);
     validate_buildup(net, &mut d);
+    if net.vertices.is_empty() && net.parcels.is_empty() {
+        push(&mut d, "", ValidationKind::EmptyModel);
+    }
     validate_dwf(net, &mut d);
     validate_tidal(net, &mut d);
     d

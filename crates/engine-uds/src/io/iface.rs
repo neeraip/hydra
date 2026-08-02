@@ -44,12 +44,36 @@ impl RoutingInterface {
         if self.records.is_empty() {
             return out;
         }
-        // Bracketing records; ends hold nothing (§14.8: boundary series).
-        let i = match self.records.iter().position(|(t, _)| *t > epoch) {
-            Some(0) => return out,
-            Some(i) => i,
-            None => return out,
-        };
+        // Bracketing records: the series' own span is served inclusive
+        // of both end instants, nothing beyond (§14.8).
+        let first_t = self.records[0].0;
+        let last_t = self.records[self.records.len() - 1].0;
+        if epoch < first_t - 1e-9 || epoch > last_t + 1e-9 {
+            return out;
+        }
+        if self.records.len() == 1 {
+            let (_, rows) = &self.records[0];
+            for (col, v) in self.vertices.iter().enumerate() {
+                let Some(vi) = v else { continue };
+                let a = &rows[col];
+                let q = a.first().copied().unwrap_or(0.0) * self.flow_cv;
+                let mut conc = vec![0.0; np];
+                for (fc, m) in self.constituents.iter().enumerate() {
+                    if let Some(p) = m {
+                        conc[*p] = a.get(fc + 1).copied().unwrap_or(0.0);
+                    }
+                }
+                out.push((*vi, q, conc));
+            }
+            return out;
+        }
+        let e = epoch.clamp(first_t, last_t);
+        let i = self
+            .records
+            .iter()
+            .position(|(t, _)| *t >= e)
+            .unwrap_or(self.records.len() - 1)
+            .clamp(1, self.records.len() - 1);
         let (t0, r0) = &self.records[i - 1];
         let (t1, r1) = &self.records[i];
         let f = if t1 > t0 {
@@ -60,11 +84,12 @@ impl RoutingInterface {
         for (col, v) in self.vertices.iter().enumerate() {
             let Some(vi) = v else { continue };
             let (a, b) = (&r0[col], &r1[col]);
-            let q = ((1.0 - f) * a[0] + f * b[0]) * self.flow_cv;
+            let at = |r: &Vec<f64>, i: usize| r.get(i).copied().unwrap_or(0.0);
+            let q = ((1.0 - f) * at(a, 0) + f * at(b, 0)) * self.flow_cv;
             let mut conc = vec![0.0; np];
             for (fc, m) in self.constituents.iter().enumerate() {
                 if let Some(p) = m {
-                    conc[*p] = (1.0 - f) * a[fc + 1] + f * b[fc + 1];
+                    conc[*p] = (1.0 - f) * at(a, fc + 1) + f * at(b, fc + 1);
                 }
             }
             out.push((*vi, q, conc));
@@ -134,10 +159,11 @@ pub fn parse_routing_file(text: &str, net: &Network) -> Result<RoutingInterface,
             + t[5].parse::<f64>().map_err(|_| "bad minute")? * 60.0
             + t[6].parse::<f64>().map_err(|_| "bad second")?;
         let epoch = crate::simulation::time::days_from_civil(date) as f64 * 86_400.0 + secs;
-        let values: Vec<f64> = t[7..]
+        let mut values: Vec<f64> = t[7..]
             .iter()
             .map(|s| s.parse::<f64>().unwrap_or(0.0))
             .collect();
+        values.resize(n_con, 0.0);
         match records.last_mut() {
             Some((te, rows)) if (*te - epoch).abs() < 1e-6 => rows[row] = values,
             _ => {

@@ -437,16 +437,27 @@ pub fn parse_climate_file(text: &str) -> Result<Vec<crate::model::DailyClimate>,
         if line.is_empty() || line.starts_with(';') {
             continue;
         }
-        if line.starts_with("DLY") || line.starts_with("GHCND") {
+        let t: Vec<&str> = line.split_whitespace().collect();
+        // A line that fails the user grammar but carries an archival
+        // signature gets the typed refusal instead of a token error.
+        let archival =
+            || line.starts_with("DLY") || line.starts_with("GHCND") || line.starts_with("TD3200");
+        if t.len() < 6 {
+            if archival() {
+                return Err(
+                    "archival climate-file formats (TD-3200/DLY0204/GHCND) arrive with a \
+                     follow-up stage"
+                        .into(),
+                );
+            }
+            return Err(format!("climate line {}: too few values", ln + 1));
+        }
+        if t[1].parse::<i32>().is_err() && archival() {
             return Err(
                 "archival climate-file formats (TD-3200/DLY0204/GHCND) arrive with a \
                  follow-up stage"
                     .into(),
             );
-        }
-        let t: Vec<&str> = line.split_whitespace().collect();
-        if t.len() < 6 {
-            return Err(format!("climate line {}: too few values", ln + 1));
         }
         let num = |s: &str| -> Result<Option<f64>, String> {
             if s == "*" {

@@ -1,11 +1,16 @@
 //! `hydra-engine-uds` — Hydra's urban drainage (stormwater and wastewater) simulation engine.
 //!
-//! **Early scaffold.** This crate is the future home of Hydra's
-//! urban drainage (stormwater and wastewater) simulation engine, operating on the SWMM data model the way
-//! `hydra-engine-wds` operates on the EPANET data model. No simulation
-//! capability is implemented yet; the crate is published so its name and
-//! versioning track the Hydra workspace from the start. Development
-//! happens at <https://github.com/neeraip/hydra>.
+//! A complete simulation engine on the SWMM data model, the way
+//! `hydra-engine-wds` operates on the EPANET data model: SWMM 5.x input
+//! parsing with behaviourally faithful validation; rainfall-runoff
+//! hydrology with infiltration, control measures, snow, groundwater, and
+//! sewer inflow; a dynamic-wave router over the Preissmann-slot closure
+//! with the full structure catalogue and HEC-22 street inlets;
+//! constituent build-up, wash-off, network transport, and treatment;
+//! rule-based operational control with PID; conservation ledgers; and
+//! the predecessor's hotstart, routing-interface, binary-results, and
+//! text-report formats. Development happens at
+//! <https://github.com/neeraip/hydra>.
 //!
 //! The specification below is authoritative for this engine's behaviour and is
 //! written ahead of the implementation.

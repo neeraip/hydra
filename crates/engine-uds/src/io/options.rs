@@ -572,7 +572,15 @@ pub fn parse_options(lines: &[TokenLine], diagnostics: &mut Vec<Diagnostic>) -> 
             "TEMPDIR" => o.temp_dir = Some(value.to_string()),
             // Accepted and inert, as in the predecessor (§14.4).
             "SLOPE_WEIGHTING" | "COMPATIBILITY" | "SYS_FLOW_TOL" | "LAT_FLOW_TOL" => {}
-            _ => unreachable!("all option keywords handled"),
+            // A keyword in OPTION_WORDS without a handler is a programming
+            // gap; surface it as a diagnostic rather than faulting on user
+            // input.
+            other => diagnostics.push(Diagnostic {
+                line: l,
+                kind: DiagnosticKind::BadValue {
+                    token: other.to_string(),
+                },
+            }),
         }
     }
 

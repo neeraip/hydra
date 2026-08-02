@@ -23,8 +23,22 @@ use crate::model::{
 /// yet interpreted (their increments follow); their identifiers are already
 /// registered and resolvable.
 pub fn parse_network(input: &str) -> (Network, Vec<Diagnostic>) {
-    let s = survey(input);
+    let mut s = survey(input);
     let mut diagnostics = s.diagnostics.clone();
+
+    // Repeated sections concatenate — a file may reopen any section, and
+    // each consumer must see the union in file order (§14.3).
+    {
+        let mut merged: Vec<(Section, Vec<TokenLine>)> = Vec::new();
+        for (sec, lines) in s.sections.drain(..) {
+            match merged.iter_mut().find(|(m, _)| *m == sec) {
+                Some((_, acc)) => acc.extend(lines),
+                None => merged.push((sec, lines)),
+            }
+        }
+        s.sections = merged;
+    }
+    let s = s;
 
     // Options first, wherever the section sits: offset conventions and unit
     // conversions below depend on them.
