@@ -59,7 +59,7 @@ export const FALLBACK_ENGINES: EngineInfo[] = [
     accent: "#7a6ff0",
     summary:
       "Stormwater and wastewater collection network simulation — runoff, routing, and water quality on the SWMM data model.",
-    status: "planned",
+    status: "available",
     import: [{ label: "SWMM input file", extensions: ["inp"] }],
   },
   {

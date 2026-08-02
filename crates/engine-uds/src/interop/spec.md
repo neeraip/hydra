@@ -251,3 +251,54 @@ Import, validation, and export diagnostics are this engine's own, typed and
 exhaustive. The predecessor's numeric error catalogue is a property of its
 API, not of its files, and is not an interoperability surface — nothing in a
 model file names an error code.
+
+### 14.11 Recognition
+
+This engine answers the foundation layer's recognition question
+(hydra-common spec §2.5) — "are these bytes yours?" — so an application
+holding a model of unknown provenance can route it without guessing. The
+verdict is derived from section names alone, requiring no field parsing:
+
+| Condition | Verdict |
+|---|---|
+| The first non-whitespace byte is neither `[` nor `;` (not INP-shaped) | `no` |
+| Any **EPANET-exclusive** section is present | `no`, with a reason naming the tool and the giveaway section |
+| At least one **SWMM-exclusive** section is present | `definite` |
+| Otherwise (INP-shaped, nothing foreign, nothing exclusive) | `plausible` |
+
+The SWMM-exclusive sections are those §14.5 defines that EPANET's input
+format does not also define:
+
+`[ADJUSTMENTS]`, `[AQUIFERS]`, `[CONDUITS]`, `[COVERAGES]`, `[DIVIDERS]`,
+`[DWF]`, `[EVAPORATION]`, `[GWF]`, `[HYDROGRAPHS]`, `[INFILTRATION]`,
+`[INFLOWS]`, `[LANDUSES]`, `[LID_CONTROLS]`, `[LID_USAGE]`, `[LOADINGS]`,
+`[LOSSES]`, `[ORIFICES]`, `[OUTFALLS]`, `[OUTLETS]`, `[POLLUTANTS]`,
+`[POLYGONS]`, `[PROFILES]`, `[RAINGAGES]`, `[SNOWPACKS]`, `[STORAGE]`,
+`[SUBAREAS]`, `[SUBCATCHMENTS]`, `[TEMPERATURE]`, `[TRANSECTS]`,
+`[TREATMENT]`, `[WEIRS]`, `[XSECTIONS]`.
+
+The EPANET-exclusive sections — foreign markers that settle the question
+against this engine, outranking any shared section — are:
+
+`[DEMANDS]`, `[EMITTERS]`, `[ENERGY]`, `[LEAKAGE]`, `[MIXING]`, `[PIPES]`,
+`[QUALITY]`, `[REACTIONS]`, `[RESERVOIRS]`, `[ROUGHNESS]`, `[SOURCES]`,
+`[STATUS]`, `[TANKS]`, `[TIMES]`, `[VALVES]`.
+
+Sections both formats declare — `[TITLE]`, `[OPTIONS]`, `[JUNCTIONS]`,
+`[PUMPS]`, `[CURVES]`, `[PATTERNS]`, `[CONTROLS]`, `[REPORT]`, `[TAGS]`,
+`[COORDINATES]`, `[VERTICES]`, `[LABELS]`, `[BACKDROP]` — carry no evidence
+either way. A model built only from these is genuinely indistinguishable
+from a water-distribution model by section vocabulary, and `plausible` is
+the honest answer.
+
+These two marker lists are the mirror image of the water-distribution
+engine's (its model spec §4.1.3): each engine names the other's exclusive
+sections as its own foreign markers, so any INP file both engines see gets
+complementary verdicts and routing never has to break a tie between them.
+
+**Recognition is stricter than parsing, deliberately.** §14.2's grammar
+discards unrecognised sections rather than rejecting the file, and that
+remains true when this engine is asked to parse by name. Recognition
+governs only *automatic routing*, where a wrong guess silently produces a
+confident wrong answer. Naming the engine explicitly supplies the evidence
+recognition lacked.

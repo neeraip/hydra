@@ -83,6 +83,7 @@ fn verdict(engine: &EngineDescriptor, bytes: &[u8]) -> Recognition {
     }
     match engine.key {
         "wds" => hydra_engine_wds::io::recognize(bytes),
+        "uds" => hydra_engine_uds::io::recognize(bytes),
         _ => Recognition::no(),
     }
 }
@@ -142,36 +143,26 @@ mod tests {
     }
 
     #[test]
-    fn refuses_a_swmm_model_and_says_why() {
-        // The owning engine is planned, so nothing claims it. The value here
-        // is the note: a bare "unrecognised" would be far less actionable.
-        let err = route(SWMM.as_bytes()).unwrap_err();
-        let RouteError::Unrecognised { notes } = &err else {
-            panic!("expected Unrecognised, got {err:?}");
-        };
-        assert!(
-            notes.iter().any(|n| n.contains("SWMM")),
-            "no engine explained the refusal: {notes:?}"
-        );
-        assert!(err.to_string().contains("SWMM"), "{err}");
+    fn routes_a_swmm_model_to_uds() {
+        assert_eq!(route(SWMM.as_bytes()).unwrap().key, "uds");
     }
 
     #[test]
     fn refuses_rather_than_defaulting_when_nothing_identifies_the_format() {
         // The whole point of the contract: with only shared sections present
         // this could be either format, so routing must decline rather than
-        // quietly hand it to wds — even though wds is the sole claimant and
-        // the only available engine.
+        // quietly hand it to an engine — both INP engines answer `plausible`
+        // and neither claim is a basis for choosing.
         let err = route(AMBIGUOUS.as_bytes()).unwrap_err();
         assert_eq!(
             err,
             RouteError::Ambiguous {
-                candidates: vec!["wds"]
+                candidates: vec!["wds", "uds"]
             }
         );
         // Ambiguous must read differently from unrecognised: this one is
-        // answered by naming the engine, the other is not.
-        assert!(err.to_string().contains("shaped like a wds model"), "{err}");
+        // answered by naming an engine, the other is not.
+        assert!(err.to_string().contains("wds or uds"), "{err}");
     }
 
     #[test]
@@ -196,7 +187,7 @@ mod tests {
         // anything, and every model of its own would fail to route.
         for engine in ENGINES.iter().filter(|e| e.is_available()) {
             assert!(
-                matches!(engine.key, "wds"),
+                matches!(engine.key, "wds" | "uds"),
                 "engine {:?} is available but has no recognizer wired in verdict()",
                 engine.key
             );
