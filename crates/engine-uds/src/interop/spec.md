@@ -238,7 +238,11 @@ predecessor defines it, settings exempted.
 optional input echo, options summary, rainfall and RDII summaries, the
 control-actions log, the continuity balances of §11, the numerical-
 performance block, and the per-object summary tables with the predecessor's
-grouping and gating. Three content differences are inherent and carried
+grouping and gating. Pollutant loads — the quality continuity balances, the
+subcatchment washoff summary, and the outfall loading summary — print in the
+predecessor's load units: pounds under US flow units, kilograms under SI,
+and log₁₀ of the count (zero when the count is zero) for count-type
+constituents, each column labelled with its unit word. Three content differences are inherent and carried
 openly: the flow-classification table's adjusted/actual length ratio is
 identically 1 (§6.5 retired the transform, the column stays for layout);
 the pumping table's off-curve columns are both live for every pump type

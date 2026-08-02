@@ -55,6 +55,46 @@ impl Rv {
             v * 1000.0
         }
     }
+
+    /// A pollutant load in internal mass to the predecessor's load units
+    /// (§14.9): pounds | kilograms, or log₁₀ of the count (zero at zero)
+    /// for count-type constituents.
+    fn load(&self, units: crate::model::ConcentrationUnits, v: f64) -> f64 {
+        use crate::model::ConcentrationUnits as Cu;
+        match units {
+            Cu::MgPerL => v / if self.us { 453.592_37 } else { 1000.0 },
+            Cu::UgPerL => v / if self.us { 453_592.37 } else { 1.0e6 },
+            Cu::CountPerL => {
+                let count = v * 1.0e3;
+                if count > 0.0 {
+                    count.log10()
+                } else {
+                    0.0
+                }
+            }
+        }
+    }
+
+    /// The load column's unit word (§14.9).
+    fn load_word(&self, units: crate::model::ConcentrationUnits) -> &'static str {
+        use crate::model::ConcentrationUnits as Cu;
+        match units {
+            Cu::CountPerL => "LogN",
+            _ if self.us => "lbs",
+            _ => "kg",
+        }
+    }
+}
+
+/// A constituent's concentration units by id; the default unit if the id
+/// is unknown (it never is — the ledger keys come from the model).
+fn constituent_units(inp: &ReportInputs<'_>, id: &str) -> crate::model::ConcentrationUnits {
+    inp.net
+        .constituents
+        .iter()
+        .find(|c| c.id == id)
+        .map(|c| c.units)
+        .unwrap_or(crate::model::ConcentrationUnits::MgPerL)
 }
 
 fn line(w: &mut impl Write, label: &str, a: f64, b: f64) -> io::Result<()> {
@@ -286,15 +326,40 @@ pub fn write_rpt(inp: &ReportInputs, w: &mut impl Write) -> io::Result<()> {
 
     // ── Quality routing continuity ──────────────────────────────────────
     for (id, q) in &inp.quality {
+        let cu = constituent_units(inp, id);
         let [admitted, discharged, reacted, flushed, stored, err] = *q;
         writeln!(w, "\n  **************************          Mass")?;
-        writeln!(w, "  Quality Routing Continuity : {id}")?;
+        writeln!(
+            w,
+            "  Quality Routing Continuity : {id}{:>10}",
+            rv.load_word(cu)
+        )?;
         writeln!(w, "  **************************     ---------")?;
-        writeln!(w, "  Total Inflow Load ........{admitted:>14.3}")?;
-        writeln!(w, "  External Outflow Load ....{discharged:>14.3}")?;
-        writeln!(w, "  Reacted Mass .............{reacted:>14.3}")?;
-        writeln!(w, "  Final Storage Flushes ....{flushed:>14.3}")?;
-        writeln!(w, "  Stored Mass ..............{stored:>14.3}")?;
+        writeln!(
+            w,
+            "  Total Inflow Load ........{:>14.3}",
+            rv.load(cu, admitted)
+        )?;
+        writeln!(
+            w,
+            "  External Outflow Load ....{:>14.3}",
+            rv.load(cu, discharged)
+        )?;
+        writeln!(
+            w,
+            "  Reacted Mass .............{:>14.3}",
+            rv.load(cu, reacted)
+        )?;
+        writeln!(
+            w,
+            "  Final Storage Flushes ....{:>14.3}",
+            rv.load(cu, flushed)
+        )?;
+        writeln!(
+            w,
+            "  Stored Mass ..............{:>14.3}",
+            rv.load(cu, stored)
+        )?;
         err_line(w, err)?;
     }
 
@@ -382,10 +447,15 @@ fn write_summary_tables(inp: &ReportInputs, rv: &Rv, w: &mut impl Write) -> io::
                 write!(w, "{:>14}", c.id)?;
             }
             writeln!(w)?;
+            write!(w, "  {:<16}", "")?;
+            for c in &inp.net.constituents {
+                write!(w, "{:>14}", rv.load_word(c.units))?;
+            }
+            writeln!(w)?;
             for (p, row) in inp.net.parcels.iter().zip(loads) {
                 write!(w, "  {:<16}", p.id)?;
-                for v in row {
-                    write!(w, "{v:>14.3}")?;
+                for (c, v) in inp.net.constituents.iter().zip(row) {
+                    write!(w, "{:>14.3}", rv.load(c.units, *v))?;
                 }
                 writeln!(w)?;
             }
@@ -460,6 +530,13 @@ fn write_summary_tables(inp: &ReportInputs, rv: &Rv, w: &mut impl Write) -> io::
             write!(w, "{:>14}", c.id)?;
         }
         writeln!(w)?;
+        if !inp.net.constituents.is_empty() {
+            write!(w, "  {:<16}{:>10}{:>12}{:>14}", "", "", "", "")?;
+            for c in &inp.net.constituents {
+                write!(w, "{:>14}", rv.load_word(c.units))?;
+            }
+            writeln!(w)?;
+        }
         for &vi in &outfalls {
             let st = &inp.vertex_stats[vi];
             let freq = if st.obs_time > 0.0 {
@@ -476,8 +553,8 @@ fn write_summary_tables(inp: &ReportInputs, rv: &Rv, w: &mut impl Write) -> io::
                 rv.big(st.out_volume)
             )?;
             if let Some(loads) = &inp.outfall_loads {
-                for row in loads {
-                    write!(w, "{:>14.3}", row[vi])?;
+                for (c, row) in inp.net.constituents.iter().zip(loads) {
+                    write!(w, "{:>14.3}", rv.load(c.units, row[vi]))?;
                 }
             }
             writeln!(w)?;
