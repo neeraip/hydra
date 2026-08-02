@@ -1,7 +1,7 @@
 # GUI
 
-<!-- PLANNED-ENGINE: uds,och — drop the "today that means…" clause as each engine ships. -->
-Hydra's desktop application lets you load, run, and explore simulations without using the command line. It is the front end to every Hydra [engine](../engines.md) — today that means the water distribution engine; planned engines appear in the app but cannot yet be used.
+<!-- PLANNED-ENGINE: och — drop the "today that means…" clause as each engine becomes editable here. -->
+Hydra's desktop application lets you load, run, and explore simulations without using the command line. It is the front end to every Hydra [engine](../engines.md) — today that means the water distribution engine. The urban drainage engine runs from the [CLI](cli.md) while its editor support is still to come, and other engines appear in the app but cannot yet be used.
 
 ## Download and Install
 
@@ -25,7 +25,7 @@ Download the installer for your platform from the [releases page](https://github
 
 Hydra organises work into **projects**. Each project holds a network model and one or more **scenarios** — independent parameter sets you can run and compare.
 
-1. **Create a project** — on the Projects screen, click **New Project**. The wizard asks for the **engine** first, then project details, then a review. Choosing the engine up front is deliberate: `.inp` belongs to both EPANET and SWMM, so the file extension cannot decide the modelling domain on your behalf. Engines marked as planned are shown but cannot be selected. <!-- PLANNED-ENGINE: uds,och — drop the preceding sentence once every registered engine is selectable. --> With Water Distribution chosen, either import an existing EPANET `.inp` file or start from a blank network.
+1. **Create a project** — on the Projects screen, click **New Project**. The wizard asks for the **engine** first, then project details, then a review. Choosing the engine up front is deliberate: `.inp` belongs to both EPANET and SWMM, so the file extension cannot decide the modelling domain on your behalf. Engines the GUI cannot edit yet are shown but cannot be selected — "CLI only" for the urban drainage engine, "Coming soon" for planned ones. <!-- PLANNED-ENGINE: och — revise the preceding sentence once every registered engine is selectable. --> With Water Distribution chosen, either import an existing EPANET `.inp` file or start from a blank network.
 2. **Configure and run** — press **⌘R** (macOS) or **Ctrl+R** (Windows/Linux), or click the **Simulate** button in the scenario strip at the bottom of the screen. Select which scenarios to run and confirm.
 3. **Explore results** — after the simulation completes, the network map updates with colour-coded results. Click any node or link to inspect its time-series values (pressure, head, flow, velocity, water age, etc.). Use the timeline scrubber to step through reporting periods.
 

@@ -9,6 +9,8 @@ hydra-sdk = "7"
 
 It re-exports every type needed to parse networks, run simulations, query results, run post-simulation analytics, and generate reports — with all internal dependency versions pre-pinned.
 
+The water-distribution engine's API is flattened at the crate root (the unprefixed types below); the urban-drainage engine is namespaced as `uds`, because its vocabulary overlaps (both have networks, simulations, and options). `engines::route(&bytes)` decides which engine owns a model of unknown provenance.
+
 ## Modules and Key Types
 
 ### Session API
@@ -76,6 +78,27 @@ use hydra_sdk::io;
 | `io::out_reader` | Read and inspect existing `.out` files |
 | `io::compute_network_digest` | Stable content digest of a `Network` (also re-exported at the crate root) |
 
+### Urban Drainage Engine
+
+```rust
+use hydra_sdk::uds;
+```
+
+The complete `hydra-engine-uds` crate, namespaced. The session API is
+`uds::simulation::engine::Simulation`: `open` (or `open_with_climate`) a model
+from its input text, `step`/`run` it, then query results by element id or
+write them with `write_out` (SWMM-compatible binary) and `write_report`
+(text). The engine performs no file I/O — model text and any auxiliary file
+contents (climate records, hotstart bytes, routing interface files) are
+supplied in memory, the way the `hydra` CLI does it.
+
+| Module | Purpose |
+|---|---|
+| `uds::model` | SWMM data model: `Network`, vertices, channels, parcels, options |
+| `uds::io` | INP import (`objects::parse_network`), recognition, climate files, OUT/RPT writers, interface files |
+| `uds::simulation` | Session (`engine::Simulation`), controls, statistics |
+| `uds::hydrology` / `uds::hydraulics` / `uds::transport` | The solver compartments, exposed for integrators that need direct access |
+
 ### Engine Identity
 
 ```rust
@@ -127,4 +150,3 @@ Beyond the tables above, `hydra-sdk` re-exports several supporting items:
 - **Version constants** — `HYDRA_VERSION` and the per-subsystem `HYDRA_*_VERSION` strings.
 - **Runtime estimation** — `estimate_simulation_runtime`, `estimate_simulation_runtime_from_summary`, and `RuntimeEstimate`. The millisecond-level forms `estimate_simulation_runtime_millis_from_summary` and `classify_simulation_runtime_millis` are also available when you want the raw prediction or the bucketing separately.
 - **Threshold binning** — `threshold_bands(values, edges)` counts values into the bands defined by ascending edges, with the outer two unbounded so nothing is dropped. It is the same binning the `wds.*-thresholds` report blocks use, so an interface presenting that view counts identically.
-- **Threshold binning** — `threshold_bands`, the shared band-counting used by the `*-thresholds` report blocks, so an interface presenting the same view counts identically.

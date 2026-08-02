@@ -3,12 +3,12 @@
 [![Crates.io](https://img.shields.io/crates/v/hydra-sdk)](https://crates.io/crates/hydra-sdk)
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](https://github.com/neeraip/hydra/blob/main/LICENSE)
 
-Water infrastructure simulation — EPANET-compatible extended-period water distribution simulation.
+Water infrastructure simulation — EPANET-compatible water distribution and SWMM-compatible urban drainage simulation.
 
-`hydra-sdk` is the user-facing library crate for [Hydra](https://github.com/neeraip/hydra). It is the single dependency you add to build on Hydra: it re-exports the water-distribution engine (`hydra-engine-wds`), the shared foundation contracts (`hydra-common` — engine identity and the reportable-output contract), and report generation (`hydra-report` — templates, document assembly, and the txt/csv/html/pdf renderers), with all internal crate versions pre-pinned.
+`hydra-sdk` is the user-facing library crate for [Hydra](https://github.com/neeraip/hydra). It is the single dependency you add to build on Hydra: it re-exports the water-distribution engine (`hydra-engine-wds`, flattened at the crate root), the urban-drainage engine (`hydra-engine-uds`, namespaced as `uds`), engine dispatch (`hydra-engines` — routing a model of unknown provenance to its engine), the shared foundation contracts (`hydra-common` — engine identity and the reportable-output contract), and report generation (`hydra-report` — templates, document assembly, and the txt/csv/html/pdf renderers), with all internal crate versions pre-pinned.
 
-<!-- PLANNED-ENGINE: uds,och — revise this paragraph as each engine ships. -->
-Hydra is built as a suite of domain engines. Water distribution (`wds`) is the one implemented today; urban drainage (`uds`) and open channel (`och`) are registered in the engine registry as **planned** — reserved and presentable, but with no implementation behind them. As each lands, it joins this same umbrella crate.
+<!-- PLANNED-ENGINE: och — revise this paragraph when the open channel engine ships. -->
+Hydra is built as a suite of domain engines. Water distribution (`wds`) and urban drainage (`uds`) are implemented today; open channel (`och`) is registered in the engine registry as **planned** — reserved and presentable, but with no implementation behind it. When it lands, it joins this same umbrella crate.
 
 **[→ Full documentation](https://neeraip.github.io/hydra/sdk/overview.html)**
 

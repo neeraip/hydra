@@ -22,11 +22,23 @@ implementation disagree, the spec wins.
 | [`crates/engine-wds/src/simulation/spec.md`](https://github.com/neeraip/hydra/blob/main/crates/engine-wds/src/simulation/spec.md) | Simulation orchestrator: controls, timestep, accounting, session API |
 | [`crates/engine-wds/src/analysis/spec.md`](https://github.com/neeraip/hydra/blob/main/crates/engine-wds/src/analysis/spec.md) | Post-simulation analytics: demand reliability, service compliance, distributions, the report-block catalog, and the analysis artifact |
 
-<!-- PLANNED-ENGINE: uds,och — replace this section with each engine's real spec table as it lands. -->
+## Urban Drainage (`uds`)
 
-## Urban Drainage (`uds`) and Open Channel (`och`)
+| Document | Scope |
+|---|---|
+| [`crates/engine-uds/src/spec.md`](https://github.com/neeraip/hydra/blob/main/crates/engine-uds/src/spec.md) | Charter: scope, principles, correspondence to the predecessor, status |
+| [`crates/engine-uds/src/model/spec.md`](https://github.com/neeraip/hydra/blob/main/crates/engine-uds/src/model/spec.md) | Data model and unit system |
+| [`crates/engine-uds/src/hydrology/spec.md`](https://github.com/neeraip/hydra/blob/main/crates/engine-uds/src/hydrology/spec.md) | Rainfall-runoff, infiltration, LID controls, snowmelt, groundwater, RDII, climate |
+| [`crates/engine-uds/src/hydraulics/spec.md`](https://github.com/neeraip/hydra/blob/main/crates/engine-uds/src/hydraulics/spec.md) | Section geometry, dynamic-wave routing, structures, street inlets |
+| [`crates/engine-uds/src/transport/spec.md`](https://github.com/neeraip/hydra/blob/main/crates/engine-uds/src/transport/spec.md) | Pollutant buildup, washoff, treatment, network transport |
+| [`crates/engine-uds/src/simulation/spec.md`](https://github.com/neeraip/hydra/blob/main/crates/engine-uds/src/simulation/spec.md) | Controls, orchestration, accounting, statistics, session API |
+| [`crates/engine-uds/src/interop/spec.md`](https://github.com/neeraip/hydra/blob/main/crates/engine-uds/src/interop/spec.md) | Predecessor file formats: INP import, interface files, OUT/RPT output, recognition |
 
-Not yet written. Both engines are [registered but planned](../engines.md) — no
+<!-- PLANNED-ENGINE: och — replace this section with the engine's real spec table as it lands. -->
+
+## Open Channel (`och`)
+
+Not yet written. The engine is [registered but planned](../engines.md) — no
 behaviour has been specified, so there is nothing yet for an implementation to
-conform to. Their specs land before any implementation code does, as the
+conform to. Its specs land before any implementation code does, as the
 spec-first workflow requires.

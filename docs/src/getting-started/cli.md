@@ -14,9 +14,10 @@ default engine: if the model does not identify one, Hydra stops and asks you to
 name it with `--engine` rather than guessing. See
 [Engine selection](#engine-selection).
 
-<!-- PLANNED-ENGINE: uds,och — `hydra engines` reports status; revise the surrounding prose as each engine ships. -->
-Only the water distribution engine is implemented today; `hydra engines` lists
-what this build provides.
+<!-- PLANNED-ENGINE: och — `hydra engines` reports status; revise this prose as each engine ships. -->
+The water distribution (`wds`, EPANET models) and urban drainage (`uds`, SWMM
+models) engines are implemented today; `hydra engines` lists what this build
+provides.
 
 > **Upgrading from 2.x** — `hydra <model> <report> <output>` is gone. Use
 > `hydra run <model> --summary <report> --results <output>`. Running the old
@@ -129,7 +130,12 @@ identification is required to proceed.
 | One engine identifies the model | It runs |
 | Nothing identifies it, but it is shaped like some engine's format | Error — name the engine with `--engine` |
 | No engine recognises the format | Error |
-| The owning engine is registered but not implemented | Error naming it, e.g. a SWMM model |
+| The owning engine is registered but not implemented | Error naming it |
+
+An EPANET model routes to the water distribution engine and a SWMM model to
+the urban drainage engine, each identified by the sections only its format
+declares. A sparse `.inp` built solely from sections both formats share is
+genuinely ambiguous, and Hydra says so rather than picking.
 
 There is deliberately **no fallback**. Handing a stormwater model to a
 pressurised-pipe solver would produce a confident, wrong answer rather than a
@@ -140,9 +146,18 @@ detection has, so it is also the escape hatch for a sparse model that carries
 nothing identifying — the named engine parses it under its normal rules.
 
 ```bash
-hydra run net.inp --engine wds     # skip detection
+hydra run net.inp --engine wds     # skip detection: parse as EPANET
+hydra run net.inp --engine uds     # skip detection: parse as SWMM
 hydra engines                      # what this build provides
 ```
+
+An urban drainage run differs from a water distribution run in a few
+CLI-visible ways: progress is a single phase (hydrology, routing, and water
+quality advance together); `--summary` writes the engine's text report only
+(no `.json` yet); and auxiliary files the model declares — daily climate
+records, hotstart state, routing interface files — are read and written
+relative to the model file's directory, which is why a model fetched over
+HTTP cannot declare them.
 
 ## Generating a report
 
