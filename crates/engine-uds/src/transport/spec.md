@@ -169,4 +169,6 @@ Q_{in}\Delta t)$, booked to the reaction account of §11.1. The influent's
 mass is already inside $c_{mix}$ — mixing precedes treatment — so no
 influent term may be added on top: doing so overstates removal by
 $(c_{in} - c_{mix})\,Q_{in}\Delta t$ whenever stored water dilutes the
-influent.
+influent. Treatment at an outlet vertex revises its discharge: the
+discharged load is the treated mass, and the removed mass moves to the
+reaction account — it is never counted in both.

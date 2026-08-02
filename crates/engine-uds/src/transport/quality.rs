@@ -28,6 +28,8 @@ pub struct NetworkQuality {
     pub reacted: Vec<f64>,
     /// Mass carried out through bed seepage (unit·m³), §11.1.
     pub seepage_mass: Vec<f64>,
+    /// Mass carried out with flooded volume (unit·m³), §11.1.
+    pub flooded_mass: Vec<f64>,
     /// Mass admitted from §8.1 sources (unit·m³).
     pub inflow_mass: Vec<f64>,
     /// Mass present at the start (unit·m³), §11.1.
@@ -138,6 +140,7 @@ impl NetworkQuality {
             outfall_mass: vec![0.0; np],
             reacted: vec![0.0; np],
             seepage_mass: vec![0.0; np],
+            flooded_mass: vec![0.0; np],
             inflow_mass: vec![0.0; np],
             initial_mass,
             outfall_load: vec![vec![0.0; nv]; np],
@@ -260,7 +263,20 @@ impl NetworkQuality {
                     };
                     self.reacted[p] += c_old * v_old * (1.0 - decay);
                     c_new = (c_old * v_old * decay + mass_in[v]) / (v_old + flow_in[v] * dt);
-                    c_new = c_new.min(c_old.max(c_in));
+                    // The clamp bounds the mixture by its ingredients —
+                    // but only when there is a flow to define c_in. A
+                    // flow-free mass load (§8.1) legitimately raises the
+                    // concentration above both, and clamping it against
+                    // c_in = 0 would destroy the admitted mass.
+                    if flow_in[v] > 0.0 {
+                        c_new = c_new.min(c_old.max(c_in));
+                    }
+                }
+                // Flooded volume leaves at the mixture concentration and
+                // books to the §11.1 flooding account.
+                let flood_vol = router.flood_rate(v) * dt;
+                if flood_vol > 0.0 {
+                    self.flooded_mass[p] += c_new * flood_vol;
                 }
                 // Below the dry thresholds with no inflow, remaining mass
                 // flushes to final storage (§8.4).
@@ -290,9 +306,12 @@ impl NetworkQuality {
                 let v_old = self.chan_vol_prev[k];
                 let dry_depth = router.link_depth(li).unwrap_or(0.0) <= DRY_DEPTH;
                 if v_new <= ZERO_VOL || dry_depth {
-                    // Dry channels flush unconditionally at either
-                    // threshold (§8.4).
-                    self.final_storage[p] += self.c_channel[p][k] * v_old.max(0.0);
+                    // Dry channels flush at either threshold (§8.4) —
+                    // the *remaining* mass only: the delivery loop already
+                    // sent this step's outflow share downstream at the
+                    // start-of-step concentration.
+                    let remaining = (v_old - q.abs() * dt).max(0.0);
+                    self.final_storage[p] += self.c_channel[p][k] * remaining;
                     self.c_channel[p][k] = 0.0;
                     continue;
                 }
@@ -304,17 +323,20 @@ impl NetworkQuality {
                 self.reacted[p] += c_old * v_old * (1.0 - decay);
                 let mut c_new = (c_old * v_old * decay + c_in * q_in_vol) / (v_old + q_in_vol);
                 c_new = c_new.min(c_old.max(c_in));
-                // §8.4: evaporation concentrates by 1 + V_evap/V — the
-                // mass stays; seepage carries its volume's share out,
-                // booked to the seepage account (§11.1).
-                let evap_rate = router.channel_evap_rates().get(k).copied().unwrap_or(0.0);
-                let v_evap = evap_rate * dt;
-                if v_evap > 0.0 && v_new > ZERO_VOL {
-                    c_new *= 1.0 + (v_evap / v_new).min(1.0);
-                }
+                // §8.4: seepage carries its volume's share out at the
+                // pre-evaporation concentration (evaporation concentrates
+                // what stays; the seeping water left at the mixture), then
+                // evaporation concentrates by the full 1 + V_evap/V — the
+                // spec formula carries no cap, and capping it discarded
+                // mass whenever evaporation exceeded the remaining volume.
                 let seep_vol = router.channel_seep_rates().get(k).copied().unwrap_or(0.0) * dt;
                 if seep_vol > 0.0 {
                     self.seepage_mass[p] += c_new * seep_vol.min(v_old.max(0.0));
+                }
+                let evap_rate = router.channel_evap_rates().get(k).copied().unwrap_or(0.0);
+                let v_evap = evap_rate * dt;
+                if v_evap > 0.0 && v_new > ZERO_VOL {
+                    c_new *= 1.0 + v_evap / v_new;
                 }
                 self.c_channel[p][k] = c_new;
             }
@@ -410,6 +432,14 @@ impl NetworkQuality {
                 // (c_in − c_mix)·Q·dt whenever storage dilutes the inflow.
                 let lost = ((c_mix - c_out) * (v_old + q * dt)).max(0.0);
                 self.reacted[p] += lost;
+                // The vertex pass booked an outfall's discharge at the
+                // untreated mixture before this pass ran; the discharge
+                // must reflect treatment (§8.5), so move the removed mass
+                // from the discharge accounts to the reaction account.
+                if router.is_outfall(v) {
+                    self.outfall_mass[p] -= lost;
+                    self.outfall_load[p][v] -= lost;
+                }
                 self.c_vertex[p][v] = c_out;
             }
         }

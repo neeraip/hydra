@@ -1483,12 +1483,15 @@ impl Router {
         self.chan_evap_now.clone_from(&trial.chan_evap);
         self.chan_seep_now.clone_from(&trial.chan_seep);
         // Outfall discharge integrates the same trapezoid the vertex
-        // update used.
+        // update used. §11.1: the system outflow places by its sign, so a
+        // reversed net flow — a staged outfall feeding the network — books
+        // to the inflow side rather than vanishing under a clamp.
         for (vi, v) in self.verts.iter().enumerate() {
             if matches!(v.class, VertClass::Outfall(_)) {
-                let old = self.net_flow[vi].max(0.0);
-                let new = trial.net_flow[vi].max(0.0);
-                self.report.outflow += 0.5 * (old + new) * dt;
+                let old = self.net_flow[vi];
+                let new = trial.net_flow[vi];
+                self.report.outflow += 0.5 * (old.max(0.0) + new.max(0.0)) * dt;
+                self.report.inflow += 0.5 * ((-old).max(0.0) + (-new).max(0.0)) * dt;
             }
         }
         // Quiescence bookkeeping (§6.5).

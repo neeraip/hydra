@@ -121,8 +121,8 @@ pub struct ReportInputs<'a> {
     /// initial, final, error %).
     pub flow: [f64; 11],
     /// Per-constituent quality parts: (id, admitted, discharged,
-    /// reacted, final storage, stored, error %).
-    pub quality: Vec<(String, [f64; 6])>,
+    /// flooded, reacted, seepage, final storage, stored, error %).
+    pub quality: Vec<(String, [f64; 8])>,
     /// Control actions: (elapsed s, link, setting, rule).
     pub actions: &'a [(f64, String, f64, String)],
     /// Numerical performance: (accepted steps, rejected trials,
@@ -327,7 +327,7 @@ pub fn write_rpt(inp: &ReportInputs, w: &mut impl Write) -> io::Result<()> {
     // ── Quality routing continuity ──────────────────────────────────────
     for (id, q) in &inp.quality {
         let cu = constituent_units(inp, id);
-        let [admitted, discharged, reacted, flushed, stored, err] = *q;
+        let [admitted, discharged, flooded, reacted, seepage, flushed, stored, err] = *q;
         writeln!(w, "\n  **************************          Mass")?;
         writeln!(
             w,
@@ -347,8 +347,18 @@ pub fn write_rpt(inp: &ReportInputs, w: &mut impl Write) -> io::Result<()> {
         )?;
         writeln!(
             w,
+            "  Flooding Loss ............{:>14.3}",
+            rv.load(cu, flooded)
+        )?;
+        writeln!(
+            w,
             "  Reacted Mass .............{:>14.3}",
             rv.load(cu, reacted)
+        )?;
+        writeln!(
+            w,
+            "  Seepage Loss .............{:>14.3}",
+            rv.load(cu, seepage)
         )?;
         writeln!(
             w,

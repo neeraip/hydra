@@ -465,13 +465,20 @@ impl SurfaceQuality {
             self.deposition[ci] += rain_mass;
             if q.v_inflow <= 0.0 {
                 // A step with no inflow writes residual ponded mass off
-                // to final storage (§8.3).
-                self.to_final[ci] += self.parcels[pi].ponded[ci];
+                // to final storage (§8.3) — arrived run-on included, so
+                // the accumulator cannot re-deliver it.
+                self.to_final[ci] += self.parcels[pi].ponded[ci]
+                    + rain_mass
+                    + std::mem::take(&mut self.parcels[pi].runon_mass[ci]);
                 self.parcels[pi].ponded[ci] = 0.0;
                 continue;
             }
-            let mut mass =
-                self.parcels[pi].ponded[ci] + rain_mass + self.parcels[pi].runon_mass[ci];
+            // Run-on is consumed on arrival: taking it here is what makes
+            // "one delivery, one arrival" true — a plain read would
+            // re-inject the same mass every subsequent wet step.
+            let mut mass = self.parcels[pi].ponded[ci]
+                + rain_mass
+                + std::mem::take(&mut self.parcels[pi].runon_mass[ci]);
             let c_ponded = mass / q.v_inflow;
             // Infiltration then outflow, each clamped (§8.3).
             let w_infil = (c_ponded * q.v_infil).min(mass);

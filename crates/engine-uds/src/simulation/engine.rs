@@ -1350,6 +1350,7 @@ impl Simulation {
             for (p, c) in self.net.constituents.iter().enumerate() {
                 let mut i = q.initial_mass[p] + q.inflow_mass[p];
                 let mut o = q.outfall_mass[p]
+                    + q.flooded_mass[p]
                     + q.reacted[p]
                     + q.final_storage[p]
                     + q.seepage_mass[p]
@@ -1827,7 +1828,9 @@ impl Simulation {
                     [
                         q.initial_mass[p] + q.inflow_mass[p],
                         q.outfall_mass[p],
+                        q.flooded_mass[p],
                         q.reacted[p],
+                        q.seepage_mass[p],
                         q.final_storage[p],
                         q.stored_mass(p),
                         l.error_percent,
