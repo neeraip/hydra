@@ -136,7 +136,14 @@ impl SurfaceQuality {
     /// §3 volume context, `date_days` the civil-day clock, and
     /// `in_sweep_season` the §8.2 seasonal window test for today.
     #[allow(clippy::needless_range_loop)] // parallel per-parcel state rows
-    pub fn step(&mut self, net: &Network, qsteps: &[QStep], date_days: f64, in_sweep_season: bool) {
+    pub fn step(
+        &mut self,
+        net: &Network,
+        qsteps: &[QStep],
+        date_days: f64,
+        in_sweep_season: bool,
+        series_value: &dyn Fn(usize) -> f64,
+    ) {
         let np = net.constituents.len();
         // Run-on booked last step arrives now.
         for (pi, state) in self.parcels.iter_mut().enumerate() {
@@ -157,7 +164,7 @@ impl SurfaceQuality {
             // §8.2: accumulation while runoff is negligible; sweeping in
             // season while it is not raining.
             if q.runoff_rate < MIN_RUNOFF {
-                self.grow_buildup(net, pi, dt, q.snow_cover);
+                self.grow_buildup(net, pi, dt, q.snow_cover, series_value);
             }
             if in_sweep_season && q.rain_rate <= MIN_RUNOFF && !q.snow_cover {
                 self.sweep(net, pi, date_days);
@@ -204,7 +211,14 @@ impl SurfaceQuality {
 
     /// §8.2 accumulation over a dry step: invert to equivalent time,
     /// advance, re-evaluate; never lose mass.
-    fn grow_buildup(&mut self, net: &Network, pi: usize, dt: f64, snow_cover: bool) {
+    fn grow_buildup(
+        &mut self,
+        net: &Network,
+        pi: usize,
+        dt: f64,
+        snow_cover: bool,
+        series_value: &dyn Fn(usize) -> f64,
+    ) {
         let parcel = &net.parcels[pi];
         for (slot, &(lu, f)) in parcel.land_cover.iter().enumerate() {
             if f <= 0.0 {
@@ -215,7 +229,7 @@ impl SurfaceQuality {
             let per_curb = f * parcel.curb_length;
             for (ci, b) in land.buildup.iter().enumerate() {
                 let Some(b) = b else { continue };
-                if matches!(b.form, BuildupForm::None | BuildupForm::External) {
+                if b.form == BuildupForm::None {
                     continue;
                 }
                 if net.constituents[ci].snow_only && !snow_cover {
@@ -227,8 +241,17 @@ impl SurfaceQuality {
                 }
                 let old = self.parcels[pi].buildup[slot][ci];
                 let per = old / per_unit / self.mass_cv[ci];
-                let days = buildup_days(b, per) + dt / 86_400.0;
-                let new = (buildup_mass(b, days) * per_unit * self.mass_cv[ci]).max(old);
+                let new_per = if b.form == BuildupForm::External {
+                    // A scaled loading series (mass per unit per day),
+                    // capped at the maximum; beyond its range the series
+                    // reads zero (§8.2, §10.1).
+                    let rate = b.series.map_or(0.0, series_value) * b.coeffs[1];
+                    (per + rate * dt / 86_400.0).min(b.coeffs[0])
+                } else {
+                    let days = buildup_days(b, per) + dt / 86_400.0;
+                    buildup_mass(b, days)
+                };
+                let new = (new_per * per_unit * self.mass_cv[ci]).max(old);
                 self.parcels[pi].buildup[slot][ci] = new;
                 self.buildup_in[ci] += new - old;
             }

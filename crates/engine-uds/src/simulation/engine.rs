@@ -207,19 +207,6 @@ impl Simulation {
 
         // §8: this stage evaluates network transport only; surface
         // accumulation-mobilisation and treatment refuse, typed.
-        if !net.constituents.is_empty() {
-            let has_external_buildup = net.land_uses.iter().any(|lu| {
-                lu.buildup
-                    .iter()
-                    .flatten()
-                    .any(|b| b.form == crate::model::BuildupForm::External)
-            });
-            if has_external_buildup {
-                return Err(OpenError::Transport(
-                    "external accumulation series arrive with a follow-up stage".into(),
-                ));
-            }
-        }
         let quality = if net.constituents.is_empty() {
             None
         } else {
@@ -398,7 +385,11 @@ impl Simulation {
                 let qsteps: Vec<_> = (0..self.net.parcels.len())
                     .map(|pi| surface.qstep(pi))
                     .collect();
-                sq.step(&self.net, &qsteps, day, in_season);
+                let net = &self.net;
+                let start_epoch = self.start_epoch;
+                let t_now = self.hydro_t + dt;
+                let sv = move |si: usize| series_value_pure(net, start_epoch, si, t_now, false);
+                sq.step(net, &qsteps, day, in_season, &sv);
                 for (pi, parcel) in self.net.parcels.iter().enumerate() {
                     let q_out = surface.parcel_runoff(pi);
                     if let crate::model::ParcelOutlet::Vertex(v) = parcel.outlet {
@@ -688,7 +679,7 @@ impl Simulation {
         let gage_past = move |g: usize, n: u32| {
             surface.map_or(0.0, |s| s.gage_past_depth(g, epoch, n)) * rain_factor
         };
-        let series_value = move |si: usize| series_value_pure(net, start_epoch, si, t);
+        let series_value = move |si: usize| series_value_pure(net, start_epoch, si, t, true);
         let applied = controls.evaluate(&super::controls::ControlView {
             router: &self.router,
             net: &self.net,
@@ -969,9 +960,10 @@ fn tidal_stage(points: &[(f64, f64)], secs: f64) -> f64 {
     points[0].1
 }
 
-/// A raw series value at run time `t`, ends held — the §9.1 rule-driven
-/// series contract, warning-free.
-fn series_value_pure(net: &Network, start_epoch: f64, si: usize, t: f64) -> f64 {
+/// A raw series value at run time `t`, warning-free: ends held for the
+/// §9.1 rule-driven contract, zero beyond the range for §8.2 external
+/// accumulation (§10.1).
+fn series_value_pure(net: &Network, start_epoch: f64, si: usize, t: f64, hold_ends: bool) -> f64 {
     let TimeSeriesSource::Points(points) = &net.timeseries[si].source else {
         return 0.0;
     };
@@ -988,10 +980,14 @@ fn series_value_pure(net: &Network, start_epoch: f64, si: usize, t: f64) -> f64 
     };
     let x = t;
     if x <= at(&points[0].time) {
-        return points[0].value;
+        return if hold_ends { points[0].value } else { 0.0 };
     }
     if x >= at(&points[points.len() - 1].time) {
-        return points[points.len() - 1].value;
+        return if hold_ends {
+            points[points.len() - 1].value
+        } else {
+            0.0
+        };
     }
     for w in points.windows(2) {
         let (t0, t1) = (at(&w[0].time), at(&w[1].time));

@@ -234,13 +234,35 @@ pub(crate) fn parse_buildup(
         ][form_i];
         let mut coeffs = [0.0; 3];
         let mut normalizer = BuildupNormalizer::PerArea;
+        let mut series = None;
         if form != BuildupForm::None {
             if t.len() < 7 {
                 diags.push(err(l, DiagnosticKind::MissingItems));
                 continue;
             }
             let mut ok = true;
-            if form != BuildupForm::External {
+            if form == BuildupForm::External {
+                // Maximum, scale, and the loading series (§8.2).
+                for (i, ci) in coeffs.iter_mut().take(2).enumerate() {
+                    match t[3 + i].parse::<f64>() {
+                        Ok(v) if v >= 0.0 => *ci = v,
+                        _ => {
+                            diags.push(bad(l, &t[3 + i]));
+                            ok = false;
+                            break;
+                        }
+                    }
+                }
+                if ok {
+                    match lookup(s, ObjectKind::TimeSeries).and_then(|m| m.get(&t[5])) {
+                        Some(&ts) => series = Some(ts),
+                        None => {
+                            diags.push(unresolved(l, &t[5]));
+                            ok = false;
+                        }
+                    }
+                }
+            } else {
                 for (i, ci) in coeffs.iter_mut().enumerate() {
                     let Ok(v) = t[3 + i].parse::<f64>() else {
                         diags.push(bad(l, &t[3 + i]));
@@ -276,6 +298,7 @@ pub(crate) fn parse_buildup(
                     form,
                     coeffs,
                     normalizer,
+                    series,
                 });
             }
         }

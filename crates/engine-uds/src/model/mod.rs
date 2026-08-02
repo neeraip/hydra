@@ -826,10 +826,13 @@ pub struct LandUse {
 pub struct Buildup {
     /// The functional form.
     pub form: BuildupForm,
-    /// The three coefficients, in the file's column order.
+    /// The three coefficients, in the file's column order; the external
+    /// form reads its maximum and scale from the first two.
     pub coeffs: [f64; 3],
     /// Per-area or per-curb-length normalisation.
     pub normalizer: BuildupNormalizer,
+    /// The external form's loading series (mass per unit per day).
+    pub series: Option<usize>,
 }
 
 /// Accumulation forms (§8.2).

@@ -1240,6 +1240,80 @@ J1  TSS  C = 20
     assert!((c - 20.0).abs() < 2.0, "effluent concentration {c}");
 }
 
+#[test]
+fn an_external_loading_series_accumulates_then_washes_off() {
+    // 12 kg/ha/day lands on the surface through the loading series over
+    // four dry hours (2 kg/ha over 2 ha = 4 kg), then the storm strips
+    // it: the network admits ~4000 g.
+    let inp = "\
+[OPTIONS]
+FLOW_UNITS    CMS
+INFILTRATION  HORTON
+START_DATE    06/01/2024
+START_TIME    00:00
+END_DATE      06/01/2024
+END_TIME      10:00
+ROUTING_STEP  10
+WET_STEP      0:05:00
+DRY_STEP      0:30:00
+REPORT_STEP   0:15:00
+
+[RAINGAGES]
+G1  INTENSITY  1:00  1.0  TIMESERIES  RAIN
+
+[SUBCATCHMENTS]
+S1  G1  J1  2  100  100  0.5  0
+
+[SUBAREAS]
+S1  0.012  0.1  0.05  0.05  25  OUTLET
+
+[INFILTRATION]
+S1  20  5  4  7  0
+
+[JUNCTIONS]
+J1  100.4  3
+
+[OUTFALLS]
+O1  100.0  FREE
+
+[CONDUITS]
+C1  J1  O1  200  0.013  0  0
+
+[XSECTIONS]
+C1  RECT_OPEN  2  2  0  0
+
+[POLLUTANTS]
+TSS  MG/L  0  0  0  0  NO
+
+[LANDUSES]
+RES
+
+[COVERAGES]
+S1  RES  100
+
+[BUILDUP]
+RES  TSS  EXT  100  1  LOAD  AREA
+
+[WASHOFF]
+RES  TSS  EXP  2.0  1.2  0  0
+
+[TIMESERIES]
+LOAD  0:00  12
+LOAD  9:00  12
+RAIN  0:00  0
+RAIN  4:00  25
+RAIN  6:00  0
+";
+    let (mut sim, _, _) = Simulation::open(inp).expect("open");
+    sim.run();
+    let (m_in, m_out, _, _) = sim.quality_ledger("TSS").expect("ledger");
+    assert!(
+        (m_in - 4000.0).abs() < 0.25 * 4000.0,
+        "admitted {m_in} of ~4000"
+    );
+    assert!(m_out > 0.7 * m_in, "discharged {m_out} of {m_in}");
+}
+
 // ── §3.4 control measures ───────────────────────────────────────────────
 
 #[test]
