@@ -478,6 +478,11 @@ export interface ImportedModel {
     links: Link[];
     fileStem: string;
   };
+  /** Element counts of the imported model. Authoritative over the array
+   * lengths above: engines whose element data arrives via the viewer
+   * snapshot return an empty `network` here, but never empty counts. */
+  nodeCount: number;
+  linkCount: number;
   findings: ValidationFinding[];
 }
 

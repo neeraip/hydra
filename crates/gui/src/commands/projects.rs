@@ -205,6 +205,14 @@ fn new_project_model(import: bool, guard: &mut NetworkStateInner) -> (Vec<u8>, u
         (NetworkStateInner::Loaded { dto, .. }, Some(bytes)) => {
             (bytes, dto.nodes.len() as u32, dto.links.len() as u32)
         }
+        // A uds import: the model text as imported, counted from the parsed
+        // network. Falling through to the starter here would silently write
+        // an EPANET model into an urban-drainage project.
+        (NetworkStateInner::LoadedUds { network, .. }, Some(bytes)) => (
+            bytes,
+            network.vertices.len() as u32,
+            network.links.len() as u32,
+        ),
         _ => (STARTER_INP.to_vec(), STARTER_NODE_COUNT, 0),
     }
 }
@@ -1337,8 +1345,14 @@ fn format_modified(modified_at: i64) -> String {
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ImportedModel {
-    /// The recovered network.
+    /// The recovered network. Empty (bar the file name) for engines whose
+    /// element data reaches the frontend through the viewer snapshot rather
+    /// than this DTO — which is why the counts below are explicit.
     pub network: NetworkDto,
+    /// Element counts of the imported model, for the wizard's preview.
+    pub node_count: u32,
+    /// See `node_count`.
+    pub link_count: u32,
     /// §2.9 violations, empty when the model is ready to run. Non-empty means
     /// the project will open with these listed in the Issues panel.
     pub findings: Vec<ValidationFindingDto>,
@@ -1428,6 +1442,8 @@ pub async fn open_and_load_network(
                 file_stem,
                 ..Default::default()
             };
+            let (node_count, link_count) =
+                (network.vertices.len() as u32, network.links.len() as u32);
             *state.0.lock() = NetworkStateInner::LoadedUds {
                 raw_text: text,
                 network: std::sync::Arc::new(network),
@@ -1436,6 +1452,8 @@ pub async fn open_and_load_network(
             };
             return Ok(Some(ImportedModel {
                 network: dto,
+                node_count,
+                link_count,
                 findings: Vec::new(),
             }));
         }
@@ -1459,8 +1477,11 @@ pub async fn open_and_load_network(
         owner_project_id: None,
         owner_scenario_id: None,
     };
+    let (node_count, link_count) = (dto.nodes.len() as u32, dto.links.len() as u32);
     Ok(Some(ImportedModel {
         network: dto,
+        node_count,
+        link_count,
         findings,
     }))
 }
@@ -2058,6 +2079,30 @@ mod tests {
     }
 
     // ── engine gating ────────────────────────────────────────────────────
+
+    /// A created uds project must contain the imported SWMM text, never the
+    /// EPANET starter — the fall-through that once wrote the starter into a
+    /// uds project silently discarded the user's model.
+    #[test]
+    fn a_uds_import_creates_the_project_from_the_imported_model() {
+        let model = "[OPTIONS]\nFLOW_UNITS CFS\n[JUNCTIONS]\nJ1 100 4\n\
+                     [OUTFALLS]\nO1 98 FREE\n[CONDUITS]\nC1 J1 O1 400 0.013 0 0\n\
+                     [XSECTIONS]\nC1 CIRCULAR 1.5 0 0 0\n";
+        let (network, diags) = hydra::uds::io::objects::parse_network(model);
+        assert!(!diags.iter().any(|d| d.kind.is_error()));
+        let mut guard = NetworkStateInner::LoadedUds {
+            raw_text: model.to_string(),
+            network: std::sync::Arc::new(network),
+            owner_project_id: None,
+            owner_scenario_id: None,
+        };
+
+        let (bytes, node_count, link_count) = new_project_model(true, &mut guard);
+        assert_eq!(bytes, model.as_bytes(), "must persist the imported model");
+        assert_eq!(node_count, 2, "J1 + O1");
+        assert_eq!(link_count, 1, "C1");
+        assert_ne!(bytes, STARTER_INP.to_vec());
+    }
 
     #[test]
     fn only_a_gui_openable_engine_may_back_a_new_project() {

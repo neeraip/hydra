@@ -91,8 +91,8 @@ export function NewProjectWizard({ onClose }: Props) {
     try {
       const result = await openAndLoadNetwork(engine.key);
       if (result) {
-        setDetectedNodeCount(result.network.nodes.length);
-        setDetectedLinkCount(result.network.links.length);
+        setDetectedNodeCount(result.nodeCount);
+        setDetectedLinkCount(result.linkCount);
         setDetectedFindings(result.findings);
         setFileDetected(true);
         bumpNetwork();
