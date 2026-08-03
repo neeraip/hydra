@@ -5,6 +5,7 @@ import {
 } from "@heroicons/react/16/solid";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useEffect, useMemo, useRef, useState } from "react";
+import type { SimResultColumn } from "../../canvas/selection-context";
 import type { Link, Node } from "../../hooks";
 import { useLinks, useNodes, useRegions } from "../../hooks";
 import { perfTrace } from "../../perfTrace";
@@ -187,6 +188,50 @@ function BadgeCell({ type }: { type: string }) {
   );
 }
 
+/** Magnitude-aware value cell for the generic result columns — drainage
+ * peaks can be 0.03 cfs, which a fixed `toFixed(1)` would print as 0.0. */
+function fmtResultValue(v: number): string {
+  const a = Math.abs(v);
+  if (a >= 1000) return Math.round(v).toLocaleString();
+  if (a >= 10) return v.toFixed(1);
+  return v.toFixed(2);
+}
+
+/** Sortable header + cell pair for the engine-generic result column. */
+function GenericResultHeader({
+  column,
+  sortCol,
+  sortDir,
+  onToggleSort,
+}: {
+  column: SimResultColumn;
+  sortCol: string | null;
+  sortDir: SortDir;
+  onToggleSort: (col: string) => void;
+}) {
+  return (
+    <th
+      style={TH}
+      onClick={() => onToggleSort("resultValue")}
+      data-tooltip={
+        column.unit ? `${column.label} (${column.unit})` : column.label
+      }
+      data-tooltip-pos="bottom"
+    >
+      {column.label}
+      <SortIndicator col="resultValue" sortCol={sortCol} sortDir={sortDir} />
+    </th>
+  );
+}
+
+function GenericResultCell({ value }: { value: number | null | undefined }) {
+  return (
+    <td style={{ ...TD, fontFamily: "var(--font-mono)" }}>
+      {value != null && Number.isFinite(value) ? fmtResultValue(value) : "—"}
+    </td>
+  );
+}
+
 function SortIndicator({
   col,
   sortCol,
@@ -215,15 +260,22 @@ function NodesTab({
   onSelect,
   onZoomTo,
   activeId,
+  resultColumn,
 }: {
   query: string;
   nodes: Node[];
   onSelect: (id: string) => void;
   onZoomTo?: (id: string) => void;
   activeId?: string | null;
+  resultColumn?: SimResultColumn;
 }) {
   const sys = useUnitSystem();
   const hasResults = nodes.some((n) => n.pressure != null);
+  // Engine-generic result column: header from the engine's catalog, values
+  // from `resultValue` (merged by CanvasView from the legend's selected
+  // variable). Shown once any element carries a value.
+  const hasGenericResults =
+    resultColumn != null && nodes.some((n) => n.resultValue != null);
   // Attribute columns render only when the snapshot carries the attribute —
   // engines whose snapshot is geometry-only (v4) get ID + badge, not a
   // column of dashes.
@@ -250,7 +302,11 @@ function NodesTab({
       ? rowVirtualizer.getTotalSize() - virtualRows[virtualRows.length - 1].end
       : 0;
   const nodeColSpan =
-    2 + (hasAttrs ? 2 : 0) + (hasResults ? 1 : 0) + (onZoomTo ? 1 : 0);
+    2 +
+    (hasAttrs ? 2 : 0) +
+    (hasResults ? 1 : 0) +
+    (hasGenericResults ? 1 : 0) +
+    (onZoomTo ? 1 : 0);
 
   return (
     <div ref={scrollRef} style={{ overflow: "auto", flex: 1 }}>
@@ -275,6 +331,7 @@ function NodesTab({
           {hasAttrs && <col />}
           {hasAttrs && <col />}
           {hasResults && <col />}
+          {hasGenericResults && <col />}
           {onZoomTo && <col style={{ width: 22 }} />}
         </colgroup>
         <thead>
@@ -362,6 +419,14 @@ function NodesTab({
                 />
               </th>
             )}
+            {hasGenericResults && resultColumn && (
+              <GenericResultHeader
+                column={resultColumn}
+                sortCol={sortCol}
+                sortDir={sortDir}
+                onToggleSort={toggleSort}
+              />
+            )}
             {onZoomTo && <th style={TH} />}
           </tr>
         </thead>
@@ -434,6 +499,9 @@ function NodesTab({
                       ? toDisplay(node.pressure, "pressure", sys).toFixed(1)
                       : "—"}
                   </td>
+                )}
+                {hasGenericResults && (
+                  <GenericResultCell value={node.resultValue} />
                 )}
                 {onZoomTo && (
                   <td
@@ -539,6 +607,7 @@ function LinksTab({
   onSelect,
   onZoomTo,
   activeId,
+  resultColumn,
 }: {
   query: string;
   links: Link[];
@@ -546,9 +615,12 @@ function LinksTab({
   onSelect: (id: string) => void;
   onZoomTo?: (id: string) => void;
   activeId?: string | null;
+  resultColumn?: SimResultColumn;
 }) {
   const sys = useUnitSystem();
   const hasResults = links.some((l) => l.flow != null);
+  const hasGenericResults =
+    resultColumn != null && links.some((l) => l.resultValue != null);
   // Same rule as the nodes table: attribute columns only when the snapshot
   // carries the attribute (v4 snapshots are geometry-only).
   const hasAttrs = links.some(
@@ -574,7 +646,11 @@ function LinksTab({
       ? rowVirtualizer.getTotalSize() - virtualRows[virtualRows.length - 1].end
       : 0;
   const linkColSpan =
-    2 + (hasAttrs ? 2 : 0) + (hasResults ? 1 : 0) + (onZoomTo ? 1 : 0);
+    2 +
+    (hasAttrs ? 2 : 0) +
+    (hasResults ? 1 : 0) +
+    (hasGenericResults ? 1 : 0) +
+    (onZoomTo ? 1 : 0);
 
   return (
     <div ref={scrollRef} style={{ overflow: "auto", flex: 1 }}>
@@ -598,6 +674,7 @@ function LinksTab({
           {hasAttrs && <col style={{ width: 36 }} />}
           {hasAttrs && <col />}
           {hasResults && <col />}
+          {hasGenericResults && <col />}
           {onZoomTo && <col style={{ width: 22 }} />}
         </colgroup>
         <thead>
@@ -674,6 +751,14 @@ function LinksTab({
                 Flow
                 <SortIndicator col="flow" sortCol={sortCol} sortDir={sortDir} />
               </th>
+            )}
+            {hasGenericResults && resultColumn && (
+              <GenericResultHeader
+                column={resultColumn}
+                sortCol={sortCol}
+                sortDir={sortDir}
+                onToggleSort={toggleSort}
+              />
             )}
             {onZoomTo && <th style={TH} />}
           </tr>
@@ -763,6 +848,9 @@ function LinksTab({
                         )
                       : "—"}
                   </td>
+                )}
+                {hasGenericResults && (
+                  <GenericResultCell value={link.resultValue} />
                 )}
                 {onZoomTo && (
                   <td
@@ -939,6 +1027,11 @@ interface Props {
   onZoomToNode?: (id: string) => void;
   /** When provided, each link row shows a zoom icon that triggers this callback. */
   onZoomToLink?: (id: string) => void;
+  /** Generic result-column headers (engines whose values ride on
+   * `Node.resultValue`/`Link.resultValue`); absent for wds, whose pressure
+   * and flow columns are built in. */
+  nodeResultColumn?: SimResultColumn;
+  linkResultColumn?: SimResultColumn;
   /**
    * When true the panel renders inline (fills its container) rather than as an
    * absolutely-positioned overlay. Use this when hosting inside the secondary rail.
@@ -956,6 +1049,8 @@ export function NetworkInspectorHome({
   activeLinkId,
   onZoomToNode,
   onZoomToLink,
+  nodeResultColumn,
+  linkResultColumn,
   embedded,
 }: Props) {
   const internalNodes = useNodes();
@@ -1181,6 +1276,7 @@ export function NetworkInspectorHome({
           onSelect={onSelectNode}
           onZoomTo={onZoomToNode}
           activeId={activeNodeId}
+          resultColumn={nodeResultColumn}
         />
       )}
       {tab === "subcatchments" && (
@@ -1194,6 +1290,7 @@ export function NetworkInspectorHome({
           onSelect={onSelectLink}
           onZoomTo={onZoomToLink}
           activeId={activeLinkId}
+          resultColumn={linkResultColumn}
         />
       )}
     </div>

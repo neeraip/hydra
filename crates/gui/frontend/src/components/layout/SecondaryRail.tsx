@@ -19,6 +19,7 @@ function CanvasRail() {
     selectedLinkId,
     simNodes,
     simLinks,
+    simColumns,
     zoomToNode,
     zoomToLink,
   } = useCanvasSelection();
@@ -32,6 +33,8 @@ function CanvasRail() {
       activeLinkId={selectedLinkId}
       nodes={simNodes ?? undefined}
       links={simLinks ?? undefined}
+      nodeResultColumn={simColumns?.node ?? undefined}
+      linkResultColumn={simColumns?.link ?? undefined}
       onZoomToNode={zoomToNode}
       onZoomToLink={zoomToLink}
     />

@@ -979,9 +979,53 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
   // values; after a topology change they are the fresh raw arrays — holding
   // back in that case left deleted elements listed in the rail forever, since
   // no period refetch arrives until the next run.
+  // For generic-results engines, merge the legend's selected variable value
+  // onto each element (`resultValue`) so the rail list gets a live result
+  // column — the generic counterpart of the wds pressure/flow merge above.
+  // Same order guarantee: payload arrays share allNodes/baseLinks order.
+  const railNodes = useMemo(() => {
+    const values = genericCanvas?.node?.values;
+    if (!needSimObjects || !values || values.length !== allNodes.length) {
+      return allNodes;
+    }
+    return allNodes.map((n, i) => ({
+      ...n,
+      resultValue: Number.isFinite(values[i]) ? values[i] : null,
+    }));
+  }, [allNodes, genericCanvas?.node, needSimObjects]);
+  const railLinks = useMemo(() => {
+    const values = genericCanvas?.link?.values;
+    if (!needSimObjects || !values || values.length !== allLinks.length) {
+      return allLinks;
+    }
+    return allLinks.map((l, i) => ({
+      ...l,
+      resultValue: Number.isFinite(values[i]) ? values[i] : null,
+    }));
+  }, [allLinks, genericCanvas?.link, needSimObjects]);
+
   useEffect(() => {
-    setSimData(allNodes, allLinks);
-  }, [allNodes, allLinks, setSimData]);
+    setSimData(
+      railNodes,
+      railLinks,
+      genericCanvas
+        ? {
+            node: genericCanvas.node
+              ? {
+                  label: genericCanvas.node.variable.label,
+                  unit: genericCanvas.node.variable.unit,
+                }
+              : null,
+            link: genericCanvas.link
+              ? {
+                  label: genericCanvas.link.variable.label,
+                  unit: genericCanvas.link.variable.unit,
+                }
+              : null,
+          }
+        : null,
+    );
+  }, [railNodes, railLinks, genericCanvas, setSimData]);
 
   // Locate the network-wide min/max of the active variable for the current
   // period, then select and fly to that element. Period arrays are index-

@@ -19,6 +19,21 @@ import type { Link, Node } from "../types/network";
 
 export type InspectorView = "closed" | "node" | "link";
 
+/** Header of an engine-generic result column in the rail list: the
+ * engine-authored label/unit of the variable whose per-element values
+ * CanvasView merged into the sim arrays (`Node.resultValue`). */
+export interface SimResultColumn {
+  label: string;
+  unit?: string;
+}
+
+/** Per-class result columns, `null` when the engine serves fixed-variable
+ * results (wds) — the rail then keeps its built-in columns. */
+export interface SimResultColumns {
+  node: SimResultColumn | null;
+  link: SimResultColumn | null;
+}
+
 interface CanvasSelectionCtx {
   selectedNodeId: string | null;
   selectedLinkId: string | null;
@@ -39,7 +54,14 @@ interface CanvasSelectionCtx {
    *  can display live result values without re-fetching from the backend. */
   simNodes: Node[] | null;
   simLinks: Link[] | null;
-  setSimData: (nodes: Node[], links: Link[]) => void;
+  /** Generic result-column headers accompanying the arrays (engines whose
+   * values ride on `resultValue`); `null` for wds. */
+  simColumns: SimResultColumns | null;
+  setSimData: (
+    nodes: Node[],
+    links: Link[],
+    columns?: SimResultColumns | null,
+  ) => void;
   /** Animate the canvas to a specific node. No-op when no canvas is mounted. */
   zoomToNode: (id: string) => void;
   /** Animate the canvas to a specific link. No-op when no canvas is mounted. */
@@ -63,6 +85,7 @@ const Ctx = createContext<CanvasSelectionCtx>({
   clearSelection: () => {},
   simNodes: null,
   simLinks: null,
+  simColumns: null,
   setSimData: () => {},
   zoomToNode: () => {},
   zoomToLink: () => {},
@@ -75,11 +98,16 @@ export function CanvasSelectionProvider({ children }: { children: ReactNode }) {
   const [inspectorView, setInspectorView] = useState<InspectorView>("closed");
   const [simNodes, setSimNodes] = useState<Node[] | null>(null);
   const [simLinks, setSimLinks] = useState<Link[] | null>(null);
+  const [simColumns, setSimColumns] = useState<SimResultColumns | null>(null);
 
-  const setSimData = useCallback((nodes: Node[], links: Link[]) => {
-    setSimNodes(nodes);
-    setSimLinks(links);
-  }, []);
+  const setSimData = useCallback(
+    (nodes: Node[], links: Link[], columns?: SimResultColumns | null) => {
+      setSimNodes(nodes);
+      setSimLinks(links);
+      setSimColumns(columns ?? null);
+    },
+    [],
+  );
 
   // Ref-based zoom callbacks so CanvasView can register them without causing
   // re-renders on every flyToState change.
@@ -156,6 +184,7 @@ export function CanvasSelectionProvider({ children }: { children: ReactNode }) {
       clearSelection,
       simNodes,
       simLinks,
+      simColumns,
       setSimData,
       zoomToNode,
       zoomToLink,
@@ -170,6 +199,7 @@ export function CanvasSelectionProvider({ children }: { children: ReactNode }) {
       clearSelection,
       simNodes,
       simLinks,
+      simColumns,
       setSimData,
       zoomToNode,
       zoomToLink,
