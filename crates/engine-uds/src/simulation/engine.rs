@@ -249,6 +249,9 @@ pub struct Simulation {
     /// The last assembled lateral vector and its category totals
     /// (external, sanitary), for the §14.9 records.
     last_lat: Vec<f64>,
+    /// The §7.8 inlet-transfer share of the last laterals, for the
+    /// period-end reporting snapshot.
+    last_inlet_lat: Vec<f64>,
     last_ext_total: f64,
     last_dwf_total: f64,
     /// §14.5 per-category inflow volumes (m³): sanitary, external,
@@ -473,6 +476,7 @@ impl Simulation {
                     ..ClimateDayState::default()
                 },
                 last_lat: vec![0.0; nv],
+                last_inlet_lat: vec![0.0; nv],
                 last_ext_total: 0.0,
                 last_dwf_total: 0.0,
                 vol_dwf: 0.0,
@@ -1029,8 +1033,19 @@ impl Simulation {
                         let quality = self.quality.as_ref();
                         let conc =
                             move |p: usize, v: usize| quality.map_or(0.0, |q| q.c_vertex[p][v]);
+                        let before = lat.clone();
                         inlets.apply(&self.router, &self.net, &mut lat, &mut mass, &conc);
                         self.inlets = Some(inlets);
+                        // §7.8: the capture transfer is part of each
+                        // vertex's lateral for reporting — record the
+                        // delta so the period-end snapshot carries it.
+                        for (d, (a, b)) in self
+                            .last_inlet_lat
+                            .iter_mut()
+                            .zip(lat.iter().zip(before.iter()))
+                        {
+                            *d = a - b;
+                        }
                         self.last_lat.clone_from(&lat);
                     }
                     if self.controls.is_some() {
@@ -1074,9 +1089,14 @@ impl Simulation {
             } else {
                 self.router.advance(period_end, &interp);
             }
-            // Retain the end-of-period laterals for the §14.9 records.
+            // Retain the end-of-period laterals for the §14.9 records —
+            // §7.8 inlet transfers included, or an inlet-fed vertex would
+            // report zero inflow while its depth rises.
             let mut lat_now = vec![0.0; self.net.vertices.len()];
             interp(self.router.time(), &mut lat_now);
+            for (l, d) in lat_now.iter_mut().zip(&self.last_inlet_lat) {
+                *l += d;
+            }
             self.last_lat = lat_now;
         } else {
             // Between events the network state freezes and no lateral

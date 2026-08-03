@@ -260,7 +260,17 @@ whole parcel — the snap is what makes that gate reachable. Direct rainfall
 always lands on the unit (the covered rain barrel excepted). Surface overflow joins parcel runoff, exfiltration
 joins infiltration, and drain flow routes separately — to the parcel's
 outlet by default, to another parcel one hydrology step delayed, to a vertex
-interpolated per routing step. Initial saturation pre-fills soil and storage
+interpolated per routing step. A unit flagged **return-to-pervious**
+instead sends its overflow and unrouted drain flow back onto the parcel's
+pervious sub-area, one hydrology step delayed like run-on — a second
+infiltration opportunity, the predecessor's semantics for the flag.
+
+> **CORRESPONDENCE:** the predecessor's return-to-pervious accounting can
+> *increase* a parcel's reported runoff volume by half over its
+> measure-free twin under identical rain — water counted again as it
+> recirculates. Adding a passive measure cannot create runoff; this
+> engine's loop conserves, and its totals differ from the predecessor's
+> on returned-flow models accordingly. Initial saturation pre-fills soil and storage
 and shrinks the Green–Ampt deficit accordingly. Gravel and pavement layers
 may clog on cumulative treated volume: the file's clogging factor scales
 the layer's own void depth — thickness × void fraction, further × the

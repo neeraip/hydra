@@ -1104,6 +1104,12 @@ impl Router {
         let mut sum = vec![0.0_f64; self.verts.len()];
         let mut count = vec![0_u32; self.verts.len()];
         for (ci, c) in self.chans.iter().enumerate() {
+            // §6.7: only links carrying an initial flow seed their end
+            // vertices — a dry link's offset is geometry, not water, and
+            // averaging it in poured phantom depth into offset junctions.
+            if end_depth[ci] <= 0.0 {
+                continue;
+            }
             sum[c.from] += end_depth[ci] + c.off1;
             count[c.from] += 1;
             sum[c.to] += end_depth[ci] + c.off2;
@@ -1308,11 +1314,14 @@ impl Router {
     /// Water depth in model link `li` (m): a channel's mid-depth, a
     /// structure's head above its crest, for the §9.1 premises.
     pub fn link_depth(&self, li: usize) -> Option<f64> {
-        if let Some((ci, c)) = self.chans.iter().enumerate().find(|(_, c)| c.link == li) {
-            let _ = ci;
-            let y1 = (self.y[c.from] - c.off1).max(0.0);
-            let y2 = (self.y[c.to] - c.off2).max(0.0);
-            return Some((0.5 * (y1 + y2)).min(c.geom.sec.y_full()));
+        if let Some(c) = self.chans.iter().find(|c| c.link == li) {
+            // Each end caps at the section's full depth before averaging
+            // — a submerged outlet contributes a full pipe, not the whole
+            // tailwater column (the predecessor's convention).
+            let y_full = c.geom.sec.y_full();
+            let y1 = (self.y[c.from] - c.off1).clamp(0.0, y_full);
+            let y2 = (self.y[c.to] - c.off2).clamp(0.0, y_full);
+            return Some(0.5 * (y1 + y2));
         }
         self.structs
             .iter()

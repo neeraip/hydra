@@ -547,8 +547,10 @@ head may rise above ground — and drains back as capacity recovers.
 
 Depths and flows default to zero. A user-supplied initial channel flow
 implies Manning normal depth. A vertex without a supplied depth is seeded
-with the average, over its connecting links, of link end depth plus the
-link's upstream offset, at non-outfall, non-storage vertices only; channels
+with the average, over connecting links **that carry an initial flow**, of
+link end depth plus the link's offset at that end, at non-outfall,
+non-storage vertices only — a vertex whose connecting links all start dry
+starts dry itself, because an offset alone is geometry, not water; channels
 without an initial flow then take the mean of their end-vertex depths. A
 checkpoint restore (§12) bypasses the seeding entirely.
 

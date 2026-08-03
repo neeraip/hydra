@@ -237,6 +237,10 @@ struct ParcelState {
     /// Run-on rate (m/s over the whole parcel), one step delayed.
     runon: f64,
     runon_next_vol: f64,
+    /// §3.4 return-to-pervious volume arriving next step (m³).
+    to_perv_next_vol: f64,
+    /// The return volume being applied this step (m³).
+    to_perv_vol: f64,
     /// This step's arriving run-on volume (m³), for the §3.4
     /// full-footprint gate.
     runon_vol: f64,
@@ -433,6 +437,8 @@ impl Surface {
                 lid_drain_removal: Vec::new(),
                 runon: 0.0,
                 runon_next_vol: 0.0,
+                to_perv_next_vol: 0.0,
+                to_perv_vol: 0.0,
                 runon_vol: 0.0,
                 qstep: QStep::default(),
                 totals: ParcelTotals::default(),
@@ -553,6 +559,7 @@ impl Surface {
         for p in &mut self.parcels {
             let ordinary: f64 = p.sub.iter().map(|s| s.area).sum();
             p.runon_vol = p.runon_next_vol;
+            p.to_perv_vol = std::mem::take(&mut p.to_perv_next_vol);
             runon_arrived += p.runon_vol;
             p.runon = if ordinary > 0.0 {
                 p.runon_vol / dt / ordinary
@@ -640,7 +647,14 @@ impl Surface {
             };
 
             let input = imp_precip + p.runon;
-            let perv_input = perv_precip + p.runon;
+            // §3.4: return-to-pervious flow re-enters the pervious
+            // sub-area one step delayed, like run-on.
+            let to_perv_rate = if p.sub[2].area > 0.0 {
+                p.to_perv_vol / dt / p.sub[2].area
+            } else {
+                0.0
+            };
+            let perv_input = perv_precip + p.runon + to_perv_rate;
 
             // §3.1 per-parcel monthly patterns: pervious roughness scales
             // 1/α, depression storage directly, conductivity through the
@@ -815,6 +829,19 @@ impl Surface {
                         // already counted in the sub-area runoff below.
                         None => lid_return += drain_vol * dt,
                     }
+                    // §3.4: a return-to-pervious unit sends overflow and
+                    // unrouted drain flow back onto the pervious
+                    // sub-area next step instead of the outlet.
+                    if u.to_pervious && p.sub[2].area > 0.0 {
+                        let back = u.overflow * u.area * dt
+                            + if u.drain_to.is_none() {
+                                u.drain_flow * u.area * dt
+                            } else {
+                                0.0
+                            };
+                        p.to_perv_next_vol += back;
+                        lid_return -= back;
+                    }
                 }
                 runoff[0] -= captured_imp * (runoff[0] / imp_runoff.max(1e-30));
                 runoff[1] -= captured_imp * (runoff[1] / imp_runoff.max(1e-30));
@@ -831,9 +858,13 @@ impl Surface {
                     };
                 }
             }
-            let area_total: f64 = p.sub.iter().map(|s| s.area).sum();
+            // §3.4: control-measure exfiltration joins infiltration — the
+            // reported parcel rate carries it, as the predecessor's does.
+            let lid_area: f64 = p.lids.iter().map(|u| u.area).sum();
+            let lid_exfil: f64 = p.lids.iter().map(|u| u.exfiltration * u.area).sum();
+            let area_total: f64 = p.sub.iter().map(|s| s.area).sum::<f64>() + lid_area;
             if area_total > 0.0 {
-                p.infil_rate = f_rate * p.sub[2].area / area_total;
+                p.infil_rate = (f_rate * p.sub[2].area + lid_exfil) / area_total;
                 let wet_perv = p.sub[2].depth > 0.0 || perv_depth > 0.0;
                 p.evap_rate = if wet_perv {
                     e * p.sub[2].area / area_total
@@ -956,7 +987,7 @@ impl Surface {
             if let Some(pack) = &p.snow {
                 v += pack.stored_volume(area);
             }
-            v += p.runon_next_vol;
+            v += p.runon_next_vol + p.to_perv_next_vol;
         }
         v
     }
