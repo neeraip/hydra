@@ -197,6 +197,69 @@ function BadgeCell({ type }: { type: string }) {
   );
 }
 
+/** Below this measured width (px) a header renders its symbol instead of
+ * text — narrower than this even "Di…" cannot render legibly. */
+const HEADER_SYMBOL_CUTOFF_PX = 34;
+
+/**
+ * Column-header text with a three-stage overflow system: the full label
+ * while it fits, CSS-ellipsised as the column narrows ("Diameter" →
+ * "Diam…"), and the column's compact symbol ("Ø", "El") once the cell is
+ * too narrow for even a truncated word. The header's tooltip always
+ * carries the full label, so no stage loses information.
+ */
+function HeaderLabel({ label, symbol }: { label: string; symbol: string }) {
+  const ref = useRef<HTMLSpanElement>(null);
+  const [narrow, setNarrow] = useState(false);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const observer = new ResizeObserver(() => {
+      setNarrow(el.clientWidth < HEADER_SYMBOL_CUTOFF_PX);
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+  return (
+    <span
+      ref={ref}
+      style={{
+        flex: 1,
+        minWidth: 0,
+        overflow: "hidden",
+        textOverflow: "ellipsis",
+        whiteSpace: "nowrap",
+      }}
+    >
+      {narrow ? symbol : label}
+    </span>
+  );
+}
+
+/** Header-cell layout: shrinking label + non-shrinking sort indicator. */
+function HeaderContent({
+  label,
+  symbol,
+  col,
+  sortCol,
+  sortDir,
+}: {
+  label: string;
+  symbol: string;
+  col: string;
+  sortCol: string | null;
+  sortDir: SortDir;
+}) {
+  return (
+    <span style={{ display: "flex", alignItems: "center", minWidth: 0 }}>
+      <HeaderLabel label={label} symbol={symbol} />
+      <span style={{ flexShrink: 0 }}>
+        <SortIndicator col={col} sortCol={sortCol} sortDir={sortDir} />
+      </span>
+    </span>
+  );
+}
+
 /** Magnitude-aware value cell for the generic result columns — drainage
  * peaks can be 0.03 cfs, which a fixed `toFixed(1)` would print as 0.0. */
 function fmtResultValue(v: number): string {
@@ -228,8 +291,13 @@ function GenericResultHeader({
       }
       data-tooltip-pos="bottom"
     >
-      {column.label}
-      <SortIndicator col={sortKey} sortCol={sortCol} sortDir={sortDir} />
+      <HeaderContent
+        label={column.label}
+        symbol={column.label.charAt(0).toUpperCase()}
+        col={sortKey}
+        sortCol={sortCol}
+        sortDir={sortDir}
+      />
     </th>
   );
 }
@@ -390,13 +458,15 @@ function NodesTab({
               .filter((col) => col === "id" || hasAttrs)
               .map((col) => {
                 const meta = {
-                  id: { label: "ID", tip: "Node ID" },
+                  id: { label: "ID", symbol: "ID", tip: "Node ID" },
                   elevation: {
-                    label: "Elev",
+                    label: "Elevation",
+                    symbol: "El",
                     tip: `Elevation (${unitLabel("elevation", sys)})`,
                   },
                   baseDemand: {
-                    label: "Dem",
+                    label: "Base demand",
+                    symbol: "De",
                     tip: `Base demand (${unitLabel("demand", sys)})`,
                   },
                 }[col];
@@ -408,8 +478,9 @@ function NodesTab({
                     data-tooltip={meta.tip}
                     data-tooltip-pos="bottom"
                   >
-                    {meta.label}
-                    <SortIndicator
+                    <HeaderContent
+                      label={meta.label}
+                      symbol={meta.symbol}
                       col={col}
                       sortCol={sortCol}
                       sortDir={sortDir}
@@ -424,8 +495,9 @@ function NodesTab({
                 data-tooltip={`Pressure (${unitLabel("pressure", sys)})`}
                 data-tooltip-pos="bottom"
               >
-                Pres
-                <SortIndicator
+                <HeaderContent
+                  label="Pressure"
+                  symbol="Pr"
                   col="pressure"
                   sortCol={sortCol}
                   sortDir={sortDir}
@@ -737,10 +809,11 @@ function LinksTab({
               .filter((col) => col === "id" || hasAttrs)
               .map((col) => {
                 const meta = {
-                  id: { label: "ID", tip: "Link ID" },
-                  status: { label: "St.", tip: "Status" },
+                  id: { label: "ID", symbol: "ID", tip: "Link ID" },
+                  status: { label: "Status", symbol: "St", tip: "Status" },
                   diameter: {
-                    label: "Ø",
+                    label: "Diameter",
+                    symbol: "Ø",
                     tip: `Diameter (${unitLabel("diameter", sys)})`,
                   },
                 }[col];
@@ -752,8 +825,9 @@ function LinksTab({
                     data-tooltip={meta.tip}
                     data-tooltip-pos="bottom"
                   >
-                    {meta.label}
-                    <SortIndicator
+                    <HeaderContent
+                      label={meta.label}
+                      symbol={meta.symbol}
                       col={col}
                       sortCol={sortCol}
                       sortDir={sortDir}
@@ -768,8 +842,13 @@ function LinksTab({
                 data-tooltip={`Flow (${unitLabel("flow", sys)})`}
                 data-tooltip-pos="bottom"
               >
-                Flow
-                <SortIndicator col="flow" sortCol={sortCol} sortDir={sortDir} />
+                <HeaderContent
+                  label="Flow"
+                  symbol="Fl"
+                  col="flow"
+                  sortCol={sortCol}
+                  sortDir={sortDir}
+                />
               </th>
             )}
             {genericColumns.map((c) => (
