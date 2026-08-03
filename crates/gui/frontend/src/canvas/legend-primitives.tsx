@@ -68,6 +68,26 @@ export const LEGEND_POPOVER_STYLE: CSSProperties = {
   gap: 12,
 };
 
+/**
+ * The colour-scale toggle at the left end of the control bar: a stack of
+ * mini ramp swatches plus a chevron.
+ *
+ * The left corners nest inside the bar's 20px rounding (20 − 4px bar
+ * padding = 16), so the button's curve sits flush against the glass pill's
+ * end. That large radius eats horizontally into the content box at the top
+ * and bottom of the button, and the more swatches stack the taller the
+ * button gets — at three ramps the outer two were clipping into the curve.
+ * The left padding therefore clears the corner arc rather than matching
+ * the right side, which only has a 6px radius to clear.
+ */
+export const LEGEND_SWATCH_BTN_STYLE: CSSProperties = {
+  width: "auto",
+  height: "auto",
+  gap: 5,
+  padding: "5px 8px 5px 11px",
+  borderRadius: "16px 6px 6px 16px",
+};
+
 /** The persistent control bar (glass pill) the pickers live in. */
 export const LEGEND_BAR_STYLE: CSSProperties = {
   display: "flex",

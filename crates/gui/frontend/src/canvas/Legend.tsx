@@ -30,6 +30,7 @@ import {
   LEGEND_BAR_STYLE,
   LEGEND_POPOVER_STYLE,
   LEGEND_ROOT_STYLE,
+  LEGEND_SWATCH_BTN_STYLE,
   LinkGlyph,
   NodeGlyph,
   PICKER_BTN_STYLE,
@@ -608,7 +609,7 @@ export function Legend({
         }`}
         style={LEGEND_BAR_STYLE}
       >
-        {/* Colour scale / thresholds toggle — separate from variable switching */}
+        {/* Color scale / thresholds toggle — separate from variable switching */}
         <button
           type="button"
           onClick={(e) => {
@@ -617,19 +618,11 @@ export function Legend({
             setNodePickerOpen(false);
             setLinkPickerOpen(false);
           }}
-          title="Colour scale & thresholds"
-          data-tooltip="Colour scale & thresholds"
+          title="Color scale & thresholds"
+          data-tooltip="Color scale & thresholds"
           data-tooltip-pos="top"
           className="tool-btn"
-          style={{
-            width: "auto",
-            height: "auto",
-            gap: 5,
-            padding: "4px 6px 4px 6px",
-            // Left corners nest inside the bar's 20px rounding (20 − 4px
-            // padding); right corners match the neighbouring pickers.
-            borderRadius: "16px 6px 6px 16px",
-          }}
+          style={LEGEND_SWATCH_BTN_STYLE}
         >
           <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
             {/* Node ramp swatch */}

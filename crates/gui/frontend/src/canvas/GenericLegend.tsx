@@ -21,6 +21,7 @@ import {
   LEGEND_BAR_STYLE,
   LEGEND_POPOVER_STYLE,
   LEGEND_ROOT_STYLE,
+  LEGEND_SWATCH_BTN_STYLE,
   LinkGlyph,
   NodeGlyph,
   PickerButton,
@@ -170,19 +171,11 @@ export function GenericLegend({
             setDetailsOpen((v) => !v);
             setOpenPicker(null);
           }}
-          title="Colour scale"
-          data-tooltip="Colour scale"
+          title="Color scale"
+          data-tooltip="Color scale"
           data-tooltip-pos="top"
           className="tool-btn"
-          style={{
-            width: "auto",
-            height: "auto",
-            gap: 5,
-            padding: "4px 6px 4px 6px",
-            // Left corners nest inside the bar's 20px rounding (20 − 4px
-            // padding); right corners match the neighbouring pickers.
-            borderRadius: "16px 6px 6px 16px",
-          }}
+          style={LEGEND_SWATCH_BTN_STYLE}
         >
           <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
             {classes.map((c) => (
