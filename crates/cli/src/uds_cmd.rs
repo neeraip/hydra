@@ -14,7 +14,9 @@ use hydra::uds::io::objects::parse_network;
 use hydra::uds::model::TemperatureSource;
 use hydra::uds::simulation::engine::{OpenError, Simulation};
 
-use crate::{emit_error, Cli, ProgressReporter, RunArgs, EXIT_INPUT, EXIT_IO, EXIT_OK};
+use crate::{
+    emit_error, Cli, ProgressReporter, RunArgs, EXIT_INPUT, EXIT_INTERNAL, EXIT_IO, EXIT_OK,
+};
 
 /// Drive an urban drainage run: open, step to completion, write results.
 ///
@@ -182,22 +184,31 @@ pub(crate) fn run(args: &RunArgs, cli: &Cli, bytes: &[u8]) -> i32 {
     }
 
     // ── Run ───────────────────────────────────────────────────────────────────
-    let mut progress = ProgressReporter::new(std::io::stderr().is_terminal() && !cli.quiet);
-    progress.startup_banner();
-    let duration = sim.duration();
-    loop {
-        progress.update("Simulation", sim.time(), duration);
-        if !sim.step() {
-            break;
+    // The drive loop, results persistence, warning emission, and summary
+    // writing are the shared per-engine dispatch in hydra::engines — only
+    // the auxiliary-file handling around them is uds-specific CLI work.
+    let mut es = hydra::engines::EngineSession::from_uds(sim);
+
+    if let Some(out_path) = args.results.as_deref() {
+        let attach = std::fs::File::create(out_path)
+            .and_then(|f| es.begin_results(Box::new(std::io::BufWriter::new(f)), &args.model, ""));
+        if let Err(e) = attach {
+            emit_error("io/output", &format!("{out_path}: {e}"), None, None);
+            return EXIT_IO;
         }
     }
-    progress.finish_phase(duration);
 
-    for n in &sim.notices {
-        emit_warning("runtime/notice", &n.message, None);
+    let mut progress = ProgressReporter::new(std::io::stderr().is_terminal() && !cli.quiet);
+    progress.startup_banner();
+    if let Err(code) = crate::drive_with_progress(&mut es, &mut progress) {
+        return code;
     }
 
     // ── Outputs ───────────────────────────────────────────────────────────────
+    let Some(sim) = es.as_uds() else {
+        emit_error("internal", "uds session lost its engine", None, None);
+        return EXIT_INTERNAL;
+    };
     if let Some(name) = &iface.hotstart_save {
         let path = match resolve_aux_path(&args.model, name) {
             Ok(p) => p,
@@ -228,11 +239,9 @@ pub(crate) fn run(args: &RunArgs, cli: &Cli, bytes: &[u8]) -> i32 {
             return EXIT_IO;
         }
     }
-    if let Some(out_path) = args.results.as_deref() {
-        if let Err(e) = create_and_write(Path::new(out_path), |w| sim.write_out(w)) {
-            emit_error("io/output", &format!("{out_path}: {e}"), None, None);
-            return EXIT_IO;
-        }
+    if let Err(e) = es.finish_results() {
+        emit_error("io/output", &e.to_string(), None, None);
+        return EXIT_IO;
     }
 
     // When the report goes to stdout and progress was printed on stderr,
@@ -240,14 +249,7 @@ pub(crate) fn run(args: &RunArgs, cli: &Cli, bytes: &[u8]) -> i32 {
     if args.summary.is_none() && progress.enabled {
         let _ = writeln!(std::io::stderr());
     }
-    let report_result = match args.summary.as_deref() {
-        None => {
-            let mut stdout = std::io::stdout().lock();
-            sim.write_report(&mut stdout)
-        }
-        Some(p) => create_and_write(Path::new(p), |w| sim.write_report(w)),
-    };
-    if let Err(e) = report_result {
+    if let Err(e) = crate::write_report(&es, args.summary.as_deref()) {
         emit_error("io/report", &e.to_string(), None, None);
         return EXIT_IO;
     }
