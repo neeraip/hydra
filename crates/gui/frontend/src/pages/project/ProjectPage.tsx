@@ -2,6 +2,7 @@ import { lazy, Suspense, useEffect, useRef } from "react";
 import { useActiveProject, useAppState } from "../../AppContext";
 import { ProjectToolbar } from "../../components/layout/ProjectToolbar";
 import { SecondaryRail } from "../../components/layout/SecondaryRail";
+import { engineComponents } from "../../engine/registry";
 import { startPerfSpan } from "../../perfTrace";
 
 const OverviewView = lazy(() =>
@@ -25,7 +26,8 @@ export function ProjectPage() {
   // view subtrees flip one interruptible render later so the click paints
   // instantly even on 46k-element networks.
   const { deferredProjectView: projectView } = useAppState();
-  const { project } = useActiveProject();
+  const { project, engine } = useActiveProject();
+  const EditorView = engineComponents(engine?.key).EditorView;
 
   // Dev-only: time from a view-tab switch committing to the next painted
   // frame. Shows up as `[hydra-perf] view-switch-paint` with the view name.
@@ -98,7 +100,7 @@ export function ProjectPage() {
                 minHeight: 0,
               }}
             >
-              <NetworkEditor />
+              {EditorView ? <EditorView /> : <NetworkEditor />}
             </div>
             <div
               style={{
