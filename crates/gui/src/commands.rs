@@ -60,6 +60,7 @@ mod sim_params;
 mod simulation;
 #[cfg(test)]
 mod test_fixtures;
+mod uds_attrs;
 mod uds_results;
 mod uds_view;
 
@@ -73,3 +74,4 @@ pub use results::*;
 pub use run_queue::*;
 pub use sim_params::*;
 pub use simulation::*;
+pub use uds_attrs::*;
