@@ -82,6 +82,24 @@ impl Simulation {
         self.quality_t = 0.0;
         self.accounting = Some(accounting);
         self.warnings = vec![];
+        // A speed pattern's multipliers ARE the speed schedule and supersede
+        // the pump's initial speed from the first step (spec §5.4); surface
+        // the dead field once at load rather than silently ignoring it.
+        if let Some(net) = self.network.as_ref() {
+            for (k, link) in net.links.iter().enumerate() {
+                if let LinkKind::Pump(pump) = &link.kind {
+                    let init = link.base.initial_setting.unwrap_or(1.0);
+                    if pump.speed_pattern.is_some() && init != 1.0 {
+                        self.warnings.push(crate::io::SimWarning {
+                            t: 0.0,
+                            kind: crate::io::WarningKind::PumpSpeedPatternSupersedesSetting {
+                                link_index: k,
+                            },
+                        });
+                    }
+                }
+            }
+        }
         self.neg_pressure_seen = vec![false; self.node_states.len()];
         self.post_rejection_dt = None;
         self.phase = Phase::Loaded;
@@ -155,8 +173,10 @@ impl Simulation {
                             network.options.pattern_step,
                             network.options.pattern_start,
                         );
-                        self.link_states[k].setting =
-                            link.base.initial_setting.unwrap_or(1.0) * factor;
+                        // The pattern's multipliers ARE the speed schedule
+                        // (spec §5.4): they replace the setting, never scale
+                        // init_setting — matching EPANET's file semantics.
+                        self.link_states[k].setting = factor;
                     }
                 }
             }
@@ -873,5 +893,53 @@ mod tests {
             sess.run_hydraulics(),
             Err(SessionError::InvalidPhase { .. })
         ));
+    }
+
+    /// §5.4: a speed pattern's multipliers ARE the speed schedule — they
+    /// replace the pump's initial setting rather than scaling it (matching
+    /// EPANET), and the superseded initial speed is surfaced once at load.
+    #[test]
+    fn speed_pattern_replaces_initial_setting_and_warns_at_load() {
+        let inp = b"[TITLE]\nSpeed pattern supersedes SPEED\n\n\
+            [JUNCTIONS]\nJ1  0  200\n\n\
+            [RESERVOIRS]\nR1  0\n\n\
+            [PUMPS]\nPU1  R1  J1  HEAD C1  SPEED 0.9  PATTERN SP1\n\n\
+            [CURVES]\nC1  0  400\nC1  1000  200\n\n\
+            [PATTERNS]\nSP1  1.0\n\n\
+            [OPTIONS]\nUnits  GPM\nHeadloss  H-W\n\n\
+            [TIMES]\nDuration  1:00\nHydraulic Timestep  1:00\n\n[END]\n";
+        let net = crate::io::parse(inp).expect("parse");
+        let mut sess = Simulation::from_network(net).expect("load");
+
+        // The dead SPEED field is reported once, at t=0, naming the pump.
+        assert!(
+            sess.warnings().iter().any(|w| matches!(
+                w.kind,
+                crate::io::WarningKind::PumpSpeedPatternSupersedesSetting { link_index: 0 }
+            )),
+            "expected the superseded-speed warning at load"
+        );
+
+        // After the first step the live setting is the pattern value (1.0),
+        // not init_setting × pattern (0.9).
+        sess.step_hydraulics().expect("step");
+        assert_eq!(sess.link_states[0].setting, 1.0);
+    }
+
+    /// A pump at the default initial speed (1.0) with a speed pattern is the
+    /// normal authoring style and must not warn.
+    #[test]
+    fn speed_pattern_with_default_initial_speed_does_not_warn() {
+        let inp = b"[TITLE]\nSpeed pattern, default SPEED\n\n\
+            [JUNCTIONS]\nJ1  0  200\n\n\
+            [RESERVOIRS]\nR1  0\n\n\
+            [PUMPS]\nPU1  R1  J1  HEAD C1  PATTERN SP1\n\n\
+            [CURVES]\nC1  0  400\nC1  1000  200\n\n\
+            [PATTERNS]\nSP1  1.0  0.5\n\n\
+            [OPTIONS]\nUnits  GPM\nHeadloss  H-W\n\n\
+            [TIMES]\nDuration  1:00\nHydraulic Timestep  1:00\n\n[END]\n";
+        let net = crate::io::parse(inp).expect("parse");
+        let sess = Simulation::from_network(net).expect("load");
+        assert!(sess.warnings().is_empty());
     }
 }

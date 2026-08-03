@@ -824,19 +824,19 @@ pub fn write_inp(network: &Network) -> Vec<u8> {
 
     // ── [LEAKAGE] ────────────────────────────────────────────────────────────
     // FAVAD coefficients are stored internally as per-pipe discharge
-    // coefficients K1/K2; write back the on-disk C1 (mm²) / C2 (mm) values by
-    // inverting the load conversion (spec §4.3, units.rs):
-    //   K1 = Cd·sqrt(2g) · 1e-6 · C1 · (L/100)
-    //   K2 = Cd·sqrt(2g) · 1e-3 · C2 · (L/100)
+    // coefficients K1/K2; write back the on-disk C1/C2 values (mm² per 100 ft
+    // of pipe) by inverting the load conversion (spec §4.3, units.rs):
+    //   K1 = Cd·sqrt(2g) · 1e-6 · C1 · (L/30.48)
+    //   K2 = Cd·sqrt(2g) · 1e-6 · C2 · (L/30.48)
     {
         let mut leak_lines: Vec<String> = Vec::new();
         for l in &network.links {
             if let LinkKind::Pipe(ref p) = l.kind {
                 if (p.leak_coeff_1 > 0.0 || p.leak_coeff_2 > 0.0) && p.length > 0.0 {
                     const CD_SQRT2G: f64 = 2.65734; // Cd·sqrt(2g), Cd = 0.6 (SI)
-                    let len_100 = p.length / 100.0; // p.length is internal (m)
-                    let c1 = p.leak_coeff_1 / (CD_SQRT2G * 1e-6 * len_100);
-                    let c2 = p.leak_coeff_2 / (CD_SQRT2G * 1e-3 * len_100);
+                    let len_100ft = p.length / 30.48; // p.length is internal (m)
+                    let c1 = p.leak_coeff_1 / (CD_SQRT2G * 1e-6 * len_100ft);
+                    let c2 = p.leak_coeff_2 / (CD_SQRT2G * 1e-6 * len_100ft);
                     leak_lines.push(format!(" {:<16} {:>12.4} {:>12.4}", l.base.id, c1, c2));
                 }
             }

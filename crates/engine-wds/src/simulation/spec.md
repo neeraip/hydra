@@ -231,7 +231,7 @@ At the start of each hydraulic time step, before the hydraulic solve:
 1. Compute the elapsed period index $p = \lfloor (t + t_{\text{pstart}}) / \Delta t_p \rfloor$.
 2. For every junction demand category assigned to pattern $j$ of length $L_j$: apply multiplier $F_j[p \bmod L_j]$.
 3. For every reservoir with a head pattern: apply multiplier to base elevation.
-4. For every pump with a utilisation pattern: apply multiplier as the new speed setting $\omega$.
+4. For every pump with a speed pattern: the pattern multiplier **is** the new speed setting $\omega$ — it replaces the pump's current setting rather than scaling `init_setting`, matching EPANET, whose file format defines the pattern's multipliers as the speed schedule itself. A pump declaring both `init_setting ≠ 1` and a speed pattern therefore has its initial speed superseded from the first step; this must be surfaced as a non-fatal load-time warning (§8.4) so the dead field is visible rather than silently ignored.
 5. For every quality source with a pattern: apply multiplier to the base source value.
 
 ### 5.5 Simulation State at Step Boundaries
@@ -483,6 +483,19 @@ set_link_property(session, link_id, property, value)
 destroy(session) // release all resources
 ```
 
+**Streaming serialization**: an implementation may additionally serialize
+results incrementally while the session is being stepped, rather than in one
+call after the run. A report period may be emitted to the stream only once
+every value it carries is **final** — its snapshot can no longer change as the
+session advances. With no quality analysis configured, a snapshot is final as
+soon as the hydraulic phase records it. With quality enabled, a snapshot's
+quality and reaction values are provisional until the quality phase — which
+replays the hydraulic history after hydraulics completes — has advanced
+through that snapshot's time and written its results back
+(`../quality/spec.md`); only then is the snapshot final. Emitting a period
+before it is final is non-conforming: the stream would persist provisional
+values that the completed run no longer holds.
+
 **Invariants**:
 
 - Multiple session objects may coexist in the same process. Sessions share no mutable state.
@@ -507,7 +520,7 @@ Errors fall into three categories:
 |---|---|---|
 | **Fatal pre-simulation** | Validation failure (`../model/spec.md` §2.9), malformed data model, unknown object type | Abort; return structured error with offending object ID and condition |
 | **Fatal mid-simulation** | Unrecoverable solver singularity, out-of-memory in segment pool | Abort current simulation; session remains valid for inspection of partial results |
-| **Warning** | Non-convergence with `extra_iter` $\geq 0$ (frozen-status extra iterations), negative pressure in DDA mode, pump XHEAD | Simulation continues; warning attached to the affected time step in the result. With `extra_iter` $= -1$ a non-converged step instead halts the simulation after its results are recorded (§9.2) |
+| **Warning** | Non-convergence with `extra_iter` $\geq 0$ (frozen-status extra iterations), negative pressure in DDA mode, pump XHEAD, pump initial speed superseded by a speed pattern (§5.4, reported once at load) | Simulation continues; warning attached to the affected time step in the result. With `extra_iter` $= -1$ a non-converged step instead halts the simulation after its results are recorded (§9.2) |
 
 All errors and warnings must be accessible programmatically (not only as printed text) so that callers can handle them without parsing log output.
 

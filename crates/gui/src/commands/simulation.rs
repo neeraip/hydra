@@ -109,6 +109,17 @@ pub(crate) fn warning_to_dto(
                 element_id: id,
             }
         }
+        WarningKind::PumpSpeedPatternSupersedesSetting { link_index } => {
+            let id = link_ids.get(*link_index).map(|s| s.to_string());
+            let name = id.clone().unwrap_or_else(|| format!("#{}", link_index + 1));
+            RunWarningDto {
+                code: "pump-speed-pattern".into(),
+                message: format!(
+                    "Pump {name}: its speed pattern supersedes the initial speed setting"
+                ),
+                element_id: id,
+            }
+        }
     }
 }
 
@@ -515,6 +526,24 @@ where
             }
             match sim.step_quality() {
                 Ok(dt) => {
+                    // Quality-final periods become available as the quality
+                    // phase advances (spec §8.3) — stream them out here; the
+                    // hydraulics-phase appends emit nothing while quality is
+                    // still pending.
+                    if let Some(w) = out_writer.as_mut() {
+                        if let Err(e) = w.append_available(&sim) {
+                            let msg = format!("simulation results could not be written: {e}");
+                            emit(
+                                "quality",
+                                quality_simulated_seconds,
+                                false,
+                                true,
+                                Some(msg.clone()),
+                            );
+                            run_err = Some(RunLoopError::Failed(msg));
+                            break;
+                        }
+                    }
                     if dt == 0.0 {
                         break;
                     }

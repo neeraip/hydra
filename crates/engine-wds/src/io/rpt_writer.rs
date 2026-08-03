@@ -46,6 +46,17 @@ pub fn describe_warning(
                 Some(node_id.clone()),
             )
         }
+        WarningKind::PumpSpeedPatternSupersedesSetting { link_index } => {
+            let link_id = &network.links[*link_index].base.id;
+            (
+                "warning/pump_speed_pattern".to_string(),
+                format!(
+                    "pump '{link_id}': speed pattern supersedes its initial \
+                     speed setting (the pattern multipliers are the speeds)"
+                ),
+                Some(link_id.clone()),
+            )
+        }
     }
 }
 
@@ -455,6 +466,13 @@ pub fn build_text_report(session: &impl WritableSimulation) -> Result<String, st
                         "  WARNING: Pump {} exceeds maximum head at {} hrs.",
                         link_id,
                         fmt_clocktime(w.t)
+                    )
+                }
+                WarningKind::PumpSpeedPatternSupersedesSetting { link_index } => {
+                    let link_id = &network.links[*link_index].base.id;
+                    format!(
+                        "  WARNING: Pump {link_id} speed pattern supersedes its \
+                         initial speed setting."
                     )
                 }
             };
