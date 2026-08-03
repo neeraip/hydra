@@ -216,6 +216,15 @@ pub fn get_sim_params(
     project_id: String,
 ) -> Result<Option<SimParamsDto>, String> {
     validate_id(&project_id)?;
+    // wds-shaped [TIMES]/[OPTIONS]/[ENERGY] only; other engines get their
+    // own settings surface. None = "nothing to show", the same answer as a
+    // draft project with no model yet.
+    {
+        let app_data = app_data_dir(&app)?;
+        if super::projects::project_engine_key(&app_data, &project_id) != "wds" {
+            return Ok(None);
+        }
+    }
     {
         let guard = state.0.lock();
         if let NetworkStateInner::Loaded {

@@ -173,7 +173,7 @@ export function ReportView() {
     if (!activeProjectId) return;
     let cancelled = false;
     void (async () => {
-      const blocks = await listReportBlocks();
+      const blocks = await listReportBlocks(activeProjectId);
       if (cancelled) return;
       setCatalog(blocks);
       const saved = await getReportTemplate(activeProjectId);

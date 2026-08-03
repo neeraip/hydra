@@ -132,6 +132,15 @@ fn require_gui_openable_engine(
     Ok(descriptor)
 }
 
+/// The engine key a project's metadata declares; `"wds"` for projects
+/// predating the field, matching `ProjectMeta`'s own default.
+pub(crate) fn project_engine_key(app_data: &std::path::Path, project_id: &str) -> String {
+    let dir = bundle::project_dir(app_data, project_id);
+    meta::read_project_meta(&dir)
+        .map(|m| m.engine)
+        .unwrap_or_else(|_| "wds".to_string())
+}
+
 /// Whether this GUI can edit the given engine's models. Openable-but-not-
 /// editable engines get read-only projects: viewable and runnable, with
 /// every mutating command refusing.

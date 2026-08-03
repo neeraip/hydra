@@ -93,8 +93,14 @@ export async function getReportBlockOptions(
 }
 
 /** The report-block catalog of the project's engine. */
-export async function listReportBlocks(): Promise<ReportBlockInfo[]> {
-  return tryInvokeOr<ReportBlockInfo[]>("list_report_blocks", undefined, []);
+export async function listReportBlocks(
+  projectId?: string,
+): Promise<ReportBlockInfo[]> {
+  return tryInvokeOr<ReportBlockInfo[]>(
+    "list_report_blocks",
+    { projectId: projectId ?? null },
+    [],
+  );
 }
 
 /** The project's saved template JSON, or null before one exists. */

@@ -394,6 +394,38 @@ pub fn get_period_results(
 /// contain structural edits (added/deleted elements) the results know nothing
 /// about, which would silently attach results to the wrong elements — so a
 /// dirty cache is treated exactly like a non-matching target.
+/// The uds counterpart of [`network_for_target`]: the cached parse when the
+/// state holds exactly this target, otherwise a fresh parse from disk.
+pub(crate) fn uds_network_for_target(
+    app_data: &std::path::Path,
+    state: &NetworkState,
+    project_id: &str,
+    scenario_id: Option<&str>,
+) -> Result<std::sync::Arc<hydra::uds::model::Network>, String> {
+    {
+        let guard = state.0.lock();
+        if let NetworkStateInner::LoadedUds {
+            network,
+            owner_project_id: Some(owner),
+            owner_scenario_id,
+            ..
+        } = &*guard
+        {
+            if owner == project_id && owner_scenario_id.as_deref() == scenario_id {
+                return Ok(network.clone());
+            }
+        }
+    }
+    let model_path = model_path_for(app_data, project_id, scenario_id);
+    let raw = std::fs::read(&model_path).map_err(|e| format!("Cannot read model: {e}"))?;
+    let text = String::from_utf8_lossy(&raw);
+    let (network, diags) = hydra::uds::io::objects::parse_network(&text);
+    if let Some(first) = diags.iter().find(|d| d.kind.is_error()) {
+        return Err(format!("Cannot read model: {first}"));
+    }
+    Ok(std::sync::Arc::new(network))
+}
+
 pub(crate) fn network_for_target(
     app_data: &std::path::Path,
     state: &NetworkState,
@@ -491,6 +523,11 @@ pub fn get_network_digest(
 ) -> Result<Option<String>, String> {
     validate_target_ids(&project_id, scenario_id.as_deref())?;
     let app_data = app_data_dir(&app)?;
+    // Only the wds model has a digest today; "no digest" is an ordinary
+    // answer (results freshness reads as unknown), not an error.
+    if super::projects::project_engine_key(&app_data, &project_id) != "wds" {
+        return Ok(None);
+    }
     Ok(
         live_network_digest(&app_data, &state, &project_id, scenario_id.as_deref())?
             .map(digest_hex),

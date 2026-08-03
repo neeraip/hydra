@@ -12,12 +12,24 @@ use super::results::network_for_target;
 use super::NetworkState;
 use crate::meta::{self, bundle};
 
-/// The report-block catalog of the project's engine. Single-engine today:
-/// serves the wds catalog; with engine #2 this takes the project id and
-/// dispatches on its engine key.
+/// The report-block catalog of the project's engine.
 #[tauri::command]
-pub fn list_report_blocks() -> &'static [hydra::common::BlockDescriptor] {
-    hydra::report_catalog()
+pub fn list_report_blocks(
+    app: tauri::AppHandle,
+    project_id: Option<String>,
+) -> Result<&'static [hydra::common::BlockDescriptor], String> {
+    // No project (or an unreadable one) serves the wds catalog, matching the
+    // pre-dispatch behaviour for existing callers.
+    let Some(project_id) = project_id else {
+        return Ok(hydra::report_catalog());
+    };
+    let app_data = app_data_dir(&app)?;
+    Ok(
+        match super::projects::project_engine_key(&app_data, &project_id).as_str() {
+            "uds" => hydra::uds::report_blocks::report_catalog(),
+            _ => hydra::report_catalog(),
+        },
+    )
 }
 
 /// Whether one block can be produced for a target, and why not when it cannot.
@@ -54,25 +66,53 @@ pub fn probe_report_blocks(
     if !out_path.exists() {
         return Ok(Vec::new());
     }
-    let network = network_for_target(&app_data, &state, &project_id, scenario_id.as_deref())?;
-    Ok(hydra::report_catalog()
-        .iter()
-        .map(|block| {
-            let (status, reason) =
-                match hydra::produce_report_block(block.id, &out_path, &network, None) {
-                    Ok(_) => ("ok", None),
-                    Err(hydra::common::BlockError::Unavailable { reason }) => {
-                        ("unavailable", Some(reason))
+    let availability =
+        |result: Result<hydra::common::Fragment, hydra::common::BlockError>| match result {
+            Ok(_) => ("ok", None),
+            Err(hydra::common::BlockError::Unavailable { reason }) => ("unavailable", Some(reason)),
+            Err(err) => ("failed", Some(err.to_string())),
+        };
+    match super::projects::project_engine_key(&app_data, &project_id).as_str() {
+        "uds" => {
+            let network = super::results::uds_network_for_target(
+                &app_data,
+                &state,
+                &project_id,
+                scenario_id.as_deref(),
+            )?;
+            Ok(hydra::uds::report_blocks::report_catalog()
+                .iter()
+                .map(|block| {
+                    let (status, reason) =
+                        availability(hydra::uds::report_blocks::produce_report_block(
+                            block.id, &out_path, &network, None,
+                        ));
+                    BlockAvailabilityDto {
+                        id: block.id.to_string(),
+                        status,
+                        reason,
                     }
-                    Err(err) => ("failed", Some(err.to_string())),
-                };
-            BlockAvailabilityDto {
-                id: block.id.to_string(),
-                status,
-                reason,
-            }
-        })
-        .collect())
+                })
+                .collect())
+        }
+        _ => {
+            let network =
+                network_for_target(&app_data, &state, &project_id, scenario_id.as_deref())?;
+            Ok(hydra::report_catalog()
+                .iter()
+                .map(|block| {
+                    let (status, reason) = availability(hydra::produce_report_block(
+                        block.id, &out_path, &network, None,
+                    ));
+                    BlockAvailabilityDto {
+                        id: block.id.to_string(),
+                        status,
+                        reason,
+                    }
+                })
+                .collect())
+        }
+    }
 }
 
 /// The options `block_id` accepts, resolved against the target's network.
@@ -95,8 +135,24 @@ pub fn get_report_block_options(
 ) -> Result<Vec<hydra::common::OptionDescriptor>, String> {
     validate_target_ids(&project_id, scenario_id.as_deref())?;
     let app_data = app_data_dir(&app)?;
-    let network = network_for_target(&app_data, &state, &project_id, scenario_id.as_deref())?;
-    Ok(hydra::report_block_options(&block_id, &network))
+    match super::projects::project_engine_key(&app_data, &project_id).as_str() {
+        "uds" => {
+            let network = super::results::uds_network_for_target(
+                &app_data,
+                &state,
+                &project_id,
+                scenario_id.as_deref(),
+            )?;
+            Ok(hydra::uds::report_blocks::report_block_options(
+                &block_id, &network,
+            ))
+        }
+        _ => {
+            let network =
+                network_for_target(&app_data, &state, &project_id, scenario_id.as_deref())?;
+            Ok(hydra::report_block_options(&block_id, &network))
+        }
+    }
 }
 
 fn template_path(app_data: &std::path::Path, project_id: &str) -> std::path::PathBuf {
@@ -254,9 +310,15 @@ fn render_for_target(
     //
     // `probe_report_blocks` deliberately does not do this: reporting per-block
     // status is its purpose, so there the failures are the answer.
-    hydra::io::out_reader::read_metadata_checked(&out_path).map_err(|e| e.to_string())?;
-
-    let network = network_for_target(&app_data, state, project_id, scenario_id)?;
+    let engine = super::projects::project_engine_key(&app_data, project_id);
+    match engine.as_str() {
+        "uds" => {
+            hydra::uds::io::out_reader::read_metadata(&out_path)?;
+        }
+        _ => {
+            hydra::io::out_reader::read_metadata_checked(&out_path).map_err(|e| e.to_string())?;
+        }
+    }
 
     let project_name = meta::read_project_meta(&bundle::project_dir(&app_data, project_id))
         .map(|m| m.name)
@@ -276,9 +338,28 @@ fn render_for_target(
         ],
     };
 
-    let document = assemble(template, hydra::report_catalog(), context, |id, options| {
-        hydra::produce_report_block(id, &out_path, &network, options)
-    });
+    let document = match engine.as_str() {
+        "uds" => {
+            let network =
+                super::results::uds_network_for_target(&app_data, state, project_id, scenario_id)?;
+            assemble(
+                template,
+                hydra::uds::report_blocks::report_catalog(),
+                context,
+                |id, options| {
+                    hydra::uds::report_blocks::produce_report_block(
+                        id, &out_path, &network, options,
+                    )
+                },
+            )
+        }
+        _ => {
+            let network = network_for_target(&app_data, state, project_id, scenario_id)?;
+            assemble(template, hydra::report_catalog(), context, |id, options| {
+                hydra::produce_report_block(id, &out_path, &network, options)
+            })
+        }
+    };
     Ok(match format {
         "txt" => render_txt(&document),
         "csv" => render_csv(&document),

@@ -7,7 +7,9 @@ use tauri::Manager;
 use crate::meta::{self, bundle};
 
 use super::network_dto::{format_inp_parse_error, format_read_error};
-use super::projects::{app_data_dir, read_model_bytes, results_path_for, validate_id};
+use super::projects::{
+    app_data_dir, project_engine_key, read_model_bytes, results_path_for, validate_id,
+};
 use super::simulation::{
     emit_or_warn, progress_percent, run_loop_outcome, run_sim_loops, try_acquire_run_target,
     RunLoopError, SimulationProgressDto, SIMULATION_PROGRESS_EVENT,
@@ -610,15 +612,6 @@ async fn run_sim_for_queue(
     }
 
     Ok(QueueRunResult::Done)
-}
-
-/// The engine key a project's metadata declares; `"wds"` for projects
-/// predating the field, matching `ProjectMeta`'s own default.
-fn project_engine_key(app_data: &std::path::Path, project_id: &str) -> String {
-    let dir = bundle::project_dir(app_data, project_id);
-    meta::read_project_meta(&dir)
-        .map(|m| m.engine)
-        .unwrap_or_else(|_| "wds".to_string())
 }
 
 #[derive(Debug, Clone, Copy)]

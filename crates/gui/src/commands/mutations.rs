@@ -1823,6 +1823,17 @@ pub fn validate_network(
 ) -> Result<Vec<ValidationFindingDto>, String> {
     validate_target_ids(&project_id, scenario_id.as_deref())?;
 
+    // Engine-scoped: these are wds validation findings. A uds project's
+    // import diagnostics surface at load; its live validation arrives with
+    // its own surface. An empty list keeps the Issues panel quiet instead
+    // of toasting a foreign-dialect error on every open.
+    {
+        let app_data = app_data_dir(&app)?;
+        if super::projects::project_engine_key(&app_data, &project_id) != "wds" {
+            return Ok(Vec::new());
+        }
+    }
+
     // Clone from the cache when it holds exactly this target (dirty allowed —
     // see the doc comment); otherwise fall back to the on-disk model.
     let cached: Option<std::sync::Arc<hydra::Network>> = {
