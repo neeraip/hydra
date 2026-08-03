@@ -59,8 +59,8 @@ Analysis → Spec → Implementation
 
 | Type of change | Required steps |
 |---|---|
-| Solver algorithm (hydraulics, quality, simulation) | 1. Update the relevant `crates/engine-wds/src/*/spec.md`. 2. Write/change implementation. |
-| Data model or parser | 1. Update `crates/engine-wds/src/model/spec.md`. 2. Write/change implementation. |
+| Solver algorithm (hydraulics, hydrology, quality, transport, simulation) | 1. Update the relevant spec in the owning engine crate (`crates/engine-wds/src/*/spec.md` or `crates/engine-uds/src/*/spec.md`). 2. Write/change implementation. |
+| Data model or parser | 1. Update the owning engine's model/interop spec (`crates/engine-wds/src/model/spec.md`, `crates/engine-uds/src/model/spec.md`, or `crates/engine-uds/src/interop/spec.md`). 2. Write/change implementation. |
 | Post-simulation analytics | 1. Update `crates/engine-wds/src/analysis/spec.md`. 2. Write/change implementation. |
 | CLI or GUI | Make changes directly — no spec document needed. |
 | Public API (`hydra-sdk` facade) | Update re-exports and `README.md` examples. No spec document needed. |
@@ -74,6 +74,13 @@ Analysis → Spec → Implementation
 | `crates/engine-wds/src/quality/spec.md` | Lagrangian transport, mixing, reactions, source tracing |
 | `crates/engine-wds/src/simulation/spec.md` | Session API, controls, timestep, accounting |
 | `crates/engine-wds/src/analysis/spec.md` | Post-simulation analytics |
+| `crates/engine-uds/src/spec.md` | uds charter: scope, principles, correspondence, status |
+| `crates/engine-uds/src/model/spec.md` | SWMM data model and unit system |
+| `crates/engine-uds/src/hydrology/spec.md` | Runoff, infiltration, LID, snowmelt, groundwater, RDII, climate |
+| `crates/engine-uds/src/hydraulics/spec.md` | Section geometry, dynamic-wave routing, structures, inlets |
+| `crates/engine-uds/src/transport/spec.md` | Buildup, washoff, treatment, network transport |
+| `crates/engine-uds/src/simulation/spec.md` | Controls, orchestration, accounting, statistics, session API |
+| `crates/engine-uds/src/interop/spec.md` | INP import, interface files, OUT/RPT output, recognition |
 
 ### Implementation rules
 

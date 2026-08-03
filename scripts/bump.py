@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Bump the workspace library version (hydra-engine-wds, hydra-sdk) and tag v{version}.
+"""Bump the workspace library version (common, engines, report, sdk) and tag v{version}.
 
 Run this first when bumping multiple tracks — it also updates the hydra-sdk dep
-pin in hydra-cli and the hydra-engine-wds dep pin in hydra-sdk.
+pin in hydra-cli and every intra-workspace dep pin (see CRATE_MANIFESTS).
 
 Usage: scripts/bump.py <patch|minor|major> [--push|--no-push]
 """

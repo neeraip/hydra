@@ -37,7 +37,7 @@ Examples:
 - **major** — breaking change to a public API or behaviour that existing callers depend on
 
 Determine which version track(s) are affected:
-- **Library** (`just bump patch|minor|major`) — changes to `hydra-engine-wds` or `hydra-sdk`
+- **Library** (`just bump patch|minor|major`) — changes to any workspace-versioned crate (`hydra-common`, `hydra-engine-wds`, `hydra-engine-uds`, `hydra-engines`, `hydra-report`, `hydra-sdk`)
 - **CLI** (`just bump-cli patch|minor|major`) — changes to `hydra-cli` or its user-facing behaviour
 - **GUI** (`just bump-gui patch|minor|major`) — changes to `hydra-gui` or the frontend
 

@@ -1,10 +1,10 @@
 # Releasing Hydra
 
-CLI (`hydra-cli`) and GUI (`hydra-gui`) are versioned **independently** from the library stack (`hydra-engine-wds`, `hydra-sdk`). The library stack shares a single workspace version.
+CLI (`hydra-cli`) and GUI (`hydra-gui`) are versioned **independently** from the library stack (`hydra-common`, the engine crates `hydra-engine-wds`/`hydra-engine-uds`/`hydra-engine-och`, `hydra-engines`, `hydra-report`, `hydra-sdk`). The library stack shares a single workspace version.
 
 | Command | What it bumps | Tag created | Triggers |
 |---|---|---|---|
-| `just bump [patch\|minor\|major] [--push\|--no-push]` | Workspace version (common + engine + sdk) + dep pins in cli/sdk | `v{version}` | GitHub draft release (crates.io publish triggers when release is published) |
+| `just bump [patch\|minor\|major] [--push\|--no-push]` | Workspace version (common + engines + report + sdk) + dep pins in cli/sdk | `v{version}` | GitHub draft release (crates.io publish triggers when release is published) |
 | `just bump-cli [patch\|minor\|major] [--push\|--no-push]` | `crates/cli/Cargo.toml` only | `cli-v{version}` | CLI binary release + crates.io publish of hydra-cli |
 | `just bump-gui [patch\|minor\|major] [--push\|--no-push]` | `crates/gui/Cargo.toml` + `tauri.conf.json` + `crates/gui/frontend/package.json` | `gui-v{version}` | GUI installer release |
 
