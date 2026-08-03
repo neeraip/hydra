@@ -1546,6 +1546,7 @@ Duration  0
         // the frontend then treats the topology match as unknown (no gating).
         let dto = |d: Option<String>| ResultMetaDto {
             times: vec![],
+            has_period_data: true,
             quality_mode: "none".into(),
             network_digest: d,
             ranges: ResultRangesDto {
