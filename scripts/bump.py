@@ -28,12 +28,14 @@ CRATE_MANIFESTS = (
     "crates/sdk/Cargo.toml",
     "crates/engines/Cargo.toml",
     "crates/engine-wds/Cargo.toml",
+    "crates/engine-uds/Cargo.toml",
     "crates/report/Cargo.toml",
 )
 
 WORKSPACE_DEPS = (
     "hydra-common",
     "hydra-engine-wds",
+    "hydra-engine-uds",
     "hydra-engines",
     "hydra-report",
 )
