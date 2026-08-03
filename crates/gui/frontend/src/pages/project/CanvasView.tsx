@@ -1005,6 +1005,7 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
       (genericMeta?.pointVars ?? []).slice(0, RAIL_RESULT_COLUMNS).map((v) => ({
         key: v.id,
         label: v.label,
+        symbol: v.symbol,
         unit: v.unit,
       })),
     [genericMeta],
@@ -1013,7 +1014,12 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
     () =>
       (genericMeta?.polylineVars ?? [])
         .slice(0, RAIL_RESULT_COLUMNS)
-        .map((v) => ({ key: v.id, label: v.label, unit: v.unit })),
+        .map((v) => ({
+          key: v.id,
+          label: v.label,
+          symbol: v.symbol,
+          unit: v.unit,
+        })),
     [genericMeta],
   );
   const railNodes = useMemo(() => {

@@ -190,6 +190,9 @@ export interface ResultRanges {
 export interface GenericVariable {
   id: string;
   label: string;
+  /** Engine-authored compact notation (Q, y, Ø) for space-starved
+   * surfaces; absent = the application derives a fallback. */
+  symbol?: string;
   unit?: string;
   ramp: "sequential" | "diverging" | "banded";
   min: number;

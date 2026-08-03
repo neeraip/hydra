@@ -44,6 +44,9 @@ use super::uds_view::UdsView;
 pub struct GenericVariableDto {
     pub id: String,
     pub label: String,
+    /// Engine-authored compact notation (§6.1) for space-starved surfaces.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub symbol: Option<String>,
     /// Engine-authored unit label for the results file's unit system, or
     /// `None` for unitless variables.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -187,6 +190,7 @@ pub fn generic_meta(out_path: &Path, meta: &OutMetadata) -> Result<GenericResult
                     GenericVariableDto {
                         id: v.id.to_string(),
                         label: v.label.to_string(),
+                        symbol: v.symbol.map(str::to_string),
                         unit: unit_label(meta, v.quantity),
                         ramp: ramp_name(&v.ramp),
                         min,

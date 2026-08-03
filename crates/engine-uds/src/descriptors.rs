@@ -310,41 +310,62 @@ fn text() -> OptionKind {
 /// the engine produces no results for yield an empty list.
 pub fn result_variables(class: ElementClass) -> Vec<VariableDescriptor> {
     match class {
+        // Symbols are the domain's standard notation: y flow depth, H head,
+        // V volume, q lateral inflow, ΣQ summed inflow, Q discharge,
+        // v velocity, y/D the partial-depth capacity ratio, i rainfall
+        // intensity (rational method), f infiltration rate (Horton).
         ElementClass::Point => vec![
-            var("depth", "Depth", Some("depth"), RampHint::Sequential),
+            var("depth", "Depth", "y", Some("depth"), RampHint::Sequential),
             var(
                 "head",
                 "Hydraulic head",
+                "H",
                 Some("elevation"),
                 RampHint::Sequential,
             ),
             var(
                 "volume",
                 "Stored volume",
+                "V",
                 Some("volume"),
                 RampHint::Sequential,
             ),
             var(
                 "lateralInflow",
                 "Lateral inflow",
+                "qL",
                 Some("flow"),
                 RampHint::Sequential,
             ),
             var(
                 "totalInflow",
                 "Total inflow",
+                "ΣQ",
                 Some("flow"),
                 RampHint::Sequential,
             ),
-            var("flooding", "Flooding", Some("flow"), RampHint::Sequential),
+            var(
+                "flooding",
+                "Flooding",
+                "Qf",
+                Some("flow"),
+                RampHint::Sequential,
+            ),
         ],
         ElementClass::Polyline => vec![
-            var("flow", "Flow", Some("flow"), RampHint::Diverging),
-            var("depth", "Depth", Some("depth"), RampHint::Sequential),
-            var("velocity", "Velocity", Some("velocity"), RampHint::Banded),
+            var("flow", "Flow", "Q", Some("flow"), RampHint::Diverging),
+            var("depth", "Depth", "y", Some("depth"), RampHint::Sequential),
+            var(
+                "velocity",
+                "Velocity",
+                "v",
+                Some("velocity"),
+                RampHint::Banded,
+            ),
             var(
                 "capacity",
                 "Capacity used",
+                "y/D",
                 Some("percent"),
                 RampHint::Banded,
             ),
@@ -353,13 +374,15 @@ pub fn result_variables(class: ElementClass) -> Vec<VariableDescriptor> {
             var(
                 "rainfall",
                 "Rainfall",
+                "i",
                 Some("rainfall"),
                 RampHint::Sequential,
             ),
-            var("runoff", "Runoff", Some("flow"), RampHint::Sequential),
+            var("runoff", "Runoff", "Q", Some("flow"), RampHint::Sequential),
             var(
                 "infiltration",
                 "Infiltration",
+                "f",
                 Some("infiltration"),
                 RampHint::Sequential,
             ),
@@ -371,12 +394,14 @@ pub fn result_variables(class: ElementClass) -> Vec<VariableDescriptor> {
 fn var(
     id: &'static str,
     label: &'static str,
+    symbol: &'static str,
     quantity: Option<&'static str>,
     ramp: RampHint,
 ) -> VariableDescriptor {
     VariableDescriptor {
         id,
         label,
+        symbol: Some(symbol),
         quantity,
         ramp,
     }

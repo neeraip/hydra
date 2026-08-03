@@ -26,6 +26,8 @@ export interface SimResultColumn {
   /** Variable id — the key into each element's `resultValues`. */
   key: string;
   label: string;
+  /** Engine-authored compact notation for the header's narrowest stage. */
+  symbol?: string;
   unit?: string;
 }
 

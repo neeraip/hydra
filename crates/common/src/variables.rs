@@ -55,6 +55,11 @@ pub struct VariableDescriptor {
     pub id: &'static str,
     /// Human-facing name.
     pub label: &'static str,
+    /// Compact engine-authored notation (≤3 chars) for space-starved
+    /// surfaces — ideally the domain's standard symbol (spec §6.1) — or
+    /// `None` for the application's own fallback.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub symbol: Option<&'static str>,
     /// Key of the quantity the values carry (spec §5), or `None` for
     /// dimensionless variables.
     pub quantity: Option<&'static str>,

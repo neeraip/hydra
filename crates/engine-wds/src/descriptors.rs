@@ -228,24 +228,44 @@ fn text() -> OptionKind {
 pub fn result_variables(class: ElementClass) -> Vec<VariableDescriptor> {
     match class {
         ElementClass::Point => vec![
-            var("pressure", "Pressure", Some("pressure"), RampHint::Banded),
-            var("head", "Head", Some("head"), RampHint::Sequential),
-            var("demand", "Demand", Some("demand"), RampHint::Sequential),
-            var("quality", "Quality", None, RampHint::Sequential),
+            var(
+                "pressure",
+                "Pressure",
+                "p",
+                Some("pressure"),
+                RampHint::Banded,
+            ),
+            var("head", "Head", "H", Some("head"), RampHint::Sequential),
+            var(
+                "demand",
+                "Demand",
+                "q",
+                Some("demand"),
+                RampHint::Sequential,
+            ),
+            var("quality", "Quality", "C", None, RampHint::Sequential),
         ],
         ElementClass::Polyline => vec![
-            var("flow", "Flow", Some("flow"), RampHint::Diverging),
-            var("velocity", "Velocity", Some("velocity"), RampHint::Banded),
+            var("flow", "Flow", "Q", Some("flow"), RampHint::Diverging),
+            var(
+                "velocity",
+                "Velocity",
+                "v",
+                Some("velocity"),
+                RampHint::Banded,
+            ),
             var(
                 "headloss",
                 "Unit headloss",
+                "hf",
                 Some("headloss"),
                 RampHint::Sequential,
             ),
-            var("quality", "Quality", None, RampHint::Sequential),
+            var("quality", "Quality", "C", None, RampHint::Sequential),
             VariableDescriptor {
                 id: "status",
                 label: "Status",
+                symbol: Some("St"),
                 quantity: None,
                 // The codes the binary results format stores (model spec
                 // §4.4.4): EPANET's status enumeration.
@@ -266,12 +286,14 @@ pub fn result_variables(class: ElementClass) -> Vec<VariableDescriptor> {
 fn var(
     id: &'static str,
     label: &'static str,
+    symbol: &'static str,
     quantity: Option<&'static str>,
     ramp: RampHint,
 ) -> VariableDescriptor {
     VariableDescriptor {
         id,
         label,
+        symbol: Some(symbol),
         quantity,
         ramp,
     }

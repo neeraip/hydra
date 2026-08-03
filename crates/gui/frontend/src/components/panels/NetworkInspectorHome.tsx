@@ -293,7 +293,7 @@ function GenericResultHeader({
     >
       <HeaderContent
         label={column.label}
-        symbol={column.label.charAt(0).toUpperCase()}
+        symbol={column.symbol ?? column.label.charAt(0).toUpperCase()}
         col={sortKey}
         sortCol={sortCol}
         sortDir={sortDir}
@@ -461,12 +461,14 @@ function NodesTab({
                   id: { label: "ID", symbol: "ID", tip: "Node ID" },
                   elevation: {
                     label: "Elevation",
-                    symbol: "El",
+                    // Engineering-standard symbols: z elevation head,
+                    // q nodal demand, p pressure (Bernoulli notation).
+                    symbol: "z",
                     tip: `Elevation (${unitLabel("elevation", sys)})`,
                   },
                   baseDemand: {
                     label: "Base demand",
-                    symbol: "De",
+                    symbol: "q",
                     tip: `Base demand (${unitLabel("demand", sys)})`,
                   },
                 }[col];
@@ -497,7 +499,7 @@ function NodesTab({
               >
                 <HeaderContent
                   label="Pressure"
-                  symbol="Pr"
+                  symbol="p"
                   col="pressure"
                   sortCol={sortCol}
                   sortDir={sortDir}
@@ -844,7 +846,7 @@ function LinksTab({
               >
                 <HeaderContent
                   label="Flow"
-                  symbol="Fl"
+                  symbol="Q"
                   col="flow"
                   sortCol={sortCol}
                   sortDir={sortDir}

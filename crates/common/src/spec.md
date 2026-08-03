@@ -1,12 +1,13 @@
 # Hydra Common — Foundation Contract
 
-Status: **v1.5 — 2026-08-03** (v1.1 added opaque per-block options
+Status: **v1.6 — 2026-08-03** (v1.1 added opaque per-block options
 to the production contract, §3.4; v1.2 added the chart fragment item,
 §3.3; v1.3 added engine availability and import formats, §2.1–2.3; v1.4
 added the recognition contract and its routing rules, §2.5; v1.5 — with a
 second engine implemented and able to validate them — added the element
 taxonomy contract (§4), the quantity contract (§5), the result-variable
-contract (§6), and the run-dispatch layering rule (§2.6)).
+contract (§6), and the run-dispatch layering rule (§2.6); v1.6 added the
+optional compact symbol on variable descriptors, §6.1).
 This file is the module documentation
 of the `hydra-common` crate and follows the same spec-first workflow as the
 engine specs: implementation changes flow from changes here, never the
@@ -535,6 +536,7 @@ an ordered catalog of variable descriptors:
 |---|---|---|
 | `id` | Stable variable identifier | Opaque to this layer; application preferences and saved views may reference it. |
 | `label` | Human-facing name | Plain text, engine-authored. |
+| `symbol` | Compact notation for space-starved surfaces (column headers, chips), or absent | Engine-authored, at most three characters, ideally the domain's standard notation (Q for discharge, y for depth, Ø for diameter). Absent means the application derives its own fallback, e.g. the label's initial. |
 | `quantity` | Key of the quantity the values carry (§5), or absent | Absent means dimensionless. |
 | `ramp` | How values are meaningfully mapped to a colour scale | One of the ramp hints below. |
 
