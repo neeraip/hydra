@@ -93,22 +93,25 @@ pub fn list_projects(app: tauri::AppHandle) -> Result<Vec<Project>, String> {
 
 /// Engines whose projects this GUI can create, edit, and run.
 ///
-/// The registry says what this *build of Hydra* can simulate; this list says
-/// what this *GUI* can edit. The two differ when an engine ships CLI-first:
-/// available in the registry (and runnable through `hydra-cli`), but with no
-/// editor, canvas, or run-queue support here yet.
+/// The registry says what this *build of Hydra* can simulate; these lists
+/// say what this *GUI* can do with each engine, in two tiers. An engine can
+/// be **openable** (projects can be created from an imported model, viewed,
+/// and run through the queue) before it is **editable** (tables, inspector
+/// writes, element creation). The tiers differ while an engine's viewer
+/// ships ahead of its editor.
+const GUI_OPENABLE_ENGINES: &[&str] = &["wds", "uds"];
 const GUI_EDITABLE_ENGINES: &[&str] = &["wds"];
 
-/// Resolve an engine key, refusing anything this GUI cannot actually edit
+/// Resolve an engine key, refusing anything this GUI cannot open at all
 /// (hydra-common spec §2.3).
 ///
 /// The three failure modes are deliberately distinct in the message: an
 /// unknown key means the project came from a newer Hydra, a planned key
 /// means the engine is registered but unimplemented, and an available but
-/// non-editable key means the engine runs from the CLI only. Collapsing them
+/// unopenable key means the engine runs from the CLI only. Collapsing them
 /// would leave a user unable to tell "upgrade Hydra" from "wait for it"
 /// from "use the CLI".
-fn require_gui_editable_engine(
+fn require_gui_openable_engine(
     key: &str,
 ) -> Result<&'static hydra::common::EngineDescriptor, String> {
     let descriptor = hydra::common::engine_by_key(key)
@@ -119,7 +122,7 @@ fn require_gui_editable_engine(
             descriptor.label
         ));
     }
-    if !GUI_EDITABLE_ENGINES.contains(&descriptor.key) {
+    if !GUI_OPENABLE_ENGINES.contains(&descriptor.key) {
         return Err(format!(
             "{} projects are not supported in the Hydra GUI yet — run these \
              models with the hydra CLI",
@@ -127,6 +130,13 @@ fn require_gui_editable_engine(
         ));
     }
     Ok(descriptor)
+}
+
+/// Whether this GUI can edit the given engine's models. Openable-but-not-
+/// editable engines get read-only projects: viewable and runnable, with
+/// every mutating command refusing.
+pub(crate) fn engine_is_gui_editable(key: &str) -> bool {
+    GUI_EDITABLE_ENGINES.contains(&key)
 }
 
 /// The model a project starts from when the user imports nothing.
@@ -190,7 +200,7 @@ fn new_project_model(import: bool, guard: &mut NetworkStateInner) -> (Vec<u8>, u
     }
     // `up_to_date_raw_bytes` re-serialises first when in-memory edits have
     // not been flushed yet.
-    let bytes = guard.up_to_date_raw_bytes().cloned();
+    let bytes = guard.current_model_bytes();
     match (&*guard, bytes) {
         (NetworkStateInner::Loaded { dto, .. }, Some(bytes)) => {
             (bytes, dto.nodes.len() as u32, dto.links.len() as u32)
@@ -225,9 +235,19 @@ pub fn create_project(
 ) -> Result<Project, String> {
     validate_id(&id)?;
     // The engine key is persisted into meta.json and never rewritten, so a
-    // key that this GUI cannot edit must be refused here rather than
+    // key that this GUI cannot open must be refused here rather than
     // producing a project that opens into a permanent unsupported state.
-    require_gui_editable_engine(&engine)?;
+    let descriptor = require_gui_openable_engine(&engine)?;
+    // A read-only engine has no editor to grow a model in, so a blank
+    // start would create a project that can never hold anything: its
+    // projects begin from an imported model or not at all.
+    if !engine_is_gui_editable(descriptor.key) && !import_loaded_network {
+        return Err(format!(
+            "{} projects start from an imported model — editing is not \
+             available in the GUI yet",
+            descriptor.label
+        ));
+    }
     let app_data = app_data_dir(&app)?;
 
     let (inp_bytes, node_count, link_count) =
@@ -1348,7 +1368,7 @@ pub async fn open_and_load_network(
 ) -> Result<Option<ImportedModel>, String> {
     use tauri_plugin_dialog::DialogExt;
 
-    let descriptor = require_gui_editable_engine(&engine)?;
+    let descriptor = require_gui_openable_engine(&engine)?;
 
     // The dialog call blocks until the user answers — run it on the blocking
     // pool so it does not tie up an async runtime worker for that whole time.
@@ -1375,8 +1395,8 @@ pub async fn open_and_load_network(
         .unwrap_or("")
         .to_string();
     let bytes = std::fs::read(&path_buf).map_err(|e| e.to_string())?;
-    // `require_gui_editable_engine` has already narrowed this to the one
-    // engine the GUI edits. Matching on the key rather than calling the wds
+    // `require_gui_openable_engine` has already narrowed this to engines
+    // the GUI opens. Matching on the key rather than calling the wds
     // parser unconditionally makes the next engine a compile-time decision
     // instead of a silently wrong parse.
     //
@@ -1393,6 +1413,31 @@ pub async fn open_and_load_network(
             let (network, _validation_errors) =
                 hydra::io::parse_tolerant(&bytes).map_err(format_read_error)?;
             network
+        }
+        "uds" => {
+            // Read-only import: parse errors refuse the file; the model text
+            // is held as-is for the project's model.inp. The wizard preview
+            // and Issues panel for uds arrive with the viewer snapshot — the
+            // returned DTO is empty apart from the file name.
+            let text = String::from_utf8_lossy(&bytes).into_owned();
+            let (network, diags) = hydra::uds::io::objects::parse_network(&text);
+            if let Some(first) = diags.iter().find(|d| d.kind.is_error()) {
+                return Err(format!("Cannot import this model: {first}"));
+            }
+            let dto = NetworkDto {
+                file_stem,
+                ..Default::default()
+            };
+            *state.0.lock() = NetworkStateInner::LoadedUds {
+                raw_text: text,
+                network: std::sync::Arc::new(network),
+                owner_project_id: None,
+                owner_scenario_id: None,
+            };
+            return Ok(Some(ImportedModel {
+                network: dto,
+                findings: Vec::new(),
+            }));
         }
         other => return Err(format!("no importer for engine {other:?}")),
     };
@@ -1485,6 +1530,11 @@ pub fn save_project(
                 owner_project_id,
                 owner_scenario_id,
                 ..
+            }
+            | NetworkStateInner::LoadedUds {
+                owner_project_id,
+                owner_scenario_id,
+                ..
             } => check_save_target(
                 owner_project_id.as_deref(),
                 owner_scenario_id.as_deref(),
@@ -1494,15 +1544,21 @@ pub fn save_project(
             NetworkStateInner::Empty => return Ok(false),
         }
         // Serialise pending in-memory edits (dirty flag) exactly once, here at
-        // the save point, instead of on every mutation.
-        let raw = match guard.up_to_date_raw_bytes() {
-            Some(bytes) => bytes.clone(),
+        // the save point, instead of on every mutation. (A uds model is
+        // read-only, so its text is always current.)
+        let raw = match guard.current_model_bytes() {
+            Some(bytes) => bytes,
             None => return Ok(false),
         };
         match &*guard {
             NetworkStateInner::Loaded { dto, .. } => {
                 (raw, dto.nodes.len() as u32, dto.links.len() as u32)
             }
+            NetworkStateInner::LoadedUds { network, .. } => (
+                raw,
+                network.vertices.len() as u32,
+                network.links.len() as u32,
+            ),
             NetworkStateInner::Empty => return Ok(false),
         }
     };
@@ -1547,6 +1603,31 @@ pub fn load_project_network(
         return Ok(tauri::ipc::Response::new(encode_network_snapshot_absent()));
     }
     let bytes = std::fs::read(&path).map_err(|e| e.to_string())?;
+
+    // A read-only engine's project loads into its own state variant; the
+    // frontend receives an empty snapshot until the descriptor-driven
+    // viewer snapshot lands, so the project page opens (engine pill, runs,
+    // reports) with a blank canvas.
+    let project_dir = bundle::project_dir(&app_data, &project_id);
+    let engine = meta::read_project_meta(&project_dir)
+        .map(|m| m.engine)
+        .unwrap_or_else(|_| "wds".to_string());
+    if engine == "uds" {
+        let text = String::from_utf8_lossy(&bytes).into_owned();
+        let (network, diags) = hydra::uds::io::objects::parse_network(&text);
+        if let Some(first) = diags.iter().find(|d| d.kind.is_error()) {
+            return Err(format!("Cannot open this model: {first}"));
+        }
+        let encoded = encode_network_snapshot(&NetworkDto::default());
+        *state.0.lock() = NetworkStateInner::LoadedUds {
+            raw_text: text,
+            network: std::sync::Arc::new(network),
+            owner_project_id: Some(project_id.clone()),
+            owner_scenario_id: scenario_id.clone(),
+        };
+        return Ok(tauri::ipc::Response::new(encoded));
+    }
+
     // Tolerant (model spec §4.1.2): a network under construction is not
     // simulable — a junction exists for some interval before anything
     // connects it — and refusing to load one would mean the editor could not
@@ -1979,25 +2060,25 @@ mod tests {
     // ── engine gating ────────────────────────────────────────────────────
 
     #[test]
-    fn only_a_gui_editable_engine_may_back_a_new_project() {
-        assert_eq!(require_gui_editable_engine("wds").unwrap().key, "wds");
+    fn only_a_gui_openable_engine_may_back_a_new_project() {
+        assert_eq!(require_gui_openable_engine("wds").unwrap().key, "wds");
+        // uds opens read-only: creatable from an import, viewable, runnable.
+        assert_eq!(require_gui_openable_engine("uds").unwrap().key, "uds");
+        assert!(engine_is_gui_editable("wds"));
+        assert!(!engine_is_gui_editable("uds"));
 
-        // Registered but not GUI-editable — planned engines and CLI-first
-        // ones alike. The wizard disables these cards; this is the backstop
-        // for a caller that ignores the card state. Which message each key
-        // gets depends on its registry status, so assert only the refusal
-        // and that it is not the unknown-key one.
-        for key in ["uds", "och"] {
-            let err = require_gui_editable_engine(key).unwrap_err();
-            assert!(
-                err.contains("not available yet") || err.contains("not supported in the Hydra GUI"),
-                "{key} rejection should say why it cannot back a project, got: {err}"
-            );
-            assert!(!err.contains("unknown engine"), "got: {err}");
-        }
+        // Registered but not openable — planned engines. The wizard disables
+        // these cards; this is the backstop for a caller that ignores the
+        // card state.
+        let err = require_gui_openable_engine("och").unwrap_err();
+        assert!(
+            err.contains("not available yet") || err.contains("not supported in the Hydra GUI"),
+            "och rejection should say why it cannot back a project, got: {err}"
+        );
+        assert!(!err.contains("unknown engine"), "got: {err}");
 
         // Unknown: a different failure with a different remedy (upgrade).
-        let err = require_gui_editable_engine("zzz").unwrap_err();
+        let err = require_gui_openable_engine("zzz").unwrap_err();
         assert!(err.contains("unknown engine"), "got: {err}");
         assert!(!err.contains("not available yet"), "got: {err}");
     }

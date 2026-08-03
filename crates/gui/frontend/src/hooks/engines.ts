@@ -79,19 +79,31 @@ export const FALLBACK_ENGINES: EngineInfo[] = [
   },
 ];
 
-/** Engines whose projects this GUI can create, edit, and run. The registry
- * status says what this build of Hydra can simulate; this says what the GUI
- * can edit — an engine that ships CLI-first is available without being
- * editable here yet. */
+/** What this GUI can do with each engine, in two tiers. Openable: projects
+ * can be created from an imported model, viewed, and run through the queue.
+ * Editable: tables, inspector writes, element creation. The tiers differ
+ * while an engine's viewer ships ahead of its editor; the registry status
+ * says only what this build of Hydra can simulate at all. Mirrors the Rust
+ * lists in `commands/projects.rs`. */
+export const GUI_OPENABLE_ENGINES: ReadonlySet<string> = new Set([
+  "wds",
+  "uds",
+]);
 export const GUI_EDITABLE_ENGINES: ReadonlySet<string> = new Set(["wds"]);
 
 /** Whether this build of Hydra can simulate `engine`'s models at all
- * (registry status — not the same as being editable in this GUI). */
+ * (registry status — not the same as being usable in this GUI). */
 export function isEngineAvailable(engine: EngineInfo): boolean {
   return engine.status === "available";
 }
 
-/** Whether `engine` can back a new project in this GUI. */
+/** Whether `engine` can back a new project in this GUI (possibly read-only:
+ * import, view, run — see `isEngineGuiEditable` for editing). */
+export function isEngineGuiOpenable(engine: EngineInfo): boolean {
+  return isEngineAvailable(engine) && GUI_OPENABLE_ENGINES.has(engine.key);
+}
+
+/** Whether `engine`'s projects can be edited in this GUI. */
 export function isEngineGuiEditable(engine: EngineInfo): boolean {
   return isEngineAvailable(engine) && GUI_EDITABLE_ENGINES.has(engine.key);
 }

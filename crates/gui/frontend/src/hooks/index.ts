@@ -49,6 +49,7 @@ export {
   importExtensionLabel,
   isEngineAvailable,
   isEngineGuiEditable,
+  isEngineGuiOpenable,
   useEngines,
 } from "./engines";
 export * from "./issues";

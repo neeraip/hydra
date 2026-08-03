@@ -27,7 +27,7 @@ import {
   formatInpImportError,
   importExtensionLabel,
   isEngineAvailable,
-  isEngineGuiEditable,
+  isEngineGuiOpenable,
   openAndLoadNetwork,
   type Project,
   useEngines,
@@ -538,7 +538,7 @@ function EngineCard({
   selected: boolean;
   onSelect: () => void;
 }) {
-  const available = isEngineGuiEditable(engine);
+  const available = isEngineGuiOpenable(engine);
   return (
     <button
       type="button"

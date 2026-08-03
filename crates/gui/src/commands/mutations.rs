@@ -429,6 +429,9 @@ where
             *dto = network_to_dto(network);
             Ok(())
         }
+        NetworkStateInner::LoadedUds { .. } => Err(
+            "This project's engine is read-only in the GUI — editing is not available yet.".into(),
+        ),
         NetworkStateInner::Empty => Err("no network loaded".into()),
     }
 }
@@ -475,51 +478,56 @@ pub fn patch_elements(
 ) -> Result<PatchElementsResult, String> {
     // Lock held across the emit below (see `NETWORK_CHANGED_EVENT`).
     let mut guard = state.0.lock();
-    let (result, elements) = {
-        match &mut *guard {
-            NetworkStateInner::Loaded {
-                dirty,
-                network,
-                dto,
-                ..
-            } => {
-                let mut applied = 0u32;
-                let mut errors = Vec::new();
-                // Unique (kind, id) pairs of successfully patched elements,
-                // in first-touched order.
-                let mut touched: Vec<(String, String)> = Vec::new();
-                for patch in patches {
-                    match apply_patch_to_network(
-                        std::sync::Arc::make_mut(network),
-                        &patch.kind,
-                        &patch.id,
-                        &patch.field,
-                        patch.value,
-                    ) {
-                        Ok(()) => {
-                            applied += 1;
-                            *dirty = true;
-                            if !touched
-                                .iter()
-                                .any(|(k, i)| *k == patch.kind && *i == patch.id)
-                            {
-                                touched.push((patch.kind, patch.id));
+    let (result, elements) =
+        {
+            match &mut *guard {
+                NetworkStateInner::Loaded {
+                    dirty,
+                    network,
+                    dto,
+                    ..
+                } => {
+                    let mut applied = 0u32;
+                    let mut errors = Vec::new();
+                    // Unique (kind, id) pairs of successfully patched elements,
+                    // in first-touched order.
+                    let mut touched: Vec<(String, String)> = Vec::new();
+                    for patch in patches {
+                        match apply_patch_to_network(
+                            std::sync::Arc::make_mut(network),
+                            &patch.kind,
+                            &patch.id,
+                            &patch.field,
+                            patch.value,
+                        ) {
+                            Ok(()) => {
+                                applied += 1;
+                                *dirty = true;
+                                if !touched
+                                    .iter()
+                                    .any(|(k, i)| *k == patch.kind && *i == patch.id)
+                                {
+                                    touched.push((patch.kind, patch.id));
+                                }
                             }
+                            Err(e) => errors.push(e),
                         }
-                        Err(e) => errors.push(e),
                     }
-                }
-                let mut elements = Vec::with_capacity(touched.len());
-                for (kind, id) in &touched {
-                    if let Ok(el) = refresh_element_dto(network, dto, kind, id) {
-                        elements.push(el);
+                    let mut elements = Vec::with_capacity(touched.len());
+                    for (kind, id) in &touched {
+                        if let Ok(el) = refresh_element_dto(network, dto, kind, id) {
+                            elements.push(el);
+                        }
                     }
+                    (PatchElementsResult { applied, errors }, elements)
                 }
-                (PatchElementsResult { applied, errors }, elements)
+                NetworkStateInner::LoadedUds { .. } => return Err(
+                    "This project's engine is read-only in the GUI — editing is not available yet."
+                        .into(),
+                ),
+                NetworkStateInner::Empty => return Err("no network loaded".into()),
             }
-            NetworkStateInner::Empty => return Err("no network loaded".into()),
-        }
-    };
+        };
     if !elements.is_empty() {
         emit_or_warn(
             &app,
@@ -573,6 +581,10 @@ pub fn patch_node_position(
                 *dirty = true;
                 Ok(moved)
             }
+            NetworkStateInner::LoadedUds { .. } => Err(
+                "This project's engine is read-only in the GUI — editing is not available yet."
+                    .into(),
+            ),
             NetworkStateInner::Empty => Err("no network loaded".into()),
         }
     };
@@ -1636,6 +1648,13 @@ pub fn preview_patches(
         let guard = state.0.lock();
         match &*guard {
             NetworkStateInner::Loaded { network, .. } => (**network).clone(),
+            NetworkStateInner::LoadedUds { .. } => {
+                return Err(
+                    "This project's engine is read-only in the GUI — editing is not \
+                     available yet."
+                        .into(),
+                )
+            }
             NetworkStateInner::Empty => return Err("no network loaded".into()),
         }
     };
