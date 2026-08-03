@@ -12,7 +12,7 @@
  * applies the same default a hand-authored template would get.
  */
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { ACCENT } from "../../../hooks";
 import type { OptionKind, ReportOptionInfo } from "../../../hooks/reports";
 
@@ -124,33 +124,46 @@ const fieldStyle: React.CSSProperties = {
   fontFamily: "var(--font-ui)",
 };
 
+const captionStyle: React.CSSProperties = {
+  display: "block",
+  fontSize: "var(--text-sm)",
+  color: "var(--text-secondary)",
+  marginBottom: 3,
+};
+
 function Row({
   descriptor,
   children,
   error,
+  htmlFor,
 }: {
   descriptor: ReportOptionInfo;
   children: React.ReactNode;
   error: string | null;
+  /** id of the row's single control; omitted when the row holds several
+   * controls that carry their own labels (multi-choice checkboxes). */
+  htmlFor?: string;
 }) {
+  const caption = (
+    <>
+      {descriptor.label}
+      {descriptor.unit ? (
+        <span style={{ color: "var(--text-tertiary)" }}>
+          {" "}
+          ({descriptor.unit})
+        </span>
+      ) : null}
+    </>
+  );
   return (
-    <label style={{ display: "block", marginBottom: 10 }}>
-      <span
-        style={{
-          display: "block",
-          fontSize: "var(--text-sm)",
-          color: "var(--text-secondary)",
-          marginBottom: 3,
-        }}
-      >
-        {descriptor.label}
-        {descriptor.unit ? (
-          <span style={{ color: "var(--text-tertiary)" }}>
-            {" "}
-            ({descriptor.unit})
-          </span>
-        ) : null}
-      </span>
+    <div style={{ marginBottom: 10 }}>
+      {htmlFor ? (
+        <label htmlFor={htmlFor} style={captionStyle}>
+          {caption}
+        </label>
+      ) : (
+        <span style={captionStyle}>{caption}</span>
+      )}
       {children}
       <span
         style={{
@@ -163,7 +176,7 @@ function Row({
       >
         {error ?? descriptor.help}
       </span>
-    </label>
+    </div>
   );
 }
 
@@ -178,11 +191,13 @@ function OptionControl({
   onChange: (next: unknown) => void;
 }) {
   const { kind } = descriptor;
+  const inputId = useId();
 
   // Text-shaped controls keep a draft so a half-typed "0, 10," survives.
+  // BlockOptions keys this component by descriptor.key, so a descriptor
+  // change remounts it and starts the draft fresh.
   const [draft, setDraft] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  useEffect(() => setDraft(null), [descriptor.key]);
 
   // The draft shadows `value`, so it has to be dropped when `value` is
   // replaced from outside — otherwise "Reset to defaults" clears the stored
@@ -210,8 +225,9 @@ function OptionControl({
 
   if (kind.type === "boolean") {
     return (
-      <Row descriptor={descriptor} error={null}>
+      <Row descriptor={descriptor} error={null} htmlFor={inputId}>
         <input
+          id={inputId}
           type="checkbox"
           checked={
             value === undefined ? (kind.default ?? false) : value === true
@@ -232,8 +248,9 @@ function OptionControl({
         : null;
     if (kind.type === "choice") {
       return (
-        <Row descriptor={descriptor} error={null}>
+        <Row descriptor={descriptor} error={null} htmlFor={inputId}>
           <select
+            id={inputId}
             value={selected ?? ""}
             onChange={(e) =>
               commit(e.target.value === "" ? undefined : e.target.value)
@@ -285,8 +302,9 @@ function OptionControl({
       draft ??
       (Array.isArray(value) ? formatNumberList(value as number[]) : "");
     return (
-      <Row descriptor={descriptor} error={error}>
+      <Row descriptor={descriptor} error={error} htmlFor={inputId}>
         <input
+          id={inputId}
           type="text"
           value={shown}
           placeholder={defaultHint(kind)}
@@ -314,8 +332,9 @@ function OptionControl({
   const shown =
     draft ?? (value === undefined || value === null ? "" : String(value));
   return (
-    <Row descriptor={descriptor} error={error}>
+    <Row descriptor={descriptor} error={error} htmlFor={inputId}>
       <input
+        id={inputId}
         type={kind.type === "text" ? "text" : "number"}
         value={shown}
         placeholder={defaultHint(kind)}
