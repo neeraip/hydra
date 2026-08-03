@@ -240,7 +240,7 @@ export function CompletedRow({
         >
           <div style={{ marginBottom: 8 }}>
             <PhaseBar
-              label={task.primaryPhaseLabel ?? "Hydraulics"}
+              label={task.primaryPhaseLabel ?? "Simulation"}
               percent={100}
               done={true}
               queued={false}

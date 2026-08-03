@@ -292,7 +292,7 @@ export function SimulationProvider({ children }: { children: ReactNode }) {
             ? "Simulation in progress"
             : `${runningForProject.length} simulations in progress`,
         detail:
-          "Hydraulics/quality solve is currently running. Results and status badges will update automatically when complete.",
+          "The simulation is currently running. Results and status badges will update automatically when complete.",
       });
     }
 
@@ -363,7 +363,7 @@ export function SimulationProvider({ children }: { children: ReactNode }) {
         source: "data",
         code: "MODEL-LOAD-FAILED",
         title: "Model failed to load",
-        detail: `${networkLoadFailure} — the INP may have been edited outside Hydra. Fix the reported line (Open folder shows the file), or re-import the model.`,
+        detail: `${networkLoadFailure} — the model file may have been edited outside Hydra. Fix the reported line (Open folder shows the file), or re-import the model.`,
       });
     }
 

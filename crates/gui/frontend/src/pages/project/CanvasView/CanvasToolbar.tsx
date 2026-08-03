@@ -16,6 +16,7 @@ import {
 import { useCanvasLayers } from "../../../canvas/layers-context";
 import type { MeasurePoint } from "../../../canvas/measureSnap";
 import type { CanvasTool, ViewMode } from "../../../canvas/types";
+import { useRegions } from "../../../hooks";
 import {
   useBasemapProviders,
   useBasemapVisibility,
@@ -93,6 +94,9 @@ export function CanvasToolbar({
   onClearAnnotations: () => void;
 }) {
   const { layers: canvasLayers, setLayer } = useCanvasLayers();
+  // Region polygons exist only for models that drew any — the toggle
+  // follows the data, not the engine.
+  const hasRegions = useRegions().length > 0;
   const basemapProviders = useBasemapProviders();
   const basemapVisibility = useBasemapVisibility();
 
@@ -556,6 +560,29 @@ export function CanvasToolbar({
             }}
           />
         </button>
+
+        {hasRegions && (
+          <button
+            type="button"
+            className={`tool-btn${canvasLayers.regions ? " active" : ""}`}
+            onClick={() => setLayer("regions", !canvasLayers.regions)}
+            data-tooltip="Toggle subcatchment areas (map view only)"
+            data-tooltip-pos="bottom"
+            aria-label="Toggle regions"
+            style={ICON_BTN_STYLE}
+          >
+            <span
+              aria-hidden
+              style={{
+                width: 11,
+                height: 9,
+                borderRadius: 2,
+                border: "1.5px solid currentColor",
+                transform: "skewX(-8deg)",
+              }}
+            />
+          </button>
+        )}
 
         <button
           type="button"

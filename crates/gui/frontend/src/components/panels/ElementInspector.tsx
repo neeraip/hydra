@@ -28,6 +28,7 @@ import {
 } from "../../engine/registry";
 import type { Link, Node, ResultRanges } from "../../hooks";
 import { ACCENT } from "../../hooks";
+import { elementTypeBadge } from "../../types/elementTypes";
 import { Header } from "./ElementInspector/InspectorHeader";
 import { LinkBody } from "./ElementInspector/LinkBody";
 import { NodeBody } from "./ElementInspector/NodeBody";
@@ -85,7 +86,9 @@ export function NodeInspector({
   // The body is engine vocabulary (attributes + result cards) — selected
   // once from the registry; chrome (header, footer actions) stays shared.
   const { engine } = useActiveProject();
-  const EngineBody = engineComponents(engine?.key).NodeInspectorBody;
+  const components = engineComponents(engine?.key);
+  const EngineBody = components.NodeInspectorBody;
+  const canOpenInEditor = components.editorFocusesElements;
   return (
     <div
       className="inspector-panel"
@@ -109,8 +112,8 @@ export function NodeInspector({
               width: 8,
               height: 8,
               borderRadius: "50%",
-              background: ACCENT,
-              boxShadow: `0 0 6px ${ACCENT}88`,
+              background: elementTypeBadge(node.type).color,
+              boxShadow: `0 0 6px ${elementTypeBadge(node.type).color}88`,
               flexShrink: 0,
             }}
           />
@@ -147,14 +150,16 @@ export function NodeInspector({
           gap: 6,
         }}
       >
-        <button
-          type="button"
-          onClick={onOpenInEditor}
-          data-tooltip="Open in editor"
-          style={btnIcon}
-        >
-          <PencilSquareIcon style={{ width: 14, height: 14 }} />
-        </button>
+        {canOpenInEditor && (
+          <button
+            type="button"
+            onClick={onOpenInEditor}
+            data-tooltip="Open in editor"
+            style={btnIcon}
+          >
+            <PencilSquareIcon style={{ width: 14, height: 14 }} />
+          </button>
+        )}
         {onZoomTo && (
           <button
             type="button"
@@ -225,7 +230,9 @@ export function LinkInspector({
 }: LinkInspectorProps) {
   // Same registry selection as NodeInspector — see the comment there.
   const { engine } = useActiveProject();
-  const EngineBody = engineComponents(engine?.key).LinkInspectorBody;
+  const components = engineComponents(engine?.key);
+  const EngineBody = components.LinkInspectorBody;
+  const canOpenInEditor = components.editorFocusesElements;
   return (
     <div
       className="inspector-panel"
@@ -249,7 +256,10 @@ export function LinkInspector({
               width: 16,
               height: 3,
               borderRadius: 2,
-              background: LINK_TYPE_COLOR[link.type] ?? ACCENT,
+              // The badge's kind colour — LINK_TYPE_COLOR only knows wds
+              // kinds and the wds accent is engine identity, not a fallback.
+              background:
+                LINK_TYPE_COLOR[link.type] ?? elementTypeBadge(link.type).color,
               flexShrink: 0,
             }}
           />
@@ -285,14 +295,16 @@ export function LinkInspector({
           gap: 6,
         }}
       >
-        <button
-          type="button"
-          onClick={onOpenInEditor}
-          data-tooltip="Open in editor"
-          style={btnIcon}
-        >
-          <PencilSquareIcon style={{ width: 14, height: 14 }} />
-        </button>
+        {canOpenInEditor && (
+          <button
+            type="button"
+            onClick={onOpenInEditor}
+            data-tooltip="Open in editor"
+            style={btnIcon}
+          >
+            <PencilSquareIcon style={{ width: 14, height: 14 }} />
+          </button>
+        )}
         {onZoomTo && (
           <button
             type="button"

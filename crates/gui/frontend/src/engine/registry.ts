@@ -87,6 +87,10 @@ export interface EngineComponents {
    * pressure/flow result cards). */
   NodeInspectorBody?: ComponentType<NodeInspectorBodyProps>;
   LinkInspectorBody?: ComponentType<LinkInspectorBodyProps>;
+  /** Whether this engine's Editor view can receive and reveal a focused
+   * element (the inspector's "Open in editor" affordance). False hides the
+   * button instead of navigating to a view that ignores the request. */
+  editorFocusesElements: boolean;
   /** Whether the settings modal edits (true) or views (false). Drives the
    * edit affordance labels without any engine branching in the modals. */
   settingsEditable: boolean;
@@ -98,6 +102,7 @@ export interface EngineComponents {
 
 const WDS: EngineComponents = {
   RunSettingsSummary: WdsRunSettingsSummary,
+  editorFocusesElements: true,
   settingsEditable: true,
   modelEditable: true,
 };
@@ -110,6 +115,7 @@ const UDS: EngineComponents = {
   OverviewComposition: UdsOverviewComposition,
   NodeInspectorBody: UdsNodeInspectorBody,
   LinkInspectorBody: UdsLinkInspectorBody,
+  editorFocusesElements: false,
   settingsEditable: false,
   modelEditable: false,
 };

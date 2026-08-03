@@ -1127,7 +1127,7 @@ export const MapCanvas = memo(function MapCanvas({
     // with a hairline outline, map mode only (rings are source-CRS geometry
     // the schematic layout knows nothing about). Non-pickable until region
     // selection lands with the read-only inspector.
-    if (!isSchematic && regions && regions.length > 0) {
+    if (!isSchematic && canvasLayers.regions && regions && regions.length > 0) {
       // With a generic region channel loaded, fill each polygon from its
       // value (regions and values share the snapshot order); otherwise the
       // neutral soft green. Kept translucent either way so the network

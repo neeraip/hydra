@@ -196,6 +196,8 @@ export function CommandPalette() {
     setInspectorView,
     zoomToNode,
     zoomToLink,
+    simNodes,
+    simLinks,
   } = useCanvasSelection();
   const { resultMeta } = useSimulation();
   const { bumpNetwork } = useNetworkVersion();
@@ -294,7 +296,7 @@ export function CommandPalette() {
           id: "n4",
           label: "Network Editor",
           category: "Navigate",
-          description: "Open the network editor view",
+          description: "Open the editor view",
           shortcut: navEditorShortcut,
           action: "nav-editor",
         },
@@ -672,13 +674,17 @@ export function CommandPalette() {
           showToast("Run a simulation first", "warn");
           return;
         }
+        // Sim-merged arrays carry the engine-generic per-period values
+        // (`resultValues`, SI) — plain arrays otherwise.
+        const exportNodes = simNodes ?? allNodes;
+        const exportLinks = simLinks ?? allLinks;
         const nodeCoords = new Map(
-          allNodes.map((n) => [n.id, [n.x, n.y] as [number, number]]),
+          exportNodes.map((n) => [n.id, [n.x, n.y] as [number, number]]),
         );
         const fc = {
           type: "FeatureCollection" as const,
           features: [
-            ...allNodes.map((n) => ({
+            ...exportNodes.map((n) => ({
               type: "Feature" as const,
               geometry: { type: "Point" as const, coordinates: [n.x, n.y] },
               properties: {
@@ -690,9 +696,10 @@ export function CommandPalette() {
                 ...(n.head != null ? { head: n.head } : {}),
                 ...(n.demand != null ? { demand: n.demand } : {}),
                 ...(n.quality != null ? { quality: n.quality } : {}),
+                ...(n.resultValues ?? {}),
               },
             })),
-            ...allLinks.map((l) => {
+            ...exportLinks.map((l) => {
               const from = nodeCoords.get(l.fromId) ?? [0, 0];
               const to = nodeCoords.get(l.toId) ?? [0, 0];
               return {
@@ -721,6 +728,7 @@ export function CommandPalette() {
                     : {}),
                   ...(l.status != null ? { status: l.status } : {}),
                   ...(l.quality != null ? { quality: l.quality } : {}),
+                  ...(l.resultValues ?? {}),
                 },
               };
             }),
@@ -898,6 +906,8 @@ export function CommandPalette() {
       allNodes,
       allLinks,
       allRegions,
+      simNodes,
+      simLinks,
       bumpNetwork,
       openIssuesPanel,
       toggleTaskTray,

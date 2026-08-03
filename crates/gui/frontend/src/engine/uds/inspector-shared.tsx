@@ -12,6 +12,10 @@ import {
   PropRow,
   SecondaryCell,
 } from "../../components/panels/ElementInspector/primitives";
+import {
+  elementSeriesCacheKey,
+  LruCache,
+} from "../../components/panels/ElementInspector/seriesCache";
 import { SectionLabel } from "../../components/ui/SectionLabel";
 import {
   ACCENT,
@@ -82,6 +86,10 @@ export function PropertiesSection({
  * the wds card's primary/extra split. */
 const PRIMARY_SERIES_FIELDS = 3;
 
+/** Module-level cache, like the wds card's: survives element re-selection
+ * and inspector remounts; entries are keyed per run via resultGeneration. */
+const seriesCache = new LruCache<ElementSeries | null>(24);
+
 /**
  * Per-element time-series charts, mirroring the wds TimeSeriesCard: one
  * sparkline per catalog variable (labels and units engine-authored, values
@@ -124,10 +132,22 @@ export function GenericTimeSeriesCard({
   const enabled =
     projectId != null && periods > 1 && index >= 0 && variables.length > 0;
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: resultGeneration is an intentional refetch trigger — a completed run must refresh the charts even though the effect body never reads it.
   useEffect(() => {
     if (!enabled || projectId == null) {
       setSeries(null);
+      setLoading(false);
+      return;
+    }
+    const key = elementSeriesCacheKey({
+      projectId,
+      scenarioId: activeScenarioId ?? null,
+      resultGeneration,
+      kind,
+      elementId,
+    });
+    const cached = seriesCache.get(key);
+    if (cached !== undefined) {
+      setSeries(cached);
       setLoading(false);
       return;
     }
@@ -137,6 +157,7 @@ export function GenericTimeSeriesCard({
     getElementSeries(projectId, activeScenarioId ?? null, kind, index).then(
       (s) => {
         if (cancelled) return;
+        seriesCache.set(key, s);
         setSeries(s);
         setLoading(false);
       },
@@ -144,7 +165,15 @@ export function GenericTimeSeriesCard({
     return () => {
       cancelled = true;
     };
-  }, [enabled, projectId, activeScenarioId, resultGeneration, kind, index]);
+  }, [
+    enabled,
+    projectId,
+    activeScenarioId,
+    resultGeneration,
+    kind,
+    index,
+    elementId,
+  ]);
 
   if (!enabled) return null;
 
