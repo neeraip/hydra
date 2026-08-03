@@ -182,10 +182,22 @@ export interface ResultRanges {
   qualityMax?: number;
 }
 
+/** §5 quantity descriptor accompanying a variable's SI values — everything
+ * needed to convert to the active display system at the render boundary. */
+export interface GenericQuantity {
+  key: string;
+  siLabel: string;
+  usLabel: string;
+  siToUsScale: number;
+  siToUsOffset: number;
+  siDecimals: number;
+  usDecimals: number;
+}
+
 /**
  * One engine-described result variable with its per-run value range —
- * everything a legend needs, authored by the engine's catalog (id, label,
- * unit label in the results file's unit system, ramp hint).
+ * everything a legend needs, authored by the engine's catalog. Values and
+ * ranges are SI; `quantity` carries the display conversion.
  */
 export interface GenericVariable {
   id: string;
@@ -193,10 +205,55 @@ export interface GenericVariable {
   /** Engine-authored compact notation (Q, y, Ø) for space-starved
    * surfaces; absent = the application derives a fallback. */
   symbol?: string;
-  unit?: string;
+  quantity?: GenericQuantity;
   ramp: "sequential" | "diverging" | "banded";
   min: number;
   max: number;
+}
+
+/** SI value → the active display system. */
+export function genericToDisplay(
+  value: number,
+  quantity: GenericQuantity | undefined,
+  sys: "si" | "us",
+): number {
+  if (!quantity || sys === "si") return value;
+  return value * quantity.siToUsScale + quantity.siToUsOffset;
+}
+
+/** Unit label for the active display system, or undefined when unitless. */
+export function genericUnitLabel(
+  quantity: GenericQuantity | undefined,
+  sys: "si" | "us",
+): string | undefined {
+  if (!quantity) return undefined;
+  return sys === "us" ? quantity.usLabel : quantity.siLabel;
+}
+
+/**
+ * Display string for one SI value: converted to the active system, using
+ * the quantity's per-system decimals (magnitude-aware for unitless or very
+ * large values), with the unit label unless `withUnit` is false.
+ */
+export function formatGenericValue(
+  value: number | null | undefined,
+  quantity: GenericQuantity | undefined,
+  sys: "si" | "us",
+  withUnit = true,
+): string {
+  if (value == null || !Number.isFinite(value)) return "—";
+  const v = genericToDisplay(value, quantity, sys);
+  const decimals = quantity
+    ? sys === "us"
+      ? quantity.usDecimals
+      : quantity.siDecimals
+    : Math.abs(v) >= 10
+      ? 1
+      : 2;
+  const text =
+    Math.abs(v) >= 1000 ? Math.round(v).toLocaleString() : v.toFixed(decimals);
+  const unit = withUnit ? genericUnitLabel(quantity, sys) : undefined;
+  return unit ? `${text} ${unit}` : text;
 }
 
 /** The engine-described result catalog for one run, per element class. */

@@ -3,7 +3,7 @@
 // active node/link variable (in display units). Renders nothing until results
 // are loaded and something is hovered.
 
-import type { PeriodResults } from "../hooks";
+import { formatGenericValue, type PeriodResults } from "../hooks";
 import { elementTypeBadge } from "../types/elementTypes";
 import { toDisplay, unitLabel, type useUnitSystem } from "../units";
 import { statusLabel } from "./MapCanvas/colorUtils";
@@ -78,16 +78,17 @@ function hoverTipValue(
 }
 
 /** Value line for the engine-generic channels: the hovered element's value
- * for its class's selected variable, with the engine-authored unit label. */
+ * for its class's selected variable, converted to the active display
+ * system with the engine's quantity descriptor. */
 function genericTipValue(
   tip: HoverTip,
   generic: GenericCanvasResults,
+  sys: ReturnType<typeof useUnitSystem>,
 ): string | null {
   const channel = tip.kind === "node" ? generic.node : generic.link;
   const v = channel?.values?.[tip.si];
   if (channel == null || v == null || !Number.isFinite(v)) return null;
-  const unit = channel.variable.unit ? ` ${channel.variable.unit}` : "";
-  return `${v.toFixed(2)}${unit}`;
+  return formatGenericValue(v, channel.variable.quantity, sys);
 }
 
 export function HoverChip({
@@ -107,7 +108,7 @@ export function HoverChip({
 }) {
   if (!tip) return null;
   const value = generic
-    ? genericTipValue(tip, generic)
+    ? genericTipValue(tip, generic, sys)
     : periodResult
       ? hoverTipValue(tip, periodResult, nodeVar, linkVar, sys)
       : null;

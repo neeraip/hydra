@@ -12,7 +12,7 @@
  */
 
 import type { ComponentType } from "react";
-import type { Link, Node } from "../hooks";
+import type { GenericQuantity, Link, Node } from "../hooks";
 import { UdsAnalysisView } from "./uds/AnalysisView";
 import { UdsEditorView } from "./uds/EditorView";
 import { UdsLinkInspectorBody } from "./uds/LinkInspectorBody";
@@ -45,8 +45,9 @@ export interface OverviewCompositionProps {
 export interface GenericElementValue {
   id: string;
   label: string;
-  unit?: string;
-  /** `null`/`NaN` = not reported for this element. */
+  /** §5 quantity descriptor for the SI `value`; absent = dimensionless. */
+  quantity?: GenericQuantity;
+  /** SI value; `null`/`NaN` = not reported for this element. */
   value: number | null;
   /** Whether this is the canvas's active variable — the result card's big
    * value, mirroring the wds card's active-variable treatment. */

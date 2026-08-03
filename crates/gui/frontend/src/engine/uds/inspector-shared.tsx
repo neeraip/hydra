@@ -18,7 +18,10 @@ import {
   type ElementAttribute,
   type ElementSeries,
   formatElementAttribute,
+  formatGenericValue,
   type GenericVariable,
+  genericToDisplay,
+  genericUnitLabel,
   getElementDetails,
   getElementSeries,
   useNetworkData,
@@ -75,19 +78,6 @@ export function PropertiesSection({
   );
 }
 
-/** Magnitude-aware value text with the engine-authored unit label. */
-function formatResultValue(v: GenericElementValue): string {
-  if (v.value == null || !Number.isFinite(v.value)) return "—";
-  const a = Math.abs(v.value);
-  const text =
-    a >= 1000
-      ? Math.round(v.value).toLocaleString()
-      : a >= 10
-        ? v.value.toFixed(1)
-        : v.value.toFixed(2);
-  return v.unit ? `${text} ${v.unit}` : text;
-}
-
 /** How many series charts show before the "more fields" toggle — mirrors
  * the wds card's primary/extra split. */
 const PRIMARY_SERIES_FIELDS = 3;
@@ -111,6 +101,7 @@ export function GenericTimeSeriesCard({
   const { resultMeta, resultGeneration } = useSimulation();
   const { nodes, links } = useNetworkData();
   const currentPeriod = useCurrentPeriod();
+  const sys = useUnitSystem();
 
   const [series, setSeries] = useState<ElementSeries | null>(null);
   const [loading, setLoading] = useState(false);
@@ -198,9 +189,13 @@ export function GenericTimeSeriesCard({
         ) : (
           <>
             {shown.map(({ field, variable }) => {
+              // Convert at the render boundary — the fetched series stays SI.
+              const values = field.values.map((v) =>
+                genericToDisplay(v, variable?.quantity, sys),
+              );
               let min = Number.POSITIVE_INFINITY;
               let max = Number.NEGATIVE_INFINITY;
-              for (const v of field.values) {
+              for (const v of values) {
                 if (!Number.isFinite(v)) continue;
                 if (v < min) min = v;
                 if (v > max) max = v;
@@ -209,13 +204,11 @@ export function GenericTimeSeriesCard({
                 min = 0;
                 max = 0;
               }
+              const unit = genericUnitLabel(variable?.quantity, sys);
               const marker =
-                currentPeriod == null || field.values.length === 0
+                currentPeriod == null || values.length === 0
                   ? null
-                  : Math.max(
-                      0,
-                      Math.min(currentPeriod, field.values.length - 1),
-                    );
+                  : Math.max(0, Math.min(currentPeriod, values.length - 1));
               return (
                 <div key={field.name}>
                   <div
@@ -228,16 +221,16 @@ export function GenericTimeSeriesCard({
                     }}
                   >
                     {variable?.label}
-                    {variable?.unit ? ` (${variable.unit})` : ""}
+                    {unit ? ` (${unit})` : ""}
                   </div>
                   <Sparkline
-                    values={field.values}
+                    values={values}
                     min={min}
                     max={max}
                     stroke="var(--accent)"
                     times={series?.times}
                     markerIndex={marker}
-                    unit={variable?.unit}
+                    unit={unit}
                     decimals={2}
                     height={40}
                   />
@@ -283,6 +276,7 @@ export function GenericResultsCards({
 }: {
   results?: GenericElementValue[] | null;
 }) {
+  const sys = useUnitSystem();
   const rows = results ?? [];
   return (
     <>
@@ -329,7 +323,7 @@ export function GenericResultsCards({
             >
               <BigValue
                 label={primary.label}
-                value={formatResultValue(primary)}
+                value={formatGenericValue(primary.value, primary.quantity, sys)}
                 color={ACCENT}
               />
               {secondaries.length > 0 && (
@@ -344,7 +338,7 @@ export function GenericResultsCards({
                     <SecondaryCell
                       key={s.id}
                       label={s.label}
-                      value={formatResultValue(s)}
+                      value={formatGenericValue(s.value, s.quantity, sys)}
                     />
                   ))}
                 </div>

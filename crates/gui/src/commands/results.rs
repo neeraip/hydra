@@ -263,7 +263,10 @@ pub struct ResultRangesDto {
 }
 
 /// Metadata returned by `load_result_meta`: snapshot times and global ranges.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// Serialize-only: the frontend is the sole consumer, and the embedded §5
+/// quantity descriptors are `&'static str`-backed engine constants that
+/// cannot be deserialized.
+#[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ResultMetaDto {
     pub times: Vec<f64>,

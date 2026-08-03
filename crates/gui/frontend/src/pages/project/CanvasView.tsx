@@ -954,7 +954,7 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
     return genericMeta.pointVars.map((v, i) => ({
       id: v.id,
       label: v.label,
-      unit: v.unit,
+      quantity: v.quantity,
       value: fetchedGenericValues.points[i]?.[si] ?? null,
       primary: v.id === genericCanvas?.node?.variable.id,
     }));
@@ -975,7 +975,7 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
     return genericMeta.polylineVars.map((v, i) => ({
       id: v.id,
       label: v.label,
-      unit: v.unit,
+      quantity: v.quantity,
       value: fetchedGenericValues.polylines[i]?.[si] ?? null,
       primary: v.id === genericCanvas?.link?.variable.id,
     }));
@@ -1006,7 +1006,7 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
         key: v.id,
         label: v.label,
         symbol: v.symbol,
-        unit: v.unit,
+        quantity: v.quantity,
       })),
     [genericMeta],
   );
@@ -1018,7 +1018,7 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
           key: v.id,
           label: v.label,
           symbol: v.symbol,
-          unit: v.unit,
+          quantity: v.quantity,
         })),
     [genericMeta],
   );

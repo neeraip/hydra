@@ -15,6 +15,7 @@ import {
   useRef,
   useState,
 } from "react";
+import type { GenericQuantity } from "../hooks/results";
 import type { Link, Node } from "../types/network";
 
 export type InspectorView = "closed" | "node" | "link";
@@ -28,7 +29,8 @@ export interface SimResultColumn {
   label: string;
   /** Engine-authored compact notation for the header's narrowest stage. */
   symbol?: string;
-  unit?: string;
+  /** §5 quantity descriptor for the column's SI values. */
+  quantity?: GenericQuantity;
 }
 
 /** Per-class result columns, `null` when the engine serves fixed-variable

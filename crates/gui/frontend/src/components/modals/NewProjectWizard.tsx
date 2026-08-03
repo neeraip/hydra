@@ -21,6 +21,7 @@ import {
 import { ClockIcon } from "@heroicons/react/24/outline";
 import { useEffect, useState } from "react";
 import { useAppState } from "../../AppContext";
+import { engineComponents } from "../../engine/registry";
 import {
   createProjectOnDisk,
   type EngineInfo,
@@ -34,6 +35,7 @@ import {
   useNetworkVersion,
   type ValidationFinding,
 } from "../../hooks";
+import { isTauri } from "../../hooks/ipc";
 import { NetworkThumbnail } from "../ui/NetworkThumbnail";
 import { PrimaryButton } from "../ui/PrimaryButton";
 
@@ -64,6 +66,10 @@ export function NewProjectWizard({ onClose }: Props) {
   );
 
   const engine = engines.find((e) => e.key === engineKey) ?? null;
+  // Engines whose model this GUI cannot edit have no starter-network path —
+  // a project can only begin from an imported model.
+  const importRequired =
+    engine != null && !engineComponents(engine.key).modelEditable;
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
@@ -120,6 +126,13 @@ export function NewProjectWizard({ onClose }: Props) {
       // state may still hold a previously-opened project's model.
       importLoadedNetwork: fileDetected,
     });
+
+    // Inside Tauri, a null answer means the backend refused (the error has
+    // already been surfaced through the IPC toast) — fabricating a project
+    // card here left the user with a phantom project backed by nothing on
+    // disk. The in-memory fallback exists only for the plain-browser dev
+    // server.
+    if (!persisted && isTauri()) return;
 
     const project: Project = persisted ?? {
       id,
@@ -244,7 +257,10 @@ export function NewProjectWizard({ onClose }: Props) {
                 value={projectName}
                 onChange={(e) => setProjectName(e.target.value)}
                 onKeyDown={(e) => {
-                  if (e.key === "Enter") setStep(3);
+                  // Same gate as the Next button: import-only engines
+                  // cannot advance without a source model.
+                  if (e.key === "Enter" && !(importRequired && !fileDetected))
+                    setStep(3);
                   if (e.key === "Escape") onClose();
                 }}
                 placeholder="e.g. South Side Rehabilitation Study"
@@ -263,7 +279,9 @@ export function NewProjectWizard({ onClose }: Props) {
               />
             </div>
 
-            <div style={fieldLabelStyle}>Source model (optional)</div>
+            <div style={fieldLabelStyle}>
+              {importRequired ? "Source model" : "Source model (optional)"}
+            </div>
             <p
               style={{
                 fontSize: "var(--text-md)",
@@ -272,8 +290,9 @@ export function NewProjectWizard({ onClose }: Props) {
                 lineHeight: 1.6,
               }}
             >
-              Skip this to start from a single reservoir and build the network
-              in the editor.
+              {importRequired
+                ? `${engine.label} projects start from an imported model — add one to continue.`
+                : "Skip this to start from a single reservoir and build the network in the editor."}
             </p>
 
             <div
@@ -437,7 +456,20 @@ export function NewProjectWizard({ onClose }: Props) {
             <FooterRow
               left={<BackButton onClick={() => setStep(1)} />}
               right={
-                <PrimaryButton onClick={() => setStep(3)}>
+                <PrimaryButton
+                  onClick={() => setStep(3)}
+                  disabled={importRequired && !fileDetected}
+                  title={
+                    importRequired && !fileDetected
+                      ? "Import a source model to continue"
+                      : undefined
+                  }
+                  style={
+                    importRequired && !fileDetected
+                      ? { opacity: 0.5, cursor: "not-allowed" }
+                      : undefined
+                  }
+                >
                   <NextLabel />
                 </PrimaryButton>
               }

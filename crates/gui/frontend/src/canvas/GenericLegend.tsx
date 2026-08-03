@@ -10,7 +10,13 @@
 
 import { ChevronUpDownIcon } from "@heroicons/react/16/solid";
 import { useEffect, useRef, useState } from "react";
-import type { GenericResultMeta, GenericVariable } from "../hooks/results";
+import {
+  formatGenericValue,
+  type GenericResultMeta,
+  type GenericVariable,
+  genericUnitLabel,
+} from "../hooks/results";
+import { useUnitSystem } from "../units";
 import {
   LEGEND_BAR_STYLE,
   LEGEND_POPOVER_STYLE,
@@ -50,19 +56,10 @@ function rampGradient(ramp: GenericVariable["ramp"]): string {
   return "linear-gradient(90deg, rgb(166,200,240), rgb(21,74,158))";
 }
 
-/** Compact numeric label: enough precision for small drainage magnitudes
- * (a 0.03 cfs peak must not read as "0.0"). */
-function fmt(v: number): string {
-  if (!Number.isFinite(v)) return "—";
-  const a = Math.abs(v);
-  if (a >= 1000) return Math.round(v).toLocaleString();
-  if (a >= 10) return v.toFixed(1);
-  return v.toFixed(2);
-}
-
-/** Picker option label: "Depth (ft)". */
-function optionLabel(v: GenericVariable): string {
-  return v.unit ? `${v.label} (${v.unit})` : v.label;
+/** Picker option label in the active display system: "Depth (ft)". */
+function optionLabel(v: GenericVariable, sys: "si" | "us"): string {
+  const unit = genericUnitLabel(v.quantity, sys);
+  return unit ? `${v.label} (${unit})` : v.label;
 }
 
 interface ClassConfig {
@@ -90,6 +87,7 @@ export function GenericLegend({
   selection: GenericSelection;
   onSelect: (cls: GenericClassKey, id: string) => void;
 }) {
+  const sys = useUnitSystem();
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [openPicker, setOpenPicker] = useState<GenericClassKey | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
@@ -146,11 +144,11 @@ export function GenericLegend({
             const v = selected(c);
             return (
               <div key={c.key}>
-                <div style={SECTION_LABEL_STYLE}>{optionLabel(v)}</div>
+                <div style={SECTION_LABEL_STYLE}>{optionLabel(v, sys)}</div>
                 <Ramp
                   gradient={rampGradient(v.ramp)}
-                  min={fmt(v.min)}
-                  max={fmt(v.max)}
+                  min={formatGenericValue(v.min, v.quantity, sys, false)}
+                  max={formatGenericValue(v.max, v.quantity, sys, false)}
                 />
               </div>
             );
@@ -210,7 +208,7 @@ export function GenericLegend({
             value={selected(c).id}
             options={c.variables.map((v) => ({
               value: v.id,
-              label: optionLabel(v),
+              label: optionLabel(v, sys),
             }))}
             icon={c.glyph}
             pickerLabel={c.pickerLabel}

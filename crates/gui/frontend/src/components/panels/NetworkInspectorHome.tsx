@@ -7,7 +7,13 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { SimResultColumn } from "../../canvas/selection-context";
 import type { Link, Node } from "../../hooks";
-import { useLinks, useNodes, useRegions } from "../../hooks";
+import {
+  formatGenericValue,
+  genericUnitLabel,
+  useLinks,
+  useNodes,
+  useRegions,
+} from "../../hooks";
 import { perfTrace } from "../../perfTrace";
 import type { Region } from "../../types";
 import { elementTypeBadge } from "../../types/elementTypes";
@@ -264,35 +270,28 @@ function HeaderContent({
   );
 }
 
-/** Magnitude-aware value cell for the generic result columns — drainage
- * peaks can be 0.03 cfs, which a fixed `toFixed(1)` would print as 0.0. */
-function fmtResultValue(v: number): string {
-  const a = Math.abs(v);
-  if (a >= 1000) return Math.round(v).toLocaleString();
-  if (a >= 10) return v.toFixed(1);
-  return v.toFixed(2);
-}
-
-/** Sortable header + cell pair for one engine-generic result column. */
+/** Sortable header + cell pair for one engine-generic result column.
+ * Values arrive SI; both convert through the column's §5 quantity. */
 function GenericResultHeader({
   column,
+  sys,
   sortCol,
   sortDir,
   onToggleSort,
 }: {
   column: SimResultColumn;
+  sys: "si" | "us";
   sortCol: string | null;
   sortDir: SortDir;
   onToggleSort: (col: string) => void;
 }) {
   const sortKey = `resultValues.${column.key}`;
+  const unit = genericUnitLabel(column.quantity, sys);
   return (
     <th
       style={TH}
       onClick={() => onToggleSort(sortKey)}
-      data-tooltip={
-        column.unit ? `${column.label} (${column.unit})` : column.label
-      }
+      data-tooltip={unit ? `${column.label} (${unit})` : column.label}
       data-tooltip-pos="bottom"
     >
       <HeaderContent
@@ -306,10 +305,18 @@ function GenericResultHeader({
   );
 }
 
-function GenericResultCell({ value }: { value: number | null | undefined }) {
+function GenericResultCell({
+  value,
+  column,
+  sys,
+}: {
+  value: number | null | undefined;
+  column: SimResultColumn;
+  sys: "si" | "us";
+}) {
   return (
     <td style={{ ...TD, fontFamily: "var(--font-mono)" }}>
-      {value != null && Number.isFinite(value) ? fmtResultValue(value) : "—"}
+      {formatGenericValue(value, column.quantity, sys, false)}
     </td>
   );
 }
@@ -514,6 +521,7 @@ function NodesTab({
               <GenericResultHeader
                 key={c.key}
                 column={c}
+                sys={sys}
                 sortCol={sortCol}
                 sortDir={sortDir}
                 onToggleSort={toggleSort}
@@ -596,6 +604,8 @@ function NodesTab({
                   <GenericResultCell
                     key={c.key}
                     value={node.resultValues?.[c.key]}
+                    column={c}
+                    sys={sys}
                   />
                 ))}
                 {onZoomTo && (
@@ -861,6 +871,7 @@ function LinksTab({
               <GenericResultHeader
                 key={c.key}
                 column={c}
+                sys={sys}
                 sortCol={sortCol}
                 sortDir={sortDir}
                 onToggleSort={toggleSort}
@@ -959,6 +970,8 @@ function LinksTab({
                   <GenericResultCell
                     key={c.key}
                     value={link.resultValues?.[c.key]}
+                    column={c}
+                    sys={sys}
                   />
                 ))}
                 {onZoomTo && (

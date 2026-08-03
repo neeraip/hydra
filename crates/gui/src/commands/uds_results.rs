@@ -2,14 +2,15 @@
 //! with per-run ranges served through `load_result_meta`, and the generic
 //! per-period payload the canvas colors elements with.
 //!
-//! "Engines describe, applications render": every variable id, label, unit
-//! label, and ramp hint here comes from the engine's §6 catalog
+//! "Engines describe, applications render": every variable id, label,
+//! quantity, and ramp hint here comes from the engine's §6 catalog
 //! (`hydra::uds::descriptors::result_variables`) — nothing is invented in
-//! the GUI. Values are served as stored in the results file's own unit
-//! system, with the matching engine-authored unit labels, except link
-//! capacity, which the file stores as a 0–1 fraction and the catalog
-//! declares as a percent — it is scaled ×100 on the way out so the label
-//! is truthful.
+//! the GUI. Values are served in **SI** regardless of the file's declared
+//! unit system, each variable carrying its §5 quantity descriptor, so the
+//! frontend converts to the user's display-unit preference at the render
+//! boundary — the same discipline as wds results and the uds attribute
+//! rows. Link capacity is the one shape change: the file stores a 0–1
+//! fraction and the catalog declares a percent, so it is scaled ×100.
 //!
 //! # Generic period payload layout
 //!
@@ -31,7 +32,7 @@
 use std::collections::HashMap;
 use std::path::Path;
 
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 
 use hydra::common::{ElementClass, RampHint, VariableDescriptor};
 use hydra::uds::io::out_reader::{scan_periods, OutMetadata, PeriodRecord};
@@ -39,7 +40,7 @@ use hydra::uds::io::out_reader::{scan_periods, OutMetadata, PeriodRecord};
 use super::uds_view::UdsView;
 
 /// One catalog variable with its per-run value range, ready for the legend.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GenericVariableDto {
     pub id: String,
@@ -47,18 +48,20 @@ pub struct GenericVariableDto {
     /// Engine-authored compact notation (§6.1) for space-starved surfaces.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub symbol: Option<String>,
-    /// Engine-authored unit label for the results file's unit system, or
-    /// `None` for unitless variables.
+    /// The §5 quantity descriptor for the variable's SI values — the
+    /// frontend converts to the active display system with it. `None` for
+    /// dimensionless variables.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub unit: Option<String>,
+    pub quantity: Option<hydra::common::QuantityDescriptor>,
     /// Ramp hint: `"sequential"`, `"diverging"`, or `"banded"`.
     pub ramp: String,
+    /// Per-run range, in SI.
     pub min: f64,
     pub max: f64,
 }
 
 /// The engine-described result catalog for one run, per element class.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GenericResultMetaDto {
     pub point_vars: Vec<GenericVariableDto>,
@@ -90,37 +93,38 @@ fn column(class: ElementClass, id: &str) -> Option<(usize, f64)> {
     Some(col)
 }
 
-/// Unit label for a quantity key in the file's unit system. Flow is the
-/// exception: the file stores whichever flow unit it declares (gpm is not
-/// cfs), so its label comes from the declared unit, not the quantity
-/// catalog's one-per-system label.
-fn unit_label(meta: &OutMetadata, quantity: Option<&str>) -> Option<String> {
-    use hydra::uds::io::options::FlowUnits::*;
-    let key = quantity?;
-    if key == "flow" {
-        return Some(
-            match meta.flow_units {
-                Cfs => "cfs",
-                Gpm => "gpm",
-                Mgd => "mgd",
-                Cms => "m³/s",
-                Lps => "L/s",
-                Mld => "ML/d",
-            }
-            .to_string(),
-        );
-    }
-    let q = hydra::uds::descriptors::QUANTITIES
+/// The §5 quantity descriptor for a catalog quantity key.
+fn quantity_descriptor(key: &str) -> Option<hydra::common::QuantityDescriptor> {
+    hydra::uds::descriptors::QUANTITIES
         .iter()
-        .find(|q| q.key == key)?;
-    Some(
-        if meta.flow_units.is_us() {
-            q.us_label
-        } else {
-            q.si_label
-        }
-        .to_string(),
-    )
+        .find(|q| q.key == key)
+        .copied()
+}
+
+/// File-units → SI factor for one quantity of this results file (§14.9
+/// stores values in the file's declared system). Flow is per-declared-unit
+/// (a gpm file is not a cfs file — the writer's own factors, inverted);
+/// every other catalog quantity is either already SI or converts through
+/// its §5 descriptor (all affine offsets in the catalog are zero).
+fn si_factor(meta: &OutMetadata, quantity: Option<&str>) -> f64 {
+    use hydra::uds::io::options::FlowUnits::*;
+    let Some(key) = quantity else { return 1.0 };
+    if key == "flow" {
+        return match meta.flow_units {
+            Cfs => 0.028_316_846_592,
+            Gpm => 6.309_019_64e-5,
+            Mgd => 0.043_812_636_4,
+            Cms => 1.0,
+            Lps => 1.0e-3,
+            Mld => 1.0 / 86.4,
+        };
+    }
+    if !meta.flow_units.is_us() {
+        return 1.0;
+    }
+    quantity_descriptor(key)
+        .map(|q| 1.0 / q.si_to_us_scale)
+        .unwrap_or(1.0)
 }
 
 fn ramp_name(hint: &RampHint) -> String {
@@ -133,12 +137,19 @@ fn ramp_name(hint: &RampHint) -> String {
     .to_string()
 }
 
-/// The declared catalog variables that resolve to a file column, with their
-/// column/scale, per class.
-fn resolved_variables(class: ElementClass) -> Vec<(VariableDescriptor, usize, f64)> {
+/// The declared catalog variables that resolve to a file column, with the
+/// full serving scale (shape scale × file-to-SI factor), per class.
+fn resolved_variables(
+    meta: &OutMetadata,
+    class: ElementClass,
+) -> Vec<(VariableDescriptor, usize, f64)> {
     hydra::uds::descriptors::result_variables(class)
         .into_iter()
-        .filter_map(|v| column(class, v.id).map(|(col, scale)| (v, col, scale)))
+        .filter_map(|v| {
+            let (col, shape) = column(class, v.id)?;
+            let scale = shape * si_factor(meta, v.quantity);
+            Some((v, col, scale))
+        })
         .collect()
 }
 
@@ -150,8 +161,10 @@ pub fn generic_meta(out_path: &Path, meta: &OutMetadata) -> Result<GenericResult
         ElementClass::Polyline,
         ElementClass::Region,
     ];
-    let vars: Vec<Vec<(VariableDescriptor, usize, f64)>> =
-        classes.iter().map(|&c| resolved_variables(c)).collect();
+    let vars: Vec<Vec<(VariableDescriptor, usize, f64)>> = classes
+        .iter()
+        .map(|&c| resolved_variables(meta, c))
+        .collect();
     // ranges[class][var] = (min, max)
     let mut ranges: Vec<Vec<(f64, f64)>> = vars
         .iter()
@@ -191,7 +204,7 @@ pub fn generic_meta(out_path: &Path, meta: &OutMetadata) -> Result<GenericResult
                         id: v.id.to_string(),
                         label: v.label.to_string(),
                         symbol: v.symbol.map(str::to_string),
-                        unit: unit_label(meta, v.quantity),
+                        quantity: v.quantity.and_then(quantity_descriptor),
                         ramp: ramp_name(&v.ramp),
                         min,
                         max,
@@ -233,9 +246,9 @@ fn out_index(ids: &[String]) -> HashMap<&str, usize> {
 /// Encode one period's values for every declared variable, in snapshot
 /// order (see the module docs for the layout).
 pub fn encode_generic_period(view: &UdsView, meta: &OutMetadata, rec: &PeriodRecord) -> Vec<u8> {
-    let point_vars = resolved_variables(ElementClass::Point);
-    let polyline_vars = resolved_variables(ElementClass::Polyline);
-    let region_vars = resolved_variables(ElementClass::Region);
+    let point_vars = resolved_variables(meta, ElementClass::Point);
+    let polyline_vars = resolved_variables(meta, ElementClass::Polyline);
+    let region_vars = resolved_variables(meta, ElementClass::Region);
 
     let n_values = point_vars.len() * view.points.len()
         + polyline_vars.len() * view.polylines.len()
@@ -258,7 +271,7 @@ pub fn encode_generic_period(view: &UdsView, meta: &OutMetadata, rec: &PeriodRec
 
     let mut write_class = |ids: Vec<&str>, index: &HashMap<&str, usize>, class: ElementClass| {
         let (values, n_vars) = class_values(rec, meta, class);
-        for (_, col, scale) in resolved_variables(class) {
+        for (_, col, scale) in resolved_variables(meta, class) {
             for id in &ids {
                 let v = index
                     .get(id)
@@ -322,7 +335,7 @@ pub fn stream_uds_results_csv(
         if ids.is_empty() {
             continue;
         }
-        let vars = resolved_variables(class);
+        let vars = resolved_variables(meta, class);
         let mut w = open(path)?;
         let header = vars
             .iter()
@@ -399,7 +412,7 @@ pub fn element_series(
     let times: Vec<u32> = (0..meta.n_periods)
         .map(|i| ((i as i64 + 1) * meta.report_step_s as i64) as u32)
         .collect();
-    let fields = resolved_variables(class)
+    let fields = resolved_variables(&meta, class)
         .into_iter()
         .filter_map(|(v, col, scale)| {
             let values = series.vars.get(col)?;
@@ -472,18 +485,28 @@ mod tests {
         assert_eq!(gm.point_vars.len(), 6);
         assert_eq!(gm.polyline_vars.len(), 4);
         assert_eq!(gm.region_vars.len(), 3);
-        // CFS file → US labels; flow's label is the file's declared unit.
+        // Values are served in SI with the §5 quantity descriptor embedded
+        // — the frontend converts to the display system with it. A CFS
+        // file's node depths therefore arrive as metres: the junction sits
+        // 2 ft below ground (invert 100, rim 102 in the model → max depth
+        // 4 ft would bound depth), so no depth may exceed ~1.3 m even
+        // though the file stores feet.
         let depth = gm.point_vars.iter().find(|v| v.id == "depth").unwrap();
-        assert_eq!(depth.unit.as_deref(), Some("ft"));
+        assert_eq!(depth.quantity.unwrap().key, "depth");
+        assert!(
+            depth.max < 4.0 * 0.3048 + 1e-6,
+            "depth range must be SI metres, got {}",
+            depth.max
+        );
         let flow = gm.polyline_vars.iter().find(|v| v.id == "flow").unwrap();
-        assert_eq!(flow.unit.as_deref(), Some("cfs"));
-        // Capacity is served ×100 against its percent label.
+        assert_eq!(flow.quantity.unwrap().key, "flow");
+        // Capacity is served ×100 against its percent quantity.
         let capacity = gm
             .polyline_vars
             .iter()
             .find(|v| v.id == "capacity")
             .unwrap();
-        assert_eq!(capacity.unit.as_deref(), Some("%"));
+        assert_eq!(capacity.quantity.unwrap().key, "percent");
         assert!(capacity.max <= 100.0 + 1e-6, "fraction scaled to percent");
         // Ranges came from a real scan: ordered and finite.
         assert!(depth.min <= depth.max && depth.max.is_finite());
