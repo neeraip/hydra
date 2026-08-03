@@ -7,6 +7,7 @@ import { COORDINATE_SYSTEM, Deck, OrthographicView } from "@deck.gl/core";
 import {
   LineLayer,
   PathLayer,
+  PolygonLayer,
   ScatterplotLayer,
   TextLayer,
 } from "@deck.gl/layers";
@@ -28,6 +29,7 @@ import {
   useBasemapProviders,
 } from "../hooks/basemapProviders";
 import { startPerfSpan } from "../perfTrace";
+import type { Region } from "../types";
 import { useUnitSystem } from "../units";
 import {
   type BasemapId,
@@ -223,6 +225,10 @@ type CanvasViewState = GeoViewState | SchematicViewState;
 interface MapCanvasProps {
   nodes: Node[];
   links: Link[];
+  /** Areal elements (subcatchment boundaries), already in the render CRS.
+   * Rendered beneath links/nodes in map mode; ignored in schematic mode
+   * (the BFS layout has no positions for rings). */
+  regions?: Region[];
   viewMode: ViewMode;
   /** Per-axis schematic spacing multipliers (`{x: 1, y: 1}` = the layout's
    * native 120:80). Scales distances between nodes only — radii and link widths
@@ -313,6 +319,7 @@ interface MapCanvasProps {
 export const MapCanvas = memo(function MapCanvas({
   nodes,
   links,
+  regions,
   viewMode,
   schematicScale = IDENTITY_SCALE,
   nodeVar,
@@ -1076,6 +1083,27 @@ export const MapCanvas = memo(function MapCanvas({
 
     const layers: Layer[] = [];
 
+    // Subcatchment boundaries render beneath everything else: soft fills
+    // with a hairline outline, map mode only (rings are source-CRS geometry
+    // the schematic layout knows nothing about). Non-pickable until region
+    // selection lands with the read-only inspector.
+    if (!isSchematic && regions && regions.length > 0) {
+      layers.push(
+        new PolygonLayer<Region>({
+          id: "regions",
+          data: regions,
+          getPolygon: (r: Region) => r.ring,
+          getFillColor: [61, 175, 117, 28],
+          getLineColor: [61, 175, 117, 150],
+          lineWidthMinPixels: 1,
+          lineWidthUnits: "pixels",
+          stroked: true,
+          filled: true,
+          pickable: false,
+        }),
+      );
+    }
+
     // Detached group marker (schematic only). The layout parks anything not
     // reachable from a source in its own region to the right; without a boundary
     // and a label, that reads as a distant part of the network rather than as
@@ -1645,6 +1673,7 @@ export const MapCanvas = memo(function MapCanvas({
     // change whenever the network does.
     hasPeriodResults,
     viewMode,
+    regions,
     nodeVar,
     linkVar,
     animateLinks,

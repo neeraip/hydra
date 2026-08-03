@@ -798,6 +798,12 @@ export function useLinks(_version = 0): Link[] {
   return links;
 }
 
+/** Areal elements (subcatchments); empty for engines without them. */
+export function useRegions(): Region[] {
+  const { regions } = useNetworkData();
+  return regions;
+}
+
 export function useNetworkSummary(): NetworkSummary {
   const { summary } = useNetworkData();
   return summary;

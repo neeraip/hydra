@@ -33,7 +33,7 @@
  */
 
 import proj4 from "proj4";
-import type { Link, Node } from "../types";
+import type { Link, Node, Region } from "../types";
 
 export interface CustomCrsDefinition {
   label: string;
@@ -234,6 +234,32 @@ export function reprojectNodes(nodes: Node[], fromEpsg: string): Node[] {
     const [lon, lat] = converter.forward([n.x, n.y]);
     return { ...n, x: lon, y: lat };
   });
+}
+
+/**
+ * Reproject regions' boundary rings from `fromEpsg` to WGS84, the same
+ * forward transform {@link reprojectNodes} applies to node coordinates.
+ * Region counts are small (dozens, not tens of thousands), so no identity
+ * cache is needed. Throws like {@link reprojectNodes} for unknown codes.
+ */
+export function reprojectRegions(
+  regions: Region[],
+  fromEpsg: string,
+): Region[] {
+  if (fromEpsg === "EPSG:4326") return regions; // no-op
+  if (!ensureEpsgDef(fromEpsg)) {
+    throw new Error(
+      `Unknown CRS: ${fromEpsg}. Provide a proj4 definition string or use a supported EPSG code.`,
+    );
+  }
+  const converter = proj4(fromEpsg, "EPSG:4326");
+  return regions.map((r) => ({
+    ...r,
+    ring: r.ring.map(([x, y]) => {
+      const [lon, lat] = converter.forward([x, y]);
+      return [lon, lat] as [number, number];
+    }),
+  }));
 }
 
 /**

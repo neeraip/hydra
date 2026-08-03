@@ -5,9 +5,11 @@ import {
   registerCustomCrsDefinitions,
   reprojectLinkVerticesCached,
   reprojectNodesCached,
+  reprojectRegions,
 } from "../../../canvas/coords";
 import { useCanvasStatus } from "../../../canvas/status-context";
 import { type Link, listCrsCatalogPage, type Node } from "../../../hooks";
+import type { Region } from "../../../types";
 
 /** Coverage of real map coordinates across the network's nodes. */
 export type CoordStatus = "complete" | "partial" | "empty";
@@ -31,11 +33,13 @@ export function useCrsReprojection({
   projectSourceCrs,
   baseNodes,
   baseLinks,
+  baseRegions,
 }: {
   /** The project row's persisted CRS (EPSG code); absent → WGS84. */
   projectSourceCrs: string | null | undefined;
   baseNodes: Node[];
   baseLinks: Link[];
+  baseRegions: Region[];
 }): {
   sourceCrs: string;
   crsError: string | null;
@@ -49,6 +53,8 @@ export function useCrsReprojection({
   posNodes: Node[];
   /** Links with reprojected polyline vertices (identity-stable when WGS84). */
   canvasLinks: Link[];
+  /** Regions with reprojected boundary rings (identity-stable when WGS84). */
+  canvasRegions: Region[];
 } {
   const { setCoordStatus } = useCanvasStatus();
 
@@ -257,6 +263,19 @@ export function useCrsReprojection({
     }
   }, [sourceCrs, baseLinks]);
 
+  // Region rings live in the source CRS exactly like link vertices; same
+  // transform, same fall-back-to-raw on error (already surfaced above).
+  const canvasRegions = useMemo(() => {
+    if (sourceCrs === "EPSG:4326" || baseRegions.length === 0) {
+      return baseRegions;
+    }
+    try {
+      return reprojectRegions(baseRegions, sourceCrs);
+    } catch {
+      return baseRegions;
+    }
+  }, [sourceCrs, baseRegions]);
+
   return {
     sourceCrs,
     crsError,
@@ -266,5 +285,6 @@ export function useCrsReprojection({
     rawPositionNodes,
     posNodes,
     canvasLinks,
+    canvasRegions,
   };
 }

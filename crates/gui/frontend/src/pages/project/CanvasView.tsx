@@ -45,6 +45,7 @@ import {
   useLinks,
   useNodes,
   useProjectCriteria,
+  useRegions,
   useSimParams,
 } from "../../hooks";
 import { useNetworkVersion } from "../../hooks/NetworkVersionContext";
@@ -737,6 +738,7 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
 
   const baseNodes = useNodes();
   const baseLinks = useLinks();
+  const baseRegions = useRegions();
 
   // Raw committed snapshot (source-CRS coords) for undo capture inside
   // stable callbacks — same render-time-ref pattern as the selection refs
@@ -765,10 +767,12 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
     rawPositionNodes,
     posNodes,
     canvasLinks,
+    canvasRegions,
   } = useCrsReprojection({
     projectSourceCrs: project?.sourceCrs,
     baseNodes,
     baseLinks,
+    baseRegions,
   });
 
   // O(1) enrichment flag (replaces the previous 46k `.some` scans): true when
@@ -1328,6 +1332,7 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
                 <MapCanvas
                   nodes={canvasNodes}
                   links={canvasLinks}
+                  regions={canvasRegions}
                   periodResult={currentPeriodResult}
                   isActive={canvasIsActive}
                   viewMode={viewMode}
