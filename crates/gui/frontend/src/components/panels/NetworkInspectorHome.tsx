@@ -6,8 +6,10 @@ import {
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Link, Node } from "../../hooks";
-import { useLinks, useNodes } from "../../hooks";
+import { useLinks, useNodes, useRegions } from "../../hooks";
 import { perfTrace } from "../../perfTrace";
+import type { Region } from "../../types";
+import { elementTypeBadge } from "../../types/elementTypes";
 import { toDisplay, unitLabel, useUnitSystem } from "../../units";
 import { MiddleTruncate } from "../ui/MiddleTruncate";
 import { TypeBadge } from "../ui/TypeBadge";
@@ -813,9 +815,86 @@ function LinksTab({
 
 /** Patterns deliberately absent: they have no position, so nothing about them
  * appears on the canvas this panel accompanies, and the Editor already has a
- * Patterns section where they can actually be edited. The tab here rendered
- * cards with no click handler wired at all. */
-type HomeTab = "nodes" | "links";
+ * Patterns section where they can actually be edited. */
+
+// ── Subcatchments tab ─────────────────────────────────────────────────────────
+
+/** Areal elements, present only for engines that have them. Read-only rows —
+ * region selection on the canvas arrives with the region inspector. */
+function SubcatchmentsTab({
+  query,
+  regions,
+}: {
+  query: string;
+  regions: Region[];
+}) {
+  const q = query.trim().toLowerCase();
+  const shown = q
+    ? regions.filter((r) => r.id.toLowerCase().includes(q))
+    : regions;
+  if (shown.length === 0) {
+    return (
+      <div
+        style={{
+          padding: 14,
+          fontSize: "var(--text-md)",
+          color: "var(--text-tertiary)",
+        }}
+      >
+        {q ? "No subcatchments match." : "No subcatchments."}
+      </div>
+    );
+  }
+  return (
+    <div style={{ overflowY: "auto", flex: 1 }}>
+      {shown.map((r) => {
+        const badge = elementTypeBadge(r.type);
+        return (
+          <div
+            key={r.id}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              padding: "6px 14px",
+              fontSize: "var(--text-md)",
+              color: "var(--text-primary)",
+              borderBottom: "1px solid var(--border)",
+            }}
+          >
+            <span
+              style={{
+                width: 16,
+                height: 16,
+                borderRadius: 4,
+                background: badge.color,
+                color: "#fff",
+                fontSize: 9,
+                fontWeight: 700,
+                display: "inline-flex",
+                alignItems: "center",
+                justifyContent: "center",
+                flexShrink: 0,
+              }}
+            >
+              {badge.label}
+            </span>
+            <span
+              style={{
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+              }}
+            >
+              {r.id}
+            </span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+type HomeTab = "nodes" | "links" | "subcatchments";
 
 interface Props {
   /** When omitted the close button is hidden (e.g. when rendered inside the rail). */
@@ -866,6 +945,7 @@ export function NetworkInspectorHome({
     [internalNodes],
   );
 
+  const regions = useRegions();
   const [tab, setTab] = useState<HomeTab>("nodes");
   const [queryInput, setQueryInput] = useState("");
   const query = useDebouncedValue(queryInput, 120);
@@ -880,7 +960,12 @@ export function NetworkInspectorHome({
   // cannot disagree with the rows under it.
   const counts: Record<HomeTab, number> = useMemo(() => {
     const q = query.trim().toLowerCase();
-    if (!q) return { nodes: allNodes.length, links: allLinks.length };
+    if (!q)
+      return {
+        nodes: allNodes.length,
+        links: allLinks.length,
+        subcatchments: regions.length,
+      };
     let nodes = 0;
     for (const n of allNodes) {
       if (matchesQuery(n, NODE_SEARCH_KEYS, q)) nodes++;
@@ -889,12 +974,17 @@ export function NetworkInspectorHome({
     for (const l of allLinks) {
       if (matchesQuery(l, LINK_SEARCH_KEYS, q)) links++;
     }
-    return { nodes, links };
-  }, [allNodes, allLinks, query]);
+    let subcatchments = 0;
+    for (const r of regions) {
+      if (r.id.toLowerCase().includes(q)) subcatchments++;
+    }
+    return { nodes, links, subcatchments };
+  }, [allNodes, allLinks, regions, query]);
   const searching = query.trim().length > 0;
   const totals: Record<HomeTab, number> = {
     nodes: allNodes.length,
     links: allLinks.length,
+    subcatchments: regions.length,
   };
 
   return (
@@ -1007,7 +1097,10 @@ export function NetworkInspectorHome({
           scrollbarWidth: "none",
         }}
       >
-        {(["nodes", "links", "patterns"] as HomeTab[]).map((t) => {
+        {(regions.length > 0
+          ? (["nodes", "links", "subcatchments"] as HomeTab[])
+          : (["nodes", "links"] as HomeTab[])
+        ).map((t) => {
           const active = t === tab;
           return (
             <button
@@ -1064,6 +1157,9 @@ export function NetworkInspectorHome({
           onZoomTo={onZoomToNode}
           activeId={activeNodeId}
         />
+      )}
+      {tab === "subcatchments" && (
+        <SubcatchmentsTab query={query} regions={regions} />
       )}
       {tab === "links" && (
         <LinksTab
