@@ -551,9 +551,9 @@ function NodesTab({
                 onClick={() => onSelect(node.id)}
                 style={{
                   cursor: "pointer",
-                  background: isActive ? "rgba(79,142,247,0.14)" : undefined,
+                  background: isActive ? "var(--selection-bg)" : undefined,
                   outline: isActive
-                    ? "1px solid rgba(79,142,247,0.3)"
+                    ? "1px solid var(--selection-border)"
                     : undefined,
                   outlineOffset: "-1px",
                 }}
@@ -903,9 +903,9 @@ function LinksTab({
                 onClick={() => onSelect(link.id)}
                 style={{
                   cursor: "pointer",
-                  background: isActive ? "rgba(79,142,247,0.14)" : undefined,
+                  background: isActive ? "var(--selection-bg)" : undefined,
                   outline: isActive
-                    ? "1px solid rgba(79,142,247,0.3)"
+                    ? "1px solid var(--selection-border)"
                     : undefined,
                   outlineOffset: "-1px",
                 }}
@@ -1221,9 +1221,9 @@ function SubcatchmentsTab({
                 onClick={() => onSelect?.(region.id)}
                 style={{
                   cursor: onSelect ? "pointer" : undefined,
-                  background: isActive ? "rgba(79,142,247,0.14)" : undefined,
+                  background: isActive ? "var(--selection-bg)" : undefined,
                   outline: isActive
-                    ? "1px solid rgba(79,142,247,0.3)"
+                    ? "1px solid var(--selection-border)"
                     : undefined,
                   outlineOffset: "-1px",
                 }}
@@ -1585,7 +1585,7 @@ export function NetworkInspectorHome({
                   padding: "1px 4px",
                   borderRadius: 4,
                   background: active
-                    ? "rgba(79,142,247,0.18)"
+                    ? "var(--selection-bg-strong)"
                     : searching && counts[t] > 0
                       ? "rgba(212,160,23,0.18)"
                       : "var(--bg-card)",

@@ -90,6 +90,14 @@
   /* Accent */
   --accent: #4a90d9;
   --accent-dim: rgba(74, 144, 217, 0.15);
+  /* Row/element selection. One language for "this is the selected thing",
+     everywhere: lists, tables, scenario rows. Derived from the accent so a
+     theme change carries it, and never from an engine's identity colour —
+     what "selected" looks like must not depend on which engine a project
+     uses. */
+  --selection-bg: rgba(74, 144, 217, 0.14);
+  --selection-bg-strong: rgba(74, 144, 217, 0.18);
+  --selection-border: rgba(74, 144, 217, 0.3);
 
   /* Nav */
   --nav-hover: rgba(255, 255, 255, 0.055);
@@ -140,6 +148,9 @@
 
   --accent: #2e72c2;
   --accent-dim: rgba(46, 114, 194, 0.1);
+  --selection-bg: rgba(46, 114, 194, 0.12);
+  --selection-bg-strong: rgba(46, 114, 194, 0.16);
+  --selection-border: rgba(46, 114, 194, 0.35);
 
   --nav-hover: rgba(23, 33, 55, 0.06);
 

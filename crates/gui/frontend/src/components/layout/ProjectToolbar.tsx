@@ -436,11 +436,13 @@ export function ProjectToolbar() {
           gap: 5,
           padding: "4px 10px 4px 8px",
           border: baseActive
-            ? `1px solid ${accent}`
+            ? "1px solid var(--accent)"
             : "1px solid var(--border)",
           borderRadius: 14,
-          background: baseActive ? `${accent}22` : "var(--bg-card)",
-          color: baseActive ? accent : "var(--text-secondary)",
+          background: baseActive
+            ? "var(--selection-bg-strong)"
+            : "var(--bg-card)",
+          color: baseActive ? "var(--accent)" : "var(--text-secondary)",
           fontSize: "var(--text-sm)",
           fontWeight: 700,
           cursor: "pointer",

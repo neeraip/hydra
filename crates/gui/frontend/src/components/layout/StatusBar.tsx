@@ -74,11 +74,13 @@ export function StatusBar() {
       {/* Engine & project pill */}
       {project ? (
         <Pill
-          background={`${accent}1f`}
-          color={accent}
           title={`${engine?.label ?? "Unsupported engine"} · ${project.name}`}
         >
-          <span style={{ fontWeight: 600, letterSpacing: 0.4 }}>
+          {/* The engine's colour marks the engine, not the whole pill: a
+              two-character identifier is identity, a tinted surface behind
+              the project name is just a wash that makes the status bar look
+              different per project type. */}
+          <span style={{ fontWeight: 600, letterSpacing: 0.4, color: accent }}>
             {engine?.pill ?? "??"}
           </span>
           <span style={{ marginLeft: 6, color: "var(--text-secondary)" }}>
@@ -199,7 +201,6 @@ export function StatusBar() {
         <SolverHistoryPopover
           onClose={() => setHistoryOpen(false)}
           timestepCount={timestepCount}
-          accent={accent}
         />
       )}
     </div>
@@ -296,11 +297,9 @@ function Pill({
 function SolverHistoryPopover({
   onClose,
   timestepCount,
-  accent,
 }: {
   onClose: () => void;
   timestepCount: number;
-  accent: string;
 }) {
   return (
     // biome-ignore lint/a11y/noStaticElementInteractions: popover container only stops backdrop clicks.
@@ -355,7 +354,7 @@ function SolverHistoryPopover({
         style={{
           marginTop: 10,
           fontSize: "var(--text-sm)",
-          color: accent,
+          color: "var(--accent)",
           background: "transparent",
           border: "none",
           cursor: "pointer",
