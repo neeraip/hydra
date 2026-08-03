@@ -34,6 +34,7 @@ import {
   LinkInspector,
   NodeInspector,
 } from "../../components/panels/ElementInspector";
+import { engineComponents } from "../../engine/registry";
 import {
   createLink,
   createNode,
@@ -152,7 +153,10 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
     commandPaletteOpen,
     showToast,
   } = useAppState();
-  const { project } = useActiveProject();
+  const { project, engine } = useActiveProject();
+  // Editing affordances exist only for engines whose model this GUI edits;
+  // for read-only engines the tools hide rather than refuse per gesture.
+  const modelEditable = engineComponents(engine?.key).modelEditable;
   const { markEdited } = useNetworkVersion();
   const renameElementFlow = useElementRename();
   const simParams = useSimParams(project?.id);
@@ -170,6 +174,16 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
     setZoomCallbacks,
   } = useCanvasSelection();
   const [activeTool, setActiveTool] = useState<CanvasTool>("select");
+  useEffect(() => {
+    if (
+      !modelEditable &&
+      (activeTool === "edit" ||
+        activeTool === "add-node" ||
+        activeTool === "add-link")
+    ) {
+      setActiveTool("select");
+    }
+  }, [modelEditable, activeTool]);
   const [currentHour, setCurrentHour] = useState(0);
   const [nodeVar, setNodeVar] = useState<NodeVariable>(
     CANVAS_PREF_DEFAULTS.nodeVar,
@@ -703,16 +717,16 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
         // layout rather than the network's own geometry.
         case "e":
         case "E":
-          if (viewMode === "map") setActiveTool("edit");
+          if (viewMode === "map" && modelEditable) setActiveTool("edit");
           break;
         case "n":
         case "N":
-          if (viewMode === "map") setActiveTool("add-node");
+          if (viewMode === "map" && modelEditable) setActiveTool("add-node");
           break;
-        // Not gated: creating a link writes only its two node ids.
+        // Not map-gated: creating a link writes only its two node ids.
         case "l":
         case "L":
-          setActiveTool("add-link");
+          if (modelEditable) setActiveTool("add-link");
           break;
         case "Escape":
           setActiveTool("select");
@@ -1468,6 +1482,7 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
 
             {/* Toolbar overlay — left offset tracks the floating rail width */}
             <CanvasToolbar
+              editable={modelEditable}
               viewMode={viewMode}
               onViewModeChange={setViewMode}
               coordStatus={coordStatus}

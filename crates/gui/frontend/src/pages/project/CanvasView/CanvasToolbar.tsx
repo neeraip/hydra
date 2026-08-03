@@ -43,6 +43,7 @@ const ICON_14: CSSProperties = { width: 14, height: 14 };
  * `data-toolbar-dropdown` markers rendered here).
  */
 export function CanvasToolbar({
+  editable,
   viewMode,
   onViewModeChange,
   coordStatus,
@@ -64,6 +65,8 @@ export function CanvasToolbar({
   measureDistanceM,
   onClearAnnotations,
 }: {
+  /** Whether model-editing tools (edit, add node, add link) appear. */
+  editable: boolean;
   viewMode: ViewMode;
   onViewModeChange: (m: ViewMode) => void;
   coordStatus: "complete" | "partial" | "empty";
@@ -426,47 +429,51 @@ export function CanvasToolbar({
           <CursorArrowRaysIcon style={ICON_14} />
         </button>
 
-        <button
-          type="button"
-          className={`tool-btn${activeTool === "edit" ? " active" : ""}`}
-          onClick={() => onToolChange("edit")}
-          disabled={mapOnly}
-          data-tooltip={mapOnlyTooltip("Edit / move nodes (E)")}
-          data-tooltip-pos="bottom"
-          aria-label="Edit"
-          style={{ ...ICON_BTN_STYLE, ...mapOnlyDim }}
-        >
-          <PencilSquareIcon style={ICON_14} />
-        </button>
+        {editable && (
+          <>
+            <button
+              type="button"
+              className={`tool-btn${activeTool === "edit" ? " active" : ""}`}
+              onClick={() => onToolChange("edit")}
+              disabled={mapOnly}
+              data-tooltip={mapOnlyTooltip("Edit / move nodes (E)")}
+              data-tooltip-pos="bottom"
+              aria-label="Edit"
+              style={{ ...ICON_BTN_STYLE, ...mapOnlyDim }}
+            >
+              <PencilSquareIcon style={ICON_14} />
+            </button>
 
-        <button
-          type="button"
-          className={`tool-btn${activeTool === "add-node" ? " active" : ""}`}
-          disabled={mapOnly}
-          onClick={() => onToolChange("add-node")}
-          data-tooltip={mapOnlyTooltip("Add node (N)")}
-          data-tooltip-pos="bottom"
-          aria-label="Add node"
-          style={{ ...ICON_BTN_STYLE, ...mapOnlyDim }}
-        >
-          <MapPinIcon style={ICON_14} />
-        </button>
+            <button
+              type="button"
+              className={`tool-btn${activeTool === "add-node" ? " active" : ""}`}
+              disabled={mapOnly}
+              onClick={() => onToolChange("add-node")}
+              data-tooltip={mapOnlyTooltip("Add node (N)")}
+              data-tooltip-pos="bottom"
+              aria-label="Add node"
+              style={{ ...ICON_BTN_STYLE, ...mapOnlyDim }}
+            >
+              <MapPinIcon style={ICON_14} />
+            </button>
 
-        {/* Not map-only, unlike its neighbours: a link carries no coordinates of
+            {/* Not map-only, unlike its neighbours: a link carries no coordinates of
             its own — `create_link` takes two node ids — so the schematic's
             synthetic positions are irrelevant to it. Connecting nodes is often
             easier there, where the layout makes connectivity legible. */}
-        <button
-          type="button"
-          className={`tool-btn${activeTool === "add-link" ? " active" : ""}`}
-          onClick={() => onToolChange("add-link")}
-          data-tooltip="Add link (L)"
-          data-tooltip-pos="bottom"
-          aria-label="Add link"
-          style={ICON_BTN_STYLE}
-        >
-          <LinkIcon style={ICON_14} />
-        </button>
+            <button
+              type="button"
+              className={`tool-btn${activeTool === "add-link" ? " active" : ""}`}
+              onClick={() => onToolChange("add-link")}
+              data-tooltip="Add link (L)"
+              data-tooltip-pos="bottom"
+              aria-label="Add link"
+              style={ICON_BTN_STYLE}
+            >
+              <LinkIcon style={ICON_14} />
+            </button>
+          </>
+        )}
 
         {/* Measure distance, with its readout anchored underneath */}
         <div style={{ position: "relative", display: "inline-flex" }}>

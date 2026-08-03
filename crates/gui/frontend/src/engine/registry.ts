@@ -36,17 +36,23 @@ export interface EngineComponents {
   /** Whether the settings modal edits (true) or views (false). Drives the
    * edit affordance labels without any engine branching in the modals. */
   settingsEditable: boolean;
+  /** Whether the model itself is editable in this GUI — canvas editing
+   * tools, element tables, create modals. Read-only engines hide those
+   * affordances entirely rather than offering gestures that refuse. */
+  modelEditable: boolean;
 }
 
 const WDS: EngineComponents = {
   RunSettingsSummary: WdsRunSettingsSummary,
   settingsEditable: true,
+  modelEditable: true,
 };
 
 const UDS: EngineComponents = {
   RunSettingsSummary: UdsRunSettingsSummary,
   SettingsView: UdsSettingsView,
   settingsEditable: false,
+  modelEditable: false,
 };
 
 const REGISTRY: Record<string, EngineComponents> = {
