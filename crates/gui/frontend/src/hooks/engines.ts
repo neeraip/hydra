@@ -56,7 +56,7 @@ export const FALLBACK_ENGINES: EngineInfo[] = [
     key: "uds",
     label: "Urban Drainage",
     pill: "UD",
-    accent: "#2e9b57",
+    accent: "#7a6ff0",
     summary:
       "Stormwater and wastewater collection network simulation — runoff, routing, and water quality on the SWMM data model.",
     status: "available",
