@@ -26,6 +26,18 @@ import {
   SEQ_GRADIENT_CSS,
   VELOCITY_GRADIENT_CSS,
 } from "./colors";
+import {
+  LEGEND_BAR_STYLE,
+  LEGEND_POPOVER_STYLE,
+  LEGEND_ROOT_STYLE,
+  LinkGlyph,
+  NodeGlyph,
+  PICKER_BTN_STYLE,
+  PickerButton,
+  type PickerOption,
+  Ramp,
+  SECTION_LABEL_STYLE,
+} from "./legend-primitives";
 import { LINK_HEADLOSS_MAX } from "./MapCanvas/colorUtils";
 import type { LinkVariable, NodeVariable } from "./types";
 
@@ -136,43 +148,6 @@ function linkGradient(
 
 // ── Sub-components ────────────────────────────────────────────────────────────
 
-function Ramp({
-  gradient,
-  min,
-  max,
-}: {
-  gradient: string;
-  min: number;
-  max: number;
-}) {
-  return (
-    <div>
-      <div
-        style={{
-          height: 10,
-          borderRadius: 5,
-          background: gradient,
-          marginBottom: 4,
-        }}
-      />
-      <div style={{ display: "flex", justifyContent: "space-between" }}>
-        <span
-          className="mono"
-          style={{ fontSize: "var(--text-xs)", color: "var(--text-tertiary)" }}
-        >
-          {min.toFixed(1)}
-        </span>
-        <span
-          className="mono"
-          style={{ fontSize: "var(--text-xs)", color: "var(--text-tertiary)" }}
-        >
-          {max.toFixed(1)}
-        </span>
-      </div>
-    </div>
-  );
-}
-
 /** Discrete link-status legend colours — must match `statusRgba` in
  * MapCanvas/colorUtils. */
 const STATUS_LEGEND = [
@@ -231,162 +206,6 @@ const THRESHOLD_ANNOTATION_STYLE: CSSProperties = {
 };
 
 // ── Legend component ──────────────────────────────────────────────────────────
-
-const SECTION_LABEL_STYLE: React.CSSProperties = {
-  fontSize: "var(--text-xs)",
-  fontWeight: 600,
-  color: "var(--text-secondary)",
-  marginBottom: 5,
-};
-
-const PICKER_BTN_STYLE: React.CSSProperties = {
-  width: "auto",
-  height: 26,
-  padding: "0 8px",
-  gap: 4,
-  display: "flex",
-  alignItems: "center",
-  fontSize: "var(--text-sm)",
-  fontWeight: 600,
-  fontFamily: "var(--font-ui)",
-  color: "var(--text-primary)",
-  whiteSpace: "nowrap",
-};
-
-const PICKER_LIST_STYLE: React.CSSProperties = {
-  position: "absolute",
-  bottom: "calc(100% + 6px)",
-  left: 0,
-  backdropFilter: "blur(20px) saturate(160%)",
-  WebkitBackdropFilter: "blur(20px) saturate(160%)",
-  borderRadius: 8,
-  overflow: "hidden",
-  minWidth: 130,
-  zIndex: 40,
-};
-
-interface PickerOption<T extends string> {
-  value: T;
-  label: string;
-}
-
-// ── Picker glyphs ─────────────────────────────────────────────────────────────
-// Micro-icons distinguishing the two variable pickers: a filled dot matching
-// how junction nodes render on the canvas, and a short pipe segment for
-// links. Both use var(--text-secondary) so they track the legend's micro-label
-// colour (SECTION_LABEL_STYLE) in every theme — they previously used
-// --text-tertiary, one step dimmer than the label they sit beside, which left
-// them hard to make out against the panel.
-
-function NodeGlyph() {
-  return (
-    <svg
-      width={10}
-      height={10}
-      viewBox="0 0 10 10"
-      aria-hidden="true"
-      style={{ flexShrink: 0 }}
-    >
-      <circle cx={5} cy={5} r={3.2} fill="var(--text-secondary)" />
-    </svg>
-  );
-}
-
-function LinkGlyph() {
-  return (
-    <svg
-      width={10}
-      height={10}
-      viewBox="0 0 10 10"
-      aria-hidden="true"
-      style={{ flexShrink: 0 }}
-    >
-      <line
-        x1={1.5}
-        y1={8.5}
-        x2={8.5}
-        y2={1.5}
-        stroke="var(--text-secondary)"
-        strokeWidth={2}
-        strokeLinecap="round"
-      />
-    </svg>
-  );
-}
-
-/** Always-visible dropdown button for switching a canvas variable — mirrors
- * the basemap/CRS picker pattern used in the canvas toolbar. */
-function PickerButton<T extends string>({
-  value,
-  options,
-  isOpen,
-  onToggle,
-  onSelect,
-  icon,
-  pickerLabel,
-}: {
-  value: T;
-  options: PickerOption<T>[];
-  isOpen: boolean;
-  onToggle: () => void;
-  onSelect: (v: T) => void;
-  /** Glyph rendered before the current value ("which picker is this?"). */
-  icon?: React.ReactNode;
-  /** Accessible name + tooltip, e.g. "Node variable". */
-  pickerLabel?: string;
-}) {
-  const current = options.find((o) => o.value === value);
-  return (
-    <div style={{ position: "relative" }}>
-      <button
-        type="button"
-        className="tool-btn"
-        onClick={(e) => {
-          e.stopPropagation();
-          onToggle();
-        }}
-        aria-label={pickerLabel}
-        data-tooltip={pickerLabel}
-        data-tooltip-pos="top"
-        style={PICKER_BTN_STYLE}
-      >
-        {icon}
-        {current?.label ?? value}
-        <ChevronUpDownIcon style={{ width: 12, height: 12 }} />
-      </button>
-      {isOpen && (
-        <div
-          className="legend-glass legend-glass--raised"
-          style={PICKER_LIST_STYLE}
-        >
-          {options.map((o) => (
-            <button
-              type="button"
-              key={o.value}
-              onClick={() => onSelect(o.value)}
-              style={{
-                display: "block",
-                width: "100%",
-                padding: "6px 10px",
-                border: "none",
-                background:
-                  o.value === value ? "rgba(74,144,217,0.22)" : "transparent",
-                color:
-                  o.value === value ? "var(--accent)" : "var(--text-secondary)",
-                cursor: "pointer",
-                fontSize: "var(--text-sm)",
-                textAlign: "left",
-                fontFamily: "var(--font-ui)",
-              }}
-            >
-              {o.label}
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
 
 /** One titled row of the threshold editor: three inputs + footer labels.
  * `fields` are both the value keys and the input placeholders. */
@@ -620,34 +439,12 @@ export function Legend({
   ];
 
   return (
-    <div
-      ref={rootRef}
-      style={{
-        position: "absolute",
-        bottom: 14,
-        left: "calc(var(--rail-effective-w, 0px) + 16px)",
-        zIndex: 30,
-        display: "flex",
-        flexDirection: "column",
-        alignItems: "flex-start",
-        transition: "left var(--rail-transition)",
-      }}
-    >
+    <div ref={rootRef} style={LEGEND_ROOT_STYLE}>
       {/* ── Popover: gradient ramps, threshold editor, colour-mode toggle ── */}
       {detailsOpen && (
         <div
           className="legend-glass legend-glass--raised"
-          style={{
-            marginBottom: 8,
-            backdropFilter: "blur(20px) saturate(160%)",
-            WebkitBackdropFilter: "blur(20px) saturate(160%)",
-            borderRadius: 10,
-            padding: "10px 14px",
-            width: 200,
-            display: "flex",
-            flexDirection: "column",
-            gap: 12,
-          }}
+          style={LEGEND_POPOVER_STYLE}
         >
           {/* Node variable ramp — variable is switched via the picker below */}
           <div>
@@ -809,16 +606,7 @@ export function Legend({
             ? " legend-glass--raised"
             : ""
         }`}
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: 4,
-          padding: 4,
-          minHeight: 32,
-          borderRadius: 20,
-          backdropFilter: "blur(20px) saturate(160%)",
-          WebkitBackdropFilter: "blur(20px) saturate(160%)",
-        }}
+        style={LEGEND_BAR_STYLE}
       >
         {/* Colour scale / thresholds toggle — separate from variable switching */}
         <button

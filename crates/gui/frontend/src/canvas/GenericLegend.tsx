@@ -1,38 +1,32 @@
 // ── Engine-generic legend ─────────────────────────────────────────────────────
-// The catalog-driven counterpart of `Legend`: renders one section per element
-// class with a variable picker, a ramp bar, and the per-run min/max — all of
-// it engine-authored data (`ResultMeta.generic`). No engine names, variable
-// ids, units, or ranges are known here; the engine's catalog described them
-// and this component draws exactly what it was given, matching the wds
-// legend's glass look and bottom-left placement.
+// The catalog-driven implementation of the shared legend design (see
+// `legend-primitives`): the same persistent glass control bar of variable
+// pickers with a details popover of ramp bars that the wds legend has —
+// only the content is engine-authored (`ResultMeta.generic`). No engine
+// names, variable ids, units, or ranges are known here; the engine's
+// catalog described them and this component draws exactly what it was
+// given. Per-engine affordances the catalog does not describe (threshold
+// editing, flow animation) are absent rather than faked.
 
-import type { CSSProperties } from "react";
+import { ChevronUpDownIcon } from "@heroicons/react/16/solid";
+import { useEffect, useRef, useState } from "react";
 import type { GenericResultMeta, GenericVariable } from "../hooks/results";
+import {
+  LEGEND_BAR_STYLE,
+  LEGEND_POPOVER_STYLE,
+  LEGEND_ROOT_STYLE,
+  LinkGlyph,
+  NodeGlyph,
+  PickerButton,
+  Ramp,
+  RegionGlyph,
+  SECTION_LABEL_STYLE,
+} from "./legend-primitives";
 
 export type GenericClassKey = "point" | "polyline" | "region";
 
-/** Selected variable id per element class ("" = class hidden/none). */
+/** Selected variable id per element class ("" = the catalog's first). */
 export type GenericSelection = Record<GenericClassKey, string>;
-
-const SECTION_LABEL_STYLE: CSSProperties = {
-  fontSize: "var(--text-xs)",
-  fontWeight: 600,
-  color: "var(--text-secondary)",
-  marginBottom: 5,
-};
-
-const SELECT_STYLE: CSSProperties = {
-  width: "100%",
-  padding: "3px 4px",
-  borderRadius: 6,
-  border: "1px solid var(--border)",
-  background: "var(--bg-card)",
-  color: "var(--text-primary)",
-  fontSize: "var(--text-xs)",
-  fontFamily: "var(--font-ui)",
-  boxSizing: "border-box",
-  marginBottom: 6,
-};
 
 /** CSS gradient for a ramp hint — mirrors `genericRgba`'s palettes. */
 function rampGradient(ramp: GenericVariable["ramp"]): string {
@@ -56,7 +50,8 @@ function rampGradient(ramp: GenericVariable["ramp"]): string {
   return "linear-gradient(90deg, rgb(166,200,240), rgb(21,74,158))";
 }
 
-/** Compact numeric label: 3 significant digits, no scientific noise. */
+/** Compact numeric label: enough precision for small drainage magnitudes
+ * (a 0.03 cfs peak must not read as "0.0"). */
 function fmt(v: number): string {
   if (!Number.isFinite(v)) return "—";
   const a = Math.abs(v);
@@ -65,70 +60,22 @@ function fmt(v: number): string {
   return v.toFixed(2);
 }
 
-function RampBar({ variable }: { variable: GenericVariable }) {
-  return (
-    <div>
-      <div
-        style={{
-          height: 8,
-          borderRadius: 4,
-          background: rampGradient(variable.ramp),
-        }}
-      />
-      <div
-        className="mono"
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          fontSize: "var(--text-2xs)",
-          color: "var(--text-tertiary)",
-          marginTop: 3,
-        }}
-      >
-        <span>{fmt(variable.min)}</span>
-        <span>{fmt(variable.max)}</span>
-      </div>
-    </div>
-  );
+/** Picker option label: "Depth (ft)". */
+function optionLabel(v: GenericVariable): string {
+  return v.unit ? `${v.label} (${v.unit})` : v.label;
 }
 
-function ClassSection({
-  title,
-  variables,
-  selectedId,
-  onSelect,
-}: {
-  title: string;
+interface ClassConfig {
+  key: GenericClassKey;
   variables: GenericVariable[];
-  selectedId: string;
-  onSelect: (id: string) => void;
-}) {
-  if (variables.length === 0) return null;
-  const selected = variables.find((v) => v.id === selectedId) ?? variables[0];
-  return (
-    <div>
-      <div style={SECTION_LABEL_STYLE}>{title}</div>
-      <select
-        style={SELECT_STYLE}
-        value={selected.id}
-        onChange={(e) => onSelect(e.target.value)}
-        aria-label={`${title} variable`}
-      >
-        {variables.map((v) => (
-          <option key={v.id} value={v.id}>
-            {v.unit ? `${v.label} (${v.unit})` : v.label}
-          </option>
-        ))}
-      </select>
-      <RampBar variable={selected} />
-    </div>
-  );
+  glyph: React.ReactNode;
+  pickerLabel: string;
 }
 
 /**
- * Legend for engines whose results are variable-keyed. Section titles are
- * element-class names (the one neutral vocabulary this layer owns);
- * everything inside each section is engine-authored.
+ * Legend for engines whose results are variable-keyed. One picker + ramp
+ * section per element class that has catalog variables (the region section
+ * appears only when the canvas shows region polygons).
  */
 export function GenericLegend({
   meta,
@@ -138,57 +85,146 @@ export function GenericLegend({
 }: {
   meta: GenericResultMeta;
   /** Whether the canvas is showing region polygons — hides the region
-   * section for models without areal elements. */
+   * picker for models without areal elements. */
   hasRegions: boolean;
   selection: GenericSelection;
   onSelect: (cls: GenericClassKey, id: string) => void;
 }) {
+  const [detailsOpen, setDetailsOpen] = useState(false);
+  const [openPicker, setOpenPicker] = useState<GenericClassKey | null>(null);
+  const rootRef = useRef<HTMLDivElement>(null);
+
+  // Same dismissal behaviour as the wds legend: any pointer press outside
+  // the legend closes pickers and the details popover.
+  useEffect(() => {
+    function onPointerDown(e: PointerEvent) {
+      if (rootRef.current?.contains(e.target as Node)) return;
+      setOpenPicker(null);
+      setDetailsOpen(false);
+    }
+    window.addEventListener("pointerdown", onPointerDown);
+    return () => window.removeEventListener("pointerdown", onPointerDown);
+  }, []);
+
+  const classes: ClassConfig[] = [
+    {
+      key: "point" as const,
+      variables: meta.pointVars,
+      glyph: <NodeGlyph />,
+      pickerLabel: "Node variable",
+    },
+    {
+      key: "polyline" as const,
+      variables: meta.polylineVars,
+      glyph: <LinkGlyph />,
+      pickerLabel: "Link variable",
+    },
+    ...(hasRegions
+      ? [
+          {
+            key: "region" as const,
+            variables: meta.regionVars,
+            glyph: <RegionGlyph />,
+            pickerLabel: "Region variable",
+          },
+        ]
+      : []),
+  ].filter((c) => c.variables.length > 0);
+
+  const selected = (c: ClassConfig): GenericVariable =>
+    c.variables.find((v) => v.id === selection[c.key]) ?? c.variables[0];
+
   return (
-    <div
-      style={{
-        position: "absolute",
-        bottom: 14,
-        left: "calc(var(--rail-effective-w, 0px) + 16px)",
-        zIndex: 30,
-        display: "flex",
-        flexDirection: "column",
-        alignItems: "flex-start",
-        transition: "left var(--rail-transition)",
-      }}
-    >
+    <div ref={rootRef} style={LEGEND_ROOT_STYLE}>
+      {/* ── Popover: one labelled gradient ramp per element class ── */}
+      {detailsOpen && (
+        <div
+          className="legend-glass legend-glass--raised"
+          style={LEGEND_POPOVER_STYLE}
+        >
+          {classes.map((c) => {
+            const v = selected(c);
+            return (
+              <div key={c.key}>
+                <div style={SECTION_LABEL_STYLE}>{optionLabel(v)}</div>
+                <Ramp
+                  gradient={rampGradient(v.ramp)}
+                  min={fmt(v.min)}
+                  max={fmt(v.max)}
+                />
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* ── Persistent control bar: ramp swatches toggle + variable pickers ── */}
       <div
-        className="legend-glass legend-glass--raised"
-        style={{
-          backdropFilter: "blur(20px) saturate(160%)",
-          WebkitBackdropFilter: "blur(20px) saturate(160%)",
-          borderRadius: 10,
-          padding: "10px 14px",
-          width: 200,
-          display: "flex",
-          flexDirection: "column",
-          gap: 12,
-        }}
+        className={`legend-glass${
+          detailsOpen || openPicker != null ? " legend-glass--raised" : ""
+        }`}
+        style={LEGEND_BAR_STYLE}
       >
-        <ClassSection
-          title="Nodes"
-          variables={meta.pointVars}
-          selectedId={selection.point}
-          onSelect={(id) => onSelect("point", id)}
-        />
-        <ClassSection
-          title="Links"
-          variables={meta.polylineVars}
-          selectedId={selection.polyline}
-          onSelect={(id) => onSelect("polyline", id)}
-        />
-        {hasRegions && (
-          <ClassSection
-            title="Regions"
-            variables={meta.regionVars}
-            selectedId={selection.region}
-            onSelect={(id) => onSelect("region", id)}
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            setDetailsOpen((v) => !v);
+            setOpenPicker(null);
+          }}
+          title="Colour scale"
+          data-tooltip="Colour scale"
+          data-tooltip-pos="top"
+          className="tool-btn"
+          style={{
+            width: "auto",
+            height: "auto",
+            gap: 5,
+            padding: "4px 6px 4px 6px",
+            // Left corners nest inside the bar's 20px rounding (20 − 4px
+            // padding); right corners match the neighbouring pickers.
+            borderRadius: "16px 6px 6px 16px",
+          }}
+        >
+          <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+            {classes.map((c) => (
+              <div
+                key={c.key}
+                style={{
+                  width: 28,
+                  height: 5,
+                  borderRadius: 3,
+                  background: rampGradient(selected(c).ramp),
+                }}
+              />
+            ))}
+          </div>
+          <ChevronUpDownIcon
+            style={{ width: 10, height: 10, color: "var(--text-tertiary)" }}
           />
-        )}
+        </button>
+        <div className="tool-divider" />
+        {classes.map((c) => (
+          <PickerButton
+            key={c.key}
+            value={selected(c).id}
+            options={c.variables.map((v) => ({
+              value: v.id,
+              label: optionLabel(v),
+            }))}
+            icon={c.glyph}
+            pickerLabel={c.pickerLabel}
+            isOpen={openPicker === c.key}
+            onToggle={() => {
+              setOpenPicker((p) => (p === c.key ? null : c.key));
+              setDetailsOpen(false);
+            }}
+            onSelect={(id) => {
+              onSelect(c.key, id);
+              setOpenPicker(null);
+            }}
+          />
+        ))}
       </div>
     </div>
   );
