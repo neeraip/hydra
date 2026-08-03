@@ -280,6 +280,11 @@ pub struct ResultMetaDto {
     /// topology match as unknown and apply no staleness gating.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub network_digest: Option<String>,
+    /// Engine-described variable catalog with per-run ranges, for engines
+    /// whose results are served through the generic payload (`uds`). `None`
+    /// for wds, whose fixed `ranges` above predate the catalog contract.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub generic: Option<super::uds_results::GenericResultMetaDto>,
 }
 
 /// Format a topology digest as the wire representation shared with the
@@ -325,14 +330,16 @@ pub fn load_result_meta(
             let times: Vec<f64> = (0..meta.n_periods)
                 .map(|i| (i as f64 + 1.0) * step)
                 .collect();
+            let generic = super::uds_results::generic_meta(&out_path, &meta)?;
             return Ok(Some(ResultMetaDto {
                 times,
-                // Period arrays for the canvas arrive with the uds results
-                // provider; until then the timeline steps uncoloured.
-                has_period_data: false,
+                has_period_data: true,
                 quality_mode: "none".to_string(),
                 network_digest: None,
+                // The wds-shaped fixed ranges stay empty; the canvas reads
+                // the per-variable ranges from `generic` instead.
                 ranges: ResultRangesDto::default(),
+                generic: Some(generic),
             }));
         }
         _ => return Ok(None),
@@ -357,6 +364,7 @@ pub fn load_result_meta(
         // gating rather than as stale.
         network_digest: crate::commands::simulation::read_run_meta(&out_path)
             .and_then(|run| run.network_digest),
+        generic: None,
         ranges: ResultRangesDto {
             pressure_min: ranges.pressure_min,
             pressure_max: ranges.pressure_max,
@@ -386,6 +394,7 @@ pub fn load_result_meta(
 /// Return flat arrays for a single reporting period (nodes + links).
 pub fn get_period_results(
     app: tauri::AppHandle,
+    state: tauri::State<'_, NetworkState>,
     project_id: String,
     period: usize,
     scenario_id: Option<String>,
@@ -400,6 +409,27 @@ pub fn get_period_results(
         // result metadata has not yet been reloaded; that must not raise a
         // scary "missing .out" backend-error toast.
         return Ok(tauri::ipc::Response::new(Vec::new()));
+    }
+    // Engine-dispatched: each engine's reader serves its own results file,
+    // in its own payload layout (the frontend picks the decoder from
+    // `load_result_meta`'s answer).
+    match super::projects::project_engine_key(&app_data, &project_id).as_str() {
+        "wds" => {}
+        "uds" => {
+            let meta = hydra::uds::io::out_reader::read_metadata(&out_path)?;
+            let rec = hydra::uds::io::out_reader::read_period(&out_path, &meta, period)?;
+            // Snapshot order comes from the same view build the canvas
+            // rendered, so values line up positionally with v4 indices.
+            let network =
+                uds_network_for_target(&app_data, &state, &project_id, scenario_id.as_deref())?;
+            let view = super::uds_view::build_view(&network);
+            return Ok(tauri::ipc::Response::new(
+                super::uds_results::encode_generic_period(&view, &meta, &rec),
+            ));
+        }
+        // Engines without a period provider serve the empty "no results"
+        // payload rather than handing their file to the wrong reader.
+        _ => return Ok(tauri::ipc::Response::new(Vec::new())),
     }
     let meta =
         hydra::io::out_reader::read_metadata_checked(&out_path).map_err(|e| e.to_string())?;
@@ -1183,7 +1213,9 @@ pub fn get_result_analytics(
 /// Sibling CSV paths for `export_results_csv`: `<base>-nodes.csv` and
 /// `<base>-links.csv` next to the user-chosen path (its extension, if any,
 /// is replaced).
-fn csv_sibling_paths(base: &std::path::Path) -> (std::path::PathBuf, std::path::PathBuf) {
+fn csv_sibling_paths(
+    base: &std::path::Path,
+) -> (std::path::PathBuf, std::path::PathBuf, std::path::PathBuf) {
     let stem = base
         .file_stem()
         .and_then(|s| s.to_str())
@@ -1192,6 +1224,8 @@ fn csv_sibling_paths(base: &std::path::Path) -> (std::path::PathBuf, std::path::
     (
         base.with_file_name(format!("{stem}-nodes.csv")),
         base.with_file_name(format!("{stem}-links.csv")),
+        // Written only by engines with areal elements (uds subcatchments).
+        base.with_file_name(format!("{stem}-subcatchments.csv")),
     )
 }
 
@@ -1287,21 +1321,50 @@ pub async fn export_results_csv(
             "No simulation results exist for this target — run a simulation first".to_string(),
         );
     }
-    let out_meta =
-        hydra::io::out_reader::read_metadata_checked(&out_path).map_err(|e| e.to_string())?;
-    let network = network_for_target(&app_data, &state, &project_id, scenario_id.as_deref())?;
-    if network.nodes.len() != out_meta.n_nodes || network.links.len() != out_meta.n_links {
-        return Err(format!(
-            "results.out does not match the current model ({} nodes / {} links in results, \
-             {} / {} in the model) — re-run the simulation before exporting",
-            out_meta.n_nodes,
-            out_meta.n_links,
-            network.nodes.len(),
-            network.links.len(),
-        ));
-    }
-    let node_ids: Vec<String> = network.nodes.iter().map(|n| n.base.id.clone()).collect();
-    let link_ids: Vec<String> = network.links.iter().map(|l| l.base.id.clone()).collect();
+    // Engine-dispatched: prepare a streaming job for this engine's reader,
+    // then share the dialog + blocking-write plumbing below.
+    type CsvJob = Box<
+        dyn FnOnce(&std::path::Path, &std::path::Path, &std::path::Path) -> Result<(), String>
+            + Send,
+    >;
+    let job: CsvJob = match super::projects::project_engine_key(&app_data, &project_id).as_str() {
+        "wds" => {
+            let out_meta = hydra::io::out_reader::read_metadata_checked(&out_path)
+                .map_err(|e| e.to_string())?;
+            let network =
+                network_for_target(&app_data, &state, &project_id, scenario_id.as_deref())?;
+            if network.nodes.len() != out_meta.n_nodes || network.links.len() != out_meta.n_links {
+                return Err(format!(
+                    "results.out does not match the current model ({} nodes / {} links in results, \
+                     {} / {} in the model) — re-run the simulation before exporting",
+                    out_meta.n_nodes,
+                    out_meta.n_links,
+                    network.nodes.len(),
+                    network.links.len(),
+                ));
+            }
+            let node_ids: Vec<String> = network.nodes.iter().map(|n| n.base.id.clone()).collect();
+            let link_ids: Vec<String> = network.links.iter().map(|l| l.base.id.clone()).collect();
+            let out_path = out_path.clone();
+            Box::new(move |nodes_csv, links_csv, _subs_csv| {
+                stream_results_csv(
+                    &out_path, &out_meta, &node_ids, &link_ids, nodes_csv, links_csv,
+                )
+            })
+        }
+        "uds" => {
+            let meta = hydra::uds::io::out_reader::read_metadata(&out_path)?;
+            let out_path = out_path.clone();
+            Box::new(move |nodes_csv, links_csv, subs_csv| {
+                super::uds_results::stream_uds_results_csv(
+                    &out_path, &meta, nodes_csv, links_csv, subs_csv,
+                )
+            })
+        }
+        _ => {
+            return Err("Results export is not available for this project's engine yet".to_string())
+        }
+    };
 
     let default_name = meta::read_project_meta(&bundle::project_dir(&app_data, &project_id))
         .map(|m| format!("{}-results.csv", m.name))
@@ -1326,16 +1389,12 @@ pub async fn export_results_csv(
         None => return Ok(None), // user cancelled
     };
     let base_path = file_path.into_path().map_err(|e| e.to_string())?;
-    let (nodes_csv, links_csv) = csv_sibling_paths(&base_path);
+    let (nodes_csv, links_csv, subs_csv) = csv_sibling_paths(&base_path);
 
     // Streaming a large result set is heavy IO — keep it off the async pool.
-    tauri::async_runtime::spawn_blocking(move || {
-        stream_results_csv(
-            &out_path, &out_meta, &node_ids, &link_ids, &nodes_csv, &links_csv,
-        )
-    })
-    .await
-    .map_err(|e| format!("CSV export task panicked: {e}"))??;
+    tauri::async_runtime::spawn_blocking(move || job(&nodes_csv, &links_csv, &subs_csv))
+        .await
+        .map_err(|e| format!("CSV export task panicked: {e}"))??;
 
     Ok(Some(base_path.to_string_lossy().into_owned()))
 }
@@ -1549,6 +1608,7 @@ Duration  0
             has_period_data: true,
             quality_mode: "none".into(),
             network_digest: d,
+            generic: None,
             ranges: ResultRangesDto {
                 pressure_min: 0.0,
                 pressure_max: 0.0,
@@ -1672,7 +1732,7 @@ Duration  0
         assert_eq!(node_ids.len(), out_meta.n_nodes);
         assert_eq!(link_ids.len(), out_meta.n_links);
 
-        let (nodes_csv, links_csv) = csv_sibling_paths(&dir.path().join("export.csv"));
+        let (nodes_csv, links_csv, _subs_csv) = csv_sibling_paths(&dir.path().join("export.csv"));
         assert!(nodes_csv.ends_with("export-nodes.csv"));
         assert!(links_csv.ends_with("export-links.csv"));
         stream_results_csv(

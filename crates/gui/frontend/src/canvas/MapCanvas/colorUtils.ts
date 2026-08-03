@@ -130,6 +130,70 @@ export function nodeRgba(
  */
 export const NO_RESULT_RGBA: RGBA = [100, 100, 100, 200];
 
+// ── Engine-generic ramps (catalog-driven results) ─────────────────────────────
+
+/** Linear blend between two RGB triples at `t` ∈ [0, 1]. */
+function blend(
+  a: readonly [number, number, number],
+  b: readonly [number, number, number],
+  t: number,
+): [number, number, number] {
+  return [
+    Math.round(a[0] + t * (b[0] - a[0])),
+    Math.round(a[1] + t * (b[1] - a[1])),
+    Math.round(a[2] + t * (b[2] - a[2])),
+  ];
+}
+
+/** Banded ramp steps, low → high: good → moderate → elevated → excessive. */
+const BAND_STEPS: readonly [number, number, number][] = [
+  [61, 175, 117],
+  [163, 190, 84],
+  [212, 160, 23],
+  [201, 120, 64],
+  [201, 64, 64],
+];
+
+/**
+ * Colour for one engine-generic value against its variable's per-run range
+ * and ramp hint — the catalog-driven counterpart of the per-variable wds
+ * ramps above, with zero engine knowledge:
+ *
+ * - `sequential`: single-hue light → dark blue over [min, max];
+ * - `diverging`: blue ← neutral → red, centred on zero, scaled by the
+ *   larger magnitude side (flow direction reads at a glance);
+ * - `banded`: five discrete good → excessive steps over [min, max].
+ *
+ * Non-finite values (unreported elements) render the shared no-result grey.
+ */
+export function genericRgba(
+  value: number | null | undefined,
+  variable: { min: number; max: number; ramp: string },
+  alpha = 220,
+): RGBA {
+  if (value == null || !Number.isFinite(value)) return NO_RESULT_RGBA;
+  const { min, max, ramp } = variable;
+  if (ramp === "diverging") {
+    const scale = Math.max(Math.abs(min), Math.abs(max));
+    const t = scale > 0 ? Math.max(-1, Math.min(1, value / scale)) : 0;
+    const rgb =
+      t < 0
+        ? blend([203, 213, 225], [37, 99, 235], -t)
+        : blend([203, 213, 225], [201, 64, 64], t);
+    return [...rgb, alpha];
+  }
+  const span = max - min;
+  const t = span > 0 ? Math.max(0, Math.min(1, (value - min) / span)) : 0;
+  if (ramp === "banded") {
+    const step = Math.min(
+      BAND_STEPS.length - 1,
+      Math.floor(t * BAND_STEPS.length),
+    );
+    return [...BAND_STEPS[step], alpha];
+  }
+  return [...blend([166, 200, 240], [21, 74, 158], t), alpha];
+}
+
 export function velocityRgba(
   v: number,
   thresholds?: { low: number; target: number; high: number },
@@ -245,7 +309,10 @@ export function linkRgba(
     case "flow":
       return flowMagnitudeRgba(link.flow, flowMax, 200, flowThresh);
     case "velocity":
-      return velocityRgba(link.velocity, velocityThresh);
+      // Absent (engine served no velocity) is unknown, not 0 m/s.
+      return link.velocity == null
+        ? NO_RESULT_RGBA
+        : velocityRgba(link.velocity, velocityThresh);
     case "status":
       return statusRgba(link.status);
     case "headloss":

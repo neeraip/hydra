@@ -7,6 +7,11 @@ import {
   isValidBasemapId,
 } from "../../canvas/Basemap";
 import { haversineMeters, wgs84ToSourceCrs } from "../../canvas/coords";
+import {
+  type GenericClassKey,
+  GenericLegend,
+  type GenericSelection,
+} from "../../canvas/GenericLegend";
 import { Legend, type LegendThresholds } from "../../canvas/Legend";
 import { MapCanvas } from "../../canvas/MapCanvas";
 import type { MeasurePoint } from "../../canvas/measureSnap";
@@ -20,6 +25,7 @@ import { useCanvasSelection } from "../../canvas/selection-context";
 import { Timeline } from "../../canvas/Timeline";
 import type {
   CanvasTool,
+  GenericCanvasResults,
   LinkVariable,
   NodeVariable,
   ViewMode,
@@ -39,6 +45,9 @@ import {
   createLink,
   createNode,
   deleteElement,
+  type GenericPeriodValues,
+  type GenericVariable,
+  getGenericPeriodValues,
   getPeriodResults,
   type PeriodResults,
   patchNodePosition,
@@ -432,12 +441,21 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
   useEffect(() => {
     function onToolCommand(e: Event) {
       const tool = (e as CustomEvent<CanvasTool>).detail;
+      // Same gate as the toolbar and keyboard shortcuts: editing tools do
+      // not exist for read-only engines, and the palette dispatches through
+      // this event too.
+      if (
+        !modelEditable &&
+        (tool === "edit" || tool === "add-node" || tool === "add-link")
+      ) {
+        return;
+      }
       if (tool === "measure") clearAnnotations();
       setActiveTool(tool);
     }
     window.addEventListener("hydra:canvas-tool", onToolCommand);
     return () => window.removeEventListener("hydra:canvas-tool", onToolCommand);
-  }, [clearAnnotations]);
+  }, [clearAnnotations, modelEditable]);
 
   useEffect(() => {
     function onViewportCommand(e: Event) {
@@ -503,6 +521,12 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
   // never load all periods at once.
   const [fetchedPeriodResult, setFetchedPeriodResult] =
     useState<PeriodResults | null>(null);
+  // Engine-generic counterpart (catalog-keyed engines): one period of every
+  // catalog variable, decoded from the generic payload. Exactly one of the
+  // two is ever non-null — the meta's `generic` field decides which decoder
+  // the fetch effect uses.
+  const [fetchedGenericValues, setFetchedGenericValues] =
+    useState<GenericPeriodValues | null>(null);
   // Which target the held arrays were fetched for. Only needed to tell "this
   // scrub failed, keep what's on screen" apart from "this scenario failed to
   // load at all, so stop showing the last one's colours".
@@ -515,6 +539,54 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
   // objects, comparison deltas) reads this gated value. Unknown digests
   // (pre-digest .out files) pass through ungated.
   const currentPeriodResult = resultsTopologyStale ? null : fetchedPeriodResult;
+
+  // ── Engine-generic result channels ─────────────────────────────────
+  // For catalog-keyed engines, the selected variable per element class.
+  // Empty string = "use the catalog's first variable" (the default until
+  // the user picks in the legend).
+  const genericMeta = stableResultMeta?.generic ?? null;
+  const [genericSelection, setGenericSelection] = useState<GenericSelection>({
+    point: "",
+    polyline: "",
+    region: "",
+  });
+  const handleGenericSelect = useCallback(
+    (cls: GenericClassKey, id: string) =>
+      setGenericSelection((s) => ({ ...s, [cls]: id })),
+    [],
+  );
+  const genericCanvas = useMemo<GenericCanvasResults | null>(() => {
+    if (!genericMeta) return null;
+    const channel = (
+      vars: GenericVariable[],
+      arrays: Float32Array[] | null,
+      selected: string,
+    ) => {
+      if (vars.length === 0) return null;
+      const i = Math.max(
+        0,
+        vars.findIndex((v) => v.id === selected),
+      );
+      return { variable: vars[i], values: arrays?.[i] ?? null };
+    };
+    return {
+      node: channel(
+        genericMeta.pointVars,
+        fetchedGenericValues?.points ?? null,
+        genericSelection.point,
+      ),
+      link: channel(
+        genericMeta.polylineVars,
+        fetchedGenericValues?.polylines ?? null,
+        genericSelection.polyline,
+      ),
+      region: channel(
+        genericMeta.regionVars,
+        fetchedGenericValues?.regions ?? null,
+        genericSelection.region,
+      ),
+    };
+  }, [genericMeta, fetchedGenericValues, genericSelection]);
 
   // On project change, discard stale period results immediately: a different
   // project is a different network, so the flat arrays cannot be reinterpreted
@@ -531,6 +603,7 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
   // biome-ignore lint/correctness/useExhaustiveDependencies: `project?.id` is the intentional reset trigger.
   useEffect(() => {
     setFetchedPeriodResult(null);
+    setFetchedGenericValues(null);
     loadedTargetRef.current = null;
   }, [project?.id]);
 
@@ -547,6 +620,7 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
   useEffect(() => {
     if (!project?.id) {
       setFetchedPeriodResult(null);
+      setFetchedGenericValues(null);
       return;
     }
     if (resultMetaKey == null) {
@@ -556,6 +630,7 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
       // scenario switch. Mirrors the `stableResultMeta` latch above.
       if (!resultMetaLoading) {
         setFetchedPeriodResult(null);
+        setFetchedGenericValues(null);
         loadedTargetRef.current = null;
       }
       return;
@@ -564,6 +639,7 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
       // The engine has result metadata (the timeline steps) but no
       // per-period arrays yet — nothing to fetch, nothing to colour.
       setFetchedPeriodResult(null);
+      setFetchedGenericValues(null);
       loadedTargetRef.current = null;
       return;
     }
@@ -576,6 +652,27 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
       0,
       Math.min(currentHour, (resultMeta?.times.length ?? 1) - 1),
     );
+    if (resultMeta?.generic) {
+      // Catalog-keyed engine: same command, generic decoder. The wds arrays
+      // stay null so the canvas renders through the generic channels only.
+      setFetchedPeriodResult(null);
+      getGenericPeriodValues(project.id, period, activeScenarioId)
+        .then((r) => {
+          if (!cancelled) {
+            setFetchedGenericValues(r);
+            loadedTargetRef.current = target;
+          }
+        })
+        .catch(() => {
+          if (!cancelled && loadedTargetRef.current !== target) {
+            setFetchedGenericValues(null);
+          }
+        });
+      return () => {
+        cancelled = true;
+      };
+    }
+    setFetchedGenericValues(null);
     getPeriodResults(project.id, period, activeScenarioId)
       .then((r) => {
         if (!cancelled) {
@@ -604,6 +701,7 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
     activeScenarioId,
     resultMeta?.times.length,
     resultMeta?.hasPeriodData,
+    resultMeta?.generic,
   ]);
 
   // ── Timeline height CSS variable ─────────────────────────────────
@@ -1143,7 +1241,14 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
     // node, from the raw snapshot BEFORE the delete.
     const { nodes: rawNodes, links: rawLinks } = rawNetworkRef.current;
     const recreates = recreateSpecsForDelete(kind, id, rawNodes, rawLinks);
-    await deleteElement(kind, id);
+    try {
+      await deleteElement(kind, id);
+    } catch (err) {
+      // A refused delete must surface, not vanish as an unhandled
+      // rejection with the element silently still present.
+      showToast(`Could not delete ${id}: ${err}`, "error");
+      return;
+    }
     if (recreates) {
       pushUndoEntry(stackKey(project.id, activeScenarioId ?? null), {
         label: `Deleted ${id}`,
@@ -1154,7 +1259,14 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
     await saveProjectOnDisk(project.id, activeScenarioId);
     markEdited(project.id, activeScenarioId);
     // No bumpNetwork(): backend event already bumps (see handleNodeMoved).
-  }, [pendingDelete, project, activeScenarioId, markEdited, clearSelection]);
+  }, [
+    pendingDelete,
+    project,
+    activeScenarioId,
+    markEdited,
+    clearSelection,
+    showToast,
+  ]);
 
   const handleRenameElement = useCallback(
     async (kind: string, oldId: string, rawNewId: string) => {
@@ -1162,9 +1274,10 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
       if (!ok) return;
       // Keep the renamed element selected under its new id (the backend
       // `network-changed` event drives the refetch that repopulates it).
+      // Node-vs-link is decided by which array holds the element — a kind
+      // allowlist misrouted every non-wds link kind to the node selector.
       const newId = rawNewId.trim();
-      if (kind === "pipe" || kind === "pump" || kind === "valve")
-        selectLink(newId);
+      if (linkMapRef.current.has(oldId)) selectLink(newId);
       else selectNode(newId);
     },
     [renameElementFlow, selectNode, selectLink],
@@ -1356,6 +1469,7 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
                   links={canvasLinks}
                   regions={canvasRegions}
                   periodResult={currentPeriodResult}
+                  generic={genericCanvas}
                   isActive={canvasIsActive}
                   viewMode={viewMode}
                   // The slider carries a track position; the layout wants per-axis
@@ -1399,8 +1513,18 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
               </CanvasErrorBoundary>
             )}
 
-            {/* Legend — visible only when simulation results exist */}
-            {!!stableResultMeta && (
+            {/* Legend — visible only when simulation results exist. The
+                engine-generic legend renders the engine's own variable
+                catalog; the wds legend keeps its fixed variable set. */}
+            {!!stableResultMeta && genericMeta && (
+              <GenericLegend
+                meta={genericMeta}
+                hasRegions={canvasRegions.length > 0}
+                selection={genericSelection}
+                onSelect={handleGenericSelect}
+              />
+            )}
+            {!!stableResultMeta && !genericMeta && (
               <Legend
                 nodeVar={nodeVar}
                 setNodeVar={setNodeVar}
@@ -1562,18 +1686,27 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
                   }))
                 }
                 disableZoomTo={!selectedNodeHasCoordinates}
-                onDelete={() =>
-                  setPendingDelete({
-                    kind: stableSelectedNode.type,
-                    id: stableSelectedNode.id,
-                  })
+                // Destructive/edit affordances only for editable engines —
+                // both props are optional and the inspector hides the
+                // gestures entirely when they are absent.
+                onDelete={
+                  modelEditable
+                    ? () =>
+                        setPendingDelete({
+                          kind: stableSelectedNode.type,
+                          id: stableSelectedNode.id,
+                        })
+                    : undefined
                 }
-                onRename={(newId) =>
-                  handleRenameElement(
-                    stableSelectedNode.type,
-                    stableSelectedNode.id,
-                    newId,
-                  )
+                onRename={
+                  modelEditable
+                    ? (newId) =>
+                        handleRenameElement(
+                          stableSelectedNode.type,
+                          stableSelectedNode.id,
+                          newId,
+                        )
+                    : undefined
                 }
                 onOpenPattern={() => {
                   setProjectView("editor");
@@ -1602,18 +1735,24 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
                   }))
                 }
                 disableZoomTo={!selectedLinkHasCoordinates}
-                onDelete={() =>
-                  setPendingDelete({
-                    kind: stableSelectedLink.type,
-                    id: stableSelectedLink.id,
-                  })
+                onDelete={
+                  modelEditable
+                    ? () =>
+                        setPendingDelete({
+                          kind: stableSelectedLink.type,
+                          id: stableSelectedLink.id,
+                        })
+                    : undefined
                 }
-                onRename={(newId) =>
-                  handleRenameElement(
-                    stableSelectedLink.type,
-                    stableSelectedLink.id,
-                    newId,
-                  )
+                onRename={
+                  modelEditable
+                    ? (newId) =>
+                        handleRenameElement(
+                          stableSelectedLink.type,
+                          stableSelectedLink.id,
+                          newId,
+                        )
+                    : undefined
                 }
                 onLocateNode={(id) => {
                   if (nodeMap.has(id)) selectNode(id);

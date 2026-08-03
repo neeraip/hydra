@@ -40,6 +40,7 @@ import { FlowPathLayer } from "./FlowPathLayer";
 import { HoverChip, type HoverTip } from "./HoverChip";
 import { useCanvasLayers } from "./layers-context";
 import {
+  genericRgba,
   hashStr,
   linkRgba,
   NO_RESULT_RGBA,
@@ -57,7 +58,13 @@ import {
   computeSchematicLayout,
   type SchematicLayout,
 } from "./schematicLayout";
-import type { CanvasTool, LinkVariable, NodeVariable, ViewMode } from "./types";
+import type {
+  CanvasTool,
+  GenericCanvasResults,
+  LinkVariable,
+  NodeVariable,
+  ViewMode,
+} from "./types";
 
 maplibregl.setWorkerUrl(maplibreWorkerUrl);
 
@@ -245,6 +252,11 @@ interface MapCanvasProps {
    * nodes/links so a timeline scrub changes only this prop — the node/link
    * arrays keep their identity and deck.gl only re-evaluates colours. */
   periodResult?: PeriodResults | null;
+  /** Engine-generic result channels (catalog-driven engines). When present,
+   * node/link/region colours come from these values and ramps instead of
+   * the fixed-variable accessors — the canvas stays free of engine
+   * knowledge; the engine's catalog described everything. */
+  generic?: GenericCanvasResults | null;
   basemap: BasemapId;
   /** Basemap dimming, 0–1 (1 = fully opaque). Applied as CSS opacity on the
    * maplibre canvas only — never on the deck.gl network overlay. */
@@ -326,6 +338,7 @@ export const MapCanvas = memo(function MapCanvas({
   linkVar,
   animateLinks = true,
   periodResult = null,
+  generic = null,
   basemap,
   basemapOpacity = 1,
   selectedNodeId,
@@ -863,6 +876,23 @@ export const MapCanvas = memo(function MapCanvas({
     periodResult.nodePressure.length === nodes.length &&
     periodResult.linkFlow.length === links.length;
 
+  // Engine-generic channels, length-guarded at component scope for the same
+  // topology-race reason as `hasPeriodResults`: a stale array must not
+  // colour a changed network.
+  const genNode =
+    generic?.node?.values && generic.node.values.length === nodes.length
+      ? generic.node
+      : null;
+  const genLink =
+    generic?.link?.values && generic.link.values.length === links.length
+      ? generic.link
+      : null;
+  const genRegion =
+    generic?.region?.values &&
+    generic.region.values.length === (regions?.length ?? 0)
+      ? generic.region
+      : null;
+
   const buildLayers = useCallback((): Layer[] => {
     const isSchematic = viewMode === "schematic";
     const coordSystem = isSchematic
@@ -955,6 +985,11 @@ export const MapCanvas = memo(function MapCanvas({
     // does not exist — the legend is hidden in this state too, so a colour
     // here would have nothing to explain it.
     const nodeColor = (d: (typeof nodeData)[number]): RGBA => {
+      if (generic) {
+        return genNode
+          ? genericRgba(genNode.values?.[d.si], genNode.variable)
+          : NO_RESULT_RGBA;
+      }
       if (!pr) return NO_RESULT_RGBA;
       return nodeRgba(
         nodeSim(d),
@@ -969,6 +1004,11 @@ export const MapCanvas = memo(function MapCanvas({
       );
     };
     const linkColor = (d: (typeof linkData)[number]): RGBA => {
+      if (generic) {
+        return genLink
+          ? genericRgba(genLink.values?.[d.si], genLink.variable)
+          : NO_RESULT_RGBA;
+      }
       // Status is the exception: it falls back to the model's initial
       // status, which is real data before any run.
       if (!pr && linkVar !== "status") return NO_RESULT_RGBA;
@@ -1088,18 +1128,29 @@ export const MapCanvas = memo(function MapCanvas({
     // the schematic layout knows nothing about). Non-pickable until region
     // selection lands with the read-only inspector.
     if (!isSchematic && regions && regions.length > 0) {
+      // With a generic region channel loaded, fill each polygon from its
+      // value (regions and values share the snapshot order); otherwise the
+      // neutral soft green. Kept translucent either way so the network
+      // above stays readable.
+      const regionFill = genRegion
+        ? (_r: Region, { index }: { index: number }) =>
+            genericRgba(genRegion.values?.[index], genRegion.variable, 110)
+        : ([61, 175, 117, 28] as RGBA);
       layers.push(
         new PolygonLayer<Region>({
           id: "regions",
           data: regions,
           getPolygon: (r: Region) => r.ring,
-          getFillColor: [61, 175, 117, 28],
+          getFillColor: regionFill,
           getLineColor: [61, 175, 117, 150],
           lineWidthMinPixels: 1,
           lineWidthUnits: "pixels",
           stroked: true,
           filled: true,
           pickable: false,
+          updateTriggers: {
+            getFillColor: [genRegion?.values, genRegion?.variable],
+          },
         }),
       );
     }
@@ -1282,6 +1333,8 @@ export const MapCanvas = memo(function MapCanvas({
         qualityMin,
         qualityMax,
         pr,
+        genLink?.values,
+        genLink?.variable,
       ];
       // Link hover/click is only meaningful in select/edit; skipping the
       // pick pass for other tools halves per-mousemove GPU picking cost.
@@ -1498,6 +1551,8 @@ export const MapCanvas = memo(function MapCanvas({
               colorMode,
               pressureThresholds,
               pr,
+              genNode?.values,
+              genNode?.variable,
             ],
             getRadius: [isSchematic],
           },
@@ -1669,9 +1724,13 @@ export const MapCanvas = memo(function MapCanvas({
     anyLinkVertices,
     periodResult,
     // `nodes`/`links` are no longer read here — the length guard they served
-    // moved into `hasPeriodResults`, and `nodeData`/`linkData` below already
-    // change whenever the network does.
+    // moved into `hasPeriodResults` (and the `gen*` channels), and
+    // `nodeData`/`linkData` below already change whenever the network does.
     hasPeriodResults,
+    generic,
+    genNode,
+    genLink,
+    genRegion,
     viewMode,
     regions,
     nodeVar,
@@ -2276,6 +2335,7 @@ export const MapCanvas = memo(function MapCanvas({
       <HoverChip
         tip={hoverTip}
         periodResult={periodResult}
+        generic={generic}
         nodeVar={nodeVar}
         linkVar={linkVar}
         sys={sys}

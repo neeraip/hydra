@@ -24,6 +24,7 @@ vi.mock("@tauri-apps/api/core", () => ({
 import { invoke } from "@tauri-apps/api/core";
 import {
   compareTopologyDigests,
+  decodeGenericPeriodValues,
   decodePeriodResults,
   getPeriodResults,
 } from "./results";
@@ -218,6 +219,53 @@ describe("decodePeriodResults", () => {
     const res = decodePeriodResults(padded);
     expect(res).not.toBeNull();
     expect(Array.from(res?.linkStatus ?? [])).toEqual([7]);
+  });
+});
+
+describe("decodeGenericPeriodValues", () => {
+  /** Little-endian generic payload: 6×u32 header + variable-major f32s. */
+  function buildGenericBuffer(
+    counts: [number, number, number, number, number, number],
+    values: number[],
+  ): ArrayBuffer {
+    const buf = new ArrayBuffer(24 + 4 * values.length);
+    const view = new DataView(buf);
+    counts.forEach((c, i) => {
+      view.setUint32(4 * i, c, true);
+    });
+    values.forEach((v, i) => {
+      view.setFloat32(24 + 4 * i, v, true);
+    });
+    return buf;
+  }
+
+  it("decodes variable-major arrays per class in catalog order", () => {
+    // 2 points × 2 vars, 1 polyline × 1 var, 0 regions × 3 vars.
+    const buf = buildGenericBuffer([2, 1, 0, 2, 1, 3], [10, 11, 20, 21, 30]);
+    const res = decodeGenericPeriodValues(buf);
+    expect(res).not.toBeNull();
+    expect(res?.points.map((a) => Array.from(a))).toEqual([
+      [10, 11],
+      [20, 21],
+    ]);
+    expect(res?.polylines.map((a) => Array.from(a))).toEqual([[30]]);
+    // Region var count is the catalog's even with zero regions: three
+    // empty arrays, not zero arrays.
+    expect(res?.regions.map((a) => Array.from(a))).toEqual([[], [], []]);
+  });
+
+  it("returns null only for a zero-byte buffer", () => {
+    expect(decodeGenericPeriodValues(new ArrayBuffer(0))).toBeNull();
+  });
+
+  it("throws for short or truncated buffers", () => {
+    expect(() => decodeGenericPeriodValues(new ArrayBuffer(8))).toThrow(
+      /too short/,
+    );
+    const full = buildGenericBuffer([1, 1, 0, 1, 1, 0], [1, 2]);
+    expect(() =>
+      decodeGenericPeriodValues(full.slice(0, full.byteLength - 4)),
+    ).toThrow(/truncated/);
   });
 });
 

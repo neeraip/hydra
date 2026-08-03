@@ -7,7 +7,7 @@ import type { PeriodResults } from "../hooks";
 import { elementTypeBadge } from "../types/elementTypes";
 import { toDisplay, unitLabel, type useUnitSystem } from "../units";
 import { statusLabel } from "./MapCanvas/colorUtils";
-import type { LinkVariable, NodeVariable } from "./types";
+import type { GenericCanvasResults, LinkVariable, NodeVariable } from "./types";
 
 /** What the hover chip is pointing at. `si` indexes the period-result arrays. */
 export interface HoverTip {
@@ -77,23 +77,40 @@ function hoverTipValue(
   return null;
 }
 
+/** Value line for the engine-generic channels: the hovered element's value
+ * for its class's selected variable, with the engine-authored unit label. */
+function genericTipValue(
+  tip: HoverTip,
+  generic: GenericCanvasResults,
+): string | null {
+  const channel = tip.kind === "node" ? generic.node : generic.link;
+  const v = channel?.values?.[tip.si];
+  if (channel == null || v == null || !Number.isFinite(v)) return null;
+  const unit = channel.variable.unit ? ` ${channel.variable.unit}` : "";
+  return `${v.toFixed(2)}${unit}`;
+}
+
 export function HoverChip({
   tip,
   periodResult,
+  generic = null,
   nodeVar,
   linkVar,
   sys,
 }: {
   tip: HoverTip | null;
   periodResult: PeriodResults | null;
+  generic?: GenericCanvasResults | null;
   nodeVar: NodeVariable;
   linkVar: LinkVariable;
   sys: ReturnType<typeof useUnitSystem>;
 }) {
   if (!tip) return null;
-  const value = periodResult
-    ? hoverTipValue(tip, periodResult, nodeVar, linkVar, sys)
-    : null;
+  const value = generic
+    ? genericTipValue(tip, generic)
+    : periodResult
+      ? hoverTipValue(tip, periodResult, nodeVar, linkVar, sys)
+      : null;
   const badge = elementTypeBadge(tip.type);
   return (
     <div

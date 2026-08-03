@@ -182,6 +182,27 @@ export interface ResultRanges {
   qualityMax?: number;
 }
 
+/**
+ * One engine-described result variable with its per-run value range —
+ * everything a legend needs, authored by the engine's catalog (id, label,
+ * unit label in the results file's unit system, ramp hint).
+ */
+export interface GenericVariable {
+  id: string;
+  label: string;
+  unit?: string;
+  ramp: "sequential" | "diverging" | "banded";
+  min: number;
+  max: number;
+}
+
+/** The engine-described result catalog for one run, per element class. */
+export interface GenericResultMeta {
+  pointVars: GenericVariable[];
+  polylineVars: GenericVariable[];
+  regionVars: GenericVariable[];
+}
+
 export interface ResultMeta {
   /** Snapshot times in seconds from the start of the simulation. */
   times: number[];
@@ -197,6 +218,13 @@ export interface ResultMeta {
    * then unknown and no staleness gating applies.
    */
   networkDigest?: string | null;
+  /**
+   * Present for engines whose results flow through the generic
+   * variable-keyed payload (uds). When set, `get_period_results` returns
+   * the generic layout and `decodeGenericPeriodValues` is the decoder;
+   * the fixed `ranges` above are then all-zero and unused.
+   */
+  generic?: GenericResultMeta;
 }
 
 /** Result of comparing the results' stored topology digest against the live
@@ -314,6 +342,109 @@ export function decodePeriodResults(buf: ArrayBuffer): PeriodResults | null {
     result.linkQuality = take(nLinks);
   }
   return result;
+}
+
+/**
+ * One period's values for every catalog variable, decoded from the generic
+ * payload: `points[v][i]` is variable `v` (in `GenericResultMeta` order)
+ * for snapshot point `i` (the canvas's element order). `NaN` marks an
+ * element the results file does not report.
+ */
+export interface GenericPeriodValues {
+  points: Float32Array[];
+  polylines: Float32Array[];
+  regions: Float32Array[];
+}
+
+/**
+ * Decode the generic period payload (backend `encode_generic_period`):
+ *
+ * ```text
+ * u32 nPoints | u32 nPolylines | u32 nRegions |
+ * u32 nPointVars | u32 nPolylineVars | u32 nRegionVars |
+ * f32 arrays, variable-major, catalog order: points, polylines, regions
+ * ```
+ *
+ * Returns `null` for a zero-byte buffer (no results); throws on a
+ * malformed buffer so a layout mismatch surfaces loudly.
+ * Exported for tests — production callers go through
+ * `getGenericPeriodValues`.
+ */
+export function decodeGenericPeriodValues(
+  buf: ArrayBuffer,
+): GenericPeriodValues | null {
+  const HEADER_BYTES = 24;
+  if (buf.byteLength === 0) return null;
+  if (buf.byteLength < HEADER_BYTES) {
+    throw periodResultsError(`buffer too short (${buf.byteLength} bytes)`);
+  }
+  const view = new DataView(buf);
+  const counts = [0, 1, 2, 3, 4, 5].map((i) => view.getUint32(4 * i, true));
+  const [
+    nPoints,
+    nPolylines,
+    nRegions,
+    nPointVars,
+    nPolylineVars,
+    nRegionVars,
+  ] = counts;
+  const expected =
+    HEADER_BYTES +
+    4 *
+      (nPointVars * nPoints +
+        nPolylineVars * nPolylines +
+        nRegionVars * nRegions);
+  if (buf.byteLength < expected) {
+    throw periodResultsError(
+      `truncated generic buffer (${buf.byteLength} bytes, expected ${expected})`,
+    );
+  }
+  let offset = HEADER_BYTES;
+  const takeClass = (nVars: number, nElements: number): Float32Array[] => {
+    const arrays: Float32Array[] = [];
+    for (let v = 0; v < nVars; v += 1) {
+      arrays.push(new Float32Array(buf, offset, nElements));
+      offset += 4 * nElements;
+    }
+    return arrays;
+  };
+  return {
+    points: takeClass(nPointVars, nPoints),
+    polylines: takeClass(nPolylineVars, nPolylines),
+    regions: takeClass(nRegionVars, nRegions),
+  };
+}
+
+/**
+ * Fetch one period of the generic variable-keyed payload. Same backend
+ * command as `getPeriodResults` — the engine decides the layout, and the
+ * caller picks this decoder when `ResultMeta.generic` is present.
+ */
+export async function getGenericPeriodValues(
+  projectId: string,
+  period: number,
+  scenarioId?: string | null,
+): Promise<GenericPeriodValues | null> {
+  const buf = await tryInvoke<ArrayBuffer>("get_period_results", {
+    projectId,
+    period,
+    scenarioId: scenarioId ?? null,
+  });
+  if (buf === null) return null;
+  if (!(buf instanceof ArrayBuffer)) {
+    const err = periodResultsError(
+      `get_period_results returned unexpected payload type ${typeof buf} (expected ArrayBuffer)`,
+    );
+    console.error("[results]", err);
+    throw err;
+  }
+  if (buf.byteLength === 0) return null;
+  try {
+    return decodeGenericPeriodValues(buf);
+  } catch (err) {
+    console.error("[results] generic period decode failed:", err);
+    throw err;
+  }
 }
 
 /**
