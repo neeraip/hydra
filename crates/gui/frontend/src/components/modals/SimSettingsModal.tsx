@@ -278,7 +278,7 @@ export function SimSettingsModal() {
                 : loading
                   ? "Loading…"
                   : engine != null && !isEngineGuiEditable(engine)
-                    ? `Simulation settings come from the model file for ${engine.label} projects.`
+                    ? `Editing simulation settings for ${engine.label} projects is not available in the GUI yet — the run uses the model file\u2019s settings, shown in the Run dialog.`
                     : "This project has no network yet. Import a model file or build one in the editor to configure simulation settings."}
             </Empty>
           ) : (

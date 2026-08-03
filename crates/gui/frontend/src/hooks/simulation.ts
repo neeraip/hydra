@@ -86,6 +86,25 @@ export interface SimParams {
 }
 
 /** Read [TIMES] + [OPTIONS] from `base/model.inp`. `null` if no base INP. */
+/** One display pair of a read-only settings summary (engines without the
+ * wds-shaped editable params surface). */
+export interface SimSummaryPair {
+  label: string;
+  value: string;
+}
+
+/** Read-only settings summary pairs; empty for engines served by
+ * `getSimParams` and for draft projects. */
+export async function getSimSummaryPairs(
+  projectId: string,
+): Promise<SimSummaryPair[]> {
+  return tryInvokeOr<SimSummaryPair[]>(
+    "get_sim_summary_pairs",
+    { projectId },
+    [],
+  );
+}
+
 export async function getSimParams(
   projectId: string,
 ): Promise<SimParams | null> {

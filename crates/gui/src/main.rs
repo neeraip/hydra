@@ -135,6 +135,7 @@ fn main() {
             commands::cancel_run_queue,
             commands::cancel_run_item,
             commands::get_sim_params,
+            commands::get_sim_summary_pairs,
             commands::update_sim_params,
             commands::get_element_series,
             commands::validate_network,

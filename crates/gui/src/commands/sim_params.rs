@@ -253,6 +253,110 @@ pub fn get_sim_params(
     Ok(Some(options_to_dto(&network.options)))
 }
 
+/// One display pair of a read-only simulation-settings summary.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SimSummaryPairDto {
+    pub label: String,
+    pub value: String,
+}
+
+/// A read-only settings summary for engines without the wds-shaped
+/// editable params surface — engine-authored display pairs the run modal
+/// shows as-is. Empty for engines that use `get_sim_params` instead, and
+/// for draft projects with no model.
+#[tauri::command(async)]
+pub fn get_sim_summary_pairs(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, NetworkState>,
+    project_id: String,
+) -> Result<Vec<SimSummaryPairDto>, String> {
+    validate_id(&project_id)?;
+    let app_data = app_data_dir(&app)?;
+    if super::projects::project_engine_key(&app_data, &project_id) != "uds" {
+        return Ok(Vec::new());
+    }
+    let network = match super::results::uds_network_for_target(&app_data, &state, &project_id, None)
+    {
+        Ok(n) => n,
+        // No model yet is the draft-project case, not an error.
+        Err(_) => return Ok(Vec::new()),
+    };
+    let o = &network.options;
+
+    let pair = |label: &str, value: String| SimSummaryPairDto {
+        label: label.to_string(),
+        value,
+    };
+    let date = |d: &hydra::uds::io::options::Date, t: f64| {
+        let (h, rem) = ((t / 3600.0) as u32, t % 3600.0);
+        format!(
+            "{:02}/{:02}/{} {:02}:{:02}",
+            d.month,
+            d.day,
+            d.year,
+            h,
+            (rem / 60.0) as u32
+        )
+    };
+    let step = |s: f64| {
+        if s >= 60.0 && s % 60.0 == 0.0 {
+            format!("{} min", (s / 60.0) as u32)
+        } else {
+            format!("{s} s")
+        }
+    };
+    let duration_hr = {
+        use chrono::NaiveDate;
+        let d0 = NaiveDate::from_ymd_opt(o.start_date.year, o.start_date.month, o.start_date.day);
+        let d1 = NaiveDate::from_ymd_opt(o.end_date.year, o.end_date.month, o.end_date.day);
+        match (d0, d1) {
+            (Some(d0), Some(d1)) => {
+                let days = (d1 - d0).num_days() as f64;
+                Some((days * 86_400.0 + o.end_time - o.start_time) / 3600.0)
+            }
+            _ => None,
+        }
+    };
+
+    let mut pairs = vec![
+        pair("Flow units", format!("{:?}", o.flow_units).to_uppercase()),
+        pair(
+            "Routing",
+            match o.routing_request {
+                hydra::uds::io::options::RoutingRequest::Steady => "Steady flow".to_string(),
+                hydra::uds::io::options::RoutingRequest::KinematicWave => {
+                    "Kinematic wave".to_string()
+                }
+                hydra::uds::io::options::RoutingRequest::DynamicWave => "Dynamic wave".to_string(),
+            },
+        ),
+        pair(
+            "Infiltration",
+            match o.infiltration {
+                hydra::uds::io::options::InfiltrationModel::Horton => "Horton".to_string(),
+                hydra::uds::io::options::InfiltrationModel::ModifiedHorton => {
+                    "Modified Horton".to_string()
+                }
+                hydra::uds::io::options::InfiltrationModel::GreenAmpt => "Green-Ampt".to_string(),
+                hydra::uds::io::options::InfiltrationModel::ModifiedGreenAmpt => {
+                    "Modified Green-Ampt".to_string()
+                }
+                hydra::uds::io::options::InfiltrationModel::CurveNumber => {
+                    "Curve number".to_string()
+                }
+            },
+        ),
+        pair("Start", date(&o.start_date, o.start_time)),
+    ];
+    if let Some(hr) = duration_hr {
+        pairs.push(pair("Duration", format!("{hr:.2} hr")));
+    }
+    pairs.push(pair("Routing step", step(o.routing_step)));
+    pairs.push(pair("Report step", step(o.report_step)));
+    Ok(pairs)
+}
+
 /// Fast-path sim-params update: when the cached parse holds `project_id`'s
 /// base model with no pending unsaved edits, apply `params` directly to the
 /// cache and return freshly serialised INP bytes for the caller to write to

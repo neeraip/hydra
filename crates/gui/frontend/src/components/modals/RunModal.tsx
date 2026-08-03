@@ -7,9 +7,11 @@ import {
   enqueueRuns,
   fetchValidationFindings,
   getSimParams,
+  getSimSummaryPairs,
   isEngineGuiEditable,
   projectHasNetwork,
   type SimParams,
+  type SimSummaryPair,
   useScenarios,
 } from "../../hooks";
 import { formatIpcError } from "../../hooks/ipc";
@@ -183,6 +185,21 @@ export function RunModal() {
   const [paramsLoading, setParamsLoading] = useState(false);
   const checkedIds = useMemo(() => [...checked], [checked]);
   const hasNetwork = projectHasNetwork(project);
+  const [summaryPairs, setSummaryPairs] = useState<SimSummaryPair[]>([]);
+  useEffect(() => {
+    if (!runModalOpen || !activeProjectId) return;
+    if (engine != null && isEngineGuiEditable(engine)) {
+      setSummaryPairs([]);
+      return;
+    }
+    let cancelled = false;
+    void getSimSummaryPairs(activeProjectId).then((pairs) => {
+      if (!cancelled) setSummaryPairs(pairs);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [runModalOpen, activeProjectId, engine]);
 
   // When the modal opens, reset the checklist to just the active scenario.
   useEffect(() => {
@@ -278,9 +295,9 @@ export function RunModal() {
 
   const runShortcut = formatShortcut([primaryModifierLabel(), "Enter"]);
 
-  // Editable-tier engines expose the wds-shaped settings surface; read-only
-  // engines carry their settings inside the model file, so "no params" is
-  // the expected state there, never a blocker.
+  // Editable-tier engines expose the wds-shaped editable settings surface;
+  // read-only engines get a read-only summary instead (fetched below), so
+  // "no params" is the expected state there, never a blocker.
   const settingsSupported = engine != null && isEngineGuiEditable(engine);
 
   // A project with no network has nothing to simulate — the engine would be
@@ -560,15 +577,35 @@ export function RunModal() {
             </button>
           </div>
           {!settingsSupported ? (
-            <div
-              style={{
-                fontSize: "var(--text-md)",
-                color: "var(--text-tertiary)",
-              }}
-            >
-              Simulation settings come from the model file for{" "}
-              {engine?.label ?? "this engine's"} projects.
-            </div>
+            summaryPairs.length > 0 ? (
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))",
+                  gap: "6px 14px",
+                }}
+              >
+                {summaryPairs.map((p) => (
+                  <div key={p.label} style={{ fontSize: "var(--text-md)" }}>
+                    <span style={{ color: "var(--text-tertiary)" }}>
+                      {p.label}
+                    </span>{" "}
+                    <span style={{ color: "var(--text-primary)" }}>
+                      {p.value}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div
+                style={{
+                  fontSize: "var(--text-md)",
+                  color: "var(--text-tertiary)",
+                }}
+              >
+                Loading…
+              </div>
+            )
           ) : params ? (
             <SummaryGrid params={params} />
           ) : (
