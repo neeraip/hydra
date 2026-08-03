@@ -1813,6 +1813,26 @@ pub(crate) fn validation_findings(network: &hydra::Network) -> Vec<ValidationFin
 /// positional indexing is involved. When the cache does not hold the target,
 /// the model is read and parsed from disk (a model that fails INP parsing —
 /// which itself runs validation — surfaces as `Err`).
+/// Stable kebab-case code for a uds validation kind, derived from the
+/// variant name (part of the engine's public API, so as stable as the
+/// engine's own semver): `AdverseSlope` → `"adverse-slope"`.
+fn kebab_variant_code(kind: &hydra::uds::io::validate::ValidationKind) -> String {
+    let debug = format!("{kind:?}");
+    let name = debug.split([' ', '(', '{']).next().unwrap_or("finding");
+    let mut out = String::with_capacity(name.len() + 4);
+    for (i, ch) in name.chars().enumerate() {
+        if ch.is_uppercase() {
+            if i > 0 {
+                out.push('-');
+            }
+            out.extend(ch.to_lowercase());
+        } else {
+            out.push(ch);
+        }
+    }
+    out
+}
+
 #[tauri::command(async)]
 /// Run engine validation for a project/scenario model and return the findings.
 pub fn validate_network(
@@ -1823,14 +1843,49 @@ pub fn validate_network(
 ) -> Result<Vec<ValidationFindingDto>, String> {
     validate_target_ids(&project_id, scenario_id.as_deref())?;
 
-    // Engine-scoped: these are wds validation findings. A uds project's
-    // import diagnostics surface at load; its live validation arrives with
-    // its own surface. An empty list keeps the Issues panel quiet instead
-    // of toasting a foreign-dialect error on every open.
+    // Engine-dispatched: each engine's validator serves its own findings.
+    // Unknown engines stay quiet instead of toasting a foreign-dialect
+    // error on every open.
     {
         let app_data = app_data_dir(&app)?;
-        if super::projects::project_engine_key(&app_data, &project_id) != "wds" {
-            return Ok(Vec::new());
+        match super::projects::project_engine_key(&app_data, &project_id).as_str() {
+            "wds" => {}
+            "uds" => {
+                let model_path = model_path_for(&app_data, &project_id, scenario_id.as_deref());
+                // No model yet: nothing to validate, and nothing wrong either.
+                if read_model_bytes(&model_path)?.is_none() {
+                    return Ok(Vec::new());
+                }
+                // The uds validator resolves as it checks (offset
+                // conventions, adverse slopes), so it needs the network by
+                // &mut — parse a working copy from disk rather than
+                // mutating (or cloning) the shared cache.
+                let raw = std::fs::read(&model_path).map_err(|e| e.to_string())?;
+                let text = String::from_utf8_lossy(&raw);
+                let (mut working, _import_diags) = hydra::uds::io::objects::parse_network(&text);
+                let diags = hydra::uds::io::validate::validate(&mut working);
+                return Ok(diags
+                    .into_iter()
+                    .map(|d| {
+                        let severity = if d.kind.is_error() {
+                            "error"
+                        } else {
+                            "warning"
+                        };
+                        ValidationFindingDto {
+                            severity: severity.to_string(),
+                            code: kebab_variant_code(&d.kind),
+                            message: d.to_string(),
+                            element_id: (!d.element.is_empty()).then(|| d.element.clone()),
+                            // The diagnostic names the element without
+                            // classing it — the id resolves against the
+                            // live arrays frontend-side.
+                            element_kind: None,
+                        }
+                    })
+                    .collect());
+            }
+            _ => return Ok(Vec::new()),
         }
     }
 
