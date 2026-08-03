@@ -56,7 +56,7 @@ export const FALLBACK_ENGINES: EngineInfo[] = [
     key: "uds",
     label: "Urban Drainage",
     pill: "UD",
-    accent: "#7a6ff0",
+    accent: "#2e9b57",
     summary:
       "Stormwater and wastewater collection network simulation — runoff, routing, and water quality on the SWMM data model.",
     status: "available",
@@ -66,7 +66,7 @@ export const FALLBACK_ENGINES: EngineInfo[] = [
     key: "och",
     label: "Open Channel",
     pill: "OC",
-    accent: "#3daf75",
+    accent: "#2f9e9e",
     summary:
       "River and open-channel hydraulics — steady and unsteady flow on the HEC-RAS data model.",
     status: "planned",

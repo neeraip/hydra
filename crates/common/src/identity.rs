@@ -113,6 +113,15 @@ impl EngineDescriptor {
 /// Every engine compiled into this distribution, in presentation order
 /// (spec §2.4) — planned engines included, so applications can present
 /// the full modelling scope rather than only what ships today.
+///
+/// The accents follow the APWA Uniform Color Code, which classifies buried
+/// utilities by what they carry — the same question an engine key answers:
+/// blue for potable water, green for sewers and drainage. Open channel has
+/// no APWA colour (a natural watercourse is not a buried utility), so it
+/// takes teal: legibly water, and clear of the other two. These are
+/// identity, not data presentation — the contract keeps colour out of the
+/// element and result catalogs precisely so applications own *those*
+/// palettes (spec §6).
 pub const ENGINES: &[EngineDescriptor] = &[
     EngineDescriptor {
         key: "wds",
@@ -131,7 +140,7 @@ pub const ENGINES: &[EngineDescriptor] = &[
         key: "uds",
         label: "Urban Drainage",
         pill: "UD",
-        accent: "#7a6ff0",
+        accent: "#2e9b57",
         summary: "Stormwater and wastewater collection network simulation — \
                   runoff, routing, and water quality on the SWMM data model.",
         status: EngineStatus::Available,
@@ -144,7 +153,7 @@ pub const ENGINES: &[EngineDescriptor] = &[
         key: "och",
         label: "Open Channel",
         pill: "OC",
-        accent: "#3daf75",
+        accent: "#2f9e9e",
         summary: "River and open-channel hydraulics — steady and unsteady flow \
                   on the HEC-RAS data model.",
         status: EngineStatus::Planned,
