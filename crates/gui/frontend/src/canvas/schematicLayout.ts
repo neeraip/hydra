@@ -124,10 +124,10 @@ export function computeSchematicLayout(
 
   if (realCoords) {
     const positions = new Map<string, [number, number]>();
+    // Coordinates arrive in the canvas's own space already (a local grid
+    // is flipped once at reprojection), so they are used as given.
     for (const n of nodes) {
-      // Y is negated so the plan reads north-up: the orthographic view's
-      // Y axis grows downward, model coordinates grow upward.
-      positions.set(n.id, [n.x * scale.x, -n.y * scale.y]);
+      positions.set(n.id, [n.x * scale.x, n.y * scale.y]);
     }
     return { positions, detachedIds: detachedFrom(nodes, adj) };
   }

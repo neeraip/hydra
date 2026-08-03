@@ -178,7 +178,14 @@ export function useCrsReprojection({
     // reproject and no range to be outside of. Coordinates pass through
     // as the model states them.
     if (sourceCrs === LOCAL_CRS) {
-      return { nodes: rawPositionNodes, error: null as string | null };
+      // The orthographic view's Y axis grows downward while model
+      // coordinates grow northward, so a local grid is flipped once here —
+      // for nodes, link vertices and region rings alike — and every
+      // consumer downstream then works in one consistent space.
+      return {
+        nodes: rawPositionNodes.map((n) => ({ ...n, y: -n.y })),
+        error: null as string | null,
+      };
     }
     if (sourceCrs === "EPSG:4326") {
       // Even with the default CRS, check that the raw coordinates are within
@@ -261,6 +268,16 @@ export function useCrsReprojection({
     >;
   }>({ crs: "", byId: new Map() });
   const canvasLinks = useMemo(() => {
+    if (sourceCrs === LOCAL_CRS) {
+      return baseLinks.map((l) =>
+        l.vertices
+          ? {
+              ...l,
+              vertices: l.vertices.map(([x, y]) => [x, -y] as [number, number]),
+            }
+          : l,
+      );
+    }
     if (sourceCrs === "EPSG:4326") return baseLinks;
     try {
       const cache = linkReprojCacheRef.current;
@@ -277,7 +294,14 @@ export function useCrsReprojection({
   // Region rings live in the source CRS exactly like link vertices; same
   // transform, same fall-back-to-raw on error (already surfaced above).
   const canvasRegions = useMemo(() => {
-    if (sourceCrs === "EPSG:4326" || baseRegions.length === 0) {
+    if (baseRegions.length === 0) return baseRegions;
+    if (sourceCrs === LOCAL_CRS) {
+      return baseRegions.map((r) => ({
+        ...r,
+        ring: r.ring.map(([x, y]) => [x, -y] as [number, number]),
+      }));
+    }
+    if (sourceCrs === "EPSG:4326") {
       return baseRegions;
     }
     try {

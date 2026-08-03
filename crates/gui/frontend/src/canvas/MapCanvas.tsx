@@ -892,7 +892,7 @@ export const MapCanvas = memo(function MapCanvas({
           const to = coordMap.get(l.toId);
           if (!from || !to) return null;
           const verts =
-            !isSchematic && l.vertices && l.vertices.length > 0
+            (localGrid || !isSchematic) && l.vertices && l.vertices.length > 0
               ? l.vertices
               : null;
           if (verts) anyLinkVertices = true;
@@ -925,7 +925,7 @@ export const MapCanvas = memo(function MapCanvas({
         nodeDatumById: new Map(nodeData.map((n) => [n.id, n])),
         anyLinkVertices,
       };
-    }, [links, nodes, viewMode, schematicCoords, geoCoords]);
+    }, [links, nodes, viewMode, localGrid, schematicCoords, geoCoords]);
 
   // Whether usable period results exist for the CURRENT topology. Guards
   // against a topology change racing ahead of the results that describe it —
@@ -1191,7 +1191,15 @@ export const MapCanvas = memo(function MapCanvas({
     // with a hairline outline, map mode only (rings are source-CRS geometry
     // the schematic layout knows nothing about). Non-pickable until region
     // selection lands with the read-only inspector.
-    if (!isSchematic && canvasLayers.regions && regions && regions.length > 0) {
+    // The schematic proper invents node positions, so rings drawn from
+    // model coordinates would not line up with it — but a local grid keeps
+    // the model's own coordinates, so its rings line up exactly.
+    if (
+      (localGrid || !isSchematic) &&
+      canvasLayers.regions &&
+      regions &&
+      regions.length > 0
+    ) {
       // With a generic region channel loaded, fill each polygon from its
       // value (regions and values share the snapshot order); otherwise the
       // neutral soft green. Kept translucent either way so the network
@@ -1875,6 +1883,7 @@ export const MapCanvas = memo(function MapCanvas({
     genLink,
     genRegion,
     viewMode,
+    localGrid,
     regions,
     couplings,
     selectedRegionId,
