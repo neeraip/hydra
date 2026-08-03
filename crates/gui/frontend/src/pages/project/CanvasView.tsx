@@ -603,6 +603,7 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
     resultMetaLoading,
     activeScenarioId,
     resultMeta?.times.length,
+    resultMeta?.hasPeriodData,
   ]);
 
   // ── Timeline height CSS variable ─────────────────────────────────
