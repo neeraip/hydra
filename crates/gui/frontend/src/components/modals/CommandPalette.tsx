@@ -303,7 +303,7 @@ export function CommandPalette() {
         {
           id: "s1",
           label: "Run simulation",
-          description: "Run hydraulics for the active scenario",
+          description: "Run a simulation of the active scenario",
           category: "Simulate",
           shortcut: runShortcut,
           action: "run-sim",

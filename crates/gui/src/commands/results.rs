@@ -726,6 +726,7 @@ fn element_series_from_out(
 /// Return per-period result series for a single node or link.
 pub fn get_element_series(
     app: tauri::AppHandle,
+    state: tauri::State<'_, NetworkState>,
     project_id: String,
     scenario_id: Option<String>,
     kind: String,
@@ -733,18 +734,22 @@ pub fn get_element_series(
 ) -> Result<Option<SeriesDto>, String> {
     validate_target_ids(&project_id, scenario_id.as_deref())?;
     let app_data = app_data_dir(&app)?;
-    // wds-shaped results reading; other engines' results arrive with their
-    // own provider (registry pattern). "No results" is the honest interim
-    // answer — never a foreign-dialect or corrupt-file error.
-    if super::projects::project_engine_key(&app_data, &project_id) != "wds" {
-        return Ok(None);
-    }
     let out_path = results_path_for(&app_data, &project_id, scenario_id.as_deref());
     // No simulation run yet — expected for a fresh project, not an error.
     if !out_path.exists() {
         return Ok(None);
     }
-    element_series_from_out(&out_path, &kind, index).map(Some)
+    // Engine-dispatched: each engine's reader serves its own series. Field
+    // names are variable ids — wds's fixed set or the uds §6 catalog's.
+    match super::projects::project_engine_key(&app_data, &project_id).as_str() {
+        "wds" => element_series_from_out(&out_path, &kind, index).map(Some),
+        "uds" => {
+            let network =
+                uds_network_for_target(&app_data, &state, &project_id, scenario_id.as_deref())?;
+            super::uds_results::element_series(&out_path, &network, &kind, index as usize)
+        }
+        _ => Ok(None),
+    }
 }
 
 /// Index and value of the smallest **finite** entry in `values` among the

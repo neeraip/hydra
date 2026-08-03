@@ -354,6 +354,64 @@ pub fn stream_uds_results_csv(
     Ok(())
 }
 
+/// Full-simulation series for one element, addressed the way the frontend
+/// addresses everything: element kind ("node"/"link") + snapshot index.
+/// The snapshot and results file can disagree about membership (the
+/// `[REPORT]` selection), so the id is resolved from the snapshot view and
+/// joined into the file's record order; an unreported element answers
+/// `None` like an unsimulated one. Field names are the §6 catalog's
+/// variable ids, values as served everywhere else (file units, capacity
+/// scaled to percent); times are the sim-relative instants
+/// `load_result_meta` serves.
+pub fn element_series(
+    out_path: &Path,
+    network: &hydra::uds::model::Network,
+    kind: &str,
+    index: usize,
+) -> Result<Option<super::results::SeriesDto>, String> {
+    use hydra::uds::io::out_reader::{read_element_series, ElementKind};
+
+    let meta = hydra::uds::io::out_reader::read_metadata(out_path)?;
+    let view = super::uds_view::build_view(network);
+    let (element_id, out_ids, out_kind, class) = match kind {
+        "node" => (
+            view.points.get(index).map(|p| p.id.as_str()),
+            &meta.node_ids,
+            ElementKind::Node,
+            ElementClass::Point,
+        ),
+        "link" => (
+            view.polylines.get(index).map(|p| p.id.as_str()),
+            &meta.link_ids,
+            ElementKind::Link,
+            ElementClass::Polyline,
+        ),
+        other => return Err(format!("unknown element kind {other:?}")),
+    };
+    let Some(element_id) = element_id else {
+        return Ok(None);
+    };
+    let Some(out_index) = out_ids.iter().position(|id| id == element_id) else {
+        return Ok(None);
+    };
+
+    let series = read_element_series(out_path, &meta, out_kind, out_index)?;
+    let times: Vec<u32> = (0..meta.n_periods)
+        .map(|i| ((i as i64 + 1) * meta.report_step_s as i64) as u32)
+        .collect();
+    let fields = resolved_variables(class)
+        .into_iter()
+        .filter_map(|(v, col, scale)| {
+            let values = series.vars.get(col)?;
+            Some(super::results::SeriesFieldDto {
+                name: v.id.to_string(),
+                values: values.iter().map(|&x| x as f64 * scale).collect(),
+            })
+        })
+        .collect();
+    Ok(Some(super::results::SeriesDto { times, fields }))
+}
+
 /// `scan_periods` with a fallible callback: the reader's scan takes an
 /// infallible closure, so IO errors are carried out through a slot.
 fn scan_result(
@@ -468,5 +526,33 @@ mod tests {
             "id,time_s,flow,depth,velocity,capacity"
         );
         assert!(!subs_csv.exists(), "no subcatchments → no third file");
+
+        // Element series: snapshot-indexed, catalog-named fields, one
+        // value per period, sim-relative times.
+        let series = element_series(&out, &network, "node", 0)
+            .unwrap()
+            .expect("J1 series");
+        assert_eq!(series.times.len(), meta.n_periods);
+        assert_eq!(series.times[0], meta.report_step_s as u32);
+        let names: Vec<&str> = series.fields.iter().map(|f| f.name.as_str()).collect();
+        assert_eq!(
+            names,
+            vec![
+                "depth",
+                "head",
+                "volume",
+                "lateralInflow",
+                "totalInflow",
+                "flooding"
+            ]
+        );
+        assert!(series
+            .fields
+            .iter()
+            .all(|f| f.values.len() == meta.n_periods));
+        // Out-of-range snapshot index answers None, not an error.
+        assert!(element_series(&out, &network, "node", 99)
+            .unwrap()
+            .is_none());
     }
 }

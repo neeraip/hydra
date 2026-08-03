@@ -229,6 +229,10 @@ function HeaderLabel({ label, symbol }: { label: string; symbol: string }) {
         overflow: "hidden",
         textOverflow: "ellipsis",
         whiteSpace: "nowrap",
+        // The TH uppercases labels; symbols are engineering notation whose
+        // case is meaningful (y depth vs V volume, p pressure vs P power)
+        // and must render exactly as the engine authored them.
+        textTransform: narrow ? "none" : undefined,
       }}
     >
       {narrow ? symbol : label}

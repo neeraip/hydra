@@ -4,6 +4,7 @@ import { ACCENT, useNodes } from "../../hooks";
 import type { LinkInspectorBodyProps } from "../registry";
 import {
   GenericResultsCards,
+  GenericTimeSeriesCard,
   PropertiesSection,
   useElementDetails,
 } from "./inspector-shared";
@@ -43,6 +44,9 @@ export function UdsLinkInspectorBody({
       </div>
 
       <GenericResultsCards results={results} />
+
+      {/* Per-period charts (renders nothing for steady-state runs) */}
+      <GenericTimeSeriesCard kind="link" elementId={link.id} />
     </div>
   );
 }

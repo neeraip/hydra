@@ -1215,7 +1215,7 @@ export const MapCanvas = memo(function MapCanvas({
             coordinateSystem: coordSystem,
             getPosition: (d) => d.position,
             getText: () =>
-              `Not connected to a source · ${count} ${count === 1 ? "node" : "nodes"}`,
+              `Disconnected group · ${count} ${count === 1 ? "node" : "nodes"}`,
             getSize: 11,
             getColor: [212, 160, 23, 220] as unknown as RGBA,
             getTextAnchor: "start",
