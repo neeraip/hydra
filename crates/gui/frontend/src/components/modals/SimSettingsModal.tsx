@@ -1,10 +1,10 @@
 import { Cog6ToothIcon, XMarkIcon } from "@heroicons/react/16/solid";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useActiveProject, useAppState } from "../../AppContext";
+import { engineComponents } from "../../engine/registry";
 import {
   ACCENT,
   getSimParams,
-  isEngineGuiEditable,
   type SimParams,
   updateSimParams,
   useScenarios,
@@ -89,6 +89,10 @@ export function SimSettingsModal() {
 
   const [original, setOriginal] = useState<SimParams | null>(null);
   const [draft, setDraft] = useState<SimParams | null>(null);
+  // Engines with their own settings body supply it via the registry; this
+  // modal owns only the chrome. `SettingsView` absent = the editor below.
+  const components = engineComponents(engine?.key);
+  const SettingsView = components.SettingsView;
   const [loadError, setLoadError] = useState<string | null>(null);
   // Distinct from `original === null`, which also means "no model on disk" —
   // without this the modal claims to be loading forever on an empty project.
@@ -269,7 +273,9 @@ export function SimSettingsModal() {
 
         {/* Body */}
         <div style={{ flex: 1, overflowY: "auto", padding: "18px 20px" }}>
-          {loadError ? (
+          {SettingsView != null && activeProjectId != null ? (
+            <SettingsView projectId={activeProjectId} />
+          ) : loadError ? (
             <Empty>Could not read simulation settings: {loadError}</Empty>
           ) : original === null || draft === null ? (
             <Empty>
@@ -277,9 +283,7 @@ export function SimSettingsModal() {
                 ? "No project selected."
                 : loading
                   ? "Loading…"
-                  : engine != null && !isEngineGuiEditable(engine)
-                    ? `Editing simulation settings for ${engine.label} projects is not available in the GUI yet — the run uses the model file\u2019s settings, shown in the Run dialog.`
-                    : "This project has no network yet. Import a model file or build one in the editor to configure simulation settings."}
+                  : "This project has no network yet. Import a model file or build one in the editor to configure simulation settings."}
             </Empty>
           ) : (
             <SettingsBody draft={draft} update={update} sys={sys} />

@@ -35,6 +35,16 @@ export function SummaryGrid({ params }: { params: SimParams }) {
     },
     { label: "Quality", value: quality },
   ];
+  return <SummaryRows rows={rows} />;
+}
+
+/** The summary card itself: the exact presentation `SummaryGrid` uses,
+ * shared so engines with a read-only settings summary render identically. */
+export function SummaryRows({
+  rows,
+}: {
+  rows: Array<{ label: string; value: string }>;
+}) {
   return (
     <div
       style={{

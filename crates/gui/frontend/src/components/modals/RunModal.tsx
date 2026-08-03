@@ -2,16 +2,14 @@ import { Cog6ToothIcon, PlayIcon, XMarkIcon } from "@heroicons/react/16/solid";
 import type React from "react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useActiveProject, useAppState } from "../../AppContext";
+import { engineComponents } from "../../engine/registry";
 import {
   ACCENT,
   enqueueRuns,
   fetchValidationFindings,
   getSimParams,
-  getSimSummaryPairs,
-  isEngineGuiEditable,
   projectHasNetwork,
   type SimParams,
-  type SimSummaryPair,
   useScenarios,
 } from "../../hooks";
 import { formatIpcError } from "../../hooks/ipc";
@@ -27,7 +25,6 @@ import {
   Label,
   runnableScenarioIds,
   SimStateBadge,
-  SummaryGrid,
 } from "./RunModal/helpers";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -179,27 +176,8 @@ export function RunModal() {
     new Set([activeScenarioId]),
   );
   const [params, setParams] = useState<SimParams | null>(null);
-  // Tracked separately from `params`, because a null `params` means both
-  // "still fetching" and "this project has no model" — and conflating them
-  // left an empty project showing "Loading…" forever.
-  const [paramsLoading, setParamsLoading] = useState(false);
   const checkedIds = useMemo(() => [...checked], [checked]);
   const hasNetwork = projectHasNetwork(project);
-  const [summaryPairs, setSummaryPairs] = useState<SimSummaryPair[]>([]);
-  useEffect(() => {
-    if (!runModalOpen || !activeProjectId) return;
-    if (engine != null && isEngineGuiEditable(engine)) {
-      setSummaryPairs([]);
-      return;
-    }
-    let cancelled = false;
-    void getSimSummaryPairs(activeProjectId).then((pairs) => {
-      if (!cancelled) setSummaryPairs(pairs);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [runModalOpen, activeProjectId, engine]);
 
   // When the modal opens, reset the checklist to just the active scenario.
   useEffect(() => {
@@ -211,14 +189,9 @@ export function RunModal() {
   useEffect(() => {
     if (!runModalOpen || !activeProjectId) return;
     let cancelled = false;
-    setParamsLoading(true);
-    getSimParams(activeProjectId)
-      .then((p) => {
-        if (!cancelled) setParams(p);
-      })
-      .finally(() => {
-        if (!cancelled) setParamsLoading(false);
-      });
+    void getSimParams(activeProjectId).then((p) => {
+      if (!cancelled) setParams(p);
+    });
     return () => {
       cancelled = true;
     };
@@ -295,10 +268,11 @@ export function RunModal() {
 
   const runShortcut = formatShortcut([primaryModifierLabel(), "Enter"]);
 
-  // Editable-tier engines expose the wds-shaped editable settings surface;
-  // read-only engines get a read-only summary instead (fetched below), so
-  // "no params" is the expected state there, never a blocker.
-  const settingsSupported = engine != null && isEngineGuiEditable(engine);
+  // The settings card's body is the engine's own component (registry) —
+  // this modal owns only the card chrome and the edit affordance. Engines
+  // whose settings are not editable never gate running on a params object.
+  const components = engineComponents(engine?.key);
+  const settingsSupported = components.settingsEditable;
 
   // A project with no network has nothing to simulate — the engine would be
   // handed an empty model and fail at parse time. Scenarios with blocking
@@ -570,44 +544,13 @@ export function RunModal() {
                 gap: 3,
               }}
               data-tooltip="Open simulation settings"
-              hidden={!settingsSupported}
             >
               <Cog6ToothIcon style={{ width: 11, height: 11 }} />
               Edit settings
             </button>
           </div>
-          {!settingsSupported ? (
-            summaryPairs.length > 0 ? (
-              <div
-                style={{
-                  display: "grid",
-                  gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))",
-                  gap: "6px 14px",
-                }}
-              >
-                {summaryPairs.map((p) => (
-                  <div key={p.label} style={{ fontSize: "var(--text-md)" }}>
-                    <span style={{ color: "var(--text-tertiary)" }}>
-                      {p.label}
-                    </span>{" "}
-                    <span style={{ color: "var(--text-primary)" }}>
-                      {p.value}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <div
-                style={{
-                  fontSize: "var(--text-md)",
-                  color: "var(--text-tertiary)",
-                }}
-              >
-                Loading…
-              </div>
-            )
-          ) : params ? (
-            <SummaryGrid params={params} />
+          {activeProjectId ? (
+            <components.RunSettingsSummary projectId={activeProjectId} />
           ) : (
             <div
               style={{
@@ -615,11 +558,7 @@ export function RunModal() {
                 color: "var(--text-tertiary)",
               }}
             >
-              {!activeProjectId
-                ? "No project selected."
-                : paramsLoading
-                  ? "Loading…"
-                  : "Unavailable — this project has no network yet."}
+              No project selected.
             </div>
           )}
         </div>
