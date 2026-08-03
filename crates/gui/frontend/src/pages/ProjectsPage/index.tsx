@@ -202,33 +202,41 @@ export function ProjectsPage() {
           />
         ),
       }),
-      col.accessor("name", {
-        header: "Name",
+      col.display({
+        id: "engine",
+        // No header: the glyph is an identity mark, and a column of two
+        // letters needs no word above it — the tooltip names the engine.
+        header: () => null,
         cell: (info) => {
           const p = info.row.original;
           const engine = engines.find((e) => e.key === p.engine) ?? null;
           return (
             <span
+              data-tooltip={engine?.label ?? "Unsupported engine"}
+              style={{
+                display: "inline-block",
+                width: "100%",
+                textAlign: "center",
+                fontSize: "var(--text-xs)",
+                fontWeight: 700,
+                letterSpacing: "0.04em",
+                fontFamily: "var(--font-ui)",
+                color: engine?.accent ?? "var(--text-tertiary)",
+              }}
+            >
+              {engine?.pill ?? "??"}
+            </span>
+          );
+        },
+      }),
+      col.accessor("name", {
+        header: "Name",
+        cell: (info) => {
+          const p = info.row.original;
+          return (
+            <span
               style={{ display: "inline-flex", alignItems: "center", gap: 6 }}
             >
-              {/* The engine's identity mark, as the status bar and the
-                  Overview header carry it: the glyph is coloured, the
-                  surface behind it is not. */}
-              <span
-                data-tooltip={engine?.label ?? "Unsupported engine"}
-                style={{
-                  flexShrink: 0,
-                  minWidth: 22,
-                  textAlign: "center",
-                  fontSize: "var(--text-xs)",
-                  fontWeight: 700,
-                  letterSpacing: "0.04em",
-                  fontFamily: "var(--font-ui)",
-                  color: engine?.accent ?? "var(--text-tertiary)",
-                }}
-              >
-                {engine?.pill ?? "??"}
-              </span>
               <button
                 type="button"
                 onClick={(e) => {
@@ -685,7 +693,11 @@ export function ProjectsPage() {
                           : undefined
                       }
                       style={{
-                        padding: "8px 14px",
+                        padding:
+                          header.column.id === "engine"
+                            ? "8px 4px"
+                            : "8px 14px",
+                        width: header.column.id === "engine" ? 34 : undefined,
                         textAlign: "left",
                         fontWeight: 600,
                         fontSize: "var(--text-sm)",
@@ -772,7 +784,12 @@ export function ProjectsPage() {
                   {row.getVisibleCells().map((cell) => (
                     <td
                       key={cell.id}
-                      style={{ padding: "8px 14px", verticalAlign: "middle" }}
+                      style={{
+                        padding:
+                          cell.column.id === "engine" ? "8px 4px" : "8px 14px",
+                        width: cell.column.id === "engine" ? 34 : undefined,
+                        verticalAlign: "middle",
+                      }}
                     >
                       {flexRender(
                         cell.column.columnDef.cell,
