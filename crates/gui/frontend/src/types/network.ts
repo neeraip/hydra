@@ -8,6 +8,9 @@ export type LinkType = "pipe" | "pump" | "valve" | (string & {});
 export interface Region {
   id: string;
   type: string;
+  /** Engine-generic current-period values keyed by catalog variable id,
+   * merged by CanvasView for the rail list. `null` = not reported. */
+  resultValues?: Record<string, number | null>;
   /** Boundary ring [x, y] in source-CRS coordinates. */
   ring: Array<[number, number]>;
   /** Id of the point element this region discharges to, if any. */

@@ -16,7 +16,6 @@ import {
 } from "../../hooks";
 import { perfTrace } from "../../perfTrace";
 import type { Region } from "../../types";
-import { elementTypeBadge } from "../../types/elementTypes";
 import { toDisplay, unitLabel, useUnitSystem } from "../../units";
 import { MiddleTruncate } from "../ui/MiddleTruncate";
 import { TypeBadge } from "../ui/TypeBadge";
@@ -187,6 +186,18 @@ const TD: React.CSSProperties = {
  * and `vertical-align: middle` on the cell centres that block in the row, so
  * the result no longer depends on font metrics.
  */
+/**
+ * Whether a list holds more than one element kind — the badge column
+ * earns its width only then. A column whose every cell reads "Sc" is
+ * noise, and it costs the row space that real data could use. Applies to
+ * every tab: a wds model of nothing but junctions gets the same treatment.
+ */
+function hasMultipleKinds(items: Array<{ type: string }>): boolean {
+  if (items.length === 0) return false;
+  const first = items[0].type;
+  return items.some((i) => i.type !== first);
+}
+
 function BadgeCell({ type }: { type: string }) {
   return (
     <td style={{ ...TD, padding: BADGE_CELL_PADDING, verticalAlign: "middle" }}>
@@ -378,6 +389,7 @@ function NodesTab({
     NODE_SEARCH_KEYS,
     "nodes",
   );
+  const showBadges = hasMultipleKinds(rows);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const rowVirtualizer = useVirtualizer({
     count: rows.length,
@@ -392,7 +404,8 @@ function NodesTab({
       ? rowVirtualizer.getTotalSize() - virtualRows[virtualRows.length - 1].end
       : 0;
   const nodeColSpan =
-    2 +
+    (showBadges ? 1 : 0) +
+    1 +
     (hasAttrs ? 2 : 0) +
     (hasResults ? 1 : 0) +
     genericColumns.length +
@@ -416,7 +429,7 @@ function NodesTab({
             (the list is virtualized); only the intrinsically-sized columns
             are pinned — the ID/data columns share the remaining rail width. */}
         <colgroup>
-          <col style={{ width: BADGE_COL_WIDTH }} />
+          {showBadges && <col style={{ width: BADGE_COL_WIDTH }} />}
           <col />
           {hasAttrs && <col />}
           {hasAttrs && <col />}
@@ -432,39 +445,46 @@ function NodesTab({
                 than a word: the column is sized to the badge, and no label
                 fits — "Type" is wider than the column, and the single letter
                 "T" would sit directly above a column of J/R/T/P/Pu/V, where
-                T already means Tank. The tooltip carries the full name. */}
-            <th
-              style={{
-                ...TH,
-                textAlign: "center",
-                padding: "5px 4px",
-                verticalAlign: "middle",
-              }}
-              onClick={() => toggleSort("type")}
-              data-tooltip="Element type — click to sort"
-              data-tooltip-pos="bottom"
-            >
-              {/* Block-level flex, not inline-flex: the glyph is an SVG box and
+                T already means Tank. The tooltip carries the full name.
+                Rendered only when the list actually mixes kinds. */}
+            {showBadges && (
+              <th
+                style={{
+                  ...TH,
+                  textAlign: "center",
+                  padding: "5px 4px",
+                  verticalAlign: "middle",
+                }}
+                onClick={() => toggleSort("type")}
+                data-tooltip="Element type — click to sort"
+                data-tooltip-pos="bottom"
+              >
+                {/* Block-level flex, not inline-flex: the glyph is an SVG box and
                   the sort arrow is a text character, so an inline box aligned
                   one to the line box and the other to the baseline. Going
                   block-level removes the line box from the question entirely —
                   the cell's `vertical-align: middle` then centres this row of
                   content, matching how BadgeCell centres the badges below. */}
-              <span
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  lineHeight: 1,
-                }}
-              >
-                <TagIcon
-                  style={{ width: 10, height: 10 }}
-                  aria-label="Element type"
-                />
-                <SortIndicator col="type" sortCol={sortCol} sortDir={sortDir} />
-              </span>
-            </th>
+                <span
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    lineHeight: 1,
+                  }}
+                >
+                  <TagIcon
+                    style={{ width: 10, height: 10 }}
+                    aria-label="Element type"
+                  />
+                  <SortIndicator
+                    col="type"
+                    sortCol={sortCol}
+                    sortDir={sortDir}
+                  />
+                </span>
+              </th>
+            )}
             {(["id", "elevation", "baseDemand"] as const)
               .filter((col) => col === "id" || hasAttrs)
               .map((col) => {
@@ -566,7 +586,7 @@ function NodesTab({
                       "transparent";
                 }}
               >
-                <BadgeCell type={node.type} />
+                {showBadges && <BadgeCell type={node.type} />}
                 <td
                   style={{
                     ...TD,
@@ -738,6 +758,7 @@ function LinksTab({
     LINK_SEARCH_KEYS,
     "links",
   );
+  const showBadges = hasMultipleKinds(rows);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const rowVirtualizer = useVirtualizer({
     count: rows.length,
@@ -752,7 +773,8 @@ function LinksTab({
       ? rowVirtualizer.getTotalSize() - virtualRows[virtualRows.length - 1].end
       : 0;
   const linkColSpan =
-    2 +
+    (showBadges ? 1 : 0) +
+    1 +
     (hasAttrs ? 2 : 0) +
     (hasResults ? 1 : 0) +
     genericColumns.length +
@@ -775,7 +797,7 @@ function LinksTab({
         {/* Same scheme as the nodes table: fixed layout, pinned narrow
             columns, flexing ID/data columns. */}
         <colgroup>
-          <col style={{ width: BADGE_COL_WIDTH }} />
+          {showBadges && <col style={{ width: BADGE_COL_WIDTH }} />}
           <col />
           {hasAttrs && <col style={{ width: 36 }} />}
           {hasAttrs && <col />}
@@ -791,36 +813,43 @@ function LinksTab({
                 than a word: the column is sized to the badge, and no label
                 fits — "Type" is wider than the column, and the single letter
                 "T" would sit directly above a column of J/R/T/P/Pu/V, where
-                T already means Tank. The tooltip carries the full name. */}
-            <th
-              style={{
-                ...TH,
-                textAlign: "center",
-                padding: "5px 4px",
-                verticalAlign: "middle",
-              }}
-              onClick={() => toggleSort("type")}
-              data-tooltip="Element type — click to sort"
-              data-tooltip-pos="bottom"
-            >
-              {/* Flex rather than inline: the glyph is an SVG box and the
+                T already means Tank. The tooltip carries the full name.
+                Rendered only when the list actually mixes kinds. */}
+            {showBadges && (
+              <th
+                style={{
+                  ...TH,
+                  textAlign: "center",
+                  padding: "5px 4px",
+                  verticalAlign: "middle",
+                }}
+                onClick={() => toggleSort("type")}
+                data-tooltip="Element type — click to sort"
+                data-tooltip-pos="bottom"
+              >
+                {/* Flex rather than inline: the glyph is an SVG box and the
                   sort arrow is a text character, so leaving them inline
                   aligned one to the line box and the other to the baseline,
                   and the icon rode high. */}
-              <span
-                style={{
-                  display: "inline-flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                }}
-              >
-                <TagIcon
-                  style={{ width: 10, height: 10 }}
-                  aria-label="Element type"
-                />
-                <SortIndicator col="type" sortCol={sortCol} sortDir={sortDir} />
-              </span>
-            </th>
+                <span
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                  }}
+                >
+                  <TagIcon
+                    style={{ width: 10, height: 10 }}
+                    aria-label="Element type"
+                  />
+                  <SortIndicator
+                    col="type"
+                    sortCol={sortCol}
+                    sortDir={sortDir}
+                  />
+                </span>
+              </th>
+            )}
             {(["id", "status", "diameter"] as const)
               .filter((col) => col === "id" || hasAttrs)
               .map((col) => {
@@ -918,7 +947,7 @@ function LinksTab({
                       "transparent";
                 }}
               >
-                <BadgeCell type={link.type} />
+                {showBadges && <BadgeCell type={link.type} />}
                 <td
                   style={{
                     ...TD,
@@ -1056,28 +1085,51 @@ function LinksTab({
 
 /** Areal elements, present only for engines that have them. Read-only rows —
  * region selection on the canvas arrives with the region inspector. */
+const REGION_SEARCH_KEYS: (keyof Region)[] = ["id", "type", "outletId"];
+
 function SubcatchmentsTab({
   query,
   regions,
   onSelect,
   onZoomTo,
   activeId,
+  resultColumns = [],
 }: {
   query: string;
   regions: Region[];
   onSelect?: (id: string) => void;
   onZoomTo?: (id: string) => void;
   activeId?: string | null;
+  resultColumns?: SimResultColumn[];
 }) {
-  const q = query.trim().toLowerCase();
-  // Same search keys as the node list: id and kind.
-  const shown = q
-    ? regions.filter(
-        (r) =>
-          r.id.toLowerCase().includes(q) || r.type.toLowerCase().includes(q),
-      )
-    : regions;
-  if (shown.length === 0) {
+  const sys = useUnitSystem();
+  const genericColumns = regions.some((r) => r.resultValues != null)
+    ? resultColumns
+    : [];
+  const [rows, sortCol, sortDir, toggleSort] = useSortedFiltered(
+    regions,
+    query,
+    REGION_SEARCH_KEYS,
+    "nodes",
+  );
+  const showBadges = hasMultipleKinds(rows);
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+  const rowVirtualizer = useVirtualizer({
+    count: rows.length,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: () => 27,
+    overscan: 12,
+  });
+  const virtualRows = rowVirtualizer.getVirtualItems();
+  const padTop = virtualRows.length > 0 ? virtualRows[0].start : 0;
+  const padBottom =
+    virtualRows.length > 0
+      ? rowVirtualizer.getTotalSize() - virtualRows[virtualRows.length - 1].end
+      : 0;
+  const colSpan =
+    (showBadges ? 1 : 0) + 2 + genericColumns.length + (onZoomTo ? 1 : 0);
+
+  if (rows.length === 0) {
     return (
       <div
         style={{
@@ -1086,119 +1138,224 @@ function SubcatchmentsTab({
           color: "var(--text-tertiary)",
         }}
       >
-        {q ? "No subcatchments match." : "No subcatchments."}
+        {query.trim() ? "No subcatchments match." : "No subcatchments."}
       </div>
     );
   }
+
   return (
-    <div style={{ overflowY: "auto", flex: 1 }}>
-      {shown.map((r) => {
-        const badge = elementTypeBadge(r.type);
-        const isActive = r.id === activeId;
-        return (
-          // biome-ignore lint/a11y/useKeyWithClickEvents: row selection mirrors the node/link tables, which are click targets with the keyboard path served by the search field.
-          // biome-ignore lint/a11y/noStaticElementInteractions: as above — the tables use the same interaction shape.
-          <div
-            key={r.id}
-            onClick={() => onSelect?.(r.id)}
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 8,
-              padding: "6px 14px",
-              fontSize: "var(--text-md)",
-              color: "var(--text-primary)",
-              borderBottom: "1px solid var(--border)",
-              cursor: onSelect ? "pointer" : undefined,
-              background: isActive ? "rgba(79,142,247,0.14)" : undefined,
-              outline: isActive ? "1px solid rgba(79,142,247,0.3)" : undefined,
-              outlineOffset: "-1px",
-              userSelect: "none",
-            }}
-            onMouseEnter={(e) => {
-              if (!isActive && onSelect)
-                (e.currentTarget as HTMLElement).style.background =
-                  "rgba(255,255,255,0.04)";
-            }}
-            onMouseLeave={(e) => {
-              if (!isActive)
-                (e.currentTarget as HTMLElement).style.background =
-                  "transparent";
-            }}
-          >
-            <span
-              style={{
-                width: 16,
-                height: 16,
-                borderRadius: 4,
-                background: badge.color,
-                color: "#fff",
-                fontSize: 9,
-                fontWeight: 700,
-                display: "inline-flex",
-                alignItems: "center",
-                justifyContent: "center",
-                flexShrink: 0,
-              }}
-            >
-              {badge.label}
-            </span>
-            <span
-              style={{
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-                whiteSpace: "nowrap",
-              }}
-            >
-              {r.id}
-            </span>
-            {r.outletId && (
-              <span
+    <div ref={scrollRef} style={{ overflow: "auto", flex: 1 }}>
+      <table
+        style={{
+          width: "100%",
+          minWidth: "100%",
+          borderCollapse: "collapse",
+          tableLayout: "fixed",
+          userSelect: "none",
+          WebkitUserSelect: "none",
+        }}
+      >
+        <colgroup>
+          {showBadges && <col style={{ width: BADGE_COL_WIDTH }} />}
+          <col />
+          <col />
+          {genericColumns.map((c) => (
+            <col key={c.key} />
+          ))}
+          {onZoomTo && <col style={{ width: 22 }} />}
+        </colgroup>
+        <thead>
+          <tr>
+            {showBadges && (
+              <th
                 style={{
-                  marginLeft: "auto",
-                  fontSize: "var(--text-xs)",
-                  color: "var(--text-tertiary)",
-                  fontFamily: "var(--font-mono)",
-                  overflow: "hidden",
-                  textOverflow: "ellipsis",
-                  whiteSpace: "nowrap",
-                  maxWidth: 90,
+                  ...TH,
+                  textAlign: "center",
+                  padding: "5px 4px",
+                  verticalAlign: "middle",
                 }}
-                data-tooltip={`Discharges to ${r.outletId}`}
+                onClick={() => toggleSort("type")}
+                data-tooltip="Element type — click to sort"
+                data-tooltip-pos="bottom"
               >
-                → {r.outletId}
-              </span>
+                <span
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                  }}
+                >
+                  <TagIcon
+                    style={{ width: 10, height: 10 }}
+                    aria-label="Element type"
+                  />
+                  <SortIndicator
+                    col="type"
+                    sortCol={sortCol}
+                    sortDir={sortDir}
+                  />
+                </span>
+              </th>
             )}
-            {onZoomTo && (
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onZoomTo(r.id);
-                }}
-                data-tooltip="Zoom to feature"
+            <th
+              style={TH}
+              onClick={() => toggleSort("id")}
+              data-tooltip="Subcatchment ID"
+              data-tooltip-pos="bottom"
+            >
+              <HeaderContent
+                label="ID"
+                symbol="ID"
+                col="id"
+                sortCol={sortCol}
+                sortDir={sortDir}
+              />
+            </th>
+            <th
+              style={TH}
+              onClick={() => toggleSort("outletId")}
+              data-tooltip="Discharges to"
+              data-tooltip-pos="bottom"
+            >
+              <HeaderContent
+                label="Outlet"
+                symbol="Ou"
+                col="outletId"
+                sortCol={sortCol}
+                sortDir={sortDir}
+              />
+            </th>
+            {genericColumns.map((c) => (
+              <GenericResultHeader
+                key={c.key}
+                column={c}
+                sys={sys}
+                sortCol={sortCol}
+                sortDir={sortDir}
+                onToggleSort={toggleSort}
+              />
+            ))}
+            {onZoomTo && <th style={TH} />}
+          </tr>
+        </thead>
+        <tbody>
+          {padTop > 0 && (
+            <tr>
+              <td
+                colSpan={colSpan}
+                style={{ height: padTop, padding: 0, borderBottom: "none" }}
+              />
+            </tr>
+          )}
+          {virtualRows.map((virtualRow) => {
+            const region = rows[virtualRow.index];
+            const isActive = region.id === activeId;
+            return (
+              <tr
+                key={region.id}
+                onClick={() => onSelect?.(region.id)}
                 style={{
-                  background: "transparent",
-                  border: "none",
-                  padding: 2,
-                  cursor: "pointer",
-                  color: "var(--text-tertiary)",
-                  display: "inline-flex",
-                  borderRadius: 3,
-                  lineHeight: 0,
-                  marginLeft: r.outletId ? 0 : "auto",
-                  flexShrink: 0,
+                  cursor: onSelect ? "pointer" : undefined,
+                  background: isActive ? "rgba(79,142,247,0.14)" : undefined,
+                  outline: isActive
+                    ? "1px solid rgba(79,142,247,0.3)"
+                    : undefined,
+                  outlineOffset: "-1px",
+                }}
+                onMouseEnter={(e) => {
+                  if (!isActive)
+                    (e.currentTarget as HTMLElement).style.background =
+                      "rgba(255,255,255,0.04)";
+                }}
+                onMouseLeave={(e) => {
+                  if (!isActive)
+                    (e.currentTarget as HTMLElement).style.background =
+                      "transparent";
                 }}
               >
-                <MagnifyingGlassPlusIcon style={{ width: 12, height: 12 }} />
-              </button>
-            )}
-          </div>
-        );
-      })}
+                {showBadges && <BadgeCell type={region.type} />}
+                <td
+                  style={{
+                    ...TD,
+                    color: "var(--accent)",
+                    fontWeight: 500,
+                    fontFamily: "var(--font-mono)",
+                  }}
+                >
+                  <MiddleTruncate text={region.id} />
+                </td>
+                <td style={{ ...TD, fontFamily: "var(--font-mono)" }}>
+                  {region.outletId ? (
+                    <MiddleTruncate text={region.outletId} />
+                  ) : (
+                    <span style={{ color: "var(--text-tertiary)" }}>—</span>
+                  )}
+                </td>
+                {genericColumns.map((c) => (
+                  <GenericResultCell
+                    key={c.key}
+                    value={region.resultValues?.[c.key]}
+                    column={c}
+                    sys={sys}
+                  />
+                ))}
+                {onZoomTo && (
+                  <td
+                    style={{
+                      ...TD,
+                      padding: "4px 4px 4px 0",
+                      textAlign: "right",
+                    }}
+                  >
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onZoomTo(region.id);
+                      }}
+                      data-tooltip="Zoom to feature"
+                      style={{
+                        background: "transparent",
+                        border: "none",
+                        padding: 2,
+                        cursor: "pointer",
+                        color: "var(--text-tertiary)",
+                        display: "inline-flex",
+                        borderRadius: 3,
+                        lineHeight: 0,
+                      }}
+                      onMouseEnter={(e) => {
+                        (e.currentTarget as HTMLButtonElement).style.color =
+                          "var(--accent)";
+                      }}
+                      onMouseLeave={(e) => {
+                        (e.currentTarget as HTMLButtonElement).style.color =
+                          "var(--text-tertiary)";
+                      }}
+                    >
+                      <MagnifyingGlassPlusIcon
+                        style={{ width: 12, height: 12 }}
+                      />
+                    </button>
+                  </td>
+                )}
+              </tr>
+            );
+          })}
+          {padBottom > 0 && (
+            <tr>
+              <td
+                colSpan={colSpan}
+                style={{ height: padBottom, padding: 0, borderBottom: "none" }}
+              />
+            </tr>
+          )}
+        </tbody>
+      </table>
     </div>
   );
 }
+
 type HomeTab = "nodes" | "links" | "subcatchments";
 
 interface Props {
@@ -1211,6 +1368,8 @@ interface Props {
   nodes?: Node[];
   /** Override the internal `useLinks()` call (e.g. pass merged sim-result links). */
   links?: Link[];
+  /** Override the internal `useRegions()` call (merged sim-result regions). */
+  regions?: Region[];
   /** Highlight this node id in the nodes list (e.g. the currently inspected element). */
   activeNodeId?: string | null;
   /** Highlight this link id in the links list (e.g. the currently inspected element). */
@@ -1228,6 +1387,7 @@ interface Props {
    * built in. */
   nodeResultColumns?: SimResultColumn[];
   linkResultColumns?: SimResultColumn[];
+  regionResultColumns?: SimResultColumn[];
   /**
    * When true the panel renders inline (fills its container) rather than as an
    * absolutely-positioned overlay. Use this when hosting inside the secondary rail.
@@ -1241,6 +1401,7 @@ export function NetworkInspectorHome({
   onSelectLink,
   nodes: nodesProp,
   links: linksProp,
+  regions: regionsProp,
   activeNodeId,
   activeLinkId,
   onZoomToNode,
@@ -1250,6 +1411,7 @@ export function NetworkInspectorHome({
   activeRegionId,
   nodeResultColumns,
   linkResultColumns,
+  regionResultColumns,
   embedded,
 }: Props) {
   const internalNodes = useNodes();
@@ -1264,7 +1426,8 @@ export function NetworkInspectorHome({
     [internalNodes],
   );
 
-  const regions = useRegions();
+  const internalRegions = useRegions();
+  const regions = regionsProp ?? internalRegions;
   const [tab, setTab] = useState<HomeTab>("nodes");
   const [queryInput, setQueryInput] = useState("");
   const query = useDebouncedValue(queryInput, 120);
@@ -1485,6 +1648,7 @@ export function NetworkInspectorHome({
           onSelect={onSelectRegion}
           onZoomTo={onZoomToRegion}
           activeId={activeRegionId}
+          resultColumns={regionResultColumns}
         />
       )}
       {tab === "links" && (

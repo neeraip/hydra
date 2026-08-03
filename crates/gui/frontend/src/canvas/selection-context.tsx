@@ -16,7 +16,7 @@ import {
   useState,
 } from "react";
 import type { GenericQuantity } from "../hooks/results";
-import type { Link, Node } from "../types/network";
+import type { Link, Node, Region } from "../types/network";
 
 export type InspectorView = "closed" | "node" | "link" | "region";
 
@@ -38,6 +38,7 @@ export interface SimResultColumn {
 export interface SimResultColumns {
   node: SimResultColumn[];
   link: SimResultColumn[];
+  region: SimResultColumn[];
 }
 
 interface CanvasSelectionCtx {
@@ -66,12 +67,14 @@ interface CanvasSelectionCtx {
    *  can display live result values without re-fetching from the backend. */
   simNodes: Node[] | null;
   simLinks: Link[] | null;
+  simRegions: Region[] | null;
   /** Generic result-column headers accompanying the arrays (engines whose
    * values ride on `resultValue`); `null` for wds. */
   simColumns: SimResultColumns | null;
   setSimData: (
     nodes: Node[],
     links: Link[],
+    regions: Region[],
     columns?: SimResultColumns | null,
   ) => void;
   /** Animate the canvas to a specific node. No-op when no canvas is mounted. */
@@ -103,6 +106,7 @@ const Ctx = createContext<CanvasSelectionCtx>({
   clearSelection: () => {},
   simNodes: null,
   simLinks: null,
+  simRegions: null,
   simColumns: null,
   setSimData: () => {},
   zoomToNode: () => {},
@@ -118,12 +122,19 @@ export function CanvasSelectionProvider({ children }: { children: ReactNode }) {
   const [inspectorView, setInspectorView] = useState<InspectorView>("closed");
   const [simNodes, setSimNodes] = useState<Node[] | null>(null);
   const [simLinks, setSimLinks] = useState<Link[] | null>(null);
+  const [simRegions, setSimRegions] = useState<Region[] | null>(null);
   const [simColumns, setSimColumns] = useState<SimResultColumns | null>(null);
 
   const setSimData = useCallback(
-    (nodes: Node[], links: Link[], columns?: SimResultColumns | null) => {
+    (
+      nodes: Node[],
+      links: Link[],
+      regions: Region[],
+      columns?: SimResultColumns | null,
+    ) => {
       setSimNodes(nodes);
       setSimLinks(links);
+      setSimRegions(regions);
       setSimColumns(columns ?? null);
     },
     [],
@@ -235,6 +246,7 @@ export function CanvasSelectionProvider({ children }: { children: ReactNode }) {
       clearSelection,
       simNodes,
       simLinks,
+      simRegions,
       simColumns,
       setSimData,
       zoomToNode,
@@ -253,6 +265,7 @@ export function CanvasSelectionProvider({ children }: { children: ReactNode }) {
       clearSelection,
       simNodes,
       simLinks,
+      simRegions,
       simColumns,
       setSimData,
       zoomToNode,

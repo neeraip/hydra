@@ -1118,17 +1118,63 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
     needSimObjects,
   ]);
 
+  const railRegionColumns = useMemo(
+    () =>
+      (genericMeta?.regionVars ?? [])
+        .slice(0, RAIL_RESULT_COLUMNS)
+        .map((v) => ({
+          key: v.id,
+          label: v.label,
+          symbol: v.symbol,
+          quantity: v.quantity,
+        })),
+    [genericMeta],
+  );
+  const railRegions = useMemo(() => {
+    const arrays = fetchedGenericValues?.regions;
+    if (
+      !needSimObjects ||
+      !arrays ||
+      railRegionColumns.length === 0 ||
+      arrays[0]?.length !== baseRegions.length
+    ) {
+      return baseRegions;
+    }
+    return baseRegions.map((r, i) => {
+      const resultValues: Record<string, number | null> = {};
+      railRegionColumns.forEach((c, vi) => {
+        const v = arrays[vi]?.[i];
+        resultValues[c.key] = v != null && Number.isFinite(v) ? v : null;
+      });
+      return { ...r, resultValues };
+    });
+  }, [
+    baseRegions,
+    fetchedGenericValues?.regions,
+    railRegionColumns,
+    needSimObjects,
+  ]);
+
   useEffect(() => {
     setSimData(
       railNodes,
       railLinks,
-      genericMeta ? { node: railNodeColumns, link: railLinkColumns } : null,
+      railRegions,
+      genericMeta
+        ? {
+            node: railNodeColumns,
+            link: railLinkColumns,
+            region: railRegionColumns,
+          }
+        : null,
     );
   }, [
     railNodes,
     railLinks,
+    railRegions,
     railNodeColumns,
     railLinkColumns,
+    railRegionColumns,
     genericMeta,
     setSimData,
   ]);
