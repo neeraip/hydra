@@ -280,7 +280,7 @@ pub fn create_project(
         version: 1,
         name,
         engine,
-        source_crs: "EPSG:4326".into(),
+        source_crs: source_crs_for_model(&inp_bytes),
         node_count,
         link_count,
     };
@@ -342,6 +342,45 @@ pub fn rename_project(
         &id,
         &project_meta,
     )))
+}
+
+/// The CRS sentinel for a model whose plan coordinates are a local
+/// drawing grid rather than a georeferenced system. Not an EPSG code
+/// precisely because no EPSG code is true of such a model.
+pub(crate) const LOCAL_CRS: &str = "LOCAL";
+
+/// The CRS a freshly imported model should start on.
+///
+/// SWMM states its coordinate basis in `[MAP] UNITS` — `DEGREES` means the
+/// plan coordinates are geographic, while `FEET`, `METERS` and `NONE` mean
+/// a linear grid whose origin is the drawing canvas, not a datum. Reading
+/// it beats defaulting everything to WGS84, which silently asserts that a
+/// site grid in feet is longitude and latitude. Anything we cannot read
+/// keeps the old default: WGS84 is the right guess for a model that says
+/// nothing, and the user can still correct it.
+fn source_crs_for_model(bytes: &[u8]) -> String {
+    let text = String::from_utf8_lossy(bytes);
+    let mut in_map = false;
+    for line in text.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('[') {
+            in_map = trimmed.to_ascii_uppercase().starts_with("[MAP");
+            continue;
+        }
+        if !in_map || trimmed.is_empty() || trimmed.starts_with(';') {
+            continue;
+        }
+        let mut it = trimmed.split_whitespace();
+        if !it.next().is_some_and(|k| k.eq_ignore_ascii_case("UNITS")) {
+            continue;
+        }
+        return match it.next().map(str::to_ascii_uppercase).as_deref() {
+            Some("DEGREES") => "EPSG:4326".to_string(),
+            Some("FEET") | Some("METERS") | Some("NONE") => LOCAL_CRS.to_string(),
+            _ => "EPSG:4326".to_string(),
+        };
+    }
+    "EPSG:4326".to_string()
 }
 
 /// Update the source CRS for a project. Returns `true` when the metadata was
@@ -1926,6 +1965,37 @@ mod tests {
     ///
     /// Colours are deliberately not checked: they are presentation the
     /// contract does not describe, and belong to the frontend alone.
+    /// SWMM states its coordinate basis in `[MAP] UNITS`, so a model on a
+    /// local drawing grid must not be handed WGS84 — which would assert
+    /// that a site grid in feet is longitude and latitude.
+    #[test]
+    fn the_map_units_line_decides_a_new_project_crs() {
+        let with_units = |u: &str| {
+            format!("[TITLE]\nx\n[MAP]\nDIMENSIONS 0 0 100 100\nUnits {u}\n[JUNCTIONS]\nJ1 1 1\n")
+        };
+        for linear in ["Feet", "METERS", "none"] {
+            assert_eq!(
+                source_crs_for_model(with_units(linear).as_bytes()),
+                LOCAL_CRS,
+                "{linear:?} is a linear drawing grid, not a datum",
+            );
+        }
+        assert_eq!(
+            source_crs_for_model(with_units("Degrees").as_bytes()),
+            "EPSG:4326",
+        );
+        // Nothing to read: WGS84 stays the guess, correctable by the user.
+        assert_eq!(
+            source_crs_for_model(b"[TITLE]\nx\n[JUNCTIONS]\nJ1 1 1\n"),
+            "EPSG:4326",
+        );
+        // UNITS belongs to [MAP]; the same word elsewhere must not steal it.
+        assert_eq!(
+            source_crs_for_model(b"[OPTIONS]\nUNITS FEET\n[MAP]\nUnits Degrees\n"),
+            "EPSG:4326",
+        );
+    }
+
     #[test]
     fn frontend_badges_mirror_the_engine_catalogs() {
         let ts = std::fs::read_to_string(concat!(

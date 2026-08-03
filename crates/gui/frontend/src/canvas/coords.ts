@@ -1,3 +1,9 @@
+/** CRS sentinel for a model whose plan coordinates are a local drawing
+ * grid rather than a georeferenced system — mirrors `LOCAL_CRS` in the
+ * backend. Deliberately not an EPSG code: no EPSG code is true of such a
+ * model, so nothing may try to resolve a proj4 definition for it. */
+export const LOCAL_CRS = "LOCAL";
+
 /* Coordinate transforms for the canvas.
  *
  * Geographic ("map") positions use WGS84 lon/lat. Schematic positions come

@@ -2,6 +2,7 @@ import { XMarkIcon } from "@heroicons/react/16/solid";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useActiveProject, useAppState } from "../../AppContext";
 import {
+  LOCAL_CRS,
   normalizeEpsgCode,
   registerCustomCrsDefinitions,
   validateCustomCrsDefinition,
@@ -335,6 +336,38 @@ export function CrsModal() {
             >
               Unsaved change: {normalizedDraft || "(none)"}
             </span>
+          )}
+          {/* Not every model is georeferenced: SWMM and EPANET both let a
+              model carry a local drawing grid, where no EPSG code is true
+              and searching the catalog is a category error. */}
+          {panelView === "select" && (
+            <button
+              type="button"
+              onClick={() => setDraftCrs(LOCAL_CRS)}
+              data-tooltip="Coordinates are a local drawing grid, not a georeferenced system"
+              style={{
+                marginLeft: 10,
+                padding: "3px 10px",
+                borderRadius: 6,
+                border:
+                  normalizedDraft === LOCAL_CRS
+                    ? "1px solid var(--accent)"
+                    : "1px solid var(--border)",
+                background:
+                  normalizedDraft === LOCAL_CRS
+                    ? "var(--selection-bg-strong)"
+                    : "transparent",
+                color:
+                  normalizedDraft === LOCAL_CRS
+                    ? "var(--accent)"
+                    : "var(--text-secondary)",
+                fontSize: "var(--text-sm)",
+                fontFamily: "var(--font-ui)",
+                cursor: "pointer",
+              }}
+            >
+              Local grid (not georeferenced)
+            </button>
           )}
           <div
             style={{

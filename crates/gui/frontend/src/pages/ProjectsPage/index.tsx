@@ -34,6 +34,7 @@ import {
   type ProjectState,
   projectsResultsSize,
   renameProjectOnDisk,
+  useEngines,
   useProjects,
 } from "../../hooks";
 import { formatIpcError } from "../../hooks/ipc";
@@ -169,6 +170,7 @@ export function ProjectsPage() {
     return f;
   }, [columnFilters, stateFilter]);
 
+  const engines = useEngines();
   const columns = useMemo(
     () => [
       col.display({
@@ -204,10 +206,29 @@ export function ProjectsPage() {
         header: "Name",
         cell: (info) => {
           const p = info.row.original;
+          const engine = engines.find((e) => e.key === p.engine) ?? null;
           return (
             <span
               style={{ display: "inline-flex", alignItems: "center", gap: 6 }}
             >
+              {/* The engine's identity mark, as the status bar and the
+                  Overview header carry it: the glyph is coloured, the
+                  surface behind it is not. */}
+              <span
+                data-tooltip={engine?.label ?? "Unsupported engine"}
+                style={{
+                  flexShrink: 0,
+                  minWidth: 22,
+                  textAlign: "center",
+                  fontSize: "var(--text-xs)",
+                  fontWeight: 700,
+                  letterSpacing: "0.04em",
+                  fontFamily: "var(--font-ui)",
+                  color: engine?.accent ?? "var(--text-tertiary)",
+                }}
+              >
+                {engine?.pill ?? "??"}
+              </span>
               <button
                 type="button"
                 onClick={(e) => {
@@ -375,7 +396,7 @@ export function ProjectsPage() {
         ),
       }),
     ],
-    [handleOpenProject],
+    [handleOpenProject, engines],
   );
 
   const table = useReactTable({

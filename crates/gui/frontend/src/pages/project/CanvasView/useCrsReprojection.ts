@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ensureEpsgDef,
+  LOCAL_CRS,
   normalizeEpsgCode,
   registerCustomCrsDefinitions,
   reprojectLinkVerticesCached,
@@ -83,7 +84,11 @@ export function useCrsReprojection({
   useEffect(() => {
     // ensureEpsgDef registers baseline/UTM/MGA defs as a side effect and
     // returns true when the code is (now) usable — nothing more to do.
-    if (sourceCrs === "EPSG:4326" || ensureEpsgDef(sourceCrs)) {
+    if (
+      sourceCrs === "EPSG:4326" ||
+      sourceCrs === LOCAL_CRS ||
+      ensureEpsgDef(sourceCrs)
+    ) {
       setCrsResolving(false);
       return;
     }
@@ -169,6 +174,12 @@ export function useCrsReprojection({
   // see as a dependency.
   // biome-ignore lint/correctness/useExhaustiveDependencies: re-run token, see above
   const reprojection = useMemo(() => {
+    // A local drawing grid is not georeferenced, so there is nothing to
+    // reproject and no range to be outside of. Coordinates pass through
+    // as the model states them.
+    if (sourceCrs === LOCAL_CRS) {
+      return { nodes: rawPositionNodes, error: null as string | null };
+    }
     if (sourceCrs === "EPSG:4326") {
       // Even with the default CRS, check that the raw coordinates are within
       // WGS84 range. If any node is out of range the user has projected
