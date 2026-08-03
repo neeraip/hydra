@@ -3,7 +3,7 @@ import {
   engineByKey,
   FALLBACK_ENGINES,
   importExtensionLabel,
-  isEngineAvailable,
+  isEngineGuiEditable,
 } from "./hooks/engines";
 import type { ProjectView } from "./projectConfig";
 import { ACCENT, PROJECT_VIEWS } from "./projectConfig";
@@ -30,22 +30,23 @@ describe("engine registry fallback", () => {
     expect(engineByKey(FALLBACK_ENGINES, "")).toBeNull();
   });
 
-  it("registers the planned engines so the wizard can present them", () => {
-    // Planned ≠ unknown (hydra-common spec §2.3): they resolve, and carry
-    // full identity, but must never back a project.
+  it("registers the non-editable engines so the wizard can present them", () => {
+    // Non-editable ≠ unknown (hydra-common spec §2.3): planned and CLI-only
+    // engines resolve, and carry full identity, but must never back a
+    // project in this GUI.
     for (const key of ["uds", "och"]) {
       const engine = engineByKey(FALLBACK_ENGINES, key);
       if (engine === null) throw new Error(`${key} must be registered`);
       expect(engine.pill).toHaveLength(2);
-      expect(isEngineAvailable(engine)).toBe(false);
+      expect(isEngineGuiEditable(engine)).toBe(false);
     }
   });
 
-  it("only wds is available in this build", () => {
-    const available = FALLBACK_ENGINES.filter(isEngineAvailable).map(
+  it("only wds can back a project in this GUI", () => {
+    const editable = FALLBACK_ENGINES.filter(isEngineGuiEditable).map(
       (e) => e.key,
     );
-    expect(available).toEqual(["wds"]);
+    expect(editable).toEqual(["wds"]);
   });
 
   it("mirrors the backend registry order", () => {

@@ -1,0 +1,32 @@
+; A green roof: the drainage-mat layer applies to this unit type alone.
+[OPTIONS]
+FLOW_UNITS    CFS
+INFILTRATION  HORTON
+
+[RAINGAGES]
+G1  INTENSITY  0:15  1.0  TIMESERIES  RAIN1
+
+[SUBCATCHMENTS]
+S1  G1  O1  2  90  200  0.02  0
+
+[SUBAREAS]
+S1  0.012  0.1  0.05  0.05  25  OUTLET
+
+[INFILTRATION]
+S1  3.0  0.5  4  7  0
+
+[OUTFALLS]
+O1  97  FREE
+
+[LID_CONTROLS]
+GR1  GR
+GR1  SURFACE   1  0.1  0.15  1.0  5
+GR1  SOIL      4  0.5  0.2   0.1  0.5  10  3.5
+GR1  DRAINMAT  2  0.5  0.1
+
+[LID_USAGE]
+S1  GR1  1  500  10  0  100  0
+
+[TIMESERIES]
+RAIN1  0:00  1.0
+RAIN1  1:00  0.0

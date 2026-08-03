@@ -8,10 +8,16 @@ and the `hydra-sdk` Rust library.
 | Engine | Key | Domain | Source model | Status |
 |---|---|---|---|---|
 | Water Distribution | `wds` | Pressurised supply networks — hydraulics, water quality, energy | EPANET `.inp` (2.x) | **Available** |
-| Urban Drainage | `uds` | Stormwater and wastewater collection — runoff, routing, water quality | SWMM `.inp` | Planned |
+| Urban Drainage | `uds` | Stormwater and wastewater collection — runoff, routing, water quality | SWMM `.inp` | **Available** (CLI and SDK) |
 | Open Channel | `och` | Rivers and open channels — steady and unsteady flow | HEC-RAS project archive | Planned |
 
-<!-- PLANNED-ENGINE: uds,och — this page is the canonical statement of engine status. Revise the table above and the section below as each engine ships. -->
+<!-- PLANNED-ENGINE: och — this page is the canonical statement of engine status. Revise the table above and the section below as each engine ships. -->
+
+The urban drainage engine ships **CLI-first**: it is available in the registry
+and runs SWMM models through the `hydra` CLI and the SDK, but the GUI cannot
+create or edit urban drainage projects yet — its engine card reads "CLI only"
+until editor support lands. Registry availability says what this build of
+Hydra can *simulate*; each application additionally knows what it can *edit*.
 
 ## Available vs. planned
 
@@ -33,9 +39,10 @@ resolves successfully; only a key this build has never heard of — for example 
 project created by a newer Hydra — is an error, and it is always surfaced as an
 explicit unsupported state, never silently substituted with a default engine.
 
-The crates for the planned engines (`hydra-engine-uds`, `hydra-engine-och`) are
-already published as empty scaffolds, so their names and version history track
-the workspace from the start rather than being introduced mid-life.
+The crate for the planned engine (`hydra-engine-och`) is already published as
+an empty scaffold, so its name and version history track the workspace from
+the start rather than being introduced mid-life — the same path
+`hydra-engine-uds` took before its implementation landed.
 
 ## Why the split matters
 

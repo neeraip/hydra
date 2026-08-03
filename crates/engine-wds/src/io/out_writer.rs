@@ -1072,7 +1072,7 @@ mod tests {
     fn load_fixture_network(name: &str) -> crate::Network {
         let path = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../..")
-            .join("tests/fixtures")
+            .join("tests/fixtures/wds")
             .join(name);
         let bytes = std::fs::read(path).expect("read fixture");
         parse(&bytes).expect("parse fixture")

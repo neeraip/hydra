@@ -1658,7 +1658,7 @@ mod tests {
 
         let path = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../..")
-            .join("tests/fixtures/single_pipe_hw.inp");
+            .join("tests/fixtures/wds/single_pipe_hw.inp");
         let Ok(bytes) = std::fs::read(&path) else {
             return;
         };

@@ -2,9 +2,9 @@
 
 Hydra is a water infrastructure simulation platform written in Rust, built as a suite of domain engines behind one shared toolchain (CLI, desktop GUI, Rust SDK).
 
-The **water distribution** engine (`wds`) is the only one implemented today: it implements the Global Gradient Algorithm (GGA) hydraulic solver and a Lagrangian water quality engine, operating on the EPANET data model (any 2.x input; the format is specified against 2.3). Correctness is defined by Hydra's own convergence criteria and physical conservation laws.
+Two engines are implemented today. The **water distribution** engine (`wds`) implements the Global Gradient Algorithm (GGA) hydraulic solver and a Lagrangian water quality engine on the EPANET data model (any 2.x input; the format is specified against 2.3). The **urban drainage** engine (`uds`) implements rainfall-runoff hydrology, Preissmann-slot dynamic-wave routing, and water quality on the SWMM data model; it ships CLI-first — available from the CLI and SDK, not yet editable in the GUI. For both, correctness is defined by Hydra's own convergence criteria and physical conservation laws.
 
-**Urban drainage** (`uds`, SWMM data model) and **open channel** (`och`, HEC-RAS data model) are registered in `hydra-common`'s engine registry as `Planned` — their crate names and engine keys are reserved, but neither is specced or implemented. Never write copy that presents Hydra as water-distribution-only, and never write copy that implies `uds`/`och` already work.
+**Open channel** (`och`, HEC-RAS data model) is registered in `hydra-common`'s engine registry as `Planned` — its crate name and engine key are reserved, but it is neither specced nor implemented. Never write copy that presents Hydra as one or two engines only by design, and never write copy that implies `och` already works.
 
 ### The `PLANNED-ENGINE` tag
 
@@ -14,7 +14,7 @@ is one grep away when an engine ships:
 
 ```sh
 grep -rn "PLANNED-ENGINE" --exclude-dir=target --exclude-dir=node_modules .
-grep -rn "PLANNED-ENGINE: uds" .    # just the urban-drainage ones
+grep -rn "PLANNED-ENGINE: och" .    # just the open-channel ones
 ```
 
 Use the comment syntax of the host file — `<!-- … -->` in Markdown, `//` in Rust
@@ -22,8 +22,8 @@ and TypeScript, `#` in TOML — and say what to do when the engine lands, not ju
 that the disclaimer exists:
 
 ```
-<!-- PLANNED-ENGINE: uds — drop this paragraph when the urban drainage engine ships. -->
-// PLANNED-ENGINE: uds,och — revise the paragraph above as each engine ships.
+<!-- PLANNED-ENGINE: och — drop this paragraph when the open channel engine ships. -->
+// PLANNED-ENGINE: och — revise the paragraph above as each engine ships.
 ```
 
 Tag the *temporary* statement, not the permanent one. "Planned engines cannot be
@@ -40,14 +40,15 @@ start from this grep.
 |---|---|---|
 | `hydra-common` | Foundation contracts shared by all engines and applications: engine identity (descriptor + registry) and the reportable-output contract (block catalog, neutral fragment model). Depends on nothing in the workspace | Any engine logic; presentation/rendering; shared element schemas and unit systems (deferred by design until a second engine exists) |
 | `hydra-engine-wds` | Complete simulation engine: data model; INP/OUT/RPT parsers and writers; unit conversion; GGA hydraulic solver; Lagrangian quality engine; controls; timestep; accounting; session API (`Simulation`); post-simulation analytics; report blocks implementing the `hydra-common` reportable-output contract; local filesystem reads for `.out` result files via an explicit path-based helper (`io::out_reader`) | Interface logic; network I/O; any other filesystem I/O (INP model bytes are supplied in memory by callers) |
-| `hydra-engine-uds`, `hydra-engine-och` | Nothing yet — published scaffolds for the future urban-drainage and open-channel engines, so their crate names and versions track the workspace from the start | Any functionality (deliberately empty until their development begins) |
+| `hydra-engine-uds` | Complete urban-drainage engine: SWMM data model; INP import and OUT/RPT writers; rainfall-runoff hydrology (infiltration, LID, snow, groundwater, RDII); dynamic-wave routing; structures and inlets; pollutant transport; controls; session API (`simulation::engine::Simulation`) | Interface logic; any filesystem or network I/O (model text and auxiliary-file contents are supplied in memory by callers) |
+| `hydra-engine-och` | Nothing yet — a published scaffold for the future open-channel engine, so its crate name and versions track the workspace from the start | Any functionality (deliberately empty until its development begins) |
 | `hydra-engines` | Engine dispatch: the routing policy of the `hydra-common` recognition contract (§2.5.1), implemented once. Depends on `hydra-common` and every engine — the only layer that sees both | Any recognition logic of its own (each engine judges its own models); any simulation logic |
 | `hydra-report` | Report generation: JSON report templates, document assembly from engine-neutral fragments, deterministic txt/csv/html renderers | Any engine knowledge (depends only on `hydra-common`); analysis math; file/output-path UX (CLI/GUI) |
 | `hydra-sdk` | **Hydra's public API** — the single crate third parties depend on to build on Hydra; curated re-exports of the full integrator-facing surface | Any new logic |
 | `hydra-cli` | CLI argument parsing; input source resolution; file I/O | All simulation logic |
 | `hydra-gui` | Tauri command surface; project/scenario persistence; background run queue; React frontend | Solver algorithms; session logic |
 
-**`hydra-engine-wds` is a self-contained black box.** Its internal module structure (`hydraulics/`, `quality/`, `simulation/`, `analysis/`, `model/`, `io/`) is an implementation detail. Callers depend only on its public re-export surface.
+**Each engine crate is a self-contained black box.** `hydra-engine-wds`'s internal module structure (`hydraulics/`, `quality/`, `simulation/`, `analysis/`, `model/`, `io/`) is an implementation detail; callers depend only on its public re-export surface. `hydra-engine-uds` is likewise self-contained (`hydrology/`, `hydraulics/`, `transport/`, `simulation/`, `model/`, `io/`, with specs additionally under `interop/`).
 
 **`hydra-sdk` is Hydra's public API, not an in-house convenience layer.** Its surface is sized by what a third-party integrator building on Hydra needs — never by what the official applications happen to use. Do not propose narrowing a re-export because the in-house apps don't exercise it; wholesale module re-exports (e.g. the engine's `io`) are correct when the module is genuinely public-facing.
 
@@ -55,7 +56,7 @@ start from this grep.
 
 **`hydra-sdk` contains no logic** — only re-exports. Never add functions, structs, or trait implementations to it. (Downstream crates import it under the alias `hydra`.)
 
-**Serialisation and output formatting** belong in `hydra-engine-wds`. Acquiring model bytes (reading INP files from disk, making HTTP calls) does not — that belongs in `hydra-cli` or `hydra-gui`. The one filesystem carve-out inside the engine is the explicit path-based streaming of `.out` result files (`io::out_reader`), which exists so large results never have to be loaded whole.
+**Serialisation and output formatting** belong in the engine crates. Acquiring model bytes (reading INP files from disk, making HTTP calls, reading a model's auxiliary climate/hotstart/interface files) does not — that belongs in `hydra-cli` or `hydra-gui`. The one filesystem carve-out inside an engine is `hydra-engine-wds`'s explicit path-based streaming of `.out` result files (`io::out_reader`), which exists so large results never have to be loaded whole.
 
 ---
 
@@ -74,6 +75,13 @@ authoritative definition of Hydra's mathematical behaviour:
 | `crates/engine-wds/src/quality/spec.md` | Lagrangian transport, mixing, reactions, source tracing |
 | `crates/engine-wds/src/simulation/spec.md` | Session API, controls, timestep orchestration, accounting |
 | `crates/engine-wds/src/analysis/spec.md` | Post-simulation analytics |
+| `crates/engine-uds/src/spec.md` | uds charter: scope, principles, correspondence, status |
+| `crates/engine-uds/src/model/spec.md` | SWMM data model and unit system |
+| `crates/engine-uds/src/hydrology/spec.md` | Runoff, infiltration, LID, snowmelt, groundwater, RDII, climate |
+| `crates/engine-uds/src/hydraulics/spec.md` | Section geometry, dynamic-wave routing, structures, inlets |
+| `crates/engine-uds/src/transport/spec.md` | Buildup, washoff, treatment, network transport |
+| `crates/engine-uds/src/simulation/spec.md` | Controls, orchestration, accounting, statistics, session API |
+| `crates/engine-uds/src/interop/spec.md` | INP import, interface files, OUT/RPT output, recognition |
 
 **Always update the relevant spec before changing solver/model/analysis implementation.**
 If a spec and its implementation disagree, the spec wins — fix the implementation
@@ -84,7 +92,9 @@ Surface the gap and update the spec first. Do not invent behaviour.
 
 Specs are language- and platform-agnostic. No references to Rust, crates, or file layouts.
 Formulae are in LaTeX with every symbol defined on first use. Intentional deviations
-from EPANET are labelled: `> **DEVIATION from EPANET:** <reason>`.
+from the engine's predecessor are labelled — `> **DEVIATION from EPANET:** <reason>`
+in the wds specs; the uds specs record their stance toward SWMM in their
+correspondence sections.
 
 Operations safe to parallelise are marked **∥** in the solver specs. These are the
 **only** operations the implementation may parallelise.
@@ -100,14 +110,17 @@ implementations live in its submodules). No separate spec files exist for those 
 
 **Changes always flow downward: spec → implementation.**
 
-### Solver algorithms (hydraulics, quality, simulation)
+### Solver algorithms (hydraulics, quality/transport, hydrology, simulation)
 
-1. Update the relevant sub-spec in `crates/engine-wds/` to define the new behaviour.
+1. Update the relevant sub-spec in the owning engine crate (`crates/engine-wds/`
+   or `crates/engine-uds/`) to define the new behaviour.
 2. Only then write or change implementation code.
 
-### Data model and parsers (hydra-engine-wds model/io)
+### Data model and parsers (engine model/io)
 
-1. Update `crates/engine-wds/src/model/spec.md`.
+1. Update the owning engine's spec — `crates/engine-wds/src/model/spec.md`, or
+   for uds `crates/engine-uds/src/model/spec.md` (data model) and
+   `crates/engine-uds/src/interop/spec.md` (file formats).
 2. Only then write or change implementation code.
 
 ### Post-simulation analytics (hydra-engine-wds analysis)

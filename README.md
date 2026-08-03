@@ -10,11 +10,11 @@ Hydra is a water infrastructure simulation platform written in Rust. It is built
 | Engine | Domain | Source model | Status |
 |---|---|---|---|
 | **Water Distribution** (`wds`) | Pressurised supply networks — hydraulics, water quality, energy | EPANET `.inp` (2.x) | **Available** |
-| **Urban Drainage** (`uds`) | Stormwater and wastewater collection — runoff, routing, quality | SWMM `.inp` | Planned |
+| **Urban Drainage** (`uds`) | Stormwater and wastewater collection — runoff, routing, quality | SWMM `.inp` | **Available** (CLI and SDK) |
 | **Open Channel** (`och`) | Rivers and channels — steady and unsteady flow | HEC-RAS project | Planned |
 
-<!-- PLANNED-ENGINE: uds,och — revise the table's Status column and drop this paragraph as each engine ships. -->
-A planned engine is registered in the shared engine registry, so its key and crate name are reserved and the applications can present the full modelling scope — but it carries no implementation, and Hydra refuses to create projects or run simulations for it. Everything below describes the water distribution engine, the one that ships today.
+<!-- PLANNED-ENGINE: och — revise the table's Status column and drop this paragraph as each engine ships. -->
+A planned engine is registered in the shared engine registry, so its key and crate name are reserved and the applications can present the full modelling scope — but it carries no implementation, and Hydra refuses to create projects or run simulations for it. The urban drainage engine ships CLI-first: the `hydra` CLI and the Rust SDK run SWMM models today, while GUI editing is still to come.
 
 **[→ Full documentation](https://neeraip.github.io/hydra/)**
 
@@ -27,6 +27,12 @@ Extended-period simulation (EPS) of hydraulic behaviour and water quality dynami
 - **I/O** — all 11 EPANET flow unit systems; `.out` binary, `.rpt` text, `.json` report output
 
 Inputs are EPANET `.inp` files (local or via HTTP URL) — any 2.x release, since the constructs 2.3 added are optional. Outputs are an EPANET-compatible binary `.out` file and a plain-text or JSON `.rpt` report.
+
+## Urban drainage engine
+
+Continuous and event simulation of stormwater and wastewater collection systems on the SWMM data model: rainfall-runoff with Horton / Green-Ampt / Curve Number infiltration, LID controls, snowmelt, groundwater and RDII; Preissmann-slot dynamic-wave routing through conduits, pumps, orifices, weirs, outlets and street inlets; pollutant buildup, washoff, treatment, and network transport; rule-based controls with PID modulation.
+
+Inputs are SWMM `.inp` files; outputs are a SWMM-compatible binary `.out` file and a text report. The engine is available from the CLI (`hydra run model.inp` — the model's own sections identify the engine) and the SDK (the `hydra::uds` module); GUI editing is not available yet.
 
 ## Install
 

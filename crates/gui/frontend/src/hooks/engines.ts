@@ -59,7 +59,7 @@ export const FALLBACK_ENGINES: EngineInfo[] = [
     accent: "#7a6ff0",
     summary:
       "Stormwater and wastewater collection network simulation — runoff, routing, and water quality on the SWMM data model.",
-    status: "planned",
+    status: "available",
     import: [{ label: "SWMM input file", extensions: ["inp"] }],
   },
   {
@@ -79,9 +79,21 @@ export const FALLBACK_ENGINES: EngineInfo[] = [
   },
 ];
 
-/** Whether `engine` can back a new project in this build. */
+/** Engines whose projects this GUI can create, edit, and run. The registry
+ * status says what this build of Hydra can simulate; this says what the GUI
+ * can edit — an engine that ships CLI-first is available without being
+ * editable here yet. */
+export const GUI_EDITABLE_ENGINES: ReadonlySet<string> = new Set(["wds"]);
+
+/** Whether this build of Hydra can simulate `engine`'s models at all
+ * (registry status — not the same as being editable in this GUI). */
 export function isEngineAvailable(engine: EngineInfo): boolean {
   return engine.status === "available";
+}
+
+/** Whether `engine` can back a new project in this GUI. */
+export function isEngineGuiEditable(engine: EngineInfo): boolean {
+  return isEngineAvailable(engine) && GUI_EDITABLE_ENGINES.has(engine.key);
 }
 
 /** The engine's accepted extensions as human-facing text, e.g. ".inp" or

@@ -91,14 +91,9 @@ be a flawless model in the tool that owns them:
 
 | Surface | Behaviour |
 |---|---|
-| CLI | Diagnostic code `input/engine`, exit code `1`: *this is a SWMM model, not an EPANET one (it declares a `[SUBCATCHMENTS]` section)* |
-| GUI | An engine-mismatch message naming the tool and the giveaway section <!-- PLANNED-ENGINE: uds — it currently ends "Hydra cannot open SWMM models yet"; restore "open it with the {tool} engine" once that engine ships. --> |
-| SDK | `io::ReadError::ForeignDialect { tool, section }` — matchable separately from every other read error, so an application offering several engines can route the file instead of rejecting it |
-
-<!-- PLANNED-ENGINE: uds — drop this paragraph when the urban drainage engine ships; the rejection stays, but routing replaces the dead end. -->
-Once the [urban drainage engine](../engines.md) lands, such a file becomes
-openable rather than merely diagnosable. Until then it is a dead end: Hydra can
-tell you exactly what the file is, but has no engine to open it with.
+| CLI | With engine detection (the default), a SWMM model simply routes to the [urban drainage engine](../engines.md) and runs. Forcing `--engine wds` on it produces diagnostic code `input/engine`, exit code `1`: *this is a SWMM model, not an EPANET one (it declares a `[SUBCATCHMENTS]` section)* |
+| GUI | An engine-mismatch message naming the tool and the giveaway section, pointing at the CLI — the GUI cannot edit urban drainage models yet |
+| SDK | `io::ReadError::ForeignDialect { tool, section }` — matchable separately from every other read error, so an application offering several engines can route the file instead of rejecting it; `hydra_sdk::engines::route` does exactly that |
 
 ---
 

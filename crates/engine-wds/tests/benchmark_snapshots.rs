@@ -1,6 +1,6 @@
 //! Golden-snapshot regression tests over real benchmark networks.
 //!
-//! Each test parses a network from `tests/benchmarks/` (workspace root), runs
+//! Each test parses a network from `tests/benchmarks/wds/` (workspace root), runs
 //! the full simulation through the public session API, and compares a compact
 //! result fingerprint — heads/flows (and quality where enabled) at fixed
 //! object IDs and timesteps, plus network-wide sums — against hard-coded
@@ -55,7 +55,7 @@ fn benchmark_path(name: &str) -> PathBuf {
         .parent()
         .and_then(|p| p.parent())
         .expect("workspace root")
-        .join("tests/benchmarks")
+        .join("tests/benchmarks/wds")
         .join(format!("{name}.inp"))
 }
 

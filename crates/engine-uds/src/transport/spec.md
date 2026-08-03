@@ -139,7 +139,10 @@ element's remaining mass flushes to final storage and its concentration
 zeroes, unconditionally for channels and absent inflow for vertices;
 initial concentrations seed only elements wet at start. Volume-less links
 pass their upstream vertex concentration through. Evaporation concentrates
-by $1 + V_{evap}/V$, consistently with §8.3.
+by $1 + V_{evap}/V$, consistently with §8.3. Storage-vertex losses (§7.7)
+follow the same rule as channels: seepage carries its volume's share out at
+the mixture concentration, booked to the seepage account, and evaporation
+concentrates what remains.
 
 ### 8.5 Treatment
 
@@ -162,3 +165,13 @@ most 1; removal-form yields zero without inflow; a treatment expression
 overrides the constituent's global decay at that vertex; co-pollutants
 receive no automatic co-treatment. Cyclic removal references are refused at
 validation (§14.7).
+
+The mass treatment removes is the concentration drop it applies times the
+step's inflow-augmented pool volume, $(c_{mix} - c_{out})(V_{old} +
+Q_{in}\Delta t)$, booked to the reaction account of §11.1. The influent's
+mass is already inside $c_{mix}$ — mixing precedes treatment — so no
+influent term may be added on top: doing so overstates removal by
+$(c_{in} - c_{mix})\,Q_{in}\Delta t$ whenever stored water dilutes the
+influent. Treatment at an outlet vertex revises its discharge: the
+discharged load is the treated mass, and the removed mass moves to the
+reaction account — it is never counted in both.

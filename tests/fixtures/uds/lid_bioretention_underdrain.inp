@@ -1,0 +1,46 @@
+; A bio-retention cell with every layer and an underdrain routed to a
+; different node than its host subcatchment's outlet.
+[OPTIONS]
+FLOW_UNITS    CFS
+INFILTRATION  HORTON
+
+[RAINGAGES]
+G1  INTENSITY  0:15  1.0  TIMESERIES  RAIN1
+
+[SUBCATCHMENTS]
+S1  G1  J1  5  40  300  0.5  0
+
+[SUBAREAS]
+S1  0.012  0.1  0.05  0.05  25  OUTLET
+
+[INFILTRATION]
+S1  3.0  0.5  4  7  0
+
+[JUNCTIONS]
+J1  100  4
+J2  99   4
+
+[OUTFALLS]
+O1  97  FREE
+
+[CONDUITS]
+C1  J1  O1  300  0.013  0  0
+C2  J2  O1  300  0.013  0  0
+
+[XSECTIONS]
+C1  CIRCULAR  1.5  0  0  0
+C2  CIRCULAR  1.5  0  0  0
+
+[LID_CONTROLS]
+BC1  BC
+BC1  SURFACE  6   0.25  0.1  1.0  5
+BC1  SOIL     24  0.5   0.2  0.1  0.5  10  3.5
+BC1  STORAGE  12  0.75  0.5  0
+BC1  DRAIN    2   0.5   6    0    0    0
+
+[LID_USAGE]
+S1  BC1  1  1000  20  0  50  0  *  J2
+
+[TIMESERIES]
+RAIN1  0:00  1.0
+RAIN1  1:00  0.0

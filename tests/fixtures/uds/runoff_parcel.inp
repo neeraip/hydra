@@ -1,0 +1,34 @@
+; One subcatchment with sub-areas and Horton infiltration draining to a
+; junction: the minimal rainfall-runoff pathway.
+[OPTIONS]
+FLOW_UNITS    CFS
+INFILTRATION  HORTON
+
+[RAINGAGES]
+G1  INTENSITY  0:15  1.0  TIMESERIES  RAIN1
+
+[SUBCATCHMENTS]
+S1  G1  J1  10  25  500  0.5  0
+
+[SUBAREAS]
+S1  0.012  0.1  0.05  0.05  25  OUTLET
+
+[INFILTRATION]
+S1  3.0  0.5  4  7  0
+
+[JUNCTIONS]
+J1  100  4
+
+[OUTFALLS]
+O1  98  FREE
+
+[CONDUITS]
+C1  J1  O1  400  0.013  0  0
+
+[XSECTIONS]
+C1  CIRCULAR  1.5  0  0  0
+
+[TIMESERIES]
+RAIN1  0:00  0.5
+RAIN1  1:00  1.0
+RAIN1  2:00  0.0

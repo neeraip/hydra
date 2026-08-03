@@ -91,19 +91,38 @@ pub fn list_projects(app: tauri::AppHandle) -> Result<Vec<Project>, String> {
     Ok(projects)
 }
 
-/// Resolve an engine key, refusing anything this build cannot actually run
+/// Engines whose projects this GUI can create, edit, and run.
+///
+/// The registry says what this *build of Hydra* can simulate; this list says
+/// what this *GUI* can edit. The two differ when an engine ships CLI-first:
+/// available in the registry (and runnable through `hydra-cli`), but with no
+/// editor, canvas, or run-queue support here yet.
+const GUI_EDITABLE_ENGINES: &[&str] = &["wds"];
+
+/// Resolve an engine key, refusing anything this GUI cannot actually edit
 /// (hydra-common spec §2.3).
 ///
-/// The two failure modes are deliberately distinct in the message: an
-/// unknown key means the project came from a newer Hydra, while a planned
-/// key means the engine is registered but unimplemented. Collapsing them
-/// would leave a user unable to tell "upgrade Hydra" from "wait for it".
-fn require_available_engine(key: &str) -> Result<&'static hydra::common::EngineDescriptor, String> {
+/// The three failure modes are deliberately distinct in the message: an
+/// unknown key means the project came from a newer Hydra, a planned key
+/// means the engine is registered but unimplemented, and an available but
+/// non-editable key means the engine runs from the CLI only. Collapsing them
+/// would leave a user unable to tell "upgrade Hydra" from "wait for it"
+/// from "use the CLI".
+fn require_gui_editable_engine(
+    key: &str,
+) -> Result<&'static hydra::common::EngineDescriptor, String> {
     let descriptor = hydra::common::engine_by_key(key)
         .map_err(|_| format!("unknown engine {key:?} — this build of Hydra does not have it"))?;
     if !descriptor.is_available() {
         return Err(format!(
             "{} modelling is not available yet in this build of Hydra",
+            descriptor.label
+        ));
+    }
+    if !GUI_EDITABLE_ENGINES.contains(&descriptor.key) {
+        return Err(format!(
+            "{} projects are not supported in the Hydra GUI yet — run these \
+             models with the hydra CLI",
             descriptor.label
         ));
     }
@@ -206,9 +225,9 @@ pub fn create_project(
 ) -> Result<Project, String> {
     validate_id(&id)?;
     // The engine key is persisted into meta.json and never rewritten, so a
-    // key that this build cannot run must be refused here rather than
+    // key that this GUI cannot edit must be refused here rather than
     // producing a project that opens into a permanent unsupported state.
-    require_available_engine(&engine)?;
+    require_gui_editable_engine(&engine)?;
     let app_data = app_data_dir(&app)?;
 
     let (inp_bytes, node_count, link_count) =
@@ -1329,7 +1348,7 @@ pub async fn open_and_load_network(
 ) -> Result<Option<ImportedModel>, String> {
     use tauri_plugin_dialog::DialogExt;
 
-    let descriptor = require_available_engine(&engine)?;
+    let descriptor = require_gui_editable_engine(&engine)?;
 
     // The dialog call blocks until the user answers — run it on the blocking
     // pool so it does not tie up an async runtime worker for that whole time.
@@ -1356,8 +1375,8 @@ pub async fn open_and_load_network(
         .unwrap_or("")
         .to_string();
     let bytes = std::fs::read(&path_buf).map_err(|e| e.to_string())?;
-    // `require_available_engine` has already narrowed this to the one engine
-    // with an implementation. Matching on the key rather than calling the wds
+    // `require_gui_editable_engine` has already narrowed this to the one
+    // engine the GUI edits. Matching on the key rather than calling the wds
     // parser unconditionally makes the next engine a compile-time decision
     // instead of a silently wrong parse.
     //
@@ -1960,22 +1979,25 @@ mod tests {
     // ── engine gating ────────────────────────────────────────────────────
 
     #[test]
-    fn only_an_implemented_engine_may_back_a_new_project() {
-        assert_eq!(require_available_engine("wds").unwrap().key, "wds");
+    fn only_a_gui_editable_engine_may_back_a_new_project() {
+        assert_eq!(require_gui_editable_engine("wds").unwrap().key, "wds");
 
-        // Planned: registered and presentable, but nothing can run it. The
-        // wizard disables these cards; this is the backstop for a caller
-        // that ignores the card state.
-        for planned in ["uds", "och"] {
-            let err = require_available_engine(planned).unwrap_err();
+        // Registered but not GUI-editable — planned engines and CLI-first
+        // ones alike. The wizard disables these cards; this is the backstop
+        // for a caller that ignores the card state. Which message each key
+        // gets depends on its registry status, so assert only the refusal
+        // and that it is not the unknown-key one.
+        for key in ["uds", "och"] {
+            let err = require_gui_editable_engine(key).unwrap_err();
             assert!(
-                err.contains("not available yet"),
-                "{planned} rejection should say it is unimplemented, got: {err}"
+                err.contains("not available yet") || err.contains("not supported in the Hydra GUI"),
+                "{key} rejection should say why it cannot back a project, got: {err}"
             );
+            assert!(!err.contains("unknown engine"), "got: {err}");
         }
 
         // Unknown: a different failure with a different remedy (upgrade).
-        let err = require_available_engine("zzz").unwrap_err();
+        let err = require_gui_editable_engine("zzz").unwrap_err();
         assert!(err.contains("unknown engine"), "got: {err}");
         assert!(!err.contains("not available yet"), "got: {err}");
     }

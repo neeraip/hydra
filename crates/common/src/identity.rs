@@ -134,7 +134,7 @@ pub const ENGINES: &[EngineDescriptor] = &[
         accent: "#7a6ff0",
         summary: "Stormwater and wastewater collection network simulation — \
                   runoff, routing, and water quality on the SWMM data model.",
-        status: EngineStatus::Planned,
+        status: EngineStatus::Available,
         import: &[ImportFormat {
             label: "SWMM input file",
             extensions: &["inp"],
@@ -200,7 +200,7 @@ mod tests {
     }
 
     #[test]
-    fn wds_is_the_only_available_engine() {
+    fn wds_and_uds_are_the_available_engines() {
         // Guards the availability contract in both directions: adding an
         // engine implementation without flipping its status leaves it
         // unusable, and flipping a status without an implementation lets
@@ -210,8 +210,7 @@ mod tests {
             .filter(|e| e.is_available())
             .map(|e| e.key)
             .collect();
-        assert_eq!(available, ["wds"]);
-        assert_eq!(engine_by_key("uds").unwrap().status, EngineStatus::Planned);
+        assert_eq!(available, ["wds", "uds"]);
         assert_eq!(engine_by_key("och").unwrap().status, EngineStatus::Planned);
     }
 
@@ -304,7 +303,7 @@ mod tests {
         // Spec §2.3: "planned" and "unknown" are distinct states. Conflating
         // them would make a planned engine indistinguishable from one this
         // build has never heard of.
-        assert!(engine_by_key("uds").is_ok());
-        assert!(!engine_by_key("uds").unwrap().is_available());
+        assert!(engine_by_key("och").is_ok());
+        assert!(!engine_by_key("och").unwrap().is_available());
     }
 }

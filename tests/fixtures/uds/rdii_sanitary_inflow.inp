@@ -1,0 +1,41 @@
+; Sanitary base flow with patterns plus RDII from a unit-hydrograph
+; group.
+[OPTIONS]
+FLOW_UNITS  CFS
+
+[RAINGAGES]
+G1  INTENSITY  1:00  1.0  TIMESERIES  RAIN1
+
+[JUNCTIONS]
+J1  100  4
+
+[OUTFALLS]
+O1  97  FREE
+
+[CONDUITS]
+C1  J1  O1  400  0.013  0  0
+
+[XSECTIONS]
+C1  CIRCULAR  1.5  0  0  0
+
+[DWF]
+J1  FLOW  0.02  HOURLY1
+
+[PATTERNS]
+HOURLY1  HOURLY  0.8 0.7 0.6 0.6 0.7 0.9
+HOURLY1          1.1 1.3 1.4 1.3 1.2 1.1
+HOURLY1          1.0 1.0 1.0 1.1 1.2 1.3
+HOURLY1          1.3 1.2 1.1 1.0 0.9 0.8
+
+[HYDROGRAPHS]
+UH1  G1
+UH1  ALL  SHORT   0.033  1.0  2.0
+UH1  ALL  MEDIUM  0.050  3.0  2.0
+UH1  ALL  LONG    0.017  5.0  2.0
+
+[RDII]
+J1  UH1  12.5
+
+[TIMESERIES]
+RAIN1  0:00  0.5
+RAIN1  1:00  0.0

@@ -4,14 +4,16 @@
 //! complete user-facing API so that downstream users depend on a single crate
 //! with all internal dependency versions pre-pinned and known to be compatible.
 //!
-//! Hydra is a suite of domain engines. Water distribution (`wds`) is the engine
-//! implemented today and the source of every simulation type re-exported below;
-//! urban drainage (`uds`) and open channel (`och`) are registered in
+//! Hydra is a suite of domain engines. Water distribution (`wds`) is the
+//! original engine and the source of every unprefixed simulation type
+//! re-exported below; urban drainage ([`uds`], SWMM data model) ships as a
+//! namespaced module. Open channel (`och`) is registered in
 //! [`common::ENGINES`] as [`common::EngineStatus::Planned`] — reserved and
-//! presentable, but with no implementation behind them. Resolve an engine
+//! presentable, but with no implementation behind it. Resolve an engine
 //! through the registry rather than assuming which one a project uses.
 //!
-//! PLANNED-ENGINE: uds,och — revise the paragraph above as each engine ships.
+//! PLANNED-ENGINE: och — revise the paragraph above when the open channel
+//! engine ships.
 //!
 //! # Quick start
 //!
@@ -201,6 +203,19 @@ pub use hydra_common as common;
 /// and `uds` both claim `.inp` — so ask [`engines::route`] rather than
 /// assuming, and never fall back to a default engine.
 pub use hydra_engines as engines;
+
+// ── Urban drainage engine ─────────────────────────────────────────────────────
+
+/// The urban drainage engine (`uds`): runoff, dynamic-wave routing, and
+/// water quality on the SWMM data model.
+///
+/// Namespaced rather than flattened because its vocabulary overlaps the
+/// water-distribution types above (both have networks, simulations, and
+/// options). The session API is [`uds::simulation::engine::Simulation`]:
+/// `open` a model from its input text, `step`/`run` it, then write results
+/// with `write_out` and `write_report`. Model text is supplied in memory;
+/// the engine performs no file I/O.
+pub use hydra_engine_uds as uds;
 
 /// Report blocks the water-distribution engine can produce, per the
 /// `common` reportable-output contract.

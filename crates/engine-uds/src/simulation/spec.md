@@ -29,6 +29,13 @@ false rather than raising an error — file semantics, adopted — but
 validation warns on a premise that can never hold, rather than leaving it
 silently inert.
 
+Premise comparisons — and the constant values in actions — read in the
+**file's unit system**, the same boundary rule as §14.6's expressions: the
+observed quantity is presented in the units its author wrote the rule for,
+which also keeps the last-compared value pair that curve lookups and PID
+set-points consume in those units. Time-valued quantities compare in days,
+matching the predecessor's clock.
+
 **Boolean structure**: `AND` and `OR` combine premises with conventional
 precedence — `A AND B OR C` means `(A AND B) OR C`.
 
@@ -71,11 +78,13 @@ calibrated model depends on.
 
 Named variables and expressions, treatment relations (§8), and custom
 groundwater relations (§3) share one expression language: three-level
-precedence (addition, multiplication, exponentiation binding tightest),
-unary minus where no operand precedes, scientific-notation literals,
-case-insensitive names resolved through the consumer's vocabulary, and
-nineteen functions (`sin cos tan cot asin acos atan acot sinh cosh tanh coth
-abs sgn sqrt log log10 exp step`).
+precedence (addition, multiplication, exponentiation binding tightest and
+associating rightward, so `a^b^c` is `a^(b^c)`), unary minus where no
+operand precedes — negating the whole multiplicative term it opens, so
+`-a·b^2` is `-(a·b^2)` — scientific-notation literals, case-insensitive
+names resolved through the consumer's vocabulary, and nineteen functions
+(`sin cos tan cot asin acos atan acot sinh cosh tanh coth abs sgn sqrt log
+log10 exp step`).
 
 Evaluation is **total**: roots and logarithms of non-positive arguments,
 powers of non-positive bases, division by zero, and any NaN result evaluate
@@ -158,7 +167,12 @@ contract of §12.3 persists; they are one design.
 An event list restricts routing to date windows: between events the routing
 step stretches to the next hydrology or reporting time, no lateral inflows
 apply, and no flow or constituent routing occurs — hydrology continues,
-network state freezes. Overlapping events clip to the next event's start.
+network state freezes. Rules, however, are **operator forcing, not routed
+state**: they evaluate on their §9.1 clock through the gap, their actions
+landing on the frozen settings, so the network resumes in the operating
+state the schedule demands — a time-triggered pump command inside a gap
+fires at its appointed time, never late. Overlapping events clip to the
+next event's start.
 These are user-declared semantics ("only route when it matters") and are
 adopted.
 

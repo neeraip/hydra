@@ -33,7 +33,9 @@ solar declination
 $$\delta = 0.40928\cos\!\big(0.017202\,(172 - d)\big), \qquad
 \omega_h = 3.8197\arccos(-\tan\delta\tan\varphi),$$
 
-with $d$ the day of year and $\varphi$ the site latitude, half-sine arcs
+with $d$ the day of year and $\varphi$ the site latitude (the `[SNOWMELT]`
+declaration when present, else the predecessor's default of 40°N — never
+the equator, whose day-length is seasonless), half-sine arcs
 fitted between successive extremes in three branches over the day, the
 overnight limb spanning from the previous day's maximum so days join
 continuously. Saturation vapour pressure follows from the same temperature
@@ -128,8 +130,17 @@ back along the recovery curve in dry weather.
 **Modified Horton**: capacity declines with **cumulative excess
 infiltration** $F_e$ (volume above $f_\infty$),
 $f_p = \max(f_0 - k_d F_e,\ f_\infty)$ — better behaved under light rain —
-fully explicit, with dry-weather decay $F_e \leftarrow F_e e^{-k_r\Delta t}$
-and the predecessor's $F_{max}$ semantics.
+fully explicit, with dry-weather decay $F_e \leftarrow F_e e^{-k_r\Delta t}$.
+The optional $F_{max}$ cap is a **finite store above the steady drainage**:
+the surface seals (zero infiltration) once $F_e$ reaches $F_{max}$, with
+$F_e$ capped there, and the same dry-weather decay reopens it. The steady
+$f_\infty$ share never counts against the cap — that water genuinely
+drains away.
+
+> **DEVIATION from SWMM:** the predecessor's cap line is inverted
+> (`Fe = MAX(Fe, Fmax)` where a minimum is evidently meant), so any wet
+> step under a configured cap instantly seals its surface. The cap's
+> documented meaning is implemented; the defect is not adopted.
 
 For both Horton forms, degenerate parameters ($f_0 = f_\infty$ or
 $k_d = 0$) mean constant capacity $f_0$; but **$f_0 < f_\infty$ yields zero
@@ -184,14 +195,26 @@ with no roughness passing percolation straight through rather than sealing);
 infiltration trenches (no soil layer, one end-limited surface-to-storage
 flux); permeable pavement (a clog-reduced permeability intake in place of
 Green–Ampt, optional soil layer); rain barrels (pure storage, sealed, no
-evaporation, intake limited by freeboard *plus* concurrent drain outflow);
+evaporation, intake limited by freeboard *plus* concurrent drain outflow,
+and a drain held shut until continuously dry weather has outlasted the
+configured delay — dryness judged by the parcel's rainfall rate falling
+below the 0.001 in/hr minimum-runoff threshold, never by the unit's total
+inflow, so the receding Manning tail captured from tributary area cannot
+hold the drain shut indefinitely; a **zero** delay never latches the drain,
+which then discharges during rain; the drain-delay clock starts at the
+configured delay, so a run beginning dry opens the drain only after that
+much dry time; and a **covered** storage layer excludes direct rainfall
+from the barrel's intake and nothing else — cover is the predecessor's
+rain-barrel-only flag, never an exfiltration or evaporation seal);
 rooftop disconnection (a lone surface layer whose gutter-capacity drain
 pre-empts overflow); and vegetative swales (trapezoidal depth-varying
 geometry, balance written on volume, widths floored at 0.1524 m with the
 side slope recomputed to keep the section consistent).
 
 **Constitutive fluxes** echo §3.3 with measure-specific parameters:
-surface-to-soil intake is modified Green–Ampt (with the stated pavement and
+surface outflow above the berm is Manning flow at the §3.2 α — the
+unit's width over its area included, a widthless unit spilling its
+excess directly; surface-to-soil intake is modified Green–Ampt (with the stated pavement and
 swale exceptions, including the swale's dependence on the parent parcel's
 own infiltration model); soil percolation is the exponential
 $K_{2S}e^{-k_{slope}(\phi_2 - \theta_2)}$, zero below field capacity, on the
@@ -199,8 +222,14 @@ layer's own conductivity slope; exfiltration is the native soil's saturated
 conductivity, capped by aquifer storability where §4.1 is modelled;
 evapotranspiration cascades top-down with the predecessor's suppression
 rules; the underdrain is the power relation $q_3 = C_{3D} h_3^{\eta_{3D}}$
-with its head regimes, hysteretic open/close thresholds, and optional
-multiplier curve — its coefficients unit-dependent per §14.6.
+with its head regimes — the head is the storage layer's water depth, and
+only once storage is full does it stack upward: first the saturated-excess
+fraction of the soil layer, $(\theta_2 - \theta_{FC})/(\phi_2 -
+\theta_{FC})$ of its thickness, then, only when the soil is fully
+saturated, the ponded surface depth — plus hysteretic open/close
+thresholds on that same stacked head and an optional multiplier curve.
+Its coefficients are unit-dependent per §14.6, the multiplier curve read
+against the offset-relative head in the file's rain-depth unit.
 
 **The limiter cascade is normative.** Each flux is clipped to what its
 source supplies before the layer beneath is asked what it accepts —
@@ -215,9 +244,11 @@ its media pass water.
 hydrology step — an update that is mass-conserving by construction, every
 flux clipped to the volume actually present, with the rate-sampling error
 governed by the wet-step bound of §10.1. The swale, whose geometry varies
-with depth, advances by the iterated trapezoidal method to a stated
-tolerance. This is a deliberate, recorded exception to blanket §3.5
-integration: the cascade's clipped fluxes are discontinuous in state, where
+with depth, advances by the iterated trapezoidal method — depth updated
+with equally weighted start- and end-of-step rates, iterated to a 1 mm
+depth tolerance with at most twenty passes, the final pass accepted as-is
+if the tolerance is still unmet. This is a deliberate, recorded exception
+to blanket §3.5 integration: the cascade's clipped fluxes are discontinuous in state, where
 the embedded-pair integrator presumes smoothness, and the balance form is
 exact for the rates given.
 
@@ -226,13 +257,28 @@ and (separately) pervious-area runoff, validated to sum to at most 100 %; a
 combined footprint within 0.1 % of the parcel area snapped equal to it; and
 run-on from upstream reaching units only when the footprint equals the
 whole parcel — the snap is what makes that gate reachable. Direct rainfall
-always lands on the unit. Surface overflow joins parcel runoff, exfiltration
+always lands on the unit (the covered rain barrel excepted). Surface overflow joins parcel runoff, exfiltration
 joins infiltration, and drain flow routes separately — to the parcel's
 outlet by default, to another parcel one hydrology step delayed, to a vertex
-interpolated per routing step. Initial saturation pre-fills soil and storage
+interpolated per routing step. A unit flagged **return-to-pervious**
+instead sends its overflow and unrouted drain flow back onto the parcel's
+pervious sub-area, one hydrology step delayed like run-on — a second
+infiltration opportunity, the predecessor's semantics for the flag.
+
+> **CORRESPONDENCE:** the predecessor's return-to-pervious accounting can
+> *increase* a parcel's reported runoff volume by half over its
+> measure-free twin under identical rain — water counted again as it
+> recirculates. Adding a passive measure cannot create runoff; this
+> engine's loop conserves, and its totals differ from the predecessor's
+> on returned-flow models accordingly. Initial saturation pre-fills soil and storage
 and shrinks the Green–Ampt deficit accordingly. Gravel and pavement layers
-may clog on cumulative treated volume, and pavement permeability may
-regenerate on a fixed-day cycle by a stated degree. Outflow concentrations
+may clog on cumulative treated volume: the file's clogging factor scales
+the layer's own void depth — thickness × void fraction, further × the
+pervious paver fraction for pavement — into a treatable depth, and
+conductivity falls linearly to zero as cumulative unit inflow approaches
+it. Pavement permeability may regenerate on a fixed-day cycle by a stated
+degree, the regeneration discounting the pavement's treated-volume account;
+the storage layer's account never regenerates. Outflow concentrations
 are volume-based per the predecessor: load reduction is runoff reduction,
 with optional per-constituent percent removals on drain loads only.
 
@@ -293,9 +339,18 @@ through the interaction terms — and negative $f_G$ (bank storage) is
 admitted when the interaction term is unused. The flux is bounded by
 aquifer storage, unsaturated-zone acceptance, and vertex supply. Custom
 expressions asymmetrically **replace** deep percolation but **add to**
-lateral discharge, and evaluate per §14.6's expression rule. Coefficients
-are unit-dependent per §14.6. Infiltrate arrives at the vertex clean unless
-a constant concentration is assigned.
+lateral discharge, and evaluate per §14.6's expression rule in the file's
+unit system. Their vocabulary is eleven names: `HGW` water-table height
+and `HSW` surface-water height above the aquifer bottom, `HCB` the
+threshold height $h^*$, `HGS` the total aquifer depth (all in the file's
+length unit); `KS` saturated and `K` current unsaturated conductivity,
+`FI` surface infiltration, and `FU` upper-zone percolation (rain-rate
+unit); `THETA` moisture and `PHI` porosity (dimensionless); and `A` the
+parcel area (land-area unit). The deep-percolation result reads in the
+rain-rate unit; the lateral result in the lateral-coefficient basis of
+§14.6 (ft³/s per acre, m³/s per hectare). Coefficients are unit-dependent
+per §14.6. Infiltrate arrives at the vertex clean unless a constant
+concentration is assigned.
 
 ### 4.2 Snow
 
@@ -339,10 +394,18 @@ depletion curves** with Anderson's temporary-curve adjustment after fresh
 snowfall on partial cover; melt and cold-content exchange scale by covered
 fraction. When the plowable surface exceeds its trigger depth (defaulted
 effectively off), its entire depth redistributes by five constant fractions
-— other sub-areas, another parcel, out of system, immediate melt. A pack
-below $10^{-3}$ in flushes as immediate melt. The net per-surface result
-replaces gage rainfall as input to §3.2 and §3.3; snow does not alter
-infiltration or roughness.
+— other sub-areas, another parcel, out of system, immediate melt. A
+transfer to a parcel that cannot hold snow — no pack, or no pervious
+surface — leaves the system with the plowed export rather than vanishing.
+A pack below $10^{-3}$ in flushes as immediate melt. The net per-surface
+result replaces gage rainfall as input to §3.2 and §3.3; snow does not
+alter infiltration or roughness.
+
+The pack's volume basis is the **full parcel area**, control-measure
+footprint included: the footprint receives the impervious surfaces' melt
+output as its precipitation input, so its share of snowfall stores on the
+same basis it later melts from — precipitation booked on arrival, melt
+booked on release, the §11.1 surface ledger closing at every step.
 
 ### 4.3 Sewer Inflow (RDII)
 

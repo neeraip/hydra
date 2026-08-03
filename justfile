@@ -47,6 +47,10 @@ test:
 test-engine:
     cargo test -p hydra-engine-wds
 
+# Run hydra-engine-uds tests only
+test-engine-uds:
+    cargo test -p hydra-engine-uds
+
 # Run hydra-sdk tests only
 test-sdk:
     cargo test -p hydra-sdk
@@ -236,7 +240,7 @@ ci: deny check-frontend-lockfile lint docs-api test check-crs-catalog build-fron
 
 # When bumping multiple tracks, always run this first — it updates the hydra-sdk dep pin in hydra-cli.
 # Usage: just bump patch|minor|major [--push|--no-push] (omit flag to be prompted)
-# Bump the workspace library version (hydra-engine-wds, hydra-sdk) and tag v{version}
+# Bump the workspace library version (common, engines, report, sdk) and tag v{version}
 bump version push_flag="":
     @python3 scripts/bump.py {{version}} {{push_flag}}
 

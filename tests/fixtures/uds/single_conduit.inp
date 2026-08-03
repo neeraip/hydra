@@ -1,0 +1,17 @@
+; The smallest routable network: one junction draining through one
+; circular conduit to a free outfall.
+[OPTIONS]
+FLOW_UNITS       CFS
+FLOW_ROUTING     DYNWAVE
+
+[JUNCTIONS]
+J1  100  4
+
+[OUTFALLS]
+O1  98  FREE
+
+[CONDUITS]
+C1  J1  O1  400  0.013  0  0
+
+[XSECTIONS]
+C1  CIRCULAR  1.5  0  0  0

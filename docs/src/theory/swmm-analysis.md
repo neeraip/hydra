@@ -1,10 +1,9 @@
 # SWMM: A Conceptual and Mathematical Analysis
 
-<!-- PLANNED-ENGINE: uds — drop the first paragraph of this banner when the urban drainage engine ships. -->
-> **Hydra implements none of this yet.** This document analyses SWMM itself. It
-> is groundwork for the [urban drainage engine](../engines.md), which is
-> registered but **planned** — no implementation exists behind it, and nothing
-> below describes behaviour you can run in Hydra today.
+> **This document analyses SWMM itself, not Hydra.** It is the groundwork the
+> [urban drainage engine](../engines.md) was built from; the engine's own
+> behaviour is defined by its specifications, which deliberately deviate from
+> SWMM where the analysis found defects.
 >
 > It is also a **pinned snapshot**: it describes SWMM 5.2.4 at tag `OWA_v5.2.4`
 > faithfully, defects included. Where it records a bug or an inconsistency, that

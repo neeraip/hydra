@@ -7,7 +7,7 @@ license.workspace = true
 repository.workspace = true
 homepage.workspace = true
 documentation.workspace = true
-description = "Water infrastructure simulation — EPANET-compatible extended-period water distribution simulation"
+description = "Water infrastructure simulation — EPANET-compatible water distribution and SWMM-compatible urban drainage simulation"
 readme = "README.md"
 keywords = ["epanet", "water", "hydraulics", "simulation", "network"]
 categories = ["science", "simulation"]
@@ -15,6 +15,7 @@ publish = true
 
 [dependencies]
 hydra-common = { path = "../common", version = "7.0.1" }
+hydra-engine-uds = { path = "../engine-uds", version = "7.0.1" }
 hydra-engine-wds = { path = "../engine-wds", version = "7.0.1" }
 hydra-engines = { path = "../engines", version = "7.0.1" }
 hydra-report = { path = "../report", version = "7.0.1" }

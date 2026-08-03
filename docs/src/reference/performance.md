@@ -4,7 +4,7 @@ Hydra is fast enough to run large extended-period simulations interactively. The
 
 ## End-to-end timings
 
-Each figure is the **best of 5 runs** (after a warm-up) of the full command-line workflow on one network: parse the `.inp`, run the complete extended-period simulation, and produce the summary report. Networks are the ones bundled in `tests/benchmarks/`.
+Each figure is the **best of 5 runs** (after a warm-up) of the full command-line workflow on one network: parse the `.inp`, run the complete extended-period simulation, and produce the summary report. Networks are the ones bundled in `tests/benchmarks/wds/`.
 
 Measured on an Apple M5 Pro (macOS 26.5), release build (`cargo build --release`, fat LTO, `codegen-units = 1`).
 

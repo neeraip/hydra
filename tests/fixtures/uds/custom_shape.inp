@@ -1,0 +1,20 @@
+; A conduit whose cross-section is a user-drawn shape curve.
+[OPTIONS]
+FLOW_UNITS  CFS
+
+[JUNCTIONS]
+J1  100  6
+
+[OUTFALLS]
+O1  97  FREE
+
+[CONDUITS]
+C1  J1  O1  300  0.013  0  0
+
+[XSECTIONS]
+C1  CUSTOM  4  SHAPE1
+
+[CURVES]
+SHAPE1  SHAPE  0.1  0.4
+SHAPE1         0.5  1.0
+SHAPE1         0.9  0.6

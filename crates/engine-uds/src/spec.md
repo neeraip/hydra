@@ -272,11 +272,20 @@ concurrently is a change requiring the same treatment as any other.
 
 ### 1.8 Status
 
-<!-- PLANNED-ENGINE: uds — replace this subsection with the engine's supported
-     capability set when the urban drainage engine ships. -->
+The urban drainage engine is registered as *available*: models are opened,
+validated, simulated, and written per this specification's sections — model
+and import (§2, §14), hydrology (§3, §4), section geometry (§5), dynamic-wave
+routing (§6), structures and inlets (§7), transport (§8), controls (§9),
+orchestration (§10), accounting and statistics (§11), the session (§12), and
+interoperability (§14).
 
-This specification is under development and the engine is not yet implemented.
-The urban drainage engine is registered as *planned*: its identity and import
-formats are declared, and models cannot yet be opened or simulated. A section
-absent from the specification is unspecified behaviour rather than deferred
-behaviour — it is not implemented until it is specified.
+Deferred capabilities are typed refusals, never approximations: a model
+needing one is refused with a named reason. Currently deferred: rainfall,
+runoff, and RDII *interface-file formats* (§14.8 specifies routing and
+hotstart files; the other three are declared but not yet served),
+file-sourced rain gages (supply the record as a series), the engine's own
+native checkpoint format (§12.3 — predecessor hotstart files version 3+
+are served), and archival climate-record formats (user-format climate
+files are served). A section absent from the specification remains unspecified
+behaviour rather than deferred behaviour — it is not implemented until it
+is specified.

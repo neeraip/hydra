@@ -113,8 +113,9 @@ Applications must treat an unknown key (e.g. a project created by a newer
 Hydra carrying an engine this build lacks) as an explicit unsupported
 state, never as a fallback to a default engine.
 
-v1 ships three registered engines — `wds` (available), `uds` (planned),
-and `och` (planned) — in that order.
+The registry holds three registered engines — `wds` (available), `uds`
+(available), and `och` (planned) — in that order. `uds` shipped planned
+through v1 and became available with its engine implementation.
 
 ### 2.5 Recognition
 

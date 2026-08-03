@@ -1,0 +1,31 @@
+; A rain barrel: covered storage with a drain that opens after a delay.
+[OPTIONS]
+FLOW_UNITS    CFS
+INFILTRATION  HORTON
+
+[RAINGAGES]
+G1  INTENSITY  0:15  1.0  TIMESERIES  RAIN1
+
+[SUBCATCHMENTS]
+S1  G1  O1  1  60  100  0.02  0
+
+[SUBAREAS]
+S1  0.012  0.1  0.05  0.05  25  OUTLET
+
+[INFILTRATION]
+S1  3.0  0.5  4  7  0
+
+[OUTFALLS]
+O1  97  FREE
+
+[LID_CONTROLS]
+RB1  RB
+RB1  STORAGE  36  1000  0  0  YES
+RB1  DRAIN    1   0.5   0  6  0  0
+
+[LID_USAGE]
+S1  RB1  4  10  1  0  25  0
+
+[TIMESERIES]
+RAIN1  0:00  1.0
+RAIN1  1:00  0.0

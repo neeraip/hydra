@@ -348,16 +348,16 @@ pub struct NetworkState(pub parking_lot::Mutex<NetworkStateInner>);
 /// telling the user their network is invalid would be simply untrue (model spec
 /// §4.1.2).
 ///
-/// PLANNED-ENGINE: uds — the engine that owns a SWMM model is registered but
-/// not implemented, so the message says the model is unsupported rather than
-/// telling the user to open it with an engine they cannot select. Restore the
-/// "open it with the {tool} engine" wording once that engine ships.
+/// The named tool's engine may exist without being editable here: SWMM
+/// models run through the urban drainage engine CLI-first, so the message
+/// points at the CLI rather than claiming Hydra cannot run the model.
+/// Revise to "open it with the {tool} engine" once the GUI can.
 pub(crate) fn format_read_error(err: hydra::io::ReadError) -> String {
     match err {
         hydra::io::ReadError::ForeignDialect { tool, section } => format!(
             "This is a {tool} model, not a water-distribution one. \
              It declares a [{section}] section, which EPANET has no concept of. \
-             Hydra cannot open {tool} models yet."
+             The GUI cannot open {tool} models yet — the hydra CLI can run them."
         ),
         other => other.to_string(),
     }

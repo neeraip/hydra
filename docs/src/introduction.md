@@ -5,15 +5,15 @@ Hydra is a water infrastructure simulation platform written in Rust. It is built
 | Engine | Domain | Source model | Status |
 |---|---|---|---|
 | **Water Distribution** (`wds`) | Pressurised supply networks — hydraulics, water quality, energy | EPANET `.inp` (2.x) | **Available** |
-| **Urban Drainage** (`uds`) | Stormwater and wastewater collection — runoff, routing, quality | SWMM `.inp` | Planned |
+| **Urban Drainage** (`uds`) | Stormwater and wastewater collection — runoff, routing, quality | SWMM `.inp` | **Available** (CLI and SDK) |
 | **Open Channel** (`och`) | Rivers and channels — steady and unsteady flow | HEC-RAS project | Planned |
 
-<!-- PLANNED-ENGINE: uds,och — revise the Status column, and the "engine that ships today" framing below, as each engine ships. -->
-See [Engines](engines.md) for what each engine covers and what "planned" means in practice.
+<!-- PLANNED-ENGINE: och — revise the Status column as each engine ships. -->
+See [Engines](engines.md) for what each engine covers and what each status means in practice.
 
 ## Water Distribution Engine
 
-The engine that ships today. It performs extended-period simulation (EPS) of hydraulic behaviour and water quality dynamics across pressurised pipe networks, computing the full time history of flows, pressures, and constituent concentrations at every node and link.
+Extended-period simulation (EPS) of hydraulic behaviour and water quality dynamics across pressurised pipe networks, computing the full time history of flows, pressures, and constituent concentrations at every node and link.
 
 Unless a page says otherwise, the rest of this documentation describes this engine.
 
@@ -52,3 +52,15 @@ The same principle will apply to each engine Hydra adds: it reads the establishe
 For migration guidance, see [Migrating from EPANET](reference/migrating-from-epanet.md).
 
 See [INP Format Support](reference/inp-format.md) for current EPANET input coverage.
+
+## Urban Drainage Engine
+
+Continuous and event simulation of stormwater and wastewater collection systems on the SWMM data model. It ships CLI-first: the `hydra` CLI and the Rust SDK run SWMM models today, while GUI editing is still to come.
+
+- **Hydrology**: rainfall-runoff on subcatchments with Horton, Green-Ampt, and Curve Number infiltration; LID controls; snowmelt; groundwater; RDII unit hydrographs; climate files and the Hargreaves evaporation relation
+- **Hydraulics**: Preissmann-slot dynamic-wave routing through conduits, pumps, orifices, weirs, and outlets; storage nodes, flow dividers, and HEC-22 street inlets
+- **Water quality**: pollutant buildup and washoff on land uses, node treatment expressions, network transport
+- **Controls**: rule-based controls with priorities and PID modulation
+- **I/O**: SWMM `.inp` input; SWMM-compatible `.out` binary and text report output
+
+The engine models the same physics as SWMM with its own solver and its own convergence and conservation criteria — the same relationship the water distribution engine has to EPANET. Where the predecessor's behaviour is reproduced, substituted, or corrected, the model import says so through named notices rather than silently rewriting.

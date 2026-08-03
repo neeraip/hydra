@@ -12,6 +12,7 @@
 //   4 — internal error (unexpected engine state; please report a bug)
 
 mod report_cmd;
+mod uds_cmd;
 
 use std::io::{IsTerminal, Write};
 use std::process;
@@ -320,13 +321,17 @@ fn run(args: &RunArgs, cli: &Cli) -> i32 {
     // Never by extension: `.inp` belongs to EPANET and SWMM alike. Either the
     // user named an engine, or the model itself has to identify one — there
     // is deliberately no default (common spec §2.5.1).
-    match resolve_engine(args.engine.as_deref(), &bytes) {
+    let engine = match resolve_engine(args.engine.as_deref(), &bytes) {
         Ok(engine) => {
             if cli.verbose_level() > 0 {
                 eprintln!("engine: {} ({})", engine.label, engine.key);
             }
+            engine
         }
         Err(code) => return code,
+    };
+    if engine.key == "uds" {
+        return uds_cmd::run(args, cli, &bytes);
     }
 
     let network = match io::parse(&bytes) {
@@ -1067,7 +1072,7 @@ mod tests {
             .unwrap()
             .parent()
             .unwrap();
-        let inp_path = workspace.join("tests/fixtures/four_node_loop.inp");
+        let inp_path = workspace.join("tests/fixtures/wds/four_node_loop.inp");
         let bytes = match std::fs::read(&inp_path) {
             Ok(b) => b,
             Err(_) => return, // fixture absent in this environment — skip

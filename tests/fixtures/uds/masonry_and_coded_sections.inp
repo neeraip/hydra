@@ -1,0 +1,29 @@
+; Legacy masonry profiles and catalogue-coded sections: an egg, a
+; horseshoe, a gothic, a size-coded horizontal ellipse, a size-coded
+; arch, and a user-dimensioned arch.
+[OPTIONS]
+FLOW_UNITS  CFS
+
+[JUNCTIONS]
+J1  100  6
+J2  99   6
+J3  98   6
+J4  97   6
+J5  96   6
+
+[OUTFALLS]
+O1  95  FREE
+
+[CONDUITS]
+C1  J1  J2  300  0.013  0  0
+C2  J2  J3  300  0.013  0  0
+C3  J3  J4  300  0.013  0  0
+C4  J4  J5  300  0.013  0  0
+C5  J5  O1  300  0.013  0  0
+
+[XSECTIONS]
+C1  EGG          4  0  0  0
+C2  HORSESHOE    4  0  0  0
+C3  GOTHIC       4  0  0  0
+C4  HORIZ_ELLIPSE  3  0  0  0
+C5  ARCH         2  3  0  0

@@ -48,6 +48,7 @@ export {
   type ImportFormat,
   importExtensionLabel,
   isEngineAvailable,
+  isEngineGuiEditable,
   useEngines,
 } from "./engines";
 export * from "./issues";
