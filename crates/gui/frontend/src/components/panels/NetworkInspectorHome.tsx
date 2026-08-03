@@ -5,11 +5,14 @@ import {
 } from "@heroicons/react/16/solid";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useActiveProject } from "../../AppContext";
 import type { SimResultColumn } from "../../canvas/selection-context";
 import type { Link, Node } from "../../hooks";
 import {
+  elementClassHeading,
   formatGenericValue,
   genericUnitLabel,
+  useElementKinds,
   useLinks,
   useNodes,
   useRegions,
@@ -1390,6 +1393,17 @@ export function NetworkInspectorHome({
 
   const internalRegions = useRegions();
   const regions = regionsProp ?? internalRegions;
+  // Tab headings are the engine's words, not ours: a class with exactly one
+  // kind is named for that kind ("Subcatchments"), a class with several by
+  // the class ("Nodes"). Derived from the declared catalog, so a heading
+  // never shifts with the loaded model's contents.
+  const { engine } = useActiveProject();
+  const elementKinds = useElementKinds(engine?.key);
+  const tabHeading: Record<HomeTab, string> = {
+    nodes: elementClassHeading(elementKinds, "point", "Nodes"),
+    links: elementClassHeading(elementKinds, "polyline", "Links"),
+    subcatchments: elementClassHeading(elementKinds, "region", "Regions"),
+  };
   const [tab, setTab] = useState<HomeTab>("nodes");
   const [queryInput, setQueryInput] = useState("");
   const query = useDebouncedValue(queryInput, 120);
@@ -1553,7 +1567,7 @@ export function NetworkInspectorHome({
               onClick={() => setTab(t)}
               className={`inspector-tab${active ? " active" : ""}`}
             >
-              <span style={{ textTransform: "capitalize" }}>{t}</span>
+              <span>{tabHeading[t]}</span>
               {/* While searching, an inactive tab holding matches is accented:
                   the whole point is to be noticed from the other tab. A tab
                   with none is dimmed to the disabled colour so "nothing here"
@@ -1562,7 +1576,7 @@ export function NetworkInspectorHome({
                 data-tooltip={
                   searching
                     ? `${counts[t]} of ${totals[t]} match`
-                    : `${totals[t]} ${t}`
+                    : `${totals[t]} ${tabHeading[t].toLowerCase()}`
                 }
                 data-tooltip-pos="bottom"
                 style={{

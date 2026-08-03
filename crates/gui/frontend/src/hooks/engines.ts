@@ -153,3 +153,78 @@ export function useEngines(): EngineInfo[] {
   }, []);
   return engines;
 }
+
+// ── Element-kind catalog (hydra-common spec §4.1) ───────────────────────────
+
+/** The element classes the contract defines. */
+export type ElementClass = "point" | "polyline" | "region" | "collection";
+
+/** One element kind an engine models, as the engine describes it. */
+export interface ElementKindInfo {
+  id: string;
+  label: string;
+  labelPlural: string;
+  class: ElementClass;
+  /** One- or two-character glyph for dense UI. */
+  badge: string;
+}
+
+// Static per engine — a property of the domain, not of any model.
+const kindCache = new Map<string, ElementKindInfo[]>();
+
+export async function getElementKinds(
+  engine: string,
+): Promise<ElementKindInfo[]> {
+  const hit = kindCache.get(engine);
+  if (hit) return hit;
+  const kinds = await tryInvokeOr<ElementKindInfo[]>(
+    "list_element_kinds",
+    { engine },
+    [],
+  );
+  kindCache.set(engine, kinds);
+  return kinds;
+}
+
+/** The element-kind catalog for `engine`; empty until it resolves. */
+export function useElementKinds(
+  engine: string | null | undefined,
+): ElementKindInfo[] {
+  const [kinds, setKinds] = useState<ElementKindInfo[]>(() =>
+    engine ? (kindCache.get(engine) ?? []) : [],
+  );
+  useEffect(() => {
+    if (!engine) {
+      setKinds([]);
+      return;
+    }
+    let cancelled = false;
+    void getElementKinds(engine).then((list) => {
+      if (!cancelled) setKinds(list);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [engine]);
+  return kinds;
+}
+
+/**
+ * Heading for one element class, from the engine's own catalog: the kind's
+ * plural label when the class holds exactly one kind ("Subcatchments"),
+ * the class's generic name when it holds several ("Nodes").
+ *
+ * Precision when precision is available, generality when it is not — and
+ * either way the words are the engine's, not this layer's. Derived from
+ * the *declared* catalog rather than the loaded model, so a heading never
+ * shifts because a particular network happens to contain one kind.
+ */
+export function elementClassHeading(
+  kinds: ElementKindInfo[],
+  cls: ElementClass,
+  fallback: string,
+): string {
+  const inClass = kinds.filter((k) => k.class === cls);
+  if (inClass.length === 1) return inClass[0].labelPlural;
+  return fallback;
+}

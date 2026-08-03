@@ -130,6 +130,7 @@ fn main() {
             commands::preview_patches,
             commands::get_versions,
             commands::list_engines,
+            commands::list_element_kinds,
             commands::updater_supported,
             commands::get_run_queue,
             commands::enqueue_runs,

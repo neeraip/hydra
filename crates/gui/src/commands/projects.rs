@@ -1863,6 +1863,23 @@ pub fn list_engines() -> &'static [hydra::common::EngineDescriptor] {
 }
 
 #[tauri::command]
+/// The element-kind catalog of one engine (hydra-common spec §4.1): every
+/// kind it models, with the class it belongs to and the engine-authored
+/// singular/plural labels and badge glyph.
+///
+/// Static per engine — a property of the domain, not of any model — so the
+/// frontend may cache it and use it for chrome that must be correct before
+/// a model is loaded (tab headings, legends, badges). Empty for an engine
+/// with no catalog, which reads as "nothing to describe".
+pub fn list_element_kinds(engine: String) -> &'static [hydra::common::ElementKind] {
+    match engine.as_str() {
+        "wds" => hydra::descriptors::ELEMENT_KINDS,
+        "uds" => hydra::uds::descriptors::ELEMENT_KINDS,
+        _ => &[],
+    }
+}
+
+#[tauri::command]
 /// Return the hydra engine and application version strings.
 pub fn get_versions() -> Versions {
     Versions {
