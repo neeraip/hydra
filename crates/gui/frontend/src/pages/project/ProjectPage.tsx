@@ -27,7 +27,9 @@ export function ProjectPage() {
   // instantly even on 46k-element networks.
   const { deferredProjectView: projectView } = useAppState();
   const { project, engine } = useActiveProject();
-  const EditorView = engineComponents(engine?.key).EditorView;
+  const engineViews = engineComponents(engine?.key);
+  const EditorView = engineViews.EditorView;
+  const EngineAnalysisView = engineViews.AnalysisView;
 
   // Dev-only: time from a view-tab switch committing to the next painted
   // frame. Shows up as `[hydra-perf] view-switch-paint` with the view name.
@@ -111,7 +113,7 @@ export function ProjectPage() {
                 minHeight: 0,
               }}
             >
-              <AnalysisView />
+              {EngineAnalysisView ? <EngineAnalysisView /> : <AnalysisView />}
             </div>
             <div
               style={{

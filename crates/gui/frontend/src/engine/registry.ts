@@ -12,6 +12,7 @@
  */
 
 import type { ComponentType } from "react";
+import { UdsAnalysisView } from "./uds/AnalysisView";
 import { UdsEditorView } from "./uds/EditorView";
 import { UdsRunSettingsSummary } from "./uds/RunSettingsSummary";
 import { UdsSettingsView } from "./uds/SettingsView";
@@ -36,6 +37,8 @@ export interface EngineComponents {
   SettingsView?: ComponentType<SettingsViewProps>;
   /** Body of the Editor project view. Absent = the wds element editor. */
   EditorView?: ComponentType;
+  /** Body of the Results project view. Absent = the wds analysis panels. */
+  AnalysisView?: ComponentType;
   /** Whether the settings modal edits (true) or views (false). Drives the
    * edit affordance labels without any engine branching in the modals. */
   settingsEditable: boolean;
@@ -55,6 +58,7 @@ const UDS: EngineComponents = {
   RunSettingsSummary: UdsRunSettingsSummary,
   SettingsView: UdsSettingsView,
   EditorView: UdsEditorView,
+  AnalysisView: UdsAnalysisView,
   settingsEditable: false,
   modelEditable: false,
 };

@@ -155,6 +155,84 @@ pub fn get_report_block_options(
     }
 }
 
+/// One analysis panel: a produced fragment, or why it could not be.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AnalysisBlockDto {
+    pub id: String,
+    pub title: String,
+    /// `"ok"`, `"unavailable"`, or `"failed"`.
+    pub status: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fragment: Option<hydra::common::Fragment>,
+}
+
+/// Produce every catalog block for a target as analysis panels — the
+/// engine's report blocks doubling as the Results view's content (the
+/// analysis-as-blocks convergence). An absent results file yields an empty
+/// list: nothing ran, nothing to analyse.
+#[tauri::command(async)]
+pub fn get_analysis_blocks(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, NetworkState>,
+    project_id: String,
+    scenario_id: Option<String>,
+) -> Result<Vec<AnalysisBlockDto>, String> {
+    validate_target_ids(&project_id, scenario_id.as_deref())?;
+    let app_data = app_data_dir(&app)?;
+    let out_path = results_path_for(&app_data, &project_id, scenario_id.as_deref());
+    if !out_path.exists() {
+        return Ok(Vec::new());
+    }
+    match super::projects::project_engine_key(&app_data, &project_id).as_str() {
+        "uds" => {
+            let network = super::results::uds_network_for_target(
+                &app_data,
+                &state,
+                &project_id,
+                scenario_id.as_deref(),
+            )?;
+            Ok(hydra::uds::report_blocks::report_catalog()
+                .iter()
+                .map(|block| {
+                    match hydra::uds::report_blocks::produce_report_block(
+                        block.id, &out_path, &network, None,
+                    ) {
+                        Ok(fragment) => AnalysisBlockDto {
+                            id: block.id.to_string(),
+                            title: block.title.to_string(),
+                            status: "ok",
+                            reason: None,
+                            fragment: Some(fragment),
+                        },
+                        Err(hydra::common::BlockError::Unavailable { reason }) => {
+                            AnalysisBlockDto {
+                                id: block.id.to_string(),
+                                title: block.title.to_string(),
+                                status: "unavailable",
+                                reason: Some(reason),
+                                fragment: None,
+                            }
+                        }
+                        Err(err) => AnalysisBlockDto {
+                            id: block.id.to_string(),
+                            title: block.title.to_string(),
+                            status: "failed",
+                            reason: Some(err.to_string()),
+                            fragment: None,
+                        },
+                    }
+                })
+                .collect())
+        }
+        // wds keeps its dedicated analytics surface until the Phase-D
+        // convergence moves it onto blocks too.
+        _ => Ok(Vec::new()),
+    }
+}
+
 fn template_path(app_data: &std::path::Path, project_id: &str) -> std::path::PathBuf {
     bundle::project_dir(app_data, project_id).join("report-template.json")
 }
