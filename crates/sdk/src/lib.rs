@@ -204,6 +204,12 @@ pub use hydra_common as common;
 /// assuming, and never fall back to a default engine.
 pub use hydra_engines as engines;
 
+/// The water-distribution engine's published element, quantity, and
+/// result-variable catalogs (hydra-common spec §4–§6) — how an application
+/// presents a wds model and its results without wds knowledge. The urban
+/// drainage engine's counterpart is [`uds::descriptors`].
+pub use hydra_engine_wds::descriptors;
+
 // ── Urban drainage engine ─────────────────────────────────────────────────────
 
 /// The urban drainage engine (`uds`): runoff, dynamic-wave routing, and
