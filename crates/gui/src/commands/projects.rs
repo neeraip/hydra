@@ -1365,6 +1365,62 @@ pub struct ImportedModel {
     /// §2.9 violations, empty when the model is ready to run. Non-empty means
     /// the project will open with these listed in the Issues panel.
     pub findings: Vec<ValidationFindingDto>,
+    /// Repairs applied during import (repair by omission, uds interop
+    /// §14.10): one human-readable entry per line the importer commented
+    /// out. Empty when the file imported as written. Must be surfaced —
+    /// the repair contract forbids applying these silently.
+    pub repairs: Vec<String>,
+}
+
+/// Parse uds model text, applying §14.10 repair-by-omission when that is
+/// the only thing standing between the file and a clean import: when every
+/// refusal is repairable, the offending lines are commented out (original
+/// text preserved behind the `;`) and the text re-read. Returns the served
+/// text, the parsed network, and one message per repair applied.
+fn import_uds_text(
+    text: String,
+) -> Result<(String, hydra::uds::model::Network, Vec<String>), String> {
+    let (network, diags) = hydra::uds::io::objects::parse_network(&text);
+    let errors: Vec<_> = diags.iter().filter(|d| d.kind.is_error()).collect();
+    if errors.is_empty() {
+        return Ok((text, network, Vec::new()));
+    }
+    if !errors.iter().all(|d| d.kind.repairable_by_omission()) {
+        // At least one refusal carries meaning omission would change —
+        // report the first, exactly as before repairs existed.
+        let first = errors
+            .iter()
+            .find(|d| !d.kind.repairable_by_omission())
+            .expect("checked above");
+        return Err(format!("Cannot import this model: {first}"));
+    }
+
+    let lines_to_comment: std::collections::HashSet<usize> =
+        errors.iter().map(|d| d.line).collect();
+    let repaired: String = text
+        .lines()
+        .enumerate()
+        .map(|(i, line)| {
+            if lines_to_comment.contains(&(i + 1)) {
+                format!("; [commented out by Hydra import] {line}")
+            } else {
+                line.to_string()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    let (network, diags) = hydra::uds::io::objects::parse_network(&repaired);
+    if let Some(first) = diags.iter().find(|d| d.kind.is_error()) {
+        // The repair did not converge (should not happen for line-scoped
+        // omissions) — refuse rather than loop.
+        return Err(format!("Cannot import this model: {first}"));
+    }
+    let repairs = errors
+        .iter()
+        .map(|d| format!("Commented out {d}"))
+        .collect();
+    Ok((repaired, network, repairs))
 }
 
 /// Open a native file-open dialog filtered to `engine`'s source-model
@@ -1438,15 +1494,15 @@ pub async fn open_and_load_network(
             network
         }
         "uds" => {
-            // Read-only import: parse errors refuse the file; the model text
-            // is held as-is for the project's model.inp. The wizard preview
-            // and Issues panel for uds arrive with the viewer snapshot — the
-            // returned DTO is empty apart from the file name.
+            // Read-only import: parse errors refuse the file — unless every
+            // refusal is repairable by omission (interop §14.10), in which
+            // case the offending lines are commented out, the repaired text
+            // becomes the project's model.inp, and the repairs are reported.
+            // The wizard preview and Issues panel for uds arrive with the
+            // viewer snapshot — the returned DTO is empty apart from the
+            // file name.
             let text = String::from_utf8_lossy(&bytes).into_owned();
-            let (network, diags) = hydra::uds::io::objects::parse_network(&text);
-            if let Some(first) = diags.iter().find(|d| d.kind.is_error()) {
-                return Err(format!("Cannot import this model: {first}"));
-            }
+            let (text, network, repairs) = import_uds_text(text)?;
             let dto = NetworkDto {
                 file_stem,
                 ..Default::default()
@@ -1464,6 +1520,7 @@ pub async fn open_and_load_network(
                 node_count,
                 link_count,
                 findings: Vec::new(),
+                repairs,
             }));
         }
         other => return Err(format!("no importer for engine {other:?}")),
@@ -1492,6 +1549,7 @@ pub async fn open_and_load_network(
         node_count,
         link_count,
         findings,
+        repairs: Vec::new(),
     }))
 }
 
@@ -2106,6 +2164,34 @@ mod tests {
     // ── engine gating ────────────────────────────────────────────────────
 
     /// A created uds project must contain the imported SWMM text, never the
+    /// Repair by omission (uds interop §14.10): a vendor-dialect option the
+    /// predecessor would also refuse is commented out, reported, and the
+    /// repaired text imports cleanly; anything else still refuses.
+    #[test]
+    fn uds_import_repairs_unknown_options_by_commenting_them_out() {
+        let model = "[OPTIONS]\nFLOW_UNITS CFS\nDATA_STEP 00:05:00\n\
+                     [JUNCTIONS]\nJ1 100 4\n[OUTFALLS]\nO1 98 FREE\n\
+                     [CONDUITS]\nC1 J1 O1 400 0.013 0 0\n\
+                     [XSECTIONS]\nC1 CIRCULAR 1.5 0 0 0\n";
+        let (text, network, repairs) =
+            import_uds_text(model.to_string()).expect("repairable import");
+        assert_eq!(repairs.len(), 1);
+        assert!(
+            repairs[0].contains("DATA_STEP") && repairs[0].contains("line 3"),
+            "repair names the line and token: {repairs:?}"
+        );
+        // The original line survives behind a comment marker, and the
+        // repaired text parses without refusals.
+        assert!(text.contains("; [commented out by Hydra import] DATA_STEP 00:05:00"));
+        assert_eq!(network.vertices.len(), 2);
+
+        // A refusal that is NOT repairable (bad value for a real option)
+        // still refuses — omission would change meaning.
+        let bad = "[OPTIONS]\nFLOW_UNITS FURLONGS\n[JUNCTIONS]\nJ1 100 4\n";
+        let err = import_uds_text(bad.to_string()).unwrap_err();
+        assert!(err.contains("Cannot import this model"), "{err}");
+    }
+
     /// EPANET starter — the fall-through that once wrote the starter into a
     /// uds project silently discarded the user's model.
     #[test]

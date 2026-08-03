@@ -64,6 +64,9 @@ export function NewProjectWizard({ onClose }: Props) {
   const [detectedFindings, setDetectedFindings] = useState<ValidationFinding[]>(
     [],
   );
+  // §14.10 repairs the importer applied (nonstandard lines commented out)
+  // — shown on the review step; the repair contract forbids silence.
+  const [detectedRepairs, setDetectedRepairs] = useState<string[]>([]);
 
   const engine = engines.find((e) => e.key === engineKey) ?? null;
   // Engines whose model this GUI cannot edit have no starter-network path —
@@ -89,6 +92,7 @@ export function NewProjectWizard({ onClose }: Props) {
     setDetectedNodeCount(0);
     setDetectedLinkCount(0);
     setDetectedFindings([]);
+    setDetectedRepairs([]);
   }
 
   async function handleBrowse() {
@@ -100,6 +104,15 @@ export function NewProjectWizard({ onClose }: Props) {
         setDetectedNodeCount(result.nodeCount);
         setDetectedLinkCount(result.linkCount);
         setDetectedFindings(result.findings);
+        setDetectedRepairs(result.repairs ?? []);
+        if (result.repairs?.length) {
+          showToast(
+            `Imported with ${result.repairs.length} repair${
+              result.repairs.length === 1 ? "" : "s"
+            } — nonstandard lines were commented out.`,
+            "warn",
+          );
+        }
         setFileDetected(true);
         bumpNetwork();
         if (!projectName.trim() && result.network.fileStem) {
@@ -390,6 +403,27 @@ export function NewProjectWizard({ onClose }: Props) {
                       The project will open with{" "}
                       {detectedFindings.length === 1 ? "it" : "them"} listed in
                       Issues &amp; Notifications.
+                    </div>
+                  )}
+                  {detectedRepairs.length > 0 && (
+                    <div
+                      style={{
+                        fontSize: "var(--text-md)",
+                        color: "var(--status-warning, #d4a017)",
+                        marginTop: 8,
+                        lineHeight: 1.5,
+                        maxWidth: 320,
+                        textAlign: "left",
+                      }}
+                    >
+                      {detectedRepairs.length === 1
+                        ? "1 nonstandard line was commented out during import:"
+                        : `${detectedRepairs.length} nonstandard lines were commented out during import:`}
+                      <ul style={{ margin: "4px 0 0", paddingLeft: 18 }}>
+                        {detectedRepairs.map((r) => (
+                          <li key={r}>{r}</li>
+                        ))}
+                      </ul>
                     </div>
                   )}
                 </div>

@@ -622,7 +622,14 @@ export function CommandPalette() {
           .then((imported) => {
             if (imported) {
               bumpNetwork();
-              const { network, findings } = imported;
+              const { network, findings, repairs } = imported;
+              // Repairs must be surfaced (repair-by-omission contract).
+              if (repairs?.length) {
+                showToast(
+                  `${repairs.length} nonstandard line${repairs.length === 1 ? "" : "s"} commented out during import`,
+                  "warn",
+                );
+              }
               // A model that read but is not yet simulable must not report as
               // a plain success — the Issues panel is where it gets resolved.
               showToast(

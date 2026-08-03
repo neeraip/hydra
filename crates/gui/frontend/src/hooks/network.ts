@@ -481,6 +481,10 @@ export interface ImportedModel {
   nodeCount: number;
   linkCount: number;
   findings: ValidationFinding[];
+  /** Repairs applied during import (one message per line the importer
+   * commented out); empty when the file imported as written. Callers must
+   * surface these — the repair contract forbids applying them silently. */
+  repairs: string[];
 }
 
 /** Convert backend/Tauri import errors into concise toast-safe text. */

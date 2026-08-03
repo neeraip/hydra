@@ -197,6 +197,15 @@ impl DiagnosticKind {
                 | DiagnosticKind::ExtraTokensIgnored { .. }
         )
     }
+
+    /// Whether commenting the diagnosed line out leaves a model the
+    /// predecessor accepts with identical meaning (§14.10 repair by
+    /// omission): exactly the unknown-`[OPTIONS]`-keyword refusal — every
+    /// option has a default and the predecessor refuses the keyword too.
+    /// Advisory: a consumer applying the repair must surface it.
+    pub fn repairable_by_omission(&self) -> bool {
+        matches!(self, DiagnosticKind::UnknownOption { .. })
+    }
 }
 
 impl std::fmt::Display for Diagnostic {
@@ -765,5 +774,18 @@ THEN PUMP P1 STATUS = ON
             .expect("junction section retained");
         assert_eq!(junctions.len(), 2);
         assert_eq!(junctions[0].tokens, vec!["J1", "100.0", "3.0"]);
+    }
+
+    #[test]
+    fn only_the_unknown_option_refusal_is_repairable_by_omission() {
+        let repairable = DiagnosticKind::UnknownOption {
+            token: "DATA_STEP".to_string(),
+        };
+        assert!(repairable.is_error() && repairable.repairable_by_omission());
+        // Every other refusal carries meaning omission would change.
+        let not = DiagnosticKind::Lex(crate::io::lex::LexError::LineTooLong {
+            effective_len: 5000,
+        });
+        assert!(not.is_error() && !not.repairable_by_omission());
     }
 }

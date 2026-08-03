@@ -308,6 +308,18 @@ exhaustive. The predecessor's numeric error catalogue is a property of its
 API, not of its files, and is not an interoperability surface — nothing in a
 model file names an error code.
 
+**Repair by omission.** A refusal is additionally marked *repairable by
+omission* when neutralising its line — commenting it out — leaves a model
+the predecessor accepts with identical meaning. Exactly one refusal
+qualifies today: the unknown-`[OPTIONS]`-keyword refusal. Every option has
+a default, and the predecessor refuses the keyword too, so omission is the
+only reading the two implementations share; vendor dialects that write
+extra option keywords become importable without admitting anything the
+predecessor would run differently. The marking is advisory: a consumer may
+comment the named line and re-read, and must surface the repair rather
+than apply it silently. No other refusal qualifies — values, identifiers,
+and structure all carry meaning that omission would change.
+
 ### 14.11 Recognition
 
 This engine answers the foundation layer's recognition question
