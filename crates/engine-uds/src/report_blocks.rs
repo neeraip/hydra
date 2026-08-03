@@ -16,7 +16,7 @@ use hydra_common::{
     OptionKind, Table, Value, ValueKind,
 };
 
-use crate::io::out_reader::{read_metadata, read_period, OutMetadata};
+use crate::io::out_reader::{read_metadata, OutMetadata};
 use crate::model::Network;
 
 const CATALOG: &[BlockDescriptor] = &[
@@ -162,14 +162,10 @@ fn col(name: &str, unit: Option<&str>, kind: ValueKind) -> Column {
 fn scan_periods(
     out_path: &Path,
     meta: &OutMetadata,
-    mut f: impl FnMut(usize, &crate::io::out_reader::PeriodRecord),
+    f: impl FnMut(usize, &crate::io::out_reader::PeriodRecord),
 ) -> Result<(), BlockError> {
-    for p in 0..meta.n_periods {
-        let rec =
-            read_period(out_path, meta, p).map_err(|message| BlockError::Failed { message })?;
-        f(p, &rec);
-    }
-    Ok(())
+    crate::io::out_reader::scan_periods(out_path, meta, f)
+        .map_err(|message| BlockError::Failed { message })
 }
 
 /// Rank rows by a metric, worst first, ties broken by id for determinism.

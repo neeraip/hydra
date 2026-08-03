@@ -3,8 +3,8 @@
 //!
 //! Results files can dwarf the model that produced them, so the reader
 //! operates on an explicitly supplied path and seeks — metadata, one
-//! period, or one element's series — rather than requiring the whole file
-//! in memory. Opening validates before serving: both magic numbers, the
+//! period, one element's series, or a sequential scan visiting every
+//! period once — rather than requiring the whole file in memory. Opening validates before serving: both magic numbers, the
 //! version, the epilog's section positions against the actual file length,
 //! and the stored error code. Values are served as stored, in the file's
 //! declared unit system; the metadata carries everything a consumer needs
@@ -272,6 +272,24 @@ fn read_ids(f: &mut File, n: usize) -> Result<Vec<String>, String> {
     Ok(ids)
 }
 
+/// Read one period record from the current file position.
+fn read_record(f: &mut File, meta: &OutMetadata) -> Result<PeriodRecord, String> {
+    let date_days = read_f64(f)?;
+    let subcatchments = read_f32_vec(f, meta.subcatchment_ids.len() * meta.n_subcatch_vars)?;
+    let nodes = read_f32_vec(f, meta.node_ids.len() * meta.n_node_vars)?;
+    let links = read_f32_vec(f, meta.link_ids.len() * meta.n_link_vars)?;
+    let sys = read_f32_vec(f, OutMetadata::N_SYSTEM_VARS)?;
+    let mut system = [0f32; OutMetadata::N_SYSTEM_VARS];
+    system.copy_from_slice(&sys);
+    Ok(PeriodRecord {
+        epoch_s: (date_days - EPOCH_OFFSET_DAYS) * 86_400.0,
+        subcatchments,
+        nodes,
+        links,
+        system,
+    })
+}
+
 /// Read one period record (§14.9). `period` is 0-based.
 pub fn read_period(path: &Path, meta: &OutMetadata, period: usize) -> Result<PeriodRecord, String> {
     if period >= meta.n_periods {
@@ -285,20 +303,26 @@ pub fn read_period(path: &Path, meta: &OutMetadata, period: usize) -> Result<Per
         meta.output_start + period as u64 * meta.record_bytes,
     ))
     .map_err(|e| e.to_string())?;
-    let date_days = read_f64(&mut f)?;
-    let subcatchments = read_f32_vec(&mut f, meta.subcatchment_ids.len() * meta.n_subcatch_vars)?;
-    let nodes = read_f32_vec(&mut f, meta.node_ids.len() * meta.n_node_vars)?;
-    let links = read_f32_vec(&mut f, meta.link_ids.len() * meta.n_link_vars)?;
-    let sys = read_f32_vec(&mut f, OutMetadata::N_SYSTEM_VARS)?;
-    let mut system = [0f32; OutMetadata::N_SYSTEM_VARS];
-    system.copy_from_slice(&sys);
-    Ok(PeriodRecord {
-        epoch_s: (date_days - EPOCH_OFFSET_DAYS) * 86_400.0,
-        subcatchments,
-        nodes,
-        links,
-        system,
-    })
+    read_record(&mut f, meta)
+}
+
+/// Fold every period record through `f` in order — one sequential pass
+/// over the file with a single handle (§14.9). Period records tile the
+/// output section exactly (validated at open), so the scan reads them
+/// back to back without reseeking.
+pub fn scan_periods(
+    path: &Path,
+    meta: &OutMetadata,
+    mut f: impl FnMut(usize, &PeriodRecord),
+) -> Result<(), String> {
+    let mut file = File::open(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    file.seek(SeekFrom::Start(meta.output_start))
+        .map_err(|e| e.to_string())?;
+    for p in 0..meta.n_periods {
+        let rec = read_record(&mut file, meta)?;
+        f(p, &rec);
+    }
+    Ok(())
 }
 
 /// Read one element's full time series with one seek per period (§14.9).

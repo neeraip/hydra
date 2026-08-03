@@ -269,8 +269,9 @@ predecessor defines it, settings exempted.
 **Reading binary results** is the same format's other half, and the one
 filesystem carve-out inside this engine: results files can dwarf the model
 that produced them, so the reader operates on an explicitly supplied path
-and seeks — metadata, one period, or one element's series — rather than
-requiring the whole file in memory (the same carve-out, for the same
+and seeks — metadata, one period, one element's series, or a sequential
+scan visiting every period once — rather than requiring the whole file in
+memory (the same carve-out, for the same
 reason, as the water-distribution engine's results reader). Opening
 validates before serving: the leading and trailing magic numbers, the
 version, the epilog's section positions against the actual file length
