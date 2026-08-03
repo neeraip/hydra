@@ -1059,13 +1059,23 @@ function LinksTab({
 function SubcatchmentsTab({
   query,
   regions,
+  onSelect,
+  onZoomTo,
+  activeId,
 }: {
   query: string;
   regions: Region[];
+  onSelect?: (id: string) => void;
+  onZoomTo?: (id: string) => void;
+  activeId?: string | null;
 }) {
   const q = query.trim().toLowerCase();
+  // Same search keys as the node list: id and kind.
   const shown = q
-    ? regions.filter((r) => r.id.toLowerCase().includes(q))
+    ? regions.filter(
+        (r) =>
+          r.id.toLowerCase().includes(q) || r.type.toLowerCase().includes(q),
+      )
     : regions;
   if (shown.length === 0) {
     return (
@@ -1084,9 +1094,13 @@ function SubcatchmentsTab({
     <div style={{ overflowY: "auto", flex: 1 }}>
       {shown.map((r) => {
         const badge = elementTypeBadge(r.type);
+        const isActive = r.id === activeId;
         return (
+          // biome-ignore lint/a11y/useKeyWithClickEvents: row selection mirrors the node/link tables, which are click targets with the keyboard path served by the search field.
+          // biome-ignore lint/a11y/noStaticElementInteractions: as above — the tables use the same interaction shape.
           <div
             key={r.id}
+            onClick={() => onSelect?.(r.id)}
             style={{
               display: "flex",
               alignItems: "center",
@@ -1095,6 +1109,21 @@ function SubcatchmentsTab({
               fontSize: "var(--text-md)",
               color: "var(--text-primary)",
               borderBottom: "1px solid var(--border)",
+              cursor: onSelect ? "pointer" : undefined,
+              background: isActive ? "rgba(79,142,247,0.14)" : undefined,
+              outline: isActive ? "1px solid rgba(79,142,247,0.3)" : undefined,
+              outlineOffset: "-1px",
+              userSelect: "none",
+            }}
+            onMouseEnter={(e) => {
+              if (!isActive && onSelect)
+                (e.currentTarget as HTMLElement).style.background =
+                  "rgba(255,255,255,0.04)";
+            }}
+            onMouseLeave={(e) => {
+              if (!isActive)
+                (e.currentTarget as HTMLElement).style.background =
+                  "transparent";
             }}
           >
             <span
@@ -1123,6 +1152,47 @@ function SubcatchmentsTab({
             >
               {r.id}
             </span>
+            {r.outletId && (
+              <span
+                style={{
+                  marginLeft: "auto",
+                  fontSize: "var(--text-xs)",
+                  color: "var(--text-tertiary)",
+                  fontFamily: "var(--font-mono)",
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                  maxWidth: 90,
+                }}
+                data-tooltip={`Discharges to ${r.outletId}`}
+              >
+                → {r.outletId}
+              </span>
+            )}
+            {onZoomTo && (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onZoomTo(r.id);
+                }}
+                data-tooltip="Zoom to feature"
+                style={{
+                  background: "transparent",
+                  border: "none",
+                  padding: 2,
+                  cursor: "pointer",
+                  color: "var(--text-tertiary)",
+                  display: "inline-flex",
+                  borderRadius: 3,
+                  lineHeight: 0,
+                  marginLeft: r.outletId ? 0 : "auto",
+                  flexShrink: 0,
+                }}
+              >
+                <MagnifyingGlassPlusIcon style={{ width: 12, height: 12 }} />
+              </button>
+            )}
           </div>
         );
       })}
@@ -1149,6 +1219,10 @@ interface Props {
   onZoomToNode?: (id: string) => void;
   /** When provided, each link row shows a zoom icon that triggers this callback. */
   onZoomToLink?: (id: string) => void;
+  /** Areal-element selection, mirroring the node/link callbacks. */
+  onSelectRegion?: (id: string) => void;
+  onZoomToRegion?: (id: string) => void;
+  activeRegionId?: string | null;
   /** Generic result-column headers (engines whose values ride on
    * `resultValues`); absent for wds, whose pressure and flow columns are
    * built in. */
@@ -1171,6 +1245,9 @@ export function NetworkInspectorHome({
   activeLinkId,
   onZoomToNode,
   onZoomToLink,
+  onSelectRegion,
+  onZoomToRegion,
+  activeRegionId,
   nodeResultColumns,
   linkResultColumns,
   embedded,
@@ -1402,7 +1479,13 @@ export function NetworkInspectorHome({
         />
       )}
       {tab === "subcatchments" && (
-        <SubcatchmentsTab query={query} regions={regions} />
+        <SubcatchmentsTab
+          query={query}
+          regions={regions}
+          onSelect={onSelectRegion}
+          onZoomTo={onZoomToRegion}
+          activeId={activeRegionId}
+        />
       )}
       {tab === "links" && (
         <LinksTab

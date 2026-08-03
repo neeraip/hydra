@@ -265,6 +265,10 @@ interface MapCanvasProps {
   onSelectNode: (id: string | null) => void;
   selectedLinkId: string | null;
   onSelectLink: (id: string | null) => void;
+  /** Selected areal element; highlights its ring. */
+  selectedRegionId?: string | null;
+  /** Called when a region polygon is clicked (select tool, map mode). */
+  onSelectRegion?: (id: string | null) => void;
   /** Result ranges used to normalise colour scales. */
   headMin?: number;
   headMax?: number;
@@ -309,6 +313,8 @@ interface MapCanvasProps {
   /** When flyToKey changes and flyToNodeId/flyToLinkId is set, the canvas animates to that element. */
   flyToNodeId?: string | null;
   flyToLinkId?: string | null;
+  /** Fly to a region's extent (map mode; the schematic has no rings). */
+  flyToRegionId?: string | null;
   flyToKey?: number;
   /** Increment to force the map/schematic to fit the full network extent.
    * Should change only on project switch (not scenario switch) so the user's
@@ -345,6 +351,8 @@ export const MapCanvas = memo(function MapCanvas({
   onSelectNode,
   selectedLinkId,
   onSelectLink,
+  selectedRegionId = null,
+  onSelectRegion,
   headMin = 0,
   headMax = 100,
   demandMin = 0,
@@ -364,6 +372,7 @@ export const MapCanvas = memo(function MapCanvas({
   measurePoints = EMPTY_MEASURE_POINTS,
   flyToNodeId,
   flyToLinkId,
+  flyToRegionId,
   flyToKey,
   fitKey,
   zoomInKey,
@@ -460,6 +469,7 @@ export const MapCanvas = memo(function MapCanvas({
   const onCreateLinkRequestRef = useRef(onCreateLinkRequest);
   const nodesRef = useRef(nodes);
   const linksRef = useRef(links);
+  const regionsRef = useRef(regions);
   // Initialised empty; kept current by useEffect once geoCoords is available.
   const geoCoordsRef = useRef<Map<string, [number, number]>>(new Map());
   const draggingNodeIdRef = useRef<string | null>(null);
@@ -690,6 +700,9 @@ export const MapCanvas = memo(function MapCanvas({
   useEffect(() => {
     linksRef.current = links;
   }, [links]);
+  useEffect(() => {
+    regionsRef.current = regions;
+  }, [regions]);
 
   // When switching away from add-link mode, cancel any pending link and clear the ghost line.
   useEffect(() => {
@@ -736,7 +749,27 @@ export const MapCanvas = memo(function MapCanvas({
     if (flyToKey == null) return;
     const nodeId = flyToNodeId;
     const linkId = flyToLinkId;
-    if (!nodeId && !linkId) return;
+    const regionId = flyToRegionId;
+    if (!nodeId && !linkId && !regionId) return;
+
+    // Regions exist in map mode only — their rings are source-CRS geometry
+    // the schematic layout knows nothing about.
+    if (regionId) {
+      if (viewMode !== "map") return;
+      const map = mapRef.current;
+      const region = regionsRef.current?.find((r) => r.id === regionId);
+      if (!map || !region || region.ring.length === 0) return;
+      const first = region.ring[0];
+      const bounds = region.ring.reduce(
+        (b, p) => b.extend(p as [number, number]),
+        new maplibregl.LngLatBounds(
+          first as [number, number],
+          first as [number, number],
+        ),
+      );
+      map.fitBounds(bounds, { padding: 80, maxZoom: 18, duration: 800 });
+      return;
+    }
 
     if (viewMode === "map") {
       const map = mapRef.current;
@@ -804,7 +837,7 @@ export const MapCanvas = memo(function MapCanvas({
         deck.setProps({ viewState: vs });
       }
     }
-  }, [flyToKey, isActive, viewMode, flyToLinkId, flyToNodeId]);
+  }, [flyToKey, isActive, viewMode, flyToLinkId, flyToNodeId, flyToRegionId]);
 
   // ── deck.gl data arrays ────────────────────────────────────────────────────
   // Memoized so their identity is stable across renders that don't change the
@@ -1131,25 +1164,44 @@ export const MapCanvas = memo(function MapCanvas({
       // With a generic region channel loaded, fill each polygon from its
       // value (regions and values share the snapshot order); otherwise the
       // neutral soft green. Kept translucent either way so the network
-      // above stays readable.
+      // above stays readable. The selected ring brightens and thickens —
+      // the areal equivalent of the node/link selection glow, which a
+      // polygon cannot use (a halo around a catchment reads as a second
+      // catchment).
       const regionFill = genRegion
         ? (_r: Region, { index }: { index: number }) =>
             genericRgba(genRegion.values?.[index], genRegion.variable, 110)
         : ([61, 175, 117, 28] as RGBA);
+      const regionSelected = (r: Region) => r.id === selectedRegionId;
+      // Regions sit beneath nodes and links, so deck's topmost-wins picking
+      // still gives those priority; a click reaches a region only where no
+      // element covers it.
+      const regionsPickable = tool === "select" && onSelectRegion != null;
       layers.push(
         new PolygonLayer<Region>({
           id: "regions",
           data: regions,
           getPolygon: (r: Region) => r.ring,
           getFillColor: regionFill,
-          getLineColor: [61, 175, 117, 150],
+          getLineColor: (r: Region) =>
+            (regionSelected(r)
+              ? [125, 215, 170, 255]
+              : [61, 175, 117, 150]) as unknown as RGBA,
+          getLineWidth: (r: Region) => (regionSelected(r) ? 2.5 : 1),
           lineWidthMinPixels: 1,
           lineWidthUnits: "pixels",
           stroked: true,
           filled: true,
-          pickable: false,
+          pickable: regionsPickable,
+          onClick: (info: { object?: unknown }) => {
+            if (toolRef.current !== "select") return;
+            const obj = info.object as Region | undefined;
+            if (obj) onSelectRegion?.(obj.id);
+          },
           updateTriggers: {
             getFillColor: [genRegion?.values, genRegion?.variable],
+            getLineColor: [selectedRegionId],
+            getLineWidth: [selectedRegionId],
           },
         }),
       );
@@ -1733,6 +1785,8 @@ export const MapCanvas = memo(function MapCanvas({
     genRegion,
     viewMode,
     regions,
+    selectedRegionId,
+    onSelectRegion,
     nodeVar,
     linkVar,
     animateLinks,

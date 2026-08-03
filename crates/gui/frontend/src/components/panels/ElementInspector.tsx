@@ -29,6 +29,7 @@ import {
 import type { Link, Node, ResultRanges } from "../../hooks";
 import { ACCENT } from "../../hooks";
 import { elementTypeBadge } from "../../types/elementTypes";
+import type { Region } from "../../types/network";
 import { Header } from "./ElementInspector/InspectorHeader";
 import { LinkBody } from "./ElementInspector/LinkBody";
 import { NodeBody } from "./ElementInspector/NodeBody";
@@ -335,6 +336,99 @@ export function LinkInspector({
           </button>
         )}
       </div>
+    </div>
+  );
+}
+
+// ── Public component: region variant ──────────────────────────────────────────
+
+interface RegionInspectorProps {
+  region: Region;
+  onClose: () => void;
+  onZoomTo?: () => void;
+  /** Select the element this region discharges to. */
+  onLocateOutlet: (id: string) => void;
+  /** See NodeInspectorProps.genericResults. */
+  genericResults?: GenericElementValue[] | null;
+}
+
+/**
+ * Inspector for an areal element (a subcatchment). Same chrome as the node
+ * and link variants — header with the kind badge, engine body, footer
+ * actions — minus the affordances an area has no meaning for: there is no
+ * "open in editor" (no engine edits areas here yet) and no rename/delete
+ * (only read-only engines have areas today). Renders nothing when the
+ * engine supplies no region body, which is also when nothing can select
+ * one.
+ */
+export function RegionInspector({
+  region,
+  onClose,
+  onZoomTo,
+  onLocateOutlet,
+  genericResults,
+}: RegionInspectorProps) {
+  const { engine } = useActiveProject();
+  const EngineBody = engineComponents(engine?.key).RegionInspectorBody;
+  if (!EngineBody) return null;
+  return (
+    <div
+      className="inspector-panel"
+      style={{
+        position: "absolute",
+        right: 0,
+        top: 0,
+        bottom: 0,
+        zIndex: 30,
+        display: "flex",
+        flexDirection: "column",
+      }}
+    >
+      <Header
+        id={region.id}
+        subtitle={region.type}
+        accentColor={ACCENT}
+        badge={
+          <div
+            style={{
+              width: 12,
+              height: 9,
+              borderRadius: 2,
+              border: `1.5px solid ${elementTypeBadge(region.type).color}`,
+              background: `${elementTypeBadge(region.type).color}33`,
+              flexShrink: 0,
+            }}
+          />
+        }
+        onClose={onClose}
+      />
+
+      <EngineBody
+        region={region}
+        onLocateOutlet={onLocateOutlet}
+        results={genericResults}
+      />
+
+      {onZoomTo && (
+        <div
+          style={{
+            flexShrink: 0,
+            borderTop: "1px solid var(--border)",
+            padding: 10,
+            display: "flex",
+            gap: 6,
+          }}
+        >
+          <button
+            type="button"
+            onClick={onZoomTo}
+            data-tooltip="Zoom to feature"
+            style={btnIcon}
+          >
+            <MagnifyingGlassPlusIcon style={{ width: 14, height: 14 }} />
+          </button>
+        </div>
+      )}
     </div>
   );
 }

@@ -18,7 +18,7 @@ use serde::Serialize;
 
 use hydra::common::QuantityDescriptor;
 use hydra::uds::model::{
-    LinkKind, Network, OutfallStage, OutletRating, StorageGeometry, VertexKind,
+    LinkKind, Network, OutfallStage, OutletRating, ParcelOutlet, StorageGeometry, VertexKind,
 };
 
 use super::network_dto::NetworkState;
@@ -59,6 +59,29 @@ fn extract(
     element_id: &str,
 ) -> Option<(&'static str, HashMap<&'static str, AttrValue>)> {
     use AttrValue::{Number, Text};
+
+    if let Some(p) = net.parcels.iter().find(|p| p.id == element_id) {
+        let mut m = HashMap::new();
+        if let Some(g) = net.gages.get(p.gage) {
+            m.insert("raingage", Text(g.id.clone()));
+        }
+        let outlet = match p.outlet {
+            ParcelOutlet::Vertex(vi) => net.vertices.get(vi).map(|v| v.id.clone()),
+            ParcelOutlet::Parcel(pi) => net.parcels.get(pi).map(|o| o.id.clone()),
+        };
+        if let Some(outlet) = outlet {
+            m.insert("outlet", Text(outlet));
+        }
+        // The model carries area in m² and slope/imperviousness as
+        // fractions; the §4 schema declares them as `area` (SI hectares)
+        // and `percent`, so each converts to its declared quantity's SI
+        // form here — the same boundary every other row crosses.
+        m.insert("area", Number(p.area / 10_000.0));
+        m.insert("width", Number(p.width));
+        m.insert("slope", Number(p.slope * 100.0));
+        m.insert("imperviousness", Number(p.frac_imperv * 100.0));
+        return Some(("subcatchment", m));
+    }
 
     if let Some(v) = net.vertices.iter().find(|v| v.id == element_id) {
         let mut m = HashMap::new();
@@ -262,5 +285,35 @@ mod tests {
             .any(|r| r.label == "Roughness" && r.quantity.is_none()));
 
         assert!(element_attributes(&net, "nope").is_none());
+    }
+
+    #[test]
+    fn subcatchment_rows_convert_to_their_declared_quantities() {
+        // 2.5 ac ≈ 10117 m² area, 40 % impervious, 1.5 % slope.
+        let model = "[OPTIONS]\nFLOW_UNITS CFS\n\
+                     [RAINGAGES]\nRG1 INTENSITY 1:00 1.0 TIMESERIES TS1\n\
+                     [JUNCTIONS]\nJ1 100 4\n\
+                     [SUBCATCHMENTS]\nS1 RG1 J1 2.5 40 500 1.5 0\n\
+                     [TIMESERIES]\nTS1 0 0.5 1 0.25\n";
+        let (net, _diags) = hydra::uds::io::objects::parse_network(model);
+        let rows = element_attributes(&net, "S1").expect("subcatchment rows");
+        let by = |label: &str| {
+            rows.iter()
+                .find(|r| r.label == label)
+                .unwrap_or_else(|| panic!("row {label:?} missing from {rows:?}"))
+        };
+        assert_eq!(by("Rain gage").text.as_deref(), Some("RG1"));
+        assert_eq!(by("Outlet").text.as_deref(), Some("J1"));
+        // Area is declared in hectares: 2.5 ac ≈ 1.0117 ha.
+        let area = by("Area");
+        assert_eq!(area.quantity.unwrap().key, "area");
+        assert!(
+            (area.number.unwrap() - 1.011_714).abs() < 1e-3,
+            "area in ha, got {:?}",
+            area.number
+        );
+        // Fractions become percent, matching the schema's quantity.
+        assert!((by("Slope").number.unwrap() - 1.5).abs() < 1e-6);
+        assert!((by("Imperviousness").number.unwrap() - 40.0).abs() < 1e-6);
     }
 }

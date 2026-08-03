@@ -18,7 +18,7 @@ import {
 import type { GenericQuantity } from "../hooks/results";
 import type { Link, Node } from "../types/network";
 
-export type InspectorView = "closed" | "node" | "link";
+export type InspectorView = "closed" | "node" | "link" | "region";
 
 /** Header of one engine-generic result column in the rail list: the
  * engine-authored label/unit of a catalog variable whose per-element
@@ -43,17 +43,23 @@ export interface SimResultColumns {
 interface CanvasSelectionCtx {
   selectedNodeId: string | null;
   selectedLinkId: string | null;
+  /** Selected areal element (subcatchment), for engines that have them. */
+  selectedRegionId: string | null;
   inspectorView: InspectorView;
   /** Smart select: handles toggle-off when the same id is passed again. */
   selectNode: (id: string | null) => void;
   /** Smart select: handles toggle-off when the same id is passed again. */
   selectLink: (id: string | null) => void;
+  /** Smart select: handles toggle-off when the same id is passed again. */
+  selectRegion: (id: string | null) => void;
   /** Raw inspector view setter for cases that need explicit control. */
   setInspectorView: (v: InspectorView) => void;
   /** Raw node id setter — use when selection state needs updating without toggle logic. */
   setSelectedNodeId: (id: string | null) => void;
   /** Raw link id setter — use when selection state needs updating without toggle logic. */
   setSelectedLinkId: (id: string | null) => void;
+  /** Raw region id setter — see `setSelectedNodeId`. */
+  setSelectedRegionId: (id: string | null) => void;
   /** Clears both selection ids and closes the inspector in one call. */
   clearSelection: () => void;
   /** Simulation-merged node/link arrays written by CanvasView so the rail
@@ -72,22 +78,28 @@ interface CanvasSelectionCtx {
   zoomToNode: (id: string) => void;
   /** Animate the canvas to a specific link. No-op when no canvas is mounted. */
   zoomToLink: (id: string) => void;
+  /** Animate the canvas to a specific region. No-op when no canvas is mounted. */
+  zoomToRegion: (id: string) => void;
   /** Called by CanvasView on mount to register the fly-to callbacks. */
   setZoomCallbacks: (
     nodeZoom: (id: string) => void,
     linkZoom: (id: string) => void,
+    regionZoom: (id: string) => void,
   ) => void;
 }
 
 const Ctx = createContext<CanvasSelectionCtx>({
   selectedNodeId: null,
   selectedLinkId: null,
+  selectedRegionId: null,
   inspectorView: "closed",
   selectNode: () => {},
   selectLink: () => {},
+  selectRegion: () => {},
   setInspectorView: () => {},
   setSelectedNodeId: () => {},
   setSelectedLinkId: () => {},
+  setSelectedRegionId: () => {},
   clearSelection: () => {},
   simNodes: null,
   simLinks: null,
@@ -95,12 +107,14 @@ const Ctx = createContext<CanvasSelectionCtx>({
   setSimData: () => {},
   zoomToNode: () => {},
   zoomToLink: () => {},
+  zoomToRegion: () => {},
   setZoomCallbacks: () => {},
 });
 
 export function CanvasSelectionProvider({ children }: { children: ReactNode }) {
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [selectedLinkId, setSelectedLinkId] = useState<string | null>(null);
+  const [selectedRegionId, setSelectedRegionId] = useState<string | null>(null);
   const [inspectorView, setInspectorView] = useState<InspectorView>("closed");
   const [simNodes, setSimNodes] = useState<Node[] | null>(null);
   const [simLinks, setSimLinks] = useState<Link[] | null>(null);
@@ -119,12 +133,22 @@ export function CanvasSelectionProvider({ children }: { children: ReactNode }) {
   // re-renders on every flyToState change.
   const zoomToNodeRef = useRef<(id: string) => void>(() => {});
   const zoomToLinkRef = useRef<(id: string) => void>(() => {});
+  const zoomToRegionRef = useRef<(id: string) => void>(() => {});
   const zoomToNode = useCallback((id: string) => zoomToNodeRef.current(id), []);
   const zoomToLink = useCallback((id: string) => zoomToLinkRef.current(id), []);
+  const zoomToRegion = useCallback(
+    (id: string) => zoomToRegionRef.current(id),
+    [],
+  );
   const setZoomCallbacks = useCallback(
-    (nodeZoom: (id: string) => void, linkZoom: (id: string) => void) => {
+    (
+      nodeZoom: (id: string) => void,
+      linkZoom: (id: string) => void,
+      regionZoom: (id: string) => void,
+    ) => {
       zoomToNodeRef.current = nodeZoom;
       zoomToLinkRef.current = linkZoom;
+      zoomToRegionRef.current = regionZoom;
     },
     [],
   );
@@ -132,8 +156,10 @@ export function CanvasSelectionProvider({ children }: { children: ReactNode }) {
   // Stable refs so callbacks don't go stale when selection changes.
   const nodeIdRef = useRef<string | null>(null);
   const linkIdRef = useRef<string | null>(null);
+  const regionIdRef = useRef<string | null>(null);
   nodeIdRef.current = selectedNodeId;
   linkIdRef.current = selectedLinkId;
+  regionIdRef.current = selectedRegionId;
 
   const selectNode = useCallback((id: string | null) => {
     if (!id) {
@@ -149,6 +175,7 @@ export function CanvasSelectionProvider({ children }: { children: ReactNode }) {
     }
     setSelectedNodeId(id);
     setSelectedLinkId(null);
+    setSelectedRegionId(null);
     setInspectorView("node");
   }, []);
 
@@ -166,12 +193,27 @@ export function CanvasSelectionProvider({ children }: { children: ReactNode }) {
     }
     setSelectedLinkId(id);
     setSelectedNodeId(null);
+    setSelectedRegionId(null);
     setInspectorView("link");
+  }, []);
+
+  const selectRegion = useCallback((id: string | null) => {
+    if (!id || regionIdRef.current === id) {
+      // Tap the same region again → deselect and close.
+      setSelectedRegionId(null);
+      setInspectorView("closed");
+      return;
+    }
+    setSelectedRegionId(id);
+    setSelectedNodeId(null);
+    setSelectedLinkId(null);
+    setInspectorView("region");
   }, []);
 
   const clearSelection = useCallback(() => {
     setSelectedNodeId(null);
     setSelectedLinkId(null);
+    setSelectedRegionId(null);
     setInspectorView("closed");
   }, []);
 
@@ -181,12 +223,15 @@ export function CanvasSelectionProvider({ children }: { children: ReactNode }) {
     () => ({
       selectedNodeId,
       selectedLinkId,
+      selectedRegionId,
       inspectorView,
       selectNode,
       selectLink,
+      selectRegion,
       setInspectorView,
       setSelectedNodeId,
       setSelectedLinkId,
+      setSelectedRegionId,
       clearSelection,
       simNodes,
       simLinks,
@@ -194,14 +239,17 @@ export function CanvasSelectionProvider({ children }: { children: ReactNode }) {
       setSimData,
       zoomToNode,
       zoomToLink,
+      zoomToRegion,
       setZoomCallbacks,
     }),
     [
       selectedNodeId,
       selectedLinkId,
+      selectedRegionId,
       inspectorView,
       selectNode,
       selectLink,
+      selectRegion,
       clearSelection,
       simNodes,
       simLinks,
@@ -209,6 +257,7 @@ export function CanvasSelectionProvider({ children }: { children: ReactNode }) {
       setSimData,
       zoomToNode,
       zoomToLink,
+      zoomToRegion,
       setZoomCallbacks,
     ],
   );

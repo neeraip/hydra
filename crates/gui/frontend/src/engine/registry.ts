@@ -13,11 +13,13 @@
 
 import type { ComponentType } from "react";
 import type { GenericQuantity, Link, Node } from "../hooks";
+import type { Region } from "../types/network";
 import { UdsAnalysisView } from "./uds/AnalysisView";
 import { UdsEditorView } from "./uds/EditorView";
 import { UdsLinkInspectorBody } from "./uds/LinkInspectorBody";
 import { UdsNodeInspectorBody } from "./uds/NodeInspectorBody";
 import { UdsOverviewComposition } from "./uds/OverviewComposition";
+import { UdsRegionInspectorBody } from "./uds/RegionInspectorBody";
 import { UdsRunSettingsSummary } from "./uds/RunSettingsSummary";
 import { UdsSettingsView } from "./uds/SettingsView";
 import { WdsRunSettingsSummary } from "./wds/RunSettingsSummary";
@@ -70,6 +72,14 @@ export interface LinkInspectorBodyProps {
   results?: GenericElementValue[] | null;
 }
 
+/** Props of the element inspector's areal-element body. */
+export interface RegionInspectorBodyProps {
+  region: Region;
+  /** Select the element this region discharges to. */
+  onLocateOutlet: (id: string) => void;
+  results?: GenericElementValue[] | null;
+}
+
 export interface EngineComponents {
   /** Body of the run modal's "Simulation settings" card. */
   RunSettingsSummary: ComponentType<RunSettingsSummaryProps>;
@@ -87,6 +97,9 @@ export interface EngineComponents {
    * pressure/flow result cards). */
   NodeInspectorBody?: ComponentType<NodeInspectorBodyProps>;
   LinkInspectorBody?: ComponentType<LinkInspectorBodyProps>;
+  /** Body of the areal-element inspector. Absent = the engine has no
+   * areal elements and the canvas never selects one. */
+  RegionInspectorBody?: ComponentType<RegionInspectorBodyProps>;
   /** Whether this engine's Editor view can receive and reveal a focused
    * element (the inspector's "Open in editor" affordance). False hides the
    * button instead of navigating to a view that ignores the request. */
@@ -115,6 +128,7 @@ const UDS: EngineComponents = {
   OverviewComposition: UdsOverviewComposition,
   NodeInspectorBody: UdsNodeInspectorBody,
   LinkInspectorBody: UdsLinkInspectorBody,
+  RegionInspectorBody: UdsRegionInspectorBody,
   editorFocusesElements: false,
   settingsEditable: false,
   modelEditable: false,

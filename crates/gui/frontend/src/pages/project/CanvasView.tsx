@@ -39,6 +39,7 @@ import { DeleteConfirmModal } from "../../components/modals/DeleteConfirmModal";
 import {
   LinkInspector,
   NodeInspector,
+  RegionInspector,
 } from "../../components/panels/ElementInspector";
 import { engineComponents } from "../../engine/registry";
 import {
@@ -175,6 +176,8 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
     inspectorView,
     selectNode,
     selectLink,
+    selectedRegionId,
+    selectRegion,
     setInspectorView,
     setSelectedNodeId,
     setSelectedLinkId,
@@ -230,17 +233,35 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
   const [flyToState, setFlyToState] = useState<{
     nodeId: string | null;
     linkId: string | null;
+    regionId: string | null;
     key: number;
-  }>({ nodeId: null, linkId: null, key: 0 });
+  }>({ nodeId: null, linkId: null, regionId: null, key: 0 });
 
   // Register zoom callbacks into the selection context so siblings (e.g. the
   // rail's network list) can trigger canvas fly-to without prop drilling.
   useEffect(() => {
     setZoomCallbacks(
       (id) =>
-        setFlyToState((s) => ({ nodeId: id, linkId: null, key: s.key + 1 })),
+        setFlyToState((s) => ({
+          nodeId: id,
+          linkId: null,
+          regionId: null,
+          key: s.key + 1,
+        })),
       (id) =>
-        setFlyToState((s) => ({ nodeId: null, linkId: id, key: s.key + 1 })),
+        setFlyToState((s) => ({
+          nodeId: null,
+          linkId: id,
+          regionId: null,
+          key: s.key + 1,
+        })),
+      (id) =>
+        setFlyToState((s) => ({
+          nodeId: null,
+          linkId: null,
+          regionId: id,
+          key: s.key + 1,
+        })),
     );
   }, [setZoomCallbacks]);
   // ── Colour scale mode and per-variable thresholds ─────────────────────────
@@ -987,6 +1008,37 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
     genericCanvas?.link,
   ]);
 
+  // The selected region object, resolved from the canvas-projected array
+  // the map renders (its ring is what "zoom to feature" fits).
+  const selectedRegion = useMemo(
+    () =>
+      selectedRegionId == null
+        ? null
+        : (canvasRegions.find((r) => r.id === selectedRegionId) ?? null),
+    [canvasRegions, selectedRegionId],
+  );
+
+  const genericRegionResults = useMemo(() => {
+    if (!genericMeta || !fetchedGenericValues || selectedRegionId == null) {
+      return null;
+    }
+    const si = baseRegions.findIndex((r) => r.id === selectedRegionId);
+    if (si < 0) return null;
+    return genericMeta.regionVars.map((v, i) => ({
+      id: v.id,
+      label: v.label,
+      quantity: v.quantity,
+      value: fetchedGenericValues.regions[i]?.[si] ?? null,
+      primary: v.id === genericCanvas?.region?.variable.id,
+    }));
+  }, [
+    genericMeta,
+    fetchedGenericValues,
+    selectedRegionId,
+    baseRegions,
+    genericCanvas?.region,
+  ]);
+
   // Keep the selection context's sim data in sync so the rail can display
   // live result values without re-fetching from the backend. Always push:
   // when the period result matches the network the arrays are merged with sim
@@ -1117,7 +1169,12 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
         const id = pick(posNodes, arr);
         if (id) {
           selectNode(id);
-          setFlyToState((s) => ({ nodeId: id, linkId: null, key: s.key + 1 }));
+          setFlyToState((s) => ({
+            nodeId: id,
+            linkId: null,
+            regionId: null,
+            key: s.key + 1,
+          }));
         }
       } else {
         const arr =
@@ -1133,7 +1190,12 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
         const id = pick(baseLinks, arr);
         if (id) {
           selectLink(id);
-          setFlyToState((s) => ({ nodeId: null, linkId: id, key: s.key + 1 }));
+          setFlyToState((s) => ({
+            nodeId: null,
+            linkId: id,
+            regionId: null,
+            key: s.key + 1,
+          }));
         }
       }
     },
@@ -1615,6 +1677,8 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
                   onSelectNode={handleSelectNode}
                   selectedLinkId={selectedLinkId}
                   onSelectLink={handleSelectLink}
+                  selectedRegionId={selectedRegionId}
+                  onSelectRegion={selectRegion}
                   headMin={stableResultMeta?.ranges.headMin ?? 0}
                   headMax={stableResultMeta?.ranges.headMax ?? 100}
                   demandMin={stableResultMeta?.ranges.demandMin ?? 0}
@@ -1634,6 +1698,7 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
                   measurePoints={measurePointPositions}
                   flyToNodeId={flyToState.nodeId}
                   flyToLinkId={flyToState.linkId}
+                  flyToRegionId={flyToState.regionId}
                   flyToKey={flyToState.key}
                   fitKey={mapFitKey}
                   zoomInKey={zoomInKey}
@@ -1812,6 +1877,7 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
                   setFlyToState((s) => ({
                     nodeId: selectedNodeId,
                     linkId: null,
+                    regionId: null,
                     key: s.key + 1,
                   }))
                 }
@@ -1851,6 +1917,24 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
                 genericResults={genericNodeResults}
               />
             )}
+            {inspectorView === "region" && selectedRegion && (
+              <RegionInspector
+                region={selectedRegion}
+                onClose={clearSelection}
+                onZoomTo={() =>
+                  setFlyToState((s) => ({
+                    nodeId: null,
+                    linkId: null,
+                    regionId: selectedRegionId,
+                    key: s.key + 1,
+                  }))
+                }
+                onLocateOutlet={(id) => {
+                  if (nodeMap.has(id)) selectNode(id);
+                }}
+                genericResults={genericRegionResults}
+              />
+            )}
             {inspectorView === "link" && stableSelectedLink && (
               <LinkInspector
                 link={stableSelectedLink}
@@ -1862,6 +1946,7 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
                   setFlyToState((s) => ({
                     nodeId: null,
                     linkId: selectedLinkId,
+                    regionId: null,
                     key: s.key + 1,
                   }))
                 }
