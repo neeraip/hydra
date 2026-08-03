@@ -2,13 +2,16 @@ import { ConnectedLink } from "../../components/panels/ElementInspector/Connecte
 import { SectionLabel } from "../../components/ui/SectionLabel";
 import { useLinksConnectedTo } from "../../hooks";
 import type { NodeInspectorBodyProps } from "../registry";
-import { GenericResultsTable } from "./GenericResultsTable";
+import {
+  GenericResultsCards,
+  PropertiesSection,
+  useElementDetails,
+} from "./inspector-shared";
 
 /**
- * Urban-drainage node inspector body: current-period results (every §6
- * catalog variable, engine-authored labels and units) + connections. The
- * v4 snapshot carries no attribute data yet — per-element attributes
- * arrive with the §4 attribute serving.
+ * Urban-drainage node inspector body, mirroring the wds body's structure:
+ * Properties (the §4 schema's rows with model values), connected links,
+ * and Results as cards (§6 catalog values at the current timeline step).
  */
 export function UdsNodeInspectorBody({
   node,
@@ -16,10 +19,12 @@ export function UdsNodeInspectorBody({
   results,
 }: NodeInspectorBodyProps) {
   const connectedLinks = useLinksConnectedTo(node.id);
+  const attributes = useElementDetails(node.id);
   return (
     <div style={{ flex: 1, overflowY: "auto", padding: 12 }}>
-      <GenericResultsTable results={results} />
-      {connectedLinks.length > 0 ? (
+      <PropertiesSection rows={attributes} />
+
+      {connectedLinks.length > 0 && (
         <>
           <SectionLabel>
             {connectedLinks.length} connected link
@@ -38,16 +43,9 @@ export function UdsNodeInspectorBody({
             ))}
           </div>
         </>
-      ) : (
-        <div
-          style={{
-            fontSize: "var(--text-sm)",
-            color: "var(--text-tertiary)",
-          }}
-        >
-          No connected links.
-        </div>
       )}
+
+      <GenericResultsCards results={results} />
     </div>
   );
 }

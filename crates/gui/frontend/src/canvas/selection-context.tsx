@@ -19,10 +19,12 @@ import type { Link, Node } from "../types/network";
 
 export type InspectorView = "closed" | "node" | "link";
 
-/** Header of an engine-generic result column in the rail list: the
- * engine-authored label/unit of the variable whose per-element values
- * CanvasView merged into the sim arrays (`Node.resultValue`). */
+/** Header of one engine-generic result column in the rail list: the
+ * engine-authored label/unit of a catalog variable whose per-element
+ * values CanvasView merged into the sim arrays (`resultValues[key]`). */
 export interface SimResultColumn {
+  /** Variable id — the key into each element's `resultValues`. */
+  key: string;
   label: string;
   unit?: string;
 }
@@ -30,8 +32,8 @@ export interface SimResultColumn {
 /** Per-class result columns, `null` when the engine serves fixed-variable
  * results (wds) — the rail then keeps its built-in columns. */
 export interface SimResultColumns {
-  node: SimResultColumn | null;
-  link: SimResultColumn | null;
+  node: SimResultColumn[];
+  link: SimResultColumn[];
 }
 
 interface CanvasSelectionCtx {

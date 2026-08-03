@@ -74,9 +74,18 @@ function useSortedFiltered<T>(
       ? items.filter((item) => matchesQuery(item, searchKeys, q))
       : items;
     if (sortCol) {
+      // "resultValues.<id>" reaches into the engine-generic value bag;
+      // every other column is a direct field.
+      const RESULT_PREFIX = "resultValues.";
+      const get = (o: Record<string, unknown>): unknown =>
+        sortCol.startsWith(RESULT_PREFIX)
+          ? (o.resultValues as Record<string, unknown> | undefined)?.[
+              sortCol.slice(RESULT_PREFIX.length)
+            ]
+          : o[sortCol];
       arr = [...arr].sort((a, b) => {
-        const av = (a as Record<string, unknown>)[sortCol] ?? "";
-        const bv = (b as Record<string, unknown>)[sortCol] ?? "";
+        const av = get(a as Record<string, unknown>) ?? "";
+        const bv = get(b as Record<string, unknown>) ?? "";
         const cmp = av < bv ? -1 : av > bv ? 1 : 0;
         return sortDir === "asc" ? cmp : -cmp;
       });
@@ -197,7 +206,7 @@ function fmtResultValue(v: number): string {
   return v.toFixed(2);
 }
 
-/** Sortable header + cell pair for the engine-generic result column. */
+/** Sortable header + cell pair for one engine-generic result column. */
 function GenericResultHeader({
   column,
   sortCol,
@@ -209,17 +218,18 @@ function GenericResultHeader({
   sortDir: SortDir;
   onToggleSort: (col: string) => void;
 }) {
+  const sortKey = `resultValues.${column.key}`;
   return (
     <th
       style={TH}
-      onClick={() => onToggleSort("resultValue")}
+      onClick={() => onToggleSort(sortKey)}
       data-tooltip={
         column.unit ? `${column.label} (${column.unit})` : column.label
       }
       data-tooltip-pos="bottom"
     >
       {column.label}
-      <SortIndicator col="resultValue" sortCol={sortCol} sortDir={sortDir} />
+      <SortIndicator col={sortKey} sortCol={sortCol} sortDir={sortDir} />
     </th>
   );
 }
@@ -260,22 +270,23 @@ function NodesTab({
   onSelect,
   onZoomTo,
   activeId,
-  resultColumn,
+  resultColumns = [],
 }: {
   query: string;
   nodes: Node[];
   onSelect: (id: string) => void;
   onZoomTo?: (id: string) => void;
   activeId?: string | null;
-  resultColumn?: SimResultColumn;
+  resultColumns?: SimResultColumn[];
 }) {
   const sys = useUnitSystem();
   const hasResults = nodes.some((n) => n.pressure != null);
-  // Engine-generic result column: header from the engine's catalog, values
-  // from `resultValue` (merged by CanvasView from the legend's selected
-  // variable). Shown once any element carries a value.
-  const hasGenericResults =
-    resultColumn != null && nodes.some((n) => n.resultValue != null);
+  // Engine-generic result columns: headers from the engine's catalog,
+  // values from `resultValues` (merged by CanvasView). Shown once any
+  // element carries a value.
+  const genericColumns = nodes.some((n) => n.resultValues != null)
+    ? resultColumns
+    : [];
   // Attribute columns render only when the snapshot carries the attribute —
   // engines whose snapshot is geometry-only (v4) get ID + badge, not a
   // column of dashes.
@@ -305,7 +316,7 @@ function NodesTab({
     2 +
     (hasAttrs ? 2 : 0) +
     (hasResults ? 1 : 0) +
-    (hasGenericResults ? 1 : 0) +
+    genericColumns.length +
     (onZoomTo ? 1 : 0);
 
   return (
@@ -331,7 +342,9 @@ function NodesTab({
           {hasAttrs && <col />}
           {hasAttrs && <col />}
           {hasResults && <col />}
-          {hasGenericResults && <col />}
+          {genericColumns.map((c) => (
+            <col key={c.key} />
+          ))}
           {onZoomTo && <col style={{ width: 22 }} />}
         </colgroup>
         <thead>
@@ -419,14 +432,15 @@ function NodesTab({
                 />
               </th>
             )}
-            {hasGenericResults && resultColumn && (
+            {genericColumns.map((c) => (
               <GenericResultHeader
-                column={resultColumn}
+                key={c.key}
+                column={c}
                 sortCol={sortCol}
                 sortDir={sortDir}
                 onToggleSort={toggleSort}
               />
-            )}
+            ))}
             {onZoomTo && <th style={TH} />}
           </tr>
         </thead>
@@ -500,9 +514,12 @@ function NodesTab({
                       : "—"}
                   </td>
                 )}
-                {hasGenericResults && (
-                  <GenericResultCell value={node.resultValue} />
-                )}
+                {genericColumns.map((c) => (
+                  <GenericResultCell
+                    key={c.key}
+                    value={node.resultValues?.[c.key]}
+                  />
+                ))}
                 {onZoomTo && (
                   <td
                     style={{
@@ -607,7 +624,7 @@ function LinksTab({
   onSelect,
   onZoomTo,
   activeId,
-  resultColumn,
+  resultColumns = [],
 }: {
   query: string;
   links: Link[];
@@ -615,12 +632,13 @@ function LinksTab({
   onSelect: (id: string) => void;
   onZoomTo?: (id: string) => void;
   activeId?: string | null;
-  resultColumn?: SimResultColumn;
+  resultColumns?: SimResultColumn[];
 }) {
   const sys = useUnitSystem();
   const hasResults = links.some((l) => l.flow != null);
-  const hasGenericResults =
-    resultColumn != null && links.some((l) => l.resultValue != null);
+  const genericColumns = links.some((l) => l.resultValues != null)
+    ? resultColumns
+    : [];
   // Same rule as the nodes table: attribute columns only when the snapshot
   // carries the attribute (v4 snapshots are geometry-only).
   const hasAttrs = links.some(
@@ -649,7 +667,7 @@ function LinksTab({
     2 +
     (hasAttrs ? 2 : 0) +
     (hasResults ? 1 : 0) +
-    (hasGenericResults ? 1 : 0) +
+    genericColumns.length +
     (onZoomTo ? 1 : 0);
 
   return (
@@ -674,7 +692,9 @@ function LinksTab({
           {hasAttrs && <col style={{ width: 36 }} />}
           {hasAttrs && <col />}
           {hasResults && <col />}
-          {hasGenericResults && <col />}
+          {genericColumns.map((c) => (
+            <col key={c.key} />
+          ))}
           {onZoomTo && <col style={{ width: 22 }} />}
         </colgroup>
         <thead>
@@ -752,14 +772,15 @@ function LinksTab({
                 <SortIndicator col="flow" sortCol={sortCol} sortDir={sortDir} />
               </th>
             )}
-            {hasGenericResults && resultColumn && (
+            {genericColumns.map((c) => (
               <GenericResultHeader
-                column={resultColumn}
+                key={c.key}
+                column={c}
                 sortCol={sortCol}
                 sortDir={sortDir}
                 onToggleSort={toggleSort}
               />
-            )}
+            ))}
             {onZoomTo && <th style={TH} />}
           </tr>
         </thead>
@@ -849,9 +870,12 @@ function LinksTab({
                       : "—"}
                   </td>
                 )}
-                {hasGenericResults && (
-                  <GenericResultCell value={link.resultValue} />
-                )}
+                {genericColumns.map((c) => (
+                  <GenericResultCell
+                    key={c.key}
+                    value={link.resultValues?.[c.key]}
+                  />
+                ))}
                 {onZoomTo && (
                   <td
                     style={{
@@ -1028,10 +1052,10 @@ interface Props {
   /** When provided, each link row shows a zoom icon that triggers this callback. */
   onZoomToLink?: (id: string) => void;
   /** Generic result-column headers (engines whose values ride on
-   * `Node.resultValue`/`Link.resultValue`); absent for wds, whose pressure
-   * and flow columns are built in. */
-  nodeResultColumn?: SimResultColumn;
-  linkResultColumn?: SimResultColumn;
+   * `resultValues`); absent for wds, whose pressure and flow columns are
+   * built in. */
+  nodeResultColumns?: SimResultColumn[];
+  linkResultColumns?: SimResultColumn[];
   /**
    * When true the panel renders inline (fills its container) rather than as an
    * absolutely-positioned overlay. Use this when hosting inside the secondary rail.
@@ -1049,8 +1073,8 @@ export function NetworkInspectorHome({
   activeLinkId,
   onZoomToNode,
   onZoomToLink,
-  nodeResultColumn,
-  linkResultColumn,
+  nodeResultColumns,
+  linkResultColumns,
   embedded,
 }: Props) {
   const internalNodes = useNodes();
@@ -1276,7 +1300,7 @@ export function NetworkInspectorHome({
           onSelect={onSelectNode}
           onZoomTo={onZoomToNode}
           activeId={activeNodeId}
-          resultColumn={nodeResultColumn}
+          resultColumns={nodeResultColumns}
         />
       )}
       {tab === "subcatchments" && (
@@ -1290,7 +1314,7 @@ export function NetworkInspectorHome({
           onSelect={onSelectLink}
           onZoomTo={onZoomToLink}
           activeId={activeLinkId}
-          resultColumn={linkResultColumn}
+          resultColumns={linkResultColumns}
         />
       )}
     </div>

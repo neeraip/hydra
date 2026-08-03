@@ -27,9 +27,9 @@ export interface Node {
   baseDemand?: number;
   pressure: number | null;
   demand: number | null;
-  /** Engine-generic current-period value (the legend's selected variable),
-   * merged by CanvasView for the rail list. `null`/absent = not reported. */
-  resultValue?: number | null;
+  /** Engine-generic current-period values keyed by catalog variable id,
+   * merged by CanvasView for the rail list. `null` = not reported. */
+  resultValues?: Record<string, number | null>;
   /** Hydraulic head in metres. `null` when no simulation has run. */
   head?: number | null;
   /** Water quality value (units depend on quality mode). `null` when no quality simulation was run. */
@@ -82,9 +82,9 @@ export interface Link {
   valveSetting?: number | null;
   /** Curve ID for GPV/PCV; null otherwise. */
   valveCurve?: string | null;
-  /** Engine-generic current-period value (the legend's selected variable),
-   * merged by CanvasView for the rail list. `null`/absent = not reported. */
-  resultValue?: number | null;
+  /** Engine-generic current-period values keyed by catalog variable id,
+   * merged by CanvasView for the rail list. `null` = not reported. */
+  resultValues?: Record<string, number | null>;
 }
 
 export interface Pattern {

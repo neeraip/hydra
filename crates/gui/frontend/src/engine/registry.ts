@@ -48,6 +48,9 @@ export interface GenericElementValue {
   unit?: string;
   /** `null`/`NaN` = not reported for this element. */
   value: number | null;
+  /** Whether this is the canvas's active variable — the result card's big
+   * value, mirroring the wds card's active-variable treatment. */
+  primary?: boolean;
 }
 
 /** Props of the element inspector's node body. */

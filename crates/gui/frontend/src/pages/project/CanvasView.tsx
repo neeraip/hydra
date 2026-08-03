@@ -956,8 +956,15 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
       label: v.label,
       unit: v.unit,
       value: fetchedGenericValues.points[i]?.[si] ?? null,
+      primary: v.id === genericCanvas?.node?.variable.id,
     }));
-  }, [genericMeta, fetchedGenericValues, selectedNodeId, baseNodes]);
+  }, [
+    genericMeta,
+    fetchedGenericValues,
+    selectedNodeId,
+    baseNodes,
+    genericCanvas?.node,
+  ]);
 
   const genericLinkResults = useMemo(() => {
     if (!genericMeta || !fetchedGenericValues || selectedLinkId == null) {
@@ -970,8 +977,15 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
       label: v.label,
       unit: v.unit,
       value: fetchedGenericValues.polylines[i]?.[si] ?? null,
+      primary: v.id === genericCanvas?.link?.variable.id,
     }));
-  }, [genericMeta, fetchedGenericValues, selectedLinkId, baseLinks]);
+  }, [
+    genericMeta,
+    fetchedGenericValues,
+    selectedLinkId,
+    baseLinks,
+    genericCanvas?.link,
+  ]);
 
   // Keep the selection context's sim data in sync so the rail can display
   // live result values without re-fetching from the backend. Always push:
@@ -979,53 +993,87 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
   // values; after a topology change they are the fresh raw arrays — holding
   // back in that case left deleted elements listed in the rail forever, since
   // no period refetch arrives until the next run.
-  // For generic-results engines, merge the legend's selected variable value
-  // onto each element (`resultValue`) so the rail list gets a live result
-  // column — the generic counterpart of the wds pressure/flow merge above.
-  // Same order guarantee: payload arrays share allNodes/baseLinks order.
+  // For generic-results engines, merge current-period values onto each
+  // element (`resultValues`, keyed by variable id) so the rail list gets
+  // live result columns — the generic counterpart of the wds pressure/flow
+  // merge above. The column set is the catalog's leading variables, capped
+  // to keep the rail readable; order guarantee as above (payload arrays
+  // share allNodes/baseLinks order).
+  const RAIL_RESULT_COLUMNS = 3;
+  const railNodeColumns = useMemo(
+    () =>
+      (genericMeta?.pointVars ?? []).slice(0, RAIL_RESULT_COLUMNS).map((v) => ({
+        key: v.id,
+        label: v.label,
+        unit: v.unit,
+      })),
+    [genericMeta],
+  );
+  const railLinkColumns = useMemo(
+    () =>
+      (genericMeta?.polylineVars ?? [])
+        .slice(0, RAIL_RESULT_COLUMNS)
+        .map((v) => ({ key: v.id, label: v.label, unit: v.unit })),
+    [genericMeta],
+  );
   const railNodes = useMemo(() => {
-    const values = genericCanvas?.node?.values;
-    if (!needSimObjects || !values || values.length !== allNodes.length) {
+    const arrays = fetchedGenericValues?.points;
+    if (
+      !needSimObjects ||
+      !arrays ||
+      railNodeColumns.length === 0 ||
+      arrays[0]?.length !== allNodes.length
+    ) {
       return allNodes;
     }
-    return allNodes.map((n, i) => ({
-      ...n,
-      resultValue: Number.isFinite(values[i]) ? values[i] : null,
-    }));
-  }, [allNodes, genericCanvas?.node, needSimObjects]);
+    return allNodes.map((n, i) => {
+      const resultValues: Record<string, number | null> = {};
+      railNodeColumns.forEach((c, vi) => {
+        const v = arrays[vi]?.[i];
+        resultValues[c.key] = v != null && Number.isFinite(v) ? v : null;
+      });
+      return { ...n, resultValues };
+    });
+  }, [allNodes, fetchedGenericValues?.points, railNodeColumns, needSimObjects]);
   const railLinks = useMemo(() => {
-    const values = genericCanvas?.link?.values;
-    if (!needSimObjects || !values || values.length !== allLinks.length) {
+    const arrays = fetchedGenericValues?.polylines;
+    if (
+      !needSimObjects ||
+      !arrays ||
+      railLinkColumns.length === 0 ||
+      arrays[0]?.length !== allLinks.length
+    ) {
       return allLinks;
     }
-    return allLinks.map((l, i) => ({
-      ...l,
-      resultValue: Number.isFinite(values[i]) ? values[i] : null,
-    }));
-  }, [allLinks, genericCanvas?.link, needSimObjects]);
+    return allLinks.map((l, i) => {
+      const resultValues: Record<string, number | null> = {};
+      railLinkColumns.forEach((c, vi) => {
+        const v = arrays[vi]?.[i];
+        resultValues[c.key] = v != null && Number.isFinite(v) ? v : null;
+      });
+      return { ...l, resultValues };
+    });
+  }, [
+    allLinks,
+    fetchedGenericValues?.polylines,
+    railLinkColumns,
+    needSimObjects,
+  ]);
 
   useEffect(() => {
     setSimData(
       railNodes,
       railLinks,
-      genericCanvas
-        ? {
-            node: genericCanvas.node
-              ? {
-                  label: genericCanvas.node.variable.label,
-                  unit: genericCanvas.node.variable.unit,
-                }
-              : null,
-            link: genericCanvas.link
-              ? {
-                  label: genericCanvas.link.variable.label,
-                  unit: genericCanvas.link.variable.unit,
-                }
-              : null,
-          }
-        : null,
+      genericMeta ? { node: railNodeColumns, link: railLinkColumns } : null,
     );
-  }, [railNodes, railLinks, genericCanvas, setSimData]);
+  }, [
+    railNodes,
+    railLinks,
+    railNodeColumns,
+    railLinkColumns,
+    genericMeta,
+    setSimData,
+  ]);
 
   // Locate the network-wide min/max of the active variable for the current
   // period, then select and fly to that element. Period arrays are index-

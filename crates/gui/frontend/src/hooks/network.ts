@@ -1025,3 +1025,61 @@ export async function getNetworkTitle(): Promise<string[]> {
 export async function updateNetworkTitle(lines: string[]): Promise<void> {
   await invoke<void>("update_network_title", { lines });
 }
+
+// ── Engine-generic element details ──────────────────────────────────────────
+
+/** §5 quantity descriptor accompanying a numeric attribute — everything the
+ * frontend needs to convert the SI value to the active display system. */
+export interface ElementAttributeQuantity {
+  key: string;
+  siLabel: string;
+  usLabel: string;
+  siToUsScale: number;
+  siToUsOffset: number;
+  siDecimals: number;
+  usDecimals: number;
+}
+
+/** One Properties row of the engine-generic element inspector: an
+ * engine-authored label with either a numeric SI value or a display text. */
+export interface ElementAttribute {
+  label: string;
+  number?: number;
+  text?: string;
+  quantity?: ElementAttributeQuantity;
+}
+
+/** Display string for an attribute row in the given unit system. */
+export function formatElementAttribute(
+  attr: ElementAttribute,
+  sys: "si" | "us",
+): string {
+  if (attr.text != null) return attr.text;
+  if (attr.number == null) return "—";
+  const q = attr.quantity;
+  if (!q) {
+    // Unitless: enough precision for roughness-scale values.
+    return String(Number(attr.number.toFixed(4)));
+  }
+  const value =
+    sys === "us" ? attr.number * q.siToUsScale + q.siToUsOffset : attr.number;
+  const decimals = sys === "us" ? q.usDecimals : q.siDecimals;
+  const unit = sys === "us" ? q.usLabel : q.siLabel;
+  return `${value.toFixed(decimals)} ${unit}`;
+}
+
+/**
+ * Engine-described attribute rows for one element. `null` outside Tauri,
+ * for engines that serve attributes elsewhere (wds), or for an unknown id.
+ */
+export async function getElementDetails(
+  projectId: string,
+  scenarioId: string | null | undefined,
+  elementId: string,
+): Promise<ElementAttribute[] | null> {
+  return tryInvokeOr<ElementAttribute[] | null>(
+    "get_element_details",
+    { projectId, scenarioId: scenarioId ?? null, elementId },
+    null,
+  );
+}
