@@ -185,6 +185,9 @@ export interface ResultRanges {
 export interface ResultMeta {
   /** Snapshot times in seconds from the start of the simulation. */
   times: number[];
+  /** Whether per-period arrays exist for this target; false = the timeline
+   * steps but the canvas stays uncoloured (engine provider pending). */
+  hasPeriodData?: boolean;
   ranges: ResultRanges;
   /** Quality mode used: `"none"` | `"chemical"` | `"age"` | `"trace"`. */
   qualityMode: string;

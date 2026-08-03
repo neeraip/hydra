@@ -242,7 +242,7 @@ pub struct ResultAnalyticsDto {
 }
 
 /// Global min/max ranges for the common result variables across all periods.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct ResultRangesDto {
     pub pressure_min: f64,
@@ -267,6 +267,10 @@ pub struct ResultRangesDto {
 #[serde(rename_all = "camelCase")]
 pub struct ResultMetaDto {
     pub times: Vec<f64>,
+    /// Whether `get_period_results` can serve per-period arrays for this
+    /// target. False for engines whose period serving has not landed —
+    /// the timeline steps, but the canvas stays uncoloured.
+    pub has_period_data: bool,
     pub ranges: ResultRangesDto,
     /// Quality mode used in the simulation: `"none"`, `"chemical"`, `"age"`, or `"trace"`.
     pub quality_mode: String,
@@ -305,15 +309,33 @@ pub fn load_result_meta(
 ) -> Result<Option<ResultMetaDto>, String> {
     validate_target_ids(&project_id, scenario_id.as_deref())?;
     let app_data = app_data_dir(&app)?;
-    // wds-shaped results reading; other engines' results arrive with their
-    // own provider (registry pattern). "No results" is the honest interim
-    // answer — never a foreign-dialect or corrupt-file error.
-    if super::projects::project_engine_key(&app_data, &project_id) != "wds" {
-        return Ok(None);
-    }
     let out_path = results_path_for(&app_data, &project_id, scenario_id.as_deref());
     if !out_path.exists() {
         return Ok(None);
+    }
+    // Engine-dispatched: each engine's reader serves its own results file.
+    match super::projects::project_engine_key(&app_data, &project_id).as_str() {
+        "wds" => {}
+        "uds" => {
+            let meta = hydra::uds::io::out_reader::read_metadata(&out_path)?;
+            // Sim-relative period instants. The stored clock carries absolute
+            // record times; the standard case reports one step after start,
+            // which (i+1)·step reproduces.
+            let step = meta.report_step_s as f64;
+            let times: Vec<f64> = (0..meta.n_periods)
+                .map(|i| (i as f64 + 1.0) * step)
+                .collect();
+            return Ok(Some(ResultMetaDto {
+                times,
+                // Period arrays for the canvas arrive with the uds results
+                // provider; until then the timeline steps uncoloured.
+                has_period_data: false,
+                quality_mode: "none".to_string(),
+                network_digest: None,
+                ranges: ResultRangesDto::default(),
+            }));
+        }
+        _ => return Ok(None),
     }
     let meta =
         hydra::io::out_reader::read_metadata_checked(&out_path).map_err(|e| e.to_string())?;
@@ -327,6 +349,7 @@ pub fn load_result_meta(
     };
     Ok(Some(ResultMetaDto {
         times,
+        has_period_data: true,
         quality_mode: quality_mode.to_string(),
         // From `run.json` beside the results: `results.out` is EPANET's
         // format and carries none of Hydra's fields (model spec §4.4.1).

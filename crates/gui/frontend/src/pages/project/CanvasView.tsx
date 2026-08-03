@@ -560,6 +560,13 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
       }
       return;
     }
+    if (resultMeta?.hasPeriodData === false) {
+      // The engine has result metadata (the timeline steps) but no
+      // per-period arrays yet — nothing to fetch, nothing to colour.
+      setFetchedPeriodResult(null);
+      loadedTargetRef.current = null;
+      return;
+    }
     const target = `${project.id}:${activeScenarioId ?? "base"}`;
     let cancelled = false;
     // Clamp: on switching to a shorter result set this effect can run before
