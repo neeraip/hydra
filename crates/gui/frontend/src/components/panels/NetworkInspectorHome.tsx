@@ -156,10 +156,10 @@ const TH: React.CSSProperties = {
   zIndex: 1,
 };
 
-/** Width of the element-type badge column: the badge is ~20px wide (18px
- * minimum, a little more for the two-character "Pu"), plus 4px each side. The
- * shared TD padding of 8px would otherwise make the column twice the width of
- * the thing in it. */
+/** Width of the element-type badge column: the badge is a fixed 22px (see
+ * `TypeBadge` — one- and two-character tags share a width so the column
+ * has a straight edge), plus 3px each side. The shared TD padding of 8px
+ * would otherwise make the column far wider than the thing in it. */
 const BADGE_COL_WIDTH = 28;
 
 /** Cell padding for that column — the shared horizontal padding, halved. */

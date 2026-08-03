@@ -3,8 +3,8 @@
 // active node/link variable (in display units). Renders nothing until results
 // are loaded and something is hovered.
 
+import { TypeBadge } from "../components/ui/TypeBadge";
 import { formatGenericValue, type PeriodResults } from "../hooks";
-import { elementTypeBadge } from "../types/elementTypes";
 import { toDisplay, unitLabel, type useUnitSystem } from "../units";
 import { statusLabel } from "./MapCanvas/colorUtils";
 import type { GenericCanvasResults, LinkVariable, NodeVariable } from "./types";
@@ -112,7 +112,6 @@ export function HoverChip({
     : periodResult
       ? hoverTipValue(tip, periodResult, nodeVar, linkVar, sys)
       : null;
-  const badge = elementTypeBadge(tip.type);
   return (
     <div
       style={{
@@ -135,26 +134,11 @@ export function HoverChip({
         textOverflow: "ellipsis",
       }}
     >
-      <span
-        style={{
-          display: "inline-flex",
-          alignItems: "center",
-          justifyContent: "center",
-          minWidth: 14,
-          height: 13,
-          padding: "0 2px",
-          marginRight: 5,
-          borderRadius: 3,
-          fontSize: "var(--text-2xs)",
-          fontWeight: 700,
-          verticalAlign: "text-bottom",
-          color: badge.color,
-          background: `${badge.color}1f`,
-          border: `1px solid ${badge.color}55`,
-          boxSizing: "border-box",
-        }}
-      >
-        {badge.label}
+      {/* Wrapper carries the spacing and baseline alignment the chip's
+          inline layout needs; the badge itself stays metric-identical to
+          the one the panels render. */}
+      <span style={{ marginRight: 5, verticalAlign: "text-bottom" }}>
+        <TypeBadge type={tip.type} size="sm" />
       </span>
       <span style={{ fontWeight: 600 }}>{tip.id}</span>
       {value != null && (

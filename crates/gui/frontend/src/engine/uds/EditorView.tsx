@@ -2,8 +2,8 @@
  * browser until urban-drainage editing lands. Element vocabulary is this
  * engine's own — a bespoke component may know its kinds by name. */
 
+import { TypeBadge } from "../../components/ui/TypeBadge";
 import { useLinks, useNodes, useRegions } from "../../hooks";
-import { elementTypeBadge } from "../../types/elementTypes";
 
 const KIND_LABELS: Record<string, string> = {
   junction: "Junctions",
@@ -63,7 +63,6 @@ function KindGroup({
         }}
       >
         {entries.map(([kind, count]) => {
-          const badge = elementTypeBadge(kind);
           return (
             <div
               key={kind}
@@ -74,23 +73,7 @@ function KindGroup({
                 fontSize: "var(--text-md)",
               }}
             >
-              <span
-                style={{
-                  width: 16,
-                  height: 16,
-                  borderRadius: 4,
-                  background: badge.color,
-                  color: "#fff",
-                  fontSize: 9,
-                  fontWeight: 700,
-                  display: "inline-flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  flexShrink: 0,
-                }}
-              >
-                {badge.label}
-              </span>
+              <TypeBadge type={kind} />
               <span style={{ color: "var(--text-primary)" }}>
                 {KIND_LABELS[kind] ?? kind}
               </span>
