@@ -1325,8 +1325,23 @@ impl Router {
         }
         self.structs
             .iter()
-            .find(|s| s.link == li)
-            .map(|st| (self.y[st.from] - st.off1).max(0.0))
+            .enumerate()
+            .find(|(_, s)| s.link == li)
+            .map(|(si, st)| {
+                // The predecessor's per-kind depth conventions: a pump
+                // reports zero; an orifice its wetted opening (capped by
+                // the setting's share); a weir the head over its crest
+                // capped at the section height; an outlet the head.
+                let up = (self.y[st.from] - st.off1).max(0.0);
+                match &st.kind {
+                    StructKind::Pump { .. } => 0.0,
+                    StructKind::Orifice { sec, .. } => {
+                        up.min(sec.y_full() * self.sett_cur[si].clamp(0.0, 1.0))
+                    }
+                    StructKind::Weir { sec, .. } => up.min(sec.y_full()),
+                    _ => up,
+                }
+            })
     }
 
     /// Flow velocity in channel `li` (m/s); `None` for structures, whose
