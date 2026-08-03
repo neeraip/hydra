@@ -1517,11 +1517,11 @@ Duration  0
         let out = dir.join("results.out");
         let digest = hydra::compute_network_digest(&hydra::io::parse(TEST_INP.as_bytes()).unwrap());
         let (_sim, err, _wall, _steps) = run_sim_loops(
-            loaded_sim(),
+            hydra::engines::EngineSession::from_wds(loaded_sim(), hydra::FlowUnits::Lps),
             Some(out.clone()),
             0.0,
             false,
-            digest,
+            Some(digest),
             |_, _, _, _, _| {},
             || false,
         );

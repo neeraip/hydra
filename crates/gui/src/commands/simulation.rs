@@ -123,13 +123,26 @@ pub(crate) fn warning_to_dto(
     }
 }
 
-/// Collect a finished run's warnings as wire DTOs.
-pub(crate) fn collect_run_warnings(sim: &hydra::Simulation) -> Vec<RunWarningDto> {
-    let node_ids = sim.node_ids();
-    let link_ids = sim.link_ids();
-    sim.warnings()
-        .iter()
-        .map(|w| warning_to_dto(w, &node_ids, &link_ids))
+/// Collect a finished run's warnings as wire DTOs. The wds arm keeps its
+/// established codes and element resolution; other engines' warnings pass
+/// through the session's neutral shape verbatim.
+pub(crate) fn collect_run_warnings(es: &hydra::engines::EngineSession) -> Vec<RunWarningDto> {
+    if let Some(sim) = es.as_wds() {
+        let node_ids = sim.node_ids();
+        let link_ids = sim.link_ids();
+        return sim
+            .warnings()
+            .iter()
+            .map(|w| warning_to_dto(w, &node_ids, &link_ids))
+            .collect();
+    }
+    es.warnings()
+        .into_iter()
+        .map(|w| RunWarningDto {
+            code: w.code,
+            message: w.message,
+            element_id: w.element,
+        })
         .collect()
 }
 
@@ -345,18 +358,22 @@ pub(crate) fn progress_percent(simulated_seconds: f64, duration_seconds: f64) ->
 ///
 /// Designed to be called inside `tauri::async_runtime::spawn_blocking`.
 pub(crate) fn run_sim_loops<F, C>(
-    mut sim: hydra::Simulation,
+    mut es: hydra::engines::EngineSession,
     out_path: Option<std::path::PathBuf>,
     duration_seconds: f64,
     run_quality: bool,
     // Topology digest of the network being run, recorded beside the results so
-    // a consumer can tell later that the model has been edited since. Passed in
-    // rather than taken from `sim`, which does not expose its network — and the
-    // caller has it in hand before loading it.
-    network_digest: u64,
+    // a consumer can tell later that the model has been edited since. `None`
+    // for engines whose model has no digest yet.
+    network_digest: Option<u64>,
     emit: F,
     should_cancel: C,
-) -> (hydra::Simulation, Option<RunLoopError>, u64, u32)
+) -> (
+    hydra::engines::EngineSession,
+    Option<RunLoopError>,
+    u64,
+    u32,
+)
 where
     F: Fn(&'static str, f64, bool, bool, Option<String>),
     C: Fn() -> bool,
@@ -373,7 +390,8 @@ where
         name.push(".tmp");
         p.with_file_name(name)
     });
-    let mut out_writer = tmp_path.as_ref().and_then(|p| {
+    let mut streamed = false;
+    if let Some(p) = tmp_path.as_ref() {
         if let Some(parent) = p.parent() {
             if let Err(e) = std::fs::create_dir_all(parent) {
                 tracing::warn!(
@@ -383,225 +401,119 @@ where
                 );
             }
         }
-        let file = match std::fs::File::create(p) {
-            Ok(f) => f,
+        match std::fs::File::create(p) {
+            Ok(file) => match es.begin_results(Box::new(file), "", "") {
+                Ok(()) => streamed = true,
+                Err(e) => {
+                    tracing::warn!(
+                        path = %p.display(),
+                        error = %e,
+                        "could not start results stream; run will not be persisted"
+                    );
+                }
+            },
             Err(e) => {
                 tracing::warn!(
                     path = %p.display(),
                     error = %e,
                     "could not create results stream; run will not be persisted"
                 );
-                return None;
-            }
-        };
-        match hydra::io::out_writer::OutStreamWriter::begin(
-            file,
-            &sim,
-            "",
-            "",
-            hydra::FlowUnits::Lps,
-        ) {
-            Ok(w) => Some(w),
-            Err(e) => {
-                tracing::warn!(
-                    path = %p.display(),
-                    error = %e,
-                    "could not start results stream; run will not be persisted"
-                );
-                None
             }
         }
-    });
+    }
 
     let mut simulated_seconds = 0.0_f64;
     let mut last_emit_at = Instant::now();
     let mut last_percent_bucket = -1_i64;
     let mut run_err: Option<RunLoopError> = None;
 
-    // A failed write to the results stream aborts the run as Failed: silently
-    // continuing would report success for a run whose results.out is missing
-    // periods (the tmp-file flow below then discards the partial stream).
-    if let Some(w) = out_writer.as_mut() {
-        if let Err(e) = w.append_available(&sim) {
-            let msg = format!("simulation results could not be written: {e}");
-            emit("hydraulics", 0.0, false, true, Some(msg.clone()));
-            run_err = Some(RunLoopError::Failed(msg));
+    // Wire phase codes are the session's phases mapped to the frontend's
+    // vocabulary; a quality-free wds run keeps reporting "hydraulics" so its
+    // event stream is unchanged from before the session abstraction.
+    let to_code = |phase: &str| -> &'static str {
+        match phase {
+            "Hydraulics" => "hydraulics",
+            "Water quality" => {
+                if run_quality {
+                    "quality"
+                } else {
+                    "hydraulics"
+                }
+            }
+            _ => "simulation",
         }
-    }
+    };
 
-    if run_err.is_none() {
-        emit("hydraulics", 0.0, false, false, None);
-    }
+    let mut phase = to_code(es.phase());
+    emit(phase, 0.0, false, false, None);
 
     while run_err.is_none() {
         if should_cancel() {
             let msg = "Cancelled by user".to_string();
-            emit("hydraulics", simulated_seconds, false, true, Some(msg));
+            emit(phase, simulated_seconds, false, true, Some(msg));
             run_err = Some(RunLoopError::Cancelled);
             break;
         }
-        match sim.step_hydraulics() {
-            Ok(dt) => {
-                if dt == 0.0 {
-                    break;
+        match es.advance() {
+            Ok(p) => {
+                let code = to_code(p.phase);
+                if code != phase {
+                    // Close the finished phase for the UI, then open the new
+                    // one at zero so its progress bar starts fresh.
+                    emit(
+                        phase,
+                        duration_seconds.max(simulated_seconds),
+                        false,
+                        false,
+                        None,
+                    );
+                    phase = code;
+                    last_percent_bucket = -1;
+                    last_emit_at = Instant::now();
+                    emit(phase, 0.0, false, false, None);
                 }
-                simulated_seconds += dt;
+                simulated_seconds = p.t;
                 hyd_steps += 1;
-                if let Some(w) = out_writer.as_mut() {
-                    if let Err(e) = w.append_available(&sim) {
-                        let msg = format!("simulation results could not be written: {e}");
-                        emit(
-                            "hydraulics",
-                            simulated_seconds,
-                            false,
-                            true,
-                            Some(msg.clone()),
-                        );
-                        run_err = Some(RunLoopError::Failed(msg));
-                        break;
-                    }
+                if p.done {
+                    emit(
+                        phase,
+                        duration_seconds.max(simulated_seconds),
+                        true,
+                        false,
+                        None,
+                    );
+                    break;
                 }
                 let pct = progress_percent(simulated_seconds, duration_seconds);
                 let bucket = pct.floor() as i64;
                 if bucket != last_percent_bucket || last_emit_at.elapsed() >= PROGRESS_EMIT_INTERVAL
                 {
-                    emit("hydraulics", simulated_seconds, false, false, None);
+                    emit(phase, simulated_seconds, false, false, None);
                     last_percent_bucket = bucket;
                     last_emit_at = Instant::now();
                 }
             }
             Err(e) => {
-                let msg = e.to_string();
-                emit(
-                    "hydraulics",
-                    simulated_seconds,
-                    false,
-                    true,
-                    Some(msg.clone()),
-                );
+                let msg = match e {
+                    hydra::engines::AdvanceError::Io(err) => {
+                        format!("simulation results could not be written: {err}")
+                    }
+                    other => other.to_string(),
+                };
+                emit(phase, simulated_seconds, false, true, Some(msg.clone()));
                 run_err = Some(RunLoopError::Failed(msg));
                 break;
             }
         }
     }
 
-    // Flush the final hydraulic snapshot (dt == 0.0 break path).
-    if run_err.is_none() {
-        if let Some(w) = out_writer.as_mut() {
-            if let Err(e) = w.append_available(&sim) {
-                let msg = format!("simulation results could not be written: {e}");
-                emit(
-                    "hydraulics",
-                    simulated_seconds,
-                    false,
-                    true,
-                    Some(msg.clone()),
-                );
-                run_err = Some(RunLoopError::Failed(msg));
-            }
-        }
-    }
-    if run_err.is_none() {
-        emit(
-            "hydraulics",
-            duration_seconds.max(simulated_seconds),
-            !run_quality,
-            false,
-            None,
-        );
-    }
-
-    if run_err.is_none() && run_quality {
-        let mut quality_simulated_seconds = 0.0_f64;
-        let mut quality_started = false;
-        last_emit_at = Instant::now();
-        last_percent_bucket = -1;
-
-        loop {
-            if should_cancel() {
-                let msg = "Cancelled by user".to_string();
-                emit("quality", quality_simulated_seconds, false, true, Some(msg));
-                run_err = Some(RunLoopError::Cancelled);
-                break;
-            }
-            match sim.step_quality() {
-                Ok(dt) => {
-                    // Quality-final periods become available as the quality
-                    // phase advances (spec §8.3) — stream them out here; the
-                    // hydraulics-phase appends emit nothing while quality is
-                    // still pending.
-                    if let Some(w) = out_writer.as_mut() {
-                        if let Err(e) = w.append_available(&sim) {
-                            let msg = format!("simulation results could not be written: {e}");
-                            emit(
-                                "quality",
-                                quality_simulated_seconds,
-                                false,
-                                true,
-                                Some(msg.clone()),
-                            );
-                            run_err = Some(RunLoopError::Failed(msg));
-                            break;
-                        }
-                    }
-                    if dt == 0.0 {
-                        break;
-                    }
-                    if !quality_started {
-                        emit("quality", 0.0, false, false, None);
-                        quality_started = true;
-                    }
-                    quality_simulated_seconds += dt;
-                    let pct = progress_percent(quality_simulated_seconds, duration_seconds);
-                    let bucket = pct.floor() as i64;
-                    if bucket != last_percent_bucket
-                        || last_emit_at.elapsed() >= PROGRESS_EMIT_INTERVAL
-                    {
-                        emit("quality", quality_simulated_seconds, false, false, None);
-                        last_percent_bucket = bucket;
-                        last_emit_at = Instant::now();
-                    }
-                }
-                Err(e) => {
-                    let msg = e.to_string();
-                    emit(
-                        "quality",
-                        quality_simulated_seconds,
-                        false,
-                        true,
-                        Some(msg.clone()),
-                    );
-                    run_err = Some(RunLoopError::Failed(msg));
-                    break;
-                }
-            }
-        }
-
-        if run_err.is_none() {
-            emit(
-                "quality",
-                duration_seconds.max(quality_simulated_seconds),
-                true,
-                false,
-                None,
-            );
-        }
-    }
-
-    let streamed = out_writer.is_some();
-    if let Some(w) = out_writer {
-        if let Err(e) = w.finish(&sim) {
+    if streamed {
+        if let Err(e) = es.finish_results() {
             if run_err.is_none() {
                 // Promoting a stream missing its epilogue would publish a
                 // corrupt results.out — abort as Failed instead.
                 let msg = format!("simulation finished but results could not be written: {e}");
-                emit(
-                    "hydraulics",
-                    simulated_seconds,
-                    false,
-                    true,
-                    Some(msg.clone()),
-                );
+                emit(phase, simulated_seconds, false, true, Some(msg.clone()));
                 run_err = Some(RunLoopError::Failed(msg));
             } else {
                 tracing::warn!(error = %e, "could not finalise discarded results stream");
@@ -634,13 +546,13 @@ where
     if let Some(final_path) = out_path.as_ref() {
         match warnings_sync_after_run(run_err.as_ref(), streamed, final_path.is_file()) {
             WarningsSync::Write => {
-                sync_run_warnings_file(final_path, Some(&collect_run_warnings(&sim)));
+                sync_run_warnings_file(final_path, Some(&collect_run_warnings(&es)));
                 // Same lifecycle as the warnings: this describes the results
                 // just published, so it is written and cleared with them.
                 sync_run_meta_file(
                     final_path,
                     Some(&RunMeta {
-                        network_digest: Some(crate::commands::results::digest_hex(network_digest)),
+                        network_digest: network_digest.map(crate::commands::results::digest_hex),
                     }),
                 );
             }
@@ -653,7 +565,7 @@ where
     }
 
     (
-        sim,
+        es,
         run_err,
         wall_start.elapsed().as_millis() as u64,
         hyd_steps,
@@ -728,17 +640,68 @@ mod tests {
         assert!(try_acquire_run_target("proj-lock-test", Some("sc-1")).is_ok());
     }
 
+    /// A uds session runs through the same loop the queue uses: results.out
+    /// is published in the SWMM binary layout, phase events use the
+    /// "simulation" code, and run.json carries no digest.
+    #[test]
+    fn run_sim_loops_runs_a_uds_session_end_to_end() {
+        let model = "[OPTIONS]\nFLOW_UNITS CFS\nFLOW_ROUTING DYNWAVE\n\
+                     START_DATE 01/01/2024\nSTART_TIME 00:00:00\n\
+                     END_DATE 01/01/2024\nEND_TIME 01:00:00\nREPORT_STEP 00:05:00\n\
+                     [JUNCTIONS]\nJ1 100 4\n[OUTFALLS]\nO1 98 FREE\n\
+                     [CONDUITS]\nC1 J1 O1 400 0.013 0 0\n\
+                     [XSECTIONS]\nC1 CIRCULAR 1.5 0 0 0\n\
+                     [REPORT]\nNODES ALL\nLINKS ALL\n";
+        let (sim, _diags, _findings) =
+            hydra::uds::simulation::Simulation::open(model).expect("open uds model");
+
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path().join("results.out");
+        let phases = std::sync::Mutex::new(Vec::new());
+        let (_es, err, _wall, _steps) = run_sim_loops(
+            hydra::engines::EngineSession::from_uds(sim),
+            Some(out.clone()),
+            3600.0,
+            false,
+            None,
+            |phase, _, _, _, _| phases.lock().unwrap().push(phase),
+            || false,
+        );
+        assert!(err.is_none(), "uds run must succeed: {err:?}");
+        assert!(out.exists(), "successful run must publish results.out");
+
+        // SWMM layout: leading magic number 516114522.
+        let bytes = std::fs::read(&out).unwrap();
+        assert_eq!(
+            i32::from_le_bytes(bytes[0..4].try_into().unwrap()),
+            516_114_522
+        );
+        // And the engine's own reader accepts what the loop published.
+        let meta = hydra::uds::io::out_reader::read_metadata(&out).expect("readable");
+        assert!(meta.n_periods > 0);
+
+        assert!(
+            phases.lock().unwrap().iter().all(|p| *p == "simulation"),
+            "uds runs report the single 'simulation' phase"
+        );
+        let run_meta = read_run_meta(&out).expect("run.json written");
+        assert!(
+            run_meta.network_digest.is_none(),
+            "uds runs carry no digest"
+        );
+    }
+
     // ── run_sim_loops results.out tmp/rename flow ─────────────────────────
     #[test]
     fn run_sim_loops_promotes_results_only_on_success() {
         let dir = tempfile::tempdir().unwrap();
         let out = dir.path().join("results.out");
         let (_sim, err, _wall, _steps) = run_sim_loops(
-            loaded_sim(),
+            hydra::engines::EngineSession::from_wds(loaded_sim(), hydra::FlowUnits::Lps),
             Some(out.clone()),
             0.0,
             false,
-            0,
+            Some(0),
             |_, _, _, _, _| {},
             || false,
         );
@@ -759,11 +722,11 @@ mod tests {
         let out = dir.path().join("results.out");
         std::fs::write(&out, b"previous successful run").unwrap();
         let (_sim, err, _wall, _steps) = run_sim_loops(
-            loaded_sim(),
+            hydra::engines::EngineSession::from_wds(loaded_sim(), hydra::FlowUnits::Lps),
             Some(out.clone()),
             0.0,
             false,
-            0,
+            Some(0),
             |_, _, _, _, _| {},
             || true, // cancel immediately
         );
@@ -858,11 +821,11 @@ mod tests {
         // Stale warnings from an earlier run must be overwritten, not merged.
         std::fs::write(dir.path().join("warnings.json"), b"[{\"bogus\":1}]").unwrap();
         let (_sim, err, _wall, _steps) = run_sim_loops(
-            loaded_sim(),
+            hydra::engines::EngineSession::from_wds(loaded_sim(), hydra::FlowUnits::Lps),
             Some(out),
             0.0,
             false,
-            0,
+            Some(0),
             |_, _, _, _, _| {},
             || false,
         );
@@ -905,8 +868,15 @@ Duration  0
         sim.load(network).unwrap();
         let dir = tempfile::tempdir().unwrap();
         let out = dir.path().join("results.out");
-        let (_sim, err, _wall, _steps) =
-            run_sim_loops(sim, Some(out), 0.0, false, 0, |_, _, _, _, _| {}, || false);
+        let (_sim, err, _wall, _steps) = run_sim_loops(
+            hydra::engines::EngineSession::from_wds(sim, hydra::FlowUnits::Lps),
+            Some(out),
+            0.0,
+            false,
+            Some(0),
+            |_, _, _, _, _| {},
+            || false,
+        );
         assert!(err.is_none(), "run must succeed with a warning: {err:?}");
         let warnings = read_run_warnings_file(&dir.path().join("warnings.json")).unwrap();
         assert!(
@@ -926,11 +896,11 @@ Duration  0
         std::fs::create_dir(&out).unwrap();
         std::fs::write(dir.path().join("warnings.json"), b"[]").unwrap();
         let (_sim, err, _wall, _steps) = run_sim_loops(
-            loaded_sim(),
+            hydra::engines::EngineSession::from_wds(loaded_sim(), hydra::FlowUnits::Lps),
             Some(out),
             0.0,
             false,
-            0,
+            Some(0),
             |_, _, _, _, _| {},
             || false,
         );
