@@ -43,7 +43,7 @@ export function AddSectionPalette({
   );
 
   return (
-    <div
+    <search
       onKeyDown={(e) => {
         if (e.key === "Escape") onClose();
       }}
@@ -184,6 +184,6 @@ export function AddSectionPalette({
       >
         Done
       </button>
-    </div>
+    </search>
   );
 }

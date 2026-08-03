@@ -343,12 +343,15 @@ export function SectionList({
                 border: "1px solid var(--border)",
               }}
             >
+              {/* Pointer-only affordance: reordering has no keyboard path
+                  through this handle, so it is hidden from assistive tech
+                  rather than dressed up as a button it cannot be. */}
               <span
+                aria-hidden="true"
                 onPointerDown={(e) => beginDrag(index, e)}
                 onPointerMove={moveDrag}
                 onPointerUp={endDrag}
                 onPointerCancel={endDrag}
-                aria-label="Drag to reorder"
                 data-tooltip="Drag to reorder"
                 style={{
                   display: "flex",
