@@ -104,6 +104,7 @@ fn main() {
             commands::get_network_digest,
             commands::get_period_results,
             commands::get_element_details,
+            commands::get_inlet_couplings,
             commands::get_pump_energy,
             commands::get_result_analytics,
             commands::load_project_network,

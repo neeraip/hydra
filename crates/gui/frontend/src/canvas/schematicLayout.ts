@@ -29,15 +29,23 @@ const DETACHED_GAP_FRACTION = 0.06;
 
 export interface SchematicLayout {
   positions: Map<string, [number, number]>;
-  /** Ids not reachable from any reservoir or tank — the detached group. Empty
-   * for a fully connected network. */
+  /** Ids not reachable from any boundary node — a genuinely separate
+   * subnetwork. Empty for a fully connected network. */
   detachedIds: Set<string>;
+}
+
+/** A connection that is not a link: a conduit coupled to a node by
+ * something other than shared endpoints (a dual-drainage street inlet). */
+export interface LayoutCoupling {
+  link: string;
+  node: string;
 }
 
 export function computeSchematicLayout(
   nodes: Node[],
   links: Link[],
   scale: { x: number; y: number } = { x: 1, y: 1 },
+  couplings: LayoutCoupling[] = [],
 ): SchematicLayout {
   // Every position below is linear in these two constants, so scaling them is
   // equivalent to scaling the output per axis — no re-running the BFS.
@@ -50,6 +58,23 @@ export function computeSchematicLayout(
   for (const l of links) {
     adj.get(l.fromId)?.add(l.toId);
     adj.get(l.toId)?.add(l.fromId);
+  }
+  // Inlet couplings join a conduit to a node without sharing an endpoint,
+  // so connectivity derived from links alone misses them — a street
+  // network draining into a sewer through inlets would read as detached.
+  // The whole segment drains to the capture node, so both of its endpoints
+  // are adjacent to it.
+  if (couplings.length > 0) {
+    const linkById = new Map(links.map((l) => [l.id, l]));
+    for (const c of couplings) {
+      const l = linkById.get(c.link);
+      if (!l || !adj.has(c.node)) continue;
+      for (const end of [l.fromId, l.toId]) {
+        if (!adj.has(end)) continue;
+        adj.get(end)?.add(c.node);
+        adj.get(c.node)?.add(end);
+      }
+    }
   }
 
   // Identify boundary nodes as BFS roots: reservoirs/tanks for water

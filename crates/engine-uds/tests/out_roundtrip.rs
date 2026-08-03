@@ -29,11 +29,18 @@ fn run_to_out(name: &str) -> PathBuf {
     let (mut sim, _diags, _findings) = Simulation::open(&text).expect("open");
     while sim.step() {}
 
+    // Unique per call, not per fixture: cargo runs these tests in parallel
+    // threads of one process, so a path keyed by fixture name and pid is
+    // shared by every test using the same fixture — and `File::create`
+    // truncates, so one test's write empties the file another is midway
+    // through reading ("failed to fill whole buffer").
+    static SEQ: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
     let mut path = std::env::temp_dir();
     path.push(format!(
-        "hydra-uds-roundtrip-{}-{}.out",
+        "hydra-uds-roundtrip-{}-{}-{}.out",
         name.trim_end_matches(".inp"),
-        std::process::id()
+        std::process::id(),
+        SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
     ));
     let mut w = std::io::BufWriter::new(std::fs::File::create(&path).expect("create"));
     sim.write_out(&mut w).expect("write out");

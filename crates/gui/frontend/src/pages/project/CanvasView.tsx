@@ -53,6 +53,7 @@ import {
   type PeriodResults,
   patchNodePosition,
   saveProjectOnDisk,
+  useInletCouplings,
   useLinks,
   useNodes,
   useProjectCriteria,
@@ -880,6 +881,10 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
   const baseNodes = useNodes();
   const baseLinks = useLinks();
   const baseRegions = useRegions();
+  // Hydraulic connections that are not links (dual-drainage street
+  // inlets): the layout counts them as connectivity, the canvas draws
+  // them. Empty for engines without them.
+  const inletCouplings = useInletCouplings(project?.id, activeScenarioId);
 
   // Raw committed snapshot (source-CRS coords) for undo capture inside
   // stable callbacks — same render-time-ref pattern as the selection refs
@@ -1706,6 +1711,7 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
                   nodes={canvasNodes}
                   links={canvasLinks}
                   regions={canvasRegions}
+                  couplings={inletCouplings}
                   periodResult={currentPeriodResult}
                   generic={genericCanvas}
                   isActive={canvasIsActive}

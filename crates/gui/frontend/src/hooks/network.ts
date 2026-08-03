@@ -1087,3 +1087,53 @@ export async function getElementDetails(
     null,
   );
 }
+
+// ── Inlet couplings (dual drainage) ─────────────────────────────────────────
+
+/**
+ * A hydraulic connection that is **not a link**: a street conduit capturing
+ * flow into a sewer node through an inlet. In a dual-drainage model the
+ * surface network reaches the buried sewer only this way, so anything
+ * reasoning about connectivity from links alone would wrongly call the
+ * street network detached.
+ */
+export interface InletCoupling {
+  /** Id of the street conduit carrying the inlet. */
+  link: string;
+  /** Id of the node receiving captured flow. */
+  node: string;
+}
+
+/** Inlet couplings for a target; empty for engines that have none. */
+export async function getInletCouplings(
+  projectId: string,
+  scenarioId?: string | null,
+): Promise<InletCoupling[]> {
+  return tryInvokeOr<InletCoupling[]>(
+    "get_inlet_couplings",
+    { projectId, scenarioId: scenarioId ?? null },
+    [],
+  );
+}
+
+/** Inlet couplings for the given target, refetched when it changes. */
+export function useInletCouplings(
+  projectId: string | null | undefined,
+  scenarioId: string | null | undefined,
+): InletCoupling[] {
+  const [couplings, setCouplings] = useState<InletCoupling[]>([]);
+  useEffect(() => {
+    if (!projectId) {
+      setCouplings([]);
+      return;
+    }
+    let cancelled = false;
+    void getInletCouplings(projectId, scenarioId).then((c) => {
+      if (!cancelled) setCouplings(c);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [projectId, scenarioId]);
+  return couplings;
+}

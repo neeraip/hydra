@@ -232,6 +232,49 @@ pub fn element_attributes(net: &Network, element_id: &str) -> Option<Vec<Element
     Some(rows)
 }
 
+/// One inlet coupling: a street conduit capturing flow into a sewer
+/// vertex (SWMM `[INLET_USAGE]`). Reported by id so a consumer resolves
+/// it against whatever element arrays it already holds.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InletCouplingDto {
+    /// The street conduit carrying the inlet.
+    pub link: String,
+    /// The vertex receiving captured flow.
+    pub node: String,
+}
+
+/// Inlet couplings of the target's model, empty for engines without them.
+///
+/// These are hydraulic connections that are **not links**: in a dual
+/// drainage model the surface street network reaches the buried sewer only
+/// through inlet capture, so a consumer reasoning about connectivity from
+/// links alone would wrongly call the street network detached.
+#[tauri::command(async)]
+pub fn get_inlet_couplings(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, NetworkState>,
+    project_id: String,
+    scenario_id: Option<String>,
+) -> Result<Vec<InletCouplingDto>, String> {
+    validate_target_ids(&project_id, scenario_id.as_deref())?;
+    let app_data = app_data_dir(&app)?;
+    if super::projects::project_engine_key(&app_data, &project_id) != "uds" {
+        return Ok(Vec::new());
+    }
+    let net = uds_network_for_target(&app_data, &state, &project_id, scenario_id.as_deref())?;
+    Ok(net
+        .inlet_usage
+        .iter()
+        .filter_map(|u| {
+            Some(InletCouplingDto {
+                link: net.links.get(u.link)?.id.clone(),
+                node: net.vertices.get(u.capture_vertex)?.id.clone(),
+            })
+        })
+        .collect())
+}
+
 /// Engine-described attribute rows for one element of the target's model.
 /// `Ok(None)` for engines that serve their attributes elsewhere (wds) or
 /// for an unknown element id.

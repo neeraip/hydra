@@ -345,3 +345,67 @@ describe("computeSchematicLayout – detached nodes", () => {
     expect([...layout.values()].map(([x]) => x)).toEqual([0, 120, 240]);
   });
 });
+
+// ── Inlet couplings (dual drainage) ────────────────────────────────────────────
+//
+// Topology taken from a real SWMM model whose surface street network the
+// layout reported as a detached group of six: the streets touch the sewer
+// only through inlet capture, never through a link.
+
+describe("computeSchematicLayout – inlet couplings", () => {
+  const outfall = (id: string): Node => ({
+    id,
+    type: "outfall",
+    x: 0,
+    y: 0,
+    pressure: null,
+    demand: null,
+  });
+  const streets = ["Aux1", "Aux2", "Aux4", "Aux5", "Aux6", "Aux7"];
+  const nodes = [
+    ...streets.map(junction),
+    ...["J1", "J2", "J2a", "J11"].map(junction),
+    outfall("O1"),
+  ];
+  const links = [
+    pipe("Street1", "Aux1", "Aux2"),
+    pipe("Street2", "Aux2", "Aux4"),
+    pipe("Street3", "Aux4", "Aux5"),
+    pipe("Street4", "Aux5", "Aux6"),
+    pipe("Street5", "Aux6", "Aux7"),
+    pipe("P2", "J2a", "J2"),
+    pipe("P3", "J2", "J11"),
+    pipe("C11", "J11", "O1"),
+  ];
+  const couplings = [
+    { link: "Street1", node: "J1" },
+    { link: "Street3", node: "J2a" },
+    { link: "Street4", node: "J2" },
+    { link: "Street5", node: "J11" },
+  ];
+
+  it("calls the street chain separate when couplings are unknown", () => {
+    const layout = computeSchematicLayout(nodes, links);
+    expect([...layout.detachedIds].sort()).toEqual([...streets, "J1"].sort());
+  });
+
+  it("counts inlet capture as connectivity, leaving nothing separate", () => {
+    const layout = computeSchematicLayout(
+      nodes,
+      links,
+      { x: 1, y: 1 },
+      couplings,
+    );
+    expect([...layout.detachedIds]).toEqual([]);
+    // Every node still gets a position.
+    expect(layout.positions.size).toBe(nodes.length);
+  });
+
+  it("ignores a coupling naming an element that is not present", () => {
+    const layout = computeSchematicLayout(nodes, links, { x: 1, y: 1 }, [
+      { link: "NoSuchStreet", node: "J2" },
+      { link: "Street1", node: "NoSuchNode" },
+    ]);
+    expect(layout.detachedIds.has("Aux1")).toBe(true);
+  });
+});

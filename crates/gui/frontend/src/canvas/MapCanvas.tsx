@@ -56,8 +56,13 @@ import {
 import { nearestPointOnPath, type SnapResult } from "./measureSnap";
 import {
   computeSchematicLayout,
+  type LayoutCoupling,
   type SchematicLayout,
 } from "./schematicLayout";
+
+/** Stable empty default so the prop never changes identity per render. */
+const EMPTY_COUPLINGS: LayoutCoupling[] = [];
+
 import type {
   CanvasTool,
   GenericCanvasResults,
@@ -265,6 +270,10 @@ interface MapCanvasProps {
   onSelectNode: (id: string | null) => void;
   selectedLinkId: string | null;
   onSelectLink: (id: string | null) => void;
+  /** Hydraulic connections that are not links (dual-drainage street
+   * inlets): drawn as dashed connectors and counted as connectivity by
+   * the schematic layout. */
+  couplings?: LayoutCoupling[];
   /** Selected areal element; highlights its ring. */
   selectedRegionId?: string | null;
   /** Called when a region polygon is clicked (select tool, map mode). */
@@ -351,6 +360,7 @@ export const MapCanvas = memo(function MapCanvas({
   onSelectNode,
   selectedLinkId,
   onSelectLink,
+  couplings = EMPTY_COUPLINGS,
   selectedRegionId = null,
   onSelectRegion,
   headMin = 0,
@@ -493,6 +503,9 @@ export const MapCanvas = memo(function MapCanvas({
      * scale object without changing it does not force a re-layout. */
     scaleX: number;
     scaleY: number;
+    /** Couplings feed the connectivity pass, so a change in them must
+     * invalidate the cached layout exactly as nodes and links do. */
+    couplings: LayoutCoupling[];
   } | null>(null);
   const schematicLayout = useMemo(() => {
     const cache = schematicCacheRef.current;
@@ -500,6 +513,7 @@ export const MapCanvas = memo(function MapCanvas({
       cache &&
       cache.nodes === nodes &&
       cache.links === links &&
+      cache.couplings === couplings &&
       cache.scaleX === schematicScale.x &&
       cache.scaleY === schematicScale.y
     ) {
@@ -511,16 +525,22 @@ export const MapCanvas = memo(function MapCanvas({
       schematicCacheRef.current = null;
       return EMPTY_SCHEMATIC_LAYOUT;
     }
-    const layout = computeSchematicLayout(nodes, links, schematicScale);
+    const layout = computeSchematicLayout(
+      nodes,
+      links,
+      schematicScale,
+      couplings,
+    );
     schematicCacheRef.current = {
       nodes,
       links,
       layout,
       scaleX: schematicScale.x,
       scaleY: schematicScale.y,
+      couplings,
     };
     return layout;
-  }, [nodes, links, viewMode, schematicScale]);
+  }, [nodes, links, viewMode, schematicScale, couplings]);
   // Positions alone, for everything that only needs coordinates.
   const schematicCoords = schematicLayout.positions;
 
@@ -1207,6 +1227,66 @@ export const MapCanvas = memo(function MapCanvas({
       );
     }
 
+    // Inlet couplings: the hydraulic path a dual-drainage model has where
+    // no link exists. Drawn from the street conduit's midpoint to the node
+    // it captures into, dashed and thin so it reads as "coupled to" rather
+    // than as another pipe. Both endpoints must be placed for a connector
+    // to be drawable, which the schematic guarantees and the map does not
+    // (an element without coordinates is absent from the arrays).
+    if (couplings.length > 0 && canvasLayers.links) {
+      const linkMid = new Map<string, [number, number]>();
+      for (const l of ld) {
+        const path = l.path;
+        if (path.length === 0) continue;
+        // Midpoint of the drawn polyline, not of from→to: on a long
+        // street the two differ enough to matter.
+        const mid = path[Math.floor(path.length / 2)];
+        linkMid.set(l.id, mid);
+      }
+      const nodePos = new Map<string, [number, number]>();
+      for (const n of nd) nodePos.set(n.id, n.position);
+      // Dashes are built geometrically rather than with deck's dash
+      // extension: that lives in @deck.gl/extensions, and one dashed
+      // connector does not justify the dependency. DASHES segments per
+      // connector, drawn over the first 60% of each interval.
+      const DASHES = 9;
+      const couplingPaths: Array<[number, number][]> = [];
+      for (const c of couplings) {
+        const from = linkMid.get(c.link);
+        const to = nodePos.get(c.node);
+        if (!from || !to) continue;
+        for (let i = 0; i < DASHES; i += 1) {
+          const t0 = i / DASHES;
+          const t1 = t0 + 0.6 / DASHES;
+          couplingPaths.push([
+            [
+              from[0] + (to[0] - from[0]) * t0,
+              from[1] + (to[1] - from[1]) * t0,
+            ],
+            [
+              from[0] + (to[0] - from[0]) * t1,
+              from[1] + (to[1] - from[1]) * t1,
+            ],
+          ]);
+        }
+      }
+      if (couplingPaths.length > 0) {
+        layers.push(
+          new PathLayer({
+            id: "inlet-couplings",
+            data: couplingPaths,
+            coordinateSystem: coordSystem,
+            getPath: (d) => d,
+            getColor: [138, 147, 163, 170] as unknown as RGBA,
+            getWidth: 1.2,
+            widthUnits: "pixels",
+            pickable: false,
+            updateTriggers: { getPath: [couplings] },
+          }) as unknown as Layer,
+        );
+      }
+    }
+
     // Detached group marker (schematic only). The layout parks anything not
     // reachable from a source in its own region to the right; without a boundary
     // and a label, that reads as a distant part of the network rather than as
@@ -1267,7 +1347,7 @@ export const MapCanvas = memo(function MapCanvas({
             coordinateSystem: coordSystem,
             getPosition: (d) => d.position,
             getText: () =>
-              `Disconnected group · ${count} ${count === 1 ? "node" : "nodes"}`,
+              `Separate subnetwork · ${count} ${count === 1 ? "node" : "nodes"}`,
             getSize: 11,
             getColor: [212, 160, 23, 220] as unknown as RGBA,
             getTextAnchor: "start",
@@ -1785,6 +1865,7 @@ export const MapCanvas = memo(function MapCanvas({
     genRegion,
     viewMode,
     regions,
+    couplings,
     selectedRegionId,
     onSelectRegion,
     nodeVar,
