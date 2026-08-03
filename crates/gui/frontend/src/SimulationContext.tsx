@@ -43,6 +43,19 @@ import { useNetworkVersion } from "./hooks/NetworkVersionContext";
 import { backfillTask, taskNeedsBackfill } from "./hooks/taskBackfill";
 
 /** "HH:MM" label used for task and issue timestamps. */
+/** History label for a progress event's phase code. Data-driven: the
+ * backend's session maps each engine's phases to these codes. */
+function phaseHistoryLabel(phase: string): string {
+  switch (phase) {
+    case "quality":
+      return "Phase: Water quality";
+    case "simulation":
+      return "Phase: Simulation";
+    default:
+      return "Phase: Hydraulics";
+  }
+}
+
 function formatClockTime(date: Date = new Date()): string {
   return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
@@ -557,10 +570,7 @@ export function SimulationProvider({ children }: { children: ReactNode }) {
             history: [
               {
                 at: Date.now(),
-                label:
-                  ev.phase === "quality"
-                    ? "Phase: Water quality"
-                    : "Phase: Hydraulics",
+                label: phaseHistoryLabel(ev.phase),
               },
             ],
           };
@@ -579,10 +589,7 @@ export function SimulationProvider({ children }: { children: ReactNode }) {
         if (phaseChanged || (prevPhase === undefined && ev.phase)) {
           newEntries.push({
             at: now,
-            label:
-              ev.phase === "quality"
-                ? "Phase: Water quality"
-                : "Phase: Hydraulics",
+            label: phaseHistoryLabel(ev.phase),
           });
         }
         if (ev.message && ev.message !== task.progressMessage) {
@@ -613,7 +620,11 @@ export function SimulationProvider({ children }: { children: ReactNode }) {
         // quality "Waiting" bar can appear even before the quality phase starts.
         const hasQuality = task.hasQuality ?? ev.runQuality;
 
-        if (ev.phase === "hydraulics") {
+        const primaryPhaseLabel =
+          ev.phase === "simulation"
+            ? "Simulation"
+            : (task.primaryPhaseLabel ?? "Hydraulics");
+        if (ev.phase === "hydraulics" || ev.phase === "simulation") {
           hydraulicsPercent = ev.percent;
           if (ev.done) {
             hydraulicsPercent = 100;
@@ -645,13 +656,14 @@ export function SimulationProvider({ children }: { children: ReactNode }) {
         const next = [...tasks];
         next[idx] = {
           ...task,
-          phase: ev.phase as "hydraulics" | "quality",
+          phase: ev.phase as "hydraulics" | "quality" | "simulation",
           progressPercent: overallPercent,
           progressMessage: ev.message ?? undefined,
           simulatedSeconds: ev.simulatedSeconds,
           durationSeconds: ev.durationSeconds,
           history: capped,
           hasQuality,
+          primaryPhaseLabel,
           hydraulicsPercent,
           hydraulicsDone,
           qualityPercent,

@@ -305,6 +305,12 @@ pub fn load_result_meta(
 ) -> Result<Option<ResultMetaDto>, String> {
     validate_target_ids(&project_id, scenario_id.as_deref())?;
     let app_data = app_data_dir(&app)?;
+    // wds-shaped results reading; other engines' results arrive with their
+    // own provider (registry pattern). "No results" is the honest interim
+    // answer — never a foreign-dialect or corrupt-file error.
+    if super::projects::project_engine_key(&app_data, &project_id) != "wds" {
+        return Ok(None);
+    }
     let out_path = results_path_for(&app_data, &project_id, scenario_id.as_deref());
     if !out_path.exists() {
         return Ok(None);
@@ -548,6 +554,12 @@ pub fn get_pump_energy(
 ) -> Result<Vec<PumpEnergyDto>, String> {
     validate_target_ids(&project_id, scenario_id.as_deref())?;
     let app_data = app_data_dir(&app)?;
+    // wds-shaped results reading; other engines' results arrive with their
+    // own provider (registry pattern). "No results" is the honest interim
+    // answer — never a foreign-dialect or corrupt-file error.
+    if super::projects::project_engine_key(&app_data, &project_id) != "wds" {
+        return Ok(Vec::new());
+    }
     let out_path = results_path_for(&app_data, &project_id, scenario_id.as_deref());
     // No simulation run yet — expected for a fresh project, not an error.
     if !out_path.exists() {
@@ -668,6 +680,12 @@ pub fn get_element_series(
 ) -> Result<Option<SeriesDto>, String> {
     validate_target_ids(&project_id, scenario_id.as_deref())?;
     let app_data = app_data_dir(&app)?;
+    // wds-shaped results reading; other engines' results arrive with their
+    // own provider (registry pattern). "No results" is the honest interim
+    // answer — never a foreign-dialect or corrupt-file error.
+    if super::projects::project_engine_key(&app_data, &project_id) != "wds" {
+        return Ok(None);
+    }
     let out_path = results_path_for(&app_data, &project_id, scenario_id.as_deref());
     // No simulation run yet — expected for a fresh project, not an error.
     if !out_path.exists() {
@@ -942,6 +960,12 @@ pub fn get_result_analytics(
 ) -> Result<Option<ResultAnalyticsDto>, String> {
     validate_target_ids(&project_id, scenario_id.as_deref())?;
     let app_data = app_data_dir(&app)?;
+    // wds-shaped results reading; other engines' results arrive with their
+    // own provider (registry pattern). "No results" is the honest interim
+    // answer — never a foreign-dialect or corrupt-file error.
+    if super::projects::project_engine_key(&app_data, &project_id) != "wds" {
+        return Ok(None);
+    }
     let out_path = results_path_for(&app_data, &project_id, scenario_id.as_deref());
     // No simulation run yet — expected for a fresh project, not an error.
     if !out_path.exists() {

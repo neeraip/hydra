@@ -228,13 +228,13 @@ export function RunningCard({
         )}
       </div>
       <PhaseBar
-        label="Hydraulics"
+        label={task.primaryPhaseLabel ?? "Hydraulics"}
         percent={task.hydraulicsPercent ?? 0}
         done={task.hydraulicsDone ?? false}
         queued={false}
-        active={task.phase === "hydraulics"}
+        active={task.phase === "hydraulics" || task.phase === "simulation"}
         simulatedSeconds={
-          task.phase === "hydraulics" ? task.simulatedSeconds : undefined
+          task.phase !== "quality" ? task.simulatedSeconds : undefined
         }
         durationSeconds={task.durationSeconds}
       />
