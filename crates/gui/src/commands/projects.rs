@@ -1918,6 +1918,43 @@ mod tests {
     /// one layer up.
     ///
     /// Rust is the source of truth; this fails the build when the mirror drifts.
+    /// The frontend's badge table (`types/elementTypes.ts`) duplicates the
+    /// letters each engine declares in its §4.1 element-kind catalog — and
+    /// had already drifted from it once, silently, because the frontend is
+    /// what renders. The engine catalog is the source of truth; this fails
+    /// the build when the mirror disagrees.
+    ///
+    /// Colours are deliberately not checked: they are presentation the
+    /// contract does not describe, and belong to the frontend alone.
+    #[test]
+    fn frontend_badges_mirror_the_engine_catalogs() {
+        let ts = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/frontend/src/types/elementTypes.ts"
+        ))
+        .expect("frontend elementTypes.ts is readable");
+
+        for kind in hydra::descriptors::ELEMENT_KINDS
+            .iter()
+            .chain(hydra::uds::descriptors::ELEMENT_KINDS)
+        {
+            // Only spatial kinds carry a row in the frontend table; the
+            // non-spatial ones are listed by their own editors.
+            if kind.class == hydra::common::ElementClass::Collection {
+                continue;
+            }
+            let expected = format!("{}: {{ label: \"{}\"", kind.id, kind.badge);
+            assert!(
+                ts.contains(&expected),
+                "frontend badge table is missing or disagrees with the engine \
+                 catalog for {:?} (expected `{}`); update \
+                 frontend/src/types/elementTypes.ts to match",
+                kind.id,
+                expected,
+            );
+        }
+    }
+
     #[test]
     fn frontend_fallback_registry_mirrors_the_rust_registry() {
         let ts = std::fs::read_to_string(concat!(

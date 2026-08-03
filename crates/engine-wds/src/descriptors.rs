@@ -35,7 +35,7 @@ pub const ELEMENT_KINDS: &[ElementKind] = &[
         label: "Tank",
         label_plural: "Tanks",
         class: ElementClass::Point,
-        badge: "T",
+        badge: "TK",
     },
     ElementKind {
         id: "pipe",
@@ -49,7 +49,7 @@ pub const ELEMENT_KINDS: &[ElementKind] = &[
         label: "Pump",
         label_plural: "Pumps",
         class: ElementClass::Polyline,
-        badge: "Pu",
+        badge: "PU",
     },
     ElementKind {
         id: "valve",
