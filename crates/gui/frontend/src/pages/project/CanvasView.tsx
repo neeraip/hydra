@@ -748,7 +748,7 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [clearAnnotations, maxStep, projectView, viewMode]);
+  }, [clearAnnotations, maxStep, projectView, viewMode, modelEditable]);
 
   const baseNodes = useNodes();
   const baseLinks = useLinks();
