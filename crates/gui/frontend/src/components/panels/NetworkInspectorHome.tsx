@@ -186,18 +186,6 @@ const TD: React.CSSProperties = {
  * and `vertical-align: middle` on the cell centres that block in the row, so
  * the result no longer depends on font metrics.
  */
-/**
- * Whether a list holds more than one element kind — the badge column
- * earns its width only then. A column whose every cell reads "Sc" is
- * noise, and it costs the row space that real data could use. Applies to
- * every tab: a wds model of nothing but junctions gets the same treatment.
- */
-function hasMultipleKinds(items: Array<{ type: string }>): boolean {
-  if (items.length === 0) return false;
-  const first = items[0].type;
-  return items.some((i) => i.type !== first);
-}
-
 function BadgeCell({ type }: { type: string }) {
   return (
     <td style={{ ...TD, padding: BADGE_CELL_PADDING, verticalAlign: "middle" }}>
@@ -389,7 +377,6 @@ function NodesTab({
     NODE_SEARCH_KEYS,
     "nodes",
   );
-  const showBadges = hasMultipleKinds(rows);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const rowVirtualizer = useVirtualizer({
     count: rows.length,
@@ -404,8 +391,7 @@ function NodesTab({
       ? rowVirtualizer.getTotalSize() - virtualRows[virtualRows.length - 1].end
       : 0;
   const nodeColSpan =
-    (showBadges ? 1 : 0) +
-    1 +
+    2 +
     (hasAttrs ? 2 : 0) +
     (hasResults ? 1 : 0) +
     genericColumns.length +
@@ -429,7 +415,7 @@ function NodesTab({
             (the list is virtualized); only the intrinsically-sized columns
             are pinned — the ID/data columns share the remaining rail width. */}
         <colgroup>
-          {showBadges && <col style={{ width: BADGE_COL_WIDTH }} />}
+          <col style={{ width: BADGE_COL_WIDTH }} />
           <col />
           {hasAttrs && <col />}
           {hasAttrs && <col />}
@@ -445,46 +431,39 @@ function NodesTab({
                 than a word: the column is sized to the badge, and no label
                 fits — "Type" is wider than the column, and the single letter
                 "T" would sit directly above a column of J/R/T/P/Pu/V, where
-                T already means Tank. The tooltip carries the full name.
-                Rendered only when the list actually mixes kinds. */}
-            {showBadges && (
-              <th
+                T already means Tank. The tooltip carries the full name. */}
+            <th
+              style={{
+                ...TH,
+                textAlign: "center",
+                padding: "5px 4px",
+                verticalAlign: "middle",
+              }}
+              onClick={() => toggleSort("type")}
+              data-tooltip="Element type — click to sort"
+              data-tooltip-pos="bottom"
+            >
+              {/* Block-level flex, not inline-flex: the glyph is an SVG box and
+                the sort arrow is a text character, so an inline box aligned
+                one to the line box and the other to the baseline. Going
+                block-level removes the line box from the question entirely —
+                the cell's `vertical-align: middle` then centres this row of
+                content, matching how BadgeCell centres the badges below. */}
+              <span
                 style={{
-                  ...TH,
-                  textAlign: "center",
-                  padding: "5px 4px",
-                  verticalAlign: "middle",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  lineHeight: 1,
                 }}
-                onClick={() => toggleSort("type")}
-                data-tooltip="Element type — click to sort"
-                data-tooltip-pos="bottom"
               >
-                {/* Block-level flex, not inline-flex: the glyph is an SVG box and
-                  the sort arrow is a text character, so an inline box aligned
-                  one to the line box and the other to the baseline. Going
-                  block-level removes the line box from the question entirely —
-                  the cell's `vertical-align: middle` then centres this row of
-                  content, matching how BadgeCell centres the badges below. */}
-                <span
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    lineHeight: 1,
-                  }}
-                >
-                  <TagIcon
-                    style={{ width: 10, height: 10 }}
-                    aria-label="Element type"
-                  />
-                  <SortIndicator
-                    col="type"
-                    sortCol={sortCol}
-                    sortDir={sortDir}
-                  />
-                </span>
-              </th>
-            )}
+                <TagIcon
+                  style={{ width: 10, height: 10 }}
+                  aria-label="Element type"
+                />
+                <SortIndicator col="type" sortCol={sortCol} sortDir={sortDir} />
+              </span>
+            </th>
             {(["id", "elevation", "baseDemand"] as const)
               .filter((col) => col === "id" || hasAttrs)
               .map((col) => {
@@ -586,7 +565,7 @@ function NodesTab({
                       "transparent";
                 }}
               >
-                {showBadges && <BadgeCell type={node.type} />}
+                <BadgeCell type={node.type} />
                 <td
                   style={{
                     ...TD,
@@ -758,7 +737,6 @@ function LinksTab({
     LINK_SEARCH_KEYS,
     "links",
   );
-  const showBadges = hasMultipleKinds(rows);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const rowVirtualizer = useVirtualizer({
     count: rows.length,
@@ -773,8 +751,7 @@ function LinksTab({
       ? rowVirtualizer.getTotalSize() - virtualRows[virtualRows.length - 1].end
       : 0;
   const linkColSpan =
-    (showBadges ? 1 : 0) +
-    1 +
+    2 +
     (hasAttrs ? 2 : 0) +
     (hasResults ? 1 : 0) +
     genericColumns.length +
@@ -797,7 +774,7 @@ function LinksTab({
         {/* Same scheme as the nodes table: fixed layout, pinned narrow
             columns, flexing ID/data columns. */}
         <colgroup>
-          {showBadges && <col style={{ width: BADGE_COL_WIDTH }} />}
+          <col style={{ width: BADGE_COL_WIDTH }} />
           <col />
           {hasAttrs && <col style={{ width: 36 }} />}
           {hasAttrs && <col />}
@@ -813,43 +790,36 @@ function LinksTab({
                 than a word: the column is sized to the badge, and no label
                 fits — "Type" is wider than the column, and the single letter
                 "T" would sit directly above a column of J/R/T/P/Pu/V, where
-                T already means Tank. The tooltip carries the full name.
-                Rendered only when the list actually mixes kinds. */}
-            {showBadges && (
-              <th
+                T already means Tank. The tooltip carries the full name. */}
+            <th
+              style={{
+                ...TH,
+                textAlign: "center",
+                padding: "5px 4px",
+                verticalAlign: "middle",
+              }}
+              onClick={() => toggleSort("type")}
+              data-tooltip="Element type — click to sort"
+              data-tooltip-pos="bottom"
+            >
+              {/* Flex rather than inline: the glyph is an SVG box and the
+                sort arrow is a text character, so leaving them inline
+                aligned one to the line box and the other to the baseline,
+                and the icon rode high. */}
+              <span
                 style={{
-                  ...TH,
-                  textAlign: "center",
-                  padding: "5px 4px",
-                  verticalAlign: "middle",
+                  display: "inline-flex",
+                  alignItems: "center",
+                  justifyContent: "center",
                 }}
-                onClick={() => toggleSort("type")}
-                data-tooltip="Element type — click to sort"
-                data-tooltip-pos="bottom"
               >
-                {/* Flex rather than inline: the glyph is an SVG box and the
-                  sort arrow is a text character, so leaving them inline
-                  aligned one to the line box and the other to the baseline,
-                  and the icon rode high. */}
-                <span
-                  style={{
-                    display: "inline-flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                  }}
-                >
-                  <TagIcon
-                    style={{ width: 10, height: 10 }}
-                    aria-label="Element type"
-                  />
-                  <SortIndicator
-                    col="type"
-                    sortCol={sortCol}
-                    sortDir={sortDir}
-                  />
-                </span>
-              </th>
-            )}
+                <TagIcon
+                  style={{ width: 10, height: 10 }}
+                  aria-label="Element type"
+                />
+                <SortIndicator col="type" sortCol={sortCol} sortDir={sortDir} />
+              </span>
+            </th>
             {(["id", "status", "diameter"] as const)
               .filter((col) => col === "id" || hasAttrs)
               .map((col) => {
@@ -947,7 +917,7 @@ function LinksTab({
                       "transparent";
                 }}
               >
-                {showBadges && <BadgeCell type={link.type} />}
+                <BadgeCell type={link.type} />
                 <td
                   style={{
                     ...TD,
@@ -1112,7 +1082,6 @@ function SubcatchmentsTab({
     REGION_SEARCH_KEYS,
     "nodes",
   );
-  const showBadges = hasMultipleKinds(rows);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const rowVirtualizer = useVirtualizer({
     count: rows.length,
@@ -1126,8 +1095,7 @@ function SubcatchmentsTab({
     virtualRows.length > 0
       ? rowVirtualizer.getTotalSize() - virtualRows[virtualRows.length - 1].end
       : 0;
-  const colSpan =
-    (showBadges ? 1 : 0) + 2 + genericColumns.length + (onZoomTo ? 1 : 0);
+  const colSpan = 3 + genericColumns.length + (onZoomTo ? 1 : 0);
 
   if (rows.length === 0) {
     return (
@@ -1156,7 +1124,7 @@ function SubcatchmentsTab({
         }}
       >
         <colgroup>
-          {showBadges && <col style={{ width: BADGE_COL_WIDTH }} />}
+          <col style={{ width: BADGE_COL_WIDTH }} />
           <col />
           <col />
           {genericColumns.map((c) => (
@@ -1166,37 +1134,31 @@ function SubcatchmentsTab({
         </colgroup>
         <thead>
           <tr>
-            {showBadges && (
-              <th
+            <th
+              style={{
+                ...TH,
+                textAlign: "center",
+                padding: "5px 4px",
+                verticalAlign: "middle",
+              }}
+              onClick={() => toggleSort("type")}
+              data-tooltip="Element type — click to sort"
+              data-tooltip-pos="bottom"
+            >
+              <span
                 style={{
-                  ...TH,
-                  textAlign: "center",
-                  padding: "5px 4px",
-                  verticalAlign: "middle",
+                  display: "inline-flex",
+                  alignItems: "center",
+                  justifyContent: "center",
                 }}
-                onClick={() => toggleSort("type")}
-                data-tooltip="Element type — click to sort"
-                data-tooltip-pos="bottom"
               >
-                <span
-                  style={{
-                    display: "inline-flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                  }}
-                >
-                  <TagIcon
-                    style={{ width: 10, height: 10 }}
-                    aria-label="Element type"
-                  />
-                  <SortIndicator
-                    col="type"
-                    sortCol={sortCol}
-                    sortDir={sortDir}
-                  />
-                </span>
-              </th>
-            )}
+                <TagIcon
+                  style={{ width: 10, height: 10 }}
+                  aria-label="Element type"
+                />
+                <SortIndicator col="type" sortCol={sortCol} sortDir={sortDir} />
+              </span>
+            </th>
             <th
               style={TH}
               onClick={() => toggleSort("id")}
@@ -1273,7 +1235,7 @@ function SubcatchmentsTab({
                       "transparent";
                 }}
               >
-                {showBadges && <BadgeCell type={region.type} />}
+                <BadgeCell type={region.type} />
                 <td
                   style={{
                     ...TD,
