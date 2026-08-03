@@ -23,6 +23,21 @@ impl WritableSimulation for Simulation {
         &self.hyd_snapshots
     }
 
+    fn finalized_through(&self) -> f64 {
+        match self.network.as_ref() {
+            None => f64::NEG_INFINITY,
+            // No quality analysis: snapshots are final as soon as the
+            // hydraulic phase records them.
+            Some(n) if n.options.quality_mode == crate::QualityMode::None => f64::INFINITY,
+            // Quality enabled: snapshots hold provisional quality values
+            // until the quality phase writes back through their time.
+            // Before quality initialisation even the t=0 snapshot is
+            // provisional (initial quality lands in it during init).
+            Some(_) if self.quality_state.is_some() => self.quality_t,
+            Some(_) => f64::NEG_INFINITY,
+        }
+    }
+
     fn pump_energy_at(&self, link_index: usize) -> Option<&PumpEnergy> {
         self.accounting.as_ref().map(|a| &a.pump_energy[link_index])
     }
@@ -162,5 +177,109 @@ mod tests {
         let sess = run_session(QualityMode::None);
         let trait_warnings = WritableSimulation::warnings(&sess);
         assert_eq!(trait_warnings.len(), Simulation::warnings(&sess).len());
+    }
+
+    #[test]
+    fn finalized_frontier_tracks_the_quality_phase() {
+        // Quality disabled: every snapshot is final as hydraulics records it.
+        let mut sess = Simulation::from_network(pump_network(QualityMode::None)).expect("load");
+        assert_eq!(sess.finalized_through(), f64::INFINITY);
+        sess.run().expect("run");
+        assert_eq!(sess.finalized_through(), f64::INFINITY);
+
+        // Quality enabled: nothing is final until the quality phase starts,
+        // then the frontier follows it to the end of the run.
+        let mut sess = Simulation::from_network(pump_network(QualityMode::Age)).expect("load");
+        assert_eq!(sess.finalized_through(), f64::NEG_INFINITY);
+        sess.run_hydraulics().expect("hydraulics");
+        assert_eq!(
+            sess.finalized_through(),
+            f64::NEG_INFINITY,
+            "snapshots hold provisional quality until the quality phase runs"
+        );
+        sess.run_quality().expect("quality");
+        assert!(sess.finalized_through() >= 2.0 * 3600.0);
+    }
+
+    /// The CLI/GUI stream periods out while stepping. A streamed file must be
+    /// byte-identical to one serialized after the full run — in particular,
+    /// quality must not be frozen at initial values because the hydraulic
+    /// phase's appends consumed the snapshots before quality was written back
+    /// (simulation spec §8.3, streaming serialization).
+    #[test]
+    fn streamed_out_is_byte_identical_to_post_run_out() {
+        use crate::io::out_writer::{write_binary_output, OutStreamWriter};
+        use crate::FlowUnits;
+        use std::io::Cursor;
+
+        // Batch reference: full run, then serialize.
+        let mut batch = Simulation::from_network(pump_network(QualityMode::Age)).expect("load");
+        batch.run().expect("run");
+        let mut buf = Cursor::new(Vec::new());
+        write_binary_output(&mut buf, &batch, "t.inp", "", FlowUnits::Gpm).expect("write");
+        let batch_bytes = buf.into_inner();
+
+        // Streamed in lockstep, exactly as the CLI/GUI run loops do.
+        let mut live = Simulation::from_network(pump_network(QualityMode::Age)).expect("load");
+        let mut stream =
+            OutStreamWriter::begin(Cursor::new(Vec::new()), &live, "t.inp", "", FlowUnits::Gpm)
+                .expect("begin");
+        stream.append_available(&live).expect("append");
+        loop {
+            let dt = live.step_hydraulics().expect("hydraulics step");
+            stream.append_available(&live).expect("append");
+            if dt == 0.0 {
+                break;
+            }
+        }
+        loop {
+            let dt = live.step_quality().expect("quality step");
+            stream.append_available(&live).expect("append");
+            if dt == 0.0 {
+                break;
+            }
+        }
+        let streamed_bytes = stream.finish(&live).expect("finish").into_inner();
+
+        assert_eq!(streamed_bytes, batch_bytes);
+
+        // Guard against trivially passing on frozen values: the last period's
+        // node quality (water age) must have advanced beyond its initial 0.
+        let n_nodes = batch.node_ids().len();
+        let n_links = batch.link_ids().len();
+        let record = (4 * n_nodes + 8 * n_links) * 4;
+        let last_period = batch_bytes.len() - 12 - 16 - record;
+        let quality_column = last_period + 3 * n_nodes * 4;
+        let ages: Vec<f32> = (0..n_nodes)
+            .map(|i| {
+                let at = quality_column + i * 4;
+                f32::from_le_bytes(batch_bytes[at..at + 4].try_into().unwrap())
+            })
+            .collect();
+        assert!(
+            ages.iter().any(|a| *a > 0.5),
+            "final-period ages should be nonzero, got {ages:?}"
+        );
+    }
+
+    /// A stream finished before quality ran must not persist provisional
+    /// quality: it closes with zero periods rather than wrong values.
+    #[test]
+    fn stream_finished_before_quality_holds_back_all_periods() {
+        use crate::io::out_writer::OutStreamWriter;
+        use crate::FlowUnits;
+        use std::io::Cursor;
+
+        let mut sess = Simulation::from_network(pump_network(QualityMode::Age)).expect("load");
+        let mut stream =
+            OutStreamWriter::begin(Cursor::new(Vec::new()), &sess, "t.inp", "", FlowUnits::Gpm)
+                .expect("begin");
+        sess.run_hydraulics().expect("hydraulics");
+        stream.append_available(&sess).expect("append");
+        let bytes = stream.finish(&sess).expect("finish").into_inner();
+
+        let n_periods =
+            i32::from_le_bytes(bytes[bytes.len() - 12..bytes.len() - 8].try_into().unwrap());
+        assert_eq!(n_periods, 0);
     }
 }

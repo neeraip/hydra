@@ -14,4 +14,4 @@ keywords = ["water", "hydraulics", "simulation", "engine"]
 categories = ["science", "simulation"]
 
 [dependencies]
-hydra-common = { path = "../common", version = "7.0.0" }
+hydra-common = { path = "../common", version = "7.0.1" }

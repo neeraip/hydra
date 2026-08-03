@@ -272,6 +272,14 @@ pub enum WarningKind {
         /// Zero-based index of the worst-error tank in `Network::nodes`.
         node_index: usize,
     },
+    /// A pump declares both an initial speed ≠ 1 and a speed pattern; the
+    /// pattern's multipliers are the speed schedule and supersede the initial
+    /// speed from the first step (simulation spec §5.4). Reported once at
+    /// load so the dead field is visible rather than silently ignored.
+    PumpSpeedPatternSupersedesSetting {
+        /// Zero-based index of the pump in `Network::links`.
+        link_index: usize,
+    },
 }
 
 /// Node result quantities available via `get_node_result` (§8.2.1).
@@ -579,6 +587,16 @@ pub trait WritableSimulation {
     fn net(&self) -> &crate::Network;
     /// All hydraulic snapshots stored during the simulation.
     fn snapshots(&self) -> &[HydSnapshot];
+    /// Simulation time (s) through which recorded snapshots are **final** —
+    /// no longer subject to change as the session advances (simulation spec
+    /// §8.3, streaming serialization). With quality enabled, snapshots carry
+    /// provisional quality values until the quality phase writes its results
+    /// back through their time; a streaming writer must not emit a snapshot
+    /// whose time lies beyond this frontier. The default suits completed
+    /// simulations, where every snapshot is final.
+    fn finalized_through(&self) -> f64 {
+        f64::INFINITY
+    }
     /// Pump energy record at `link_index`, or `None` if no accounting state is
     /// available (e.g. hydraulics not yet run).
     fn pump_energy_at(&self, link_index: usize) -> Option<&PumpEnergy>;

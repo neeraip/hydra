@@ -142,11 +142,20 @@ impl<W: Write + Seek> OutStreamWriter<W> {
     }
 
     /// Append newly available report-boundary snapshots.
+    ///
+    /// "Available" means final (simulation spec §8.3): with quality enabled,
+    /// a snapshot's quality values are provisional until the quality phase
+    /// has written back through its time, so it is held here — not consumed —
+    /// until `finalized_through` passes it.
     pub fn append_available(&mut self, session: &impl WritableSimulation) -> std::io::Result<()> {
         let network = session.net();
         let snapshots = session.snapshots();
+        let frontier = session.finalized_through();
 
         for snapshot in snapshots.iter().skip(self.next_snapshot_index) {
+            if snapshot.t > frontier {
+                break;
+            }
             self.next_snapshot_index += 1;
             let snapshot_time = snapshot.t.round() as i64;
 
@@ -178,6 +187,10 @@ impl<W: Write + Seek> OutStreamWriter<W> {
 
     /// Finalize the file by patching energy and appending reactions+epilog.
     pub fn finish(mut self, session: &impl WritableSimulation) -> std::io::Result<W> {
+        // Emit anything still pending, so correctness does not depend on the
+        // caller having called append_available after the final quality step.
+        self.append_available(session)?;
+
         // STATISTIC aggregation: emit the single aggregated period now (nothing
         // was written to the dynamic-results region during streaming).
         if let Some(stats) = self.stats.take() {
@@ -732,12 +745,13 @@ fn dynamic_snapshot_bytes(
         let link_state = &snapshot.link_states[i];
         let setting = match &link.kind {
             // Pipe "setting" is the roughness coefficient. Hazen-Williams C and
-            // Manning n are dimensionless; Darcy-Weisbach roughness was
-            // converted to metres at parse time (units.rs) and must be
-            // converted back to user units (mm / milli-ft) for output.
+            // Manning n are dimensionless; Darcy-Weisbach roughness is written
+            // in feet in every unit system — EPANET emits its internal
+            // ft-based value raw, and that defines this column's meaning
+            // (model spec §4.4.4).
             LinkKind::Pipe(p) => {
                 if network.options.head_loss_formula == HeadLossFormula::DarcyWeisbach {
-                    p.roughness * 1000.0 * ucf.elev
+                    p.roughness / 0.3048
                 } else {
                     p.roughness
                 }
@@ -770,7 +784,13 @@ fn dynamic_snapshot_bytes(
     for (i, link) in network.links.iter().enumerate() {
         let link_state = &snapshot.link_states[i];
         let friction_factor = if let LinkKind::Pipe(p) = &link.kind {
-            if link_state.flow.abs() > 1.0e-6 && p.length > 0.0 {
+            // A closed pipe's residual seepage flow makes the derived factor
+            // meaningless (multi-million values); EPANET writes 0 there and
+            // that defines this column's meaning (model spec §4.4.4).
+            if link_state.status != LinkStatus::Closed
+                && link_state.flow.abs() > 1.0e-6
+                && p.length > 0.0
+            {
                 let from_node_index = link.base.from_idx();
                 let to_node_index = link.base.to_idx();
                 let from_head = snapshot.node_states[from_node_index].head as f32 as f64;
@@ -899,11 +919,12 @@ fn epanet_warn_flag(session: &impl WritableSimulation) -> i32 {
             WarningKind::UnbalancedHydraulics => {
                 has_unbalanced = true;
             }
-            // Hydra-specific: has no EPANET warning category, so it does not
+            // Hydra-specific: no EPANET warning category, so these do not
             // contribute to the .out warn flag — that flag reports EPANET's
             // classes to EPANET-format readers. Hydra's own surfaces (RPT,
-            // JSON, GUI) carry it.
-            WarningKind::TankLevelAccuracy { .. } => {}
+            // JSON, GUI) carry them.
+            WarningKind::TankLevelAccuracy { .. }
+            | WarningKind::PumpSpeedPatternSupersedesSetting { .. } => {}
         }
     }
     let f = flush(&mut has_unbalanced, &mut has_pressure, &mut has_pump);
@@ -1433,10 +1454,12 @@ mod tests {
         );
     }
 
-    /// Verifies that the link "setting" written for Darcy-Weisbach pipes is the
-    /// roughness in user units (mm for SI), not the internal metres value.
+    /// Verifies that the link "setting" written for Darcy-Weisbach pipes is
+    /// the roughness in feet in every unit system — EPANET emits its internal
+    /// ft-based value raw, and that defines the column (model spec §4.4.4).
+    /// EPANET 2.3.5 writes 0.00164042 for this model; verified empirically.
     #[test]
-    fn dynamic_setting_reports_dw_roughness_in_user_units() {
+    fn dynamic_setting_reports_dw_roughness_in_feet() {
         // single_pipe_dw.inp: LPS units, D-W, roughness 0.5 mm (internal 0.0005 m).
         let session = mock_session("single_pipe_dw.inp");
         let mut buf = Cursor::new(Vec::new());
@@ -1447,9 +1470,8 @@ mod tests {
         assert_eq!(out.periods.len(), 1);
         let setting = out.periods[0].link_setting[0];
         assert!(
-            (setting - 0.5_f32).abs() < 1e-6,
-            "expected D-W roughness 0.5 mm in user units, got {setting} \
-             (old code wrote the internal metres value 0.0005)"
+            (setting - 0.001_640_42_f32).abs() < 1e-8,
+            "expected D-W roughness 0.5 mm as 0.00164042 ft, got {setting}"
         );
     }
 }

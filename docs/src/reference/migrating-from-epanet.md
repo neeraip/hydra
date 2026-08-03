@@ -73,6 +73,10 @@ EPANET's quality timestep can reach 0 seconds via integer truncation when hydrau
 
 This only matters for networks with very short hydraulic timesteps (well under 60 seconds), which is unusual in practice.
 
+### FIFO tank quality while filling
+
+For a FIFO (plug-flow) tank that is filling, EPANET reports the tank node's quality as approximately the **inflow** concentration — even when the tank is still full of water at a different concentration. Hydra reports the concentration at the tank's **outlet end** (its oldest water): the water the tank would actually deliver to the network. During a long fill of a tank whose initial water differs from the inflow, the two reports diverge until the old water flushes through. Water delivered downstream is identical in both engines — only the reported tank-node value differs.
+
 ---
 
 ## Newer EPANET Features Worth Knowing

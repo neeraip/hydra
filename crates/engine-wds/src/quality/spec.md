@@ -297,6 +297,10 @@ The tank is treated as a perfectly ordered pipe. Its contents are represented as
 
 Outflow concentration = the concentration of the oldest (outlet-end) segment, consuming it at rate $Q_{\text{out}}$.
 
+The tank node's **reported** concentration is the same outlet-end value: the water the tank would deliver to the network at that instant.
+
+> **DEVIATION from EPANET:** EPANET reports a net-filling FIFO tank's node quality as approximately the current **inflow** concentration — empirically, a tank full of initial water at one concentration reports the fresh inflow's concentration from the first period of a fill, regardless of its contents. Hydra reports the outlet-end (oldest) segment instead, because "tank quality" should describe the water the tank holds at its outlet and would deliver, not the water that just arrived at its inlet. During a long fill of a tank whose initial water differs from the inflow, the two conventions diverge by the full concentration difference until the old water is flushed through; downstream transport is unaffected in both tools, since actual outflow always draws the oldest segments. This is an intentional reporting improvement, not an oversight.
+
 #### 6.7.4 LIFO Stacked Layers
 
 Inflow and outflow both occur at the **same end** (top). Each sub-step processes the **gross** inflow and outflow volumes, in this order:

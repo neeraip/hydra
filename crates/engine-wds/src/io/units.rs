@@ -191,18 +191,21 @@ pub fn apply_unit_conversion(
                     }
                 }
                 // FAVAD leakage coefficients: convert raw INP values
-                // (C1 in mm², C2 in mm) to per-pipe discharge coefficients
-                // K₁ (m^2.5/s per m^0.5) and K₂ (m^0.5/s per m^1.5).
+                // (C1 = mm² of leak area per 100 ft of pipe, C2 = mm² of
+                // leak-area expansion per metre of head per 100 ft of pipe)
+                // to per-pipe discharge coefficients (model spec §4.3).
                 // Formula (SI, p.length already in m):
-                //   K1 = Cd · sqrt(2g) · (C1 × 1e-6 m²/mm²) · (length_m / 100)
-                //   K2 = Cd · sqrt(2g) · (C2 × 1e-3 m/mm)  · (length_m / 100)
-                // where Cd = 0.6, g = 9.80665 m/s².
+                //   K1 = Cd · sqrt(2g) · (C1 × 1e-6 m²/mm²) · (length_m / 30.48)
+                //   K2 = Cd · sqrt(2g) · (C2 × 1e-6 m²/mm²) · (length_m / 30.48)
+                // where Cd = 0.6, g = 9.80665 m/s², and length_m/30.48 counts
+                // the pipe's 100-foot sections — the basis is 100 ft in every
+                // unit system because EPANET's internal length is always feet.
                 if p.leak_coeff_1 > 0.0 || p.leak_coeff_2 > 0.0 {
                     // 0.6 * sqrt(2 * 9.80665) = 2.65734
                     const CD_SQRT2G: f64 = 2.65734; // Cd * sqrt(2g) in SI
-                    let len_100 = p.length / 100.0; // p.length already in m
-                    p.leak_coeff_1 = CD_SQRT2G * 1e-6 * p.leak_coeff_1 * len_100;
-                    p.leak_coeff_2 = CD_SQRT2G * 1e-3 * p.leak_coeff_2 * len_100;
+                    let len_100ft = p.length / 30.48; // p.length already in m
+                    p.leak_coeff_1 = CD_SQRT2G * 1e-6 * p.leak_coeff_1 * len_100ft;
+                    p.leak_coeff_2 = CD_SQRT2G * 1e-6 * p.leak_coeff_2 * len_100ft;
                 }
             }
             LinkKind::Pump(ref mut pump) => {
