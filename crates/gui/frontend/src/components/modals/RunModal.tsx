@@ -7,6 +7,7 @@ import {
   enqueueRuns,
   fetchValidationFindings,
   getSimParams,
+  isEngineGuiEditable,
   projectHasNetwork,
   type SimParams,
   useScenarios,
@@ -277,11 +278,19 @@ export function RunModal() {
 
   const runShortcut = formatShortcut([primaryModifierLabel(), "Enter"]);
 
+  // Editable-tier engines expose the wds-shaped settings surface; read-only
+  // engines carry their settings inside the model file, so "no params" is
+  // the expected state there, never a blocker.
+  const settingsSupported = engine != null && isEngineGuiEditable(engine);
+
   // A project with no network has nothing to simulate — the engine would be
   // handed an empty model and fail at parse time. Scenarios with blocking
   // validation errors are excluded rather than blocking the whole run: a
   // sibling's broken model should not stop a valid one being simulated.
-  const canRun = hasNetwork && params != null && runnableIds.length > 0;
+  const canRun =
+    hasNetwork &&
+    (params != null || !settingsSupported) &&
+    runnableIds.length > 0;
   const excludedCount = checkedIds.length - runnableIds.length;
   const allChecked = scenarios.every((s) => checked.has(s.id));
 
@@ -544,12 +553,23 @@ export function RunModal() {
                 gap: 3,
               }}
               data-tooltip="Open simulation settings"
+              hidden={!settingsSupported}
             >
               <Cog6ToothIcon style={{ width: 11, height: 11 }} />
               Edit settings
             </button>
           </div>
-          {params ? (
+          {!settingsSupported ? (
+            <div
+              style={{
+                fontSize: "var(--text-md)",
+                color: "var(--text-tertiary)",
+              }}
+            >
+              Simulation settings come from the model file for{" "}
+              {engine?.label ?? "this engine's"} projects.
+            </div>
+          ) : params ? (
             <SummaryGrid params={params} />
           ) : (
             <div

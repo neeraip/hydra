@@ -4,6 +4,7 @@ import { useActiveProject, useAppState } from "../../AppContext";
 import {
   ACCENT,
   getSimParams,
+  isEngineGuiEditable,
   type SimParams,
   updateSimParams,
   useScenarios,
@@ -276,7 +277,9 @@ export function SimSettingsModal() {
                 ? "No project selected."
                 : loading
                   ? "Loading…"
-                  : "This project has no network yet. Import a model file or build one in the editor to configure simulation settings."}
+                  : engine != null && !isEngineGuiEditable(engine)
+                    ? `Simulation settings come from the model file for ${engine.label} projects.`
+                    : "This project has no network yet. Import a model file or build one in the editor to configure simulation settings."}
             </Empty>
           ) : (
             <SettingsBody draft={draft} update={update} sys={sys} />
