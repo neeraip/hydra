@@ -19,9 +19,11 @@ export interface Node {
   type: NodeType;
   x: number;
   y: number;
-  /** Elevation in metres; 0 when not yet loaded from backend. */
+  /** Elevation in metres; absent when the engine's snapshot carries no
+   * attribute data (v4) — never fabricate a 0 for it. */
   elevation?: number;
-  /** Sum of base demands in L/s; 0 when not yet loaded from backend. */
+  /** Sum of base demands in L/s; absent when the snapshot carries no
+   * attribute data. */
   baseDemand?: number;
   pressure: number | null;
   demand: number | null;
@@ -44,7 +46,9 @@ export interface Link {
   type: LinkType;
   fromId: string;
   toId: string;
-  velocity: number;
+  /** Mean velocity (m/s) for the current reporting period; absent when the
+   * engine's snapshot carries no attribute data. */
+  velocity?: number;
   /** Flow in L/s for the current reporting period. `null` when no simulation has run. */
   flow?: number | null;
   /**
@@ -55,7 +59,9 @@ export interface Link {
   status?: number | null;
   /** Initial [STATUS] from the INP (pipes only): open, closed, or check valve. */
   initialStatus?: "open" | "closed" | "cv";
-  diameter: number;
+  /** Diameter in mm; absent when the engine's snapshot carries no
+   * attribute data — never fabricate a 0 for it. */
+  diameter?: number;
   /** Water quality value along the link. `null` when no quality simulation was run. */
   quality?: number | null;
   /** Pipe length in metres; 0 for pumps/valves. */

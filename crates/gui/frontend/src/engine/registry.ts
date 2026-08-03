@@ -12,8 +12,12 @@
  */
 
 import type { ComponentType } from "react";
+import type { Link, Node } from "../hooks";
 import { UdsAnalysisView } from "./uds/AnalysisView";
 import { UdsEditorView } from "./uds/EditorView";
+import { UdsLinkInspectorBody } from "./uds/LinkInspectorBody";
+import { UdsNodeInspectorBody } from "./uds/NodeInspectorBody";
+import { UdsOverviewComposition } from "./uds/OverviewComposition";
 import { UdsRunSettingsSummary } from "./uds/RunSettingsSummary";
 import { UdsSettingsView } from "./uds/SettingsView";
 import { WdsRunSettingsSummary } from "./wds/RunSettingsSummary";
@@ -29,6 +33,25 @@ export interface SettingsViewProps {
   projectId: string;
 }
 
+/** Props of the Overview page's "Network" KPI grid. */
+export interface OverviewCompositionProps {
+  networkLoaded: boolean;
+  fallbackNodeCount: number;
+  fallbackLinkCount: number;
+}
+
+/** Props of the element inspector's node body. */
+export interface NodeInspectorBodyProps {
+  node: Node;
+  onLocateLink: (id: string) => void;
+}
+
+/** Props of the element inspector's link body. */
+export interface LinkInspectorBodyProps {
+  link: Link;
+  onLocateNode: (id: string) => void;
+}
+
 export interface EngineComponents {
   /** Body of the run modal's "Simulation settings" card. */
   RunSettingsSummary: ComponentType<RunSettingsSummaryProps>;
@@ -39,6 +62,13 @@ export interface EngineComponents {
   EditorView?: ComponentType;
   /** Body of the Results project view. Absent = the wds analysis panels. */
   AnalysisView?: ComponentType;
+  /** The Overview page's "Network" KPI grid. Absent = the wds composition
+   * (pipes/tanks/pumps with lengths and diameters). */
+  OverviewComposition?: ComponentType<OverviewCompositionProps>;
+  /** Element inspector bodies. Absent = the wds bodies (attribute tables +
+   * pressure/flow result cards). */
+  NodeInspectorBody?: ComponentType<NodeInspectorBodyProps>;
+  LinkInspectorBody?: ComponentType<LinkInspectorBodyProps>;
   /** Whether the settings modal edits (true) or views (false). Drives the
    * edit affordance labels without any engine branching in the modals. */
   settingsEditable: boolean;
@@ -59,6 +89,9 @@ const UDS: EngineComponents = {
   SettingsView: UdsSettingsView,
   EditorView: UdsEditorView,
   AnalysisView: UdsAnalysisView,
+  OverviewComposition: UdsOverviewComposition,
+  NodeInspectorBody: UdsNodeInspectorBody,
+  LinkInspectorBody: UdsLinkInspectorBody,
   settingsEditable: false,
   modelEditable: false,
 };

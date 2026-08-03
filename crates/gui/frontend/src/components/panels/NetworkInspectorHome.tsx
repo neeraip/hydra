@@ -224,6 +224,12 @@ function NodesTab({
 }) {
   const sys = useUnitSystem();
   const hasResults = nodes.some((n) => n.pressure != null);
+  // Attribute columns render only when the snapshot carries the attribute —
+  // engines whose snapshot is geometry-only (v4) get ID + badge, not a
+  // column of dashes.
+  const hasAttrs = nodes.some(
+    (n) => n.elevation != null || n.baseDemand != null,
+  );
   const [rows, sortCol, sortDir, toggleSort] = useSortedFiltered(
     nodes,
     query,
@@ -243,7 +249,8 @@ function NodesTab({
     virtualRows.length > 0
       ? rowVirtualizer.getTotalSize() - virtualRows[virtualRows.length - 1].end
       : 0;
-  const nodeColSpan = hasResults ? (onZoomTo ? 6 : 5) : onZoomTo ? 5 : 4;
+  const nodeColSpan =
+    2 + (hasAttrs ? 2 : 0) + (hasResults ? 1 : 0) + (onZoomTo ? 1 : 0);
 
   return (
     <div ref={scrollRef} style={{ overflow: "auto", flex: 1 }}>
@@ -265,8 +272,8 @@ function NodesTab({
         <colgroup>
           <col style={{ width: BADGE_COL_WIDTH }} />
           <col />
-          <col />
-          <col />
+          {hasAttrs && <col />}
+          {hasAttrs && <col />}
           {hasResults && <col />}
           {onZoomTo && <col style={{ width: 22 }} />}
         </colgroup>
@@ -309,35 +316,37 @@ function NodesTab({
                 <SortIndicator col="type" sortCol={sortCol} sortDir={sortDir} />
               </span>
             </th>
-            {(["id", "elevation", "baseDemand"] as const).map((col) => {
-              const meta = {
-                id: { label: "ID", tip: "Node ID" },
-                elevation: {
-                  label: "Elev",
-                  tip: `Elevation (${unitLabel("elevation", sys)})`,
-                },
-                baseDemand: {
-                  label: "Dem",
-                  tip: `Base demand (${unitLabel("demand", sys)})`,
-                },
-              }[col];
-              return (
-                <th
-                  key={col}
-                  style={TH}
-                  onClick={() => toggleSort(col)}
-                  data-tooltip={meta.tip}
-                  data-tooltip-pos="bottom"
-                >
-                  {meta.label}
-                  <SortIndicator
-                    col={col}
-                    sortCol={sortCol}
-                    sortDir={sortDir}
-                  />
-                </th>
-              );
-            })}
+            {(["id", "elevation", "baseDemand"] as const)
+              .filter((col) => col === "id" || hasAttrs)
+              .map((col) => {
+                const meta = {
+                  id: { label: "ID", tip: "Node ID" },
+                  elevation: {
+                    label: "Elev",
+                    tip: `Elevation (${unitLabel("elevation", sys)})`,
+                  },
+                  baseDemand: {
+                    label: "Dem",
+                    tip: `Base demand (${unitLabel("demand", sys)})`,
+                  },
+                }[col];
+                return (
+                  <th
+                    key={col}
+                    style={TH}
+                    onClick={() => toggleSort(col)}
+                    data-tooltip={meta.tip}
+                    data-tooltip-pos="bottom"
+                  >
+                    {meta.label}
+                    <SortIndicator
+                      col={col}
+                      sortCol={sortCol}
+                      sortDir={sortDir}
+                    />
+                  </th>
+                );
+              })}
             {hasResults && (
               <th
                 style={TH}
@@ -403,18 +412,22 @@ function NodesTab({
                 >
                   <MiddleTruncate text={node.id} />
                 </td>
-                <td style={{ ...TD, fontFamily: "var(--font-mono)" }}>
-                  {node.elevation != null
-                    ? toDisplay(node.elevation, "elevation", sys).toFixed(1)
-                    : "—"}
-                </td>
-                <td style={{ ...TD, fontFamily: "var(--font-mono)" }}>
-                  {node.baseDemand != null
-                    ? toDisplay(node.baseDemand, "demand", sys).toFixed(
-                        sys === "si" ? 2 : 1,
-                      )
-                    : "—"}
-                </td>
+                {hasAttrs && (
+                  <td style={{ ...TD, fontFamily: "var(--font-mono)" }}>
+                    {node.elevation != null
+                      ? toDisplay(node.elevation, "elevation", sys).toFixed(1)
+                      : "—"}
+                  </td>
+                )}
+                {hasAttrs && (
+                  <td style={{ ...TD, fontFamily: "var(--font-mono)" }}>
+                    {node.baseDemand != null
+                      ? toDisplay(node.baseDemand, "demand", sys).toFixed(
+                          sys === "si" ? 2 : 1,
+                        )
+                      : "—"}
+                  </td>
+                )}
                 {hasResults && (
                   <td style={{ ...TD, fontFamily: "var(--font-mono)" }}>
                     {node.pressure != null
@@ -536,6 +549,11 @@ function LinksTab({
 }) {
   const sys = useUnitSystem();
   const hasResults = links.some((l) => l.flow != null);
+  // Same rule as the nodes table: attribute columns only when the snapshot
+  // carries the attribute (v4 snapshots are geometry-only).
+  const hasAttrs = links.some(
+    (l) => l.diameter != null || l.status != null || l.initialStatus != null,
+  );
   const [rows, sortCol, sortDir, toggleSort] = useSortedFiltered(
     links,
     query,
@@ -555,7 +573,8 @@ function LinksTab({
     virtualRows.length > 0
       ? rowVirtualizer.getTotalSize() - virtualRows[virtualRows.length - 1].end
       : 0;
-  const linkColSpan = hasResults ? (onZoomTo ? 6 : 5) : onZoomTo ? 5 : 4;
+  const linkColSpan =
+    2 + (hasAttrs ? 2 : 0) + (hasResults ? 1 : 0) + (onZoomTo ? 1 : 0);
 
   return (
     <div ref={scrollRef} style={{ overflow: "auto", flex: 1 }}>
@@ -576,8 +595,8 @@ function LinksTab({
         <colgroup>
           <col style={{ width: BADGE_COL_WIDTH }} />
           <col />
-          <col style={{ width: 36 }} />
-          <col />
+          {hasAttrs && <col style={{ width: 36 }} />}
+          {hasAttrs && <col />}
           {hasResults && <col />}
           {onZoomTo && <col style={{ width: 22 }} />}
         </colgroup>
@@ -617,32 +636,34 @@ function LinksTab({
                 <SortIndicator col="type" sortCol={sortCol} sortDir={sortDir} />
               </span>
             </th>
-            {(["id", "status", "diameter"] as const).map((col) => {
-              const meta = {
-                id: { label: "ID", tip: "Link ID" },
-                status: { label: "St.", tip: "Status" },
-                diameter: {
-                  label: "Ø",
-                  tip: `Diameter (${unitLabel("diameter", sys)})`,
-                },
-              }[col];
-              return (
-                <th
-                  key={col}
-                  style={TH}
-                  onClick={() => toggleSort(col)}
-                  data-tooltip={meta.tip}
-                  data-tooltip-pos="bottom"
-                >
-                  {meta.label}
-                  <SortIndicator
-                    col={col}
-                    sortCol={sortCol}
-                    sortDir={sortDir}
-                  />
-                </th>
-              );
-            })}
+            {(["id", "status", "diameter"] as const)
+              .filter((col) => col === "id" || hasAttrs)
+              .map((col) => {
+                const meta = {
+                  id: { label: "ID", tip: "Link ID" },
+                  status: { label: "St.", tip: "Status" },
+                  diameter: {
+                    label: "Ø",
+                    tip: `Diameter (${unitLabel("diameter", sys)})`,
+                  },
+                }[col];
+                return (
+                  <th
+                    key={col}
+                    style={TH}
+                    onClick={() => toggleSort(col)}
+                    data-tooltip={meta.tip}
+                    data-tooltip-pos="bottom"
+                  >
+                    {meta.label}
+                    <SortIndicator
+                      col={col}
+                      sortCol={sortCol}
+                      sortDir={sortDir}
+                    />
+                  </th>
+                );
+              })}
             {hasResults && (
               <th
                 style={TH}
@@ -706,30 +727,34 @@ function LinksTab({
                 >
                   <MiddleTruncate text={link.id} />
                 </td>
-                <td style={TD}>
-                  {link.status != null ? (
-                    <span
-                      data-tooltip={STATUS_LABEL[link.status] ?? "Unknown"}
-                      style={{
-                        display: "inline-block",
-                        width: 7,
-                        height: 7,
-                        borderRadius: "50%",
-                        background:
-                          STATUS_COLOR[link.status] ?? "var(--text-tertiary)",
-                      }}
-                    />
-                  ) : (
-                    <span style={{ color: "var(--text-tertiary)" }}>—</span>
-                  )}
-                </td>
-                <td style={{ ...TD, fontFamily: "var(--font-mono)" }}>
-                  {link.diameter != null
-                    ? toDisplay(link.diameter, "diameter", sys).toFixed(
-                        sys === "si" ? 0 : 1,
-                      )
-                    : "—"}
-                </td>
+                {hasAttrs && (
+                  <td style={TD}>
+                    {link.status != null ? (
+                      <span
+                        data-tooltip={STATUS_LABEL[link.status] ?? "Unknown"}
+                        style={{
+                          display: "inline-block",
+                          width: 7,
+                          height: 7,
+                          borderRadius: "50%",
+                          background:
+                            STATUS_COLOR[link.status] ?? "var(--text-tertiary)",
+                        }}
+                      />
+                    ) : (
+                      <span style={{ color: "var(--text-tertiary)" }}>—</span>
+                    )}
+                  </td>
+                )}
+                {hasAttrs && (
+                  <td style={{ ...TD, fontFamily: "var(--font-mono)" }}>
+                    {link.diameter != null
+                      ? toDisplay(link.diameter, "diameter", sys).toFixed(
+                          sys === "si" ? 0 : 1,
+                        )
+                      : "—"}
+                  </td>
+                )}
                 {hasResults && (
                   <td style={{ ...TD, fontFamily: "var(--font-mono)" }}>
                     {link.flow != null

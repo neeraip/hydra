@@ -1,4 +1,5 @@
 import { useActiveProject, useAppState } from "../../AppContext";
+import { engineComponents } from "../../engine/registry";
 import { openBaseFolder, useNetworkSummary, useScenarios } from "../../hooks";
 import { Header } from "./OverviewView/Header";
 import { NetworkComposition } from "./OverviewView/NetworkComposition";
@@ -22,6 +23,9 @@ export function OverviewView() {
 
   const summary = useNetworkSummary();
   const scenarios = useScenarios(project?.id ?? null, scenariosVersion);
+  // The "Network" KPI grid is engine-specific vocabulary (pipes/tanks vs
+  // conduits/subcatchments) — selected once from the registry.
+  const EngineComposition = engineComponents(engine?.key).OverviewComposition;
 
   if (!project) {
     return (
@@ -59,12 +63,20 @@ export function OverviewView() {
 
       {/* ── Tier 1: Static project facts ─────────────────────────────── */}
       <Section title="Network">
-        <NetworkComposition
-          summary={summary}
-          networkLoaded={networkLoaded}
-          fallbackNodeCount={project.nodeCount}
-          fallbackLinkCount={project.linkCount}
-        />
+        {EngineComposition ? (
+          <EngineComposition
+            networkLoaded={networkLoaded}
+            fallbackNodeCount={project.nodeCount}
+            fallbackLinkCount={project.linkCount}
+          />
+        ) : (
+          <NetworkComposition
+            summary={summary}
+            networkLoaded={networkLoaded}
+            fallbackNodeCount={project.nodeCount}
+            fallbackLinkCount={project.linkCount}
+          />
+        )}
       </Section>
 
       <div

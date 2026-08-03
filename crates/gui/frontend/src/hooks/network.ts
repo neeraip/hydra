@@ -150,13 +150,14 @@ function decodeGenericSnapshot(
 
   const nodes: Node[] = [];
   for (let i = 0; i < nPoints; i += 1) {
+    // No attribute fields: the v4 snapshot is geometry + identity only.
+    // Fabricating zeros here made every consumer print "Elevation 0.00 m"
+    // as if it were model data.
     nodes.push({
       id: pointIds[i],
       type: kindOf(pointKind, i),
       x: px[i],
       y: py[i],
-      elevation: 0,
-      baseDemand: 0,
       pressure: null,
       demand: null,
     });
@@ -176,10 +177,6 @@ function decodeGenericSnapshot(
       type: kindOf(polylineKind, i),
       fromId: from[i] >= 0 ? pointIds[from[i]] : "",
       toId: to[i] >= 0 ? pointIds[to[i]] : "",
-      velocity: 0,
-      diameter: 0,
-      length: 0,
-      roughness: 0,
     };
     if (vertices.length > 0) link.vertices = vertices;
     links.push(link);

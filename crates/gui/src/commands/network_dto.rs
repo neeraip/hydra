@@ -382,17 +382,30 @@ pub struct NetworkState(pub parking_lot::Mutex<NetworkStateInner>);
 /// telling the user their network is invalid would be simply untrue (model spec
 /// §4.1.2).
 ///
-/// The named tool's engine may exist without being editable here: SWMM
-/// models run through the urban drainage engine CLI-first, so the message
-/// points at the CLI rather than claiming Hydra cannot run the model.
-/// Revise to "open it with the {tool} engine" once the GUI can.
+/// When the named tool's engine is GUI-openable, the message says how to
+/// open it (create a project under that engine); otherwise it points at
+/// the CLI, which runs every available engine.
 pub(crate) fn format_read_error(err: hydra::io::ReadError) -> String {
     match err {
-        hydra::io::ReadError::ForeignDialect { tool, section } => format!(
-            "This is a {tool} model, not a water-distribution one. \
-             It declares a [{section}] section, which EPANET has no concept of. \
-             The GUI cannot open {tool} models yet — the hydra CLI can run them."
-        ),
+        hydra::io::ReadError::ForeignDialect { tool, section } => {
+            let openable_engine = hydra::common::ENGINES.iter().find(|e| {
+                e.import.iter().any(|f| f.label.contains(tool))
+                    && super::projects::GUI_OPENABLE_ENGINES.contains(&e.key)
+            });
+            let advice = match openable_engine {
+                Some(e) => format!(
+                    "To open it here, create a new {} project and import this file.",
+                    e.label
+                ),
+                None => {
+                    format!("The GUI cannot open {tool} models yet — the hydra CLI can run them.")
+                }
+            };
+            format!(
+                "This is a {tool} model, not a water-distribution one. \
+                 It declares a [{section}] section, which EPANET has no concept of. {advice}"
+            )
+        }
         other => other.to_string(),
     }
 }

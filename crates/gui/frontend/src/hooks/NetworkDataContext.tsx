@@ -150,7 +150,7 @@ function summarizeNetwork(nodes: Node[], links: Link[]): NetworkSummary {
       pipes += 1;
       if (typeof l.length === "number" && l.length > 0)
         totalLengthM += l.length;
-      if (l.diameter > 0) {
+      if (l.diameter != null && l.diameter > 0) {
         diaSum += l.diameter;
         diaCount += 1;
       }

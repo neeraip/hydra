@@ -20,7 +20,9 @@ import {
   TrashIcon,
 } from "@heroicons/react/16/solid";
 import type React from "react";
+import { useActiveProject } from "../../AppContext";
 import type { LinkVariable, NodeVariable } from "../../canvas/types";
+import { engineComponents } from "../../engine/registry";
 import type { Link, Node, ResultRanges } from "../../hooks";
 import { ACCENT } from "../../hooks";
 import { Header } from "./ElementInspector/InspectorHeader";
@@ -73,6 +75,10 @@ export function NodeInspector({
   hasSimulation,
   isTransitioning,
 }: NodeInspectorProps) {
+  // The body is engine vocabulary (attributes + result cards) — selected
+  // once from the registry; chrome (header, footer actions) stays shared.
+  const { engine } = useActiveProject();
+  const EngineBody = engineComponents(engine?.key).NodeInspectorBody;
   return (
     <div
       className="inspector-panel"
@@ -106,16 +112,20 @@ export function NodeInspector({
         onRename={onRename}
       />
 
-      <NodeBody
-        node={node}
-        accent={ACCENT}
-        nodeVar={nodeVar}
-        ranges={ranges}
-        hasSimulation={hasSimulation}
-        isTransitioning={isTransitioning}
-        onOpenPattern={onOpenPattern}
-        onLocateLink={onLocateRelated}
-      />
+      {EngineBody ? (
+        <EngineBody node={node} onLocateLink={onLocateRelated} />
+      ) : (
+        <NodeBody
+          node={node}
+          accent={ACCENT}
+          nodeVar={nodeVar}
+          ranges={ranges}
+          hasSimulation={hasSimulation}
+          isTransitioning={isTransitioning}
+          onOpenPattern={onOpenPattern}
+          onLocateLink={onLocateRelated}
+        />
+      )}
 
       <div
         style={{
@@ -199,6 +209,9 @@ export function LinkInspector({
   hasSimulation,
   isTransitioning,
 }: LinkInspectorProps) {
+  // Same registry selection as NodeInspector — see the comment there.
+  const { engine } = useActiveProject();
+  const EngineBody = engineComponents(engine?.key).LinkInspectorBody;
   return (
     <div
       className="inspector-panel"
@@ -231,15 +244,19 @@ export function LinkInspector({
         onRename={onRename}
       />
 
-      <LinkBody
-        link={link}
-        accent={ACCENT}
-        linkVar={linkVar}
-        ranges={ranges}
-        hasSimulation={hasSimulation}
-        isTransitioning={isTransitioning}
-        onLocateNode={onLocateNode}
-      />
+      {EngineBody ? (
+        <EngineBody link={link} onLocateNode={onLocateNode} />
+      ) : (
+        <LinkBody
+          link={link}
+          accent={ACCENT}
+          linkVar={linkVar}
+          ranges={ranges}
+          hasSimulation={hasSimulation}
+          isTransitioning={isTransitioning}
+          onLocateNode={onLocateNode}
+        />
+      )}
 
       <div
         style={{

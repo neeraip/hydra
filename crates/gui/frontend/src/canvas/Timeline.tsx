@@ -217,7 +217,7 @@ export function Timeline({
       <div className="timeline-bar timeline-bar--steady">
         <span className="timeline-steady-pill">Steady-state</span>
         <span className="timeline-steady-text">
-          Single hydraulic snapshot at {snapshotLabel}
+          Single snapshot at {snapshotLabel}
         </span>
       </div>
     );

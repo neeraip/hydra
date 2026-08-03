@@ -419,6 +419,13 @@ pub fn update_sim_params(
 ) -> Result<(), String> {
     validate_id(&project_id)?;
     let app_data = app_data_dir(&app)?;
+    // Writing settings serialises the model with the wds writer; other
+    // engines' settings are read-only in the GUI (mirrors `get_sim_params`
+    // serving only wds). Guarded here, not just in the frontend, so no new
+    // caller can rewrite a foreign model's bytes with EPANET output.
+    if super::projects::project_engine_key(&app_data, &project_id) != "wds" {
+        return Err("This project's engine's settings are read-only in the GUI.".into());
+    }
 
     // 1) Base model.
     let base_path = bundle::base_model_path(&app_data, &project_id);

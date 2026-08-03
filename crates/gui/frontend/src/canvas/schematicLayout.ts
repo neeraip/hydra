@@ -52,9 +52,11 @@ export function computeSchematicLayout(
     adj.get(l.toId)?.add(l.fromId);
   }
 
-  // Identify source nodes (reservoirs, tanks) as BFS roots
+  // Identify boundary nodes as BFS roots: reservoirs/tanks for water
+  // distribution, outfalls for drainage (where flow converges rather than
+  // diverges — the layout only needs consistent depths, not direction).
   const sources = nodes.filter(
-    (n) => n.type === "reservoir" || n.type === "tank",
+    (n) => n.type === "reservoir" || n.type === "tank" || n.type === "outfall",
   );
   if (sources.length === 0 && nodes.length > 0) sources.push(nodes[0]);
 

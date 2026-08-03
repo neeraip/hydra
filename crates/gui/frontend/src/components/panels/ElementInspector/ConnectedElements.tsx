@@ -72,7 +72,7 @@ export function ConnectedLink({
       >
         {link.type}
       </span>
-      {link.diameter > 0 && (
+      {link.diameter != null && link.diameter > 0 && (
         <span
           style={{
             fontSize: "var(--text-xs)",

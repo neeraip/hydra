@@ -99,7 +99,7 @@ pub fn list_projects(app: tauri::AppHandle) -> Result<Vec<Project>, String> {
 /// and run through the queue) before it is **editable** (tables, inspector
 /// writes, element creation). The tiers differ while an engine's viewer
 /// ships ahead of its editor.
-const GUI_OPENABLE_ENGINES: &[&str] = &["wds", "uds"];
+pub(crate) const GUI_OPENABLE_ENGINES: &[&str] = &["wds", "uds"];
 const GUI_EDITABLE_ENGINES: &[&str] = &["wds"];
 
 /// Resolve an engine key, refusing anything this GUI cannot open at all
@@ -1744,14 +1744,30 @@ pub async fn export_project_inp(
         .map(|m| m.name)
         .unwrap_or_else(|_| "model".to_string());
 
+    // Filter label from the engine's own import format — a SWMM project's
+    // save dialog must not say "EPANET Input File".
+    let engine_key = project_engine_key(&app_data, &project_id);
+    let (filter_label, filter_exts): (String, Vec<String>) = hydra::common::ENGINES
+        .iter()
+        .find(|e| e.key == engine_key)
+        .and_then(|e| e.import.first())
+        .map(|f| {
+            (
+                f.label.to_string(),
+                f.extensions.iter().map(|x| (*x).to_string()).collect(),
+            )
+        })
+        .unwrap_or_else(|| ("Model input file".to_string(), vec!["inp".to_string()]));
+
     // The dialog call blocks until the user answers — run it on the blocking
     // pool so it does not tie up an async runtime worker for that whole time.
     let dialog_app = app.clone();
     let picked = tauri::async_runtime::spawn_blocking(move || {
+        let exts: Vec<&str> = filter_exts.iter().map(String::as_str).collect();
         dialog_app
             .dialog()
             .file()
-            .add_filter("EPANET Input File", &["inp"])
+            .add_filter(filter_label, &exts)
             .set_file_name(format!("{default_name}.inp"))
             .blocking_save_file()
     })

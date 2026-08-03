@@ -17,22 +17,31 @@ describe("elementTypeBadge", () => {
     }
   });
 
-  it("never gives two types the same letter", () => {
+  it("never gives two types the same letter within an engine", () => {
     // Colour alone must not be the only differentiator — pipe owns "P", so
-    // pump has to be "Pu".
-    const labels = [
+    // pump has to be "Pu"; outfall/orifice/outlet get two-letter labels.
+    const wds = ["junction", "reservoir", "tank", "pipe", "pump", "valve"];
+    const uds = [
       "junction",
-      "reservoir",
-      "tank",
-      "pipe",
+      "outfall",
+      "storage",
+      "divider",
+      "conduit",
       "pump",
-      "valve",
-    ].map((t) => elementTypeBadge(t).label);
-    expect(new Set(labels).size).toBe(labels.length);
+      "orifice",
+      "weir",
+      "outlet",
+      "subcatchment",
+      "raingage",
+    ];
+    for (const kinds of [wds, uds]) {
+      const labels = kinds.map((t) => elementTypeBadge(t).label);
+      expect(new Set(labels).size).toBe(labels.length);
+    }
   });
 
   it("falls back to an initial for an unknown type", () => {
-    expect(elementTypeBadge("subcatchment").label).toBe("S");
+    expect(elementTypeBadge("aquifer").label).toBe("A");
     expect(elementTypeBadge("").label).toBe("?");
   });
 });
