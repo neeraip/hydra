@@ -22,7 +22,10 @@ import {
 import type React from "react";
 import { useActiveProject } from "../../AppContext";
 import type { LinkVariable, NodeVariable } from "../../canvas/types";
-import { engineComponents } from "../../engine/registry";
+import {
+  engineComponents,
+  type GenericElementValue,
+} from "../../engine/registry";
 import type { Link, Node, ResultRanges } from "../../hooks";
 import { ACCENT } from "../../hooks";
 import { Header } from "./ElementInspector/InspectorHeader";
@@ -58,6 +61,9 @@ interface NodeInspectorProps {
   ranges?: ResultRanges;
   hasSimulation?: boolean;
   isTransitioning?: boolean;
+  /** Current-period catalog values for engines with generic results —
+   * consumed by the per-engine body slot; the wds body ignores it. */
+  genericResults?: GenericElementValue[] | null;
 }
 
 export function NodeInspector({
@@ -74,6 +80,7 @@ export function NodeInspector({
   ranges,
   hasSimulation,
   isTransitioning,
+  genericResults,
 }: NodeInspectorProps) {
   // The body is engine vocabulary (attributes + result cards) — selected
   // once from the registry; chrome (header, footer actions) stays shared.
@@ -113,7 +120,11 @@ export function NodeInspector({
       />
 
       {EngineBody ? (
-        <EngineBody node={node} onLocateLink={onLocateRelated} />
+        <EngineBody
+          node={node}
+          onLocateLink={onLocateRelated}
+          results={genericResults}
+        />
       ) : (
         <NodeBody
           node={node}
@@ -193,6 +204,8 @@ interface LinkInspectorProps {
   ranges?: ResultRanges;
   hasSimulation?: boolean;
   isTransitioning?: boolean;
+  /** See NodeInspectorProps.genericResults. */
+  genericResults?: GenericElementValue[] | null;
 }
 
 export function LinkInspector({
@@ -208,6 +221,7 @@ export function LinkInspector({
   ranges,
   hasSimulation,
   isTransitioning,
+  genericResults,
 }: LinkInspectorProps) {
   // Same registry selection as NodeInspector — see the comment there.
   const { engine } = useActiveProject();
@@ -245,7 +259,11 @@ export function LinkInspector({
       />
 
       {EngineBody ? (
-        <EngineBody link={link} onLocateNode={onLocateNode} />
+        <EngineBody
+          link={link}
+          onLocateNode={onLocateNode}
+          results={genericResults}
+        />
       ) : (
         <LinkBody
           link={link}

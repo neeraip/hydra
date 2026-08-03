@@ -40,16 +40,30 @@ export interface OverviewCompositionProps {
   fallbackLinkCount: number;
 }
 
+/** One engine-described result value for a selected element at the current
+ * timeline step — label and unit are engine-authored (§6 catalog). */
+export interface GenericElementValue {
+  id: string;
+  label: string;
+  unit?: string;
+  /** `null`/`NaN` = not reported for this element. */
+  value: number | null;
+}
+
 /** Props of the element inspector's node body. */
 export interface NodeInspectorBodyProps {
   node: Node;
   onLocateLink: (id: string) => void;
+  /** Current-period catalog values for this element, when the engine's
+   * generic results are loaded; `null` before a run. */
+  results?: GenericElementValue[] | null;
 }
 
 /** Props of the element inspector's link body. */
 export interface LinkInspectorBodyProps {
   link: Link;
   onLocateNode: (id: string) => void;
+  results?: GenericElementValue[] | null;
 }
 
 export interface EngineComponents {

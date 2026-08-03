@@ -1,26 +1,24 @@
 import { ConnectedLink } from "../../components/panels/ElementInspector/ConnectedElements";
 import { SectionLabel } from "../../components/ui/SectionLabel";
-import type { Node } from "../../hooks";
 import { useLinksConnectedTo } from "../../hooks";
+import type { NodeInspectorBodyProps } from "../registry";
+import { GenericResultsTable } from "./GenericResultsTable";
 
 /**
- * Urban-drainage node inspector body: identity + connections only. The v4
- * snapshot carries no attribute data yet, and the wds body's vocabulary
- * (elevation, base demand, pressure cards) is wrong for drainage nodes —
- * per-element attributes and results arrive with the §4 attribute serving.
- * Current-period values already show on hover and through the canvas
- * colouring.
+ * Urban-drainage node inspector body: current-period results (every §6
+ * catalog variable, engine-authored labels and units) + connections. The
+ * v4 snapshot carries no attribute data yet — per-element attributes
+ * arrive with the §4 attribute serving.
  */
 export function UdsNodeInspectorBody({
   node,
   onLocateLink,
-}: {
-  node: Node;
-  onLocateLink: (id: string) => void;
-}) {
+  results,
+}: NodeInspectorBodyProps) {
   const connectedLinks = useLinksConnectedTo(node.id);
   return (
     <div style={{ flex: 1, overflowY: "auto", padding: 12 }}>
+      <GenericResultsTable results={results} />
       {connectedLinks.length > 0 ? (
         <>
           <SectionLabel>

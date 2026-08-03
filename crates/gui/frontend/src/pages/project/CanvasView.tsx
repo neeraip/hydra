@@ -941,6 +941,38 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
     }));
   }, [baseLinks, currentPeriodResult, needSimObjects]);
 
+  // Current-period catalog values for the selected element — rendered by
+  // the per-engine inspector bodies (registry slot prop). Payload arrays
+  // share the snapshot order of baseNodes/baseLinks, so the element's
+  // array index is its position there.
+  const genericNodeResults = useMemo(() => {
+    if (!genericMeta || !fetchedGenericValues || selectedNodeId == null) {
+      return null;
+    }
+    const si = baseNodes.findIndex((n) => n.id === selectedNodeId);
+    if (si < 0) return null;
+    return genericMeta.pointVars.map((v, i) => ({
+      id: v.id,
+      label: v.label,
+      unit: v.unit,
+      value: fetchedGenericValues.points[i]?.[si] ?? null,
+    }));
+  }, [genericMeta, fetchedGenericValues, selectedNodeId, baseNodes]);
+
+  const genericLinkResults = useMemo(() => {
+    if (!genericMeta || !fetchedGenericValues || selectedLinkId == null) {
+      return null;
+    }
+    const si = baseLinks.findIndex((l) => l.id === selectedLinkId);
+    if (si < 0) return null;
+    return genericMeta.polylineVars.map((v, i) => ({
+      id: v.id,
+      label: v.label,
+      unit: v.unit,
+      value: fetchedGenericValues.polylines[i]?.[si] ?? null,
+    }));
+  }, [genericMeta, fetchedGenericValues, selectedLinkId, baseLinks]);
+
   // Keep the selection context's sim data in sync so the rail can display
   // live result values without re-fetching from the backend. Always push:
   // when the period result matches the network the arrays are merged with sim
@@ -1718,6 +1750,7 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
                 ranges={stableResultMeta?.ranges}
                 hasSimulation={!!stableResultMeta}
                 isTransitioning={!!stableResultMeta && !nodeIsEnriched}
+                genericResults={genericNodeResults}
               />
             )}
             {inspectorView === "link" && stableSelectedLink && (
@@ -1761,6 +1794,7 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
                 ranges={stableResultMeta?.ranges}
                 hasSimulation={!!stableResultMeta}
                 isTransitioning={!!stableResultMeta && !linkIsEnriched}
+                genericResults={genericLinkResults}
               />
             )}
           </div>
