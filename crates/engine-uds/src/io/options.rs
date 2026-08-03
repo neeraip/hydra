@@ -39,6 +39,20 @@ impl FlowUnits {
     pub fn is_us(self) -> bool {
         matches!(self, FlowUnits::Cfs | FlowUnits::Gpm | FlowUnits::Mgd)
     }
+
+    /// The variant for a binary-results unit code (the discriminant the
+    /// writer stores, §14.9), or `None` for an unknown code.
+    pub fn from_code(code: i32) -> Option<Self> {
+        Some(match code {
+            0 => FlowUnits::Cfs,
+            1 => FlowUnits::Gpm,
+            2 => FlowUnits::Mgd,
+            3 => FlowUnits::Cms,
+            4 => FlowUnits::Lps,
+            5 => FlowUnits::Mld,
+            _ => return None,
+        })
+    }
 }
 
 /// The infiltration relation selection (§3.3).

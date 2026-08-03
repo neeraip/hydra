@@ -14,6 +14,7 @@ pub mod lex;
 pub mod lid;
 pub mod objects;
 pub mod options;
+pub mod out_reader;
 pub mod out_writer;
 pub mod quality;
 pub mod rpt_writer;

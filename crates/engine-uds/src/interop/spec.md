@@ -266,6 +266,25 @@ simulation, both as the predecessor's readers expect. Node and link values
 are period-interpolated; the period-averaged variant is served as the
 predecessor defines it, settings exempted.
 
+**Reading binary results** is the same format's other half, and the one
+filesystem carve-out inside this engine: results files can dwarf the model
+that produced them, so the reader operates on an explicitly supplied path
+and seeks — metadata, one period, or one element's series — rather than
+requiring the whole file in memory (the same carve-out, for the same
+reason, as the water-distribution engine's results reader). Opening
+validates before serving: the leading and trailing magic numbers, the
+version, the epilog's section positions against the actual file length
+(header, identifier tables, property tables, and the fixed-size period
+records must tile the file exactly), and the stored error code — a file
+whose writer recorded an error, or whose geometry does not reconcile, is
+refused with a message naming what failed rather than misread. Values are
+served as stored — in the file's declared unit system, per-object records
+gated by the `[REPORT]` selection — with the metadata carrying everything
+a consumer needs to interpret them: unit codes, object identifiers in
+record order, pollutant names and concentration units, and the reporting
+clock (including undoing the backdated start, so served times are true
+record instants).
+
 **The text report** follows the predecessor's structure — banner, title,
 optional input echo, options summary, rainfall and RDII summaries, the
 control-actions log, the continuity balances of §11, the numerical-
