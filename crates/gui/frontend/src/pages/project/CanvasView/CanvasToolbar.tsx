@@ -46,6 +46,7 @@ const ICON_14: CSSProperties = { width: 14, height: 14 };
 export function CanvasToolbar({
   editable,
   viewMode,
+  localGrid = false,
   onViewModeChange,
   coordStatus,
   coordMissingCount,
@@ -69,6 +70,9 @@ export function CanvasToolbar({
   /** Whether model-editing tools (edit, add node, add link) appear. */
   editable: boolean;
   viewMode: ViewMode;
+  /** The model has no georeference: there is no map to switch to, and no
+   * basemap to draw under it. */
+  localGrid?: boolean;
   onViewModeChange: (m: ViewMode) => void;
   coordStatus: "complete" | "partial" | "empty";
   coordMissingCount: number;
@@ -139,7 +143,10 @@ export function CanvasToolbar({
     );
   }
 
-  const mapOnly = viewMode !== "map";
+  // A local grid never enters map mode, so the map-only affordances stay
+  // hidden rather than offering a basemap for coordinates no basemap can
+  // place.
+  const mapOnly = localGrid || viewMode !== "map";
   const mapOnlyDim: CSSProperties = {
     opacity: mapOnly ? 0.38 : undefined,
     cursor: mapOnly ? "not-allowed" : undefined,
@@ -169,7 +176,10 @@ export function CanvasToolbar({
             flexShrink: 0,
           }}
         >
-          {(["map", "schematic"] as ViewMode[]).map((m) => (
+          {(localGrid
+            ? (["schematic"] as ViewMode[])
+            : (["map", "schematic"] as ViewMode[])
+          ).map((m) => (
             <button
               type="button"
               key={m}

@@ -41,11 +41,48 @@ export interface LayoutCoupling {
   node: string;
 }
 
+/** Boundary nodes the layout treats as roots: reservoirs/tanks for water
+ * distribution, outfalls for drainage. */
+function boundaryNodes(nodes: Node[]): Node[] {
+  const found = nodes.filter(
+    (n) => n.type === "reservoir" || n.type === "tank" || n.type === "outfall",
+  );
+  if (found.length === 0 && nodes.length > 0) return [nodes[0]];
+  return found;
+}
+
+/** Ids not reachable from any boundary node — a genuinely separate
+ * subnetwork, by whatever adjacency the caller built. */
+function detachedFrom(
+  nodes: Node[],
+  adj: Map<string, Set<string>>,
+): Set<string> {
+  const seen = new Set<string>();
+  const queue = boundaryNodes(nodes).map((n) => n.id);
+  for (const id of queue) seen.add(id);
+  let head = 0;
+  while (head < queue.length) {
+    const cur = queue[head++];
+    for (const neighbor of adj.get(cur) ?? []) {
+      if (!seen.has(neighbor)) {
+        seen.add(neighbor);
+        queue.push(neighbor);
+      }
+    }
+  }
+  return new Set(nodes.filter((n) => !seen.has(n.id)).map((n) => n.id));
+}
+
 export function computeSchematicLayout(
   nodes: Node[],
   links: Link[],
   scale: { x: number; y: number } = { x: 1, y: 1 },
   couplings: LayoutCoupling[] = [],
+  /** Keep the model's own plan coordinates instead of laying nodes out by
+   * depth. For a model on a local grid this view *is* the plan — the
+   * coordinates are real, they simply are not georeferenced, so there is
+   * no map to put them on but every reason to keep their true shape. */
+  realCoords = false,
 ): SchematicLayout {
   // Every position below is linear in these two constants, so scaling them is
   // equivalent to scaling the output per axis — no re-running the BFS.
@@ -84,6 +121,16 @@ export function computeSchematicLayout(
     (n) => n.type === "reservoir" || n.type === "tank" || n.type === "outfall",
   );
   if (sources.length === 0 && nodes.length > 0) sources.push(nodes[0]);
+
+  if (realCoords) {
+    const positions = new Map<string, [number, number]>();
+    for (const n of nodes) {
+      // Y is negated so the plan reads north-up: the orthographic view's
+      // Y axis grows downward, model coordinates grow upward.
+      positions.set(n.id, [n.x * scale.x, -n.y * scale.y]);
+    }
+    return { positions, detachedIds: detachedFrom(nodes, adj) };
+  }
 
   // BFS to assign each node a depth
   const depth = new Map<string, number>();

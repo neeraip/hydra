@@ -6,7 +6,11 @@ import {
   clampBasemapOpacity,
   isValidBasemapId,
 } from "../../canvas/Basemap";
-import { haversineMeters, wgs84ToSourceCrs } from "../../canvas/coords";
+import {
+  haversineMeters,
+  LOCAL_CRS,
+  wgs84ToSourceCrs,
+} from "../../canvas/coords";
 import {
   type GenericClassKey,
   GenericLegend,
@@ -885,6 +889,12 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
   // inlets): the layout counts them as connectivity, the canvas draws
   // them. Empty for engines without them.
   const inletCouplings = useInletCouplings(project?.id, activeScenarioId);
+  // A local-grid model has no georeference, so there is no basemap to place
+  // it on. It still has real geometry, so the canvas renders it
+  // orthographically at its true coordinates rather than pretending the
+  // numbers are longitude and latitude — which crashed MapLibre outright
+  // ("Invalid LngLat latitude value") the moment anything flew to a feature.
+  const localGrid = project?.sourceCrs === LOCAL_CRS;
 
   // Raw committed snapshot (source-CRS coords) for undo capture inside
   // stable callbacks — same render-time-ref pattern as the selection refs
@@ -1715,7 +1725,8 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
                   periodResult={currentPeriodResult}
                   generic={genericCanvas}
                   isActive={canvasIsActive}
-                  viewMode={viewMode}
+                  viewMode={localGrid ? "schematic" : viewMode}
+                  localGrid={localGrid}
                   // The slider carries a track position; the layout wants per-axis
                   // multipliers. Converting here keeps the geometric mapping in
                   // one place instead of duplicating it in the canvas.
@@ -1862,7 +1873,8 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
             {/* Toolbar overlay — left offset tracks the floating rail width */}
             <CanvasToolbar
               editable={modelEditable}
-              viewMode={viewMode}
+              viewMode={localGrid ? "schematic" : viewMode}
+              localGrid={localGrid}
               onViewModeChange={setViewMode}
               coordStatus={coordStatus}
               coordMissingCount={coordMissingCount}

@@ -270,6 +270,10 @@ interface MapCanvasProps {
   onSelectNode: (id: string | null) => void;
   selectedLinkId: string | null;
   onSelectLink: (id: string | null) => void;
+  /** The model's coordinates are a local grid, not a georeferenced system:
+   * there is no basemap to place them on, so the canvas renders them
+   * orthographically at their true positions. */
+  localGrid?: boolean;
   /** Hydraulic connections that are not links (dual-drainage street
    * inlets): drawn as dashed connectors and counted as connectivity by
    * the schematic layout. */
@@ -360,6 +364,7 @@ export const MapCanvas = memo(function MapCanvas({
   onSelectNode,
   selectedLinkId,
   onSelectLink,
+  localGrid = false,
   couplings = EMPTY_COUPLINGS,
   selectedRegionId = null,
   onSelectRegion,
@@ -506,6 +511,9 @@ export const MapCanvas = memo(function MapCanvas({
     /** Couplings feed the connectivity pass, so a change in them must
      * invalidate the cached layout exactly as nodes and links do. */
     couplings: LayoutCoupling[];
+    /** Real-coordinate mode changes what positions mean, so it keys the
+     * cache exactly as the inputs do. */
+    localGrid: boolean;
   } | null>(null);
   const schematicLayout = useMemo(() => {
     const cache = schematicCacheRef.current;
@@ -514,6 +522,7 @@ export const MapCanvas = memo(function MapCanvas({
       cache.nodes === nodes &&
       cache.links === links &&
       cache.couplings === couplings &&
+      cache.localGrid === localGrid &&
       cache.scaleX === schematicScale.x &&
       cache.scaleY === schematicScale.y
     ) {
@@ -530,6 +539,7 @@ export const MapCanvas = memo(function MapCanvas({
       links,
       schematicScale,
       couplings,
+      localGrid,
     );
     schematicCacheRef.current = {
       nodes,
@@ -538,9 +548,10 @@ export const MapCanvas = memo(function MapCanvas({
       scaleX: schematicScale.x,
       scaleY: schematicScale.y,
       couplings,
+      localGrid,
     };
     return layout;
-  }, [nodes, links, viewMode, schematicScale, couplings]);
+  }, [nodes, links, viewMode, schematicScale, couplings, localGrid]);
   // Positions alone, for everything that only needs coordinates.
   const schematicCoords = schematicLayout.positions;
 
