@@ -1,5 +1,18 @@
-export type NodeType = "junction" | "tank" | "reservoir";
-export type LinkType = "pipe" | "pump" | "valve";
+/** The wds kinds are enumerated for autocomplete; other engines contribute
+ * their own kind ids (snapshot v4), resolved against the engine catalog. */
+export type NodeType = "junction" | "tank" | "reservoir" | (string & {});
+export type LinkType = "pipe" | "pump" | "valve" | (string & {});
+
+/** An areal element (snapshot v4): a polygon boundary with an optional
+ * discharge reference — a subcatchment, in urban-drainage terms. */
+export interface Region {
+  id: string;
+  type: string;
+  /** Boundary ring [x, y] in source-CRS coordinates. */
+  ring: Array<[number, number]>;
+  /** Id of the point element this region discharges to, if any. */
+  outletId: string | null;
+}
 
 export interface Node {
   id: string;

@@ -60,6 +60,7 @@ mod sim_params;
 mod simulation;
 #[cfg(test)]
 mod test_fixtures;
+mod uds_view;
 
 pub use basemap_providers::*;
 pub use binary_codec::*;

@@ -48,6 +48,8 @@ const SNAPSHOT_FLAG_PRESENT = 1;
 // the source CRS, exclusive of the endpoints); `headloss` is merged per
 // reporting period by the canvas from PeriodResults.linkHeadloss. Both are
 // optional, so every existing Link consumer keeps compiling untouched.
+import type { Region } from "../types/network";
+
 declare module "../types/network" {
   interface Link {
     /** Intermediate polyline vertices [x, y] in source-CRS coordinates
@@ -70,6 +72,139 @@ const SNAPSHOT_LINK_TYPES: readonly LinkType[] = ["pipe", "pump", "valve"];
 /** v3 `initialStatus` code → `Link.initialStatus` value (pipes only). */
 const SNAPSHOT_LINK_STATUSES = ["open", "closed", "cv"] as const;
 
+// ── Generic (engine-neutral) snapshot, layout v4 ─────────────────────────────
+// Emitted for engines the GUI views through the element-class contract
+// (hydra-common §4.1): classed points, polylines, and regions with a kind
+// string table. Produced by `commands/uds_view.rs`; layout documented there.
+
+const GENERIC_SNAPSHOT_VERSION = 4;
+const GENERIC_HEADER_BYTES = 48;
+
+function decodeGenericSnapshot(
+  buf: ArrayBuffer,
+  view: DataView,
+): { nodes: Node[]; links: Link[]; regions: Region[] } | null {
+  const flags = view.getUint32(4, true);
+  if ((flags & SNAPSHOT_FLAG_PRESENT) === 0) return null;
+  const nPoints = view.getUint32(8, true);
+  const nPolylines = view.getUint32(12, true);
+  const nRegions = view.getUint32(16, true);
+  const nKinds = view.getUint32(20, true);
+  const totalBends = view.getUint32(24, true);
+  const totalRing = view.getUint32(28, true);
+
+  let offset = GENERIC_HEADER_BYTES;
+  const takeF64 = (len: number): Float64Array => {
+    const arr = new Float64Array(buf, offset, len);
+    offset += 8 * len;
+    return arr;
+  };
+  const takeI32 = (len: number): Int32Array => {
+    // May be unaligned after odd f64 totals never occur (all blocks are
+    // 8-byte multiples before this point), but copy defensively anyway.
+    const bytes = new Uint8Array(buf, offset, 4 * len);
+    offset += 4 * len;
+    return new Int32Array(bytes.slice().buffer);
+  };
+  const takeU8 = (len: number): Uint8Array => {
+    const arr = new Uint8Array(buf, offset, len);
+    offset += len;
+    return arr;
+  };
+  const takeStrings = (count: number): string[] => {
+    const byteLen = new DataView(buf, offset, 4).getUint32(0, true);
+    offset += 4;
+    const text = new TextDecoder().decode(new Uint8Array(buf, offset, byteLen));
+    offset += byteLen;
+    if (count === 0) return [];
+    const parts = text.split("\n");
+    if (parts.length !== count) {
+      throw snapshotError(
+        `string column has ${parts.length} entries, expected ${count}`,
+      );
+    }
+    return parts;
+  };
+
+  const px = takeF64(nPoints);
+  const py = takeF64(nPoints);
+  const bx = takeF64(totalBends);
+  const by = takeF64(totalBends);
+  const rx = takeF64(totalRing);
+  const ry = takeF64(totalRing);
+  const from = takeI32(nPolylines);
+  const to = takeI32(nPolylines);
+  const outlet = takeI32(nRegions);
+  const bendCount = takeI32(nPolylines);
+  const ringCount = takeI32(nRegions);
+  const pointKind = takeU8(nPoints);
+  const polylineKind = takeU8(nPolylines);
+  const regionKind = takeU8(nRegions);
+  const kinds = takeStrings(nKinds);
+  const pointIds = takeStrings(nPoints);
+  const polylineIds = takeStrings(nPolylines);
+  const regionIds = takeStrings(nRegions);
+
+  const kindOf = (arr: Uint8Array, i: number): string =>
+    kinds[arr[i]] ?? "unknown";
+
+  const nodes: Node[] = [];
+  for (let i = 0; i < nPoints; i += 1) {
+    nodes.push({
+      id: pointIds[i],
+      type: kindOf(pointKind, i),
+      x: px[i],
+      y: py[i],
+      elevation: 0,
+      baseDemand: 0,
+      pressure: null,
+      demand: null,
+    });
+  }
+
+  const links: Link[] = [];
+  let bendAt = 0;
+  for (let i = 0; i < nPolylines; i += 1) {
+    const n = bendCount[i];
+    const vertices: Array<[number, number]> = [];
+    for (let k = 0; k < n; k += 1) {
+      vertices.push([bx[bendAt + k], by[bendAt + k]]);
+    }
+    bendAt += n;
+    const link: Link = {
+      id: polylineIds[i],
+      type: kindOf(polylineKind, i),
+      fromId: from[i] >= 0 ? pointIds[from[i]] : "",
+      toId: to[i] >= 0 ? pointIds[to[i]] : "",
+      velocity: 0,
+      diameter: 0,
+      length: 0,
+      roughness: 0,
+    };
+    if (vertices.length > 0) link.vertices = vertices;
+    links.push(link);
+  }
+
+  const regions: Region[] = [];
+  let ringAt = 0;
+  for (let i = 0; i < nRegions; i += 1) {
+    const n = ringCount[i];
+    const ring: Array<[number, number]> = [];
+    for (let k = 0; k < n; k += 1) {
+      ring.push([rx[ringAt + k], ry[ringAt + k]]);
+    }
+    ringAt += n;
+    regions.push({
+      id: regionIds[i],
+      type: kindOf(regionKind, i),
+      ring,
+      outletId: outlet[i] >= 0 ? pointIds[outlet[i]] : null,
+    });
+  }
+
+  return { nodes, links, regions };
+}
+
 function snapshotError(detail: string): Error {
   return new Error(`network snapshot decode failed: ${detail}`);
 }
@@ -89,12 +224,15 @@ function snapshotError(detail: string): Error {
  */
 export function decodeNetworkSnapshot(
   buf: ArrayBuffer,
-): { nodes: Node[]; links: Link[] } | null {
+): { nodes: Node[]; links: Link[]; regions: Region[] } | null {
   if (buf.byteLength < SNAPSHOT_HEADER_BYTES) {
     throw snapshotError(`buffer too short (${buf.byteLength} bytes)`);
   }
   const view = new DataView(buf);
   const version = view.getUint32(0, true);
+  if (version === GENERIC_SNAPSHOT_VERSION) {
+    return decodeGenericSnapshot(buf, view);
+  }
   if (version !== SNAPSHOT_VERSION) {
     throw snapshotError(`unsupported version ${version}`);
   }
@@ -279,7 +417,7 @@ export function decodeNetworkSnapshot(
     );
   }
 
-  return { nodes, links };
+  return { nodes, links, regions: [] };
 }
 
 /**
@@ -291,6 +429,7 @@ export function decodeNetworkSnapshot(
 export async function fetchNetworkSnapshot(): Promise<{
   nodes: Node[];
   links: Link[];
+  regions: Region[];
 } | null> {
   const buf = await tryInvoke<ArrayBuffer>("get_network_snapshot");
   // `null` = outside Tauri or the command failed (reported via onIpcError).
@@ -394,7 +533,7 @@ export function formatInpImportError(err: unknown): string {
 export async function loadProjectNetwork(
   projectId: string,
   scenarioId: string | null,
-): Promise<{ nodes: Node[]; links: Link[] } | null> {
+): Promise<{ nodes: Node[]; links: Link[]; regions: Region[] } | null> {
   const buf = await tryInvoke<ArrayBuffer>("load_project_network", {
     projectId,
     scenarioId,

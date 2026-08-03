@@ -1618,7 +1618,7 @@ pub fn load_project_network(
         if let Some(first) = diags.iter().find(|d| d.kind.is_error()) {
             return Err(format!("Cannot open this model: {first}"));
         }
-        let encoded = encode_network_snapshot(&NetworkDto::default());
+        let encoded = super::uds_view::encode_uds_snapshot(&super::uds_view::build_view(&network));
         *state.0.lock() = NetworkStateInner::LoadedUds {
             raw_text: text,
             network: std::sync::Arc::new(network),

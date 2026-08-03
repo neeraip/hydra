@@ -370,7 +370,7 @@ describe("decodeNetworkSnapshot", () => {
 
   it("decodes a present-but-empty snapshot to empty arrays", () => {
     const res = decodeNetworkSnapshot(buildEmptySnapshot());
-    expect(res).toEqual({ nodes: [], links: [] });
+    expect(res).toEqual({ nodes: [], links: [], regions: [] });
   });
 
   it("returns null when the present flag is clear (no network loaded)", () => {
