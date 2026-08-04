@@ -180,7 +180,8 @@ export function EmptyState({
         onMouseEnter={(e) => {
           (e.currentTarget as HTMLButtonElement).style.background =
             "var(--accent)";
-          (e.currentTarget as HTMLButtonElement).style.color = "#fff";
+          (e.currentTarget as HTMLButtonElement).style.color =
+            "var(--accent-fg)";
         }}
         onMouseLeave={(e) => {
           (e.currentTarget as HTMLButtonElement).style.background =

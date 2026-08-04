@@ -151,8 +151,8 @@ function UpdateRow({
       style={{
         display: "block",
         width: "100%",
-        background: `${ACCENT}14`,
-        border: `1px solid ${ACCENT}55`,
+        background: "var(--accent-dim)",
+        border: "1px solid var(--selection-border)",
         borderRadius: 6,
         cursor: actionable ? "pointer" : "default",
         padding: "8px 10px",
@@ -164,10 +164,11 @@ function UpdateRow({
       onMouseEnter={(e) => {
         if (actionable)
           (e.currentTarget as HTMLButtonElement).style.background =
-            `${ACCENT}26`;
+            "var(--accent-dim)";
       }}
       onMouseLeave={(e) => {
-        (e.currentTarget as HTMLButtonElement).style.background = `${ACCENT}14`;
+        (e.currentTarget as HTMLButtonElement).style.background =
+          "var(--accent-dim)";
       }}
     >
       <div
@@ -205,7 +206,7 @@ function UpdateRow({
             marginTop: 7,
             height: 3,
             borderRadius: 2,
-            background: `${ACCENT}22`,
+            background: "var(--selection-bg-strong)",
             overflow: "hidden",
           }}
         >
@@ -552,8 +553,8 @@ export function HomePage() {
                       letterSpacing: "0.07em",
                       textTransform: "uppercase",
                       color: ACCENT,
-                      background: `${ACCENT}22`,
-                      border: `1px solid ${ACCENT}44`,
+                      background: "var(--selection-bg-strong)",
+                      border: "1px solid var(--selection-border)",
                       borderRadius: 4,
                       padding: "1px 5px",
                     }}

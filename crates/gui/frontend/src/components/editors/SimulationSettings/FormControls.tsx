@@ -30,7 +30,7 @@ export const ghostBtn: React.CSSProperties = {
 export const primaryBtn: React.CSSProperties = {
   background: "var(--accent)",
   border: "1px solid var(--accent)",
-  color: "#fff",
+  color: "var(--accent-fg)",
   borderRadius: 5,
   padding: "5px 12px",
   fontSize: "var(--text-sm)",

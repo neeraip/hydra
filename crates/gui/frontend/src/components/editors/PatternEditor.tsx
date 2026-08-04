@@ -315,7 +315,7 @@ export function PatternEditor({ accent }: { accent: string }) {
                     height: 24,
                     fontSize: "var(--text-sm)",
                     background: "var(--accent)",
-                    color: "#fff",
+                    color: "var(--accent-fg)",
                     border: "none",
                     borderRadius: 4,
                     cursor: "pointer",

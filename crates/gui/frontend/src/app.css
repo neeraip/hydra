@@ -92,6 +92,10 @@
      identity colour can ever be mistaken for "this is selected" — and the
      whole spectrum stays free for data. */
   --accent: #cdd3df;
+  /* What goes *on* an accent fill. An accent that is near-white cannot
+     carry white text, and a filled control is the one place the accent is
+     a background rather than a mark — so the pair travels together. */
+  --accent-fg: #11131a;
   --accent-dim: rgba(205, 211, 223, 0.14);
   /* Row/element selection. One language for "this is the selected thing",
      everywhere: lists, tables, scenario rows. Derived from the accent so a
@@ -150,6 +154,7 @@
   --text-disabled: #aab3c5;
 
   --accent: #2a3140;
+  --accent-fg: #f4f6fa;
   --accent-dim: rgba(42, 49, 64, 0.09);
   --selection-bg: rgba(42, 49, 64, 0.09);
   --selection-bg-strong: rgba(42, 49, 64, 0.13);
@@ -707,7 +712,7 @@ body,
   background: rgba(255, 255, 255, 0.05);
 }
 .legend-btn-secondary.legend-btn-secondary--active {
-  background: rgba(74, 144, 217, 0.22);
+  background: var(--selection-bg-strong);
 }
 
 /* ── Context menu ──────────────────────────────────────────────────────────────*/
@@ -809,7 +814,7 @@ body,
 }
 .tl-btn.tl-play:hover {
   background: var(--accent);
-  color: #fff;
+  color: var(--accent-fg);
 }
 .tl-btn.tl-active {
   background: var(--accent-dim);
@@ -892,7 +897,7 @@ body,
   background: linear-gradient(
     145deg,
     var(--bg-card) 0%,
-    rgba(74, 144, 217, 0.05) 100%
+    var(--accent-dim) 100%
   );
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -1015,7 +1020,7 @@ body,
 .btn-run {
   background: linear-gradient(135deg, #4a90d9 0%, #2f6dba 100%);
   box-shadow:
-    0 2px 8px rgba(74, 144, 217, 0.3),
+    0 2px 8px var(--border-focus),
     inset 0 1px 0 rgba(255, 255, 255, 0.1);
   color: #fff;
   border: none;
@@ -1034,13 +1039,13 @@ body,
 }
 .btn-run:hover {
   box-shadow:
-    0 4px 16px rgba(74, 144, 217, 0.45),
+    0 4px 16px var(--border-focus),
     inset 0 1px 0 rgba(255, 255, 255, 0.14);
   transform: translateY(-1px);
 }
 .btn-run:active {
   transform: translateY(0);
-  box-shadow: 0 1px 4px rgba(74, 144, 217, 0.2);
+  box-shadow: 0 1px 4px var(--border-focus);
 }
 /* Without this a disabled primary button is pixel-identical to an enabled
    one and simply ignores clicks — the wizard's "Next" is disabled until a
@@ -1073,8 +1078,8 @@ body,
   box-shadow: none;
 }
 .btn-run--outline:hover {
-  background: rgba(74, 144, 217, 0.08);
-  box-shadow: 0 2px 8px rgba(74, 144, 217, 0.2);
+  background: var(--accent-dim);
+  box-shadow: 0 2px 8px var(--border-focus);
 }
 
 /* ── Custom range input (timeline scrubber) ──────────────────────────────────*/
@@ -1095,7 +1100,7 @@ input[type="range"]::-webkit-slider-thumb {
   background: var(--accent);
   cursor: pointer;
   box-shadow:
-    0 0 0 3px rgba(74, 144, 217, 0.22),
+    0 0 0 3px var(--border-focus),
     0 1px 4px rgba(0, 0, 0, 0.45);
   transition:
     transform var(--t-fast),
@@ -1104,7 +1109,7 @@ input[type="range"]::-webkit-slider-thumb {
 input[type="range"]::-webkit-slider-thumb:hover {
   transform: scale(1.25);
   box-shadow:
-    0 0 0 5px rgba(74, 144, 217, 0.18),
+    0 0 0 5px var(--border-focus),
     0 1px 6px rgba(0, 0, 0, 0.5);
 }
 input[type="range"]::-moz-range-thumb {
@@ -1114,7 +1119,7 @@ input[type="range"]::-moz-range-thumb {
   background: var(--accent);
   border: none;
   cursor: pointer;
-  box-shadow: 0 0 0 3px rgba(74, 144, 217, 0.22);
+  box-shadow: 0 0 0 3px var(--border-focus);
 }
 input[type="range"]::-moz-range-track {
   height: 4px;
@@ -1122,25 +1127,21 @@ input[type="range"]::-moz-range-track {
   border-radius: 2px;
 }
 
-/* ── Canvas background depth ─────────────────────────────────────────────────*/
+/* ── Canvas background ───────────────────────────────────────────────────────*/
+/*
+ * Flat, deliberately.
+ *
+ * This is a data surface, not a page: everything above it — basemap tiles,
+ * ramp colours, the network at rest — is read for its exact value, and an
+ * ambient tint underneath shifts all of it. It used to carry three accent
+ * radial gradients for "depth", which showed through as a soft white glow
+ * wherever no basemap was drawn.
+ *
+ * Ambient glow belongs to decorative surfaces (the home hero paints its
+ * own, scoped to that panel). Keep it off anything the user measures.
+ */
 .canvas-bg {
-  background:
-    radial-gradient(
-      ellipse at 25% 35%,
-      rgba(74, 144, 217, 0.06) 0%,
-      transparent 55%
-    ),
-    radial-gradient(
-      ellipse at 75% 65%,
-      rgba(61, 175, 117, 0.05) 0%,
-      transparent 50%
-    ),
-    radial-gradient(
-      ellipse at 50% 50%,
-      rgba(74, 144, 217, 0.025) 0%,
-      transparent 70%
-    ),
-    var(--bg-app);
+  background: var(--bg-app);
 }
 
 /* ── Light-mode glass overrides ──────────────────────────────────────────────*/
@@ -1321,7 +1322,7 @@ select:focus-visible {
 }
 .btn-pager.pager-active {
   background: var(--accent);
-  color: #fff;
+  color: var(--accent-fg);
   border-color: var(--accent);
   font-weight: 600;
   cursor: default;

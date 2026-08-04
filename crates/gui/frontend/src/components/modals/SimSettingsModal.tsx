@@ -225,8 +225,8 @@ export function SimSettingsModal() {
               fontWeight: 700,
               letterSpacing: "0.06em",
               color: ACCENT,
-              background: `${ACCENT}26`,
-              border: `1px solid ${ACCENT}55`,
+              background: "var(--accent-dim)",
+              border: "1px solid var(--selection-border)",
               padding: "3px 8px",
               borderRadius: 4,
             }}

@@ -834,7 +834,7 @@ export function ReportView() {
                   borderRadius: 6,
                   border: "1px solid",
                   borderColor: active ? ACCENT : "transparent",
-                  background: active ? `${ACCENT}1a` : "transparent",
+                  background: active ? "var(--accent-dim)" : "transparent",
                   color: active ? ACCENT : "var(--text-secondary)",
                   cursor: "pointer",
                   fontSize: "var(--text-md)",
