@@ -215,7 +215,7 @@ export function CanvasToolbar({
                 m === "schematic"
                   ? "Idealised orthogonal layout"
                   : localGrid
-                    ? "The model's own coordinates, not georeferenced"
+                    ? "The model's own coordinates — its CRS is a local grid"
                     : "Geographic layout"
               }
               data-tooltip-pos="bottom"
