@@ -146,7 +146,7 @@ const RAIL_RESULT_COLUMNS = 3;
  * GeoJSON export, which takes whatever is merged. Each column keeps the
  * index of its own values array, because reordering the columns must not
  * reorder what they read. */
-const railColumns = (
+export const railColumns = (
   vars: GenericVariable[],
   selected: string,
 ): Array<{
@@ -156,6 +156,9 @@ const railColumns = (
   quantity?: GenericQuantity;
   at: number;
 }> => {
+  // No catalog, no columns. `Math.max(0, -1)` below would otherwise turn
+  // "not found" into index 0 and read it out of an empty array.
+  if (vars.length === 0) return [];
   const chosen = Math.max(
     0,
     vars.findIndex((v) => v.id === selected),
