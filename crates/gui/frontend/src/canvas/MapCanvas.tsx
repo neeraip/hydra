@@ -2228,13 +2228,19 @@ export const MapCanvas = memo(function MapCanvas({
    */
   const ensureDeck = useCallback(
     (initial?: SchematicViewState) => {
-      if (deckRef.current || !deckHostRef.current) return deckRef.current;
+      if (deckRef.current || !deckCanvasRef.current) return deckRef.current;
       const initialViewState =
         initial ?? orthoCenterFromMap(renderCoordsRef.current);
       viewStateRef.current = initialViewState;
       const deck = new Deck({
-        parent: deckHostRef.current,
-        style: { position: "absolute", inset: "0", zIndex: "1" },
+        // Our own canvas, not one deck makes for us. `deck.getCanvas()`
+        // returns null immediately after construction — the device is set
+        // up asynchronously — so every style this component applied to that
+        // canvas was being skipped: the transparent background, the hide
+        // before framing, the reveal after it, and the hide on returning to
+        // the map. Supplying the element means it exists, is sized by CSS
+        // and is styled by us before deck ever draws into it.
+        canvas: deckCanvasRef.current,
         views: orthoViewRef.current,
         viewState: initialViewState,
         controller: true,
@@ -2257,16 +2263,6 @@ export const MapCanvas = memo(function MapCanvas({
         layers: [],
       });
       deckRef.current = deck;
-      deckCanvasRef.current = deck.getCanvas();
-      if (deckCanvasRef.current) {
-        deckCanvasRef.current.style.background = "transparent";
-        // Created hidden, always. The camera is not framed until the effect
-        // below runs, and a canvas revealed before then shows one frame of
-        // whatever the seed happened to be — which is why this flashed on the
-        // first switch into the schematic and never again: after that the
-        // deck already exists and this branch does not run.
-        deckCanvasRef.current.style.display = "none";
-      }
       return deck;
     },
     [scheduleLabelRefresh],
@@ -2534,7 +2530,6 @@ export const MapCanvas = memo(function MapCanvas({
   // holding the camera was the only way to see it, and reframing collapsed the
   // two tracks onto one degree of freedom.)
   const framedForRef = useRef<{ nodes: Node[]; links: Link[] } | null>(null);
-  const inSchematicRef = useRef(false);
   // One deck serves both orthographic views, but a plan and a schematic are
   // different coordinate spaces — the model's own units against the layout's
   // grid — so a camera carried from one to the other lands nowhere. Each
@@ -2552,9 +2547,15 @@ export const MapCanvas = memo(function MapCanvas({
     pitch: number;
   } | null>(null);
   useEffect(() => {
-    // Reset before the `isActive` guard, so returning to schematic re-frames.
+    // Leaving the orthographic renderer: keep the camera for the space it
+    // belonged to, so coming back returns you to it rather than framing the
+    // whole network again.
     if (viewMode !== "schematic") {
-      inSchematicRef.current = false;
+      const leaving = orthoSpaceRef.current;
+      if (leaving) {
+        savedOrthoViewRef.current[leaving] =
+          viewStateRef.current as SchematicViewState;
+      }
       return;
     }
     if (!isActive) return;
@@ -2563,8 +2564,7 @@ export const MapCanvas = memo(function MapCanvas({
     if (topological && !couplingsResolved) return;
     const space = topological ? "topological" : "plan";
     const prevSpace = orthoSpaceRef.current;
-    const spaceChanged = prevSpace != null && prevSpace !== space;
-    if (spaceChanged) {
+    if (prevSpace && prevSpace !== space) {
       savedOrthoViewRef.current[prevSpace] =
         viewStateRef.current as SchematicViewState;
     }
@@ -2577,16 +2577,14 @@ export const MapCanvas = memo(function MapCanvas({
       savedOrthoViewRef.current = { plan: null, topological: null };
       savedMapViewRef.current = null;
     }
-    const saved = savedOrthoViewRef.current[space];
-    const reframe =
-      !inSchematicRef.current || networkChanged || (spaceChanged && !saved);
-    inSchematicRef.current = true;
     framedForRef.current = { nodes, links };
-    const vs = reframe
-      ? orthoCenterFromMap(renderCoords)
-      : spaceChanged && saved
-        ? saved
-        : (viewStateRef.current as SchematicViewState);
+
+    // Frame only when there is nothing to return to. A saved camera is the
+    // record of having been here before, so it answers both "have I framed
+    // this yet" and "where was I" — and fitting the network on every arrival
+    // is what made switching views feel like it kept pressing Fit network.
+    const saved = savedOrthoViewRef.current[space];
+    const vs = saved ?? orthoCenterFromMap(renderCoords);
 
     // Framed before the deck exists, so the deck can be born looking at the
     // right place rather than corrected a frame later.
@@ -2599,7 +2597,10 @@ export const MapCanvas = memo(function MapCanvas({
       layers: buildLayersRef.current(),
     });
     markFirstFrame("schematic");
-    if (deckCanvasRef.current) deckCanvasRef.current.style.display = "";
+    if (deckCanvasRef.current) {
+      deckCanvasRef.current.style.display = "";
+      deckCanvasRef.current.style.visibility = "visible";
+    }
   }, [
     ensureDeck,
     isActive,
@@ -2741,13 +2742,23 @@ export const MapCanvas = memo(function MapCanvas({
     if (mapElRef.current) mapElRef.current.style.display = "";
     if (enteringMapMode) {
       const map = mapRef.current;
-      const saved = savedMapViewRef.current;
-      if (map && saved) {
-        map.jumpTo(saved);
-      } else if (map) {
-        fitMapExtents(nodesRef.current, map, {
-          padding: visibleMapPadding(map),
-        });
+      if (map) {
+        // Measure before framing. A project opened straight into the
+        // schematic builds its map inside a `display: none` container, so
+        // MapLibre's transform is sized to nothing — and it only watches the
+        // *window* for resizes, never its own container. Every camera
+        // computed against that transform came out at the wrong zoom, which
+        // is why the first arrival in map view looked far out and every
+        // arrival after it was right.
+        map.resize();
+        const saved = savedMapViewRef.current;
+        if (saved) {
+          map.jumpTo(saved);
+        } else {
+          fitMapExtents(nodesRef.current, map, {
+            padding: visibleMapPadding(map),
+          });
+        }
       }
     }
   }, [isActive, viewMode]);
@@ -2882,7 +2893,24 @@ export const MapCanvas = memo(function MapCanvas({
       }}
     >
       <div ref={mapElRef} style={{ position: "absolute", inset: 0 }} />
-      <div ref={deckHostRef} style={{ position: "absolute", inset: 0 }} />
+      <div ref={deckHostRef} style={{ position: "absolute", inset: 0 }}>
+        {/* Hidden with `visibility`, never `display`: a canvas that is not
+            laid out measures zero, and deck would size its viewport from
+            nothing. The framing effect makes it visible once it has a
+            camera to show. */}
+        <canvas
+          ref={deckCanvasRef}
+          style={{
+            position: "absolute",
+            inset: 0,
+            width: "100%",
+            height: "100%",
+            zIndex: 1,
+            background: "transparent",
+            visibility: "hidden",
+          }}
+        />
+      </div>
       <HoverChip
         tip={hoverTip}
         periodResult={periodResult}
