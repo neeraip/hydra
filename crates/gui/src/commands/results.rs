@@ -283,11 +283,92 @@ pub struct ResultMetaDto {
     /// topology match as unknown and apply no staleness gating.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub network_digest: Option<String>,
-    /// Engine-described variable catalog with per-run ranges, for engines
-    /// whose results are served through the generic payload (`uds`). `None`
-    /// for wds, whose fixed `ranges` above predate the catalog contract.
+    /// Engine-described variable catalog with per-run ranges. Every engine
+    /// publishes one (§6), and both serve it here — it is what lets a
+    /// single legend render either engine's results.
+    ///
+    /// wds additionally fills the fixed `ranges` above, which predate the
+    /// catalog contract and still feed its canvas colouring.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub generic: Option<super::uds_results::GenericResultMetaDto>,
+    pub generic: Option<super::generic_results::GenericResultMetaDto>,
+    /// Whether this target's per-period values are served in the generic
+    /// variable-major payload (`get_generic_period_values`) rather than the
+    /// fixed wds arrays (`get_period_results`).
+    ///
+    /// Deliberately independent of `generic`: publishing a catalog is a
+    /// statement about what the results *contain*, and this is a statement
+    /// about how they are *encoded*. Conflating them routed wds onto a
+    /// payload nothing serves for it, and its canvas silently fell back to
+    /// the network-at-rest palette — results present, everything grey, no
+    /// error anywhere.
+    pub generic_periods: bool,
+}
+
+/// The §5 quantity descriptor for a wds catalog quantity key.
+fn wds_quantity(key: &str) -> Option<hydra::common::QuantityDescriptor> {
+    hydra::descriptors::QUANTITIES
+        .iter()
+        .find(|q| q.key == key)
+        .copied()
+}
+
+/// The per-run range for one declared wds variable, or `None` when this run
+/// carries no values for it.
+///
+/// `results.out` is always written with `FlowUnits::Lps`, and the wds
+/// quantity catalog declares L/s as flow's own SI label — so the scanned
+/// ranges are already in each variable's declared SI unit and reach the
+/// frontend unscaled, which converts them for display like any other
+/// catalog value.
+fn wds_range(id: &str, ranges: &hydra::io::out_reader::ResultRanges) -> Option<(f64, f64)> {
+    Some(match id {
+        "pressure" => (ranges.pressure_min, ranges.pressure_max),
+        "head" => (ranges.head_min, ranges.head_max),
+        "demand" => (ranges.demand_min, ranges.demand_max),
+        "flow" => (ranges.flow_min, ranges.flow_max),
+        "velocity" => (ranges.velocity_min, ranges.velocity_max),
+        "headloss" => (ranges.headloss_min, ranges.headloss_max),
+        // Present only when the run simulated quality; absent leaves the
+        // variable out of the catalog entirely rather than showing an
+        // empty ramp the user cannot fill.
+        "quality" => (ranges.quality_min?, ranges.quality_max?),
+        // A categorical variable's states come from the hint, not a range.
+        "status" => (0.0, 0.0),
+        _ => return None,
+    })
+}
+
+/// Build the wds result catalog for one run: every variable the engine
+/// declares (§6) that this run actually carries, with its scanned range.
+///
+/// The engine has always published this catalog; serving it here is what
+/// lets one legend component render either engine, instead of the frontend
+/// re-declaring wds's variable list by hand and drifting from it.
+fn wds_generic_meta(
+    ranges: &hydra::io::out_reader::ResultRanges,
+) -> super::generic_results::GenericResultMetaDto {
+    use super::generic_results::{GenericResultMetaDto, GenericVariableDto};
+    use hydra::common::ElementClass;
+
+    let class_vars = |class| {
+        hydra::descriptors::result_variables(class)
+            .into_iter()
+            .filter_map(|v| {
+                let (min, max) = wds_range(v.id, ranges)?;
+                Some(GenericVariableDto::from_descriptor(
+                    &v,
+                    min,
+                    max,
+                    wds_quantity,
+                ))
+            })
+            .collect()
+    };
+    GenericResultMetaDto {
+        point_vars: class_vars(ElementClass::Point),
+        polyline_vars: class_vars(ElementClass::Polyline),
+        region_vars: Vec::new(),
+    }
 }
 
 /// Format a topology digest as the wire representation shared with the
@@ -343,6 +424,7 @@ pub fn load_result_meta(
                 // the per-variable ranges from `generic` instead.
                 ranges: ResultRangesDto::default(),
                 generic: Some(generic),
+                generic_periods: true,
             }));
         }
         _ => return Ok(None),
@@ -367,7 +449,9 @@ pub fn load_result_meta(
         // gating rather than as stale.
         network_digest: crate::commands::simulation::read_run_meta(&out_path)
             .and_then(|run| run.network_digest),
-        generic: None,
+        generic: Some(wds_generic_meta(&ranges)),
+        // wds serves the fixed arrays; only its catalog is generic.
+        generic_periods: false,
         ranges: ResultRangesDto {
             pressure_min: ranges.pressure_min,
             pressure_max: ranges.pressure_max,
@@ -1413,6 +1497,124 @@ mod tests {
     use crate::commands::simulation::run_sim_loops;
     use crate::commands::test_fixtures::{loaded_sim, loaded_state, TEST_INP};
 
+    // ── wds result catalog (§6) ───────────────────────────────────────────
+
+    fn ranges_with_quality(quality: Option<(f64, f64)>) -> hydra::io::out_reader::ResultRanges {
+        hydra::io::out_reader::ResultRanges {
+            pressure_min: 1.0,
+            pressure_max: 2.0,
+            head_min: 3.0,
+            head_max: 4.0,
+            demand_min: 5.0,
+            demand_max: 6.0,
+            flow_min: 7.0,
+            flow_max: 8.0,
+            velocity_min: 9.0,
+            velocity_max: 10.0,
+            headloss_min: 11.0,
+            headloss_max: 12.0,
+            quality_min: quality.map(|q| q.0),
+            quality_max: quality.map(|q| q.1),
+        }
+    }
+
+    /// Every variable the engine declares must reach the catalog with the
+    /// range that was actually scanned for it — a mapping that pairs a
+    /// variable with a neighbouring range is invisible until someone reads
+    /// a legend.
+    #[test]
+    fn wds_catalog_pairs_each_variable_with_its_own_range() {
+        let meta = wds_generic_meta(&ranges_with_quality(Some((0.5, 1.5))));
+        let by_id = |vars: &[super::super::generic_results::GenericVariableDto], id: &str| {
+            vars.iter()
+                .find(|v| v.id == id)
+                .map(|v| (v.min, v.max))
+                .unwrap_or_else(|| panic!("{id} missing from catalog"))
+        };
+        assert_eq!(by_id(&meta.point_vars, "pressure"), (1.0, 2.0));
+        assert_eq!(by_id(&meta.point_vars, "head"), (3.0, 4.0));
+        assert_eq!(by_id(&meta.point_vars, "demand"), (5.0, 6.0));
+        assert_eq!(by_id(&meta.point_vars, "quality"), (0.5, 1.5));
+        assert_eq!(by_id(&meta.polyline_vars, "flow"), (7.0, 8.0));
+        assert_eq!(by_id(&meta.polyline_vars, "velocity"), (9.0, 10.0));
+        assert_eq!(by_id(&meta.polyline_vars, "headloss"), (11.0, 12.0));
+    }
+
+    /// A run without quality simulation must omit the quality variables
+    /// rather than offer a ramp over a range that does not exist.
+    #[test]
+    fn wds_catalog_omits_quality_when_the_run_had_none() {
+        let meta = wds_generic_meta(&ranges_with_quality(None));
+        assert!(!meta.point_vars.iter().any(|v| v.id == "quality"));
+        assert!(!meta.polyline_vars.iter().any(|v| v.id == "quality"));
+        // The rest of the catalog is unaffected.
+        assert!(meta.point_vars.iter().any(|v| v.id == "pressure"));
+        assert!(meta.polyline_vars.iter().any(|v| v.id == "status"));
+    }
+
+    /// Publishing a catalog and serving the generic period payload are two
+    /// different claims, and wds makes only the first. Conflating them sent
+    /// wds to a payload nothing serves for it: results loaded, the canvas
+    /// painted every element in the network-at-rest palette, and no error
+    /// surfaced anywhere because the empty fetch was indistinguishable from
+    /// "not simulated yet".
+    #[test]
+    fn wds_publishes_a_catalog_without_claiming_generic_periods() {
+        let ranges = ranges_with_quality(None);
+        let meta = ResultMetaDto {
+            times: vec![],
+            has_period_data: true,
+            quality_mode: "none".into(),
+            network_digest: None,
+            generic: Some(wds_generic_meta(&ranges)),
+            generic_periods: false,
+            ranges: ResultRangesDto::default(),
+        };
+        let json = serde_json::to_value(&meta).expect("serialisable");
+        assert!(
+            json["generic"]["polylineVars"]
+                .as_array()
+                .is_some_and(|v| !v.is_empty()),
+            "wds must publish a catalog for the legend"
+        );
+        assert_eq!(
+            json["genericPeriods"], false,
+            "wds serves the fixed period arrays, not the generic payload"
+        );
+    }
+
+    /// wds has no areal elements, so the region class must stay empty —
+    /// the legend hides a class with no variables, and a stray entry would
+    /// give a water-distribution map a region picker.
+    #[test]
+    fn wds_catalog_declares_no_region_variables() {
+        assert!(wds_generic_meta(&ranges_with_quality(None))
+            .region_vars
+            .is_empty());
+    }
+
+    /// Link status is the one categorical variable; its engine-authored
+    /// state labels must survive into the catalog, because a legend cannot
+    /// draw discrete swatches without them.
+    #[test]
+    fn wds_catalog_carries_link_status_states() {
+        let meta = wds_generic_meta(&ranges_with_quality(None));
+        let status = meta
+            .polyline_vars
+            .iter()
+            .find(|v| v.id == "status")
+            .expect("status declared");
+        match &status.ramp {
+            hydra::common::RampHint::Categorical { items } => {
+                assert!(
+                    items.iter().any(|i| i.label == "Open"),
+                    "expected an Open state, got {items:?}"
+                );
+            }
+            other => panic!("status should be categorical, got {other:?}"),
+        }
+    }
+
     // ── network_for_target cache/dirty decision ───────────────────────────
 
     /// TEST_INP plus one extra junction (`J2`) — distinguishable from the
@@ -1617,6 +1819,7 @@ Duration  0
             quality_mode: "none".into(),
             network_digest: d,
             generic: None,
+            generic_periods: false,
             ranges: ResultRangesDto {
                 pressure_min: 0.0,
                 pressure_max: 0.0,

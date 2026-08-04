@@ -32,42 +32,11 @@
 use std::collections::HashMap;
 use std::path::Path;
 
-use serde::Serialize;
-
-use hydra::common::{ElementClass, RampHint, VariableDescriptor};
+use hydra::common::{ElementClass, VariableDescriptor};
 use hydra::uds::io::out_reader::{scan_periods, OutMetadata, PeriodRecord};
 
+use super::generic_results::{GenericResultMetaDto, GenericVariableDto};
 use super::uds_view::UdsView;
-
-/// One catalog variable with its per-run value range, ready for the legend.
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct GenericVariableDto {
-    pub id: String,
-    pub label: String,
-    /// Engine-authored compact notation (§6.1) for space-starved surfaces.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub symbol: Option<String>,
-    /// The §5 quantity descriptor for the variable's SI values — the
-    /// frontend converts to the active display system with it. `None` for
-    /// dimensionless variables.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub quantity: Option<hydra::common::QuantityDescriptor>,
-    /// Ramp hint: `"sequential"`, `"diverging"`, or `"banded"`.
-    pub ramp: String,
-    /// Per-run range, in SI.
-    pub min: f64,
-    pub max: f64,
-}
-
-/// The engine-described result catalog for one run, per element class.
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct GenericResultMetaDto {
-    pub point_vars: Vec<GenericVariableDto>,
-    pub polyline_vars: Vec<GenericVariableDto>,
-    pub region_vars: Vec<GenericVariableDto>,
-}
 
 /// File column and serving scale for a catalog variable (§14.9 record
 /// order). The catalog's presentation order deliberately differs from file
@@ -125,16 +94,6 @@ fn si_factor(meta: &OutMetadata, quantity: Option<&str>) -> f64 {
     quantity_descriptor(key)
         .map(|q| 1.0 / q.si_to_us_scale)
         .unwrap_or(1.0)
-}
-
-fn ramp_name(hint: &RampHint) -> String {
-    match hint {
-        RampHint::Sequential => "sequential",
-        RampHint::Diverging => "diverging",
-        RampHint::Banded => "banded",
-        RampHint::Categorical { .. } => "sequential",
-    }
-    .to_string()
 }
 
 /// The declared catalog variables that resolve to a file column, with the
@@ -195,20 +154,7 @@ pub fn generic_meta(out_path: &Path, meta: &OutMetadata) -> Result<GenericResult
                 .enumerate()
                 .map(|(vi, (v, _, _))| {
                     let (min, max) = ranges[ci][vi];
-                    let (min, max) = if min.is_finite() && max.is_finite() {
-                        (min, max)
-                    } else {
-                        (0.0, 0.0)
-                    };
-                    GenericVariableDto {
-                        id: v.id.to_string(),
-                        label: v.label.to_string(),
-                        symbol: v.symbol.map(str::to_string),
-                        quantity: v.quantity.and_then(quantity_descriptor),
-                        ramp: ramp_name(&v.ramp),
-                        min,
-                        max,
-                    }
+                    GenericVariableDto::from_descriptor(v, min, max, quantity_descriptor)
                 })
                 .collect(),
         );
