@@ -22,11 +22,11 @@ export function UdsRegionInspectorBody({
   onLocateOutlet,
   results,
 }: RegionInspectorBodyProps) {
-  const attributes = useElementDetails(region.id);
+  const attributes = useElementDetails(region.id, region.type);
   const { hoverNode, clearHover } = useHoverActions();
   return (
     <div style={{ flex: 1, overflowY: "auto", padding: 12 }}>
-      <PropertiesSection rows={attributes} />
+      <PropertiesSection {...attributes} />
 
       {region.outletId && (
         <>

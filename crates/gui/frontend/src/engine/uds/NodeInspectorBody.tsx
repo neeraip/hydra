@@ -23,7 +23,7 @@ export function UdsNodeInspectorBody({
   results,
 }: NodeInspectorBodyProps) {
   const connectedLinks = useLinksConnectedTo(node.id);
-  const attributes = useElementDetails(node.id);
+  const attributes = useElementDetails(node.id, node.type);
   const { hoverRegion, clearHover } = useHoverActions();
   // The reverse of a catchment's "Discharges to". A catchment reaches its
   // outlet through no link at all, so this relationship is invisible from
@@ -36,7 +36,7 @@ export function UdsNodeInspectorBody({
   );
   return (
     <div style={{ flex: 1, overflowY: "auto", padding: 12 }}>
-      <PropertiesSection rows={attributes} />
+      <PropertiesSection {...attributes} />
 
       {connectedLinks.length > 0 && (
         <>

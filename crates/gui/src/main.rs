@@ -133,6 +133,7 @@ fn main() {
             commands::get_versions,
             commands::list_engines,
             commands::list_element_kinds,
+            commands::list_element_attributes,
             commands::updater_supported,
             commands::get_run_queue,
             commands::enqueue_runs,

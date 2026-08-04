@@ -12,6 +12,7 @@
 
 import { useEffect, useState } from "react";
 import { tryInvokeOr } from "./ipc";
+import type { GenericQuantity } from "./results";
 
 /** One source-model file format an engine imports (hydra-common spec §2.2).
  *
@@ -207,6 +208,57 @@ export function useElementKinds(
     };
   }, [engine]);
   return kinds;
+}
+
+/** One §4.3 property of an element kind, without any element's values. */
+export interface ElementAttributeInfo {
+  key: string;
+  label: string;
+  quantity?: GenericQuantity;
+}
+
+// Static per engine and kind, exactly as the kind catalog is.
+const attributeCache = new Map<string, ElementAttributeInfo[]>();
+
+/**
+ * The declared property schema of one element kind.
+ *
+ * Known before any element is looked at, which is what lets a panel draw
+ * its property rows while the values are still in flight instead of
+ * appearing empty and then shoving everything below it down the panel.
+ */
+export function useElementAttributes(
+  engine: string | null | undefined,
+  kind: string | null | undefined,
+): ElementAttributeInfo[] {
+  const key = `${engine ?? ""}\u0000${kind ?? ""}`;
+  const [attrs, setAttrs] = useState<ElementAttributeInfo[]>(
+    () => attributeCache.get(key) ?? [],
+  );
+  useEffect(() => {
+    if (!engine || !kind) {
+      setAttrs([]);
+      return;
+    }
+    const hit = attributeCache.get(key);
+    if (hit) {
+      setAttrs(hit);
+      return;
+    }
+    let cancelled = false;
+    void tryInvokeOr<ElementAttributeInfo[]>(
+      "list_element_attributes",
+      { engine, kind },
+      [],
+    ).then((list) => {
+      attributeCache.set(key, list);
+      if (!cancelled) setAttrs(list);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [engine, kind, key]);
+  return attrs;
 }
 
 /**

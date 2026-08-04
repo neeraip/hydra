@@ -289,6 +289,45 @@ pub struct KindElementsDto {
 /// IPC round trip per row. Empty for engines whose attributes reach the
 /// frontend by another route — wds carries its own in the network
 /// snapshot — and for a kind the model has none of.
+/// One §4.3 attribute of an element kind, without any element's values.
+///
+/// The schema is a property of the kind, so it is known before any element
+/// is looked at — which is what lets a panel draw its property rows while
+/// the values are still being fetched, rather than appearing empty and then
+/// pushing everything below it down the panel.
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AttributeInfoDto {
+    pub key: String,
+    pub label: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub quantity: Option<hydra::common::QuantityDescriptor>,
+}
+
+#[tauri::command]
+/// The declared attribute schema of one element kind (spec §4.3): every
+/// property it has, in presentation order, with its label and quantity.
+///
+/// Static per engine and kind — no project, no scenario, no values.
+pub fn list_element_attributes(engine: String, kind: String) -> Vec<AttributeInfoDto> {
+    let attrs = match engine.as_str() {
+        "wds" => hydra::descriptors::attribute_schema(&kind),
+        "uds" => hydra::uds::descriptors::attribute_schema(&kind),
+        _ => return Vec::new(),
+    };
+    attrs
+        .into_iter()
+        .map(|attr| AttributeInfoDto {
+            key: attr.key,
+            label: attr.label,
+            quantity: attr
+                .quantity
+                .as_deref()
+                .and_then(super::uds_results::quantity_descriptor),
+        })
+        .collect()
+}
+
 #[tauri::command(async)]
 pub fn get_kind_elements(
     app: tauri::AppHandle,

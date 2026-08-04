@@ -20,6 +20,7 @@ import { SectionLabel } from "../../components/ui/SectionLabel";
 import {
   ACCENT,
   type ElementAttribute,
+  type ElementAttributeInfo,
   type ElementSeries,
   formatElementAttribute,
   formatGenericValue,
@@ -28,6 +29,7 @@ import {
   genericUnitLabel,
   getElementDetails,
   getElementSeries,
+  useElementAttributes,
   useNetworkData,
 } from "../../hooks";
 import { Sparkline } from "../../pages/project/AnalysisPanel/charts";
@@ -35,32 +37,88 @@ import { useUnitSystem } from "../../units";
 import type { GenericElementValue } from "../registry";
 
 /** Fetch the engine-described attribute rows for one element. */
+/** Rows already fetched, so re-selecting an element does not go blank
+ * while the same answer is fetched again. */
+const detailCache = new Map<string, ElementAttribute[]>();
+
+/**
+ * A element's §4.3 property rows, and how much space to leave for them.
+ *
+ * Properties arrive over IPC, and the node, link and region bodies are
+ * separate components — so selecting a junction after a catchment mounts a
+ * fresh body whose rows are null for one round trip. Rendering nothing in
+ * that gap collapsed the section, then restored it, shoving everything
+ * below it down the panel.
+ *
+ * The schema is the answer to that: a kind's properties are declared, so
+ * their names are known before any element is fetched. The section draws
+ * its real rows immediately and fills the values in when they land.
+ */
 export function useElementDetails(
   elementId: string,
-): ElementAttribute[] | null {
+  kind?: string,
+): { rows: ElementAttribute[] | null; schema: ElementAttributeInfo[] } {
   const { project } = useActiveProject();
   const { activeScenarioId } = useAppState();
-  const [rows, setRows] = useState<ElementAttribute[] | null>(null);
+  const schema = useElementAttributes(project?.engine, kind);
+  const key = `${project?.id ?? ""}\u0000${activeScenarioId ?? ""}\u0000${elementId}`;
+  const [rows, setRows] = useState<ElementAttribute[] | null>(
+    () => detailCache.get(key) ?? null,
+  );
   useEffect(() => {
     if (!project?.id) return;
+    const cached = detailCache.get(key);
+    if (cached) {
+      setRows(cached);
+      return;
+    }
+    setRows(null);
     let cancelled = false;
     getElementDetails(project.id, activeScenarioId, elementId).then((r) => {
+      if (r) detailCache.set(key, r);
       if (!cancelled) setRows(r);
     });
     return () => {
       cancelled = true;
     };
-  }, [project?.id, activeScenarioId, elementId]);
-  return rows;
+  }, [project?.id, activeScenarioId, elementId, key]);
+  return { rows, schema };
 }
 
 /** Properties section: §4 schema rows in the wds table presentation. */
 export function PropertiesSection({
   rows,
+  schema = [],
 }: {
   rows: ElementAttribute[] | null;
+  /** The kind's declared properties, drawn while the values load. */
+  schema?: ElementAttributeInfo[];
 }) {
   const sys = useUnitSystem();
+  // Nothing known yet, but this kind has been seen before: hold the height
+  // rather than collapsing and shoving the rest of the panel about.
+  // Labels are declared, values are fetched. Draw what is known and leave
+  // the values blank for the moment rather than drawing nothing at all.
+  if (!rows && schema.length > 0) {
+    return (
+      <>
+        <SectionLabel>Properties</SectionLabel>
+        <table
+          style={{
+            width: "100%",
+            borderCollapse: "collapse",
+            marginBottom: 14,
+          }}
+        >
+          <tbody>
+            {schema.map((a) => (
+              <PropRow key={a.key} label={a.label} value="—" />
+            ))}
+          </tbody>
+        </table>
+      </>
+    );
+  }
   if (!rows || rows.length === 0) return null;
   return (
     <>

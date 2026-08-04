@@ -20,10 +20,10 @@ export function UdsLinkInspectorBody({
   results,
 }: LinkInspectorBodyProps) {
   const allNodes = useNodes();
-  const attributes = useElementDetails(link.id);
+  const attributes = useElementDetails(link.id, link.type);
   return (
     <div style={{ flex: 1, overflowY: "auto", padding: 12 }}>
-      <PropertiesSection rows={attributes} />
+      <PropertiesSection {...attributes} />
 
       <SectionLabel>Connected nodes</SectionLabel>
       <div style={{ display: "flex", gap: 6, marginBottom: 14 }}>

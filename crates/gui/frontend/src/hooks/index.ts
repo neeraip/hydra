@@ -40,6 +40,7 @@ export * from "./basemapProviders";
 export * from "./criteria";
 export * from "./editors";
 export {
+  type ElementAttributeInfo,
   type ElementClass,
   type ElementKindInfo,
   type EngineInfo,
@@ -54,6 +55,7 @@ export {
   isEngineAvailable,
   isEngineGuiEditable,
   isEngineGuiOpenable,
+  useElementAttributes,
   useElementKinds,
   useEngines,
 } from "./engines";
