@@ -297,6 +297,16 @@ interface MapCanvasProps {
    * topological layout unreachable for exactly the models that need it most.
    */
   topological?: boolean;
+  /**
+   * Whether the inlet couplings have been answered for.
+   *
+   * They are hydraulic connections that are not links, so a topological
+   * layout computed before they arrive reads a dual-drainage model as two
+   * disconnected networks — and says so, loudly, in an amber detached
+   * group, then reframes when the answer lands. Waiting costs one blank
+   * frame; not waiting costs a wrong one that the camera then fits to.
+   */
+  couplingsResolved?: boolean;
   /** Hydraulic connections that are not links (dual-drainage street
    * inlets): drawn as dashed connectors and counted as connectivity by
    * the schematic layout. */
@@ -388,6 +398,7 @@ export const MapCanvas = memo(function MapCanvas({
   selectedLinkId,
   onSelectLink,
   topological = false,
+  couplingsResolved = true,
   couplings = EMPTY_COUPLINGS,
   selectedRegionId = null,
   onSelectRegion,
@@ -554,7 +565,7 @@ export const MapCanvas = memo(function MapCanvas({
     // handed a plan view the schematic's positions — invisible for the
     // coordinates, which a plan view never reads, but the leader lines came
     // through and hung in space at schematic-space endpoints.
-    if (!topological) {
+    if (!topological || !couplingsResolved) {
       // Drop a stale cache rather than pinning an obsolete full generation
       // of nodes/links/coords in memory until schematic is next opened.
       schematicCacheRef.current = null;
@@ -589,7 +600,15 @@ export const MapCanvas = memo(function MapCanvas({
       regions,
     };
     return layout;
-  }, [nodes, links, topological, schematicScale, couplings, regions]);
+  }, [
+    nodes,
+    links,
+    topological,
+    couplingsResolved,
+    schematicScale,
+    couplings,
+    regions,
+  ]);
   // Positions alone, for everything that only needs coordinates.
   const schematicCoords = schematicLayout.positions;
 
@@ -2483,6 +2502,9 @@ export const MapCanvas = memo(function MapCanvas({
       return;
     }
     if (!isActive) return;
+    // Nothing to frame yet: framing an empty layout would mark it framed and
+    // the real one would never get its turn.
+    if (topological && !couplingsResolved) return;
     const deck = ensureDeck();
     if (!deck) return;
 
@@ -2528,6 +2550,7 @@ export const MapCanvas = memo(function MapCanvas({
     nodes,
     renderCoords,
     topological,
+    couplingsResolved,
     viewMode,
   ]);
 
@@ -2685,6 +2708,9 @@ export const MapCanvas = memo(function MapCanvas({
 
     if (!hasNodes) return;
     if (!nodesJustArrived && !fitKeyChanged) return;
+    // Same wait as the framing effect: there is no layout to fit to until
+    // the couplings say which parts of the network are actually connected.
+    if (topological && !couplingsResolved) return;
 
     if (viewMode === "schematic") {
       const deck = ensureDeck();
@@ -2709,11 +2735,13 @@ export const MapCanvas = memo(function MapCanvas({
     }
   }, [
     buildLayers,
+    couplingsResolved,
     ensureDeck,
     fitKey,
     isActive,
     nodes,
     renderCoords,
+    topological,
     viewMode,
   ]);
 

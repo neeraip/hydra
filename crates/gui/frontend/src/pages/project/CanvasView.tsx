@@ -969,7 +969,8 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
   // Hydraulic connections that are not links (dual-drainage street
   // inlets): the layout counts them as connectivity, the canvas draws
   // them. Empty for engines without them.
-  const inletCouplings = useInletCouplings(project?.id, activeScenarioId);
+  const { couplings: inletCouplings, resolved: couplingsResolved } =
+    useInletCouplings(project?.id, activeScenarioId);
   // The canvas owns the timeline, but sibling views (the element tables)
   // ask the same question, so the value is published rather than lifted —
   // the scrub state keeps its playback and clamping logic here.
@@ -1820,6 +1821,7 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
                 isActive={canvasIsActive}
                 viewMode={localGrid ? "schematic" : viewMode}
                 topological={viewMode === "schematic"}
+                couplingsResolved={couplingsResolved}
                 // The slider carries a track position; the layout wants per-axis
                 // multipliers. Converting here keeps the geometric mapping in
                 // one place instead of duplicating it in the canvas.

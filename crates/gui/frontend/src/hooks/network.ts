@@ -1120,23 +1120,43 @@ export async function getInletCouplings(
 export function useInletCouplings(
   projectId: string | null | undefined,
   scenarioId: string | null | undefined,
-): InletCoupling[] {
-  const [couplings, setCouplings] = useState<InletCoupling[]>([]);
+): { couplings: InletCoupling[]; resolved: boolean } {
+  // `resolved` is the point of the shape. An empty array cannot say whether
+  // this model has no couplings or has not been asked yet, and a layout that
+  // guesses "none" declares every street conduit detached from the sewer it
+  // drains into — briefly, until the answer arrives.
+  const [state, setState] = useState<{
+    couplings: InletCoupling[];
+    resolved: boolean;
+  }>({ couplings: EMPTY_COUPLINGS, resolved: false });
   useEffect(() => {
     if (!projectId) {
-      setCouplings([]);
+      setState({ couplings: EMPTY_COUPLINGS, resolved: true });
       return;
     }
     let cancelled = false;
-    void getInletCouplings(projectId, scenarioId).then((c) => {
-      if (!cancelled) setCouplings(c);
-    });
+    setState({ couplings: EMPTY_COUPLINGS, resolved: false });
+    void getInletCouplings(projectId, scenarioId)
+      .then((c) => {
+        if (!cancelled) setState({ couplings: c, resolved: true });
+      })
+      .catch(() => {
+        // A failed read is still an answer: draw the network without
+        // couplings rather than never drawing it.
+        if (!cancelled) {
+          setState({ couplings: EMPTY_COUPLINGS, resolved: true });
+        }
+      });
     return () => {
       cancelled = true;
     };
   }, [projectId, scenarioId]);
-  return couplings;
+  return state;
 }
+
+/** Stable empty, so a coupling-less model does not hand the layout a fresh
+ * array identity on every render and invalidate its cache. */
+const EMPTY_COUPLINGS: InletCoupling[] = [];
 
 // ── Per-kind element tables ────────────────────────────────────────────────
 
