@@ -1,15 +1,31 @@
-import {
-  MagnifyingGlassPlusIcon,
-  TagIcon,
-  XMarkIcon,
-} from "@heroicons/react/16/solid";
+// ── The network finder ────────────────────────────────────────────────────────
+//
+// The rail beside the canvas answers two questions: *where is this element*
+// and *what am I looking at*. It is not a spreadsheet — the Elements view
+// is, with every property a kind declares and the full result set. Trying
+// to be a second one inside 280 pixels is what gave this panel three tabs,
+// a three-column cap, and a row you could not find.
+//
+// So it is a finder:
+//
+//   · one flat list over every element, whatever its kind or class,
+//     because someone hunting "J-401" does not know which tab it is in;
+//   · search that ranks — an exact id first, then a prefix, then anything
+//     that merely contains the text, including what an element connects to;
+//   · kind chips instead of tabs, so browsing by kind still works and
+//     works for all nine drainage kinds, not just two classes;
+//   · selection that arrives from the canvas scrolls its row into view.
+//
+// Kinds, labels and result variables come from the engine catalogs, so this
+// file names no kind and no engine.
+
+import { MagnifyingGlassPlusIcon, XMarkIcon } from "@heroicons/react/16/solid";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useActiveProject } from "../../AppContext";
 import type { SimResultColumn } from "../../canvas/selection-context";
-import type { Link, Node } from "../../hooks";
+import type { ElementClass, Link, Node } from "../../hooks";
 import {
-  elementClassHeading,
   formatGenericValue,
   genericUnitLabel,
   useElementKinds,
@@ -23,1340 +39,185 @@ import { toDisplay, unitLabel, useUnitSystem } from "../../units";
 import { MiddleTruncate } from "../ui/MiddleTruncate";
 import { TypeBadge } from "../ui/TypeBadge";
 
-// ── Sort / filter hook ────────────────────────────────────────────────────────
-
-type SortDir = "asc" | "desc";
+const ROW_HEIGHT = 27;
 
 function hasNodeCoordinates(node: Node): boolean {
   return !(node.x === 0 && node.y === 0);
 }
 
-/**
- * Case-insensitive substring match over `searchKeys`.
- *
- * Shared by the tab lists and by the tab-strip counts: computing "how many
- * match" separately from "which ones show" is how a badge ends up claiming 12
- * results over a list of 9.
- */
-export function matchesQuery<T>(
-  item: T,
-  searchKeys: (keyof T)[],
-  loweredQuery: string,
-): boolean {
-  return searchKeys.some((k) =>
-    String((item as Record<string, unknown>)[k as string] ?? "")
-      .toLowerCase()
-      .includes(loweredQuery),
-  );
-}
-
-function useSortedFiltered<T>(
-  items: T[],
-  query: string,
-  searchKeys: (keyof T)[],
-  traceTab: "nodes" | "links",
-): [T[], string | null, SortDir, (col: string) => void] {
-  const [sortCol, setSortCol] = useState<string | null>(null);
-  const [sortDir, setSortDir] = useState<SortDir>("asc");
-  const lastTraceKeyRef = useRef<string>("");
-
-  // Tri-state: first click sorts ascending, second descending, third clears
-  // the sort entirely — restoring the network's natural (file) order, which
-  // is not necessarily ID order.
-  function toggleSort(col: string) {
-    if (sortCol !== col) {
-      setSortCol(col);
-      setSortDir("asc");
-    } else if (sortDir === "asc") {
-      setSortDir("desc");
-    } else {
-      setSortCol(null);
-      setSortDir("asc");
-    }
-  }
-
-  const result = useMemo(() => {
-    const t0 = performance.now();
-    const q = query.toLowerCase();
-    let arr = q
-      ? items.filter((item) => matchesQuery(item, searchKeys, q))
-      : items;
-    if (sortCol) {
-      // "resultValues.<id>" reaches into the engine-generic value bag;
-      // every other column is a direct field.
-      const RESULT_PREFIX = "resultValues.";
-      const get = (o: Record<string, unknown>): unknown =>
-        sortCol.startsWith(RESULT_PREFIX)
-          ? (o.resultValues as Record<string, unknown> | undefined)?.[
-              sortCol.slice(RESULT_PREFIX.length)
-            ]
-          : o[sortCol];
-      arr = [...arr].sort((a, b) => {
-        const av = get(a as Record<string, unknown>) ?? "";
-        const bv = get(b as Record<string, unknown>) ?? "";
-        const cmp = av < bv ? -1 : av > bv ? 1 : 0;
-        return sortDir === "asc" ? cmp : -cmp;
-      });
-    }
-
-    const deriveMs = performance.now() - t0;
-    const shouldTrace =
-      items.length > 0 &&
-      deriveMs >= 2 &&
-      (q.length > 0 || sortCol !== null || items.length > 1000);
-    if (shouldTrace) {
-      const traceKey = `${traceTab}:${items.length}:${arr.length}:${q}:${sortCol ?? "none"}:${sortDir}`;
-      if (lastTraceKeyRef.current !== traceKey) {
-        lastTraceKeyRef.current = traceKey;
-        perfTrace("network-list-derive", deriveMs, {
-          tab: traceTab,
-          inputCount: items.length,
-          resultCount: arr.length,
-          queryLen: q.length,
-          sortCol: sortCol ?? "none",
-          sortDir,
-        });
-      }
-    }
-
-    return arr;
-  }, [items, query, searchKeys, sortCol, sortDir, traceTab]);
-
-  return [result, sortCol, sortDir, toggleSort];
-}
-
 function useDebouncedValue<T>(value: T, delayMs: number): T {
   const [debounced, setDebounced] = useState(value);
-
   useEffect(() => {
     const id = window.setTimeout(() => setDebounced(value), delayMs);
     return () => window.clearTimeout(id);
   }, [delayMs, value]);
-
   return debounced;
 }
 
-// ── Shared table styles ───────────────────────────────────────────────────────
+// ── The row model ─────────────────────────────────────────────────────────────
 
-const TH: React.CSSProperties = {
-  padding: "5px 8px",
-  textAlign: "left",
-  fontSize: "var(--text-xs)",
-  fontWeight: 600,
+/** One line of the finder. Classes are flattened into a single sequence, so
+ * everything the list needs to draw and rank a row lives here rather than
+ * behind three parallel code paths. */
+interface Row {
+  id: string;
+  /** Element-kind id — drives the badge and the kind chips. */
+  kind: string;
+  cls: ElementClass;
+  /** Secondary text the search also matches: what a link joins, or the node
+   * a catchment drains to. Shown as the row's subtitle when searching. */
+  context: string;
+  /** Current-period value, already SI, or null before a run. */
+  value: number | null;
+  /** How to render that value — an engine-generic column, or one of the
+   * fixed-variable quantities the wds snapshot carries inline. */
+  format: SimResultColumn | "pressure" | "flow" | null;
+  canZoom: boolean;
+}
+
+/** Rank a row against a lowercased query. Lower is better; -1 is no match.
+ *
+ * The order is the order someone typing expects: what they typed exactly,
+ * then things that begin with it, then things that contain it, and only
+ * then things that merely mention it somewhere else. Without this, typing
+ * "J-4" buries J-4 itself under J-40 through J-499. */
+export function rankRow(row: Row, q: string): number {
+  const id = row.id.toLowerCase();
+  if (id === q) return 0;
+  if (id.startsWith(q)) return 1;
+  if (id.includes(q)) return 2;
+  if (row.kind.toLowerCase().includes(q)) return 3;
+  if (row.context.toLowerCase().includes(q)) return 4;
+  return -1;
+}
+
+/** The value a row shows, and how to render it.
+ *
+ * Engine-generic results ride on `resultValues` keyed by variable id, and
+ * the leading column for the element's class is the one worth the single
+ * slot a finder has. Engines whose snapshot carries fixed variables (wds)
+ * have no such column, so their own field is used. */
+function currentValue(
+  el: Node | Link | Region,
+  cls: ElementClass,
+  columns: SimResultColumn[] | undefined,
+): Pick<Row, "value" | "format"> {
+  const column = columns?.[0];
+  if (column) {
+    const bag = (el as { resultValues?: Record<string, number | null> })
+      .resultValues;
+    if (bag) return { value: bag[column.key] ?? null, format: column };
+  }
+  if (cls === "point") {
+    const p = (el as Node).pressure;
+    if (p != null) return { value: p, format: "pressure" };
+  }
+  if (cls === "polyline") {
+    const f = (el as Link).flow;
+    if (f != null) return { value: f, format: "flow" };
+  }
+  return { value: null, format: null };
+}
+
+function formatValue(row: Row, sys: "si" | "us"): string {
+  if (row.value == null) return "—";
+  if (row.format === "pressure") {
+    return toDisplay(row.value, "pressure", sys).toFixed(1);
+  }
+  if (row.format === "flow") {
+    return toDisplay(row.value, "flow", sys).toFixed(sys === "si" ? 2 : 1);
+  }
+  if (row.format)
+    return formatGenericValue(row.value, row.format.quantity, sys, false);
+  return "—";
+}
+
+function unitOf(row: Row, sys: "si" | "us"): string {
+  if (row.format === "pressure") return unitLabel("pressure", sys);
+  if (row.format === "flow") return unitLabel("flow", sys);
+  if (row.format) return genericUnitLabel(row.format.quantity, sys) ?? "";
+  return "";
+}
+
+// ── Styles ────────────────────────────────────────────────────────────────────
+
+const BADGE_COL_WIDTH = 28;
+
+const HEADER_BAR: React.CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  gap: 6,
+  padding: "8px 10px 6px",
+  borderBottom: "1px solid var(--border)",
+  flexShrink: 0,
+};
+
+const SEARCH_INPUT: React.CSSProperties = {
+  flex: 1,
+  minWidth: 0,
+  background: "var(--bg-input)",
+  border: "1px solid var(--border)",
+  borderRadius: 4,
+  padding: "4px 8px",
+  fontSize: "var(--text-sm)",
+  color: "var(--text-primary)",
+  outline: "none",
+};
+
+const CHIP_BASE: React.CSSProperties = {
+  display: "inline-flex",
+  alignItems: "center",
+  gap: 4,
+  padding: "2px 6px",
+  borderRadius: 4,
+  border: "1px solid transparent",
+  background: "transparent",
+  cursor: "pointer",
+  fontSize: "var(--text-2xs)",
+  color: "var(--text-tertiary)",
+  fontFamily: "var(--font-ui)",
+  flexShrink: 0,
+};
+
+const COUNT_BAR: React.CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "space-between",
+  gap: 6,
+  padding: "3px 10px",
+  fontSize: "var(--text-2xs)",
   letterSpacing: "0.05em",
   textTransform: "uppercase",
   color: "var(--text-tertiary)",
   borderBottom: "1px solid var(--border)",
+  flexShrink: 0,
   whiteSpace: "nowrap",
-  cursor: "pointer",
-  userSelect: "none",
-  position: "sticky",
-  top: 0,
-  background: "var(--bg-panel)",
-  zIndex: 1,
 };
 
-/** Width of the element-type badge column: the badge is a fixed 22px (see
- * `TypeBadge` — one- and two-character tags share a width so the column
- * has a straight edge), plus 3px each side. The shared TD padding of 8px
- * would otherwise make the column far wider than the thing in it. */
-const BADGE_COL_WIDTH = 28;
-
-/** Cell padding for that column — the shared horizontal padding, halved. */
-const BADGE_CELL_PADDING = "4px 4px";
-
-const TD: React.CSSProperties = {
-  padding: "4px 8px",
-  fontSize: "var(--text-sm)",
-  borderBottom: "1px solid rgba(255,255,255,0.04)",
-  whiteSpace: "nowrap",
-  overflow: "hidden",
-  textOverflow: "ellipsis",
-  maxWidth: 110,
-  // Rows are click targets (select/locate an element); dragging across
-  // them must not highlight cell text.
-  userSelect: "none",
-};
-
-/**
- * Element-type cell for the nodes/links tables.
- *
- * The badge is centred as a *box* rather than aligned on the row's text
- * baseline. `TypeBadge` is an inline-flex box, so inline layout aligns it by
- * the baseline of the letter inside it — and that letter's baseline sits below
- * the badge's own centre, which dragged the whole badge about a pixel below the
- * centre of the row. A block-level flex container has no baseline to align to,
- * and `vertical-align: middle` on the cell centres that block in the row, so
- * the result no longer depends on font metrics.
- */
-function BadgeCell({ type }: { type: string }) {
-  return (
-    <td style={{ ...TD, padding: BADGE_CELL_PADDING, verticalAlign: "middle" }}>
-      <span
-        style={{
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-        }}
-      >
-        <TypeBadge type={type} />
-      </span>
-    </td>
-  );
-}
-
-/** Below this measured width (px) a header renders its symbol instead of
- * text — narrower than this even "Di…" cannot render legibly. */
-const HEADER_SYMBOL_CUTOFF_PX = 34;
-
-/**
- * Column-header text with a three-stage overflow system: the full label
- * while it fits, CSS-ellipsised as the column narrows ("Diameter" →
- * "Diam…"), and the column's compact symbol ("Ø", "El") once the cell is
- * too narrow for even a truncated word. The header's tooltip always
- * carries the full label, so no stage loses information.
- */
-function HeaderLabel({ label, symbol }: { label: string; symbol: string }) {
-  const ref = useRef<HTMLSpanElement>(null);
-  const [narrow, setNarrow] = useState(false);
-  useEffect(() => {
-    const el = ref.current;
-    if (!el) return;
-    const observer = new ResizeObserver(() => {
-      setNarrow(el.clientWidth < HEADER_SYMBOL_CUTOFF_PX);
-    });
-    observer.observe(el);
-    return () => observer.disconnect();
-  }, []);
-  return (
-    <span
-      ref={ref}
-      style={{
-        flex: 1,
-        minWidth: 0,
-        overflow: "hidden",
-        textOverflow: "ellipsis",
-        whiteSpace: "nowrap",
-        // The TH uppercases labels; symbols are engineering notation whose
-        // case is meaningful (y depth vs V volume, p pressure vs P power)
-        // and must render exactly as the engine authored them.
-        textTransform: narrow ? "none" : undefined,
-      }}
-    >
-      {narrow ? symbol : label}
-    </span>
-  );
-}
-
-/** Header-cell layout: shrinking label + non-shrinking sort indicator. */
-function HeaderContent({
-  label,
-  symbol,
-  col,
-  sortCol,
-  sortDir,
-}: {
-  label: string;
-  symbol: string;
-  col: string;
-  sortCol: string | null;
-  sortDir: SortDir;
-}) {
-  return (
-    <span style={{ display: "flex", alignItems: "center", minWidth: 0 }}>
-      <HeaderLabel label={label} symbol={symbol} />
-      <span style={{ flexShrink: 0 }}>
-        <SortIndicator col={col} sortCol={sortCol} sortDir={sortDir} />
-      </span>
-    </span>
-  );
-}
-
-/** Sortable header + cell pair for one engine-generic result column.
- * Values arrive SI; both convert through the column's §5 quantity. */
-function GenericResultHeader({
-  column,
-  sys,
-  sortCol,
-  sortDir,
-  onToggleSort,
-}: {
-  column: SimResultColumn;
-  sys: "si" | "us";
-  sortCol: string | null;
-  sortDir: SortDir;
-  onToggleSort: (col: string) => void;
-}) {
-  const sortKey = `resultValues.${column.key}`;
-  const unit = genericUnitLabel(column.quantity, sys);
-  return (
-    <th
-      style={TH}
-      onClick={() => onToggleSort(sortKey)}
-      data-tooltip={unit ? `${column.label} (${unit})` : column.label}
-      data-tooltip-pos="bottom"
-    >
-      <HeaderContent
-        label={column.label}
-        symbol={column.symbol ?? column.label.charAt(0).toUpperCase()}
-        col={sortKey}
-        sortCol={sortCol}
-        sortDir={sortDir}
-      />
-    </th>
-  );
-}
-
-function GenericResultCell({
-  value,
-  column,
-  sys,
-}: {
-  value: number | null | undefined;
-  column: SimResultColumn;
-  sys: "si" | "us";
-}) {
-  return (
-    <td style={{ ...TD, fontFamily: "var(--font-mono)" }}>
-      {formatGenericValue(value, column.quantity, sys, false)}
-    </td>
-  );
-}
-
-function SortIndicator({
-  col,
-  sortCol,
-  sortDir,
-}: {
-  col: string;
-  sortCol: string | null;
-  sortDir: SortDir;
-}) {
-  if (sortCol !== col)
-    return <span style={{ opacity: 0.25, marginLeft: 3 }}>↕</span>;
-  return (
-    <span style={{ marginLeft: 3, color: "var(--accent)" }}>
-      {sortDir === "asc" ? "↑" : "↓"}
-    </span>
-  );
-}
-
-// ── Nodes tab ────────────────────────────────────────────────────────────────
-
-const NODE_SEARCH_KEYS: (keyof Node)[] = ["id", "type"];
-
-function NodesTab({
-  query,
-  nodes,
-  onSelect,
-  onZoomTo,
-  activeId,
-  resultColumns = [],
-}: {
-  query: string;
-  nodes: Node[];
-  onSelect: (id: string) => void;
-  onZoomTo?: (id: string) => void;
-  activeId?: string | null;
-  resultColumns?: SimResultColumn[];
-}) {
-  const sys = useUnitSystem();
-  const hasResults = nodes.some((n) => n.pressure != null);
-  // Engine-generic result columns: headers from the engine's catalog,
-  // values from `resultValues` (merged by CanvasView). Shown once any
-  // element carries a value.
-  const genericColumns = nodes.some((n) => n.resultValues != null)
-    ? resultColumns
-    : [];
-  // Attribute columns render only when the snapshot carries the attribute —
-  // engines whose snapshot is geometry-only (v4) get ID + badge, not a
-  // column of dashes.
-  const hasAttrs = nodes.some(
-    (n) => n.elevation != null || n.baseDemand != null,
-  );
-  const [rows, sortCol, sortDir, toggleSort] = useSortedFiltered(
-    nodes,
-    query,
-    NODE_SEARCH_KEYS,
-    "nodes",
-  );
-  const scrollRef = useRef<HTMLDivElement | null>(null);
-  const rowVirtualizer = useVirtualizer({
-    count: rows.length,
-    getScrollElement: () => scrollRef.current,
-    estimateSize: () => 27,
-    overscan: 12,
-  });
-  const virtualRows = rowVirtualizer.getVirtualItems();
-  const padTop = virtualRows.length > 0 ? virtualRows[0].start : 0;
-  const padBottom =
-    virtualRows.length > 0
-      ? rowVirtualizer.getTotalSize() - virtualRows[virtualRows.length - 1].end
-      : 0;
-  const nodeColSpan =
-    2 +
-    (hasAttrs ? 2 : 0) +
-    (hasResults ? 1 : 0) +
-    genericColumns.length +
-    (onZoomTo ? 1 : 0);
-
-  return (
-    <div ref={scrollRef} style={{ overflow: "auto", flex: 1 }}>
-      <table
-        style={{
-          width: "100%",
-          minWidth: "100%",
-          borderCollapse: "collapse",
-          tableLayout: "fixed",
-          // Rows are click targets; WKWebView needs the -webkit- form for
-          // user-select, and table-level scope covers every cell style.
-          userSelect: "none",
-          WebkitUserSelect: "none",
-        }}
-      >
-        {/* Fixed table layout for scroll-stable, measurement-free columns
-            (the list is virtualized); only the intrinsically-sized columns
-            are pinned — the ID/data columns share the remaining rail width. */}
-        <colgroup>
-          <col style={{ width: BADGE_COL_WIDTH }} />
-          <col />
-          {hasAttrs && <col />}
-          {hasAttrs && <col />}
-          {hasResults && <col />}
-          {genericColumns.map((c) => (
-            <col key={c.key} />
-          ))}
-          {onZoomTo && <col style={{ width: 22 }} />}
-        </colgroup>
-        <thead>
-          <tr>
-            {/* Badge column, first to match the cells. A tag glyph rather
-                than a word: the column is sized to the badge, and no label
-                fits — "Type" is wider than the column, and the single letter
-                "T" would sit directly above a column of J/R/T/P/Pu/V, where
-                T already means Tank. The tooltip carries the full name. */}
-            <th
-              style={{
-                ...TH,
-                textAlign: "center",
-                padding: "5px 4px",
-                verticalAlign: "middle",
-              }}
-              onClick={() => toggleSort("type")}
-              data-tooltip="Element type — click to sort"
-              data-tooltip-pos="bottom"
-            >
-              {/* Block-level flex, not inline-flex: the glyph is an SVG box and
-                the sort arrow is a text character, so an inline box aligned
-                one to the line box and the other to the baseline. Going
-                block-level removes the line box from the question entirely —
-                the cell's `vertical-align: middle` then centres this row of
-                content, matching how BadgeCell centres the badges below. */}
-              <span
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  lineHeight: 1,
-                }}
-              >
-                <TagIcon
-                  style={{ width: 10, height: 10 }}
-                  aria-label="Element type"
-                />
-                <SortIndicator col="type" sortCol={sortCol} sortDir={sortDir} />
-              </span>
-            </th>
-            {(["id", "elevation", "baseDemand"] as const)
-              .filter((col) => col === "id" || hasAttrs)
-              .map((col) => {
-                const meta = {
-                  id: { label: "ID", symbol: "ID", tip: "Node ID" },
-                  elevation: {
-                    label: "Elevation",
-                    // Engineering-standard symbols: z elevation head,
-                    // q nodal demand, p pressure (Bernoulli notation).
-                    symbol: "z",
-                    tip: `Elevation (${unitLabel("elevation", sys)})`,
-                  },
-                  baseDemand: {
-                    label: "Base demand",
-                    symbol: "q",
-                    tip: `Base demand (${unitLabel("demand", sys)})`,
-                  },
-                }[col];
-                return (
-                  <th
-                    key={col}
-                    style={TH}
-                    onClick={() => toggleSort(col)}
-                    data-tooltip={meta.tip}
-                    data-tooltip-pos="bottom"
-                  >
-                    <HeaderContent
-                      label={meta.label}
-                      symbol={meta.symbol}
-                      col={col}
-                      sortCol={sortCol}
-                      sortDir={sortDir}
-                    />
-                  </th>
-                );
-              })}
-            {hasResults && (
-              <th
-                style={TH}
-                onClick={() => toggleSort("pressure")}
-                data-tooltip={`Pressure (${unitLabel("pressure", sys)})`}
-                data-tooltip-pos="bottom"
-              >
-                <HeaderContent
-                  label="Pressure"
-                  symbol="p"
-                  col="pressure"
-                  sortCol={sortCol}
-                  sortDir={sortDir}
-                />
-              </th>
-            )}
-            {genericColumns.map((c) => (
-              <GenericResultHeader
-                key={c.key}
-                column={c}
-                sys={sys}
-                sortCol={sortCol}
-                sortDir={sortDir}
-                onToggleSort={toggleSort}
-              />
-            ))}
-            {onZoomTo && <th style={TH} />}
-          </tr>
-        </thead>
-        <tbody>
-          {padTop > 0 && (
-            <tr>
-              <td
-                colSpan={nodeColSpan}
-                style={{ height: padTop, padding: 0, borderBottom: "none" }}
-              />
-            </tr>
-          )}
-          {virtualRows.map((virtualRow) => {
-            const node = rows[virtualRow.index];
-            const isActive = node.id === activeId;
-            const canZoomTo = hasNodeCoordinates(node);
-            return (
-              <tr
-                key={node.id}
-                onClick={() => onSelect(node.id)}
-                style={{
-                  cursor: "pointer",
-                  background: isActive ? "var(--selection-bg)" : undefined,
-                  outline: isActive
-                    ? "1px solid var(--selection-border)"
-                    : undefined,
-                  outlineOffset: "-1px",
-                }}
-                onMouseEnter={(e) => {
-                  if (!isActive)
-                    (e.currentTarget as HTMLElement).style.background =
-                      "rgba(255,255,255,0.04)";
-                }}
-                onMouseLeave={(e) => {
-                  if (!isActive)
-                    (e.currentTarget as HTMLElement).style.background =
-                      "transparent";
-                }}
-              >
-                <BadgeCell type={node.type} />
-                <td
-                  style={{
-                    ...TD,
-                    color: "var(--accent)",
-                    fontWeight: 500,
-                    fontFamily: "var(--font-mono)",
-                  }}
-                >
-                  <MiddleTruncate text={node.id} />
-                </td>
-                {hasAttrs && (
-                  <td style={{ ...TD, fontFamily: "var(--font-mono)" }}>
-                    {node.elevation != null
-                      ? toDisplay(node.elevation, "elevation", sys).toFixed(1)
-                      : "—"}
-                  </td>
-                )}
-                {hasAttrs && (
-                  <td style={{ ...TD, fontFamily: "var(--font-mono)" }}>
-                    {node.baseDemand != null
-                      ? toDisplay(node.baseDemand, "demand", sys).toFixed(
-                          sys === "si" ? 2 : 1,
-                        )
-                      : "—"}
-                  </td>
-                )}
-                {hasResults && (
-                  <td style={{ ...TD, fontFamily: "var(--font-mono)" }}>
-                    {node.pressure != null
-                      ? toDisplay(node.pressure, "pressure", sys).toFixed(1)
-                      : "—"}
-                  </td>
-                )}
-                {genericColumns.map((c) => (
-                  <GenericResultCell
-                    key={c.key}
-                    value={node.resultValues?.[c.key]}
-                    column={c}
-                    sys={sys}
-                  />
-                ))}
-                {onZoomTo && (
-                  <td
-                    style={{
-                      ...TD,
-                      padding: "4px 4px 4px 0",
-                      textAlign: "right",
-                    }}
-                  >
-                    <button
-                      type="button"
-                      disabled={!canZoomTo}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        if (!canZoomTo) return;
-                        onZoomTo(node.id);
-                      }}
-                      style={{
-                        background: "transparent",
-                        border: "none",
-                        padding: 2,
-                        cursor: canZoomTo ? "pointer" : "not-allowed",
-                        color: "var(--text-tertiary)",
-                        display: "inline-flex",
-                        borderRadius: 3,
-                        lineHeight: 0,
-                        opacity: canZoomTo ? 1 : 0.45,
-                      }}
-                      onMouseEnter={(e) => {
-                        if (!canZoomTo) return;
-                        (e.currentTarget as HTMLButtonElement).style.color =
-                          "var(--accent)";
-                      }}
-                      onMouseLeave={(e) => {
-                        (e.currentTarget as HTMLButtonElement).style.color =
-                          "var(--text-tertiary)";
-                      }}
-                    >
-                      <MagnifyingGlassPlusIcon
-                        style={{ width: 11, height: 11 }}
-                      />
-                    </button>
-                  </td>
-                )}
-              </tr>
-            );
-          })}
-          {padBottom > 0 && (
-            <tr>
-              <td
-                colSpan={nodeColSpan}
-                style={{ height: padBottom, padding: 0, borderBottom: "none" }}
-              />
-            </tr>
-          )}
-        </tbody>
-      </table>
-      {rows.length === 0 && (
-        <div
-          style={{
-            padding: 14,
-            fontSize: "var(--text-sm)",
-            color: "var(--text-tertiary)",
-            fontStyle: "italic",
-          }}
-        >
-          No nodes match.
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ── Links tab ────────────────────────────────────────────────────────────────
-
-// Hydra OUT-file status codes (status_to_f32 in out_writer.rs)
-const STATUS_COLOR: Record<number, string> = {
-  3: "var(--status-success)", // Open
-  2: "var(--status-error)", // Closed
-  0: "var(--status-error)", // XHead (pump overloaded)
-  1: "var(--status-error)", // TempClosed
-  4: "#d4a017", // Active (control valve)
-  6: "#d4a017", // XFcv
-  7: "#d4a017", // XPressure
-};
-
-const STATUS_LABEL: Record<number, string> = {
-  3: "Open",
-  2: "Closed",
-  0: "Closed (XHead)",
-  1: "Temp Closed",
-  4: "Active",
-  6: "Active (XFcv)",
-  7: "Active (XPressure)",
-};
-
-const LINK_SEARCH_KEYS: (keyof Link)[] = ["id", "type", "fromId", "toId"];
-
-function LinksTab({
-  query,
-  links,
-  zoomableNodeIds,
-  onSelect,
-  onZoomTo,
-  activeId,
-  resultColumns = [],
-}: {
-  query: string;
-  links: Link[];
-  zoomableNodeIds: Set<string>;
-  onSelect: (id: string) => void;
-  onZoomTo?: (id: string) => void;
-  activeId?: string | null;
-  resultColumns?: SimResultColumn[];
-}) {
-  const sys = useUnitSystem();
-  const hasResults = links.some((l) => l.flow != null);
-  const genericColumns = links.some((l) => l.resultValues != null)
-    ? resultColumns
-    : [];
-  // Same rule as the nodes table: attribute columns only when the snapshot
-  // carries the attribute (v4 snapshots are geometry-only).
-  const hasAttrs = links.some(
-    (l) => l.diameter != null || l.status != null || l.initialStatus != null,
-  );
-  const [rows, sortCol, sortDir, toggleSort] = useSortedFiltered(
-    links,
-    query,
-    LINK_SEARCH_KEYS,
-    "links",
-  );
-  const scrollRef = useRef<HTMLDivElement | null>(null);
-  const rowVirtualizer = useVirtualizer({
-    count: rows.length,
-    getScrollElement: () => scrollRef.current,
-    estimateSize: () => 27,
-    overscan: 12,
-  });
-  const virtualRows = rowVirtualizer.getVirtualItems();
-  const padTop = virtualRows.length > 0 ? virtualRows[0].start : 0;
-  const padBottom =
-    virtualRows.length > 0
-      ? rowVirtualizer.getTotalSize() - virtualRows[virtualRows.length - 1].end
-      : 0;
-  const linkColSpan =
-    2 +
-    (hasAttrs ? 2 : 0) +
-    (hasResults ? 1 : 0) +
-    genericColumns.length +
-    (onZoomTo ? 1 : 0);
-
-  return (
-    <div ref={scrollRef} style={{ overflow: "auto", flex: 1 }}>
-      <table
-        style={{
-          width: "100%",
-          minWidth: "100%",
-          borderCollapse: "collapse",
-          tableLayout: "fixed",
-          // Rows are click targets; WKWebView needs the -webkit- form for
-          // user-select, and table-level scope covers every cell style.
-          userSelect: "none",
-          WebkitUserSelect: "none",
-        }}
-      >
-        {/* Same scheme as the nodes table: fixed layout, pinned narrow
-            columns, flexing ID/data columns. */}
-        <colgroup>
-          <col style={{ width: BADGE_COL_WIDTH }} />
-          <col />
-          {hasAttrs && <col style={{ width: 36 }} />}
-          {hasAttrs && <col />}
-          {hasResults && <col />}
-          {genericColumns.map((c) => (
-            <col key={c.key} />
-          ))}
-          {onZoomTo && <col style={{ width: 22 }} />}
-        </colgroup>
-        <thead>
-          <tr>
-            {/* Badge column, first to match the cells. A tag glyph rather
-                than a word: the column is sized to the badge, and no label
-                fits — "Type" is wider than the column, and the single letter
-                "T" would sit directly above a column of J/R/T/P/Pu/V, where
-                T already means Tank. The tooltip carries the full name. */}
-            <th
-              style={{
-                ...TH,
-                textAlign: "center",
-                padding: "5px 4px",
-                verticalAlign: "middle",
-              }}
-              onClick={() => toggleSort("type")}
-              data-tooltip="Element type — click to sort"
-              data-tooltip-pos="bottom"
-            >
-              {/* Flex rather than inline: the glyph is an SVG box and the
-                sort arrow is a text character, so leaving them inline
-                aligned one to the line box and the other to the baseline,
-                and the icon rode high. */}
-              <span
-                style={{
-                  display: "inline-flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                }}
-              >
-                <TagIcon
-                  style={{ width: 10, height: 10 }}
-                  aria-label="Element type"
-                />
-                <SortIndicator col="type" sortCol={sortCol} sortDir={sortDir} />
-              </span>
-            </th>
-            {(["id", "status", "diameter"] as const)
-              .filter((col) => col === "id" || hasAttrs)
-              .map((col) => {
-                const meta = {
-                  id: { label: "ID", symbol: "ID", tip: "Link ID" },
-                  status: { label: "Status", symbol: "St", tip: "Status" },
-                  diameter: {
-                    label: "Diameter",
-                    symbol: "Ø",
-                    tip: `Diameter (${unitLabel("diameter", sys)})`,
-                  },
-                }[col];
-                return (
-                  <th
-                    key={col}
-                    style={TH}
-                    onClick={() => toggleSort(col)}
-                    data-tooltip={meta.tip}
-                    data-tooltip-pos="bottom"
-                  >
-                    <HeaderContent
-                      label={meta.label}
-                      symbol={meta.symbol}
-                      col={col}
-                      sortCol={sortCol}
-                      sortDir={sortDir}
-                    />
-                  </th>
-                );
-              })}
-            {hasResults && (
-              <th
-                style={TH}
-                onClick={() => toggleSort("flow")}
-                data-tooltip={`Flow (${unitLabel("flow", sys)})`}
-                data-tooltip-pos="bottom"
-              >
-                <HeaderContent
-                  label="Flow"
-                  symbol="Q"
-                  col="flow"
-                  sortCol={sortCol}
-                  sortDir={sortDir}
-                />
-              </th>
-            )}
-            {genericColumns.map((c) => (
-              <GenericResultHeader
-                key={c.key}
-                column={c}
-                sys={sys}
-                sortCol={sortCol}
-                sortDir={sortDir}
-                onToggleSort={toggleSort}
-              />
-            ))}
-            {onZoomTo && <th style={TH} />}
-          </tr>
-        </thead>
-        <tbody>
-          {padTop > 0 && (
-            <tr>
-              <td
-                colSpan={linkColSpan}
-                style={{ height: padTop, padding: 0, borderBottom: "none" }}
-              />
-            </tr>
-          )}
-          {virtualRows.map((virtualRow) => {
-            const link = rows[virtualRow.index];
-            const isActive = link.id === activeId;
-            const canZoomTo =
-              zoomableNodeIds.has(link.fromId) &&
-              zoomableNodeIds.has(link.toId);
-            return (
-              <tr
-                key={link.id}
-                onClick={() => onSelect(link.id)}
-                style={{
-                  cursor: "pointer",
-                  background: isActive ? "var(--selection-bg)" : undefined,
-                  outline: isActive
-                    ? "1px solid var(--selection-border)"
-                    : undefined,
-                  outlineOffset: "-1px",
-                }}
-                onMouseEnter={(e) => {
-                  if (!isActive)
-                    (e.currentTarget as HTMLElement).style.background =
-                      "rgba(255,255,255,0.04)";
-                }}
-                onMouseLeave={(e) => {
-                  if (!isActive)
-                    (e.currentTarget as HTMLElement).style.background =
-                      "transparent";
-                }}
-              >
-                <BadgeCell type={link.type} />
-                <td
-                  style={{
-                    ...TD,
-                    color: "var(--accent)",
-                    fontWeight: 500,
-                    fontFamily: "var(--font-mono)",
-                  }}
-                >
-                  <MiddleTruncate text={link.id} />
-                </td>
-                {hasAttrs && (
-                  <td style={TD}>
-                    {link.status != null ? (
-                      <span
-                        data-tooltip={STATUS_LABEL[link.status] ?? "Unknown"}
-                        style={{
-                          display: "inline-block",
-                          width: 7,
-                          height: 7,
-                          borderRadius: "50%",
-                          background:
-                            STATUS_COLOR[link.status] ?? "var(--text-tertiary)",
-                        }}
-                      />
-                    ) : (
-                      <span style={{ color: "var(--text-tertiary)" }}>—</span>
-                    )}
-                  </td>
-                )}
-                {hasAttrs && (
-                  <td style={{ ...TD, fontFamily: "var(--font-mono)" }}>
-                    {link.diameter != null
-                      ? toDisplay(link.diameter, "diameter", sys).toFixed(
-                          sys === "si" ? 0 : 1,
-                        )
-                      : "—"}
-                  </td>
-                )}
-                {hasResults && (
-                  <td style={{ ...TD, fontFamily: "var(--font-mono)" }}>
-                    {link.flow != null
-                      ? toDisplay(link.flow, "flow", sys).toFixed(
-                          sys === "si" ? 2 : 1,
-                        )
-                      : "—"}
-                  </td>
-                )}
-                {genericColumns.map((c) => (
-                  <GenericResultCell
-                    key={c.key}
-                    value={link.resultValues?.[c.key]}
-                    column={c}
-                    sys={sys}
-                  />
-                ))}
-                {onZoomTo && (
-                  <td
-                    style={{
-                      ...TD,
-                      padding: "4px 4px 4px 0",
-                      textAlign: "right",
-                    }}
-                  >
-                    <button
-                      type="button"
-                      disabled={!canZoomTo}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        if (!canZoomTo) return;
-                        onZoomTo(link.id);
-                      }}
-                      style={{
-                        background: "transparent",
-                        border: "none",
-                        padding: 2,
-                        cursor: canZoomTo ? "pointer" : "not-allowed",
-                        color: "var(--text-tertiary)",
-                        display: "inline-flex",
-                        borderRadius: 3,
-                        lineHeight: 0,
-                        opacity: canZoomTo ? 1 : 0.45,
-                      }}
-                      onMouseEnter={(e) => {
-                        if (!canZoomTo) return;
-                        (e.currentTarget as HTMLButtonElement).style.color =
-                          "var(--accent)";
-                      }}
-                      onMouseLeave={(e) => {
-                        (e.currentTarget as HTMLButtonElement).style.color =
-                          "var(--text-tertiary)";
-                      }}
-                    >
-                      <MagnifyingGlassPlusIcon
-                        style={{ width: 11, height: 11 }}
-                      />
-                    </button>
-                  </td>
-                )}
-              </tr>
-            );
-          })}
-          {padBottom > 0 && (
-            <tr>
-              <td
-                colSpan={linkColSpan}
-                style={{ height: padBottom, padding: 0, borderBottom: "none" }}
-              />
-            </tr>
-          )}
-        </tbody>
-      </table>
-      {rows.length === 0 && (
-        <div
-          style={{
-            padding: 14,
-            fontSize: "var(--text-sm)",
-            color: "var(--text-tertiary)",
-            fontStyle: "italic",
-          }}
-        >
-          No links match.
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ── Patterns tab ──────────────────────────────────────────────────────────────
-
-/** Patterns deliberately absent: they have no position, so nothing about them
- * appears on the canvas this panel accompanies, and the Editor already has a
- * Patterns section where they can actually be edited. */
-
-// ── Subcatchments tab ─────────────────────────────────────────────────────────
-
-/** Areal elements, present only for engines that have them. Read-only rows —
- * region selection on the canvas arrives with the region inspector. */
-const REGION_SEARCH_KEYS: (keyof Region)[] = ["id", "type", "outletId"];
-
-function SubcatchmentsTab({
-  query,
-  regions,
-  onSelect,
-  onZoomTo,
-  activeId,
-  resultColumns = [],
-}: {
-  query: string;
-  regions: Region[];
-  onSelect?: (id: string) => void;
-  onZoomTo?: (id: string) => void;
-  activeId?: string | null;
-  resultColumns?: SimResultColumn[];
-}) {
-  const sys = useUnitSystem();
-  const genericColumns = regions.some((r) => r.resultValues != null)
-    ? resultColumns
-    : [];
-  const [rows, sortCol, sortDir, toggleSort] = useSortedFiltered(
-    regions,
-    query,
-    REGION_SEARCH_KEYS,
-    "nodes",
-  );
-  const scrollRef = useRef<HTMLDivElement | null>(null);
-  const rowVirtualizer = useVirtualizer({
-    count: rows.length,
-    getScrollElement: () => scrollRef.current,
-    estimateSize: () => 27,
-    overscan: 12,
-  });
-  const virtualRows = rowVirtualizer.getVirtualItems();
-  const padTop = virtualRows.length > 0 ? virtualRows[0].start : 0;
-  const padBottom =
-    virtualRows.length > 0
-      ? rowVirtualizer.getTotalSize() - virtualRows[virtualRows.length - 1].end
-      : 0;
-  const colSpan = 3 + genericColumns.length + (onZoomTo ? 1 : 0);
-
-  if (rows.length === 0) {
-    return (
-      <div
-        style={{
-          padding: 14,
-          fontSize: "var(--text-md)",
-          color: "var(--text-tertiary)",
-        }}
-      >
-        {query.trim() ? "No subcatchments match." : "No subcatchments."}
-      </div>
-    );
-  }
-
-  return (
-    <div ref={scrollRef} style={{ overflow: "auto", flex: 1 }}>
-      <table
-        style={{
-          width: "100%",
-          minWidth: "100%",
-          borderCollapse: "collapse",
-          tableLayout: "fixed",
-          userSelect: "none",
-          WebkitUserSelect: "none",
-        }}
-      >
-        <colgroup>
-          <col style={{ width: BADGE_COL_WIDTH }} />
-          <col />
-          <col />
-          {genericColumns.map((c) => (
-            <col key={c.key} />
-          ))}
-          {onZoomTo && <col style={{ width: 22 }} />}
-        </colgroup>
-        <thead>
-          <tr>
-            <th
-              style={{
-                ...TH,
-                textAlign: "center",
-                padding: "5px 4px",
-                verticalAlign: "middle",
-              }}
-              onClick={() => toggleSort("type")}
-              data-tooltip="Element type — click to sort"
-              data-tooltip-pos="bottom"
-            >
-              <span
-                style={{
-                  display: "inline-flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                }}
-              >
-                <TagIcon
-                  style={{ width: 10, height: 10 }}
-                  aria-label="Element type"
-                />
-                <SortIndicator col="type" sortCol={sortCol} sortDir={sortDir} />
-              </span>
-            </th>
-            <th
-              style={TH}
-              onClick={() => toggleSort("id")}
-              data-tooltip="Subcatchment ID"
-              data-tooltip-pos="bottom"
-            >
-              <HeaderContent
-                label="ID"
-                symbol="ID"
-                col="id"
-                sortCol={sortCol}
-                sortDir={sortDir}
-              />
-            </th>
-            <th
-              style={TH}
-              onClick={() => toggleSort("outletId")}
-              data-tooltip="Discharges to"
-              data-tooltip-pos="bottom"
-            >
-              <HeaderContent
-                label="Outlet"
-                symbol="Ou"
-                col="outletId"
-                sortCol={sortCol}
-                sortDir={sortDir}
-              />
-            </th>
-            {genericColumns.map((c) => (
-              <GenericResultHeader
-                key={c.key}
-                column={c}
-                sys={sys}
-                sortCol={sortCol}
-                sortDir={sortDir}
-                onToggleSort={toggleSort}
-              />
-            ))}
-            {onZoomTo && <th style={TH} />}
-          </tr>
-        </thead>
-        <tbody>
-          {padTop > 0 && (
-            <tr>
-              <td
-                colSpan={colSpan}
-                style={{ height: padTop, padding: 0, borderBottom: "none" }}
-              />
-            </tr>
-          )}
-          {virtualRows.map((virtualRow) => {
-            const region = rows[virtualRow.index];
-            const isActive = region.id === activeId;
-            return (
-              <tr
-                key={region.id}
-                onClick={() => onSelect?.(region.id)}
-                style={{
-                  cursor: onSelect ? "pointer" : undefined,
-                  background: isActive ? "var(--selection-bg)" : undefined,
-                  outline: isActive
-                    ? "1px solid var(--selection-border)"
-                    : undefined,
-                  outlineOffset: "-1px",
-                }}
-                onMouseEnter={(e) => {
-                  if (!isActive)
-                    (e.currentTarget as HTMLElement).style.background =
-                      "rgba(255,255,255,0.04)";
-                }}
-                onMouseLeave={(e) => {
-                  if (!isActive)
-                    (e.currentTarget as HTMLElement).style.background =
-                      "transparent";
-                }}
-              >
-                <BadgeCell type={region.type} />
-                <td
-                  style={{
-                    ...TD,
-                    color: "var(--accent)",
-                    fontWeight: 500,
-                    fontFamily: "var(--font-mono)",
-                  }}
-                >
-                  <MiddleTruncate text={region.id} />
-                </td>
-                <td style={{ ...TD, fontFamily: "var(--font-mono)" }}>
-                  {region.outletId ? (
-                    <MiddleTruncate text={region.outletId} />
-                  ) : (
-                    <span style={{ color: "var(--text-tertiary)" }}>—</span>
-                  )}
-                </td>
-                {genericColumns.map((c) => (
-                  <GenericResultCell
-                    key={c.key}
-                    value={region.resultValues?.[c.key]}
-                    column={c}
-                    sys={sys}
-                  />
-                ))}
-                {onZoomTo && (
-                  <td
-                    style={{
-                      ...TD,
-                      padding: "4px 4px 4px 0",
-                      textAlign: "right",
-                    }}
-                  >
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onZoomTo(region.id);
-                      }}
-                      data-tooltip="Zoom to feature"
-                      style={{
-                        background: "transparent",
-                        border: "none",
-                        padding: 2,
-                        cursor: "pointer",
-                        color: "var(--text-tertiary)",
-                        display: "inline-flex",
-                        borderRadius: 3,
-                        lineHeight: 0,
-                      }}
-                      onMouseEnter={(e) => {
-                        (e.currentTarget as HTMLButtonElement).style.color =
-                          "var(--accent)";
-                      }}
-                      onMouseLeave={(e) => {
-                        (e.currentTarget as HTMLButtonElement).style.color =
-                          "var(--text-tertiary)";
-                      }}
-                    >
-                      <MagnifyingGlassPlusIcon
-                        style={{ width: 12, height: 12 }}
-                      />
-                    </button>
-                  </td>
-                )}
-              </tr>
-            );
-          })}
-          {padBottom > 0 && (
-            <tr>
-              <td
-                colSpan={colSpan}
-                style={{ height: padBottom, padding: 0, borderBottom: "none" }}
-              />
-            </tr>
-          )}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
-type HomeTab = "nodes" | "links" | "subcatchments";
+// ── Panel ─────────────────────────────────────────────────────────────────────
 
 interface Props {
-  /** When omitted the close button is hidden (e.g. when rendered inside the rail). */
+  /** When omitted the close button is hidden (e.g. inside the rail). */
   onClose?: () => void;
   onSelectNode: (id: string) => void;
   onSelectLink: (id: string) => void;
-  /** When provided, pattern cards are clickable and navigate to the editor. */
-  /** Override the internal `useNodes()` call (e.g. pass merged sim-result nodes). */
+  /** Override the internal `useNodes()` call (e.g. merged sim-result nodes). */
   nodes?: Node[];
-  /** Override the internal `useLinks()` call (e.g. pass merged sim-result links). */
   links?: Link[];
-  /** Override the internal `useRegions()` call (merged sim-result regions). */
   regions?: Region[];
-  /** Highlight this node id in the nodes list (e.g. the currently inspected element). */
   activeNodeId?: string | null;
-  /** Highlight this link id in the links list (e.g. the currently inspected element). */
   activeLinkId?: string | null;
-  /** When provided, each node row shows a zoom icon that triggers this callback. */
   onZoomToNode?: (id: string) => void;
-  /** When provided, each link row shows a zoom icon that triggers this callback. */
   onZoomToLink?: (id: string) => void;
-  /** Areal-element selection, mirroring the node/link callbacks. */
   onSelectRegion?: (id: string) => void;
   onZoomToRegion?: (id: string) => void;
   activeRegionId?: string | null;
   /** Generic result-column headers (engines whose values ride on
-   * `resultValues`); absent for wds, whose pressure and flow columns are
-   * built in. */
+   * `resultValues`); absent for wds, whose pressure and flow ride inline. */
   nodeResultColumns?: SimResultColumn[];
   linkResultColumns?: SimResultColumn[];
   regionResultColumns?: SimResultColumn[];
-  /**
-   * When true the panel renders inline (fills its container) rather than as an
-   * absolutely-positioned overlay. Use this when hosting inside the secondary rail.
-   */
+  /** Render inline (fills its container) rather than as an overlay. */
   embedded?: boolean;
 }
 
@@ -1379,264 +240,517 @@ export function NetworkInspectorHome({
   regionResultColumns,
   embedded,
 }: Props) {
+  const sys = useUnitSystem();
   const internalNodes = useNodes();
   const internalLinks = useLinks();
+  const internalRegions = useRegions();
   const allNodes = nodesProp ?? internalNodes;
   const allLinks = linksProp ?? internalLinks;
-  // Derived from the base network rather than `allNodes`: sim-merged node
-  // arrays change identity on every timeline scrub, but x/y never do — using
-  // `internalNodes` keeps this Set stable across scrubs.
+  const regions = regionsProp ?? internalRegions;
+
+  const { engine } = useActiveProject();
+  const elementKinds = useElementKinds(engine?.key);
+  const kindLabel = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const k of elementKinds) m.set(k.id, k.label);
+    return m;
+  }, [elementKinds]);
+
+  // Derived from the base network, not the sim-merged arrays: those change
+  // identity on every timeline scrub, but coordinates never do.
   const zoomableNodeIds = useMemo(
     () => new Set(internalNodes.filter(hasNodeCoordinates).map((n) => n.id)),
     [internalNodes],
   );
 
-  const internalRegions = useRegions();
-  const regions = regionsProp ?? internalRegions;
-  // Tab headings are the engine's words, not ours: a class with exactly one
-  // kind is named for that kind ("Subcatchments"), a class with several by
-  // the class ("Nodes"). Derived from the declared catalog, so a heading
-  // never shifts with the loaded model's contents.
-  const { engine } = useActiveProject();
-  const elementKinds = useElementKinds(engine?.key);
-  const tabHeading: Record<HomeTab, string> = {
-    nodes: elementClassHeading(elementKinds, "point", "Nodes"),
-    links: elementClassHeading(elementKinds, "polyline", "Links"),
-    subcatchments: elementClassHeading(elementKinds, "region", "Regions"),
-  };
-  const [tab, setTab] = useState<HomeTab>("nodes");
   const [queryInput, setQueryInput] = useState("");
   const query = useDebouncedValue(queryInput, 120);
+  const [kindFilter, setKindFilter] = useState<string | null>(null);
 
-  // While searching, the badges count *matches* rather than totals — that is
-  // what tells you a query typed on the Nodes tab found something in Links.
-  // Without it the only feedback is an empty list, which reads as "no results"
-  // rather than "no results here".
-  //
-  // Computed from the debounced query, so a keystroke does not trigger a pass
-  // over both collections; the same `matchesQuery` the lists use, so a badge
-  // cannot disagree with the rows under it.
-  const counts: Record<HomeTab, number> = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    if (!q)
-      return {
-        nodes: allNodes.length,
-        links: allLinks.length,
-        subcatchments: regions.length,
-      };
-    let nodes = 0;
+  // One row per element, every class in one sequence. Rebuilt whenever the
+  // network or its current-period values change — the same cost the three
+  // tabs paid, now paid once.
+  const rows = useMemo<Row[]>(() => {
+    const t0 = performance.now();
+    const out: Row[] = [];
     for (const n of allNodes) {
-      if (matchesQuery(n, NODE_SEARCH_KEYS, q)) nodes++;
+      out.push({
+        id: n.id,
+        kind: n.type,
+        cls: "point",
+        context: "",
+        canZoom: zoomableNodeIds.has(n.id),
+        ...currentValue(n, "point", nodeResultColumns),
+      });
     }
-    let links = 0;
     for (const l of allLinks) {
-      if (matchesQuery(l, LINK_SEARCH_KEYS, q)) links++;
+      out.push({
+        id: l.id,
+        kind: l.type,
+        cls: "polyline",
+        context: `${l.fromId} → ${l.toId}`,
+        canZoom: zoomableNodeIds.has(l.fromId) && zoomableNodeIds.has(l.toId),
+        ...currentValue(l, "polyline", linkResultColumns),
+      });
     }
-    let subcatchments = 0;
     for (const r of regions) {
-      if (r.id.toLowerCase().includes(q)) subcatchments++;
+      out.push({
+        id: r.id,
+        kind: r.type,
+        cls: "region",
+        context: r.outletId ? `→ ${r.outletId}` : "",
+        canZoom: true,
+        ...currentValue(r, "region", regionResultColumns),
+      });
     }
-    return { nodes, links, subcatchments };
-  }, [allNodes, allLinks, regions, query]);
+    perfTrace("network-finder-rows", performance.now() - t0, {
+      count: out.length,
+    });
+    return out;
+  }, [
+    allNodes,
+    allLinks,
+    regions,
+    zoomableNodeIds,
+    nodeResultColumns,
+    linkResultColumns,
+    regionResultColumns,
+  ]);
+
+  /** Kinds actually present, in catalog order, with their counts — the chip
+   * strip. A kind the model does not contain earns no chip. */
+  const presentKinds = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const r of rows) counts.set(r.kind, (counts.get(r.kind) ?? 0) + 1);
+    const ordered = elementKinds
+      .filter((k) => counts.has(k.id))
+      .map((k) => ({
+        id: k.id,
+        label: k.labelPlural,
+        count: counts.get(k.id) ?? 0,
+      }));
+    // Kinds the catalog does not declare still deserve a chip rather than
+    // becoming unreachable behind a filter that cannot name them.
+    for (const [id, count] of counts) {
+      if (!ordered.some((k) => k.id === id)) {
+        ordered.push({ id, label: id, count });
+      }
+    }
+    return ordered;
+  }, [rows, elementKinds]);
+
+  // A filter for a kind the model no longer has would hide everything with
+  // no way back, so it lapses with the model.
+  const activeKind =
+    kindFilter && presentKinds.some((k) => k.id === kindFilter)
+      ? kindFilter
+      : null;
+
+  const visible = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    const byKind = activeKind
+      ? rows.filter((r) => r.kind === activeKind)
+      : rows;
+    if (!q) return byKind;
+    const t0 = performance.now();
+    const ranked: Array<{ row: Row; rank: number; i: number }> = [];
+    byKind.forEach((row, i) => {
+      const rank = rankRow(row, q);
+      if (rank >= 0) ranked.push({ row, rank, i });
+    });
+    // Stable within a rank: equal-quality matches keep model order rather
+    // than shuffling as you type.
+    ranked.sort((a, b) => a.rank - b.rank || a.i - b.i);
+    perfTrace("network-finder-search", performance.now() - t0, {
+      matched: ranked.length,
+    });
+    return ranked.map((r) => r.row);
+  }, [rows, query, activeKind]);
+
   const searching = query.trim().length > 0;
-  const totals: Record<HomeTab, number> = {
-    nodes: allNodes.length,
-    links: allLinks.length,
-    subcatchments: regions.length,
-  };
+
+  /** The value column means one thing only when one class is in view. With
+   * junctions and conduits side by side it is depth for some rows and flow
+   * for others, so the header says so rather than lying with one name. */
+  const valueHeading = useMemo(() => {
+    let label: string | null = null;
+    for (const r of visible) {
+      if (r.format == null) continue;
+      const name =
+        r.format === "pressure"
+          ? "Pressure"
+          : r.format === "flow"
+            ? "Flow"
+            : r.format.label;
+      if (label == null) label = name;
+      else if (label !== name) return "Current";
+    }
+    if (label == null) return "";
+    const unit = unitOf(visible.find((r) => r.format != null) as Row, sys);
+    return unit ? `${label} (${unit})` : label;
+  }, [visible, sys]);
+
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const rowVirtualizer = useVirtualizer({
+    count: visible.length,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: () => ROW_HEIGHT,
+    overscan: 12,
+  });
+
+  const activeId = activeNodeId ?? activeLinkId ?? activeRegionId ?? null;
+
+  // Selection arriving from the canvas scrolls its row into view. Keyed on
+  // the id alone: re-running on every list identity would fight the user's
+  // own scrolling on each timeline scrub.
+  const lastScrolledTo = useRef<string | null>(null);
+  useEffect(() => {
+    if (activeId == null) {
+      lastScrolledTo.current = null;
+      return;
+    }
+    if (lastScrolledTo.current === activeId) return;
+    const index = visible.findIndex((r) => r.id === activeId);
+    if (index < 0) return;
+    lastScrolledTo.current = activeId;
+    rowVirtualizer.scrollToIndex(index, { align: "auto" });
+  }, [activeId, visible, rowVirtualizer]);
+
+  function select(row: Row) {
+    if (row.cls === "point") onSelectNode(row.id);
+    else if (row.cls === "polyline") onSelectLink(row.id);
+    else onSelectRegion?.(row.id);
+  }
+
+  function zoomTo(row: Row) {
+    if (row.cls === "point") onZoomToNode?.(row.id);
+    else if (row.cls === "polyline") onZoomToLink?.(row.id);
+    else onZoomToRegion?.(row.id);
+  }
+
+  function canZoomTo(row: Row): boolean {
+    if (!row.canZoom) return false;
+    if (row.cls === "point") return onZoomToNode != null;
+    if (row.cls === "polyline") return onZoomToLink != null;
+    return onZoomToRegion != null;
+  }
+
+  const shell: React.CSSProperties = embedded
+    ? {
+        width: "100%",
+        height: "100%",
+        display: "flex",
+        flexDirection: "column",
+        minHeight: 0,
+      }
+    : {
+        position: "absolute",
+        right: 0,
+        top: 0,
+        bottom: 0,
+        width: 320,
+        display: "flex",
+        flexDirection: "column",
+        minHeight: 0,
+      };
 
   return (
-    <div
-      className="inspector-panel"
-      style={
-        embedded
-          ? {
-              flex: 1,
-              display: "flex",
-              flexDirection: "column",
-              overflow: "hidden",
-              minHeight: 0,
-              width: "100%",
-            }
-          : {
-              position: "absolute",
-              right: 0,
-              top: 0,
-              bottom: 0,
-              zIndex: 30,
-              display: "flex",
-              flexDirection: "column",
-            }
-      }
-    >
-      {/* Header */}
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: 8,
-          padding: "10px 12px",
-          borderBottom: "1px solid var(--border)",
-          flexShrink: 0,
-        }}
-      >
-        {/* Title does not flex: the search field takes the slack instead, so a
-            narrow rail shrinks the field rather than squeezing the label into
-            an ellipsis. Element counts are deliberately absent — the tab strip
-            below already carries one per tab. */}
-        <div
-          style={{
-            fontSize: "var(--text-lg)",
-            fontWeight: 600,
-            color: "var(--text-primary)",
-            flexShrink: 0,
-          }}
-        >
-          Network
-        </div>
+    <div className="inspector-panel" style={shell}>
+      <div style={HEADER_BAR}>
         <input
           value={queryInput}
           onChange={(e) => setQueryInput(e.target.value)}
-          placeholder="Search…"
-          aria-label="Search network elements"
-          style={{
-            flex: 1,
-            minWidth: 0,
-            padding: "4px 8px",
-            borderRadius: 6,
-            border: "1px solid var(--border)",
-            background: "rgba(255,255,255,0.04)",
-            color: "var(--text-primary)",
-            fontSize: "var(--text-sm)",
-            outline: "none",
-            boxSizing: "border-box",
-          }}
+          placeholder="Find an element…"
+          aria-label="Find a network element"
+          spellCheck={false}
+          autoComplete="off"
+          style={SEARCH_INPUT}
         />
+        {queryInput && (
+          <button
+            type="button"
+            onClick={() => setQueryInput("")}
+            aria-label="Clear search"
+            data-tooltip="Clear search"
+            style={{
+              background: "none",
+              border: "none",
+              cursor: "pointer",
+              color: "var(--text-tertiary)",
+              display: "flex",
+              padding: 2,
+            }}
+          >
+            <XMarkIcon width={13} height={13} />
+          </button>
+        )}
+        {onClose && (
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close"
+            style={{
+              background: "none",
+              border: "none",
+              cursor: "pointer",
+              color: "var(--text-tertiary)",
+              display: "flex",
+              padding: 2,
+            }}
+          >
+            <XMarkIcon width={14} height={14} />
+          </button>
+        )}
+      </div>
+
+      {presentKinds.length > 1 && (
         <div
           style={{
             display: "flex",
-            alignItems: "center",
-            gap: 8,
+            gap: 3,
+            padding: "6px 8px",
+            overflowX: "auto",
+            scrollbarWidth: "none",
             flexShrink: 0,
+            borderBottom: "1px solid var(--border)",
           }}
         >
-          {onClose && (
-            <button
-              type="button"
-              onClick={onClose}
-              data-tooltip="Close"
-              style={{
-                background: "transparent",
-                border: "none",
-                color: "var(--text-tertiary)",
-                cursor: "pointer",
-                padding: 4,
-                lineHeight: 1,
-                display: "inline-flex",
-                alignItems: "center",
-                justifyContent: "center",
-              }}
-            >
-              <XMarkIcon style={{ width: 14, height: 14 }} />
-            </button>
-          )}
-        </div>
-      </div>
-
-      {/* Tab strip */}
-      <div
-        style={{
-          display: "flex",
-          borderBottom: "1px solid var(--border)",
-          flexShrink: 0,
-          background: "var(--bg-rail)",
-          marginTop: 8,
-          overflowX: "auto",
-          scrollbarWidth: "none",
-        }}
-      >
-        {(regions.length > 0
-          ? (["nodes", "links", "subcatchments"] as HomeTab[])
-          : (["nodes", "links"] as HomeTab[])
-        ).map((t) => {
-          const active = t === tab;
-          return (
-            <button
-              type="button"
-              key={t}
-              onClick={() => setTab(t)}
-              className={`inspector-tab${active ? " active" : ""}`}
-            >
-              <span>{tabHeading[t]}</span>
-              {/* While searching, an inactive tab holding matches is accented:
-                  the whole point is to be noticed from the other tab. A tab
-                  with none is dimmed to the disabled colour so "nothing here"
-                  reads differently from "nothing anywhere". */}
-              <span
-                data-tooltip={
-                  searching
-                    ? `${counts[t]} of ${totals[t]} match`
-                    : `${totals[t]} ${tabHeading[t].toLowerCase()}`
-                }
-                data-tooltip-pos="bottom"
+          <button
+            type="button"
+            onClick={() => setKindFilter(null)}
+            data-tooltip="Every kind"
+            style={{
+              ...CHIP_BASE,
+              color: activeKind == null ? "var(--accent)" : CHIP_BASE.color,
+              background:
+                activeKind == null
+                  ? "var(--selection-bg-strong)"
+                  : "transparent",
+              borderColor:
+                activeKind == null ? "var(--selection-border)" : "transparent",
+            }}
+          >
+            All
+          </button>
+          {presentKinds.map((k) => {
+            const on = activeKind === k.id;
+            return (
+              <button
+                type="button"
+                key={k.id}
+                onClick={() => setKindFilter(on ? null : k.id)}
+                data-tooltip={`${k.label} (${k.count})`}
                 style={{
-                  marginLeft: 4,
-                  fontSize: "var(--text-xs)",
-                  padding: "1px 4px",
-                  borderRadius: 4,
-                  background: active
-                    ? "var(--selection-bg-strong)"
-                    : searching && counts[t] > 0
-                      ? "rgba(212,160,23,0.18)"
-                      : "var(--bg-card)",
-                  color: active
-                    ? "var(--accent)"
-                    : searching
-                      ? counts[t] > 0
-                        ? "#d4a017"
-                        : "var(--text-disabled)"
-                      : "var(--text-tertiary)",
-                  fontFamily: "var(--font-mono)",
+                  ...CHIP_BASE,
+                  background: on ? "var(--selection-bg-strong)" : "transparent",
+                  borderColor: on ? "var(--selection-border)" : "transparent",
                 }}
               >
-                {counts[t]}
-              </span>
-            </button>
-          );
-        })}
+                <TypeBadge type={k.id} size="sm" />
+                <span>{k.count}</span>
+              </button>
+            );
+          })}
+        </div>
+      )}
+
+      <div style={COUNT_BAR}>
+        <span>
+          {searching || activeKind
+            ? `${visible.length.toLocaleString()} of ${rows.length.toLocaleString()}`
+            : `${rows.length.toLocaleString()} elements`}
+        </span>
+        <span
+          style={{
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            textTransform: "none",
+            letterSpacing: 0,
+          }}
+        >
+          {valueHeading}
+        </span>
       </div>
 
-      {/* Tab body */}
-      {tab === "nodes" && (
-        <NodesTab
-          query={query}
-          nodes={allNodes}
-          onSelect={onSelectNode}
-          onZoomTo={onZoomToNode}
-          activeId={activeNodeId}
-          resultColumns={nodeResultColumns}
-        />
-      )}
-      {tab === "subcatchments" && (
-        <SubcatchmentsTab
-          query={query}
-          regions={regions}
-          onSelect={onSelectRegion}
-          onZoomTo={onZoomToRegion}
-          activeId={activeRegionId}
-          resultColumns={regionResultColumns}
-        />
-      )}
-      {tab === "links" && (
-        <LinksTab
-          query={query}
-          links={allLinks}
-          zoomableNodeIds={zoomableNodeIds}
-          onSelect={onSelectLink}
-          onZoomTo={onZoomToLink}
-          activeId={activeLinkId}
-          resultColumns={linkResultColumns}
-        />
+      {visible.length === 0 ? (
+        <div
+          style={{
+            padding: 14,
+            fontSize: "var(--text-sm)",
+            color: "var(--text-tertiary)",
+            fontStyle: "italic",
+          }}
+        >
+          {rows.length === 0
+            ? "This project has no network yet."
+            : "Nothing matches."}
+        </div>
+      ) : (
+        <div
+          ref={scrollRef}
+          style={{ flex: 1, overflow: "auto", minHeight: 0 }}
+        >
+          <div
+            style={{
+              height: rowVirtualizer.getTotalSize(),
+              position: "relative",
+            }}
+          >
+            {rowVirtualizer.getVirtualItems().map((v) => {
+              const row = visible[v.index];
+              const isActive = row.id === activeId;
+              const zoomable = canZoomTo(row);
+              return (
+                <div
+                  key={`${row.cls}:${row.id}`}
+                  style={{
+                    position: "absolute",
+                    top: 0,
+                    left: 0,
+                    width: "100%",
+                    height: v.size,
+                    transform: `translateY(${v.start}px)`,
+                  }}
+                >
+                  {/* The row is the button; the zoom control is its sibling
+                      rather than its child, because a button inside a button
+                      is invalid and gives the row two focus stops. */}
+                  <button
+                    type="button"
+                    onClick={() => select(row)}
+                    style={{
+                      width: "100%",
+                      height: "100%",
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 6,
+                      padding: `0 ${zoomable ? 26 : 8}px 0 8px`,
+                      textAlign: "left",
+                      font: "inherit",
+                      cursor: "pointer",
+                      userSelect: "none",
+                      boxSizing: "border-box",
+                      border: "none",
+                      borderBottom: "1px solid rgba(255,255,255,0.04)",
+                      background: isActive
+                        ? "var(--selection-bg)"
+                        : "transparent",
+                      outline: isActive
+                        ? "1px solid var(--selection-border)"
+                        : undefined,
+                      outlineOffset: "-1px",
+                    }}
+                    onMouseEnter={(e) => {
+                      if (!isActive)
+                        e.currentTarget.style.background =
+                          "rgba(255,255,255,0.04)";
+                    }}
+                    onMouseLeave={(e) => {
+                      if (!isActive)
+                        e.currentTarget.style.background = "transparent";
+                    }}
+                  >
+                    <span
+                      style={{
+                        width: BADGE_COL_WIDTH - 6,
+                        display: "flex",
+                        justifyContent: "center",
+                        flexShrink: 0,
+                      }}
+                      data-tooltip={kindLabel.get(row.kind) ?? row.kind}
+                    >
+                      <TypeBadge type={row.kind} />
+                    </span>
+                    <span
+                      style={{
+                        flex: 1,
+                        minWidth: 0,
+                        display: "flex",
+                        flexDirection: "column",
+                        justifyContent: "center",
+                        overflow: "hidden",
+                      }}
+                    >
+                      <span
+                        style={{
+                          color: "var(--accent)",
+                          fontFamily: "var(--font-mono)",
+                          fontSize: "var(--text-sm)",
+                          fontWeight: 500,
+                          overflow: "hidden",
+                        }}
+                      >
+                        <MiddleTruncate text={row.id} />
+                      </span>
+                      {/* What a row connects to is the disambiguator when a
+                        query matched it there rather than on its id. */}
+                      {searching && row.context && (
+                        <span
+                          style={{
+                            fontSize: "var(--text-2xs)",
+                            color: "var(--text-tertiary)",
+                            fontFamily: "var(--font-mono)",
+                            overflow: "hidden",
+                            textOverflow: "ellipsis",
+                            whiteSpace: "nowrap",
+                          }}
+                        >
+                          {row.context}
+                        </span>
+                      )}
+                    </span>
+                    <span
+                      style={{
+                        fontFamily: "var(--font-mono)",
+                        fontSize: "var(--text-sm)",
+                        color:
+                          row.value == null
+                            ? "var(--text-disabled)"
+                            : "var(--text-secondary)",
+                        flexShrink: 0,
+                      }}
+                      data-tooltip={
+                        row.format && row.value != null
+                          ? `${
+                              row.format === "pressure"
+                                ? "Pressure"
+                                : row.format === "flow"
+                                  ? "Flow"
+                                  : row.format.label
+                            } ${unitOf(row, sys)}`.trim()
+                          : undefined
+                      }
+                    >
+                      {formatValue(row, sys)}
+                    </span>
+                  </button>
+                  {zoomable && (
+                    <button
+                      type="button"
+                      onClick={() => zoomTo(row)}
+                      aria-label={`Zoom to ${row.id}`}
+                      data-tooltip="Zoom to"
+                      style={{
+                        position: "absolute",
+                        right: 6,
+                        top: "50%",
+                        transform: "translateY(-50%)",
+                        background: "none",
+                        border: "none",
+                        cursor: "pointer",
+                        color: "var(--text-tertiary)",
+                        display: "flex",
+                        padding: 0,
+                      }}
+                    >
+                      <MagnifyingGlassPlusIcon width={13} height={13} />
+                    </button>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
       )}
     </div>
   );
