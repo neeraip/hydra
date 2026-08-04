@@ -16,7 +16,7 @@
 // correctly, and so does an engine that does not exist yet.
 
 import { useMemo, useState } from "react";
-import type { GenericVariable, KindElements } from "../../hooks";
+import type { DeclaredVariable, KindElements } from "../../hooks";
 import { formatGenericValue, genericUnitLabel } from "../../hooks";
 import { formatElementAttribute } from "../../hooks/network";
 import { useUnitSystem } from "../../units";
@@ -71,9 +71,11 @@ export function KindTable({
   kindId: string;
   /** §4.3 property columns for this kind. */
   elements: KindElements;
-  /** §6 result variables for this kind's class; empty before a run. */
-  resultVariables: GenericVariable[];
-  /** Current-period values per element id; empty before a run. */
+  /** §6 result variables for this kind's class, from the engine's declared
+   * catalog — so the columns are the same whether or not a run exists. */
+  resultVariables: DeclaredVariable[];
+  /** Current-period values per element id; empty before a run, where every
+   * result cell then reads as the same em dash a missing value does. */
   resultValues: ResultValuesById;
   activeId?: string | null;
   onSelect?: (id: string) => void;

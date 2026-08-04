@@ -12,6 +12,7 @@
 
 import { useEffect, useState } from "react";
 import { tryInvokeOr } from "./ipc";
+import type { GenericQuantity } from "./results";
 
 /** One source-model file format an engine imports (hydra-common spec §2.2).
  *
@@ -207,6 +208,73 @@ export function useElementKinds(
     };
   }, [engine]);
   return kinds;
+}
+
+/**
+ * One result variable an engine declares, before any run exists.
+ *
+ * The same shape as a run's `GenericVariable` minus its `min`/`max`, which
+ * are a property of the results rather than of the engine. Use this to lay
+ * out result columns; use the run's catalog to read values.
+ */
+export interface DeclaredVariable {
+  id: string;
+  label: string;
+  symbol?: string;
+  quantity?: GenericQuantity;
+  ramp: string;
+}
+
+export interface DeclaredVariables {
+  pointVars: DeclaredVariable[];
+  polylineVars: DeclaredVariable[];
+  regionVars: DeclaredVariable[];
+}
+
+const EMPTY_VARIABLES: DeclaredVariables = {
+  pointVars: [],
+  polylineVars: [],
+  regionVars: [],
+};
+
+// Static per engine, exactly as the kind catalog is.
+const variableCache = new Map<string, DeclaredVariables>();
+
+export async function getResultVariables(
+  engine: string,
+): Promise<DeclaredVariables> {
+  const hit = variableCache.get(engine);
+  if (hit) return hit;
+  const vars = await tryInvokeOr<DeclaredVariables>(
+    "list_result_variables",
+    { engine },
+    EMPTY_VARIABLES,
+  );
+  variableCache.set(engine, vars);
+  return vars;
+}
+
+/** The result-variable catalog for `engine`; empty until it resolves. */
+export function useResultVariables(
+  engine: string | null | undefined,
+): DeclaredVariables {
+  const [vars, setVars] = useState<DeclaredVariables>(() =>
+    engine ? (variableCache.get(engine) ?? EMPTY_VARIABLES) : EMPTY_VARIABLES,
+  );
+  useEffect(() => {
+    if (!engine) {
+      setVars(EMPTY_VARIABLES);
+      return;
+    }
+    let cancelled = false;
+    void getResultVariables(engine).then((list) => {
+      if (!cancelled) setVars(list);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [engine]);
+  return vars;
 }
 
 /**

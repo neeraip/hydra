@@ -1918,6 +1918,86 @@ pub fn list_element_kinds(engine: String) -> &'static [hydra::common::ElementKin
     }
 }
 
+/// One result variable an engine declares, independent of any run.
+///
+/// The run-scoped counterpart (`GenericVariableDto`) carries the min/max a
+/// particular set of results spanned; this one deliberately does not. It
+/// answers "what would a run report", which a table can ask before there is
+/// anything to report.
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeclaredVariableDto {
+    pub id: String,
+    pub label: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub symbol: Option<String>,
+    /// The §5 quantity descriptor for the variable's SI values, resolved
+    /// from the owning engine's own catalog.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub quantity: Option<hydra::common::QuantityDescriptor>,
+    pub ramp: String,
+}
+
+/// An engine's declared result variables, per element class.
+#[derive(Debug, Clone, Default, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeclaredVariablesDto {
+    pub point_vars: Vec<DeclaredVariableDto>,
+    pub polyline_vars: Vec<DeclaredVariableDto>,
+    pub region_vars: Vec<DeclaredVariableDto>,
+}
+
+fn declared_variables(
+    engine: &str,
+    class: hydra::common::ElementClass,
+) -> Vec<DeclaredVariableDto> {
+    let (vars, quantities) = match engine {
+        "wds" => (
+            hydra::descriptors::result_variables(class),
+            hydra::descriptors::QUANTITIES,
+        ),
+        "uds" => (
+            hydra::uds::descriptors::result_variables(class),
+            hydra::uds::descriptors::QUANTITIES,
+        ),
+        _ => return Vec::new(),
+    };
+    vars.into_iter()
+        .map(|v| DeclaredVariableDto {
+            id: v.id.to_string(),
+            label: v.label.to_string(),
+            symbol: v.symbol.map(str::to_string),
+            quantity: v
+                .quantity
+                .and_then(|key| quantities.iter().find(|q| q.key == key).copied()),
+            ramp: match v.ramp {
+                hydra::common::RampHint::Diverging => "diverging",
+                hydra::common::RampHint::Banded => "banded",
+                _ => "sequential",
+            }
+            .to_string(),
+        })
+        .collect()
+}
+
+#[tauri::command]
+/// The result-variable catalog of one engine (hydra-common spec §6): every
+/// variable it reports, per element class, with the engine-authored label,
+/// symbol and §5 quantity.
+///
+/// Static per engine — which variables a class reports is a property of the
+/// domain, not of a particular run — so a table can lay out its result
+/// columns before a simulation exists, and stop changing shape when one
+/// appears. Values still come from the run; only the shape comes from here.
+pub fn list_result_variables(engine: String) -> DeclaredVariablesDto {
+    use hydra::common::ElementClass::{Point, Polyline, Region};
+    DeclaredVariablesDto {
+        point_vars: declared_variables(&engine, Point),
+        polyline_vars: declared_variables(&engine, Polyline),
+        region_vars: declared_variables(&engine, Region),
+    }
+}
+
 #[tauri::command]
 /// Return the hydra engine and application version strings.
 pub fn get_versions() -> Versions {
@@ -1946,6 +2026,56 @@ pub fn updater_supported() -> bool {
 
 #[cfg(test)]
 mod tests {
+    /// Resolution must neither lose a quantity nor invent one.
+    ///
+    /// A variable that declares a quantity key and comes back without it
+    /// serves a column with no unit and no conversion — a bare SI number in
+    /// a US-units project. A variable that declares none legitimately has
+    /// none: wds quality carries mg/L, hours or percent depending on the
+    /// quality mode, so no single descriptor fits it.
+    #[test]
+    fn declared_variables_resolve_for_every_engine() {
+        use hydra::common::ElementClass::{Point, Polyline, Region};
+        for engine in ["wds", "uds"] {
+            for class in [Point, Polyline, Region] {
+                let raw = match engine {
+                    "wds" => hydra::descriptors::result_variables(class),
+                    _ => hydra::uds::descriptors::result_variables(class),
+                };
+                let served = declared_variables(engine, class);
+                assert_eq!(
+                    served.len(),
+                    raw.len(),
+                    "{engine} dropped a {class:?} variable"
+                );
+                for (dto, descriptor) in served.iter().zip(raw.iter()) {
+                    assert_eq!(dto.id, descriptor.id);
+                    assert!(!dto.label.is_empty(), "{engine} {} has no label", dto.id);
+                    assert_eq!(
+                        dto.quantity.is_some(),
+                        descriptor.quantity.is_some(),
+                        "{engine} {} quantity resolution disagrees with its declaration",
+                        dto.id
+                    );
+                }
+            }
+        }
+        // Both engines model points and links, so neither may be silent
+        // about them; only uds has areal elements.
+        for engine in ["wds", "uds"] {
+            assert!(
+                !declared_variables(engine, Point).is_empty(),
+                "{engine} points"
+            );
+            assert!(
+                !declared_variables(engine, Polyline).is_empty(),
+                "{engine} links"
+            );
+        }
+        assert!(!declared_variables("uds", Region).is_empty());
+        assert!(declared_variables("och", Point).is_empty());
+    }
+
     // ── Frontend registry mirror ─────────────────────────────────────────────
 
     /// The frontend keeps `FALLBACK_ENGINES`, a hand-written copy of the

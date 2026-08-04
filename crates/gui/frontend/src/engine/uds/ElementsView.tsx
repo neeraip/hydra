@@ -19,6 +19,8 @@ import {
 } from "../../components/panels/KindTable";
 import { TypeBadge } from "../../components/ui/TypeBadge";
 import {
+  type DeclaredVariable,
+  type DeclaredVariables,
   type ElementClass,
   type GenericVariable,
   getGenericPeriodValues,
@@ -27,20 +29,38 @@ import {
   useLinks,
   useNodes,
   useRegions,
+  useResultVariables,
 } from "../../hooks";
 
 /** Result variables belong to a class, so every kind in a class shares
- * them — a junction and an outfall both report depth and flooding. */
+ * them — a junction and an outfall both report depth and flooding.
+ *
+ * Taken from the engine's declared catalog rather than from a run, so the
+ * columns are the same before and after a simulation. A table that grew
+ * columns when results appeared changed width under you every time you
+ * switched between a simulated and an unsimulated scenario, and said
+ * nothing at all about what a run would report. */
 function variablesForClass(
-  meta: ReturnType<typeof useSimulation>["resultMeta"],
+  declared: DeclaredVariables,
   cls: ElementClass,
-): GenericVariable[] {
-  const g = meta?.generic;
-  if (!g) return [];
-  if (cls === "point") return g.pointVars;
-  if (cls === "polyline") return g.polylineVars;
-  if (cls === "region") return g.regionVars;
+): DeclaredVariable[] {
+  if (cls === "point") return declared.pointVars;
+  if (cls === "polyline") return declared.polylineVars;
+  if (cls === "region") return declared.regionVars;
   return [];
+}
+
+/** Where each declared variable sits in a period payload.
+ *
+ * The payload's arrays are ordered by what the results file actually
+ * carries, which need not match the catalog's presentation order — so the
+ * join is by id, and a variable the run does not carry simply has no index
+ * and renders empty. */
+function payloadIndices(
+  declared: DeclaredVariable[],
+  served: GenericVariable[] | undefined,
+): number[] {
+  return declared.map((v) => served?.findIndex((s) => s.id === v.id) ?? -1);
 }
 
 export function UdsElementsView() {
@@ -58,6 +78,7 @@ export function UdsElementsView() {
   const period = useCurrentPeriod();
 
   const kinds = useElementKinds(project?.engine);
+  const declaredVariables = useResultVariables(project?.engine);
   const nodes = useNodes();
   const links = useLinks();
   const regions = useRegions();
@@ -81,7 +102,7 @@ export function UdsElementsView() {
   const activeClass = present.find((k) => k.id === kind)?.class ?? "point";
 
   const elements = useKindElements(project?.id, activeScenarioId, kind);
-  const variables = variablesForClass(resultMeta, activeClass);
+  const variables = variablesForClass(declaredVariables, activeClass);
 
   // Current-period results for this class, keyed by element id. The payload
   // is class-wide and snapshot-ordered, so it is joined to ids here.
@@ -94,6 +115,13 @@ export function UdsElementsView() {
       return;
     }
     let cancelled = false;
+    const served =
+      activeClass === "point"
+        ? resultMeta?.generic?.pointVars
+        : activeClass === "polyline"
+          ? resultMeta?.generic?.polylineVars
+          : resultMeta?.generic?.regionVars;
+    const indices = payloadIndices(variables, served);
     void getGenericPeriodValues(projectId, period, activeScenarioId).then(
       (payload) => {
         if (cancelled || !payload) return;
@@ -114,7 +142,8 @@ export function UdsElementsView() {
         ordered.forEach((el, i) => {
           const row: Record<string, number | null> = {};
           variables.forEach((v, vi) => {
-            const value = arrays[vi]?.[i];
+            const at = indices[vi];
+            const value = at >= 0 ? arrays[at]?.[i] : undefined;
             row[v.id] = value != null && Number.isFinite(value) ? value : null;
           });
           next.set(el.id, row);
