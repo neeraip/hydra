@@ -154,6 +154,54 @@ pub const ELEMENT_KINDS: &[ElementKind] = &[
         role: None,
         badge: "Ru",
     },
+    ElementKind {
+        id: "landuse",
+        label: "Land use",
+        label_plural: "Land uses",
+        class: ElementClass::Collection,
+        role: None,
+        badge: "Lu",
+    },
+    ElementKind {
+        id: "aquifer",
+        label: "Aquifer",
+        label_plural: "Aquifers",
+        class: ElementClass::Collection,
+        role: None,
+        badge: "Aq",
+    },
+    ElementKind {
+        id: "snowpack",
+        label: "Snow pack",
+        label_plural: "Snow packs",
+        class: ElementClass::Collection,
+        role: None,
+        badge: "Sn",
+    },
+    ElementKind {
+        id: "hydrograph",
+        label: "Unit hydrograph",
+        label_plural: "Unit hydrographs",
+        class: ElementClass::Collection,
+        role: None,
+        badge: "Uh",
+    },
+    ElementKind {
+        id: "lidcontrol",
+        label: "LID control",
+        label_plural: "LID controls",
+        class: ElementClass::Collection,
+        role: None,
+        badge: "Li",
+    },
+    ElementKind {
+        id: "transect",
+        label: "Transect",
+        label_plural: "Transects",
+        class: ElementClass::Collection,
+        role: None,
+        badge: "Tr",
+    },
 ];
 
 // ── Quantities (spec §5) ──────────────────────────────────────────────────────
@@ -300,6 +348,99 @@ pub fn attribute_schema(kind_id: &str) -> Vec<AttributeDescriptor> {
                 OptionKind::Boolean { default: None },
                 None,
             ),
+        ],
+        // ── Collections (§4.1 `collection` class) ─────────────────────
+        //
+        // These carry no geometry, so an application lists them the same
+        // way it lists a junction: by id, with the columns declared here.
+        // The point of each is a table or a rule body — too large for a
+        // cell — so the schemas describe *what a row is* and how big,
+        // leaving the contents to a dedicated editor.
+        "pollutant" => vec![
+            attr("units", "Units", text(), None),
+            attr("rainConc", "Rainfall conc.", num(), Some("concentration")),
+            attr(
+                "groundwaterConc",
+                "Groundwater conc.",
+                num(),
+                Some("concentration"),
+            ),
+            attr("rdiiConc", "RDII conc.", num(), Some("concentration")),
+            attr("dwfConc", "Dry-weather conc.", num(), Some("concentration")),
+            // First-order decay, per day: dimensionless in the §5 catalog
+            // because a reciprocal-time quantity has no entry there.
+            attr("decay", "Decay (1/day)", num(), None),
+            attr(
+                "snowOnly",
+                "Snow only",
+                OptionKind::Boolean { default: None },
+                None,
+            ),
+        ],
+        "curve" => vec![
+            attr("curveType", "Type", text(), None),
+            attr("points", "Points", num(), None),
+        ],
+        "timeseries" => vec![
+            attr("source", "Source", text(), None),
+            attr("points", "Points", num(), None),
+        ],
+        "pattern" => vec![
+            attr("patternType", "Type", text(), None),
+            attr("factors", "Factors", num(), None),
+        ],
+        "rule" => vec![attr("clauses", "Clauses", num(), None)],
+        // ── Process parameter sets ────────────────────────────────────
+        //
+        // Named registries the model references by id: a subcatchment
+        // names its land uses, an aquifer, a snow pack; a storage vertex
+        // names a unit hydrograph group. Each is a parameter set rather
+        // than a table, so the columns are the parameters a modeller
+        // compares across the set, and the deeper structure (per-pollutant
+        // buildup curves, per-month responses, per-layer LID geometry)
+        // stays behind the row.
+        "landuse" => vec![
+            attr("sweepInterval", "Sweep interval (days)", num(), None),
+            // A fraction of available load, not a percentage: the parser
+            // rejects anything outside 0–1, so labelling it `percent`
+            // would render 0.5 as "0.5 %" and mean 50.
+            attr("sweepRemoval", "Sweep removal (fraction)", num(), None),
+            attr("sweepDaysSince", "Days since swept", num(), None),
+            attr("buildupFor", "Buildup defined", num(), None),
+            attr("washoffFor", "Washoff defined", num(), None),
+        ],
+        "aquifer" => vec![
+            attr("porosity", "Porosity", num(), None),
+            attr("wiltingPoint", "Wilting point", num(), None),
+            attr("fieldCapacity", "Field capacity", num(), None),
+            attr("conductivity", "Conductivity", num(), Some("infiltration")),
+            attr("upperEvapFrac", "Upper evap. fraction", num(), None),
+            attr("lowerEvapDepth", "Lower evap. depth", num(), Some("depth")),
+        ],
+        "snowpack" => vec![
+            attr("surfaces", "Surfaces defined", num(), None),
+            attr("plowFraction", "Plowable fraction", num(), None),
+            attr(
+                "removal",
+                "Removal defined",
+                OptionKind::Boolean { default: None },
+                None,
+            ),
+        ],
+        "hydrograph" => vec![
+            attr("raingage", "Rain gage", text(), None),
+            attr("responses", "Responses defined", num(), None),
+        ],
+        "lidcontrol" => vec![
+            attr("lidType", "Type", text(), None),
+            attr("layers", "Layers defined", num(), None),
+            attr("removals", "Pollutant removals", num(), None),
+        ],
+        "transect" => vec![
+            attr("nChannel", "Channel roughness", num(), None),
+            attr("nLeft", "Left-bank roughness", num(), None),
+            attr("nRight", "Right-bank roughness", num(), None),
+            attr("stations", "Stations", num(), None),
         ],
         _ => Vec::new(),
     }
@@ -466,6 +607,23 @@ mod tests {
             assert!(
                 matches!(hint(ElementClass::Point, id), RampHint::Sequential),
                 "{id} is unsigned"
+            );
+        }
+    }
+
+    /// Every declared kind must be listable, collections included.
+    ///
+    /// A kind with no attribute schema has no columns, so an application
+    /// building a table from the catalog gets an entry that opens onto
+    /// nothing — which is why the drainage editor hid its five collection
+    /// kinds outright rather than show five empty tables.
+    #[test]
+    fn every_kind_has_attributes_to_show() {
+        for kind in ELEMENT_KINDS {
+            assert!(
+                !attribute_schema(kind.id).is_empty(),
+                "{} declares no attribute schema, so nothing can list it",
+                kind.id
             );
         }
     }
