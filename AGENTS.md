@@ -209,3 +209,50 @@ Brief inline progress notes during multi-step work are fine (e.g. "running cargo
 - **Parallelism:** Only parallelise operations marked **∥** in the owning spec. Do not introduce parallelism for anything else without updating the spec first.
 - **Error handling:** Solver and model crates return `Result` with domain-specific error types. No `unwrap()` or `expect()` outside test code. Every `unsafe` block requires a `// SAFETY:` comment.
 - **Testing:** Use fast, targeted commands during iteration (`cargo check`, `cargo test -p <crate> <name>`, and in `crates/gui/frontend` `npx tsc --noEmit` / `npx biome check <file>` for pinpoint checks). But the check that declares a task **complete** must be a `just` recipe, because only the recipes carry the exact flags and whole-tree scope CI enforces (`clippy -D warnings`, `--locked`, `RUSTDOCFLAGS=-D warnings`, frozen lockfile, whole-tree Biome, the `tauri/custom-protocol` feature): `just lint` (all static checks), `just verify` (adds the full Rust + frontend test suites), or `just ci` (the complete CI gate). A green targeted run is not proof CI is green — note that `cargo test` never exercises the React/TypeScript frontend at all.
+
+---
+
+## Regression Discipline
+
+Every defect that reaches the running app gets a test that would have
+caught it, committed with the fix. The point is not coverage — it is that
+the same mistake cannot be made twice silently.
+
+**Test the decision, not the symptom.** Most defects here have been a
+decision buried where nothing can call it: a ternary inside JSX, a branch
+inside an effect. Extract it into a named exported function taking plain
+data, and test that. This is a design improvement first and a testability
+one second — a decision with a name and a docstring is a decision someone
+can review. `resultsPath`, `readScaleMode`, `railOpenForLocation`,
+`clearableCountOf`, and `splitForTruncation` all exist because a bug proved
+they should.
+
+**Watch for one identifier meaning two things.** The recurring defect shape
+in this codebase is a single value answering two questions that later
+diverge: a result catalog that also meant "how periods are encoded"; a
+variable id that also meant "which engine's criteria apply"; a rail
+preference that also meant "is a rail on screen". When you find yourself
+reading a field to answer a question it was not named for, split it and
+give each half a test asserting they are independent.
+
+**Layers, and what belongs in each:**
+
+| Layer | Use for | Where |
+|---|---|---|
+| Rust unit | Solver maths, parsers, catalogs, DTO shape and gating | Beside the code, `#[cfg(test)]` |
+| Pure TS | Decisions, formatting, preference migration, geometry | `*.test.ts`, `environment: node` |
+| Component | What the user actually reads: which elements render, what dismisses, what is offered | `*.test.tsx` with `@vitest-environment jsdom` |
+
+Component tests need the `@vitest-environment jsdom` docblock; without it
+they run in Node and fail on `document`. Cleanup is automatic
+(`src/test-setup.ts`).
+
+**Cross-boundary invariants get a test on each side.** The Rust DTO and the
+TypeScript interface are hand-mirrored, so a claim that matters on both
+sides (an engine publishes a catalog but does not serve generic periods)
+is asserted in both places. Neither test alone would have caught the drift.
+
+**Not currently covered, and known:** no end-to-end test drives the real
+Tauri shell, and nothing checks appearance — a purely visual regression
+(a stray gradient, a wrong colour) will not be caught by any test here.
+
