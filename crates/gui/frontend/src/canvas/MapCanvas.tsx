@@ -1013,19 +1013,18 @@ export const MapCanvas = memo(function MapCanvas({
    */
   const viewportBox = useCallback((): ViewportBox | null => {
     if (orthographicRef.current) {
-      const canvas = deckCanvasRef.current;
-      const vs = viewStateRef.current;
-      if (!canvas || !vs || !("target" in vs)) return null;
-      const scale = 2 ** vs.zoom;
-      const halfW = canvas.clientWidth / 2 / scale;
-      const halfH = canvas.clientHeight / 2 / scale;
-      const [cx, cy] = vs.target;
-      return {
-        west: cx - halfW,
-        east: cx + halfW,
-        south: cy - halfH,
-        north: cy + halfH,
-      };
+      // deck's own viewport, rather than deriving the extent from the stored
+      // camera and the canvas size by hand. It already knows the canvas
+      // size, the zoom-to-scale convention and the view's Y orientation, and
+      // it answers from whatever deck is *actually* rendering rather than
+      // from a ref that several code paths write and one seeds with a
+      // geographic camera. The hand-rolled version had a null to return for
+      // each of those it could not satisfy, and a null reads as "everything
+      // is visible".
+      const viewport = deckRef.current?.getViewports()[0];
+      if (!viewport) return null;
+      const [west, south, east, north] = viewport.getBounds();
+      return { west, south, east, north };
     }
     const map = mapRef.current;
     if (!map) return null;
