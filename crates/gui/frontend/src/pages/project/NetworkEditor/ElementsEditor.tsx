@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAppState } from "../../../AppContext";
 import { useCanvasSelection } from "../../../canvas/selection-context";
 import { RenameElementModal } from "../../../components/modals/RenameElementModal";
-import { TabButton } from "../../../components/ui/TabButton";
 import {
   type JunctionRow,
   type PipeRow,
@@ -20,10 +19,7 @@ import {
 import { ELEMENT_TEMP_ID_PREFIX, useDraft } from "../../../hooks/DraftContext";
 import { useElementRename } from "../../../hooks/useElementRename";
 import { readTextScale } from "../../../textScale";
-import {
-  collectDirtyKinds,
-  type ElementKind,
-} from "./elementsEditorDerivations";
+import type { ElementKind } from "./elementsEditorDerivations";
 import { JunctionTable } from "./JunctionTable";
 import { PipeTable } from "./PipeTable";
 import { PumpTable } from "./PumpTable";
@@ -38,7 +34,7 @@ import {
 } from "./tableSearch";
 import { ValveTable } from "./ValveTable";
 
-type Section =
+export type Section =
   | "junctions"
   | "pipes"
   | "pumps"
@@ -59,10 +55,20 @@ const SECTION_FOR_KIND: Record<string, Section> = {
 };
 
 export function ElementsEditor({
+  section,
+  onSectionChange,
   focusKind,
   focusId,
   focusToken,
 }: {
+  /** Which kind's table to show. Owned by the Editor's rail rather than
+   * here: the rail lists every kind and every collection as one flat
+   * inventory, so the active kind is part of the page's navigation state,
+   * not this component's. */
+  section: Section;
+  /** Requested when something inside reveals an element of another kind
+   * (the pump-curve link, the canvas's "Open in editor"). */
+  onSectionChange: (section: Section) => void;
   /** Element kind to reveal when `focusToken` changes ("junction" | "pipe" |
    *  "pump" | "tank" | "reservoir" | "valve"). */
   focusKind?: string;
@@ -97,7 +103,8 @@ export function ElementsEditor({
   const { selectNode, selectLink, zoomToNode, zoomToLink } =
     useCanvasSelection();
   const editorVisible = deferredProjectView === "editor";
-  const [activeSection, setActiveSection] = useState<Section>("junctions");
+  const activeSection = section;
+  const setActiveSection = onSectionChange;
   const [searchQuery, setSearchQuery] = useState("");
   // Filtering runs against a debounced copy of the query so fast typing does
   // not re-filter ~46k rows on every keystroke. Clearing is applied
@@ -181,8 +188,7 @@ export function ElementsEditor({
       container.scrollTop = Math.max(0, target);
     };
     requestAnimationFrame(tryScroll);
-  }, [focusToken, focusId, focusKind]);
-  const draftValues = useMemo(() => Array.from(draft.values()), [draft]);
+  }, [focusToken, focusId, focusKind, setActiveSection]);
   const pendingKeys = useMemo(() => new Set(draft.keys()), [draft]);
   // Per-kind temp-id sets: each table only receives its own kind's pending
   // row ids, so e.g. a pending junction no longer makes the Pipes table mount
@@ -231,17 +237,6 @@ export function ElementsEditor({
     [draft],
   );
 
-  // Per-kind dirty flags for the element sub-tabs.
-  const dirtyKinds = useMemo(
-    () =>
-      collectDirtyKinds({
-        draftEntries: draftValues,
-        pendingAdds,
-        pendingDeletes,
-      }),
-    [draftValues, pendingAdds, pendingDeletes],
-  );
-
   // Stage a change locally without writing to the backend yet.
   const handleStage = useCallback(
     (kind: string, id: string, field: string, value: number | string) => {
@@ -254,17 +249,25 @@ export function ElementsEditor({
     [setDraft],
   );
 
-  const handleTabClick = (section: Section) => {
-    setActiveSection(section);
+  // A table's search, sort and selection belong to the kind being shown,
+  // so they reset when the rail moves to another one. This runs on the
+  // prop rather than in a click handler because the rail now owns the
+  // choice — and because the canvas's "Open in editor" changes it too,
+  // which a click handler would never have seen.
+  //
+  // The debounced copy is cleared here as well, not left to its own
+  // effect, so the newly shown kind never paints one frame filtered by
+  // the previous kind's query.
+  const shownSection = useRef(section);
+  useEffect(() => {
+    if (shownSection.current === section) return;
+    shownSection.current = section;
     setSearchQuery("");
-    // Clear the debounced copy in the same handler (not just via the
-    // debounce effect) so the newly shown section never paints one frame
-    // filtered by the previous section's query.
     setDebouncedQuery("");
     setSortField(null);
     setSortAsc(true);
     setSelectedId(null);
-  };
+  }, [section]);
 
   // Tri-state: ascending → descending → unsorted (the network's natural
   // file order), matching the rail's network-list sorting.
@@ -868,56 +871,6 @@ export function ElementsEditor({
           minWidth: 0,
         }}
       >
-        {/* Scrollable tab strip */}
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 4,
-            overflowX: "auto",
-            flexShrink: 1,
-            minWidth: 0,
-            scrollbarWidth: "none",
-          }}
-        >
-          <TabButton
-            variant="underline"
-            active={activeSection === "junctions"}
-            onClick={() => handleTabClick("junctions")}
-            dirty={dirtyKinds.has("junction")}
-          >{`Junctions (${junctionRowsAllWithPending.length})`}</TabButton>
-          <TabButton
-            variant="underline"
-            active={activeSection === "pipes"}
-            onClick={() => handleTabClick("pipes")}
-            dirty={dirtyKinds.has("pipe")}
-          >{`Pipes (${pipeRowsAllWithPending.length})`}</TabButton>
-          <TabButton
-            variant="underline"
-            active={activeSection === "pumps"}
-            onClick={() => handleTabClick("pumps")}
-            dirty={dirtyKinds.has("pump")}
-          >{`Pumps (${pumpRowsAllWithPending.length})`}</TabButton>
-          <TabButton
-            variant="underline"
-            active={activeSection === "tanks"}
-            onClick={() => handleTabClick("tanks")}
-            dirty={dirtyKinds.has("tank")}
-          >{`Tanks (${tankRowsAllWithPending.length})`}</TabButton>
-          <TabButton
-            variant="underline"
-            active={activeSection === "reservoirs"}
-            onClick={() => handleTabClick("reservoirs")}
-            dirty={dirtyKinds.has("reservoir")}
-          >{`Reservoirs (${reservoirRowsAllWithPending.length})`}</TabButton>
-          <TabButton
-            variant="underline"
-            active={activeSection === "valves"}
-            onClick={() => handleTabClick("valves")}
-            dirty={dirtyKinds.has("valve")}
-          >{`Valves (${valveRowsAllWithPending.length})`}</TabButton>
-        </div>
-
         <div style={{ flex: 1 }} />
 
         {/* Search */}
