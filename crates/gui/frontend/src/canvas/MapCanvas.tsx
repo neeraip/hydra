@@ -2444,6 +2444,14 @@ export const MapCanvas = memo(function MapCanvas({
   // two tracks onto one degree of freedom.)
   const framedForRef = useRef<{ nodes: Node[]; links: Link[] } | null>(null);
   const inSchematicRef = useRef(false);
+  // One deck serves both orthographic views, but a plan and a schematic are
+  // different coordinate spaces — the model's own units against the layout's
+  // grid — so a camera carried from one to the other lands nowhere. Each
+  // space keeps its own, restored on return and framed afresh the first time.
+  const orthoSpaceRef = useRef<"plan" | "topological" | null>(null);
+  const savedOrthoViewRef = useRef<
+    Record<"plan" | "topological", SchematicViewState | null>
+  >({ plan: null, topological: null });
   useEffect(() => {
     // Reset before the `isActive` guard, so returning to schematic re-frames.
     if (viewMode !== "schematic") {
@@ -2453,16 +2461,32 @@ export const MapCanvas = memo(function MapCanvas({
     if (!isActive) return;
     const deck = ensureDeck();
     if (!deck) return;
+
+    const space = topological ? "topological" : "plan";
+    const prevSpace = orthoSpaceRef.current;
+    const spaceChanged = prevSpace != null && prevSpace !== space;
+    if (spaceChanged) {
+      savedOrthoViewRef.current[prevSpace] =
+        viewStateRef.current as SchematicViewState;
+    }
+    orthoSpaceRef.current = space;
+
     const framed = framedForRef.current;
+    const networkChanged = framed?.nodes !== nodes || framed?.links !== links;
+    // A camera saved against a different network frames the wrong thing.
+    if (networkChanged) {
+      savedOrthoViewRef.current = { plan: null, topological: null };
+    }
+    const saved = savedOrthoViewRef.current[space];
     const reframe =
-      !inSchematicRef.current ||
-      framed?.nodes !== nodes ||
-      framed?.links !== links;
+      !inSchematicRef.current || networkChanged || (spaceChanged && !saved);
     inSchematicRef.current = true;
     framedForRef.current = { nodes, links };
     const vs = reframe
       ? orthoCenterFromMap(renderCoords)
-      : (viewStateRef.current as SchematicViewState);
+      : spaceChanged && saved
+        ? saved
+        : (viewStateRef.current as SchematicViewState);
     viewStateRef.current = vs;
     deck.setProps({
       views: orthoViewRef.current,
@@ -2478,6 +2502,7 @@ export const MapCanvas = memo(function MapCanvas({
     markFirstFrame,
     nodes,
     renderCoords,
+    topological,
     viewMode,
   ]);
 
