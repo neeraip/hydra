@@ -314,7 +314,12 @@ export function Timeline({
             fontFamily: "var(--font-mono)",
           }}
         >
-          step {currentHour.toString().padStart(2, "0")} / {effectiveMaxStep}
+          {/* Counted from one, because it counts reported periods rather
+              than indexing an array. The distinction shows: drainage takes
+              its first reading one report step in, so a zero here sat
+              beside a clock reading 00:01 and the two looked out of step
+              with each other when both were right. */}
+          period {currentHour + 1} / {effectiveMaxStep + 1}
         </span>
       </div>
 

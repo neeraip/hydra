@@ -280,6 +280,13 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
     }
   }, [modelEditable, activeTool]);
   const [currentHour, setCurrentHour] = useState(0);
+  // A scrub position belongs to the run it was scrubbed in. Carrying it to
+  // another project pointed at a period that project may not even have, and
+  // silently answered "what is happening now" with someone else's clock.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the project id is the reset trigger.
+  useEffect(() => {
+    setCurrentHour(0);
+  }, [project?.id]);
   const [nodeVar, setNodeVar] = useState<NodeVariable>(
     CANVAS_PREF_DEFAULTS.nodeVar,
   );
