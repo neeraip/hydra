@@ -710,7 +710,7 @@ export function CrsModal() {
                     fontFamily: "var(--font-mono)",
                   }}
                 >
-                  {normalizedDraft || "(none)"}
+                  {crsLabel(normalizedDraft) || "(none)"}
                 </span>
                 {highlightedEntry && (
                   <span
