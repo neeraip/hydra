@@ -23,6 +23,7 @@ import { MagnifyingGlassPlusIcon, XMarkIcon } from "@heroicons/react/16/solid";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useActiveProject } from "../../AppContext";
+import { useHoverActions } from "../../canvas/hover-context";
 import type { SimResultColumn } from "../../canvas/selection-context";
 import type { ElementClass, Link, Node } from "../../hooks";
 import {
@@ -241,6 +242,9 @@ export function NetworkInspectorHome({
   embedded,
 }: Props) {
   const sys = useUnitSystem();
+  // Setters only — this panel never reads hover state, so moving the pointer
+  // down a list of 46k rows never re-renders it.
+  const { hoverNode, hoverLink, hoverRegion, clearHover } = useHoverActions();
   const internalNodes = useNodes();
   const internalLinks = useLinks();
   const internalRegions = useRegions();
@@ -415,6 +419,14 @@ export function NetworkInspectorHome({
     lastScrolledTo.current = activeId;
     rowVirtualizer.scrollToIndex(index, { align: "auto" });
   }, [activeId, visible, rowVirtualizer]);
+
+  /** Hovering a row lights the element up on the canvas, exactly as
+   * hovering the element itself does. */
+  function hover(row: Row) {
+    if (row.cls === "point") hoverNode(row.id);
+    else if (row.cls === "polyline") hoverLink(row.id);
+    else hoverRegion(row.id);
+  }
 
   function select(row: Row) {
     if (row.cls === "point") onSelectNode(row.id);
@@ -644,11 +656,15 @@ export function NetworkInspectorHome({
                       if (!isActive)
                         e.currentTarget.style.background =
                           "rgba(255,255,255,0.04)";
+                      hover(row);
                     }}
                     onMouseLeave={(e) => {
                       if (!isActive)
                         e.currentTarget.style.background = "transparent";
+                      clearHover();
                     }}
+                    onFocus={() => hover(row)}
+                    onBlur={() => clearHover()}
                   >
                     <span
                       style={{

@@ -38,6 +38,7 @@ import {
 } from "./Basemap";
 import { FlowPathLayer } from "./FlowPathLayer";
 import { HoverChip, type HoverTip } from "./HoverChip";
+import { useHoverActions, useHoverState } from "./hover-context";
 import { useCanvasLayers } from "./layers-context";
 import {
   genericRgba,
@@ -402,8 +403,20 @@ export const MapCanvas = memo(function MapCanvas({
   const mapElRef = useRef<HTMLDivElement>(null);
   const deckHostRef = useRef<HTMLDivElement>(null);
   const { layers: canvasLayers } = useCanvasLayers();
-  const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null);
-  const [hoveredLinkId, setHoveredLinkId] = useState<string | null>(null);
+  // Hover is shared state, not local: the network list and the inspector
+  // drive it too, so hovering a row there lights the element up here.
+  const { hoveredNodeId, hoveredLinkId, hoveredRegionId } = useHoverState();
+  const {
+    hoverNode: setHoveredNodeId,
+    hoverLink: setHoveredLinkId,
+    hoverRegion: setHoveredRegionId,
+    clearHover,
+  } = useHoverActions();
+  // These refs deliberately track only what the *canvas* pointer is over,
+  // never what the list or inspector hovers. They gate node dragging and
+  // add-node placement, which must answer "what is under the cursor on the
+  // map" — syncing them with the shared hover would make hovering a list row
+  // silently refuse the next click on the map.
   const hoveredNodeIdRef = useRef<string | null>(null);
   const hoveredLinkIdRef = useRef<string | null>(null);
   // Cursor-following value chip: the element under the pointer + its position.
@@ -716,7 +729,7 @@ export const MapCanvas = memo(function MapCanvas({
       setHoveredNodeId(null);
       setHoverTip(null);
     }
-  }, [tool]);
+  }, [tool, setHoveredNodeId, setHoveredLinkId]);
   useEffect(() => {
     viewModeRef.current = viewMode;
   }, [viewMode]);
@@ -1225,6 +1238,12 @@ export const MapCanvas = memo(function MapCanvas({
             )
         : ([61, 175, 117, 28] as RGBA);
       const regionSelected = (r: Region) => r.id === selectedRegionId;
+      // Hover brightens the ring short of the selected treatment, so the two
+      // stay distinguishable when you hover something else while one region
+      // is selected. A polygon cannot use the node/link halo — a glow around
+      // a catchment reads as a second catchment.
+      const regionHovered = (r: Region) =>
+        r.id === hoveredRegionId && r.id !== selectedRegionId;
       // Regions sit beneath nodes and links, so deck's topmost-wins picking
       // still gives those priority; a click reaches a region only where no
       // element covers it.
@@ -1239,8 +1258,11 @@ export const MapCanvas = memo(function MapCanvas({
           getLineColor: (r: Region) =>
             (regionSelected(r)
               ? [125, 215, 170, 255]
-              : [61, 175, 117, 150]) as unknown as RGBA,
-          getLineWidth: (r: Region) => (regionSelected(r) ? 2.5 : 1),
+              : regionHovered(r)
+                ? [95, 200, 145, 210]
+                : [61, 175, 117, 150]) as unknown as RGBA,
+          getLineWidth: (r: Region) =>
+            regionSelected(r) ? 2.5 : regionHovered(r) ? 1.8 : 1,
           lineWidthMinPixels: 1,
           lineWidthUnits: "pixels",
           stroked: true,
@@ -1251,11 +1273,16 @@ export const MapCanvas = memo(function MapCanvas({
             const obj = info.object as Region | undefined;
             if (obj) onSelectRegion?.(obj.id);
           },
+          onHover: (info: { object?: unknown }) => {
+            if (!regionsPickable) return;
+            const obj = info.object as Region | undefined;
+            setHoveredRegionId(obj?.id ?? null);
+          },
           updateTriggers: {
             getPolygon: [isSchematic, schematicLayout.regionRings],
             getFillColor: [genRegion?.values, genRegion?.variable],
-            getLineColor: [selectedRegionId],
-            getLineWidth: [selectedRegionId],
+            getLineColor: [selectedRegionId, hoveredRegionId],
+            getLineWidth: [selectedRegionId, hoveredRegionId],
           },
         }),
       );
@@ -1923,6 +1950,10 @@ export const MapCanvas = memo(function MapCanvas({
     viewMode,
     regions,
     couplings,
+    hoveredRegionId,
+    setHoveredRegionId,
+    setHoveredNodeId,
+    setHoveredLinkId,
     selectedRegionId,
     onSelectRegion,
     nodeVar,
@@ -2516,9 +2547,8 @@ export const MapCanvas = memo(function MapCanvas({
       }}
       onPointerLeave={() => {
         hoveredNodeIdRef.current = null;
-        setHoveredNodeId(null);
         hoveredLinkIdRef.current = null;
-        setHoveredLinkId(null);
+        clearHover();
         setHoverTip(null);
       }}
     >

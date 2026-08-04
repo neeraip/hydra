@@ -4,6 +4,7 @@ import "maplibre-gl/dist/maplibre-gl.css";
 import "./app.css";
 import { App } from "./App";
 import { AppProvider } from "./AppContext";
+import { HoverProvider } from "./canvas/hover-context";
 import { CanvasLayersProvider } from "./canvas/layers-context";
 import { CanvasSelectionProvider } from "./canvas/selection-context";
 import { CanvasStatusProvider } from "./canvas/status-context";
@@ -31,11 +32,13 @@ createRoot(document.getElementById("root")!).render(
         <NetworkDataProvider>
           <CanvasLayersProvider>
             <CanvasSelectionProvider>
-              <CanvasStatusProvider>
-                <AppProvider>
-                  <App />
-                </AppProvider>
-              </CanvasStatusProvider>
+              <HoverProvider>
+                <CanvasStatusProvider>
+                  <AppProvider>
+                    <App />
+                  </AppProvider>
+                </CanvasStatusProvider>
+              </HoverProvider>
             </CanvasSelectionProvider>
           </CanvasLayersProvider>
         </NetworkDataProvider>

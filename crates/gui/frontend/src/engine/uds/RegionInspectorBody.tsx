@@ -1,3 +1,4 @@
+import { useHoverActions } from "../../canvas/hover-context";
 import { SectionLabel } from "../../components/ui/SectionLabel";
 import type { RegionInspectorBodyProps } from "../registry";
 import {
@@ -22,6 +23,7 @@ export function UdsRegionInspectorBody({
   results,
 }: RegionInspectorBodyProps) {
   const attributes = useElementDetails(region.id);
+  const { hoverNode, clearHover } = useHoverActions();
   return (
     <div style={{ flex: 1, overflowY: "auto", padding: 12 }}>
       <PropertiesSection rows={attributes} />
@@ -33,6 +35,10 @@ export function UdsRegionInspectorBody({
             <button
               type="button"
               onClick={() => onLocateOutlet(region.outletId as string)}
+              onMouseEnter={() => hoverNode(region.outletId as string)}
+              onMouseLeave={() => clearHover()}
+              onFocus={() => hoverNode(region.outletId as string)}
+              onBlur={() => clearHover()}
               style={{
                 background: "var(--bg-card)",
                 border: "1px solid var(--border)",

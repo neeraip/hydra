@@ -1,4 +1,5 @@
 import { flowColor, pressureColor } from "../../../canvas/colors";
+import { useHoverActions } from "../../../canvas/hover-context";
 import type { Link, Node } from "../../../hooks";
 import { toDisplay, unitLabel, useUnitSystem } from "../../../units";
 import { LINK_TYPE_COLOR } from "./ResultsCards";
@@ -13,6 +14,7 @@ export function ConnectedLink({
   onLocate: (id: string) => void;
 }) {
   const sys = useUnitSystem();
+  const { hoverLink, clearHover } = useHoverActions();
   const hasFlow = link.flow != null;
   const flow = link.flow ?? 0;
   return (
@@ -32,12 +34,16 @@ export function ConnectedLink({
         fontFamily: "var(--font-ui)",
         width: "100%",
       }}
-      onMouseEnter={(e) =>
-        (e.currentTarget.style.borderColor = "var(--border-hover)")
-      }
-      onMouseLeave={(e) =>
-        (e.currentTarget.style.borderColor = "var(--border)")
-      }
+      onMouseEnter={(e) => {
+        e.currentTarget.style.borderColor = "var(--border-hover)";
+        hoverLink(link.id);
+      }}
+      onMouseLeave={(e) => {
+        e.currentTarget.style.borderColor = "var(--border)";
+        clearHover();
+      }}
+      onFocus={() => hoverLink(link.id)}
+      onBlur={() => clearHover()}
     >
       {/* Link type stripe */}
       <span
@@ -116,6 +122,7 @@ export function ConnectedNodeChip({
   accent: string;
   onLocate: (id: string) => void;
 }) {
+  const { hoverNode, clearHover } = useHoverActions();
   const node = allNodes.find((n) => n.id === nodeId);
   return (
     <button
@@ -134,10 +141,16 @@ export function ConnectedNodeChip({
         textAlign: "left",
         fontFamily: "var(--font-ui)",
       }}
-      onMouseEnter={(e) => (e.currentTarget.style.borderColor = accent)}
-      onMouseLeave={(e) =>
-        (e.currentTarget.style.borderColor = "var(--border)")
-      }
+      onMouseEnter={(e) => {
+        e.currentTarget.style.borderColor = accent;
+        hoverNode(nodeId);
+      }}
+      onMouseLeave={(e) => {
+        e.currentTarget.style.borderColor = "var(--border)";
+        clearHover();
+      }}
+      onFocus={() => hoverNode(nodeId)}
+      onBlur={() => clearHover()}
     >
       <span
         style={{
