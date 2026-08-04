@@ -432,9 +432,13 @@ describe("computeSchematicLayout – region glyphs", () => {
   const links = [pipe("P1", "R", "J1"), pipe("P2", "J1", "J2")];
 
   it("anchors a catchment near the node it drains to", () => {
-    const layout = computeSchematicLayout(nodes, links, undefined, [], false, [
-      catchment("S1", "J1"),
-    ]);
+    const layout = computeSchematicLayout(
+      nodes,
+      links,
+      undefined,
+      [],
+      [catchment("S1", "J1")],
+    );
     const ring = layout.regionRings.get("S1");
     expect(ring).toBeDefined();
     if (!ring) return;
@@ -448,9 +452,13 @@ describe("computeSchematicLayout – region glyphs", () => {
   });
 
   it("preserves the catchment's aspect ratio", () => {
-    const layout = computeSchematicLayout(nodes, links, undefined, [], false, [
-      catchment("S1", "J1"),
-    ]);
+    const layout = computeSchematicLayout(
+      nodes,
+      links,
+      undefined,
+      [],
+      [catchment("S1", "J1")],
+    );
     const ring = layout.regionRings.get("S1") ?? [];
     const xs = ring.map(([x]) => x);
     const ys = ring.map(([, y]) => y);
@@ -460,10 +468,13 @@ describe("computeSchematicLayout – region glyphs", () => {
   });
 
   it("fans catchments sharing one outlet so they do not coincide", () => {
-    const layout = computeSchematicLayout(nodes, links, undefined, [], false, [
-      catchment("S1", "J1"),
-      catchment("S2", "J1"),
-    ]);
+    const layout = computeSchematicLayout(
+      nodes,
+      links,
+      undefined,
+      [],
+      [catchment("S1", "J1"), catchment("S2", "J1")],
+    );
     const a = layout.regionRings.get("S1") ?? [];
     const b = layout.regionRings.get("S2") ?? [];
     expect(a.length).toBeGreaterThan(0);
@@ -472,18 +483,14 @@ describe("computeSchematicLayout – region glyphs", () => {
   });
 
   it("omits a catchment with no node to hang off", () => {
-    const layout = computeSchematicLayout(nodes, links, undefined, [], false, [
-      catchment("S1", null),
-      catchment("S2", "NoSuchNode"),
-    ]);
+    const layout = computeSchematicLayout(
+      nodes,
+      links,
+      undefined,
+      [],
+      [catchment("S1", null), catchment("S2", "NoSuchNode")],
+    );
     expect(layout.regionRings.size).toBe(0);
     expect(layout.regionLeaders.size).toBe(0);
-  });
-
-  it("keeps real coordinates when the layout is a plan, not a schematic", () => {
-    const layout = computeSchematicLayout(nodes, links, undefined, [], true, [
-      catchment("S1", "J1"),
-    ]);
-    expect(layout.regionRings.get("S1")?.[0]).toEqual([1000, 2000]);
   });
 });

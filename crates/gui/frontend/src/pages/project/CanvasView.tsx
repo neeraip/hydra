@@ -323,6 +323,17 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
   const [viewMode, setViewMode] = useState<ViewMode>(
     CANVAS_PREF_DEFAULTS.viewMode,
   );
+  // A model on a local drawing grid is not georeferenced, so there is no
+  // basemap to put it on. It still has real geometry, so the canvas renders
+  // it orthographically at its true coordinates rather than pretending the
+  // numbers are longitude and latitude — which crashed MapLibre outright
+  // ("Invalid LngLat latitude value") the moment anything flew to a feature.
+  const localGrid = project?.sourceCrs === LOCAL_CRS;
+  // Tools that need the geographic renderer's pointer handling — dragging a
+  // node, placing one, measuring between two points. A plan view has real
+  // coordinates but draws them through the orthographic path, which has no
+  // handlers for any of that.
+  const geographic = viewMode === "map" && !localGrid;
   const [basemap, setBasemap] = useState<BasemapId>(
     CANVAS_PREF_DEFAULTS.basemap,
   );
@@ -838,7 +849,7 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
           // Without this the shortcut was the one way into measure mode in
           // schematic view, where it has no meaningful coordinate space to
           // measure in.
-          if (viewMode === "map") {
+          if (geographic) {
             setActiveTool("measure");
             clearAnnotations();
           }
@@ -849,11 +860,11 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
         // layout rather than the network's own geometry.
         case "e":
         case "E":
-          if (viewMode === "map" && modelEditable) setActiveTool("edit");
+          if (geographic && modelEditable) setActiveTool("edit");
           break;
         case "n":
         case "N":
-          if (viewMode === "map" && modelEditable) setActiveTool("add-node");
+          if (geographic && modelEditable) setActiveTool("add-node");
           break;
         // Not map-gated: creating a link writes only its two node ids.
         case "l":
@@ -880,7 +891,7 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [clearAnnotations, maxStep, projectView, viewMode, modelEditable]);
+  }, [clearAnnotations, maxStep, projectView, geographic, modelEditable]);
 
   const baseNodes = useNodes();
   const baseLinks = useLinks();
@@ -889,12 +900,6 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
   // inlets): the layout counts them as connectivity, the canvas draws
   // them. Empty for engines without them.
   const inletCouplings = useInletCouplings(project?.id, activeScenarioId);
-  // A local-grid model has no georeference, so there is no basemap to place
-  // it on. It still has real geometry, so the canvas renders it
-  // orthographically at its true coordinates rather than pretending the
-  // numbers are longitude and latitude — which crashed MapLibre outright
-  // ("Invalid LngLat latitude value") the moment anything flew to a feature.
-  const localGrid = project?.sourceCrs === LOCAL_CRS;
   // The canvas owns the timeline, but sibling views (the element tables)
   // ask the same question, so the value is published rather than lifted —
   // the scrub state keeps its playback and clamping logic here.
@@ -1436,8 +1441,8 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
 
   const canvasIsActive = isActive && projectView === "canvas";
 
-  // Shared styling for toolbar controls that only work in map mode.
-  const mapOnly = viewMode !== "map";
+  // Shared styling for toolbar controls that only work on the geographic map.
+  const mapOnly = !geographic;
 
   const handleNodeMoved = useCallback(
     async (
@@ -1732,7 +1737,7 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
                 generic={genericCanvas}
                 isActive={canvasIsActive}
                 viewMode={localGrid ? "schematic" : viewMode}
-                localGrid={localGrid}
+                topological={viewMode === "schematic"}
                 // The slider carries a track position; the layout wants per-axis
                 // multipliers. Converting here keeps the geometric mapping in
                 // one place instead of duplicating it in the canvas.
@@ -1879,7 +1884,7 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
           {/* Toolbar overlay — left offset tracks the floating rail width */}
           <CanvasToolbar
             editable={modelEditable}
-            viewMode={localGrid ? "schematic" : viewMode}
+            viewMode={viewMode}
             localGrid={localGrid}
             onViewModeChange={setViewMode}
             coordStatus={coordStatus}

@@ -151,7 +151,15 @@ export function CanvasToolbar({
     opacity: mapOnly ? 0.38 : undefined,
     cursor: mapOnly ? "not-allowed" : undefined,
   };
-  const mapOnlyTooltip = (label: string) => (mapOnly ? "Map mode only" : label);
+  // A local grid is disabled for a different reason than the schematic is:
+  // it has real coordinates, it simply has no georeference, so saying "map
+  // mode only" to someone already looking at their plan reads as a bug.
+  const mapOnlyTooltip = (label: string) =>
+    !mapOnly
+      ? label
+      : localGrid
+        ? "Needs a georeferenced model"
+        : "Map mode only";
 
   return (
     <div
@@ -176,10 +184,12 @@ export function CanvasToolbar({
             flexShrink: 0,
           }}
         >
-          {(localGrid
-            ? (["schematic"] as ViewMode[])
-            : (["map", "schematic"] as ViewMode[])
-          ).map((m) => (
+          {/* Both views exist for every project. What differs is what the
+              first one *is*: a georeferenced model gets a map, a local grid
+              gets its plan — the model's own coordinates with no basemap to
+              put them on. Both are real positions, which is what separates
+              them from the schematic's invented ones. */}
+          {(["map", "schematic"] as ViewMode[]).map((m) => (
             <button
               type="button"
               key={m}
@@ -201,19 +211,22 @@ export function CanvasToolbar({
                 flexShrink: 0,
               }}
               data-tooltip={
-                m === "map"
-                  ? "Geographic layout"
-                  : "Idealised orthogonal layout"
+                m === "schematic"
+                  ? "Idealised orthogonal layout"
+                  : localGrid
+                    ? "The model's own coordinates, not georeferenced"
+                    : "Geographic layout"
               }
               data-tooltip-pos="bottom"
             >
-              {m === "map" ? "Map" : "Schematic"}
+              {m === "schematic" ? "Schematic" : localGrid ? "Plan" : "Map"}
             </button>
           ))}
         </div>
 
         {/* Coordinate-coverage indicator — only shown when coords are missing */}
-        {viewMode === "map" &&
+        {!localGrid &&
+          viewMode === "map" &&
           coordStatus !== "complete" &&
           coordTotalCount > 0 && (
             <CoordStatusIndicator
@@ -254,7 +267,7 @@ export function CanvasToolbar({
               style={{ width: 12, height: 12, verticalAlign: "middle" }}
             />
           </button>
-          {showBasemapDropdown && viewMode === "map" && (
+          {showBasemapDropdown && viewMode === "map" && !localGrid && (
             <div
               style={{
                 position: "absolute",

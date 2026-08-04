@@ -134,48 +134,11 @@ export interface LayoutCoupling {
   node: string;
 }
 
-/** Boundary nodes the layout treats as roots: reservoirs/tanks for water
- * distribution, outfalls for drainage. */
-function boundaryNodes(nodes: Node[]): Node[] {
-  const found = nodes.filter(
-    (n) => n.type === "reservoir" || n.type === "tank" || n.type === "outfall",
-  );
-  if (found.length === 0 && nodes.length > 0) return [nodes[0]];
-  return found;
-}
-
-/** Ids not reachable from any boundary node — a genuinely separate
- * subnetwork, by whatever adjacency the caller built. */
-function detachedFrom(
-  nodes: Node[],
-  adj: Map<string, Set<string>>,
-): Set<string> {
-  const seen = new Set<string>();
-  const queue = boundaryNodes(nodes).map((n) => n.id);
-  for (const id of queue) seen.add(id);
-  let head = 0;
-  while (head < queue.length) {
-    const cur = queue[head++];
-    for (const neighbor of adj.get(cur) ?? []) {
-      if (!seen.has(neighbor)) {
-        seen.add(neighbor);
-        queue.push(neighbor);
-      }
-    }
-  }
-  return new Set(nodes.filter((n) => !seen.has(n.id)).map((n) => n.id));
-}
-
 export function computeSchematicLayout(
   nodes: Node[],
   links: Link[],
   scale: { x: number; y: number } = { x: 1, y: 1 },
   couplings: LayoutCoupling[] = [],
-  /** Keep the model's own plan coordinates instead of laying nodes out by
-   * depth. For a model on a local grid this view *is* the plan — the
-   * coordinates are real, they simply are not georeferenced, so there is
-   * no map to put them on but every reason to keep their true shape. */
-  realCoords = false,
   /** Catchment boundaries to place alongside the nodes. */
   regions: Region[] = [],
 ): SchematicLayout {
@@ -216,35 +179,6 @@ export function computeSchematicLayout(
     (n) => n.type === "reservoir" || n.type === "tank" || n.type === "outfall",
   );
   if (sources.length === 0 && nodes.length > 0) sources.push(nodes[0]);
-
-  if (realCoords) {
-    const positions = new Map<string, [number, number]>();
-    // Coordinates arrive in the canvas's own space already (a local grid
-    // is flipped once at reprojection), so they are used as given.
-    for (const n of nodes) {
-      positions.set(n.id, [n.x * scale.x, n.y * scale.y]);
-    }
-    // Real coordinates make this the plan view, so rings are drawn where
-    // the model puts them — scaled with the nodes so the two stay aligned
-    // once the aspect slider moves.
-    const regionRings = new Map<string, Array<[number, number]>>();
-    for (const r of regions) {
-      if (r.ring.length < 3) continue;
-      regionRings.set(
-        r.id,
-        r.ring.map(
-          ([x, y]: [number, number]) =>
-            [x * scale.x, y * scale.y] as [number, number],
-        ),
-      );
-    }
-    return {
-      positions,
-      detachedIds: detachedFrom(nodes, adj),
-      regionRings,
-      regionLeaders: new Map(),
-    };
-  }
 
   // BFS to assign each node a depth
   const depth = new Map<string, number>();

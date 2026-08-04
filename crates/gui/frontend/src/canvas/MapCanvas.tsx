@@ -249,8 +249,8 @@ interface MapCanvasProps {
   nodes: Node[];
   links: Link[];
   /** Areal elements (subcatchment boundaries), already in the render CRS.
-   * Rendered beneath links/nodes in map mode; ignored in schematic mode
-   * (the BFS layout has no positions for rings). */
+   * Drawn from their own rings wherever positions are real; in a topological
+   * layout they are drawn from the glyphs that layout placed. */
   regions?: Region[];
   viewMode: ViewMode;
   /** Per-axis schematic spacing multipliers (`{x: 1, y: 1}` = the layout's
@@ -284,7 +284,18 @@ interface MapCanvasProps {
   /** The model's coordinates are a local grid, not a georeferenced system:
    * there is no basemap to place them on, so the canvas renders them
    * orthographically at their true positions. */
-  localGrid?: boolean;
+  /**
+   * Whether the positions on screen are *invented* by the layout rather than
+   * the model's own.
+   *
+   * This is not the same question as `viewMode`, which selects the rendering
+   * path (maplibre + basemap, or the orthographic deck view). A local grid
+   * renders orthographically — it has no basemap to sit on — while its
+   * coordinates are entirely real. Conflating the two is what made a local
+   * grid's plan view masquerade as the schematic, and made the real
+   * topological layout unreachable for exactly the models that need it most.
+   */
+  topological?: boolean;
   /** Hydraulic connections that are not links (dual-drainage street
    * inlets): drawn as dashed connectors and counted as connectivity by
    * the schematic layout. */
@@ -375,7 +386,7 @@ export const MapCanvas = memo(function MapCanvas({
   onSelectNode,
   selectedLinkId,
   onSelectLink,
-  localGrid = false,
+  topological = false,
   couplings = EMPTY_COUPLINGS,
   selectedRegionId = null,
   onSelectRegion,
@@ -534,9 +545,6 @@ export const MapCanvas = memo(function MapCanvas({
     /** Couplings feed the connectivity pass, so a change in them must
      * invalidate the cached layout exactly as nodes and links do. */
     couplings: LayoutCoupling[];
-    /** Real-coordinate mode changes what positions mean, so it keys the
-     * cache exactly as the inputs do. */
-    localGrid: boolean;
     regions: Region[] | undefined;
   } | null>(null);
   const schematicLayout = useMemo(() => {
@@ -547,13 +555,12 @@ export const MapCanvas = memo(function MapCanvas({
       cache.links === links &&
       cache.couplings === couplings &&
       cache.regions === regions &&
-      cache.localGrid === localGrid &&
       cache.scaleX === schematicScale.x &&
       cache.scaleY === schematicScale.y
     ) {
       return cache.layout;
     }
-    if (viewMode !== "schematic") {
+    if (!topological) {
       // Drop a stale cache rather than pinning an obsolete full generation
       // of nodes/links/coords in memory until schematic is next opened.
       schematicCacheRef.current = null;
@@ -564,7 +571,6 @@ export const MapCanvas = memo(function MapCanvas({
       links,
       schematicScale,
       couplings,
-      localGrid,
       regions ?? EMPTY_REGION_DATA,
     );
     schematicCacheRef.current = {
@@ -575,10 +581,9 @@ export const MapCanvas = memo(function MapCanvas({
       scaleY: schematicScale.y,
       couplings,
       regions,
-      localGrid,
     };
     return layout;
-  }, [nodes, links, viewMode, schematicScale, couplings, localGrid, regions]);
+  }, [nodes, links, topological, schematicScale, couplings, regions]);
   // Positions alone, for everything that only needs coordinates.
   const schematicCoords = schematicLayout.positions;
 
@@ -908,11 +913,11 @@ export const MapCanvas = memo(function MapCanvas({
   // 60 fps; with stable identity those frames only update a uniform.
   const { linkData, nodeData, linkDatumById, nodeDatumById, anyLinkVertices } =
     useMemo(() => {
-      const isSchematic = viewMode === "schematic";
-      const coordMap = isSchematic ? schematicCoords : geoCoords;
+      // Positions come from the layout only where the layout invented them.
+      const coordMap = topological ? schematicCoords : geoCoords;
       // Display path precomputed once per network/viewMode change (not per
-      // accessor call over 46k links). Schematic mode ignores vertices — the
-      // BFS layout has no vertex positions, so links stay straight there.
+      // accessor call over 46k links). A topological layout ignores vertices
+      // — it has no vertex positions, so links stay straight there.
       let anyLinkVertices = false;
       const linkData = links
         .map((l, si) => {
@@ -920,7 +925,7 @@ export const MapCanvas = memo(function MapCanvas({
           const to = coordMap.get(l.toId);
           if (!from || !to) return null;
           const verts =
-            (localGrid || !isSchematic) && l.vertices && l.vertices.length > 0
+            !topological && l.vertices && l.vertices.length > 0
               ? l.vertices
               : null;
           if (verts) anyLinkVertices = true;
@@ -953,37 +958,112 @@ export const MapCanvas = memo(function MapCanvas({
         nodeDatumById: new Map(nodeData.map((n) => [n.id, n])),
         anyLinkVertices,
       };
-    }, [links, nodes, viewMode, localGrid, schematicCoords, geoCoords]);
+    }, [links, nodes, topological, schematicCoords, geoCoords]);
 
   // ── Viewport probe ─────────────────────────────────────────────────────────
   // The network list asks "is this element on screen"; only this component
   // knows both the viewport and the display coordinates. Answered per call
   // (~25 visible rows) rather than by precomputing a 46k-element set.
   const { setViewportProbe, viewportMoved } = useViewportActions();
+
+  // Which renderer is on screen. `viewMode` still carries this — CanvasView
+  // maps a local grid onto "schematic" because that is the orthographic
+  // path — so it answers "is there a basemap", not "are the positions real".
+  const orthographic = viewMode === "schematic";
+  const orthographicRef = useRef(orthographic);
+  orthographicRef.current = orthographic;
+
+  /**
+   * The visible extent, in whatever space the elements are drawn in.
+   *
+   * Two renderers, two sources: maplibre reports lng/lat bounds directly,
+   * while the orthographic deck view states a centre and a log2 zoom, so its
+   * extent is the canvas size divided by the scale that zoom implies.
+   * `null` when neither is ready — the caller treats that as "visible", so a
+   * canvas that has not laid out yet dims nothing.
+   */
+  const viewportBox = useCallback((): ViewportBox | null => {
+    if (orthographicRef.current) {
+      const canvas = deckCanvasRef.current;
+      const vs = viewStateRef.current;
+      if (!canvas || !vs || !("target" in vs)) return null;
+      const scale = 2 ** vs.zoom;
+      const halfW = canvas.clientWidth / 2 / scale;
+      const halfH = canvas.clientHeight / 2 / scale;
+      const [cx, cy] = vs.target;
+      return {
+        west: cx - halfW,
+        east: cx + halfW,
+        south: cy - halfH,
+        north: cy + halfH,
+      };
+    }
+    const map = mapRef.current;
+    if (!map) return null;
+    const b = map.getBounds();
+    return {
+      west: b.getWest(),
+      south: b.getSouth(),
+      east: b.getEast(),
+      north: b.getNorth(),
+    };
+  }, []);
   const linkDatumByIdRef = useRef(linkDatumById);
   linkDatumByIdRef.current = linkDatumById;
   const viewportMovedRef = useRef(viewportMoved);
   viewportMovedRef.current = viewportMoved;
 
+  // Throttled to ~10 Hz and shared by both renderers. Nothing in the list
+  // reorders when the viewport moves, so rows fading as you pan is the
+  // point — but maplibre's "move" and deck's onViewStateChange both fire per
+  // frame, and a report per frame would re-render the list at 60 Hz.
+  const viewportThrottleRef = useRef<number | null>(null);
+  const reportViewportMoved = useCallback(() => {
+    if (viewportThrottleRef.current != null) return;
+    viewportThrottleRef.current = window.setTimeout(() => {
+      viewportThrottleRef.current = null;
+      viewportMovedRef.current();
+    }, 100);
+  }, []);
+  /** Report immediately, cancelling any pending throttled report — for the
+   * end of a gesture, so the settled viewport is never left showing the
+   * state from 100 ms earlier. */
+  const flushViewportMoved = useCallback(() => {
+    if (viewportThrottleRef.current != null) {
+      window.clearTimeout(viewportThrottleRef.current);
+      viewportThrottleRef.current = null;
+    }
+    viewportMovedRef.current();
+  }, []);
+  useEffect(
+    () => () => {
+      if (viewportThrottleRef.current != null) {
+        window.clearTimeout(viewportThrottleRef.current);
+      }
+    },
+    [],
+  );
+  // Both renderers are wired up inside long-lived effects, so they reach
+  // these through refs rather than re-registering their listeners.
+  const reportViewportMovedRef = useRef(reportViewportMoved);
+  reportViewportMovedRef.current = reportViewportMoved;
+  const flushViewportMovedRef = useRef(flushViewportMoved);
+  flushViewportMovedRef.current = flushViewportMoved;
+
   useEffect(() => {
-    // Only a geographic map has a viewport in the model's own coordinates.
-    // The schematic invents positions and a local grid is not georeferenced,
-    // so there is nothing to compare — registering nothing is what hides the
-    // feature rather than offering a toggle that cannot answer.
-    if (viewMode !== "map") {
+    // The question is "is this element on screen", which needs positions the
+    // model actually stated. A topological layout invented them, so there is
+    // nothing to compare and no probe is registered — that absence is what
+    // hides the feature rather than offering a toggle that cannot answer.
+    // A local grid is *not* excluded: its coordinates are perfectly real, it
+    // simply draws them orthographically instead of on a basemap.
+    if (topological) {
       setViewportProbe(null);
       return;
     }
     setViewportProbe((cls, id) => {
-      const map = mapRef.current;
-      if (!map) return true;
-      const b = map.getBounds();
-      const box: ViewportBox = {
-        west: b.getWest(),
-        south: b.getSouth(),
-        east: b.getEast(),
-        north: b.getNorth(),
-      };
+      const box = viewportBox();
+      if (!box) return true;
       if (cls === "point") {
         const p = geoCoordsRef.current.get(id);
         return p ? pointInBox(p[0], p[1], box) : false;
@@ -996,7 +1076,7 @@ export const MapCanvas = memo(function MapCanvas({
       return ring ? ringIntersectsBox(ring, box) : false;
     });
     return () => setViewportProbe(null);
-  }, [viewMode, setViewportProbe]);
+  }, [topological, setViewportProbe, viewportBox]);
 
   // Whether usable period results exist for the CURRENT topology. Guards
   // against a topology change racing ahead of the results that describe it —
@@ -1264,7 +1344,7 @@ export const MapCanvas = memo(function MapCanvas({
     // the catchment's outlet, because the schematic has no plan to draw a
     // real ring on.
     const regionRing = (r: Region): Array<[number, number]> =>
-      isSchematic ? (schematicLayout.regionRings.get(r.id) ?? []) : r.ring;
+      topological ? (schematicLayout.regionRings.get(r.id) ?? []) : r.ring;
     const placedRegions =
       canvasLayers.regions && regions
         ? regions.filter((r) => regionRing(r).length >= 3)
@@ -1330,7 +1410,7 @@ export const MapCanvas = memo(function MapCanvas({
             setHoveredRegionId(obj?.id ?? null);
           },
           updateTriggers: {
-            getPolygon: [isSchematic, schematicLayout.regionRings],
+            getPolygon: [topological, schematicLayout.regionRings],
             getFillColor: [genRegion?.values, genRegion?.variable],
             getLineColor: [selectedRegionId, hoveredRegionId],
             getLineWidth: [selectedRegionId, hoveredRegionId],
@@ -1428,7 +1508,7 @@ export const MapCanvas = memo(function MapCanvas({
     // "these are disconnected". Amber is free here: it is the warning colour and
     // the only other amber on the canvas belongs to the measure tool, which is
     // map-mode only, so the two can never appear together.
-    if (isSchematic && schematicLayout.detachedIds.size > 0) {
+    if (topological && schematicLayout.detachedIds.size > 0) {
       let minX = Number.POSITIVE_INFINITY;
       let minY = Number.POSITIVE_INFINITY;
       let maxX = Number.NEGATIVE_INFINITY;
@@ -1999,6 +2079,7 @@ export const MapCanvas = memo(function MapCanvas({
     genLink,
     genRegion,
     viewMode,
+    topological,
     regions,
     couplings,
     hoveredRegionId,
@@ -2084,6 +2165,9 @@ export const MapCanvas = memo(function MapCanvas({
         deckRef.current?.setProps({ viewState: nextViewState });
         // Labels are viewport-culled; refresh them as the view moves.
         if (labelsOnRef.current) scheduleLabelRefresh("schematic");
+        // Same report the map makes on "move": a plan view has a viewport
+        // like any other, so the network list's dimming tracks it too.
+        reportViewportMovedRef.current();
       },
       layers: [],
     });
@@ -2122,23 +2206,10 @@ export const MapCanvas = memo(function MapCanvas({
     // Viewport reports for the network list's dimming. Throttled to ~10 Hz
     // during a drag: nothing reorders, so rows fading as you pan is the
     // point — but a report per frame would re-render the list at 60 Hz.
-    let viewportThrottle: number | null = null;
-    map.on("move", () => {
-      if (viewportThrottle != null) return;
-      viewportThrottle = window.setTimeout(() => {
-        viewportThrottle = null;
-        viewportMovedRef.current();
-      }, 100);
-    });
+    map.on("move", () => reportViewportMovedRef.current());
 
     map.on("moveend", () => {
-      if (viewportThrottle != null) {
-        window.clearTimeout(viewportThrottle);
-        viewportThrottle = null;
-      }
-      // Always report the settled viewport, so the last frame of a pan is
-      // never left showing the throttled state from 100 ms earlier.
-      viewportMovedRef.current();
+      flushViewportMovedRef.current();
       if (labelsOnRef.current && viewModeRef.current === "map") {
         scheduleLabelRefresh("map");
       }
