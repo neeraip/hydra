@@ -200,7 +200,7 @@ export function ProjectToolbar() {
     setActiveScenarioId,
     scenariosVersion,
   } = useAppState();
-  const { project, accent } = useActiveProject();
+  const { project } = useActiveProject();
   const { isEdited, markEdited } = useNetworkVersion();
 
   const rawDtos = useScenarios(project?.id ?? null, scenariosVersion);
@@ -505,7 +505,6 @@ export function ProjectToolbar() {
                     isActive={v.id === activeScenarioId}
                     isAncestor={expanded}
                     isStale={isEdited(project.id, v.id) || v.state === "stale"}
-                    accent={accent}
                     siblingCount={0}
                     pickerOpen={false}
                     onClick={() => setActiveScenarioId(v.id)}
@@ -530,7 +529,6 @@ export function ProjectToolbar() {
                             isStale={
                               isEdited(project.id, s.id) || s.state === "stale"
                             }
-                            accent={accent}
                             siblingCount={siblingCount}
                             pickerOpen={
                               picker?.kind === "siblings" && picker.id === s.id
@@ -578,7 +576,6 @@ export function ProjectToolbar() {
                           isEdited(project.id, tail.child.id) ||
                           tail.child.state === "stale"
                         }
-                        accent={accent}
                         siblingCount={0}
                         pickerOpen={false}
                         onClick={() => setActiveScenarioId(tail.child.id)}
@@ -889,7 +886,6 @@ function ScenarioChip({
   isActive,
   isAncestor = false,
   isStale,
-  accent,
   siblingCount,
   pickerOpen,
   onClick,
@@ -904,7 +900,6 @@ function ScenarioChip({
    * no clue which variant the arrow descends from. */
   isAncestor?: boolean;
   isStale: boolean;
-  accent: string;
   siblingCount: number;
   pickerOpen: boolean;
   onClick: () => void;
@@ -916,10 +911,16 @@ function ScenarioChip({
     : (STATE_COLOR[state] ?? STATE_COLOR["not-run"]);
   const isRunning = state === "running";
   const titleSuffix = isStale ? " · network edited since last run" : "";
-  const textColor = isActive ? accent : "var(--text-primary)";
+  // Selection is the app's own colour, not the engine's. Which engine a
+  // project uses is an identity, and identity belongs on identity marks —
+  // spending it on "this one is selected" says the wrong thing twice, and
+  // leaves the Base pill (which has always used the app accent) looking
+  // like a different kind of control from its own siblings.
+  const textColor = isActive ? "var(--accent)" : "var(--text-primary)";
   // Ancestors take the accent border without the fill: present on the path,
   // but not the thing selected.
-  const borderColor = isActive || isAncestor ? accent : "var(--border)";
+  const borderColor =
+    isActive || isAncestor ? "var(--accent)" : "var(--border)";
 
   return (
     <span
@@ -929,7 +930,7 @@ function ScenarioChip({
         alignItems: "stretch",
         border: `1px solid ${borderColor}`,
         borderRadius: 14,
-        background: isActive ? `${accent}22` : "var(--bg-card)",
+        background: isActive ? "var(--accent-dim)" : "var(--bg-card)",
         overflow: "hidden",
         transition: "background var(--t-fast), border-color var(--t-fast)",
       }}
@@ -1011,10 +1012,10 @@ function ScenarioChip({
             padding: "0 7px 0 5px",
             border: "none",
             borderLeft: isActive
-              ? `1px solid ${accent}55`
+              ? "1px solid var(--accent)"
               : "1px solid var(--border)",
             background: pickerOpen ? "var(--nav-hover)" : "transparent",
-            color: isActive ? accent : "var(--text-tertiary)",
+            color: isActive ? "var(--accent)" : "var(--text-tertiary)",
             fontSize: "var(--text-xs)",
             fontWeight: 600,
             cursor: "pointer",
