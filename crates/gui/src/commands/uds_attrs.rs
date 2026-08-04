@@ -58,9 +58,19 @@ fn extract(
     net: &Network,
     element_id: &str,
 ) -> Option<(&'static str, HashMap<&'static str, AttrValue>)> {
-    use AttrValue::{Number, Text};
-
     if let Some(p) = net.parcels.iter().find(|p| p.id == element_id) {
+        return Some(("subcatchment", parcel_values(net, p)));
+    }
+    if let Some(v) = net.vertices.iter().find(|v| v.id == element_id) {
+        return Some(vertex_values(net, v));
+    }
+    let l = net.links.iter().find(|l| l.id == element_id)?;
+    Some(link_values(net, l))
+}
+
+fn parcel_values(net: &Network, p: &hydra::uds::model::Parcel) -> HashMap<&'static str, AttrValue> {
+    use AttrValue::{Number, Text};
+    {
         let mut m = HashMap::new();
         if let Some(g) = net.gages.get(p.gage) {
             m.insert("raingage", Text(g.id.clone()));
@@ -80,10 +90,16 @@ fn extract(
         m.insert("width", Number(p.width));
         m.insert("slope", Number(p.slope * 100.0));
         m.insert("imperviousness", Number(p.frac_imperv * 100.0));
-        return Some(("subcatchment", m));
+        m
     }
+}
 
-    if let Some(v) = net.vertices.iter().find(|v| v.id == element_id) {
+fn vertex_values(
+    net: &Network,
+    v: &hydra::uds::model::Vertex,
+) -> (&'static str, HashMap<&'static str, AttrValue>) {
+    use AttrValue::{Number, Text};
+    {
         let mut m = HashMap::new();
         m.insert("invert", Number(v.invert));
         let kind = match &v.kind {
@@ -135,10 +151,15 @@ fn extract(
                 "divider"
             }
         };
-        return Some((kind, m));
+        (kind, m)
     }
+}
 
-    let l = net.links.iter().find(|l| l.id == element_id)?;
+fn link_values(
+    net: &Network,
+    l: &hydra::uds::model::Link,
+) -> (&'static str, HashMap<&'static str, AttrValue>) {
+    use AttrValue::{Number, Text};
     let mut m = HashMap::new();
     let kind = match &l.kind {
         LinkKind::Channel {
@@ -196,7 +217,7 @@ fn extract(
             "outlet"
         }
     };
-    Some((kind, m))
+    (kind, m)
 }
 
 /// Properties rows for one element: the §4 schema's rows, in schema order,
@@ -230,6 +251,113 @@ pub fn element_attributes(net: &Network, element_id: &str) -> Option<Vec<Element
         })
         .collect();
     Some(rows)
+}
+
+/// One column of a kind's property table: an engine-declared attribute
+/// (§4.3) with every element's value for it, parallel to `ids`.
+///
+/// Columnar rather than row-major because a table is read by column — and
+/// because one array per attribute stays compact where a per-row object
+/// would repeat every key thousands of times.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KindColumnDto {
+    pub key: String,
+    pub label: String,
+    /// The §5 quantity for numeric values (SI), absent for text columns.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub quantity: Option<QuantityDescriptor>,
+    /// One entry per id: a number for numeric attributes, a string for
+    /// textual ones, `null` where the element does not carry the
+    /// attribute at all.
+    pub values: Vec<serde_json::Value>,
+}
+
+/// Every element of one kind, with its §4.3 attribute columns.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KindElementsDto {
+    /// Element ids, in model order — the row order every column follows.
+    pub ids: Vec<String>,
+    pub columns: Vec<KindColumnDto>,
+}
+
+/// The elements of one kind with their declared properties.
+///
+/// The per-element command answers "what is this thing?"; a table needs
+/// "what are all of these?", and asking element by element would be one
+/// IPC round trip per row. Empty for engines whose attributes reach the
+/// frontend by another route — wds carries its own in the network
+/// snapshot — and for a kind the model has none of.
+#[tauri::command(async)]
+pub fn get_kind_elements(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, NetworkState>,
+    project_id: String,
+    scenario_id: Option<String>,
+    kind: String,
+) -> Result<KindElementsDto, String> {
+    validate_target_ids(&project_id, scenario_id.as_deref())?;
+    let app_data = app_data_dir(&app)?;
+    let empty = KindElementsDto {
+        ids: Vec::new(),
+        columns: Vec::new(),
+    };
+    if super::projects::project_engine_key(&app_data, &project_id) != "uds" {
+        return Ok(empty);
+    }
+    let net = uds_network_for_target(&app_data, &state, &project_id, scenario_id.as_deref())?;
+    Ok(kind_elements(&net, &kind))
+}
+
+/// Build one kind's table: ids in model order, and one column per §4.3
+/// attribute the schema declares, in schema order.
+pub fn kind_elements(net: &Network, kind: &str) -> KindElementsDto {
+    // One pass over the elements of this kind, rather than a lookup per id.
+    let mut rows: Vec<(String, HashMap<&'static str, AttrValue>)> = Vec::new();
+    for p in &net.parcels {
+        if kind == "subcatchment" {
+            rows.push((p.id.clone(), parcel_values(net, p)));
+        }
+    }
+    for v in &net.vertices {
+        let (k, values) = vertex_values(net, v);
+        if k == kind {
+            rows.push((v.id.clone(), values));
+        }
+    }
+    for l in &net.links {
+        let (k, values) = link_values(net, l);
+        if k == kind {
+            rows.push((l.id.clone(), values));
+        }
+    }
+
+    let ids: Vec<String> = rows.iter().map(|(id, _)| id.clone()).collect();
+    let columns = hydra::uds::descriptors::attribute_schema(kind)
+        .into_iter()
+        .map(|attr| {
+            let quantity = attr
+                .quantity
+                .as_deref()
+                .and_then(super::uds_results::quantity_descriptor);
+            let values = rows
+                .iter()
+                .map(|(_, m)| match m.get(attr.key.as_str()) {
+                    Some(AttrValue::Number(n)) => serde_json::json!(n),
+                    Some(AttrValue::Text(t)) => serde_json::json!(t),
+                    None => serde_json::Value::Null,
+                })
+                .collect();
+            KindColumnDto {
+                key: attr.key,
+                label: attr.label,
+                quantity,
+                values,
+            }
+        })
+        .collect();
+    KindElementsDto { ids, columns }
 }
 
 /// One inlet coupling: a street conduit capturing flow into a sewer
@@ -328,6 +456,52 @@ mod tests {
             .any(|r| r.label == "Roughness" && r.quantity.is_none()));
 
         assert!(element_attributes(&net, "nope").is_none());
+    }
+
+    /// The bulk path is what a per-kind table reads: ids in model order,
+    /// one column per declared attribute, values parallel to the ids.
+    #[test]
+    fn kind_elements_serves_one_column_per_declared_attribute() {
+        let model = "[OPTIONS]\nFLOW_UNITS CFS\n\
+                     [JUNCTIONS]\nJ1 100 4 0.5\nJ2 90 3 0\n\
+                     [OUTFALLS]\nO1 88 FREE NO\n\
+                     [CONDUITS]\nC1 J1 J2 400 0.013 0 0\nC2 J2 O1 300 0.015 0 0\n\
+                     [XSECTIONS]\nC1 CIRCULAR 1.5 0 0 0\nC2 CIRCULAR 1.5 0 0 0\n";
+        let (net, _diags) = hydra::uds::io::objects::parse_network(model);
+
+        let junctions = kind_elements(&net, "junction");
+        assert_eq!(junctions.ids, vec!["J1", "J2"]);
+        assert_eq!(
+            junctions
+                .columns
+                .iter()
+                .map(|c| c.label.as_str())
+                .collect::<Vec<_>>(),
+            vec!["Invert elevation", "Maximum depth", "Initial depth"],
+        );
+        // Values are columnar and parallel to ids, in SI.
+        let invert = &junctions.columns[0];
+        assert_eq!(invert.values.len(), junctions.ids.len());
+        assert_eq!(invert.quantity.unwrap().key, "elevation");
+        assert!((invert.values[0].as_f64().unwrap() - 30.48).abs() < 1e-6);
+
+        // A different kind gets its own columns entirely — the whole point.
+        let conduits = kind_elements(&net, "conduit");
+        assert_eq!(conduits.ids, vec!["C1", "C2"]);
+        assert!(conduits.columns.iter().any(|c| c.label == "Roughness"));
+        assert!(conduits.columns.iter().any(|c| c.label == "Cross-section"));
+
+        // Outfalls carry text attributes, served as strings.
+        let outfalls = kind_elements(&net, "outfall");
+        let boundary = outfalls
+            .columns
+            .iter()
+            .find(|c| c.label == "Boundary")
+            .expect("boundary column");
+        assert_eq!(boundary.values[0].as_str(), Some("FREE"));
+
+        // A kind the model has none of is empty, not an error.
+        assert!(kind_elements(&net, "weir").ids.is_empty());
     }
 
     #[test]

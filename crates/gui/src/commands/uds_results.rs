@@ -94,7 +94,7 @@ fn column(class: ElementClass, id: &str) -> Option<(usize, f64)> {
 }
 
 /// The §5 quantity descriptor for a catalog quantity key.
-fn quantity_descriptor(key: &str) -> Option<hydra::common::QuantityDescriptor> {
+pub(super) fn quantity_descriptor(key: &str) -> Option<hydra::common::QuantityDescriptor> {
     hydra::uds::descriptors::QUANTITIES
         .iter()
         .find(|q| q.key == key)
