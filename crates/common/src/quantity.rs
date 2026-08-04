@@ -19,7 +19,7 @@ use serde::Serialize;
 #[serde(rename_all = "camelCase")]
 pub struct QuantityDescriptor {
     /// Stable quantity identifier, opaque to this layer; referenced by
-    /// attribute schemas (spec §4.3) and result variables (spec §6).
+    /// attribute schemas (spec §4.4) and result variables (spec §6).
     pub key: &'static str,
     /// Unit text in the SI display system (e.g. "m", "L/s", "mm/hr").
     pub si_label: &'static str,

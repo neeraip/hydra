@@ -37,6 +37,35 @@ pub enum ElementClass {
     Collection,
 }
 
+/// What an element kind does in the network, as distinct from what it is
+/// geometrically (spec §4.3).
+///
+/// This exists because it is the distinction an application must draw to
+/// present an *unsimulated* model at all: before any results exist there is
+/// nothing to colour by, and a network drawn in one uniform tone tells a
+/// reader nothing. `ElementClass` cannot answer it — a pump and a pipe are
+/// both `Polyline`, a reservoir and a junction both `Point` — and kind
+/// cannot either without the application naming kinds it should not know.
+///
+/// Carries no presentation. An application decides what a boundary looks
+/// like; this layer decides only which kinds are boundaries.
+///
+/// Optional on `ElementKind`: some kinds have no role in the flow network,
+/// and the absence is information rather than a gap to be defaulted away.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ElementRole {
+    /// Carries flow without imposing a boundary or a control on it — a
+    /// junction, a pipe, a conduit. The bulk of any model.
+    Conveyance,
+    /// Where the model meets what it does not simulate: a fixed head or
+    /// stage, a storage volume, an outfall. Flow enters or leaves here.
+    Boundary,
+    /// Acts on the flow rather than merely passing it — a pump, a valve, a
+    /// weir, an orifice, a flow divider.
+    Control,
+}
+
 /// Descriptor of one element kind in an engine's catalog (spec §4.2).
 ///
 /// The catalog is static and model-free, like the block catalog: an
@@ -55,12 +84,16 @@ pub struct ElementKind {
     pub label_plural: &'static str,
     /// The kind's element class.
     pub class: ElementClass,
+    /// What the kind does in the network (spec §4.3), or `None` for a kind
+    /// that is not in the flow network at all — a rain gage conveys
+    /// nothing, and a curve or a control rule is not in it to begin with.
+    pub role: Option<ElementRole>,
     /// One- or two-character glyph for dense UI (markers, chips).
     pub badge: &'static str,
 }
 
 /// Description of one attribute an application may display for elements of
-/// a kind (spec §4.3).
+/// a kind (spec §4.4).
 ///
 /// Reuses the option-descriptor value vocabulary ([`OptionKind`], spec
 /// §3.2.1) and is advisory in exactly that sense: it tells a generic UI
@@ -106,10 +139,12 @@ mod tests {
             label: "Kind",
             label_plural: "Kinds",
             class: ElementClass::Point,
+            role: Some(ElementRole::Boundary),
             badge: "K",
         };
         let json = serde_json::to_value(kind).unwrap();
         assert_eq!(json["labelPlural"], "Kinds");
         assert_eq!(json["class"], "point");
+        assert_eq!(json["role"], "boundary");
     }
 }

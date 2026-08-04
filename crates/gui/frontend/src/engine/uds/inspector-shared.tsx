@@ -42,7 +42,7 @@ import type { GenericElementValue } from "../registry";
 const detailCache = new Map<string, ElementAttribute[]>();
 
 /**
- * A element's §4.3 property rows, and how much space to leave for them.
+ * A element's §4.4 property rows, and how much space to leave for them.
  *
  * Properties arrive over IPC, and the node, link and region bodies are
  * separate components — so selecting a junction after a catchment mounts a

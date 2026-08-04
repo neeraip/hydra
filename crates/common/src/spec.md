@@ -446,6 +446,7 @@ conduit, subcatchment, rain gage — as an ordered catalog of descriptors:
 | `label` | Human-facing singular name | Plain text, engine-authored. |
 | `label_plural` | Human-facing plural name | Plain text, engine-authored. |
 | `class` | The kind's element class (§4.1) | One of the four classes. |
+| `role` | What the kind does in the network (§4.3) | One of the three roles, or absent. |
 | `badge` | Short glyph for dense UI (markers, chips) | One or two characters, engine-authored. |
 
 The catalog is static and model-free, like the block catalog (§3.2): an
@@ -460,7 +461,44 @@ within a model; whether identifiers are additionally unique across kinds
 (as they are within one engine's node family) is the engine's own rule,
 expressed through its validation, not through this contract.
 
-### 4.3 Attribute schemas
+### 4.3 Element roles
+
+A class says what an element *is* geometrically. A **role** says what it
+does in the network:
+
+| Role | Meaning |
+|---|---|
+| `conveyance` | Carries flow without imposing a boundary or a control on it — a junction, a pipe, a conduit. The bulk of any model. |
+| `boundary` | Where the model meets what it does not simulate: a fixed head or stage, a storage volume, an outfall. Flow enters or leaves the modelled system here. |
+| `control` | Acts on the flow rather than merely passing it — a pump, a valve, a weir, an orifice, a flow divider. |
+
+Role exists because it is the distinction an application must draw to
+present an *unsimulated* model at all. Before any results exist there is
+nothing to colour by, and a network drawn in one uniform tone tells a
+reader nothing; what they need to see is where the system is fed and
+drained, and where something acts on the flow. Class cannot answer that —
+a pump and a pipe are both `polyline`, a reservoir and a junction both
+`point` — and kind cannot either without the application naming kinds it
+should not know.
+
+**A kind may have no role at all.** A rain gage is located but conveys
+nothing; a curve, a pattern and a control rule are not in the flow network
+to begin with. Those declare no role, and an application draws them by
+whatever means suits — the absence is information, not an omission to be
+defaulted away.
+
+The role list is closed in this revision, and extending it is an additive
+spec change here rather than an engine decision, exactly as the class list
+is. Roles carry no presentation: an application decides what a boundary
+looks like, and this layer decides only which kinds are boundaries.
+
+> **Assignment is the engine's judgement, not a lookup.** A storage unit is
+> a boundary in drainage because it is where volume leaves the routed
+> network, while a tank is a boundary in distribution for the same reason
+> expressed differently. Where a kind is arguably two roles, the engine
+> picks the one an application should draw it as.
+
+### 4.4 Attribute schemas
 
 For each kind, an engine describes the attributes an application may
 display for elements of that kind — an ordered list of attribute

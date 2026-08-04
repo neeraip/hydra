@@ -1161,7 +1161,7 @@ const EMPTY_COUPLINGS: InletCoupling[] = [];
 // ── Per-kind element tables ────────────────────────────────────────────────
 
 /** One column of a kind's property table: an engine-declared attribute
- * (§4.3) with every element's value, parallel to `ids`. */
+ * (§4.4) with every element's value, parallel to `ids`. */
 export interface KindColumn {
   key: string;
   label: string;

@@ -254,7 +254,7 @@ pub fn element_attributes(net: &Network, element_id: &str) -> Option<Vec<Element
 }
 
 /// One column of a kind's property table: an engine-declared attribute
-/// (§4.3) with every element's value for it, parallel to `ids`.
+/// (§4.4) with every element's value for it, parallel to `ids`.
 ///
 /// Columnar rather than row-major because a table is read by column — and
 /// because one array per attribute stays compact where a per-row object
@@ -273,7 +273,7 @@ pub struct KindColumnDto {
     pub values: Vec<serde_json::Value>,
 }
 
-/// Every element of one kind, with its §4.3 attribute columns.
+/// Every element of one kind, with its §4.4 attribute columns.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct KindElementsDto {
@@ -289,7 +289,7 @@ pub struct KindElementsDto {
 /// IPC round trip per row. Empty for engines whose attributes reach the
 /// frontend by another route — wds carries its own in the network
 /// snapshot — and for a kind the model has none of.
-/// One §4.3 attribute of an element kind, without any element's values.
+/// One §4.4 attribute of an element kind, without any element's values.
 ///
 /// The schema is a property of the kind, so it is known before any element
 /// is looked at — which is what lets a panel draw its property rows while
@@ -305,7 +305,7 @@ pub struct AttributeInfoDto {
 }
 
 #[tauri::command]
-/// The declared attribute schema of one element kind (spec §4.3): every
+/// The declared attribute schema of one element kind (spec §4.4): every
 /// property it has, in presentation order, with its label and quantity.
 ///
 /// Static per engine and kind — no project, no scenario, no values.
@@ -349,7 +349,7 @@ pub fn get_kind_elements(
     Ok(kind_elements(&net, &kind))
 }
 
-/// Build one kind's table: ids in model order, and one column per §4.3
+/// Build one kind's table: ids in model order, and one column per §4.4
 /// attribute the schema declares, in schema order.
 pub fn kind_elements(net: &Network, kind: &str) -> KindElementsDto {
     // One pass over the elements of this kind, rather than a lookup per id.

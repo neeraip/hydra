@@ -12,8 +12,8 @@
 //! presence resolution (spec §6.2) when result reading lands.
 
 use hydra_common::{
-    AttributeDescriptor, ElementClass, ElementKind, OptionKind, QuantityDescriptor, RampHint,
-    VariableDescriptor,
+    AttributeDescriptor, ElementClass, ElementKind, ElementRole, OptionKind, QuantityDescriptor,
+    RampHint, VariableDescriptor,
 };
 
 // ── Element kinds (spec §4.2) ─────────────────────────────────────────────────
@@ -31,6 +31,7 @@ pub const ELEMENT_KINDS: &[ElementKind] = &[
         label: "Junction",
         label_plural: "Junctions",
         class: ElementClass::Point,
+        role: Some(ElementRole::Conveyance),
         badge: "J",
     },
     ElementKind {
@@ -38,6 +39,7 @@ pub const ELEMENT_KINDS: &[ElementKind] = &[
         label: "Outfall",
         label_plural: "Outfalls",
         class: ElementClass::Point,
+        role: Some(ElementRole::Boundary),
         badge: "OF",
     },
     ElementKind {
@@ -45,6 +47,7 @@ pub const ELEMENT_KINDS: &[ElementKind] = &[
         label: "Divider",
         label_plural: "Dividers",
         class: ElementClass::Point,
+        role: Some(ElementRole::Control),
         badge: "FD",
     },
     ElementKind {
@@ -52,6 +55,7 @@ pub const ELEMENT_KINDS: &[ElementKind] = &[
         label: "Storage unit",
         label_plural: "Storage units",
         class: ElementClass::Point,
+        role: Some(ElementRole::Boundary),
         badge: "SU",
     },
     ElementKind {
@@ -59,6 +63,7 @@ pub const ELEMENT_KINDS: &[ElementKind] = &[
         label: "Rain gage",
         label_plural: "Rain gages",
         class: ElementClass::Point,
+        role: None,
         badge: "RG",
     },
     ElementKind {
@@ -66,6 +71,7 @@ pub const ELEMENT_KINDS: &[ElementKind] = &[
         label: "Conduit",
         label_plural: "Conduits",
         class: ElementClass::Polyline,
+        role: Some(ElementRole::Conveyance),
         badge: "C",
     },
     ElementKind {
@@ -73,6 +79,7 @@ pub const ELEMENT_KINDS: &[ElementKind] = &[
         label: "Pump",
         label_plural: "Pumps",
         class: ElementClass::Polyline,
+        role: Some(ElementRole::Control),
         badge: "PU",
     },
     ElementKind {
@@ -80,6 +87,7 @@ pub const ELEMENT_KINDS: &[ElementKind] = &[
         label: "Orifice",
         label_plural: "Orifices",
         class: ElementClass::Polyline,
+        role: Some(ElementRole::Control),
         badge: "OR",
     },
     ElementKind {
@@ -87,6 +95,7 @@ pub const ELEMENT_KINDS: &[ElementKind] = &[
         label: "Weir",
         label_plural: "Weirs",
         class: ElementClass::Polyline,
+        role: Some(ElementRole::Control),
         badge: "W",
     },
     ElementKind {
@@ -94,6 +103,7 @@ pub const ELEMENT_KINDS: &[ElementKind] = &[
         label: "Outlet",
         label_plural: "Outlets",
         class: ElementClass::Polyline,
+        role: Some(ElementRole::Control),
         badge: "OL",
     },
     ElementKind {
@@ -101,6 +111,7 @@ pub const ELEMENT_KINDS: &[ElementKind] = &[
         label: "Subcatchment",
         label_plural: "Subcatchments",
         class: ElementClass::Region,
+        role: Some(ElementRole::Boundary),
         badge: "SC",
     },
     ElementKind {
@@ -108,6 +119,7 @@ pub const ELEMENT_KINDS: &[ElementKind] = &[
         label: "Pollutant",
         label_plural: "Pollutants",
         class: ElementClass::Collection,
+        role: None,
         badge: "Po",
     },
     ElementKind {
@@ -115,6 +127,7 @@ pub const ELEMENT_KINDS: &[ElementKind] = &[
         label: "Curve",
         label_plural: "Curves",
         class: ElementClass::Collection,
+        role: None,
         badge: "Cv",
     },
     ElementKind {
@@ -122,6 +135,7 @@ pub const ELEMENT_KINDS: &[ElementKind] = &[
         label: "Time series",
         label_plural: "Time series",
         class: ElementClass::Collection,
+        role: None,
         badge: "Ts",
     },
     ElementKind {
@@ -129,6 +143,7 @@ pub const ELEMENT_KINDS: &[ElementKind] = &[
         label: "Pattern",
         label_plural: "Patterns",
         class: ElementClass::Collection,
+        role: None,
         badge: "Pa",
     },
     ElementKind {
@@ -136,6 +151,7 @@ pub const ELEMENT_KINDS: &[ElementKind] = &[
         label: "Control rule",
         label_plural: "Control rules",
         class: ElementClass::Collection,
+        role: None,
         badge: "Ru",
     },
 ];
@@ -415,6 +431,41 @@ fn var(
 
 #[cfg(test)]
 mod tests {
+
+    /// Role is the engine's judgement, not a lookup, so it is pinned here.
+    /// An application draws an unsimulated model from these alone, and a
+    /// kind silently sliding from boundary to conveyance would change what
+    /// a reader sees without changing anything they can point at.
+    #[test]
+    fn every_kind_declares_the_role_it_plays() {
+        use ElementRole::*;
+        let role = |id: &str| ELEMENT_KINDS.iter().find(|k| k.id == id).unwrap().role;
+
+        // Where flow enters or leaves the routed network.
+        assert_eq!(role("outfall"), Some(Boundary));
+        assert_eq!(role("storage"), Some(Boundary));
+        // Runoff is where water enters the network from outside it.
+        assert_eq!(role("subcatchment"), Some(Boundary));
+
+        // Structures act on the flow; a divider splits it, so it acts too.
+        for id in ["pump", "orifice", "weir", "outlet", "divider"] {
+            assert_eq!(role(id), Some(Control), "{id}");
+        }
+
+        assert_eq!(role("junction"), Some(Conveyance));
+        assert_eq!(role("conduit"), Some(Conveyance));
+
+        // A gage is located but conveys nothing, and a collection is not in
+        // the flow network at all.
+        assert_eq!(role("raingage"), None);
+        for k in ELEMENT_KINDS
+            .iter()
+            .filter(|k| k.class == ElementClass::Collection)
+        {
+            assert_eq!(k.role, None, "{}", k.id);
+        }
+    }
+
     use super::*;
     use std::collections::HashSet;
 

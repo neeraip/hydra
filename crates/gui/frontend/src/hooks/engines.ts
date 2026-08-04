@@ -161,11 +161,18 @@ export function useEngines(): EngineInfo[] {
 export type ElementClass = "point" | "polyline" | "region" | "collection";
 
 /** One element kind an engine models, as the engine describes it. */
+/** What a kind does in the network (§4.3), as distinct from what it is
+ * geometrically. Absent for kinds outside the flow network — a rain gage,
+ * a curve, a control rule. */
+export type ElementRole = "conveyance" | "boundary" | "control";
+
 export interface ElementKindInfo {
   id: string;
   label: string;
   labelPlural: string;
   class: ElementClass;
+  /** Absent where the kind plays no part in the flow network. */
+  role?: ElementRole;
   /** One- or two-character glyph for dense UI. */
   badge: string;
 }
@@ -210,7 +217,7 @@ export function useElementKinds(
   return kinds;
 }
 
-/** One §4.3 property of an element kind, without any element's values. */
+/** One §4.4 property of an element kind, without any element's values. */
 export interface ElementAttributeInfo {
   key: string;
   label: string;

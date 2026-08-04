@@ -8,8 +8,8 @@
 //! views, so removing or repurposing one is a compatibility break.
 
 use hydra_common::{
-    AttributeDescriptor, CategoryItem, ElementClass, ElementKind, OptionKind, QuantityDescriptor,
-    RampHint, VariableDescriptor,
+    AttributeDescriptor, CategoryItem, ElementClass, ElementKind, ElementRole, OptionKind,
+    QuantityDescriptor, RampHint, VariableDescriptor,
 };
 
 // ── Element kinds (spec §4.2) ─────────────────────────────────────────────────
@@ -21,6 +21,7 @@ pub const ELEMENT_KINDS: &[ElementKind] = &[
         label: "Junction",
         label_plural: "Junctions",
         class: ElementClass::Point,
+        role: Some(ElementRole::Conveyance),
         badge: "J",
     },
     ElementKind {
@@ -28,6 +29,7 @@ pub const ELEMENT_KINDS: &[ElementKind] = &[
         label: "Reservoir",
         label_plural: "Reservoirs",
         class: ElementClass::Point,
+        role: Some(ElementRole::Boundary),
         badge: "R",
     },
     ElementKind {
@@ -35,6 +37,7 @@ pub const ELEMENT_KINDS: &[ElementKind] = &[
         label: "Tank",
         label_plural: "Tanks",
         class: ElementClass::Point,
+        role: Some(ElementRole::Boundary),
         badge: "TK",
     },
     ElementKind {
@@ -42,6 +45,7 @@ pub const ELEMENT_KINDS: &[ElementKind] = &[
         label: "Pipe",
         label_plural: "Pipes",
         class: ElementClass::Polyline,
+        role: Some(ElementRole::Conveyance),
         badge: "P",
     },
     ElementKind {
@@ -49,6 +53,7 @@ pub const ELEMENT_KINDS: &[ElementKind] = &[
         label: "Pump",
         label_plural: "Pumps",
         class: ElementClass::Polyline,
+        role: Some(ElementRole::Control),
         badge: "PU",
     },
     ElementKind {
@@ -56,6 +61,7 @@ pub const ELEMENT_KINDS: &[ElementKind] = &[
         label: "Valve",
         label_plural: "Valves",
         class: ElementClass::Polyline,
+        role: Some(ElementRole::Control),
         badge: "V",
     },
     ElementKind {
@@ -63,6 +69,7 @@ pub const ELEMENT_KINDS: &[ElementKind] = &[
         label: "Pattern",
         label_plural: "Patterns",
         class: ElementClass::Collection,
+        role: None,
         badge: "Pa",
     },
     ElementKind {
@@ -70,6 +77,7 @@ pub const ELEMENT_KINDS: &[ElementKind] = &[
         label: "Curve",
         label_plural: "Curves",
         class: ElementClass::Collection,
+        role: None,
         badge: "Cv",
     },
     ElementKind {
@@ -77,6 +85,7 @@ pub const ELEMENT_KINDS: &[ElementKind] = &[
         label: "Control",
         label_plural: "Controls",
         class: ElementClass::Collection,
+        role: None,
         badge: "Ct",
     },
     ElementKind {
@@ -84,6 +93,7 @@ pub const ELEMENT_KINDS: &[ElementKind] = &[
         label: "Rule",
         label_plural: "Rules",
         class: ElementClass::Collection,
+        role: None,
         badge: "Ru",
     },
 ];
@@ -308,6 +318,34 @@ fn cat(value: i64, label: &str) -> CategoryItem {
 
 #[cfg(test)]
 mod tests {
+
+    /// Role is the engine's judgement, not a lookup — see the drainage
+    /// engine's counterpart. Pinned so an unsimulated network cannot change
+    /// how it reads without someone choosing to change it.
+    #[test]
+    fn every_kind_declares_the_role_it_plays() {
+        use ElementRole::*;
+        let role = |id: &str| ELEMENT_KINDS.iter().find(|k| k.id == id).unwrap().role;
+
+        // A reservoir fixes head, a tank holds volume: both are where the
+        // model meets what it does not simulate.
+        assert_eq!(role("reservoir"), Some(Boundary));
+        assert_eq!(role("tank"), Some(Boundary));
+
+        assert_eq!(role("pump"), Some(Control));
+        assert_eq!(role("valve"), Some(Control));
+
+        assert_eq!(role("junction"), Some(Conveyance));
+        assert_eq!(role("pipe"), Some(Conveyance));
+
+        for k in ELEMENT_KINDS
+            .iter()
+            .filter(|k| k.class == ElementClass::Collection)
+        {
+            assert_eq!(k.role, None, "{}", k.id);
+        }
+    }
+
     use super::*;
     use std::collections::HashSet;
 

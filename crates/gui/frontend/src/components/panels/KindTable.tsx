@@ -12,7 +12,7 @@
 // inspector.
 //
 // Columns are engine-authored — labels, units and ordering come from the
-// engine's §4.3 attribute schema — so a kind this file has never heard of
+// engine's §4.4 attribute schema — so a kind this file has never heard of
 // renders correctly, and so does an engine that does not exist yet.
 
 import { useMemo, useState } from "react";
@@ -55,7 +55,7 @@ export function KindTable({
   onSelect,
 }: {
   kindId: string;
-  /** §4.3 property columns for this kind. */
+  /** §4.4 property columns for this kind. */
   elements: KindElements;
   activeId?: string | null;
   onSelect?: (id: string) => void;

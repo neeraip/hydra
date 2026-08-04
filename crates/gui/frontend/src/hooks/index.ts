@@ -43,6 +43,7 @@ export {
   type ElementAttributeInfo,
   type ElementClass,
   type ElementKindInfo,
+  type ElementRole,
   type EngineInfo,
   type EngineStatus,
   elementClassHeading,

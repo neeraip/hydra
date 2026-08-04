@@ -9,7 +9,7 @@ mod quantity;
 mod report;
 mod variables;
 
-pub use elements::{AttributeDescriptor, ElementClass, ElementKind};
+pub use elements::{AttributeDescriptor, ElementClass, ElementKind, ElementRole};
 pub use identity::{
     engine_by_key, EngineDescriptor, EngineStatus, ImportFormat, Recognition, UnknownEngineError,
     ENGINES,
