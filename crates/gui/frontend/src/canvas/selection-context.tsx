@@ -17,24 +17,39 @@ import {
 } from "react";
 import type { GenericQuantity } from "../hooks/results";
 import type { Link, Node, Region } from "../types/network";
+import type { Quantity } from "../units";
 
 export type InspectorView = "closed" | "node" | "link" | "region";
 
-/** Header of one engine-generic result column in the rail list: the
- * engine-authored label/unit of a catalog variable whose per-element
- * values CanvasView merged into the sim arrays (`resultValues[key]`). */
+/** Header of one result column in the rail list.
+ *
+ * `key` is looked up on each element twice over: first in `resultValues`,
+ * where engines that serve a variable catalog put their values, then as a
+ * field on the element itself, which is where an engine with fixed
+ * variables (wds pressure, flow) already carries them. One contract, both
+ * kinds of engine.
+ *
+ * The unit travels either as a §5 descriptor from the engine's catalog or,
+ * for a fixed variable, as the application's own quantity key. */
 export interface SimResultColumn {
-  /** Variable id — the key into each element's `resultValues`. */
   key: string;
   label: string;
   /** Engine-authored compact notation for the header's narrowest stage. */
   symbol?: string;
   /** §5 quantity descriptor for the column's SI values. */
   quantity?: GenericQuantity;
+  /** Quantity key for a fixed-variable engine's own conversion. */
+  unit?: Quantity;
 }
 
-/** Per-class result columns, `null` when the engine serves fixed-variable
- * results (wds) — the rail then keeps its built-in columns. */
+/**
+ * Per-class result columns, most relevant first.
+ *
+ * **The first column is the variable the canvas is currently colouring
+ * by.** The rail has room for one number, and the useful one is the number
+ * the map is already showing — change the legend and the list follows, so
+ * the two views answer the same question rather than two arbitrary ones.
+ */
 export interface SimResultColumns {
   node: SimResultColumn[];
   link: SimResultColumn[];

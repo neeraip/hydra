@@ -51,6 +51,7 @@ import {
   createNode,
   deleteElement,
   type GenericPeriodValues,
+  type GenericQuantity,
   type GenericVariable,
   getGenericPeriodValues,
   getPeriodResults,
@@ -72,6 +73,7 @@ import {
 } from "../../hooks/undoStack";
 import { useElementRename } from "../../hooks/useElementRename";
 import { useReducedMotion } from "../../hooks/useReducedMotion";
+import type { Quantity } from "../../units";
 import { CanvasErrorBoundary } from "./CanvasView/CanvasErrorBoundary";
 import { CanvasToolbar } from "./CanvasView/CanvasToolbar";
 import { InvalidCrsOverlay } from "./CanvasView/InvalidCrsOverlay";
@@ -127,6 +129,71 @@ const CANVAS_PREF_DEFAULTS: CanvasPrefs = {
 // (Basemap ids are validated structurally via isValidBasemapId instead — the
 // provider catalog is open-ended.)
 const PREF_VIEW_MODES: readonly ViewMode[] = ["map", "schematic"];
+
+/** Label, engineering symbol and quantity for each fixed wds variable —
+ * the frontend's own table, because these are not engine-catalog variables
+ * and nothing serves descriptors for them. Symbols follow the same notation
+ * the catalog engines use: p pressure, H head, q demand, Q flow, v velocity,
+ * hL headloss, C concentration. */
+/** How many result variables ride along on each rail element. The rail
+ * shows one; the rest are there for the GeoJSON export. */
+const RAIL_RESULT_COLUMNS = 3;
+
+/** Catalog variables for one class, the legend's choice first.
+ *
+ * The rail shows the first column, so leading with the selected variable
+ * is what makes the list follow the map. The rest ride along for the
+ * GeoJSON export, which takes whatever is merged. Each column keeps the
+ * index of its own values array, because reordering the columns must not
+ * reorder what they read. */
+const railColumns = (
+  vars: GenericVariable[],
+  selected: string,
+): Array<{
+  key: string;
+  label: string;
+  symbol?: string;
+  quantity?: GenericQuantity;
+  at: number;
+}> => {
+  const chosen = Math.max(
+    0,
+    vars.findIndex((v) => v.id === selected),
+  );
+  const order = [
+    chosen,
+    ...vars.map((_, i) => i).filter((i) => i !== chosen),
+  ].slice(0, RAIL_RESULT_COLUMNS);
+  return order.map((i) => ({
+    key: vars[i].id,
+    label: vars[i].label,
+    symbol: vars[i].symbol,
+    quantity: vars[i].quantity,
+    at: i,
+  }));
+};
+
+const WDS_NODE_VARS: Record<
+  NodeVariable,
+  { label: string; symbol: string; unit?: Quantity }
+> = {
+  pressure: { label: "Pressure", symbol: "p", unit: "pressure" },
+  head: { label: "Head", symbol: "H", unit: "elevation" },
+  demand: { label: "Demand", symbol: "q", unit: "demand" },
+  quality: { label: "Quality", symbol: "C" },
+};
+
+const WDS_LINK_VARS: Record<
+  LinkVariable,
+  { label: string; symbol: string; unit?: Quantity }
+> = {
+  flow: { label: "Flow", symbol: "Q", unit: "flow" },
+  velocity: { label: "Velocity", symbol: "v", unit: "velocity" },
+  headloss: { label: "Headloss", symbol: "hL", unit: "elevation" },
+  status: { label: "Status", symbol: "St" },
+  quality: { label: "Quality", symbol: "C" },
+};
+
 const PREF_NODE_VARS: readonly NodeVariable[] = [
   "pressure",
   "head",
@@ -1078,28 +1145,14 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
   // merge above. The column set is the catalog's leading variables, capped
   // to keep the rail readable; order guarantee as above (payload arrays
   // share allNodes/baseLinks order).
-  const RAIL_RESULT_COLUMNS = 3;
   const railNodeColumns = useMemo(
-    () =>
-      (genericMeta?.pointVars ?? []).slice(0, RAIL_RESULT_COLUMNS).map((v) => ({
-        key: v.id,
-        label: v.label,
-        symbol: v.symbol,
-        quantity: v.quantity,
-      })),
-    [genericMeta],
+    () => railColumns(genericMeta?.pointVars ?? [], genericSelection.point),
+    [genericMeta, genericSelection.point],
   );
   const railLinkColumns = useMemo(
     () =>
-      (genericMeta?.polylineVars ?? [])
-        .slice(0, RAIL_RESULT_COLUMNS)
-        .map((v) => ({
-          key: v.id,
-          label: v.label,
-          symbol: v.symbol,
-          quantity: v.quantity,
-        })),
-    [genericMeta],
+      railColumns(genericMeta?.polylineVars ?? [], genericSelection.polyline),
+    [genericMeta, genericSelection.polyline],
   );
   const railNodes = useMemo(() => {
     const arrays = fetchedGenericValues?.points;
@@ -1113,8 +1166,8 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
     }
     return allNodes.map((n, i) => {
       const resultValues: Record<string, number | null> = {};
-      railNodeColumns.forEach((c, vi) => {
-        const v = arrays[vi]?.[i];
+      railNodeColumns.forEach((c) => {
+        const v = arrays[c.at]?.[i];
         resultValues[c.key] = v != null && Number.isFinite(v) ? v : null;
       });
       return { ...n, resultValues };
@@ -1132,8 +1185,8 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
     }
     return allLinks.map((l, i) => {
       const resultValues: Record<string, number | null> = {};
-      railLinkColumns.forEach((c, vi) => {
-        const v = arrays[vi]?.[i];
+      railLinkColumns.forEach((c) => {
+        const v = arrays[c.at]?.[i];
         resultValues[c.key] = v != null && Number.isFinite(v) ? v : null;
       });
       return { ...l, resultValues };
@@ -1146,16 +1199,8 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
   ]);
 
   const railRegionColumns = useMemo(
-    () =>
-      (genericMeta?.regionVars ?? [])
-        .slice(0, RAIL_RESULT_COLUMNS)
-        .map((v) => ({
-          key: v.id,
-          label: v.label,
-          symbol: v.symbol,
-          quantity: v.quantity,
-        })),
-    [genericMeta],
+    () => railColumns(genericMeta?.regionVars ?? [], genericSelection.region),
+    [genericMeta, genericSelection.region],
   );
   const railRegions = useMemo(() => {
     const arrays = fetchedGenericValues?.regions;
@@ -1169,8 +1214,8 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
     }
     return baseRegions.map((r, i) => {
       const resultValues: Record<string, number | null> = {};
-      railRegionColumns.forEach((c, vi) => {
-        const v = arrays[vi]?.[i];
+      railRegionColumns.forEach((c) => {
+        const v = arrays[c.at]?.[i];
         resultValues[c.key] = v != null && Number.isFinite(v) ? v : null;
       });
       return { ...r, resultValues };
@@ -1181,6 +1226,32 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
     railRegionColumns,
     needSimObjects,
   ]);
+
+  // An engine with fixed variables gets the same treatment: its legend
+  // choice becomes the rail's column, reading a field the sim merge already
+  // put on each element rather than a catalog bag.
+  const wdsColumns = useMemo(
+    () => ({
+      node: [
+        {
+          key: nodeVar,
+          label: WDS_NODE_VARS[nodeVar].label,
+          symbol: WDS_NODE_VARS[nodeVar].symbol,
+          unit: WDS_NODE_VARS[nodeVar].unit,
+        },
+      ],
+      link: [
+        {
+          key: linkVar,
+          label: WDS_LINK_VARS[linkVar].label,
+          symbol: WDS_LINK_VARS[linkVar].symbol,
+          unit: WDS_LINK_VARS[linkVar].unit,
+        },
+      ],
+      region: [],
+    }),
+    [nodeVar, linkVar],
+  );
 
   useEffect(() => {
     setSimData(
@@ -1193,13 +1264,14 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
             link: railLinkColumns,
             region: railRegionColumns,
           }
-        : null,
+        : wdsColumns,
     );
   }, [
     railNodes,
     railLinks,
     railRegions,
     railNodeColumns,
+    wdsColumns,
     railLinkColumns,
     railRegionColumns,
     genericMeta,

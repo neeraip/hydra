@@ -85,9 +85,8 @@ interface Row {
   context: string;
   /** Current-period value, already SI, or null before a run. */
   value: number | null;
-  /** How to render that value — an engine-generic column, or one of the
-   * fixed-variable quantities the wds snapshot carries inline. */
-  format: SimResultColumn | "pressure" | "flow" | null;
+  /** The column this value came from, for its label and unit. */
+  format: SimResultColumn | null;
   canZoom: boolean;
 }
 
@@ -107,54 +106,48 @@ export function rankRow(row: Row, q: string): number {
   return -1;
 }
 
-/** The value a row shows, and how to render it.
+/** The value a row shows, and the column it came from.
  *
- * Engine-generic results ride on `resultValues` keyed by variable id, and
- * the leading column for the element's class is the one worth the single
- * slot a finder has. Engines whose snapshot carries fixed variables (wds)
- * have no such column, so their own field is used. */
+ * That column is the one the canvas legend has selected, so the number
+ * beside an element is the number the map is painting it with — change the
+ * legend and the list follows. Engines that serve a variable catalog put
+ * their values in `resultValues`; an engine with fixed variables carries
+ * them as fields on the element itself, so both are tried.
+ */
 function currentValue(
   el: Node | Link | Region,
-  cls: ElementClass,
   columns: SimResultColumn[] | undefined,
 ): Pick<Row, "value" | "format"> {
   const column = columns?.[0];
-  if (column) {
-    const bag = (el as { resultValues?: Record<string, number | null> })
-      .resultValues;
-    if (bag) return { value: bag[column.key] ?? null, format: column };
-  }
-  if (cls === "point") {
-    const p = (el as Node).pressure;
-    if (p != null) return { value: p, format: "pressure" };
-  }
-  if (cls === "polyline") {
-    const f = (el as Link).flow;
-    if (f != null) return { value: f, format: "flow" };
-  }
-  return { value: null, format: null };
+  if (!column) return { value: null, format: null };
+  const bag = (el as { resultValues?: Record<string, number | null> })
+    .resultValues;
+  const raw =
+    bag && column.key in bag
+      ? bag[column.key]
+      : (el as unknown as Record<string, unknown>)[column.key];
+  const value = typeof raw === "number" && Number.isFinite(raw) ? raw : null;
+  return { value, format: column };
 }
 
 function formatValue(row: Row, sys: "si" | "us"): string {
-  if (row.value == null) return "—";
-  if (row.format === "pressure") {
-    return toDisplay(row.value, "pressure", sys).toFixed(1);
-  }
-  if (row.format === "flow") {
-    return toDisplay(row.value, "flow", sys).toFixed(sys === "si" ? 2 : 1);
-  }
-  if (row.format)
+  if (row.value == null || !row.format) return "—";
+  if (row.format.quantity) {
     return formatGenericValue(row.value, row.format.quantity, sys, false);
-  return "—";
+  }
+  if (row.format.unit) {
+    return toDisplay(row.value, row.format.unit, sys).toFixed(
+      sys === "si" ? 2 : 1,
+    );
+  }
+  // Dimensionless: quality carries whatever unit its mode implies, and a
+  // status code is an enum. Neither converts.
+  return String(Number(row.value.toFixed(2)));
 }
 
-/** The name and engineering symbol for a row's value, whichever family it
- * came from — an engine-authored variable, or one of the fixed quantities
- * the wds snapshot carries inline. */
+/** The name and engineering symbol for a row's value. */
 function formatMeta(f: Row["format"]): { name: string; symbol: string } | null {
   if (f == null) return null;
-  if (f === "pressure") return { name: "Pressure", symbol: "p" };
-  if (f === "flow") return { name: "Flow", symbol: "Q" };
   return {
     name: f.label,
     symbol: f.symbol ?? f.label.charAt(0).toUpperCase(),
@@ -162,10 +155,11 @@ function formatMeta(f: Row["format"]): { name: string; symbol: string } | null {
 }
 
 function unitOf(row: Row, sys: "si" | "us"): string {
-  if (row.format === "pressure") return unitLabel("pressure", sys);
-  if (row.format === "flow") return unitLabel("flow", sys);
-  if (row.format) return genericUnitLabel(row.format.quantity, sys) ?? "";
-  return "";
+  if (!row.format) return "";
+  if (row.format.quantity) {
+    return genericUnitLabel(row.format.quantity, sys) ?? "";
+  }
+  return row.format.unit ? unitLabel(row.format.unit, sys) : "";
 }
 
 // ── Styles ────────────────────────────────────────────────────────────────────
@@ -328,7 +322,7 @@ export function NetworkInspectorHome({
         cls: "point",
         context: "",
         canZoom: zoomableNodeIds.has(n.id),
-        ...currentValue(n, "point", nodeResultColumns),
+        ...currentValue(n, nodeResultColumns),
       });
     }
     for (const l of allLinks) {
@@ -338,7 +332,7 @@ export function NetworkInspectorHome({
         cls: "polyline",
         context: `${l.fromId} → ${l.toId}`,
         canZoom: zoomableNodeIds.has(l.fromId) && zoomableNodeIds.has(l.toId),
-        ...currentValue(l, "polyline", linkResultColumns),
+        ...currentValue(l, linkResultColumns),
       });
     }
     for (const r of regions) {
@@ -348,7 +342,7 @@ export function NetworkInspectorHome({
         cls: "region",
         context: r.outletId ? `→ ${r.outletId}` : "",
         canZoom: true,
-        ...currentValue(r, "region", regionResultColumns),
+        ...currentValue(r, regionResultColumns),
       });
     }
     perfTrace("network-finder-rows", performance.now() - t0, {
