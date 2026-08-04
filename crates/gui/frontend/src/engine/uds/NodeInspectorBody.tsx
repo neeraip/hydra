@@ -1,6 +1,8 @@
+import { useMemo } from "react";
+import { useHoverActions } from "../../canvas/hover-context";
 import { ConnectedLink } from "../../components/panels/ElementInspector/ConnectedElements";
 import { SectionLabel } from "../../components/ui/SectionLabel";
-import { useLinksConnectedTo } from "../../hooks";
+import { useLinksConnectedTo, useRegions } from "../../hooks";
 import type { NodeInspectorBodyProps } from "../registry";
 import {
   GenericResultsCards,
@@ -17,10 +19,21 @@ import {
 export function UdsNodeInspectorBody({
   node,
   onLocateLink,
+  onLocateRegion,
   results,
 }: NodeInspectorBodyProps) {
   const connectedLinks = useLinksConnectedTo(node.id);
   const attributes = useElementDetails(node.id);
+  const { hoverRegion, clearHover } = useHoverActions();
+  // The reverse of a catchment's "Discharges to". A catchment reaches its
+  // outlet through no link at all, so this relationship is invisible from
+  // the node's side unless it is looked up — and from the node's side is
+  // exactly where you ask what is loading it.
+  const regions = useRegions();
+  const draining = useMemo(
+    () => regions.filter((r) => r.outletId === node.id),
+    [regions, node.id],
+  );
   return (
     <div style={{ flex: 1, overflowY: "auto", padding: 12 }}>
       <PropertiesSection rows={attributes} />
@@ -41,6 +54,48 @@ export function UdsNodeInspectorBody({
           >
             {connectedLinks.map((l) => (
               <ConnectedLink key={l.id} link={l} onLocate={onLocateLink} />
+            ))}
+          </div>
+        </>
+      )}
+
+      {draining.length > 0 && (
+        <>
+          <SectionLabel>
+            {draining.length} catchment{draining.length === 1 ? "" : "s"} drain
+            {draining.length === 1 ? "s" : ""} here
+          </SectionLabel>
+          <div
+            style={{
+              display: "flex",
+              flexWrap: "wrap",
+              gap: 4,
+              marginBottom: 14,
+            }}
+          >
+            {draining.map((r) => (
+              <button
+                type="button"
+                key={r.id}
+                onClick={() => onLocateRegion?.(r.id)}
+                onMouseEnter={() => hoverRegion(r.id)}
+                onMouseLeave={() => clearHover()}
+                onFocus={() => hoverRegion(r.id)}
+                onBlur={() => clearHover()}
+                disabled={!onLocateRegion}
+                style={{
+                  background: "var(--bg-card)",
+                  border: "1px solid var(--border)",
+                  borderRadius: 6,
+                  padding: "6px 10px",
+                  cursor: onLocateRegion ? "pointer" : "default",
+                  fontFamily: "var(--font-mono)",
+                  fontSize: "var(--text-md)",
+                  color: "var(--accent)",
+                }}
+              >
+                {r.id}
+              </button>
             ))}
           </div>
         </>

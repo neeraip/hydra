@@ -60,6 +60,9 @@ export interface GenericElementValue {
 export interface NodeInspectorBodyProps {
   node: Node;
   onLocateLink: (id: string) => void;
+  /** Select an areal element that drains to this node. Absent for engines
+   * with no areal elements. */
+  onLocateRegion?: (id: string) => void;
   /** Current-period catalog values for this element, when the engine's
    * generic results are loaded; `null` before a run. */
   results?: GenericElementValue[] | null;

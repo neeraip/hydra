@@ -2090,6 +2090,7 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
               onLocateRelated={(id) => {
                 if (linkMap.has(id)) selectLink(id);
               }}
+              onLocateRegion={(id) => selectRegion(id)}
               nodeVar={nodeVar}
               ranges={stableResultMeta?.ranges}
               hasSimulation={!!stableResultMeta}

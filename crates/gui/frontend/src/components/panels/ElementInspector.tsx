@@ -58,6 +58,9 @@ interface NodeInspectorProps {
   onDelete?: () => void;
   onRename?: (newId: string) => void;
   onLocateRelated: (id: string) => void;
+  /** Select an areal element draining to this node, for engines that have
+   * them — the reverse of a catchment's own "discharges to". */
+  onLocateRegion?: (id: string) => void;
   onOpenPattern?: (id: string) => void;
   nodeVar?: NodeVariable;
   ranges?: ResultRanges;
@@ -77,6 +80,7 @@ export function NodeInspector({
   onDelete,
   onRename,
   onLocateRelated,
+  onLocateRegion,
   onOpenPattern,
   nodeVar,
   ranges,
@@ -127,6 +131,7 @@ export function NodeInspector({
         <EngineBody
           node={node}
           onLocateLink={onLocateRelated}
+          onLocateRegion={onLocateRegion}
           results={genericResults}
         />
       ) : (
