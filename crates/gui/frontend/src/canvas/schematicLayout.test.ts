@@ -482,6 +482,25 @@ describe("computeSchematicLayout – region glyphs", () => {
     expect(a[0]).not.toEqual(b[0]);
   });
 
+  it("never leaves a leader without the glyph it points from", () => {
+    // A leader explains a placed glyph. One without a ring is a line hanging
+    // in space — which is exactly what a stale layout looked like.
+    const layout = computeSchematicLayout(
+      nodes,
+      links,
+      undefined,
+      [],
+      [
+        catchment("S1", "J1"),
+        catchment("S2", null),
+        catchment("S3", "NoSuchNode"),
+      ],
+    );
+    for (const id of layout.regionLeaders.keys()) {
+      expect(layout.regionRings.has(id)).toBe(true);
+    }
+  });
+
   it("omits a catchment with no node to hang off", () => {
     const layout = computeSchematicLayout(
       nodes,

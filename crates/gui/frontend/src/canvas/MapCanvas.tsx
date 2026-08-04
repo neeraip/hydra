@@ -548,6 +548,17 @@ export const MapCanvas = memo(function MapCanvas({
     regions: Region[] | undefined;
   } | null>(null);
   const schematicLayout = useMemo(() => {
+    // Checked before the cache, not after: the cache is keyed on the inputs
+    // to the layout, and the mode is not one of them. Consulting it first
+    // handed a plan view the schematic's positions — invisible for the
+    // coordinates, which a plan view never reads, but the leader lines came
+    // through and hung in space at schematic-space endpoints.
+    if (!topological) {
+      // Drop a stale cache rather than pinning an obsolete full generation
+      // of nodes/links/coords in memory until schematic is next opened.
+      schematicCacheRef.current = null;
+      return EMPTY_SCHEMATIC_LAYOUT;
+    }
     const cache = schematicCacheRef.current;
     if (
       cache &&
@@ -559,12 +570,6 @@ export const MapCanvas = memo(function MapCanvas({
       cache.scaleY === schematicScale.y
     ) {
       return cache.layout;
-    }
-    if (!topological) {
-      // Drop a stale cache rather than pinning an obsolete full generation
-      // of nodes/links/coords in memory until schematic is next opened.
-      schematicCacheRef.current = null;
-      return EMPTY_SCHEMATIC_LAYOUT;
     }
     const layout = computeSchematicLayout(
       nodes,
@@ -1421,7 +1426,10 @@ export const MapCanvas = memo(function MapCanvas({
       // Leader lines: in the schematic a glyph's position is a placement,
       // not a location, so the line to its outlet is what carries the
       // meaning. Dashed and dim, to read as annotation rather than a link.
-      const leaders = placedRegions
+      // Only a topological layout has leaders to draw: they explain a glyph
+      // that was *placed* beside its outlet. Where the ring sits at its own
+      // coordinates there is nothing to explain.
+      const leaders = (topological ? placedRegions : EMPTY_REGION_DATA)
         .map((r) => schematicLayout.regionLeaders.get(r.id))
         .filter((l): l is [[number, number], [number, number]] => l != null);
       if (leaders.length > 0) {
