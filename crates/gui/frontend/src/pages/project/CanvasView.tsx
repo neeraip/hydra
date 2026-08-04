@@ -73,6 +73,7 @@ import {
 } from "../../hooks/undoStack";
 import { useElementRename } from "../../hooks/useElementRename";
 import { useReducedMotion } from "../../hooks/useReducedMotion";
+import type { Link, Node, Region } from "../../types/network";
 import type { Quantity } from "../../units";
 import { CanvasErrorBoundary } from "./CanvasView/CanvasErrorBoundary";
 import { CanvasToolbar } from "./CanvasView/CanvasToolbar";
@@ -129,6 +130,12 @@ const CANVAS_PREF_DEFAULTS: CanvasPrefs = {
 // (Basemap ids are validated structurally via isValidBasemapId instead — the
 // provider catalog is open-ended.)
 const PREF_VIEW_MODES: readonly ViewMode[] = ["map", "schematic"];
+
+/** Stable empties, so suppressing unplaceable geometry does not hand the
+ * canvas a fresh array identity on every render. */
+const EMPTY_NODES: Node[] = [];
+const EMPTY_LINKS: Link[] = [];
+const EMPTY_REGIONS: Region[] = [];
 
 /** Label, engineering symbol and quantity for each fixed wds variable —
  * the frontend's own table, because these are not engine-catalog variables
@@ -1367,6 +1374,20 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
   // the length guard in MapCanvas drops stale colours immediately.
   const canvasNodes = posNodes;
 
+  // Coordinates that could not be reprojected are not positions. Handing
+  // them to the map draws the network at whatever longitude and latitude
+  // those raw numbers happen to name — a fabricated place, under an overlay
+  // saying the placement is invalid, which reads as a warning about a map
+  // that is fine. Nothing is the honest picture, and it is also what makes
+  // the overlay legible.
+  //
+  // Not gated on `crsResolving` the way the overlay is: a blank moment
+  // while a definition loads is better than a moment of confident nonsense.
+  const placeable = viewMode !== "map" || !crsError;
+  const shownNodes = placeable ? canvasNodes : EMPTY_NODES;
+  const shownLinks = placeable ? canvasLinks : EMPTY_LINKS;
+  const shownRegions = placeable ? canvasRegions : EMPTY_REGIONS;
+
   const nodeMap = useMemo(
     () => new Map(allNodes.map((n) => [n.id, n])),
     [allNodes],
@@ -1812,9 +1833,9 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
           {prefsReady && (
             <CanvasErrorBoundary>
               <MapCanvas
-                nodes={canvasNodes}
-                links={canvasLinks}
-                regions={canvasRegions}
+                nodes={shownNodes}
+                links={shownLinks}
+                regions={shownRegions}
                 couplings={inletCouplings}
                 periodResult={currentPeriodResult}
                 generic={genericCanvas}
