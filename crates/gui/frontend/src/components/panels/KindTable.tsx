@@ -4,29 +4,24 @@
 // Nodes/Links table cannot offer, because columns common to junctions,
 // outfalls and storage units are barely any columns at all.
 //
-// The vertical divider down the middle is the point of the design, and it
-// separates two different kinds of truth:
+// Properties only: what the model file declares. Results are deliberately
+// absent. They belong to a moment in a run, and the page this table lives on
+// has no timeline to choose that moment with — a column headed "current"
+// beside a scrub bar that does not exist answers a question nobody asked.
+// Results live where the timeline does: the canvas rail and the element
+// inspector.
 //
-//   left   §4.3 properties — what the model file declares. Fixed for a run.
-//   right  §6 results      — what the simulation produced, at the period
-//                            the timeline is parked on. Changes as you scrub.
-//
-// Both sides are engine-authored: labels, units and ordering come from the
-// engine's catalogs, so a kind this file has never heard of renders
-// correctly, and so does an engine that does not exist yet.
+// Columns are engine-authored — labels, units and ordering come from the
+// engine's §4.3 attribute schema — so a kind this file has never heard of
+// renders correctly, and so does an engine that does not exist yet.
 
 import { useMemo, useState } from "react";
-import type { DeclaredVariable, KindElements } from "../../hooks";
-import { formatGenericValue, genericUnitLabel } from "../../hooks";
+import type { KindElements } from "../../hooks";
 import { formatElementAttribute } from "../../hooks/network";
 import { useUnitSystem } from "../../units";
 import { TypeBadge } from "../ui/TypeBadge";
 
 type SortDir = "asc" | "desc";
-
-/** Per-element current-period values, keyed by variable id — the same bag
- * the rail and inspector read, indexed here by element id. */
-export type ResultValuesById = Map<string, Record<string, number | null>>;
 
 const TH: React.CSSProperties = {
   padding: "6px 10px",
@@ -53,30 +48,15 @@ const TD: React.CSSProperties = {
   whiteSpace: "nowrap",
 };
 
-/** The rule that draws the divider: the first results column carries it, so
- * the boundary sits between the two families without an empty spacer
- * column that would confuse selection and export. */
-const DIVIDER: React.CSSProperties = {
-  borderLeft: "2px solid var(--border-hover)",
-};
-
 export function KindTable({
   kindId,
   elements,
-  resultVariables,
-  resultValues,
   activeId,
   onSelect,
 }: {
   kindId: string;
   /** §4.3 property columns for this kind. */
   elements: KindElements;
-  /** §6 result variables for this kind's class, from the engine's declared
-   * catalog — so the columns are the same whether or not a run exists. */
-  resultVariables: DeclaredVariable[];
-  /** Current-period values per element id; empty before a run, where every
-   * result cell then reads as the same em dash a missing value does. */
-  resultValues: ResultValuesById;
   activeId?: string | null;
   onSelect?: (id: string) => void;
 }) {
@@ -104,8 +84,7 @@ export function KindTable({
     const propCol = elements.columns.find((c) => c.key === sortCol);
     const get = (i: number): number | string | null => {
       if (propCol) return propCol.values[i] ?? null;
-      if (sortCol === "id") return elements.ids[i];
-      return resultValues.get(elements.ids[i])?.[sortCol] ?? null;
+      return elements.ids[i];
     };
     return idx.sort((a, b) => {
       const av = get(a) ?? "";
@@ -113,7 +92,7 @@ export function KindTable({
       const cmp = av < bv ? -1 : av > bv ? 1 : 0;
       return sortDir === "asc" ? cmp : -cmp;
     });
-  }, [elements, sortCol, sortDir, resultValues]);
+  }, [elements, sortCol, sortDir]);
 
   const indicator = (col: string) =>
     sortCol !== col ? (
@@ -162,28 +141,12 @@ export function KindTable({
                 {indicator(c.key)}
               </th>
             ))}
-            {resultVariables.map((v, i) => {
-              const unit = genericUnitLabel(v.quantity, sys);
-              return (
-                <th
-                  key={v.id}
-                  style={i === 0 ? { ...TH, ...DIVIDER } : TH}
-                  onClick={() => toggleSort(v.id)}
-                  data-tooltip="Result at the current timestep"
-                >
-                  {v.label}
-                  {unit ? ` (${unit})` : ""}
-                  {indicator(v.id)}
-                </th>
-              );
-            })}
           </tr>
         </thead>
         <tbody>
           {order.map((i) => {
             const id = elements.ids[i];
             const isActive = id === activeId;
-            const values = resultValues.get(id);
             return (
               <tr
                 key={id}
@@ -232,27 +195,6 @@ export function KindTable({
                     </td>
                   );
                 })}
-                {resultVariables.map((variable, ri) => (
-                  <td
-                    key={variable.id}
-                    style={
-                      ri === 0
-                        ? {
-                            ...TD,
-                            ...DIVIDER,
-                            fontFamily: "var(--font-mono)",
-                          }
-                        : { ...TD, fontFamily: "var(--font-mono)" }
-                    }
-                  >
-                    {formatGenericValue(
-                      values?.[variable.id],
-                      variable.quantity,
-                      sys,
-                      false,
-                    )}
-                  </td>
-                ))}
               </tr>
             );
           })}

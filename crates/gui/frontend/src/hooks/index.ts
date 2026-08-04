@@ -40,8 +40,6 @@ export * from "./basemapProviders";
 export * from "./criteria";
 export * from "./editors";
 export {
-  type DeclaredVariable,
-  type DeclaredVariables,
   type ElementClass,
   type ElementKindInfo,
   type EngineInfo,
@@ -51,7 +49,6 @@ export {
   FALLBACK_ENGINES,
   getElementKinds,
   getEngines,
-  getResultVariables,
   type ImportFormat,
   importExtensionLabel,
   isEngineAvailable,
@@ -59,7 +56,6 @@ export {
   isEngineGuiOpenable,
   useElementKinds,
   useEngines,
-  useResultVariables,
 } from "./engines";
 export * from "./issues";
 export type { NetworkSummary } from "./NetworkDataContext";
