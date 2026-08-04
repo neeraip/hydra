@@ -325,7 +325,7 @@ export function HomePage() {
             height: 480,
             borderRadius: "50%",
             background:
-              "radial-gradient(circle, rgba(74,144,217,0.14) 0%, transparent 68%)",
+              "radial-gradient(circle, rgba(205,211,223,0.10) 0%, transparent 68%)",
             pointerEvents: "none",
           }}
         />

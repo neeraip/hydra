@@ -75,7 +75,7 @@
   /* Borders */
   --border: rgba(255, 255, 255, 0.07);
   --border-hover: rgba(255, 255, 255, 0.13);
-  --border-focus: rgba(74, 144, 217, 0.55);
+  --border-focus: rgba(205, 211, 223, 0.55);
 
   /* Text */
   --text-primary: #e2e2ec;
@@ -88,16 +88,19 @@
   --text-disabled: #3a3a4c;
 
   /* Accent */
-  --accent: #4a90d9;
-  --accent-dim: rgba(74, 144, 217, 0.15);
+  /* Achromatic: selection reads by brightness, not hue, so no engine's
+     identity colour can ever be mistaken for "this is selected" — and the
+     whole spectrum stays free for data. */
+  --accent: #cdd3df;
+  --accent-dim: rgba(205, 211, 223, 0.14);
   /* Row/element selection. One language for "this is the selected thing",
      everywhere: lists, tables, scenario rows. Derived from the accent so a
      theme change carries it, and never from an engine's identity colour —
      what "selected" looks like must not depend on which engine a project
      uses. */
-  --selection-bg: rgba(74, 144, 217, 0.14);
-  --selection-bg-strong: rgba(74, 144, 217, 0.18);
-  --selection-border: rgba(74, 144, 217, 0.3);
+  --selection-bg: rgba(205, 211, 223, 0.13);
+  --selection-bg-strong: rgba(205, 211, 223, 0.17);
+  --selection-border: rgba(205, 211, 223, 0.32);
 
   /* Nav */
   --nav-hover: rgba(255, 255, 255, 0.055);
@@ -139,18 +142,18 @@
 
   --border: rgba(23, 33, 55, 0.09);
   --border-hover: rgba(23, 33, 55, 0.16);
-  --border-focus: rgba(46, 114, 194, 0.5);
+  --border-focus: rgba(42, 49, 64, 0.5);
 
   --text-primary: #14213a;
   --text-secondary: #4a536a;
   --text-tertiary: #8090a8;
   --text-disabled: #aab3c5;
 
-  --accent: #2e72c2;
-  --accent-dim: rgba(46, 114, 194, 0.1);
-  --selection-bg: rgba(46, 114, 194, 0.12);
-  --selection-bg-strong: rgba(46, 114, 194, 0.16);
-  --selection-border: rgba(46, 114, 194, 0.35);
+  --accent: #2a3140;
+  --accent-dim: rgba(42, 49, 64, 0.09);
+  --selection-bg: rgba(42, 49, 64, 0.09);
+  --selection-bg-strong: rgba(42, 49, 64, 0.13);
+  --selection-border: rgba(42, 49, 64, 0.32);
 
   --nav-hover: rgba(23, 33, 55, 0.06);
 
@@ -205,7 +208,7 @@
 :root[data-high-contrast="true"] {
   --border: rgba(255, 255, 255, 0.18);
   --border-hover: rgba(255, 255, 255, 0.3);
-  --border-focus: rgba(74, 144, 217, 0.8);
+  --border-focus: rgba(232, 236, 244, 0.85);
   --text-secondary: #b4b4cc;
   --text-tertiary: #8a8aa8;
   --status-success: #4dc98a;

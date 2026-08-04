@@ -223,7 +223,9 @@ export function PickerButton<T extends string>({
                 padding: "6px 10px",
                 border: "none",
                 background:
-                  o.value === value ? "rgba(74,144,217,0.22)" : "transparent",
+                  o.value === value
+                    ? "var(--selection-bg-strong)"
+                    : "transparent",
                 color:
                   o.value === value ? "var(--accent)" : "var(--text-secondary)",
                 cursor: "pointer",

@@ -198,7 +198,7 @@ export function SchematicAspectSlider({
             borderRadius: "50%",
             background: "var(--accent)",
             boxShadow:
-              "0 0 0 3px rgba(74, 144, 217, 0.22), 0 1px 4px rgba(0, 0, 0, 0.45)",
+              "0 0 0 3px rgba(205, 211, 223, 0.22), 0 1px 4px rgba(0, 0, 0, 0.45)",
             pointerEvents: "none",
           }}
         />
