@@ -15,7 +15,7 @@ import type { ComponentType } from "react";
 import type { GenericQuantity, Link, Node } from "../hooks";
 import type { Region } from "../types/network";
 import { UdsAnalysisView } from "./uds/AnalysisView";
-import { UdsEditorView } from "./uds/EditorView";
+import { UdsElementsView } from "./uds/ElementsView";
 import { UdsLinkInspectorBody } from "./uds/LinkInspectorBody";
 import { UdsNodeInspectorBody } from "./uds/NodeInspectorBody";
 import { UdsOverviewComposition } from "./uds/OverviewComposition";
@@ -123,7 +123,7 @@ const WDS: EngineComponents = {
 const UDS: EngineComponents = {
   RunSettingsSummary: UdsRunSettingsSummary,
   SettingsView: UdsSettingsView,
-  EditorView: UdsEditorView,
+  EditorView: UdsElementsView,
   AnalysisView: UdsAnalysisView,
   OverviewComposition: UdsOverviewComposition,
   NodeInspectorBody: UdsNodeInspectorBody,

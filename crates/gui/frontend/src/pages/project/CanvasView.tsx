@@ -19,7 +19,7 @@ import {
 import { Legend, type LegendThresholds } from "../../canvas/Legend";
 import { MapCanvas } from "../../canvas/MapCanvas";
 import type { MeasurePoint } from "../../canvas/measureSnap";
-import { CurrentPeriodProvider } from "../../canvas/period-context";
+import { usePublishCurrentPeriod } from "../../canvas/period-context";
 import {
   ASPECT_SLIDER_DEFAULT,
   aspectScales,
@@ -895,6 +895,13 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
   // numbers are longitude and latitude — which crashed MapLibre outright
   // ("Invalid LngLat latitude value") the moment anything flew to a feature.
   const localGrid = project?.sourceCrs === LOCAL_CRS;
+  // The canvas owns the timeline, but sibling views (the element tables)
+  // ask the same question, so the value is published rather than lifted —
+  // the scrub state keeps its playback and clamping logic here.
+  const publishPeriod = usePublishCurrentPeriod();
+  useEffect(() => {
+    publishPeriod(currentHour);
+  }, [currentHour, publishPeriod]);
 
   // Raw committed snapshot (source-CRS coords) for undo capture inside
   // stable callbacks — same render-time-ref pattern as the selection refs
@@ -1686,428 +1693,426 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
     // The provider value is a primitive, and CanvasView already re-renders
     // wholly per scrub (currentHour is local state), so this adds no extra
     // re-render surface beyond the card that consumes it.
-    <CurrentPeriodProvider period={currentHour}>
+    <div
+      style={{
+        flex: 1,
+        display: "flex",
+        flexDirection: "column",
+        overflow: "hidden",
+        minHeight: 0,
+        position: "relative",
+      }}
+    >
+      {/* Main row: canvas + optional results panel */}
       <div
         style={{
           flex: 1,
           display: "flex",
-          flexDirection: "column",
           overflow: "hidden",
           minHeight: 0,
           position: "relative",
         }}
       >
-        {/* Main row: canvas + optional results panel */}
+        {/* Canvas area */}
         <div
-          style={{
-            flex: 1,
-            display: "flex",
-            overflow: "hidden",
-            minHeight: 0,
-            position: "relative",
-          }}
+          className="canvas-bg"
+          style={{ flex: 1, position: "relative", overflow: "hidden" }}
         >
-          {/* Canvas area */}
-          <div
-            className="canvas-bg"
-            style={{ flex: 1, position: "relative", overflow: "hidden" }}
-          >
-            {/* Map + Schematic — MapLibre GL JS + deck.gl. Held back until
+          {/* Map + Schematic — MapLibre GL JS + deck.gl. Held back until
                 prefsReady so MapLibre never initialises with the placeholder
                 basemap/CRS (see the cold-load gate above). */}
-            {prefsReady && (
-              <CanvasErrorBoundary>
-                <MapCanvas
-                  nodes={canvasNodes}
-                  links={canvasLinks}
-                  regions={canvasRegions}
-                  couplings={inletCouplings}
-                  periodResult={currentPeriodResult}
-                  generic={genericCanvas}
-                  isActive={canvasIsActive}
-                  viewMode={localGrid ? "schematic" : viewMode}
-                  localGrid={localGrid}
-                  // The slider carries a track position; the layout wants per-axis
-                  // multipliers. Converting here keeps the geometric mapping in
-                  // one place instead of duplicating it in the canvas.
-                  schematicScale={schematicScale}
-                  nodeVar={nodeVar}
-                  linkVar={linkVar}
-                  animateLinks={animateLinks}
-                  basemap={basemap}
-                  basemapOpacity={basemapOpacity}
-                  selectedNodeId={selectedNodeId}
-                  onSelectNode={handleSelectNode}
-                  selectedLinkId={selectedLinkId}
-                  onSelectLink={handleSelectLink}
-                  selectedRegionId={selectedRegionId}
-                  onSelectRegion={selectRegion}
-                  headMin={stableResultMeta?.ranges.headMin ?? 0}
-                  headMax={stableResultMeta?.ranges.headMax ?? 100}
-                  demandMin={stableResultMeta?.ranges.demandMin ?? 0}
-                  demandMax={stableResultMeta?.ranges.demandMax ?? 1}
-                  flowMax={stableResultMeta?.ranges.flowMax ?? 1}
-                  qualityMin={stableResultMeta?.ranges.qualityMin ?? 0}
-                  qualityMax={stableResultMeta?.ranges.qualityMax ?? 1}
-                  colorMode={colorMode}
-                  pressureThresholds={thresholds.pressure}
-                  velocityThresholds={thresholds.velocity}
-                  flowThresholds={thresholds.flow}
-                  tool={activeTool}
-                  onNodeMoved={handleNodeMoved}
-                  onCreateNodeRequest={handleCreateNodeRequest}
-                  onCreateLinkRequest={handleCreateLinkRequest}
-                  onMeasurePoint={handleMeasurePoint}
-                  measurePoints={measurePointPositions}
-                  flyToNodeId={flyToState.nodeId}
-                  flyToLinkId={flyToState.linkId}
-                  flyToRegionId={flyToState.regionId}
-                  flyToKey={flyToState.key}
-                  fitKey={mapFitKey}
-                  zoomInKey={zoomInKey}
-                  zoomOutKey={zoomOutKey}
-                  resetNorthKey={resetNorthKey}
-                />
-              </CanvasErrorBoundary>
-            )}
+          {prefsReady && (
+            <CanvasErrorBoundary>
+              <MapCanvas
+                nodes={canvasNodes}
+                links={canvasLinks}
+                regions={canvasRegions}
+                couplings={inletCouplings}
+                periodResult={currentPeriodResult}
+                generic={genericCanvas}
+                isActive={canvasIsActive}
+                viewMode={localGrid ? "schematic" : viewMode}
+                localGrid={localGrid}
+                // The slider carries a track position; the layout wants per-axis
+                // multipliers. Converting here keeps the geometric mapping in
+                // one place instead of duplicating it in the canvas.
+                schematicScale={schematicScale}
+                nodeVar={nodeVar}
+                linkVar={linkVar}
+                animateLinks={animateLinks}
+                basemap={basemap}
+                basemapOpacity={basemapOpacity}
+                selectedNodeId={selectedNodeId}
+                onSelectNode={handleSelectNode}
+                selectedLinkId={selectedLinkId}
+                onSelectLink={handleSelectLink}
+                selectedRegionId={selectedRegionId}
+                onSelectRegion={selectRegion}
+                headMin={stableResultMeta?.ranges.headMin ?? 0}
+                headMax={stableResultMeta?.ranges.headMax ?? 100}
+                demandMin={stableResultMeta?.ranges.demandMin ?? 0}
+                demandMax={stableResultMeta?.ranges.demandMax ?? 1}
+                flowMax={stableResultMeta?.ranges.flowMax ?? 1}
+                qualityMin={stableResultMeta?.ranges.qualityMin ?? 0}
+                qualityMax={stableResultMeta?.ranges.qualityMax ?? 1}
+                colorMode={colorMode}
+                pressureThresholds={thresholds.pressure}
+                velocityThresholds={thresholds.velocity}
+                flowThresholds={thresholds.flow}
+                tool={activeTool}
+                onNodeMoved={handleNodeMoved}
+                onCreateNodeRequest={handleCreateNodeRequest}
+                onCreateLinkRequest={handleCreateLinkRequest}
+                onMeasurePoint={handleMeasurePoint}
+                measurePoints={measurePointPositions}
+                flyToNodeId={flyToState.nodeId}
+                flyToLinkId={flyToState.linkId}
+                flyToRegionId={flyToState.regionId}
+                flyToKey={flyToState.key}
+                fitKey={mapFitKey}
+                zoomInKey={zoomInKey}
+                zoomOutKey={zoomOutKey}
+                resetNorthKey={resetNorthKey}
+              />
+            </CanvasErrorBoundary>
+          )}
 
-            {/* Legend — visible only when simulation results exist. The
+          {/* Legend — visible only when simulation results exist. The
                 engine-generic legend renders the engine's own variable
                 catalog; the wds legend keeps its fixed variable set. */}
-            {!!stableResultMeta && genericMeta && (
-              <GenericLegend
-                meta={genericMeta}
-                hasRegions={canvasRegions.length > 0}
-                selection={genericSelection}
-                onSelect={handleGenericSelect}
-              />
-            )}
-            {!!stableResultMeta && !genericMeta && (
-              <Legend
-                nodeVar={nodeVar}
-                setNodeVar={setNodeVar}
-                linkVar={linkVar}
-                setLinkVar={setLinkVar}
-                linkAnimation={linkAnimation}
-                setLinkAnimation={setLinkAnimation}
-                reducedMotion={reducedMotion}
-                qualityMode={stableResultMeta.qualityMode ?? "none"}
-                headMin={stableResultMeta.ranges.headMin ?? 0}
-                headMax={stableResultMeta.ranges.headMax ?? 100}
-                demandMin={stableResultMeta.ranges.demandMin ?? 0}
-                demandMax={stableResultMeta.ranges.demandMax ?? 1}
-                flowMax={stableResultMeta.ranges.flowMax ?? 1}
-                qualityMin={stableResultMeta.ranges.qualityMin ?? 0}
-                qualityMax={stableResultMeta.ranges.qualityMax ?? 1}
-                colorMode={colorMode}
-                thresholds={thresholds}
-                onColorModeChange={setColorMode}
-                onThresholdsChange={setThresholds}
-                onLocateExtreme={
-                  currentPeriodResult ? onLocateExtreme : undefined
-                }
-              />
-            )}
+          {!!stableResultMeta && genericMeta && (
+            <GenericLegend
+              meta={genericMeta}
+              hasRegions={canvasRegions.length > 0}
+              selection={genericSelection}
+              onSelect={handleGenericSelect}
+            />
+          )}
+          {!!stableResultMeta && !genericMeta && (
+            <Legend
+              nodeVar={nodeVar}
+              setNodeVar={setNodeVar}
+              linkVar={linkVar}
+              setLinkVar={setLinkVar}
+              linkAnimation={linkAnimation}
+              setLinkAnimation={setLinkAnimation}
+              reducedMotion={reducedMotion}
+              qualityMode={stableResultMeta.qualityMode ?? "none"}
+              headMin={stableResultMeta.ranges.headMin ?? 0}
+              headMax={stableResultMeta.ranges.headMax ?? 100}
+              demandMin={stableResultMeta.ranges.demandMin ?? 0}
+              demandMax={stableResultMeta.ranges.demandMax ?? 1}
+              flowMax={stableResultMeta.ranges.flowMax ?? 1}
+              qualityMin={stableResultMeta.ranges.qualityMin ?? 0}
+              qualityMax={stableResultMeta.ranges.qualityMax ?? 1}
+              colorMode={colorMode}
+              thresholds={thresholds}
+              onColorModeChange={setColorMode}
+              onThresholdsChange={setThresholds}
+              onLocateExtreme={
+                currentPeriodResult ? onLocateExtreme : undefined
+              }
+            />
+          )}
 
-            {/* Topology-stale notice — results exist but are hidden because
+          {/* Topology-stale notice — results exist but are hidden because
                 the network's structure changed since they were produced. */}
-            {resultsTopologyStale &&
-              !!stableResultMeta &&
-              !staleNoticeDismissed && (
-                <div
+          {resultsTopologyStale &&
+            !!stableResultMeta &&
+            !staleNoticeDismissed && (
+              <div
+                style={{
+                  position: "absolute",
+                  top: 60,
+                  left: "50%",
+                  transform: "translateX(-50%)",
+                  zIndex: 25,
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 8,
+                  padding: "6px 10px",
+                  background: "var(--bg-card)",
+                  border: "1px solid var(--border)",
+                  borderRadius: 8,
+                  boxShadow: "var(--shadow-2)",
+                }}
+              >
+                <span
                   style={{
-                    position: "absolute",
-                    top: 60,
-                    left: "50%",
-                    transform: "translateX(-50%)",
-                    zIndex: 25,
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 8,
-                    padding: "6px 10px",
-                    background: "var(--bg-card)",
-                    border: "1px solid var(--border)",
-                    borderRadius: 8,
-                    boxShadow: "var(--shadow-2)",
+                    fontSize: "var(--text-md)",
+                    color: "var(--text-secondary)",
+                    fontFamily: "var(--font-ui)",
                   }}
                 >
-                  <span
-                    style={{
-                      fontSize: "var(--text-md)",
-                      color: "var(--text-secondary)",
-                      fontFamily: "var(--font-ui)",
-                    }}
-                  >
-                    Results predate the current network topology — re-run the
-                    simulation
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => setStaleNoticeDismissed(true)}
-                    aria-label="Dismiss stale-results notice"
-                    style={{
-                      border: "none",
-                      background: "transparent",
-                      cursor: "pointer",
-                      display: "inline-flex",
-                      padding: 2,
-                      color: "var(--text-tertiary)",
-                    }}
-                  >
-                    <XMarkIcon style={{ width: 12, height: 12 }} />
-                  </button>
-                </div>
-              )}
+                  Results predate the current network topology — re-run the
+                  simulation
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setStaleNoticeDismissed(true)}
+                  aria-label="Dismiss stale-results notice"
+                  style={{
+                    border: "none",
+                    background: "transparent",
+                    cursor: "pointer",
+                    display: "inline-flex",
+                    padding: 2,
+                    color: "var(--text-tertiary)",
+                  }}
+                >
+                  <XMarkIcon style={{ width: 12, height: 12 }} />
+                </button>
+              </div>
+            )}
 
-            {/* Comparison notice — baseline missing results / topology drift.
+          {/* Comparison notice — baseline missing results / topology drift.
                 Suppressed while the topology-stale notice occupies the same
                 slot (that notice already explains the hidden results). */}
 
-            {/* CRS alert — map mode only, shown when coordinates can't be
+          {/* CRS alert — map mode only, shown when coordinates can't be
                 reprojected. Suppressed while a catalog proj4 def is still being
                 fetched for a persisted CRS (avoids a spurious cold-start flash). */}
-            {prefsReady && viewMode === "map" && crsError && !crsResolving && (
-              <InvalidCrsOverlay onSetCrs={openCrsModal} />
-            )}
+          {prefsReady && viewMode === "map" && crsError && !crsResolving && (
+            <InvalidCrsOverlay onSetCrs={openCrsModal} />
+          )}
 
-            {/* Toolbar overlay — left offset tracks the floating rail width */}
-            <CanvasToolbar
-              editable={modelEditable}
-              viewMode={localGrid ? "schematic" : viewMode}
-              localGrid={localGrid}
-              onViewModeChange={setViewMode}
-              coordStatus={coordStatus}
-              coordMissingCount={coordMissingCount}
-              coordTotalCount={rawPositionNodes.length}
-              basemap={basemap}
-              onBasemapChange={setBasemap}
-              basemapOpacity={basemapOpacity}
-              onBasemapOpacityChange={setBasemapOpacity}
-              showBasemapDropdown={showBasemapDropdown}
-              setShowBasemapDropdown={setShowBasemapDropdown}
-              sourceCrs={sourceCrs}
-              crsError={crsError}
-              onOpenCrsModal={openCrsModal}
-              onOpenBasemapProviders={openBasemapProvidersModal}
-              activeTool={activeTool}
-              onToolChange={setActiveTool}
-              measurePoints={measurePoints}
-              measureDistanceM={measureDistanceM}
-              onClearAnnotations={clearAnnotations}
-            />
+          {/* Toolbar overlay — left offset tracks the floating rail width */}
+          <CanvasToolbar
+            editable={modelEditable}
+            viewMode={localGrid ? "schematic" : viewMode}
+            localGrid={localGrid}
+            onViewModeChange={setViewMode}
+            coordStatus={coordStatus}
+            coordMissingCount={coordMissingCount}
+            coordTotalCount={rawPositionNodes.length}
+            basemap={basemap}
+            onBasemapChange={setBasemap}
+            basemapOpacity={basemapOpacity}
+            onBasemapOpacityChange={setBasemapOpacity}
+            showBasemapDropdown={showBasemapDropdown}
+            setShowBasemapDropdown={setShowBasemapDropdown}
+            sourceCrs={sourceCrs}
+            crsError={crsError}
+            onOpenCrsModal={openCrsModal}
+            onOpenBasemapProviders={openBasemapProvidersModal}
+            activeTool={activeTool}
+            onToolChange={setActiveTool}
+            measurePoints={measurePoints}
+            measureDistanceM={measureDistanceM}
+            onClearAnnotations={clearAnnotations}
+          />
 
-            {/* Bottom-right control stack. One positioned column so each strip
+          {/* Bottom-right control stack. One positioned column so each strip
                 sits above the last without an offset derived from its
                 neighbour's height, and so the inspector offset is applied once
                 for the whole stack rather than per strip. */}
-            <div
-              style={{
-                position: "absolute",
-                right: "calc(var(--inspector-effective-w, 0px) + 12px)",
-                bottom: 12,
-                zIndex: 11,
-                display: "flex",
-                flexDirection: "column",
-                alignItems: "flex-end",
-                gap: 8,
-              }}
-            >
-              {/* Schematic only: the geographic layout's spacing is the
+          <div
+            style={{
+              position: "absolute",
+              right: "calc(var(--inspector-effective-w, 0px) + 12px)",
+              bottom: 12,
+              zIndex: 11,
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "flex-end",
+              gap: 8,
+            }}
+          >
+            {/* Schematic only: the geographic layout's spacing is the
                   network's real geometry, not ours to redistribute. */}
-              {viewMode === "schematic" && (
-                <SchematicAspectSlider
-                  value={schematicAspect}
-                  onChange={setSchematicAspect}
-                />
-              )}
-              <ViewportControls
-                mapOnly={mapOnly}
-                onZoomIn={() => setZoomInKey((k) => k + 1)}
-                onZoomOut={() => setZoomOutKey((k) => k + 1)}
-                onResetNorth={() => setResetNorthKey((k) => k + 1)}
-                onFit={() => setMapFitKey((k) => k + 1)}
-              />
-            </div>
-
-            {/* Inspector panel — node or link detail view */}
-            {inspectorView === "node" && stableSelectedNode && (
-              <NodeInspector
-                node={stableSelectedNode}
-                onClose={clearSelection}
-                onOpenInEditor={() =>
-                  focusInEditor(stableSelectedNode.type, stableSelectedNode.id)
-                }
-                onZoomTo={() =>
-                  setFlyToState((s) => ({
-                    nodeId: selectedNodeId,
-                    linkId: null,
-                    regionId: null,
-                    key: s.key + 1,
-                  }))
-                }
-                disableZoomTo={!selectedNodeHasCoordinates}
-                // Destructive/edit affordances only for editable engines —
-                // both props are optional and the inspector hides the
-                // gestures entirely when they are absent.
-                onDelete={
-                  modelEditable
-                    ? () =>
-                        setPendingDelete({
-                          kind: stableSelectedNode.type,
-                          id: stableSelectedNode.id,
-                        })
-                    : undefined
-                }
-                onRename={
-                  modelEditable
-                    ? (newId) =>
-                        handleRenameElement(
-                          stableSelectedNode.type,
-                          stableSelectedNode.id,
-                          newId,
-                        )
-                    : undefined
-                }
-                onOpenPattern={() => {
-                  setProjectView("editor");
-                }}
-                onLocateRelated={(id) => {
-                  if (linkMap.has(id)) selectLink(id);
-                }}
-                nodeVar={nodeVar}
-                ranges={stableResultMeta?.ranges}
-                hasSimulation={!!stableResultMeta}
-                isTransitioning={!!stableResultMeta && !nodeIsEnriched}
-                genericResults={genericNodeResults}
+            {viewMode === "schematic" && (
+              <SchematicAspectSlider
+                value={schematicAspect}
+                onChange={setSchematicAspect}
               />
             )}
-            {inspectorView === "region" && selectedRegion && (
-              <RegionInspector
-                region={selectedRegion}
-                onClose={clearSelection}
-                onZoomTo={() =>
-                  setFlyToState((s) => ({
-                    nodeId: null,
-                    linkId: null,
-                    regionId: selectedRegionId,
-                    key: s.key + 1,
-                  }))
-                }
-                onLocateOutlet={(id) => {
-                  if (nodeMap.has(id)) selectNode(id);
-                }}
-                genericResults={genericRegionResults}
-              />
-            )}
-            {inspectorView === "link" && stableSelectedLink && (
-              <LinkInspector
-                link={stableSelectedLink}
-                onClose={clearSelection}
-                onOpenInEditor={() =>
-                  focusInEditor(stableSelectedLink.type, stableSelectedLink.id)
-                }
-                onZoomTo={() =>
-                  setFlyToState((s) => ({
-                    nodeId: null,
-                    linkId: selectedLinkId,
-                    regionId: null,
-                    key: s.key + 1,
-                  }))
-                }
-                disableZoomTo={!selectedLinkHasCoordinates}
-                onDelete={
-                  modelEditable
-                    ? () =>
-                        setPendingDelete({
-                          kind: stableSelectedLink.type,
-                          id: stableSelectedLink.id,
-                        })
-                    : undefined
-                }
-                onRename={
-                  modelEditable
-                    ? (newId) =>
-                        handleRenameElement(
-                          stableSelectedLink.type,
-                          stableSelectedLink.id,
-                          newId,
-                        )
-                    : undefined
-                }
-                onLocateNode={(id) => {
-                  if (nodeMap.has(id)) selectNode(id);
-                }}
-                linkVar={linkVar}
-                ranges={stableResultMeta?.ranges}
-                hasSimulation={!!stableResultMeta}
-                isTransitioning={!!stableResultMeta && !linkIsEnriched}
-                genericResults={genericLinkResults}
-              />
-            )}
+            <ViewportControls
+              mapOnly={mapOnly}
+              onZoomIn={() => setZoomInKey((k) => k + 1)}
+              onZoomOut={() => setZoomOutKey((k) => k + 1)}
+              onResetNorth={() => setResetNorthKey((k) => k + 1)}
+              onFit={() => setMapFitKey((k) => k + 1)}
+            />
           </div>
 
-          {/* Results panel — moved to Results top-level tab */}
+          {/* Inspector panel — node or link detail view */}
+          {inspectorView === "node" && stableSelectedNode && (
+            <NodeInspector
+              node={stableSelectedNode}
+              onClose={clearSelection}
+              onOpenInEditor={() =>
+                focusInEditor(stableSelectedNode.type, stableSelectedNode.id)
+              }
+              onZoomTo={() =>
+                setFlyToState((s) => ({
+                  nodeId: selectedNodeId,
+                  linkId: null,
+                  regionId: null,
+                  key: s.key + 1,
+                }))
+              }
+              disableZoomTo={!selectedNodeHasCoordinates}
+              // Destructive/edit affordances only for editable engines —
+              // both props are optional and the inspector hides the
+              // gestures entirely when they are absent.
+              onDelete={
+                modelEditable
+                  ? () =>
+                      setPendingDelete({
+                        kind: stableSelectedNode.type,
+                        id: stableSelectedNode.id,
+                      })
+                  : undefined
+              }
+              onRename={
+                modelEditable
+                  ? (newId) =>
+                      handleRenameElement(
+                        stableSelectedNode.type,
+                        stableSelectedNode.id,
+                        newId,
+                      )
+                  : undefined
+              }
+              onOpenPattern={() => {
+                setProjectView("editor");
+              }}
+              onLocateRelated={(id) => {
+                if (linkMap.has(id)) selectLink(id);
+              }}
+              nodeVar={nodeVar}
+              ranges={stableResultMeta?.ranges}
+              hasSimulation={!!stableResultMeta}
+              isTransitioning={!!stableResultMeta && !nodeIsEnriched}
+              genericResults={genericNodeResults}
+            />
+          )}
+          {inspectorView === "region" && selectedRegion && (
+            <RegionInspector
+              region={selectedRegion}
+              onClose={clearSelection}
+              onZoomTo={() =>
+                setFlyToState((s) => ({
+                  nodeId: null,
+                  linkId: null,
+                  regionId: selectedRegionId,
+                  key: s.key + 1,
+                }))
+              }
+              onLocateOutlet={(id) => {
+                if (nodeMap.has(id)) selectNode(id);
+              }}
+              genericResults={genericRegionResults}
+            />
+          )}
+          {inspectorView === "link" && stableSelectedLink && (
+            <LinkInspector
+              link={stableSelectedLink}
+              onClose={clearSelection}
+              onOpenInEditor={() =>
+                focusInEditor(stableSelectedLink.type, stableSelectedLink.id)
+              }
+              onZoomTo={() =>
+                setFlyToState((s) => ({
+                  nodeId: null,
+                  linkId: selectedLinkId,
+                  regionId: null,
+                  key: s.key + 1,
+                }))
+              }
+              disableZoomTo={!selectedLinkHasCoordinates}
+              onDelete={
+                modelEditable
+                  ? () =>
+                      setPendingDelete({
+                        kind: stableSelectedLink.type,
+                        id: stableSelectedLink.id,
+                      })
+                  : undefined
+              }
+              onRename={
+                modelEditable
+                  ? (newId) =>
+                      handleRenameElement(
+                        stableSelectedLink.type,
+                        stableSelectedLink.id,
+                        newId,
+                      )
+                  : undefined
+              }
+              onLocateNode={(id) => {
+                if (nodeMap.has(id)) selectNode(id);
+              }}
+              linkVar={linkVar}
+              ranges={stableResultMeta?.ranges}
+              hasSimulation={!!stableResultMeta}
+              isTransitioning={!!stableResultMeta && !linkIsEnriched}
+              genericResults={genericLinkResults}
+            />
+          )}
         </div>
 
-        {/* Timeline bar — always shown in canvas mode. */}
-        {stableResultMeta ? (
-          <Timeline
-            currentHour={currentHour}
-            setCurrentHour={setCurrentHour}
-            isPlaying={isPlaying}
-            setIsPlaying={setIsPlaying}
-            speed={speed}
-            setSpeed={setSpeed}
-            loop={loop}
-            setLoop={setLoop}
-            resultMeta={stableResultMeta}
-            maxStep={maxStep}
-            steadyState={isSteadyState}
-          />
-        ) : (
-          <div
-            className="timeline-bar"
-            style={{ justifyContent: "center", gap: 8 }}
-          >
-            <span
-              style={{
-                color: "var(--text-tertiary)",
-                fontSize: "var(--text-md)",
-              }}
-            >
-              {resultMetaLoading
-                ? "Loading simulation state..."
-                : isSteadyState
-                  ? "This scenario has no steady-state result yet. Run a simulation to generate the snapshot."
-                  : "This scenario is not simulated yet. Run a simulation to enable timeline stepping."}
-            </span>
-          </div>
-        )}
-
-        <DeleteConfirmModal
-          open={!!pendingDelete}
-          elementKind={pendingDelete?.kind ?? ""}
-          elementId={pendingDelete?.id ?? ""}
-          onConfirm={handleConfirmDelete}
-          onCancel={() => setPendingDelete(null)}
-        />
-        <CreateNodeModal
-          open={!!pendingCreateNode}
-          suggestId={suggestNodeId}
-          lng={pendingCreateNode?.lng ?? 0}
-          lat={pendingCreateNode?.lat ?? 0}
-          onConfirm={handleConfirmCreateNode}
-          onCancel={() => setPendingCreateNode(null)}
-        />
-        <CreateLinkModal
-          open={!!pendingCreateLink}
-          suggestId={suggestLinkId}
-          fromNodeId={pendingCreateLink?.fromId ?? ""}
-          toNodeId={pendingCreateLink?.toId ?? ""}
-          onConfirm={handleConfirmCreateLink}
-          onCancel={() => setPendingCreateLink(null)}
-        />
+        {/* Results panel — moved to Results top-level tab */}
       </div>
-    </CurrentPeriodProvider>
+
+      {/* Timeline bar — always shown in canvas mode. */}
+      {stableResultMeta ? (
+        <Timeline
+          currentHour={currentHour}
+          setCurrentHour={setCurrentHour}
+          isPlaying={isPlaying}
+          setIsPlaying={setIsPlaying}
+          speed={speed}
+          setSpeed={setSpeed}
+          loop={loop}
+          setLoop={setLoop}
+          resultMeta={stableResultMeta}
+          maxStep={maxStep}
+          steadyState={isSteadyState}
+        />
+      ) : (
+        <div
+          className="timeline-bar"
+          style={{ justifyContent: "center", gap: 8 }}
+        >
+          <span
+            style={{
+              color: "var(--text-tertiary)",
+              fontSize: "var(--text-md)",
+            }}
+          >
+            {resultMetaLoading
+              ? "Loading simulation state..."
+              : isSteadyState
+                ? "This scenario has no steady-state result yet. Run a simulation to generate the snapshot."
+                : "This scenario is not simulated yet. Run a simulation to enable timeline stepping."}
+          </span>
+        </div>
+      )}
+
+      <DeleteConfirmModal
+        open={!!pendingDelete}
+        elementKind={pendingDelete?.kind ?? ""}
+        elementId={pendingDelete?.id ?? ""}
+        onConfirm={handleConfirmDelete}
+        onCancel={() => setPendingDelete(null)}
+      />
+      <CreateNodeModal
+        open={!!pendingCreateNode}
+        suggestId={suggestNodeId}
+        lng={pendingCreateNode?.lng ?? 0}
+        lat={pendingCreateNode?.lat ?? 0}
+        onConfirm={handleConfirmCreateNode}
+        onCancel={() => setPendingCreateNode(null)}
+      />
+      <CreateLinkModal
+        open={!!pendingCreateLink}
+        suggestId={suggestLinkId}
+        fromNodeId={pendingCreateLink?.fromId ?? ""}
+        toNodeId={pendingCreateLink?.toId ?? ""}
+        onConfirm={handleConfirmCreateLink}
+        onCancel={() => setPendingCreateLink(null)}
+      />
+    </div>
   );
 }

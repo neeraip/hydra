@@ -1137,3 +1137,60 @@ export function useInletCouplings(
   }, [projectId, scenarioId]);
   return couplings;
 }
+
+// ── Per-kind element tables ────────────────────────────────────────────────
+
+/** One column of a kind's property table: an engine-declared attribute
+ * (§4.3) with every element's value, parallel to `ids`. */
+export interface KindColumn {
+  key: string;
+  label: string;
+  /** Present for numeric columns; values are SI and convert through it. */
+  quantity?: ElementAttributeQuantity;
+  /** Number, string, or null where the element lacks the attribute. */
+  values: Array<number | string | null>;
+}
+
+/** Every element of one kind with its declared properties. */
+export interface KindElements {
+  /** Element ids in model order — the row order every column follows. */
+  ids: string[];
+  columns: KindColumn[];
+}
+
+const EMPTY_KIND_ELEMENTS: KindElements = { ids: [], columns: [] };
+
+export async function getKindElements(
+  projectId: string,
+  scenarioId: string | null | undefined,
+  kind: string,
+): Promise<KindElements> {
+  return tryInvokeOr<KindElements>(
+    "get_kind_elements",
+    { projectId, scenarioId: scenarioId ?? null, kind },
+    EMPTY_KIND_ELEMENTS,
+  );
+}
+
+/** The elements of `kind` for a target, refetched when any of them change. */
+export function useKindElements(
+  projectId: string | null | undefined,
+  scenarioId: string | null | undefined,
+  kind: string | null,
+): KindElements {
+  const [elements, setElements] = useState<KindElements>(EMPTY_KIND_ELEMENTS);
+  useEffect(() => {
+    if (!projectId || !kind) {
+      setElements(EMPTY_KIND_ELEMENTS);
+      return;
+    }
+    let cancelled = false;
+    void getKindElements(projectId, scenarioId, kind).then((e) => {
+      if (!cancelled) setElements(e);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [projectId, scenarioId, kind]);
+  return elements;
+}
