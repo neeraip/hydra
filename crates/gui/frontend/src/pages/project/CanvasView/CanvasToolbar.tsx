@@ -402,15 +402,15 @@ export function CanvasToolbar({
           )}
         </div>
 
-        {/* CRS status + modal launcher */}
-        <div
-          data-toolbar-dropdown
-          style={{ position: "relative", opacity: mapOnlyDim.opacity }}
-        >
+        {/* CRS status + modal launcher.
+            Never gated on the view: which coordinate system a model is in
+            is a property of the model, not of how it is being drawn — and
+            gating it on `localGrid` was a trap, since this is the control
+            you would use to say a model is *not* on a local grid. */}
+        <div data-toolbar-dropdown style={{ position: "relative" }}>
           <button
             type="button"
             className="tool-btn"
-            disabled={mapOnly}
             style={{
               width: "auto",
               padding: "0 8px",
@@ -418,19 +418,14 @@ export function CanvasToolbar({
               gap: 4,
               display: "flex",
               alignItems: "center",
-              cursor: mapOnlyDim.cursor,
-              borderColor:
-                !mapOnly && crsError ? "var(--status-error)" : undefined,
+              borderColor: crsError ? "var(--status-error)" : undefined,
             }}
             onClick={(e) => {
-              if (mapOnly) return;
               e.stopPropagation();
               setShowBasemapDropdown(false);
               onOpenCrsModal();
             }}
-            data-tooltip={mapOnlyTooltip(
-              crsError ?? "Set source coordinate reference system",
-            )}
+            data-tooltip={crsError ?? "Set source coordinate reference system"}
             data-tooltip-pos="bottom"
           >
             {sourceCrs}{" "}
