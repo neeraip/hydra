@@ -29,7 +29,32 @@ const DEFAULT_TAIL = 6;
  * In `ch` so it tracks the font: the ids render in the monospace face, where
  * one `ch` is one character.
  */
-const MIN_HEAD = "2ch";
+const MIN_HEAD_CHARS = 2;
+const MIN_HEAD = `${MIN_HEAD_CHARS}ch`;
+
+/**
+ * Split an id into an eliding head and a pinned tail, or `null` to render
+ * it as plain text.
+ *
+ * Plain text when the id is short enough to always fit — selection and copy
+ * then behave exactly like a text node — and, critically, when the head
+ * would be narrower than {@link MIN_HEAD_CHARS}. The head is floored at
+ * that width so the ellipsis always has room, which means a *shorter* head
+ * is padded out to it, opening a gap that reads as part of the id:
+ * `Street1` split into a one-character head rendered as "S treet1". Such a
+ * head could never elide anyway — it always fits — so splitting it buys
+ * nothing and costs a lie.
+ */
+export function splitForTruncation(
+  text: string,
+  tailChars: number,
+): { head: string; tail: string } | null {
+  if (text.length <= tailChars + MIN_HEAD_CHARS) return null;
+  return {
+    head: text.slice(0, text.length - tailChars),
+    tail: text.slice(text.length - tailChars),
+  };
+}
 
 export function MiddleTruncate({
   text,
@@ -42,13 +67,11 @@ export function MiddleTruncate({
   /** Native tooltip text; defaults to the untruncated value. */
   title?: string;
 }) {
-  // Short enough to always fit: skip the split so selection and copy behave
-  // exactly like a plain text node.
-  if (text.length <= tailChars) {
+  const split = splitForTruncation(text, tailChars);
+  if (!split) {
     return <span title={title ?? text}>{text}</span>;
   }
-  const head = text.slice(0, text.length - tailChars);
-  const tail = text.slice(text.length - tailChars);
+  const { head, tail } = split;
   return (
     <span
       title={title ?? text}
