@@ -1,3 +1,4 @@
+import type { GenericQuantity } from "./results";
 /**
  * Network model hooks and mutation commands: nodes/links/patterns/curves,
  * element patching, controls & rules, and the diff-preview seam.
@@ -1190,6 +1191,107 @@ export async function getKindElements(
     { projectId, scenarioId: scenarioId ?? null, kind },
     EMPTY_KIND_ELEMENTS,
   );
+}
+
+/**
+ * The contents of one collection element — a curve's points, a pattern's
+ * factors, a rule's clauses.
+ *
+ * One shape for every container: `rows` under `columns` when the content
+ * is tabular, `lines` when it is language. A consumer renders whichever
+ * is non-empty.
+ */
+export interface CollectionDetail {
+  columns: string[];
+  /** The §5 quantity each column carries; `null` where dimensionless.
+   * Values are SI, so this is what makes them displayable. */
+  quantities: (GenericQuantity | null)[];
+  rows: number[][];
+  lines: string[];
+}
+
+const EMPTY_DETAIL: CollectionDetail = {
+  columns: [],
+  quantities: [],
+  rows: [],
+  lines: [],
+};
+
+export async function getCollectionDetail(
+  projectId: string,
+  scenarioId: string | null | undefined,
+  kind: string,
+  id: string,
+): Promise<CollectionDetail> {
+  return tryInvokeOr<CollectionDetail>(
+    "get_collection_detail",
+    { projectId, scenarioId: scenarioId ?? null, kind, id },
+    EMPTY_DETAIL,
+  );
+}
+
+/** The contents of the selected container, or empty when none is chosen. */
+export function useCollectionDetail(
+  projectId: string | null | undefined,
+  scenarioId: string | null | undefined,
+  kind: string | null,
+  id: string | null,
+): CollectionDetail {
+  const [detail, setDetail] = useState<CollectionDetail>(EMPTY_DETAIL);
+  useEffect(() => {
+    if (!projectId || !kind || !id) {
+      setDetail(EMPTY_DETAIL);
+      return;
+    }
+    let cancelled = false;
+    void getCollectionDetail(projectId, scenarioId, kind, id).then((d) => {
+      if (!cancelled) setDetail(d);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [projectId, scenarioId, kind, id]);
+  return detail;
+}
+
+/** How many elements each declared kind holds, keyed by kind id. */
+export async function getKindCounts(
+  projectId: string,
+  scenarioId: string | null | undefined,
+): Promise<Record<string, number>> {
+  return tryInvokeOr<Record<string, number>>(
+    "get_kind_counts",
+    { projectId, scenarioId: scenarioId ?? null },
+    {},
+  );
+}
+
+/**
+ * Per-kind element counts for a target.
+ *
+ * The editor's rail needs every kind's size at once, which the per-kind
+ * fetch cannot give without one call per kind — including the collections,
+ * whose contents nothing else loads.
+ */
+export function useKindCounts(
+  projectId: string | null | undefined,
+  scenarioId: string | null | undefined,
+): Record<string, number> {
+  const [counts, setCounts] = useState<Record<string, number>>({});
+  useEffect(() => {
+    if (!projectId) {
+      setCounts({});
+      return;
+    }
+    let cancelled = false;
+    void getKindCounts(projectId, scenarioId).then((c) => {
+      if (!cancelled) setCounts(c);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [projectId, scenarioId]);
+  return counts;
 }
 
 /** The elements of `kind` for a target, refetched when any of them change. */

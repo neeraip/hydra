@@ -19,7 +19,6 @@ import { useMemo, useState } from "react";
 import type { KindElements } from "../../hooks";
 import { formatElementAttribute } from "../../hooks/network";
 import { useUnitSystem } from "../../units";
-import { TypeBadge } from "../ui/TypeBadge";
 
 type SortDir = "asc" | "desc";
 
@@ -48,13 +47,22 @@ const TD: React.CSSProperties = {
   whiteSpace: "nowrap",
 };
 
+/**
+ * One element kind's table.
+ *
+ * Carries no kind column: the table is already scoped to a single kind by
+ * the Editor's rail, so a badge on every row would repeat the same glyph
+ * down the page and buy a column's width for nothing.
+ *
+ * Mount one per kind (`key={kind}`) — the sort column belongs to the kind
+ * being shown, and carrying it across would leave a table sorted by a
+ * column it does not have.
+ */
 export function KindTable({
-  kindId,
   elements,
   activeId,
   onSelect,
 }: {
-  kindId: string;
   /** §4.4 property columns for this kind. */
   elements: KindElements;
   activeId?: string | null;
@@ -63,6 +71,7 @@ export function KindTable({
   const sys = useUnitSystem();
   const [sortCol, setSortCol] = useState<string | null>(null);
   const [sortDir, setSortDir] = useState<SortDir>("asc");
+  const [query, setQuery] = useState("");
 
   function toggleSort(col: string) {
     if (sortCol !== col) {
@@ -76,10 +85,28 @@ export function KindTable({
     }
   }
 
+  // Matching is on the id alone, not every column.
+  //
+  // A drainage model has thousands of conduits, and the question a search
+  // box answers here is "where is C1423?" — searching the property values
+  // as well would return rows whose diameter happens to contain the digits
+  // typed, burying the one that was asked for.
+  const matches = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return null;
+    return new Set(
+      elements.ids
+        .map((id, i) => (id.toLowerCase().includes(q) ? i : -1))
+        .filter((i) => i >= 0),
+    );
+  }, [elements.ids, query]);
+
   // Rows are indices into the columnar arrays, so sorting never copies the
   // values themselves.
   const order = useMemo(() => {
-    const idx = elements.ids.map((_, i) => i);
+    const idx = elements.ids
+      .map((_, i) => i)
+      .filter((i) => matches == null || matches.has(i));
     if (!sortCol) return idx;
     const propCol = elements.columns.find((c) => c.key === sortCol);
     const get = (i: number): number | string | null => {
@@ -92,7 +119,7 @@ export function KindTable({
       const cmp = av < bv ? -1 : av > bv ? 1 : 0;
       return sortDir === "asc" ? cmp : -cmp;
     });
-  }, [elements, sortCol, sortDir]);
+  }, [elements, sortCol, sortDir, matches]);
 
   const indicator = (col: string) =>
     sortCol !== col ? (
@@ -118,88 +145,139 @@ export function KindTable({
   }
 
   return (
-    <div style={{ overflow: "auto", flex: 1 }}>
-      <table
+    <div
+      style={{
+        flex: 1,
+        display: "flex",
+        flexDirection: "column",
+        minHeight: 0,
+      }}
+    >
+      <div
         style={{
-          width: "100%",
-          borderCollapse: "collapse",
-          userSelect: "none",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "flex-end",
+          padding: "8px 12px",
+          borderBottom: "1px solid var(--border)",
+          background: "var(--bg-panel)",
+          flexShrink: 0,
         }}
       >
-        <thead>
-          <tr>
-            <th style={{ ...TH, width: 34 }} />
-            <th style={TH} onClick={() => toggleSort("id")}>
-              ID{indicator("id")}
-            </th>
-            {elements.columns.map((c) => (
-              <th key={c.key} style={TH} onClick={() => toggleSort(c.key)}>
-                {c.label}
-                {c.quantity
-                  ? ` (${sys === "us" ? c.quantity.usLabel : c.quantity.siLabel})`
-                  : ""}
-                {indicator(c.key)}
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {order.map((i) => {
-            const id = elements.ids[i];
-            const isActive = id === activeId;
-            return (
-              <tr
-                key={id}
-                onClick={() => onSelect?.(id)}
-                style={{
-                  cursor: onSelect ? "pointer" : undefined,
-                  background: isActive ? "var(--selection-bg)" : undefined,
-                  outline: isActive
-                    ? "1px solid var(--selection-border)"
-                    : undefined,
-                  outlineOffset: "-1px",
-                }}
-              >
-                <td style={{ ...TD, padding: "5px 4px", textAlign: "center" }}>
-                  <TypeBadge type={kindId} />
-                </td>
-                <td
-                  style={{
-                    ...TD,
-                    color: "var(--accent)",
-                    fontFamily: "var(--font-mono)",
-                    fontWeight: 500,
-                  }}
-                >
-                  {id}
-                </td>
-                {elements.columns.map((c) => {
-                  const v = c.values[i];
-                  return (
-                    <td
-                      key={c.key}
-                      style={{ ...TD, fontFamily: "var(--font-mono)" }}
-                    >
-                      {v == null
-                        ? "—"
-                        : typeof v === "number"
-                          ? formatElementAttribute(
-                              {
-                                label: c.label,
-                                number: v,
-                                quantity: c.quantity,
-                              },
-                              sys,
-                            )
-                          : v}
-                    </td>
-                  );
-                })}
+        <input
+          type="text"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Search ids…"
+          aria-label="Search ids"
+          style={{
+            width: 200,
+            height: 28,
+            background: "var(--bg-input)",
+            border: "1px solid var(--border)",
+            borderRadius: 5,
+            padding: "0 8px",
+            color: "var(--text-primary)",
+            fontFamily: "var(--font-mono)",
+            fontSize: "var(--text-md)",
+            outline: "none",
+          }}
+        />
+      </div>
+      {/* A search that matches nothing is not the same as a kind with
+          nothing in it, and saying "no elements of this kind" here would
+          be false. */}
+      {order.length === 0 ? (
+        <div
+          style={{
+            padding: 16,
+            fontSize: "var(--text-md)",
+            color: "var(--text-tertiary)",
+          }}
+        >
+          No ids match “{query}”.
+        </div>
+      ) : (
+        <div style={{ overflow: "auto", flex: 1 }}>
+          <table
+            style={{
+              width: "100%",
+              borderCollapse: "collapse",
+              userSelect: "none",
+            }}
+          >
+            <thead>
+              <tr>
+                <th style={TH} onClick={() => toggleSort("id")}>
+                  ID{indicator("id")}
+                </th>
+                {elements.columns.map((c) => (
+                  <th key={c.key} style={TH} onClick={() => toggleSort(c.key)}>
+                    {c.label}
+                    {c.quantity
+                      ? ` (${sys === "us" ? c.quantity.usLabel : c.quantity.siLabel})`
+                      : ""}
+                    {indicator(c.key)}
+                  </th>
+                ))}
               </tr>
-            );
-          })}
-        </tbody>
-      </table>
+            </thead>
+            <tbody>
+              {order.map((i) => {
+                const id = elements.ids[i];
+                const isActive = id === activeId;
+                return (
+                  <tr
+                    key={id}
+                    onClick={() => onSelect?.(id)}
+                    style={{
+                      cursor: onSelect ? "pointer" : undefined,
+                      background: isActive ? "var(--selection-bg)" : undefined,
+                      outline: isActive
+                        ? "1px solid var(--selection-border)"
+                        : undefined,
+                      outlineOffset: "-1px",
+                    }}
+                  >
+                    <td
+                      style={{
+                        ...TD,
+                        color: "var(--accent)",
+                        fontFamily: "var(--font-mono)",
+                        fontWeight: 500,
+                      }}
+                    >
+                      {id}
+                    </td>
+                    {elements.columns.map((c) => {
+                      const v = c.values[i];
+                      return (
+                        <td
+                          key={c.key}
+                          style={{ ...TD, fontFamily: "var(--font-mono)" }}
+                        >
+                          {v == null
+                            ? "—"
+                            : typeof v === "number"
+                              ? formatElementAttribute(
+                                  {
+                                    label: c.label,
+                                    number: v,
+                                    quantity: c.quantity,
+                                  },
+                                  sys,
+                                )
+                              : v}
+                        </td>
+                      );
+                    })}
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }
