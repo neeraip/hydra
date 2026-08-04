@@ -19,14 +19,13 @@ use hydra_common::{
 // ── Element kinds (spec §4.2) ─────────────────────────────────────────────────
 
 /// The engine's element kinds, in presentation order.
+///
+/// Grouped by element class, in the order the contract declares them —
+/// points, then polylines, then regions, then collections. An application
+/// that lays a tab or a chip out per kind then reads network before
+/// catchment, which is the order someone inspecting a model works in even
+/// though the water runs the other way.
 pub const ELEMENT_KINDS: &[ElementKind] = &[
-    ElementKind {
-        id: "subcatchment",
-        label: "Subcatchment",
-        label_plural: "Subcatchments",
-        class: ElementClass::Region,
-        badge: "SC",
-    },
     ElementKind {
         id: "junction",
         label: "Junction",
@@ -96,6 +95,13 @@ pub const ELEMENT_KINDS: &[ElementKind] = &[
         label_plural: "Outlets",
         class: ElementClass::Polyline,
         badge: "OL",
+    },
+    ElementKind {
+        id: "subcatchment",
+        label: "Subcatchment",
+        label_plural: "Subcatchments",
+        class: ElementClass::Region,
+        badge: "SC",
     },
     ElementKind {
         id: "pollutant",
