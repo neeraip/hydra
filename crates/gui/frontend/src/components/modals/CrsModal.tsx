@@ -47,7 +47,13 @@ export function CrsModal() {
   const [pageIndex, setPageIndex] = useState(0);
   const [_catalogVersion, setCatalogVersion] = useState(0);
   const [selectedResultIndex, setSelectedResultIndex] = useState(0);
-  const [panelView, setPanelView] = useState<"select" | "custom">("select");
+  /** The three kinds of answer to "what coordinate system is this model
+   * in?": a published code, one you defined, or none — it is a drawing
+   * grid. They are answers, not methods, which is why "Local grid" belongs
+   * in this control rather than beside it as a toggle whose effect on the
+   * list selection was invisible. */
+  type PanelView = "select" | "custom" | "local";
+  const [panelView, setPanelView] = useState<PanelView>("select");
   const [projectSaving, setProjectSaving] = useState(false);
   const resultButtonRefs = useRef<Array<HTMLButtonElement | null>>([]);
 
@@ -56,7 +62,7 @@ export function CrsModal() {
     setQuery("");
     setPageIndex(0);
     setSelectedResultIndex(0);
-    setPanelView("select");
+    setPanelView((project?.sourceCrs ?? "") === LOCAL_CRS ? "local" : "select");
     setCustomCode("");
     setCustomName("");
     setCustomProj4("");
@@ -75,7 +81,7 @@ export function CrsModal() {
     setQuery("");
     setPageIndex(0);
     setSelectedResultIndex(0);
-    setPanelView("select");
+    setPanelView((project?.sourceCrs ?? "") === LOCAL_CRS ? "local" : "select");
     setDraftCrs(project?.sourceCrs ?? "");
     setCustomCode("");
     setCustomName("");
@@ -155,7 +161,18 @@ export function CrsModal() {
     code === LOCAL_CRS ? "Local grid" : code;
   const normalizedDraft = normalizeEpsgCode(draftCrs);
   const dirty = normalizedDraft !== normalizedSaved;
-  const highlightedEntry = catalogPage.items[selectedResultIndex] ?? null;
+
+  /** Switching segment switches the answer, because the segments *are* the
+   * answers. Leaving "Local grid" therefore clears the draft rather than
+   * leaving a control reading "Standard" over a selection of LOCAL. */
+  function switchPanel(next: PanelView) {
+    setPanelView(next);
+    if (next === "local") {
+      setDraftCrs(LOCAL_CRS);
+    } else if (normalizeEpsgCode(draftCrs) === LOCAL_CRS) {
+      setDraftCrs(normalizedSaved === LOCAL_CRS ? "" : normalizedSaved);
+    }
+  }
 
   function selectDraft(value: string | CrsCatalogEntry) {
     const raw = typeof value === "string" ? value : value.epsg;
@@ -331,11 +348,11 @@ export function CrsModal() {
               fontFamily: "var(--font-ui)",
             }}
           >
-            {panelView === "select"
-              ? `Saved: ${crsLabel(project.sourceCrs)}`
-              : "Create or manage reusable custom CRS definitions"}
+            {panelView === "custom"
+              ? "Create or manage reusable custom CRS definitions"
+              : `Saved: ${crsLabel(project.sourceCrs)}`}
           </span>
-          {panelView === "select" && dirty && (
+          {panelView !== "custom" && dirty && (
             <span
               style={{
                 fontSize: "var(--text-sm)",
@@ -345,38 +362,6 @@ export function CrsModal() {
             >
               Unsaved change: {crsLabel(normalizedDraft) || "(none)"}
             </span>
-          )}
-          {/* Not every model is georeferenced: SWMM and EPANET both let a
-              model carry a local drawing grid, where no EPSG code is true
-              and searching the catalog is a category error. */}
-          {panelView === "select" && (
-            <button
-              type="button"
-              onClick={() => setDraftCrs(LOCAL_CRS)}
-              data-tooltip="Coordinates are a local drawing grid, not a georeferenced system"
-              style={{
-                marginLeft: 10,
-                padding: "3px 10px",
-                borderRadius: 6,
-                border:
-                  normalizedDraft === LOCAL_CRS
-                    ? "1px solid var(--accent)"
-                    : "1px solid var(--border)",
-                background:
-                  normalizedDraft === LOCAL_CRS
-                    ? "var(--selection-bg-strong)"
-                    : "transparent",
-                color:
-                  normalizedDraft === LOCAL_CRS
-                    ? "var(--accent)"
-                    : "var(--text-secondary)",
-                fontSize: "var(--text-sm)",
-                fontFamily: "var(--font-ui)",
-                cursor: "pointer",
-              }}
-            >
-              Local grid (not georeferenced)
-            </button>
           )}
           <div
             style={{
@@ -391,7 +376,7 @@ export function CrsModal() {
           >
             <button
               type="button"
-              onClick={() => setPanelView("select")}
+              onClick={() => switchPanel("select")}
               className="tool-btn"
               style={{
                 width: "auto",
@@ -407,11 +392,11 @@ export function CrsModal() {
                     : "var(--text-secondary)",
               }}
             >
-              Select CRS
+              Standard
             </button>
             <button
               type="button"
-              onClick={() => setPanelView("custom")}
+              onClick={() => switchPanel("custom")}
               className="tool-btn"
               style={{
                 width: "auto",
@@ -427,7 +412,28 @@ export function CrsModal() {
                     : "var(--text-secondary)",
               }}
             >
-              Custom CRS
+              Custom
+            </button>
+            <button
+              type="button"
+              onClick={() => switchPanel("local")}
+              className="tool-btn"
+              data-tooltip="Coordinates are a local drawing grid, not a georeferenced system"
+              style={{
+                width: "auto",
+                height: 24,
+                padding: "0 8px",
+                fontSize: "var(--text-sm)",
+                borderRadius: 6,
+                background:
+                  panelView === "local" ? "var(--accent-dim)" : "transparent",
+                color:
+                  panelView === "local"
+                    ? "var(--accent)"
+                    : "var(--text-secondary)",
+              }}
+            >
+              Local grid
             </button>
           </div>
           <div style={{ flex: 1 }} />
@@ -466,7 +472,51 @@ export function CrsModal() {
           </button>
         </div>
 
-        {panelView === "select" ? (
+        {panelView === "local" ? (
+          <div
+            style={{
+              padding: "22px 18px",
+              display: "flex",
+              flexDirection: "column",
+              gap: 10,
+              fontFamily: "var(--font-ui)",
+            }}
+          >
+            <span
+              style={{
+                fontSize: "var(--text-lg)",
+                color: "var(--text-primary)",
+                fontWeight: 600,
+              }}
+            >
+              Coordinates are a local drawing grid
+            </span>
+            <span
+              style={{
+                fontSize: "var(--text-md)",
+                color: "var(--text-secondary)",
+                lineHeight: 1.6,
+                maxWidth: "58ch",
+              }}
+            >
+              The model's coordinates are real distances on their own grid, with
+              no stated relation to the earth — so there is nothing to reproject
+              and no code to choose. Hydra draws the network at its own
+              coordinates, to scale, without a basemap.
+            </span>
+            <span
+              style={{
+                fontSize: "var(--text-sm)",
+                color: "var(--text-tertiary)",
+                lineHeight: 1.6,
+                maxWidth: "58ch",
+              }}
+            >
+              Choose Standard or Custom instead if you know which system the
+              coordinates were surveyed in. You can come back here at any time.
+            </span>
+          </div>
+        ) : panelView === "select" ? (
           <>
             <div
               style={{
@@ -712,32 +762,8 @@ export function CrsModal() {
                 >
                   {crsLabel(normalizedDraft) || "(none)"}
                 </span>
-                {highlightedEntry && (
-                  <span
-                    style={{
-                      fontSize: "var(--text-xs)",
-                      color: "var(--text-tertiary)",
-                      fontFamily: "var(--font-ui)",
-                    }}
-                  >
-                    Highlighted: {highlightedEntry.epsg}
-                  </span>
-                )}
               </div>
               <div style={{ display: "flex", gap: 8 }}>
-                <button
-                  type="button"
-                  className="tool-btn"
-                  onClick={() => setPanelView("custom")}
-                  style={{
-                    width: "auto",
-                    height: 28,
-                    padding: "0 10px",
-                    fontSize: "var(--text-md)",
-                  }}
-                >
-                  Manage custom CRS
-                </button>
                 <button
                   type="button"
                   onClick={dismissModal}
