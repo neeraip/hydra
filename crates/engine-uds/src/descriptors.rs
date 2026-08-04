@@ -352,19 +352,24 @@ pub fn result_variables(class: ElementClass) -> Vec<VariableDescriptor> {
                 Some("volume"),
                 RampHint::Sequential,
             ),
+            // Both are signed: a lateral can be a loss, and a total is a
+            // *net* — laterals plus arriving link flows minus leaving ones —
+            // so a node that sheds more than it takes reads negative. A
+            // sequential ramp hides that: the sign crossing becomes just
+            // another shade, and water entering looks like water leaving.
             var(
                 "lateralInflow",
                 "Lateral inflow",
                 "qL",
                 Some("flow"),
-                RampHint::Sequential,
+                RampHint::Diverging,
             ),
             var(
                 "totalInflow",
                 "Total inflow",
                 "ΣQ",
                 Some("flow"),
-                RampHint::Sequential,
+                RampHint::Diverging,
             ),
             var(
                 "flooding",
@@ -431,6 +436,39 @@ fn var(
 
 #[cfg(test)]
 mod tests {
+    /// A signed quantity needs a ramp with a middle. Node inflows are net
+    /// figures — a node can shed more than it takes — and link flow already
+    /// says so; declaring the same physical quantity sequential at a node
+    /// and diverging in a conduit told an application two different things
+    /// about one measurement.
+    #[test]
+    fn signed_quantities_declare_a_diverging_ramp() {
+        let hint = |class, id: &str| {
+            result_variables(class)
+                .into_iter()
+                .find(|v| v.id == id)
+                .unwrap()
+                .ramp
+        };
+        for id in ["lateralInflow", "totalInflow"] {
+            assert!(
+                matches!(hint(ElementClass::Point, id), RampHint::Diverging),
+                "{id} is signed and must diverge"
+            );
+        }
+        assert!(matches!(
+            hint(ElementClass::Polyline, "flow"),
+            RampHint::Diverging
+        ));
+
+        // Quantities that cannot go negative keep a one-way ramp.
+        for id in ["depth", "volume", "flooding"] {
+            assert!(
+                matches!(hint(ElementClass::Point, id), RampHint::Sequential),
+                "{id} is unsigned"
+            );
+        }
+    }
 
     /// Role is the engine's judgement, not a lookup, so it is pinned here.
     /// An application draws an unsimulated model from these alone, and a
