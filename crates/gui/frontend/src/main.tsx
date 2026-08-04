@@ -8,6 +8,7 @@ import { HoverProvider } from "./canvas/hover-context";
 import { CanvasLayersProvider } from "./canvas/layers-context";
 import { CanvasSelectionProvider } from "./canvas/selection-context";
 import { CanvasStatusProvider } from "./canvas/status-context";
+import { ViewportProvider } from "./canvas/viewport-context";
 import { ErrorBoundary } from "./components/ui/ErrorBoundary";
 import { NetworkDataProvider } from "./hooks/NetworkDataContext";
 import { NetworkVersionProvider } from "./hooks/NetworkVersionContext";
@@ -33,11 +34,13 @@ createRoot(document.getElementById("root")!).render(
           <CanvasLayersProvider>
             <CanvasSelectionProvider>
               <HoverProvider>
-                <CanvasStatusProvider>
-                  <AppProvider>
-                    <App />
-                  </AppProvider>
-                </CanvasStatusProvider>
+                <ViewportProvider>
+                  <CanvasStatusProvider>
+                    <AppProvider>
+                      <App />
+                    </AppProvider>
+                  </CanvasStatusProvider>
+                </ViewportProvider>
               </HoverProvider>
             </CanvasSelectionProvider>
           </CanvasLayersProvider>

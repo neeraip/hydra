@@ -60,6 +60,13 @@ import {
   type LayoutCoupling,
   type SchematicLayout,
 } from "./schematicLayout";
+import {
+  pathIntersectsBox,
+  pointInBox,
+  ringIntersectsBox,
+  useViewportActions,
+  type ViewportBox,
+} from "./viewport-context";
 
 /** Stable empty default so the prop never changes identity per render. */
 const EMPTY_COUPLINGS: LayoutCoupling[] = [];
@@ -789,6 +796,7 @@ export const MapCanvas = memo(function MapCanvas({
   useEffect(() => {
     geoCoordsRef.current = geoCoords;
   }, [geoCoords]);
+
   const schematicCoordsRef = useRef<Map<string, [number, number]>>(new Map());
   useEffect(() => {
     schematicCoordsRef.current = schematicCoords;
@@ -946,6 +954,49 @@ export const MapCanvas = memo(function MapCanvas({
         anyLinkVertices,
       };
     }, [links, nodes, viewMode, localGrid, schematicCoords, geoCoords]);
+
+  // ── Viewport probe ─────────────────────────────────────────────────────────
+  // The network list asks "is this element on screen"; only this component
+  // knows both the viewport and the display coordinates. Answered per call
+  // (~25 visible rows) rather than by precomputing a 46k-element set.
+  const { setViewportProbe, viewportMoved } = useViewportActions();
+  const linkDatumByIdRef = useRef(linkDatumById);
+  linkDatumByIdRef.current = linkDatumById;
+  const viewportMovedRef = useRef(viewportMoved);
+  viewportMovedRef.current = viewportMoved;
+
+  useEffect(() => {
+    // Only a geographic map has a viewport in the model's own coordinates.
+    // The schematic invents positions and a local grid is not georeferenced,
+    // so there is nothing to compare — registering nothing is what hides the
+    // feature rather than offering a toggle that cannot answer.
+    if (viewMode !== "map") {
+      setViewportProbe(null);
+      return;
+    }
+    setViewportProbe((cls, id) => {
+      const map = mapRef.current;
+      if (!map) return true;
+      const b = map.getBounds();
+      const box: ViewportBox = {
+        west: b.getWest(),
+        south: b.getSouth(),
+        east: b.getEast(),
+        north: b.getNorth(),
+      };
+      if (cls === "point") {
+        const p = geoCoordsRef.current.get(id);
+        return p ? pointInBox(p[0], p[1], box) : false;
+      }
+      if (cls === "polyline") {
+        const datum = linkDatumByIdRef.current.get(id);
+        return datum ? pathIntersectsBox(datum.path, box) : false;
+      }
+      const ring = regionsRef.current?.find((r) => r.id === id)?.ring;
+      return ring ? ringIntersectsBox(ring, box) : false;
+    });
+    return () => setViewportProbe(null);
+  }, [viewMode, setViewportProbe]);
 
   // Whether usable period results exist for the CURRENT topology. Guards
   // against a topology change racing ahead of the results that describe it —
@@ -2068,7 +2119,26 @@ export const MapCanvas = memo(function MapCanvas({
     // canvas element and not the container).
     map.getCanvas().style.opacity = String(basemapOpacityRef.current);
 
+    // Viewport reports for the network list's dimming. Throttled to ~10 Hz
+    // during a drag: nothing reorders, so rows fading as you pan is the
+    // point — but a report per frame would re-render the list at 60 Hz.
+    let viewportThrottle: number | null = null;
+    map.on("move", () => {
+      if (viewportThrottle != null) return;
+      viewportThrottle = window.setTimeout(() => {
+        viewportThrottle = null;
+        viewportMovedRef.current();
+      }, 100);
+    });
+
     map.on("moveend", () => {
+      if (viewportThrottle != null) {
+        window.clearTimeout(viewportThrottle);
+        viewportThrottle = null;
+      }
+      // Always report the settled viewport, so the last frame of a pan is
+      // never left showing the throttled state from 100 ms earlier.
+      viewportMovedRef.current();
       if (labelsOnRef.current && viewModeRef.current === "map") {
         scheduleLabelRefresh("map");
       }

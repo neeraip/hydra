@@ -19,12 +19,20 @@
 // Kinds, labels and result variables come from the engine catalogs, so this
 // file names no kind and no engine.
 
-import { MagnifyingGlassPlusIcon, XMarkIcon } from "@heroicons/react/16/solid";
+import {
+  EyeIcon,
+  MagnifyingGlassPlusIcon,
+  XMarkIcon,
+} from "@heroicons/react/16/solid";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useActiveProject } from "../../AppContext";
 import { useHoverActions } from "../../canvas/hover-context";
 import type { SimResultColumn } from "../../canvas/selection-context";
+import {
+  useViewportActions,
+  useViewportKey,
+} from "../../canvas/viewport-context";
 import type { ElementClass, Link, Node } from "../../hooks";
 import {
   formatGenericValue,
@@ -41,6 +49,13 @@ import { MiddleTruncate } from "../ui/MiddleTruncate";
 import { TypeBadge } from "../ui/TypeBadge";
 
 const ROW_HEIGHT = 27;
+
+/** Opacity of a row whose element is off screen. Low enough to recede at a
+ * glance, high enough that the id stays readable — the row is still a
+ * result, it is just not where you are looking. */
+const OFFSCREEN_OPACITY = 0.38;
+
+const DIM_PREF_KEY = "hydra2-rail-dim-offscreen";
 
 function hasNodeCoordinates(node: Node): boolean {
   return !(node.x === 0 && node.y === 0);
@@ -271,6 +286,22 @@ export function NetworkInspectorHome({
   const query = useDebouncedValue(queryInput, 120);
   const [kindFilter, setKindFilter] = useState<string | null>(null);
 
+  // `null` means the canvas has no geographic viewport (schematic, local
+  // grid) — the toggle is hidden rather than offered and inert. Reading the
+  // key here is also what re-renders the rows as the map moves.
+  const viewportKey = useViewportKey();
+  const { isInViewport } = useViewportActions();
+  const [dimOffscreen, setDimOffscreen] = useState(
+    () => localStorage.getItem(DIM_PREF_KEY) === "true",
+  );
+  function toggleDim() {
+    setDimOffscreen((on) => {
+      localStorage.setItem(DIM_PREF_KEY, String(!on));
+      return !on;
+    });
+  }
+  const dimming = dimOffscreen && viewportKey != null;
+
   // One row per element, every class in one sequence. Rebuilt whenever the
   // network or its current-period values change — the same cost the three
   // tabs paid, now paid once.
@@ -496,6 +527,35 @@ export function NetworkInspectorHome({
             <XMarkIcon width={13} height={13} />
           </button>
         )}
+        {viewportKey != null && (
+          <button
+            type="button"
+            onClick={toggleDim}
+            aria-label="Dim elements outside the map view"
+            aria-pressed={dimOffscreen}
+            data-tooltip={
+              dimOffscreen
+                ? "Showing all — elements off the map view are dimmed"
+                : "Dim elements outside the map view"
+            }
+            style={{
+              background: dimOffscreen
+                ? "var(--selection-bg-strong)"
+                : "transparent",
+              border: `1px solid ${
+                dimOffscreen ? "var(--selection-border)" : "transparent"
+              }`,
+              borderRadius: 4,
+              cursor: "pointer",
+              color: dimOffscreen ? "var(--accent)" : "var(--text-tertiary)",
+              display: "flex",
+              padding: 3,
+              flexShrink: 0,
+            }}
+          >
+            <EyeIcon width={13} height={13} />
+          </button>
+        )}
         {onClose && (
           <button
             type="button"
@@ -612,6 +672,11 @@ export function NetworkInspectorHome({
               const row = visible[v.index];
               const isActive = row.id === activeId;
               const zoomable = canZoomTo(row);
+              // Probed per rendered row — the virtualizer keeps that to a
+              // couple of dozen. The selected row never dims: having panned
+              // away from it is exactly when you still need to see it.
+              const offscreen =
+                dimming && !isActive && !isInViewport(row.cls, row.id);
               return (
                 <div
                   key={`${row.cls}:${row.id}`}
@@ -622,6 +687,7 @@ export function NetworkInspectorHome({
                     width: "100%",
                     height: v.size,
                     transform: `translateY(${v.start}px)`,
+                    opacity: offscreen ? OFFSCREEN_OPACITY : 1,
                   }}
                 >
                   {/* The row is the button; the zoom control is its sibling
