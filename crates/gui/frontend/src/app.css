@@ -842,6 +842,11 @@ body,
   flex-shrink: 0;
   overflow: hidden;
   animation: slideInRight 180ms ease-out;
+  /* Promote the layer before the animation rather than during it: this
+     panel fades in over a WebGL canvas *and* filters the backdrop behind
+     it, and a layer created mid-animation is what let the network draw
+     over the panel until the animation settled. */
+  will-change: transform, opacity;
 }
 
 /* ── Inspector tab strip buttons ─────────────────────────────────────────────*/

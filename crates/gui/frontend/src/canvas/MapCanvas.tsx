@@ -2842,6 +2842,12 @@ export const MapCanvas = memo(function MapCanvas({
       style={{
         position: "absolute",
         inset: 0,
+        // An explicit level rather than `auto`. The overlays above this are
+        // composited layers — the inspector animates its opacity behind a
+        // backdrop-filter — and a WebGL canvas whose stacking context is
+        // only implied can be re-sorted above them while such a layer is
+        // being rebuilt. Naming the level removes the ambiguity.
+        zIndex: 0,
         cursor:
           hoveredNodeId != null || hoveredLinkId != null
             ? "pointer"
