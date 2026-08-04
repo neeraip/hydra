@@ -723,6 +723,13 @@ export const MapCanvas = memo(function MapCanvas({
     return m;
   }, [nodes]);
 
+  // The positions actually on screen: invented by the layout in a
+  // topological view, the model's own everywhere else. Every camera path in
+  // the orthographic renderer must frame *these* — framing the layout's
+  // positions in a plan view aimed the camera at an empty map, which is why
+  // "Fit network" flew to nowhere.
+  const renderCoords = topological ? schematicCoords : geoCoords;
+
   useEffect(() => {
     selectedNodeIdRef.current = selectedNodeId;
   }, [selectedNodeId]);
@@ -807,10 +814,10 @@ export const MapCanvas = memo(function MapCanvas({
     geoCoordsRef.current = geoCoords;
   }, [geoCoords]);
 
-  const schematicCoordsRef = useRef<Map<string, [number, number]>>(new Map());
+  const renderCoordsRef = useRef<Map<string, [number, number]>>(new Map());
   useEffect(() => {
-    schematicCoordsRef.current = schematicCoords;
-  }, [schematicCoords]);
+    renderCoordsRef.current = renderCoords;
+  }, [renderCoords]);
 
   // Fly/zoom to a specific element when flyToKey changes.
   useEffect(() => {
@@ -821,8 +828,10 @@ export const MapCanvas = memo(function MapCanvas({
     const regionId = flyToRegionId;
     if (!nodeId && !linkId && !regionId) return;
 
-    // Regions exist in map mode only — their rings are source-CRS geometry
-    // the schematic layout knows nothing about.
+    // Zooming to a region is still geographic-only. Both other views now
+    // have a ring to frame — the model's own in a plan view, the placed
+    // glyph in a schematic — but neither has the orthographic camera path
+    // for it, so the request is dropped rather than aimed at nothing.
     if (regionId) {
       if (viewMode !== "map") return;
       const map = mapRef.current;
@@ -865,7 +874,7 @@ export const MapCanvas = memo(function MapCanvas({
       // Schematic mode — orthographic view
       const deck = deckRef.current;
       if (!deck) return;
-      const coords = schematicCoordsRef.current;
+      const coords = renderCoordsRef.current;
       const { zoom: fitZoom } = orthoCenterFromMap(coords);
       if (nodeId) {
         const target = coords.get(nodeId);
@@ -919,7 +928,7 @@ export const MapCanvas = memo(function MapCanvas({
   const { linkData, nodeData, linkDatumById, nodeDatumById, anyLinkVertices } =
     useMemo(() => {
       // Positions come from the layout only where the layout invented them.
-      const coordMap = topological ? schematicCoords : geoCoords;
+      const coordMap = renderCoords;
       // Display path precomputed once per network/viewMode change (not per
       // accessor call over 46k links). A topological layout ignores vertices
       // — it has no vertex positions, so links stay straight there.
@@ -963,7 +972,7 @@ export const MapCanvas = memo(function MapCanvas({
         nodeDatumById: new Map(nodeData.map((n) => [n.id, n])),
         anyLinkVertices,
       };
-    }, [links, nodes, topological, schematicCoords, geoCoords]);
+    }, [links, nodes, renderCoords, topological]);
 
   // ── Viewport probe ─────────────────────────────────────────────────────────
   // The network list asks "is this element on screen"; only this component
@@ -2153,7 +2162,7 @@ export const MapCanvas = memo(function MapCanvas({
 
   const ensureDeck = useCallback(() => {
     if (deckRef.current || !deckHostRef.current) return deckRef.current;
-    const initialViewState = orthoCenterFromMap(schematicCoordsRef.current);
+    const initialViewState = orthoCenterFromMap(renderCoordsRef.current);
     viewStateRef.current = initialViewState;
     const deck = new Deck({
       parent: deckHostRef.current,
@@ -2452,7 +2461,7 @@ export const MapCanvas = memo(function MapCanvas({
     inSchematicRef.current = true;
     framedForRef.current = { nodes, links };
     const vs = reframe
-      ? orthoCenterFromMap(schematicCoords)
+      ? orthoCenterFromMap(renderCoords)
       : (viewStateRef.current as SchematicViewState);
     viewStateRef.current = vs;
     deck.setProps({
@@ -2468,7 +2477,7 @@ export const MapCanvas = memo(function MapCanvas({
     links,
     markFirstFrame,
     nodes,
-    schematicCoords,
+    renderCoords,
     viewMode,
   ]);
 
@@ -2602,7 +2611,7 @@ export const MapCanvas = memo(function MapCanvas({
     if (viewMode === "schematic") {
       const deck = ensureDeck();
       if (!deck) return;
-      const { target, zoom } = orthoCenterFromMap(schematicCoords);
+      const { target, zoom } = orthoCenterFromMap(renderCoords);
       const vs = { target, zoom };
       viewStateRef.current = vs;
       deck.setProps({
@@ -2626,7 +2635,7 @@ export const MapCanvas = memo(function MapCanvas({
     fitKey,
     isActive,
     nodes,
-    schematicCoords,
+    renderCoords,
     viewMode,
   ]);
 
