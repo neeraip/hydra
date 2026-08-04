@@ -148,6 +148,19 @@ function formatValue(row: Row, sys: "si" | "us"): string {
   return "—";
 }
 
+/** The name and engineering symbol for a row's value, whichever family it
+ * came from — an engine-authored variable, or one of the fixed quantities
+ * the wds snapshot carries inline. */
+function formatMeta(f: Row["format"]): { name: string; symbol: string } | null {
+  if (f == null) return null;
+  if (f === "pressure") return { name: "Pressure", symbol: "p" };
+  if (f === "flow") return { name: "Flow", symbol: "Q" };
+  return {
+    name: f.label,
+    symbol: f.symbol ?? f.label.charAt(0).toUpperCase(),
+  };
+}
+
 function unitOf(row: Row, sys: "si" | "us"): string {
   if (row.format === "pressure") return unitLabel("pressure", sys);
   if (row.format === "flow") return unitLabel("flow", sys);
@@ -408,21 +421,43 @@ export function NetworkInspectorHome({
    * junctions and conduits side by side it is depth for some rows and flow
    * for others, so the header says so rather than lying with one name. */
   const valueHeading = useMemo(() => {
-    let label: string | null = null;
+    // One slot, but not one meaning: with junctions and conduits side by
+    // side it holds depth for some rows and flow for others. Naming the
+    // variables is the only honest header — "Current" said nothing, and a
+    // column of bare numbers meaning different things is worse than none.
+    const symbolByName = new Map<string, string>();
+    let unit = "";
     for (const r of visible) {
-      if (r.format == null) continue;
-      const name =
-        r.format === "pressure"
-          ? "Pressure"
-          : r.format === "flow"
-            ? "Flow"
-            : r.format.label;
-      if (label == null) label = name;
-      else if (label !== name) return "Current";
+      const meta = formatMeta(r.format);
+      if (!meta) continue;
+      if (!symbolByName.has(meta.name)) {
+        symbolByName.set(meta.name, meta.symbol);
+        if (symbolByName.size === 1) unit = unitOf(r, sys);
+      }
+      // One variable per class, so three is every variable there can be.
+      if (symbolByName.size >= 3) break;
     }
-    if (label == null) return "";
-    const unit = unitOf(visible.find((r) => r.format != null) as Row, sys);
-    return unit ? `${label} (${unit})` : label;
+    if (symbolByName.size === 0) {
+      return { text: "", tip: undefined, perRowUnits: false };
+    }
+    if (symbolByName.size === 1) {
+      const name = [...symbolByName.keys()][0];
+      return {
+        text: unit ? `${name} (${unit})` : name,
+        tip: undefined,
+        // The header already says what the unit is; repeating it on every
+        // row would only break the column's alignment.
+        perRowUnits: false,
+      };
+    }
+    // Several variables at once: their symbols fit where their names do
+    // not, and each row carries its own unit, which is what actually tells
+    // depth from flow at a glance.
+    return {
+      text: [...symbolByName.values()].join(" · "),
+      tip: [...symbolByName.keys()].join(" · "),
+      perRowUnits: true,
+    };
   }, [visible, sys]);
 
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -633,6 +668,7 @@ export function NetworkInspectorHome({
             : `${rows.length.toLocaleString()} elements`}
         </span>
         <span
+          data-tooltip={valueHeading.tip}
           style={{
             overflow: "hidden",
             textOverflow: "ellipsis",
@@ -640,7 +676,7 @@ export function NetworkInspectorHome({
             letterSpacing: 0,
           }}
         >
-          {valueHeading}
+          {valueHeading.text}
         </span>
       </div>
 
@@ -792,18 +828,25 @@ export function NetworkInspectorHome({
                         flexShrink: 0,
                       }}
                       data-tooltip={
-                        row.format && row.value != null
-                          ? `${
-                              row.format === "pressure"
-                                ? "Pressure"
-                                : row.format === "flow"
-                                  ? "Flow"
-                                  : row.format.label
-                            } ${unitOf(row, sys)}`.trim()
+                        row.value != null
+                          ? `${formatMeta(row.format)?.name ?? ""} ${unitOf(
+                              row,
+                              sys,
+                            )}`.trim() || undefined
                           : undefined
                       }
                     >
                       {formatValue(row, sys)}
+                      {valueHeading.perRowUnits && row.value != null && (
+                        <span
+                          style={{
+                            color: "var(--text-tertiary)",
+                            marginLeft: 2,
+                          }}
+                        >
+                          {unitOf(row, sys)}
+                        </span>
+                      )}
                     </span>
                   </button>
                   {zoomable && (
