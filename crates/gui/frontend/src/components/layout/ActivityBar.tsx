@@ -21,7 +21,6 @@ export function ActivityBar() {
     toggleTaskTray,
     taskTrayOpen,
     activeProjectId,
-    closeProject,
   } = useAppState();
   const { project } = useActiveProject();
   const tasks = useTasks();
@@ -32,12 +31,16 @@ export function ActivityBar() {
   const commandPaletteShortcut = formatPrimaryShortcut("K");
   const isMac = isMacLikePlatform();
 
+  // Home goes home. It used to divert to Projects whenever a project was
+  // open — "up one level" behaviour under a control that says Home, in a rail
+  // where Projects is already its own item one row below. A control that does
+  // different things depending on where you stand is the thing to avoid, and
+  // for anyone reading the label rather than the picture it was simply wrong.
+  //
+  // The project stays open, so the rail keeps its sub-nav and going back is
+  // one click; leaving is what the project's own close does.
   function handleHomeClick() {
-    if (activeProjectId) {
-      closeProject();
-    } else {
-      setPage("home");
-    }
+    setPage("home");
   }
 
   return (
