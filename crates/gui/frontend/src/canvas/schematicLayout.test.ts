@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { Link, Node } from "../types";
+import type { Link, Node, Region } from "../types";
 import { computeSchematicLayout } from "./schematicLayout";
 
 /** Positions only — most assertions here are about coordinates. */
@@ -407,5 +407,83 @@ describe("computeSchematicLayout – inlet couplings", () => {
       { link: "Street1", node: "NoSuchNode" },
     ]);
     expect(layout.detachedIds.has("Aux1")).toBe(true);
+  });
+});
+
+// ── catchment glyphs ──────────────────────────────────────────────────────────
+
+describe("computeSchematicLayout – region glyphs", () => {
+  /** A 2:1 rectangle, so aspect is checkable after placement. */
+  function catchment(id: string, outletId: string | null): Region {
+    return {
+      id,
+      type: "subcatchment",
+      outletId,
+      ring: [
+        [1000, 2000],
+        [1400, 2000],
+        [1400, 2200],
+        [1000, 2200],
+      ],
+    };
+  }
+
+  const nodes = [junction("J1"), junction("J2"), reservoir("R")];
+  const links = [pipe("P1", "R", "J1"), pipe("P2", "J1", "J2")];
+
+  it("anchors a catchment near the node it drains to", () => {
+    const layout = computeSchematicLayout(nodes, links, undefined, [], false, [
+      catchment("S1", "J1"),
+    ]);
+    const ring = layout.regionRings.get("S1");
+    expect(ring).toBeDefined();
+    if (!ring) return;
+    const outlet = getLayoutPoint(layout.positions, "J1");
+    // Within one layer's spacing of the outlet in each axis: the glyph is a
+    // placement beside the node, not a plan position half a network away.
+    for (const [x, y] of ring) {
+      expect(Math.abs(x - outlet[0])).toBeLessThan(120 * 1.5);
+      expect(Math.abs(y - outlet[1])).toBeLessThan(80 * 3);
+    }
+  });
+
+  it("preserves the catchment's aspect ratio", () => {
+    const layout = computeSchematicLayout(nodes, links, undefined, [], false, [
+      catchment("S1", "J1"),
+    ]);
+    const ring = layout.regionRings.get("S1") ?? [];
+    const xs = ring.map(([x]) => x);
+    const ys = ring.map(([, y]) => y);
+    const w = Math.max(...xs) - Math.min(...xs);
+    const h = Math.max(...ys) - Math.min(...ys);
+    expect(w / h).toBeCloseTo(2, 5);
+  });
+
+  it("fans catchments sharing one outlet so they do not coincide", () => {
+    const layout = computeSchematicLayout(nodes, links, undefined, [], false, [
+      catchment("S1", "J1"),
+      catchment("S2", "J1"),
+    ]);
+    const a = layout.regionRings.get("S1") ?? [];
+    const b = layout.regionRings.get("S2") ?? [];
+    expect(a.length).toBeGreaterThan(0);
+    expect(b.length).toBeGreaterThan(0);
+    expect(a[0]).not.toEqual(b[0]);
+  });
+
+  it("omits a catchment with no node to hang off", () => {
+    const layout = computeSchematicLayout(nodes, links, undefined, [], false, [
+      catchment("S1", null),
+      catchment("S2", "NoSuchNode"),
+    ]);
+    expect(layout.regionRings.size).toBe(0);
+    expect(layout.regionLeaders.size).toBe(0);
+  });
+
+  it("keeps real coordinates when the layout is a plan, not a schematic", () => {
+    const layout = computeSchematicLayout(nodes, links, undefined, [], true, [
+      catchment("S1", "J1"),
+    ]);
+    expect(layout.regionRings.get("S1")?.[0]).toEqual([1000, 2000]);
   });
 });

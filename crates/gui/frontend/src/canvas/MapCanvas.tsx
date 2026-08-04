@@ -143,10 +143,13 @@ function sameBasemapStyle(
 const EMPTY_SCHEMATIC_LAYOUT: SchematicLayout = {
   positions: new Map(),
   detachedIds: new Set(),
+  regionRings: new Map(),
+  regionLeaders: new Map(),
 };
 /** Stable empties for hidden layers, so toggling visibility off does not hand
  * deck.gl a fresh array identity on every rebuild. */
 const EMPTY_LINK_DATA: never[] = [];
+const EMPTY_REGION_DATA: never[] = [];
 const EMPTY_NODE_DATA: never[] = [];
 
 /** Stable default so map-mode callers omitting the prop never invalidate the
@@ -514,6 +517,7 @@ export const MapCanvas = memo(function MapCanvas({
     /** Real-coordinate mode changes what positions mean, so it keys the
      * cache exactly as the inputs do. */
     localGrid: boolean;
+    regions: Region[] | undefined;
   } | null>(null);
   const schematicLayout = useMemo(() => {
     const cache = schematicCacheRef.current;
@@ -522,6 +526,7 @@ export const MapCanvas = memo(function MapCanvas({
       cache.nodes === nodes &&
       cache.links === links &&
       cache.couplings === couplings &&
+      cache.regions === regions &&
       cache.localGrid === localGrid &&
       cache.scaleX === schematicScale.x &&
       cache.scaleY === schematicScale.y
@@ -540,6 +545,7 @@ export const MapCanvas = memo(function MapCanvas({
       schematicScale,
       couplings,
       localGrid,
+      regions ?? EMPTY_REGION_DATA,
     );
     schematicCacheRef.current = {
       nodes,
@@ -548,10 +554,11 @@ export const MapCanvas = memo(function MapCanvas({
       scaleX: schematicScale.x,
       scaleY: schematicScale.y,
       couplings,
+      regions,
       localGrid,
     };
     return layout;
-  }, [nodes, links, viewMode, schematicScale, couplings, localGrid]);
+  }, [nodes, links, viewMode, schematicScale, couplings, localGrid, regions]);
   // Positions alone, for everything that only needs coordinates.
   const schematicCoords = schematicLayout.positions;
 
@@ -1188,18 +1195,17 @@ export const MapCanvas = memo(function MapCanvas({
     const layers: Layer[] = [];
 
     // Subcatchment boundaries render beneath everything else: soft fills
-    // with a hairline outline, map mode only (rings are source-CRS geometry
-    // the schematic layout knows nothing about). Non-pickable until region
-    // selection lands with the read-only inspector.
-    // The schematic proper invents node positions, so rings drawn from
-    // model coordinates would not line up with it — but a local grid keeps
-    // the model's own coordinates, so its rings line up exactly.
-    if (
-      (localGrid || !isSchematic) &&
-      canvasLayers.regions &&
-      regions &&
-      regions.length > 0
-    ) {
+    // with a hairline outline. In map mode the ring is the model's own plan
+    // geometry; in the schematic it is the glyph the layout placed beside
+    // the catchment's outlet, because the schematic has no plan to draw a
+    // real ring on.
+    const regionRing = (r: Region): Array<[number, number]> =>
+      isSchematic ? (schematicLayout.regionRings.get(r.id) ?? []) : r.ring;
+    const placedRegions =
+      canvasLayers.regions && regions
+        ? regions.filter((r) => regionRing(r).length >= 3)
+        : EMPTY_REGION_DATA;
+    if (placedRegions.length > 0) {
       // With a generic region channel loaded, fill each polygon from its
       // value (regions and values share the snapshot order); otherwise the
       // neutral soft green. Kept translucent either way so the network
@@ -1207,9 +1213,16 @@ export const MapCanvas = memo(function MapCanvas({
       // the areal equivalent of the node/link selection glow, which a
       // polygon cannot use (a halo around a catchment reads as a second
       // catchment).
+      // Values are indexed by snapshot order, so a filtered draw list must
+      // look its value up by id, never by its position in that list.
+      const regionOrder = new Map(regions?.map((r, i) => [r.id, i]) ?? []);
       const regionFill = genRegion
-        ? (_r: Region, { index }: { index: number }) =>
-            genericRgba(genRegion.values?.[index], genRegion.variable, 110)
+        ? (r: Region) =>
+            genericRgba(
+              genRegion.values?.[regionOrder.get(r.id) ?? -1],
+              genRegion.variable,
+              110,
+            )
         : ([61, 175, 117, 28] as RGBA);
       const regionSelected = (r: Region) => r.id === selectedRegionId;
       // Regions sit beneath nodes and links, so deck's topmost-wins picking
@@ -1219,8 +1232,9 @@ export const MapCanvas = memo(function MapCanvas({
       layers.push(
         new PolygonLayer<Region>({
           id: "regions",
-          data: regions,
-          getPolygon: (r: Region) => r.ring,
+          data: placedRegions,
+          getPolygon: regionRing,
+          coordinateSystem: coordSystem,
           getFillColor: regionFill,
           getLineColor: (r: Region) =>
             (regionSelected(r)
@@ -1238,12 +1252,36 @@ export const MapCanvas = memo(function MapCanvas({
             if (obj) onSelectRegion?.(obj.id);
           },
           updateTriggers: {
+            getPolygon: [isSchematic, schematicLayout.regionRings],
             getFillColor: [genRegion?.values, genRegion?.variable],
             getLineColor: [selectedRegionId],
             getLineWidth: [selectedRegionId],
           },
         }),
       );
+
+      // Leader lines: in the schematic a glyph's position is a placement,
+      // not a location, so the line to its outlet is what carries the
+      // meaning. Dashed and dim, to read as annotation rather than a link.
+      const leaders = placedRegions
+        .map((r) => schematicLayout.regionLeaders.get(r.id))
+        .filter((l): l is [[number, number], [number, number]] => l != null);
+      if (leaders.length > 0) {
+        layers.push(
+          new LineLayer<[[number, number], [number, number]]>({
+            id: "region-leaders",
+            data: leaders,
+            coordinateSystem: coordSystem,
+            getSourcePosition: (l) => l[0],
+            getTargetPosition: (l) => l[1],
+            getColor: [61, 175, 117, 90] as unknown as RGBA,
+            getWidth: 1,
+            widthUnits: "pixels",
+            widthMinPixels: 1,
+            pickable: false,
+          }),
+        );
+      }
     }
 
     // Inlet couplings: the hydraulic path a dual-drainage model has where
@@ -1883,7 +1921,6 @@ export const MapCanvas = memo(function MapCanvas({
     genLink,
     genRegion,
     viewMode,
-    localGrid,
     regions,
     couplings,
     selectedRegionId,

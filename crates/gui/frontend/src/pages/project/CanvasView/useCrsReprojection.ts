@@ -267,6 +267,7 @@ export function useCrsReprojection({
       { src: (typeof baseLinks)[number]; out: (typeof baseLinks)[number] }
     >;
   }>({ crs: "", byId: new Map() });
+  // biome-ignore lint/correctness/useExhaustiveDependencies: re-run token, see above
   const canvasLinks = useMemo(() => {
     if (sourceCrs === LOCAL_CRS) {
       return baseLinks.map((l) =>
@@ -289,10 +290,13 @@ export function useCrsReprojection({
     } catch {
       return baseLinks;
     }
-  }, [sourceCrs, baseLinks]);
+    // Same re-run token as the node memo: without it a lazily-fetched def
+    // would reproject the nodes and leave the vertices in raw metres.
+  }, [sourceCrs, baseLinks, crsDefsVersion]);
 
   // Region rings live in the source CRS exactly like link vertices; same
   // transform, same fall-back-to-raw on error (already surfaced above).
+  // biome-ignore lint/correctness/useExhaustiveDependencies: re-run token, see above
   const canvasRegions = useMemo(() => {
     if (baseRegions.length === 0) return baseRegions;
     if (sourceCrs === LOCAL_CRS) {
@@ -309,7 +313,7 @@ export function useCrsReprojection({
     } catch {
       return baseRegions;
     }
-  }, [sourceCrs, baseRegions]);
+  }, [sourceCrs, baseRegions, crsDefsVersion]);
 
   return {
     sourceCrs,
