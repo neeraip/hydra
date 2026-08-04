@@ -349,11 +349,416 @@ pub fn get_kind_elements(
     Ok(kind_elements(&net, &kind))
 }
 
+/// The contents of one collection element — the points, factors or
+/// clauses a row can only report the *size* of.
+///
+/// One shape for every container rather than one DTO each: a curve, a
+/// pattern and a time series are all a table of numbers under different
+/// headings, and a control rule is a block of text. A consumer renders
+/// whichever of the two is non-empty and needs to know nothing about
+/// which kind it asked for.
+#[derive(Debug, Clone, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CollectionDetailDto {
+    /// Column headings for `rows`; empty when the content is text.
+    pub columns: Vec<String>,
+    /// The §5 quantity each column carries, or `None` where it is
+    /// dimensionless. Values are SI, so without this a US-units project
+    /// would render metres under a heading that never says so.
+    pub quantities: Vec<Option<hydra::common::QuantityDescriptor>>,
+    /// Tabular content, each row matching `columns`.
+    pub rows: Vec<Vec<f64>>,
+    /// Verbatim lines, for containers whose content is language.
+    pub lines: Vec<String>,
+}
+
+/// The contents of one collection element, or an empty detail when the
+/// kind has none to show or the id is unknown.
+#[tauri::command(async)]
+pub fn get_collection_detail(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, NetworkState>,
+    project_id: String,
+    scenario_id: Option<String>,
+    kind: String,
+    id: String,
+) -> Result<CollectionDetailDto, String> {
+    validate_target_ids(&project_id, scenario_id.as_deref())?;
+    let app_data = app_data_dir(&app)?;
+    if super::projects::project_engine_key(&app_data, &project_id) != "uds" {
+        return Ok(CollectionDetailDto::default());
+    }
+    let net = uds_network_for_target(&app_data, &state, &project_id, scenario_id.as_deref())?;
+    Ok(collection_detail(&net, &kind, &id))
+}
+
+/// Pure form of [`get_collection_detail`].
+pub fn collection_detail(net: &Network, kind: &str, id: &str) -> CollectionDetailDto {
+    let pair = |columns: [&str; 2], quantities: [Option<&str>; 2], rows: Vec<Vec<f64>>| {
+        CollectionDetailDto {
+            columns: columns.iter().map(|c| (*c).to_string()).collect(),
+            quantities: quantities
+                .iter()
+                .map(|q| q.and_then(super::uds_results::quantity_descriptor))
+                .collect(),
+            rows,
+            lines: Vec::new(),
+        }
+    };
+    /// What a curve's two columns *are* depends on what the curve is for
+    /// (§2.9): a storage curve relates depth to surface area, a rating
+    /// curve head to discharge. Labelling both "X" and "Y" would hand the
+    /// reader two unlabelled SI numbers.
+    fn curve_axes(
+        kind: hydra::uds::model::CurveKind,
+    ) -> ([&'static str; 2], [Option<&'static str>; 2]) {
+        use hydra::uds::model::CurveKind::*;
+        match kind {
+            Storage => (["Depth", "Surface area"], [Some("depth"), Some("area")]),
+            Diversion => (["Inflow", "Diverted flow"], [Some("flow"), Some("flow")]),
+            Tidal => (["Hour of day", "Stage"], [None, Some("elevation")]),
+            Rating => (["Head", "Discharge"], [Some("depth"), Some("flow")]),
+            Shape => (["Depth (norm.)", "Width (norm.)"], [None, None]),
+            WeirCoeff => (["Head", "Coefficient"], [Some("depth"), None]),
+            Control => (["Controller", "Setting"], [None, None]),
+            // The five pump curve types differ only in what the flow is
+            // plotted against (§2.9).
+            Pump1 => (["Wet-well volume", "Flow"], [Some("volume"), Some("flow")]),
+            Pump2 | Pump4 => (["Inlet depth", "Flow"], [Some("depth"), Some("flow")]),
+            Pump3 | Pump5 => (["Head difference", "Flow"], [Some("depth"), Some("flow")]),
+        }
+    }
+    match kind {
+        "curve" => net
+            .curves
+            .iter()
+            .find(|c| c.id == id)
+            .map(|c| {
+                let (columns, quantities) = curve_axes(c.kind);
+                pair(
+                    columns,
+                    quantities,
+                    c.points.iter().map(|(x, y)| vec![*x, *y]).collect(),
+                )
+            })
+            .unwrap_or_default(),
+        "pattern" => net
+            .patterns
+            .iter()
+            .find(|p| p.id == id)
+            .map(|p| {
+                pair(
+                    ["Interval", "Factor"],
+                    [None, None],
+                    p.factors
+                        .iter()
+                        .enumerate()
+                        // 1-based: a modeller counts hour 1, not hour 0.
+                        .map(|(i, f)| vec![(i + 1) as f64, *f])
+                        .collect(),
+                )
+            })
+            .unwrap_or_default(),
+        "timeseries" => net
+            .timeseries
+            .iter()
+            .find(|t| t.id == id)
+            .map(|t| match &t.source {
+                hydra::uds::model::TimeSeriesSource::Points(pts) => {
+                    use hydra::uds::model::SeriesTime;
+                    // A dated series cannot go in a numeric time column
+                    // without dropping the date, which would make two
+                    // readings on different days look like the same
+                    // instant. Those are rendered as text instead.
+                    if pts
+                        .iter()
+                        .any(|p| matches!(p.time, SeriesTime::Absolute { .. }))
+                    {
+                        CollectionDetailDto {
+                            columns: Vec::new(),
+                            quantities: Vec::new(),
+                            rows: Vec::new(),
+                            lines: pts
+                                .iter()
+                                .map(|p| match &p.time {
+                                    SeriesTime::Absolute { date, seconds } => format!(
+                                        "{:04}-{:02}-{:02} {:>6.2} h    {}",
+                                        date.year,
+                                        date.month,
+                                        date.day,
+                                        seconds / 3600.0,
+                                        p.value
+                                    ),
+                                    SeriesTime::Elapsed(s) => {
+                                        format!("{:>6.2} h    {}", s / 3600.0, p.value)
+                                    }
+                                })
+                                .collect(),
+                        }
+                    } else {
+                        pair(
+                            // A series' values can be rainfall, flow or
+                            // head depending on what references it, so the
+                            // quantity is genuinely unknown here.
+                            ["Time (h)", "Value"],
+                            [None, None],
+                            pts.iter()
+                                .map(|p| {
+                                    let SeriesTime::Elapsed(s) = p.time else {
+                                        unreachable!("absolute times handled above")
+                                    };
+                                    vec![s / 3600.0, p.value]
+                                })
+                                .collect(),
+                        )
+                    }
+                }
+                // An external series lives in a file this crate never
+                // reads; there is nothing to show and saying so is the
+                // consumer's job.
+                hydra::uds::model::TimeSeriesSource::External { .. } => {
+                    CollectionDetailDto::default()
+                }
+            })
+            .unwrap_or_default(),
+        "rule" => net
+            .controls
+            .rules
+            .iter()
+            .find(|r| r.name == id)
+            .map(|r| CollectionDetailDto {
+                columns: Vec::new(),
+                quantities: Vec::new(),
+                rows: Vec::new(),
+                lines: r.lines.clone(),
+            })
+            .unwrap_or_default(),
+        _ => CollectionDetailDto::default(),
+    }
+}
+
+/// How many elements each declared kind holds, for the editor's rail.
+///
+/// Counted through `kind_elements` rather than by a second walk of the
+/// model: the rail's number and the table's row count are then the same
+/// derivation, and a rail claiming 12 curves beside a table listing 11 is
+/// the kind of disagreement nobody reports — they just stop trusting the
+/// number.
+///
+/// Empty for engines other than uds, like the rest of this module.
+#[tauri::command(async)]
+pub fn get_kind_counts(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, NetworkState>,
+    project_id: String,
+    scenario_id: Option<String>,
+) -> Result<HashMap<String, usize>, String> {
+    validate_target_ids(&project_id, scenario_id.as_deref())?;
+    let app_data = app_data_dir(&app)?;
+    if super::projects::project_engine_key(&app_data, &project_id) != "uds" {
+        return Ok(HashMap::new());
+    }
+    let net = uds_network_for_target(&app_data, &state, &project_id, scenario_id.as_deref())?;
+    Ok(hydra::uds::descriptors::ELEMENT_KINDS
+        .iter()
+        .map(|k| (k.id.to_string(), kind_elements(&net, k.id).ids.len()))
+        .collect())
+}
+
+/// Rows for a collection kind: the model's non-spatial tables (§4.1
+/// `collection`), listed by id like any other kind.
+///
+/// Each of these is a *container* — a curve is a list of points, a rule a
+/// list of clauses — so the row reports what the thing is and how large it
+/// is, and leaves the contents to an editor that has room for them.
+fn collection_rows(
+    net: &Network,
+    kind: &str,
+) -> Option<Vec<(String, HashMap<&'static str, AttrValue>)>> {
+    use AttrValue::{Number, Text};
+    let rows = match kind {
+        "pollutant" => net
+            .constituents
+            .iter()
+            .map(|c| {
+                let mut m = HashMap::new();
+                m.insert("units", Text(format!("{:?}", c.units)));
+                m.insert("rainConc", Number(c.c_rain));
+                m.insert("groundwaterConc", Number(c.c_groundwater));
+                m.insert("rdiiConc", Number(c.c_rdii));
+                m.insert("dwfConc", Number(c.c_dwf));
+                m.insert("decay", Number(c.decay));
+                m.insert("snowOnly", yes_no(c.snow_only));
+                (c.id.clone(), m)
+            })
+            .collect(),
+        "curve" => net
+            .curves
+            .iter()
+            .map(|c| {
+                let mut m = HashMap::new();
+                m.insert("curveType", Text(format!("{:?}", c.kind)));
+                m.insert("points", Number(c.points.len() as f64));
+                (c.id.clone(), m)
+            })
+            .collect(),
+        "timeseries" => net
+            .timeseries
+            .iter()
+            .map(|t| {
+                let mut m = HashMap::new();
+                let (source, points) = match &t.source {
+                    hydra::uds::model::TimeSeriesSource::External { file } => (file.clone(), None),
+                    hydra::uds::model::TimeSeriesSource::Points(pts) => {
+                        ("Inline".to_string(), Some(pts.len()))
+                    }
+                };
+                m.insert("source", Text(source));
+                // An external series' length lives in a file this crate
+                // never reads, so it is genuinely unknown here rather
+                // than zero.
+                if let Some(n) = points {
+                    m.insert("points", Number(n as f64));
+                }
+                (t.id.clone(), m)
+            })
+            .collect(),
+        "pattern" => net
+            .patterns
+            .iter()
+            .map(|p| {
+                let mut m = HashMap::new();
+                m.insert("patternType", Text(format!("{:?}", p.kind)));
+                m.insert("factors", Number(p.factors.len() as f64));
+                (p.id.clone(), m)
+            })
+            .collect(),
+        "rule" => net
+            .controls
+            .rules
+            .iter()
+            .map(|r| {
+                let mut m = HashMap::new();
+                m.insert("clauses", Number(r.lines.len() as f64));
+                (r.name.clone(), m)
+            })
+            .collect(),
+        "landuse" => net
+            .land_uses
+            .iter()
+            .map(|l| {
+                let mut m = HashMap::new();
+                m.insert("sweepInterval", Number(l.sweep_interval));
+                m.insert("sweepRemoval", Number(l.sweep_removal));
+                m.insert("sweepDaysSince", Number(l.sweep_days_since));
+                // Buildup and washoff are per-pollutant and mostly absent;
+                // the count says how much of this land use is actually
+                // parameterised without pretending to show the curves.
+                m.insert(
+                    "buildupFor",
+                    Number(l.buildup.iter().flatten().count() as f64),
+                );
+                m.insert(
+                    "washoffFor",
+                    Number(l.washoff.iter().flatten().count() as f64),
+                );
+                (l.id.clone(), m)
+            })
+            .collect(),
+        "aquifer" => net
+            .aquifers
+            .iter()
+            .map(|a| {
+                let mut m = HashMap::new();
+                m.insert("porosity", Number(a.porosity));
+                m.insert("wiltingPoint", Number(a.wilting_point));
+                m.insert("fieldCapacity", Number(a.field_capacity));
+                m.insert("conductivity", Number(a.conductivity));
+                m.insert("upperEvapFrac", Number(a.upper_evap_frac));
+                m.insert("lowerEvapDepth", Number(a.lower_evap_depth));
+                (a.id.clone(), m)
+            })
+            .collect(),
+        "snowpack" => net
+            .snowpacks
+            .iter()
+            .map(|p| {
+                let mut m = HashMap::new();
+                let surfaces = [&p.plowable, &p.impervious, &p.pervious]
+                    .iter()
+                    .filter(|s| s.is_some())
+                    .count();
+                m.insert("surfaces", Number(surfaces as f64));
+                m.insert("plowFraction", Number(p.plow_fraction));
+                m.insert("removal", yes_no(p.removal.is_some()));
+                (p.id.clone(), m)
+            })
+            .collect(),
+        "hydrograph" => net
+            .unit_hydrographs
+            .iter()
+            .map(|h| {
+                let mut m = HashMap::new();
+                if let Some(g) = h.gage.and_then(|i| net.gages.get(i)) {
+                    m.insert("raingage", Text(g.id.clone()));
+                }
+                let responses = h
+                    .months
+                    .iter()
+                    .flat_map(|m| m.iter())
+                    .filter(|r| r.is_some())
+                    .count();
+                m.insert("responses", Number(responses as f64));
+                (h.id.clone(), m)
+            })
+            .collect(),
+        "lidcontrol" => net
+            .lid_controls
+            .iter()
+            .map(|c| {
+                let mut m = HashMap::new();
+                if let Some(k) = &c.kind {
+                    m.insert("lidType", Text(format!("{k:?}")));
+                }
+                let layers = [
+                    c.surface.is_some(),
+                    c.soil.is_some(),
+                    c.pavement.is_some(),
+                    c.storage.is_some(),
+                    c.drain.is_some(),
+                    c.drain_mat.is_some(),
+                ]
+                .iter()
+                .filter(|p| **p)
+                .count();
+                m.insert("layers", Number(layers as f64));
+                m.insert("removals", Number(c.removals.len() as f64));
+                (c.id.clone(), m)
+            })
+            .collect(),
+        "transect" => net
+            .transects
+            .iter()
+            .map(|t| {
+                let mut m = HashMap::new();
+                m.insert("nChannel", Number(t.n_channel));
+                m.insert("nLeft", Number(t.n_left));
+                m.insert("nRight", Number(t.n_right));
+                m.insert("stations", Number(t.stations.len() as f64));
+                (t.id.clone(), m)
+            })
+            .collect(),
+        _ => return None,
+    };
+    Some(rows)
+}
+
 /// Build one kind's table: ids in model order, and one column per §4.4
 /// attribute the schema declares, in schema order.
 pub fn kind_elements(net: &Network, kind: &str) -> KindElementsDto {
     // One pass over the elements of this kind, rather than a lookup per id.
-    let mut rows: Vec<(String, HashMap<&'static str, AttrValue>)> = Vec::new();
+    let mut rows: Vec<(String, HashMap<&'static str, AttrValue>)> =
+        collection_rows(net, kind).unwrap_or_default();
     for p in &net.parcels {
         if kind == "subcatchment" {
             rows.push((p.id.clone(), parcel_values(net, p)));
@@ -499,6 +904,143 @@ mod tests {
 
     /// The bulk path is what a per-kind table reads: ids in model order,
     /// one column per declared attribute, values parallel to the ids.
+    /// The five collection kinds are declared by the engine but had no
+    /// rows, so the editor hid them and a drainage model's pollutants,
+    /// curves, time series, patterns and rules were unreachable in the GUI.
+    #[test]
+    fn kind_elements_lists_the_collection_kinds() {
+        let model = "[OPTIONS]\nFLOW_UNITS CFS\n\
+                     [JUNCTIONS]\nJ1 100 4 0.5\n\
+                     [POLLUTANTS]\nTSS MG/L 0 0 0 0 NO\n\
+                     [CURVES]\nST1 STORAGE 0 100\nST1 1 150\n\
+                     [TIMESERIES]\nTS1 0:00 0.1\nTS1 1:00 0.4\n\
+                     [PATTERNS]\nP1 HOURLY 1 1 1 1 1 1\n";
+        let (net, _diags) = hydra::uds::io::objects::parse_network(model);
+
+        let pollutants = kind_elements(&net, "pollutant");
+        assert_eq!(pollutants.ids, vec!["TSS"]);
+        assert!(
+            pollutants.columns.iter().any(|c| c.label == "Units"),
+            "a pollutant row must say what its concentrations are in"
+        );
+
+        let curves = kind_elements(&net, "curve");
+        assert_eq!(curves.ids, vec!["ST1"]);
+        // A curve is a container; the row reports how large it is.
+        let points = curves
+            .columns
+            .iter()
+            .find(|c| c.key == "points")
+            .expect("points column");
+        assert_eq!(points.values[0], serde_json::json!(2.0));
+
+        assert_eq!(kind_elements(&net, "timeseries").ids, vec!["TS1"]);
+        assert_eq!(kind_elements(&net, "pattern").ids, vec!["P1"]);
+    }
+
+    /// A container's row reports only its size; the detail is the only
+    /// way to see what is actually in it.
+    #[test]
+    fn collection_detail_serves_a_container_s_contents() {
+        let model = "[OPTIONS]\nFLOW_UNITS CFS\n\
+                     [JUNCTIONS]\nJ1 100 4 0.5\n\
+                     [CURVES]\nST1 STORAGE 0 100\nST1 1 150\n\
+                     [PATTERNS]\nP1 HOURLY 1 2 3\n\
+                     [TIMESERIES]\nTS1 0:00 0.1\nTS1 1:00 0.4\n";
+        let (net, _diags) = hydra::uds::io::objects::parse_network(model);
+
+        // A storage curve relates depth to surface area, and the values
+        // are SI — the model declares CFS, so the importer converted feet
+        // and square feet on the way in. Naming the axes is what stops
+        // those numbers being two anonymous magnitudes.
+        let curve = collection_detail(&net, "curve", "ST1");
+        assert_eq!(curve.columns, vec!["Depth", "Surface area"]);
+        assert_eq!(
+            curve
+                .quantities
+                .iter()
+                .map(|q| q.map(|q| q.key))
+                .collect::<Vec<_>>(),
+            vec![Some("depth"), Some("area")]
+        );
+        assert_eq!(curve.rows.len(), 2);
+        assert!(
+            (curve.rows[1][0] - 0.3048).abs() < 1e-6,
+            "1 ft should arrive as 0.3048 m, got {}",
+            curve.rows[1][0]
+        );
+
+        // Intervals are 1-based: a modeller counts hour 1, not hour 0.
+        let pattern = collection_detail(&net, "pattern", "P1");
+        assert_eq!(pattern.rows[0], vec![1.0, 1.0]);
+        assert_eq!(pattern.rows[2], vec![3.0, 3.0]);
+
+        let series = collection_detail(&net, "timeseries", "TS1");
+        assert_eq!(series.columns, vec!["Time (h)", "Value"]);
+        assert_eq!(series.rows, vec![vec![0.0, 0.1], vec![1.0, 0.4]]);
+    }
+
+    /// An unknown id is an expected state — a stale selection after the
+    /// model reloads — not an error.
+    #[test]
+    fn collection_detail_is_empty_for_an_unknown_id() {
+        let model = "[OPTIONS]\nFLOW_UNITS CFS\n[JUNCTIONS]\nJ1 100 4 0.5\n";
+        let (net, _diags) = hydra::uds::io::objects::parse_network(model);
+        let d = collection_detail(&net, "curve", "nope");
+        assert!(d.columns.is_empty() && d.rows.is_empty() && d.lines.is_empty());
+        // ...as is a kind that is not a container at all.
+        assert!(collection_detail(&net, "junction", "J1").rows.is_empty());
+    }
+
+    /// The process parameter sets — land uses, aquifers, snow packs, unit
+    /// hydrographs, LID controls, transects — are named registries the
+    /// model references by id, and none of them was declared as a kind, so
+    /// they were unreachable in the GUI entirely rather than merely empty.
+    #[test]
+    fn kind_elements_lists_the_process_parameter_sets() {
+        let model = "[OPTIONS]\nFLOW_UNITS CFS\n\
+                     [JUNCTIONS]\nJ1 100 4 0.5\n\
+                     [POLLUTANTS]\nTSS MG/L 0 0 0 0 NO\n\
+                     [LANDUSES]\nResidential 7 0.5 0\n\
+                     [AQUIFERS]\nAQ1 0.5 0.15 0.30 5.0 10 15 0.35 3.0 10 0 0 0\n\
+                     [TRANSECTS]\nNC 0.05 0.05 0.03\n\
+                     X1 TR1 4 0 0 0 0 0 0 0\n\
+                     GR 10 0 5 5 5 10 10 15\n";
+        let (net, _diags) = hydra::uds::io::objects::parse_network(model);
+
+        let land = kind_elements(&net, "landuse");
+        assert_eq!(land.ids, vec!["Residential"]);
+
+        let aquifers = kind_elements(&net, "aquifer");
+        assert_eq!(aquifers.ids, vec!["AQ1"]);
+        let porosity = aquifers
+            .columns
+            .iter()
+            .find(|c| c.key == "porosity")
+            .expect("porosity column");
+        assert_eq!(porosity.values[0], serde_json::json!(0.5));
+
+        assert_eq!(kind_elements(&net, "transect").ids, vec!["TR1"]);
+    }
+
+    /// An external series' length lives in a file this crate never reads,
+    /// so it must come back absent rather than as a confident zero.
+    #[test]
+    fn an_external_time_series_reports_no_point_count() {
+        let model = "[OPTIONS]\nFLOW_UNITS CFS\n\
+                     [JUNCTIONS]\nJ1 100 4 0.5\n\
+                     [TIMESERIES]\nTS1 FILE \"rain.dat\"\n";
+        let (net, _diags) = hydra::uds::io::objects::parse_network(model);
+        let ts = kind_elements(&net, "timeseries");
+        assert_eq!(ts.ids, vec!["TS1"]);
+        let points = ts
+            .columns
+            .iter()
+            .find(|c| c.key == "points")
+            .expect("points column");
+        assert_eq!(points.values[0], serde_json::Value::Null);
+    }
+
     #[test]
     fn kind_elements_serves_one_column_per_declared_attribute() {
         let model = "[OPTIONS]\nFLOW_UNITS CFS\n\

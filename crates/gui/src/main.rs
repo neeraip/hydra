@@ -106,6 +106,8 @@ fn main() {
             commands::get_element_details,
             commands::get_inlet_couplings,
             commands::get_kind_elements,
+            commands::get_kind_counts,
+            commands::get_collection_detail,
             commands::get_pump_energy,
             commands::get_result_analytics,
             commands::load_project_network,
