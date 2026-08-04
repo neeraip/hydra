@@ -41,10 +41,11 @@ import { HoverChip, type HoverTip } from "./HoverChip";
 import { useHoverActions, useHoverState } from "./hover-context";
 import { useCanvasLayers } from "./layers-context";
 import {
+  baseLinkRgba,
+  baseNodeRgba,
   genericRgba,
   hashStr,
   linkRgba,
-  NO_RESULT_RGBA,
   nodeRgba,
   type RGBA,
 } from "./MapCanvas/colorUtils";
@@ -296,6 +297,10 @@ interface MapCanvasProps {
    * grid's plan view masquerade as the schematic, and made the real
    * topological layout unreachable for exactly the models that need it most.
    */
+  /** Kind id → the role the engine declared for it (spec §4.3). Drives the
+   * network-at-rest palette, so an unsimulated model shows where it is fed
+   * and drained rather than one uniform grey. */
+  kindRoles?: ReadonlyMap<string, string>;
   topological?: boolean;
   /**
    * Whether the inlet couplings have been answered for.
@@ -366,6 +371,15 @@ interface MapCanvasProps {
    * Should change only on project switch (not scenario switch) so the user's
    * view position is preserved across scenario comparisons. */
   fitKey?: number;
+  /**
+   * Fired when the *user* moves the camera — a drag, a scroll-zoom, a
+   * rotate — and never when the app moves it.
+   *
+   * The distinction is the whole point: it tells the caller whether the
+   * current framing is the user's or the app's, and only a framing the app
+   * chose may be replaced without asking.
+   */
+  onUserMovedViewport?: () => void;
   /** Increment to zoom in one step in the active view. */
   zoomInKey?: number;
   /** Increment to zoom out one step in the active view. */
@@ -397,6 +411,7 @@ export const MapCanvas = memo(function MapCanvas({
   onSelectNode,
   selectedLinkId,
   onSelectLink,
+  kindRoles,
   topological = false,
   couplingsResolved = true,
   couplings = EMPTY_COUPLINGS,
@@ -424,6 +439,7 @@ export const MapCanvas = memo(function MapCanvas({
   flyToRegionId,
   flyToKey,
   fitKey,
+  onUserMovedViewport,
   zoomInKey,
   zoomOutKey,
   resetNorthKey,
@@ -1094,6 +1110,8 @@ export const MapCanvas = memo(function MapCanvas({
   // these through refs rather than re-registering their listeners.
   const reportViewportMovedRef = useRef(reportViewportMoved);
   reportViewportMovedRef.current = reportViewportMoved;
+  const userMovedRef = useRef(onUserMovedViewport);
+  userMovedRef.current = onUserMovedViewport;
   const flushViewportMovedRef = useRef(flushViewportMoved);
   flushViewportMovedRef.current = flushViewportMoved;
 
@@ -1247,12 +1265,15 @@ export const MapCanvas = memo(function MapCanvas({
     // does not exist — the legend is hidden in this state too, so a colour
     // here would have nothing to explain it.
     const nodeColor = (d: (typeof nodeData)[number]): RGBA => {
+      // Nothing to plot yet is not the same as a missing reading: the
+      // network at rest gets its own palette, keyed on what each kind does.
+      const role = kindRoles?.get(d.type);
       if (generic) {
         return genNode
-          ? genericRgba(genNode.values?.[d.si], genNode.variable)
-          : NO_RESULT_RGBA;
+          ? genericRgba(genNode.values?.[d.si], genNode.variable, 220, "point")
+          : baseNodeRgba(role);
       }
-      if (!pr) return NO_RESULT_RGBA;
+      if (!pr) return baseNodeRgba(role);
       return nodeRgba(
         nodeSim(d),
         nodeVar,
@@ -1263,17 +1284,24 @@ export const MapCanvas = memo(function MapCanvas({
         qualityMin,
         qualityMax,
         pressThresh,
+        role,
       );
     };
     const linkColor = (d: (typeof linkData)[number]): RGBA => {
+      const role = kindRoles?.get(d.type);
       if (generic) {
         return genLink
-          ? genericRgba(genLink.values?.[d.si], genLink.variable)
-          : NO_RESULT_RGBA;
+          ? genericRgba(
+              genLink.values?.[d.si],
+              genLink.variable,
+              220,
+              "polyline",
+            )
+          : baseLinkRgba(role);
       }
       // Status is the exception: it falls back to the model's initial
       // status, which is real data before any run.
-      if (!pr && linkVar !== "status") return NO_RESULT_RGBA;
+      if (!pr && linkVar !== "status") return baseLinkRgba(role);
       return linkRgba(
         linkSim(d),
         linkVar,
@@ -1413,8 +1441,12 @@ export const MapCanvas = memo(function MapCanvas({
               genRegion.values?.[regionOrder.get(r.id) ?? -1],
               genRegion.variable,
               110,
+              "region",
             )
-        : () => [61, 175, 117, 28] as unknown as RGBA;
+        : // At rest, before any result: neutral like every other class, so
+          // the network reads by role rather than by hue. The green belongs
+          // to catchment *data*, not to catchments as objects.
+          () => [138, 147, 163, 30] as unknown as RGBA;
       const regionSelected = (r: Region) => r.id === selectedRegionId;
       // Hover brightens the ring short of the selected treatment, so the two
       // stay distinguishable when you hover something else while one region
@@ -1453,10 +1485,10 @@ export const MapCanvas = memo(function MapCanvas({
           },
           getLineColor: (r: Region) =>
             (regionSelected(r)
-              ? [125, 215, 170, 255]
+              ? [226, 232, 242, 240]
               : regionHovered(r)
-                ? [95, 200, 145, 210]
-                : [61, 175, 117, 150]) as unknown as RGBA,
+                ? [196, 205, 219, 205]
+                : [138, 147, 163, 140]) as unknown as RGBA,
           getLineWidth: (r: Region) =>
             regionSelected(r) ? 2.5 : regionHovered(r) ? 1.8 : 1,
           lineWidthMinPixels: 1,
@@ -1505,7 +1537,7 @@ export const MapCanvas = memo(function MapCanvas({
             coordinateSystem: coordSystem,
             getSourcePosition: (l) => l[0],
             getTargetPosition: (l) => l[1],
-            getColor: [61, 175, 117, 90] as unknown as RGBA,
+            getColor: [138, 147, 163, 95] as unknown as RGBA,
             getWidth: 1,
             widthUnits: "pixels",
             widthMinPixels: 1,
@@ -2153,6 +2185,7 @@ export const MapCanvas = memo(function MapCanvas({
     genRegion,
     viewMode,
     topological,
+    kindRoles,
     regions,
     couplings,
     hoveredRegionId,
@@ -2247,7 +2280,19 @@ export const MapCanvas = memo(function MapCanvas({
         pickingRadius: 6,
         onViewStateChange: ({
           viewState,
+          interactionState,
         }: ViewStateChangeParameters<OrthographicViewState>) => {
+          // Only a gesture counts. deck moves the camera itself when the
+          // layout is framed, and that must not read as the user choosing
+          // a view.
+          if (
+            interactionState?.isDragging ||
+            interactionState?.isPanning ||
+            interactionState?.isZooming ||
+            interactionState?.isRotating
+          ) {
+            userMovedRef.current?.();
+          }
           const nextViewState: SchematicViewState = {
             target: viewState.target as [number, number, number],
             zoom: Number(viewState.zoom ?? 0),
@@ -2309,6 +2354,15 @@ export const MapCanvas = memo(function MapCanvas({
     // during a drag: nothing reorders, so rows fading as you pan is the
     // point — but a report per frame would re-render the list at 60 Hz.
     map.on("move", () => reportViewportMovedRef.current());
+
+    // `originalEvent` is present only when input drove the move; fitBounds
+    // and easeTo arrive without one. That is the cleanest signal maplibre
+    // offers for "the user did this".
+    map.on("movestart", (e) => {
+      if ((e as { originalEvent?: unknown }).originalEvent != null) {
+        userMovedRef.current?.();
+      }
+    });
 
     map.on("moveend", () => {
       flushViewportMovedRef.current();

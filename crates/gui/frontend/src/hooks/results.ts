@@ -183,6 +183,31 @@ export interface ResultRanges {
   qualityMax?: number;
 }
 
+/**
+ * How a target's per-period values are delivered, and therefore which
+ * decoder to call and which colour path the canvas takes.
+ *
+ * A named decision rather than an inline `if`, because it is exactly the
+ * kind that fails silently: choosing wrong yields no error, just a canvas
+ * with nothing on it. Two consumers ask this question — the fetch effect
+ * and the canvas — and when they derived it separately from `generic`
+ * being present, both were wrong together.
+ *
+ * `"generic"` — the variable-major catalog payload.
+ * `"fixed"` — the engine's own fixed period arrays.
+ * `"none"` — no per-period data for this target at all.
+ */
+export type ResultsPath = "generic" | "fixed" | "none";
+
+export function resultsPath(
+  meta: Pick<ResultMeta, "hasPeriodData" | "genericPeriods"> | null | undefined,
+): ResultsPath {
+  if (!meta || meta.hasPeriodData === false) return "none";
+  // The catalog is deliberately not consulted: every engine publishes one,
+  // and it says what the results *contain*, never how they are encoded.
+  return meta.genericPeriods ? "generic" : "fixed";
+}
+
 /** §5 quantity descriptor accompanying a variable's SI values — everything
  * needed to convert to the active display system at the render boundary. */
 export interface GenericQuantity {
@@ -200,6 +225,37 @@ export interface GenericQuantity {
  * everything a legend needs, authored by the engine's catalog. Values and
  * ranges are SI; `quantity` carries the display conversion.
  */
+/**
+ * How remarkable one categorical state is (contract §6.1).
+ *
+ * A claim about the domain, not about presentation — only the engine knows
+ * that a closed pipe is an abnormal condition. Absent where the states are
+ * merely a partition (a material, a land-use class) with no abnormal
+ * member; absent is a real answer, not a missing one.
+ */
+export type CategorySeverity = "nominal" | "caution" | "alarm";
+
+/** One discrete state of a categorical variable, as the engine named it. */
+export interface RampCategory {
+  /** The value the result series stores for this state. */
+  value: number;
+  label: string;
+  severity?: CategorySeverity;
+}
+
+/**
+ * How a variable's values map to a colour scale (contract §6.1) — a shape
+ * statement from the engine, never a colour. Carried in the contract's own
+ * tagged form so `categorical` keeps its engine-authored states: a status
+ * variable stripped of its labels can only be drawn as a meaningless
+ * gradient over status codes.
+ */
+export type RampHint =
+  | { type: "sequential" }
+  | { type: "diverging" }
+  | { type: "banded" }
+  | { type: "categorical"; items: RampCategory[] };
+
 export interface GenericVariable {
   id: string;
   label: string;
@@ -207,7 +263,7 @@ export interface GenericVariable {
    * surfaces; absent = the application derives a fallback. */
   symbol?: string;
   quantity?: GenericQuantity;
-  ramp: "sequential" | "diverging" | "banded";
+  ramp: RampHint;
   min: number;
   max: number;
 }
@@ -287,6 +343,18 @@ export interface ResultMeta {
    * the fixed `ranges` above are then all-zero and unused.
    */
   generic?: GenericResultMeta;
+  /**
+   * Whether per-period values arrive in the generic variable-major payload
+   * rather than the fixed wds arrays.
+   *
+   * Separate from `generic` on purpose. Every engine publishes a catalog —
+   * that is what the legend renders — but the catalog says nothing about
+   * how a period is encoded on the wire. Reading `generic` as "the values
+   * come from the catalog path" routed wds onto a payload nothing serves
+   * for it, and its canvas fell back to the network-at-rest palette with
+   * no error raised anywhere.
+   */
+  genericPeriods?: boolean;
 }
 
 /** Result of comparing the results' stored topology digest against the live

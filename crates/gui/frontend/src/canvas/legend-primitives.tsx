@@ -62,7 +62,11 @@ export const LEGEND_POPOVER_STYLE: CSSProperties = {
   WebkitBackdropFilter: "blur(20px) saturate(160%)",
   borderRadius: 10,
   padding: "10px 14px",
-  width: 200,
+  // Wide enough for the scale control's three options on one row at the
+  // 10px label size (~177px of buttons inside a 28px padding box). At 200
+  // they overflowed by a few pixels and wrapped mid-label — "Whole run"
+  // broke across two lines.
+  width: 224,
   display: "flex",
   flexDirection: "column",
   gap: 12,
@@ -70,7 +74,11 @@ export const LEGEND_POPOVER_STYLE: CSSProperties = {
 
 /**
  * The colour-scale toggle at the left end of the control bar: a stack of
- * mini ramp swatches plus a chevron.
+ * mini ramp swatches.
+ *
+ * The swatches are the affordance — they are a preview of what the popover
+ * explains, and they change with the selected variables — so no chevron is
+ * needed to advertise that there is more behind them.
  *
  * The left corners nest inside the bar's 20px rounding (20 − 4px bar
  * padding = 16), so the button's curve sits flush against the glass pill's
@@ -83,8 +91,7 @@ export const LEGEND_POPOVER_STYLE: CSSProperties = {
 export const LEGEND_SWATCH_BTN_STYLE: CSSProperties = {
   width: "auto",
   height: "auto",
-  gap: 5,
-  padding: "5px 8px 5px 11px",
+  padding: "5px 9px 5px 11px",
   borderRadius: "16px 6px 6px 16px",
 };
 
@@ -108,7 +115,7 @@ export interface PickerOption<T extends string> {
 // ── Picker glyphs ─────────────────────────────────────────────────────────────
 // Micro-icons distinguishing the variable pickers: a filled dot matching how
 // point elements render on the canvas, a short segment for polylines, and a
-// small ring for areal regions. All use var(--text-secondary) so they track
+// small ring for areal regions. All use "var(--text-secondary)" so they track
 // the legend's micro-label colour in every theme.
 
 export function NodeGlyph() {
@@ -239,6 +246,144 @@ export function PickerButton<T extends string>({
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+/**
+ * What a ramp is scaled against.
+ *
+ * These are three answers to one question, not two independent settings,
+ * which is why they share a control: `criteria` pins the scale to the
+ * project's threshold bands and ignores the data range entirely, so it
+ * cannot meaningfully combine with either data-derived range.
+ */
+export type ScaleMode = "run" | "step" | "criteria";
+
+export interface ScaleOption {
+  mode: ScaleMode;
+  label: string;
+  tip: string;
+}
+
+/** The two data-derived scales, offered for every variable. */
+export const DATA_SCALE_OPTIONS: readonly ScaleOption[] = [
+  {
+    mode: "run",
+    label: "Whole run",
+    tip: "One scale for every step: colours compare across time",
+  },
+  {
+    mode: "step",
+    label: "This step",
+    tip: "Rescale each step: the pattern within a moment reads fully",
+  },
+];
+
+/** Offered only for variables the project has criteria bands for. */
+export const CRITERIA_SCALE_OPTION: ScaleOption = {
+  mode: "criteria",
+  label: "Criteria",
+  tip: "Pin the scale to the project's threshold bands",
+};
+
+/**
+ * Segmented control selecting what the ramps above it are scaled against.
+ *
+ * It belongs in the legend popover because the legend *is* the scale — and
+ * because the min/max numbers directly above change as you scrub once
+ * "This step" is on, which explains the control better than a tooltip
+ * could.
+ */
+export function ScaleControl({
+  value,
+  options,
+  onChange,
+}: {
+  value: ScaleMode;
+  options: readonly ScaleOption[];
+  onChange: (mode: ScaleMode) => void;
+}) {
+  return (
+    <div
+      style={{
+        display: "flex",
+        // Wrap the buttons as whole units if a future label or translation
+        // outgrows the row: a second row of intact options is readable,
+        // a broken word is not.
+        flexWrap: "wrap",
+        gap: 3,
+        marginTop: 8,
+        paddingTop: 8,
+        borderTop: "1px solid var(--border)",
+      }}
+    >
+      {options.map(({ mode, label, tip }) => (
+        <button
+          type="button"
+          key={mode}
+          onClick={() => onChange(mode)}
+          data-tooltip={tip}
+          style={{
+            flex: 1,
+            padding: "3px 6px",
+            borderRadius: 5,
+            border: "1px solid",
+            borderColor:
+              value === mode ? "var(--selection-border)" : "transparent",
+            background: value === mode ? "var(--accent-dim)" : "transparent",
+            color: value === mode ? "var(--accent)" : "var(--text-tertiary)",
+            fontSize: "var(--text-xs)",
+            fontFamily: "var(--font-ui)",
+            whiteSpace: "nowrap",
+            cursor: "pointer",
+          }}
+        >
+          {label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/**
+ * Discrete swatches for a categorical variable — one labelled chip per
+ * engine-declared state, in place of a gradient.
+ *
+ * A closed set of states has no "between", so drawing it as a bar would
+ * invite reading a magnitude off colours that only carry identity.
+ */
+export function CategorySwatches({
+  items,
+}: {
+  items: readonly { label: string; color: string }[];
+}) {
+  return (
+    <div style={{ display: "flex", flexWrap: "wrap", gap: "4px 10px" }}>
+      {items.map(({ label, color }) => (
+        <div
+          key={label}
+          style={{ display: "flex", alignItems: "center", gap: 5 }}
+        >
+          <div
+            style={{
+              width: 10,
+              height: 10,
+              borderRadius: 3,
+              background: color,
+              flexShrink: 0,
+            }}
+          />
+          <span
+            style={{
+              fontSize: "var(--text-xs)",
+              color: "var(--text-tertiary)",
+            }}
+          >
+            {label}
+          </span>
+        </div>
+      ))}
     </div>
   );
 }

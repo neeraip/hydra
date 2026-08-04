@@ -114,6 +114,21 @@ export interface EngineComponents {
    * tools, element tables, create modals. Read-only engines hide those
    * affordances entirely rather than offering gestures that refuse. */
   modelEditable: boolean;
+  /**
+   * Result-variable ids this engine's projects hold criteria bands for.
+   *
+   * The project criteria file is a water-distribution compliance standard
+   * (minimum service pressure and pressure/velocity/flow bands), so its
+   * bands mean something only for the engine they were designed for.
+   * Matching on variable id alone is not enough: two engines can publish a
+   * variable called `flow` and mean different quantities by it, and a
+   * drainage map was briefly offered a Criteria scale annotated with
+   * water-distribution numbers.
+   *
+   * Empty means this engine has no such standard, and the legend never
+   * offers the option.
+   */
+  criteriaVariables: readonly string[];
 }
 
 const WDS: EngineComponents = {
@@ -121,6 +136,7 @@ const WDS: EngineComponents = {
   editorFocusesElements: true,
   settingsEditable: true,
   modelEditable: true,
+  criteriaVariables: ["pressure", "velocity", "flow"],
 };
 
 const UDS: EngineComponents = {
@@ -135,6 +151,8 @@ const UDS: EngineComponents = {
   editorFocusesElements: false,
   settingsEditable: false,
   modelEditable: false,
+  // Drainage has no compliance standard in the project criteria file.
+  criteriaVariables: [],
 };
 
 const REGISTRY: Record<string, EngineComponents> = {

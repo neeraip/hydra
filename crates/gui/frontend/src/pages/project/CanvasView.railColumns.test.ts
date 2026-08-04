@@ -3,7 +3,13 @@ import type { GenericVariable } from "../../hooks";
 import { railColumns } from "./CanvasView";
 
 function v(id: string): GenericVariable {
-  return { id, label: id.toUpperCase(), ramp: "sequential", min: 0, max: 1 };
+  return {
+    id,
+    label: id.toUpperCase(),
+    ramp: { type: "sequential" },
+    min: 0,
+    max: 1,
+  };
 }
 
 const VARS = [v("depth"), v("head"), v("volume"), v("flooding")];

@@ -16,7 +16,7 @@ import {
   GenericLegend,
   type GenericSelection,
 } from "../../canvas/GenericLegend";
-import { Legend, type LegendThresholds } from "../../canvas/Legend";
+import type { ScaleMode } from "../../canvas/legend-primitives";
 import { MapCanvas } from "../../canvas/MapCanvas";
 import type { MeasurePoint } from "../../canvas/measureSnap";
 import { usePublishCurrentPeriod } from "../../canvas/period-context";
@@ -58,7 +58,9 @@ import {
   getPeriodResults,
   type PeriodResults,
   patchNodePosition,
+  resultsPath,
   saveProjectOnDisk,
+  useElementKinds,
   useInletCouplings,
   useLinks,
   useNodes,
@@ -75,7 +77,7 @@ import {
 import { useElementRename } from "../../hooks/useElementRename";
 import { useReducedMotion } from "../../hooks/useReducedMotion";
 import type { Link, Node, Region } from "../../types/network";
-import type { Quantity } from "../../units";
+import { type Quantity, toDisplay, useUnitSystem } from "../../units";
 import { CanvasErrorBoundary } from "./CanvasView/CanvasErrorBoundary";
 import { CanvasToolbar } from "./CanvasView/CanvasToolbar";
 import { InvalidCrsOverlay } from "./CanvasView/InvalidCrsOverlay";
@@ -104,10 +106,36 @@ interface CanvasPrefs {
   basemapOpacity: number;
   nodeVar: NodeVariable;
   linkVar: LinkVariable;
-  colorMode: "relative" | "threshold";
   /** Schematic layout aspect slider position. Missing in older prefs →
    * defaults to the midpoint, i.e. the layout's native 120:80 spacing. */
   schematicAspect: number;
+  /**
+   * What the colour ramps are scaled against: the whole run, the current
+   * step, or the project's criteria bands.
+   *
+   * Supersedes the old `colorMode`, whose "relative"/"threshold" pair asked
+   * the same question with two of the three answers. Prefs written before
+   * the merge are migrated on read.
+   */
+  scaleMode: ScaleMode;
+  /** Whether the legend's ramp popover is showing. Persisted because it is
+   * a working mode — "keep the full legend up while I read the map" —
+   * rather than a menu the user reopens each time. */
+  legendOpen: boolean;
+  /**
+   * Selected catalog variable per element class.
+   *
+   * The variables a reader chose are what the map *means* to them, so they
+   * survive reopening the project like every other canvas choice. Only the
+   * wds pair was persisted before (as `nodeVar`/`linkVar`, which its canvas
+   * colours from); drainage lost its selection on every remount, and no
+   * engine remembered its areal variable at all.
+   *
+   * Ids are stored raw and validated on use rather than on read: the
+   * catalog they belong to depends on the run, and the legend already
+   * falls back to the first variable when an id is not in it.
+   */
+  genericSelection: GenericSelection;
 }
 
 /**
@@ -123,14 +151,158 @@ const CANVAS_PREF_DEFAULTS: CanvasPrefs = {
   basemapOpacity: 1,
   nodeVar: "pressure",
   linkVar: "velocity",
-  colorMode: "relative",
   schematicAspect: ASPECT_SLIDER_DEFAULT,
+  scaleMode: "run",
+  legendOpen: false,
+  genericSelection: { point: "", polyline: "", region: "" },
 };
 
 // Allowlists so corrupt/stale localStorage can never inject invalid state.
 // (Basemap ids are validated structurally via isValidBasemapId instead — the
 // provider catalog is open-ended.)
 const PREF_VIEW_MODES: readonly ViewMode[] = ["map", "schematic"];
+
+/**
+ * What a colour ramp is scaled against.
+ *
+ * `run` — the whole simulation's range. Colours mean the same thing at
+ * every step, so scrubbing shows a quantity rising and falling. The cost is
+ * that a step whose values occupy a sliver of the run's range is painted in
+ * a sliver of the ramp, and its spatial pattern is invisible.
+ *
+ * `step` — the current period's own range. Every frame uses the full ramp,
+ * so the pattern *within* a moment is as legible as it can be. The cost is
+ * that colours no longer compare between steps: a bright node now and a
+ * bright node later are each the highest of their own moment, not equal.
+ *
+ * `criteria` — the project's threshold bands, ignoring the data range
+ * entirely. Colours then answer "is this acceptable?" rather than "how
+ * much?", and stay fixed while the model changes around them.
+ */
+const PREF_SCALE_MODES: readonly ScaleMode[] = ["run", "step", "criteria"];
+
+/**
+ * Read a persisted scale mode, migrating prefs written before the merge.
+ *
+ * `colorMode` asked "relative or threshold?" and `rangeMode` asked "whole
+ * run or this step?" — the same question with two of the three answers, so
+ * a saved "threshold" becomes `criteria` and a saved "relative" defers to
+ * whatever range mode was stored alongside it.
+ */
+/**
+ * Read a persisted per-class variable selection, tolerating anything.
+ *
+ * Every field is optional and unvalidated against a catalog on purpose:
+ * which variables exist depends on the run that produced the results, and
+ * an id that is not in the current catalog is not corrupt — it is a
+ * selection made against a different one. The legend falls back to the
+ * catalog's first variable for those, which is the same thing it does for
+ * a project that has never chosen.
+ */
+/**
+ * What "Clear view" would currently dismiss.
+ *
+ * Split out so the button can be disabled when it would do nothing, and so
+ * the two — what it clears, and whether it is offered — are derived from
+ * one description instead of two lists that can disagree.
+ */
+export interface ClearableView {
+  rail: boolean;
+  selection: boolean;
+  legend: boolean;
+  basemapMenu: boolean;
+  tool: boolean;
+  measurements: boolean;
+}
+
+export function clearableCountOf(c: ClearableView): number {
+  return Object.values(c).filter(Boolean).length;
+}
+
+/**
+ * Whether clearing the view should also re-fit the network.
+ *
+ * "Fitted" is a state, not a past action. Fit frames the network against
+ * the *visible* map, so the moment a panel closes the viewport grows and
+ * the framing Fit produced is no longer a fit — same camera, more room,
+ * network small and off-centre. Re-fitting restores the invariant rather
+ * than inventing a move.
+ *
+ * It is conditional because the two failure directions are not
+ * symmetrical. Failing to re-fit costs a small convenience. Re-fitting a
+ * camera the user positioned themselves discards deliberate work and
+ * cannot be undone. So this answers yes only when the app owns the current
+ * framing, and anything ambiguous must mark the viewport as the user's.
+ *
+ * `occlusionChanged` gates out the no-op case: closing something that
+ * never covered the map (a dropdown, the ramp popover) leaves the fit
+ * exactly as it was, and a camera animation with no visible cause reads
+ * as a glitch.
+ */
+export function shouldRefitOnClear(
+  viewportIsAppOwned: boolean,
+  occlusionChanged: boolean,
+): boolean {
+  return viewportIsAppOwned && occlusionChanged;
+}
+
+export function readGenericSelection(raw: unknown): GenericSelection {
+  const empty = { point: "", polyline: "", region: "" };
+  if (typeof raw !== "object" || raw === null) return empty;
+  const sel = (raw as { genericSelection?: unknown }).genericSelection;
+  if (typeof sel !== "object" || sel === null) return empty;
+  const s = sel as Record<string, unknown>;
+  const str = (v: unknown) => (typeof v === "string" ? v : "");
+  return {
+    point: str(s.point),
+    polyline: str(s.polyline),
+    region: str(s.region),
+  };
+}
+
+export function readScaleMode(raw: unknown): ScaleMode {
+  if (typeof raw !== "object" || raw === null) return "run";
+  const p = raw as Record<string, unknown>;
+  if (typeof p.scaleMode === "string") {
+    const v = p.scaleMode as ScaleMode;
+    if (PREF_SCALE_MODES.includes(v)) return v;
+  }
+  if (p.colorMode === "threshold") return "criteria";
+  if (p.rangeMode === "step") return "step";
+  return "run";
+}
+
+/**
+ * The range a ramp should use for one period's values.
+ *
+ * Falls back to the run range when the period's own span is a sliver of it.
+ * A field that is essentially uniform — everything dry before the storm
+ * arrives — has a span made of floating-point dust, and autoscaling to it
+ * paints that dust across the whole ramp. Noise then looks exactly like
+ * signal, which is worse than a flat frame.
+ */
+export function periodRange(
+  values: Float32Array | null,
+  runMin: number,
+  runMax: number,
+): { min: number; max: number } {
+  if (!values || values.length === 0) return { min: runMin, max: runMax };
+  let min = Number.POSITIVE_INFINITY;
+  let max = Number.NEGATIVE_INFINITY;
+  for (const v of values) {
+    if (!Number.isFinite(v)) continue;
+    if (v < min) min = v;
+    if (v > max) max = v;
+  }
+  if (!Number.isFinite(min) || !Number.isFinite(max)) {
+    return { min: runMin, max: runMax };
+  }
+  const runSpan = Math.abs(runMax - runMin);
+  if (runSpan > 0 && Math.abs(max - min) < runSpan * 0.01) {
+    return { min: runMin, max: runMax };
+  }
+  return { min, max };
+}
 
 /** Stable empties, so suppressing unplaceable geometry does not hand the
  * canvas a fresh array identity on every render. */
@@ -218,10 +390,9 @@ const PREF_LINK_VARS: readonly LinkVariable[] = [
   "headloss",
   "quality",
 ];
-const PREF_COLOR_MODES: readonly CanvasPrefs["colorMode"][] = [
-  "relative",
-  "threshold",
-];
+
+/** Variables whose links animate in flow direction. */
+const ANIMATED_VARIABLES: readonly string[] = ["flow", "velocity"];
 
 function readCanvasPrefs(projectId: string): Partial<CanvasPrefs> | null {
   try {
@@ -243,13 +414,14 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
     focusInEditor,
     projectView,
     railOpen,
+    toggleRail,
     commandPaletteOpen,
     showToast,
   } = useAppState();
   const { project, engine } = useActiveProject();
   // Editing affordances exist only for engines whose model this GUI edits;
   // for read-only engines the tools hide rather than refuse per gesture.
-  const modelEditable = engineComponents(engine?.key).modelEditable;
+  const { modelEditable, criteriaVariables } = engineComponents(engine?.key);
   const { markEdited } = useNetworkVersion();
   const renameElementFlow = useElementRename();
   const simParams = useSimParams(project?.id);
@@ -327,6 +499,16 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
     key: number;
   }>({ nodeId: null, linkId: null, regionId: null, key: 0 });
 
+  // Flying to an element frames the map as deliberately as dragging it, and
+  // it is triggered from five places. Marking ownership here — where every
+  // one of them converges on the key bump — beats a fifth call site to
+  // remember, which is exactly how such a rule comes to be applied in four
+  // places out of five.
+  useEffect(() => {
+    if (flyToState.key === 0) return;
+    viewportUserOwnedRef.current = true;
+  }, [flyToState.key]);
+
   // Register zoom callbacks into the selection context so siblings (e.g. the
   // rail's network list) can trigger canvas fly-to without prop drilling.
   useEffect(() => {
@@ -355,10 +537,14 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
     );
   }, [setZoomCallbacks]);
   // ── Colour scale mode and per-variable thresholds ─────────────────────────
-  const [colorMode, setColorMode] = useState<"relative" | "threshold">(
-    CANVAS_PREF_DEFAULTS.colorMode,
+  const [scaleMode, setScaleMode] = useState<ScaleMode>(
+    CANVAS_PREF_DEFAULTS.scaleMode,
   );
-  // Threshold defaults — seeded from SimulationOptions when loaded; user can still adjust.
+  const [legendOpen, setLegendOpen] = useState(CANVAS_PREF_DEFAULTS.legendOpen);
+  const [genericSelection, setGenericSelection] = useState<GenericSelection>(
+    CANVAS_PREF_DEFAULTS.genericSelection,
+  );
+  const unitSystem = useUnitSystem();
   // Threshold bands come from the project's criteria file. Previously they
   // were component state, so velocity and flow carried across project
   // switches — the canvas coloured one network against another's bands.
@@ -367,19 +553,13 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
     setCriteria,
     saved: criteriaSaved,
   } = useProjectCriteria(project?.id ?? null);
-  const thresholds: LegendThresholds = useMemo(
+  const thresholds = useMemo(
     () => ({
       pressure: criteria.pressure,
       velocity: criteria.velocity,
       flow: criteria.flow,
     }),
     [criteria],
-  );
-  const setThresholds = useCallback(
-    (next: LegendThresholds) => {
-      setCriteria({ ...criteria, ...next });
-    },
-    [criteria, setCriteria],
   );
   // Seed pressure thresholds from SimulationOptions, but only for a project
   // that has never had criteria saved. Seeding unconditionally would discard
@@ -414,6 +594,15 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
   // numbers are longitude and latitude — which crashed MapLibre outright
   // ("Invalid LngLat latitude value") the moment anything flew to a feature.
   const localGrid = project?.sourceCrs === LOCAL_CRS;
+  // What each kind does in the network, for the canvas's at-rest palette.
+  // The engine declares it (spec §4.3); the canvas never names a kind.
+  const elementKinds = useElementKinds(project?.engine);
+  const kindRoles = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const k of elementKinds) if (k.role) m.set(k.id, k.role);
+    return m;
+  }, [elementKinds]);
+
   // Tools that need the geographic renderer's pointer handling — dragging a
   // node, placing one, measuring between two points. A plan view has real
   // coordinates but draws them through the orthographic path, which has no
@@ -465,7 +654,10 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
     setBasemapOpacity(clampBasemapOpacity(prefs?.basemapOpacity));
     setNodeVar(pick("nodeVar", (v) => PREF_NODE_VARS.includes(v)));
     setLinkVar(pick("linkVar", (v) => PREF_LINK_VARS.includes(v)));
-    setColorMode(pick("colorMode", (v) => PREF_COLOR_MODES.includes(v)));
+    // Reads the merged key, falling back to the pre-merge pair.
+    setScaleMode(readScaleMode(prefs));
+    setLegendOpen(pick("legendOpen", (v) => typeof v === "boolean"));
+    setGenericSelection(readGenericSelection(prefs));
     // Clamp already maps missing/corrupt values to the default.
     setSchematicAspect(clampSliderValue(prefs?.schematicAspect ?? Number.NaN));
     setPrefsLoadedFor(id);
@@ -486,8 +678,10 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
       basemapOpacity,
       nodeVar,
       linkVar,
-      colorMode,
       schematicAspect,
+      scaleMode,
+      legendOpen,
+      genericSelection,
     };
     try {
       localStorage.setItem(canvasPrefsKey(id), JSON.stringify(prefs));
@@ -502,8 +696,10 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
     basemapOpacity,
     nodeVar,
     linkVar,
-    colorMode,
     schematicAspect,
+    scaleMode,
+    legendOpen,
+    genericSelection,
   ]);
 
   useEffect(() => {
@@ -526,6 +722,21 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
   // Increments only on project switch so MapCanvas resets its view to fit
   // the new network.  Does NOT increment on scenario switch so the user's
   // chosen pan/zoom position is preserved during scenario comparisons.
+  /**
+   * Whether the current camera is the user's rather than the app's.
+   *
+   * Set by any deliberate framing — a drag or scroll-zoom on the canvas,
+   * the zoom buttons, reset-north, or flying to an element — and cleared
+   * only by a fit, which is the app framing the network itself. Defaults
+   * to false because a freshly loaded project is auto-fitted.
+   *
+   * A ref, not state: nothing renders from it, and making it state would
+   * re-render the whole canvas on every pan frame.
+   */
+  const viewportUserOwnedRef = useRef(false);
+  const markViewportUserOwned = useCallback(() => {
+    viewportUserOwnedRef.current = true;
+  }, []);
   const [mapFitKey, setMapFitKey] = useState(0);
   const [zoomInKey, setZoomInKey] = useState(0);
   const [zoomOutKey, setZoomOutKey] = useState(0);
@@ -649,6 +860,9 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
   // the fetch effect uses.
   const [fetchedGenericValues, setFetchedGenericValues] =
     useState<GenericPeriodValues | null>(null);
+  /** Which per-period encoding this target serves — the one place that is
+   * decided, so the fetch effect and the canvas can never disagree. */
+  const periodPath = resultsPath(resultMeta);
   // Which target the held arrays were fetched for. Only needed to tell "this
   // scrub failed, keep what's on screen" apart from "this scenario failed to
   // load at all, so stop showing the last one's colours".
@@ -667,18 +881,48 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
   // Empty string = "use the catalog's first variable" (the default until
   // the user picks in the legend).
   const genericMeta = stableResultMeta?.generic ?? null;
-  const [genericSelection, setGenericSelection] = useState<GenericSelection>({
-    point: "",
-    polyline: "",
-    region: "",
-  });
+  // The catalog drives the legend for every engine; only some engines
+  // deliver their period values through it. Everything that reads *values*
+  // gates on this, not on the catalog's presence.
+  const genericPeriods = resultsPath(stableResultMeta) === "generic";
+
   const handleGenericSelect = useCallback(
-    (cls: GenericClassKey, id: string) =>
-      setGenericSelection((s) => ({ ...s, [cls]: id })),
+    (cls: GenericClassKey, id: string) => {
+      setGenericSelection((s) => ({ ...s, [cls]: id }));
+      // wds colours its canvas from these typed variable names rather than
+      // from the catalog payload. Its catalog ids are the same strings, so
+      // the legend drives both without either side naming an engine — and
+      // this is what keeps the persisted prefs in step with the picker.
+      if (
+        cls === "point" &&
+        (PREF_NODE_VARS as readonly string[]).includes(id)
+      ) {
+        setNodeVar(id as NodeVariable);
+      }
+      if (
+        cls === "polyline" &&
+        (PREF_LINK_VARS as readonly string[]).includes(id)
+      ) {
+        setLinkVar(id as LinkVariable);
+      }
+    },
     [],
   );
+  // The saved wds variables are the starting selection, so a reopened
+  // project shows the legend it was left on.
+  useEffect(() => {
+    if (!prefsReady) return;
+    setGenericSelection((s) => ({
+      ...s,
+      point: s.point || nodeVar,
+      polyline: s.polyline || linkVar,
+    }));
+  }, [prefsReady, nodeVar, linkVar]);
   const genericCanvas = useMemo<GenericCanvasResults | null>(() => {
-    if (!genericMeta) return null;
+    // Null for engines whose values arrive as fixed arrays, so the canvas
+    // takes its own colouring path rather than a catalog channel that will
+    // never be filled.
+    if (!genericMeta || !genericPeriods) return null;
     const channel = (
       vars: GenericVariable[],
       arrays: Float32Array[] | null,
@@ -689,7 +933,16 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
         0,
         vars.findIndex((v) => v.id === selected),
       );
-      return { variable: vars[i], values: arrays?.[i] ?? null };
+      const values = arrays?.[i] ?? null;
+      const v = vars[i];
+      // Rescaling to the period rewrites only the range the ramp spans; the
+      // variable is otherwise itself, so labels, units and ramp shape are
+      // untouched.
+      const variable =
+        scaleMode === "step"
+          ? { ...v, ...periodRange(values, v.min, v.max) }
+          : v;
+      return { variable, values };
     };
     return {
       node: channel(
@@ -708,7 +961,13 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
         genericSelection.region,
       ),
     };
-  }, [genericMeta, fetchedGenericValues, genericSelection]);
+  }, [
+    genericMeta,
+    genericPeriods,
+    fetchedGenericValues,
+    genericSelection,
+    scaleMode,
+  ]);
 
   // On project change, discard stale period results immediately: a different
   // project is a different network, so the flat arrays cannot be reinterpreted
@@ -757,7 +1016,7 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
       }
       return;
     }
-    if (resultMeta?.hasPeriodData === false) {
+    if (periodPath === "none") {
       // The engine has result metadata (the timeline steps) but no
       // per-period arrays yet — nothing to fetch, nothing to colour.
       setFetchedPeriodResult(null);
@@ -774,9 +1033,10 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
       0,
       Math.min(currentHour, (resultMeta?.times.length ?? 1) - 1),
     );
-    if (resultMeta?.generic) {
-      // Catalog-keyed engine: same command, generic decoder. The wds arrays
-      // stay null so the canvas renders through the generic channels only.
+    if (periodPath === "generic") {
+      // Generic-payload engine: same command, generic decoder. The wds
+      // arrays stay null so the canvas renders through the generic
+      // channels only.
       setFetchedPeriodResult(null);
       getGenericPeriodValues(project.id, period, activeScenarioId)
         .then((r) => {
@@ -822,8 +1082,8 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
     resultMetaLoading,
     activeScenarioId,
     resultMeta?.times.length,
-    resultMeta?.hasPeriodData,
-    resultMeta?.generic,
+    // The encoding, not the catalog: this effect chooses a decoder.
+    periodPath,
   ]);
 
   // ── Timeline height CSS variable ─────────────────────────────────
@@ -1374,6 +1634,108 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
     ],
   );
 
+  // ── Per-engine legend affordances ─────────────────────────────────────────
+  // Supplied to the shared legend rather than branched on inside it. An
+  // engine with no criteria bands, no locatable extremes, or no animatable
+  // quantity simply contributes nothing and the control is absent.
+
+  /** The legend speaks in element classes; the wds extremes search is
+   * indexed by node/link arrays. Regions have no wds counterpart. */
+  const handleLocateExtreme = useCallback(
+    (cls: GenericClassKey, which: "min" | "max") => {
+      if (cls === "region") return;
+      onLocateExtreme(cls === "point" ? "node" : "link", which);
+    },
+    [onLocateExtreme],
+  );
+
+  // ── Clear view ────────────────────────────────────────────────────────────
+  //
+  // Dismisses everything stacked over the map, and nothing else. Saved
+  // preferences — the chosen variables, the scale, the basemap, the dim
+  // toggle — are what the map *means* to this reader and survive: the
+  // button tidies the view, it does not undo decisions.
+  //
+  // The camera is deliberately untouched. "Fit network" sits directly
+  // above and is that action; a clear that also moved the viewport would
+  // be the most disorienting control on the canvas.
+  const clearable = useMemo<ClearableView>(
+    () => ({
+      rail: railOpen,
+      selection:
+        selectedNodeId != null ||
+        selectedLinkId != null ||
+        selectedRegionId != null,
+      legend: legendOpen,
+      basemapMenu: showBasemapDropdown,
+      tool: activeTool !== "select",
+      measurements: measurePoints.length > 0,
+    }),
+    [
+      railOpen,
+      selectedNodeId,
+      selectedLinkId,
+      selectedRegionId,
+      legendOpen,
+      showBasemapDropdown,
+      activeTool,
+      measurePoints.length,
+    ],
+  );
+  const clearableCount = useMemo(
+    () => clearableCountOf(clearable),
+    [clearable],
+  );
+
+  const handleClearView = useCallback(() => {
+    // Only these actually shrink the map; the rest sit over it without
+    // changing what Fit has to work with.
+    const occlusionChanged = clearable.rail || clearable.selection;
+    // `toggleRail` is a toggle, so guard on the current state rather than
+    // calling it unconditionally — an unguarded call would *open* the rail
+    // for anyone whose view was already clear.
+    if (clearable.rail) toggleRail();
+    if (clearable.selection) clearSelection();
+    if (clearable.legend) setLegendOpen(false);
+    if (clearable.basemapMenu) setShowBasemapDropdown(false);
+    if (clearable.tool) setActiveTool("select");
+    if (clearable.measurements) clearAnnotations();
+    if (shouldRefitOnClear(!viewportUserOwnedRef.current, occlusionChanged)) {
+      setMapFitKey((k) => k + 1);
+    }
+  }, [clearable, toggleRail, clearSelection, clearAnnotations]);
+
+  const legendAnimation = useMemo(
+    () => ({
+      playing: linkAnimation,
+      onToggle: setLinkAnimation,
+      appliesTo: ANIMATED_VARIABLES,
+      reducedMotion,
+    }),
+    [linkAnimation, setLinkAnimation, reducedMotion],
+  );
+
+  /** Read-only band text under a criteria-backed variable's ramp. The
+   * legend shows where the bands fall on the scale; Analysis is where they
+   * are edited. */
+  const criteriaAnnotation = useCallback(
+    (variableId: string): string | null => {
+      const show = (v: number, q: Quantity) =>
+        `${Number(toDisplay(v, q, unitSystem).toFixed(2))}`;
+      if (variableId === "pressure") {
+        const b = criteria.pressure;
+        return `< ${show(b.low, "pressure")} low · ${show(b.required, "pressure")} required · > ${show(b.high, "pressure")} high`;
+      }
+      if (variableId === "velocity" || variableId === "flow") {
+        const b = variableId === "velocity" ? criteria.velocity : criteria.flow;
+        const q: Quantity = variableId === "velocity" ? "velocity" : "flow";
+        return `< ${show(b.low, q)} low · ${show(b.target, q)} target · > ${show(b.high, q)} high`;
+      }
+      return null;
+    },
+    [criteria, unitSystem],
+  );
+
   // MapCanvas gets the *stable* position/base arrays plus the flat period
   // result — colours update via the periodResult prop without new arrays, so
   // the old flicker-latch over merged arrays is no longer needed. During the
@@ -1862,6 +2224,7 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
                 generic={genericCanvas}
                 isActive={canvasIsActive}
                 viewMode={localGrid ? "schematic" : viewMode}
+                kindRoles={kindRoles}
                 topological={viewMode === "schematic"}
                 couplingsResolved={couplingsResolved}
                 // The slider carries a track position; the layout wants per-axis
@@ -1886,7 +2249,7 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
                 flowMax={stableResultMeta?.ranges.flowMax ?? 1}
                 qualityMin={stableResultMeta?.ranges.qualityMin ?? 0}
                 qualityMax={stableResultMeta?.ranges.qualityMax ?? 1}
-                colorMode={colorMode}
+                colorMode={scaleMode === "criteria" ? "threshold" : "relative"}
                 pressureThresholds={thresholds.pressure}
                 velocityThresholds={thresholds.velocity}
                 flowThresholds={thresholds.flow}
@@ -1901,6 +2264,7 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
                 flyToRegionId={flyToState.regionId}
                 flyToKey={flyToState.key}
                 fitKey={mapFitKey}
+                onUserMovedViewport={markViewportUserOwned}
                 zoomInKey={zoomInKey}
                 zoomOutKey={zoomOutKey}
                 resetNorthKey={resetNorthKey}
@@ -1908,41 +2272,31 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
             </CanvasErrorBoundary>
           )}
 
-          {/* Legend — visible only when simulation results exist. The
-                engine-generic legend renders the engine's own variable
-                catalog; the wds legend keeps its fixed variable set. */}
+          {/* Legend — visible only when simulation results exist. One
+                component for every engine: it renders whatever the engine's
+                §6 catalog declares, and the per-engine affordances below
+                are passed in rather than branched on. */}
           {!!stableResultMeta && genericMeta && (
             <GenericLegend
               meta={genericMeta}
               hasRegions={canvasRegions.length > 0}
               selection={genericSelection}
               onSelect={handleGenericSelect}
-            />
-          )}
-          {!!stableResultMeta && !genericMeta && (
-            <Legend
-              nodeVar={nodeVar}
-              setNodeVar={setNodeVar}
-              linkVar={linkVar}
-              setLinkVar={setLinkVar}
-              linkAnimation={linkAnimation}
-              setLinkAnimation={setLinkAnimation}
-              reducedMotion={reducedMotion}
-              qualityMode={stableResultMeta.qualityMode ?? "none"}
-              headMin={stableResultMeta.ranges.headMin ?? 0}
-              headMax={stableResultMeta.ranges.headMax ?? 100}
-              demandMin={stableResultMeta.ranges.demandMin ?? 0}
-              demandMax={stableResultMeta.ranges.demandMax ?? 1}
-              flowMax={stableResultMeta.ranges.flowMax ?? 1}
-              qualityMin={stableResultMeta.ranges.qualityMin ?? 0}
-              qualityMax={stableResultMeta.ranges.qualityMax ?? 1}
-              colorMode={colorMode}
-              thresholds={thresholds}
-              onColorModeChange={setColorMode}
-              onThresholdsChange={setThresholds}
+              scaleMode={scaleMode}
+              onScaleModeChange={setScaleMode}
+              effectiveRanges={{
+                point: genericCanvas?.node?.variable,
+                polyline: genericCanvas?.link?.variable,
+                region: genericCanvas?.region?.variable,
+              }}
+              criteriaVariables={criteriaVariables}
+              criteriaAnnotation={criteriaAnnotation}
               onLocateExtreme={
-                currentPeriodResult ? onLocateExtreme : undefined
+                currentPeriodResult ? handleLocateExtreme : undefined
               }
+              animation={legendAnimation}
+              detailsOpen={legendOpen}
+              onDetailsOpenChange={setLegendOpen}
             />
           )}
 
@@ -2059,10 +2413,25 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
             )}
             <ViewportControls
               mapOnly={mapOnly}
-              onZoomIn={() => setZoomInKey((k) => k + 1)}
-              onZoomOut={() => setZoomOutKey((k) => k + 1)}
-              onResetNorth={() => setResetNorthKey((k) => k + 1)}
-              onFit={() => setMapFitKey((k) => k + 1)}
+              onZoomIn={() => {
+                markViewportUserOwned();
+                setZoomInKey((k) => k + 1);
+              }}
+              onZoomOut={() => {
+                markViewportUserOwned();
+                setZoomOutKey((k) => k + 1);
+              }}
+              onResetNorth={() => {
+                markViewportUserOwned();
+                setResetNorthKey((k) => k + 1);
+              }}
+              onFit={() => {
+                // A fit hands framing back to the app.
+                viewportUserOwnedRef.current = false;
+                setMapFitKey((k) => k + 1);
+              }}
+              onClearView={handleClearView}
+              clearableCount={clearableCount}
             />
           </div>
 
