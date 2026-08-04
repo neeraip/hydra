@@ -3,6 +3,7 @@
  * per-period result arrays.
  */
 
+import { formatDecimal, significantDecimals } from "../numberFormat";
 import { tryInvoke, tryInvokeOr } from "./ipc";
 
 // ── Simulation results ────────────────────────────────────────────────
@@ -231,9 +232,9 @@ export function genericUnitLabel(
 }
 
 /**
- * Display string for one SI value: converted to the active system, using
- * the quantity's per-system decimals (magnitude-aware for unitless or very
- * large values), with the unit label unless `withUnit` is false.
+ * Display string for one SI value: converted to the active system and shown
+ * to significant-figure precision, with the quantity's declared decimals as
+ * a floor. The unit label is appended unless `withUnit` is false.
  */
 export function formatGenericValue(
   value: number | null | undefined,
@@ -243,15 +244,16 @@ export function formatGenericValue(
 ): string {
   if (value == null || !Number.isFinite(value)) return "—";
   const v = genericToDisplay(value, quantity, sys);
-  const decimals = quantity
+  // The quantity's declared decimals are a floor, not the answer: they say
+  // how coarsely the engine is willing to be read, and a value smaller than
+  // that resolution still has to be legible. Two decimals rendered a
+  // 0.000471 lateral inflow as "0.00".
+  const floor = quantity
     ? sys === "us"
       ? quantity.usDecimals
       : quantity.siDecimals
-    : Math.abs(v) >= 10
-      ? 1
-      : 2;
-  const text =
-    Math.abs(v) >= 1000 ? Math.round(v).toLocaleString() : v.toFixed(decimals);
+    : 0;
+  const text = formatDecimal(v, significantDecimals(v, floor));
   const unit = withUnit ? genericUnitLabel(quantity, sys) : undefined;
   return unit ? `${text} ${unit}` : text;
 }

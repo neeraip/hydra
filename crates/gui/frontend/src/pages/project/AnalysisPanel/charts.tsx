@@ -1,6 +1,7 @@
 // ── Shared chart primitives ───────────────────────────────────────────────────
 
 import { type CSSProperties, useState } from "react";
+import { formatDecimal, rangeDecimals } from "../../../numberFormat";
 
 export function NoDataCard({ message }: { message: string }) {
   return (
@@ -73,10 +74,7 @@ export function formatSimTime(seconds: number): string {
 
 /** Compact numeric label for axis bounds / hover readouts. */
 function formatChartValue(v: number, decimals: number): string {
-  if (!Number.isFinite(v)) return "—";
-  const abs = Math.abs(v);
-  if (abs >= 1000) return v.toFixed(0);
-  return v.toFixed(decimals);
+  return formatDecimal(v, decimals);
 }
 
 /** Sparkline stroke width; the plot band is inset by half of it. */
@@ -98,7 +96,7 @@ export function Sparkline({
   times,
   markerIndex,
   unit,
-  decimals = 2,
+  decimals = 0,
   height = 36,
 }: {
   values: number[];
@@ -111,11 +109,17 @@ export function Sparkline({
   markerIndex?: number | null;
   /** Display unit appended to the hover readout (e.g. "m", "L/s"). */
   unit?: string;
-  /** Decimal places for value labels. */
+  /** Floor for the value labels' decimal places. The labels resolve the
+   * series' own span, so this only ever raises them. */
   decimals?: number;
   height?: number;
 }) {
   const [hoverIdx, setHoverIdx] = useState<number | null>(null);
+  // Labels resolve the span, not the magnitude. A trend running 1513.36 to
+  // 1514.00 is all variation and no magnitude: formatted by size alone every
+  // label reads "1513" or "1514" and the line looks flat next to numbers
+  // that never move.
+  const labelDecimals = rangeDecimals(min, max, decimals);
   const w = 280;
   const h = height;
   // A constant series has no range to scale against. Clamping the span to a
@@ -226,10 +230,10 @@ export function Sparkline({
     <div style={{ position: "relative" }}>
       {chart}
       <span style={{ ...axisLabel, top: 0 }}>
-        {formatChartValue(max, decimals)}
+        {formatChartValue(max, labelDecimals)}
       </span>
       <span style={{ ...axisLabel, bottom: 0 }}>
-        {formatChartValue(min, decimals)}
+        {formatChartValue(min, labelDecimals)}
       </span>
       {hoverIdx != null && times?.[hoverIdx] != null && (
         <span
@@ -242,7 +246,7 @@ export function Sparkline({
           }}
         >
           {formatSimTime(times[hoverIdx])} ·{" "}
-          {formatChartValue(values[hoverIdx], decimals)}
+          {formatChartValue(values[hoverIdx], labelDecimals)}
           {unit ? ` ${unit}` : ""}
         </span>
       )}
