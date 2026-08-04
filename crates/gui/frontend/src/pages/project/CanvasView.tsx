@@ -1406,11 +1406,18 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
   // overlays shift for a panel that never appears.
   const inspectorOccupies =
     (inspectorView === "node" && stableSelectedNode != null) ||
-    (inspectorView === "link" && stableSelectedLink != null);
+    (inspectorView === "link" && stableSelectedLink != null) ||
+    (inspectorView === "region" && selectedRegion != null);
   useEffect(() => {
+    // Resolved to a length rather than left as `var(--inspector-w)`: CSS
+    // calc() would cope either way, but the canvas reads this from script to
+    // work out how much of itself is covered, and script gets the raw string.
+    const width = getComputedStyle(document.documentElement)
+      .getPropertyValue("--inspector-w")
+      .trim();
     document.documentElement.style.setProperty(
       "--inspector-effective-w",
-      inspectorOccupies ? "var(--inspector-w)" : "0px",
+      inspectorOccupies && width ? width : "0px",
     );
     return () => {
       document.documentElement.style.setProperty(

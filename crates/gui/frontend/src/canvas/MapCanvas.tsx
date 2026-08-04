@@ -53,6 +53,7 @@ import {
   geoBounds,
   orthoCenterFromMap,
   roughGeoViewState,
+  visibleMapPadding,
 } from "./MapCanvas/geoUtils";
 import { nearestPointOnPath, type SnapResult } from "./measureSnap";
 import {
@@ -845,7 +846,11 @@ export const MapCanvas = memo(function MapCanvas({
           first as [number, number],
         ),
       );
-      map.fitBounds(bounds, { padding: 80, maxZoom: 18, duration: 800 });
+      map.fitBounds(bounds, {
+        padding: visibleMapPadding(map),
+        maxZoom: 18,
+        duration: 800,
+      });
       return;
     }
 
@@ -860,7 +865,13 @@ export const MapCanvas = memo(function MapCanvas({
         const mapZoom = map.getZoom();
         const currentZoom = Number.isFinite(mapZoom) ? mapZoom : 12;
         const zoom = Math.max(currentZoom, 14);
-        map.flyTo({ center, zoom, curve: 1, duration: 800 });
+        map.flyTo({
+          center,
+          zoom,
+          curve: 1,
+          duration: 800,
+          padding: visibleMapPadding(map),
+        });
       } else if (linkId) {
         const link = linksRef.current.find((l) => l.id === linkId);
         if (!link) return;
@@ -868,7 +879,11 @@ export const MapCanvas = memo(function MapCanvas({
         const to = geoCoordsRef.current.get(link.toId);
         if (!from || !to) return;
         const bounds = new maplibregl.LngLatBounds(from, from).extend(to);
-        map.fitBounds(bounds, { padding: 80, maxZoom: 18, duration: 800 });
+        map.fitBounds(bounds, {
+          padding: visibleMapPadding(map),
+          maxZoom: 18,
+          duration: 800,
+        });
       }
     } else {
       // Schematic mode — orthographic view
@@ -2258,7 +2273,9 @@ export const MapCanvas = memo(function MapCanvas({
           overlayRef.current?.setProps({ layers: buildLayersRef.current() });
           markFirstFrame("map");
         }
-        fitMapExtents(nodesRef.current, map);
+        fitMapExtents(nodesRef.current, map, {
+          padding: visibleMapPadding(map),
+        });
         return;
       }
 
@@ -2613,7 +2630,10 @@ export const MapCanvas = memo(function MapCanvas({
     if (mapElRef.current) mapElRef.current.style.display = "";
     if (enteringMapMode) {
       const map = mapRef.current;
-      if (map) fitMapExtents(nodesRef.current, map);
+      if (map)
+        fitMapExtents(nodesRef.current, map, {
+          padding: visibleMapPadding(map),
+        });
     }
   }, [isActive, viewMode]);
 
@@ -2649,7 +2669,7 @@ export const MapCanvas = memo(function MapCanvas({
       if (!map) return;
       const bounds = geoBounds(nodes);
       if (bounds) {
-        fitMapExtents(nodes, map);
+        fitMapExtents(nodes, map, { padding: visibleMapPadding(map) });
       } else {
         map.jumpTo({ center: [0, 20], zoom: 1 });
       }
