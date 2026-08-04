@@ -115,16 +115,33 @@ export function UdsElementsView() {
       return;
     }
     let cancelled = false;
+    const clear = () => {
+      if (!cancelled) setResultValues(new Map());
+    };
     const served =
       activeClass === "point"
         ? resultMeta?.generic?.pointVars
         : activeClass === "polyline"
           ? resultMeta?.generic?.polylineVars
           : resultMeta?.generic?.regionVars;
+    // No result metadata means this scenario has not been run. Clear rather
+    // than ask: the columns stay, holding the same em dash a missing value
+    // shows, and the previous scenario's numbers do not sit under the new
+    // scenario's name.
+    if (!served) {
+      clear();
+      return () => {
+        cancelled = true;
+      };
+    }
     const indices = payloadIndices(variables, served);
-    void getGenericPeriodValues(projectId, period, activeScenarioId).then(
-      (payload) => {
-        if (cancelled || !payload) return;
+    void getGenericPeriodValues(projectId, period, activeScenarioId)
+      .then((payload) => {
+        if (cancelled) return;
+        if (!payload) {
+          clear();
+          return;
+        }
         const arrays =
           activeClass === "point"
             ? payload.points
@@ -148,9 +165,11 @@ export function UdsElementsView() {
           });
           next.set(el.id, row);
         });
-        if (!cancelled) setResultValues(next);
-      },
-    );
+        setResultValues(next);
+      })
+      // A failed read must not leave the last scenario's numbers on screen
+      // either — every path out of here either sets values or clears them.
+      .catch(clear);
     return () => {
       cancelled = true;
     };
@@ -159,6 +178,7 @@ export function UdsElementsView() {
     activeScenarioId,
     period,
     activeClass,
+    resultMeta,
     resultGeneration,
     nodes,
     links,
