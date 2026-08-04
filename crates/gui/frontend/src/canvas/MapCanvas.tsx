@@ -2248,11 +2248,15 @@ export const MapCanvas = memo(function MapCanvas({
     deckCanvasRef.current = deck.getCanvas();
     if (deckCanvasRef.current) {
       deckCanvasRef.current.style.background = "transparent";
-      deckCanvasRef.current.style.display =
-        viewMode === "schematic" ? "" : "none";
+      // Created hidden, always. The camera is not framed until the effect
+      // below runs, and a canvas revealed before then shows one frame of
+      // whatever the seed happened to be — which is why this flashed on the
+      // first switch into the schematic and never again: after that the
+      // deck already exists and this branch does not run.
+      deckCanvasRef.current.style.display = "none";
     }
     return deck;
-  }, [viewMode, scheduleLabelRefresh]);
+  }, [scheduleLabelRefresh]);
 
   useEffect(() => {
     if (!mapElRef.current) return;
@@ -2708,7 +2712,8 @@ export const MapCanvas = memo(function MapCanvas({
       // Clear overlay when entering schematic so no map-mode layer lingers.
       overlayRef.current?.setProps({ layers: [] });
       if (mapElRef.current) mapElRef.current.style.display = "none";
-      if (deckCanvasRef.current) deckCanvasRef.current.style.display = "";
+      // Revealing the deck is the framing effect's job, not this one's:
+      // it may still be waiting for the couplings that decide the layout.
       if (deckHostRef.current) deckHostRef.current.style.pointerEvents = "";
       return;
     }
