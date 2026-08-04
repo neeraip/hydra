@@ -145,6 +145,16 @@ export function orthoCenterFromMap(coords: Map<string, [number, number]>): {
  * do not, so their heights are constants here — they are fixed by
  * `--tool-btn-size` and the legend bar's own `minHeight`, and being a few
  * pixels out only costs a little breathing room.
+ *
+ * **Charge a corner overlay to the edge it is thin against.** MapLibre
+ * padding is a frame, not a set of rectangles, so reserving an overlay's
+ * *height* on the bottom withholds that height across the entire width.
+ * The viewport controls are a tall, narrow column in one corner: billing
+ * their ~164px height to the bottom edge cost a quarter of the container's
+ * height everywhere, and the network sat high above a wide empty band.
+ * Reserving their ~40px *width* on the right instead is both cheaper and
+ * strictly safer — no content is placed in their column at all, so nothing
+ * can end up behind them.
  */
 export function visibleMapPadding(
   map: maplibregl.Map,
@@ -164,18 +174,18 @@ export function visibleMapPadding(
    * once results exist, so this over-pads a model that has not run — in the
    * direction of more breathing room, not less. */
   const LEGEND = 14 + 32;
-  /** The viewport controls, 12px up from the bottom: four buttons in a
-   * column, the first two flush and the rest separated by an 8px gap, inside
-   * the cluster's 8px vertical padding. Much the tallest thing on this edge
-   * — sizing the bottom for the legend alone left the network under it. */
-  const CONTROLS = 12 + 8 + 4 * button + 16 + 8;
+  /** The viewport controls' *width*: one button column inside the toolbar's
+   * 4px padding and 1px border, sitting 12px in from the right edge. Their
+   * height is deliberately not charged to the bottom — see the note above. */
+  const CONTROLS_W = 12 + button + 10;
 
   const padding = {
     left: px("--rail-effective-w") + MARGIN,
-    right: px("--inspector-effective-w") + MARGIN,
+    right: px("--inspector-effective-w") + CONTROLS_W + MARGIN,
     top: TOOLBAR + MARGIN,
-    // The bottom edge carries two overlays at once; clear the taller.
-    bottom: Math.max(LEGEND, CONTROLS) + MARGIN,
+    // The legend bar genuinely spans this edge horizontally, so its height
+    // is the honest cost here.
+    bottom: LEGEND + MARGIN,
   };
   // Padding that exceeds the container leaves no viewport to fit into, and
   // MapLibre's camera maths degenerates. A container that small has no room
