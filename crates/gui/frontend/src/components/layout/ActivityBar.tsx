@@ -4,6 +4,7 @@ import {
   FolderIcon,
 } from "@heroicons/react/24/outline";
 import { useActiveProject, useAppState, useTasks } from "../../AppContext";
+import logoGlyphUrl from "../../assets/logo-glyph.png";
 import { PROJECT_VIEWS } from "../../hooks";
 import { formatPrimaryShortcut, isMacLikePlatform } from "../../shortcuts";
 import { NavButton } from "../ui/NavButton";
@@ -19,8 +20,8 @@ export function ActivityBar() {
     openCommandPalette,
     toggleTaskTray,
     taskTrayOpen,
-    closeProject,
     activeProjectId,
+    closeProject,
   } = useAppState();
   const { project } = useActiveProject();
   const tasks = useTasks();
@@ -70,7 +71,10 @@ export function ActivityBar() {
           marginBottom: 8,
           border: "none",
           borderRadius: 9,
-          background: "var(--accent)",
+          // No plate: the rail's other items are bare icons, and one in the
+          // accent would make the app's own logo read as a selected control.
+          background: "transparent",
+          color: "var(--text-primary)",
           cursor: "pointer",
           display: "flex",
           alignItems: "center",
@@ -79,21 +83,35 @@ export function ActivityBar() {
           padding: 0,
         }}
       >
-        {/* Hydra wordmark glyph */}
-        <svg
-          width="18"
-          height="18"
-          viewBox="0 0 18 18"
-          fill="none"
+        {/*
+          The mark itself, lifted out of the app icon.
+
+          `icons/logo.png` is a plated icon — a black rounded tile with the
+          glyph knocked out of it — which is right for a dock and wrong for a
+          nav rail, where every neighbour is a bare monochrome icon and no
+          plate would follow the theme. So the glyph is extracted to an alpha
+          mask (ImageMagick: flatten on black, intensity to alpha, threshold
+          off the tile's antialiased edge, trim) and painted with the current
+          text colour. One asset, both themes, no inverted copy to keep in
+          step — and hover and focus can tint it like anything else.
+        */}
+        <span
           aria-hidden="true"
-        >
-          <path
-            d="M3 3v12M3 9h12M15 3v12"
-            stroke="#fff"
-            strokeWidth="2.2"
-            strokeLinecap="round"
-          />
-        </svg>
+          style={{
+            width: 21,
+            height: 21,
+            display: "block",
+            backgroundColor: "currentColor",
+            WebkitMaskImage: `url(${logoGlyphUrl})`,
+            maskImage: `url(${logoGlyphUrl})`,
+            WebkitMaskSize: "contain",
+            maskSize: "contain",
+            WebkitMaskRepeat: "no-repeat",
+            maskRepeat: "no-repeat",
+            WebkitMaskPosition: "center",
+            maskPosition: "center",
+          }}
+        />
       </button>
 
       {/* ── Global nav ─────────────────────────────────────────────────────── */}
