@@ -849,6 +849,14 @@ body,
   will-change: transform, opacity;
 }
 
+/* Following a "connected to" link swaps one inspector body for another.
+   That is the same panel showing something else, not a panel arriving, so
+   it must not replay the entrance — which faded the whole panel back
+   through transparent and let the canvas show through it. */
+[data-inspector-entering="false"] .inspector-panel {
+  animation: none;
+}
+
 /* ── Inspector tab strip buttons ─────────────────────────────────────────────*/
 .inspector-tab {
   flex: 1;

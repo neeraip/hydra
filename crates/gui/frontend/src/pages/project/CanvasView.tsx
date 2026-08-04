@@ -25,6 +25,7 @@ import {
   aspectScales,
   clampSliderValue,
 } from "../../canvas/schematicAspect";
+import type { InspectorView } from "../../canvas/selection-context";
 import { useCanvasSelection } from "../../canvas/selection-context";
 import { Timeline } from "../../canvas/Timeline";
 import type {
@@ -1545,6 +1546,19 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
 
   const canvasIsActive = isActive && projectView === "canvas";
 
+  // The inspector's entrance animation should play when the panel appears,
+  // not when its contents change kind. Node, link and region bodies are
+  // separate components, so following a "connected to" link from a node to
+  // a conduit unmounts one and mounts the other — replaying a fade-in over
+  // the canvas for what the reader experiences as the same panel showing
+  // something else. Clicking around the map never did this, because it
+  // usually keeps you within one kind.
+  const prevInspectorViewRef = useRef<InspectorView>("closed");
+  const inspectorEntering = prevInspectorViewRef.current === "closed";
+  useEffect(() => {
+    prevInspectorViewRef.current = inspectorView;
+  }, [inspectorView]);
+
   // Shared styling for toolbar controls that only work on the geographic map.
   const mapOnly = !geographic;
 
@@ -2045,122 +2059,126 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
             />
           </div>
 
-          {/* Inspector panel — node or link detail view */}
-          {inspectorView === "node" && stableSelectedNode && (
-            <NodeInspector
-              node={stableSelectedNode}
-              onClose={clearSelection}
-              onOpenInEditor={() =>
-                focusInEditor(stableSelectedNode.type, stableSelectedNode.id)
-              }
-              onZoomTo={() =>
-                setFlyToState((s) => ({
-                  nodeId: selectedNodeId,
-                  linkId: null,
-                  regionId: null,
-                  key: s.key + 1,
-                }))
-              }
-              disableZoomTo={!selectedNodeHasCoordinates}
-              // Destructive/edit affordances only for editable engines —
-              // both props are optional and the inspector hides the
-              // gestures entirely when they are absent.
-              onDelete={
-                modelEditable
-                  ? () =>
-                      setPendingDelete({
-                        kind: stableSelectedNode.type,
-                        id: stableSelectedNode.id,
-                      })
-                  : undefined
-              }
-              onRename={
-                modelEditable
-                  ? (newId) =>
-                      handleRenameElement(
-                        stableSelectedNode.type,
-                        stableSelectedNode.id,
-                        newId,
-                      )
-                  : undefined
-              }
-              onOpenPattern={() => {
-                setProjectView("editor");
-              }}
-              onLocateRelated={(id) => {
-                if (linkMap.has(id)) selectLink(id);
-              }}
-              onLocateRegion={(id) => selectRegion(id)}
-              nodeVar={nodeVar}
-              ranges={stableResultMeta?.ranges}
-              hasSimulation={!!stableResultMeta}
-              isTransitioning={!!stableResultMeta && !nodeIsEnriched}
-              genericResults={genericNodeResults}
-            />
-          )}
-          {inspectorView === "region" && selectedRegion && (
-            <RegionInspector
-              region={selectedRegion}
-              onClose={clearSelection}
-              onZoomTo={() =>
-                setFlyToState((s) => ({
-                  nodeId: null,
-                  linkId: null,
-                  regionId: selectedRegionId,
-                  key: s.key + 1,
-                }))
-              }
-              onLocateOutlet={(id) => {
-                if (nodeMap.has(id)) selectNode(id);
-              }}
-              genericResults={genericRegionResults}
-            />
-          )}
-          {inspectorView === "link" && stableSelectedLink && (
-            <LinkInspector
-              link={stableSelectedLink}
-              onClose={clearSelection}
-              onOpenInEditor={() =>
-                focusInEditor(stableSelectedLink.type, stableSelectedLink.id)
-              }
-              onZoomTo={() =>
-                setFlyToState((s) => ({
-                  nodeId: null,
-                  linkId: selectedLinkId,
-                  regionId: null,
-                  key: s.key + 1,
-                }))
-              }
-              disableZoomTo={!selectedLinkHasCoordinates}
-              onDelete={
-                modelEditable
-                  ? () =>
-                      setPendingDelete({
-                        kind: stableSelectedLink.type,
-                        id: stableSelectedLink.id,
-                      })
-                  : undefined
-              }
-              onRename={
-                modelEditable
-                  ? (newId) =>
-                      handleRenameElement(
-                        stableSelectedLink.type,
-                        stableSelectedLink.id,
-                        newId,
-                      )
-                  : undefined
-              }
-              onLocateNode={(id) => {
-                if (nodeMap.has(id)) selectNode(id);
-              }}
-              linkVar={linkVar}
-              ranges={stableResultMeta?.ranges}
-              hasSimulation={!!stableResultMeta}
-              isTransitioning={!!stableResultMeta && !linkIsEnriched}
-              genericResults={genericLinkResults}
-            />
-          )}
+          {/* Inspector panel — node, link or region detail view. The
+              wrapper only carries the entrance flag; it is static, so the
+              panels inside still position against the canvas. */}
+          <div data-inspector-entering={inspectorEntering ? "true" : "false"}>
+            {inspectorView === "node" && stableSelectedNode && (
+              <NodeInspector
+                node={stableSelectedNode}
+                onClose={clearSelection}
+                onOpenInEditor={() =>
+                  focusInEditor(stableSelectedNode.type, stableSelectedNode.id)
+                }
+                onZoomTo={() =>
+                  setFlyToState((s) => ({
+                    nodeId: selectedNodeId,
+                    linkId: null,
+                    regionId: null,
+                    key: s.key + 1,
+                  }))
+                }
+                disableZoomTo={!selectedNodeHasCoordinates}
+                // Destructive/edit affordances only for editable engines —
+                // both props are optional and the inspector hides the
+                // gestures entirely when they are absent.
+                onDelete={
+                  modelEditable
+                    ? () =>
+                        setPendingDelete({
+                          kind: stableSelectedNode.type,
+                          id: stableSelectedNode.id,
+                        })
+                    : undefined
+                }
+                onRename={
+                  modelEditable
+                    ? (newId) =>
+                        handleRenameElement(
+                          stableSelectedNode.type,
+                          stableSelectedNode.id,
+                          newId,
+                        )
+                    : undefined
+                }
+                onOpenPattern={() => {
+                  setProjectView("editor");
+                }}
+                onLocateRelated={(id) => {
+                  if (linkMap.has(id)) selectLink(id);
+                }}
+                onLocateRegion={(id) => selectRegion(id)}
+                nodeVar={nodeVar}
+                ranges={stableResultMeta?.ranges}
+                hasSimulation={!!stableResultMeta}
+                isTransitioning={!!stableResultMeta && !nodeIsEnriched}
+                genericResults={genericNodeResults}
+              />
+            )}
+            {inspectorView === "region" && selectedRegion && (
+              <RegionInspector
+                region={selectedRegion}
+                onClose={clearSelection}
+                onZoomTo={() =>
+                  setFlyToState((s) => ({
+                    nodeId: null,
+                    linkId: null,
+                    regionId: selectedRegionId,
+                    key: s.key + 1,
+                  }))
+                }
+                onLocateOutlet={(id) => {
+                  if (nodeMap.has(id)) selectNode(id);
+                }}
+                genericResults={genericRegionResults}
+              />
+            )}
+            {inspectorView === "link" && stableSelectedLink && (
+              <LinkInspector
+                link={stableSelectedLink}
+                onClose={clearSelection}
+                onOpenInEditor={() =>
+                  focusInEditor(stableSelectedLink.type, stableSelectedLink.id)
+                }
+                onZoomTo={() =>
+                  setFlyToState((s) => ({
+                    nodeId: null,
+                    linkId: selectedLinkId,
+                    regionId: null,
+                    key: s.key + 1,
+                  }))
+                }
+                disableZoomTo={!selectedLinkHasCoordinates}
+                onDelete={
+                  modelEditable
+                    ? () =>
+                        setPendingDelete({
+                          kind: stableSelectedLink.type,
+                          id: stableSelectedLink.id,
+                        })
+                    : undefined
+                }
+                onRename={
+                  modelEditable
+                    ? (newId) =>
+                        handleRenameElement(
+                          stableSelectedLink.type,
+                          stableSelectedLink.id,
+                          newId,
+                        )
+                    : undefined
+                }
+                onLocateNode={(id) => {
+                  if (nodeMap.has(id)) selectNode(id);
+                }}
+                linkVar={linkVar}
+                ranges={stableResultMeta?.ranges}
+                hasSimulation={!!stableResultMeta}
+                isTransitioning={!!stableResultMeta && !linkIsEnriched}
+                genericResults={genericLinkResults}
+              />
+            )}
+          </div>
         </div>
 
         {/* Results panel — moved to Results top-level tab */}
