@@ -2216,47 +2216,61 @@ export const MapCanvas = memo(function MapCanvas({
     draggingNodePosRef.current = null;
   }, [geoCoords]);
 
-  const ensureDeck = useCallback(() => {
-    if (deckRef.current || !deckHostRef.current) return deckRef.current;
-    const initialViewState = orthoCenterFromMap(renderCoordsRef.current);
-    viewStateRef.current = initialViewState;
-    const deck = new Deck({
-      parent: deckHostRef.current,
-      style: { position: "absolute", inset: "0", zIndex: "1" },
-      views: orthoViewRef.current,
-      viewState: initialViewState,
-      controller: true,
-      pickingRadius: 6,
-      onViewStateChange: ({
-        viewState,
-      }: ViewStateChangeParameters<OrthographicViewState>) => {
-        const nextViewState: SchematicViewState = {
-          target: viewState.target as [number, number, number],
-          zoom: Number(viewState.zoom ?? 0),
-        };
-        viewStateRef.current = nextViewState;
-        deckRef.current?.setProps({ viewState: nextViewState });
-        // Labels are viewport-culled; refresh them as the view moves.
-        if (labelsOnRef.current) scheduleLabelRefresh("schematic");
-        // Same report the map makes on "move": a plan view has a viewport
-        // like any other, so the network list's dimming tracks it too.
-        reportViewportMovedRef.current();
-      },
-      layers: [],
-    });
-    deckRef.current = deck;
-    deckCanvasRef.current = deck.getCanvas();
-    if (deckCanvasRef.current) {
-      deckCanvasRef.current.style.background = "transparent";
-      // Created hidden, always. The camera is not framed until the effect
-      // below runs, and a canvas revealed before then shows one frame of
-      // whatever the seed happened to be — which is why this flashed on the
-      // first switch into the schematic and never again: after that the
-      // deck already exists and this branch does not run.
-      deckCanvasRef.current.style.display = "none";
-    }
-    return deck;
-  }, [scheduleLabelRefresh]);
+  /**
+   * The orthographic deck, created once.
+   *
+   * `initial` is the camera to be born with. The caller that creates the
+   * deck has already worked out where to frame it, and deriving a second
+   * answer here from a ref was how the deck came into existence pointing
+   * somewhere else — painting one frame of the network at that camera
+   * before the right one arrived. Only the first switch into the schematic
+   * ever ran this, which is exactly when the flash appeared.
+   */
+  const ensureDeck = useCallback(
+    (initial?: SchematicViewState) => {
+      if (deckRef.current || !deckHostRef.current) return deckRef.current;
+      const initialViewState =
+        initial ?? orthoCenterFromMap(renderCoordsRef.current);
+      viewStateRef.current = initialViewState;
+      const deck = new Deck({
+        parent: deckHostRef.current,
+        style: { position: "absolute", inset: "0", zIndex: "1" },
+        views: orthoViewRef.current,
+        viewState: initialViewState,
+        controller: true,
+        pickingRadius: 6,
+        onViewStateChange: ({
+          viewState,
+        }: ViewStateChangeParameters<OrthographicViewState>) => {
+          const nextViewState: SchematicViewState = {
+            target: viewState.target as [number, number, number],
+            zoom: Number(viewState.zoom ?? 0),
+          };
+          viewStateRef.current = nextViewState;
+          deckRef.current?.setProps({ viewState: nextViewState });
+          // Labels are viewport-culled; refresh them as the view moves.
+          if (labelsOnRef.current) scheduleLabelRefresh("schematic");
+          // Same report the map makes on "move": a plan view has a viewport
+          // like any other, so the network list's dimming tracks it too.
+          reportViewportMovedRef.current();
+        },
+        layers: [],
+      });
+      deckRef.current = deck;
+      deckCanvasRef.current = deck.getCanvas();
+      if (deckCanvasRef.current) {
+        deckCanvasRef.current.style.background = "transparent";
+        // Created hidden, always. The camera is not framed until the effect
+        // below runs, and a canvas revealed before then shows one frame of
+        // whatever the seed happened to be — which is why this flashed on the
+        // first switch into the schematic and never again: after that the
+        // deck already exists and this branch does not run.
+        deckCanvasRef.current.style.display = "none";
+      }
+      return deck;
+    },
+    [scheduleLabelRefresh],
+  );
 
   useEffect(() => {
     if (!mapElRef.current) return;
@@ -2547,9 +2561,6 @@ export const MapCanvas = memo(function MapCanvas({
     // Nothing to frame yet: framing an empty layout would mark it framed and
     // the real one would never get its turn.
     if (topological && !couplingsResolved) return;
-    const deck = ensureDeck();
-    if (!deck) return;
-
     const space = topological ? "topological" : "plan";
     const prevSpace = orthoSpaceRef.current;
     const spaceChanged = prevSpace != null && prevSpace !== space;
@@ -2576,6 +2587,11 @@ export const MapCanvas = memo(function MapCanvas({
       : spaceChanged && saved
         ? saved
         : (viewStateRef.current as SchematicViewState);
+
+    // Framed before the deck exists, so the deck can be born looking at the
+    // right place rather than corrected a frame later.
+    const deck = ensureDeck(vs);
+    if (!deck) return;
     viewStateRef.current = vs;
     deck.setProps({
       views: orthoViewRef.current,
