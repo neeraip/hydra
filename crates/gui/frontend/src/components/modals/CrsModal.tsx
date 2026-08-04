@@ -149,6 +149,10 @@ export function CrsModal() {
   }, [crsModalOpen, dismissModal]);
 
   const normalizedSaved = normalizeEpsgCode(project?.sourceCrs ?? "");
+  /** What to call a coordinate system on screen. `LOCAL` is a sentinel, not
+   * a code, and showing it raw asks the reader to know that. */
+  const crsLabel = (code: string): string =>
+    code === LOCAL_CRS ? "Local grid" : code;
   const normalizedDraft = normalizeEpsgCode(draftCrs);
   const dirty = normalizedDraft !== normalizedSaved;
   const highlightedEntry = catalogPage.items[selectedResultIndex] ?? null;
@@ -192,7 +196,12 @@ export function CrsModal() {
           return;
         }
         bumpProjects();
-        showToast(`Source CRS updated to ${code}.`, "success");
+        showToast(
+          code === LOCAL_CRS
+            ? "Coordinates are now read as a local grid."
+            : `Source CRS updated to ${code}.`,
+          "success",
+        );
         closeCrsModal();
       } finally {
         setProjectSaving(false);
@@ -323,7 +332,7 @@ export function CrsModal() {
             }}
           >
             {panelView === "select"
-              ? `Saved: ${project.sourceCrs}`
+              ? `Saved: ${crsLabel(project.sourceCrs)}`
               : "Create or manage reusable custom CRS definitions"}
           </span>
           {panelView === "select" && dirty && (
@@ -334,7 +343,7 @@ export function CrsModal() {
                 fontFamily: "var(--font-ui)",
               }}
             >
-              Unsaved change: {normalizedDraft || "(none)"}
+              Unsaved change: {crsLabel(normalizedDraft) || "(none)"}
             </span>
           )}
           {/* Not every model is georeferenced: SWMM and EPANET both let a

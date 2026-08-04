@@ -13,6 +13,7 @@ import {
   basemapPickerGroups,
   clampBasemapOpacity,
 } from "../../../canvas/Basemap";
+import { LOCAL_CRS } from "../../../canvas/coords";
 import { useCanvasLayers } from "../../../canvas/layers-context";
 import type { MeasurePoint } from "../../../canvas/measureSnap";
 import type { CanvasTool, ViewMode } from "../../../canvas/types";
@@ -428,7 +429,7 @@ export function CanvasToolbar({
             data-tooltip={crsError ?? "Set source coordinate reference system"}
             data-tooltip-pos="bottom"
           >
-            {sourceCrs}{" "}
+            {sourceCrs === LOCAL_CRS ? "Local grid" : sourceCrs}{" "}
             <ChevronUpDownIcon
               style={{ width: 12, height: 12, verticalAlign: "middle" }}
             />
