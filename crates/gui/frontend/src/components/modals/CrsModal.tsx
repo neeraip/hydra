@@ -723,76 +723,6 @@ export function CrsModal() {
                 </button>
               </div>
             </div>
-
-            <div
-              style={{
-                padding: "10px 12px",
-                borderTop: "1px solid var(--border)",
-                background: "var(--bg-panel)",
-                position: "sticky",
-                bottom: 0,
-                boxShadow: "0 -8px 18px rgba(0,0,0,0.18)",
-                display: "flex",
-                justifyContent: "space-between",
-                alignItems: "center",
-                gap: 8,
-              }}
-            >
-              <div
-                style={{
-                  display: "flex",
-                  flexDirection: "column",
-                  gap: 4,
-                }}
-              >
-                <span
-                  style={{
-                    fontSize: "var(--text-sm)",
-                    color: "var(--text-tertiary)",
-                  }}
-                >
-                  Selected CRS
-                </span>
-                <span
-                  style={{
-                    fontSize: "var(--text-md)",
-                    color: "var(--text-primary)",
-                    fontFamily: "var(--font-mono)",
-                  }}
-                >
-                  {crsLabel(normalizedDraft) || "(none)"}
-                </span>
-              </div>
-              <div style={{ display: "flex", gap: 8 }}>
-                <button
-                  type="button"
-                  onClick={dismissModal}
-                  className="tool-btn"
-                  style={{
-                    width: "auto",
-                    height: 28,
-                    padding: "0 10px",
-                    fontSize: "var(--text-md)",
-                  }}
-                >
-                  Cancel
-                </button>
-                <button
-                  type="button"
-                  onClick={() => void saveProjectCrs()}
-                  className="tool-btn"
-                  disabled={projectSaving || !dirty}
-                  style={{
-                    width: "auto",
-                    height: 28,
-                    padding: "0 10px",
-                    fontSize: "var(--text-md)",
-                  }}
-                >
-                  {projectSaving ? "Saving..." : "Save CRS"}
-                </button>
-              </div>
-            </div>
           </>
         ) : (
           <>
@@ -995,6 +925,82 @@ export function CrsModal() {
               )}
             </div>
           </>
+        )}
+
+        {/* Shared by every branch that answers the project's CRS. Choosing
+            a local grid is as much an answer as picking a code, so it needs
+            the same way to commit — it had none while this lived inside the
+            catalog branch. */}
+        {panelView !== "custom" && (
+          <div
+            style={{
+              padding: "10px 12px",
+              borderTop: "1px solid var(--border)",
+              background: "var(--bg-panel)",
+              position: "sticky",
+              bottom: 0,
+              boxShadow: "0 -8px 18px rgba(0,0,0,0.18)",
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+              gap: 8,
+            }}
+          >
+            <div
+              style={{
+                display: "flex",
+                flexDirection: "column",
+                gap: 4,
+              }}
+            >
+              <span
+                style={{
+                  fontSize: "var(--text-sm)",
+                  color: "var(--text-tertiary)",
+                }}
+              >
+                Selected CRS
+              </span>
+              <span
+                style={{
+                  fontSize: "var(--text-md)",
+                  color: "var(--text-primary)",
+                  fontFamily: "var(--font-mono)",
+                }}
+              >
+                {crsLabel(normalizedDraft) || "(none)"}
+              </span>
+            </div>
+            <div style={{ display: "flex", gap: 8 }}>
+              <button
+                type="button"
+                onClick={dismissModal}
+                className="tool-btn"
+                style={{
+                  width: "auto",
+                  height: 28,
+                  padding: "0 10px",
+                  fontSize: "var(--text-md)",
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => void saveProjectCrs()}
+                className="tool-btn"
+                disabled={projectSaving || !dirty}
+                style={{
+                  width: "auto",
+                  height: 28,
+                  padding: "0 10px",
+                  fontSize: "var(--text-md)",
+                }}
+              >
+                {projectSaving ? "Saving..." : "Save CRS"}
+              </button>
+            </div>
+          </div>
         )}
       </div>
     </ModalBackdrop>
