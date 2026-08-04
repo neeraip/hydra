@@ -540,6 +540,7 @@ export function CrsPicker() {
                 {c.label}
                 {c.custom && (
                   <span
+                    data-tooltip="You defined this — not an entry from the standard catalogue"
                     style={{
                       fontSize: "var(--text-2xs)",
                       fontWeight: 700,
@@ -550,7 +551,7 @@ export function CrsPicker() {
                       padding: "0 4px",
                     }}
                   >
-                    YOURS
+                    CUSTOM
                   </span>
                 )}
               </span>
