@@ -2248,6 +2248,21 @@ export const MapCanvas = memo(function MapCanvas({
       attributionControl: false,
     });
     mapRef.current = map;
+
+    // Correct the seed before anything paints.
+    //
+    // `initialVs` is a heuristic: it knows the network's extent but not the
+    // container it has to fit inside, nor the rail, inspector, toolbar and
+    // controls covering part of it. `cameraForBounds` knows all of that, and
+    // works before the style loads because it is transform arithmetic. The
+    // fit that used to happen on style.load therefore ran a frame or two
+    // after the first paint, and you watched the map zoom out to it.
+    if (nodesRef.current.length > 0) {
+      fitMapExtents(nodesRef.current, map, {
+        padding: visibleMapPadding(map),
+      });
+    }
+
     // Basemap dimming survives map re-creation: apply the current value to
     // the fresh canvas (see the basemapOpacity effect below for why the
     // canvas element and not the container).
