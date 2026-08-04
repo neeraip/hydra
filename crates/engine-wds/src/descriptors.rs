@@ -8,8 +8,8 @@
 //! views, so removing or repurposing one is a compatibility break.
 
 use hydra_common::{
-    AttributeDescriptor, CategoryItem, ElementClass, ElementKind, ElementRole, OptionKind,
-    QuantityDescriptor, RampHint, VariableDescriptor,
+    AttributeDescriptor, CategoryItem, CategorySeverity, ElementClass, ElementKind, ElementRole,
+    OptionKind, QuantityDescriptor, RampHint, VariableDescriptor,
 };
 
 // ── Element kinds (spec §4.2) ─────────────────────────────────────────────────
@@ -279,12 +279,26 @@ pub fn result_variables(class: ElementClass) -> Vec<VariableDescriptor> {
                 quantity: None,
                 // The codes the binary results format stores (model spec
                 // §4.4.4): EPANET's status enumeration.
+                // Every code the results writer can emit (`status_to_f32`),
+                // not merely the common ones: a consumer that colours by
+                // this catalog renders an undeclared code as "no value",
+                // so a pump shut down on excess head would vanish from the
+                // one view that would have explained it.
+                //
+                // Severity is a hydraulic judgement, not a display choice:
+                // a link carrying no flow in a pressurised network is an
+                // abnormal condition, and a valve or pump that cannot meet
+                // what was asked of it is worth noticing, whoever is
+                // looking.
                 ramp: RampHint::Categorical {
                     items: vec![
-                        cat(2, "Closed"),
-                        cat(3, "Open"),
-                        cat(4, "Active"),
-                        cat(7, "Excess pressure"),
+                        cat(0, "Excess head", CategorySeverity::Alarm),
+                        cat(1, "Temporarily closed", CategorySeverity::Alarm),
+                        cat(2, "Closed", CategorySeverity::Alarm),
+                        cat(3, "Open", CategorySeverity::Nominal),
+                        cat(4, "Active", CategorySeverity::Caution),
+                        cat(6, "Setpoint not met", CategorySeverity::Caution),
+                        cat(7, "Excess pressure", CategorySeverity::Caution),
                     ],
                 },
             },
@@ -309,10 +323,11 @@ fn var(
     }
 }
 
-fn cat(value: i64, label: &str) -> CategoryItem {
+fn cat(value: i64, label: &str, severity: CategorySeverity) -> CategoryItem {
     CategoryItem {
         value,
         label: label.to_string(),
+        severity: Some(severity),
     }
 }
 
@@ -393,6 +408,65 @@ mod tests {
                     );
                 }
             }
+        }
+    }
+
+    /// Whether a link state is abnormal is a hydraulic judgement only this
+    /// engine can make. An application that is given the states without it
+    /// can order them but not rank them, so it must paint a closed link and
+    /// an open one as merely different — losing a distinction that matters
+    /// at a glance. Every state must therefore carry one.
+    #[test]
+    fn every_link_state_declares_how_remarkable_it_is() {
+        let status = result_variables(ElementClass::Polyline)
+            .into_iter()
+            .find(|v| v.id == "status")
+            .expect("link status is published");
+        let RampHint::Categorical { items } = status.ramp else {
+            panic!("link status must be categorical, got {:?}", status.ramp);
+        };
+        for item in &items {
+            assert!(
+                item.severity.is_some(),
+                "state {:?} declares no severity",
+                item.label
+            );
+        }
+        // The judgement itself, not merely its presence: a network is read
+        // for what has stopped conducting.
+        let by_label = |l: &str| {
+            items
+                .iter()
+                .find(|i| i.label == l)
+                .unwrap_or_else(|| panic!("{l} state is published"))
+                .severity
+        };
+        assert_eq!(by_label("Open"), Some(CategorySeverity::Nominal));
+        assert_eq!(by_label("Closed"), Some(CategorySeverity::Alarm));
+        assert_eq!(by_label("Active"), Some(CategorySeverity::Caution));
+    }
+
+    /// The catalog must name every status code the results writer can
+    /// actually emit. An undeclared code has no label and no colour, so a
+    /// link in that state reads as having no result at all — the failure
+    /// states, which are exactly the ones worth seeing, would be the ones
+    /// that disappeared.
+    #[test]
+    fn every_status_the_writer_emits_is_declared() {
+        use crate::LinkStatus::*;
+        let status = result_variables(ElementClass::Polyline)
+            .into_iter()
+            .find(|v| v.id == "status")
+            .expect("link status is published");
+        let RampHint::Categorical { items } = status.ramp else {
+            panic!("link status must be categorical");
+        };
+        for st in [XHead, TempClosed, Closed, Open, Active, XFcv, XPressure] {
+            let code = crate::io::out_writer::status_out_code(st) as i64;
+            assert!(
+                items.iter().any(|i| i.value == code),
+                "status {st:?} is written as {code} but no catalog item declares it"
+            );
         }
     }
 

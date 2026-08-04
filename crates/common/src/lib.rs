@@ -19,4 +19,4 @@ pub use report::{
     BlockDescriptor, BlockError, Chart, ChartData, ChoiceItem, Column, Fragment, FragmentItem,
     KeyValue, LineSeries, OptionDescriptor, OptionKind, Table, Value, ValueKind,
 };
-pub use variables::{CategoryItem, RampHint, VariableDescriptor};
+pub use variables::{CategoryItem, CategorySeverity, RampHint, VariableDescriptor};

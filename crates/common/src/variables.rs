@@ -10,6 +10,22 @@
 
 use serde::{Deserialize, Serialize};
 
+/// How remarkable one categorical state is (spec §6.1).
+///
+/// A statement about the domain, not about presentation: whether a state is
+/// an abnormal condition is something only the engine knows. Applications
+/// decide what — if anything — each level looks like.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum CategorySeverity {
+    /// The ordinary condition; nothing to notice.
+    Nominal,
+    /// Worth attention, but not a fault.
+    Caution,
+    /// An abnormal condition.
+    Alarm,
+}
+
 /// One discrete state of a [`RampHint::Categorical`] variable.
 ///
 /// `value` is the number the engine stores in the result series for this
@@ -21,6 +37,13 @@ pub struct CategoryItem {
     pub value: i64,
     /// Human-facing label for this state.
     pub label: String,
+    /// Whether this state is unremarkable, worth attention, or wrong.
+    ///
+    /// `None` where the states carry no such judgement — a partition like a
+    /// land-use class or a material has no abnormal member, and must not be
+    /// made to invent one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub severity: Option<CategorySeverity>,
 }
 
 /// How a variable's values are meaningfully mapped to a colour scale
@@ -77,10 +100,52 @@ mod tests {
             items: vec![CategoryItem {
                 value: 3,
                 label: "Open".into(),
+                severity: Some(CategorySeverity::Nominal),
             }],
         };
         let json = serde_json::to_value(&ramp).unwrap();
         assert_eq!(json["type"], "categorical");
         assert_eq!(json["items"][0]["value"], 3);
+        assert_eq!(json["items"][0]["severity"], "nominal");
+    }
+
+    /// Severity is a real claim about the domain, so a state set that is
+    /// merely a partition must be able to decline it — and declining must
+    /// be distinguishable from claiming "nominal", not collapsed into it.
+    #[test]
+    fn a_state_without_a_judgement_omits_severity() {
+        let ramp = RampHint::Categorical {
+            items: vec![CategoryItem {
+                value: 1,
+                label: "Concrete".into(),
+                severity: None,
+            }],
+        };
+        let json = serde_json::to_value(&ramp).unwrap();
+        assert!(
+            json["items"][0].get("severity").is_none(),
+            "absent severity must not serialise, got {}",
+            json["items"][0]
+        );
+    }
+
+    /// Catalogs are persisted and exchanged; a severity that round-trips to
+    /// a different level would silently re-rank an engine's states.
+    #[test]
+    fn severity_round_trips() {
+        for level in [
+            CategorySeverity::Nominal,
+            CategorySeverity::Caution,
+            CategorySeverity::Alarm,
+        ] {
+            let item = CategoryItem {
+                value: 0,
+                label: "s".into(),
+                severity: Some(level),
+            };
+            let json = serde_json::to_string(&item).unwrap();
+            let back: CategoryItem = serde_json::from_str(&json).unwrap();
+            assert_eq!(back.severity, Some(level));
+        }
     }
 }

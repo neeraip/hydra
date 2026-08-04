@@ -797,6 +797,10 @@ pub struct ResultRanges {
     pub velocity_min: f64,
     /// Maximum link velocity across all sampled periods.
     pub velocity_max: f64,
+    /// Minimum link unit headloss across all sampled periods.
+    pub headloss_min: f64,
+    /// Maximum link unit headloss across all sampled periods.
+    pub headloss_max: f64,
     /// Global min/max quality value across all periods and nodes.
     /// `None` when the file was written with `quality_flag == 0` (no quality run).
     pub quality_min: Option<f64>,
@@ -818,6 +822,8 @@ impl Default for ResultRanges {
             flow_max: f64::NEG_INFINITY,
             velocity_min: f64::INFINITY,
             velocity_max: f64::NEG_INFINITY,
+            headloss_min: f64::INFINITY,
+            headloss_max: f64::NEG_INFINITY,
             quality_min: None,
             quality_max: None,
         }
@@ -843,6 +849,7 @@ impl ResultRanges {
         fix(&mut self.demand_min, &mut self.demand_max, 0.0, 10.0);
         fix(&mut self.flow_min, &mut self.flow_max, 0.0, 100.0);
         fix(&mut self.velocity_min, &mut self.velocity_max, 0.0, 5.0);
+        fix(&mut self.headloss_min, &mut self.headloss_max, 0.0, 10.0);
         if let (Some(qmin), Some(qmax)) = (&mut self.quality_min, &mut self.quality_max) {
             fix(qmin, qmax, 0.0, 1.0);
         }
@@ -893,6 +900,15 @@ impl ResultRanges {
             }
             if v > self.velocity_max {
                 self.velocity_max = v;
+            }
+        }
+        for &v in &pr.link_headloss {
+            let v = v as f64;
+            if v < self.headloss_min {
+                self.headloss_min = v;
+            }
+            if v > self.headloss_max {
+                self.headloss_max = v;
             }
         }
         // Quality arrays are populated only when quality_flag != 0.  When they
@@ -1026,6 +1042,13 @@ pub fn scan_ranges(
         for i in 0..nl {
             let fv = f32_at(&buf, link_base + i) as f64;
             let vv = f32_at(&buf, link_base + nl + i) as f64;
+            let hv = f32_at(&buf, link_base + 2 * nl + i) as f64;
+            if hv < ranges.headloss_min {
+                ranges.headloss_min = hv;
+            }
+            if hv > ranges.headloss_max {
+                ranges.headloss_max = hv;
+            }
             if fv < ranges.flow_min {
                 ranges.flow_min = fv;
             }
@@ -1914,7 +1937,7 @@ mod tests {
             node_quality: vec![],
             link_flow: vec![2.0],
             link_velocity: vec![0.5],
-            link_headloss: vec![0.0],
+            link_headloss: vec![1.5, 4.0],
             link_quality: vec![],
             link_status: vec![1.0],
             link_setting: vec![1.0],
@@ -1929,6 +1952,8 @@ mod tests {
         assert_eq!(ranges.demand_max, 3.0);
         assert_eq!(ranges.flow_min, 2.0);
         assert_eq!(ranges.velocity_min, 0.5);
+        assert_eq!(ranges.headloss_min, 1.5);
+        assert_eq!(ranges.headloss_max, 4.0);
     }
 
     // ── duration + strided element series (spec §4.5.8) ───────────────────
@@ -1986,6 +2011,43 @@ mod tests {
         let meta = read_metadata_checked(&path).expect("valid file");
         let _ = std::fs::remove_file(&path);
         assert_eq!(meta.duration, 0.0);
+    }
+
+    /// `scan_ranges` reads the dynamic block by hand-computed word offsets
+    /// rather than through `read_period`'s decoder, so a stride that is one
+    /// variable off yields a plausible-looking range taken from the wrong
+    /// column. Every range it reports must therefore agree with the same
+    /// range folded out of the decoded periods.
+    #[test]
+    fn scan_ranges_agrees_with_decoded_periods() {
+        let (n_nodes, n_tanks, n_links, n_periods) = (4, 1, 3, 5);
+        let path = write_temp_bytes(&make_out_with_periods(
+            n_nodes, n_tanks, n_links, n_periods, 14_400,
+        ));
+        let meta = read_metadata_checked(&path).expect("valid file");
+
+        let mut expected = ResultRanges::default();
+        for p in 0..n_periods {
+            expected.update_from_period(&read_period(&path, &meta, p).expect("period"));
+        }
+        let scanned = scan_ranges(&path, &meta, 2048).expect("scan");
+        let _ = std::fs::remove_file(&path);
+
+        // The fixture derives every word from its own byte offset, so each
+        // variable's range is distinct — reading a neighbouring column
+        // cannot coincidentally match.
+        assert_eq!(scanned.headloss_min, expected.headloss_min, "headloss_min");
+        assert_eq!(scanned.headloss_max, expected.headloss_max, "headloss_max");
+        assert_eq!(scanned.velocity_min, expected.velocity_min, "velocity_min");
+        assert_eq!(scanned.velocity_max, expected.velocity_max, "velocity_max");
+        assert_eq!(scanned.flow_min, expected.flow_min, "flow_min");
+        assert_eq!(scanned.flow_max, expected.flow_max, "flow_max");
+        assert_eq!(scanned.pressure_min, expected.pressure_min, "pressure_min");
+        assert_eq!(scanned.pressure_max, expected.pressure_max, "pressure_max");
+        assert_eq!(scanned.head_min, expected.head_min, "head_min");
+        assert_eq!(scanned.head_max, expected.head_max, "head_max");
+        assert_eq!(scanned.demand_min, expected.demand_min, "demand_min");
+        assert_eq!(scanned.demand_max, expected.demand_max, "demand_max");
     }
 
     /// The strided reader must agree with the whole-block reader for every

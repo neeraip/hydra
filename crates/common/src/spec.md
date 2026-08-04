@@ -586,10 +586,33 @@ and they are shape statements, never colours:
 | `sequential` | Magnitude on a continuous low→high scale. |
 | `diverging` | Signed values around a meaningful zero (e.g. flow direction). |
 | `banded` | Values classed into user-configurable threshold bands. |
-| `categorical` | A closed set of discrete states; the descriptor carries the engine-authored (value, label) items, as a §3.2.1 choice does. |
+| `categorical` | A closed set of discrete states; the descriptor carries the engine-authored items described below, as a §3.2.1 choice does. |
 
 An application chooses palettes, band edges, and legend styling; the
 engine says only which shape is truthful for the data.
+
+#### Categorical items
+
+Each item of a `categorical` variable carries:
+
+| Field | Meaning | Constraints |
+|---|---|---|
+| `value` | The number the result series stores for this state | Engine-authored; unique within the variable. |
+| `label` | Human-facing name for the state | Plain text, engine-authored. |
+| `severity` | Whether the state is unremarkable, worth attention, or wrong, or absent when the states carry no such judgement | One of `nominal`, `caution`, `alarm`. |
+
+Severity is a statement about the *domain*, not about presentation: a
+closed pipe is an abnormal condition in a pressurised network whoever is
+looking at it, and only the engine knows that. Without it an application
+can order states but cannot rank them, so it must colour a closed pipe and
+an open one as merely *different* — losing a distinction the engine
+already held. It stays optional because it is a real claim: a state set
+that is genuinely just a partition (a land-use class, a material) must not
+be forced to invent a judgement, and absent means exactly that.
+
+As with every hint here, this fixes no colours. An application decides
+what caution and alarm look like, and remains free to ignore severity
+entirely.
 
 ### 6.2 Presence
 

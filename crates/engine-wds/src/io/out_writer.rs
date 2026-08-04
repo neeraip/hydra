@@ -737,7 +737,7 @@ fn dynamic_snapshot_bytes(
     // Status
     for (i, _link) in network.links.iter().enumerate() {
         let link_state = &snapshot.link_states[i];
-        buf.extend_from_slice(&status_to_f32(link_state.status).to_le_bytes());
+        buf.extend_from_slice(&status_out_code(link_state.status).to_le_bytes());
     }
 
     // Setting
@@ -1009,7 +1009,11 @@ fn is_closed(status: LinkStatus) -> bool {
 }
 
 /// Map Hydra `LinkStatus` to EPANET `StatusType` enum value (0–10).
-fn status_to_f32(status: LinkStatus) -> f32 {
+///
+/// The result catalog (§6) declares one item per code this produces, and a
+/// test pins the two together — an undeclared code renders as no value at
+/// all, so a link in a failure state would silently vanish from the view.
+pub(crate) fn status_out_code(status: LinkStatus) -> f32 {
     match status {
         LinkStatus::XHead => 0.0,
         LinkStatus::TempClosed => 1.0,
@@ -1125,10 +1129,10 @@ mod tests {
 
     #[test]
     fn status_to_f32_matches_epanet_status_enum() {
-        assert_eq!(status_to_f32(LinkStatus::Closed), 2.0);
-        assert_eq!(status_to_f32(LinkStatus::Open), 3.0);
-        assert_eq!(status_to_f32(LinkStatus::Active), 4.0);
-        assert_eq!(status_to_f32(LinkStatus::XPressure), 7.0);
+        assert_eq!(status_out_code(LinkStatus::Closed), 2.0);
+        assert_eq!(status_out_code(LinkStatus::Open), 3.0);
+        assert_eq!(status_out_code(LinkStatus::Active), 4.0);
+        assert_eq!(status_out_code(LinkStatus::XPressure), 7.0);
     }
 
     #[test]
