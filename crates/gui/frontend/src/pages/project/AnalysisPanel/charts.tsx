@@ -151,6 +151,8 @@ export function Sparkline({
 
   const chart = (
     <svg
+      role="img"
+      aria-label="Trend sparkline"
       width="100%"
       viewBox={`0 0 ${w} ${h}`}
       preserveAspectRatio="none"
@@ -170,7 +172,6 @@ export function Sparkline({
       }
       onPointerLeave={interactive ? () => setHoverIdx(null) : undefined}
     >
-      <title>Trend sparkline</title>
       {markerIndex != null &&
         markerIndex >= 0 &&
         markerIndex < values.length && (
@@ -274,11 +275,12 @@ export function HorizontalBarChart({
 
   return (
     <svg
+      role="img"
+      aria-label="Horizontal bar chart"
       width="100%"
       viewBox={`0 0 ${labelW + barAreaW + 24} ${height}`}
       style={{ overflow: "visible" }}
     >
-      <title>Horizontal bar chart</title>
       {bars.map((bar, i) => {
         const y = i * rowH;
         const barW = maxCount > 0 ? (bar.count / maxCount) * barAreaW : 0;

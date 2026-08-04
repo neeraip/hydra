@@ -796,13 +796,14 @@ function PatternEnvelope({
       }}
     >
       <svg
+        role="img"
+        aria-label="Pattern preview (downsampled)"
         width="100%"
         height={innerH}
         viewBox={`0 0 ${VW} ${innerH}`}
         preserveAspectRatio="none"
         style={{ display: "block" }}
       >
-        <title>Pattern preview (downsampled)</title>
         <path d={band} fill={`${accent}66`} stroke={accent} strokeWidth={1} />
         <line
           x1={0}
