@@ -189,5 +189,21 @@ export function visibleMapPadding(
   ) {
     return { top: 8, bottom: 8, left: 8, right: 8 };
   }
-  return padding;
+
+  // A last slice of whatever space is left over, so a fit never runs the
+  // network right up to the edge it was fitted into. Proportional rather
+  // than fixed: the allowance then means the same thing on a laptop and on
+  // a large display, and it absorbs the places these constants are a few
+  // pixels optimistic — an outermost node's own radius and label among them,
+  // neither of which a bounds fit knows about, since bounds are computed
+  // from coordinates and drawn with width.
+  const SLACK = 0.05;
+  const freeWidth = width - padding.left - padding.right;
+  const freeHeight = height - padding.top - padding.bottom;
+  return {
+    left: padding.left + freeWidth * SLACK,
+    right: padding.right + freeWidth * SLACK,
+    top: padding.top + freeHeight * SLACK,
+    bottom: padding.bottom + freeHeight * SLACK,
+  };
 }
