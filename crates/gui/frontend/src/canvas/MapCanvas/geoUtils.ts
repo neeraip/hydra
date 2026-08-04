@@ -137,8 +137,9 @@ export function orthoCenterFromMap(coords: Map<string, [number, number]>): {
  *
  * A fit that ignores it centres the network in the *container*, which is
  * correct arithmetic and the wrong answer: the rail covers the left edge,
- * the inspector the right, the toolbar the top and the legend the bottom,
- * so the network lands visibly off to one side of the part you can see.
+ * the inspector the right, the toolbar the top, and the legend and viewport
+ * controls the bottom, so the network lands visibly off to one side of the
+ * part you can see.
  *
  * The two side panels publish their occupied width; the toolbar and legend
  * do not, so their heights are constants here — they are fixed by
@@ -155,19 +156,26 @@ export function visibleMapPadding(
   };
   /** Breathing room between the network and whatever bounds it. */
   const MARGIN = 24;
-  /** `.canvas-toolbar`: a row of `--tool-btn-size` buttons plus its padding
-   * and border, sitting 12px down from the top. */
-  const TOOLBAR = 12 + 40;
-  /** The legend bar's `minHeight`, sitting 14px up from the bottom. Present
-   * only once results exist, so this over-pads a model that has not run —
-   * in the direction of more breathing room, not less. */
+  const button = px("--tool-btn-size") || 30;
+  /** `.canvas-toolbar`: one row of buttons plus its 4px padding and border,
+   * sitting 12px down from the top. */
+  const TOOLBAR = 12 + button + 10;
+  /** The legend bar's `minHeight`, 14px up from the bottom. Present only
+   * once results exist, so this over-pads a model that has not run — in the
+   * direction of more breathing room, not less. */
   const LEGEND = 14 + 32;
+  /** The viewport controls, 12px up from the bottom: four buttons in a
+   * column, the first two flush and the rest separated by an 8px gap, inside
+   * the cluster's 8px vertical padding. Much the tallest thing on this edge
+   * — sizing the bottom for the legend alone left the network under it. */
+  const CONTROLS = 12 + 8 + 4 * button + 16 + 8;
 
   const padding = {
     left: px("--rail-effective-w") + MARGIN,
     right: px("--inspector-effective-w") + MARGIN,
     top: TOOLBAR + MARGIN,
-    bottom: LEGEND + MARGIN,
+    // The bottom edge carries two overlays at once; clear the taller.
+    bottom: Math.max(LEGEND, CONTROLS) + MARGIN,
   };
   // Padding that exceeds the container leaves no viewport to fit into, and
   // MapLibre's camera maths degenerates. A container that small has no room
