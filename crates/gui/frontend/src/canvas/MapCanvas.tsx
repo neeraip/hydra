@@ -2468,6 +2468,14 @@ export const MapCanvas = memo(function MapCanvas({
   const savedOrthoViewRef = useRef<
     Record<"plan" | "topological", SchematicViewState | null>
   >({ plan: null, topological: null });
+  // The geographic camera gets the same treatment, so a trip to the
+  // schematic and back does not cost you the place you were working.
+  const savedMapViewRef = useRef<{
+    center: [number, number];
+    zoom: number;
+    bearing: number;
+    pitch: number;
+  } | null>(null);
   useEffect(() => {
     // Reset before the `isActive` guard, so returning to schematic re-frames.
     if (viewMode !== "schematic") {
@@ -2492,6 +2500,7 @@ export const MapCanvas = memo(function MapCanvas({
     // A camera saved against a different network frames the wrong thing.
     if (networkChanged) {
       savedOrthoViewRef.current = { plan: null, topological: null };
+      savedMapViewRef.current = null;
     }
     const saved = savedOrthoViewRef.current[space];
     const reframe =
@@ -2607,13 +2616,34 @@ export const MapCanvas = memo(function MapCanvas({
   }, [basemapOpacity]);
 
   // View mode switch.
+  //
+  // The map keeps its camera across a trip to the schematic, the way each
+  // orthographic space keeps its own: someone who zoomed to a junction,
+  // glanced at the topology and came back was looking at the whole network
+  // again, having lost the place they were working. It is only framed on the
+  // first arrival, or after a network change makes a saved camera frame the
+  // wrong thing.
   useEffect(() => {
     if (!isActive) return;
     const enteringMapMode =
       viewMode === "map" && prevViewModeRef.current !== "map";
+    const leavingMapMode =
+      viewMode !== "map" && prevViewModeRef.current === "map";
     prevViewModeRef.current = viewMode;
 
     if (viewMode === "schematic") {
+      if (leavingMapMode) {
+        const map = mapRef.current;
+        if (map) {
+          const c = map.getCenter();
+          savedMapViewRef.current = {
+            center: [c.lng, c.lat],
+            zoom: map.getZoom(),
+            bearing: map.getBearing(),
+            pitch: map.getPitch(),
+          };
+        }
+      }
       // Clear overlay when entering schematic so no map-mode layer lingers.
       overlayRef.current?.setProps({ layers: [] });
       if (mapElRef.current) mapElRef.current.style.display = "none";
@@ -2629,10 +2659,14 @@ export const MapCanvas = memo(function MapCanvas({
     if (mapElRef.current) mapElRef.current.style.display = "";
     if (enteringMapMode) {
       const map = mapRef.current;
-      if (map)
+      const saved = savedMapViewRef.current;
+      if (map && saved) {
+        map.jumpTo(saved);
+      } else if (map) {
         fitMapExtents(nodesRef.current, map, {
           padding: visibleMapPadding(map),
         });
+      }
     }
   }, [isActive, viewMode]);
 

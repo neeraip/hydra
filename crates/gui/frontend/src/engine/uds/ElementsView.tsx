@@ -193,7 +193,17 @@ export function UdsElementsView() {
             key={k.id}
             onClick={() => setActiveKind(k.id)}
             className={`inspector-tab${k.id === kind ? " active" : ""}`}
-            style={{ display: "inline-flex", alignItems: "center", gap: 6 }}
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 6,
+              // `.inspector-tab` is `flex: 1` for the two- or three-tab
+              // inspector, where filling the width is the point. Here there
+              // is one tab per element kind, so stretching them spreads a
+              // handful of short labels across the whole page.
+              flex: "0 0 auto",
+              padding: "8px 10px",
+            }}
           >
             <TypeBadge type={k.id} />
             <span>{k.labelPlural}</span>
