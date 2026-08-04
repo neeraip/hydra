@@ -1407,14 +1407,14 @@ export const MapCanvas = memo(function MapCanvas({
       // Values are indexed by snapshot order, so a filtered draw list must
       // look its value up by id, never by its position in that list.
       const regionOrder = new Map(regions?.map((r, i) => [r.id, i]) ?? []);
-      const regionFill = genRegion
+      const baseFill: (r: Region) => RGBA = genRegion
         ? (r: Region) =>
             genericRgba(
               genRegion.values?.[regionOrder.get(r.id) ?? -1],
               genRegion.variable,
               110,
             )
-        : ([61, 175, 117, 28] as RGBA);
+        : () => [61, 175, 117, 28] as unknown as RGBA;
       const regionSelected = (r: Region) => r.id === selectedRegionId;
       // Hover brightens the ring short of the selected treatment, so the two
       // stay distinguishable when you hover something else while one region
@@ -1432,7 +1432,25 @@ export const MapCanvas = memo(function MapCanvas({
           data: placedRegions,
           getPolygon: regionRing,
           coordinateSystem: coordSystem,
-          getFillColor: regionFill,
+          getFillColor: (r: Region) => {
+            // Hover and selection lift the fill as well as the ring. Only
+            // the alpha moves, and only a little: the hue is carrying a
+            // result value, and a catchment that changes colour when the
+            // pointer crosses it reads as a change in the data.
+            const [red, green, blue, alpha] = baseFill(r) as unknown as [
+              number,
+              number,
+              number,
+              number,
+            ];
+            const lift = regionSelected(r) ? 40 : regionHovered(r) ? 22 : 0;
+            return [
+              red,
+              green,
+              blue,
+              Math.min(255, alpha + lift),
+            ] as unknown as RGBA;
+          },
           getLineColor: (r: Region) =>
             (regionSelected(r)
               ? [125, 215, 170, 255]
@@ -1458,7 +1476,12 @@ export const MapCanvas = memo(function MapCanvas({
           },
           updateTriggers: {
             getPolygon: [topological, schematicLayout.regionRings],
-            getFillColor: [genRegion?.values, genRegion?.variable],
+            getFillColor: [
+              genRegion?.values,
+              genRegion?.variable,
+              selectedRegionId,
+              hoveredRegionId,
+            ],
             getLineColor: [selectedRegionId, hoveredRegionId],
             getLineWidth: [selectedRegionId, hoveredRegionId],
           },
