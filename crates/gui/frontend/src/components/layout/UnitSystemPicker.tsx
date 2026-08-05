@@ -136,7 +136,16 @@ export function UnitSystemPicker() {
       }}
     >
       <span style={{ width: 12, flexShrink: 0 }}>{selected ? "✓" : ""}</span>
-      <span style={{ display: "flex", flexDirection: "column", gap: 1 }}>
+      <span
+        style={{
+          display: "flex",
+          flexDirection: "column",
+          gap: 1,
+          // Without this a flex child refuses to shrink below its content,
+          // so the description stretches the menu instead of wrapping.
+          minWidth: 0,
+        }}
+      >
         {label}
         {description && (
           <span
@@ -154,17 +163,27 @@ export function UnitSystemPicker() {
     </button>
   );
 
-  const groupLabel = (text: string) => (
+  /**
+   * A group heading, optionally with a hint about what the whole group
+   * means.
+   *
+   * The Default group's explanation rides on its single row instead, where
+   * it describes what choosing that row does. Override has three rows and
+   * one shared consequence, so it belongs up here rather than repeated
+   * three times.
+   */
+  const groupLabel = (text: string, hint?: string) => (
     <div
       style={{
         padding: "6px 10px 2px",
         fontSize: "var(--text-xs)",
-        letterSpacing: "0.05em",
-        textTransform: "uppercase",
         color: "var(--text-tertiary)",
       }}
     >
-      {text}
+      <span style={{ letterSpacing: "0.05em", textTransform: "uppercase" }}>
+        {text}
+      </span>
+      {hint && <span style={{ opacity: 0.85 }}> · {hint}</span>}
     </div>
   );
 
@@ -214,7 +233,7 @@ export function UnitSystemPicker() {
             // Matches the toolbar's other popovers, which sit above the
             // canvas and the secondary rail.
             zIndex: 120,
-            minWidth: 248,
+            width: 244,
             padding: "4px 0",
             borderRadius: 8,
             border: "1px solid var(--border)",
@@ -226,9 +245,12 @@ export function UnitSystemPicker() {
           {/* Says where the value came from, which the label alone cannot:
               the row shows the *resolved* system, so without this it reads
               as a third explicit choice rather than as deference to
-              Settings. Naming the consequence rather than just the source,
-              because tracking a later change is the only thing that
-              distinguishes this from pinning the same value below. */}
+              Settings.
+
+              "Follows" against the override group's "Fixed" is the whole
+              distinction in two words apiece — which is what these rows
+              need, since they are identical in text whenever the default
+              is Source. */}
           {row(
             appDefault === "source"
               ? sourceOptionLabel(modelSystem)
@@ -236,7 +258,7 @@ export function UnitSystemPicker() {
             inherited,
             () => choose(null),
             "inherit",
-            "From your app Settings — follows it if you change it there",
+            "Follows your app Settings",
           )}
           <div
             style={{
@@ -245,19 +267,10 @@ export function UnitSystemPicker() {
               background: "var(--border)",
             }}
           />
-          {groupLabel("Override")}
-          {/* The contrast that makes the duplicate `Source` row above
-              meaningful: these stay put when Settings moves. */}
-          <div
-            style={{
-              padding: "0 10px 4px 30px",
-              fontSize: "var(--text-xs)",
-              color: "var(--text-tertiary)",
-              lineHeight: 1.4,
-            }}
-          >
-            This project only, whatever Settings says
-          </div>
+          {/* "Fixed" against the Default row's "Follows" is what makes the
+              duplicate `Source` entry above meaningful: these stay put when
+              Settings moves. */}
+          {groupLabel("Override", "fixed for this project")}
           {(["source", "si", "us"] as const).map((v) =>
             row(
               overrideOptionLabel(v, modelSystem),
