@@ -11,6 +11,7 @@
  */
 
 import { useEffect, useState } from "react";
+import { registerElementBadges } from "../types/elementTypes";
 import { tryInvokeOr } from "./ipc";
 import type { GenericQuantity } from "./results";
 
@@ -191,6 +192,9 @@ export async function getElementKinds(
     [],
   );
   kindCache.set(engine, kinds);
+  // The engine's own badge letters become authoritative for every surface
+  // that draws one, rather than each surface consulting a static copy.
+  registerElementBadges(kinds);
   return kinds;
 }
 

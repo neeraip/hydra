@@ -73,16 +73,69 @@ const BADGES: Record<string, ElementTypeBadge> = {
   rule: { label: "Ru", color: COLLECTION_TINT },
   pollutant: { label: "Po", color: COLLECTION_TINT },
   timeseries: { label: "Ts", color: COLLECTION_TINT },
+  // Drainage process parameter sets. Their letters match the `badge` the
+  // engine declares for each kind — this map is a hand-kept copy of that,
+  // and the six below were missing, so they fell through to the initial:
+  // `landuse` and `lidcontrol` both rendered as a grey "L".
+  landuse: { label: "Lu", color: COLLECTION_TINT },
+  aquifer: { label: "Aq", color: COLLECTION_TINT },
+  snowpack: { label: "Sn", color: COLLECTION_TINT },
+  hydrograph: { label: "Uh", color: COLLECTION_TINT },
+  lidcontrol: { label: "Li", color: COLLECTION_TINT },
+  transect: { label: "Tr", color: COLLECTION_TINT },
 };
 
 const FALLBACK_COLOR = POINT_TINT;
 
-/** Badge for `type`, falling back to its initial for an unknown kind. */
+/**
+ * Letters published by the engines themselves, learned as their catalogs
+ * are fetched.
+ *
+ * The map above is a hand-kept copy of something every engine already
+ * declares (`ElementKind.badge`), and a copy is a thing that can fall
+ * behind: six drainage kinds shipped with no entry and fell through to
+ * their initial, so `landuse` and `lidcontrol` both rendered as "L".
+ * Registering the catalog makes the engine's own letters authoritative
+ * and the map a fallback for colour and for surfaces that render before
+ * any catalog has loaded.
+ */
+const declaredLabels = new Map<string, string>();
+
+export function registerElementBadges(
+  kinds: readonly { id: string; badge: string }[],
+): void {
+  for (const k of kinds) {
+    // Kind ids are shared across engines where the concept is shared
+    // (`junction`, `pump`), and both engines badge those identically —
+    // so registering a second catalog reinforces rather than overwrites.
+    // Were they ever to disagree, the last engine loaded would win, and
+    // the badges are meant to read the same everywhere.
+    if (k.badge) declaredLabels.set(k.id, k.badge);
+  }
+}
+
+/** Forget every registered catalog. For tests, which would otherwise
+ * inherit whatever a previous one registered into this module-global. */
+export function clearElementBadges(): void {
+  declaredLabels.clear();
+}
+
+/**
+ * Badge for `type`: the engine's declared letters where known, this
+ * layer's colour, and the type's initial only when nothing has described
+ * it at all.
+ */
 export function elementTypeBadge(type: string): ElementTypeBadge {
-  return (
-    BADGES[type] ?? {
+  const known = BADGES[type];
+  const declared = declaredLabels.get(type);
+  if (!known && !declared) {
+    return {
       label: type.charAt(0).toUpperCase() || "?",
       color: FALLBACK_COLOR,
-    }
-  );
+    };
+  }
+  return {
+    label: declared ?? known?.label ?? "?",
+    color: known?.color ?? COLLECTION_TINT,
+  };
 }
