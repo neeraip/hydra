@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAppState, useSimulation } from "../../AppContext";
 import { useCanvasSelection } from "../../canvas/selection-context";
 import { engineComponents } from "../../engine/registry";
+import { buildResultsGeoJson } from "../../export/resultsGeoJson";
 import {
   type Command,
   type CommandCategory,
@@ -198,6 +199,7 @@ export function CommandPalette() {
     zoomToLink,
     simNodes,
     simLinks,
+    simRegions,
   } = useCanvasSelection();
   const { resultMeta } = useSimulation();
   const { bumpNetwork } = useNetworkVersion();
@@ -284,19 +286,29 @@ export function CommandPalette() {
           category: "Navigate",
           action: "nav-scenarios",
         },
+        // Labels are the tab labels, verbatim. They had drifted — the tabs
+        // read "Results" and "Editor" while the palette offered "Analysis"
+        // and "Network Editor", so searching the palette for what is
+        // written on screen found nothing. "Network Editor" was doubly
+        // wrong for a read-only engine, which has an Editor but edits
+        // nothing.
+        //
+        // The former labels survive in the descriptions, which the filter
+        // also searches — renaming a command should not strip the word a
+        // user has been typing for a year.
         {
           id: "n3",
-          label: "Analysis",
+          label: "Results",
           category: "Navigate",
-          description: "Open the analysis view",
+          description: "Open the results and analysis view",
           shortcut: navAnalysisShortcut,
           action: "nav-analysis",
         },
         {
           id: "n4",
-          label: "Network Editor",
+          label: "Editor",
           category: "Navigate",
-          description: "Open the editor view",
+          description: "Open the network editor view",
           shortcut: navEditorShortcut,
           action: "nav-editor",
         },
@@ -316,7 +328,7 @@ export function CommandPalette() {
           id: "a2",
           label: "Export results to GeoJSON",
           description:
-            "Export nodes/links with attributes and result values when available",
+            "Export every element with its attributes and result values when available",
           category: "Actions",
         },
         {
@@ -682,80 +694,16 @@ export function CommandPalette() {
           return;
         }
         // Sim-merged arrays carry the engine-generic per-period values
-        // (`resultValues`, SI) — plain arrays otherwise.
-        const exportNodes = simNodes ?? allNodes;
-        const exportLinks = simLinks ?? allLinks;
-        const nodeCoords = new Map(
-          exportNodes.map((n) => [n.id, [n.x, n.y] as [number, number]]),
+        // (`resultValues`, SI) — plain arrays otherwise. All three classes
+        // take the same merged source: reading the unmerged regions here
+        // exported subcatchments with their geometry and none of their
+        // runoff, while the nodes and links in the same file carried a
+        // full result set.
+        const fc = buildResultsGeoJson(
+          simNodes ?? allNodes,
+          simLinks ?? allLinks,
+          simRegions ?? allRegions,
         );
-        const fc = {
-          type: "FeatureCollection" as const,
-          features: [
-            ...exportNodes.map((n) => ({
-              type: "Feature" as const,
-              geometry: { type: "Point" as const, coordinates: [n.x, n.y] },
-              properties: {
-                id: n.id,
-                type: n.type,
-                // Static attributes, then result values when available.
-                ...(n.elevation != null ? { elevation: n.elevation } : {}),
-                ...(n.pressure != null ? { pressure: n.pressure } : {}),
-                ...(n.head != null ? { head: n.head } : {}),
-                ...(n.demand != null ? { demand: n.demand } : {}),
-                ...(n.quality != null ? { quality: n.quality } : {}),
-                ...(n.resultValues ?? {}),
-              },
-            })),
-            ...exportLinks.map((l) => {
-              const from = nodeCoords.get(l.fromId) ?? [0, 0];
-              const to = nodeCoords.get(l.toId) ?? [0, 0];
-              return {
-                type: "Feature" as const,
-                geometry: {
-                  type: "LineString" as const,
-                  // Intermediate vertices included — a straight from→to
-                  // line flattened every polyline conduit.
-                  coordinates: [from, ...(l.vertices ?? []), to],
-                },
-                properties: {
-                  id: l.id,
-                  type: l.type,
-                  // Static attributes, then result values when available.
-                  // Absent attributes are omitted, never exported as 0.
-                  ...(l.diameter != null && l.diameter > 0
-                    ? { diameter: l.diameter }
-                    : {}),
-                  ...(l.length != null && l.length > 0
-                    ? { length: l.length }
-                    : {}),
-                  // `velocity` is only meaningful once sim data is merged in
-                  // — gate it on `flow` like the other result values.
-                  ...(l.flow != null
-                    ? { flow: l.flow, velocity: l.velocity }
-                    : {}),
-                  ...(l.status != null ? { status: l.status } : {}),
-                  ...(l.quality != null ? { quality: l.quality } : {}),
-                  ...(l.resultValues ?? {}),
-                },
-              };
-            }),
-            // Areal elements (subcatchments) as closed polygons.
-            ...allRegions
-              .filter((r) => r.ring.length >= 3)
-              .map((r) => ({
-                type: "Feature" as const,
-                geometry: {
-                  type: "Polygon" as const,
-                  coordinates: [[...r.ring, r.ring[0]]],
-                },
-                properties: {
-                  id: r.id,
-                  type: r.type,
-                  ...(r.outletId != null ? { outlet: r.outletId } : {}),
-                },
-              })),
-          ],
-        };
         const blob = new Blob([JSON.stringify(fc, null, 2)], {
           type: "application/json",
         });
@@ -915,6 +863,7 @@ export function CommandPalette() {
       allRegions,
       simNodes,
       simLinks,
+      simRegions,
       bumpNetwork,
       openIssuesPanel,
       toggleTaskTray,
