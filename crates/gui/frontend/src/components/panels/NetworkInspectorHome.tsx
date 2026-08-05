@@ -45,7 +45,12 @@ import {
 import { perfTrace } from "../../perfTrace";
 import { readTextScale } from "../../textScale";
 import type { Region } from "../../types";
-import { toDisplay, unitLabel, useUnitSystem } from "../../units";
+import {
+  toDisplay,
+  type UnitSystem,
+  unitLabel,
+  useUnitSystem,
+} from "../../units";
 import { MiddleTruncate } from "../ui/MiddleTruncate";
 import { TypeBadge } from "../ui/TypeBadge";
 import { activeElement, activeKey, isActiveRow } from "./activeElement";
@@ -106,7 +111,7 @@ function useDebouncedValue<T>(value: T, delayMs: number): T {
 /** One line of the finder. Classes are flattened into a single sequence, so
  * everything the list needs to draw and rank a row lives here rather than
  * behind three parallel code paths. */
-interface Row {
+export interface Row {
   id: string;
   /** Element-kind id — drives the badge and the kind chips. */
   kind: string;
@@ -119,6 +124,80 @@ interface Row {
   /** The column this value came from, for its label and unit. */
   format: SimResultColumn | null;
   canZoom: boolean;
+}
+
+/** What the value column's header says, and how wide a unit lane the rows
+ * need beneath it. */
+export interface ValueColumnHeading {
+  /** Header text — a variable name, or the symbols when several are shown. */
+  text: string;
+  /** Tooltip spelling out the symbols; absent when the header is already
+   * spelled out. */
+  tip: string | undefined;
+  /** Whether each row must carry its own unit. */
+  perRowUnits: boolean;
+  /** Width to reserve for that unit, in characters; 0 when unused. */
+  unitWidth: number;
+}
+
+/**
+ * The value column's header and unit lane, from the rows on screen.
+ *
+ * One slot, but not one meaning: with junctions and conduits side by side
+ * it holds depth for some rows and flow for others. Naming the variables
+ * is the only honest header — "Current" said nothing, and a column of bare
+ * numbers meaning different things is worse than none.
+ *
+ * With a single variable the unit belongs in the header, and repeating it
+ * on every row would only break the column's alignment. With several, each
+ * row must carry its own — so the rows get a lane wide enough for the
+ * widest, and the numbers right-align against one edge instead of being
+ * shoved about by units of different widths.
+ *
+ * The lane is sized to what is displayed, not to the widest unit either
+ * engine can produce: that is `ft/kft`, and a 320px rail cannot spare six
+ * characters permanently for a variable rarely in view.
+ *
+ * Extracted and tested because the unit scan shares its loop — and its
+ * early exit — with the symbol scan. That exit is correct only while a
+ * class has exactly one variable, and nothing in the loop says so.
+ */
+export function valueColumnHeading(
+  visible: readonly Row[],
+  sys: UnitSystem,
+): ValueColumnHeading {
+  const symbolByName = new Map<string, string>();
+  let unit = "";
+  let unitWidth = 0;
+  for (const r of visible) {
+    const meta = formatMeta(r.format);
+    if (!meta) continue;
+    if (!symbolByName.has(meta.name)) {
+      symbolByName.set(meta.name, meta.symbol);
+      unitWidth = Math.max(unitWidth, unitOf(r, sys).length);
+      if (symbolByName.size === 1) unit = unitOf(r, sys);
+    }
+    // One variable per class, so three is every variable there can be.
+    if (symbolByName.size >= 3) break;
+  }
+  if (symbolByName.size === 0) {
+    return { text: "", tip: undefined, perRowUnits: false, unitWidth: 0 };
+  }
+  if (symbolByName.size === 1) {
+    const name = [...symbolByName.keys()][0];
+    return {
+      text: unit ? `${name} (${unit})` : name,
+      tip: undefined,
+      perRowUnits: false,
+      unitWidth: 0,
+    };
+  }
+  return {
+    text: [...symbolByName.values()].join(" · "),
+    tip: [...symbolByName.keys()].join(" · "),
+    perRowUnits: true,
+    unitWidth,
+  };
 }
 
 /** Rank a row against a lowercased query. Lower is better; -1 is no match.
@@ -442,48 +521,10 @@ export function NetworkInspectorHome({
 
   const searching = query.trim().length > 0;
 
-  /** The value column means one thing only when one class is in view. With
-   * junctions and conduits side by side it is depth for some rows and flow
-   * for others, so the header says so rather than lying with one name. */
-  const valueHeading = useMemo(() => {
-    // One slot, but not one meaning: with junctions and conduits side by
-    // side it holds depth for some rows and flow for others. Naming the
-    // variables is the only honest header — "Current" said nothing, and a
-    // column of bare numbers meaning different things is worse than none.
-    const symbolByName = new Map<string, string>();
-    let unit = "";
-    for (const r of visible) {
-      const meta = formatMeta(r.format);
-      if (!meta) continue;
-      if (!symbolByName.has(meta.name)) {
-        symbolByName.set(meta.name, meta.symbol);
-        if (symbolByName.size === 1) unit = unitOf(r, sys);
-      }
-      // One variable per class, so three is every variable there can be.
-      if (symbolByName.size >= 3) break;
-    }
-    if (symbolByName.size === 0) {
-      return { text: "", tip: undefined, perRowUnits: false };
-    }
-    if (symbolByName.size === 1) {
-      const name = [...symbolByName.keys()][0];
-      return {
-        text: unit ? `${name} (${unit})` : name,
-        tip: undefined,
-        // The header already says what the unit is; repeating it on every
-        // row would only break the column's alignment.
-        perRowUnits: false,
-      };
-    }
-    // Several variables at once: their symbols fit where their names do
-    // not, and each row carries its own unit, which is what actually tells
-    // depth from flow at a glance.
-    return {
-      text: [...symbolByName.values()].join(" · "),
-      tip: [...symbolByName.keys()].join(" · "),
-      perRowUnits: true,
-    };
-  }, [visible, sys]);
+  const valueHeading = useMemo(
+    () => valueColumnHeading(visible, sys),
+    [visible, sys],
+  );
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const rowHeight = inspectorRowHeight(readTextScale(), searching);
@@ -875,14 +916,27 @@ export function NetworkInspectorHome({
                       }
                     >
                       {formatValue(row, sys)}
-                      {valueHeading.perRowUnits && row.value != null && (
+                      {/* A lane of its own, so the numbers right-align on
+                          one edge instead of being pushed around by units
+                          of different widths — "8.153 m" and "0.8695 m/s"
+                          right-aligned as one group put their digits at
+                          different offsets, which is exactly what the
+                          column exists to let you compare.
+
+                          Reserved even when a row has no value, or the
+                          rows that do would shift out from under the ones
+                          that don't. */}
+                      {valueHeading.perRowUnits && (
                         <span
                           style={{
                             color: "var(--text-tertiary)",
-                            marginLeft: 2,
+                            marginLeft: 3,
+                            display: "inline-block",
+                            width: `${valueHeading.unitWidth}ch`,
+                            textAlign: "left",
                           }}
                         >
-                          {unitOf(row, sys)}
+                          {row.value != null ? unitOf(row, sys) : ""}
                         </span>
                       )}
                     </span>
