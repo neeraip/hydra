@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 /**
  * Live view of the app's "Reduce motion" accessibility setting.
  *
- * SettingsPage persists the setting to localStorage and mirrors it onto the
+ * The Settings drawer persists the setting to localStorage and mirrors it onto the
  * root element's `data-reduced-motion` attribute (applied before first paint
  * in main.tsx). Observing the attribute keeps consumers in sync when the
  * setting is toggled without requiring a reload.

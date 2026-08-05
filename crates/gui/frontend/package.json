@@ -13,7 +13,7 @@
     "format": "biome format --write .",
     "test": "vitest run --project unit",
     "test:layout": "vitest run --project layout",
-    "test:watch": "vitest"
+    "test:watch": "vitest --project unit"
   },
   "dependencies": {
     "@deck.gl/core": "^9.3.7",
