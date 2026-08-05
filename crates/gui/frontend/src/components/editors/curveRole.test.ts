@@ -14,7 +14,6 @@ describe("curveRoleLabel", () => {
     const roles = [
       "pump-head",
       "pump-efficiency",
-      "pump-volume",
       "tank-volume",
       "gpv-headloss",
       "pcv-loss-ratio",
@@ -31,6 +30,16 @@ describe("curveRoleLabel", () => {
    * never seen. It renders as itself — slightly ugly beats blank. */
   it("falls back to the raw role for one it has never seen", () => {
     expect(curveRoleLabel("pump-npsh")).toBe("pump-npsh");
+  });
+
+  /**
+   * `pump-volume` is the engine's unreachable `PumpVolume` kind, which
+   * names a curve type that exists in neither EPANET nor Hydra. It has no
+   * label on purpose: giving it one would advertise a curve kind no model
+   * can contain. The fallback above is what keeps that safe.
+   */
+  it("does not advertise the engine's unreachable pump-volume kind", () => {
+    expect(curveRoleLabel("pump-volume")).toBe("pump-volume");
   });
 
   // An imported curve the model references from nowhere is not a pump

@@ -856,9 +856,9 @@ export interface PumpCurve {
   pumpId: string;
   /**
    * What the curve is for, as the engine classified it from the model's
-   * own references: `pump-head`, `pump-efficiency`, `pump-volume`,
-   * `tank-volume`, `gpv-headloss`, `pcv-loss-ratio`, or `generic` for one
-   * nothing references.
+   * own references: `pump-head`, `pump-efficiency`, `tank-volume`,
+   * `gpv-headloss`, `pcv-loss-ratio`, or `generic` for one nothing
+   * references.
    *
    * This replaced a `curveType` field that was not a type at all — it
    * held `single-point`/`three-point`/`multi-point`, a restatement of

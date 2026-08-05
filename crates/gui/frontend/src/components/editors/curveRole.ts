@@ -12,12 +12,18 @@
  * has never seen renders as itself rather than as nothing, so a curve role
  * added to the engine shows up as a slightly ugly label instead of a blank
  * line.
+ *
+ * That fallback is why `pump-volume` is deliberately absent. The engine
+ * still has a `PumpVolume` curve kind, but nothing can produce one — it
+ * names a curve type that exists in neither EPANET nor Hydra (a
+ * constant-horsepower pump carries a power value and no curve), and it is
+ * queued for removal at the next breaking release. Labelling it would
+ * advertise a curve kind this GUI can never be shown.
  */
 
 const ROLE_LABEL: Record<string, string> = {
   "pump-head": "Pump head",
   "pump-efficiency": "Pump efficiency",
-  "pump-volume": "Pump volume",
   "tank-volume": "Tank volume",
   "gpv-headloss": "Valve headloss",
   "pcv-loss-ratio": "Valve loss ratio",

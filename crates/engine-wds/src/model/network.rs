@@ -410,7 +410,22 @@ pub enum CurveKind {
     PumpHead,
     /// Pump efficiency vs. flow curve.
     PumpEfficiency,
-    /// Constant-HP pump volume curve.
+    /// Unreachable, and not a real curve kind — scheduled for removal at
+    /// the next breaking release of this crate (it is public API, so it
+    /// cannot go in a patch).
+    ///
+    /// Nothing constructs this: no parser path assigns it, no solver reads
+    /// it, and §2.3 does not list it. Its name conflated two separate
+    /// EPANET concepts — the curve's own type (volume/pump/efficiency/
+    /// headloss) and a pump's characteristic type (constant-HP/power-
+    /// function/custom). There is no constant-HP volume curve in either
+    /// EPANET or Hydra: a constant-horsepower pump is
+    /// [`PumpCurveType::ConstHp`] with a `power` value and **no curve at
+    /// all**.
+    ///
+    /// Do not give this variant behaviour, units, or a display label. If
+    /// you are here because a `match` demanded an arm, route it with the
+    /// unknown kinds.
     PumpVolume,
     /// Tank volume vs. level curve.
     TankVolume,

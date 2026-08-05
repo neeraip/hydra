@@ -144,8 +144,11 @@ pub struct PatternDto {
 #[serde(rename_all = "camelCase")]
 pub struct CurveDto {
     pub id: String,
-    /// "pump-head" | "pump-efficiency" | "pump-volume" | "tank-volume" |
-    /// "gpv-headloss" | "pcv-loss-ratio" | "generic"
+    /// "generic" | "pump-head" | "pump-efficiency" | "tank-volume" |
+    /// "gpv-headloss" | "pcv-loss-ratio"
+    ///
+    /// ("pump-volume" is emitted for the engine's `PumpVolume` kind, but
+    /// nothing can produce one — see that variant's own note.)
     pub kind: String,
     /// x-axis values. Units depend on kind (flow L/s for pump curves).
     pub x: Vec<f64>,
@@ -776,6 +779,9 @@ pub(crate) fn network_to_dto(network: &hydra::Network) -> NetworkDto {
             let kind = match c.kind {
                 CurveKind::PumpHead => "pump-head",
                 CurveKind::PumpEfficiency => "pump-efficiency",
+                // Unreachable: nothing constructs `PumpVolume`. The arm
+                // exists only because the match is exhaustive, and the
+                // frontend has no label for it on purpose.
                 CurveKind::PumpVolume => "pump-volume",
                 CurveKind::TankVolume => "tank-volume",
                 CurveKind::GpvHeadloss => "gpv-headloss",
