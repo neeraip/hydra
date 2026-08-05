@@ -2364,6 +2364,47 @@ mod tests {
         assert!(!err.contains("not available yet"), "got: {err}");
     }
 
+    /// The wds Editor's rail is declared by hand rather than built from
+    /// this catalog — each of its sections is a bespoke editable table, so
+    /// there is nothing to derive a section from that would not still need
+    /// a hand-written kind→component map beside it.
+    ///
+    /// The cost of declaring it is drift, and it has already been paid
+    /// once: the rail called the Curves section "Pump curves" long after
+    /// this catalog called it "Curves" and the curve payload distinguished
+    /// tank-volume and valve-headloss curves from pump ones.
+    ///
+    /// So the claim is pinned on both sides. This half notices the engine
+    /// changing; the frontend half — `editorRail.test.ts` — notices the
+    /// rail changing, and asserts every kind listed here reaches exactly
+    /// one section under its own label. Changing this list without
+    /// changing that one fails the pair, which is the point.
+    #[test]
+    fn the_gui_editor_rail_mirrors_this_catalog() {
+        let catalog: Vec<(&str, &str)> = list_element_kinds("wds".into())
+            .iter()
+            .map(|k| (k.id, k.label_plural))
+            .collect();
+        assert_eq!(
+            catalog,
+            vec![
+                ("junction", "Junctions"),
+                ("reservoir", "Reservoirs"),
+                ("tank", "Tanks"),
+                ("pipe", "Pipes"),
+                ("pump", "Pumps"),
+                ("valve", "Valves"),
+                ("pattern", "Patterns"),
+                ("curve", "Curves"),
+                ("control", "Controls"),
+                ("rule", "Rules"),
+            ],
+            "the wds catalog changed — update the Editor rail in \
+             crates/gui/frontend/src/pages/project/NetworkEditor/editorRail.ts \
+             and the CATALOG mirror in its test, then update this list"
+        );
+    }
+
     // ── deleting simulation results ──────────────────────────────────────
 
     #[test]

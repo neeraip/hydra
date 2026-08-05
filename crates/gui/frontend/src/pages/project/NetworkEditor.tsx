@@ -22,6 +22,13 @@ import {
 import type { Section } from "./NetworkEditor/ElementsEditor";
 import { ElementsEditor } from "./NetworkEditor/ElementsEditor";
 import {
+  COLLECTIONS,
+  type CollectionId,
+  type EditorSectionId,
+  SECTION_FOR_KIND,
+  SECTION_LABEL,
+} from "./NetworkEditor/editorRail";
+import {
   collectDirtyKinds,
   ELEMENT_KIND_ORDER,
   elementCounts,
@@ -37,35 +44,14 @@ import {
  * horizontal strip that hid them behind an invisible scroll once there
  * were enough. A vertical list scrolls honestly and shows every kind's
  * count without a click.
+ *
+ * Which kind each section shows and what it is called lives in
+ * `NetworkEditor/editorRail.ts`, beside the test pinning it to the
+ * engine's §4.2 catalog — that file also records why this rail is
+ * declared by hand rather than derived from the catalog the way the
+ * drainage rail is. What stays here is what the manifest cannot know:
+ * the counts, which fold in unsaved adds and deletes.
  */
-type CollectionId = "curves" | "patterns" | "controls";
-type EditorSectionId = Section | CollectionId;
-
-/** Kind id (as the model names it) → its rail section. */
-const SECTION_FOR_KIND: Record<string, Section> = {
-  junction: "junctions",
-  pipe: "pipes",
-  pump: "pumps",
-  tank: "tanks",
-  reservoir: "reservoirs",
-  valve: "valves",
-};
-
-const KIND_LABEL: Record<string, string> = {
-  junction: "Junctions",
-  pipe: "Pipes",
-  pump: "Pumps",
-  tank: "Tanks",
-  reservoir: "Reservoirs",
-  valve: "Valves",
-};
-
-const COLLECTIONS: { id: CollectionId; label: string; kindId: string }[] = [
-  { id: "curves", label: "Pump curves", kindId: "curve" },
-  { id: "patterns", label: "Patterns", kindId: "pattern" },
-  { id: "controls", label: "Controls", kindId: "control" },
-];
-
 export function NetworkEditor() {
   return (
     <DraftProvider>
@@ -117,7 +103,7 @@ function NetworkEditorInner() {
   const sections: EditorSection[] = [
     ...ELEMENT_KIND_ORDER.map((kind) => ({
       id: SECTION_FOR_KIND[kind] as EditorSectionId,
-      label: KIND_LABEL[kind],
+      label: SECTION_LABEL[SECTION_FOR_KIND[kind]],
       count: counts[kind],
       dirtyCount: dirtyKinds.has(kind) ? 1 : 0,
       kindId: kind,
@@ -140,7 +126,7 @@ function NetworkEditorInner() {
   const [confirmDiscardOpen, setConfirmDiscardOpen] = useState(false);
   // General "reveal this element" request forwarded to the ElementsEditor:
   // switches to its kind tab, selects the row, and scrolls it into view.
-  // Sources: the Pump curves tab's "attached to" link, and the canvas
+  // Sources: the Curves tab's "attached to" link, and the canvas
   // inspector's "Open in editor" (via AppContext.editorFocus).
   const [elementFocus, setElementFocus] = useState<{
     kind: string;
