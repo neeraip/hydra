@@ -147,10 +147,16 @@ export function ActiveBadge() {
       style={{
         fontSize: "var(--text-xs)",
         fontWeight: 600,
-        letterSpacing: "0.04em",
+        // Set like the modal's own section headings ("SIMULATE",
+        // "SCENARIOS") so a status chip reads as a label rather than a
+        // word someone forgot to capitalise.
+        textTransform: "uppercase",
+        letterSpacing: "0.06em",
         color: "var(--accent)",
-        background: "rgba(100,160,255,0.12)",
-        border: "1px solid rgba(100,160,255,0.25)",
+        // Was a hardcoded blue from before the accent went achromatic, so
+        // the chip's fill and its text had drifted onto different hues.
+        background: "var(--accent-dim)",
+        border: "1px solid var(--selection-border)",
         padding: "1px 6px",
         borderRadius: 3,
       }}

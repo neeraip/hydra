@@ -1329,7 +1329,9 @@ select:focus-visible {
 }
 .btn-pager.pager-active:hover {
   background: var(--accent);
-  color: #fff;
+  /* Same pairing rule as every other accent fill: white was legible on a
+     saturated blue, not on an achromatic accent. */
+  color: var(--accent-fg);
 }
 
 /* ── Activity bar active glow ────────────────────────────────────────────────*/

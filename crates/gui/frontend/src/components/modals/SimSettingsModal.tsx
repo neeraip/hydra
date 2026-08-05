@@ -339,7 +339,10 @@ export function SimSettingsModal() {
               style={{
                 background: !saving && dirty ? ACCENT : "var(--bg-card)",
                 border: `1px solid ${!saving && dirty ? ACCENT : "var(--border)"}`,
-                color: !saving && dirty ? "#fff" : "var(--text-disabled)",
+                color:
+                  !saving && dirty
+                    ? "var(--accent-fg)"
+                    : "var(--text-disabled)",
                 borderRadius: 5,
                 padding: "7px 16px",
                 fontSize: "var(--text-md)",

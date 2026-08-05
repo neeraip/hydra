@@ -359,9 +359,13 @@ export function RunModal() {
               fontSize: "var(--text-sm)",
               fontWeight: 700,
               letterSpacing: "0.06em",
-              color: ACCENT,
-              background: "var(--accent-dim)",
-              border: "1px solid var(--selection-border)",
+              // The *engine's* colour, not the app's. Engine identity
+              // publishes one (`EngineInfo.accent`) precisely so a model
+              // announces which engine it belongs to; the app accent is
+              // achromatic by design, which left this pill grey.
+              color: engine?.accent ?? "var(--accent)",
+              background: engine ? `${engine.accent}1f` : "var(--accent-dim)",
+              border: `1px solid ${engine ? `${engine.accent}55` : "var(--selection-border)"}`,
               padding: "3px 8px",
               borderRadius: 4,
             }}
@@ -616,7 +620,11 @@ export function RunModal() {
             style={{
               background: canRun ? ACCENT : "var(--bg-card)",
               border: `1px solid ${canRun ? ACCENT : "var(--border)"}`,
-              color: canRun ? "#fff" : "var(--text-disabled)",
+              // White on the accent was legible while the accent was a
+              // saturated blue; achromatic it is a light grey, and white
+              // text on it barely reads. `--accent-fg` is the pair the
+              // accent publishes for exactly this.
+              color: canRun ? "var(--accent-fg)" : "var(--text-disabled)",
               borderRadius: 5,
               padding: "7px 16px",
               fontSize: "var(--text-md)",

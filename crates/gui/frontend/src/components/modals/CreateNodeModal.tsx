@@ -359,7 +359,7 @@ export function CreateNodeModal({
             style={{
               fontSize: "var(--text-md)",
               background: canSubmit ? "var(--accent)" : undefined,
-              color: canSubmit ? "#fff" : undefined,
+              color: canSubmit ? "var(--accent-fg)" : undefined,
               opacity: canSubmit ? 1 : 0.5,
             }}
           >
