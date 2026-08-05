@@ -200,6 +200,34 @@ export function valueColumnHeading(
   };
 }
 
+/**
+ * Whether this click should toggle the selection.
+ *
+ * `detail` is the browser's count of clicks in the current burst. Only the
+ * first acts: selection *toggles*, so letting the second through undid the
+ * first, and a double-click selected, deselected, then zoomed to something
+ * it had just deselected.
+ *
+ * The alternative — waiting to see whether a second click arrives — puts a
+ * quarter-second of latency on every selection to serve the rarer gesture.
+ * The click count is free and already there.
+ */
+export function clickSelects(detail: number): boolean {
+  return detail <= 1;
+}
+
+/**
+ * Whether the double-click must select, having seen one click already.
+ *
+ * That click toggled, so a row that started selected is now deselected and
+ * vice versa. Selecting whatever is not selected lands both starting
+ * states on the same result — selected, and zoomed to — which is what
+ * "double-click to zoom" should mean either way.
+ */
+export function doubleClickSelects(isActive: boolean): boolean {
+  return !isActive;
+}
+
 /** Rank a row against a lowercased query. Lower is better; -1 is no match.
  *
  * The order is the order someone typing expects: what they typed exactly,
@@ -810,18 +838,40 @@ export function NetworkInspectorHome({
                       is invalid and gives the row two focus stops. */}
                   <button
                     type="button"
-                    onClick={() => select(row)}
                     // Select on click, zoom on double-click — the file-list
                     // idiom, where opening is what you do to the thing you
                     // just picked.
                     //
-                    // The click is *not* suppressed while waiting to see
-                    // whether a second one follows: that would put ~250ms
+                    // Neither handler waits to see whether another click is
+                    // coming. Debouncing the first would put a quarter-second
                     // of latency on every selection to serve the rarer
-                    // gesture. Selecting is idempotent, so the pair simply
-                    // reads as "select, then zoom to it" — which is what
-                    // the double-click meant anyway.
-                    onDoubleClick={zoomable ? () => zoomTo(row) : undefined}
+                    // gesture, so instead each one reads `event.detail`, the
+                    // browser's own count of clicks in this burst, and the
+                    // pair is arranged to land on the same result either way.
+                    onClick={(e) => {
+                      // Selection *toggles*, so letting the second click
+                      // through undid the first: a double-click selected,
+                      // deselected, then zoomed to something no longer
+                      // selected. The second click of a burst does nothing
+                      // and leaves the outcome to the double-click handler.
+                      if (!clickSelects(e.detail)) return;
+                      select(row);
+                    }}
+                    onDoubleClick={
+                      zoomable
+                        ? () => {
+                            // One click has landed, so a row that started
+                            // selected is now deselected and vice versa.
+                            // Select whatever is not, and a double-click
+                            // always ends selected *and* zoomed, from
+                            // either starting state.
+                            if (doubleClickSelects(isActiveRow(row, active))) {
+                              select(row);
+                            }
+                            zoomTo(row);
+                          }
+                        : undefined
+                    }
                     style={{
                       width: "100%",
                       height: "100%",
