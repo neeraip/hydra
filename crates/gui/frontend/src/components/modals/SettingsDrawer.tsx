@@ -70,7 +70,12 @@ export function SettingsDrawer() {
           boxShadow: "var(--shadow-3)",
           display: "flex",
           flexDirection: "column",
-          overflow: "auto",
+          // `scroll`, not `auto`: the skeleton is shorter than the content
+          // it stands in for, so an `auto` scrollbar appeared only once the
+          // real rows landed — taking width from the column and re-wrapping
+          // every description at the moment the jump was meant to be gone.
+          // Reserving the track costs nothing where scrollbars are overlays.
+          overflowY: "scroll",
           animation: "slideInRight 180ms ease-out",
         }}
       >

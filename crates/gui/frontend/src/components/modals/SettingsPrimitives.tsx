@@ -51,7 +51,11 @@ export function SettingRow({
         gap: 24,
       }}
     >
-      <div>
+      {/* Takes the slack, so the control lane below is what fixes the
+          column boundary rather than whichever control happens to be
+          widest. `min-width: 0` lets a long description wrap instead of
+          forcing the row wider. */}
+      <div style={{ flex: 1, minWidth: 0 }}>
         <div
           style={{
             fontSize: "var(--text-lg)",
@@ -74,7 +78,23 @@ export function SettingRow({
           </div>
         )}
       </div>
-      <div style={{ flexShrink: 0 }}>{children}</div>
+      {/* A lane wide enough for the widest control, so every row's label
+          column is the same width and swapping a loading placeholder for
+          the real control cannot move anything — not the label, and not
+          the line a description wraps at.
+
+          Sized in `em` rather than pixels so it grows with the text scale;
+          a fixed lane would clip the theme buttons at the larger steps. */}
+      <div
+        style={{
+          flexShrink: 0,
+          minWidth: "14em",
+          display: "flex",
+          justifyContent: "flex-end",
+        }}
+      >
+        {children}
+      </div>
     </div>
   );
 }
