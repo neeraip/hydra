@@ -269,7 +269,7 @@ export function UnitSystemPicker() {
             borderRadius: 8,
             border: "1px solid var(--border)",
             background: "var(--bg-panel)",
-            boxShadow: "var(--shadow-key)",
+            boxShadow: "var(--shadow-2)",
           }}
         >
           {groupLabel("Default")}

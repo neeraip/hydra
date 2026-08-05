@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { useAppState } from "../../AppContext";
 import { getVersions, openDataFolder, type Versions } from "../../hooks";
 import { useUpdater } from "../../hooks/useUpdater";
+import { startPerfSpan } from "../../perfTrace";
 import {
   parseTextScale,
   readTextScale,
@@ -310,6 +311,25 @@ function UnitSystemToggle() {
  */
 export function SettingsDrawer() {
   const { settingsOpen, closeSettings } = useAppState();
+
+  // Dev-only: time from the drawer mounting to the next painted frame, as
+  // `[hydra-perf] settings-open`. The chunk is 10 kB and prefetched, and
+  // everything the body does on mount is async — so if opening still feels
+  // slow, this says whether the cost is in the render or somewhere before
+  // it, rather than leaving it to impression.
+  useEffect(() => {
+    if (!import.meta.env.DEV || !settingsOpen) return;
+    const span = startPerfSpan("settings-open");
+    let inner: number | null = null;
+    const outer = requestAnimationFrame(() => {
+      inner = requestAnimationFrame(() => span.end());
+    });
+    return () => {
+      cancelAnimationFrame(outer);
+      if (inner != null) cancelAnimationFrame(inner);
+    };
+  }, [settingsOpen]);
+
   if (!settingsOpen) return null;
   return (
     <ModalBackdrop
@@ -327,7 +347,7 @@ export function SettingsDrawer() {
           height: "100%",
           background: "var(--bg-app)",
           borderLeft: "1px solid var(--border)",
-          boxShadow: "var(--shadow-key)",
+          boxShadow: "var(--shadow-3)",
           display: "flex",
           flexDirection: "column",
           animation: "slideInRight 180ms ease-out",
