@@ -28,6 +28,7 @@ import {
   useUnitSystem,
 } from "../../units";
 import { DeleteConfirmModal } from "../modals/DeleteConfirmModal";
+import { curveRoleLabel } from "./curveRole";
 import { EditorSidebarList } from "./EditorSidebarList";
 
 const DEFAULT_CURVE_POINTS: CurvePoint[] = [
@@ -39,10 +40,6 @@ const DEFAULT_CURVE_POINTS: CurvePoint[] = [
  * polyline itself is a single element at any size). Curves this long come
  * from imported files, not hand editing. */
 const MAX_CHART_POINT_MARKERS = 500;
-
-function classifyCurveType(n: number): PumpCurve["curveType"] {
-  return n === 1 ? "single-point" : n === 3 ? "three-point" : "multi-point";
-}
 
 export function CurveEditor({
   accent,
@@ -91,17 +88,17 @@ export function CurveEditor({
       .map((c) => {
         const staged = curveEdits.get(c.id);
         if (!staged) return c;
-        return {
-          ...c,
-          points: staged,
-          curveType: classifyCurveType(staged.length),
-        };
+        // Editing the points cannot change what the curve is for — the
+        // role follows the model's references, not the values.
+        return { ...c, points: staged };
       });
     const added: PumpCurve[] = Array.from(curveAdds.entries()).map(
       ([id, points]) => ({
         id,
         pumpId: "",
-        curveType: classifyCurveType(points.length),
+        // Nothing references a curve that has just been created, which is
+        // exactly what the engine calls `generic`.
+        role: "generic",
         points,
       }),
     );
@@ -332,7 +329,7 @@ export function CurveEditor({
                   marginTop: 2,
                 }}
               >
-                {c.curveType} · {c.points.length} pts
+                {curveRoleLabel(c.role)} · {c.points.length} pts
               </div>
             </button>
           );

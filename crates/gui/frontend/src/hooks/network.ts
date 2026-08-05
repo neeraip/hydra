@@ -854,7 +854,18 @@ export interface CurvePoint {
 export interface PumpCurve {
   id: string;
   pumpId: string;
-  curveType: "single-point" | "three-point" | "multi-point";
+  /**
+   * What the curve is for, as the engine classified it from the model's
+   * own references: `pump-head`, `pump-efficiency`, `pump-volume`,
+   * `tank-volume`, `gpv-headloss`, `pcv-loss-ratio`, or `generic` for one
+   * nothing references.
+   *
+   * This replaced a `curveType` field that was not a type at all — it
+   * held `single-point`/`three-point`/`multi-point`, a restatement of
+   * `points.length` under a name that read as the curve's role, while the
+   * engine's actual role travelled in the same payload and was dropped.
+   */
+  role: string;
   points: CurvePoint[];
   bep?: number;
   notes?: string;
@@ -894,16 +905,10 @@ export function useCurves(version = 0): PumpCurve[] {
         flow: x,
         head: d.y[i] ?? 0,
       }));
-      const curveType: PumpCurve["curveType"] =
-        points.length === 1
-          ? "single-point"
-          : points.length === 3
-            ? "three-point"
-            : "multi-point";
       return {
         id: d.id,
         pumpId: pumpByCurveId.get(d.id) ?? "",
-        curveType,
+        role: d.kind,
         points,
       };
     });
