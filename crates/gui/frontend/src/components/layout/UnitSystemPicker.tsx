@@ -54,6 +54,18 @@ export function UnitSystemPicker() {
   const modelSystem = useModelUnitSystem(project?.id, activeScenarioId);
   const [open, setOpen] = useState(false);
   const wrapRef = useRef<HTMLDivElement | null>(null);
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
+  // Where to draw the menu, measured from the trigger when it opens.
+  //
+  // Fixed rather than absolute, for the same reason the scenario pickers
+  // in this toolbar are: `ProjectPage` wraps the toolbar in a column with
+  // `overflow: hidden`, which clips any child extending past the toolbar's
+  // own height — so an absolutely-positioned menu is cut off no matter how
+  // high its z-index goes. Fixed positioning leaves that clipping context
+  // entirely.
+  const [anchor, setAnchor] = useState<{ left: number; top: number } | null>(
+    null,
+  );
 
   useEffect(() => {
     if (!open) return;
@@ -65,11 +77,19 @@ export function UnitSystemPicker() {
     function onKey(e: KeyboardEvent) {
       if (e.key === "Escape") setOpen(false);
     }
+    // The anchor is measured, not tracked: the toolbar does not scroll, so
+    // the only things that can move it are a resize or a layout change big
+    // enough that closing is the honest response.
+    function reposition() {
+      setOpen(false);
+    }
     window.addEventListener("mousedown", onDown);
     window.addEventListener("keydown", onKey);
+    window.addEventListener("resize", reposition);
     return () => {
       window.removeEventListener("mousedown", onDown);
       window.removeEventListener("keydown", onKey);
+      window.removeEventListener("resize", reposition);
     };
   }, [open]);
 
@@ -136,8 +156,13 @@ export function UnitSystemPicker() {
   return (
     <div ref={wrapRef} style={{ position: "relative", flexShrink: 0 }}>
       <button
+        ref={triggerRef}
         type="button"
-        onClick={() => setOpen((v) => !v)}
+        onClick={() => {
+          const rect = triggerRef.current?.getBoundingClientRect();
+          if (rect) setAnchor({ left: rect.left, top: rect.bottom + 4 });
+          setOpen((v) => !v);
+        }}
         aria-haspopup="menu"
         aria-expanded={open}
         data-tooltip="Display units for this project"
@@ -164,14 +189,16 @@ export function UnitSystemPicker() {
         )}
       </button>
 
-      {open && (
+      {open && anchor && (
         <div
           role="menu"
           style={{
-            position: "absolute",
-            top: "calc(100% + 4px)",
-            left: 0,
-            zIndex: 60,
+            position: "fixed",
+            top: anchor.top,
+            left: anchor.left,
+            // Matches the toolbar's other popovers, which sit above the
+            // canvas and the secondary rail.
+            zIndex: 120,
             minWidth: 200,
             padding: "4px 0",
             borderRadius: 8,
