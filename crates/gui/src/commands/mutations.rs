@@ -1137,24 +1137,34 @@ pub fn create_curve(
     id: String,
 ) -> Result<(), String> {
     mutate_structural(&app, &state, |network| {
-        let id = validate_inp_id(&id, "curve")?;
-        if network.curves.iter().any(|c| c.id == id) {
-            return Err(format!("curve '{}' already exists", id));
-        }
-        // Default: two-point pump-head curve spanning ~(0 L/s, 50 m) to (5 L/s, 0 m)
-        network.curves.push(hydra::Curve {
-            id: id.clone(),
-            kind: hydra::CurveKind::PumpHead,
-            points: vec![
-                hydra::CurvePoint { x: 0.0, y: 50.0 },
-                hydra::CurvePoint {
-                    x: 5.0 / M3S_TO_LPS,
-                    y: 0.0,
-                },
-            ],
-        });
-        Ok(())
+        create_curve_in_network(network, &id)
     })
+}
+
+/// The kind and default points a newly created curve gets — factored out of
+/// the command so a test can assert the kind without a Tauri handle. The
+/// editor stages new curves under this kind's id to look their axes up.
+pub(crate) fn create_curve_in_network(
+    network: &mut hydra::Network,
+    id: &str,
+) -> Result<(), String> {
+    let id = validate_inp_id(id, "curve")?;
+    if network.curves.iter().any(|c| c.id == id) {
+        return Err(format!("curve '{}' already exists", id));
+    }
+    // Default: two-point pump-head curve spanning ~(0 L/s, 50 m) to (5 L/s, 0 m)
+    network.curves.push(hydra::Curve {
+        id: id.clone(),
+        kind: hydra::CurveKind::PumpHead,
+        points: vec![
+            hydra::CurvePoint { x: 0.0, y: 50.0 },
+            hydra::CurvePoint {
+                x: 5.0 / M3S_TO_LPS,
+                y: 0.0,
+            },
+        ],
+    });
+    Ok(())
 }
 
 /// Delete a curve from the network.

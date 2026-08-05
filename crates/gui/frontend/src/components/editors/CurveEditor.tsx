@@ -11,7 +11,7 @@
 
 import { TrashIcon } from "@heroicons/react/16/solid";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useAppState } from "../../AppContext";
+import { useActiveProject, useAppState } from "../../AppContext";
 import {
   type CurveAxis,
   type CurvePoint,
@@ -20,6 +20,8 @@ import {
   genericUnitLabel,
   type PumpCurve,
   renameCurve,
+  UNKNOWN_CURVE_AXES,
+  useCurveAxes,
   useCurves,
 } from "../../hooks";
 import { useDraft } from "../../hooks/DraftContext";
@@ -41,17 +43,14 @@ const DEFAULT_CURVE_POINTS: CurvePoint[] = [
 ];
 
 /**
- * Axes for a curve staged here but not yet created in the backend.
+ * The kind a curve created here will be.
  *
- * `create_curve` makes a pump-head curve, so these must match what
- * `curve_axes(PumpHead)` serves for one. This is the only place the GUI
- * names an axis itself, and only because a staged add has no server-side
- * curve to ask; every curve that exists carries the engine's own answer.
+ * `create_curve` makes a pump-head curve, so a staged add is shown — and
+ * has its axes looked up — under this key. The one fact still stated on
+ * both sides of the IPC boundary; the Rust half is
+ * `a_created_curve_is_the_kind_the_editor_stages_it_as`.
  */
-const STAGED_PUMP_HEAD_AXES: [CurveAxis, CurveAxis] = [
-  { label: "Flow", quantity: undefined },
-  { label: "Head", quantity: undefined },
-];
+export const stagedCurveRole = "pump-head";
 
 /** "Flow (L/s)", or just "Position" when the axis carries no unit. */
 function axisTitle(axis: CurveAxis, sys: "si" | "us"): string {
@@ -76,7 +75,14 @@ export function CurveEditor({
   const sys = useUnitSystem();
   const { showToast } = useAppState();
   const { bumpNetwork } = useNetworkVersion();
+  const { engine } = useActiveProject();
   const curves = useCurves();
+  // Axes come from the engine, keyed by curve kind — so a curve staged in
+  // the draft resolves exactly like a saved one, with the same units. It
+  // used to carry hand-written axes with no quantity at all, which showed
+  // a new curve's points unconverted and stored whatever the user typed as
+  // though it were already SI.
+  const axesByKind = useCurveAxes(engine?.key);
   const {
     curveAdds,
     setCurveAdds,
@@ -119,12 +125,9 @@ export function CurveEditor({
       ([id, points]) => ({
         id,
         pumpId: "",
-        axes: STAGED_PUMP_HEAD_AXES,
-        // What this add will become when the draft is saved: `create_curve`
-        // makes a pump-head curve, and the points are then written through
-        // the pump-head conversion. Showing a staged add as anything else
-        // would describe it as something it is already not.
-        role: "pump-head",
+        // What this add will become when the draft is saved, which is also
+        // the key its axes are looked up under.
+        role: stagedCurveRole,
         points,
       }),
     );
@@ -134,6 +137,10 @@ export function CurveEditor({
   const curve =
     mergedCurves.find((c) => c.id === activeId) ??
     (mergedCurves.length > 0 ? mergedCurves[0] : null);
+  // Before the table resolves, or for a kind it does not describe, two bare
+  // magnitudes — never a guessed unit.
+  const axes: [CurveAxis, CurveAxis] =
+    (curve && axesByKind[curve.role]) ?? UNKNOWN_CURVE_AXES;
 
   // Keep the rename draft in sync when the active curve changes (render-time
   // reconciliation, mirroring PatternEditor's header).
@@ -264,7 +271,7 @@ export function CurveEditor({
     if (!Number.isFinite(parsed)) return;
     // Entered in the display system — store SI, using this axis's own
     // quantity rather than assuming every curve plots flow against head.
-    const v = genericFromDisplay(parsed, curve.axes[axis].quantity, sys);
+    const v = genericFromDisplay(parsed, axes[axis].quantity, sys);
     const key = axis === 0 ? "x" : "y";
     commitPoints(
       curve.points.map((p, i) => (i === index ? { ...p, [key]: v } : p)),
@@ -601,6 +608,7 @@ export function CurveEditor({
           >
             <div style={{ flex: 1, padding: 16, minWidth: 0 }}>
               <CurveChart
+                axes={axes}
                 curve={curve}
                 accent={accent}
                 hoverIdx={hoverIdx}
@@ -618,6 +626,7 @@ export function CurveEditor({
               }}
             >
               <PointsTable
+                axes={axes}
                 scrollRef={pointsScrollRef}
                 curve={curve}
                 accent={accent}
@@ -669,11 +678,14 @@ export function CurveEditor({
 }
 
 function CurveChart({
+  axes,
   curve,
   accent,
   hoverIdx,
   setHoverIdx,
 }: {
+  /** The curve's engine-described axes, resolved by its kind. */
+  axes: [CurveAxis, CurveAxis];
   curve: PumpCurve;
   accent: string;
   hoverIdx: number | null;
@@ -704,7 +716,7 @@ function CurveChart({
 
   // The whole chart works in display units so axis ticks land on nice
   // numbers in either system; the stored points stay SI.
-  const [axX, axY] = curve.axes;
+  const [axX, axY] = axes;
   const dispPoints = curve.points.map((p) => ({
     x: genericToDisplay(p.x, axX.quantity, sys),
     y: genericToDisplay(p.y, axY.quantity, sys),
@@ -871,6 +883,7 @@ function CurveChart({
 }
 
 function PointsTable({
+  axes,
   curve,
   accent,
   hoverIdx,
@@ -880,6 +893,8 @@ function PointsTable({
   onRemovePoint,
   scrollRef,
 }: {
+  /** The curve's engine-described axes, resolved by its kind. */
+  axes: [CurveAxis, CurveAxis];
   curve: PumpCurve;
   accent: string;
   hoverIdx: number | null;
@@ -949,10 +964,10 @@ function PointsTable({
           <tr>
             <th style={thStyle}>#</th>
             <th style={{ ...thStyle, textAlign: "right" }}>
-              {axisTitle(curve.axes[0], sys)}
+              {axisTitle(axes[0], sys)}
             </th>
             <th style={{ ...thStyle, textAlign: "right" }}>
-              {axisTitle(curve.axes[1], sys)}
+              {axisTitle(axes[1], sys)}
             </th>
             <th style={thStyle} />
           </tr>
@@ -982,22 +997,18 @@ function PointsTable({
                   {i + 1}
                 </td>
                 <EditableCell
-                  display={genericToDisplay(
-                    p.x,
-                    curve.axes[0].quantity,
-                    sys,
-                  ).toFixed(1)}
+                  display={genericToDisplay(p.x, axes[0].quantity, sys).toFixed(
+                    1,
+                  )}
                   align="right"
                   inputType="number"
                   min={0}
                   onCommit={(v) => onCommitPoint(i, 0, v)}
                 />
                 <EditableCell
-                  display={genericToDisplay(
-                    p.y,
-                    curve.axes[1].quantity,
-                    sys,
-                  ).toFixed(1)}
+                  display={genericToDisplay(p.y, axes[1].quantity, sys).toFixed(
+                    1,
+                  )}
                   align="right"
                   inputType="number"
                   min={0}

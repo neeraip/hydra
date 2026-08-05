@@ -179,18 +179,10 @@ pub struct CurveDto {
     /// ("pump-volume" is emitted for the engine's `PumpVolume` kind, but
     /// nothing can produce one — see that variant's own note.)
     pub kind: String,
-    /// What the two axes are, in order — `[x, y]`.
-    ///
-    /// Served rather than inferred by the reader, because what a curve's
-    /// axes *mean* depends on what the curve is for: a pump curve relates
-    /// flow to head, a tank curve level to volume, a PCV curve a valve
-    /// position to a loss ratio. The editor used to name every axis "flow"
-    /// and "head" and convert accordingly, which showed a tank's volume
-    /// curve in the wrong units under the wrong names.
-    pub axes: [CurveAxisDto; 2],
-    /// x-axis values, in the SI display unit of `axes[0].quantity`.
+    /// x-axis values, in the SI display unit of this kind's first axis
+    /// (see `list_curve_axes`).
     pub x: Vec<f64>,
-    /// y-axis values, in the SI display unit of `axes[1].quantity`.
+    /// y-axis values, in the SI display unit of this kind's second axis.
     pub y: Vec<f64>,
 }
 
@@ -811,19 +803,10 @@ pub(crate) fn network_to_dto(network: &hydra::Network) -> NetworkDto {
         .curves
         .iter()
         .map(|c| {
-            use hydra::CurveKind;
-            let kind = match c.kind {
-                CurveKind::PumpHead => "pump-head",
-                CurveKind::PumpEfficiency => "pump-efficiency",
-                // Unreachable: nothing constructs `PumpVolume`. The arm
-                // exists only because the match is exhaustive, and the
-                // frontend has no label for it on purpose.
-                CurveKind::PumpVolume => "pump-volume",
-                CurveKind::TankVolume => "tank-volume",
-                CurveKind::GpvHeadloss => "gpv-headloss",
-                CurveKind::PcvLossRatio => "pcv-loss-ratio",
-                CurveKind::Generic => "generic",
-            };
+            let kind = curve_kind_id(c.kind);
+            // Values are scaled here; what the axes *are* is served once
+            // per engine by `list_curve_axes`, keyed on this `kind`, rather
+            // than repeated on every curve in the network.
             let [ax, ay] = curve_axes(c.kind);
             let (xs, ys): (Vec<f64>, Vec<f64>) = c
                 .points
@@ -832,8 +815,7 @@ pub(crate) fn network_to_dto(network: &hydra::Network) -> NetworkDto {
                 .unzip();
             CurveDto {
                 id: c.id.clone(),
-                kind: kind.into(),
-                axes: [ax.dto(), ay.dto()],
+                kind: kind.to_string(),
                 x: xs,
                 y: ys,
             }
@@ -895,6 +877,70 @@ const fn axis(label: &'static str, quantity: Option<&'static str>, scale: f64) -
         quantity,
         scale,
     }
+}
+
+/// Wire id for a curve kind — the key `list_curve_axes` is looked up by.
+pub(crate) fn curve_kind_id(kind: hydra::CurveKind) -> &'static str {
+    use hydra::CurveKind::*;
+    match kind {
+        PumpHead => "pump-head",
+        PumpEfficiency => "pump-efficiency",
+        // Unreachable: nothing constructs `PumpVolume`. The arm exists
+        // only because the match is exhaustive, and the frontend has no
+        // label for it on purpose.
+        PumpVolume => "pump-volume",
+        TankVolume => "tank-volume",
+        GpvHeadloss => "gpv-headloss",
+        PcvLossRatio => "pcv-loss-ratio",
+        Generic => "generic",
+    }
+}
+
+/// The axes of every curve kind this engine's models can contain.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CurveKindAxesDto {
+    /// Matches `CurveDto.kind`.
+    pub kind: String,
+    pub axes: [CurveAxisDto; 2],
+}
+
+/// What each curve kind's axes are — served once per engine rather than
+/// repeated on every curve.
+///
+/// Keyed by kind because that is what determines the answer, which also
+/// means the editor can ask about a curve that does not exist yet: a curve
+/// staged in the draft has no server-side counterpart to read axes from,
+/// and hand-writing them in the frontend meant a newly created curve
+/// rendered without units and stored what the user typed as though it were
+/// already SI.
+///
+/// Empty for engines whose curves this GUI does not edit. Drainage serves
+/// its curve axes alongside the values, in `get_collection_detail` — it can,
+/// because those curves are only ever read.
+#[tauri::command]
+pub fn list_curve_axes(engine: String) -> Vec<CurveKindAxesDto> {
+    use hydra::CurveKind::*;
+    if engine != "wds" {
+        return Vec::new();
+    }
+    [
+        Generic,
+        PumpHead,
+        PumpEfficiency,
+        TankVolume,
+        GpvHeadloss,
+        PcvLossRatio,
+    ]
+    .into_iter()
+    .map(|k| {
+        let [x, y] = curve_axes(k);
+        CurveKindAxesDto {
+            kind: curve_kind_id(k).to_string(),
+            axes: [x.dto(), y.dto()],
+        }
+    })
+    .collect()
 }
 
 /// What a curve's two axes are, by what the curve is *for*.
@@ -1974,6 +2020,92 @@ mod curve_axis_boundary {
         }
     }
 
+    /// The command the frontend actually reads: one entry per kind a model
+    /// can contain, keyed by the same string `CurveDto.kind` carries — so a
+    /// curve staged in the draft, which has no DTO at all, resolves its
+    /// axes exactly as a saved one does.
+    #[test]
+    fn the_served_table_covers_every_kind_a_curve_dto_can_report() {
+        use hydra::CurveKind::*;
+        let served = list_curve_axes("wds".into());
+        let keys: Vec<&str> = served.iter().map(|r| r.kind.as_str()).collect();
+        for kind in [
+            Generic,
+            PumpHead,
+            PumpEfficiency,
+            TankVolume,
+            GpvHeadloss,
+            PcvLossRatio,
+        ] {
+            let id = curve_kind_id(kind);
+            assert!(keys.contains(&id), "{id} is missing from the served table");
+        }
+        // Each entry says what `curve_axes` says — one authority, two
+        // readers (the DTO's value scaling and this table's labels).
+        for row in &served {
+            let kind = [
+                Generic,
+                PumpHead,
+                PumpEfficiency,
+                TankVolume,
+                GpvHeadloss,
+                PcvLossRatio,
+            ]
+            .into_iter()
+            .find(|k| curve_kind_id(*k) == row.kind)
+            .expect("served kind is one of the above");
+            let [x, y] = curve_axes(kind);
+            assert_eq!(row.axes[0].label, x.dto().label);
+            assert_eq!(row.axes[1].label, y.dto().label);
+        }
+    }
+
+    /// The one fact still stated on both sides of the IPC boundary: a
+    /// curve created in the GUI is a pump-head curve, so the editor stages
+    /// the add with `role: "pump-head"` and looks its axes up under that
+    /// key. If `create_curve` ever makes something else, the staged add
+    /// would render under the wrong axes until it was saved.
+    ///
+    /// The frontend half is `stagedCurveRole` in `CurveEditor.tsx`.
+    #[test]
+    fn a_created_curve_is_the_kind_the_editor_stages_it_as() {
+        let mut network =
+            hydra::io::parse(crate::commands::test_fixtures::TEST_INP.as_bytes()).unwrap();
+        crate::commands::mutations::create_curve_in_network(&mut network, "NEW1").unwrap();
+        let created = network.curves.iter().find(|c| c.id == "NEW1").unwrap();
+        assert_eq!(
+            curve_kind_id(created.kind),
+            "pump-head",
+            "the editor stages new curves as pump-head; keep the two in step"
+        );
+    }
+
+    /// Engines whose curves this GUI does not edit publish none, and must
+    /// say so as an empty list rather than by serving wds's table.
+    #[test]
+    fn engines_without_editable_curves_serve_no_axes() {
+        assert!(list_curve_axes("uds".into()).is_empty());
+        assert!(list_curve_axes("och".into()).is_empty());
+    }
+
+    /// A US reader must see the number their own file carries. An INP
+    /// expresses volumes in cubic feet, so a 5000 ft³ minimum volume has to
+    /// read as 5000 — it read as 37 401 while the catalog said gallons.
+    #[test]
+    fn volume_is_cubic_feet_in_us_display() {
+        let volume = hydra::descriptors::QUANTITIES
+            .iter()
+            .find(|q| q.key == "volume")
+            .expect("the catalog declares volume");
+        assert_eq!(volume.us_label, "ft³");
+        let five_thousand_cubic_feet_in_m3 = 5000.0 / 35.314_667;
+        let displayed = five_thousand_cubic_feet_in_m3 * volume.si_to_us_scale;
+        assert!(
+            (displayed - 5000.0).abs() < 1e-6,
+            "5000 ft³ must display as 5000, got {displayed}"
+        );
+    }
+
     /// Every quantity the table names must exist in the engine's §5
     /// catalog, or the axis reaches the frontend with no unit at all —
     /// silently, since an unknown key resolves to `None`.
@@ -2047,8 +2179,6 @@ Duration  0
         let dto = network_to_dto(&network);
         let tv = dto.curves.iter().find(|c| c.id == "TV1").unwrap();
         assert_eq!(tv.kind, "tank-volume");
-        assert_eq!(tv.axes[0].label, "Level");
-        assert_eq!(tv.axes[1].label, "Volume");
         // 10 ft = 3.048 m; 5000 ft³ = 141.584 m³.
         assert!(
             (tv.x[1] - 3.048).abs() < 1e-3,

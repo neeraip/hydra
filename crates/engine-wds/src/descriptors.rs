@@ -112,7 +112,11 @@ pub const QUANTITIES: &[QuantityDescriptor] = &[
     q("velocity", "m/s", "ft/s", 3.280_84, 2, 2),
     q("pressure", "m", "psi", 1.421_970_2, 1, 1),
     q("headloss", "m/km", "ft/kft", 1.0, 2, 1),
-    q("volume", "m³", "gal", 264.172, 1, 0),
+    // ft³, not gallons: an INP expresses every volume in cubic feet on a
+    // US model (the importer divides by 35.315 ft³/m³), so a reader in US
+    // mode must see the number their own file carries. Gallons made a
+    // 5000 ft³ tank read as 37 401 — right, and unrecognisable.
+    q("volume", "m³", "ft³", 35.314_667, 1, 0),
     // Unitless but not dimensionless-anonymous: a pump efficiency and a
     // valve's loss ratio are read as percentages, and a reader who is not
     // told so cannot tell 0.85 from 85. Same in both systems.

@@ -867,6 +867,59 @@ export interface CurveAxis {
   /** §5 quantity for this axis's values; absent = unitless. */
   quantity?: GenericQuantity;
 }
+
+interface CurveKindAxesDto {
+  kind: string;
+  axes: [CurveAxis, CurveAxis];
+}
+
+/**
+ * Axes for a curve whose kind is not (yet) known, or whose engine
+ * publishes none: two bare magnitudes, converted by nothing.
+ *
+ * Deliberately not pump-head axes. A wrong unit is worse than no unit —
+ * it invites the reader to trust a number that has not been converted,
+ * and this is exactly what a value typed into a not-yet-created curve
+ * used to be stored as.
+ */
+export const UNKNOWN_CURVE_AXES: [CurveAxis, CurveAxis] = [
+  { label: "X" },
+  { label: "Y" },
+];
+
+/**
+ * The engine's curve axes by kind, keyed for lookup.
+ *
+ * Static per engine — a property of the domain, not of any model — so one
+ * fetch serves every curve, saved or staged. Empty before it resolves, and
+ * for engines whose curves this GUI does not edit.
+ */
+export function useCurveAxes(
+  engineKey: string | null | undefined,
+): Record<string, [CurveAxis, CurveAxis]> {
+  const [byKind, setByKind] = useState<Record<string, [CurveAxis, CurveAxis]>>(
+    {},
+  );
+  useEffect(() => {
+    if (!engineKey) {
+      setByKind({});
+      return;
+    }
+    let cancelled = false;
+    void tryInvokeOr<CurveKindAxesDto[]>(
+      "list_curve_axes",
+      { engine: engineKey },
+      [],
+    ).then((rows) => {
+      if (cancelled) return;
+      setByKind(Object.fromEntries(rows.map((r) => [r.kind, r.axes])));
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [engineKey]);
+  return byKind;
+}
 export interface PumpCurve {
   id: string;
   pumpId: string;
@@ -882,8 +935,6 @@ export interface PumpCurve {
    * engine's actual role travelled in the same payload and was dropped.
    */
   role: string;
-  /** What the two axes are, in order — `[x, y]`. Engine-described. */
-  axes: [CurveAxis, CurveAxis];
   points: CurvePoint[];
   notes?: string;
 }
@@ -898,7 +949,6 @@ export interface TimePattern {
 interface NetworkCurveDto {
   id: string;
   kind: string;
-  axes: [CurveAxis, CurveAxis];
   x: number[];
   y: number[];
 }
@@ -927,7 +977,6 @@ export function useCurves(version = 0): PumpCurve[] {
         id: d.id,
         pumpId: pumpByCurveId.get(d.id) ?? "",
         role: d.kind,
-        axes: d.axes,
         points,
       };
     });
