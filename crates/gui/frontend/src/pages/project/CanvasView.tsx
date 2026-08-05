@@ -814,7 +814,9 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
   useEffect(() => {
     function onViewportCommand(e: Event) {
       const cmd = (
-        e as CustomEvent<"zoom-in" | "zoom-out" | "fit" | "reset-north">
+        e as CustomEvent<
+          "zoom-in" | "zoom-out" | "fit" | "reset-north" | "toggle-view"
+        >
       ).detail;
       if (cmd === "zoom-in") {
         setZoomInKey((k) => k + 1);
@@ -824,6 +826,8 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
         setMapFitKey((k) => k + 1);
       } else if (cmd === "reset-north") {
         setResetNorthKey((k) => k + 1);
+      } else if (cmd === "toggle-view") {
+        handleToggleViewRef.current();
       }
     }
     window.addEventListener("hydra:canvas-viewport", onViewportCommand);
@@ -1777,6 +1781,11 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
   );
   const viewAction = useMemo(() => viewButtonAction(clearable), [clearable]);
 
+  // The viewport-command listener mounts once, so it reads the handler
+  // through a ref rather than closing over the render that installed it —
+  // otherwise the palette would clear a view as it stood at mount.
+  const handleToggleViewRef = useRef<() => void>(() => {});
+
   const handleToggleView = useCallback(() => {
     if (viewButtonAction(clearable) === "restore") {
       // Nothing is covering the map, so the press means the opposite: give
@@ -1814,6 +1823,8 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
       setMapFitKey((k) => k + 1);
     }
   }, [clearable, toggleRail, clearSelection, clearAnnotations]);
+
+  handleToggleViewRef.current = handleToggleView;
 
   const legendAnimation = useMemo(
     () => ({

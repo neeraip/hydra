@@ -94,6 +94,10 @@ interface AppState {
   /** Whether the Settings drawer is open. An overlay over whatever page is
    *  underneath, which is left untouched. */
   settingsOpen: boolean;
+  /** Whether the keyboard-shortcut card is open. Here rather than local to
+   *  `App` so the command palette can offer it — a card whose whole job is
+   *  discoverability was itself reachable only by already knowing `?`. */
+  shortcutCardOpen: boolean;
   /** True when a real INP file has been loaded via the wizard. */
   isNetworkLoaded: boolean;
   /** Bumped whenever the on-disk project list mutates (create/delete/rename), so
@@ -132,6 +136,8 @@ interface AppActions {
   closeProject: () => void;
   toggleSettings: () => void;
   closeSettings: () => void;
+  toggleShortcutCard: () => void;
+  closeShortcutCard: () => void;
   toggleRail: () => void;
   openCommandPalette: () => void;
   closeCommandPalette: () => void;
@@ -321,6 +327,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       page: "home",
       projectView: "canvas",
       settingsOpen: false,
+      shortcutCardOpen: false,
       railOpen: false,
       commandPaletteOpen: false,
       runModalOpen: false,
@@ -787,6 +794,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
       prev.settingsOpen ? { ...prev, settingsOpen: false } : prev,
     );
   }, []);
+  const toggleShortcutCard = useCallback(() => {
+    setS((prev) => ({ ...prev, shortcutCardOpen: !prev.shortcutCardOpen }));
+  }, []);
+  const closeShortcutCard = useCallback(() => {
+    setS((prev) =>
+      prev.shortcutCardOpen ? { ...prev, shortcutCardOpen: false } : prev,
+    );
+  }, []);
 
   // Session restore fallback: when we launched straight into a restored
   // project, verify it still exists once the project list resolves and drop
@@ -1118,6 +1133,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
       closeProject,
       toggleSettings,
       closeSettings,
+      toggleShortcutCard,
+      closeShortcutCard,
       toggleRail,
       openCommandPalette,
       closeCommandPalette,
@@ -1165,6 +1182,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
       closeProject,
       toggleSettings,
       closeSettings,
+      toggleShortcutCard,
+      closeShortcutCard,
       toggleRail,
       openCommandPalette,
       closeCommandPalette,

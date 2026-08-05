@@ -101,6 +101,9 @@ export function App() {
     simSettingsModalOpen,
     activeProjectId,
     taskTrayOpen,
+    shortcutCardOpen,
+    toggleShortcutCard,
+    closeShortcutCard,
     setProjectView,
     issuesPanelOpen,
     toggleIssuesPanel,
@@ -123,7 +126,7 @@ export function App() {
   }, [activeProjectId]);
 
   const { undo, redo } = useUndoRedo();
-  const [shortcutCardOpen, setShortcutCardOpen] = useState(false);
+
   const [animKey, setAnimKey] = useState(0);
   const [animDir, setAnimDir] = useState<"right" | "left">("right");
   const prevPageRef = useRef<Page>(page);
@@ -215,7 +218,7 @@ export function App() {
         !e.altKey &&
         !inEditable
       ) {
-        setShortcutCardOpen((prev) => !prev);
+        toggleShortcutCard();
       }
       // ⌘Z undo / ⌘⇧Z redo — committed network edits, project page only.
       // Skipped while typing (text fields have their own undo) and while the
@@ -252,7 +255,7 @@ export function App() {
       }
       if (e.key === "Escape") {
         if (shortcutCardOpen) {
-          setShortcutCardOpen(false);
+          closeShortcutCard();
         } else if (issuesPanelOpen) {
           closeIssuesPanel();
         } else if (commandPaletteOpen) {
@@ -287,6 +290,8 @@ export function App() {
     closeIssuesPanel,
     undo,
     redo,
+    toggleShortcutCard,
+    closeShortcutCard,
   ]);
 
   // Alternate between identical base/-alt keyframe names so the animation
@@ -383,7 +388,7 @@ export function App() {
       </Suspense>
       {shortcutCardOpen && (
         <Suspense fallback={null}>
-          <ShortcutCard onClose={() => setShortcutCardOpen(false)} />
+          <ShortcutCard onClose={closeShortcutCard} />
         </Suspense>
       )}
       {taskTrayOpen && <TaskTray />}

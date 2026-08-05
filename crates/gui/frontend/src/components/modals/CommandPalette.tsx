@@ -1,7 +1,12 @@
 import { MagnifyingGlassIcon } from "@heroicons/react/24/outline";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useAppState, useSimulation } from "../../AppContext";
+import {
+  getDraftDirtyCount,
+  saveDraftsViaGuard,
+  useAppState,
+  useSimulation,
+} from "../../AppContext";
 import { useCanvasSelection } from "../../canvas/selection-context";
 import { engineComponents } from "../../engine/registry";
 import { buildResultsGeoJson } from "../../export/resultsGeoJson";
@@ -20,6 +25,7 @@ import {
   useScenarios,
 } from "../../hooks";
 import { tryInvoke } from "../../hooks/ipc";
+import { useUndoRedo } from "../../hooks/useUndoRedo";
 import {
   formatPrimaryShortcut,
   formatShortcut,
@@ -142,6 +148,13 @@ const STATIC_COMMANDS: DynamicCommand[] = [
     action: "theme-system",
   },
   {
+    id: "a-shortcuts",
+    label: "Keyboard shortcuts",
+    description: "Show every shortcut this app listens for",
+    category: "Actions",
+    action: "shortcut-card",
+  },
+  {
     id: "a-docs",
     label: "Open documentation",
     description: "Open the Hydra docs in your browser",
@@ -175,7 +188,9 @@ export function CommandPalette() {
     scenariosVersion,
     requestClearResults,
     toggleSettings,
+    toggleShortcutCard,
   } = useAppState();
+  const { undo, redo } = useUndoRedo();
 
   const projects = useProjects(projectsVersion);
   // Engine key of the open project — the "import model file" action needs it
@@ -234,10 +249,14 @@ export function CommandPalette() {
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const modifier = primaryModifierLabel();
+  const navOverviewShortcut = formatShortcut([modifier, "1"]);
   const navCanvasShortcut = formatShortcut([modifier, "2"]);
   const navEditorShortcut = formatShortcut([modifier, "3"]);
   const navAnalysisShortcut = formatShortcut([modifier, "4"]);
   const runShortcut = formatPrimaryShortcut("R");
+  const undoShortcut = formatPrimaryShortcut("Z");
+  const redoShortcut = formatShortcut([modifier, shiftModifierLabel(), "Z"]);
+  const saveShortcut = formatPrimaryShortcut("S");
   const toggleLayoutShortcut = formatPrimaryShortcut("M");
   const zoomInShortcut = formatPrimaryShortcut("=");
   const zoomOutShortcut = formatPrimaryShortcut("-");
@@ -265,6 +284,15 @@ export function CommandPalette() {
     }
     if (page === "project" && activeProjectId) {
       const nav: DynamicCommand[] = [
+        {
+          // ⌘1, and the only numbered view the palette used to omit.
+          id: "n0",
+          label: "Overview",
+          category: "Navigate",
+          description: "Open the project overview",
+          shortcut: navOverviewShortcut,
+          action: "nav-overview",
+        },
         {
           id: "n1",
           label: "Canvas",
@@ -303,6 +331,13 @@ export function CommandPalette() {
           description: "Open the network editor view",
           shortcut: navEditorShortcut,
           action: "nav-editor",
+        },
+        {
+          id: "n5",
+          label: "Report",
+          category: "Navigate",
+          description: "Open the report builder — and export from there",
+          action: "nav-report",
         },
       ];
       const simulate: DynamicCommand[] = [
@@ -354,6 +389,30 @@ export function CommandPalette() {
               } satisfies DynamicCommand,
             ]
           : []),
+        {
+          id: "a-undo",
+          label: "Undo",
+          description: "Reverse the last committed network edit",
+          category: "Actions",
+          shortcut: undoShortcut,
+          action: "undo",
+        },
+        {
+          id: "a-redo",
+          label: "Redo",
+          description: "Reapply the edit that was undone",
+          category: "Actions",
+          shortcut: redoShortcut,
+          action: "redo",
+        },
+        {
+          id: "a-save",
+          label: "Save changes",
+          description: "Write staged editor changes to the model",
+          category: "Actions",
+          shortcut: saveShortcut,
+          action: "save-changes",
+        },
         {
           id: "a4",
           label: "Import model file…",
@@ -456,6 +515,14 @@ export function CommandPalette() {
           action: "canvas-fit-network",
         },
         {
+          id: "p-toggle-view",
+          label: "Clear view / restore panels",
+          description:
+            "Close everything covering the map — or bring the panels back",
+          category: "Page",
+          action: "canvas-toggle-view",
+        },
+        {
           id: "p-reset-north",
           label: "Reset north",
           description: "Reset map bearing to north-up",
@@ -504,7 +571,11 @@ export function CommandPalette() {
     navCanvasShortcut,
     navEditorShortcut,
     navAnalysisShortcut,
+    navOverviewShortcut,
     runShortcut,
+    undoShortcut,
+    redoShortcut,
+    saveShortcut,
     toggleLayoutShortcut,
     zoomInShortcut,
     zoomOutShortcut,
@@ -729,6 +800,35 @@ export function CommandPalette() {
         case "nav-editor":
           setProjectView("editor");
           break;
+        case "nav-overview":
+          setProjectView("overview");
+          break;
+        case "nav-report":
+          setProjectView("report");
+          break;
+        case "undo":
+          undo();
+          break;
+        case "redo":
+          redo();
+          break;
+        case "save-changes":
+          // Same guard the shortcut uses: saving nothing would toast a
+          // success for work that was never staged.
+          if (getDraftDirtyCount() > 0) void saveDraftsViaGuard();
+          else showToast("No unsaved changes", "info");
+          break;
+        case "shortcut-card":
+          toggleShortcutCard();
+          break;
+        case "canvas-toggle-view":
+          setProjectView("canvas");
+          window.dispatchEvent(
+            new CustomEvent("hydra:canvas-viewport", {
+              detail: "toggle-view",
+            }),
+          );
+          break;
         case "nav-settings":
           // An overlay, so it opens over wherever you are rather than
           // navigating — the page underneath is left alone.
@@ -852,6 +952,9 @@ export function CommandPalette() {
       openRunModal,
       openScenariosModal,
       toggleSettings,
+      toggleShortcutCard,
+      undo,
+      redo,
       resultMeta,
       allNodes,
       allLinks,
