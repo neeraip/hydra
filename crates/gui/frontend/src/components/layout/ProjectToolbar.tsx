@@ -20,6 +20,7 @@ import {
   variantTail,
 } from "../panels/ScenariosPanel/shared";
 import { PrimaryButton } from "../ui/PrimaryButton";
+import { UnitSystemPicker } from "./UnitSystemPicker";
 
 /* ─── ProjectToolbar ────────────────────────────────────────────────────────
    Persistent toolbar across the top of every project view. Holds scenario
@@ -814,6 +815,11 @@ export function ProjectToolbar() {
         <Cog6ToothIcon style={{ width: 12, height: 12 }} />
         Manage
       </button>
+
+      {/* Display units — grouped with the scenario controls because both
+          answer "what am I looking at", and deliberately not beside
+          Simulate, where it would read as "run in these units". */}
+      <UnitSystemPicker />
 
       {/* Divider separating scenario controls from the run controls.
           marginLeft: auto pushes this + the split button to the far right. */}

@@ -80,6 +80,8 @@ fn main() {
             commands::update_project_criteria,
             commands::rename_project,
             commands::update_project_crs,
+            commands::update_project_units,
+            commands::get_model_unit_system,
             commands::list_crs_catalog_page,
             commands::list_custom_crs,
             commands::upsert_custom_crs,

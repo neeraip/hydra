@@ -381,6 +381,41 @@ mod tests {
         }
     }
 
+    /// The GUI keeps a hand-mirror of this table (`units.ts`), because its
+    /// conversion helpers take a closed `Quantity` union rather than a
+    /// descriptor. The two drifted once — `volume` moved to cubic feet here
+    /// while the GUI kept converting to gallons — so the claim is pinned on
+    /// both sides. The frontend half is "the engine quantity catalog agrees
+    /// with this module on every shared quantity", in `units.test.ts`.
+    #[test]
+    fn the_gui_unit_table_mirrors_this_catalog() {
+        let expected: &[(&str, &str, &str, f64)] = &[
+            ("length", "m", "ft", 3.280_84),
+            ("elevation", "m", "ft", 3.280_84),
+            ("head", "m", "ft", 3.280_84),
+            ("diameter", "mm", "in", 0.039_370_1),
+            ("flow", "L/s", "gpm", 15.850_323),
+            ("demand", "L/s", "gpm", 15.850_323),
+            ("velocity", "m/s", "ft/s", 3.280_84),
+            ("pressure", "m", "psi", 1.421_970_2),
+            ("headloss", "m/km", "ft/kft", 1.0),
+            ("volume", "m³", "ft³", 35.314_667),
+        ];
+        for (key, si, us, scale) in expected {
+            let q = QUANTITIES
+                .iter()
+                .find(|q| q.key == *key)
+                .unwrap_or_else(|| panic!("{key} left the catalog; update units.ts too"));
+            assert_eq!(q.si_label, *si, "{key} SI label");
+            assert_eq!(q.us_label, *us, "{key} US label");
+            assert!(
+                (q.si_to_us_scale - scale).abs() < 1e-6,
+                "{key} scale: catalog {} vs GUI {scale}",
+                q.si_to_us_scale
+            );
+        }
+    }
+
     #[test]
     fn every_attribute_quantity_is_in_the_catalog() {
         let keys: HashSet<&str> = QUANTITIES.iter().map(|q| q.key).collect();

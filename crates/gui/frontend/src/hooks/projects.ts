@@ -4,12 +4,46 @@
  */
 
 import { useEffect, useMemo, useState } from "react";
+import type { UnitSystem } from "../units";
 import { tryInvoke, tryInvokeOr } from "./ipc";
 
 // ── Project types ────────────────────────────────────────────────────────────
 //
 // Defined here to match the backend's `commands::Project` DTO exactly.
 // `useProjects` calls `list_projects` and returns live DB rows.
+
+/**
+ * The unit system a target's own model declares — what the `source`
+ * preference resolves to.
+ *
+ * `null` until it resolves, for a project with no network yet, or for an
+ * engine that declares none. Callers treat that as "fall back to SI"
+ * (`resolveUnitSystem`), never as "assume US".
+ */
+export function useModelUnitSystem(
+  projectId: string | null | undefined,
+  scenarioId: string | null | undefined,
+): UnitSystem | null {
+  const [system, setSystem] = useState<UnitSystem | null>(null);
+  useEffect(() => {
+    if (!projectId) {
+      setSystem(null);
+      return;
+    }
+    let cancelled = false;
+    void tryInvoke<string | null>("get_model_unit_system", {
+      projectId,
+      scenarioId: scenarioId ?? null,
+    }).then((v) => {
+      if (cancelled) return;
+      setSystem(v === "si" || v === "us" ? v : null);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [projectId, scenarioId]);
+  return system;
+}
 
 export type ProjectState =
   | "draft"
@@ -47,6 +81,8 @@ export interface Project {
   linkCount: number;
   /** EPSG code for the INP [COORDINATES] CRS. Defaults to "EPSG:4326". */
   sourceCrs: string;
+  /** Per-project display-unit override; absent = follow the app default. */
+  unitSystem?: "source" | "si" | "us";
   insights: ProjectInsights | null;
   /** `true` when the DB row exists but the on-disk bundle folder is absent. */
   folderMissing: boolean;
@@ -210,6 +246,23 @@ export async function updateProjectCrs(
   crs: string,
 ): Promise<boolean> {
   return tryInvokeOr<boolean>("update_project_crs", { id, crs }, false);
+}
+
+/**
+ * Set or clear a project's display-unit override.
+ *
+ * `null` clears it back to following the app-wide default — deliberately
+ * distinct from pinning the value that default currently holds.
+ */
+export async function updateProjectUnits(
+  id: string,
+  unitSystem: "source" | "si" | "us" | null,
+): Promise<boolean> {
+  return tryInvokeOr<boolean>(
+    "update_project_units",
+    { id, unitSystem },
+    false,
+  );
 }
 
 export async function listCustomCrsDefs(): Promise<CustomCrsDef[]> {

@@ -4,7 +4,11 @@ import { Toggle } from "../components/ui/Toggle";
 import { getVersions, openDataFolder, type Versions } from "../hooks";
 import { useUpdater } from "../hooks/useUpdater";
 import { readTextScale, setTextScale, TEXT_SCALES } from "../textScale";
-import { setUnitSystem, type UnitSystem, useUnitSystem } from "../units";
+import {
+  setUnitPreference,
+  type UnitPreference,
+  useUnitPreference,
+} from "../units";
 
 const SK = {
   reducedMotion: "hydra2-reduced-motion",
@@ -248,20 +252,24 @@ function UpdatesRow() {
   );
 }
 
-const UNIT_OPTIONS: Array<{ value: UnitSystem; label: string }> = [
+const UNIT_OPTIONS: Array<{ value: UnitPreference; label: string }> = [
+  // "Source" first because it is the default and the least surprising: it
+  // shows each model in the system its own file declares, which is also
+  // what reports use.
+  { value: "source", label: "Source" },
   { value: "si", label: "SI (metric)" },
   { value: "us", label: "US customary" },
 ];
 
 function UnitSystemToggle() {
-  const unitSystem = useUnitSystem();
+  const unitSystem = useUnitPreference();
   return (
     <div style={{ display: "flex", gap: 6 }}>
       {UNIT_OPTIONS.map((o) => (
         <button
           type="button"
           key={o.value}
-          onClick={() => setUnitSystem(o.value)}
+          onClick={() => setUnitPreference(o.value)}
           style={{
             padding: "5px 14px",
             border: "1px solid",
@@ -381,8 +389,8 @@ export function SettingsPage() {
           <ThemeToggle />
         </SettingRow>
         <SettingRow
-          label="Display units"
-          description="How values are shown and entered throughout the app. Files and exports (INP, CSV, GeoJSON) always remain in the model's native/SI units."
+          label="Default display units"
+          description="How values are shown and entered, for projects that do not set their own. Source follows each model's declared unit system. Files and exports (INP, CSV, GeoJSON) always remain in the model's native/SI units."
         >
           <UnitSystemToggle />
         </SettingRow>

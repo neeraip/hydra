@@ -7,10 +7,11 @@ import {
   formatQtyRaw,
   formatQtyValue,
   fromDisplay,
-  getUnitSystem,
+  getUnitPreference,
   parseNumericInput,
   type Quantity,
-  setUnitSystem,
+  resolveUnitSystem,
+  setUnitPreference,
   toDisplay,
   unitLabel,
 } from "./units";
@@ -55,7 +56,7 @@ describe("toDisplay / fromDisplay", () => {
     expect(toDisplay(1, "demand", "us")).toBeCloseTo(15.850323, 6);
     expect(toDisplay(1, "velocity", "us")).toBeCloseTo(3.28084, 6);
     expect(toDisplay(1, "pressure", "us")).toBeCloseTo(1.4219702, 7);
-    expect(toDisplay(1, "volume", "us")).toBeCloseTo(264.172, 4);
+    expect(toDisplay(1, "volume", "us")).toBeCloseTo(35.314667, 4);
   });
 
   it("headloss is numerically unchanged (m/km ≡ ft/kft), only the label differs", () => {
@@ -94,7 +95,7 @@ describe("unitLabel", () => {
     expect(unitLabel("demand", "us")).toBe("gpm");
     expect(unitLabel("velocity", "us")).toBe("ft/s");
     expect(unitLabel("pressure", "us")).toBe("psi");
-    expect(unitLabel("volume", "us")).toBe("gal");
+    expect(unitLabel("volume", "us")).toBe("ft³");
   });
 });
 
@@ -188,15 +189,102 @@ describe("defaultDecimals", () => {
   });
 });
 
+// ── Agreement with the engine's §5 catalog ───────────────────────────────────
+
+/**
+ * This module's factors and labels are a hand-mirror of the wds engine's
+ * quantity catalog (`crates/engine-wds/src/descriptors.rs`), and the two
+ * can drift: `volume` was changed there from gallons to cubic feet and
+ * this table kept converting to gallons, so the same quantity had two
+ * answers depending on which surface rendered it.
+ *
+ * The Rust half is `the_gui_unit_table_mirrors_this_catalog`. Neither test
+ * alone notices — this one sees the frontend change, that one sees the
+ * engine change, and updating either without the other fails the pair.
+ */
+const ENGINE_CATALOG: Array<[Quantity, string, string, number]> = [
+  ["length", "m", "ft", 3.28084],
+  ["elevation", "m", "ft", 3.28084],
+  ["head", "m", "ft", 3.28084],
+  ["diameter", "mm", "in", 0.0393701],
+  ["flow", "L/s", "gpm", 15.850323],
+  ["demand", "L/s", "gpm", 15.850323],
+  ["velocity", "m/s", "ft/s", 3.28084],
+  ["pressure", "m", "psi", 1.4219702],
+  ["headloss", "m/km", "ft/kft", 1.0],
+  ["volume", "m³", "ft³", 35.314667],
+];
+
+describe("the engine quantity catalog", () => {
+  it("agrees with this module on every shared quantity", () => {
+    for (const [q, si, us, scale] of ENGINE_CATALOG) {
+      expect(unitLabel(q, "si"), `${q} SI label`).toBe(si);
+      expect(unitLabel(q, "us"), `${q} US label`).toBe(us);
+      expect(toDisplay(1, q, "us"), `${q} factor`).toBeCloseTo(scale, 4);
+    }
+  });
+});
+
 // ── Store ────────────────────────────────────────────────────────────────────
 
-describe("unit-system store", () => {
-  it("defaults to SI and persists changes", () => {
-    expect(getUnitSystem()).toBe("si");
-    setUnitSystem("us");
-    expect(getUnitSystem()).toBe("us");
-    setUnitSystem("si");
-    expect(getUnitSystem()).toBe("si");
+describe("unit-preference store", () => {
+  // "Source" rather than SI: someone who has never opened Settings is best
+  // served by each model showing in the system its own file declares,
+  // which is also what reports do.
+  it("defaults to Source and persists changes", () => {
+    expect(getUnitPreference()).toBe("source");
+    setUnitPreference("us");
+    expect(getUnitPreference()).toBe("us");
+    setUnitPreference("source");
+    expect(getUnitPreference()).toBe("source");
+  });
+});
+
+describe("resolveUnitSystem", () => {
+  it("prefers a project override over the app default", () => {
+    expect(resolveUnitSystem("us", "si", "si")).toBe("us");
+    expect(resolveUnitSystem("si", "us", "us")).toBe("si");
+  });
+
+  it("follows the app default when the project has no override", () => {
+    expect(resolveUnitSystem(null, "us", "si")).toBe("us");
+    expect(resolveUnitSystem(undefined, "si", "us")).toBe("si");
+  });
+
+  it("reads the model when either level says Source", () => {
+    expect(resolveUnitSystem("source", "si", "us")).toBe("us");
+    expect(resolveUnitSystem(null, "source", "us")).toBe("us");
+    expect(resolveUnitSystem(null, "source", "si")).toBe("si");
+  });
+
+  /**
+   * The distinction the menu's two Source entries exist for. Inheriting
+   * and pinning look identical while the default is Source, and diverge
+   * the moment Settings changes — which is exactly when a user would
+   * otherwise wonder why one project moved and another did not.
+   */
+  it("distinguishes inheriting Source from pinning it", () => {
+    const inherit = (appDefault: "source" | "si" | "us") =>
+      resolveUnitSystem(null, appDefault, "us");
+    const pinned = (appDefault: "source" | "si" | "us") =>
+      resolveUnitSystem("source", appDefault, "us");
+
+    // Identical while the default is Source…
+    expect(inherit("source")).toBe(pinned("source"));
+    // …and different once it is not.
+    expect(inherit("si")).toBe("si");
+    expect(pinned("si")).toBe("us");
+  });
+
+  /**
+   * Source with nothing to follow — no network yet, an engine that
+   * declares no units, or before the fetch resolves. SI is the reading
+   * that converts nothing, since every stored value is already SI;
+   * guessing US would scale numbers on the strength of no information.
+   */
+  it("falls back to SI when there is no model to follow", () => {
+    expect(resolveUnitSystem("source", "us", null)).toBe("si");
+    expect(resolveUnitSystem(null, "source", undefined)).toBe("si");
   });
 });
 

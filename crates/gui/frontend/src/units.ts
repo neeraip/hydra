@@ -8,14 +8,43 @@
  * {@link fromDisplay} before being staged or patched. Stored/staged values
  * must never be mutated to display units.
  *
- * The selected system is a module-level store persisted to localStorage and
- * exposed to React via {@link useUnitSystem} (useSyncExternalStore) — no
- * context/provider needed.
+ * # Which system, and who decides
+ *
+ * Two settings, resolved by {@link resolveUnitSystem}:
+ *
+ * - an app-wide **default** (Settings), a module-level store persisted to
+ *   localStorage — `source`, `si`, or `us`;
+ * - an optional per-project **override** in the project's `meta.json`,
+ *   beside `source_crs`, because it is the same kind of decision: how to
+ *   read this model, not a fact about it.
+ *
+ * `source` means "whatever system the model's own file declares", which is
+ * also what reports use — so it is the least surprising default and the one
+ * that makes the Canvas and the Report tab agree.
+ *
+ * The *resolved* system depends on the active project, so
+ * {@link useUnitSystem} reads it from a context that `ProjectPage` provides.
+ * Outside a project (Settings, Home) there is no model to follow and the
+ * app-wide default resolves on its own.
+ *
+ * Deliberately project-scoped and never scenario-scoped: switching scenario
+ * chips is the app's one built-in comparison, and units differing between
+ * them would show a 3.28× jump as though the model had changed.
  */
 
-import { useSyncExternalStore } from "react";
+import { createContext, useContext, useSyncExternalStore } from "react";
 
+/** A resolved system — what every conversion in this module takes. */
 export type UnitSystem = "si" | "us";
+
+/**
+ * A *chosen* system, which may defer to the model.
+ *
+ * Distinct from {@link UnitSystem} because `source` is not a system: it is
+ * a rule for picking one, exactly as a theme setting of "system" is not a
+ * theme. Conversions only ever see the resolved value.
+ */
+export type UnitPreference = "source" | "si" | "us";
 
 /** Physical quantities the GUI displays. `demand` ≡ `flow` and
  * `elevation`/`head` ≡ `length` numerically, but they are kept distinct so
@@ -32,35 +61,44 @@ export type Quantity =
   | "volume"
   | "demand";
 
-// ── Store ────────────────────────────────────────────────────────────────────
+// ── App-wide default ─────────────────────────────────────────────────────────
 
 const STORAGE_KEY = "hydra2-unit-system";
 
-function readStored(): UnitSystem {
+/**
+ * The stored default.
+ *
+ * The key predates `source` and held `"si"` / `"us"`, both of which are
+ * still valid preferences — so an existing choice migrates by being read
+ * unchanged. Only the *absence* of a stored value now means something
+ * different: it used to mean SI, and now means "follow the model", which is
+ * the answer someone who never opened Settings was most likely wanting.
+ */
+function readStored(): UnitPreference {
   try {
     if (typeof localStorage !== "undefined") {
       const v = localStorage.getItem(STORAGE_KEY);
-      if (v === "us" || v === "si") return v;
+      if (v === "us" || v === "si" || v === "source") return v;
     }
   } catch {
     // localStorage unavailable (tests, privacy mode) — fall through.
   }
-  return "si";
+  return "source";
 }
 
-let current: UnitSystem = readStored();
+let current: UnitPreference = readStored();
 const listeners = new Set<() => void>();
 
-export function getUnitSystem(): UnitSystem {
+export function getUnitPreference(): UnitPreference {
   return current;
 }
 
-export function setUnitSystem(sys: UnitSystem): void {
-  if (sys === current) return;
-  current = sys;
+export function setUnitPreference(pref: UnitPreference): void {
+  if (pref === current) return;
+  current = pref;
   try {
     if (typeof localStorage !== "undefined")
-      localStorage.setItem(STORAGE_KEY, sys);
+      localStorage.setItem(STORAGE_KEY, pref);
   } catch {
     // Persistence is best-effort.
   }
@@ -72,9 +110,52 @@ function subscribe(cb: () => void): () => void {
   return () => listeners.delete(cb);
 }
 
+/** The app-wide default preference — what Settings edits. */
+export function useUnitPreference(): UnitPreference {
+  return useSyncExternalStore(subscribe, getUnitPreference, getUnitPreference);
+}
+
+// ── Resolution ───────────────────────────────────────────────────────────────
+
+/**
+ * Which system to display in, from the three inputs that decide it.
+ *
+ * A named function because it is the decision the whole feature turns on,
+ * and because two of its rules are easy to get subtly wrong:
+ *
+ * - a project override of `null` means **follow the default**, which is not
+ *   the same as an override that happens to equal the default. The first
+ *   tracks a later change in Settings; the second pins against one. That
+ *   distinction is the entire difference between the menu's two `Source`
+ *   entries.
+ * - `source` with no model to read — a project with no network yet, an
+ *   engine that declares no units, or before the fetch resolves — falls
+ *   back to SI rather than guessing US. Values are stored in SI, so SI is
+ *   the reading that converts nothing.
+ */
+export function resolveUnitSystem(
+  projectOverride: UnitPreference | null | undefined,
+  appDefault: UnitPreference,
+  modelSystem: UnitSystem | null | undefined,
+): UnitSystem {
+  const chosen = projectOverride ?? appDefault;
+  if (chosen === "source") return modelSystem ?? "si";
+  return chosen;
+}
+
+/**
+ * The resolved system for the active project, supplied by `ProjectPage`.
+ *
+ * `null` outside a project: {@link useUnitSystem} then resolves the app-wide
+ * default alone, which is all that Settings and Home can mean by it.
+ */
+export const ResolvedUnitSystem = createContext<UnitSystem | null>(null);
+
 /** Current display-unit system; re-renders the caller when it changes. */
 export function useUnitSystem(): UnitSystem {
-  return useSyncExternalStore(subscribe, getUnitSystem, getUnitSystem);
+  const resolved = useContext(ResolvedUnitSystem);
+  const appDefault = useUnitPreference();
+  return resolved ?? resolveUnitSystem(null, appDefault, null);
 }
 
 // ── Conversion ───────────────────────────────────────────────────────────────
@@ -97,7 +178,7 @@ const SI_TO_US: Record<Quantity, number> = {
   velocity: 3.28084, // m/s → ft/s
   pressure: 1.4219702, // m (head) → psi
   headloss: 1.0, // m/km → ft/kft (numerically identical, see above)
-  volume: 264.172, // m³ → gal
+  volume: 35.314667, // m³ → ft³ (an INP's volumes are cubic feet)
 };
 
 const SI_LABEL: Record<Quantity, string> = {
@@ -123,7 +204,7 @@ const US_LABEL: Record<Quantity, string> = {
   velocity: "ft/s",
   pressure: "psi",
   headloss: "ft/kft",
-  volume: "gal",
+  volume: "ft³",
 };
 
 /** Convert a stored SI value to the given display system. */
@@ -155,7 +236,7 @@ export function defaultDecimals(q: Quantity, sys: UnitSystem): number {
       case "velocity":
         return 2; // ft/s
       case "volume":
-        return 0; // gal
+        return 0; // ft³
       default:
         return 1; // ft, ft/kft
     }
