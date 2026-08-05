@@ -4,18 +4,32 @@
 
 use serde::{Deserialize, Serialize};
 
-/// Shared unit-conversion factors between the engine's internal US-customary
-/// units and the GUI's display units (see `link_setting_internal_to_display`
-/// and friends). Inverse factors used by the mutation helpers are defined
-/// locally in terms of these.
-pub(crate) const FT_TO_M: f64 = 0.3048;
-pub(crate) const FT_TO_MM: f64 = 304.8;
-/// 1 ft³ = 28.316 846 6 litres — the single ft³↔litre basis used everywhere
-/// in this module (flow cfs↔L/s and volume ft³↔m³ below), so display↔internal
-/// round-trips through different commands can never drift.
-pub(crate) const CFS_TO_LPS: f64 = 28.316_846_6;
-/// ft³ → m³, derived from the same litre basis (1 m³ = 1000 L).
-pub(crate) const FT3_TO_M3: f64 = CFS_TO_LPS / 1000.0;
+/// Scale factors from the engine's internal units to the GUI's display
+/// units.
+///
+/// **The engine stores SI throughout** — metres, m³/s, m³ — and the wds
+/// model spec §3 makes that a guarantee callers may rely on, not an
+/// implementation detail: conversion from the file's declared unit system
+/// happens inside the parser, at the I/O boundary. So a length is already
+/// a length in metres by the time it reaches this module, and the only
+/// factors that belong here are the two where the *display* unit is not
+/// the SI base unit: millimetres for diameters, litres per second for
+/// flows.
+///
+/// This module used to hold `FT_TO_M`, `FT_TO_MM` and `CFS_TO_LPS`,
+/// converting as though the engine stored EPANET's US-customary units. It
+/// does not, so every dimensional value was scaled a second time — served
+/// 3.28× small for lengths and 35.3× small for demands — and the mutation
+/// helpers applied the same factors inverted, writing a 3.28× wrong value
+/// into the model while the GUI redisplayed whatever the user had typed.
+/// Nothing caught it for the life of the repo because every test of it was
+/// a round trip, and the error cancels in one. See the `unit_boundary`
+/// tests at the foot of this file, which assert absolute values instead.
+pub(crate) const M_TO_MM: f64 = 1000.0;
+pub(crate) const M3S_TO_LPS: f64 = 1000.0;
+/// Litres → m³, for accumulations read out of a results file (which the
+/// engine always writes in L/s, whatever the model's own unit system).
+pub(crate) const L_TO_M3: f64 = 0.001;
 
 // ── Network load commands ─────────────────────────────────────────────────────
 
@@ -33,7 +47,7 @@ pub struct NodeDto {
     /// the tank *bottom* elevation — the same value the tank "elevation"
     /// patch accepts — not the internal `base.elevation` (bottom + min_level).
     pub elevation: f64,
-    /// Base demand in L/s (converted from internal ft³/s); 0 for non-junctions.
+    /// Base demand in L/s (scaled from the engine's m³/s); 0 for non-junctions.
     pub base_demand: f64,
     /// Omitted until a simulation result is available.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -79,9 +93,9 @@ pub struct LinkDto {
     pub to_id: String,
     /// 0.0 until a simulation result is available.
     pub velocity: f64,
-    /// Diameter in mm (converted from internal ft).
+    /// Diameter in mm (scaled from the engine's metres).
     pub diameter: f64,
-    /// Length in metres (converted from internal ft); 0 for pumps/valves.
+    /// Length in metres, as the engine stores it; 0 for pumps/valves.
     pub length: f64,
     /// Hazen-Williams roughness coefficient (C); 0 for pumps/valves.
     pub roughness: f64,
@@ -582,21 +596,22 @@ pub(crate) fn node_to_dto(network: &hydra::Network, n: &hydra::Node) -> NodeDto 
     // `apply_patch_to_network` (and `create_node`'s `elevation` input) so a
     // DTO → patch round-trip is stable instead of silently raising the tank
     // by `min_level` on every edit.
+    // Lengths pass through: the engine's metres are the DTO's metres.
     let elevation = match &n.kind {
-        NodeKind::Tank(t) => (n.base.elevation - t.min_level) * FT_TO_M,
-        _ => n.base.elevation * FT_TO_M,
+        NodeKind::Tank(t) => n.base.elevation - t.min_level,
+        _ => n.base.elevation,
     };
     let base_demand = match &n.kind {
-        NodeKind::Junction(j) => j.demands.iter().map(|d| d.base_demand).sum::<f64>() * CFS_TO_LPS,
+        NodeKind::Junction(j) => j.demands.iter().map(|d| d.base_demand).sum::<f64>() * M3S_TO_LPS,
         _ => 0.0,
     };
     let (tank_min_level, tank_max_level, tank_initial_level, tank_diameter, tank_volume_curve) =
         if let NodeKind::Tank(t) = &n.kind {
             (
-                Some(t.min_level * FT_TO_M),
-                Some(t.max_level * FT_TO_M),
-                Some(t.initial_level * FT_TO_M),
-                Some(t.diameter * FT_TO_M),
+                Some(t.min_level),
+                Some(t.max_level),
+                Some(t.initial_level),
+                Some(t.diameter),
                 t.volume_curve.clone(),
             )
         } else {
@@ -631,14 +646,9 @@ pub(crate) fn link_to_dto(l: &hydra::Link, from_id: String, to_id: String) -> Li
     use hydra::LinkKind;
 
     let (kind, diameter, length, roughness) = match &l.kind {
-        LinkKind::Pipe(p) => (
-            "pipe",
-            p.diameter * FT_TO_MM,
-            p.length * FT_TO_M,
-            p.roughness,
-        ),
+        LinkKind::Pipe(p) => ("pipe", p.diameter * M_TO_MM, p.length, p.roughness),
         LinkKind::Pump(_) => ("pump", 0.0, 0.0, 0.0),
-        LinkKind::Valve(v) => ("valve", v.diameter * FT_TO_MM, 0.0, 0.0),
+        LinkKind::Valve(v) => ("valve", v.diameter * M_TO_MM, 0.0, 0.0),
     };
     let (pump_curve, pump_power_kw, pump_speed) = if let LinkKind::Pump(p) = &l.kind {
         // power is stored in Watts; convert to kW for the DTO
@@ -660,12 +670,11 @@ pub(crate) fn link_to_dto(l: &hydra::Link, from_id: String, to_id: String) -> Li
             ValveType::Pcv => "PCV",
             ValveType::Pbv => "PBV",
         };
-        // Convert setting from internal ft/cfs/dimensionless to display units.
+        // A valve's setting means a different quantity per type: a pressure
+        // or head in metres, a flow, or a dimensionless coefficient.
         let setting = match v.valve_type {
-            ValveType::Prv | ValveType::Psv | ValveType::Pbv => {
-                l.base.initial_setting.map(|s| s * FT_TO_M)
-            }
-            ValveType::Fcv => l.base.initial_setting.map(|s| s * CFS_TO_LPS),
+            ValveType::Prv | ValveType::Psv | ValveType::Pbv => l.base.initial_setting,
+            ValveType::Fcv => l.base.initial_setting.map(|s| s * M3S_TO_LPS),
             ValveType::Tcv => l.base.initial_setting,
             ValveType::Gpv | ValveType::Pcv => None,
         };
@@ -788,14 +797,11 @@ pub(crate) fn network_to_dto(network: &hydra::Network) -> NetworkDto {
                 CurveKind::PcvLossRatio => "pcv-loss-ratio",
                 CurveKind::Generic => "generic",
             };
-            // Pump-head: x = flow (cfs → L/s), y = head (ft → m).
+            // Pump-head: x = flow (m³/s → L/s), y = head (already metres).
             // All others: pass raw values through (unit conversion is
             // context-dependent; the frontend labels accordingly).
             let (xs, ys): (Vec<f64>, Vec<f64>) = if c.kind == CurveKind::PumpHead {
-                c.points
-                    .iter()
-                    .map(|p| (p.x * CFS_TO_LPS, p.y * FT_TO_M))
-                    .unzip()
+                c.points.iter().map(|p| (p.x * M3S_TO_LPS, p.y)).unzip()
             } else {
                 c.points.iter().map(|p| (p.x, p.y)).unzip()
             };
@@ -837,10 +843,8 @@ pub(crate) fn network_to_dto(network: &hydra::Network) -> NetworkDto {
 pub(crate) fn link_setting_internal_to_display(link: &hydra::Link, internal: f64) -> f64 {
     match &link.kind {
         hydra::LinkKind::Valve(v) => match v.valve_type {
-            hydra::ValveType::Prv | hydra::ValveType::Psv | hydra::ValveType::Pbv => {
-                internal * FT_TO_M
-            }
-            hydra::ValveType::Fcv => internal * CFS_TO_LPS,
+            hydra::ValveType::Prv | hydra::ValveType::Psv | hydra::ValveType::Pbv => internal,
+            hydra::ValveType::Fcv => internal * M3S_TO_LPS,
             _ => internal,
         },
         _ => internal,
@@ -851,10 +855,8 @@ pub(crate) fn link_setting_internal_to_display(link: &hydra::Link, internal: f64
 pub(crate) fn link_setting_display_to_internal(link: &hydra::Link, display: f64) -> f64 {
     match &link.kind {
         hydra::LinkKind::Valve(v) => match v.valve_type {
-            hydra::ValveType::Prv | hydra::ValveType::Psv | hydra::ValveType::Pbv => {
-                display / FT_TO_M
-            }
-            hydra::ValveType::Fcv => display / CFS_TO_LPS,
+            hydra::ValveType::Prv | hydra::ValveType::Psv | hydra::ValveType::Pbv => display,
+            hydra::ValveType::Fcv => display / M3S_TO_LPS,
             _ => display,
         },
         _ => display,
@@ -862,16 +864,16 @@ pub(crate) fn link_setting_display_to_internal(link: &hydra::Link, display: f64)
 }
 
 /// Convert a HiLevel/LowLevel trigger grade from internal absolute hydraulic
-/// grade (ft) to the display threshold shown to the user: level above bottom
+/// grade (m) to the display threshold shown to the user: level above bottom
 /// (m) for tanks, pressure-equivalent head (m) for junctions/reservoirs.
 /// Mirrors `inp_writer`'s `[CONTROLS]` emission.
 pub(crate) fn node_grade_internal_to_display(node: &hydra::Node, internal_grade: f64) -> f64 {
     match &node.kind {
         hydra::NodeKind::Tank(t) => {
             let bottom = node.base.elevation - t.min_level;
-            (internal_grade - bottom) * FT_TO_M
+            internal_grade - bottom
         }
-        _ => (internal_grade - node.base.elevation) * FT_TO_M,
+        _ => internal_grade - node.base.elevation,
     }
 }
 
@@ -880,9 +882,9 @@ pub(crate) fn node_grade_display_to_internal(node: &hydra::Node, display: f64) -
     match &node.kind {
         hydra::NodeKind::Tank(t) => {
             let bottom = node.base.elevation - t.min_level;
-            display / FT_TO_M + bottom
+            display + bottom
         }
-        _ => display / FT_TO_M + node.base.elevation,
+        _ => display + node.base.elevation,
     }
 }
 
@@ -1016,10 +1018,8 @@ fn premise_value_internal_to_display(
 ) -> f64 {
     use hydra::{PremiseAttribute, PremiseObject};
     match attribute {
-        PremiseAttribute::Head | PremiseAttribute::Pressure | PremiseAttribute::Level => {
-            value * FT_TO_M
-        }
-        PremiseAttribute::Demand | PremiseAttribute::Flow => value * CFS_TO_LPS,
+        PremiseAttribute::Head | PremiseAttribute::Pressure | PremiseAttribute::Level => value,
+        PremiseAttribute::Demand | PremiseAttribute::Flow => value * M3S_TO_LPS,
         PremiseAttribute::FillTime | PremiseAttribute::DrainTime => value / 3600.0,
         PremiseAttribute::Setting => {
             if let PremiseObject::Link(idx) = object {
@@ -1042,10 +1042,8 @@ fn premise_value_display_to_internal(
 ) -> f64 {
     use hydra::{PremiseAttribute, PremiseObject};
     match attribute {
-        PremiseAttribute::Head | PremiseAttribute::Pressure | PremiseAttribute::Level => {
-            value / FT_TO_M
-        }
-        PremiseAttribute::Demand | PremiseAttribute::Flow => value / CFS_TO_LPS,
+        PremiseAttribute::Head | PremiseAttribute::Pressure | PremiseAttribute::Level => value,
+        PremiseAttribute::Demand | PremiseAttribute::Flow => value / M3S_TO_LPS,
         PremiseAttribute::FillTime | PremiseAttribute::DrainTime => value * 3600.0,
         PremiseAttribute::Setting => {
             if let PremiseObject::Link(idx) = object {
@@ -1496,11 +1494,17 @@ Duration  0
 
     #[test]
     fn link_setting_conversion_round_trips_per_valve_type() {
+        // Expectations are written as literals, not as `internal * FACTOR`.
+        // Phrasing them in terms of the conversion constant is how this test
+        // passed while every value it checked was wrong: it asserted that the
+        // code agreed with itself.
         for (vt, internal, display) in [
-            (hydra::ValveType::Prv, 100.0, 100.0 * FT_TO_M),
-            (hydra::ValveType::Psv, 50.0, 50.0 * FT_TO_M),
-            (hydra::ValveType::Pbv, 25.0, 25.0 * FT_TO_M),
-            (hydra::ValveType::Fcv, 2.0, 2.0 * CFS_TO_LPS),
+            // A pressure/head setting is already metres internally.
+            (hydra::ValveType::Prv, 100.0, 100.0),
+            (hydra::ValveType::Psv, 50.0, 50.0),
+            (hydra::ValveType::Pbv, 25.0, 25.0),
+            // A flow setting is m³/s internally, L/s on the wire.
+            (hydra::ValveType::Fcv, 2.0, 2000.0),
             (hydra::ValveType::Tcv, 7.5, 7.5), // dimensionless: identity
         ] {
             let link = valve_link(vt);
@@ -1533,11 +1537,11 @@ Duration  0
         };
         let bottom = tank.base.elevation - t.min_level;
         let display = node_grade_internal_to_display(tank, bottom + 10.0);
-        assert!((display - 10.0 * FT_TO_M).abs() < 1e-9);
+        assert!((display - 10.0).abs() < 1e-9, "10 m above bottom is 10 m");
         // Junction display value is head above the node elevation in metres.
         let j1 = network.nodes.iter().find(|n| n.base.id == "J1").unwrap();
         let display = node_grade_internal_to_display(j1, j1.base.elevation + 10.0);
-        assert!((display - 10.0 * FT_TO_M).abs() < 1e-9);
+        assert!((display - 10.0).abs() < 1e-9, "10 m of head is 10 m");
     }
 
     // ── INP parse-error summarisation ─────────────────────────────────────
@@ -1638,5 +1642,169 @@ Duration  0
         let err = hydra::io::parse(inp).expect_err("duplicate node ID must fail");
         let msg = format_inp_parse_error(err);
         assert!(msg.contains("duplicate node ID 'J1'"), "got: {msg}");
+    }
+}
+
+/// The unit boundary between the engine and the GUI, asserted against
+/// **known absolute values** rather than round trips.
+///
+/// Every test here failed when it was written. The GUI had converted as
+/// though the engine stored EPANET's US-customary units, but the engine
+/// stores SI throughout (wds model spec §3, "any layer above the I/O
+/// boundary may rely on all model quantities being in SI"), so every
+/// dimensional value was scaled a second time: lengths, elevations and
+/// diameters served 3.28× small, demands 35.3× small — and, because the
+/// write path applied the same factors inverted, every edit wrote a value
+/// 3.28× wrong into the model while the GUI redisplayed what the user had
+/// typed.
+///
+/// It survived for the life of the repo because every test of it was a
+/// round trip, and the error is perfectly symmetric under one: patch 42,
+/// read back 42, both halves wrong by the same factor. That is why these
+/// tests name a real model with real numbers and check the arithmetic
+/// against the source file, and why none of them may be rewritten as a
+/// round trip.
+#[cfg(test)]
+mod unit_boundary {
+    use super::*;
+
+    /// A US-customary model, deliberately: for a metric model the internal
+    /// SI value and the file's own number coincide, so a metric fixture
+    /// cannot tell a correct conversion from a missing one.
+    ///
+    /// J1: elevation 100 ft (= 30.48 m), demand 50 gpm (= 3.1545 L/s).
+    /// P1: 1000 ft (= 304.8 m) long, 12 in (= 304.8 mm) across.
+    /// T1: bottom 80 ft, min level 5 ft (= 1.524 m), max 20 ft (= 6.096 m).
+    const US_MODEL: &str = "\
+[JUNCTIONS]
+J1  100  50
+
+[RESERVOIRS]
+R1  200
+
+[TANKS]
+T1  80  10  5  20  60  0
+
+[PIPES]
+P1  R1  J1  1000  12  100  0  Open
+
+[OPTIONS]
+Units  GPM
+Headloss  H-W
+
+[TIMES]
+Duration  0
+";
+
+    fn dto() -> NetworkDto {
+        network_to_dto(&hydra::io::parse(US_MODEL.as_bytes()).expect("fixture parses"))
+    }
+
+    /// Relative comparison, because the expected values here are exact
+    /// textbook conversions and the engine's are EPANET's rounded ones
+    /// (3.28084 ft/m, 35.315 cfs per m³/s). A 1000 ft pipe therefore comes
+    /// back as 304.8037 m, not 304.8 — right to about five significant
+    /// figures, and wrong by 3.28× if this fix regresses. The tolerance is
+    /// far tighter than any unit error and far looser than that rounding.
+    fn close(a: f64, b: f64) -> bool {
+        (a - b).abs() <= 1e-4 * b.abs().max(1.0)
+    }
+
+    #[test]
+    fn elevations_are_served_in_metres() {
+        let dto = dto();
+        let j1 = dto.nodes.iter().find(|n| n.id == "J1").unwrap();
+        // 100 ft = 30.48 m. Serving 9.29 would be metres scaled by 0.3048
+        // a second time.
+        assert!(
+            close(j1.elevation, 30.48),
+            "J1 is at 100 ft = 30.48 m, got {}",
+            j1.elevation
+        );
+    }
+
+    #[test]
+    fn demands_are_served_in_litres_per_second() {
+        let dto = dto();
+        let j1 = dto.nodes.iter().find(|n| n.id == "J1").unwrap();
+        // 50 gpm = 3.1545 L/s.
+        assert!(
+            close(j1.base_demand, 3.1545),
+            "J1 demands 50 gpm = 3.1545 L/s, got {}",
+            j1.base_demand
+        );
+    }
+
+    #[test]
+    fn pipe_length_is_metres_and_diameter_is_millimetres() {
+        let dto = dto();
+        let p1 = dto.links.iter().find(|l| l.id == "P1").unwrap();
+        assert!(
+            close(p1.length, 304.8),
+            "P1 is 1000 ft = 304.8 m long, got {}",
+            p1.length
+        );
+        // The two happen to share a number — 1000 ft in metres and 12 in in
+        // millimetres are both 304.8 — which is a coincidence of the
+        // fixture, not a shared factor. Both are checked because they take
+        // different conversions.
+        assert!(
+            close(p1.diameter, 304.8),
+            "P1 is 12 in = 304.8 mm across, got {}",
+            p1.diameter
+        );
+    }
+
+    #[test]
+    fn tank_levels_are_served_in_metres() {
+        let dto = dto();
+        let t1 = dto.nodes.iter().find(|n| n.id == "T1").unwrap();
+        assert!(
+            close(t1.tank_min_level.unwrap(), 1.524),
+            "T1's min level is 5 ft = 1.524 m, got {:?}",
+            t1.tank_min_level
+        );
+        assert!(
+            close(t1.tank_max_level.unwrap(), 6.096),
+            "T1's max level is 20 ft = 6.096 m, got {:?}",
+            t1.tank_max_level
+        );
+    }
+
+    /// The one that matters most: an edit must reach the model as the value
+    /// the user meant, not merely come back out looking like it.
+    #[test]
+    fn an_edited_elevation_reaches_the_model_and_the_exported_file() {
+        let mut network = hydra::io::parse(US_MODEL.as_bytes()).unwrap();
+        crate::commands::mutations::apply_patch_to_network(
+            &mut network,
+            "junction",
+            "J1",
+            "elevation",
+            serde_json::json!(42.0),
+        )
+        .unwrap();
+
+        // The engine stores SI, so "42 m" is 42.
+        let j1 = network.nodes.iter().find(|n| n.base.id == "J1").unwrap();
+        assert!(
+            close(j1.base.elevation, 42.0),
+            "an elevation set to 42 m must be stored as 42 m, got {}",
+            j1.base.elevation
+        );
+
+        // And the file the user exports must say so. The model is GPM, so
+        // [JUNCTIONS] carries feet: 42 m = 137.795 ft. Writing 452 ft here
+        // was the corruption, invisible because the DTO scaled it back.
+        let inp = String::from_utf8_lossy(&hydra::io::write_inp(&network)).into_owned();
+        let j1_line = inp
+            .lines()
+            .find(|l| l.trim_start().starts_with("J1 "))
+            .expect("J1 is written");
+        let elev: f64 = j1_line.split_whitespace().nth(1).unwrap().parse().unwrap();
+        assert!(
+            close(elev, 137.795),
+            "42 m must export as 137.795 ft, got {elev} (line: {j1_line})"
+        );
     }
 }

@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use crate::meta::{self, bundle};
 
 use super::binary_codec::encode_period_results;
-use super::network_dto::{format_read_error, NetworkState, NetworkStateInner, FT3_TO_M3, FT_TO_MM};
+use super::network_dto::{format_read_error, NetworkState, NetworkStateInner, L_TO_M3, M_TO_MM};
 use super::projects::{
     app_data_dir, model_path_for, read_model_bytes, results_path_for, validate_target_ids,
 };
@@ -1226,7 +1226,7 @@ pub fn get_result_analytics(
                 .map(|n| n.base.id.clone())
                 .unwrap_or_default();
             let diameter_mm = match &link.kind {
-                hydra::LinkKind::Pipe(p) => p.diameter * FT_TO_MM,
+                hydra::LinkKind::Pipe(p) => p.diameter * M_TO_MM,
                 _ => 0.0,
             };
             Some(TopPipeDto {
@@ -1268,11 +1268,16 @@ pub fn get_result_analytics(
         .map(|l| l.base.id.clone());
     let max_velocity_ms = max_velocity.map(|(_, v)| v);
 
-    // Convert demand accumulations from ft³/s·period to m³ (multiply by
-    // period duration in seconds then by the module-level ft³→m³ factor).
+    // The scan accumulates demand in the results file's own units, and the
+    // engine always writes `.out` in L/s — so a period's contribution is
+    // L/s × seconds = litres, and litres become m³.
+    //
+    // This used to apply a ft³→m³ factor, which overstated both totals by
+    // 28.3×. The balance percentage was right regardless, because the same
+    // factor divides out of a ratio; only the absolute volumes were wrong.
     let report_step_s = meta.report_step;
-    let inflow_m3 = total_inflow * report_step_s * FT3_TO_M3;
-    let outflow_m3 = total_outflow * report_step_s * FT3_TO_M3;
+    let inflow_m3 = total_inflow * report_step_s * L_TO_M3;
+    let outflow_m3 = total_outflow * report_step_s * L_TO_M3;
     let balance_pct = if inflow_m3 > 0.0 {
         (outflow_m3 / inflow_m3 * 100.0).min(100.0)
     } else {

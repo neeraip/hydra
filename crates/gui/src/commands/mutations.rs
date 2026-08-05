@@ -7,8 +7,8 @@ use serde::{Deserialize, Serialize};
 
 use super::network_dto::{
     control_from_dto, format_read_error, link_to_dto, network_to_dto, node_to_dto, rule_from_dto,
-    ControlDto, LinkDto, NetworkDto, NetworkState, NetworkStateInner, NodeDto, RuleDto, CFS_TO_LPS,
-    FT_TO_M, FT_TO_MM,
+    ControlDto, LinkDto, NetworkDto, NetworkState, NetworkStateInner, NodeDto, RuleDto, M3S_TO_LPS,
+    M_TO_MM,
 };
 use super::projects::{app_data_dir, model_path_for, read_model_bytes, validate_target_ids};
 use super::simulation::emit_or_warn;
@@ -57,9 +57,12 @@ pub(crate) fn apply_patch_to_network(
     field: &str,
     value: serde_json::Value,
 ) -> Result<(), String> {
-    const M_TO_FT: f64 = 1.0 / FT_TO_M;
-    const LPS_TO_CFS: f64 = 1.0 / CFS_TO_LPS;
-    const MM_TO_FT: f64 = 1.0 / FT_TO_MM;
+    // Display → internal. The engine stores SI, so lengths need no factor
+    // at all; only the two quantities whose display unit differs from the
+    // SI base unit do. These must stay the exact inverses of
+    // `network_dto`'s outbound scales.
+    const LPS_TO_M3S: f64 = 1.0 / M3S_TO_LPS;
+    const MM_TO_M: f64 = 1.0 / M_TO_MM;
 
     let as_f64 = |v: &serde_json::Value| -> Result<f64, String> {
         v.as_f64()
@@ -75,16 +78,16 @@ pub(crate) fn apply_patch_to_network(
                 .ok_or_else(|| format!("junction '{id}' not found"))?;
             match field {
                 "elevation" => {
-                    node.base.elevation = as_f64(&value)? * M_TO_FT;
+                    node.base.elevation = as_f64(&value)?;
                 }
                 "baseDemand" => {
                     if let hydra::NodeKind::Junction(ref mut j) = node.kind {
-                        let demand_cfs = as_f64(&value)? * LPS_TO_CFS;
+                        let demand_m3s = as_f64(&value)? * LPS_TO_M3S;
                         if let Some(first) = j.demands.first_mut() {
-                            first.base_demand = demand_cfs;
+                            first.base_demand = demand_m3s;
                         } else {
                             j.demands.push(hydra::DemandCategory {
-                                base_demand: demand_cfs,
+                                base_demand: demand_m3s,
                                 pattern: None,
                                 name: None,
                             });
@@ -104,7 +107,7 @@ pub(crate) fn apply_patch_to_network(
                 .ok_or_else(|| format!("reservoir '{id}' not found"))?;
             match field {
                 "head" => {
-                    node.base.elevation = as_f64(&value)? * M_TO_FT;
+                    node.base.elevation = as_f64(&value)?;
                 }
                 "headPattern" => {
                     if let hydra::NodeKind::Reservoir(ref mut r) = node.kind {
@@ -125,32 +128,32 @@ pub(crate) fn apply_patch_to_network(
                 .ok_or_else(|| format!("tank '{id}' not found"))?;
             match field {
                 "elevation" => {
-                    let new_bottom_ft = as_f64(&value)? * M_TO_FT;
+                    let new_bottom_m = as_f64(&value)?;
                     if let hydra::NodeKind::Tank(ref t) = node.kind {
-                        node.base.elevation = new_bottom_ft + t.min_level;
+                        node.base.elevation = new_bottom_m + t.min_level;
                     }
                 }
                 "minLevel" => {
                     if let hydra::NodeKind::Tank(ref mut t) = node.kind {
                         let old_min = t.min_level;
-                        let new_min = as_f64(&value)? * M_TO_FT;
+                        let new_min = as_f64(&value)?;
                         node.base.elevation = node.base.elevation - old_min + new_min;
                         t.min_level = new_min;
                     }
                 }
                 "maxLevel" => {
                     if let hydra::NodeKind::Tank(ref mut t) = node.kind {
-                        t.max_level = as_f64(&value)? * M_TO_FT;
+                        t.max_level = as_f64(&value)?;
                     }
                 }
                 "initialLevel" => {
                     if let hydra::NodeKind::Tank(ref mut t) = node.kind {
-                        t.initial_level = as_f64(&value)? * M_TO_FT;
+                        t.initial_level = as_f64(&value)?;
                     }
                 }
                 "diameter" => {
                     if let hydra::NodeKind::Tank(ref mut t) = node.kind {
-                        t.diameter = as_f64(&value)? * M_TO_FT;
+                        t.diameter = as_f64(&value)?;
                     }
                 }
                 "volumeCurve" => {
@@ -173,17 +176,17 @@ pub(crate) fn apply_patch_to_network(
             if let hydra::LinkKind::Pipe(ref mut p) = link.kind {
                 match field {
                     "length" => {
-                        p.length = as_f64(&value)? * M_TO_FT;
+                        p.length = as_f64(&value)?;
                     }
                     "diameter" => {
-                        let new_diam_ft = as_f64(&value)? * MM_TO_FT;
+                        let new_diam_m = as_f64(&value)? * MM_TO_M;
                         if p.minor_loss > 0.0 {
                             let old_d4 = p.diameter.powi(4);
                             let kv = p.minor_loss * old_d4 / 0.02517;
-                            let new_d4 = new_diam_ft.powi(4);
+                            let new_d4 = new_diam_m.powi(4);
                             p.minor_loss = 0.02517 * kv / new_d4;
                         }
-                        p.diameter = new_diam_ft;
+                        p.diameter = new_diam_m;
                     }
                     "roughness" => {
                         p.roughness = as_f64(&value)?;
@@ -250,7 +253,7 @@ pub(crate) fn apply_patch_to_network(
             match field {
                 "diameter" => {
                     if let hydra::LinkKind::Valve(ref mut v) = link.kind {
-                        v.diameter = as_f64(&value)? * MM_TO_FT;
+                        v.diameter = as_f64(&value)? * MM_TO_M;
                     }
                 }
                 "valveType" => {
@@ -278,9 +281,9 @@ pub(crate) fn apply_patch_to_network(
                     };
                     link.base.initial_setting = Some(match vt {
                         hydra::ValveType::Prv | hydra::ValveType::Psv | hydra::ValveType::Pbv => {
-                            raw * M_TO_FT
+                            raw
                         }
-                        hydra::ValveType::Fcv => raw * LPS_TO_CFS,
+                        hydra::ValveType::Fcv => raw * LPS_TO_M3S,
                         _ => raw,
                     });
                 }
@@ -966,8 +969,7 @@ pub fn create_node(
     max_level: Option<f64>,
     initial_level: Option<f64>,
 ) -> Result<(), String> {
-    const M_TO_FT: f64 = 1.0 / FT_TO_M;
-    let elev_ft = elevation.unwrap_or(0.0) * M_TO_FT;
+    let elev_m = elevation.unwrap_or(0.0);
     mutate_structural(&app, &state, |network| {
         let id = validate_inp_id(&id, "element")?;
         // Node ids are unique among nodes only — a link may share the id
@@ -978,9 +980,9 @@ pub fn create_node(
         }
         let index = network.nodes.len() + 1;
         // Tank level defaults: ~3 m min gap, ~1.5 m initial (matching original 10 ft / 5 ft).
-        let min_ft = min_level.unwrap_or(0.0) * M_TO_FT;
-        let max_ft = max_level.map(|v| v * M_TO_FT).unwrap_or(10.0);
-        let init_ft = initial_level.map(|v| v * M_TO_FT).unwrap_or(5.0);
+        let min_m = min_level.unwrap_or(0.0);
+        let max_m = max_level.unwrap_or(10.0);
+        let init_m = initial_level.unwrap_or(5.0);
         let node_kind = match kind.as_str() {
             "junction" => hydra::NodeKind::Junction(hydra::Junction {
                 demands: vec![hydra::DemandCategory {
@@ -993,9 +995,9 @@ pub fn create_node(
             }),
             "reservoir" => hydra::NodeKind::Reservoir(hydra::Reservoir { head_pattern: None }),
             "tank" => hydra::NodeKind::Tank(hydra::Tank {
-                min_level: min_ft,
-                max_level: max_ft,
-                initial_level: init_ft,
+                min_level: min_m,
+                max_level: max_m,
+                initial_level: init_m,
                 diameter: 10.0,
                 min_volume: 0.0,
                 volume_curve: None,
@@ -1009,9 +1011,9 @@ pub fn create_node(
         // For tanks: EPANET stores base.elevation = bottom + min_level (the minimum
         // piezometric head).  For junctions / reservoirs: base.elevation = elevation.
         let base_elev = if matches!(node_kind, hydra::NodeKind::Tank(_)) {
-            elev_ft + min_ft
+            elev_m + min_m
         } else {
-            elev_ft
+            elev_m
         };
         network.nodes.push(hydra::Node {
             base: hydra::NodeBase {
@@ -1028,15 +1030,15 @@ pub fn create_node(
     })
 }
 
-/// Default attributes for a link created by `create_link`, in **internal
-/// US-customary units** (feet / cfs / Watts). Pipe: length 100 m, diameter
-/// 300 mm, roughness 100 (Hazen-Williams C). Pump: constant-power 10 kW.
-/// Valve: PRV, diameter 300 mm.
+/// Default attributes for a link created by `create_link`, in the engine's
+/// **internal SI units** (metres / m³/s / Watts). Pipe: length 100 m,
+/// diameter 300 mm, roughness 100 (Hazen-Williams C). Pump: constant-power
+/// 10 kW. Valve: PRV, diameter 300 mm.
 fn default_link_kind(kind: &str) -> Result<hydra::LinkKind, String> {
     match kind {
         "pipe" => Ok(hydra::LinkKind::Pipe(hydra::Pipe {
-            length: 100.0 / FT_TO_M, // 100 m in ft
-            diameter: 0.3 / FT_TO_M, // 300 mm in ft
+            length: 100.0,
+            diameter: 0.3,
             roughness: 100.0,
             minor_loss: 0.0,
             check_valve: false,
@@ -1057,7 +1059,7 @@ fn default_link_kind(kind: &str) -> Result<hydra::LinkKind, String> {
         })),
         "valve" => Ok(hydra::LinkKind::Valve(hydra::Valve {
             valve_type: hydra::ValveType::Prv,
-            diameter: 0.3 / FT_TO_M, // 300 mm in ft
+            diameter: 0.3,
             minor_loss: 0.0,
             curve: None,
         })),
@@ -1126,8 +1128,8 @@ pub fn create_link(
 /// Create a new pump-head curve with default two-point data.
 ///
 /// `id` must be unique within the network. The default points span
-/// (0 L/s, 50 m) → (5 L/s, 0 m) in display units, converted to internal
-/// US-customary (cfs, ft) for storage.
+/// (0 L/s, 50 m) → (5 L/s, 0 m) in display units, converted to the
+/// engine's internal SI (m³/s, m) for storage.
 #[tauri::command(async)]
 pub fn create_curve(
     app: tauri::AppHandle,
@@ -1144,12 +1146,9 @@ pub fn create_curve(
             id: id.clone(),
             kind: hydra::CurveKind::PumpHead,
             points: vec![
+                hydra::CurvePoint { x: 0.0, y: 50.0 },
                 hydra::CurvePoint {
-                    x: 0.0,
-                    y: 50.0 / FT_TO_M,
-                },
-                hydra::CurvePoint {
-                    x: 5.0 / CFS_TO_LPS,
+                    x: 5.0 / M3S_TO_LPS,
                     y: 0.0,
                 },
             ],
@@ -1280,8 +1279,8 @@ pub fn rename_curve(
 }
 
 /// Convert curve points from the display units used by `get_curves` back to
-/// internal US-customary storage units. Pump-head curves: x = flow (L/s →
-/// cfs), y = head (m → ft); all other kinds pass through unchanged. Exact
+/// internal SI storage units. Pump-head curves: x = flow (L/s → m³/s), y =
+/// head (already metres); all other kinds pass through unchanged. Exact
 /// inverse of the conversion in `network_to_dto`, sharing the same module
 /// constants so a get → update round-trip is value-stable.
 fn curve_points_display_to_internal(
@@ -1293,8 +1292,8 @@ fn curve_points_display_to_internal(
         xs.iter()
             .zip(ys.iter())
             .map(|(&x, &y)| hydra::CurvePoint {
-                x: x / CFS_TO_LPS,
-                y: y / FT_TO_M,
+                x: x / M3S_TO_LPS,
+                y,
             })
             .collect()
     } else {
@@ -2118,7 +2117,10 @@ mod tests {
             let node = patched.node.expect("node delta");
             assert!(patched.link.is_none());
             assert_eq!(node.id, "J1");
-            // Value is in display units (m), round-tripped through internal ft.
+            // A round trip, and only that: it shows the delta path and the
+            // full rebuild agree, not that either is in the right unit. The
+            // absolute check lives in `network_dto`'s `unit_boundary` tests,
+            // which this assertion once stood in for and could not.
             assert!((node.elevation - 42.0).abs() < 1e-6);
 
             let j1 = dto.nodes.iter().find(|n| n.id == "J1").unwrap();
@@ -2209,7 +2211,7 @@ mod tests {
         // `base.elevation`.
         let dto_elev = node_to_dto(network, t1).elevation;
         assert!(
-            (dto_elev - (internal_before - min_level) * FT_TO_M).abs() < 1e-9,
+            (dto_elev - (internal_before - min_level)).abs() < 1e-9,
             "DTO must report tank bottom, got {dto_elev}"
         );
 
@@ -2361,7 +2363,7 @@ Duration  0
         assert_eq!(remap_index(3, &[]), 3);
     }
 
-    // ── create_link defaults (internal ft ↔ display m/mm) ─────────────────
+    // ── create_link defaults (internal SI ↔ display m/mm) ─────────────────
 
     #[test]
     fn create_link_pipe_defaults_display_as_100m_300mm() {
@@ -2420,10 +2422,14 @@ Duration  0
 
     #[test]
     fn pump_head_curve_display_round_trip_is_value_stable() {
-        // Internal points (cfs, ft) → DTO display units (L/s, m) via
+        // Internal points (m³/s, m) → DTO display units (L/s, m) via
         // network_to_dto's conversion, then back through the
-        // update_curve_points conversion. The same CFS_TO_LPS/FT_TO_M basis
-        // is used in both directions, so the round-trip must be stable.
+        // update_curve_points conversion. The same scale is used in both
+        // directions, so the round-trip must be stable.
+        //
+        // Stability is all this test can prove. It passed unchanged while
+        // both directions were wrong by 28× — which is why the absolute
+        // values live in `network_dto`'s `unit_boundary` tests instead.
         let mut network = hydra::io::parse(TEST_INP.as_bytes()).unwrap();
         let internal = vec![
             hydra::CurvePoint { x: 0.0, y: 164.0 },
