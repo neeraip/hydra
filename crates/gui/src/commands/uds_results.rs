@@ -314,7 +314,8 @@ pub fn stream_uds_results_csv(
 }
 
 /// Full-simulation series for one element, addressed the way the frontend
-/// addresses everything: element kind ("node"/"link") + snapshot index.
+/// addresses everything: element class ("node"/"link"/"region") + snapshot
+/// index.
 /// The snapshot and results file can disagree about membership (the
 /// `[REPORT]` selection), so the id is resolved from the snapshot view and
 /// joined into the file's record order; an unreported element answers
@@ -344,6 +345,18 @@ pub fn element_series(
             &meta.link_ids,
             ElementKind::Link,
             ElementClass::Polyline,
+        ),
+        // Areal elements read exactly like the other two classes — the
+        // results file stores subcatchment records first, and the reader
+        // has always known how to address them. The inspector showed a
+        // Time series section for a node and a conduit and nothing for the
+        // subcatchment draining into them, which read as "this engine does
+        // not record runoff over time" rather than "this arm was missing".
+        "region" => (
+            view.regions.get(index).map(|r| r.id.as_str()),
+            &meta.subcatchment_ids,
+            ElementKind::Subcatchment,
+            ElementClass::Region,
         ),
         other => return Err(format!("unknown element kind {other:?}")),
     };
@@ -523,5 +536,85 @@ mod tests {
         assert!(element_series(&out, &network, "node", 99)
             .unwrap()
             .is_none());
+    }
+
+    /// Every element class the snapshot carries can be asked for a series.
+    ///
+    /// The areal arm was missing: the reader has always known how to
+    /// address subcatchment records, but `element_series` matched only
+    /// `"node"` and `"link"`, so the inspector showed a Time series
+    /// section for a junction and a conduit and nothing at all for the
+    /// subcatchment draining into them. Nothing failed loudly — the
+    /// request errored into the frontend's `null` and the section simply
+    /// did not render, which reads as "this engine does not record runoff
+    /// over time".
+    #[test]
+    fn every_snapshot_class_can_be_asked_for_a_series() {
+        let model = "[OPTIONS]\nFLOW_UNITS CFS\nFLOW_ROUTING DYNWAVE\nINFILTRATION HORTON\n\
+                     START_DATE 01/01/2024\nSTART_TIME 00:00:00\n\
+                     END_DATE 01/01/2024\nEND_TIME 01:00:00\nREPORT_STEP 00:05:00\n\
+                     [RAINGAGES]\nG1 INTENSITY 0:15 1.0 TIMESERIES RAIN1\n\
+                     [SUBCATCHMENTS]\nS1 G1 J1 10 25 500 0.5 0\n\
+                     [SUBAREAS]\nS1 0.012 0.1 0.05 0.05 25 OUTLET\n\
+                     [INFILTRATION]\nS1 3.0 0.5 4 7 0\n\
+                     [JUNCTIONS]\nJ1 100 4\n[OUTFALLS]\nO1 98 FREE\n\
+                     [CONDUITS]\nC1 J1 O1 400 0.013 0 0\n\
+                     [XSECTIONS]\nC1 CIRCULAR 1.5 0 0 0\n\
+                     [TIMESERIES]\nRAIN1 0:00 0.5\nRAIN1 1:00 1.0\n\
+                     [REPORT]\nSUBCATCHMENTS ALL\nNODES ALL\nLINKS ALL\n\
+                     [COORDINATES]\nJ1 0 0\nO1 100 0\n\
+                     [POLYGONS]\nS1 0 0\nS1 10 0\nS1 10 10\nS1 0 10\n";
+        let (sim, _diags, _findings) =
+            hydra::uds::simulation::Simulation::open(model).expect("open uds model");
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path().join("results.out");
+        let (_es, err, _wall, _steps) = crate::commands::simulation::run_sim_loops(
+            hydra::engines::EngineSession::from_uds(sim),
+            Some(out.clone()),
+            3600.0,
+            false,
+            None,
+            |_, _, _, _, _| {},
+            || false,
+        );
+        assert!(err.is_none(), "uds run must succeed: {err:?}");
+
+        let meta = hydra::uds::io::out_reader::read_metadata(&out).expect("readable");
+        let (network, _diags) = hydra::uds::io::objects::parse_network(model);
+        let view = super::super::uds_view::build_view(&network);
+        assert_eq!(view.regions.len(), 1, "the model has one subcatchment");
+
+        for kind in ["node", "link", "region"] {
+            let series = element_series(&out, &network, kind, 0)
+                .unwrap()
+                .unwrap_or_else(|| panic!("{kind} index 0 must have a series"));
+            assert_eq!(series.times.len(), meta.n_periods, "{kind} period count");
+            assert!(
+                !series.fields.is_empty(),
+                "{kind} must carry its catalog's variables"
+            );
+            assert!(
+                series
+                    .fields
+                    .iter()
+                    .all(|f| f.values.len() == meta.n_periods),
+                "{kind} fields must be one value per period"
+            );
+        }
+
+        // The areal series is the region catalog's, not a neighbouring
+        // class's — the failure mode of a missing match arm falling through
+        // to the wrong one.
+        let region = element_series(&out, &network, "region", 0)
+            .unwrap()
+            .expect("S1 series");
+        let names: Vec<&str> = region.fields.iter().map(|f| f.name.as_str()).collect();
+        assert_eq!(names, vec!["rainfall", "runoff", "infiltration"]);
+
+        // Same contract as the other classes at the edges.
+        assert!(element_series(&out, &network, "region", 99)
+            .unwrap()
+            .is_none());
+        assert!(element_series(&out, &network, "parcel", 0).is_err());
     }
 }

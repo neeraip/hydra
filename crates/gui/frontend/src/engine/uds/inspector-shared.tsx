@@ -22,6 +22,7 @@ import {
   type ElementAttribute,
   type ElementAttributeInfo,
   type ElementSeries,
+  type ElementSeriesKind,
   formatElementAttribute,
   formatGenericValue,
   type GenericVariable,
@@ -35,6 +36,7 @@ import {
 import { Sparkline } from "../../pages/project/AnalysisPanel/charts";
 import { useUnitSystem } from "../../units";
 import type { GenericElementValue } from "../registry";
+import { seriesIndex, seriesVariables } from "./seriesAddressing";
 
 /** Fetch the engine-described attribute rows for one element. */
 /** Rows already fetched, so re-selecting an element does not go blank
@@ -159,13 +161,13 @@ export function GenericTimeSeriesCard({
   kind,
   elementId,
 }: {
-  kind: "node" | "link";
+  kind: ElementSeriesKind;
   elementId: string;
 }) {
   const { project } = useActiveProject();
   const { activeScenarioId } = useAppState();
   const { resultMeta, resultGeneration } = useSimulation();
-  const { nodes, links } = useNetworkData();
+  const { nodes, links, regions } = useNetworkData();
   const currentPeriod = useCurrentPeriod();
   const sys = useUnitSystem();
 
@@ -175,17 +177,17 @@ export function GenericTimeSeriesCard({
 
   const projectId = project?.id ?? null;
   const periods = resultMeta?.times.length ?? 0;
-  const variables: GenericVariable[] =
-    (kind === "node"
-      ? resultMeta?.generic?.pointVars
-      : resultMeta?.generic?.polylineVars) ?? [];
+  const variables: GenericVariable[] = seriesVariables(
+    resultMeta?.generic,
+    kind,
+  );
 
   // The backend addresses series by snapshot index, the same order the
   // NetworkDataContext arrays carry.
-  const index = useMemo(() => {
-    const arr: Array<{ id: string }> = kind === "node" ? nodes : links;
-    return arr.findIndex((el) => el.id === elementId);
-  }, [kind, nodes, links, elementId]);
+  const index = useMemo(
+    () => seriesIndex({ nodes, links, regions }, kind, elementId),
+    [kind, nodes, links, regions, elementId],
+  );
 
   const enabled =
     projectId != null && periods > 1 && index >= 0 && variables.length > 0;
