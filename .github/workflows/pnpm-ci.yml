@@ -102,3 +102,12 @@ jobs:
 
       - name: Run tests
         run: pnpm test
+
+      # The layout tests drive a real browser: jsdom performs no layout, so
+      # a whole class of regression — a box that sizes to its content, a row
+      # too short for its own second line — is invisible without one.
+      - name: Install Chromium for the layout tests
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Run layout tests
+        run: pnpm test:layout

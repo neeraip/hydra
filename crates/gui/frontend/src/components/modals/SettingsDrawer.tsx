@@ -24,6 +24,7 @@
  */
 
 import { XMarkIcon } from "@heroicons/react/16/solid";
+import type React from "react";
 import { lazy, Suspense, useEffect } from "react";
 import { useAppState } from "../../AppContext";
 import { loadSettingsContent } from "../../lazyChunks";
@@ -33,6 +34,26 @@ import { Spinner } from "../ui/Spinner";
 const SettingsContent = lazy(() =>
   loadSettingsContent().then((m) => ({ default: m.SettingsContent })),
 );
+
+/**
+ * The drawer's inner column.
+ *
+ * `width: 100%` is load-bearing, not belt-and-braces. The panel is a
+ * column flex container, and auto cross-axis margins on a flex item
+ * suppress the default stretch — so without a width this box sized to its
+ * *content*: narrow while the spinner was all it held, then widening to
+ * the 680 cap as the rows arrived, dragging the header out with it.
+ *
+ * Exported so `SettingsDrawer.layout.test.tsx` asserts against this object
+ * rather than a copy of it — the failure it guards against is precisely
+ * someone deleting the width as redundant.
+ */
+export const SETTINGS_COLUMN: React.CSSProperties = {
+  width: "100%",
+  maxWidth: 680,
+  margin: "0 auto",
+  padding: "40px 48px",
+};
 
 export function SettingsDrawer() {
   const { settingsOpen, closeSettings } = useAppState();
@@ -79,20 +100,7 @@ export function SettingsDrawer() {
           animation: "slideInRight 180ms ease-out",
         }}
       >
-        {/* `width: 100%` is load-bearing, not belt-and-braces. The panel
-            is a column flex container, and auto cross-axis margins on a
-            flex item suppress the default stretch — so without a width
-            this box sized to its *content*: narrow while the spinner was
-            all it held, then widening to the 680 cap as the rows arrived,
-            dragging the header out with it. That was the jump. */}
-        <div
-          style={{
-            width: "100%",
-            maxWidth: 680,
-            margin: "0 auto",
-            padding: "40px 48px",
-          }}
-        >
+        <div style={SETTINGS_COLUMN}>
           {/* The header is chrome, not content: it names the drawer and
               offers the way out, both of which have to be there from the
               first frame rather than after a load. */}

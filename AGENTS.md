@@ -268,10 +268,29 @@ give each half a test asserting they are independent.
 | Rust unit | Solver maths, parsers, catalogs, DTO shape and gating | Beside the code, `#[cfg(test)]` |
 | Pure TS | Decisions, formatting, preference migration, geometry | `*.test.ts`, `environment: node` |
 | Component | What the user actually reads: which elements render, what dismisses, what is offered | `*.test.tsx` with `@vitest-environment jsdom` |
+| Layout | Boxes: a width that must not depend on its content, a row that must fit its own second line | `*.layout.test.tsx`, real Chromium |
 
 Component tests need the `@vitest-environment jsdom` docblock; without it
 they run in Node and fail on `document`. Cleanup is automatic
 (`src/test-setup.ts`).
+
+**Layout tests run in a browser because jsdom performs none.** It answers
+every question about width, height or overflow with a zero, so a box that
+sizes to its content instead of its declaration is invisible to the other
+three layers — two such bugs reached users before this layer existed.
+`*.layout.test.tsx` files run under the `layout` project against real
+Chromium (`just test-layout`; `just setup-layout-tests` fetches the
+browser once). They load `app.css`, because layout is a product of the
+cascade: without the global `border-box` reset a column declared 680px
+wide measures 776.
+
+Keep this layer small and keep it measuring *numbers about elements*.
+Screenshot diffing is deliberately not done: font rasterisation differs
+between a developer's machine and CI, so image baselines churn without
+catching much, while "this box is 680px wide whatever it holds" is stable
+and says exactly what broke. Assert against the component's own exported
+styles rather than a copy — `SETTINGS_COLUMN` exists so its test cannot
+drift from what ships.
 
 **Cross-boundary invariants get a test on each side.** The Rust DTO and the
 TypeScript interface are hand-mirrored, so a claim that matters on both
@@ -279,6 +298,7 @@ sides (an engine publishes a catalog but does not serve generic periods)
 is asserted in both places. Neither test alone would have caught the drift.
 
 **Not currently covered, and known:** no end-to-end test drives the real
-Tauri shell, and nothing checks appearance — a purely visual regression
-(a stray gradient, a wrong colour) will not be caught by any test here.
+Tauri shell, and nothing checks *appearance* — the layout layer measures
+geometry, so a stray gradient or a wrong colour still passes everything
+here.
 

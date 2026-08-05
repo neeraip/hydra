@@ -83,12 +83,16 @@ export function SettingRow({
           the real control cannot move anything — not the label, and not
           the line a description wraps at.
 
-          Sized in `em` rather than pixels so it grows with the text scale;
-          a fixed lane would clip the theme buttons at the larger steps. */}
+          Sized in `em` so it grows with the text scale — a fixed lane
+          would clip the theme buttons at the larger steps. 17em against
+          the app's 14px base is ~238px, comfortably past the widest
+          control (the three theme buttons, ~210px); the layout test holds
+          that margin, since a lane narrower than its widest control is a
+          lane that only sometimes works. */}
       <div
         style={{
           flexShrink: 0,
-          minWidth: "14em",
+          minWidth: "17em",
           display: "flex",
           justifyContent: "flex-end",
         }}
