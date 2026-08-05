@@ -28,6 +28,7 @@ import { lazy, Suspense, useEffect } from "react";
 import { useAppState } from "../../AppContext";
 import { loadSettingsContent } from "../../lazyChunks";
 import { ModalBackdrop, stopBackdropEvents } from "../ui/ModalBackdrop";
+import { SettingsSkeleton } from "./SettingsSkeleton";
 
 const SettingsContent = lazy(() =>
   loadSettingsContent().then((m) => ({ default: m.SettingsContent })),
@@ -135,10 +136,10 @@ export function SettingsDrawer() {
           >
             Appearance, accessibility, and maintenance tools.
           </p>
-          {/* Reserves the height a settings row occupies rather than
-              collapsing to nothing, so the arriving content does not shove
-              the header up the screen. */}
-          <Suspense fallback={<div style={{ minHeight: 320 }} />}>
+          {/* The real layout with only the controls standing in, so the
+              headings and rows are already where they will be and the
+              arriving content fills them rather than displacing them. */}
+          <Suspense fallback={<SettingsSkeleton />}>
             <SettingsContent />
           </Suspense>
         </div>

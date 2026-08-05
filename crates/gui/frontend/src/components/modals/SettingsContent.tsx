@@ -14,6 +14,7 @@ import {
   useUnitPreference,
 } from "../../units";
 import { Toggle } from "../ui/Toggle";
+import { Section, SettingRow } from "./SettingsPrimitives";
 
 /** Matches the `inputStyle` the editors use for their selects, so a
  * dropdown looks the same wherever it appears. */
@@ -45,74 +46,6 @@ function getBool(key: string, fallback: boolean): boolean {
 /** Section heading. A real `<h2>` rather than a styled div: the page has one
  * `<h1>` and seven visually obvious groups, none of which existed for a
  * screen reader navigating by heading. */
-function Section({ children }: { children: React.ReactNode }) {
-  return (
-    <h2
-      style={{
-        // The element's own defaults would fight the type scale below.
-        margin: 0,
-        marginTop: 32,
-        marginBottom: 2,
-        fontSize: "var(--text-sm)",
-        fontWeight: 600,
-        letterSpacing: "0.08em",
-        textTransform: "uppercase",
-        color: "var(--text-tertiary)",
-      }}
-    >
-      {children}
-    </h2>
-  );
-}
-
-function SettingRow({
-  label,
-  description,
-  children,
-}: {
-  label: string;
-  description?: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <div
-      style={{
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "space-between",
-        padding: "12px 0",
-        borderBottom: "1px solid var(--border)",
-        gap: 24,
-      }}
-    >
-      <div>
-        <div
-          style={{
-            fontSize: "var(--text-lg)",
-            color: "var(--text-primary)",
-            fontWeight: 500,
-          }}
-        >
-          {label}
-        </div>
-        {description && (
-          <div
-            style={{
-              fontSize: "var(--text-md)",
-              color: "var(--text-secondary)",
-              marginTop: 2,
-              lineHeight: 1.5,
-            }}
-          >
-            {description}
-          </div>
-        )}
-      </div>
-      <div style={{ flexShrink: 0 }}>{children}</div>
-    </div>
-  );
-}
-
 function ThemeToggle() {
   const { theme, setTheme } = useAppState();
   return (
