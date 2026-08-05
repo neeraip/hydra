@@ -51,7 +51,7 @@ import { UnitSystemPicker } from "./UnitSystemPicker";
 
    Layout (left → right):
      [Scenarios ▸ 🔍] [Base pill] [variant] → [summary] │ [variant] → [active
-     path… → ▾ stub]   [units] | [Simulate ▸ ⚙]
+     path… → ▾ stub] │ [units] │ [Simulate ▸ ⚙]
 
    The Scenarios split button leads rather than trails: it names the strip
    that follows, the way a section heading does, and the strip is the part
@@ -810,22 +810,19 @@ export function ProjectToolbar() {
         </div>
       )}
 
-      {/* Display units — grouped with the scenario controls because both
-          answer "what am I looking at", and deliberately not beside
-          Simulate, where it would read as "run in these units". */}
-      <UnitSystemPicker />
+      {/* Display units — a group of one, flanked rather than attached.
+          It is neither a scenario control nor a run control, and it began
+          pressed against the divider below, where equal spacing next to
+          Simulate read as "run in these units". Both dividers earn their
+          place: the bar holds three different kinds of thing — which data,
+          how it is shown, and act — not two.
 
-      {/* Divider separating scenario controls from the run controls.
-          marginLeft: auto pushes this + the split button to the far right. */}
-      <span
-        style={{
-          width: 1,
-          height: 22,
-          background: "var(--border)",
-          flexShrink: 0,
-          marginLeft: "auto",
-        }}
-      />
+          This divider carries the `marginLeft: auto`, so the whole
+          right-hand cluster is pushed over when there is no lineage strip
+          to fill the middle. */}
+      <ToolbarDivider style={{ marginLeft: "auto" }} />
+      <UnitSystemPicker />
+      <ToolbarDivider />
 
       {/* Split Simulate button — left segment runs; right (gear) segment opens
           the simulation-settings modal. */}
@@ -874,6 +871,22 @@ export function ProjectToolbar() {
         </PrimaryButton>
       </div>
     </div>
+  );
+}
+
+/** A hairline separating one group of toolbar controls from the next. */
+function ToolbarDivider({ style }: { style?: React.CSSProperties }) {
+  return (
+    <span
+      aria-hidden
+      style={{
+        width: 1,
+        height: 22,
+        background: "var(--border)",
+        flexShrink: 0,
+        ...style,
+      }}
+    />
   );
 }
 
