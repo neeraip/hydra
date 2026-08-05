@@ -811,6 +811,17 @@ export function NetworkInspectorHome({
                   <button
                     type="button"
                     onClick={() => select(row)}
+                    // Select on click, zoom on double-click — the file-list
+                    // idiom, where opening is what you do to the thing you
+                    // just picked.
+                    //
+                    // The click is *not* suppressed while waiting to see
+                    // whether a second one follows: that would put ~250ms
+                    // of latency on every selection to serve the rarer
+                    // gesture. Selecting is idempotent, so the pair simply
+                    // reads as "select, then zoom to it" — which is what
+                    // the double-click meant anyway.
+                    onDoubleClick={zoomable ? () => zoomTo(row) : undefined}
                     style={{
                       width: "100%",
                       height: "100%",
