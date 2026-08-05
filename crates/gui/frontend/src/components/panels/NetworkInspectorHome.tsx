@@ -47,6 +47,7 @@ import type { Region } from "../../types";
 import { toDisplay, unitLabel, useUnitSystem } from "../../units";
 import { MiddleTruncate } from "../ui/MiddleTruncate";
 import { TypeBadge } from "../ui/TypeBadge";
+import { activeElement, activeKey, isActiveRow } from "./activeElement";
 
 const ROW_HEIGHT = 27;
 
@@ -462,23 +463,27 @@ export function NetworkInspectorHome({
     overscan: 12,
   });
 
-  const activeId = activeNodeId ?? activeLinkId ?? activeRegionId ?? null;
+  // Class *and* id: an element id is unique only within its class, so a
+  // junction and a pipe may both be called "2".
+  const active = activeElement(activeNodeId, activeLinkId, activeRegionId);
+  const activeScrollKey = activeKey(active);
 
   // Selection arriving from the canvas scrolls its row into view. Keyed on
-  // the id alone: re-running on every list identity would fight the user's
-  // own scrolling on each timeline scrub.
+  // the selected element rather than the whole list: re-running on every
+  // list identity would fight the user's own scrolling on each timeline
+  // scrub.
   const lastScrolledTo = useRef<string | null>(null);
   useEffect(() => {
-    if (activeId == null) {
+    if (active == null || activeScrollKey == null) {
       lastScrolledTo.current = null;
       return;
     }
-    if (lastScrolledTo.current === activeId) return;
-    const index = visible.findIndex((r) => r.id === activeId);
+    if (lastScrolledTo.current === activeScrollKey) return;
+    const index = visible.findIndex((r) => isActiveRow(r, active));
     if (index < 0) return;
-    lastScrolledTo.current = activeId;
+    lastScrolledTo.current = activeScrollKey;
     rowVirtualizer.scrollToIndex(index, { align: "auto" });
-  }, [activeId, visible, rowVirtualizer]);
+  }, [active, activeScrollKey, visible, rowVirtualizer]);
 
   /** Hovering a row lights the element up on the canvas, exactly as
    * hovering the element itself does. */
@@ -700,7 +705,7 @@ export function NetworkInspectorHome({
           >
             {rowVirtualizer.getVirtualItems().map((v) => {
               const row = visible[v.index];
-              const isActive = row.id === activeId;
+              const isActive = isActiveRow(row, active);
               const zoomable = canZoomTo(row);
               // Probed per rendered row — the virtualizer keeps that to a
               // couple of dozen. The selected row never dims: having panned

@@ -134,7 +134,12 @@ export function StatusBar() {
       {/* Selected element — a quick read-out of the current canvas selection */}
       {project && (selectedNodeId || selectedLinkId) && (
         <Pill title={`Selected ${selectedNodeId ? "node" : "link"}`}>
-          <span style={{ color: "var(--text-tertiary)" }}>Selected</span>
+          {/* Names the class, not just "Selected": an element id is unique
+              only within its class, so a bare "2" does not say whether the
+              junction or the pipe of that name is in hand. */}
+          <span style={{ color: "var(--text-tertiary)" }}>
+            {selectedNodeId ? "Selected node" : "Selected link"}
+          </span>
           <span
             style={{
               marginLeft: 6,
