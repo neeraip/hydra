@@ -76,6 +76,12 @@
   --border: rgba(255, 255, 255, 0.07);
   --border-hover: rgba(255, 255, 255, 0.13);
   --border-focus: rgba(205, 211, 223, 0.55);
+  /* Colour for cast shadows. Deliberately *not* --border-focus: a focus
+     ring has to contrast with the background and so is near-white on a
+     dark theme, while a shadow has to be darker than what it falls on.
+     Sharing one token gave the primary button a white glow in dark and a
+     shadow in light. */
+  --shadow-key: rgba(0, 0, 0, 0.5);
 
   /* Text */
   --text-primary: #e2e2ec;
@@ -147,6 +153,7 @@
   --border: rgba(23, 33, 55, 0.09);
   --border-hover: rgba(23, 33, 55, 0.16);
   --border-focus: rgba(42, 49, 64, 0.5);
+  --shadow-key: rgba(0, 0, 0, 0.16);
 
   --text-primary: #14213a;
   --text-secondary: #4a536a;
@@ -214,6 +221,7 @@
   --border: rgba(255, 255, 255, 0.18);
   --border-hover: rgba(255, 255, 255, 0.3);
   --border-focus: rgba(232, 236, 244, 0.85);
+  --shadow-key: rgba(0, 0, 0, 0.7);
   --text-secondary: #b4b4cc;
   --text-tertiary: #8a8aa8;
   --status-success: #4dc98a;
@@ -225,6 +233,7 @@
   --border: rgba(23, 33, 55, 0.22);
   --border-hover: rgba(23, 33, 55, 0.38);
   --border-focus: rgba(46, 114, 194, 0.8);
+  --shadow-key: rgba(0, 0, 0, 0.28);
   --text-secondary: #2e3c56;
   --text-tertiary: #4e6080;
 }
@@ -1020,7 +1029,7 @@ body,
 .btn-run {
   background: linear-gradient(135deg, #4a90d9 0%, #2f6dba 100%);
   box-shadow:
-    0 2px 8px var(--border-focus),
+    0 2px 8px var(--shadow-key),
     inset 0 1px 0 rgba(255, 255, 255, 0.1);
   color: #fff;
   border: none;
@@ -1039,13 +1048,13 @@ body,
 }
 .btn-run:hover {
   box-shadow:
-    0 4px 16px var(--border-focus),
+    0 6px 18px var(--shadow-key),
     inset 0 1px 0 rgba(255, 255, 255, 0.14);
   transform: translateY(-1px);
 }
 .btn-run:active {
   transform: translateY(0);
-  box-shadow: 0 1px 4px var(--border-focus);
+  box-shadow: 0 1px 4px var(--shadow-key);
 }
 /* Without this a disabled primary button is pixel-identical to an enabled
    one and simply ignores clicks — the wizard's "Next" is disabled until a
@@ -1079,7 +1088,7 @@ body,
 }
 .btn-run--outline:hover {
   background: var(--accent-dim);
-  box-shadow: 0 2px 8px var(--border-focus);
+  box-shadow: 0 2px 8px var(--shadow-key);
 }
 
 /* ── Custom range input (timeline scrubber) ──────────────────────────────────*/
@@ -1125,6 +1134,13 @@ input[type="range"]::-moz-range-track {
   height: 4px;
   background: var(--border-hover);
   border-radius: 2px;
+}
+
+/* The CRS picker's rows are labels wrapping an off-screen radio, so the
+   focus ring has to come from the row rather than from the control. */
+.crs-row:focus-within {
+  outline: 2px solid var(--border-focus);
+  outline-offset: -2px;
 }
 
 /* ── Canvas background ───────────────────────────────────────────────────────*/
