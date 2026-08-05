@@ -79,7 +79,20 @@ export function SettingsDrawer() {
           animation: "slideInRight 180ms ease-out",
         }}
       >
-        <div style={{ maxWidth: 680, margin: "0 auto", padding: "40px 48px" }}>
+        {/* `width: 100%` is load-bearing, not belt-and-braces. The panel
+            is a column flex container, and auto cross-axis margins on a
+            flex item suppress the default stretch — so without a width
+            this box sized to its *content*: narrow while the spinner was
+            all it held, then widening to the 680 cap as the rows arrived,
+            dragging the header out with it. That was the jump. */}
+        <div
+          style={{
+            width: "100%",
+            maxWidth: 680,
+            margin: "0 auto",
+            padding: "40px 48px",
+          }}
+        >
           {/* The header is chrome, not content: it names the drawer and
               offers the way out, both of which have to be there from the
               first frame rather than after a load. */}
