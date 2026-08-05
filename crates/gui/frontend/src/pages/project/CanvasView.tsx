@@ -18,6 +18,7 @@ import {
 } from "../../canvas/GenericLegend";
 import type { ScaleMode } from "../../canvas/legend-primitives";
 import { MapCanvas } from "../../canvas/MapCanvas";
+import { wdsBandColors } from "../../canvas/MapCanvas/colorUtils";
 import type { MeasurePoint } from "../../canvas/measureSnap";
 import { usePublishCurrentPeriod } from "../../canvas/period-context";
 import {
@@ -1634,6 +1635,78 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
     ],
   );
 
+  /**
+   * The ranges the wds canvas and legend scale against.
+   *
+   * The catalog-driven path rescales itself per period inside
+   * `genericCanvas`; wds colours from these fixed props instead, so
+   * without this the scale control was offered and did nothing — the
+   * ramp and its numbers were the run's range at every step.
+   *
+   * `periodRange` supplies the guard: a period whose span is a sliver of
+   * the run's keeps the run's range, so a near-uniform field is not
+   * amplified into a picture of its own rounding.
+   */
+  const wdsPeriodRange = useCallback(
+    (
+      values: Float32Array | null | undefined,
+      runMin: number,
+      runMax: number,
+    ) =>
+      scaleMode === "step" && currentPeriodResult
+        ? periodRange(values ?? null, runMin, runMax)
+        : { min: runMin, max: runMax },
+    [scaleMode, currentPeriodResult],
+  );
+
+  const wdsRanges = useMemo(() => {
+    const r = stableResultMeta?.ranges;
+    const pr = currentPeriodResult;
+    const head = wdsPeriodRange(
+      pr?.nodeHead,
+      r?.headMin ?? 0,
+      r?.headMax ?? 100,
+    );
+    const demand = wdsPeriodRange(
+      pr?.nodeDemand,
+      r?.demandMin ?? 0,
+      r?.demandMax ?? 1,
+    );
+    const pressure = wdsPeriodRange(
+      pr?.nodePressure,
+      r?.pressureMin ?? 0,
+      r?.pressureMax ?? 100,
+    );
+    const flow = wdsPeriodRange(pr?.linkFlow, r?.flowMin ?? 0, r?.flowMax ?? 1);
+    const velocity = wdsPeriodRange(
+      pr?.linkVelocity,
+      r?.velocityMin ?? 0,
+      r?.velocityMax ?? 1.5,
+    );
+    const quality = wdsPeriodRange(
+      pr?.nodeQuality,
+      r?.qualityMin ?? 0,
+      r?.qualityMax ?? 1,
+    );
+    return { head, demand, pressure, flow, velocity, quality };
+  }, [stableResultMeta, currentPeriodResult, wdsPeriodRange]);
+
+  /** The selected variable's range, for the legend's numbers. */
+  const wdsRangeFor = useCallback(
+    (id: string) => {
+      const byId: Record<string, { min: number; max: number } | undefined> = {
+        pressure: wdsRanges.pressure,
+        head: wdsRanges.head,
+        demand: wdsRanges.demand,
+        flow: wdsRanges.flow,
+        velocity: wdsRanges.velocity,
+        quality: wdsRanges.quality,
+      };
+      return byId[id];
+    },
+    [wdsRanges],
+  );
+
   // ── Per-engine legend affordances ─────────────────────────────────────────
   // Supplied to the shared legend rather than branched on inside it. An
   // engine with no criteria bands, no locatable extremes, or no animatable
@@ -2242,13 +2315,16 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
                 onSelectLink={handleSelectLink}
                 selectedRegionId={selectedRegionId}
                 onSelectRegion={selectRegion}
-                headMin={stableResultMeta?.ranges.headMin ?? 0}
-                headMax={stableResultMeta?.ranges.headMax ?? 100}
-                demandMin={stableResultMeta?.ranges.demandMin ?? 0}
-                demandMax={stableResultMeta?.ranges.demandMax ?? 1}
-                flowMax={stableResultMeta?.ranges.flowMax ?? 1}
-                qualityMin={stableResultMeta?.ranges.qualityMin ?? 0}
-                qualityMax={stableResultMeta?.ranges.qualityMax ?? 1}
+                headMin={wdsRanges.head.min}
+                headMax={wdsRanges.head.max}
+                demandMin={wdsRanges.demand.min}
+                demandMax={wdsRanges.demand.max}
+                flowMax={wdsRanges.flow.max}
+                qualityMin={wdsRanges.quality.min}
+                qualityMax={wdsRanges.quality.max}
+                pressureMin={wdsRanges.pressure.min}
+                pressureMax={wdsRanges.pressure.max}
+                velocityMax={wdsRanges.velocity.max}
                 colorMode={scaleMode === "criteria" ? "threshold" : "relative"}
                 pressureThresholds={thresholds.pressure}
                 velocityThresholds={thresholds.velocity}
@@ -2285,12 +2361,23 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
               scaleMode={scaleMode}
               onScaleModeChange={setScaleMode}
               effectiveRanges={{
-                point: genericCanvas?.node?.variable,
-                polyline: genericCanvas?.link?.variable,
+                // The catalog path carries its own rescaled variable; wds
+                // scales through the props above, so its numbers come from
+                // the same derivation the map is painted with.
+                point:
+                  genericCanvas?.node?.variable ??
+                  wdsRangeFor(genericSelection.point || nodeVar),
+                polyline:
+                  genericCanvas?.link?.variable ??
+                  wdsRangeFor(genericSelection.polyline || linkVar),
                 region: genericCanvas?.region?.variable,
               }}
               criteriaVariables={criteriaVariables}
               criteriaAnnotation={criteriaAnnotation}
+              // The verdict's colours describe the map only while the map
+              // is showing the verdict; in the data-range modes these
+              // variables are painted as plain magnitudes.
+              bandColors={scaleMode === "criteria" ? wdsBandColors : () => null}
               onLocateExtreme={
                 currentPeriodResult ? handleLocateExtreme : undefined
               }

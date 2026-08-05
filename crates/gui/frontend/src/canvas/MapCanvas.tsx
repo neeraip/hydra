@@ -170,20 +170,32 @@ const IDENTITY_SCALE = { x: 1, y: 1 } as const;
 // layers built in buildLayers. Alphas/widths/radius pads are visual tuning —
 // the layer ids derived from these suffixes must stay stable (deck.gl matches
 // layers by id).
+// Hover halo. Achromatic on purpose, for the same reason the measure
+// highlight below is: a halo tinted with the element's own colour separates
+// by hue, and there is no hue an element cannot already be.
+//
+// It failed asymmetrically, which is why it survived. Around a thin link a
+// same-coloured halo is many times the line's width and reads fine; around
+// a filled disc it is a narrow annulus in the disc's own colour, at 7–27%
+// alpha, on a map where those discs sit shoulder to shoulder — invisible.
+// One interaction should not look like two, so both use the rim.
+const HOVER_HALO_RGB: [number, number, number] = [226, 232, 242];
 const LINK_HOVER_GLOW = [
-  { suffix: "outer", alpha: 20, width: 18 },
-  { suffix: "mid", alpha: 50, width: 9 },
-  { suffix: "inner", alpha: 90, width: 4 },
+  { suffix: "outer", alpha: 20, width: 18, rgb: HOVER_HALO_RGB },
+  { suffix: "mid", alpha: 60, width: 9, rgb: HOVER_HALO_RGB },
+  { suffix: "inner", alpha: 110, width: 4, rgb: HOVER_HALO_RGB },
 ];
 const LINK_SELECTION_GLOW = [
   { suffix: "outer", alpha: 40, width: 22 },
   { suffix: "mid", alpha: 90, width: 10 },
   { suffix: "inner", alpha: 170, width: 5 },
 ];
+// Alphas above the link's: a node's halo is only the annulus outside its
+// own radius, so less of it is visible for the same nominal strength.
 const NODE_HOVER_GLOW = [
-  { suffix: "outer", alpha: 18, radiusPad: 14 },
-  { suffix: "mid", alpha: 40, radiusPad: 8 },
-  { suffix: "inner", alpha: 70, radiusPad: 4 },
+  { suffix: "outer", alpha: 45, radiusPad: 14, rgb: HOVER_HALO_RGB },
+  { suffix: "mid", alpha: 95, radiusPad: 8, rgb: HOVER_HALO_RGB },
+  { suffix: "inner", alpha: 150, radiusPad: 4, rgb: HOVER_HALO_RGB },
 ];
 const NODE_SELECTION_GLOW = [
   { suffix: "outer", alpha: 35, radiusPad: 18 },
@@ -336,6 +348,11 @@ interface MapCanvasProps {
   velocityThresholds?: { low: number; target: number; high: number };
   /** Custom flow-magnitude thresholds used when colorMode is "threshold". */
   flowThresholds?: { low: number; target: number; high: number };
+  /** Run ranges for the magnitude ramps pressure and velocity take when the
+   * reader has not asked for the verdict. */
+  pressureMin?: number;
+  pressureMax?: number;
+  velocityMax?: number;
   /** Active canvas tool; affects cursor and interaction mode. */
   tool?: CanvasTool;
   /** Called (after mouseup) when the user drags a node to a new position.
@@ -428,6 +445,9 @@ export const MapCanvas = memo(function MapCanvas({
   pressureThresholds,
   velocityThresholds,
   flowThresholds,
+  pressureMin = 0,
+  pressureMax = 100,
+  velocityMax = 1.5,
   tool = "select",
   onNodeMoved,
   onCreateNodeRequest,
@@ -1285,6 +1305,8 @@ export const MapCanvas = memo(function MapCanvas({
         qualityMax,
         pressThresh,
         role,
+        pressureMin,
+        pressureMax,
       );
     };
     const linkColor = (d: (typeof linkData)[number]): RGBA => {
@@ -1310,6 +1332,7 @@ export const MapCanvas = memo(function MapCanvas({
         flowThresh,
         qualityMin,
         qualityMax,
+        velocityMax,
       );
     };
 
@@ -2216,6 +2239,9 @@ export const MapCanvas = memo(function MapCanvas({
     pressureThresholds,
     velocityThresholds,
     flowThresholds,
+    pressureMin,
+    pressureMax,
+    velocityMax,
     measurePoints,
     schematicLayout,
   ]);

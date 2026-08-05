@@ -46,6 +46,7 @@ import {
   bandedGradientCss,
   categoryRgba,
   divergingGradientCss,
+  hardStopGradient,
   sequentialGradientCss,
 } from "./MapCanvas/colorUtils";
 
@@ -57,8 +58,24 @@ export type GenericSelection = Record<GenericClassKey, string>;
 /** CSS gradient for a ramp hint, sampled from the ramp functions themselves
  * rather than restated here — the legend cannot drift from the map if it is
  * drawn from the same code. */
-function rampGradient(ramp: GenericVariable["ramp"], cls: string): string {
+function rampGradient(
+  ramp: GenericVariable["ramp"],
+  cls: string,
+  /** The colours this variable is actually painted in, when the caller
+   * knows them. Banded variables are not painted alike across engines,
+   * and assuming one palette is how the legend came to advertise an
+   * orange scale over a map of reds, greens and blues. */
+  bands?: readonly string[] | null,
+): string {
+  if (ramp.type === "banded" && bands && bands.length > 0) {
+    return hardStopGradient(bands);
+  }
   if (ramp.type === "diverging") return divergingGradientCss();
+  // A banded variable the caller supplied no colours for is not being
+  // judged right now — it is painted as a magnitude, and the legend says
+  // so rather than showing bands the map is not using.
+  if (ramp.type === "banded" && bands === null)
+    return sequentialGradientCss(cls);
   if (ramp.type === "banded") return bandedGradientCss();
   if (ramp.type === "categorical") {
     // Hard stops, so the swatch reads as a set of states rather than a
@@ -147,6 +164,7 @@ export function GenericLegend({
   effectiveRanges,
   criteriaVariables,
   criteriaAnnotation,
+  bandColors,
   onLocateExtreme,
   animation,
   detailsOpen,
@@ -175,6 +193,9 @@ export function GenericLegend({
    * legend displays criteria; it does not author them (they are project
    * analysis inputs, edited in Analysis). */
   criteriaAnnotation?: (variableId: string) => string | null;
+  /** The colours a banded variable is actually painted in, ascending, or
+   * null to use the shared banded ramp. */
+  bandColors?: (variableId: string) => string[] | null;
   onLocateExtreme?: (cls: GenericClassKey, which: "min" | "max") => void;
   animation?: AnimationControl;
   /** Whether the ramp popover is showing. Owned by the caller so it
@@ -330,7 +351,7 @@ export function GenericLegend({
                 ) : (
                   <>
                     <Ramp
-                      gradient={rampGradient(v.ramp, c.key)}
+                      gradient={rampGradient(v.ramp, c.key, bandColors?.(v.id))}
                       min={formatGenericValue(
                         range.min,
                         v.quantity,
@@ -400,7 +421,11 @@ export function GenericLegend({
                   width: 28,
                   height: 5,
                   borderRadius: 3,
-                  background: rampGradient(selected(c).ramp, c.key),
+                  background: rampGradient(
+                    selected(c).ramp,
+                    c.key,
+                    bandColors?.(selected(c).id),
+                  ),
                 }}
               />
             ))}

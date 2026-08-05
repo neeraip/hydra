@@ -130,17 +130,58 @@ export function qualityRgba(normalised: number, cls = "point"): RGBA {
 
 // ── Node variable colour functions ────────────────────────────────────────────
 
+/**
+ * How far out of specification a value sits — the shape a criteria-banded
+ * variable actually has.
+ *
+ * Not a magnitude. Pressure's desirable state is a *middle*: too little is
+ * under-service, too much risks bursts and leakage, and a ramp running
+ * monotonically from "fine" to "bad" cannot say that. So the scale is a
+ * verdict — compliant is quiet, and departing the band in either direction
+ * escalates.
+ *
+ * It borrows the severity language the engines already use for categorical
+ * states (§6.1), so "compliant / caution / alarm" means one thing across
+ * the application whether it describes a pump's status or a junction's
+ * pressure.
+ */
+export type Verdict = "nominal" | "caution" | "alarm";
+
+export function verdictRgba(v: Verdict, alpha = 255): RGBA {
+  return [...SEVERITY_RGB[v], alpha];
+}
+
+/** Under-service is the failure; over-pressure is worth noticing. */
+export function pressureVerdict(
+  p: number,
+  bands: { low: number; required: number; high: number },
+): Verdict {
+  if (p < bands.low) return "alarm";
+  if (p < bands.required) return "caution";
+  if (p < bands.high) return "nominal";
+  return "caution";
+}
+
+/** Stagnation is worth noticing; scour and headloss are the failure. */
+export function velocityVerdict(
+  v: number,
+  bands: { low: number; target: number; high: number },
+): Verdict {
+  if (v < bands.low) return "caution";
+  if (v < bands.high) return "nominal";
+  return "alarm";
+}
+
 export function pressureRgba(
   p: number,
   thresholds?: { low: number; required: number; high: number },
 ): RGBA {
-  const low = thresholds?.low ?? PRESSURE_THRESHOLD;
-  const req = thresholds?.required ?? 35;
-  const high = thresholds?.high ?? 45;
-  if (p < low) return [201, 64, 64, 255];
-  if (p < req) return [212, 160, 23, 255];
-  if (p < high) return [61, 175, 117, 255];
-  return [74, 144, 217, 255];
+  const bands = {
+    low: thresholds?.low ?? PRESSURE_THRESHOLD,
+    required: thresholds?.required ?? 35,
+    high: thresholds?.high ?? 45,
+  };
+  return verdictRgba(pressureVerdict(p, bands), 255);
 }
 
 /**
@@ -187,17 +228,29 @@ export function nodeRgba(
   demandMax: number,
   qualityMin: number,
   qualityMax: number,
+  /**
+   * Criteria bands, supplied **only** when the reader has asked to see the
+   * verdict. Their presence is what selects a judgement over a magnitude:
+   * the model carries no required service pressure, so painting one by
+   * default would render a policy nobody had affirmed.
+   */
   pressureThresh?: { low: number; required: number; high: number },
   /** The kind's declared role (spec §4.3), for kinds that carry no value
    * of the active variable and so show the network-at-rest palette. */
   role?: string,
+  /** Run range for the magnitude ramp pressure takes when unjudged. */
+  pressureMin = 0,
+  pressureMax = 100,
 ): RGBA {
   if (node.type !== "junction") return baseNodeRgba(role);
   switch (nodeVar) {
     case "pressure":
-      return node.pressure != null
+      if (node.pressure == null) return [...NO_DATA_RGB, 190];
+      // Unjudged, pressure is just a quantity, and reads like every other
+      // quantity on the map.
+      return pressureThresh
         ? pressureRgba(node.pressure, pressureThresh)
-        : [...NO_DATA_RGB, 190];
+        : sequentialRgba(node.pressure, pressureMin, pressureMax);
     case "head":
       return sequentialRgba(node.head, headMin, headMax);
     case "demand":
@@ -432,18 +485,16 @@ export function genericRgba(
 export function velocityRgba(
   v: number,
   thresholds?: { low: number; target: number; high: number },
+  max = 1.5,
 ): RGBA {
-  // Thresholded velocity is a judgement, so it speaks the banded ramp's
-  // language rather than a second warm palette of its own.
-  if (thresholds) {
-    if (v < thresholds.low) return [...BAND_STEPS[0], 220];
-    if (v < thresholds.target) return [...BAND_STEPS[2], 220];
-    if (v < thresholds.high) return [...BAND_STEPS[3], 220];
-    return [...BAND_STEPS[4], 220];
-  }
-  // Untresholded velocity is a magnitude, so it takes the sequential ramp
-  // — the same one head, depth and every generic magnitude uses.
-  return [...seqRgb(Math.min(v / 1.5, 1), "polyline"), 220];
+  // A thresholded velocity is a verdict, not a magnitude, and speaks the
+  // same severity language pressure does.
+  if (thresholds) return verdictRgba(velocityVerdict(v, thresholds), 220);
+  // Unjudged velocity is a magnitude, so it takes the sequential ramp —
+  // the same one head, depth and every generic magnitude uses. Scaled to
+  // the run rather than a fixed 1.5 m/s, so the ramp spends its range on
+  // the values this network actually reaches.
+  return [...seqRgb(Math.min(v / (max || 1.5), 1), "polyline"), 220];
 }
 
 /** Flow magnitude on the sequential ramp; the banded ramp where the user
@@ -549,10 +600,13 @@ export function linkRgba(
   link: Link,
   linkVar: LinkVariable,
   flowMax: number,
+  /** As with pressure: present only when the verdict was asked for. */
   velocityThresh?: { low: number; target: number; high: number },
   flowThresh?: { low: number; target: number; high: number },
   qualityMin = 0,
   qualityMax = 1,
+  /** Run range for the magnitude ramp velocity takes when unjudged. */
+  velocityMax = 1.5,
 ): RGBA {
   switch (linkVar) {
     case "flow":
@@ -561,7 +615,7 @@ export function linkRgba(
       // Absent (engine served no velocity) is unknown, not 0 m/s.
       return link.velocity == null
         ? NO_RESULT_RGBA
-        : velocityRgba(link.velocity, velocityThresh);
+        : velocityRgba(link.velocity, velocityThresh, velocityMax);
     case "status":
       return statusRgba(link.status);
     case "headloss":
@@ -607,9 +661,41 @@ export function divergingGradientCss(): string {
 
 /** The banded ramp as hard steps, one per band. */
 export function bandedGradientCss(): string {
-  const stops = BAND_STEPS.map(
-    (c, i) =>
-      `${css(c)} ${(i * 100) / BAND_STEPS.length}% ${((i + 1) * 100) / BAND_STEPS.length}%`,
+  return hardStopGradient(BAND_STEPS.map(css));
+}
+
+/** Equal hard-edged stops, for a scale whose values are classed rather
+ * than continuous — a gradient would imply a between that bands do not
+ * have. */
+export function hardStopGradient(colors: readonly string[]): string {
+  const n = colors.length || 1;
+  const stops = colors.map(
+    (c, i) => `${c} ${(i * 100) / n}% ${((i + 1) * 100) / n}%`,
   );
   return `linear-gradient(to right, ${stops.join(", ")})`;
+}
+
+/**
+ * The colours a thresholded wds variable is actually painted in, in
+ * ascending value order.
+ *
+ * The legend draws banded variables from this rather than assuming the
+ * generic band palette, because the two engines' banded variables are not
+ * painted alike: velocity speaks the shared banded ramp, while pressure
+ * still carries EPANET's service colours — under-served red through to
+ * ample blue. Assuming one palette is what let the legend advertise an
+ * orange scale over a map of reds, greens and blues.
+ */
+export function wdsBandColors(variableId: string): string[] | null {
+  const v = (x: Verdict) => css(SEVERITY_RGB[x]);
+  // Ascending value order, so the bar reads left to right the way its
+  // min/max labels do — which is what makes a non-monotonic verdict
+  // legible as a bar at all.
+  if (variableId === "pressure") {
+    return [v("alarm"), v("caution"), v("nominal"), v("caution")];
+  }
+  if (variableId === "velocity") {
+    return [v("caution"), v("nominal"), v("alarm")];
+  }
+  return null;
 }

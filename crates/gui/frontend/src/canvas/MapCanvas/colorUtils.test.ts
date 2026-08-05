@@ -21,6 +21,7 @@ import {
   statusLabel,
   statusRgba,
   velocityRgba,
+  verdictRgba,
 } from "./colorUtils";
 
 const RED = [201, 64, 64, 200];
@@ -100,15 +101,18 @@ describe("flowMagnitudeRgba", () => {
 });
 
 describe("velocityRgba", () => {
-  it("bands against thresholds when provided", () => {
+  // Thresholds mean the reader asked for the verdict, so the answer is a
+  // severity rather than a position on a scale: stagnation is worth
+  // noticing, and scour is the failure.
+  it("renders a verdict when thresholds are provided", () => {
     const thresholds = { low: 0.5, target: 1.0, high: 2.0 };
-    expect(velocityRgba(0.2, thresholds)).toEqual([...BAND_STEPS[0], 220]);
-    expect(velocityRgba(0.7, thresholds)).toEqual([...BAND_STEPS[2], 220]);
-    expect(velocityRgba(1.5, thresholds)).toEqual([...BAND_STEPS[3], 220]);
-    expect(velocityRgba(2.5, thresholds)).toEqual([...BAND_STEPS[4], 220]);
+    expect(velocityRgba(0.2, thresholds)).toEqual(verdictRgba("caution", 220));
+    expect(velocityRgba(0.7, thresholds)).toEqual(verdictRgba("nominal", 220));
+    expect(velocityRgba(1.5, thresholds)).toEqual(verdictRgba("nominal", 220));
+    expect(velocityRgba(2.5, thresholds)).toEqual(verdictRgba("alarm", 220));
     // Exact threshold values fall into the next band up (strict `<`).
-    expect(velocityRgba(0.5, thresholds)).toEqual([...BAND_STEPS[2], 220]);
-    expect(velocityRgba(2.0, thresholds)).toEqual([...BAND_STEPS[4], 220]);
+    expect(velocityRgba(0.5, thresholds)).toEqual(verdictRgba("nominal", 220));
+    expect(velocityRgba(2.0, thresholds)).toEqual(verdictRgba("alarm", 220));
   });
 
   it("takes the sequential ramp, capped at 1.5 m/s, without thresholds", () => {
@@ -307,19 +311,40 @@ describe("nodeRgba", () => {
     expect(baseNodeRgba(undefined)).toEqual(baseNodeRgba("conveyance"));
   });
 
-  it("colours junctions by pressure thresholds (default 24/35/45)", () => {
-    expect(rgbaOf(makeNode({ pressure: 10 }), "pressure")).toEqual([
-      201, 64, 64, 255,
-    ]); // below low
-    expect(rgbaOf(makeNode({ pressure: 30 }), "pressure")).toEqual([
-      212, 160, 23, 255,
-    ]); // low–required
-    expect(rgbaOf(makeNode({ pressure: 40 }), "pressure")).toEqual([
-      61, 175, 117, 255,
-    ]); // required–high
-    expect(rgbaOf(makeNode({ pressure: 50 }), "pressure")).toEqual([
-      74, 144, 217, 255,
-    ]); // above high
+  // The model carries no required service pressure — it is a regulatory
+  // and design input, and differs by jurisdiction, pressure zone and fire
+  // condition. So an unjudged map shows pressure as what it measurably is,
+  // a quantity, on the same ramp head and demand use. It used to render a
+  // verdict against defaults nobody had affirmed.
+  it("paints pressure as a magnitude when no bands are given", () => {
+    const low = rgbaOf(makeNode({ pressure: 10 }), "pressure");
+    const high = rgbaOf(makeNode({ pressure: 90 }), "pressure");
+    expect(low).toEqual(sequentialRgba(10, 0, 100));
+    expect(high).toEqual(sequentialRgba(90, 0, 100));
+    expect(low).not.toEqual(high);
+  });
+
+  // With bands, the reader has asked for the judgement. Under-service is
+  // the failure; over-pressure is worth noticing, so the scale is not
+  // monotonic — which is precisely why a magnitude ramp cannot express it.
+  it("renders a verdict when bands are given", () => {
+    const bands = { low: 24, required: 35, high: 45 };
+    const judged = (p: number) =>
+      nodeRgba(
+        makeNode({ pressure: p }),
+        "pressure",
+        0,
+        100,
+        0,
+        10,
+        0,
+        1,
+        bands,
+      );
+    expect(judged(10)).toEqual(verdictRgba("alarm"));
+    expect(judged(30)).toEqual(verdictRgba("caution"));
+    expect(judged(40)).toEqual(verdictRgba("nominal"));
+    expect(judged(50)).toEqual(verdictRgba("caution"));
   });
 
   it("marks a missing reading as missing, not as a resting element", () => {
