@@ -3,12 +3,32 @@ import { useAppState } from "../AppContext";
 import { Toggle } from "../components/ui/Toggle";
 import { getVersions, openDataFolder, type Versions } from "../hooks";
 import { useUpdater } from "../hooks/useUpdater";
-import { readTextScale, setTextScale, TEXT_SCALES } from "../textScale";
+import {
+  parseTextScale,
+  readTextScale,
+  setTextScale,
+  TEXT_SCALES,
+} from "../textScale";
 import {
   setUnitPreference,
   type UnitPreference,
   useUnitPreference,
 } from "../units";
+
+/** Matches the `inputStyle` the editors use for their selects, so a
+ * dropdown looks the same wherever it appears. */
+const SETTINGS_SELECT: React.CSSProperties = {
+  height: 28,
+  background: "var(--bg-input, var(--bg-card))",
+  border: "1px solid var(--border)",
+  borderRadius: 6,
+  padding: "0 8px",
+  color: "var(--text-primary)",
+  fontFamily: "var(--font-ui)",
+  fontSize: "var(--text-lg)",
+  cursor: "pointer",
+  outline: "none",
+};
 
 const SK = {
   reducedMotion: "hydra2-reduced-motion",
@@ -124,46 +144,34 @@ function ThemeToggle() {
   );
 }
 
-/** Segmented text-size control. Applies immediately — the whole app resizes
- * live, so the effect of each step is visible while choosing it, including on
- * this control's own labels. */
+/** Text-size control. Applies immediately — the whole app resizes live, so
+ * the effect of each step is visible while choosing it, including on this
+ * control's own label.
+ *
+ * A dropdown rather than the segmented buttons this used to be: four steps
+ * side by side crowded the row, and they grow with the very setting they
+ * set, so the widest choice made the control widest exactly when the user
+ * had least room. A closed list of ordered steps is what a select is for.
+ */
 function TextSizeToggle() {
   const [scale, setScale] = useState(readTextScale);
   return (
-    <div style={{ display: "flex", gap: 6 }}>
+    <select
+      aria-label="Text size"
+      value={String(scale)}
+      onChange={(e) => {
+        const next = parseTextScale(e.target.value);
+        setTextScale(next);
+        setScale(next);
+      }}
+      style={SETTINGS_SELECT}
+    >
       {TEXT_SCALES.map((option) => (
-        <button
-          type="button"
-          key={option.label}
-          onClick={() => {
-            setTextScale(option.value);
-            setScale(option.value);
-          }}
-          aria-pressed={scale === option.value}
-          style={{
-            padding: "5px 14px",
-            border: "1px solid",
-            borderColor:
-              scale === option.value ? "var(--accent)" : "var(--border-hover)",
-            borderRadius: 6,
-            background:
-              scale === option.value ? "var(--accent-dim)" : "transparent",
-            color:
-              scale === option.value
-                ? "var(--accent)"
-                : "var(--text-secondary)",
-            cursor: "pointer",
-            fontSize: "var(--text-lg)",
-            fontFamily: "var(--font-ui)",
-            fontWeight: scale === option.value ? 500 : 400,
-            transition: "all var(--t-fast)",
-            whiteSpace: "nowrap",
-          }}
-        >
+        <option key={option.label} value={String(option.value)}>
           {option.label}
-        </button>
+        </option>
       ))}
-    </div>
+    </select>
   );
 }
 
