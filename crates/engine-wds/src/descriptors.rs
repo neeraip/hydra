@@ -113,6 +113,10 @@ pub const QUANTITIES: &[QuantityDescriptor] = &[
     q("pressure", "m", "psi", 1.421_970_2, 1, 1),
     q("headloss", "m/km", "ft/kft", 1.0, 2, 1),
     q("volume", "m³", "gal", 264.172, 1, 0),
+    // Unitless but not dimensionless-anonymous: a pump efficiency and a
+    // valve's loss ratio are read as percentages, and a reader who is not
+    // told so cannot tell 0.85 from 85. Same in both systems.
+    q("percent", "%", "%", 1.0, 1, 1),
 ];
 
 /// Shorthand constructor keeping the table above readable.

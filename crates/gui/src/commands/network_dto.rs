@@ -153,8 +153,23 @@ pub struct PatternDto {
     pub multipliers: Vec<f64>,
 }
 
+/// One axis of a curve: what it measures, and in what.
+///
+/// Serialize-only, like every DTO that embeds an engine `QuantityDescriptor`
+/// (the descriptor is authored by the engine and only ever travels outward).
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CurveAxisDto {
+    /// Human label for this axis, e.g. "Flow" or "Surface area".
+    pub label: String,
+    /// §5 quantity for the values on this axis; absent = unitless, or a
+    /// curve whose purpose (and therefore units) the model never declares.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub quantity: Option<hydra::common::QuantityDescriptor>,
+}
+
 /// Serialisable curve sent to the frontend.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CurveDto {
     pub id: String,
@@ -164,9 +179,18 @@ pub struct CurveDto {
     /// ("pump-volume" is emitted for the engine's `PumpVolume` kind, but
     /// nothing can produce one — see that variant's own note.)
     pub kind: String,
-    /// x-axis values. Units depend on kind (flow L/s for pump curves).
+    /// What the two axes are, in order — `[x, y]`.
+    ///
+    /// Served rather than inferred by the reader, because what a curve's
+    /// axes *mean* depends on what the curve is for: a pump curve relates
+    /// flow to head, a tank curve level to volume, a PCV curve a valve
+    /// position to a loss ratio. The editor used to name every axis "flow"
+    /// and "head" and convert accordingly, which showed a tank's volume
+    /// curve in the wrong units under the wrong names.
+    pub axes: [CurveAxisDto; 2],
+    /// x-axis values, in the SI display unit of `axes[0].quantity`.
     pub x: Vec<f64>,
-    /// y-axis values. Units depend on kind (head m for pump-head curves).
+    /// y-axis values, in the SI display unit of `axes[1].quantity`.
     pub y: Vec<f64>,
 }
 
@@ -256,7 +280,10 @@ pub struct RuleDto {
 }
 
 /// The full network payload returned to the frontend after parsing.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+// Serialize-only: this DTO is built from a parsed network and sent to the
+// frontend, never read back. Its `Deserialize` was vestigial, and became
+// impossible once curves began carrying engine `QuantityDescriptor`s.
+#[derive(Debug, Clone, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NetworkDto {
     pub nodes: Vec<NodeDto>,
@@ -797,17 +824,16 @@ pub(crate) fn network_to_dto(network: &hydra::Network) -> NetworkDto {
                 CurveKind::PcvLossRatio => "pcv-loss-ratio",
                 CurveKind::Generic => "generic",
             };
-            // Pump-head: x = flow (m³/s → L/s), y = head (already metres).
-            // All others: pass raw values through (unit conversion is
-            // context-dependent; the frontend labels accordingly).
-            let (xs, ys): (Vec<f64>, Vec<f64>) = if c.kind == CurveKind::PumpHead {
-                c.points.iter().map(|p| (p.x * M3S_TO_LPS, p.y)).unzip()
-            } else {
-                c.points.iter().map(|p| (p.x, p.y)).unzip()
-            };
+            let [ax, ay] = curve_axes(c.kind);
+            let (xs, ys): (Vec<f64>, Vec<f64>) = c
+                .points
+                .iter()
+                .map(|p| (p.x * ax.scale, p.y * ay.scale))
+                .unzip();
             CurveDto {
                 id: c.id.clone(),
                 kind: kind.into(),
+                axes: [ax.dto(), ay.dto()],
                 x: xs,
                 y: ys,
             }
@@ -833,6 +859,88 @@ pub(crate) fn network_to_dto(network: &hydra::Network) -> NetworkDto {
         file_stem: String::new(),
         link_vertices,
         link_initial_status: network.links.iter().map(link_initial_status_code).collect(),
+    }
+}
+
+/// One curve axis: what it measures, the §5 quantity its values carry, and
+/// the scale from the engine's internal SI to that quantity's SI display
+/// unit.
+pub(crate) struct CurveAxis {
+    label: &'static str,
+    quantity: Option<&'static str>,
+    scale: f64,
+}
+
+impl CurveAxis {
+    /// Internal SI → this axis's display unit. Callers going the other way
+    /// divide by it.
+    pub(crate) fn scale(&self) -> f64 {
+        self.scale
+    }
+
+    fn dto(&self) -> CurveAxisDto {
+        CurveAxisDto {
+            label: self.label.to_string(),
+            quantity: self
+                .quantity
+                .and_then(|k| hydra::descriptors::QUANTITIES.iter().find(|q| q.key == k))
+                .copied(),
+        }
+    }
+}
+
+const fn axis(label: &'static str, quantity: Option<&'static str>, scale: f64) -> CurveAxis {
+    CurveAxis {
+        label,
+        quantity,
+        scale,
+    }
+}
+
+/// What a curve's two axes are, by what the curve is *for*.
+///
+/// The single authority for both directions: `network_to_dto` scales
+/// outbound by `scale` and `curve_points_display_to_internal` divides by the
+/// same, so a get → update round-trip cannot drift however the table grows.
+///
+/// A curve's kind is inferred from what references it (wds model spec §2.3),
+/// so these are facts about the model, not preferences. Before this table
+/// the editor named every axis flow-and-head and converted as though every
+/// curve were a pump curve, which rendered a tank's volume curve in the
+/// wrong units under the wrong names.
+pub(crate) fn curve_axes(kind: hydra::CurveKind) -> [CurveAxis; 2] {
+    use hydra::CurveKind::*;
+    match kind {
+        PumpHead => [
+            axis("Flow", Some("flow"), M3S_TO_LPS),
+            axis("Head", Some("head"), 1.0),
+        ],
+        PumpEfficiency => [
+            axis("Flow", Some("flow"), M3S_TO_LPS),
+            // Stored as a percentage already (§2.3 bounds it to (0, 100]).
+            axis("Efficiency", Some("percent"), 1.0),
+        ],
+        TankVolume => [
+            axis("Level", Some("length"), 1.0),
+            axis("Volume", Some("volume"), 1.0),
+        ],
+        GpvHeadloss => [
+            axis("Flow", Some("flow"), M3S_TO_LPS),
+            axis("Head loss", Some("head"), 1.0),
+        ],
+        // Both axes are percentages: the solver evaluates this curve at the
+        // valve's percent-open setting and divides the result by 100 to get
+        // the loss ratio it applies.
+        PcvLossRatio => [
+            axis("Position", Some("percent"), 1.0),
+            axis("Loss ratio", Some("percent"), 1.0),
+        ],
+        // A curve nothing references. Its purpose is unknown, so no unit
+        // interpretation may be imposed on it — the importer does not
+        // convert its points either, so they are still in whatever units
+        // the source file used. Naming a quantity here would be a guess
+        // that changes the numbers.
+        Generic | PumpVolume => [axis("X", None, 1.0), axis("Y", None, 1.0)],
     }
 }
 
@@ -1806,5 +1914,188 @@ Duration  0
             close(elev, 137.795),
             "42 m must export as 137.795 ft, got {elev} (line: {j1_line})"
         );
+    }
+}
+
+/// What each curve kind's axes are, and that the outbound scale and its
+/// inverse agree — checked against absolute values, the way the unit
+/// boundary above is.
+#[cfg(test)]
+mod curve_axis_boundary {
+    use super::*;
+    use crate::commands::mutations::curve_points_display_to_internal;
+
+    fn axes_of(kind: hydra::CurveKind) -> [CurveAxisDto; 2] {
+        let [x, y] = curve_axes(kind);
+        [x.dto(), y.dto()]
+    }
+
+    fn quantity_key(a: &CurveAxisDto) -> Option<&str> {
+        a.quantity.as_ref().map(|q| q.key)
+    }
+
+    /// The whole point of serving axes: what a curve's numbers *are*
+    /// depends on what the curve is for. A single flow/head assumption
+    /// described four of the six kinds wrongly.
+    #[test]
+    fn each_kind_names_its_own_axes() {
+        use hydra::CurveKind::*;
+        for (kind, x_label, x_q, y_label, y_q) in [
+            (PumpHead, "Flow", Some("flow"), "Head", Some("head")),
+            (
+                PumpEfficiency,
+                "Flow",
+                Some("flow"),
+                "Efficiency",
+                Some("percent"),
+            ),
+            (
+                TankVolume,
+                "Level",
+                Some("length"),
+                "Volume",
+                Some("volume"),
+            ),
+            (GpvHeadloss, "Flow", Some("flow"), "Head loss", Some("head")),
+            (
+                PcvLossRatio,
+                "Position",
+                Some("percent"),
+                "Loss ratio",
+                Some("percent"),
+            ),
+            (Generic, "X", None, "Y", None),
+        ] {
+            let [x, y] = axes_of(kind);
+            assert_eq!(x.label, x_label, "{kind:?} x label");
+            assert_eq!(y.label, y_label, "{kind:?} y label");
+            assert_eq!(quantity_key(&x), x_q, "{kind:?} x quantity");
+            assert_eq!(quantity_key(&y), y_q, "{kind:?} y quantity");
+        }
+    }
+
+    /// Every quantity the table names must exist in the engine's §5
+    /// catalog, or the axis reaches the frontend with no unit at all —
+    /// silently, since an unknown key resolves to `None`.
+    #[test]
+    fn every_named_quantity_resolves_in_the_engine_catalog() {
+        use hydra::CurveKind::*;
+        for kind in [
+            PumpHead,
+            PumpEfficiency,
+            TankVolume,
+            GpvHeadloss,
+            PcvLossRatio,
+            Generic,
+        ] {
+            for (i, a) in axes_of(kind).iter().enumerate() {
+                let named = curve_axes(kind)[i].quantity.is_some();
+                assert_eq!(
+                    named,
+                    a.quantity.is_some(),
+                    "{kind:?} axis {i} names a quantity the catalog does not define"
+                );
+            }
+        }
+    }
+
+    /// Flows are the only curve values that change scale. Everything else
+    /// is already in its display unit, and scaling it would be the old bug
+    /// in a new place.
+    #[test]
+    fn only_flow_axes_are_scaled() {
+        use hydra::CurveKind::*;
+        assert_eq!(curve_axes(PumpHead)[0].scale(), 1000.0, "m³/s → L/s");
+        assert_eq!(curve_axes(PumpHead)[1].scale(), 1.0, "head is metres");
+        assert_eq!(curve_axes(TankVolume)[0].scale(), 1.0, "level is metres");
+        assert_eq!(curve_axes(TankVolume)[1].scale(), 1.0, "volume is m³");
+        assert_eq!(curve_axes(PcvLossRatio)[0].scale(), 1.0, "percent");
+        assert_eq!(curve_axes(PcvLossRatio)[1].scale(), 1.0, "percent");
+        assert_eq!(curve_axes(Generic)[0].scale(), 1.0, "unknown units");
+    }
+
+    /// A tank volume curve read from a US-customary model, checked against
+    /// the file. This is the case the old code got most visibly wrong: it
+    /// labelled the axes flow and head and converted both as though they
+    /// were, so a 10 ft / 5000 ft³ point rendered as 10 L/s by 5000 m.
+    #[test]
+    fn a_tank_volume_curve_arrives_in_metres_and_cubic_metres() {
+        let inp = "\
+[JUNCTIONS]
+J1  100  0
+
+[RESERVOIRS]
+R1  200
+
+[TANKS]
+T1  80  10  5  20  60  0  TV1
+
+[PIPES]
+P1  R1  J1  1000  12  100  0  Open
+
+[CURVES]
+TV1  0     0
+TV1  10    5000
+
+[OPTIONS]
+Units  GPM
+
+[TIMES]
+Duration  0
+";
+        let network = hydra::io::parse(inp.as_bytes()).unwrap();
+        let dto = network_to_dto(&network);
+        let tv = dto.curves.iter().find(|c| c.id == "TV1").unwrap();
+        assert_eq!(tv.kind, "tank-volume");
+        assert_eq!(tv.axes[0].label, "Level");
+        assert_eq!(tv.axes[1].label, "Volume");
+        // 10 ft = 3.048 m; 5000 ft³ = 141.584 m³.
+        assert!(
+            (tv.x[1] - 3.048).abs() < 1e-3,
+            "10 ft of level is 3.048 m, got {}",
+            tv.x[1]
+        );
+        assert!(
+            (tv.y[1] - 141.584).abs() < 1e-2,
+            "5000 ft³ is 141.584 m³, got {}",
+            tv.y[1]
+        );
+    }
+
+    /// The inverse reads the same table, so an edit must land back exactly
+    /// where it came from — for every kind, not just the one the editor was
+    /// originally written for.
+    #[test]
+    fn display_to_internal_inverts_every_kind() {
+        use hydra::CurveKind::*;
+        let internal_x = [0.0, 0.177, 0.354];
+        let internal_y = [50.0, 25.0, 0.0];
+        for kind in [
+            PumpHead,
+            PumpEfficiency,
+            TankVolume,
+            GpvHeadloss,
+            PcvLossRatio,
+            Generic,
+        ] {
+            let [ax, ay] = curve_axes(kind);
+            let xs: Vec<f64> = internal_x.iter().map(|v| v * ax.scale()).collect();
+            let ys: Vec<f64> = internal_y.iter().map(|v| v * ay.scale()).collect();
+            let back = curve_points_display_to_internal(kind, &xs, &ys);
+            for (i, p) in back.iter().enumerate() {
+                assert!(
+                    (p.x - internal_x[i]).abs() < 1e-12,
+                    "{kind:?} x drifted: {} → {}",
+                    internal_x[i],
+                    p.x
+                );
+                assert!(
+                    (p.y - internal_y[i]).abs() < 1e-12,
+                    "{kind:?} y drifted: {} → {}",
+                    internal_y[i],
+                    p.y
+                );
+            }
+        }
     }
 }

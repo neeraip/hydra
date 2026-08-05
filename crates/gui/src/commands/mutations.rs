@@ -6,9 +6,9 @@
 use serde::{Deserialize, Serialize};
 
 use super::network_dto::{
-    control_from_dto, format_read_error, link_to_dto, network_to_dto, node_to_dto, rule_from_dto,
-    ControlDto, LinkDto, NetworkDto, NetworkState, NetworkStateInner, NodeDto, RuleDto, M3S_TO_LPS,
-    M_TO_MM,
+    control_from_dto, curve_axes, format_read_error, link_to_dto, network_to_dto, node_to_dto,
+    rule_from_dto, ControlDto, LinkDto, NetworkDto, NetworkState, NetworkStateInner, NodeDto,
+    RuleDto, M3S_TO_LPS, M_TO_MM,
 };
 use super::projects::{app_data_dir, model_path_for, read_model_bytes, validate_target_ids};
 use super::simulation::emit_or_warn;
@@ -1279,29 +1279,25 @@ pub fn rename_curve(
 }
 
 /// Convert curve points from the display units used by `get_curves` back to
-/// internal SI storage units. Pump-head curves: x = flow (L/s → m³/s), y =
-/// head (already metres); all other kinds pass through unchanged. Exact
-/// inverse of the conversion in `network_to_dto`, sharing the same module
-/// constants so a get → update round-trip is value-stable.
-fn curve_points_display_to_internal(
+/// the engine's internal SI storage units.
+///
+/// Reads the same [`curve_axes`] table `network_to_dto` scales outbound
+/// with, and divides by exactly what that multiplied — so the two cannot
+/// drift as the table gains kinds, which is the whole reason the axes are
+/// declared in one place rather than as a pair of matching `if`s.
+pub(crate) fn curve_points_display_to_internal(
     kind: hydra::CurveKind,
     xs: &[f64],
     ys: &[f64],
 ) -> Vec<hydra::CurvePoint> {
-    if kind == hydra::CurveKind::PumpHead {
-        xs.iter()
-            .zip(ys.iter())
-            .map(|(&x, &y)| hydra::CurvePoint {
-                x: x / M3S_TO_LPS,
-                y,
-            })
-            .collect()
-    } else {
-        xs.iter()
-            .zip(ys.iter())
-            .map(|(&x, &y)| hydra::CurvePoint { x, y })
-            .collect()
-    }
+    let [ax, ay] = curve_axes(kind);
+    xs.iter()
+        .zip(ys.iter())
+        .map(|(&x, &y)| hydra::CurvePoint {
+            x: x / ax.scale(),
+            y: y / ay.scale(),
+        })
+        .collect()
 }
 
 /// Replace all points of an existing curve.

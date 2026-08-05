@@ -847,9 +847,25 @@ export function usePatterns(_version = 0): Pattern[] {
 
 // ── Curve / pattern editor types ───────────────────────────────────────────
 
+/**
+ * One sample on a curve, in the SI display units of its curve's axes.
+ *
+ * Named `x`/`y` because only the curve knows what they are: flow and head
+ * on a pump curve, level and volume on a tank curve, a valve position and
+ * a loss ratio on a PCV curve. They were `flow`/`head`, which made every
+ * curve read as a pump curve and every axis label a lie for four of the
+ * six kinds.
+ */
 export interface CurvePoint {
-  flow: number; // L/s
-  head: number; // m
+  x: number;
+  y: number;
+}
+
+/** What one axis of a curve measures, and in what — engine-authored. */
+export interface CurveAxis {
+  label: string;
+  /** §5 quantity for this axis's values; absent = unitless. */
+  quantity?: GenericQuantity;
 }
 export interface PumpCurve {
   id: string;
@@ -866,8 +882,9 @@ export interface PumpCurve {
    * engine's actual role travelled in the same payload and was dropped.
    */
   role: string;
+  /** What the two axes are, in order — `[x, y]`. Engine-described. */
+  axes: [CurveAxis, CurveAxis];
   points: CurvePoint[];
-  bep?: number;
   notes?: string;
 }
 export interface TimePattern {
@@ -881,6 +898,7 @@ export interface TimePattern {
 interface NetworkCurveDto {
   id: string;
   kind: string;
+  axes: [CurveAxis, CurveAxis];
   x: number[];
   y: number[];
 }
@@ -902,13 +920,14 @@ export function useCurves(version = 0): PumpCurve[] {
     }
     return dtos.map((d) => {
       const points: CurvePoint[] = d.x.map((x, i) => ({
-        flow: x,
-        head: d.y[i] ?? 0,
+        x,
+        y: d.y[i] ?? 0,
       }));
       return {
         id: d.id,
         pumpId: pumpByCurveId.get(d.id) ?? "",
         role: d.kind,
+        axes: d.axes,
         points,
       };
     });
