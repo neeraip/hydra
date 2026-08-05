@@ -119,6 +119,19 @@ export function UnitSystemPicker() {
       role="menuitemradio"
       aria-checked={selected}
       onClick={onClick}
+      // Restores to the *selected* colour rather than a constant: the
+      // checked row is accent-coloured, and resetting everything to
+      // secondary on mouse-out would quietly un-highlight it.
+      onMouseEnter={(e) => {
+        e.currentTarget.style.background = "var(--nav-hover)";
+        e.currentTarget.style.color = "var(--text-primary)";
+      }}
+      onMouseLeave={(e) => {
+        e.currentTarget.style.background = "transparent";
+        e.currentTarget.style.color = selected
+          ? "var(--accent)"
+          : "var(--text-secondary)";
+      }}
       style={{
         display: "flex",
         alignItems: "flex-start",
@@ -133,6 +146,7 @@ export function UnitSystemPicker() {
         fontWeight: selected ? 500 : 400,
         cursor: "pointer",
         textAlign: "left",
+        transition: "background var(--t-fast), color var(--t-fast)",
       }}
     >
       <span style={{ width: 12, flexShrink: 0 }}>{selected ? "✓" : ""}</span>
@@ -201,6 +215,21 @@ export function UnitSystemPicker() {
         aria-expanded={open}
         data-tooltip="Display units for this project"
         data-tooltip-pos="bottom"
+        // Matches the other toolbar buttons: background, border and text
+        // all lift together, and the open menu keeps the lit state so the
+        // trigger reads as the thing the popover belongs to.
+        onMouseEnter={(e) => {
+          e.currentTarget.style.background = "var(--nav-hover)";
+          e.currentTarget.style.borderColor = "var(--border-hover)";
+          e.currentTarget.style.color = "var(--text-primary)";
+        }}
+        onMouseLeave={(e) => {
+          e.currentTarget.style.background = open
+            ? "var(--nav-hover)"
+            : "transparent";
+          e.currentTarget.style.borderColor = "var(--border)";
+          e.currentTarget.style.color = "var(--text-secondary)";
+        }}
         style={{
           display: "inline-flex",
           alignItems: "center",
@@ -208,11 +237,13 @@ export function UnitSystemPicker() {
           padding: "3px 8px",
           borderRadius: 6,
           border: "1px solid var(--border)",
-          background: "transparent",
+          background: open ? "var(--nav-hover)" : "transparent",
           color: "var(--text-secondary)",
           fontFamily: "var(--font-ui)",
           fontSize: "var(--text-sm)",
           cursor: "pointer",
+          transition:
+            "background var(--t-fast), border-color var(--t-fast), color var(--t-fast)",
         }}
       >
         {SYSTEM_LABEL[effective]}
