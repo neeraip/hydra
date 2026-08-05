@@ -96,9 +96,11 @@ export function CurveEditor({
       ([id, points]) => ({
         id,
         pumpId: "",
-        // Nothing references a curve that has just been created, which is
-        // exactly what the engine calls `generic`.
-        role: "generic",
+        // What this add will become when the draft is saved: `create_curve`
+        // makes a pump-head curve, and the points are then written through
+        // the pump-head conversion. Showing a staged add as anything else
+        // would describe it as something it is already not.
+        role: "pump-head",
         points,
       }),
     );

@@ -21,8 +21,9 @@ const ROLE_LABEL: Record<string, string> = {
   "tank-volume": "Tank volume",
   "gpv-headloss": "Valve headloss",
   "pcv-loss-ratio": "Valve loss ratio",
-  // The engine's word for a curve nothing in the model references — which
-  // is also what a curve just created here is, until it is attached.
+  // The engine's word for a curve the model references from nowhere. It
+  // is reachable only by importing one; a curve created here is a pump
+  // curve from the moment `create_curve` runs.
   generic: "Unassigned",
 };
 

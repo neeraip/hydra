@@ -33,8 +33,10 @@ describe("curveRoleLabel", () => {
     expect(curveRoleLabel("pump-npsh")).toBe("pump-npsh");
   });
 
-  // The distinction that matters most on screen: a curve attached to
-  // nothing is not a pump curve, and must not read as one.
+  // An imported curve the model references from nowhere is not a pump
+  // curve and must not read as one. (A curve *created* here is: the
+  // backend's `create_curve` makes a pump-head curve, so the editor stages
+  // adds as `pump-head`, not as this.)
   it("does not present an unreferenced curve as a pump curve", () => {
     expect(curveRoleLabel("generic")).toBe("Unassigned");
     expect(curveRoleLabel("generic").toLowerCase()).not.toContain("pump");
