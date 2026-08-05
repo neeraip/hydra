@@ -89,4 +89,56 @@ describe("KindTable", () => {
     render(<KindTable elements={{ ids: [], columns: [] } as KindElements} />);
     expect(screen.getByText("No elements of this kind.")).toBeDefined();
   });
+
+  /**
+   * Revealing an element — the canvas inspector's "Open in editor" — has to
+   * end with that element on screen. The search box is the one thing that
+   * can hide it: a user filtered to "J2" who then asks to see J1 would
+   * otherwise get a table that looks empty, which is a correct answer to
+   * the filter and the wrong answer to what they asked for.
+   */
+  it("clears a search that would hide the revealed element", () => {
+    const { rerender } = render(
+      <KindTable elements={junctions} activeId="J1" revealToken={1} />,
+    );
+    fireEvent.change(screen.getByLabelText("Search ids"), {
+      target: { value: "J2" },
+    });
+    expect(screen.queryByText("J1")).toBeNull();
+
+    rerender(<KindTable elements={junctions} activeId="J1" revealToken={2} />);
+    expect(screen.getByText("J1")).toBeDefined();
+  });
+
+  // A token, not a boolean: asking for the same element twice has to act
+  // both times, and a flag that is already set cannot say "again".
+  it("acts again when the same element is revealed a second time", () => {
+    const { rerender } = render(
+      <KindTable elements={junctions} activeId="J1" revealToken={1} />,
+    );
+    fireEvent.change(screen.getByLabelText("Search ids"), {
+      target: { value: "J2" },
+    });
+    rerender(<KindTable elements={junctions} activeId="J1" revealToken={2} />);
+    expect(screen.getByText("J1")).toBeDefined();
+
+    fireEvent.change(screen.getByLabelText("Search ids"), {
+      target: { value: "J2" },
+    });
+    expect(screen.queryByText("J1")).toBeNull();
+    rerender(<KindTable elements={junctions} activeId="J1" revealToken={3} />);
+    expect(screen.getByText("J1")).toBeDefined();
+  });
+
+  // Selecting a row is not a reveal request. Only the token clears the
+  // search — otherwise every click would wipe the filter under the user.
+  it("leaves the search alone when no reveal is requested", () => {
+    const { rerender } = render(<KindTable elements={junctions} />);
+    fireEvent.change(screen.getByLabelText("Search ids"), {
+      target: { value: "J2" },
+    });
+    rerender(<KindTable elements={junctions} activeId="J2" />);
+    expect(screen.queryByText("J1")).toBeNull();
+    expect(screen.getByText("J2")).toBeDefined();
+  });
 });

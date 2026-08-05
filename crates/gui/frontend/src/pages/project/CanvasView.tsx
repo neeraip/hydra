@@ -2593,6 +2593,9 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
                 onLocateOutlet={(id) => {
                   if (nodeMap.has(id)) selectNode(id);
                 }}
+                onOpenInEditor={() =>
+                  focusInEditor(selectedRegion.type, selectedRegion.id)
+                }
                 genericResults={genericRegionResults}
               />
             )}

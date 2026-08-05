@@ -14,7 +14,7 @@
  */
 
 import { LockClosedIcon } from "@heroicons/react/16/solid";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useActiveProject, useAppState } from "../../AppContext";
 import { useCanvasSelection } from "../../canvas/selection-context";
 import { KindTable } from "../../components/panels/KindTable";
@@ -33,7 +33,7 @@ import { CollectionDetail } from "./CollectionDetail";
 
 export function UdsElementsView() {
   const { project } = useActiveProject();
-  const { activeScenarioId } = useAppState();
+  const { activeScenarioId, editorFocus } = useAppState();
   const {
     selectNode,
     selectLink,
@@ -65,6 +65,23 @@ export function UdsElementsView() {
     ? activeKind
     : (present[0]?.id ?? null);
   const activeClass = present.find((k) => k.id === kind)?.class ?? "point";
+
+  // The canvas inspector's "Open in editor" → show the element's own kind
+  // and scroll its row into view. The row is already selected: this view
+  // reads the canvas selection, and the request always comes from the
+  // element that selection names.
+  //
+  // The rail is keyed by catalog kind id and so is the request, so nothing
+  // here maps between the two vocabularies — a kind this file has never
+  // heard of reveals correctly.
+  const [revealToken, setRevealToken] = useState(0);
+  useEffect(() => {
+    if (!editorFocus) return;
+    setActiveKind(editorFocus.kind);
+    // Follows the request's nonce, so opening the same element twice moves
+    // the table both times.
+    setRevealToken(editorFocus.nonce);
+  }, [editorFocus]);
 
   const elements = useKindElements(project?.id, activeScenarioId, kind);
 
@@ -192,6 +209,7 @@ export function UdsElementsView() {
             elements={elements}
             activeId={selectedId}
             onSelect={select}
+            revealToken={revealToken || undefined}
           />
           {containerId && (
             <CollectionDetail detail={detail} elementId={containerId} />

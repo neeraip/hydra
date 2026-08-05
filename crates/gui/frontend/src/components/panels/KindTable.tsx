@@ -15,7 +15,7 @@
 // engine's §4.4 attribute schema — so a kind this file has never heard of
 // renders correctly, and so does an engine that does not exist yet.
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { KindElements } from "../../hooks";
 import { formatElementAttribute } from "../../hooks/network";
 import { useUnitSystem } from "../../units";
@@ -62,16 +62,38 @@ export function KindTable({
   elements,
   activeId,
   onSelect,
+  revealToken,
 }: {
   /** §4.4 property columns for this kind. */
   elements: KindElements;
   activeId?: string | null;
   onSelect?: (id: string) => void;
+  /**
+   * Bumped by the caller to mean "bring `activeId` into view now".
+   *
+   * A token rather than a boolean because the same element can be revealed
+   * twice in a row — asking for J5 again after scrolling away has to move
+   * the table again, and a boolean that is already `true` cannot say so.
+   */
+  revealToken?: number;
 }) {
   const sys = useUnitSystem();
   const [sortCol, setSortCol] = useState<string | null>(null);
   const [sortDir, setSortDir] = useState<SortDir>("asc");
   const [query, setQuery] = useState("");
+  const activeRowRef = useRef<HTMLTableRowElement | null>(null);
+
+  // Reveal: clear any search first, because a filter that excludes the
+  // requested element would leave the table looking empty in response to
+  // "show me this element" — then scroll once the row has rendered.
+  useEffect(() => {
+    if (revealToken == null) return;
+    setQuery("");
+    const raf = requestAnimationFrame(() => {
+      activeRowRef.current?.scrollIntoView({ block: "center" });
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [revealToken]);
 
   function toggleSort(col: string) {
     if (sortCol !== col) {
@@ -229,6 +251,7 @@ export function KindTable({
                 return (
                   <tr
                     key={id}
+                    ref={isActive ? activeRowRef : undefined}
                     onClick={() => onSelect?.(id)}
                     style={{
                       cursor: onSelect ? "pointer" : undefined,
