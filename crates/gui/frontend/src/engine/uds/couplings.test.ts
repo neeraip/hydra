@@ -4,9 +4,9 @@ import { capturedFrom, capturedInto } from "./couplings";
 
 /** Two streets draining into one sewer node, and a third into another. */
 const COUPLINGS: InletCoupling[] = [
-  { link: "Street1", node: "J5" },
-  { link: "Street2", node: "J5" },
-  { link: "Street3", node: "J9" },
+  { link: "Street1", node: "J5", design: "Grate_P50" },
+  { link: "Street2", node: "J5", design: "ComboA" },
+  { link: "Street3", node: "J9", design: "Grate_P50" },
 ];
 
 describe("inlet couplings", () => {
@@ -18,7 +18,9 @@ describe("inlet couplings", () => {
    * cheerfully offer them as places to go.
    */
   it("reads a coupling from each end without confusing the two", () => {
-    expect(capturedInto(COUPLINGS, "Street1")).toEqual(["J5"]);
+    expect(capturedInto(COUPLINGS, "Street1")).toEqual([
+      { node: "J5", design: "Grate_P50" },
+    ]);
     expect(capturedFrom(COUPLINGS, "J5")).toEqual(["Street1", "Street2"]);
   });
 
@@ -46,6 +48,17 @@ describe("inlet couplings", () => {
     expect(capturedFrom(COUPLINGS, "Street1")).toEqual([]);
   });
 
+  /**
+   * The design travels with the node, because "captures into J5" says
+   * where and not how — and how is what decides how much. It is also an
+   * `inlet` registry entry, so the name is a place the reader can go.
+   */
+  it("carries the inlet design alongside the node", () => {
+    expect(capturedInto(COUPLINGS, "Street2")).toEqual([
+      { node: "J5", design: "ComboA" },
+    ]);
+  });
+
   /** Nothing to read before the fetch resolves, and no throw either. */
   it("answers empty for a model with no couplings", () => {
     expect(capturedInto([], "Street1")).toEqual([]);
@@ -59,9 +72,12 @@ describe("inlet couplings", () => {
    */
   it("keeps every node a link captures into", () => {
     const many: InletCoupling[] = [
-      { link: "Street1", node: "J5" },
-      { link: "Street1", node: "J6" },
+      { link: "Street1", node: "J5", design: "Grate_P50" },
+      { link: "Street1", node: "J6", design: "ComboA" },
     ];
-    expect(capturedInto(many, "Street1")).toEqual(["J5", "J6"]);
+    expect(capturedInto(many, "Street1").map((c) => c.node)).toEqual([
+      "J5",
+      "J6",
+    ]);
   });
 });

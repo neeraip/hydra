@@ -67,11 +67,11 @@ export function UdsLinkInspectorBody({
               marginBottom: 14,
             }}
           >
-            {captureNodes.map((id) => (
+            {captureNodes.map((c) => (
               <ConnectedNodeChip
-                key={id}
-                label="Inlet"
-                nodeId={id}
+                key={c.node}
+                label={c.design}
+                nodeId={c.node}
                 allNodes={allNodes}
                 accent={ACCENT}
                 onLocate={onLocateNode}

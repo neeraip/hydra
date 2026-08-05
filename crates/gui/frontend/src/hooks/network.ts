@@ -1176,6 +1176,9 @@ export interface InletCoupling {
   link: string;
   /** Id of the node receiving captured flow. */
   node: string;
+  /** Id of the inlet design doing the capturing — an `inlet` registry
+   * entry, listed in the Editor like any other collection. */
+  design: string;
 }
 
 /** Inlet couplings for a target; empty for engines that have none. */

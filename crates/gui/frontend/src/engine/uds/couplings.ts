@@ -18,18 +18,23 @@
 import type { InletCoupling } from "../../hooks";
 
 /**
- * Ids of the nodes a link's inlets capture into.
+ * Where a link's inlets capture to, and through which design.
  *
  * Usually one — the model format assigns a conduit's inlet a single
- * receiving node — but returned as a list rather than a single id, because
- * nothing in the data forbids a second row naming the same link, and a
- * silent "first one wins" would hide the rest.
+ * receiving node — but returned as a list rather than a single entry,
+ * because nothing in the data forbids a second row naming the same link,
+ * and a silent "first one wins" would hide the rest.
+ *
+ * The design comes along because *how* a street captures is what decides
+ * how much: "captures into J5" is a topological half-answer.
  */
 export function capturedInto(
   couplings: readonly InletCoupling[],
   linkId: string,
-): string[] {
-  return couplings.filter((c) => c.link === linkId).map((c) => c.node);
+): Array<{ node: string; design: string }> {
+  return couplings
+    .filter((c) => c.link === linkId)
+    .map((c) => ({ node: c.node, design: c.design }));
 }
 
 /**

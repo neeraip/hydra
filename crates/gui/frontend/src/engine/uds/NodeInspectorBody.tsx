@@ -82,7 +82,7 @@ export function UdsNodeInspectorBody({
       {capturingLinks.length > 0 && (
         <>
           <SectionLabel>
-            Captured from {capturingLinks.length} street
+            Captured from {capturingLinks.length} conduit
             {capturingLinks.length === 1 ? "" : "s"}
           </SectionLabel>
           <div
