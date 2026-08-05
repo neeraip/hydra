@@ -212,6 +212,32 @@ Brief inline progress notes during multi-step work are fine (e.g. "running cargo
 
 ---
 
+## Interface Rules
+
+**Never name an element kind in words alone.** Wherever the interface
+identifies an element's kind, it shows the kind's glyph — either the glyph
+by itself, or the glyph beside the name. Never the name on its own.
+
+An element id is unique only *within* its class: a junction `2` and a pipe
+`2` are two different elements that happen to share a name. So a kind is
+not decoration, it is half the identity, and the reader needs it at a
+glance rather than in a word they must stop and read. The glyph also
+carries the kind's colour, which a word does not, and it is the same mark
+the canvas, the network list and the editor tables use — so the reader
+learns one vocabulary instead of one per surface.
+
+Render it with `TypeBadge` (`components/ui/TypeBadge.tsx`), the single
+renderer for element badges. Never hand-roll a coloured dot, letter or
+stripe: those drift from the catalog and from each other, and a stripe
+tinted by kind says less than the badge while looking like it says the
+same.
+
+The exception is running prose. A sentence that happens to contain a kind's
+name — "Editing drainage models here isn't built yet", "3 catchments drain
+here" — is describing, not identifying, and needs no glyph.
+
+---
+
 ## Regression Discipline
 
 Every defect that reaches the running app gets a test that would have

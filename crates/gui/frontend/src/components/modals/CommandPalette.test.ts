@@ -90,6 +90,13 @@ describe("searchElements", () => {
     expect(matches).toEqual([]);
   });
 
+  /**
+   * The description no longer repeats the element's type: the row renders
+   * that as a badge and a name of its own, and saying it a third time in
+   * the description crowded out the coordinates and endpoints the line
+   * exists to show. `subtype` still carries it — the row needs the kind,
+   * just not spelled into prose.
+   */
   it("builds the documented description strings", () => {
     const matches = searchElements(
       [makeNode("J1", { type: "tank", x: 3, y: 4 })],
@@ -100,13 +107,13 @@ describe("searchElements", () => {
       id: "J1",
       kind: "node",
       subtype: "tank",
-      description: "tank · (3, 4)",
+      description: "(3, 4)",
     });
     expect(matches[1]).toEqual({
       id: "P1",
       kind: "link",
       subtype: "valve",
-      description: "valve · A → B · ⌀80 mm",
+      description: "A → B · ⌀80 mm",
     });
   });
 });

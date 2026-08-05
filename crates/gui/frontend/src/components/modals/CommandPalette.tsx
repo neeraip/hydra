@@ -1,4 +1,4 @@
-import { MagnifyingGlassIcon, MapPinIcon } from "@heroicons/react/24/outline";
+import { MagnifyingGlassIcon } from "@heroicons/react/24/outline";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAppState, useSimulation } from "../../AppContext";
@@ -29,6 +29,7 @@ import {
 import { formatQtyRaw, type UnitSystem, useUnitSystem } from "../../units";
 import { lineageLabel } from "../panels/ScenariosPanel/shared";
 import { ModalBackdrop, stopBackdropEvents } from "../ui/ModalBackdrop";
+import { TypeBadge } from "../ui/TypeBadge";
 
 /**
  * Display-only category union — extends the data-layer `CommandCategory`
@@ -86,7 +87,7 @@ export function searchElements(
       id: n.id,
       kind: "node",
       subtype: n.type,
-      description: `${n.type} · (${n.x}, ${n.y})`,
+      description: `(${n.x}, ${n.y})`,
     });
     found += 1;
   }
@@ -100,7 +101,7 @@ export function searchElements(
       subtype: l.type,
       // Diameter only when the engine served one — "⌀0 m" on every
       // attribute-less link read as data.
-      description: `${l.type} · ${l.fromId} → ${l.toId}${
+      description: `${l.fromId} → ${l.toId}${
         l.diameter != null && l.diameter > 0
           ? ` · ⌀${formatQtyRaw(l.diameter, "diameter", sys)}`
           : ""
@@ -1075,14 +1076,12 @@ export function CommandPalette() {
                         : "2px solid transparent",
                     }}
                   >
-                    <MapPinIcon
-                      style={{
-                        width: 16,
-                        height: 16,
-                        flexShrink: 0,
-                        color: m.kind === "node" ? "#4a90d9" : "#3daf75",
-                      }}
-                    />
+                    {/* The kind's own glyph, not a generic pin tinted by
+                        class: the pin said "this is an element" twice over
+                        — the list is nothing else — where the badge says
+                        which kind, in the same letters every other surface
+                        uses. */}
+                    <TypeBadge type={m.subtype} />
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div
                         style={{
@@ -1100,7 +1099,7 @@ export function CommandPalette() {
                             fontFamily: "var(--font-ui)",
                           }}
                         >
-                          {m.kind} · {m.subtype}
+                          {m.subtype}
                         </span>
                       </div>
                       <div
