@@ -18,9 +18,15 @@
  * coordinating.
  */
 
-/** The Settings drawer. */
-export function loadSettingsDrawer() {
-  return import("./components/modals/SettingsDrawer");
+/**
+ * The Settings drawer's *contents* — the rows, not the panel.
+ *
+ * The drawer's own chrome is imported eagerly: splitting it meant nothing
+ * appeared until the chunk resolved, so the click looked ignored. Only what
+ * fills an already-open drawer is worth deferring.
+ */
+export function loadSettingsContent() {
+  return import("./components/modals/SettingsContent");
 }
 
 /**

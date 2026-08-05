@@ -6,7 +6,7 @@ import {
 import { useActiveProject, useAppState, useTasks } from "../../AppContext";
 import logoGlyphUrl from "../../assets/logo-glyph.png";
 import { PROJECT_VIEWS } from "../../hooks";
-import { loadSettingsDrawer } from "../../lazyChunks";
+import { loadSettingsContent } from "../../lazyChunks";
 import { formatPrimaryShortcut, isMacLikePlatform } from "../../shortcuts";
 import { NavButton } from "../ui/NavButton";
 
@@ -215,7 +215,7 @@ export function ActivityBar() {
         // arriving here is the earliest reliable signal that the drawer is
         // about to be wanted, and it lands a few hundred milliseconds
         // before the click. Repeat calls are free.
-        onPrefetch={() => void loadSettingsDrawer()}
+        onPrefetch={() => void loadSettingsContent()}
       />
     </div>
   );

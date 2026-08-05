@@ -17,7 +17,7 @@ import { Toast } from "./components/ui/Toast";
 import { TooltipPortal } from "./components/ui/TooltipPortal";
 import { tryInvoke } from "./hooks/ipc";
 import { useUndoRedo } from "./hooks/useUndoRedo";
-import { loadSettingsDrawer, whenIdle } from "./lazyChunks";
+import { loadSettingsContent, whenIdle } from "./lazyChunks";
 import { startMainThreadStallWatch } from "./perfTrace";
 import type { ProjectView } from "./projectConfig";
 import {
@@ -67,9 +67,11 @@ const ProjectPage = lazy(() =>
     default: m.ProjectPage,
   })),
 );
-const SettingsDrawer = lazy(() =>
-  loadSettingsDrawer().then((m) => ({ default: m.SettingsDrawer })),
-);
+
+// Eager: the drawer's chrome is what has to appear on the click. Only its
+// contents are split — see `SettingsDrawer`.
+import { SettingsDrawer } from "./components/modals/SettingsDrawer";
+
 const ProjectsPage = lazy(() =>
   import("./pages/ProjectsPage").then((m) => ({ default: m.ProjectsPage })),
 );
@@ -99,7 +101,6 @@ export function App() {
     simSettingsModalOpen,
     activeProjectId,
     taskTrayOpen,
-    settingsOpen,
     setProjectView,
     issuesPanelOpen,
     toggleIssuesPanel,
@@ -135,7 +136,7 @@ export function App() {
   // Warm the Settings chunk once the app has settled. It is small and most
   // sessions open it at least once, so paying for it during an idle moment
   // costs nothing and removes the pause that otherwise lands on the click.
-  useEffect(() => whenIdle(() => void loadSettingsDrawer()), []);
+  useEffect(() => whenIdle(() => void loadSettingsContent()), []);
 
   useEffect(() => {
     let cancelled = false;
@@ -376,11 +377,7 @@ export function App() {
       </Suspense>
       {/* Below the modals it can itself open — BasemapProviders sits at
           205, above this drawer's 200. */}
-      {settingsOpen && (
-        <Suspense fallback={null}>
-          <SettingsDrawer />
-        </Suspense>
-      )}
+      <SettingsDrawer />
       <Suspense fallback={null}>
         <BasemapProvidersModal />
       </Suspense>
