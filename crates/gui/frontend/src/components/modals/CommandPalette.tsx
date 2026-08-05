@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   getDraftDirtyCount,
   saveDraftsViaGuard,
+  useActiveProject,
   useAppState,
   useSimulation,
 } from "../../AppContext";
@@ -11,12 +12,11 @@ import { useCanvasSelection } from "../../canvas/selection-context";
 import { engineComponents } from "../../engine/registry";
 import { buildResultsGeoJson } from "../../export/resultsGeoJson";
 import {
-  type Command,
-  type CommandCategory,
   formatInpImportError,
   type Link,
   type Node,
   openAndLoadNetwork,
+  updateProjectUnits,
   useLinks,
   useNetworkVersion,
   useNodes,
@@ -32,18 +32,21 @@ import {
   primaryModifierLabel,
   shiftModifierLabel,
 } from "../../shortcuts";
-import { formatQtyRaw, type UnitSystem, useUnitSystem } from "../../units";
+import type { DisplayCategory, DynamicCommand } from "../../types/ui";
+import {
+  formatQtyRaw,
+  setUnitPreference,
+  type UnitPreference,
+  type UnitSystem,
+  useUnitPreference,
+  useUnitSystem,
+} from "../../units";
 import { lineageLabel } from "../panels/ScenariosPanel/shared";
 import { ModalBackdrop, stopBackdropEvents } from "../ui/ModalBackdrop";
 import { TypeBadge } from "../ui/TypeBadge";
+import { unitCommands } from "./unitCommands";
 
-/**
- * Display-only category union — extends the data-layer `CommandCategory`
- * with a synthetic "Page" group that the palette injects dynamically based
- * on the user's current view. The data layer doesn't know about "Page".
- */
-type DisplayCategory = CommandCategory | "Page" | "Scenarios";
-
+/** The order the groups are shown in. */
 const CATEGORY_ORDER: DisplayCategory[] = [
   "Page",
   "Recent",
@@ -52,13 +55,6 @@ const CATEGORY_ORDER: DisplayCategory[] = [
   "Scenarios",
   "Actions",
 ];
-
-interface DynamicCommand extends Omit<Command, "category"> {
-  projectId?: string;
-  /** Target for the "switch-scenario" action. */
-  scenarioId?: string;
-  category: DisplayCategory;
-}
 
 export interface ElementMatch {
   id: string;
@@ -189,8 +185,11 @@ export function CommandPalette() {
     requestClearResults,
     toggleSettings,
     toggleShortcutCard,
+    bumpProjects,
   } = useAppState();
   const { undo, redo } = useUndoRedo();
+  const { project: activeProject } = useActiveProject();
+  const appDefaultUnits = useUnitPreference();
 
   const projects = useProjects(projectsVersion);
   // Engine key of the open project — the "import model file" action needs it
@@ -242,8 +241,13 @@ export function CommandPalette() {
           projectId: p.id,
         })),
       ...STATIC_COMMANDS,
+      ...unitCommands(
+        activeProjectId !== null,
+        activeProject?.unitSystem ?? null,
+        appDefaultUnits,
+      ),
     ],
-    [projects, query],
+    [projects, query, activeProjectId, activeProject, appDefaultUnits],
   );
   const [activeIdx, setActiveIdx] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -930,6 +934,29 @@ export function CommandPalette() {
         case "theme-system":
           setTheme("system");
           break;
+        case "units-default-source":
+        case "units-default-si":
+        case "units-default-us":
+          setUnitPreference(
+            cmd.action.slice("units-default-".length) as UnitPreference,
+          );
+          break;
+        case "units-project-source":
+        case "units-project-si":
+        case "units-project-us":
+        case "units-project-inherit": {
+          if (!activeProjectId) break;
+          const next =
+            cmd.action === "units-project-inherit"
+              ? null
+              : (cmd.action.slice("units-project-".length) as UnitPreference);
+          // Persisted like every other project field, then announced: the
+          // picker in the toolbar reads the same project record, so without
+          // the bump the palette would change the units and leave the
+          // control that shows them reading the old value.
+          void updateProjectUnits(activeProjectId, next).then(bumpProjects);
+          break;
+        }
         default:
           break;
       }
@@ -966,6 +993,7 @@ export function CommandPalette() {
       openIssuesPanel,
       toggleTaskTray,
       showToast,
+      bumpProjects,
     ],
   );
 
