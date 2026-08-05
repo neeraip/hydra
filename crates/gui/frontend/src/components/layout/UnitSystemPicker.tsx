@@ -111,6 +111,7 @@ export function UnitSystemPicker() {
     selected: boolean,
     onClick: () => void,
     key: string,
+    description?: string,
   ) => (
     <button
       key={key}
@@ -120,7 +121,7 @@ export function UnitSystemPicker() {
       onClick={onClick}
       style={{
         display: "flex",
-        alignItems: "center",
+        alignItems: "flex-start",
         gap: 8,
         width: "100%",
         padding: "5px 10px",
@@ -135,7 +136,21 @@ export function UnitSystemPicker() {
       }}
     >
       <span style={{ width: 12, flexShrink: 0 }}>{selected ? "✓" : ""}</span>
-      {label}
+      <span style={{ display: "flex", flexDirection: "column", gap: 1 }}>
+        {label}
+        {description && (
+          <span
+            style={{
+              fontSize: "var(--text-xs)",
+              fontWeight: 400,
+              color: "var(--text-tertiary)",
+              lineHeight: 1.4,
+            }}
+          >
+            {description}
+          </span>
+        )}
+      </span>
     </button>
   );
 
@@ -199,7 +214,7 @@ export function UnitSystemPicker() {
             // Matches the toolbar's other popovers, which sit above the
             // canvas and the secondary rail.
             zIndex: 120,
-            minWidth: 200,
+            minWidth: 248,
             padding: "4px 0",
             borderRadius: 8,
             border: "1px solid var(--border)",
@@ -208,6 +223,12 @@ export function UnitSystemPicker() {
           }}
         >
           {groupLabel("Default")}
+          {/* Says where the value came from, which the label alone cannot:
+              the row shows the *resolved* system, so without this it reads
+              as a third explicit choice rather than as deference to
+              Settings. Naming the consequence rather than just the source,
+              because tracking a later change is the only thing that
+              distinguishes this from pinning the same value below. */}
           {row(
             appDefault === "source"
               ? sourceOptionLabel(modelSystem)
@@ -215,6 +236,7 @@ export function UnitSystemPicker() {
             inherited,
             () => choose(null),
             "inherit",
+            "From your app Settings — follows it if you change it there",
           )}
           <div
             style={{
@@ -224,6 +246,18 @@ export function UnitSystemPicker() {
             }}
           />
           {groupLabel("Override")}
+          {/* The contrast that makes the duplicate `Source` row above
+              meaningful: these stay put when Settings moves. */}
+          <div
+            style={{
+              padding: "0 10px 4px 30px",
+              fontSize: "var(--text-xs)",
+              color: "var(--text-tertiary)",
+              lineHeight: 1.4,
+            }}
+          >
+            This project only, whatever Settings says
+          </div>
           {(["source", "si", "us"] as const).map((v) =>
             row(
               overrideOptionLabel(v, modelSystem),
