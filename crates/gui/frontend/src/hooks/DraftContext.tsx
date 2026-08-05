@@ -45,6 +45,7 @@ import {
   tankRowsFromNodes,
 } from "../pages/project/NetworkEditor/elementsEditorDerivations";
 import { saveStagedElements } from "../pages/project/NetworkEditor/elementsEditorSave";
+import { draftDirty } from "./draftDirty";
 import {
   type CurvePoint,
   createControl,
@@ -251,36 +252,41 @@ export function DraftProvider({ children }: { children: ReactNode }) {
     return `${prefix}${n}`;
   }, []);
 
-  const elementsDirtyCount =
-    elementsDraft.size + pendingAdds.length + pendingDeletes.length;
-  const curvesDirtyCount = curveAdds.size + curveEdits.size + curveDeletes.size;
-  const patternsDirtyCount =
-    patternAdds.size + patternEdits.size + patternDeletes.size;
-  const controlsDirtyCount =
-    controlAdds.size +
-    controlEdits.size +
-    controlDeletes.size +
-    ruleAdds.size +
-    ruleEdits.size +
-    ruleDeletes.size;
-  const dirtyCount =
-    elementsDirtyCount +
-    curvesDirtyCount +
-    patternsDirtyCount +
-    controlsDirtyCount;
-
-  const dirtyBySection = useMemo(
-    () => ({
-      elements: elementsDirtyCount,
-      curves: curvesDirtyCount,
-      patterns: patternsDirtyCount,
-      controls: controlsDirtyCount,
-    }),
+  const { bySection: dirtyBySection, total: dirtyCount } = useMemo(
+    () =>
+      draftDirty({
+        elementsDraft: elementsDraft.size,
+        pendingAdds: pendingAdds.length,
+        pendingDeletes: pendingDeletes.length,
+        curveAdds: curveAdds.size,
+        curveEdits: curveEdits.size,
+        curveDeletes: curveDeletes.size,
+        patternAdds: patternAdds.size,
+        patternEdits: patternEdits.size,
+        patternDeletes: patternDeletes.size,
+        controlAdds: controlAdds.size,
+        controlEdits: controlEdits.size,
+        controlDeletes: controlDeletes.size,
+        ruleAdds: ruleAdds.size,
+        ruleEdits: ruleEdits.size,
+        ruleDeletes: ruleDeletes.size,
+      }),
     [
-      elementsDirtyCount,
-      curvesDirtyCount,
-      patternsDirtyCount,
-      controlsDirtyCount,
+      elementsDraft.size,
+      pendingAdds.length,
+      pendingDeletes.length,
+      curveAdds.size,
+      curveEdits.size,
+      curveDeletes.size,
+      patternAdds.size,
+      patternEdits.size,
+      patternDeletes.size,
+      controlAdds.size,
+      controlEdits.size,
+      controlDeletes.size,
+      ruleAdds.size,
+      ruleEdits.size,
+      ruleDeletes.size,
     ],
   );
 
@@ -477,7 +483,7 @@ export function DraftProvider({ children }: { children: ReactNode }) {
       };
 
       // ── Elements (creates → field patches → deletes) ──────────────────────
-      if (elementsDirtyCount > 0) {
+      if (dirtyBySection.elements > 0) {
         // Row models and the ID pool are derived here, lazily, from the
         // current network snapshot — see the comment on `networkRef` above.
         const { nodes: nodesNow, links: linksNow } = networkRef.current;
@@ -640,7 +646,7 @@ export function DraftProvider({ children }: { children: ReactNode }) {
       return { applied, failed, errors };
     }
   }, [
-    elementsDirtyCount,
+    dirtyBySection.elements,
     elementsDraft,
     pendingAdds,
     pendingDeletes,

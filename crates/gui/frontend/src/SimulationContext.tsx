@@ -31,6 +31,7 @@ import {
   listenRunQueueUpdate,
   listenSimulationProgress,
   loadResultMeta,
+  mergeIssues,
   type PumpEnergyRecord,
   type ResultMeta,
   type RunQueueItem,
@@ -416,15 +417,7 @@ export function SimulationProvider({ children }: { children: ReactNode }) {
     // simwarn-<code>-<elementId|network> ids for the first-seen merge).
     next.push(...runWarningIssues);
 
-    setIssues((prev) => {
-      const prevById = new Map(prev.map((i) => [i.id, i]));
-      return next.map((i) => {
-        const existing = prevById.get(i.id);
-        // Preserve the original first-seen time so a still-present issue keeps
-        // its age across re-derivations instead of resetting on every refresh.
-        return existing ? { ...i, firstSeen: existing.firstSeen } : i;
-      });
-    });
+    setIssues((prev) => mergeIssues(prev, next));
   }, [
     activeProjectId,
     activeScenarioId,
