@@ -1,6 +1,7 @@
 import { Cog6ToothIcon, XMarkIcon } from "@heroicons/react/16/solid";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useActiveProject, useAppState } from "../../AppContext";
+import { engineComponents } from "../../engine/registry";
 import {
   ACCENT,
   getSimParams,
@@ -88,6 +89,10 @@ export function SimSettingsModal() {
 
   const [original, setOriginal] = useState<SimParams | null>(null);
   const [draft, setDraft] = useState<SimParams | null>(null);
+  // Engines with their own settings body supply it via the registry; this
+  // modal owns only the chrome. `SettingsView` absent = the editor below.
+  const components = engineComponents(engine?.key);
+  const SettingsView = components.SettingsView;
   const [loadError, setLoadError] = useState<string | null>(null);
   // Distinct from `original === null`, which also means "no model on disk" —
   // without this the modal claims to be loading forever on an empty project.
@@ -95,9 +100,11 @@ export function SimSettingsModal() {
   const [saving, setSaving] = useState(false);
 
   // (Re)load params whenever the modal opens or the project changes — the model
-  // may have been edited elsewhere since the last open.
+  // may have been edited elsewhere since the last open. Engines with their
+  // own settings body fetch their own data; the wds params IPC would only
+  // resolve null for them.
   useEffect(() => {
-    if (!simSettingsModalOpen || !activeProjectId) return;
+    if (!simSettingsModalOpen || !activeProjectId || SettingsView) return;
     let cancelled = false;
     setLoadError(null);
     setOriginal(null);
@@ -118,7 +125,7 @@ export function SimSettingsModal() {
     return () => {
       cancelled = true;
     };
-  }, [simSettingsModalOpen, activeProjectId]);
+  }, [simSettingsModalOpen, activeProjectId, SettingsView]);
 
   const dirty = useMemo(() => {
     if (!original || !draft) return false;
@@ -218,8 +225,8 @@ export function SimSettingsModal() {
               fontWeight: 700,
               letterSpacing: "0.06em",
               color: ACCENT,
-              background: `${ACCENT}26`,
-              border: `1px solid ${ACCENT}55`,
+              background: "var(--accent-dim)",
+              border: "1px solid var(--selection-border)",
               padding: "3px 8px",
               borderRadius: 4,
             }}
@@ -268,7 +275,9 @@ export function SimSettingsModal() {
 
         {/* Body */}
         <div style={{ flex: 1, overflowY: "auto", padding: "18px 20px" }}>
-          {loadError ? (
+          {SettingsView != null && activeProjectId != null ? (
+            <SettingsView projectId={activeProjectId} />
+          ) : loadError ? (
             <Empty>Could not read simulation settings: {loadError}</Empty>
           ) : original === null || draft === null ? (
             <Empty>
@@ -319,40 +328,45 @@ export function SimSettingsModal() {
               fontFamily: "var(--font-ui)",
             }}
           >
-            Cancel
+            {components.settingsEditable ? "Cancel" : "Close"}
           </button>
-          <button
-            type="button"
-            onClick={save}
-            disabled={saving || !dirty}
-            data-tooltip={dirty ? `Save (${saveHint})` : "No changes"}
-            style={{
-              background: !saving && dirty ? ACCENT : "var(--bg-card)",
-              border: `1px solid ${!saving && dirty ? ACCENT : "var(--border)"}`,
-              color: !saving && dirty ? "#fff" : "var(--text-disabled)",
-              borderRadius: 5,
-              padding: "7px 16px",
-              fontSize: "var(--text-md)",
-              fontWeight: 600,
-              cursor: !saving && dirty ? "pointer" : "not-allowed",
-              opacity: !saving && dirty ? 1 : 0.6,
-              fontFamily: "var(--font-ui)",
-              display: "inline-flex",
-              alignItems: "center",
-              gap: 6,
-            }}
-          >
-            {saving ? "Saving…" : "Save"}
-            <span
+          {components.settingsEditable && (
+            <button
+              type="button"
+              onClick={save}
+              disabled={saving || !dirty}
+              data-tooltip={dirty ? `Save (${saveHint})` : "No changes"}
               style={{
-                fontSize: "var(--text-xs)",
-                opacity: 0.85,
-                fontFamily: "var(--font-mono)",
+                background: !saving && dirty ? ACCENT : "var(--bg-card)",
+                border: `1px solid ${!saving && dirty ? ACCENT : "var(--border)"}`,
+                color:
+                  !saving && dirty
+                    ? "var(--accent-fg)"
+                    : "var(--text-disabled)",
+                borderRadius: 5,
+                padding: "7px 16px",
+                fontSize: "var(--text-md)",
+                fontWeight: 600,
+                cursor: !saving && dirty ? "pointer" : "not-allowed",
+                opacity: !saving && dirty ? 1 : 0.6,
+                fontFamily: "var(--font-ui)",
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 6,
               }}
             >
-              {saveHint}
-            </span>
-          </button>
+              {saving ? "Saving…" : "Save"}
+              <span
+                style={{
+                  fontSize: "var(--text-xs)",
+                  opacity: 0.85,
+                  fontFamily: "var(--font-mono)",
+                }}
+              >
+                {saveHint}
+              </span>
+            </button>
+          )}
         </div>
       </div>
     </ModalBackdrop>

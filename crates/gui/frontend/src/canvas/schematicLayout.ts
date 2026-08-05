@@ -1,4 +1,5 @@
 import type { Link, Node } from "../hooks";
+import type { Region } from "../types";
 
 /**
  * Compute a schematic (topological) layout for a network graph.
@@ -27,17 +28,119 @@ const DETACHED_GAP_COLUMNS = 4;
  * visible on layouts that are tens of thousands of units wide. */
 const DETACHED_GAP_FRACTION = 0.06;
 
+/** How much of a layer's spacing a catchment glyph may occupy. Small
+ * enough that a glyph never reaches its neighbouring column, large enough
+ * to read as an area rather than a marker. */
+const GLYPH_FRACTION = 0.42;
+
 export interface SchematicLayout {
   positions: Map<string, [number, number]>;
-  /** Ids not reachable from any reservoir or tank — the detached group. Empty
-   * for a fully connected network. */
+  /** Ids not reachable from any boundary node — a genuinely separate
+   * subnetwork. Empty for a fully connected network. */
   detachedIds: Set<string>;
+  /** Region boundaries in schematic space, keyed by region id.
+   *
+   * A schematic keeps a catchment's *shape* but not its position: real
+   * rings are plan geometry, and the schematic has no plan. Each ring is
+   * therefore normalised to a fixed glyph size and anchored beside the
+   * node it drains to — how a drainage schematic has always drawn a
+   * catchment, as a symbol hung off its outlet. Regions the layout could
+   * not anchor are absent. */
+  regionRings: Map<string, Array<[number, number]>>;
+  /** Glyph centre → outlet node position, for the leader line that says
+   * which node a glyph drains to. Same keys as `regionRings` minus any
+   * region whose outlet is not a node. */
+  regionLeaders: Map<string, [[number, number], [number, number]]>;
+}
+
+/** Place each region's ring beside the node it drains to, at a size the
+ * schematic's own spacing dictates. Shape is preserved (one scale factor
+ * for both axes); absolute position and size are not, because in a
+ * schematic they mean nothing. */
+function placeRegionGlyphs(
+  regions: Region[],
+  positions: Map<string, [number, number]>,
+  spacingX: number,
+  spacingY: number,
+): Pick<SchematicLayout, "regionRings" | "regionLeaders"> {
+  const regionRings = new Map<string, Array<[number, number]>>();
+  const regionLeaders = new Map<string, [[number, number], [number, number]]>();
+  if (regions.length === 0) return { regionRings, regionLeaders };
+
+  const boxW = spacingX * GLYPH_FRACTION;
+  const boxH = spacingY * GLYPH_FRACTION;
+
+  // Several catchments may drain to one node, so they fan out along the
+  // column rather than stacking invisibly on top of each other.
+  const perOutlet = new Map<string, number>();
+
+  for (const r of regions) {
+    if (r.ring.length < 3) continue;
+    const outletId = r.outletId;
+    if (!outletId) continue;
+    const anchor = positions.get(outletId);
+    if (!anchor) continue;
+
+    let minX = Number.POSITIVE_INFINITY;
+    let minY = Number.POSITIVE_INFINITY;
+    let maxX = Number.NEGATIVE_INFINITY;
+    let maxY = Number.NEGATIVE_INFINITY;
+    for (const [x, y] of r.ring) {
+      if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
+      if (x < minX) minX = x;
+      if (x > maxX) maxX = x;
+      if (y < minY) minY = y;
+      if (y > maxY) maxY = y;
+    }
+    const w = maxX - minX;
+    const h = maxY - minY;
+    if (!Number.isFinite(w) || !Number.isFinite(h) || (w <= 0 && h <= 0)) {
+      continue;
+    }
+    // One factor for both axes: a catchment squeezed to fill a box is no
+    // longer that catchment's shape.
+    const scale = Math.min(
+      w > 0 ? boxW / w : boxH / h,
+      h > 0 ? boxH / h : boxW / w,
+    );
+    const cx = (minX + maxX) / 2;
+    const cy = (minY + maxY) / 2;
+
+    const slot = perOutlet.get(outletId) ?? 0;
+    perOutlet.set(outletId, slot + 1);
+    // Up and to the left of the outlet — upstream of it in a layout whose
+    // depth grows rightward — then fanned upward per additional catchment.
+    const gx = anchor[0] - spacingX * 0.5;
+    const gy = anchor[1] - spacingY * (0.75 + slot * GLYPH_FRACTION * 1.3);
+
+    // Plan coordinates grow northward; the orthographic canvas grows
+    // downward. Flipping y here keeps the glyph the right way up.
+    regionRings.set(
+      r.id,
+      r.ring.map(
+        ([x, y]: [number, number]) =>
+          [gx + (x - cx) * scale, gy - (y - cy) * scale] as [number, number],
+      ),
+    );
+    regionLeaders.set(r.id, [[gx, gy], anchor]);
+  }
+  return { regionRings, regionLeaders };
+}
+
+/** A connection that is not a link: a conduit coupled to a node by
+ * something other than shared endpoints (a dual-drainage street inlet). */
+export interface LayoutCoupling {
+  link: string;
+  node: string;
 }
 
 export function computeSchematicLayout(
   nodes: Node[],
   links: Link[],
   scale: { x: number; y: number } = { x: 1, y: 1 },
+  couplings: LayoutCoupling[] = [],
+  /** Catchment boundaries to place alongside the nodes. */
+  regions: Region[] = [],
 ): SchematicLayout {
   // Every position below is linear in these two constants, so scaling them is
   // equivalent to scaling the output per axis — no re-running the BFS.
@@ -51,10 +154,29 @@ export function computeSchematicLayout(
     adj.get(l.fromId)?.add(l.toId);
     adj.get(l.toId)?.add(l.fromId);
   }
+  // Inlet couplings join a conduit to a node without sharing an endpoint,
+  // so connectivity derived from links alone misses them — a street
+  // network draining into a sewer through inlets would read as detached.
+  // The whole segment drains to the capture node, so both of its endpoints
+  // are adjacent to it.
+  if (couplings.length > 0) {
+    const linkById = new Map(links.map((l) => [l.id, l]));
+    for (const c of couplings) {
+      const l = linkById.get(c.link);
+      if (!l || !adj.has(c.node)) continue;
+      for (const end of [l.fromId, l.toId]) {
+        if (!adj.has(end)) continue;
+        adj.get(end)?.add(c.node);
+        adj.get(c.node)?.add(end);
+      }
+    }
+  }
 
-  // Identify source nodes (reservoirs, tanks) as BFS roots
+  // Identify boundary nodes as BFS roots: reservoirs/tanks for water
+  // distribution, outfalls for drainage (where flow converges rather than
+  // diverges — the layout only needs consistent depths, not direction).
   const sources = nodes.filter(
-    (n) => n.type === "reservoir" || n.type === "tank",
+    (n) => n.type === "reservoir" || n.type === "tank" || n.type === "outfall",
   );
   if (sources.length === 0 && nodes.length > 0) sources.push(nodes[0]);
 
@@ -178,5 +300,11 @@ export function computeSchematicLayout(
     }
   }
 
-  return { positions, detachedIds: new Set(detachedDepth.keys()) };
+  return {
+    positions,
+    detachedIds: new Set(detachedDepth.keys()),
+    // Placed last, once every node — connected and detached — has landed,
+    // so a catchment draining to a stray node follows it there.
+    ...placeRegionGlyphs(regions, positions, SPACING_X, SPACING_Y),
+  };
 }

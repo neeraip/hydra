@@ -192,6 +192,27 @@ function pushNav(
   return { navHistory: [...history, newLoc], navCursor: history.length };
 }
 
+/**
+ * Whether the secondary rail should be open at a navigated-to location.
+ *
+ * Back/forward must land on the same rail state as arriving any other way,
+ * so this reads the target project's saved preference rather than carrying
+ * the current one across. Carrying it is what collapsed the network list:
+ * leaving the project page sets `railOpen` false (no rail exists there),
+ * and navigating back into the project then inherited that false and
+ * ignored the preference the user had actually set.
+ *
+ * Keyed on the *target's* project, not the current one — history can cross
+ * from one project to another, and each keeps its own preference.
+ */
+export function railOpenForLocation(
+  loc: NavLocation,
+  savedPref: (projectId: string) => boolean,
+): boolean {
+  if (loc.page !== "project") return false;
+  return loc.activeProjectId ? savedPref(loc.activeProjectId) : true;
+}
+
 /** Window within which identical backend-error toasts are suppressed. */
 const IPC_TOAST_DEDUPE_MS = 5000;
 
@@ -828,7 +849,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         projectView: loc.projectView,
         activeProjectId: loc.activeProjectId,
         activeScenarioId: loc.activeScenarioId,
-        railOpen: loc.page === "project" ? prev.railOpen : false,
+        railOpen: railOpenForLocation(loc, readRailOpen),
       };
     });
   }, []);

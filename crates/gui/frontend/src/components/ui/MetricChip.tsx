@@ -1,7 +1,7 @@
 interface MetricChipProps {
   value: string | number;
   label: string;
-  /** Override colour of the value text (defaults to var(--text-primary)) */
+  /** Override colour of the value text (defaults to "var(--text-primary)") */
   valueColor?: string;
   /** Override border colour of the chip */
   borderColor?: string;

@@ -40,15 +40,24 @@ export * from "./basemapProviders";
 export * from "./criteria";
 export * from "./editors";
 export {
+  type ElementAttributeInfo,
+  type ElementClass,
+  type ElementKindInfo,
+  type ElementRole,
   type EngineInfo,
   type EngineStatus,
+  elementClassHeading,
   engineByKey,
   FALLBACK_ENGINES,
+  getElementKinds,
   getEngines,
   type ImportFormat,
   importExtensionLabel,
   isEngineAvailable,
   isEngineGuiEditable,
+  isEngineGuiOpenable,
+  useElementAttributes,
+  useElementKinds,
   useEngines,
 } from "./engines";
 export * from "./issues";

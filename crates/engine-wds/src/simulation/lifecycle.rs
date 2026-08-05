@@ -449,6 +449,14 @@ impl Simulation {
                 .iter()
                 .map(|&i| self.node_states[i].volume)
                 .collect();
+            // Statuses as the predictor left them. The corrector's own solve
+            // may reclassify a link under ../hydraulics §3.9 — a pump past
+            // its maximum head, a check valve closing, a PRV changing mode —
+            // and that makes its flows a sample of a different regime (§5.3
+            // smoothness precondition). Simple controls and rules cannot do
+            // this: they are applied outside the corrector.
+            let status_before: Vec<LinkStatus> =
+                self.link_states.iter().map(|l| l.status).collect();
             {
                 let network = self
                     .network
@@ -474,6 +482,38 @@ impl Simulation {
                     controls::pswitch,
                 )
                 .map_err(SessionError::HydraulicSolve)?;
+            }
+
+            let switched = self
+                .link_states
+                .iter()
+                .zip(&status_before)
+                .any(|(l, before)| l.status != *before);
+
+            if switched {
+                // §5.3: the predictor is regime-consistent across the
+                // interval; the trapezoid would average two different flow
+                // regimes and integrate neither. Take V* — the same choice a
+                // clamped tank gets — accept the step, and run no error test,
+                // because halving cannot reduce a discontinuity. It would
+                // retry at the same switch one interval later, and again,
+                // down to the floor.
+                for (j, &i) in tank_indices.iter().enumerate() {
+                    let network = self
+                        .network
+                        .as_ref()
+                        .expect("invariant: network set in load()");
+                    let NodeKind::Tank(tank) = &network.nodes[i].kind else {
+                        continue;
+                    };
+                    let level = tank.level_from_volume(v_star[j], &network.curves);
+                    let head = tank.head_from_level(network.nodes[i].base.elevation, level);
+                    let ns = &mut self.node_states[i];
+                    ns.volume = v_star[j];
+                    ns.level = level;
+                    ns.head = head;
+                }
+                break;
             }
 
             let network = self

@@ -3,6 +3,7 @@ import {
   ArrowsRightLeftIcon,
   MinusIcon,
   PlusIcon,
+  Square2StackIcon,
 } from "@heroicons/react/16/solid";
 import type { CSSProperties } from "react";
 
@@ -25,6 +26,8 @@ export function ViewportControls({
   onZoomOut,
   onResetNorth,
   onFit,
+  onClearView,
+  clearableCount,
 }: {
   /** True in schematic mode — reset-north only applies to the map. */
   mapOnly: boolean;
@@ -32,6 +35,13 @@ export function ViewportControls({
   onZoomOut: () => void;
   onResetNorth: () => void;
   onFit: () => void;
+  /** Dismiss everything covering the map. Deliberately does not move the
+   * camera — Fit network above is that, and a reset that also jumped the
+   * viewport would be the most disorienting button on the canvas. */
+  onClearView: () => void;
+  /** How many things are currently covering the map. Zero disables the
+   * button rather than offering an action with no visible effect. */
+  clearableCount: number;
 }) {
   const mapOnlyDim: CSSProperties = {
     opacity: mapOnly ? 0.38 : undefined,
@@ -105,6 +115,26 @@ export function ViewportControls({
         aria-label="Fit network"
       >
         <ArrowsPointingOutIcon style={ICON_14} />
+      </button>
+
+      <button
+        type="button"
+        className="tool-btn"
+        onClick={onClearView}
+        disabled={clearableCount === 0}
+        data-tooltip={
+          clearableCount === 0
+            ? "Nothing covering the map"
+            : "Clear view — close panels, overlays and measurements"
+        }
+        data-tooltip-pos="left"
+        aria-label="Clear view"
+        style={{
+          opacity: clearableCount === 0 ? 0.38 : undefined,
+          cursor: clearableCount === 0 ? "not-allowed" : undefined,
+        }}
+      >
+        <Square2StackIcon style={ICON_14} />
       </button>
     </div>
   );

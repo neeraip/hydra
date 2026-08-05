@@ -1,13 +1,16 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ensureEpsgDef,
+  LOCAL_CRS,
   normalizeEpsgCode,
   registerCustomCrsDefinitions,
   reprojectLinkVerticesCached,
   reprojectNodesCached,
+  reprojectRegions,
 } from "../../../canvas/coords";
 import { useCanvasStatus } from "../../../canvas/status-context";
 import { type Link, listCrsCatalogPage, type Node } from "../../../hooks";
+import type { Region } from "../../../types";
 
 /** Coverage of real map coordinates across the network's nodes. */
 export type CoordStatus = "complete" | "partial" | "empty";
@@ -31,11 +34,13 @@ export function useCrsReprojection({
   projectSourceCrs,
   baseNodes,
   baseLinks,
+  baseRegions,
 }: {
   /** The project row's persisted CRS (EPSG code); absent → WGS84. */
   projectSourceCrs: string | null | undefined;
   baseNodes: Node[];
   baseLinks: Link[];
+  baseRegions: Region[];
 }): {
   sourceCrs: string;
   crsError: string | null;
@@ -49,6 +54,8 @@ export function useCrsReprojection({
   posNodes: Node[];
   /** Links with reprojected polyline vertices (identity-stable when WGS84). */
   canvasLinks: Link[];
+  /** Regions with reprojected boundary rings (identity-stable when WGS84). */
+  canvasRegions: Region[];
 } {
   const { setCoordStatus } = useCanvasStatus();
 
@@ -77,7 +84,11 @@ export function useCrsReprojection({
   useEffect(() => {
     // ensureEpsgDef registers baseline/UTM/MGA defs as a side effect and
     // returns true when the code is (now) usable — nothing more to do.
-    if (sourceCrs === "EPSG:4326" || ensureEpsgDef(sourceCrs)) {
+    if (
+      sourceCrs === "EPSG:4326" ||
+      sourceCrs === LOCAL_CRS ||
+      ensureEpsgDef(sourceCrs)
+    ) {
       setCrsResolving(false);
       return;
     }
@@ -163,6 +174,19 @@ export function useCrsReprojection({
   // see as a dependency.
   // biome-ignore lint/correctness/useExhaustiveDependencies: re-run token, see above
   const reprojection = useMemo(() => {
+    // A local drawing grid is not georeferenced, so there is nothing to
+    // reproject and no range to be outside of. Coordinates pass through
+    // as the model states them.
+    if (sourceCrs === LOCAL_CRS) {
+      // The orthographic view's Y axis grows downward while model
+      // coordinates grow northward, so a local grid is flipped once here —
+      // for nodes, link vertices and region rings alike — and every
+      // consumer downstream then works in one consistent space.
+      return {
+        nodes: rawPositionNodes.map((n) => ({ ...n, y: -n.y })),
+        error: null as string | null,
+      };
+    }
     if (sourceCrs === "EPSG:4326") {
       // Even with the default CRS, check that the raw coordinates are within
       // WGS84 range. If any node is out of range the user has projected
@@ -243,7 +267,18 @@ export function useCrsReprojection({
       { src: (typeof baseLinks)[number]; out: (typeof baseLinks)[number] }
     >;
   }>({ crs: "", byId: new Map() });
+  // biome-ignore lint/correctness/useExhaustiveDependencies: re-run token, see above
   const canvasLinks = useMemo(() => {
+    if (sourceCrs === LOCAL_CRS) {
+      return baseLinks.map((l) =>
+        l.vertices
+          ? {
+              ...l,
+              vertices: l.vertices.map(([x, y]) => [x, -y] as [number, number]),
+            }
+          : l,
+      );
+    }
     if (sourceCrs === "EPSG:4326") return baseLinks;
     try {
       const cache = linkReprojCacheRef.current;
@@ -255,7 +290,30 @@ export function useCrsReprojection({
     } catch {
       return baseLinks;
     }
-  }, [sourceCrs, baseLinks]);
+    // Same re-run token as the node memo: without it a lazily-fetched def
+    // would reproject the nodes and leave the vertices in raw metres.
+  }, [sourceCrs, baseLinks, crsDefsVersion]);
+
+  // Region rings live in the source CRS exactly like link vertices; same
+  // transform, same fall-back-to-raw on error (already surfaced above).
+  // biome-ignore lint/correctness/useExhaustiveDependencies: re-run token, see above
+  const canvasRegions = useMemo(() => {
+    if (baseRegions.length === 0) return baseRegions;
+    if (sourceCrs === LOCAL_CRS) {
+      return baseRegions.map((r) => ({
+        ...r,
+        ring: r.ring.map(([x, y]) => [x, -y] as [number, number]),
+      }));
+    }
+    if (sourceCrs === "EPSG:4326") {
+      return baseRegions;
+    }
+    try {
+      return reprojectRegions(baseRegions, sourceCrs);
+    } catch {
+      return baseRegions;
+    }
+  }, [sourceCrs, baseRegions, crsDefsVersion]);
 
   return {
     sourceCrs,
@@ -266,5 +324,6 @@ export function useCrsReprojection({
     rawPositionNodes,
     posNodes,
     canvasLinks,
+    canvasRegions,
   };
 }

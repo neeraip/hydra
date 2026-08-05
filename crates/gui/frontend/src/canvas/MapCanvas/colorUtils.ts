@@ -1,8 +1,82 @@
 import type { Link, Node } from "../../hooks";
+import type { RampHint } from "../../hooks/results";
 import { PRESSURE_THRESHOLD } from "../../types";
 import type { LinkVariable, NodeVariable } from "../types";
 
 export type RGBA = [number, number, number, number];
+
+/**
+ * Sequential ramps, one hue family per element class.
+ *
+ * Three classes can be coloured at once — a node variable, a link variable
+ * and a catchment variable — and painted in one hue they left the reader
+ * remembering which geometry meant which legend row. Hue now says *which
+ * class*, lightness says *how much*: two channels, two questions.
+ *
+ * On the canvas that is a fair use of hue. The rule that hue carries state
+ * rather than identity was written for chrome, where hue competed with
+ * selection; here it is the data channel already, and nothing else is
+ * asking for it. The families are chosen for what they describe — blue for
+ * water level at a node, green for the land a catchment covers — and are
+ * separated in OKLab chroma so no two are confusable at the same lightness.
+ *
+ * Every family is dark at the bottom of its range and bright at the top:
+ * the ground is near-black, and the maxima are what these maps are read
+ * for.
+ */
+type SeqFamily = readonly [
+  readonly [number, number, number],
+  readonly [number, number, number],
+  readonly [number, number, number],
+];
+
+const SEQ_FAMILIES: Record<string, SeqFamily> = {
+  /** Nodes: blue, for depth, head and water level. */
+  point: [
+    [12, 38, 78],
+    [31, 122, 186],
+    [186, 240, 253],
+  ],
+  /** Links: violet, distinct from both water blue and land green. */
+  polyline: [
+    [36, 17, 71],
+    [109, 75, 196],
+    [224, 208, 255],
+  ],
+  /** Catchments: green, for the surface they describe. */
+  region: [
+    [14, 44, 26],
+    [47, 143, 82],
+    [200, 245, 207],
+  ],
+};
+
+/**
+ * Diverging: bright teal ← dark centre → bright violet.
+ *
+ * Dark in the middle, not light. A diverging ramp is read for its extremes
+ * — which way and how hard — and a light centre made "near zero" the
+ * brightest thing on a dark canvas while strong flow in either direction
+ * receded. The centre now sits close to the ground and recedes with it.
+ *
+ * Teal and violet rather than blue and red: this ramp shows direction, and
+ * direction is not severity. Red belongs to the ramp that judges.
+ *
+ * The two ends are matched in perceptual lightness (OKLab L ≈ 0.75), so
+ * neither direction looks stronger than the other at equal magnitude.
+ *
+ * Class-independent, unlike the sequential families: this ramp's shape —
+ * bright, dark, bright — already marks it as a different kind of reading,
+ * and splitting it three ways would need six more hues the palette does
+ * not have room for.
+ */
+const DIV_LOW: [number, number, number] = [72, 198, 183];
+const DIV_MID: [number, number, number] = [42, 47, 58];
+const DIV_HIGH: [number, number, number] = [183, 155, 255];
+
+/** A value that should exist and does not — an unreported element, a null
+ * reading. Distinct from the network at rest, which has its own palette. */
+export const NO_DATA_RGB: [number, number, number] = [110, 116, 126];
 
 /** Stable hash of a string → float in [0, 1). Used for per-link phase offsets. */
 export function hashStr(s: string): number {
@@ -12,78 +86,136 @@ export function hashStr(s: string): number {
   return (Math.abs(h) >>> 0) / 0x100000000;
 }
 
-export function nodeTypeRgba(type: string): RGBA {
-  if (type === "reservoir") return [74, 144, 217, 255];
-  if (type === "tank") return [61, 175, 117, 255];
-  return [180, 195, 215, 220]; // junction — muted steel blue-grey
+/**
+ * The network at rest, before any result exists.
+ *
+ * Differentiated by what a kind *does* (spec §4.3) rather than by what it
+ * is called, so it works for an engine this file has never heard of. And
+ * differentiated by lightness rather than hue, because hue is spent on
+ * results: a reader glancing at an unsimulated model needs to see where the
+ * system is fed and drained and where something acts on the flow, not to
+ * learn a colour code.
+ *
+ * Everything used to paint one grey here, which said nothing at all.
+ */
+const BASE_CONVEYANCE_NODE: RGBA = [168, 180, 196, 220];
+const BASE_BOUNDARY_NODE: RGBA = [232, 238, 246, 245];
+const BASE_CONTROL_NODE: RGBA = [201, 209, 221, 235];
+const BASE_CONVEYANCE_LINK: RGBA = [145, 158, 175, 210];
+const BASE_CONTROL_LINK: RGBA = [206, 213, 223, 230];
+
+/** A kind with no declared role is not in the flow network; it gets the
+ * quietest treatment rather than a guess. */
+export function baseNodeRgba(role: string | undefined): RGBA {
+  if (role === "boundary") return BASE_BOUNDARY_NODE;
+  if (role === "control") return BASE_CONTROL_NODE;
+  return BASE_CONVEYANCE_NODE;
+}
+
+export function baseLinkRgba(role: string | undefined): RGBA {
+  return role === "control" ? BASE_CONTROL_LINK : BASE_CONVEYANCE_LINK;
 }
 
 // ── Quality colour helper (shared between node quality and legacy use) ────────
 
-export function qualityRgba(normalised: number): RGBA {
-  const t = Math.max(0, Math.min(1, normalised));
-  if (t < 0.5) {
-    const s = t * 2;
-    return [
-      Math.round(74 + s * (61 - 74)),
-      Math.round(144 + s * (175 - 144)),
-      Math.round(217 - s * (217 - 117)),
-      230,
-    ];
-  }
-  const s = (t - 0.5) * 2;
-  return [
-    Math.round(61 + s * (201 - 61)),
-    Math.round(175 - s * (175 - 64)),
-    Math.round(117 - s * (117 - 64)),
-    230,
-  ];
+export function qualityRgba(normalised: number, cls = "point"): RGBA {
+  // A concentration, an age or a trace percentage is a magnitude, not a
+  // verdict — so it takes the sequential ramp like every other magnitude.
+  // It used to run blue → green → red, which said "high is bad" about a
+  // quantity whose meaning depends entirely on the quality mode.
+  return [...seqRgb(Math.max(0, Math.min(1, normalised)), cls), 230];
 }
 
 // ── Diverging comparison ramp (scenario Δ overlay) ────────────────────────────
 
 // ── Node variable colour functions ────────────────────────────────────────────
 
+/**
+ * How far out of specification a value sits — the shape a criteria-banded
+ * variable actually has.
+ *
+ * Not a magnitude. Pressure's desirable state is a *middle*: too little is
+ * under-service, too much risks bursts and leakage, and a ramp running
+ * monotonically from "fine" to "bad" cannot say that. So the scale is a
+ * verdict — compliant is quiet, and departing the band in either direction
+ * escalates.
+ *
+ * It borrows the severity language the engines already use for categorical
+ * states (§6.1), so "compliant / caution / alarm" means one thing across
+ * the application whether it describes a pump's status or a junction's
+ * pressure.
+ */
+export type Verdict = "nominal" | "caution" | "alarm";
+
+export function verdictRgba(v: Verdict, alpha = 255): RGBA {
+  return [...SEVERITY_RGB[v], alpha];
+}
+
+/** Under-service is the failure; over-pressure is worth noticing. */
+export function pressureVerdict(
+  p: number,
+  bands: { low: number; required: number; high: number },
+): Verdict {
+  if (p < bands.low) return "alarm";
+  if (p < bands.required) return "caution";
+  if (p < bands.high) return "nominal";
+  return "caution";
+}
+
+/** Stagnation is worth noticing; scour and headloss are the failure. */
+export function velocityVerdict(
+  v: number,
+  bands: { low: number; target: number; high: number },
+): Verdict {
+  if (v < bands.low) return "caution";
+  if (v < bands.high) return "nominal";
+  return "alarm";
+}
+
 export function pressureRgba(
   p: number,
   thresholds?: { low: number; required: number; high: number },
 ): RGBA {
-  const low = thresholds?.low ?? PRESSURE_THRESHOLD;
-  const req = thresholds?.required ?? 35;
-  const high = thresholds?.high ?? 45;
-  if (p < low) return [201, 64, 64, 255];
-  if (p < req) return [212, 160, 23, 255];
-  if (p < high) return [61, 175, 117, 255];
-  return [74, 144, 217, 255];
+  const bands = {
+    low: thresholds?.low ?? PRESSURE_THRESHOLD,
+    required: thresholds?.required ?? 35,
+    high: thresholds?.high ?? 45,
+  };
+  return verdictRgba(pressureVerdict(p, bands), 255);
 }
 
 /**
- * Sequential ramp: blue (low) → green → yellow → orange (high).
- * Used for head, demand, and quality node variables.
+ * Sequential ramp: single-hue light → dark blue over [min, max].
+ *
+ * This replaced a blue→cyan→green→yellow→red rainbow. A rainbow is not
+ * ordered by lightness, so it invents boundaries the data does not have,
+ * ranks badly under colour-vision deficiency, and — the reason it mattered
+ * here — spent green and red, which the banded ramp needs for judgements.
+ * One hue, monotonic in lightness, reads as a magnitude and nothing else.
+ *
+ * The same ramp the engine-generic path uses, so a head map and a depth map
+ * are read the same way.
  */
 export function sequentialRgba(
   value: number | null | undefined,
   min: number,
   max: number,
   alpha = 220,
+  cls = "point",
 ): RGBA {
-  if (value == null) return [100, 100, 100, alpha];
+  if (value == null) return [...NO_DATA_RGB, alpha];
   const range = max - min || 1;
   const t = Math.max(0, Math.min(1, (value - min) / range));
-  if (t < 0.25) {
-    const s = t / 0.25;
-    return [0, Math.round(180 * s), Math.round(255 - 55 * s), alpha];
-  }
-  if (t < 0.5) {
-    const s = (t - 0.25) / 0.25;
-    return [0, Math.round(180 + 75 * s), Math.round(200 - 200 * s), alpha];
-  }
-  if (t < 0.75) {
-    const s = (t - 0.5) / 0.25;
-    return [Math.round(255 * s), 255, 0, alpha];
-  }
-  const s = (t - 0.75) / 0.25;
-  return [255, Math.round(255 * (1 - s)), 0, alpha];
+  return [...seqRgb(t, cls), alpha];
+}
+
+/** The sequential ramp at `t` for one class, through its midpoint. Two
+ * segments give each family its chroma arc — dark, through a saturated
+ * mid, to near-white — which one straight line between the ends could not.
+ * An unknown class falls back to the node family. */
+export function seqRgb(t: number, cls = "point"): [number, number, number] {
+  const [low, mid, high] = SEQ_FAMILIES[cls] ?? SEQ_FAMILIES.point;
+  return t < 0.5 ? blend(low, mid, t / 0.5) : blend(mid, high, (t - 0.5) / 0.5);
 }
 
 /** Pick node RGBA based on the active node variable. Non-junctions always use their type colour. */
@@ -96,14 +228,29 @@ export function nodeRgba(
   demandMax: number,
   qualityMin: number,
   qualityMax: number,
+  /**
+   * Criteria bands, supplied **only** when the reader has asked to see the
+   * verdict. Their presence is what selects a judgement over a magnitude:
+   * the model carries no required service pressure, so painting one by
+   * default would render a policy nobody had affirmed.
+   */
   pressureThresh?: { low: number; required: number; high: number },
+  /** The kind's declared role (spec §4.3), for kinds that carry no value
+   * of the active variable and so show the network-at-rest palette. */
+  role?: string,
+  /** Run range for the magnitude ramp pressure takes when unjudged. */
+  pressureMin = 0,
+  pressureMax = 100,
 ): RGBA {
-  if (node.type !== "junction") return nodeTypeRgba(node.type);
+  if (node.type !== "junction") return baseNodeRgba(role);
   switch (nodeVar) {
     case "pressure":
-      return node.pressure != null
+      if (node.pressure == null) return [...NO_DATA_RGB, 190];
+      // Unjudged, pressure is just a quantity, and reads like every other
+      // quantity on the map.
+      return pressureThresh
         ? pressureRgba(node.pressure, pressureThresh)
-        : [180, 195, 215, 180];
+        : sequentialRgba(node.pressure, pressureMin, pressureMax);
     case "head":
       return sequentialRgba(node.head, headMin, headMax);
     case "demand":
@@ -113,7 +260,7 @@ export function nodeRgba(
         const range = qualityMax - qualityMin || 1;
         return qualityRgba((node.quality - qualityMin) / range);
       }
-      return [180, 195, 215, 180];
+      return [...NO_DATA_RGB, 190];
   }
 }
 
@@ -130,47 +277,244 @@ export function nodeRgba(
  */
 export const NO_RESULT_RGBA: RGBA = [100, 100, 100, 200];
 
-export function velocityRgba(
-  v: number,
-  thresholds?: { low: number; target: number; high: number },
-): RGBA {
-  if (thresholds) {
-    if (v < thresholds.low) return [61, 175, 117, 220]; // below low  — good
-    if (v < thresholds.target) return [212, 160, 23, 220]; // low–target — moderate
-    if (v < thresholds.high) return [201, 120, 64, 220]; // target–high — elevated
-    return [201, 64, 64, 220]; // above high  — excessive
-  }
-  const t = Math.min(v / 1.5, 1);
+// ── Engine-generic ramps (catalog-driven results) ─────────────────────────────
+
+/** Linear blend between two RGB triples at `t` ∈ [0, 1]. */
+// ── Perceptual interpolation ────────────────────────────────────────────────
+//
+// Ramps are mixed in OKLab, not in sRGB. Mixing raw channel values makes
+// equal steps in the data unequal to the eye — the middle of a ramp bunches
+// and its ends stretch — so a reader mis-ranks values by an amount that
+// depends on where in the range they fall. OKLab is near-uniform, so an
+// equal step in the data is an equal step in appearance.
+
+function srgbToLinear(c: number): number {
+  const v = c / 255;
+  return v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
+}
+
+function linearToSrgb(v: number): number {
+  const c = v <= 0.0031308 ? v * 12.92 : 1.055 * v ** (1 / 2.4) - 0.055;
+  return Math.max(0, Math.min(255, Math.round(c * 255)));
+}
+
+type Oklab = [number, number, number];
+
+function toOklab([r, g, b]: readonly [number, number, number]): Oklab {
+  const lr = srgbToLinear(r);
+  const lg = srgbToLinear(g);
+  const lb = srgbToLinear(b);
+  const l = Math.cbrt(
+    0.4122214708 * lr + 0.5363325363 * lg + 0.0514459929 * lb,
+  );
+  const m = Math.cbrt(
+    0.2119034982 * lr + 0.6806995451 * lg + 0.1073969566 * lb,
+  );
+  const s = Math.cbrt(
+    0.0883024619 * lr + 0.2817188376 * lg + 0.6299787005 * lb,
+  );
   return [
-    Math.round(74 + t * (201 - 74)),
-    Math.round(144 - t * (144 - 80)),
-    Math.round(217 - t * (217 - 23)),
-    220,
+    0.2104542553 * l + 0.793617785 * m - 0.0040720468 * s,
+    1.9779984951 * l - 2.428592205 * m + 0.4505937099 * s,
+    0.0259040371 * l + 0.7827717662 * m - 0.808675766 * s,
   ];
 }
 
-/** Flow magnitude: grey (no data) → cyan (low) → orange (max). */
+function fromOklab([L, a, b]: Oklab): [number, number, number] {
+  const l = (L + 0.3963377774 * a + 0.2158037573 * b) ** 3;
+  const m = (L - 0.1055613458 * a - 0.0638541728 * b) ** 3;
+  const s = (L - 0.0894841775 * a - 1.291485548 * b) ** 3;
+  return [
+    linearToSrgb(4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s),
+    linearToSrgb(-1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s),
+    linearToSrgb(-0.0041960863 * l - 0.7034186147 * m + 1.707614701 * s),
+  ];
+}
+
+function blend(
+  a: readonly [number, number, number],
+  b: readonly [number, number, number],
+  t: number,
+): [number, number, number] {
+  const A = toOklab(a);
+  const B = toOklab(b);
+  return fromOklab([
+    A[0] + t * (B[0] - A[0]),
+    A[1] + t * (B[1] - A[1]),
+    A[2] + t * (B[2] - A[2]),
+  ]);
+}
+
+/**
+ * Banded ramp, within criteria → exceeding: quiet and dark, then warming
+ * and brightening.
+ *
+ * The only ramp that passes judgement, so it is the only one spending warm
+ * hue. It carries that judgement in *lightness* as well: each band is
+ * strictly brighter than the one before, so it survives greyscale and
+ * colour-vision deficiency, and so the worst band is the most prominent
+ * thing on the canvas rather than the darkest.
+ *
+ * The old bands ran green → amber → red, which is the worst pairing for
+ * colour-vision deficiency and was not even ordered — its second step was
+ * lighter than its third. Normal is now simply quiet, in the manner of a
+ * process display, rather than a green that competes for attention with
+ * everything else on screen.
+ */
+export const BAND_STEPS: readonly [number, number, number][] = [
+  [38, 52, 66],
+  [92, 84, 62],
+  [156, 116, 44],
+  [214, 132, 48],
+  [255, 168, 96],
+];
+
+/**
+ * Qualitative palette for `categorical` states the engine passes no
+ * judgement on, indexed by position in its declared item list.
+ *
+ * These are a closed set of *states*, not magnitudes, so this palette must
+ * not read as ordered: every entry sits at a similar lightness and differs
+ * by hue, the opposite of the sequential and banded ramps. The hues are
+ * spaced around the wheel and avoid the pure red/green pairing that
+ * colour-vision deficiency collapses.
+ */
+export const CATEGORY_STEPS: readonly [number, number, number][] = [
+  [120, 150, 185],
+  [212, 160, 23],
+  [176, 106, 92],
+  [110, 160, 140],
+  [150, 128, 190],
+  [180, 168, 96],
+];
+
+/**
+ * States the engine *has* judged (§6.1 severity), which is a different
+ * reading and gets a different treatment: not "which state is this?" but
+ * "is anything wrong here?".
+ *
+ * Graded by prominence rather than by hue alone, so the answer survives a
+ * glance at a whole network: nominal recedes toward the quiet blue-grey the
+ * network-at-rest palette uses, caution is the amber the banded ramp
+ * spends on its upper steps, and alarm is the one saturated red on the
+ * canvas. Ordered in lightness as well as hue, so it survives greyscale and
+ * colour-vision deficiency — the same discipline as the banded ramp, which
+ * this is the discrete counterpart of.
+ */
+export const SEVERITY_RGB: Record<string, [number, number, number]> = {
+  nominal: [120, 150, 185],
+  caution: [212, 160, 23],
+  alarm: [201, 64, 64],
+};
+
+/**
+ * Colour for one declared state: its severity when the engine gave one,
+ * otherwise its position in the qualitative palette.
+ *
+ * Severity wins because it is the stronger claim. An engine that says a
+ * state is an alarm has told us something a position never could, and
+ * ignoring it would paint a closed pipe as merely the third kind of link.
+ */
+export function categoryRgba(
+  index: number,
+  alpha = 220,
+  severity?: string,
+): RGBA {
+  const judged = severity ? SEVERITY_RGB[severity] : undefined;
+  if (judged) return [...judged, alpha];
+  // Wrap rather than clamp: two states sharing a colour is confusing, but
+  // a run of trailing states sharing the *last* colour is worse.
+  const c =
+    CATEGORY_STEPS[
+      ((index % CATEGORY_STEPS.length) + CATEGORY_STEPS.length) %
+        CATEGORY_STEPS.length
+    ];
+  return [...c, alpha];
+}
+
+/**
+ * Colour for one engine-generic value against its variable's per-run range
+ * and ramp hint — the catalog-driven counterpart of the per-variable wds
+ * ramps above, with zero engine knowledge:
+ *
+ * - `sequential`: single-hue light → dark blue over [min, max];
+ * - `diverging`: teal ← neutral → violet, centred on zero, scaled by the
+ *   larger magnitude side (flow direction reads at a glance);
+ * - `banded`: five discrete good → excessive steps over [min, max];
+ * - `categorical`: one qualitative colour per engine-declared state.
+ *
+ * Non-finite values (unreported elements) render the shared no-result grey.
+ */
+export function genericRgba(
+  value: number | null | undefined,
+  variable: { min: number; max: number; ramp: RampHint },
+  alpha = 220,
+  /** Element class, selecting the sequential hue family. Diverging and
+   * banded are class-independent — see their own notes. */
+  cls = "point",
+): RGBA {
+  if (value == null || !Number.isFinite(value)) return NO_RESULT_RGBA;
+  const { min, max, ramp } = variable;
+  if (ramp.type === "categorical") {
+    const i = ramp.items.findIndex((it) => it.value === value);
+    // A state the engine did not declare is not a state we can name, so it
+    // renders as absent rather than borrowing another state's colour.
+    return i < 0
+      ? NO_RESULT_RGBA
+      : categoryRgba(i, alpha, ramp.items[i].severity);
+  }
+  if (ramp.type === "diverging") {
+    const scale = Math.max(Math.abs(min), Math.abs(max));
+    const t = scale > 0 ? Math.max(-1, Math.min(1, value / scale)) : 0;
+    const rgb =
+      t < 0 ? blend(DIV_MID, DIV_LOW, -t) : blend(DIV_MID, DIV_HIGH, t);
+    return [...rgb, alpha];
+  }
+  const span = max - min;
+  const t = span > 0 ? Math.max(0, Math.min(1, (value - min) / span)) : 0;
+  if (ramp.type === "banded") {
+    const step = Math.min(
+      BAND_STEPS.length - 1,
+      Math.floor(t * BAND_STEPS.length),
+    );
+    return [...BAND_STEPS[step], alpha];
+  }
+  return [...seqRgb(t, cls), alpha];
+}
+
+export function velocityRgba(
+  v: number,
+  thresholds?: { low: number; target: number; high: number },
+  max = 1.5,
+): RGBA {
+  // A thresholded velocity is a verdict, not a magnitude, and speaks the
+  // same severity language pressure does.
+  if (thresholds) return verdictRgba(velocityVerdict(v, thresholds), 220);
+  // Unjudged velocity is a magnitude, so it takes the sequential ramp —
+  // the same one head, depth and every generic magnitude uses. Scaled to
+  // the run rather than a fixed 1.5 m/s, so the ramp spends its range on
+  // the values this network actually reaches.
+  return [...seqRgb(Math.min(v / (max || 1.5), 1), "polyline"), 220];
+}
+
+/** Flow magnitude on the sequential ramp; the banded ramp where the user
+ * has set thresholds, because thresholds make it a judgement. */
 export function flowMagnitudeRgba(
   flow: number | null | undefined,
   maxFlow: number,
   alpha = 200,
   thresholds?: { low: number; target: number; high: number },
 ): RGBA {
-  if (flow == null) return [100, 100, 100, alpha];
+  if (flow == null) return [...NO_DATA_RGB, alpha];
   if (thresholds) {
     const abs = Math.abs(flow);
-    if (abs < thresholds.low) return [61, 175, 117, alpha]; // below low  — good
-    if (abs < thresholds.target) return [212, 160, 23, alpha]; // low–target — moderate
-    if (abs < thresholds.high) return [201, 120, 64, alpha]; // target–high — elevated
-    return [201, 64, 64, alpha]; // above high  — excessive
+    if (abs < thresholds.low) return [...BAND_STEPS[0], alpha];
+    if (abs < thresholds.target) return [...BAND_STEPS[2], alpha];
+    if (abs < thresholds.high) return [...BAND_STEPS[3], alpha];
+    return [...BAND_STEPS[4], alpha];
   }
   const t = maxFlow > 0 ? Math.min(1, Math.abs(flow) / maxFlow) : 0;
-  return [
-    Math.round(80 + 175 * t),
-    Math.round(200 - 120 * t),
-    Math.round(247 - 200 * t),
-    alpha,
-  ];
+  return [...seqRgb(t, "polyline"), alpha];
 }
 
 /**
@@ -197,10 +541,25 @@ export function statusLabel(s: number | null | undefined): string {
   return "—";
 }
 
+/**
+ * Link status on the canvas, coloured by how remarkable the state is.
+ *
+ * Drawn from the same severity table the catalog-driven legend uses, so the
+ * swatch a reader looks up always matches the link they looked it up for.
+ * The code→severity mapping mirrors the engine's own published catalog
+ * (§6.1); it is restated here only because this path colours from the fixed
+ * wds period arrays rather than from the catalog payload.
+ */
 export function statusRgba(status: number | null | undefined): RGBA {
-  if (status === 2 || status === 0 || status === 1) return [201, 64, 64, 200]; // closed variants — red
-  if (status === 4 || status === 6 || status === 7) return [212, 160, 23, 200]; // active/controlled — amber
-  return [120, 150, 185, 180]; // open (3) / unknown — blue-grey
+  // Closed variants: 2 closed, 0 excess head, 1 temporarily closed.
+  if (status === 2 || status === 0 || status === 1) {
+    return [...SEVERITY_RGB.alarm, 200];
+  }
+  // Controlled variants: 4 active, 6 setpoint not met, 7 excess pressure.
+  if (status === 4 || status === 6 || status === 7) {
+    return [...SEVERITY_RGB.caution, 200];
+  }
+  return [...SEVERITY_RGB.nominal, 180]; // open (3) / unknown
 }
 
 /**
@@ -214,8 +573,14 @@ export const LINK_HEADLOSS_MAX = 10;
 /** Headloss: grey (no data) → sequential blue → red ramp capped at
  * {@link LINK_HEADLOSS_MAX}. */
 export function headlossRgba(headloss: number | null | undefined): RGBA {
-  if (headloss == null) return [100, 100, 100, 200];
-  return sequentialRgba(Math.abs(headloss), 0, LINK_HEADLOSS_MAX);
+  if (headloss == null) return [...NO_DATA_RGB, 200];
+  return sequentialRgba(
+    Math.abs(headloss),
+    0,
+    LINK_HEADLOSS_MAX,
+    220,
+    "polyline",
+  );
 }
 
 /** Link quality: grey (no data) → the node quality ramp normalised to the
@@ -225,9 +590,9 @@ export function linkQualityRgba(
   qualityMin: number,
   qualityMax: number,
 ): RGBA {
-  if (quality == null) return [100, 100, 100, 200];
+  if (quality == null) return [...NO_DATA_RGB, 200];
   const range = qualityMax - qualityMin || 1;
-  return qualityRgba((quality - qualityMin) / range);
+  return qualityRgba((quality - qualityMin) / range, "polyline");
 }
 
 /** Pick link RGBA based on the active link variable. Pumps always use their fixed colour. */
@@ -235,17 +600,22 @@ export function linkRgba(
   link: Link,
   linkVar: LinkVariable,
   flowMax: number,
+  /** As with pressure: present only when the verdict was asked for. */
   velocityThresh?: { low: number; target: number; high: number },
   flowThresh?: { low: number; target: number; high: number },
   qualityMin = 0,
   qualityMax = 1,
+  /** Run range for the magnitude ramp velocity takes when unjudged. */
+  velocityMax = 1.5,
 ): RGBA {
-  if (link.type === "pump") return [212, 160, 23, 220];
   switch (linkVar) {
     case "flow":
       return flowMagnitudeRgba(link.flow, flowMax, 200, flowThresh);
     case "velocity":
-      return velocityRgba(link.velocity, velocityThresh);
+      // Absent (engine served no velocity) is unknown, not 0 m/s.
+      return link.velocity == null
+        ? NO_RESULT_RGBA
+        : velocityRgba(link.velocity, velocityThresh, velocityMax);
     case "status":
       return statusRgba(link.status);
     case "headloss":
@@ -253,4 +623,79 @@ export function linkRgba(
     case "quality":
       return linkQualityRgba(link.quality, qualityMin, qualityMax);
   }
+}
+
+// ── Legend gradients ────────────────────────────────────────────────────────
+//
+// Derived from the ramp functions above, never hand-written beside them. The
+// legend used to carry its own CSS copies of every palette, which is how it
+// came to disagree with the map about what "open" looked like — a comment
+// insisting the two must match is not a mechanism that makes them match.
+
+const css = (c: readonly [number, number, number]) =>
+  `rgb(${c[0]},${c[1]},${c[2]})`;
+
+/** The sequential ramp as a CSS gradient, sampled from the ramp itself. */
+export function sequentialGradientCss(cls = "point"): string {
+  const stops = Array.from({ length: 9 }, (_, i) => {
+    const t = i / 8;
+    return `${css(seqRgb(t, cls))} ${Math.round(t * 100)}%`;
+  });
+  return `linear-gradient(to right, ${stops.join(", ")})`;
+}
+
+/** The diverging ramp as a CSS gradient, negative → zero → positive. */
+export function divergingGradientCss(): string {
+  const stops = Array.from({ length: 9 }, (_, i) => {
+    const t = i / 8;
+    const value = -1 + 2 * t;
+    const c = genericRgba(value, {
+      min: -1,
+      max: 1,
+      ramp: { type: "diverging" },
+    });
+    return `${css([c[0], c[1], c[2]])} ${Math.round(t * 100)}%`;
+  });
+  return `linear-gradient(to right, ${stops.join(", ")})`;
+}
+
+/** The banded ramp as hard steps, one per band. */
+export function bandedGradientCss(): string {
+  return hardStopGradient(BAND_STEPS.map(css));
+}
+
+/** Equal hard-edged stops, for a scale whose values are classed rather
+ * than continuous — a gradient would imply a between that bands do not
+ * have. */
+export function hardStopGradient(colors: readonly string[]): string {
+  const n = colors.length || 1;
+  const stops = colors.map(
+    (c, i) => `${c} ${(i * 100) / n}% ${((i + 1) * 100) / n}%`,
+  );
+  return `linear-gradient(to right, ${stops.join(", ")})`;
+}
+
+/**
+ * The colours a thresholded wds variable is actually painted in, in
+ * ascending value order.
+ *
+ * The legend draws banded variables from this rather than assuming the
+ * generic band palette, because the two engines' banded variables are not
+ * painted alike: velocity speaks the shared banded ramp, while pressure
+ * still carries EPANET's service colours — under-served red through to
+ * ample blue. Assuming one palette is what let the legend advertise an
+ * orange scale over a map of reds, greens and blues.
+ */
+export function wdsBandColors(variableId: string): string[] | null {
+  const v = (x: Verdict) => css(SEVERITY_RGB[x]);
+  // Ascending value order, so the bar reads left to right the way its
+  // min/max labels do — which is what makes a non-monotonic verdict
+  // legible as a bar at all.
+  if (variableId === "pressure") {
+    return [v("alarm"), v("caution"), v("nominal"), v("caution")];
+  }
+  if (variableId === "velocity") {
+    return [v("caution"), v("nominal"), v("alarm")];
+  }
+  return null;
 }

@@ -81,7 +81,7 @@ export function roughGeoViewState(nodes: Node[]): {
 export function fitMapExtents(
   nodes: Node[],
   map: maplibregl.Map,
-  opts: { animate?: boolean } = {},
+  opts: { animate?: boolean; padding?: maplibregl.PaddingOptions } = {},
 ): void {
   const bounds = geoBounds(nodes);
   if (!bounds) return;
@@ -90,7 +90,10 @@ export function fitMapExtents(
   if (minLon < -180 || maxLon > 180 || minLat < -90 || maxLat > 90) return;
   let camera: ReturnType<typeof map.cameraForBounds>;
   try {
-    camera = map.cameraForBounds(bounds, { padding: 48, maxZoom: 18 });
+    camera = map.cameraForBounds(bounds, {
+      padding: opts.padding ?? 48,
+      maxZoom: 18,
+    });
   } catch {
     return;
   }
@@ -127,4 +130,90 @@ export function orthoCenterFromMap(coords: Map<string, [number, number]>): {
   const span = Math.max(maxX - minX, maxY - minY);
   const zoom = span > 0 ? Math.log2(600 / span) : 0;
   return { target: [cx, cy, 0], zoom };
+}
+
+/**
+ * The chrome floating over the map, as MapLibre edge padding.
+ *
+ * A fit that ignores it centres the network in the *container*, which is
+ * correct arithmetic and the wrong answer: the rail covers the left edge,
+ * the inspector the right, the toolbar the top, and the legend and viewport
+ * controls the bottom, so the network lands visibly off to one side of the
+ * part you can see.
+ *
+ * The two side panels publish their occupied width; the toolbar and legend
+ * do not, so their heights are constants here — they are fixed by
+ * `--tool-btn-size` and the legend bar's own `minHeight`, and being a few
+ * pixels out only costs a little breathing room.
+ *
+ * **Charge a corner overlay to the edge it is thin against.** MapLibre
+ * padding is a frame, not a set of rectangles, so reserving an overlay's
+ * *height* on the bottom withholds that height across the entire width.
+ * The viewport controls are a tall, narrow column in one corner: billing
+ * their ~164px height to the bottom edge cost a quarter of the container's
+ * height everywhere, and the network sat high above a wide empty band.
+ * Reserving their ~40px *width* on the right instead is both cheaper and
+ * strictly safer — no content is placed in their column at all, so nothing
+ * can end up behind them.
+ */
+export function visibleMapPadding(
+  map: maplibregl.Map,
+): maplibregl.PaddingOptions {
+  const style = getComputedStyle(document.documentElement);
+  const px = (name: string): number => {
+    const value = Number.parseFloat(style.getPropertyValue(name));
+    return Number.isFinite(value) ? value : 0;
+  };
+  /** Breathing room between the network and whatever bounds it. */
+  const MARGIN = 24;
+  const button = px("--tool-btn-size") || 30;
+  /** `.canvas-toolbar`: one row of buttons plus its 4px padding and border,
+   * sitting 12px down from the top. */
+  const TOOLBAR = 12 + button + 10;
+  /** The legend bar's `minHeight`, 14px up from the bottom. Present only
+   * once results exist, so this over-pads a model that has not run — in the
+   * direction of more breathing room, not less. */
+  const LEGEND = 14 + 32;
+  /** The viewport controls' *width*: one button column inside the toolbar's
+   * 4px padding and 1px border, sitting 12px in from the right edge. Their
+   * height is deliberately not charged to the bottom — see the note above. */
+  const CONTROLS_W = 12 + button + 10;
+
+  const padding = {
+    left: px("--rail-effective-w") + MARGIN,
+    right: px("--inspector-effective-w") + CONTROLS_W + MARGIN,
+    top: TOOLBAR + MARGIN,
+    // The legend bar genuinely spans this edge horizontally, so its height
+    // is the honest cost here.
+    bottom: LEGEND + MARGIN,
+  };
+  // Padding that exceeds the container leaves no viewport to fit into, and
+  // MapLibre's camera maths degenerates. A container that small has no room
+  // for a considered fit anyway, so fall back to a plain even margin.
+  const canvas = map.getCanvas();
+  const width = canvas.clientWidth;
+  const height = canvas.clientHeight;
+  if (
+    padding.left + padding.right >= width ||
+    padding.top + padding.bottom >= height
+  ) {
+    return { top: 8, bottom: 8, left: 8, right: 8 };
+  }
+
+  // A last slice of whatever space is left over, so a fit never runs the
+  // network right up to the edge it was fitted into. Proportional rather
+  // than fixed: the allowance then means the same thing on a laptop and on
+  // a large display, and it absorbs the places these constants are a few
+  // pixels optimistic — an outermost node's own radius and label among them,
+  // neither of which a bounds fit knows about, since bounds are computed
+  // from coordinates and drawn with width.
+  const SLACK = 0.05;
+  const freeWidth = width - padding.left - padding.right;
+  const freeHeight = height - padding.top - padding.bottom;
+  return {
+    left: padding.left + freeWidth * SLACK,
+    right: padding.right + freeWidth * SLACK,
+    top: padding.top + freeHeight * SLACK,
+    bottom: padding.bottom + freeHeight * SLACK,
+  };
 }

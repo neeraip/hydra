@@ -27,6 +27,10 @@ export interface CanvasLayers {
   // engine exists.
   nodes: boolean;
   links: boolean;
+  /** Areal region polygons (subcatchments). Only meaningful for models
+   * that carry any; map mode only (rings are source-CRS geometry the
+   * schematic layout knows nothing about). */
+  regions: boolean;
   nodeLabels: boolean; // Node label text
   linkLabels: boolean; // Link label text
   pressZone: boolean; // Pressure zone overlay (future)
@@ -41,6 +45,7 @@ interface CanvasLayersCtx {
 const DEFAULT: CanvasLayers = {
   nodes: true,
   links: true,
+  regions: true,
   nodeLabels: false,
   linkLabels: false,
   pressZone: false,

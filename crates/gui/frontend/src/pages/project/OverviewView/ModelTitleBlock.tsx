@@ -1,6 +1,7 @@
 import { CheckIcon, XMarkIcon } from "@heroicons/react/16/solid";
 import { useEffect, useRef, useState } from "react";
-import { useAppState } from "../../../AppContext";
+import { useActiveProject, useAppState } from "../../../AppContext";
+import { engineComponents } from "../../../engine/registry";
 import { useNetworkVersion } from "../../../hooks/NetworkVersionContext";
 import { getNetworkTitle, updateNetworkTitle } from "../../../hooks/network";
 import {
@@ -17,6 +18,11 @@ import {
  */
 export function ModelTitleBlock() {
   const { showToast } = useAppState();
+  const { engine } = useActiveProject();
+  // Read-only engines show the title as plain text — offering the edit
+  // gesture only to refuse on save is exactly what `modelEditable` exists
+  // to prevent.
+  const modelEditable = engineComponents(engine?.key).modelEditable;
   const { version } = useNetworkVersion();
   const [lines, setLines] = useState<string[] | null>(null);
   const [editing, setEditing] = useState(false);
@@ -119,6 +125,43 @@ export function ModelTitleBlock() {
 
   const hasMore = lines.length > TITLE_DISPLAY_LINES;
   const shown = expanded ? lines : lines.slice(0, TITLE_DISPLAY_LINES);
+
+  if (!modelEditable) {
+    // Plain read-only text; nothing to show when the model has no title.
+    if (lines.length === 0) return null;
+    return (
+      <div style={{ marginTop: 8 }}>
+        <div
+          style={{
+            padding: "4px 0",
+            fontSize: "var(--text-md)",
+            color: "var(--text-tertiary)",
+            lineHeight: 1.5,
+            fontFamily: "var(--font-ui)",
+            whiteSpace: "pre-wrap",
+            overflowWrap: "anywhere",
+          }}
+        >
+          {shown.join("\n")}
+        </div>
+        {hasMore && (
+          <button
+            type="button"
+            onClick={() => setExpanded((v) => !v)}
+            style={{
+              ...iconBtn,
+              fontSize: "var(--text-sm)",
+              color: "var(--accent)",
+              padding: 0,
+              marginTop: 2,
+            }}
+          >
+            {expanded ? "View less" : "View more"}
+          </button>
+        )}
+      </div>
+    );
+  }
 
   return (
     <div style={{ marginTop: 8 }}>

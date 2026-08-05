@@ -1,7 +1,9 @@
 import { lazy, Suspense, useEffect, useRef } from "react";
 import { useActiveProject, useAppState } from "../../AppContext";
+import { ProjectPeriodProvider } from "../../canvas/period-context";
 import { ProjectToolbar } from "../../components/layout/ProjectToolbar";
 import { SecondaryRail } from "../../components/layout/SecondaryRail";
+import { engineComponents } from "../../engine/registry";
 import { startPerfSpan } from "../../perfTrace";
 
 const OverviewView = lazy(() =>
@@ -25,7 +27,10 @@ export function ProjectPage() {
   // view subtrees flip one interruptible render later so the click paints
   // instantly even on 46k-element networks.
   const { deferredProjectView: projectView } = useAppState();
-  const { project } = useActiveProject();
+  const { project, engine } = useActiveProject();
+  const engineViews = engineComponents(engine?.key);
+  const EditorView = engineViews.EditorView;
+  const EngineAnalysisView = engineViews.AnalysisView;
 
   // Dev-only: time from a view-tab switch committing to the next painted
   // frame. Shows up as `[hydra-perf] view-switch-paint` with the view name.
@@ -46,85 +51,87 @@ export function ProjectPage() {
   }, [projectView]);
 
   return (
-    <div
-      style={{
-        flex: 1,
-        height: "100%",
-        display: "flex",
-        flexDirection: "column",
-        overflow: "hidden",
-        animation: "fadeIn 150ms ease-out",
-      }}
-    >
-      <ProjectToolbar />
+    <ProjectPeriodProvider>
       <div
         style={{
           flex: 1,
-          position: "relative",
-          overflow: "hidden",
+          height: "100%",
           display: "flex",
           flexDirection: "column",
+          overflow: "hidden",
+          animation: "fadeIn 150ms ease-out",
         }}
       >
-        <SecondaryRail />
-        {project && (
-          <Suspense fallback={null}>
-            <div
-              style={{
-                flex: 1,
-                overflow: "auto",
-                padding: 32,
-                display: projectView === "overview" ? "block" : "none",
-              }}
-            >
-              <OverviewView />
-            </div>
-            <div
-              style={{
-                flex: 1,
-                display: projectView === "canvas" ? "flex" : "none",
-                flexDirection: "column",
-                overflow: "hidden",
-                minHeight: 0,
-              }}
-            >
-              <CanvasView isActive={projectView === "canvas"} />
-            </div>
-            <div
-              style={{
-                flex: 1,
-                display: projectView === "editor" ? "flex" : "none",
-                overflow: "hidden",
-                minHeight: 0,
-              }}
-            >
-              <NetworkEditor />
-            </div>
-            <div
-              style={{
-                flex: 1,
-                display: projectView === "analysis" ? "flex" : "none",
-                flexDirection: "column",
-                overflow: "hidden",
-                minHeight: 0,
-              }}
-            >
-              <AnalysisView />
-            </div>
-            <div
-              style={{
-                flex: 1,
-                display: projectView === "report" ? "flex" : "none",
-                flexDirection: "column",
-                overflow: "hidden",
-                minHeight: 0,
-              }}
-            >
-              <ReportView />
-            </div>
-          </Suspense>
-        )}
+        <ProjectToolbar />
+        <div
+          style={{
+            flex: 1,
+            position: "relative",
+            overflow: "hidden",
+            display: "flex",
+            flexDirection: "column",
+          }}
+        >
+          <SecondaryRail />
+          {project && (
+            <Suspense fallback={null}>
+              <div
+                style={{
+                  flex: 1,
+                  overflow: "auto",
+                  padding: 32,
+                  display: projectView === "overview" ? "block" : "none",
+                }}
+              >
+                <OverviewView />
+              </div>
+              <div
+                style={{
+                  flex: 1,
+                  display: projectView === "canvas" ? "flex" : "none",
+                  flexDirection: "column",
+                  overflow: "hidden",
+                  minHeight: 0,
+                }}
+              >
+                <CanvasView isActive={projectView === "canvas"} />
+              </div>
+              <div
+                style={{
+                  flex: 1,
+                  display: projectView === "editor" ? "flex" : "none",
+                  overflow: "hidden",
+                  minHeight: 0,
+                }}
+              >
+                {EditorView ? <EditorView /> : <NetworkEditor />}
+              </div>
+              <div
+                style={{
+                  flex: 1,
+                  display: projectView === "analysis" ? "flex" : "none",
+                  flexDirection: "column",
+                  overflow: "hidden",
+                  minHeight: 0,
+                }}
+              >
+                {EngineAnalysisView ? <EngineAnalysisView /> : <AnalysisView />}
+              </div>
+              <div
+                style={{
+                  flex: 1,
+                  display: projectView === "report" ? "flex" : "none",
+                  flexDirection: "column",
+                  overflow: "hidden",
+                  minHeight: 0,
+                }}
+              >
+                <ReportView />
+              </div>
+            </Suspense>
+          )}
+        </div>
       </div>
-    </div>
+    </ProjectPeriodProvider>
   );
 }

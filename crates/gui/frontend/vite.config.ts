@@ -49,5 +49,7 @@ export default defineConfig({
     // `@vitest-environment jsdom` docblock comment (after installing jsdom).
     environment: "node",
     include: ["src/**/*.test.ts", "src/**/*.test.tsx"],
+    // Applies to every test; the DOM-only parts no-op under `node`.
+    setupFiles: ["./src/test-setup.ts"],
   },
 });

@@ -7,7 +7,9 @@ use tauri::Manager;
 use crate::meta::{self, bundle};
 
 use super::network_dto::{format_inp_parse_error, format_read_error};
-use super::projects::{app_data_dir, read_model_bytes, results_path_for, validate_id};
+use super::projects::{
+    app_data_dir, project_engine_key, read_model_bytes, results_path_for, validate_id,
+};
 use super::simulation::{
     emit_or_warn, progress_percent, run_loop_outcome, run_sim_loops, try_acquire_run_target,
     RunLoopError, SimulationProgressDto, SIMULATION_PROGRESS_EVENT,
@@ -305,6 +307,7 @@ pub async fn enqueue_runs(
     //
     // All-or-nothing: a batch that silently dropped its invalid targets would
     // report success while doing less than asked.
+    let engine_key = project_engine_key(&app_data, &project_id);
     for target_id in &targets {
         let label = target_id.as_deref().unwrap_or("the base model");
         let path = match target_id.as_deref() {
@@ -314,22 +317,39 @@ pub async fn enqueue_runs(
         let Some(raw) = read_model_bytes(&path)? else {
             return Err(format!("{label} has no model to simulate"));
         };
-        // Tolerant, then validate explicitly: this reports *which* constraint
-        // fails rather than the strict parse's flat failure, and it keeps
-        // unreadable files distinguishable from unfinished ones.
-        let (_network, validation_errors) =
-            hydra::io::parse_tolerant(&raw).map_err(format_read_error)?;
-        if let Some(first) = validation_errors.first() {
-            let more = validation_errors.len() - 1;
-            return Err(if more > 0 {
-                format!(
-                    "Cannot simulate {label}: {first} (and {more} more issue{}). \
-                     See Issues & Notifications.",
-                    if more == 1 { "" } else { "s" }
-                )
-            } else {
-                format!("Cannot simulate {label}: {first}")
-            });
+        match engine_key.as_str() {
+            // Tolerant, then validate explicitly: this reports *which*
+            // constraint fails rather than the strict parse's flat failure,
+            // and it keeps unreadable files distinguishable from unfinished
+            // ones.
+            "wds" => {
+                let (_network, validation_errors) =
+                    hydra::io::parse_tolerant(&raw).map_err(format_read_error)?;
+                if let Some(first) = validation_errors.first() {
+                    let more = validation_errors.len() - 1;
+                    return Err(if more > 0 {
+                        format!(
+                            "Cannot simulate {label}: {first} (and {more} more issue{}). \
+                             See Issues & Notifications.",
+                            if more == 1 { "" } else { "s" }
+                        )
+                    } else {
+                        format!("Cannot simulate {label}: {first}")
+                    });
+                }
+            }
+            "uds" => {
+                let text = String::from_utf8_lossy(&raw);
+                let (_net, diags) = hydra::uds::io::objects::parse_network(&text);
+                if let Some(first) = diags.iter().find(|d| d.kind.is_error()) {
+                    return Err(format!("Cannot simulate {label}: {first}"));
+                }
+            }
+            other => {
+                return Err(format!(
+                    "Projects using the '{other}' engine cannot run in the GUI yet."
+                ));
+            }
         }
     }
 
@@ -484,9 +504,45 @@ async fn run_sim_for_queue(
         }
     };
 
-    let network = hydra::io::parse(&raw_bytes).map_err(format_inp_parse_error)?;
-    let run_quality = network.options.quality_mode != QualityMode::None;
-    let duration_seconds = network.options.duration;
+    // Per-engine session construction; everything after this point drives
+    // the run through the engine-neutral session.
+    let engine_key = project_engine_key(&app_data, project_id);
+    let (es, network_digest, run_quality, duration_seconds) = match engine_key.as_str() {
+        "wds" => {
+            let network = hydra::io::parse(&raw_bytes).map_err(format_inp_parse_error)?;
+            let run_quality = network.options.quality_mode != QualityMode::None;
+            let duration_seconds = network.options.duration;
+            // Taken before the network is moved into the session, and
+            // recorded beside the results: `results.out` is EPANET's format
+            // and no longer carries Hydra's own fields (model spec §4.4.1).
+            let network_digest = hydra::compute_network_digest(&network);
+            let mut sim = Simulation::create();
+            sim.load(network).map_err(|e| format!("{e:?}"))?;
+            (
+                hydra::engines::EngineSession::from_wds(sim, hydra::FlowUnits::Lps),
+                Some(network_digest),
+                run_quality,
+                duration_seconds,
+            )
+        }
+        "uds" => {
+            let text = String::from_utf8_lossy(&raw_bytes).into_owned();
+            let (sim, _diags, _findings) = hydra::uds::simulation::Simulation::open(&text)
+                .map_err(|e| format!("Cannot open the model: {e:?}"))?;
+            let duration_seconds = sim.duration();
+            (
+                hydra::engines::EngineSession::from_uds(sim),
+                None,
+                false,
+                duration_seconds,
+            )
+        }
+        other => {
+            return Err(format!(
+                "Projects using the '{other}' engine cannot run in the GUI yet."
+            ));
+        }
+    };
 
     let out_path = results_path_for(&app_data, project_id, scenario_id);
 
@@ -494,19 +550,12 @@ async fn run_sim_for_queue(
     // item with a clear error if a direct run is currently writing it.
     let _run_guard = try_acquire_run_target(project_id, scenario_id)?;
 
-    // Taken before the network is moved into the session, and recorded beside
-    // the results: `results.out` is EPANET's format and no longer carries
-    // Hydra's own fields (model spec §4.4.1).
-    let network_digest = hydra::compute_network_digest(&network);
-    let mut sim = Simulation::create();
-    sim.load(network).map_err(|e| format!("{e:?}"))?;
-
     let run_id_owned = run_id.to_string();
     let app_emit = app.clone();
     let app_cancel = app.clone();
     let (_, run_err, wall_ms, hyd_steps) = tauri::async_runtime::spawn_blocking(move || {
         run_sim_loops(
-            sim,
+            es,
             Some(out_path),
             duration_seconds,
             run_quality,

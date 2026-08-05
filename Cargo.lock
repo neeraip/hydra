@@ -2506,6 +2506,7 @@ name = "hydra-engine-uds"
 version = "7.0.1"
 dependencies = [
  "hydra-common",
+ "serde_json",
 ]
 
 [[package]]

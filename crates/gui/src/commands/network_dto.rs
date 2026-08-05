@@ -308,6 +308,21 @@ pub enum NetworkStateInner {
         /// `(project_id, scenario_id)` target without re-reading from disk.
         owner_scenario_id: Option<String>,
     },
+    /// A loaded urban-drainage model: viewable and runnable, never editable
+    /// (mutating commands refuse this variant), so it is never dirty and its
+    /// text is always current. The viewer DTO/snapshot arrives with the
+    /// descriptor-driven snapshot layout; until then the canvas shows an
+    /// empty network for these projects.
+    LoadedUds {
+        /// The model text as imported — served back for save/create.
+        raw_text: String,
+        /// Parsed uds network, for validation findings and future viewing.
+        network: std::sync::Arc<hydra::uds::model::Network>,
+        /// Same ownership semantics as `Loaded`.
+        owner_project_id: Option<String>,
+        /// Same ownership semantics as `Loaded`.
+        owner_scenario_id: Option<String>,
+    },
 }
 
 impl NetworkStateInner {
@@ -332,8 +347,27 @@ impl NetworkStateInner {
                 }
                 Some(raw_bytes)
             }
+            NetworkStateInner::LoadedUds { .. } => None,
             NetworkStateInner::Empty => None,
         }
+    }
+
+    /// The uds model text when a uds network is loaded — the read-only
+    /// counterpart of [`Self::up_to_date_raw_bytes`].
+    pub(crate) fn uds_raw_text(&self) -> Option<&str> {
+        match self {
+            NetworkStateInner::LoadedUds { raw_text, .. } => Some(raw_text),
+            _ => None,
+        }
+    }
+
+    /// Current model bytes for save/create, whichever engine is loaded:
+    /// wds re-serialises when dirty, uds text is always current.
+    pub(crate) fn current_model_bytes(&mut self) -> Option<Vec<u8>> {
+        if let Some(text) = self.uds_raw_text() {
+            return Some(text.as_bytes().to_vec());
+        }
+        self.up_to_date_raw_bytes().cloned()
     }
 }
 
@@ -348,17 +382,30 @@ pub struct NetworkState(pub parking_lot::Mutex<NetworkStateInner>);
 /// telling the user their network is invalid would be simply untrue (model spec
 /// §4.1.2).
 ///
-/// The named tool's engine may exist without being editable here: SWMM
-/// models run through the urban drainage engine CLI-first, so the message
-/// points at the CLI rather than claiming Hydra cannot run the model.
-/// Revise to "open it with the {tool} engine" once the GUI can.
+/// When the named tool's engine is GUI-openable, the message says how to
+/// open it (create a project under that engine); otherwise it points at
+/// the CLI, which runs every available engine.
 pub(crate) fn format_read_error(err: hydra::io::ReadError) -> String {
     match err {
-        hydra::io::ReadError::ForeignDialect { tool, section } => format!(
-            "This is a {tool} model, not a water-distribution one. \
-             It declares a [{section}] section, which EPANET has no concept of. \
-             The GUI cannot open {tool} models yet — the hydra CLI can run them."
-        ),
+        hydra::io::ReadError::ForeignDialect { tool, section } => {
+            let openable_engine = hydra::common::ENGINES.iter().find(|e| {
+                e.import.iter().any(|f| f.label.contains(tool))
+                    && super::projects::GUI_OPENABLE_ENGINES.contains(&e.key)
+            });
+            let advice = match openable_engine {
+                Some(e) => format!(
+                    "To open it here, create a new {} project and import this file.",
+                    e.label
+                ),
+                None => {
+                    format!("The GUI cannot open {tool} models yet — the hydra CLI can run them.")
+                }
+            };
+            format!(
+                "This is a {tool} model, not a water-distribution one. \
+                 It declares a [{section}] section, which EPANET has no concept of. {advice}"
+            )
+        }
         other => other.to_string(),
     }
 }
@@ -480,7 +527,7 @@ fn cloned_from_dto<T: Clone>(
 ) -> Vec<T> {
     match &*state.0.lock() {
         NetworkStateInner::Loaded { dto, .. } => get(dto).to_vec(),
-        NetworkStateInner::Empty => vec![],
+        NetworkStateInner::LoadedUds { .. } | NetworkStateInner::Empty => vec![],
     }
 }
 
@@ -504,6 +551,7 @@ pub fn get_curves(state: tauri::State<'_, NetworkState>) -> Vec<CurveDto> {
 pub fn get_network_title(state: tauri::State<'_, NetworkState>) -> Vec<String> {
     match &*state.0.lock() {
         NetworkStateInner::Loaded { network, .. } => network.title.clone(),
+        NetworkStateInner::LoadedUds { network, .. } => network.title.clone(),
         NetworkStateInner::Empty => Vec::new(),
     }
 }
@@ -1334,7 +1382,7 @@ mod tests {
         // ...and the dirty flag must be cleared so the next read is free.
         match &state {
             NetworkStateInner::Loaded { dirty, .. } => assert!(!dirty),
-            NetworkStateInner::Empty => panic!("state must stay loaded"),
+            _ => panic!("state must stay loaded"),
         }
     }
 

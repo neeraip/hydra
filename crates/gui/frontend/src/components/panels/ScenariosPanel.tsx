@@ -37,7 +37,7 @@ export function ScenariosPanel({
 }: {
   showHeader?: boolean;
 }) {
-  const { project, accent } = useActiveProject();
+  const { project } = useActiveProject();
   // A scenario is a variant of the base model, so an empty project has
   // nothing to branch. The backend refuses too — this only keeps the UI from
   // offering an action that can only fail.
@@ -326,10 +326,10 @@ export function ScenariosPanel({
               alignItems: "center",
               gap: 5,
               padding: "5px 12px",
-              border: `1px solid ${accent}`,
+              border: "1px solid var(--accent)",
               borderRadius: 6,
-              background: `${accent}22`,
-              color: accent,
+              background: "var(--selection-bg-strong)",
+              color: "var(--accent)",
               fontSize: "var(--text-md)",
               fontWeight: 500,
               cursor: hasNetwork ? "pointer" : "default",
@@ -356,7 +356,6 @@ export function ScenariosPanel({
           {/* Base model row — always first */}
           <BaseRow
             isActive={activeScenarioId === null}
-            accent={accent}
             onActivate={() => setActiveScenarioId(null)}
             onNewScenario={() => {
               setCreateParentId(null);
@@ -426,7 +425,7 @@ export function ScenariosPanel({
                   style={{
                     background: "none",
                     border: "none",
-                    color: accent,
+                    color: "var(--accent)",
                     cursor: "pointer",
                     fontSize: "var(--text-lg)",
                     padding: 0,
@@ -446,7 +445,6 @@ export function ScenariosPanel({
               <ScenarioRow
                 scenario={s}
                 isActive={s.id === activeScenarioId}
-                accent={accent}
                 isRenaming={renamingId === s.id}
                 renameValue={renameValue}
                 renameInputRef={

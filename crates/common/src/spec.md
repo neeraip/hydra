@@ -1,9 +1,13 @@
 # Hydra Common — Foundation Contract
 
-Status: **v1.4 — ratified 2026-07-31** (v1.1 added opaque per-block options
+Status: **v1.6 — 2026-08-03** (v1.1 added opaque per-block options
 to the production contract, §3.4; v1.2 added the chart fragment item,
 §3.3; v1.3 added engine availability and import formats, §2.1–2.3; v1.4
-added the recognition contract and its routing rules, §2.5).
+added the recognition contract and its routing rules, §2.5; v1.5 — with a
+second engine implemented and able to validate them — added the element
+taxonomy contract (§4), the quantity contract (§5), the result-variable
+contract (§6), and the run-dispatch layering rule (§2.6); v1.6 added the
+optional compact symbol on variable descriptors, §6.1).
 This file is the module documentation
 of the `hydra-common` crate and follows the same spec-first workflow as the
 engine specs: implementation changes flow from changes here, never the
@@ -18,19 +22,31 @@ depend on. It depends on nothing else in the workspace. It exists so that
 applications can host *any* Hydra engine — present or future — through one
 uniform surface instead of per-engine hardcoded knowledge.
 
-**v1 is deliberately slim.** It defines exactly two contracts:
+The layer defines five contracts:
 
 1. **Engine identity** — what an engine *is*, including how it is
    recognised from a model's bytes (§2).
 2. **Reportable output** — what an engine can contribute to a report (§3).
+3. **Element taxonomy** — how an engine describes its model's element
+   vocabulary so an application can present any engine's model (§4).
+4. **Quantities** — how an engine declares the physical quantities its
+   values carry, so applications can format and convert them (§5).
+5. **Result variables** — how an engine describes the per-element result
+   series a completed simulation carries (§6).
 
-**Explicit non-goals for v1** (ratified 2026-07-28): a shared element
-schema (node / link / subcatchment / …), a unified unit system, and any
-cross-engine simulation contract. These are deferred until at least one
-additional engine implementation exists to exercise them; abstracting them
-from a single implementation risks baking water-distribution assumptions
-into the foundation. Nothing in v1 may presuppose the shape those future
-contracts will take.
+Contracts 3–5 were **explicit non-goals for v1.0** (ratified 2026-07-28):
+abstracting them from a single implementation risked baking
+water-distribution assumptions into the foundation, so they were deferred
+until a second engine implementation existed to exercise them. The urban
+drainage engine is that second implementation, and its model — in
+particular the subcatchment, which is neither a node nor a link — is the
+stress test these contracts were shaped against.
+
+**Still deferred:** a cross-engine simulation contract (a neutral session
+type every engine implements). Two engines with genuinely different run
+shapes are not yet evidence of the right trait; §2.6 assigns *where* the
+uniform run surface lives without defining it here. Nothing in this layer
+may presuppose the shape that future contract will take.
 
 ---
 
@@ -202,6 +218,29 @@ to a layer that sees both this contract and every engine — never to an
 individual application, which would duplicate the routing policy in every
 interface and let them drift apart.
 
+### 2.6 Run dispatch
+
+Running a model is engine-owned, and each engine's run has its own shape:
+one engine solves in phases and streams results as they become final;
+another steps a single cascade and writes results when it completes.
+Knowing those shapes — "how do I drive engine X from bytes to a results
+file?" — is per-engine knowledge of exactly the kind §2.5.2 forbids
+applications from holding, and for the same reason: an application that
+encodes it duplicates it in every interface, and the copies drift.
+
+The **uniform run surface** — open a model for its engine, advance it,
+observe progress, persist its results, collect its warnings — therefore
+belongs to the same both-seeing dispatch layer as routing (§2.5.2), and
+every application drives every engine through that one implementation.
+
+This section deliberately assigns *where* that surface lives and no more.
+Its concrete shape is the dispatch layer's own, documented with its
+implementation, because a neutral session contract in this layer remains
+an explicit non-goal (§1): it would have to be abstracted from two run
+shapes that genuinely differ, and this layer must not freeze a guess. When
+a later engine proves the common shape, the surface graduates here as a
+new contract, additively (§7).
+
 ---
 
 ## 3. Reportable-Output Contract
@@ -366,13 +405,249 @@ report layer never invokes an engine; engines never render.
 
 ---
 
-## 4. Evolution
+## 4. Element Taxonomy Contract
 
-- All v1 contracts evolve **additively**; fields are added, never
+The contract by which an engine describes its model's element vocabulary,
+so that an application can enumerate, render, and inspect *any* engine's
+model without knowing what a junction or a subcatchment is. It follows the
+same discipline as recognition (§2.5) and reportable output (§3):
+**engine-specific meaning travels only through opaque ids and
+engine-authored text**; this layer contributes structure, never domain
+vocabulary.
+
+### 4.1 Element classes
+
+The single piece of structural vocabulary this layer owns is the **element
+class** — the geometric and referential nature of an element, which an
+application must know to render and organise it, and which is genuinely
+engine-independent:
+
+| Class | Nature | Application obligations |
+|---|---|---|
+| `point` | A located element: one coordinate. | Render as a marker; selectable; may anchor `polyline` ends and `region` outlets. |
+| `polyline` | A connecting element: references a from-`point` and a to-`point`, with optional intermediate vertices. | Render as a line/path between its endpoints; selectable. |
+| `region` | An areal element: a polygon boundary, with an optional reference to a `point` element it discharges to. | Render as a filled polygon; selectable; the discharge reference may be visualised as a connector. |
+| `collection` | A non-spatial named object (a curve, a pattern, a time series, a control). | Enumerable and countable; presentation is application-defined and may be engine-specific. |
+
+The class list is closed **in this revision**; extending it is an additive
+spec change here, not an engine decision. A subcatchment is the proof case
+for `region`: it is neither a node nor a link, and any taxonomy that
+offered only those two classes would have baked one engine family's shape
+into the foundation.
+
+### 4.2 Element kinds
+
+Within those classes, an engine describes its **kinds** — junction, tank,
+conduit, subcatchment, rain gage — as an ordered catalog of descriptors:
+
+| Field | Meaning | Constraints |
+|---|---|---|
+| `id` | Stable kind identifier | Opaque to this layer; stable per engine — persisted data and application preferences may reference it. |
+| `label` | Human-facing singular name | Plain text, engine-authored. |
+| `label_plural` | Human-facing plural name | Plain text, engine-authored. |
+| `class` | The kind's element class (§4.1) | One of the four classes. |
+| `role` | What the kind does in the network (§4.3) | One of the three roles, or absent. |
+| `badge` | Short glyph for dense UI (markers, chips) | One or two characters, engine-authored. |
+
+The catalog is static and model-free, like the block catalog (§3.2): an
+application must be able to build its chrome — tables, filters, layer
+toggles, legends — before any model is loaded. Kind ids follow the block-id
+stability rule: removing one, or changing the *meaning* of one, is a break
+on the order of a file-format break.
+
+**Identity:** every element carries an engine-scoped string identifier.
+This layer requires only that the pair (kind id, element id) is unique
+within a model; whether identifiers are additionally unique across kinds
+(as they are within one engine's node family) is the engine's own rule,
+expressed through its validation, not through this contract.
+
+### 4.3 Element roles
+
+A class says what an element *is* geometrically. A **role** says what it
+does in the network:
+
+| Role | Meaning |
+|---|---|
+| `conveyance` | Carries flow without imposing a boundary or a control on it — a junction, a pipe, a conduit. The bulk of any model. |
+| `boundary` | Where the model meets what it does not simulate: a fixed head or stage, a storage volume, an outfall. Flow enters or leaves the modelled system here. |
+| `control` | Acts on the flow rather than merely passing it — a pump, a valve, a weir, an orifice, a flow divider. |
+
+Role exists because it is the distinction an application must draw to
+present an *unsimulated* model at all. Before any results exist there is
+nothing to colour by, and a network drawn in one uniform tone tells a
+reader nothing; what they need to see is where the system is fed and
+drained, and where something acts on the flow. Class cannot answer that —
+a pump and a pipe are both `polyline`, a reservoir and a junction both
+`point` — and kind cannot either without the application naming kinds it
+should not know.
+
+**A kind may have no role at all.** A rain gage is located but conveys
+nothing; a curve, a pattern and a control rule are not in the flow network
+to begin with. Those declare no role, and an application draws them by
+whatever means suits — the absence is information, not an omission to be
+defaulted away.
+
+The role list is closed in this revision, and extending it is an additive
+spec change here rather than an engine decision, exactly as the class list
+is. Roles carry no presentation: an application decides what a boundary
+looks like, and this layer decides only which kinds are boundaries.
+
+> **Assignment is the engine's judgement, not a lookup.** A storage unit is
+> a boundary in drainage because it is where volume leaves the routed
+> network, while a tank is a boundary in distribution for the same reason
+> expressed differently. Where a kind is arguably two roles, the engine
+> picks the one an application should draw it as.
+
+### 4.4 Attribute schemas
+
+For each kind, an engine describes the attributes an application may
+display for elements of that kind — an ordered list of attribute
+descriptors reusing the option-descriptor vocabulary of §3.2.1:
+
+| Field | Meaning | Constraints |
+|---|---|---|
+| `key` | Field name in the element's attribute data | Stable per kind; renaming one is a break, like a block id. |
+| `label` | Human-facing name | Plain text, engine-authored. |
+| `kind` | Value shape and bounds | The §3.2.1 kinds, unchanged. |
+| `quantity` | Key of the physical quantity the value carries (§5), or absent | Absent means dimensionless or textual. |
+
+An attribute schema is advisory in exactly the §3.2.1 sense: it tells a
+generic UI what to show; it is not the validation authority, and an engine
+remains free to hold data no schema advertises. This revision defines
+attribute schemas for **display**. Editability, defaults, and creation
+flows are a later additive revision — describing them before a second
+engine's editor exists would repeat the mistake §1 warns against.
+
+---
+
+## 5. Quantity Contract
+
+Fragments carry unit strings as display text (§3.3) because a rendered
+report needs no arithmetic. Live applications do: they let the user choose
+a display unit system, format values in it, and accept input in it. The
+quantity contract is how an engine declares the physical quantities its
+values carry so that applications can do that generically.
+
+An engine publishes a static catalog of **quantity descriptors**:
+
+| Field | Meaning | Constraints |
+|---|---|---|
+| `key` | Stable quantity identifier | Opaque to this layer; referenced by attribute schemas (§4.3) and result variables (§6). |
+| `si_label` | Unit text in the SI display system | Plain text, e.g. "m", "L/s", "mm/hr". |
+| `us_label` | Unit text in the US-customary display system | Plain text, e.g. "ft", "gpm", "in/hr". |
+| `si_to_us` | Affine conversion from SI display value to US display value | A scale factor and an offset (offset 0 for all but temperature-like quantities). |
+| `si_decimals` / `us_decimals` | Suggested display precision per system | Advisory formatting hints. |
+
+Values crossing an engine boundary for a quantity-bearing field are **in
+that quantity's SI display unit**; the application converts for display
+and converts back on input, using only the descriptor. Engines never
+format, and applications never hardcode a conversion — the descriptor is
+the single authority, so a quantity this layer has never heard of (a
+rainfall intensity, an infiltration rate) costs an application nothing to
+support.
+
+Quantity keys are engine-scoped: two engines may both declare a `flow`
+quantity, and nothing requires their descriptors to agree, because no
+value ever crosses between engines. The catalog is static; which
+attributes and variables *reference* which quantities is declared where
+those are declared (§4.3, §6).
+
+This contract deliberately does not model unit *systems* beyond the two
+display families applications offer, and it does not touch §3.3: fragment
+unit strings remain engine-authored display text, unchanged.
+
+---
+
+## 6. Result-Variable Contract
+
+The contract by which an engine describes the per-element time-series
+variables a completed simulation carries — pressure, flow, depth,
+runoff — so an application can offer result exploration (map colouring,
+legends, per-element series, period scrubbing) for any engine.
+
+### 6.1 Variable descriptors
+
+For each element class it produces results for (§4.1), an engine publishes
+an ordered catalog of variable descriptors:
+
+| Field | Meaning | Constraints |
+|---|---|---|
+| `id` | Stable variable identifier | Opaque to this layer; application preferences and saved views may reference it. |
+| `label` | Human-facing name | Plain text, engine-authored. |
+| `symbol` | Compact notation for space-starved surfaces (column headers, chips), or absent | Engine-authored, at most three characters, ideally the domain's standard notation (Q for discharge, y for depth, Ø for diameter). Absent means the application derives its own fallback, e.g. the label's initial. |
+| `quantity` | Key of the quantity the values carry (§5), or absent | Absent means dimensionless. |
+| `ramp` | How values are meaningfully mapped to a colour scale | One of the ramp hints below. |
+
+Ramp hints are the only presentation vocabulary this layer contributes,
+and they are shape statements, never colours:
+
+| Hint | Meaning |
+|---|---|
+| `sequential` | Magnitude on a continuous low→high scale. |
+| `diverging` | Signed values around a meaningful zero (e.g. flow direction). |
+| `banded` | Values classed into user-configurable threshold bands. |
+| `categorical` | A closed set of discrete states; the descriptor carries the engine-authored items described below, as a §3.2.1 choice does. |
+
+An application chooses palettes, band edges, and legend styling; the
+engine says only which shape is truthful for the data.
+
+#### Categorical items
+
+Each item of a `categorical` variable carries:
+
+| Field | Meaning | Constraints |
+|---|---|---|
+| `value` | The number the result series stores for this state | Engine-authored; unique within the variable. |
+| `label` | Human-facing name for the state | Plain text, engine-authored. |
+| `severity` | Whether the state is unremarkable, worth attention, or wrong, or absent when the states carry no such judgement | One of `nominal`, `caution`, `alarm`. |
+
+Severity is a statement about the *domain*, not about presentation: a
+closed pipe is an abnormal condition in a pressurised network whoever is
+looking at it, and only the engine knows that. Without it an application
+can order states but cannot rank them, so it must colour a closed pipe and
+an open one as merely *different* — losing a distinction the engine
+already held. It stays optional because it is a real claim: a state set
+that is genuinely just a partition (a land-use class, a material) must not
+be forced to invent a judgement, and absent means exactly that.
+
+As with every hint here, this fixes no colours. An application decides
+what caution and alarm look like, and remains free to ignore severity
+entirely.
+
+### 6.2 Presence
+
+Not every catalog variable exists in every run — a quality variable is
+absent from a run with quality disabled. An engine therefore reports,
+**for a given completed simulation's results**, which of its catalog
+variables are present, resolved the way block options are resolved against
+a model (§3.2.1): the catalog stays static, presence is per-run. An
+application offers only present variables and treats an absent one the way
+the report layer treats an unavailable block — an expected state, not an
+error.
+
+### 6.3 Addressing
+
+Consumers address results by (element class, variable id, reporting
+period), and per-variable minimum/maximum envelopes are addressed by
+(element class, variable id). Wire encodings, caching, and file formats
+are the consumer's own concern and are not part of this contract — but
+they must be derived from the catalog rather than fixing a variable list,
+or they re-create the closed-set coupling this contract exists to remove.
+
+---
+
+## 7. Evolution
+
+- All contracts evolve **additively**; fields are added, never
   repurposed.
-- The deferred contracts (element schema, units, simulation surface) will
-  arrive as *new* modules of this layer with their own spec sections,
-  gated on a second engine implementation existing to validate them. Their
-  arrival must not require changes to the v1 identity or report contracts.
-- If a future revision must break a v1 contract, the break follows the
+- The element, quantity, and result-variable contracts (§4–§6) arrived in
+  v1.5 exactly this way: as new sections, gated on a second engine
+  implementation existing to validate them, requiring no change to the
+  identity or report contracts. The one remaining deferred contract — a
+  neutral simulation session — follows the same path when a further engine
+  proves its shape (§2.6); until then only its dispatch home is assigned.
+- Known additive follow-ups already anticipated: editability, defaults,
+  and creation flows on attribute schemas (§4.3), and additional element
+  classes (§4.1) should an engine need one.
+- If a future revision must break a contract, the break follows the
   library release track's semver discipline.

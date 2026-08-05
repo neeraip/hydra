@@ -2,6 +2,7 @@ import { Cog6ToothIcon, PlayIcon, XMarkIcon } from "@heroicons/react/16/solid";
 import type React from "react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useActiveProject, useAppState } from "../../AppContext";
+import { engineComponents } from "../../engine/registry";
 import {
   ACCENT,
   enqueueRuns,
@@ -24,7 +25,6 @@ import {
   Label,
   runnableScenarioIds,
   SimStateBadge,
-  SummaryGrid,
 } from "./RunModal/helpers";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -176,10 +176,6 @@ export function RunModal() {
     new Set([activeScenarioId]),
   );
   const [params, setParams] = useState<SimParams | null>(null);
-  // Tracked separately from `params`, because a null `params` means both
-  // "still fetching" and "this project has no model" — and conflating them
-  // left an empty project showing "Loading…" forever.
-  const [paramsLoading, setParamsLoading] = useState(false);
   const checkedIds = useMemo(() => [...checked], [checked]);
   const hasNetwork = projectHasNetwork(project);
 
@@ -193,14 +189,9 @@ export function RunModal() {
   useEffect(() => {
     if (!runModalOpen || !activeProjectId) return;
     let cancelled = false;
-    setParamsLoading(true);
-    getSimParams(activeProjectId)
-      .then((p) => {
-        if (!cancelled) setParams(p);
-      })
-      .finally(() => {
-        if (!cancelled) setParamsLoading(false);
-      });
+    void getSimParams(activeProjectId).then((p) => {
+      if (!cancelled) setParams(p);
+    });
     return () => {
       cancelled = true;
     };
@@ -277,11 +268,20 @@ export function RunModal() {
 
   const runShortcut = formatShortcut([primaryModifierLabel(), "Enter"]);
 
+  // The settings card's body is the engine's own component (registry) —
+  // this modal owns only the card chrome and the edit affordance. Engines
+  // whose settings are not editable never gate running on a params object.
+  const components = engineComponents(engine?.key);
+  const settingsSupported = components.settingsEditable;
+
   // A project with no network has nothing to simulate — the engine would be
   // handed an empty model and fail at parse time. Scenarios with blocking
   // validation errors are excluded rather than blocking the whole run: a
   // sibling's broken model should not stop a valid one being simulated.
-  const canRun = hasNetwork && params != null && runnableIds.length > 0;
+  const canRun =
+    hasNetwork &&
+    (params != null || !settingsSupported) &&
+    runnableIds.length > 0;
   const excludedCount = checkedIds.length - runnableIds.length;
   const allChecked = scenarios.every((s) => checked.has(s.id));
 
@@ -359,9 +359,13 @@ export function RunModal() {
               fontSize: "var(--text-sm)",
               fontWeight: 700,
               letterSpacing: "0.06em",
-              color: ACCENT,
-              background: `${ACCENT}26`,
-              border: `1px solid ${ACCENT}55`,
+              // The *engine's* colour, not the app's. Engine identity
+              // publishes one (`EngineInfo.accent`) precisely so a model
+              // announces which engine it belongs to; the app accent is
+              // achromatic by design, which left this pill grey.
+              color: engine?.accent ?? "var(--accent)",
+              background: engine ? `${engine.accent}1f` : "var(--accent-dim)",
+              border: `1px solid ${engine ? `${engine.accent}55` : "var(--selection-border)"}`,
               padding: "3px 8px",
               borderRadius: 4,
             }}
@@ -549,8 +553,8 @@ export function RunModal() {
               Edit settings
             </button>
           </div>
-          {params ? (
-            <SummaryGrid params={params} />
+          {activeProjectId ? (
+            <components.RunSettingsSummary projectId={activeProjectId} />
           ) : (
             <div
               style={{
@@ -558,11 +562,7 @@ export function RunModal() {
                 color: "var(--text-tertiary)",
               }}
             >
-              {!activeProjectId
-                ? "No project selected."
-                : paramsLoading
-                  ? "Loading…"
-                  : "Unavailable — this project has no network yet."}
+              No project selected.
             </div>
           )}
         </div>
@@ -620,7 +620,11 @@ export function RunModal() {
             style={{
               background: canRun ? ACCENT : "var(--bg-card)",
               border: `1px solid ${canRun ? ACCENT : "var(--border)"}`,
-              color: canRun ? "#fff" : "var(--text-disabled)",
+              // White on the accent was legible while the accent was a
+              // saturated blue; achromatic it is a light grey, and white
+              // text on it barely reads. `--accent-fg` is the pair the
+              // accent publishes for exactly this.
+              color: canRun ? "var(--accent-fg)" : "var(--text-disabled)",
               borderRadius: 5,
               padding: "7px 16px",
               fontSize: "var(--text-md)",

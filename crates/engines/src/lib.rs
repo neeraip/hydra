@@ -19,6 +19,10 @@ use std::fmt;
 
 use hydra_common::{EngineDescriptor, Recognition, ENGINES};
 
+mod session;
+
+pub use session::{AdvanceError, EngineSession, Progress, SessionWarning, WriteSeek};
+
 /// The crate version, taken from `Cargo.toml` at compile time.
 pub const HYDRA_ENGINES_VERSION: &str = env!("CARGO_PKG_VERSION");
 

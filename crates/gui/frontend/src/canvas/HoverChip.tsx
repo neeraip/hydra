@@ -3,11 +3,11 @@
 // active node/link variable (in display units). Renders nothing until results
 // are loaded and something is hovered.
 
-import type { PeriodResults } from "../hooks";
-import { elementTypeBadge } from "../types/elementTypes";
+import { TypeBadge } from "../components/ui/TypeBadge";
+import { formatGenericValue, type PeriodResults } from "../hooks";
 import { toDisplay, unitLabel, type useUnitSystem } from "../units";
 import { statusLabel } from "./MapCanvas/colorUtils";
-import type { LinkVariable, NodeVariable } from "./types";
+import type { GenericCanvasResults, LinkVariable, NodeVariable } from "./types";
 
 /** What the hover chip is pointing at. `si` indexes the period-result arrays. */
 export interface HoverTip {
@@ -77,24 +77,41 @@ function hoverTipValue(
   return null;
 }
 
+/** Value line for the engine-generic channels: the hovered element's value
+ * for its class's selected variable, converted to the active display
+ * system with the engine's quantity descriptor. */
+function genericTipValue(
+  tip: HoverTip,
+  generic: GenericCanvasResults,
+  sys: ReturnType<typeof useUnitSystem>,
+): string | null {
+  const channel = tip.kind === "node" ? generic.node : generic.link;
+  const v = channel?.values?.[tip.si];
+  if (channel == null || v == null || !Number.isFinite(v)) return null;
+  return formatGenericValue(v, channel.variable.quantity, sys);
+}
+
 export function HoverChip({
   tip,
   periodResult,
+  generic = null,
   nodeVar,
   linkVar,
   sys,
 }: {
   tip: HoverTip | null;
   periodResult: PeriodResults | null;
+  generic?: GenericCanvasResults | null;
   nodeVar: NodeVariable;
   linkVar: LinkVariable;
   sys: ReturnType<typeof useUnitSystem>;
 }) {
   if (!tip) return null;
-  const value = periodResult
-    ? hoverTipValue(tip, periodResult, nodeVar, linkVar, sys)
-    : null;
-  const badge = elementTypeBadge(tip.type);
+  const value = generic
+    ? genericTipValue(tip, generic, sys)
+    : periodResult
+      ? hoverTipValue(tip, periodResult, nodeVar, linkVar, sys)
+      : null;
   return (
     <div
       style={{
@@ -117,26 +134,11 @@ export function HoverChip({
         textOverflow: "ellipsis",
       }}
     >
-      <span
-        style={{
-          display: "inline-flex",
-          alignItems: "center",
-          justifyContent: "center",
-          minWidth: 14,
-          height: 13,
-          padding: "0 2px",
-          marginRight: 5,
-          borderRadius: 3,
-          fontSize: "var(--text-2xs)",
-          fontWeight: 700,
-          verticalAlign: "text-bottom",
-          color: badge.color,
-          background: `${badge.color}1f`,
-          border: `1px solid ${badge.color}55`,
-          boxSizing: "border-box",
-        }}
-      >
-        {badge.label}
+      {/* Wrapper carries the spacing and baseline alignment the chip's
+          inline layout needs; the badge itself stays metric-identical to
+          the one the panels render. */}
+      <span style={{ marginRight: 5, verticalAlign: "text-bottom" }}>
+        <TypeBadge type={tip.type} size="sm" />
       </span>
       <span style={{ fontWeight: 600 }}>{tip.id}</span>
       {value != null && (

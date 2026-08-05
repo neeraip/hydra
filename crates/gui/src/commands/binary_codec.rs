@@ -226,6 +226,9 @@ pub fn get_network_snapshot(state: tauri::State<'_, NetworkState>) -> tauri::ipc
     // under the lock is cheaper than the full nodes+links clone it replaced.
     let bytes = match &*state.0.lock() {
         NetworkStateInner::Loaded { dto, .. } => encode_network_snapshot(dto),
+        NetworkStateInner::LoadedUds { network, .. } => {
+            super::uds_view::encode_uds_snapshot(&super::uds_view::build_view(network))
+        }
         NetworkStateInner::Empty => encode_network_snapshot(&NetworkDto::default()),
     };
     tauri::ipc::Response::new(bytes)

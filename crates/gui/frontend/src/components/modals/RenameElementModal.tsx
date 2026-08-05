@@ -169,7 +169,7 @@ export function RenameElementModal({
             style={{
               background: canSubmit ? "var(--accent)" : "var(--bg-card)",
               border: `1px solid ${canSubmit ? "var(--accent)" : "var(--border)"}`,
-              color: canSubmit ? "#fff" : "var(--text-disabled)",
+              color: canSubmit ? "var(--accent-fg)" : "var(--text-disabled)",
               borderRadius: 5,
               padding: "7px 16px",
               fontSize: "var(--text-md)",

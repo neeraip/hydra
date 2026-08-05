@@ -20,8 +20,14 @@ export function RingIcon({
   const RING_R = 6;
   const RING_C = 2 * Math.PI * RING_R;
   return (
-    <svg width="14" height="14" viewBox="0 0 14 14" style={{ flexShrink: 0 }}>
-      <title>Task progress</title>
+    <svg
+      role="img"
+      aria-label="Task progress"
+      width="14"
+      height="14"
+      viewBox="0 0 14 14"
+      style={{ flexShrink: 0 }}
+    >
       <circle
         cx="7"
         cy="7"
@@ -228,13 +234,13 @@ export function RunningCard({
         )}
       </div>
       <PhaseBar
-        label="Hydraulics"
+        label={task.primaryPhaseLabel ?? "Simulation"}
         percent={task.hydraulicsPercent ?? 0}
         done={task.hydraulicsDone ?? false}
         queued={false}
-        active={task.phase === "hydraulics"}
+        active={task.phase === "hydraulics" || task.phase === "simulation"}
         simulatedSeconds={
-          task.phase === "hydraulics" ? task.simulatedSeconds : undefined
+          task.phase !== "quality" ? task.simulatedSeconds : undefined
         }
         durationSeconds={task.durationSeconds}
       />

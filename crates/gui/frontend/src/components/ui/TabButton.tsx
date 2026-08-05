@@ -81,7 +81,7 @@ export function TabButton({
             fontSize: "var(--text-xs)",
             fontWeight: 700,
             background: badgeColor ?? "var(--accent)",
-            color: "#fff",
+            color: "var(--accent-fg)",
             borderRadius: 4,
             padding: "1px 5px",
             marginLeft: 2,

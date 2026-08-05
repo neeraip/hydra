@@ -11,7 +11,9 @@
  */
 
 import { useEffect, useState } from "react";
+import { registerElementBadges } from "../types/elementTypes";
 import { tryInvokeOr } from "./ipc";
+import type { GenericQuantity } from "./results";
 
 /** One source-model file format an engine imports (hydra-common spec §2.2).
  *
@@ -66,7 +68,7 @@ export const FALLBACK_ENGINES: EngineInfo[] = [
     key: "och",
     label: "Open Channel",
     pill: "OC",
-    accent: "#3daf75",
+    accent: "#2f9e9e",
     summary:
       "River and open-channel hydraulics — steady and unsteady flow on the HEC-RAS data model.",
     status: "planned",
@@ -79,19 +81,31 @@ export const FALLBACK_ENGINES: EngineInfo[] = [
   },
 ];
 
-/** Engines whose projects this GUI can create, edit, and run. The registry
- * status says what this build of Hydra can simulate; this says what the GUI
- * can edit — an engine that ships CLI-first is available without being
- * editable here yet. */
+/** What this GUI can do with each engine, in two tiers. Openable: projects
+ * can be created from an imported model, viewed, and run through the queue.
+ * Editable: tables, inspector writes, element creation. The tiers differ
+ * while an engine's viewer ships ahead of its editor; the registry status
+ * says only what this build of Hydra can simulate at all. Mirrors the Rust
+ * lists in `commands/projects.rs`. */
+export const GUI_OPENABLE_ENGINES: ReadonlySet<string> = new Set([
+  "wds",
+  "uds",
+]);
 export const GUI_EDITABLE_ENGINES: ReadonlySet<string> = new Set(["wds"]);
 
 /** Whether this build of Hydra can simulate `engine`'s models at all
- * (registry status — not the same as being editable in this GUI). */
+ * (registry status — not the same as being usable in this GUI). */
 export function isEngineAvailable(engine: EngineInfo): boolean {
   return engine.status === "available";
 }
 
-/** Whether `engine` can back a new project in this GUI. */
+/** Whether `engine` can back a new project in this GUI (possibly read-only:
+ * import, view, run — see `isEngineGuiEditable` for editing). */
+export function isEngineGuiOpenable(engine: EngineInfo): boolean {
+  return isEngineAvailable(engine) && GUI_OPENABLE_ENGINES.has(engine.key);
+}
+
+/** Whether `engine`'s projects can be edited in this GUI. */
 export function isEngineGuiEditable(engine: EngineInfo): boolean {
   return isEngineAvailable(engine) && GUI_EDITABLE_ENGINES.has(engine.key);
 }
@@ -140,4 +154,140 @@ export function useEngines(): EngineInfo[] {
     };
   }, []);
   return engines;
+}
+
+// ── Element-kind catalog (hydra-common spec §4.1) ───────────────────────────
+
+/** The element classes the contract defines. */
+export type ElementClass = "point" | "polyline" | "region" | "collection";
+
+/** One element kind an engine models, as the engine describes it. */
+/** What a kind does in the network (§4.3), as distinct from what it is
+ * geometrically. Absent for kinds outside the flow network — a rain gage,
+ * a curve, a control rule. */
+export type ElementRole = "conveyance" | "boundary" | "control";
+
+export interface ElementKindInfo {
+  id: string;
+  label: string;
+  labelPlural: string;
+  class: ElementClass;
+  /** Absent where the kind plays no part in the flow network. */
+  role?: ElementRole;
+  /** One- or two-character glyph for dense UI. */
+  badge: string;
+}
+
+// Static per engine — a property of the domain, not of any model.
+const kindCache = new Map<string, ElementKindInfo[]>();
+
+export async function getElementKinds(
+  engine: string,
+): Promise<ElementKindInfo[]> {
+  const hit = kindCache.get(engine);
+  if (hit) return hit;
+  const kinds = await tryInvokeOr<ElementKindInfo[]>(
+    "list_element_kinds",
+    { engine },
+    [],
+  );
+  kindCache.set(engine, kinds);
+  // The engine's own badge letters become authoritative for every surface
+  // that draws one, rather than each surface consulting a static copy.
+  registerElementBadges(kinds);
+  return kinds;
+}
+
+/** The element-kind catalog for `engine`; empty until it resolves. */
+export function useElementKinds(
+  engine: string | null | undefined,
+): ElementKindInfo[] {
+  const [kinds, setKinds] = useState<ElementKindInfo[]>(() =>
+    engine ? (kindCache.get(engine) ?? []) : [],
+  );
+  useEffect(() => {
+    if (!engine) {
+      setKinds([]);
+      return;
+    }
+    let cancelled = false;
+    void getElementKinds(engine).then((list) => {
+      if (!cancelled) setKinds(list);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [engine]);
+  return kinds;
+}
+
+/** One §4.4 property of an element kind, without any element's values. */
+export interface ElementAttributeInfo {
+  key: string;
+  label: string;
+  quantity?: GenericQuantity;
+}
+
+// Static per engine and kind, exactly as the kind catalog is.
+const attributeCache = new Map<string, ElementAttributeInfo[]>();
+
+/**
+ * The declared property schema of one element kind.
+ *
+ * Known before any element is looked at, which is what lets a panel draw
+ * its property rows while the values are still in flight instead of
+ * appearing empty and then shoving everything below it down the panel.
+ */
+export function useElementAttributes(
+  engine: string | null | undefined,
+  kind: string | null | undefined,
+): ElementAttributeInfo[] {
+  const key = `${engine ?? ""}\u0000${kind ?? ""}`;
+  const [attrs, setAttrs] = useState<ElementAttributeInfo[]>(
+    () => attributeCache.get(key) ?? [],
+  );
+  useEffect(() => {
+    if (!engine || !kind) {
+      setAttrs([]);
+      return;
+    }
+    const hit = attributeCache.get(key);
+    if (hit) {
+      setAttrs(hit);
+      return;
+    }
+    let cancelled = false;
+    void tryInvokeOr<ElementAttributeInfo[]>(
+      "list_element_attributes",
+      { engine, kind },
+      [],
+    ).then((list) => {
+      attributeCache.set(key, list);
+      if (!cancelled) setAttrs(list);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [engine, kind, key]);
+  return attrs;
+}
+
+/**
+ * Heading for one element class, from the engine's own catalog: the kind's
+ * plural label when the class holds exactly one kind ("Subcatchments"),
+ * the class's generic name when it holds several ("Nodes").
+ *
+ * Precision when precision is available, generality when it is not — and
+ * either way the words are the engine's, not this layer's. Derived from
+ * the *declared* catalog rather than the loaded model, so a heading never
+ * shifts because a particular network happens to contain one kind.
+ */
+export function elementClassHeading(
+  kinds: ElementKindInfo[],
+  cls: ElementClass,
+  fallback: string,
+): string {
+  const inClass = kinds.filter((k) => k.class === cls);
+  if (inClass.length === 1) return inClass[0].labelPlural;
+  return fallback;
 }

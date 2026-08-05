@@ -31,6 +31,7 @@ import {
   listenRunQueueUpdate,
   listenSimulationProgress,
   loadResultMeta,
+  mergeIssues,
   type PumpEnergyRecord,
   type ResultMeta,
   type RunQueueItem,
@@ -43,6 +44,19 @@ import { useNetworkVersion } from "./hooks/NetworkVersionContext";
 import { backfillTask, taskNeedsBackfill } from "./hooks/taskBackfill";
 
 /** "HH:MM" label used for task and issue timestamps. */
+/** History label for a progress event's phase code. Data-driven: the
+ * backend's session maps each engine's phases to these codes. */
+function phaseHistoryLabel(phase: string): string {
+  switch (phase) {
+    case "quality":
+      return "Phase: Water quality";
+    case "simulation":
+      return "Phase: Simulation";
+    default:
+      return "Phase: Hydraulics";
+  }
+}
+
 function formatClockTime(date: Date = new Date()): string {
   return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
@@ -279,7 +293,7 @@ export function SimulationProvider({ children }: { children: ReactNode }) {
             ? "Simulation in progress"
             : `${runningForProject.length} simulations in progress`,
         detail:
-          "Hydraulics/quality solve is currently running. Results and status badges will update automatically when complete.",
+          "The simulation is currently running. Results and status badges will update automatically when complete.",
       });
     }
 
@@ -350,7 +364,7 @@ export function SimulationProvider({ children }: { children: ReactNode }) {
         source: "data",
         code: "MODEL-LOAD-FAILED",
         title: "Model failed to load",
-        detail: `${networkLoadFailure} — the INP may have been edited outside Hydra. Fix the reported line (Open folder shows the file), or re-import the model.`,
+        detail: `${networkLoadFailure} — the model file may have been edited outside Hydra. Fix the reported line (Open folder shows the file), or re-import the model.`,
       });
     }
 
@@ -403,15 +417,7 @@ export function SimulationProvider({ children }: { children: ReactNode }) {
     // simwarn-<code>-<elementId|network> ids for the first-seen merge).
     next.push(...runWarningIssues);
 
-    setIssues((prev) => {
-      const prevById = new Map(prev.map((i) => [i.id, i]));
-      return next.map((i) => {
-        const existing = prevById.get(i.id);
-        // Preserve the original first-seen time so a still-present issue keeps
-        // its age across re-derivations instead of resetting on every refresh.
-        return existing ? { ...i, firstSeen: existing.firstSeen } : i;
-      });
-    });
+    setIssues((prev) => mergeIssues(prev, next));
   }, [
     activeProjectId,
     activeScenarioId,
@@ -557,10 +563,7 @@ export function SimulationProvider({ children }: { children: ReactNode }) {
             history: [
               {
                 at: Date.now(),
-                label:
-                  ev.phase === "quality"
-                    ? "Phase: Water quality"
-                    : "Phase: Hydraulics",
+                label: phaseHistoryLabel(ev.phase),
               },
             ],
           };
@@ -579,10 +582,7 @@ export function SimulationProvider({ children }: { children: ReactNode }) {
         if (phaseChanged || (prevPhase === undefined && ev.phase)) {
           newEntries.push({
             at: now,
-            label:
-              ev.phase === "quality"
-                ? "Phase: Water quality"
-                : "Phase: Hydraulics",
+            label: phaseHistoryLabel(ev.phase),
           });
         }
         if (ev.message && ev.message !== task.progressMessage) {
@@ -613,7 +613,11 @@ export function SimulationProvider({ children }: { children: ReactNode }) {
         // quality "Waiting" bar can appear even before the quality phase starts.
         const hasQuality = task.hasQuality ?? ev.runQuality;
 
-        if (ev.phase === "hydraulics") {
+        const primaryPhaseLabel =
+          ev.phase === "simulation"
+            ? "Simulation"
+            : (task.primaryPhaseLabel ?? "Hydraulics");
+        if (ev.phase === "hydraulics" || ev.phase === "simulation") {
           hydraulicsPercent = ev.percent;
           if (ev.done) {
             hydraulicsPercent = 100;
@@ -645,13 +649,14 @@ export function SimulationProvider({ children }: { children: ReactNode }) {
         const next = [...tasks];
         next[idx] = {
           ...task,
-          phase: ev.phase as "hydraulics" | "quality",
+          phase: ev.phase as "hydraulics" | "quality" | "simulation",
           progressPercent: overallPercent,
           progressMessage: ev.message ?? undefined,
           simulatedSeconds: ev.simulatedSeconds,
           durationSeconds: ev.durationSeconds,
           history: capped,
           hasQuality,
+          primaryPhaseLabel,
           hydraulicsPercent,
           hydraulicsDone,
           qualityPercent,

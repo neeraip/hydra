@@ -395,7 +395,7 @@ export function CurveEditor({
                     height: 24,
                     fontSize: "var(--text-sm)",
                     background: "var(--accent)",
-                    color: "#fff",
+                    color: "var(--accent-fg)",
                     border: "none",
                     borderRadius: 4,
                     cursor: "pointer",
@@ -724,8 +724,13 @@ function CurveChart({
       ref={wrapRef}
       style={{ width: "100%", height: "100%", position: "relative" }}
     >
-      <svg width={W} height={H} style={{ display: "block" }}>
-        <title>Curve preview</title>
+      <svg
+        role="img"
+        aria-label="Curve preview"
+        width={W}
+        height={H}
+        style={{ display: "block" }}
+      >
         <defs>
           <linearGradient id={`pc-${curve.id}`} x1="0" y1="0" x2="0" y2="1">
             <stop offset="0%" stopColor={accent} stopOpacity={0.25} />

@@ -13,12 +13,17 @@ import type { ComponentType, SVGProps } from "react";
 
 // ── App accent ───────────────────────────────────────────────────────────────
 
-/** App-wide accent colour for generic chrome (buttons, highlights, toasts).
- * Currently equal to the WDS engine accent while Hydra ships one engine.
+/** App-wide accent for generic chrome (buttons, highlights, toasts).
+ *
+ * The token, not a copy of its value. It used to hold the wds engine's hex
+ * — the collision that made an engine's identity mark indistinguishable
+ * from "this is selected" — and being a literal it also sat outside the
+ * theme, so it stayed blue when the accent stopped being blue.
+ *
  * Engine-identity surfaces (project cards, pills, wizard, status bar) must
  * NOT use this — they resolve the project's engine via
  * `useEngines`/`engineByKey` instead. */
-export const ACCENT = "#4a90d9" as const;
+export const ACCENT = "var(--accent)" as const;
 
 // ── Project view identifiers ─────────────────────────────────────────────────
 

@@ -1,3 +1,9 @@
+/** CRS sentinel for a model whose plan coordinates are a local drawing
+ * grid rather than a georeferenced system — mirrors `LOCAL_CRS` in the
+ * backend. Deliberately not an EPSG code: no EPSG code is true of such a
+ * model, so nothing may try to resolve a proj4 definition for it. */
+export const LOCAL_CRS = "LOCAL";
+
 /* Coordinate transforms for the canvas.
  *
  * Geographic ("map") positions use WGS84 lon/lat. Schematic positions come
@@ -33,7 +39,7 @@
  */
 
 import proj4 from "proj4";
-import type { Link, Node } from "../types";
+import type { Link, Node, Region } from "../types";
 
 export interface CustomCrsDefinition {
   label: string;
@@ -234,6 +240,32 @@ export function reprojectNodes(nodes: Node[], fromEpsg: string): Node[] {
     const [lon, lat] = converter.forward([n.x, n.y]);
     return { ...n, x: lon, y: lat };
   });
+}
+
+/**
+ * Reproject regions' boundary rings from `fromEpsg` to WGS84, the same
+ * forward transform {@link reprojectNodes} applies to node coordinates.
+ * Region counts are small (dozens, not tens of thousands), so no identity
+ * cache is needed. Throws like {@link reprojectNodes} for unknown codes.
+ */
+export function reprojectRegions(
+  regions: Region[],
+  fromEpsg: string,
+): Region[] {
+  if (fromEpsg === "EPSG:4326") return regions; // no-op
+  if (!ensureEpsgDef(fromEpsg)) {
+    throw new Error(
+      `Unknown CRS: ${fromEpsg}. Provide a proj4 definition string or use a supported EPSG code.`,
+    );
+  }
+  const converter = proj4(fromEpsg, "EPSG:4326");
+  return regions.map((r) => ({
+    ...r,
+    ring: r.ring.map(([x, y]) => {
+      const [lon, lat] = converter.forward([x, y]);
+      return [lon, lat] as [number, number];
+    }),
+  }));
 }
 
 /**

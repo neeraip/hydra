@@ -15,7 +15,10 @@ export interface Task {
   status: TaskStatus;
   timeLabel: string;
   // ── live progress (populated from simulation_progress events) ──
-  phase?: "hydraulics" | "quality";
+  phase?: "hydraulics" | "quality" | "simulation";
+  /** Display label of the primary phase bar ("Hydraulics" for wds,
+   * "Simulation" for single-phase engines). */
+  primaryPhaseLabel?: string;
   progressPercent?: number;
   /** Raw message from the backend (e.g. "Hydraulics: step 3/12"). */
   progressMessage?: string;

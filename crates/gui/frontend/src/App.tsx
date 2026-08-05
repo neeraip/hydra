@@ -44,8 +44,8 @@ const ScenariosModal = lazy(() =>
   })),
 );
 const CrsModal = lazy(() =>
-  import("./components/modals/CrsModal").then((m) => ({
-    default: m.CrsModal,
+  import("./components/modals/CrsPicker").then((m) => ({
+    default: m.CrsPicker,
   })),
 );
 const BasemapProvidersModal = lazy(() =>

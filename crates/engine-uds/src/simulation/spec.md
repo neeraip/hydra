@@ -109,7 +109,20 @@ influence graph is loop-free. This is what permits three clocks:
   longer *dry* step otherwise;
 - the **routing clock**, governed by §6.5's error-controlled stepping,
   typically far shorter; and
-- the **reporting clock**, at which results are recorded.
+- the **reporting clock**, at which results are recorded. Its first
+  boundary is one report step after the simulation start, or the report
+  start date where that falls later: a reporting instant closes an interval,
+  and at the start no interval has elapsed. The earliest record therefore
+  describes the state one step in, and no record describes the initial
+  condition.
+
+> **CORRESPONDENCE:** this matches the predecessor, and differs from the
+> water-distribution engine, whose quasi-steady solution *is* defined at the
+> start instant and is reported there. A reader comparing the two sees a
+> drainage run's first record at $t = \Delta t_r$ and a distribution run's
+> at $t = 0$; both are the earliest instant at which their engine has an
+> answer.
+
 
 Per routing period: hydrology advances by whole hydrology steps until it
 covers the routing period's end; routing advances one trial step under §6.5's

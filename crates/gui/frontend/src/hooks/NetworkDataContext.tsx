@@ -9,7 +9,7 @@ import {
   useState,
 } from "react";
 import { perfTrace } from "../perfTrace";
-import type { Link, Node } from "../types";
+import type { Link, Node, Region } from "../types";
 import { useNetworkVersion } from "./NetworkVersionContext";
 import {
   fetchNetworkSnapshot,
@@ -34,6 +34,8 @@ export interface NetworkSummary {
 interface NetworkDataCtx {
   nodes: Node[];
   links: Link[];
+  /** Areal elements (subcatchments); empty for engines without them. */
+  regions: Region[];
   summary: NetworkSummary;
   loading: boolean;
   primeNetworkData: (snapshot: NetworkSnapshotDto) => void;
@@ -46,6 +48,7 @@ interface NetworkDataCtx {
 interface NetworkSnapshotDto {
   nodes: Node[];
   links: Link[];
+  regions?: Region[];
 }
 
 /**
@@ -147,7 +150,7 @@ function summarizeNetwork(nodes: Node[], links: Link[]): NetworkSummary {
       pipes += 1;
       if (typeof l.length === "number" && l.length > 0)
         totalLengthM += l.length;
-      if (l.diameter > 0) {
+      if (l.diameter != null && l.diameter > 0) {
         diaSum += l.diameter;
         diaCount += 1;
       }
@@ -196,6 +199,7 @@ const EMPTY_SUMMARY: NetworkSummary = {
 const Ctx = createContext<NetworkDataCtx>({
   nodes: [],
   links: [],
+  regions: [],
   summary: EMPTY_SUMMARY,
   loading: false,
   primeNetworkData: () => {},
@@ -206,6 +210,7 @@ export function NetworkDataProvider({ children }: { children: ReactNode }) {
   const { version, bumpNetwork } = useNetworkVersion();
   const [nodes, setNodes] = useState<Node[]>([]);
   const [links, setLinks] = useState<Link[]>([]);
+  const [regions, setRegions] = useState<Region[]>([]);
   const [loading, setLoading] = useState(false);
   // Set only by `primeNetworkData`: the snapshot was just loaded via
   // `load_project_network`, so the version bump that follows a prime must
@@ -226,6 +231,7 @@ export function NetworkDataProvider({ children }: { children: ReactNode }) {
     fullRefetchNeededRef.current = false;
     setNodes(normalizeNodes(snapshot.nodes));
     setLinks(snapshot.links);
+    setRegions(snapshot.regions ?? []);
     setLoading(false);
   }, []);
 
@@ -235,6 +241,7 @@ export function NetworkDataProvider({ children }: { children: ReactNode }) {
   const clearNetworkData = useCallback(() => {
     setNodes([]);
     setLinks([]);
+    setRegions([]);
     setLoading(true);
   }, []);
 
@@ -315,6 +322,7 @@ export function NetworkDataProvider({ children }: { children: ReactNode }) {
         const linkCount = nextLinks.length;
         setNodes(nextNodes);
         setLinks(nextLinks);
+        setRegions(snapshot?.regions ?? []);
         if (nodeCount > 0 || linkCount > 0) {
           perfTrace("network-data-fetch", performance.now() - fetchStartedAt, {
             version,
@@ -360,12 +368,21 @@ export function NetworkDataProvider({ children }: { children: ReactNode }) {
     () => ({
       nodes,
       links,
+      regions,
       summary,
       loading,
       primeNetworkData,
       clearNetworkData,
     }),
-    [links, loading, nodes, primeNetworkData, clearNetworkData, summary],
+    [
+      links,
+      loading,
+      nodes,
+      regions,
+      primeNetworkData,
+      clearNetworkData,
+      summary,
+    ],
   );
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;

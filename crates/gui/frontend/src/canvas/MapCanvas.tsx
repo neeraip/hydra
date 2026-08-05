@@ -7,6 +7,7 @@ import { COORDINATE_SYSTEM, Deck, OrthographicView } from "@deck.gl/core";
 import {
   LineLayer,
   PathLayer,
+  PolygonLayer,
   ScatterplotLayer,
   TextLayer,
 } from "@deck.gl/layers";
@@ -28,6 +29,7 @@ import {
   useBasemapProviders,
 } from "../hooks/basemapProviders";
 import { startPerfSpan } from "../perfTrace";
+import type { Region } from "../types";
 import { useUnitSystem } from "../units";
 import {
   type BasemapId,
@@ -36,11 +38,14 @@ import {
 } from "./Basemap";
 import { FlowPathLayer } from "./FlowPathLayer";
 import { HoverChip, type HoverTip } from "./HoverChip";
+import { useHoverActions, useHoverState } from "./hover-context";
 import { useCanvasLayers } from "./layers-context";
 import {
+  baseLinkRgba,
+  baseNodeRgba,
+  genericRgba,
   hashStr,
   linkRgba,
-  NO_RESULT_RGBA,
   nodeRgba,
   type RGBA,
 } from "./MapCanvas/colorUtils";
@@ -49,13 +54,32 @@ import {
   geoBounds,
   orthoCenterFromMap,
   roughGeoViewState,
+  visibleMapPadding,
 } from "./MapCanvas/geoUtils";
 import { nearestPointOnPath, type SnapResult } from "./measureSnap";
 import {
   computeSchematicLayout,
+  type LayoutCoupling,
   type SchematicLayout,
 } from "./schematicLayout";
-import type { CanvasTool, LinkVariable, NodeVariable, ViewMode } from "./types";
+import {
+  pathIntersectsBox,
+  pointInBox,
+  ringIntersectsBox,
+  useViewportActions,
+  type ViewportBox,
+} from "./viewport-context";
+
+/** Stable empty default so the prop never changes identity per render. */
+const EMPTY_COUPLINGS: LayoutCoupling[] = [];
+
+import type {
+  CanvasTool,
+  GenericCanvasResults,
+  LinkVariable,
+  NodeVariable,
+  ViewMode,
+} from "./types";
 
 maplibregl.setWorkerUrl(maplibreWorkerUrl);
 
@@ -129,10 +153,13 @@ function sameBasemapStyle(
 const EMPTY_SCHEMATIC_LAYOUT: SchematicLayout = {
   positions: new Map(),
   detachedIds: new Set(),
+  regionRings: new Map(),
+  regionLeaders: new Map(),
 };
 /** Stable empties for hidden layers, so toggling visibility off does not hand
  * deck.gl a fresh array identity on every rebuild. */
 const EMPTY_LINK_DATA: never[] = [];
+const EMPTY_REGION_DATA: never[] = [];
 const EMPTY_NODE_DATA: never[] = [];
 
 /** Stable default so map-mode callers omitting the prop never invalidate the
@@ -143,20 +170,32 @@ const IDENTITY_SCALE = { x: 1, y: 1 } as const;
 // layers built in buildLayers. Alphas/widths/radius pads are visual tuning —
 // the layer ids derived from these suffixes must stay stable (deck.gl matches
 // layers by id).
+// Hover halo. Achromatic on purpose, for the same reason the measure
+// highlight below is: a halo tinted with the element's own colour separates
+// by hue, and there is no hue an element cannot already be.
+//
+// It failed asymmetrically, which is why it survived. Around a thin link a
+// same-coloured halo is many times the line's width and reads fine; around
+// a filled disc it is a narrow annulus in the disc's own colour, at 7–27%
+// alpha, on a map where those discs sit shoulder to shoulder — invisible.
+// One interaction should not look like two, so both use the rim.
+const HOVER_HALO_RGB: [number, number, number] = [226, 232, 242];
 const LINK_HOVER_GLOW = [
-  { suffix: "outer", alpha: 20, width: 18 },
-  { suffix: "mid", alpha: 50, width: 9 },
-  { suffix: "inner", alpha: 90, width: 4 },
+  { suffix: "outer", alpha: 20, width: 18, rgb: HOVER_HALO_RGB },
+  { suffix: "mid", alpha: 60, width: 9, rgb: HOVER_HALO_RGB },
+  { suffix: "inner", alpha: 110, width: 4, rgb: HOVER_HALO_RGB },
 ];
 const LINK_SELECTION_GLOW = [
   { suffix: "outer", alpha: 40, width: 22 },
   { suffix: "mid", alpha: 90, width: 10 },
   { suffix: "inner", alpha: 170, width: 5 },
 ];
+// Alphas above the link's: a node's halo is only the annulus outside its
+// own radius, so less of it is visible for the same nominal strength.
 const NODE_HOVER_GLOW = [
-  { suffix: "outer", alpha: 18, radiusPad: 14 },
-  { suffix: "mid", alpha: 40, radiusPad: 8 },
-  { suffix: "inner", alpha: 70, radiusPad: 4 },
+  { suffix: "outer", alpha: 45, radiusPad: 14, rgb: HOVER_HALO_RGB },
+  { suffix: "mid", alpha: 95, radiusPad: 8, rgb: HOVER_HALO_RGB },
+  { suffix: "inner", alpha: 150, radiusPad: 4, rgb: HOVER_HALO_RGB },
 ];
 const NODE_SELECTION_GLOW = [
   { suffix: "outer", alpha: 35, radiusPad: 18 },
@@ -223,6 +262,10 @@ type CanvasViewState = GeoViewState | SchematicViewState;
 interface MapCanvasProps {
   nodes: Node[];
   links: Link[];
+  /** Areal elements (subcatchment boundaries), already in the render CRS.
+   * Drawn from their own rings wherever positions are real; in a topological
+   * layout they are drawn from the glyphs that layout placed. */
+  regions?: Region[];
   viewMode: ViewMode;
   /** Per-axis schematic spacing multipliers (`{x: 1, y: 1}` = the layout's
    * native 120:80). Scales distances between nodes only — radii and link widths
@@ -239,6 +282,11 @@ interface MapCanvasProps {
    * nodes/links so a timeline scrub changes only this prop — the node/link
    * arrays keep their identity and deck.gl only re-evaluates colours. */
   periodResult?: PeriodResults | null;
+  /** Engine-generic result channels (catalog-driven engines). When present,
+   * node/link/region colours come from these values and ramps instead of
+   * the fixed-variable accessors — the canvas stays free of engine
+   * knowledge; the engine's catalog described everything. */
+  generic?: GenericCanvasResults | null;
   basemap: BasemapId;
   /** Basemap dimming, 0–1 (1 = fully opaque). Applied as CSS opacity on the
    * maplibre canvas only — never on the deck.gl network overlay. */
@@ -247,6 +295,43 @@ interface MapCanvasProps {
   onSelectNode: (id: string | null) => void;
   selectedLinkId: string | null;
   onSelectLink: (id: string | null) => void;
+  /** The model's coordinates are a local grid, not a georeferenced system:
+   * there is no basemap to place them on, so the canvas renders them
+   * orthographically at their true positions. */
+  /**
+   * Whether the positions on screen are *invented* by the layout rather than
+   * the model's own.
+   *
+   * This is not the same question as `viewMode`, which selects the rendering
+   * path (maplibre + basemap, or the orthographic deck view). A local grid
+   * renders orthographically — it has no basemap to sit on — while its
+   * coordinates are entirely real. Conflating the two is what made a local
+   * grid's plan view masquerade as the schematic, and made the real
+   * topological layout unreachable for exactly the models that need it most.
+   */
+  /** Kind id → the role the engine declared for it (spec §4.3). Drives the
+   * network-at-rest palette, so an unsimulated model shows where it is fed
+   * and drained rather than one uniform grey. */
+  kindRoles?: ReadonlyMap<string, string>;
+  topological?: boolean;
+  /**
+   * Whether the inlet couplings have been answered for.
+   *
+   * They are hydraulic connections that are not links, so a topological
+   * layout computed before they arrive reads a dual-drainage model as two
+   * disconnected networks — and says so, loudly, in an amber detached
+   * group, then reframes when the answer lands. Waiting costs one blank
+   * frame; not waiting costs a wrong one that the camera then fits to.
+   */
+  couplingsResolved?: boolean;
+  /** Hydraulic connections that are not links (dual-drainage street
+   * inlets): drawn as dashed connectors and counted as connectivity by
+   * the schematic layout. */
+  couplings?: LayoutCoupling[];
+  /** Selected areal element; highlights its ring. */
+  selectedRegionId?: string | null;
+  /** Called when a region polygon is clicked (select tool, map mode). */
+  onSelectRegion?: (id: string | null) => void;
   /** Result ranges used to normalise colour scales. */
   headMin?: number;
   headMax?: number;
@@ -263,6 +348,11 @@ interface MapCanvasProps {
   velocityThresholds?: { low: number; target: number; high: number };
   /** Custom flow-magnitude thresholds used when colorMode is "threshold". */
   flowThresholds?: { low: number; target: number; high: number };
+  /** Run ranges for the magnitude ramps pressure and velocity take when the
+   * reader has not asked for the verdict. */
+  pressureMin?: number;
+  pressureMax?: number;
+  velocityMax?: number;
   /** Active canvas tool; affects cursor and interaction mode. */
   tool?: CanvasTool;
   /** Called (after mouseup) when the user drags a node to a new position.
@@ -291,11 +381,22 @@ interface MapCanvasProps {
   /** When flyToKey changes and flyToNodeId/flyToLinkId is set, the canvas animates to that element. */
   flyToNodeId?: string | null;
   flyToLinkId?: string | null;
+  /** Fly to a region's extent (map mode; the schematic has no rings). */
+  flyToRegionId?: string | null;
   flyToKey?: number;
   /** Increment to force the map/schematic to fit the full network extent.
    * Should change only on project switch (not scenario switch) so the user's
    * view position is preserved across scenario comparisons. */
   fitKey?: number;
+  /**
+   * Fired when the *user* moves the camera — a drag, a scroll-zoom, a
+   * rotate — and never when the app moves it.
+   *
+   * The distinction is the whole point: it tells the caller whether the
+   * current framing is the user's or the app's, and only a framing the app
+   * chose may be replaced without asking.
+   */
+  onUserMovedViewport?: () => void;
   /** Increment to zoom in one step in the active view. */
   zoomInKey?: number;
   /** Increment to zoom out one step in the active view. */
@@ -313,18 +414,26 @@ interface MapCanvasProps {
 export const MapCanvas = memo(function MapCanvas({
   nodes,
   links,
+  regions,
   viewMode,
   schematicScale = IDENTITY_SCALE,
   nodeVar,
   linkVar,
   animateLinks = true,
   periodResult = null,
+  generic = null,
   basemap,
   basemapOpacity = 1,
   selectedNodeId,
   onSelectNode,
   selectedLinkId,
   onSelectLink,
+  kindRoles,
+  topological = false,
+  couplingsResolved = true,
+  couplings = EMPTY_COUPLINGS,
+  selectedRegionId = null,
+  onSelectRegion,
   headMin = 0,
   headMax = 100,
   demandMin = 0,
@@ -336,6 +445,9 @@ export const MapCanvas = memo(function MapCanvas({
   pressureThresholds,
   velocityThresholds,
   flowThresholds,
+  pressureMin = 0,
+  pressureMax = 100,
+  velocityMax = 1.5,
   tool = "select",
   onNodeMoved,
   onCreateNodeRequest,
@@ -344,8 +456,10 @@ export const MapCanvas = memo(function MapCanvas({
   measurePoints = EMPTY_MEASURE_POINTS,
   flyToNodeId,
   flyToLinkId,
+  flyToRegionId,
   flyToKey,
   fitKey,
+  onUserMovedViewport,
   zoomInKey,
   zoomOutKey,
   resetNorthKey,
@@ -355,8 +469,20 @@ export const MapCanvas = memo(function MapCanvas({
   const mapElRef = useRef<HTMLDivElement>(null);
   const deckHostRef = useRef<HTMLDivElement>(null);
   const { layers: canvasLayers } = useCanvasLayers();
-  const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null);
-  const [hoveredLinkId, setHoveredLinkId] = useState<string | null>(null);
+  // Hover is shared state, not local: the network list and the inspector
+  // drive it too, so hovering a row there lights the element up here.
+  const { hoveredNodeId, hoveredLinkId, hoveredRegionId } = useHoverState();
+  const {
+    hoverNode: setHoveredNodeId,
+    hoverLink: setHoveredLinkId,
+    hoverRegion: setHoveredRegionId,
+    clearHover,
+  } = useHoverActions();
+  // These refs deliberately track only what the *canvas* pointer is over,
+  // never what the list or inspector hovers. They gate node dragging and
+  // add-node placement, which must answer "what is under the cursor on the
+  // map" — syncing them with the shared hover would make hovering a list row
+  // silently refuse the next click on the map.
   const hoveredNodeIdRef = useRef<string | null>(null);
   const hoveredLinkIdRef = useRef<string | null>(null);
   // Cursor-following value chip: the element under the pointer + its position.
@@ -440,6 +566,7 @@ export const MapCanvas = memo(function MapCanvas({
   const onCreateLinkRequestRef = useRef(onCreateLinkRequest);
   const nodesRef = useRef(nodes);
   const linksRef = useRef(links);
+  const regionsRef = useRef(regions);
   // Initialised empty; kept current by useEffect once geoCoords is available.
   const geoCoordsRef = useRef<Map<string, [number, number]>>(new Map());
   const draggingNodeIdRef = useRef<string | null>(null);
@@ -463,34 +590,61 @@ export const MapCanvas = memo(function MapCanvas({
      * scale object without changing it does not force a re-layout. */
     scaleX: number;
     scaleY: number;
+    /** Couplings feed the connectivity pass, so a change in them must
+     * invalidate the cached layout exactly as nodes and links do. */
+    couplings: LayoutCoupling[];
+    regions: Region[] | undefined;
   } | null>(null);
   const schematicLayout = useMemo(() => {
-    const cache = schematicCacheRef.current;
-    if (
-      cache &&
-      cache.nodes === nodes &&
-      cache.links === links &&
-      cache.scaleX === schematicScale.x &&
-      cache.scaleY === schematicScale.y
-    ) {
-      return cache.layout;
-    }
-    if (viewMode !== "schematic") {
+    // Checked before the cache, not after: the cache is keyed on the inputs
+    // to the layout, and the mode is not one of them. Consulting it first
+    // handed a plan view the schematic's positions — invisible for the
+    // coordinates, which a plan view never reads, but the leader lines came
+    // through and hung in space at schematic-space endpoints.
+    if (!topological || !couplingsResolved) {
       // Drop a stale cache rather than pinning an obsolete full generation
       // of nodes/links/coords in memory until schematic is next opened.
       schematicCacheRef.current = null;
       return EMPTY_SCHEMATIC_LAYOUT;
     }
-    const layout = computeSchematicLayout(nodes, links, schematicScale);
+    const cache = schematicCacheRef.current;
+    if (
+      cache &&
+      cache.nodes === nodes &&
+      cache.links === links &&
+      cache.couplings === couplings &&
+      cache.regions === regions &&
+      cache.scaleX === schematicScale.x &&
+      cache.scaleY === schematicScale.y
+    ) {
+      return cache.layout;
+    }
+    const layout = computeSchematicLayout(
+      nodes,
+      links,
+      schematicScale,
+      couplings,
+      regions ?? EMPTY_REGION_DATA,
+    );
     schematicCacheRef.current = {
       nodes,
       links,
       layout,
       scaleX: schematicScale.x,
       scaleY: schematicScale.y,
+      couplings,
+      regions,
     };
     return layout;
-  }, [nodes, links, viewMode, schematicScale]);
+  }, [
+    nodes,
+    links,
+    topological,
+    couplingsResolved,
+    schematicScale,
+    couplings,
+    regions,
+  ]);
   // Positions alone, for everything that only needs coordinates.
   const schematicCoords = schematicLayout.positions;
 
@@ -625,6 +779,13 @@ export const MapCanvas = memo(function MapCanvas({
     return m;
   }, [nodes]);
 
+  // The positions actually on screen: invented by the layout in a
+  // topological view, the model's own everywhere else. Every camera path in
+  // the orthographic renderer must frame *these* — framing the layout's
+  // positions in a plan view aimed the camera at an empty map, which is why
+  // "Fit network" flew to nowhere.
+  const renderCoords = topological ? schematicCoords : geoCoords;
+
   useEffect(() => {
     selectedNodeIdRef.current = selectedNodeId;
   }, [selectedNodeId]);
@@ -648,7 +809,7 @@ export const MapCanvas = memo(function MapCanvas({
       setHoveredNodeId(null);
       setHoverTip(null);
     }
-  }, [tool]);
+  }, [tool, setHoveredNodeId, setHoveredLinkId]);
   useEffect(() => {
     viewModeRef.current = viewMode;
   }, [viewMode]);
@@ -670,6 +831,9 @@ export const MapCanvas = memo(function MapCanvas({
   useEffect(() => {
     linksRef.current = links;
   }, [links]);
+  useEffect(() => {
+    regionsRef.current = regions;
+  }, [regions]);
 
   // When switching away from add-link mode, cancel any pending link and clear the ghost line.
   useEffect(() => {
@@ -705,10 +869,11 @@ export const MapCanvas = memo(function MapCanvas({
   useEffect(() => {
     geoCoordsRef.current = geoCoords;
   }, [geoCoords]);
-  const schematicCoordsRef = useRef<Map<string, [number, number]>>(new Map());
+
+  const renderCoordsRef = useRef<Map<string, [number, number]>>(new Map());
   useEffect(() => {
-    schematicCoordsRef.current = schematicCoords;
-  }, [schematicCoords]);
+    renderCoordsRef.current = renderCoords;
+  }, [renderCoords]);
 
   // Fly/zoom to a specific element when flyToKey changes.
   useEffect(() => {
@@ -716,7 +881,33 @@ export const MapCanvas = memo(function MapCanvas({
     if (flyToKey == null) return;
     const nodeId = flyToNodeId;
     const linkId = flyToLinkId;
-    if (!nodeId && !linkId) return;
+    const regionId = flyToRegionId;
+    if (!nodeId && !linkId && !regionId) return;
+
+    // Zooming to a region is still geographic-only. Both other views now
+    // have a ring to frame — the model's own in a plan view, the placed
+    // glyph in a schematic — but neither has the orthographic camera path
+    // for it, so the request is dropped rather than aimed at nothing.
+    if (regionId) {
+      if (viewMode !== "map") return;
+      const map = mapRef.current;
+      const region = regionsRef.current?.find((r) => r.id === regionId);
+      if (!map || !region || region.ring.length === 0) return;
+      const first = region.ring[0];
+      const bounds = region.ring.reduce(
+        (b, p) => b.extend(p as [number, number]),
+        new maplibregl.LngLatBounds(
+          first as [number, number],
+          first as [number, number],
+        ),
+      );
+      map.fitBounds(bounds, {
+        padding: visibleMapPadding(map),
+        maxZoom: 18,
+        duration: 800,
+      });
+      return;
+    }
 
     if (viewMode === "map") {
       const map = mapRef.current;
@@ -729,7 +920,13 @@ export const MapCanvas = memo(function MapCanvas({
         const mapZoom = map.getZoom();
         const currentZoom = Number.isFinite(mapZoom) ? mapZoom : 12;
         const zoom = Math.max(currentZoom, 14);
-        map.flyTo({ center, zoom, curve: 1, duration: 800 });
+        map.flyTo({
+          center,
+          zoom,
+          curve: 1,
+          duration: 800,
+          padding: visibleMapPadding(map),
+        });
       } else if (linkId) {
         const link = linksRef.current.find((l) => l.id === linkId);
         if (!link) return;
@@ -737,13 +934,17 @@ export const MapCanvas = memo(function MapCanvas({
         const to = geoCoordsRef.current.get(link.toId);
         if (!from || !to) return;
         const bounds = new maplibregl.LngLatBounds(from, from).extend(to);
-        map.fitBounds(bounds, { padding: 80, maxZoom: 18, duration: 800 });
+        map.fitBounds(bounds, {
+          padding: visibleMapPadding(map),
+          maxZoom: 18,
+          duration: 800,
+        });
       }
     } else {
       // Schematic mode — orthographic view
       const deck = deckRef.current;
       if (!deck) return;
-      const coords = schematicCoordsRef.current;
+      const coords = renderCoordsRef.current;
       const { zoom: fitZoom } = orthoCenterFromMap(coords);
       if (nodeId) {
         const target = coords.get(nodeId);
@@ -784,7 +985,7 @@ export const MapCanvas = memo(function MapCanvas({
         deck.setProps({ viewState: vs });
       }
     }
-  }, [flyToKey, isActive, viewMode, flyToLinkId, flyToNodeId]);
+  }, [flyToKey, isActive, viewMode, flyToLinkId, flyToNodeId, flyToRegionId]);
 
   // ── deck.gl data arrays ────────────────────────────────────────────────────
   // Memoized so their identity is stable across renders that don't change the
@@ -796,11 +997,11 @@ export const MapCanvas = memo(function MapCanvas({
   // 60 fps; with stable identity those frames only update a uniform.
   const { linkData, nodeData, linkDatumById, nodeDatumById, anyLinkVertices } =
     useMemo(() => {
-      const isSchematic = viewMode === "schematic";
-      const coordMap = isSchematic ? schematicCoords : geoCoords;
+      // Positions come from the layout only where the layout invented them.
+      const coordMap = renderCoords;
       // Display path precomputed once per network/viewMode change (not per
-      // accessor call over 46k links). Schematic mode ignores vertices — the
-      // BFS layout has no vertex positions, so links stay straight there.
+      // accessor call over 46k links). A topological layout ignores vertices
+      // — it has no vertex positions, so links stay straight there.
       let anyLinkVertices = false;
       const linkData = links
         .map((l, si) => {
@@ -808,7 +1009,7 @@ export const MapCanvas = memo(function MapCanvas({
           const to = coordMap.get(l.toId);
           if (!from || !to) return null;
           const verts =
-            !isSchematic && l.vertices && l.vertices.length > 0
+            !topological && l.vertices && l.vertices.length > 0
               ? l.vertices
               : null;
           if (verts) anyLinkVertices = true;
@@ -841,7 +1042,126 @@ export const MapCanvas = memo(function MapCanvas({
         nodeDatumById: new Map(nodeData.map((n) => [n.id, n])),
         anyLinkVertices,
       };
-    }, [links, nodes, viewMode, schematicCoords, geoCoords]);
+    }, [links, nodes, renderCoords, topological]);
+
+  // ── Viewport probe ─────────────────────────────────────────────────────────
+  // The network list asks "is this element on screen"; only this component
+  // knows both the viewport and the display coordinates. Answered per call
+  // (~25 visible rows) rather than by precomputing a 46k-element set.
+  const { setViewportProbe, viewportMoved } = useViewportActions();
+
+  // Which renderer is on screen. `viewMode` still carries this — CanvasView
+  // maps a local grid onto "schematic" because that is the orthographic
+  // path — so it answers "is there a basemap", not "are the positions real".
+  const orthographic = viewMode === "schematic";
+  const orthographicRef = useRef(orthographic);
+  orthographicRef.current = orthographic;
+
+  /**
+   * The visible extent, in whatever space the elements are drawn in.
+   *
+   * Two renderers, two sources: maplibre reports lng/lat bounds directly,
+   * while the orthographic deck view states a centre and a log2 zoom, so its
+   * extent is the canvas size divided by the scale that zoom implies.
+   * `null` when neither is ready — the caller treats that as "visible", so a
+   * canvas that has not laid out yet dims nothing.
+   */
+  const viewportBox = useCallback((): ViewportBox | null => {
+    if (orthographicRef.current) {
+      // deck's own viewport, rather than deriving the extent from the stored
+      // camera and the canvas size by hand. It already knows the canvas
+      // size, the zoom-to-scale convention and the view's Y orientation, and
+      // it answers from whatever deck is *actually* rendering rather than
+      // from a ref that several code paths write and one seeds with a
+      // geographic camera. The hand-rolled version had a null to return for
+      // each of those it could not satisfy, and a null reads as "everything
+      // is visible".
+      const viewport = deckRef.current?.getViewports()[0];
+      if (!viewport) return null;
+      const [west, south, east, north] = viewport.getBounds();
+      return { west, south, east, north };
+    }
+    const map = mapRef.current;
+    if (!map) return null;
+    const b = map.getBounds();
+    return {
+      west: b.getWest(),
+      south: b.getSouth(),
+      east: b.getEast(),
+      north: b.getNorth(),
+    };
+  }, []);
+  const linkDatumByIdRef = useRef(linkDatumById);
+  linkDatumByIdRef.current = linkDatumById;
+  const viewportMovedRef = useRef(viewportMoved);
+  viewportMovedRef.current = viewportMoved;
+
+  // Throttled to ~10 Hz and shared by both renderers. Nothing in the list
+  // reorders when the viewport moves, so rows fading as you pan is the
+  // point — but maplibre's "move" and deck's onViewStateChange both fire per
+  // frame, and a report per frame would re-render the list at 60 Hz.
+  const viewportThrottleRef = useRef<number | null>(null);
+  const reportViewportMoved = useCallback(() => {
+    if (viewportThrottleRef.current != null) return;
+    viewportThrottleRef.current = window.setTimeout(() => {
+      viewportThrottleRef.current = null;
+      viewportMovedRef.current();
+    }, 100);
+  }, []);
+  /** Report immediately, cancelling any pending throttled report — for the
+   * end of a gesture, so the settled viewport is never left showing the
+   * state from 100 ms earlier. */
+  const flushViewportMoved = useCallback(() => {
+    if (viewportThrottleRef.current != null) {
+      window.clearTimeout(viewportThrottleRef.current);
+      viewportThrottleRef.current = null;
+    }
+    viewportMovedRef.current();
+  }, []);
+  useEffect(
+    () => () => {
+      if (viewportThrottleRef.current != null) {
+        window.clearTimeout(viewportThrottleRef.current);
+      }
+    },
+    [],
+  );
+  // Both renderers are wired up inside long-lived effects, so they reach
+  // these through refs rather than re-registering their listeners.
+  const reportViewportMovedRef = useRef(reportViewportMoved);
+  reportViewportMovedRef.current = reportViewportMoved;
+  const userMovedRef = useRef(onUserMovedViewport);
+  userMovedRef.current = onUserMovedViewport;
+  const flushViewportMovedRef = useRef(flushViewportMoved);
+  flushViewportMovedRef.current = flushViewportMoved;
+
+  useEffect(() => {
+    // The question is "is this element on screen", which needs positions the
+    // model actually stated. A topological layout invented them, so there is
+    // nothing to compare and no probe is registered — that absence is what
+    // hides the feature rather than offering a toggle that cannot answer.
+    // A local grid is *not* excluded: its coordinates are perfectly real, it
+    // simply draws them orthographically instead of on a basemap.
+    if (topological) {
+      setViewportProbe(null);
+      return;
+    }
+    setViewportProbe((cls, id) => {
+      const box = viewportBox();
+      if (!box) return true;
+      if (cls === "point") {
+        const p = geoCoordsRef.current.get(id);
+        return p ? pointInBox(p[0], p[1], box) : false;
+      }
+      if (cls === "polyline") {
+        const datum = linkDatumByIdRef.current.get(id);
+        return datum ? pathIntersectsBox(datum.path, box) : false;
+      }
+      const ring = regionsRef.current?.find((r) => r.id === id)?.ring;
+      return ring ? ringIntersectsBox(ring, box) : false;
+    });
+    return () => setViewportProbe(null);
+  }, [topological, setViewportProbe, viewportBox]);
 
   // Whether usable period results exist for the CURRENT topology. Guards
   // against a topology change racing ahead of the results that describe it —
@@ -855,6 +1175,23 @@ export const MapCanvas = memo(function MapCanvas({
     periodResult != null &&
     periodResult.nodePressure.length === nodes.length &&
     periodResult.linkFlow.length === links.length;
+
+  // Engine-generic channels, length-guarded at component scope for the same
+  // topology-race reason as `hasPeriodResults`: a stale array must not
+  // colour a changed network.
+  const genNode =
+    generic?.node?.values && generic.node.values.length === nodes.length
+      ? generic.node
+      : null;
+  const genLink =
+    generic?.link?.values && generic.link.values.length === links.length
+      ? generic.link
+      : null;
+  const genRegion =
+    generic?.region?.values &&
+    generic.region.values.length === (regions?.length ?? 0)
+      ? generic.region
+      : null;
 
   const buildLayers = useCallback((): Layer[] => {
     const isSchematic = viewMode === "schematic";
@@ -948,7 +1285,15 @@ export const MapCanvas = memo(function MapCanvas({
     // does not exist — the legend is hidden in this state too, so a colour
     // here would have nothing to explain it.
     const nodeColor = (d: (typeof nodeData)[number]): RGBA => {
-      if (!pr) return NO_RESULT_RGBA;
+      // Nothing to plot yet is not the same as a missing reading: the
+      // network at rest gets its own palette, keyed on what each kind does.
+      const role = kindRoles?.get(d.type);
+      if (generic) {
+        return genNode
+          ? genericRgba(genNode.values?.[d.si], genNode.variable, 220, "point")
+          : baseNodeRgba(role);
+      }
+      if (!pr) return baseNodeRgba(role);
       return nodeRgba(
         nodeSim(d),
         nodeVar,
@@ -959,12 +1304,26 @@ export const MapCanvas = memo(function MapCanvas({
         qualityMin,
         qualityMax,
         pressThresh,
+        role,
+        pressureMin,
+        pressureMax,
       );
     };
     const linkColor = (d: (typeof linkData)[number]): RGBA => {
+      const role = kindRoles?.get(d.type);
+      if (generic) {
+        return genLink
+          ? genericRgba(
+              genLink.values?.[d.si],
+              genLink.variable,
+              220,
+              "polyline",
+            )
+          : baseLinkRgba(role);
+      }
       // Status is the exception: it falls back to the model's initial
       // status, which is real data before any run.
-      if (!pr && linkVar !== "status") return NO_RESULT_RGBA;
+      if (!pr && linkVar !== "status") return baseLinkRgba(role);
       return linkRgba(
         linkSim(d),
         linkVar,
@@ -973,6 +1332,7 @@ export const MapCanvas = memo(function MapCanvas({
         flowThresh,
         qualityMin,
         qualityMax,
+        velocityMax,
       );
     };
 
@@ -1076,13 +1436,207 @@ export const MapCanvas = memo(function MapCanvas({
 
     const layers: Layer[] = [];
 
+    // Subcatchment boundaries render beneath everything else: soft fills
+    // with a hairline outline. In map mode the ring is the model's own plan
+    // geometry; in the schematic it is the glyph the layout placed beside
+    // the catchment's outlet, because the schematic has no plan to draw a
+    // real ring on.
+    const regionRing = (r: Region): Array<[number, number]> =>
+      topological ? (schematicLayout.regionRings.get(r.id) ?? []) : r.ring;
+    const placedRegions =
+      canvasLayers.regions && regions
+        ? regions.filter((r) => regionRing(r).length >= 3)
+        : EMPTY_REGION_DATA;
+    if (placedRegions.length > 0) {
+      // With a generic region channel loaded, fill each polygon from its
+      // value (regions and values share the snapshot order); otherwise the
+      // neutral soft green. Kept translucent either way so the network
+      // above stays readable. The selected ring brightens and thickens —
+      // the areal equivalent of the node/link selection glow, which a
+      // polygon cannot use (a halo around a catchment reads as a second
+      // catchment).
+      // Values are indexed by snapshot order, so a filtered draw list must
+      // look its value up by id, never by its position in that list.
+      const regionOrder = new Map(regions?.map((r, i) => [r.id, i]) ?? []);
+      const baseFill: (r: Region) => RGBA = genRegion
+        ? (r: Region) =>
+            genericRgba(
+              genRegion.values?.[regionOrder.get(r.id) ?? -1],
+              genRegion.variable,
+              110,
+              "region",
+            )
+        : // At rest, before any result: neutral like every other class, so
+          // the network reads by role rather than by hue. The green belongs
+          // to catchment *data*, not to catchments as objects.
+          () => [138, 147, 163, 30] as unknown as RGBA;
+      const regionSelected = (r: Region) => r.id === selectedRegionId;
+      // Hover brightens the ring short of the selected treatment, so the two
+      // stay distinguishable when you hover something else while one region
+      // is selected. A polygon cannot use the node/link halo — a glow around
+      // a catchment reads as a second catchment.
+      const regionHovered = (r: Region) =>
+        r.id === hoveredRegionId && r.id !== selectedRegionId;
+      // Regions sit beneath nodes and links, so deck's topmost-wins picking
+      // still gives those priority; a click reaches a region only where no
+      // element covers it.
+      const regionsPickable = tool === "select" && onSelectRegion != null;
+      layers.push(
+        new PolygonLayer<Region>({
+          id: "regions",
+          data: placedRegions,
+          getPolygon: regionRing,
+          coordinateSystem: coordSystem,
+          getFillColor: (r: Region) => {
+            // Hover and selection lift the fill as well as the ring. Only
+            // the alpha moves, and only a little: the hue is carrying a
+            // result value, and a catchment that changes colour when the
+            // pointer crosses it reads as a change in the data.
+            const [red, green, blue, alpha] = baseFill(r) as unknown as [
+              number,
+              number,
+              number,
+              number,
+            ];
+            const lift = regionSelected(r) ? 40 : regionHovered(r) ? 22 : 0;
+            return [
+              red,
+              green,
+              blue,
+              Math.min(255, alpha + lift),
+            ] as unknown as RGBA;
+          },
+          getLineColor: (r: Region) =>
+            (regionSelected(r)
+              ? [226, 232, 242, 240]
+              : regionHovered(r)
+                ? [196, 205, 219, 205]
+                : [138, 147, 163, 140]) as unknown as RGBA,
+          getLineWidth: (r: Region) =>
+            regionSelected(r) ? 2.5 : regionHovered(r) ? 1.8 : 1,
+          lineWidthMinPixels: 1,
+          lineWidthUnits: "pixels",
+          stroked: true,
+          filled: true,
+          pickable: regionsPickable,
+          onClick: (info: { object?: unknown }) => {
+            if (toolRef.current !== "select") return;
+            const obj = info.object as Region | undefined;
+            if (obj) onSelectRegion?.(obj.id);
+          },
+          onHover: (info: { object?: unknown }) => {
+            if (!regionsPickable) return;
+            const obj = info.object as Region | undefined;
+            setHoveredRegionId(obj?.id ?? null);
+          },
+          updateTriggers: {
+            getPolygon: [topological, schematicLayout.regionRings],
+            getFillColor: [
+              genRegion?.values,
+              genRegion?.variable,
+              selectedRegionId,
+              hoveredRegionId,
+            ],
+            getLineColor: [selectedRegionId, hoveredRegionId],
+            getLineWidth: [selectedRegionId, hoveredRegionId],
+          },
+        }),
+      );
+
+      // Leader lines: in the schematic a glyph's position is a placement,
+      // not a location, so the line to its outlet is what carries the
+      // meaning. Dashed and dim, to read as annotation rather than a link.
+      // Only a topological layout has leaders to draw: they explain a glyph
+      // that was *placed* beside its outlet. Where the ring sits at its own
+      // coordinates there is nothing to explain.
+      const leaders = (topological ? placedRegions : EMPTY_REGION_DATA)
+        .map((r) => schematicLayout.regionLeaders.get(r.id))
+        .filter((l): l is [[number, number], [number, number]] => l != null);
+      if (leaders.length > 0) {
+        layers.push(
+          new LineLayer<[[number, number], [number, number]]>({
+            id: "region-leaders",
+            data: leaders,
+            coordinateSystem: coordSystem,
+            getSourcePosition: (l) => l[0],
+            getTargetPosition: (l) => l[1],
+            getColor: [138, 147, 163, 95] as unknown as RGBA,
+            getWidth: 1,
+            widthUnits: "pixels",
+            widthMinPixels: 1,
+            pickable: false,
+          }),
+        );
+      }
+    }
+
+    // Inlet couplings: the hydraulic path a dual-drainage model has where
+    // no link exists. Drawn from the street conduit's midpoint to the node
+    // it captures into, dashed and thin so it reads as "coupled to" rather
+    // than as another pipe. Both endpoints must be placed for a connector
+    // to be drawable, which the schematic guarantees and the map does not
+    // (an element without coordinates is absent from the arrays).
+    if (couplings.length > 0 && canvasLayers.links) {
+      const linkMid = new Map<string, [number, number]>();
+      for (const l of ld) {
+        const path = l.path;
+        if (path.length === 0) continue;
+        // Midpoint of the drawn polyline, not of from→to: on a long
+        // street the two differ enough to matter.
+        const mid = path[Math.floor(path.length / 2)];
+        linkMid.set(l.id, mid);
+      }
+      const nodePos = new Map<string, [number, number]>();
+      for (const n of nd) nodePos.set(n.id, n.position);
+      // Dashes are built geometrically rather than with deck's dash
+      // extension: that lives in @deck.gl/extensions, and one dashed
+      // connector does not justify the dependency. DASHES segments per
+      // connector, drawn over the first 60% of each interval.
+      const DASHES = 9;
+      const couplingPaths: Array<[number, number][]> = [];
+      for (const c of couplings) {
+        const from = linkMid.get(c.link);
+        const to = nodePos.get(c.node);
+        if (!from || !to) continue;
+        for (let i = 0; i < DASHES; i += 1) {
+          const t0 = i / DASHES;
+          const t1 = t0 + 0.6 / DASHES;
+          couplingPaths.push([
+            [
+              from[0] + (to[0] - from[0]) * t0,
+              from[1] + (to[1] - from[1]) * t0,
+            ],
+            [
+              from[0] + (to[0] - from[0]) * t1,
+              from[1] + (to[1] - from[1]) * t1,
+            ],
+          ]);
+        }
+      }
+      if (couplingPaths.length > 0) {
+        layers.push(
+          new PathLayer({
+            id: "inlet-couplings",
+            data: couplingPaths,
+            coordinateSystem: coordSystem,
+            getPath: (d) => d,
+            getColor: [138, 147, 163, 170] as unknown as RGBA,
+            getWidth: 1.2,
+            widthUnits: "pixels",
+            pickable: false,
+            updateTriggers: { getPath: [couplings] },
+          }) as unknown as Layer,
+        );
+      }
+    }
+
     // Detached group marker (schematic only). The layout parks anything not
     // reachable from a source in its own region to the right; without a boundary
     // and a label, that reads as a distant part of the network rather than as
     // "these are disconnected". Amber is free here: it is the warning colour and
     // the only other amber on the canvas belongs to the measure tool, which is
     // map-mode only, so the two can never appear together.
-    if (isSchematic && schematicLayout.detachedIds.size > 0) {
+    if (topological && schematicLayout.detachedIds.size > 0) {
       let minX = Number.POSITIVE_INFINITY;
       let minY = Number.POSITIVE_INFINITY;
       let maxX = Number.NEGATIVE_INFINITY;
@@ -1136,7 +1690,7 @@ export const MapCanvas = memo(function MapCanvas({
             coordinateSystem: coordSystem,
             getPosition: (d) => d.position,
             getText: () =>
-              `Not connected to a source · ${count} ${count === 1 ? "node" : "nodes"}`,
+              `Separate subnetwork · ${count} ${count === 1 ? "node" : "nodes"}`,
             getSize: 11,
             getColor: [212, 160, 23, 220] as unknown as RGBA,
             getTextAnchor: "start",
@@ -1254,6 +1808,8 @@ export const MapCanvas = memo(function MapCanvas({
         qualityMin,
         qualityMax,
         pr,
+        genLink?.values,
+        genLink?.variable,
       ];
       // Link hover/click is only meaningful in select/edit; skipping the
       // pick pass for other tools halves per-mousemove GPU picking cost.
@@ -1470,6 +2026,8 @@ export const MapCanvas = memo(function MapCanvas({
               colorMode,
               pressureThresholds,
               pr,
+              genNode?.values,
+              genNode?.variable,
             ],
             getRadius: [isSchematic],
           },
@@ -1641,10 +2199,24 @@ export const MapCanvas = memo(function MapCanvas({
     anyLinkVertices,
     periodResult,
     // `nodes`/`links` are no longer read here — the length guard they served
-    // moved into `hasPeriodResults`, and `nodeData`/`linkData` below already
-    // change whenever the network does.
+    // moved into `hasPeriodResults` (and the `gen*` channels), and
+    // `nodeData`/`linkData` below already change whenever the network does.
     hasPeriodResults,
+    generic,
+    genNode,
+    genLink,
+    genRegion,
     viewMode,
+    topological,
+    kindRoles,
+    regions,
+    couplings,
+    hoveredRegionId,
+    setHoveredRegionId,
+    setHoveredNodeId,
+    setHoveredLinkId,
+    selectedRegionId,
+    onSelectRegion,
     nodeVar,
     linkVar,
     animateLinks,
@@ -1667,6 +2239,9 @@ export const MapCanvas = memo(function MapCanvas({
     pressureThresholds,
     velocityThresholds,
     flowThresholds,
+    pressureMin,
+    pressureMax,
+    velocityMax,
     measurePoints,
     schematicLayout,
   ]);
@@ -1700,40 +2275,69 @@ export const MapCanvas = memo(function MapCanvas({
     draggingNodePosRef.current = null;
   }, [geoCoords]);
 
-  const ensureDeck = useCallback(() => {
-    if (deckRef.current || !deckHostRef.current) return deckRef.current;
-    const initialViewState = orthoCenterFromMap(schematicCoordsRef.current);
-    viewStateRef.current = initialViewState;
-    const deck = new Deck({
-      parent: deckHostRef.current,
-      style: { position: "absolute", inset: "0", zIndex: "1" },
-      views: orthoViewRef.current,
-      viewState: initialViewState,
-      controller: true,
-      pickingRadius: 6,
-      onViewStateChange: ({
-        viewState,
-      }: ViewStateChangeParameters<OrthographicViewState>) => {
-        const nextViewState: SchematicViewState = {
-          target: viewState.target as [number, number, number],
-          zoom: Number(viewState.zoom ?? 0),
-        };
-        viewStateRef.current = nextViewState;
-        deckRef.current?.setProps({ viewState: nextViewState });
-        // Labels are viewport-culled; refresh them as the view moves.
-        if (labelsOnRef.current) scheduleLabelRefresh("schematic");
-      },
-      layers: [],
-    });
-    deckRef.current = deck;
-    deckCanvasRef.current = deck.getCanvas();
-    if (deckCanvasRef.current) {
-      deckCanvasRef.current.style.background = "transparent";
-      deckCanvasRef.current.style.display =
-        viewMode === "schematic" ? "" : "none";
-    }
-    return deck;
-  }, [viewMode, scheduleLabelRefresh]);
+  /**
+   * The orthographic deck, created once.
+   *
+   * `initial` is the camera to be born with. The caller that creates the
+   * deck has already worked out where to frame it, and deriving a second
+   * answer here from a ref was how the deck came into existence pointing
+   * somewhere else — painting one frame of the network at that camera
+   * before the right one arrived. Only the first switch into the schematic
+   * ever ran this, which is exactly when the flash appeared.
+   */
+  const ensureDeck = useCallback(
+    (initial?: SchematicViewState) => {
+      if (deckRef.current || !deckCanvasRef.current) return deckRef.current;
+      const initialViewState =
+        initial ?? orthoCenterFromMap(renderCoordsRef.current);
+      viewStateRef.current = initialViewState;
+      const deck = new Deck({
+        // Our own canvas, not one deck makes for us. `deck.getCanvas()`
+        // returns null immediately after construction — the device is set
+        // up asynchronously — so every style this component applied to that
+        // canvas was being skipped: the transparent background, the hide
+        // before framing, the reveal after it, and the hide on returning to
+        // the map. Supplying the element means it exists, is sized by CSS
+        // and is styled by us before deck ever draws into it.
+        canvas: deckCanvasRef.current,
+        views: orthoViewRef.current,
+        viewState: initialViewState,
+        controller: true,
+        pickingRadius: 6,
+        onViewStateChange: ({
+          viewState,
+          interactionState,
+        }: ViewStateChangeParameters<OrthographicViewState>) => {
+          // Only a gesture counts. deck moves the camera itself when the
+          // layout is framed, and that must not read as the user choosing
+          // a view.
+          if (
+            interactionState?.isDragging ||
+            interactionState?.isPanning ||
+            interactionState?.isZooming ||
+            interactionState?.isRotating
+          ) {
+            userMovedRef.current?.();
+          }
+          const nextViewState: SchematicViewState = {
+            target: viewState.target as [number, number, number],
+            zoom: Number(viewState.zoom ?? 0),
+          };
+          viewStateRef.current = nextViewState;
+          deckRef.current?.setProps({ viewState: nextViewState });
+          // Labels are viewport-culled; refresh them as the view moves.
+          if (labelsOnRef.current) scheduleLabelRefresh("schematic");
+          // Same report the map makes on "move": a plan view has a viewport
+          // like any other, so the network list's dimming tracks it too.
+          reportViewportMovedRef.current();
+        },
+        layers: [],
+      });
+      deckRef.current = deck;
+      return deck;
+    },
+    [scheduleLabelRefresh],
+  );
 
   useEffect(() => {
     if (!mapElRef.current) return;
@@ -1752,12 +2356,42 @@ export const MapCanvas = memo(function MapCanvas({
       attributionControl: false,
     });
     mapRef.current = map;
+
+    // Correct the seed before anything paints.
+    //
+    // `initialVs` is a heuristic: it knows the network's extent but not the
+    // container it has to fit inside, nor the rail, inspector, toolbar and
+    // controls covering part of it. `cameraForBounds` knows all of that, and
+    // works before the style loads because it is transform arithmetic. The
+    // fit that used to happen on style.load therefore ran a frame or two
+    // after the first paint, and you watched the map zoom out to it.
+    if (nodesRef.current.length > 0) {
+      fitMapExtents(nodesRef.current, map, {
+        padding: visibleMapPadding(map),
+      });
+    }
+
     // Basemap dimming survives map re-creation: apply the current value to
     // the fresh canvas (see the basemapOpacity effect below for why the
     // canvas element and not the container).
     map.getCanvas().style.opacity = String(basemapOpacityRef.current);
 
+    // Viewport reports for the network list's dimming. Throttled to ~10 Hz
+    // during a drag: nothing reorders, so rows fading as you pan is the
+    // point — but a report per frame would re-render the list at 60 Hz.
+    map.on("move", () => reportViewportMovedRef.current());
+
+    // `originalEvent` is present only when input drove the move; fitBounds
+    // and easeTo arrive without one. That is the cleanest signal maplibre
+    // offers for "the user did this".
+    map.on("movestart", (e) => {
+      if ((e as { originalEvent?: unknown }).originalEvent != null) {
+        userMovedRef.current?.();
+      }
+    });
+
     map.on("moveend", () => {
+      flushViewportMovedRef.current();
       if (labelsOnRef.current && viewModeRef.current === "map") {
         scheduleLabelRefresh("map");
       }
@@ -1789,7 +2423,9 @@ export const MapCanvas = memo(function MapCanvas({
           overlayRef.current?.setProps({ layers: buildLayersRef.current() });
           markFirstFrame("map");
         }
-        fitMapExtents(nodesRef.current, map);
+        fitMapExtents(nodesRef.current, map, {
+          padding: visibleMapPadding(map),
+        });
         return;
       }
 
@@ -1974,26 +2610,66 @@ export const MapCanvas = memo(function MapCanvas({
   // holding the camera was the only way to see it, and reframing collapsed the
   // two tracks onto one degree of freedom.)
   const framedForRef = useRef<{ nodes: Node[]; links: Link[] } | null>(null);
-  const inSchematicRef = useRef(false);
+  // One deck serves both orthographic views, but a plan and a schematic are
+  // different coordinate spaces — the model's own units against the layout's
+  // grid — so a camera carried from one to the other lands nowhere. Each
+  // space keeps its own, restored on return and framed afresh the first time.
+  const orthoSpaceRef = useRef<"plan" | "topological" | null>(null);
+  const savedOrthoViewRef = useRef<
+    Record<"plan" | "topological", SchematicViewState | null>
+  >({ plan: null, topological: null });
+  // The geographic camera gets the same treatment, so a trip to the
+  // schematic and back does not cost you the place you were working.
+  const savedMapViewRef = useRef<{
+    center: [number, number];
+    zoom: number;
+    bearing: number;
+    pitch: number;
+  } | null>(null);
   useEffect(() => {
-    // Reset before the `isActive` guard, so returning to schematic re-frames.
+    // Leaving the orthographic renderer: keep the camera for the space it
+    // belonged to, so coming back returns you to it rather than framing the
+    // whole network again.
     if (viewMode !== "schematic") {
-      inSchematicRef.current = false;
+      const leaving = orthoSpaceRef.current;
+      if (leaving) {
+        savedOrthoViewRef.current[leaving] =
+          viewStateRef.current as SchematicViewState;
+      }
       return;
     }
     if (!isActive) return;
-    const deck = ensureDeck();
-    if (!deck) return;
+    // Nothing to frame yet: framing an empty layout would mark it framed and
+    // the real one would never get its turn.
+    if (topological && !couplingsResolved) return;
+    const space = topological ? "topological" : "plan";
+    const prevSpace = orthoSpaceRef.current;
+    if (prevSpace && prevSpace !== space) {
+      savedOrthoViewRef.current[prevSpace] =
+        viewStateRef.current as SchematicViewState;
+    }
+    orthoSpaceRef.current = space;
+
     const framed = framedForRef.current;
-    const reframe =
-      !inSchematicRef.current ||
-      framed?.nodes !== nodes ||
-      framed?.links !== links;
-    inSchematicRef.current = true;
+    const networkChanged = framed?.nodes !== nodes || framed?.links !== links;
+    // A camera saved against a different network frames the wrong thing.
+    if (networkChanged) {
+      savedOrthoViewRef.current = { plan: null, topological: null };
+      savedMapViewRef.current = null;
+    }
     framedForRef.current = { nodes, links };
-    const vs = reframe
-      ? orthoCenterFromMap(schematicCoords)
-      : (viewStateRef.current as SchematicViewState);
+
+    // Frame only when there is nothing to return to. A saved camera is the
+    // record of having been here before, so it answers both "have I framed
+    // this yet" and "where was I" — and fitting the network on every arrival
+    // is what made switching views feel like it kept pressing Fit network.
+    const saved = savedOrthoViewRef.current[space];
+    const vs = saved ?? orthoCenterFromMap(renderCoords);
+
+    // Framed before the deck exists, so the deck can be born looking at the
+    // right place rather than corrected a frame later.
+    const deck = ensureDeck(vs);
+    if (!deck) return;
     viewStateRef.current = vs;
     deck.setProps({
       views: orthoViewRef.current,
@@ -2001,14 +2677,19 @@ export const MapCanvas = memo(function MapCanvas({
       layers: buildLayersRef.current(),
     });
     markFirstFrame("schematic");
-    if (deckCanvasRef.current) deckCanvasRef.current.style.display = "";
+    if (deckCanvasRef.current) {
+      deckCanvasRef.current.style.display = "";
+      deckCanvasRef.current.style.visibility = "visible";
+    }
   }, [
     ensureDeck,
     isActive,
     links,
     markFirstFrame,
     nodes,
-    schematicCoords,
+    renderCoords,
+    topological,
+    couplingsResolved,
     viewMode,
   ]);
 
@@ -2097,17 +2778,39 @@ export const MapCanvas = memo(function MapCanvas({
   }, [basemapOpacity]);
 
   // View mode switch.
+  //
+  // The map keeps its camera across a trip to the schematic, the way each
+  // orthographic space keeps its own: someone who zoomed to a junction,
+  // glanced at the topology and came back was looking at the whole network
+  // again, having lost the place they were working. It is only framed on the
+  // first arrival, or after a network change makes a saved camera frame the
+  // wrong thing.
   useEffect(() => {
     if (!isActive) return;
     const enteringMapMode =
       viewMode === "map" && prevViewModeRef.current !== "map";
+    const leavingMapMode =
+      viewMode !== "map" && prevViewModeRef.current === "map";
     prevViewModeRef.current = viewMode;
 
     if (viewMode === "schematic") {
+      if (leavingMapMode) {
+        const map = mapRef.current;
+        if (map) {
+          const c = map.getCenter();
+          savedMapViewRef.current = {
+            center: [c.lng, c.lat],
+            zoom: map.getZoom(),
+            bearing: map.getBearing(),
+            pitch: map.getPitch(),
+          };
+        }
+      }
       // Clear overlay when entering schematic so no map-mode layer lingers.
       overlayRef.current?.setProps({ layers: [] });
       if (mapElRef.current) mapElRef.current.style.display = "none";
-      if (deckCanvasRef.current) deckCanvasRef.current.style.display = "";
+      // Revealing the deck is the framing effect's job, not this one's:
+      // it may still be waiting for the couplings that decide the layout.
       if (deckHostRef.current) deckHostRef.current.style.pointerEvents = "";
       return;
     }
@@ -2119,7 +2822,24 @@ export const MapCanvas = memo(function MapCanvas({
     if (mapElRef.current) mapElRef.current.style.display = "";
     if (enteringMapMode) {
       const map = mapRef.current;
-      if (map) fitMapExtents(nodesRef.current, map);
+      if (map) {
+        // Measure before framing. A project opened straight into the
+        // schematic builds its map inside a `display: none` container, so
+        // MapLibre's transform is sized to nothing — and it only watches the
+        // *window* for resizes, never its own container. Every camera
+        // computed against that transform came out at the wrong zoom, which
+        // is why the first arrival in map view looked far out and every
+        // arrival after it was right.
+        map.resize();
+        const saved = savedMapViewRef.current;
+        if (saved) {
+          map.jumpTo(saved);
+        } else {
+          fitMapExtents(nodesRef.current, map, {
+            padding: visibleMapPadding(map),
+          });
+        }
+      }
     }
   }, [isActive, viewMode]);
 
@@ -2138,11 +2858,14 @@ export const MapCanvas = memo(function MapCanvas({
 
     if (!hasNodes) return;
     if (!nodesJustArrived && !fitKeyChanged) return;
+    // Same wait as the framing effect: there is no layout to fit to until
+    // the couplings say which parts of the network are actually connected.
+    if (topological && !couplingsResolved) return;
 
     if (viewMode === "schematic") {
       const deck = ensureDeck();
       if (!deck) return;
-      const { target, zoom } = orthoCenterFromMap(schematicCoords);
+      const { target, zoom } = orthoCenterFromMap(renderCoords);
       const vs = { target, zoom };
       viewStateRef.current = vs;
       deck.setProps({
@@ -2155,18 +2878,20 @@ export const MapCanvas = memo(function MapCanvas({
       if (!map) return;
       const bounds = geoBounds(nodes);
       if (bounds) {
-        fitMapExtents(nodes, map);
+        fitMapExtents(nodes, map, { padding: visibleMapPadding(map) });
       } else {
         map.jumpTo({ center: [0, 20], zoom: 1 });
       }
     }
   }, [
     buildLayers,
+    couplingsResolved,
     ensureDeck,
     fitKey,
     isActive,
     nodes,
-    schematicCoords,
+    renderCoords,
+    topological,
     viewMode,
   ]);
 
@@ -2229,6 +2954,12 @@ export const MapCanvas = memo(function MapCanvas({
       style={{
         position: "absolute",
         inset: 0,
+        // An explicit level rather than `auto`. The overlays above this are
+        // composited layers — the inspector animates its opacity behind a
+        // backdrop-filter — and a WebGL canvas whose stacking context is
+        // only implied can be re-sorted above them while such a layer is
+        // being rebuilt. Naming the level removes the ambiguity.
+        zIndex: 0,
         cursor:
           hoveredNodeId != null || hoveredLinkId != null
             ? "pointer"
@@ -2236,17 +2967,34 @@ export const MapCanvas = memo(function MapCanvas({
       }}
       onPointerLeave={() => {
         hoveredNodeIdRef.current = null;
-        setHoveredNodeId(null);
         hoveredLinkIdRef.current = null;
-        setHoveredLinkId(null);
+        clearHover();
         setHoverTip(null);
       }}
     >
       <div ref={mapElRef} style={{ position: "absolute", inset: 0 }} />
-      <div ref={deckHostRef} style={{ position: "absolute", inset: 0 }} />
+      <div ref={deckHostRef} style={{ position: "absolute", inset: 0 }}>
+        {/* Hidden with `visibility`, never `display`: a canvas that is not
+            laid out measures zero, and deck would size its viewport from
+            nothing. The framing effect makes it visible once it has a
+            camera to show. */}
+        <canvas
+          ref={deckCanvasRef}
+          style={{
+            position: "absolute",
+            inset: 0,
+            width: "100%",
+            height: "100%",
+            zIndex: 1,
+            background: "transparent",
+            visibility: "hidden",
+          }}
+        />
+      </div>
       <HoverChip
         tip={hoverTip}
         periodResult={periodResult}
+        generic={generic}
         nodeVar={nodeVar}
         linkVar={linkVar}
         sys={sys}

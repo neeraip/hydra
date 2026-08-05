@@ -6,20 +6,32 @@ import {
   clampBasemapOpacity,
   isValidBasemapId,
 } from "../../canvas/Basemap";
-import { haversineMeters, wgs84ToSourceCrs } from "../../canvas/coords";
-import { Legend, type LegendThresholds } from "../../canvas/Legend";
+import {
+  haversineMeters,
+  LOCAL_CRS,
+  wgs84ToSourceCrs,
+} from "../../canvas/coords";
+import {
+  type GenericClassKey,
+  GenericLegend,
+  type GenericSelection,
+} from "../../canvas/GenericLegend";
+import type { ScaleMode } from "../../canvas/legend-primitives";
 import { MapCanvas } from "../../canvas/MapCanvas";
+import { wdsBandColors } from "../../canvas/MapCanvas/colorUtils";
 import type { MeasurePoint } from "../../canvas/measureSnap";
-import { CurrentPeriodProvider } from "../../canvas/period-context";
+import { usePublishCurrentPeriod } from "../../canvas/period-context";
 import {
   ASPECT_SLIDER_DEFAULT,
   aspectScales,
   clampSliderValue,
 } from "../../canvas/schematicAspect";
+import type { InspectorView } from "../../canvas/selection-context";
 import { useCanvasSelection } from "../../canvas/selection-context";
 import { Timeline } from "../../canvas/Timeline";
 import type {
   CanvasTool,
+  GenericCanvasResults,
   LinkVariable,
   NodeVariable,
   ViewMode,
@@ -33,18 +45,28 @@ import { DeleteConfirmModal } from "../../components/modals/DeleteConfirmModal";
 import {
   LinkInspector,
   NodeInspector,
+  RegionInspector,
 } from "../../components/panels/ElementInspector";
+import { engineComponents } from "../../engine/registry";
 import {
   createLink,
   createNode,
   deleteElement,
+  type GenericPeriodValues,
+  type GenericQuantity,
+  type GenericVariable,
+  getGenericPeriodValues,
   getPeriodResults,
   type PeriodResults,
   patchNodePosition,
+  resultsPath,
   saveProjectOnDisk,
+  useElementKinds,
+  useInletCouplings,
   useLinks,
   useNodes,
   useProjectCriteria,
+  useRegions,
   useSimParams,
 } from "../../hooks";
 import { useNetworkVersion } from "../../hooks/NetworkVersionContext";
@@ -55,6 +77,8 @@ import {
 } from "../../hooks/undoStack";
 import { useElementRename } from "../../hooks/useElementRename";
 import { useReducedMotion } from "../../hooks/useReducedMotion";
+import type { Link, Node, Region } from "../../types/network";
+import { type Quantity, toDisplay, useUnitSystem } from "../../units";
 import { CanvasErrorBoundary } from "./CanvasView/CanvasErrorBoundary";
 import { CanvasToolbar } from "./CanvasView/CanvasToolbar";
 import { InvalidCrsOverlay } from "./CanvasView/InvalidCrsOverlay";
@@ -83,10 +107,36 @@ interface CanvasPrefs {
   basemapOpacity: number;
   nodeVar: NodeVariable;
   linkVar: LinkVariable;
-  colorMode: "relative" | "threshold";
   /** Schematic layout aspect slider position. Missing in older prefs →
    * defaults to the midpoint, i.e. the layout's native 120:80 spacing. */
   schematicAspect: number;
+  /**
+   * What the colour ramps are scaled against: the whole run, the current
+   * step, or the project's criteria bands.
+   *
+   * Supersedes the old `colorMode`, whose "relative"/"threshold" pair asked
+   * the same question with two of the three answers. Prefs written before
+   * the merge are migrated on read.
+   */
+  scaleMode: ScaleMode;
+  /** Whether the legend's ramp popover is showing. Persisted because it is
+   * a working mode — "keep the full legend up while I read the map" —
+   * rather than a menu the user reopens each time. */
+  legendOpen: boolean;
+  /**
+   * Selected catalog variable per element class.
+   *
+   * The variables a reader chose are what the map *means* to them, so they
+   * survive reopening the project like every other canvas choice. Only the
+   * wds pair was persisted before (as `nodeVar`/`linkVar`, which its canvas
+   * colours from); drainage lost its selection on every remount, and no
+   * engine remembered its areal variable at all.
+   *
+   * Ids are stored raw and validated on use rather than on read: the
+   * catalog they belong to depends on the run, and the legend already
+   * falls back to the first variable when an id is not in it.
+   */
+  genericSelection: GenericSelection;
 }
 
 /**
@@ -102,14 +152,232 @@ const CANVAS_PREF_DEFAULTS: CanvasPrefs = {
   basemapOpacity: 1,
   nodeVar: "pressure",
   linkVar: "velocity",
-  colorMode: "relative",
   schematicAspect: ASPECT_SLIDER_DEFAULT,
+  scaleMode: "run",
+  legendOpen: false,
+  genericSelection: { point: "", polyline: "", region: "" },
 };
 
 // Allowlists so corrupt/stale localStorage can never inject invalid state.
 // (Basemap ids are validated structurally via isValidBasemapId instead — the
 // provider catalog is open-ended.)
 const PREF_VIEW_MODES: readonly ViewMode[] = ["map", "schematic"];
+
+/**
+ * What a colour ramp is scaled against.
+ *
+ * `run` — the whole simulation's range. Colours mean the same thing at
+ * every step, so scrubbing shows a quantity rising and falling. The cost is
+ * that a step whose values occupy a sliver of the run's range is painted in
+ * a sliver of the ramp, and its spatial pattern is invisible.
+ *
+ * `step` — the current period's own range. Every frame uses the full ramp,
+ * so the pattern *within* a moment is as legible as it can be. The cost is
+ * that colours no longer compare between steps: a bright node now and a
+ * bright node later are each the highest of their own moment, not equal.
+ *
+ * `criteria` — the project's threshold bands, ignoring the data range
+ * entirely. Colours then answer "is this acceptable?" rather than "how
+ * much?", and stay fixed while the model changes around them.
+ */
+const PREF_SCALE_MODES: readonly ScaleMode[] = ["run", "step", "criteria"];
+
+/**
+ * Read a persisted scale mode, migrating prefs written before the merge.
+ *
+ * `colorMode` asked "relative or threshold?" and `rangeMode` asked "whole
+ * run or this step?" — the same question with two of the three answers, so
+ * a saved "threshold" becomes `criteria` and a saved "relative" defers to
+ * whatever range mode was stored alongside it.
+ */
+/**
+ * Read a persisted per-class variable selection, tolerating anything.
+ *
+ * Every field is optional and unvalidated against a catalog on purpose:
+ * which variables exist depends on the run that produced the results, and
+ * an id that is not in the current catalog is not corrupt — it is a
+ * selection made against a different one. The legend falls back to the
+ * catalog's first variable for those, which is the same thing it does for
+ * a project that has never chosen.
+ */
+/**
+ * What "Clear view" would currently dismiss.
+ *
+ * Split out so the button can be disabled when it would do nothing, and so
+ * the two — what it clears, and whether it is offered — are derived from
+ * one description instead of two lists that can disagree.
+ */
+export interface ClearableView {
+  rail: boolean;
+  selection: boolean;
+  legend: boolean;
+  basemapMenu: boolean;
+  tool: boolean;
+  measurements: boolean;
+}
+
+export function clearableCountOf(c: ClearableView): number {
+  return Object.values(c).filter(Boolean).length;
+}
+
+/**
+ * Whether clearing the view should also re-fit the network.
+ *
+ * "Fitted" is a state, not a past action. Fit frames the network against
+ * the *visible* map, so the moment a panel closes the viewport grows and
+ * the framing Fit produced is no longer a fit — same camera, more room,
+ * network small and off-centre. Re-fitting restores the invariant rather
+ * than inventing a move.
+ *
+ * It is conditional because the two failure directions are not
+ * symmetrical. Failing to re-fit costs a small convenience. Re-fitting a
+ * camera the user positioned themselves discards deliberate work and
+ * cannot be undone. So this answers yes only when the app owns the current
+ * framing, and anything ambiguous must mark the viewport as the user's.
+ *
+ * `occlusionChanged` gates out the no-op case: closing something that
+ * never covered the map (a dropdown, the ramp popover) leaves the fit
+ * exactly as it was, and a camera animation with no visible cause reads
+ * as a glitch.
+ */
+export function shouldRefitOnClear(
+  viewportIsAppOwned: boolean,
+  occlusionChanged: boolean,
+): boolean {
+  return viewportIsAppOwned && occlusionChanged;
+}
+
+export function readGenericSelection(raw: unknown): GenericSelection {
+  const empty = { point: "", polyline: "", region: "" };
+  if (typeof raw !== "object" || raw === null) return empty;
+  const sel = (raw as { genericSelection?: unknown }).genericSelection;
+  if (typeof sel !== "object" || sel === null) return empty;
+  const s = sel as Record<string, unknown>;
+  const str = (v: unknown) => (typeof v === "string" ? v : "");
+  return {
+    point: str(s.point),
+    polyline: str(s.polyline),
+    region: str(s.region),
+  };
+}
+
+export function readScaleMode(raw: unknown): ScaleMode {
+  if (typeof raw !== "object" || raw === null) return "run";
+  const p = raw as Record<string, unknown>;
+  if (typeof p.scaleMode === "string") {
+    const v = p.scaleMode as ScaleMode;
+    if (PREF_SCALE_MODES.includes(v)) return v;
+  }
+  if (p.colorMode === "threshold") return "criteria";
+  if (p.rangeMode === "step") return "step";
+  return "run";
+}
+
+/**
+ * The range a ramp should use for one period's values.
+ *
+ * Falls back to the run range when the period's own span is a sliver of it.
+ * A field that is essentially uniform — everything dry before the storm
+ * arrives — has a span made of floating-point dust, and autoscaling to it
+ * paints that dust across the whole ramp. Noise then looks exactly like
+ * signal, which is worse than a flat frame.
+ */
+export function periodRange(
+  values: Float32Array | null,
+  runMin: number,
+  runMax: number,
+): { min: number; max: number } {
+  if (!values || values.length === 0) return { min: runMin, max: runMax };
+  let min = Number.POSITIVE_INFINITY;
+  let max = Number.NEGATIVE_INFINITY;
+  for (const v of values) {
+    if (!Number.isFinite(v)) continue;
+    if (v < min) min = v;
+    if (v > max) max = v;
+  }
+  if (!Number.isFinite(min) || !Number.isFinite(max)) {
+    return { min: runMin, max: runMax };
+  }
+  const runSpan = Math.abs(runMax - runMin);
+  if (runSpan > 0 && Math.abs(max - min) < runSpan * 0.01) {
+    return { min: runMin, max: runMax };
+  }
+  return { min, max };
+}
+
+/** Stable empties, so suppressing unplaceable geometry does not hand the
+ * canvas a fresh array identity on every render. */
+const EMPTY_NODES: Node[] = [];
+const EMPTY_LINKS: Link[] = [];
+const EMPTY_REGIONS: Region[] = [];
+
+/** Label, engineering symbol and quantity for each fixed wds variable —
+ * the frontend's own table, because these are not engine-catalog variables
+ * and nothing serves descriptors for them. Symbols follow the same notation
+ * the catalog engines use: p pressure, H head, q demand, Q flow, v velocity,
+ * hL headloss, C concentration. */
+/** How many result variables ride along on each rail element. The rail
+ * shows one; the rest are there for the GeoJSON export. */
+const RAIL_RESULT_COLUMNS = 3;
+
+/** Catalog variables for one class, the legend's choice first.
+ *
+ * The rail shows the first column, so leading with the selected variable
+ * is what makes the list follow the map. The rest ride along for the
+ * GeoJSON export, which takes whatever is merged. Each column keeps the
+ * index of its own values array, because reordering the columns must not
+ * reorder what they read. */
+export const railColumns = (
+  vars: GenericVariable[],
+  selected: string,
+): Array<{
+  key: string;
+  label: string;
+  symbol?: string;
+  quantity?: GenericQuantity;
+  at: number;
+}> => {
+  // No catalog, no columns. `Math.max(0, -1)` below would otherwise turn
+  // "not found" into index 0 and read it out of an empty array.
+  if (vars.length === 0) return [];
+  const chosen = Math.max(
+    0,
+    vars.findIndex((v) => v.id === selected),
+  );
+  const order = [
+    chosen,
+    ...vars.map((_, i) => i).filter((i) => i !== chosen),
+  ].slice(0, RAIL_RESULT_COLUMNS);
+  return order.map((i) => ({
+    key: vars[i].id,
+    label: vars[i].label,
+    symbol: vars[i].symbol,
+    quantity: vars[i].quantity,
+    at: i,
+  }));
+};
+
+const WDS_NODE_VARS: Record<
+  NodeVariable,
+  { label: string; symbol: string; unit?: Quantity }
+> = {
+  pressure: { label: "Pressure", symbol: "p", unit: "pressure" },
+  head: { label: "Head", symbol: "H", unit: "elevation" },
+  demand: { label: "Demand", symbol: "q", unit: "demand" },
+  quality: { label: "Quality", symbol: "C" },
+};
+
+const WDS_LINK_VARS: Record<
+  LinkVariable,
+  { label: string; symbol: string; unit?: Quantity }
+> = {
+  flow: { label: "Flow", symbol: "Q", unit: "flow" },
+  velocity: { label: "Velocity", symbol: "v", unit: "velocity" },
+  headloss: { label: "Headloss", symbol: "hL", unit: "elevation" },
+  status: { label: "Status", symbol: "St" },
+  quality: { label: "Quality", symbol: "C" },
+};
+
 const PREF_NODE_VARS: readonly NodeVariable[] = [
   "pressure",
   "head",
@@ -123,10 +391,9 @@ const PREF_LINK_VARS: readonly LinkVariable[] = [
   "headloss",
   "quality",
 ];
-const PREF_COLOR_MODES: readonly CanvasPrefs["colorMode"][] = [
-  "relative",
-  "threshold",
-];
+
+/** Variables whose links animate in flow direction. */
+const ANIMATED_VARIABLES: readonly string[] = ["flow", "velocity"];
 
 function readCanvasPrefs(projectId: string): Partial<CanvasPrefs> | null {
   try {
@@ -148,10 +415,14 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
     focusInEditor,
     projectView,
     railOpen,
+    toggleRail,
     commandPaletteOpen,
     showToast,
   } = useAppState();
-  const { project } = useActiveProject();
+  const { project, engine } = useActiveProject();
+  // Editing affordances exist only for engines whose model this GUI edits;
+  // for read-only engines the tools hide rather than refuse per gesture.
+  const { modelEditable, criteriaVariables } = engineComponents(engine?.key);
   const { markEdited } = useNetworkVersion();
   const renameElementFlow = useElementRename();
   const simParams = useSimParams(project?.id);
@@ -161,6 +432,8 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
     inspectorView,
     selectNode,
     selectLink,
+    selectedRegionId,
+    selectRegion,
     setInspectorView,
     setSelectedNodeId,
     setSelectedLinkId,
@@ -169,7 +442,24 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
     setZoomCallbacks,
   } = useCanvasSelection();
   const [activeTool, setActiveTool] = useState<CanvasTool>("select");
+  useEffect(() => {
+    if (
+      !modelEditable &&
+      (activeTool === "edit" ||
+        activeTool === "add-node" ||
+        activeTool === "add-link")
+    ) {
+      setActiveTool("select");
+    }
+  }, [modelEditable, activeTool]);
   const [currentHour, setCurrentHour] = useState(0);
+  // A scrub position belongs to the run it was scrubbed in. Carrying it to
+  // another project pointed at a period that project may not even have, and
+  // silently answered "what is happening now" with someone else's clock.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the project id is the reset trigger.
+  useEffect(() => {
+    setCurrentHour(0);
+  }, [project?.id]);
   const [nodeVar, setNodeVar] = useState<NodeVariable>(
     CANVAS_PREF_DEFAULTS.nodeVar,
   );
@@ -206,24 +496,56 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
   const [flyToState, setFlyToState] = useState<{
     nodeId: string | null;
     linkId: string | null;
+    regionId: string | null;
     key: number;
-  }>({ nodeId: null, linkId: null, key: 0 });
+  }>({ nodeId: null, linkId: null, regionId: null, key: 0 });
+
+  // Flying to an element frames the map as deliberately as dragging it, and
+  // it is triggered from five places. Marking ownership here — where every
+  // one of them converges on the key bump — beats a fifth call site to
+  // remember, which is exactly how such a rule comes to be applied in four
+  // places out of five.
+  useEffect(() => {
+    if (flyToState.key === 0) return;
+    viewportUserOwnedRef.current = true;
+  }, [flyToState.key]);
 
   // Register zoom callbacks into the selection context so siblings (e.g. the
   // rail's network list) can trigger canvas fly-to without prop drilling.
   useEffect(() => {
     setZoomCallbacks(
       (id) =>
-        setFlyToState((s) => ({ nodeId: id, linkId: null, key: s.key + 1 })),
+        setFlyToState((s) => ({
+          nodeId: id,
+          linkId: null,
+          regionId: null,
+          key: s.key + 1,
+        })),
       (id) =>
-        setFlyToState((s) => ({ nodeId: null, linkId: id, key: s.key + 1 })),
+        setFlyToState((s) => ({
+          nodeId: null,
+          linkId: id,
+          regionId: null,
+          key: s.key + 1,
+        })),
+      (id) =>
+        setFlyToState((s) => ({
+          nodeId: null,
+          linkId: null,
+          regionId: id,
+          key: s.key + 1,
+        })),
     );
   }, [setZoomCallbacks]);
   // ── Colour scale mode and per-variable thresholds ─────────────────────────
-  const [colorMode, setColorMode] = useState<"relative" | "threshold">(
-    CANVAS_PREF_DEFAULTS.colorMode,
+  const [scaleMode, setScaleMode] = useState<ScaleMode>(
+    CANVAS_PREF_DEFAULTS.scaleMode,
   );
-  // Threshold defaults — seeded from SimulationOptions when loaded; user can still adjust.
+  const [legendOpen, setLegendOpen] = useState(CANVAS_PREF_DEFAULTS.legendOpen);
+  const [genericSelection, setGenericSelection] = useState<GenericSelection>(
+    CANVAS_PREF_DEFAULTS.genericSelection,
+  );
+  const unitSystem = useUnitSystem();
   // Threshold bands come from the project's criteria file. Previously they
   // were component state, so velocity and flow carried across project
   // switches — the canvas coloured one network against another's bands.
@@ -232,19 +554,13 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
     setCriteria,
     saved: criteriaSaved,
   } = useProjectCriteria(project?.id ?? null);
-  const thresholds: LegendThresholds = useMemo(
+  const thresholds = useMemo(
     () => ({
       pressure: criteria.pressure,
       velocity: criteria.velocity,
       flow: criteria.flow,
     }),
     [criteria],
-  );
-  const setThresholds = useCallback(
-    (next: LegendThresholds) => {
-      setCriteria({ ...criteria, ...next });
-    },
-    [criteria, setCriteria],
   );
   // Seed pressure thresholds from SimulationOptions, but only for a project
   // that has never had criteria saved. Seeding unconditionally would discard
@@ -273,6 +589,26 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
   const [viewMode, setViewMode] = useState<ViewMode>(
     CANVAS_PREF_DEFAULTS.viewMode,
   );
+  // A model on a local drawing grid is not georeferenced, so there is no
+  // basemap to put it on. It still has real geometry, so the canvas renders
+  // it orthographically at its true coordinates rather than pretending the
+  // numbers are longitude and latitude — which crashed MapLibre outright
+  // ("Invalid LngLat latitude value") the moment anything flew to a feature.
+  const localGrid = project?.sourceCrs === LOCAL_CRS;
+  // What each kind does in the network, for the canvas's at-rest palette.
+  // The engine declares it (spec §4.3); the canvas never names a kind.
+  const elementKinds = useElementKinds(project?.engine);
+  const kindRoles = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const k of elementKinds) if (k.role) m.set(k.id, k.role);
+    return m;
+  }, [elementKinds]);
+
+  // Tools that need the geographic renderer's pointer handling — dragging a
+  // node, placing one, measuring between two points. A plan view has real
+  // coordinates but draws them through the orthographic path, which has no
+  // handlers for any of that.
+  const geographic = viewMode === "map" && !localGrid;
   const [basemap, setBasemap] = useState<BasemapId>(
     CANVAS_PREF_DEFAULTS.basemap,
   );
@@ -319,7 +655,10 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
     setBasemapOpacity(clampBasemapOpacity(prefs?.basemapOpacity));
     setNodeVar(pick("nodeVar", (v) => PREF_NODE_VARS.includes(v)));
     setLinkVar(pick("linkVar", (v) => PREF_LINK_VARS.includes(v)));
-    setColorMode(pick("colorMode", (v) => PREF_COLOR_MODES.includes(v)));
+    // Reads the merged key, falling back to the pre-merge pair.
+    setScaleMode(readScaleMode(prefs));
+    setLegendOpen(pick("legendOpen", (v) => typeof v === "boolean"));
+    setGenericSelection(readGenericSelection(prefs));
     // Clamp already maps missing/corrupt values to the default.
     setSchematicAspect(clampSliderValue(prefs?.schematicAspect ?? Number.NaN));
     setPrefsLoadedFor(id);
@@ -340,8 +679,10 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
       basemapOpacity,
       nodeVar,
       linkVar,
-      colorMode,
       schematicAspect,
+      scaleMode,
+      legendOpen,
+      genericSelection,
     };
     try {
       localStorage.setItem(canvasPrefsKey(id), JSON.stringify(prefs));
@@ -356,8 +697,10 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
     basemapOpacity,
     nodeVar,
     linkVar,
-    colorMode,
     schematicAspect,
+    scaleMode,
+    legendOpen,
+    genericSelection,
   ]);
 
   useEffect(() => {
@@ -380,6 +723,21 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
   // Increments only on project switch so MapCanvas resets its view to fit
   // the new network.  Does NOT increment on scenario switch so the user's
   // chosen pan/zoom position is preserved during scenario comparisons.
+  /**
+   * Whether the current camera is the user's rather than the app's.
+   *
+   * Set by any deliberate framing — a drag or scroll-zoom on the canvas,
+   * the zoom buttons, reset-north, or flying to an element — and cleared
+   * only by a fit, which is the app framing the network itself. Defaults
+   * to false because a freshly loaded project is auto-fitted.
+   *
+   * A ref, not state: nothing renders from it, and making it state would
+   * re-render the whole canvas on every pan frame.
+   */
+  const viewportUserOwnedRef = useRef(false);
+  const markViewportUserOwned = useCallback(() => {
+    viewportUserOwnedRef.current = true;
+  }, []);
   const [mapFitKey, setMapFitKey] = useState(0);
   const [zoomInKey, setZoomInKey] = useState(0);
   const [zoomOutKey, setZoomOutKey] = useState(0);
@@ -417,12 +775,21 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
   useEffect(() => {
     function onToolCommand(e: Event) {
       const tool = (e as CustomEvent<CanvasTool>).detail;
+      // Same gate as the toolbar and keyboard shortcuts: editing tools do
+      // not exist for read-only engines, and the palette dispatches through
+      // this event too.
+      if (
+        !modelEditable &&
+        (tool === "edit" || tool === "add-node" || tool === "add-link")
+      ) {
+        return;
+      }
       if (tool === "measure") clearAnnotations();
       setActiveTool(tool);
     }
     window.addEventListener("hydra:canvas-tool", onToolCommand);
     return () => window.removeEventListener("hydra:canvas-tool", onToolCommand);
-  }, [clearAnnotations]);
+  }, [clearAnnotations, modelEditable]);
 
   useEffect(() => {
     function onViewportCommand(e: Event) {
@@ -488,6 +855,15 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
   // never load all periods at once.
   const [fetchedPeriodResult, setFetchedPeriodResult] =
     useState<PeriodResults | null>(null);
+  // Engine-generic counterpart (catalog-keyed engines): one period of every
+  // catalog variable, decoded from the generic payload. Exactly one of the
+  // two is ever non-null — the meta's `generic` field decides which decoder
+  // the fetch effect uses.
+  const [fetchedGenericValues, setFetchedGenericValues] =
+    useState<GenericPeriodValues | null>(null);
+  /** Which per-period encoding this target serves — the one place that is
+   * decided, so the fetch effect and the canvas can never disagree. */
+  const periodPath = resultsPath(resultMeta);
   // Which target the held arrays were fetched for. Only needed to tell "this
   // scrub failed, keep what's on screen" apart from "this scenario failed to
   // load at all, so stop showing the last one's colours".
@@ -500,6 +876,99 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
   // objects, comparison deltas) reads this gated value. Unknown digests
   // (pre-digest .out files) pass through ungated.
   const currentPeriodResult = resultsTopologyStale ? null : fetchedPeriodResult;
+
+  // ── Engine-generic result channels ─────────────────────────────────
+  // For catalog-keyed engines, the selected variable per element class.
+  // Empty string = "use the catalog's first variable" (the default until
+  // the user picks in the legend).
+  const genericMeta = stableResultMeta?.generic ?? null;
+  // The catalog drives the legend for every engine; only some engines
+  // deliver their period values through it. Everything that reads *values*
+  // gates on this, not on the catalog's presence.
+  const genericPeriods = resultsPath(stableResultMeta) === "generic";
+
+  const handleGenericSelect = useCallback(
+    (cls: GenericClassKey, id: string) => {
+      setGenericSelection((s) => ({ ...s, [cls]: id }));
+      // wds colours its canvas from these typed variable names rather than
+      // from the catalog payload. Its catalog ids are the same strings, so
+      // the legend drives both without either side naming an engine — and
+      // this is what keeps the persisted prefs in step with the picker.
+      if (
+        cls === "point" &&
+        (PREF_NODE_VARS as readonly string[]).includes(id)
+      ) {
+        setNodeVar(id as NodeVariable);
+      }
+      if (
+        cls === "polyline" &&
+        (PREF_LINK_VARS as readonly string[]).includes(id)
+      ) {
+        setLinkVar(id as LinkVariable);
+      }
+    },
+    [],
+  );
+  // The saved wds variables are the starting selection, so a reopened
+  // project shows the legend it was left on.
+  useEffect(() => {
+    if (!prefsReady) return;
+    setGenericSelection((s) => ({
+      ...s,
+      point: s.point || nodeVar,
+      polyline: s.polyline || linkVar,
+    }));
+  }, [prefsReady, nodeVar, linkVar]);
+  const genericCanvas = useMemo<GenericCanvasResults | null>(() => {
+    // Null for engines whose values arrive as fixed arrays, so the canvas
+    // takes its own colouring path rather than a catalog channel that will
+    // never be filled.
+    if (!genericMeta || !genericPeriods) return null;
+    const channel = (
+      vars: GenericVariable[],
+      arrays: Float32Array[] | null,
+      selected: string,
+    ) => {
+      if (vars.length === 0) return null;
+      const i = Math.max(
+        0,
+        vars.findIndex((v) => v.id === selected),
+      );
+      const values = arrays?.[i] ?? null;
+      const v = vars[i];
+      // Rescaling to the period rewrites only the range the ramp spans; the
+      // variable is otherwise itself, so labels, units and ramp shape are
+      // untouched.
+      const variable =
+        scaleMode === "step"
+          ? { ...v, ...periodRange(values, v.min, v.max) }
+          : v;
+      return { variable, values };
+    };
+    return {
+      node: channel(
+        genericMeta.pointVars,
+        fetchedGenericValues?.points ?? null,
+        genericSelection.point,
+      ),
+      link: channel(
+        genericMeta.polylineVars,
+        fetchedGenericValues?.polylines ?? null,
+        genericSelection.polyline,
+      ),
+      region: channel(
+        genericMeta.regionVars,
+        fetchedGenericValues?.regions ?? null,
+        genericSelection.region,
+      ),
+    };
+  }, [
+    genericMeta,
+    genericPeriods,
+    fetchedGenericValues,
+    genericSelection,
+    scaleMode,
+  ]);
 
   // On project change, discard stale period results immediately: a different
   // project is a different network, so the flat arrays cannot be reinterpreted
@@ -516,6 +985,7 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
   // biome-ignore lint/correctness/useExhaustiveDependencies: `project?.id` is the intentional reset trigger.
   useEffect(() => {
     setFetchedPeriodResult(null);
+    setFetchedGenericValues(null);
     loadedTargetRef.current = null;
   }, [project?.id]);
 
@@ -532,6 +1002,7 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
   useEffect(() => {
     if (!project?.id) {
       setFetchedPeriodResult(null);
+      setFetchedGenericValues(null);
       return;
     }
     if (resultMetaKey == null) {
@@ -541,8 +1012,17 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
       // scenario switch. Mirrors the `stableResultMeta` latch above.
       if (!resultMetaLoading) {
         setFetchedPeriodResult(null);
+        setFetchedGenericValues(null);
         loadedTargetRef.current = null;
       }
+      return;
+    }
+    if (periodPath === "none") {
+      // The engine has result metadata (the timeline steps) but no
+      // per-period arrays yet — nothing to fetch, nothing to colour.
+      setFetchedPeriodResult(null);
+      setFetchedGenericValues(null);
+      loadedTargetRef.current = null;
       return;
     }
     const target = `${project.id}:${activeScenarioId ?? "base"}`;
@@ -554,6 +1034,28 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
       0,
       Math.min(currentHour, (resultMeta?.times.length ?? 1) - 1),
     );
+    if (periodPath === "generic") {
+      // Generic-payload engine: same command, generic decoder. The wds
+      // arrays stay null so the canvas renders through the generic
+      // channels only.
+      setFetchedPeriodResult(null);
+      getGenericPeriodValues(project.id, period, activeScenarioId)
+        .then((r) => {
+          if (!cancelled) {
+            setFetchedGenericValues(r);
+            loadedTargetRef.current = target;
+          }
+        })
+        .catch(() => {
+          if (!cancelled && loadedTargetRef.current !== target) {
+            setFetchedGenericValues(null);
+          }
+        });
+      return () => {
+        cancelled = true;
+      };
+    }
+    setFetchedGenericValues(null);
     getPeriodResults(project.id, period, activeScenarioId)
       .then((r) => {
         if (!cancelled) {
@@ -581,6 +1083,8 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
     resultMetaLoading,
     activeScenarioId,
     resultMeta?.times.length,
+    // The encoding, not the catalog: this effect chooses a decoder.
+    periodPath,
   ]);
 
   // ── Timeline height CSS variable ─────────────────────────────────
@@ -691,7 +1195,7 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
           // Without this the shortcut was the one way into measure mode in
           // schematic view, where it has no meaningful coordinate space to
           // measure in.
-          if (viewMode === "map") {
+          if (geographic) {
             setActiveTool("measure");
             clearAnnotations();
           }
@@ -702,16 +1206,16 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
         // layout rather than the network's own geometry.
         case "e":
         case "E":
-          if (viewMode === "map") setActiveTool("edit");
+          if (geographic && modelEditable) setActiveTool("edit");
           break;
         case "n":
         case "N":
-          if (viewMode === "map") setActiveTool("add-node");
+          if (geographic && modelEditable) setActiveTool("add-node");
           break;
-        // Not gated: creating a link writes only its two node ids.
+        // Not map-gated: creating a link writes only its two node ids.
         case "l":
         case "L":
-          setActiveTool("add-link");
+          if (modelEditable) setActiveTool("add-link");
           break;
         case "Escape":
           setActiveTool("select");
@@ -733,10 +1237,23 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [clearAnnotations, maxStep, projectView, viewMode]);
+  }, [clearAnnotations, maxStep, projectView, geographic, modelEditable]);
 
   const baseNodes = useNodes();
   const baseLinks = useLinks();
+  const baseRegions = useRegions();
+  // Hydraulic connections that are not links (dual-drainage street
+  // inlets): the layout counts them as connectivity, the canvas draws
+  // them. Empty for engines without them.
+  const { couplings: inletCouplings, resolved: couplingsResolved } =
+    useInletCouplings(project?.id, activeScenarioId);
+  // The canvas owns the timeline, but sibling views (the element tables)
+  // ask the same question, so the value is published rather than lifted —
+  // the scrub state keeps its playback and clamping logic here.
+  const publishPeriod = usePublishCurrentPeriod();
+  useEffect(() => {
+    publishPeriod(currentHour);
+  }, [currentHour, publishPeriod]);
 
   // Raw committed snapshot (source-CRS coords) for undo capture inside
   // stable callbacks — same render-time-ref pattern as the selection refs
@@ -765,10 +1282,12 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
     rawPositionNodes,
     posNodes,
     canvasLinks,
+    canvasRegions,
   } = useCrsReprojection({
     projectSourceCrs: project?.sourceCrs,
     baseNodes,
     baseLinks,
+    baseRegions,
   });
 
   // O(1) enrichment flag (replaces the previous 46k `.some` scans): true when
@@ -817,15 +1336,227 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
     }));
   }, [baseLinks, currentPeriodResult, needSimObjects]);
 
+  // Current-period catalog values for the selected element — rendered by
+  // the per-engine inspector bodies (registry slot prop). Payload arrays
+  // share the snapshot order of baseNodes/baseLinks, so the element's
+  // array index is its position there.
+  const genericNodeResults = useMemo(() => {
+    if (!genericMeta || !fetchedGenericValues || selectedNodeId == null) {
+      return null;
+    }
+    const si = baseNodes.findIndex((n) => n.id === selectedNodeId);
+    if (si < 0) return null;
+    return genericMeta.pointVars.map((v, i) => ({
+      id: v.id,
+      label: v.label,
+      quantity: v.quantity,
+      value: fetchedGenericValues.points[i]?.[si] ?? null,
+      primary: v.id === genericCanvas?.node?.variable.id,
+    }));
+  }, [
+    genericMeta,
+    fetchedGenericValues,
+    selectedNodeId,
+    baseNodes,
+    genericCanvas?.node,
+  ]);
+
+  const genericLinkResults = useMemo(() => {
+    if (!genericMeta || !fetchedGenericValues || selectedLinkId == null) {
+      return null;
+    }
+    const si = baseLinks.findIndex((l) => l.id === selectedLinkId);
+    if (si < 0) return null;
+    return genericMeta.polylineVars.map((v, i) => ({
+      id: v.id,
+      label: v.label,
+      quantity: v.quantity,
+      value: fetchedGenericValues.polylines[i]?.[si] ?? null,
+      primary: v.id === genericCanvas?.link?.variable.id,
+    }));
+  }, [
+    genericMeta,
+    fetchedGenericValues,
+    selectedLinkId,
+    baseLinks,
+    genericCanvas?.link,
+  ]);
+
+  // The selected region object, resolved from the canvas-projected array
+  // the map renders (its ring is what "zoom to feature" fits).
+  const selectedRegion = useMemo(
+    () =>
+      selectedRegionId == null
+        ? null
+        : (canvasRegions.find((r) => r.id === selectedRegionId) ?? null),
+    [canvasRegions, selectedRegionId],
+  );
+
+  const genericRegionResults = useMemo(() => {
+    if (!genericMeta || !fetchedGenericValues || selectedRegionId == null) {
+      return null;
+    }
+    const si = baseRegions.findIndex((r) => r.id === selectedRegionId);
+    if (si < 0) return null;
+    return genericMeta.regionVars.map((v, i) => ({
+      id: v.id,
+      label: v.label,
+      quantity: v.quantity,
+      value: fetchedGenericValues.regions[i]?.[si] ?? null,
+      primary: v.id === genericCanvas?.region?.variable.id,
+    }));
+  }, [
+    genericMeta,
+    fetchedGenericValues,
+    selectedRegionId,
+    baseRegions,
+    genericCanvas?.region,
+  ]);
+
   // Keep the selection context's sim data in sync so the rail can display
   // live result values without re-fetching from the backend. Always push:
   // when the period result matches the network the arrays are merged with sim
   // values; after a topology change they are the fresh raw arrays — holding
   // back in that case left deleted elements listed in the rail forever, since
   // no period refetch arrives until the next run.
+  // For generic-results engines, merge current-period values onto each
+  // element (`resultValues`, keyed by variable id) so the rail list gets
+  // live result columns — the generic counterpart of the wds pressure/flow
+  // merge above. The column set is the catalog's leading variables, capped
+  // to keep the rail readable; order guarantee as above (payload arrays
+  // share allNodes/baseLinks order).
+  const railNodeColumns = useMemo(
+    () => railColumns(genericMeta?.pointVars ?? [], genericSelection.point),
+    [genericMeta, genericSelection.point],
+  );
+  const railLinkColumns = useMemo(
+    () =>
+      railColumns(genericMeta?.polylineVars ?? [], genericSelection.polyline),
+    [genericMeta, genericSelection.polyline],
+  );
+  const railNodes = useMemo(() => {
+    const arrays = fetchedGenericValues?.points;
+    if (
+      !needSimObjects ||
+      !arrays ||
+      railNodeColumns.length === 0 ||
+      arrays[0]?.length !== allNodes.length
+    ) {
+      return allNodes;
+    }
+    return allNodes.map((n, i) => {
+      const resultValues: Record<string, number | null> = {};
+      railNodeColumns.forEach((c) => {
+        const v = arrays[c.at]?.[i];
+        resultValues[c.key] = v != null && Number.isFinite(v) ? v : null;
+      });
+      return { ...n, resultValues };
+    });
+  }, [allNodes, fetchedGenericValues?.points, railNodeColumns, needSimObjects]);
+  const railLinks = useMemo(() => {
+    const arrays = fetchedGenericValues?.polylines;
+    if (
+      !needSimObjects ||
+      !arrays ||
+      railLinkColumns.length === 0 ||
+      arrays[0]?.length !== allLinks.length
+    ) {
+      return allLinks;
+    }
+    return allLinks.map((l, i) => {
+      const resultValues: Record<string, number | null> = {};
+      railLinkColumns.forEach((c) => {
+        const v = arrays[c.at]?.[i];
+        resultValues[c.key] = v != null && Number.isFinite(v) ? v : null;
+      });
+      return { ...l, resultValues };
+    });
+  }, [
+    allLinks,
+    fetchedGenericValues?.polylines,
+    railLinkColumns,
+    needSimObjects,
+  ]);
+
+  const railRegionColumns = useMemo(
+    () => railColumns(genericMeta?.regionVars ?? [], genericSelection.region),
+    [genericMeta, genericSelection.region],
+  );
+  const railRegions = useMemo(() => {
+    const arrays = fetchedGenericValues?.regions;
+    if (
+      !needSimObjects ||
+      !arrays ||
+      railRegionColumns.length === 0 ||
+      arrays[0]?.length !== baseRegions.length
+    ) {
+      return baseRegions;
+    }
+    return baseRegions.map((r, i) => {
+      const resultValues: Record<string, number | null> = {};
+      railRegionColumns.forEach((c) => {
+        const v = arrays[c.at]?.[i];
+        resultValues[c.key] = v != null && Number.isFinite(v) ? v : null;
+      });
+      return { ...r, resultValues };
+    });
+  }, [
+    baseRegions,
+    fetchedGenericValues?.regions,
+    railRegionColumns,
+    needSimObjects,
+  ]);
+
+  // An engine with fixed variables gets the same treatment: its legend
+  // choice becomes the rail's column, reading a field the sim merge already
+  // put on each element rather than a catalog bag.
+  const wdsColumns = useMemo(
+    () => ({
+      node: [
+        {
+          key: nodeVar,
+          label: WDS_NODE_VARS[nodeVar].label,
+          symbol: WDS_NODE_VARS[nodeVar].symbol,
+          unit: WDS_NODE_VARS[nodeVar].unit,
+        },
+      ],
+      link: [
+        {
+          key: linkVar,
+          label: WDS_LINK_VARS[linkVar].label,
+          symbol: WDS_LINK_VARS[linkVar].symbol,
+          unit: WDS_LINK_VARS[linkVar].unit,
+        },
+      ],
+      region: [],
+    }),
+    [nodeVar, linkVar],
+  );
+
   useEffect(() => {
-    setSimData(allNodes, allLinks);
-  }, [allNodes, allLinks, setSimData]);
+    setSimData(
+      railNodes,
+      railLinks,
+      railRegions,
+      genericMeta
+        ? {
+            node: railNodeColumns,
+            link: railLinkColumns,
+            region: railRegionColumns,
+          }
+        : wdsColumns,
+    );
+  }, [
+    railNodes,
+    railLinks,
+    railRegions,
+    railNodeColumns,
+    wdsColumns,
+    railLinkColumns,
+    railRegionColumns,
+    genericMeta,
+    setSimData,
+  ]);
 
   // Locate the network-wide min/max of the active variable for the current
   // period, then select and fly to that element. Period arrays are index-
@@ -863,7 +1594,12 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
         const id = pick(posNodes, arr);
         if (id) {
           selectNode(id);
-          setFlyToState((s) => ({ nodeId: id, linkId: null, key: s.key + 1 }));
+          setFlyToState((s) => ({
+            nodeId: id,
+            linkId: null,
+            regionId: null,
+            key: s.key + 1,
+          }));
         }
       } else {
         const arr =
@@ -879,7 +1615,12 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
         const id = pick(baseLinks, arr);
         if (id) {
           selectLink(id);
-          setFlyToState((s) => ({ nodeId: null, linkId: id, key: s.key + 1 }));
+          setFlyToState((s) => ({
+            nodeId: null,
+            linkId: id,
+            regionId: null,
+            key: s.key + 1,
+          }));
         }
       }
     },
@@ -894,6 +1635,180 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
     ],
   );
 
+  /**
+   * The ranges the wds canvas and legend scale against.
+   *
+   * The catalog-driven path rescales itself per period inside
+   * `genericCanvas`; wds colours from these fixed props instead, so
+   * without this the scale control was offered and did nothing — the
+   * ramp and its numbers were the run's range at every step.
+   *
+   * `periodRange` supplies the guard: a period whose span is a sliver of
+   * the run's keeps the run's range, so a near-uniform field is not
+   * amplified into a picture of its own rounding.
+   */
+  const wdsPeriodRange = useCallback(
+    (
+      values: Float32Array | null | undefined,
+      runMin: number,
+      runMax: number,
+    ) =>
+      scaleMode === "step" && currentPeriodResult
+        ? periodRange(values ?? null, runMin, runMax)
+        : { min: runMin, max: runMax },
+    [scaleMode, currentPeriodResult],
+  );
+
+  const wdsRanges = useMemo(() => {
+    const r = stableResultMeta?.ranges;
+    const pr = currentPeriodResult;
+    const head = wdsPeriodRange(
+      pr?.nodeHead,
+      r?.headMin ?? 0,
+      r?.headMax ?? 100,
+    );
+    const demand = wdsPeriodRange(
+      pr?.nodeDemand,
+      r?.demandMin ?? 0,
+      r?.demandMax ?? 1,
+    );
+    const pressure = wdsPeriodRange(
+      pr?.nodePressure,
+      r?.pressureMin ?? 0,
+      r?.pressureMax ?? 100,
+    );
+    const flow = wdsPeriodRange(pr?.linkFlow, r?.flowMin ?? 0, r?.flowMax ?? 1);
+    const velocity = wdsPeriodRange(
+      pr?.linkVelocity,
+      r?.velocityMin ?? 0,
+      r?.velocityMax ?? 1.5,
+    );
+    const quality = wdsPeriodRange(
+      pr?.nodeQuality,
+      r?.qualityMin ?? 0,
+      r?.qualityMax ?? 1,
+    );
+    return { head, demand, pressure, flow, velocity, quality };
+  }, [stableResultMeta, currentPeriodResult, wdsPeriodRange]);
+
+  /** The selected variable's range, for the legend's numbers. */
+  const wdsRangeFor = useCallback(
+    (id: string) => {
+      const byId: Record<string, { min: number; max: number } | undefined> = {
+        pressure: wdsRanges.pressure,
+        head: wdsRanges.head,
+        demand: wdsRanges.demand,
+        flow: wdsRanges.flow,
+        velocity: wdsRanges.velocity,
+        quality: wdsRanges.quality,
+      };
+      return byId[id];
+    },
+    [wdsRanges],
+  );
+
+  // ── Per-engine legend affordances ─────────────────────────────────────────
+  // Supplied to the shared legend rather than branched on inside it. An
+  // engine with no criteria bands, no locatable extremes, or no animatable
+  // quantity simply contributes nothing and the control is absent.
+
+  /** The legend speaks in element classes; the wds extremes search is
+   * indexed by node/link arrays. Regions have no wds counterpart. */
+  const handleLocateExtreme = useCallback(
+    (cls: GenericClassKey, which: "min" | "max") => {
+      if (cls === "region") return;
+      onLocateExtreme(cls === "point" ? "node" : "link", which);
+    },
+    [onLocateExtreme],
+  );
+
+  // ── Clear view ────────────────────────────────────────────────────────────
+  //
+  // Dismisses everything stacked over the map, and nothing else. Saved
+  // preferences — the chosen variables, the scale, the basemap, the dim
+  // toggle — are what the map *means* to this reader and survive: the
+  // button tidies the view, it does not undo decisions.
+  //
+  // The camera is deliberately untouched. "Fit network" sits directly
+  // above and is that action; a clear that also moved the viewport would
+  // be the most disorienting control on the canvas.
+  const clearable = useMemo<ClearableView>(
+    () => ({
+      rail: railOpen,
+      selection:
+        selectedNodeId != null ||
+        selectedLinkId != null ||
+        selectedRegionId != null,
+      legend: legendOpen,
+      basemapMenu: showBasemapDropdown,
+      tool: activeTool !== "select",
+      measurements: measurePoints.length > 0,
+    }),
+    [
+      railOpen,
+      selectedNodeId,
+      selectedLinkId,
+      selectedRegionId,
+      legendOpen,
+      showBasemapDropdown,
+      activeTool,
+      measurePoints.length,
+    ],
+  );
+  const clearableCount = useMemo(
+    () => clearableCountOf(clearable),
+    [clearable],
+  );
+
+  const handleClearView = useCallback(() => {
+    // Only these actually shrink the map; the rest sit over it without
+    // changing what Fit has to work with.
+    const occlusionChanged = clearable.rail || clearable.selection;
+    // `toggleRail` is a toggle, so guard on the current state rather than
+    // calling it unconditionally — an unguarded call would *open* the rail
+    // for anyone whose view was already clear.
+    if (clearable.rail) toggleRail();
+    if (clearable.selection) clearSelection();
+    if (clearable.legend) setLegendOpen(false);
+    if (clearable.basemapMenu) setShowBasemapDropdown(false);
+    if (clearable.tool) setActiveTool("select");
+    if (clearable.measurements) clearAnnotations();
+    if (shouldRefitOnClear(!viewportUserOwnedRef.current, occlusionChanged)) {
+      setMapFitKey((k) => k + 1);
+    }
+  }, [clearable, toggleRail, clearSelection, clearAnnotations]);
+
+  const legendAnimation = useMemo(
+    () => ({
+      playing: linkAnimation,
+      onToggle: setLinkAnimation,
+      appliesTo: ANIMATED_VARIABLES,
+      reducedMotion,
+    }),
+    [linkAnimation, setLinkAnimation, reducedMotion],
+  );
+
+  /** Read-only band text under a criteria-backed variable's ramp. The
+   * legend shows where the bands fall on the scale; Analysis is where they
+   * are edited. */
+  const criteriaAnnotation = useCallback(
+    (variableId: string): string | null => {
+      const show = (v: number, q: Quantity) =>
+        `${Number(toDisplay(v, q, unitSystem).toFixed(2))}`;
+      if (variableId === "pressure") {
+        const b = criteria.pressure;
+        return `< ${show(b.low, "pressure")} low · ${show(b.required, "pressure")} required · > ${show(b.high, "pressure")} high`;
+      }
+      if (variableId === "velocity" || variableId === "flow") {
+        const b = variableId === "velocity" ? criteria.velocity : criteria.flow;
+        const q: Quantity = variableId === "velocity" ? "velocity" : "flow";
+        return `< ${show(b.low, q)} low · ${show(b.target, q)} target · > ${show(b.high, q)} high`;
+      }
+      return null;
+    },
+    [criteria, unitSystem],
+  );
+
   // MapCanvas gets the *stable* position/base arrays plus the flat period
   // result — colours update via the periodResult prop without new arrays, so
   // the old flicker-latch over merged arrays is no longer needed. During the
@@ -901,6 +1816,20 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
   // matches by length and keeps the canvas coloured; after a topology change
   // the length guard in MapCanvas drops stale colours immediately.
   const canvasNodes = posNodes;
+
+  // Coordinates that could not be reprojected are not positions. Handing
+  // them to the map draws the network at whatever longitude and latitude
+  // those raw numbers happen to name — a fabricated place, under an overlay
+  // saying the placement is invalid, which reads as a warning about a map
+  // that is fine. Nothing is the honest picture, and it is also what makes
+  // the overlay legible.
+  //
+  // Not gated on `crsResolving` the way the overlay is: a blank moment
+  // while a definition loads is better than a moment of confident nonsense.
+  const placeable = viewMode !== "map" || !crsError;
+  const shownNodes = placeable ? canvasNodes : EMPTY_NODES;
+  const shownLinks = placeable ? canvasLinks : EMPTY_LINKS;
+  const shownRegions = placeable ? canvasRegions : EMPTY_REGIONS;
 
   const nodeMap = useMemo(
     () => new Map(allNodes.map((n) => [n.id, n])),
@@ -1017,11 +1946,18 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
   // overlays shift for a panel that never appears.
   const inspectorOccupies =
     (inspectorView === "node" && stableSelectedNode != null) ||
-    (inspectorView === "link" && stableSelectedLink != null);
+    (inspectorView === "link" && stableSelectedLink != null) ||
+    (inspectorView === "region" && selectedRegion != null);
   useEffect(() => {
+    // Resolved to a length rather than left as `var(--inspector-w)`: CSS
+    // calc() would cope either way, but the canvas reads this from script to
+    // work out how much of itself is covered, and script gets the raw string.
+    const width = getComputedStyle(document.documentElement)
+      .getPropertyValue("--inspector-w")
+      .trim();
     document.documentElement.style.setProperty(
       "--inspector-effective-w",
-      inspectorOccupies ? "var(--inspector-w)" : "0px",
+      inspectorOccupies && width ? width : "0px",
     );
     return () => {
       document.documentElement.style.setProperty(
@@ -1052,8 +1988,21 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
 
   const canvasIsActive = isActive && projectView === "canvas";
 
-  // Shared styling for toolbar controls that only work in map mode.
-  const mapOnly = viewMode !== "map";
+  // The inspector's entrance animation should play when the panel appears,
+  // not when its contents change kind. Node, link and region bodies are
+  // separate components, so following a "connected to" link from a node to
+  // a conduit unmounts one and mounts the other — replaying a fade-in over
+  // the canvas for what the reader experiences as the same panel showing
+  // something else. Clicking around the map never did this, because it
+  // usually keeps you within one kind.
+  const prevInspectorViewRef = useRef<InspectorView>("closed");
+  const inspectorEntering = prevInspectorViewRef.current === "closed";
+  useEffect(() => {
+    prevInspectorViewRef.current = inspectorView;
+  }, [inspectorView]);
+
+  // Shared styling for toolbar controls that only work on the geographic map.
+  const mapOnly = !geographic;
 
   const handleNodeMoved = useCallback(
     async (
@@ -1117,7 +2066,14 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
     // node, from the raw snapshot BEFORE the delete.
     const { nodes: rawNodes, links: rawLinks } = rawNetworkRef.current;
     const recreates = recreateSpecsForDelete(kind, id, rawNodes, rawLinks);
-    await deleteElement(kind, id);
+    try {
+      await deleteElement(kind, id);
+    } catch (err) {
+      // A refused delete must surface, not vanish as an unhandled
+      // rejection with the element silently still present.
+      showToast(`Could not delete ${id}: ${err}`, "error");
+      return;
+    }
     if (recreates) {
       pushUndoEntry(stackKey(project.id, activeScenarioId ?? null), {
         label: `Deleted ${id}`,
@@ -1128,7 +2084,14 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
     await saveProjectOnDisk(project.id, activeScenarioId);
     markEdited(project.id, activeScenarioId);
     // No bumpNetwork(): backend event already bumps (see handleNodeMoved).
-  }, [pendingDelete, project, activeScenarioId, markEdited, clearSelection]);
+  }, [
+    pendingDelete,
+    project,
+    activeScenarioId,
+    markEdited,
+    clearSelection,
+    showToast,
+  ]);
 
   const handleRenameElement = useCallback(
     async (kind: string, oldId: string, rawNewId: string) => {
@@ -1136,9 +2099,10 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
       if (!ok) return;
       // Keep the renamed element selected under its new id (the backend
       // `network-changed` event drives the refetch that repopulates it).
+      // Node-vs-link is decided by which array holds the element — a kind
+      // allowlist misrouted every non-wds link kind to the node selector.
       const newId = rawNewId.trim();
-      if (kind === "pipe" || kind === "pump" || kind === "valve")
-        selectLink(newId);
+      if (linkMapRef.current.has(oldId)) selectLink(newId);
       else selectNode(newId);
     },
     [renameElementFlow, selectNode, selectLink],
@@ -1294,231 +2258,274 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
     // The provider value is a primitive, and CanvasView already re-renders
     // wholly per scrub (currentHour is local state), so this adds no extra
     // re-render surface beyond the card that consumes it.
-    <CurrentPeriodProvider period={currentHour}>
+    <div
+      style={{
+        flex: 1,
+        display: "flex",
+        flexDirection: "column",
+        overflow: "hidden",
+        minHeight: 0,
+        position: "relative",
+      }}
+    >
+      {/* Main row: canvas + optional results panel */}
       <div
         style={{
           flex: 1,
           display: "flex",
-          flexDirection: "column",
           overflow: "hidden",
           minHeight: 0,
           position: "relative",
         }}
       >
-        {/* Main row: canvas + optional results panel */}
+        {/* Canvas area */}
         <div
-          style={{
-            flex: 1,
-            display: "flex",
-            overflow: "hidden",
-            minHeight: 0,
-            position: "relative",
-          }}
+          className="canvas-bg"
+          style={{ flex: 1, position: "relative", overflow: "hidden" }}
         >
-          {/* Canvas area */}
-          <div
-            className="canvas-bg"
-            style={{ flex: 1, position: "relative", overflow: "hidden" }}
-          >
-            {/* Map + Schematic — MapLibre GL JS + deck.gl. Held back until
+          {/* Map + Schematic — MapLibre GL JS + deck.gl. Held back until
                 prefsReady so MapLibre never initialises with the placeholder
                 basemap/CRS (see the cold-load gate above). */}
-            {prefsReady && (
-              <CanvasErrorBoundary>
-                <MapCanvas
-                  nodes={canvasNodes}
-                  links={canvasLinks}
-                  periodResult={currentPeriodResult}
-                  isActive={canvasIsActive}
-                  viewMode={viewMode}
-                  // The slider carries a track position; the layout wants per-axis
-                  // multipliers. Converting here keeps the geometric mapping in
-                  // one place instead of duplicating it in the canvas.
-                  schematicScale={schematicScale}
-                  nodeVar={nodeVar}
-                  linkVar={linkVar}
-                  animateLinks={animateLinks}
-                  basemap={basemap}
-                  basemapOpacity={basemapOpacity}
-                  selectedNodeId={selectedNodeId}
-                  onSelectNode={handleSelectNode}
-                  selectedLinkId={selectedLinkId}
-                  onSelectLink={handleSelectLink}
-                  headMin={stableResultMeta?.ranges.headMin ?? 0}
-                  headMax={stableResultMeta?.ranges.headMax ?? 100}
-                  demandMin={stableResultMeta?.ranges.demandMin ?? 0}
-                  demandMax={stableResultMeta?.ranges.demandMax ?? 1}
-                  flowMax={stableResultMeta?.ranges.flowMax ?? 1}
-                  qualityMin={stableResultMeta?.ranges.qualityMin ?? 0}
-                  qualityMax={stableResultMeta?.ranges.qualityMax ?? 1}
-                  colorMode={colorMode}
-                  pressureThresholds={thresholds.pressure}
-                  velocityThresholds={thresholds.velocity}
-                  flowThresholds={thresholds.flow}
-                  tool={activeTool}
-                  onNodeMoved={handleNodeMoved}
-                  onCreateNodeRequest={handleCreateNodeRequest}
-                  onCreateLinkRequest={handleCreateLinkRequest}
-                  onMeasurePoint={handleMeasurePoint}
-                  measurePoints={measurePointPositions}
-                  flyToNodeId={flyToState.nodeId}
-                  flyToLinkId={flyToState.linkId}
-                  flyToKey={flyToState.key}
-                  fitKey={mapFitKey}
-                  zoomInKey={zoomInKey}
-                  zoomOutKey={zoomOutKey}
-                  resetNorthKey={resetNorthKey}
-                />
-              </CanvasErrorBoundary>
-            )}
-
-            {/* Legend — visible only when simulation results exist */}
-            {!!stableResultMeta && (
-              <Legend
+          {prefsReady && (
+            <CanvasErrorBoundary>
+              <MapCanvas
+                nodes={shownNodes}
+                links={shownLinks}
+                regions={shownRegions}
+                couplings={inletCouplings}
+                periodResult={currentPeriodResult}
+                generic={genericCanvas}
+                isActive={canvasIsActive}
+                viewMode={localGrid ? "schematic" : viewMode}
+                kindRoles={kindRoles}
+                topological={viewMode === "schematic"}
+                couplingsResolved={couplingsResolved}
+                // The slider carries a track position; the layout wants per-axis
+                // multipliers. Converting here keeps the geometric mapping in
+                // one place instead of duplicating it in the canvas.
+                schematicScale={schematicScale}
                 nodeVar={nodeVar}
-                setNodeVar={setNodeVar}
                 linkVar={linkVar}
-                setLinkVar={setLinkVar}
-                linkAnimation={linkAnimation}
-                setLinkAnimation={setLinkAnimation}
-                reducedMotion={reducedMotion}
-                qualityMode={stableResultMeta.qualityMode ?? "none"}
-                headMin={stableResultMeta.ranges.headMin ?? 0}
-                headMax={stableResultMeta.ranges.headMax ?? 100}
-                demandMin={stableResultMeta.ranges.demandMin ?? 0}
-                demandMax={stableResultMeta.ranges.demandMax ?? 1}
-                flowMax={stableResultMeta.ranges.flowMax ?? 1}
-                qualityMin={stableResultMeta.ranges.qualityMin ?? 0}
-                qualityMax={stableResultMeta.ranges.qualityMax ?? 1}
-                colorMode={colorMode}
-                thresholds={thresholds}
-                onColorModeChange={setColorMode}
-                onThresholdsChange={setThresholds}
-                onLocateExtreme={
-                  currentPeriodResult ? onLocateExtreme : undefined
-                }
+                animateLinks={animateLinks}
+                basemap={basemap}
+                basemapOpacity={basemapOpacity}
+                selectedNodeId={selectedNodeId}
+                onSelectNode={handleSelectNode}
+                selectedLinkId={selectedLinkId}
+                onSelectLink={handleSelectLink}
+                selectedRegionId={selectedRegionId}
+                onSelectRegion={selectRegion}
+                headMin={wdsRanges.head.min}
+                headMax={wdsRanges.head.max}
+                demandMin={wdsRanges.demand.min}
+                demandMax={wdsRanges.demand.max}
+                flowMax={wdsRanges.flow.max}
+                qualityMin={wdsRanges.quality.min}
+                qualityMax={wdsRanges.quality.max}
+                pressureMin={wdsRanges.pressure.min}
+                pressureMax={wdsRanges.pressure.max}
+                velocityMax={wdsRanges.velocity.max}
+                colorMode={scaleMode === "criteria" ? "threshold" : "relative"}
+                pressureThresholds={thresholds.pressure}
+                velocityThresholds={thresholds.velocity}
+                flowThresholds={thresholds.flow}
+                tool={activeTool}
+                onNodeMoved={handleNodeMoved}
+                onCreateNodeRequest={handleCreateNodeRequest}
+                onCreateLinkRequest={handleCreateLinkRequest}
+                onMeasurePoint={handleMeasurePoint}
+                measurePoints={measurePointPositions}
+                flyToNodeId={flyToState.nodeId}
+                flyToLinkId={flyToState.linkId}
+                flyToRegionId={flyToState.regionId}
+                flyToKey={flyToState.key}
+                fitKey={mapFitKey}
+                onUserMovedViewport={markViewportUserOwned}
+                zoomInKey={zoomInKey}
+                zoomOutKey={zoomOutKey}
+                resetNorthKey={resetNorthKey}
               />
-            )}
+            </CanvasErrorBoundary>
+          )}
 
-            {/* Topology-stale notice — results exist but are hidden because
+          {/* Legend — visible only when simulation results exist. One
+                component for every engine: it renders whatever the engine's
+                §6 catalog declares, and the per-engine affordances below
+                are passed in rather than branched on. */}
+          {!!stableResultMeta && genericMeta && (
+            <GenericLegend
+              meta={genericMeta}
+              hasRegions={canvasRegions.length > 0}
+              selection={genericSelection}
+              onSelect={handleGenericSelect}
+              scaleMode={scaleMode}
+              onScaleModeChange={setScaleMode}
+              effectiveRanges={{
+                // The catalog path carries its own rescaled variable; wds
+                // scales through the props above, so its numbers come from
+                // the same derivation the map is painted with.
+                point:
+                  genericCanvas?.node?.variable ??
+                  wdsRangeFor(genericSelection.point || nodeVar),
+                polyline:
+                  genericCanvas?.link?.variable ??
+                  wdsRangeFor(genericSelection.polyline || linkVar),
+                region: genericCanvas?.region?.variable,
+              }}
+              criteriaVariables={criteriaVariables}
+              criteriaAnnotation={criteriaAnnotation}
+              // The verdict's colours describe the map only while the map
+              // is showing the verdict; in the data-range modes these
+              // variables are painted as plain magnitudes.
+              bandColors={scaleMode === "criteria" ? wdsBandColors : () => null}
+              onLocateExtreme={
+                currentPeriodResult ? handleLocateExtreme : undefined
+              }
+              animation={legendAnimation}
+              detailsOpen={legendOpen}
+              onDetailsOpenChange={setLegendOpen}
+            />
+          )}
+
+          {/* Topology-stale notice — results exist but are hidden because
                 the network's structure changed since they were produced. */}
-            {resultsTopologyStale &&
-              !!stableResultMeta &&
-              !staleNoticeDismissed && (
-                <div
+          {resultsTopologyStale &&
+            !!stableResultMeta &&
+            !staleNoticeDismissed && (
+              <div
+                style={{
+                  position: "absolute",
+                  top: 60,
+                  left: "50%",
+                  transform: "translateX(-50%)",
+                  zIndex: 25,
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 8,
+                  padding: "6px 10px",
+                  background: "var(--bg-card)",
+                  border: "1px solid var(--border)",
+                  borderRadius: 8,
+                  boxShadow: "var(--shadow-2)",
+                }}
+              >
+                <span
                   style={{
-                    position: "absolute",
-                    top: 60,
-                    left: "50%",
-                    transform: "translateX(-50%)",
-                    zIndex: 25,
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 8,
-                    padding: "6px 10px",
-                    background: "var(--bg-card)",
-                    border: "1px solid var(--border)",
-                    borderRadius: 8,
-                    boxShadow: "var(--shadow-2)",
+                    fontSize: "var(--text-md)",
+                    color: "var(--text-secondary)",
+                    fontFamily: "var(--font-ui)",
                   }}
                 >
-                  <span
-                    style={{
-                      fontSize: "var(--text-md)",
-                      color: "var(--text-secondary)",
-                      fontFamily: "var(--font-ui)",
-                    }}
-                  >
-                    Results predate the current network topology — re-run the
-                    simulation
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => setStaleNoticeDismissed(true)}
-                    aria-label="Dismiss stale-results notice"
-                    style={{
-                      border: "none",
-                      background: "transparent",
-                      cursor: "pointer",
-                      display: "inline-flex",
-                      padding: 2,
-                      color: "var(--text-tertiary)",
-                    }}
-                  >
-                    <XMarkIcon style={{ width: 12, height: 12 }} />
-                  </button>
-                </div>
-              )}
+                  Results predate the current network topology — re-run the
+                  simulation
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setStaleNoticeDismissed(true)}
+                  aria-label="Dismiss stale-results notice"
+                  style={{
+                    border: "none",
+                    background: "transparent",
+                    cursor: "pointer",
+                    display: "inline-flex",
+                    padding: 2,
+                    color: "var(--text-tertiary)",
+                  }}
+                >
+                  <XMarkIcon style={{ width: 12, height: 12 }} />
+                </button>
+              </div>
+            )}
 
-            {/* Comparison notice — baseline missing results / topology drift.
+          {/* Comparison notice — baseline missing results / topology drift.
                 Suppressed while the topology-stale notice occupies the same
                 slot (that notice already explains the hidden results). */}
 
-            {/* CRS alert — map mode only, shown when coordinates can't be
+          {/* CRS alert — map mode only, shown when coordinates can't be
                 reprojected. Suppressed while a catalog proj4 def is still being
                 fetched for a persisted CRS (avoids a spurious cold-start flash). */}
-            {prefsReady && viewMode === "map" && crsError && !crsResolving && (
-              <InvalidCrsOverlay onSetCrs={openCrsModal} />
-            )}
+          {prefsReady && viewMode === "map" && crsError && !crsResolving && (
+            <InvalidCrsOverlay onSetCrs={openCrsModal} />
+          )}
 
-            {/* Toolbar overlay — left offset tracks the floating rail width */}
-            <CanvasToolbar
-              viewMode={viewMode}
-              onViewModeChange={setViewMode}
-              coordStatus={coordStatus}
-              coordMissingCount={coordMissingCount}
-              coordTotalCount={rawPositionNodes.length}
-              basemap={basemap}
-              onBasemapChange={setBasemap}
-              basemapOpacity={basemapOpacity}
-              onBasemapOpacityChange={setBasemapOpacity}
-              showBasemapDropdown={showBasemapDropdown}
-              setShowBasemapDropdown={setShowBasemapDropdown}
-              sourceCrs={sourceCrs}
-              crsError={crsError}
-              onOpenCrsModal={openCrsModal}
-              onOpenBasemapProviders={openBasemapProvidersModal}
-              activeTool={activeTool}
-              onToolChange={setActiveTool}
-              measurePoints={measurePoints}
-              measureDistanceM={measureDistanceM}
-              onClearAnnotations={clearAnnotations}
-            />
+          {/* Toolbar overlay — left offset tracks the floating rail width */}
+          <CanvasToolbar
+            editable={modelEditable}
+            viewMode={viewMode}
+            localGrid={localGrid}
+            onViewModeChange={setViewMode}
+            coordStatus={coordStatus}
+            coordMissingCount={coordMissingCount}
+            coordTotalCount={rawPositionNodes.length}
+            basemap={basemap}
+            onBasemapChange={setBasemap}
+            basemapOpacity={basemapOpacity}
+            onBasemapOpacityChange={setBasemapOpacity}
+            showBasemapDropdown={showBasemapDropdown}
+            setShowBasemapDropdown={setShowBasemapDropdown}
+            sourceCrs={sourceCrs}
+            crsError={crsError}
+            onOpenCrsModal={openCrsModal}
+            onOpenBasemapProviders={openBasemapProvidersModal}
+            activeTool={activeTool}
+            onToolChange={setActiveTool}
+            measurePoints={measurePoints}
+            measureDistanceM={measureDistanceM}
+            onClearAnnotations={clearAnnotations}
+          />
 
-            {/* Bottom-right control stack. One positioned column so each strip
+          {/* Bottom-right control stack. One positioned column so each strip
                 sits above the last without an offset derived from its
                 neighbour's height, and so the inspector offset is applied once
                 for the whole stack rather than per strip. */}
-            <div
-              style={{
-                position: "absolute",
-                right: "calc(var(--inspector-effective-w, 0px) + 12px)",
-                bottom: 12,
-                zIndex: 11,
-                display: "flex",
-                flexDirection: "column",
-                alignItems: "flex-end",
-                gap: 8,
-              }}
-            >
-              {/* Schematic only: the geographic layout's spacing is the
+          <div
+            style={{
+              position: "absolute",
+              right: "calc(var(--inspector-effective-w, 0px) + 12px)",
+              bottom: 12,
+              zIndex: 11,
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "flex-end",
+              gap: 8,
+            }}
+          >
+            {/* Schematic only: the geographic layout's spacing is the
                   network's real geometry, not ours to redistribute. */}
-              {viewMode === "schematic" && (
-                <SchematicAspectSlider
-                  value={schematicAspect}
-                  onChange={setSchematicAspect}
-                />
-              )}
-              <ViewportControls
-                mapOnly={mapOnly}
-                onZoomIn={() => setZoomInKey((k) => k + 1)}
-                onZoomOut={() => setZoomOutKey((k) => k + 1)}
-                onResetNorth={() => setResetNorthKey((k) => k + 1)}
-                onFit={() => setMapFitKey((k) => k + 1)}
+            {viewMode === "schematic" && (
+              <SchematicAspectSlider
+                value={schematicAspect}
+                onChange={setSchematicAspect}
               />
-            </div>
+            )}
+            <ViewportControls
+              mapOnly={mapOnly}
+              onZoomIn={() => {
+                markViewportUserOwned();
+                setZoomInKey((k) => k + 1);
+              }}
+              onZoomOut={() => {
+                markViewportUserOwned();
+                setZoomOutKey((k) => k + 1);
+              }}
+              onResetNorth={() => {
+                markViewportUserOwned();
+                setResetNorthKey((k) => k + 1);
+              }}
+              onFit={() => {
+                // A fit hands framing back to the app.
+                viewportUserOwnedRef.current = false;
+                setMapFitKey((k) => k + 1);
+              }}
+              onClearView={handleClearView}
+              clearableCount={clearableCount}
+            />
+          </div>
 
-            {/* Inspector panel — node or link detail view */}
+          {/* Inspector panel — node, link or region detail view. The
+              wrapper only carries the entrance flag; it is static, so the
+              panels inside still position against the canvas. */}
+          <div data-inspector-entering={inspectorEntering ? "true" : "false"}>
             {inspectorView === "node" && stableSelectedNode && (
               <NodeInspector
                 node={stableSelectedNode}
@@ -1530,22 +2537,32 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
                   setFlyToState((s) => ({
                     nodeId: selectedNodeId,
                     linkId: null,
+                    regionId: null,
                     key: s.key + 1,
                   }))
                 }
                 disableZoomTo={!selectedNodeHasCoordinates}
-                onDelete={() =>
-                  setPendingDelete({
-                    kind: stableSelectedNode.type,
-                    id: stableSelectedNode.id,
-                  })
+                // Destructive/edit affordances only for editable engines —
+                // both props are optional and the inspector hides the
+                // gestures entirely when they are absent.
+                onDelete={
+                  modelEditable
+                    ? () =>
+                        setPendingDelete({
+                          kind: stableSelectedNode.type,
+                          id: stableSelectedNode.id,
+                        })
+                    : undefined
                 }
-                onRename={(newId) =>
-                  handleRenameElement(
-                    stableSelectedNode.type,
-                    stableSelectedNode.id,
-                    newId,
-                  )
+                onRename={
+                  modelEditable
+                    ? (newId) =>
+                        handleRenameElement(
+                          stableSelectedNode.type,
+                          stableSelectedNode.id,
+                          newId,
+                        )
+                    : undefined
                 }
                 onOpenPattern={() => {
                   setProjectView("editor");
@@ -1553,10 +2570,30 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
                 onLocateRelated={(id) => {
                   if (linkMap.has(id)) selectLink(id);
                 }}
+                onLocateRegion={(id) => selectRegion(id)}
                 nodeVar={nodeVar}
                 ranges={stableResultMeta?.ranges}
                 hasSimulation={!!stableResultMeta}
                 isTransitioning={!!stableResultMeta && !nodeIsEnriched}
+                genericResults={genericNodeResults}
+              />
+            )}
+            {inspectorView === "region" && selectedRegion && (
+              <RegionInspector
+                region={selectedRegion}
+                onClose={clearSelection}
+                onZoomTo={() =>
+                  setFlyToState((s) => ({
+                    nodeId: null,
+                    linkId: null,
+                    regionId: selectedRegionId,
+                    key: s.key + 1,
+                  }))
+                }
+                onLocateOutlet={(id) => {
+                  if (nodeMap.has(id)) selectNode(id);
+                }}
+                genericResults={genericRegionResults}
               />
             )}
             {inspectorView === "link" && stableSelectedLink && (
@@ -1570,22 +2607,29 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
                   setFlyToState((s) => ({
                     nodeId: null,
                     linkId: selectedLinkId,
+                    regionId: null,
                     key: s.key + 1,
                   }))
                 }
                 disableZoomTo={!selectedLinkHasCoordinates}
-                onDelete={() =>
-                  setPendingDelete({
-                    kind: stableSelectedLink.type,
-                    id: stableSelectedLink.id,
-                  })
+                onDelete={
+                  modelEditable
+                    ? () =>
+                        setPendingDelete({
+                          kind: stableSelectedLink.type,
+                          id: stableSelectedLink.id,
+                        })
+                    : undefined
                 }
-                onRename={(newId) =>
-                  handleRenameElement(
-                    stableSelectedLink.type,
-                    stableSelectedLink.id,
-                    newId,
-                  )
+                onRename={
+                  modelEditable
+                    ? (newId) =>
+                        handleRenameElement(
+                          stableSelectedLink.type,
+                          stableSelectedLink.id,
+                          newId,
+                        )
+                    : undefined
                 }
                 onLocateNode={(id) => {
                   if (nodeMap.has(id)) selectNode(id);
@@ -1594,72 +2638,73 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
                 ranges={stableResultMeta?.ranges}
                 hasSimulation={!!stableResultMeta}
                 isTransitioning={!!stableResultMeta && !linkIsEnriched}
+                genericResults={genericLinkResults}
               />
             )}
           </div>
-
-          {/* Results panel — moved to Results top-level tab */}
         </div>
 
-        {/* Timeline bar — always shown in canvas mode. */}
-        {stableResultMeta ? (
-          <Timeline
-            currentHour={currentHour}
-            setCurrentHour={setCurrentHour}
-            isPlaying={isPlaying}
-            setIsPlaying={setIsPlaying}
-            speed={speed}
-            setSpeed={setSpeed}
-            loop={loop}
-            setLoop={setLoop}
-            resultMeta={stableResultMeta}
-            maxStep={maxStep}
-            steadyState={isSteadyState}
-          />
-        ) : (
-          <div
-            className="timeline-bar"
-            style={{ justifyContent: "center", gap: 8 }}
-          >
-            <span
-              style={{
-                color: "var(--text-tertiary)",
-                fontSize: "var(--text-md)",
-              }}
-            >
-              {resultMetaLoading
-                ? "Loading simulation state..."
-                : isSteadyState
-                  ? "This scenario has no steady-state result yet. Run a simulation to generate the snapshot."
-                  : "This scenario is not simulated yet. Run a simulation to enable timeline stepping."}
-            </span>
-          </div>
-        )}
-
-        <DeleteConfirmModal
-          open={!!pendingDelete}
-          elementKind={pendingDelete?.kind ?? ""}
-          elementId={pendingDelete?.id ?? ""}
-          onConfirm={handleConfirmDelete}
-          onCancel={() => setPendingDelete(null)}
-        />
-        <CreateNodeModal
-          open={!!pendingCreateNode}
-          suggestId={suggestNodeId}
-          lng={pendingCreateNode?.lng ?? 0}
-          lat={pendingCreateNode?.lat ?? 0}
-          onConfirm={handleConfirmCreateNode}
-          onCancel={() => setPendingCreateNode(null)}
-        />
-        <CreateLinkModal
-          open={!!pendingCreateLink}
-          suggestId={suggestLinkId}
-          fromNodeId={pendingCreateLink?.fromId ?? ""}
-          toNodeId={pendingCreateLink?.toId ?? ""}
-          onConfirm={handleConfirmCreateLink}
-          onCancel={() => setPendingCreateLink(null)}
-        />
+        {/* Results panel — moved to Results top-level tab */}
       </div>
-    </CurrentPeriodProvider>
+
+      {/* Timeline bar — always shown in canvas mode. */}
+      {stableResultMeta ? (
+        <Timeline
+          currentHour={currentHour}
+          setCurrentHour={setCurrentHour}
+          isPlaying={isPlaying}
+          setIsPlaying={setIsPlaying}
+          speed={speed}
+          setSpeed={setSpeed}
+          loop={loop}
+          setLoop={setLoop}
+          resultMeta={stableResultMeta}
+          maxStep={maxStep}
+          steadyState={isSteadyState}
+        />
+      ) : (
+        <div
+          className="timeline-bar"
+          style={{ justifyContent: "center", gap: 8 }}
+        >
+          <span
+            style={{
+              color: "var(--text-tertiary)",
+              fontSize: "var(--text-md)",
+            }}
+          >
+            {resultMetaLoading
+              ? "Loading simulation state..."
+              : isSteadyState
+                ? "This scenario has no steady-state result yet. Run a simulation to generate the snapshot."
+                : "This scenario is not simulated yet. Run a simulation to enable timeline stepping."}
+          </span>
+        </div>
+      )}
+
+      <DeleteConfirmModal
+        open={!!pendingDelete}
+        elementKind={pendingDelete?.kind ?? ""}
+        elementId={pendingDelete?.id ?? ""}
+        onConfirm={handleConfirmDelete}
+        onCancel={() => setPendingDelete(null)}
+      />
+      <CreateNodeModal
+        open={!!pendingCreateNode}
+        suggestId={suggestNodeId}
+        lng={pendingCreateNode?.lng ?? 0}
+        lat={pendingCreateNode?.lat ?? 0}
+        onConfirm={handleConfirmCreateNode}
+        onCancel={() => setPendingCreateNode(null)}
+      />
+      <CreateLinkModal
+        open={!!pendingCreateLink}
+        suggestId={suggestLinkId}
+        fromNodeId={pendingCreateLink?.fromId ?? ""}
+        toNodeId={pendingCreateLink?.toId ?? ""}
+        onConfirm={handleConfirmCreateLink}
+        onCancel={() => setPendingCreateLink(null)}
+      />
+    </div>
   );
 }

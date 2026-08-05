@@ -11,8 +11,10 @@ import { ACCENT, PROJECT_VIEWS } from "./projectConfig";
 // ── App accent + engine registry fallback ────────────────────────────────────
 
 describe("app accent", () => {
-  it("ACCENT is a 6-digit hex colour", () => {
-    expect(ACCENT).toMatch(/^#[0-9a-fA-F]{6}$/);
+  it("ACCENT is the theme token, not a copy of its value", () => {
+    // A literal here cannot follow the theme, and the literal it held was
+    // the wds engine's own colour — the collision the accent change removed.
+    expect(ACCENT).toBe("var(--accent)");
   });
 });
 

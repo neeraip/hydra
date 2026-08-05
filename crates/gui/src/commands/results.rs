@@ -242,7 +242,7 @@ pub struct ResultAnalyticsDto {
 }
 
 /// Global min/max ranges for the common result variables across all periods.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct ResultRangesDto {
     pub pressure_min: f64,
@@ -263,10 +263,17 @@ pub struct ResultRangesDto {
 }
 
 /// Metadata returned by `load_result_meta`: snapshot times and global ranges.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// Serialize-only: the frontend is the sole consumer, and the embedded §5
+/// quantity descriptors are `&'static str`-backed engine constants that
+/// cannot be deserialized.
+#[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ResultMetaDto {
     pub times: Vec<f64>,
+    /// Whether `get_period_results` can serve per-period arrays for this
+    /// target. False for engines whose period serving has not landed —
+    /// the timeline steps, but the canvas stays uncoloured.
+    pub has_period_data: bool,
     pub ranges: ResultRangesDto,
     /// Quality mode used in the simulation: `"none"`, `"chemical"`, `"age"`, or `"trace"`.
     pub quality_mode: String,
@@ -276,6 +283,92 @@ pub struct ResultMetaDto {
     /// topology match as unknown and apply no staleness gating.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub network_digest: Option<String>,
+    /// Engine-described variable catalog with per-run ranges. Every engine
+    /// publishes one (§6), and both serve it here — it is what lets a
+    /// single legend render either engine's results.
+    ///
+    /// wds additionally fills the fixed `ranges` above, which predate the
+    /// catalog contract and still feed its canvas colouring.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub generic: Option<super::generic_results::GenericResultMetaDto>,
+    /// Whether this target's per-period values are served in the generic
+    /// variable-major payload (`get_generic_period_values`) rather than the
+    /// fixed wds arrays (`get_period_results`).
+    ///
+    /// Deliberately independent of `generic`: publishing a catalog is a
+    /// statement about what the results *contain*, and this is a statement
+    /// about how they are *encoded*. Conflating them routed wds onto a
+    /// payload nothing serves for it, and its canvas silently fell back to
+    /// the network-at-rest palette — results present, everything grey, no
+    /// error anywhere.
+    pub generic_periods: bool,
+}
+
+/// The §5 quantity descriptor for a wds catalog quantity key.
+fn wds_quantity(key: &str) -> Option<hydra::common::QuantityDescriptor> {
+    hydra::descriptors::QUANTITIES
+        .iter()
+        .find(|q| q.key == key)
+        .copied()
+}
+
+/// The per-run range for one declared wds variable, or `None` when this run
+/// carries no values for it.
+///
+/// `results.out` is always written with `FlowUnits::Lps`, and the wds
+/// quantity catalog declares L/s as flow's own SI label — so the scanned
+/// ranges are already in each variable's declared SI unit and reach the
+/// frontend unscaled, which converts them for display like any other
+/// catalog value.
+fn wds_range(id: &str, ranges: &hydra::io::out_reader::ResultRanges) -> Option<(f64, f64)> {
+    Some(match id {
+        "pressure" => (ranges.pressure_min, ranges.pressure_max),
+        "head" => (ranges.head_min, ranges.head_max),
+        "demand" => (ranges.demand_min, ranges.demand_max),
+        "flow" => (ranges.flow_min, ranges.flow_max),
+        "velocity" => (ranges.velocity_min, ranges.velocity_max),
+        "headloss" => (ranges.headloss_min, ranges.headloss_max),
+        // Present only when the run simulated quality; absent leaves the
+        // variable out of the catalog entirely rather than showing an
+        // empty ramp the user cannot fill.
+        "quality" => (ranges.quality_min?, ranges.quality_max?),
+        // A categorical variable's states come from the hint, not a range.
+        "status" => (0.0, 0.0),
+        _ => return None,
+    })
+}
+
+/// Build the wds result catalog for one run: every variable the engine
+/// declares (§6) that this run actually carries, with its scanned range.
+///
+/// The engine has always published this catalog; serving it here is what
+/// lets one legend component render either engine, instead of the frontend
+/// re-declaring wds's variable list by hand and drifting from it.
+fn wds_generic_meta(
+    ranges: &hydra::io::out_reader::ResultRanges,
+) -> super::generic_results::GenericResultMetaDto {
+    use super::generic_results::{GenericResultMetaDto, GenericVariableDto};
+    use hydra::common::ElementClass;
+
+    let class_vars = |class| {
+        hydra::descriptors::result_variables(class)
+            .into_iter()
+            .filter_map(|v| {
+                let (min, max) = wds_range(v.id, ranges)?;
+                Some(GenericVariableDto::from_descriptor(
+                    &v,
+                    min,
+                    max,
+                    wds_quantity,
+                ))
+            })
+            .collect()
+    };
+    GenericResultMetaDto {
+        point_vars: class_vars(ElementClass::Point),
+        polyline_vars: class_vars(ElementClass::Polyline),
+        region_vars: Vec::new(),
+    }
 }
 
 /// Format a topology digest as the wire representation shared with the
@@ -309,6 +402,33 @@ pub fn load_result_meta(
     if !out_path.exists() {
         return Ok(None);
     }
+    // Engine-dispatched: each engine's reader serves its own results file.
+    match super::projects::project_engine_key(&app_data, &project_id).as_str() {
+        "wds" => {}
+        "uds" => {
+            let meta = hydra::uds::io::out_reader::read_metadata(&out_path)?;
+            // Sim-relative period instants. The stored clock carries absolute
+            // record times; the standard case reports one step after start,
+            // which (i+1)·step reproduces.
+            let step = meta.report_step_s as f64;
+            let times: Vec<f64> = (0..meta.n_periods)
+                .map(|i| (i as f64 + 1.0) * step)
+                .collect();
+            let generic = super::uds_results::generic_meta(&out_path, &meta)?;
+            return Ok(Some(ResultMetaDto {
+                times,
+                has_period_data: true,
+                quality_mode: "none".to_string(),
+                network_digest: None,
+                // The wds-shaped fixed ranges stay empty; the canvas reads
+                // the per-variable ranges from `generic` instead.
+                ranges: ResultRangesDto::default(),
+                generic: Some(generic),
+                generic_periods: true,
+            }));
+        }
+        _ => return Ok(None),
+    }
     let meta =
         hydra::io::out_reader::read_metadata_checked(&out_path).map_err(|e| e.to_string())?;
     let times = meta.snapshot_times();
@@ -321,6 +441,7 @@ pub fn load_result_meta(
     };
     Ok(Some(ResultMetaDto {
         times,
+        has_period_data: true,
         quality_mode: quality_mode.to_string(),
         // From `run.json` beside the results: `results.out` is EPANET's
         // format and carries none of Hydra's fields (model spec §4.4.1).
@@ -328,6 +449,9 @@ pub fn load_result_meta(
         // gating rather than as stale.
         network_digest: crate::commands::simulation::read_run_meta(&out_path)
             .and_then(|run| run.network_digest),
+        generic: Some(wds_generic_meta(&ranges)),
+        // wds serves the fixed arrays; only its catalog is generic.
+        generic_periods: false,
         ranges: ResultRangesDto {
             pressure_min: ranges.pressure_min,
             pressure_max: ranges.pressure_max,
@@ -357,6 +481,7 @@ pub fn load_result_meta(
 /// Return flat arrays for a single reporting period (nodes + links).
 pub fn get_period_results(
     app: tauri::AppHandle,
+    state: tauri::State<'_, NetworkState>,
     project_id: String,
     period: usize,
     scenario_id: Option<String>,
@@ -371,6 +496,27 @@ pub fn get_period_results(
         // result metadata has not yet been reloaded; that must not raise a
         // scary "missing .out" backend-error toast.
         return Ok(tauri::ipc::Response::new(Vec::new()));
+    }
+    // Engine-dispatched: each engine's reader serves its own results file,
+    // in its own payload layout (the frontend picks the decoder from
+    // `load_result_meta`'s answer).
+    match super::projects::project_engine_key(&app_data, &project_id).as_str() {
+        "wds" => {}
+        "uds" => {
+            let meta = hydra::uds::io::out_reader::read_metadata(&out_path)?;
+            let rec = hydra::uds::io::out_reader::read_period(&out_path, &meta, period)?;
+            // Snapshot order comes from the same view build the canvas
+            // rendered, so values line up positionally with v4 indices.
+            let network =
+                uds_network_for_target(&app_data, &state, &project_id, scenario_id.as_deref())?;
+            let view = super::uds_view::build_view(&network);
+            return Ok(tauri::ipc::Response::new(
+                super::uds_results::encode_generic_period(&view, &meta, &rec),
+            ));
+        }
+        // Engines without a period provider serve the empty "no results"
+        // payload rather than handing their file to the wrong reader.
+        _ => return Ok(tauri::ipc::Response::new(Vec::new())),
     }
     let meta =
         hydra::io::out_reader::read_metadata_checked(&out_path).map_err(|e| e.to_string())?;
@@ -394,6 +540,38 @@ pub fn get_period_results(
 /// contain structural edits (added/deleted elements) the results know nothing
 /// about, which would silently attach results to the wrong elements — so a
 /// dirty cache is treated exactly like a non-matching target.
+/// The uds counterpart of [`network_for_target`]: the cached parse when the
+/// state holds exactly this target, otherwise a fresh parse from disk.
+pub(crate) fn uds_network_for_target(
+    app_data: &std::path::Path,
+    state: &NetworkState,
+    project_id: &str,
+    scenario_id: Option<&str>,
+) -> Result<std::sync::Arc<hydra::uds::model::Network>, String> {
+    {
+        let guard = state.0.lock();
+        if let NetworkStateInner::LoadedUds {
+            network,
+            owner_project_id: Some(owner),
+            owner_scenario_id,
+            ..
+        } = &*guard
+        {
+            if owner == project_id && owner_scenario_id.as_deref() == scenario_id {
+                return Ok(network.clone());
+            }
+        }
+    }
+    let model_path = model_path_for(app_data, project_id, scenario_id);
+    let raw = std::fs::read(&model_path).map_err(|e| format!("Cannot read model: {e}"))?;
+    let text = String::from_utf8_lossy(&raw);
+    let (network, diags) = hydra::uds::io::objects::parse_network(&text);
+    if let Some(first) = diags.iter().find(|d| d.kind.is_error()) {
+        return Err(format!("Cannot read model: {first}"));
+    }
+    Ok(std::sync::Arc::new(network))
+}
+
 pub(crate) fn network_for_target(
     app_data: &std::path::Path,
     state: &NetworkState,
@@ -491,6 +669,11 @@ pub fn get_network_digest(
 ) -> Result<Option<String>, String> {
     validate_target_ids(&project_id, scenario_id.as_deref())?;
     let app_data = app_data_dir(&app)?;
+    // Only the wds model has a digest today; "no digest" is an ordinary
+    // answer (results freshness reads as unknown), not an error.
+    if super::projects::project_engine_key(&app_data, &project_id) != "wds" {
+        return Ok(None);
+    }
     Ok(
         live_network_digest(&app_data, &state, &project_id, scenario_id.as_deref())?
             .map(digest_hex),
@@ -511,6 +694,12 @@ pub fn get_pump_energy(
 ) -> Result<Vec<PumpEnergyDto>, String> {
     validate_target_ids(&project_id, scenario_id.as_deref())?;
     let app_data = app_data_dir(&app)?;
+    // wds-shaped results reading; other engines' results arrive with their
+    // own provider (registry pattern). "No results" is the honest interim
+    // answer — never a foreign-dialect or corrupt-file error.
+    if super::projects::project_engine_key(&app_data, &project_id) != "wds" {
+        return Ok(Vec::new());
+    }
     let out_path = results_path_for(&app_data, &project_id, scenario_id.as_deref());
     // No simulation run yet — expected for a fresh project, not an error.
     if !out_path.exists() {
@@ -624,6 +813,7 @@ fn element_series_from_out(
 /// Return per-period result series for a single node or link.
 pub fn get_element_series(
     app: tauri::AppHandle,
+    state: tauri::State<'_, NetworkState>,
     project_id: String,
     scenario_id: Option<String>,
     kind: String,
@@ -636,7 +826,17 @@ pub fn get_element_series(
     if !out_path.exists() {
         return Ok(None);
     }
-    element_series_from_out(&out_path, &kind, index).map(Some)
+    // Engine-dispatched: each engine's reader serves its own series. Field
+    // names are variable ids — wds's fixed set or the uds §6 catalog's.
+    match super::projects::project_engine_key(&app_data, &project_id).as_str() {
+        "wds" => element_series_from_out(&out_path, &kind, index).map(Some),
+        "uds" => {
+            let network =
+                uds_network_for_target(&app_data, &state, &project_id, scenario_id.as_deref())?;
+            super::uds_results::element_series(&out_path, &network, &kind, index as usize)
+        }
+        _ => Ok(None),
+    }
 }
 
 /// Index and value of the smallest **finite** entry in `values` among the
@@ -905,6 +1105,12 @@ pub fn get_result_analytics(
 ) -> Result<Option<ResultAnalyticsDto>, String> {
     validate_target_ids(&project_id, scenario_id.as_deref())?;
     let app_data = app_data_dir(&app)?;
+    // wds-shaped results reading; other engines' results arrive with their
+    // own provider (registry pattern). "No results" is the honest interim
+    // answer — never a foreign-dialect or corrupt-file error.
+    if super::projects::project_engine_key(&app_data, &project_id) != "wds" {
+        return Ok(None);
+    }
     let out_path = results_path_for(&app_data, &project_id, scenario_id.as_deref());
     // No simulation run yet — expected for a fresh project, not an error.
     if !out_path.exists() {
@@ -1099,7 +1305,9 @@ pub fn get_result_analytics(
 /// Sibling CSV paths for `export_results_csv`: `<base>-nodes.csv` and
 /// `<base>-links.csv` next to the user-chosen path (its extension, if any,
 /// is replaced).
-fn csv_sibling_paths(base: &std::path::Path) -> (std::path::PathBuf, std::path::PathBuf) {
+fn csv_sibling_paths(
+    base: &std::path::Path,
+) -> (std::path::PathBuf, std::path::PathBuf, std::path::PathBuf) {
     let stem = base
         .file_stem()
         .and_then(|s| s.to_str())
@@ -1108,6 +1316,8 @@ fn csv_sibling_paths(base: &std::path::Path) -> (std::path::PathBuf, std::path::
     (
         base.with_file_name(format!("{stem}-nodes.csv")),
         base.with_file_name(format!("{stem}-links.csv")),
+        // Written only by engines with areal elements (uds subcatchments).
+        base.with_file_name(format!("{stem}-subcatchments.csv")),
     )
 }
 
@@ -1203,21 +1413,50 @@ pub async fn export_results_csv(
             "No simulation results exist for this target — run a simulation first".to_string(),
         );
     }
-    let out_meta =
-        hydra::io::out_reader::read_metadata_checked(&out_path).map_err(|e| e.to_string())?;
-    let network = network_for_target(&app_data, &state, &project_id, scenario_id.as_deref())?;
-    if network.nodes.len() != out_meta.n_nodes || network.links.len() != out_meta.n_links {
-        return Err(format!(
-            "results.out does not match the current model ({} nodes / {} links in results, \
-             {} / {} in the model) — re-run the simulation before exporting",
-            out_meta.n_nodes,
-            out_meta.n_links,
-            network.nodes.len(),
-            network.links.len(),
-        ));
-    }
-    let node_ids: Vec<String> = network.nodes.iter().map(|n| n.base.id.clone()).collect();
-    let link_ids: Vec<String> = network.links.iter().map(|l| l.base.id.clone()).collect();
+    // Engine-dispatched: prepare a streaming job for this engine's reader,
+    // then share the dialog + blocking-write plumbing below.
+    type CsvJob = Box<
+        dyn FnOnce(&std::path::Path, &std::path::Path, &std::path::Path) -> Result<(), String>
+            + Send,
+    >;
+    let job: CsvJob = match super::projects::project_engine_key(&app_data, &project_id).as_str() {
+        "wds" => {
+            let out_meta = hydra::io::out_reader::read_metadata_checked(&out_path)
+                .map_err(|e| e.to_string())?;
+            let network =
+                network_for_target(&app_data, &state, &project_id, scenario_id.as_deref())?;
+            if network.nodes.len() != out_meta.n_nodes || network.links.len() != out_meta.n_links {
+                return Err(format!(
+                    "results.out does not match the current model ({} nodes / {} links in results, \
+                     {} / {} in the model) — re-run the simulation before exporting",
+                    out_meta.n_nodes,
+                    out_meta.n_links,
+                    network.nodes.len(),
+                    network.links.len(),
+                ));
+            }
+            let node_ids: Vec<String> = network.nodes.iter().map(|n| n.base.id.clone()).collect();
+            let link_ids: Vec<String> = network.links.iter().map(|l| l.base.id.clone()).collect();
+            let out_path = out_path.clone();
+            Box::new(move |nodes_csv, links_csv, _subs_csv| {
+                stream_results_csv(
+                    &out_path, &out_meta, &node_ids, &link_ids, nodes_csv, links_csv,
+                )
+            })
+        }
+        "uds" => {
+            let meta = hydra::uds::io::out_reader::read_metadata(&out_path)?;
+            let out_path = out_path.clone();
+            Box::new(move |nodes_csv, links_csv, subs_csv| {
+                super::uds_results::stream_uds_results_csv(
+                    &out_path, &meta, nodes_csv, links_csv, subs_csv,
+                )
+            })
+        }
+        _ => {
+            return Err("Results export is not available for this project's engine yet".to_string())
+        }
+    };
 
     let default_name = meta::read_project_meta(&bundle::project_dir(&app_data, &project_id))
         .map(|m| format!("{}-results.csv", m.name))
@@ -1242,16 +1481,12 @@ pub async fn export_results_csv(
         None => return Ok(None), // user cancelled
     };
     let base_path = file_path.into_path().map_err(|e| e.to_string())?;
-    let (nodes_csv, links_csv) = csv_sibling_paths(&base_path);
+    let (nodes_csv, links_csv, subs_csv) = csv_sibling_paths(&base_path);
 
     // Streaming a large result set is heavy IO — keep it off the async pool.
-    tauri::async_runtime::spawn_blocking(move || {
-        stream_results_csv(
-            &out_path, &out_meta, &node_ids, &link_ids, &nodes_csv, &links_csv,
-        )
-    })
-    .await
-    .map_err(|e| format!("CSV export task panicked: {e}"))??;
+    tauri::async_runtime::spawn_blocking(move || job(&nodes_csv, &links_csv, &subs_csv))
+        .await
+        .map_err(|e| format!("CSV export task panicked: {e}"))??;
 
     Ok(Some(base_path.to_string_lossy().into_owned()))
 }
@@ -1261,6 +1496,124 @@ mod tests {
     use super::*;
     use crate::commands::simulation::run_sim_loops;
     use crate::commands::test_fixtures::{loaded_sim, loaded_state, TEST_INP};
+
+    // ── wds result catalog (§6) ───────────────────────────────────────────
+
+    fn ranges_with_quality(quality: Option<(f64, f64)>) -> hydra::io::out_reader::ResultRanges {
+        hydra::io::out_reader::ResultRanges {
+            pressure_min: 1.0,
+            pressure_max: 2.0,
+            head_min: 3.0,
+            head_max: 4.0,
+            demand_min: 5.0,
+            demand_max: 6.0,
+            flow_min: 7.0,
+            flow_max: 8.0,
+            velocity_min: 9.0,
+            velocity_max: 10.0,
+            headloss_min: 11.0,
+            headloss_max: 12.0,
+            quality_min: quality.map(|q| q.0),
+            quality_max: quality.map(|q| q.1),
+        }
+    }
+
+    /// Every variable the engine declares must reach the catalog with the
+    /// range that was actually scanned for it — a mapping that pairs a
+    /// variable with a neighbouring range is invisible until someone reads
+    /// a legend.
+    #[test]
+    fn wds_catalog_pairs_each_variable_with_its_own_range() {
+        let meta = wds_generic_meta(&ranges_with_quality(Some((0.5, 1.5))));
+        let by_id = |vars: &[super::super::generic_results::GenericVariableDto], id: &str| {
+            vars.iter()
+                .find(|v| v.id == id)
+                .map(|v| (v.min, v.max))
+                .unwrap_or_else(|| panic!("{id} missing from catalog"))
+        };
+        assert_eq!(by_id(&meta.point_vars, "pressure"), (1.0, 2.0));
+        assert_eq!(by_id(&meta.point_vars, "head"), (3.0, 4.0));
+        assert_eq!(by_id(&meta.point_vars, "demand"), (5.0, 6.0));
+        assert_eq!(by_id(&meta.point_vars, "quality"), (0.5, 1.5));
+        assert_eq!(by_id(&meta.polyline_vars, "flow"), (7.0, 8.0));
+        assert_eq!(by_id(&meta.polyline_vars, "velocity"), (9.0, 10.0));
+        assert_eq!(by_id(&meta.polyline_vars, "headloss"), (11.0, 12.0));
+    }
+
+    /// A run without quality simulation must omit the quality variables
+    /// rather than offer a ramp over a range that does not exist.
+    #[test]
+    fn wds_catalog_omits_quality_when_the_run_had_none() {
+        let meta = wds_generic_meta(&ranges_with_quality(None));
+        assert!(!meta.point_vars.iter().any(|v| v.id == "quality"));
+        assert!(!meta.polyline_vars.iter().any(|v| v.id == "quality"));
+        // The rest of the catalog is unaffected.
+        assert!(meta.point_vars.iter().any(|v| v.id == "pressure"));
+        assert!(meta.polyline_vars.iter().any(|v| v.id == "status"));
+    }
+
+    /// Publishing a catalog and serving the generic period payload are two
+    /// different claims, and wds makes only the first. Conflating them sent
+    /// wds to a payload nothing serves for it: results loaded, the canvas
+    /// painted every element in the network-at-rest palette, and no error
+    /// surfaced anywhere because the empty fetch was indistinguishable from
+    /// "not simulated yet".
+    #[test]
+    fn wds_publishes_a_catalog_without_claiming_generic_periods() {
+        let ranges = ranges_with_quality(None);
+        let meta = ResultMetaDto {
+            times: vec![],
+            has_period_data: true,
+            quality_mode: "none".into(),
+            network_digest: None,
+            generic: Some(wds_generic_meta(&ranges)),
+            generic_periods: false,
+            ranges: ResultRangesDto::default(),
+        };
+        let json = serde_json::to_value(&meta).expect("serialisable");
+        assert!(
+            json["generic"]["polylineVars"]
+                .as_array()
+                .is_some_and(|v| !v.is_empty()),
+            "wds must publish a catalog for the legend"
+        );
+        assert_eq!(
+            json["genericPeriods"], false,
+            "wds serves the fixed period arrays, not the generic payload"
+        );
+    }
+
+    /// wds has no areal elements, so the region class must stay empty —
+    /// the legend hides a class with no variables, and a stray entry would
+    /// give a water-distribution map a region picker.
+    #[test]
+    fn wds_catalog_declares_no_region_variables() {
+        assert!(wds_generic_meta(&ranges_with_quality(None))
+            .region_vars
+            .is_empty());
+    }
+
+    /// Link status is the one categorical variable; its engine-authored
+    /// state labels must survive into the catalog, because a legend cannot
+    /// draw discrete swatches without them.
+    #[test]
+    fn wds_catalog_carries_link_status_states() {
+        let meta = wds_generic_meta(&ranges_with_quality(None));
+        let status = meta
+            .polyline_vars
+            .iter()
+            .find(|v| v.id == "status")
+            .expect("status declared");
+        match &status.ramp {
+            hydra::common::RampHint::Categorical { items } => {
+                assert!(
+                    items.iter().any(|i| i.label == "Open"),
+                    "expected an Open state, got {items:?}"
+                );
+            }
+            other => panic!("status should be categorical, got {other:?}"),
+        }
+    }
 
     // ── network_for_target cache/dirty decision ───────────────────────────
 
@@ -1462,8 +1815,11 @@ Duration  0
         // the frontend then treats the topology match as unknown (no gating).
         let dto = |d: Option<String>| ResultMetaDto {
             times: vec![],
+            has_period_data: true,
             quality_mode: "none".into(),
             network_digest: d,
+            generic: None,
+            generic_periods: false,
             ranges: ResultRangesDto {
                 pressure_min: 0.0,
                 pressure_max: 0.0,
@@ -1517,11 +1873,11 @@ Duration  0
         let out = dir.join("results.out");
         let digest = hydra::compute_network_digest(&hydra::io::parse(TEST_INP.as_bytes()).unwrap());
         let (_sim, err, _wall, _steps) = run_sim_loops(
-            loaded_sim(),
+            hydra::engines::EngineSession::from_wds(loaded_sim(), hydra::FlowUnits::Lps),
             Some(out.clone()),
             0.0,
             false,
-            digest,
+            Some(digest),
             |_, _, _, _, _| {},
             || false,
         );
@@ -1587,7 +1943,7 @@ Duration  0
         assert_eq!(node_ids.len(), out_meta.n_nodes);
         assert_eq!(link_ids.len(), out_meta.n_links);
 
-        let (nodes_csv, links_csv) = csv_sibling_paths(&dir.path().join("export.csv"));
+        let (nodes_csv, links_csv, _subs_csv) = csv_sibling_paths(&dir.path().join("export.csv"));
         assert!(nodes_csv.ends_with("export-nodes.csv"));
         assert!(links_csv.ends_with("export-links.csv"));
         stream_results_csv(

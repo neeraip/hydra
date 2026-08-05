@@ -59,6 +59,7 @@
 //! crate's public re-export surface; they do not depend on any internal module.
 
 pub mod analysis;
+pub mod descriptors;
 #[allow(clippy::too_many_arguments, clippy::needless_range_loop)]
 mod hydraulics;
 /// Parsing and output-writing utilities: INP parser, binary `.out` reader/writer, `.rpt` writer, and unit conversion.

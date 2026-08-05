@@ -6,18 +6,22 @@
 import { describe, expect, it } from "vitest";
 import type { Link, Node } from "../../hooks";
 import {
+  BAND_STEPS,
+  baseNodeRgba,
   flowMagnitudeRgba,
   headlossRgba,
   LINK_HEADLOSS_MAX,
   linkQualityRgba,
   linkRgba,
+  NO_DATA_RGB,
   nodeRgba,
-  nodeTypeRgba,
   qualityRgba,
+  seqRgb,
   sequentialRgba,
   statusLabel,
   statusRgba,
   velocityRgba,
+  verdictRgba,
 } from "./colorUtils";
 
 const RED = [201, 64, 64, 200];
@@ -46,75 +50,98 @@ describe("statusRgba", () => {
 });
 
 describe("flowMagnitudeRgba", () => {
-  it("returns grey for missing data", () => {
-    expect(flowMagnitudeRgba(null, 10)).toEqual([100, 100, 100, 200]);
-    expect(flowMagnitudeRgba(undefined, 10, 123)).toEqual([100, 100, 100, 123]);
+  it("marks missing data as missing", () => {
+    expect(flowMagnitudeRgba(null, 10)).toEqual([...NO_DATA_RGB, 200]);
+    expect(flowMagnitudeRgba(undefined, 10, 123)).toEqual([
+      ...NO_DATA_RGB,
+      123,
+    ]);
   });
 
   it("bands |flow| against thresholds when provided", () => {
+    // Thresholds make it a judgement, so it speaks the banded ramp rather
+    // than a warm palette of its own.
     const thresholds = { low: 10, target: 20, high: 30 };
     expect(flowMagnitudeRgba(5, 100, 200, thresholds)).toEqual([
-      61, 175, 117, 200,
-    ]); // good
+      ...BAND_STEPS[0],
+      200,
+    ]);
     expect(flowMagnitudeRgba(15, 100, 200, thresholds)).toEqual([
-      212, 160, 23, 200,
-    ]); // moderate
+      ...BAND_STEPS[2],
+      200,
+    ]);
     expect(flowMagnitudeRgba(25, 100, 200, thresholds)).toEqual([
-      201, 120, 64, 200,
-    ]); // elevated
+      ...BAND_STEPS[3],
+      200,
+    ]);
     expect(flowMagnitudeRgba(35, 100, 200, thresholds)).toEqual([
-      201, 64, 64, 200,
+      ...BAND_STEPS[4],
+      200,
     ]); // excessive
     // Band edges are exclusive lower bounds: exactly `low` is moderate.
     expect(flowMagnitudeRgba(10, 100, 200, thresholds)).toEqual([
-      212, 160, 23, 200,
+      ...BAND_STEPS[2],
+      200,
     ]);
     // Sign is ignored — reverse flow bands by magnitude.
     expect(flowMagnitudeRgba(-35, 100, 200, thresholds)).toEqual([
-      201, 64, 64, 200,
+      ...BAND_STEPS[4],
+      200,
     ]);
   });
 
-  it("ramps cyan → orange by |flow|/maxFlow without thresholds", () => {
-    expect(flowMagnitudeRgba(0, 10)).toEqual([80, 200, 247, 200]); // t=0
-    expect(flowMagnitudeRgba(10, 10)).toEqual([255, 80, 47, 200]); // t=1
-    expect(flowMagnitudeRgba(-10, 10)).toEqual([255, 80, 47, 200]); // |flow|
-    expect(flowMagnitudeRgba(5, 0)).toEqual([80, 200, 247, 200]); // maxFlow=0 → t=0
+  it("takes the sequential ramp by |flow|/maxFlow without thresholds", () => {
+    // Links take the polyline hue family, so a link and a node at the same
+    // fraction of their range are told apart by hue rather than by memory.
+    expect(flowMagnitudeRgba(0, 10)).toEqual([...seqRgb(0, "polyline"), 200]);
+    expect(flowMagnitudeRgba(10, 10)).toEqual([...seqRgb(1, "polyline"), 200]);
+    expect(flowMagnitudeRgba(-10, 10)).toEqual([...seqRgb(1, "polyline"), 200]); // |flow|
+    expect(flowMagnitudeRgba(5, 0)).toEqual([...seqRgb(0, "polyline"), 200]);
   });
 });
 
 describe("velocityRgba", () => {
-  it("bands against thresholds when provided", () => {
+  // Thresholds mean the reader asked for the verdict, so the answer is a
+  // severity rather than a position on a scale: stagnation is worth
+  // noticing, and scour is the failure.
+  it("renders a verdict when thresholds are provided", () => {
     const thresholds = { low: 0.5, target: 1.0, high: 2.0 };
-    expect(velocityRgba(0.2, thresholds)).toEqual([61, 175, 117, 220]); // good
-    expect(velocityRgba(0.7, thresholds)).toEqual([212, 160, 23, 220]); // moderate
-    expect(velocityRgba(1.5, thresholds)).toEqual([201, 120, 64, 220]); // elevated
-    expect(velocityRgba(2.5, thresholds)).toEqual([201, 64, 64, 220]); // excessive
+    expect(velocityRgba(0.2, thresholds)).toEqual(verdictRgba("caution", 220));
+    expect(velocityRgba(0.7, thresholds)).toEqual(verdictRgba("nominal", 220));
+    expect(velocityRgba(1.5, thresholds)).toEqual(verdictRgba("nominal", 220));
+    expect(velocityRgba(2.5, thresholds)).toEqual(verdictRgba("alarm", 220));
     // Exact threshold values fall into the next band up (strict `<`).
-    expect(velocityRgba(0.5, thresholds)).toEqual([212, 160, 23, 220]);
-    expect(velocityRgba(2.0, thresholds)).toEqual([201, 64, 64, 220]);
+    expect(velocityRgba(0.5, thresholds)).toEqual(verdictRgba("nominal", 220));
+    expect(velocityRgba(2.0, thresholds)).toEqual(verdictRgba("alarm", 220));
   });
 
-  it("ramps blue → red capped at 1.5 m/s without thresholds", () => {
-    expect(velocityRgba(0)).toEqual([74, 144, 217, 220]); // t=0
-    expect(velocityRgba(1.5)).toEqual([201, 80, 23, 220]); // t=1
-    expect(velocityRgba(99)).toEqual([201, 80, 23, 220]); // clamped
+  it("takes the sequential ramp, capped at 1.5 m/s, without thresholds", () => {
+    expect(velocityRgba(0)).toEqual([...seqRgb(0, "polyline"), 220]);
+    expect(velocityRgba(1.5)).toEqual([...seqRgb(1, "polyline"), 220]);
+    expect(velocityRgba(99)).toEqual([...seqRgb(1, "polyline"), 220]);
   });
 });
 
 describe("headlossRgba", () => {
   it("returns grey for missing data", () => {
-    expect(headlossRgba(null)).toEqual([100, 100, 100, 200]);
-    expect(headlossRgba(undefined)).toEqual([100, 100, 100, 200]);
+    expect(headlossRgba(null)).toEqual([...NO_DATA_RGB, 200]);
+    expect(headlossRgba(undefined)).toEqual([...NO_DATA_RGB, 200]);
   });
 
   it("ramps the sequential scale over the fixed 0..LINK_HEADLOSS_MAX range", () => {
-    expect(headlossRgba(0)).toEqual(sequentialRgba(0, 0, LINK_HEADLOSS_MAX));
-    expect(headlossRgba(0)).toEqual([0, 0, 255, 220]); // t=0 → blue end
-    expect(headlossRgba(5)).toEqual(sequentialRgba(5, 0, LINK_HEADLOSS_MAX));
-    expect(headlossRgba(LINK_HEADLOSS_MAX)).toEqual([255, 0, 0, 220]); // t=1
-    // Values above the cap clamp to the red end.
-    expect(headlossRgba(99)).toEqual([255, 0, 0, 220]);
+    expect(headlossRgba(0)).toEqual(
+      sequentialRgba(0, 0, LINK_HEADLOSS_MAX, 220, "polyline"),
+    );
+    expect(headlossRgba(0)).toEqual([...seqRgb(0, "polyline"), 220]);
+    expect(headlossRgba(5)).toEqual(
+      sequentialRgba(5, 0, LINK_HEADLOSS_MAX, 220, "polyline"),
+    );
+    expect(headlossRgba(LINK_HEADLOSS_MAX)).toEqual([
+      ...seqRgb(1, "polyline"),
+      220,
+    ]);
+    // Values above the cap clamp to the bright end.
+    expect(headlossRgba(99)).toEqual([...seqRgb(1, "polyline"), 220]);
   });
 
   it("colours by magnitude (reverse-flow headloss sign is ignored)", () => {
@@ -124,18 +151,18 @@ describe("headlossRgba", () => {
 
 describe("linkQualityRgba", () => {
   it("returns grey for missing data", () => {
-    expect(linkQualityRgba(null, 0, 1)).toEqual([100, 100, 100, 200]);
-    expect(linkQualityRgba(undefined, 0, 1)).toEqual([100, 100, 100, 200]);
+    expect(linkQualityRgba(null, 0, 1)).toEqual([...NO_DATA_RGB, 200]);
+    expect(linkQualityRgba(undefined, 0, 1)).toEqual([...NO_DATA_RGB, 200]);
   });
 
   it("reuses the node quality ramp normalised to the result range", () => {
-    expect(linkQualityRgba(0, 0, 1)).toEqual(qualityRgba(0));
-    expect(linkQualityRgba(0.5, 0, 1)).toEqual(qualityRgba(0.5));
-    expect(linkQualityRgba(1, 0, 1)).toEqual(qualityRgba(1));
+    expect(linkQualityRgba(0, 0, 1)).toEqual(qualityRgba(0, "polyline"));
+    expect(linkQualityRgba(0.5, 0, 1)).toEqual(qualityRgba(0.5, "polyline"));
+    expect(linkQualityRgba(1, 0, 1)).toEqual(qualityRgba(1, "polyline"));
     // Non-trivial range: 15 of [10, 20] → t = 0.5.
-    expect(linkQualityRgba(15, 10, 20)).toEqual(qualityRgba(0.5));
+    expect(linkQualityRgba(15, 10, 20)).toEqual(qualityRgba(0.5, "polyline"));
     // Degenerate range guards against divide-by-zero.
-    expect(linkQualityRgba(5, 5, 5)).toEqual(qualityRgba(0));
+    expect(linkQualityRgba(5, 5, 5)).toEqual(qualityRgba(0, "polyline"));
   });
 });
 
@@ -154,11 +181,15 @@ function makeLink(extra: Partial<Link> = {}): Link {
 }
 
 describe("linkRgba", () => {
-  it("always colours pumps amber, regardless of the active variable", () => {
+  it("lets a pump show its own results", () => {
+    // A pump used to be painted a fixed amber before the ramp was
+    // consulted, so it could never show its flow, velocity or status — the
+    // one link kind whose data was hidden to signal what kind it was.
+    // Identity comes from role and size; the colour belongs to the data.
     const pump = makeLink({ type: "pump", flow: 999, velocity: 99, status: 2 });
-    expect(linkRgba(pump, "flow", 10)).toEqual([212, 160, 23, 220]);
-    expect(linkRgba(pump, "velocity", 10)).toEqual([212, 160, 23, 220]);
-    expect(linkRgba(pump, "status", 10)).toEqual([212, 160, 23, 220]);
+    expect(linkRgba(pump, "flow", 10)).toEqual(flowMagnitudeRgba(999, 10));
+    expect(linkRgba(pump, "velocity", 10)).toEqual(velocityRgba(99));
+    expect(linkRgba(pump, "status", 10)).toEqual(statusRgba(2));
   });
 
   it("dispatches to flowMagnitudeRgba for the flow variable", () => {
@@ -170,7 +201,8 @@ describe("linkRgba", () => {
       flowMagnitudeRgba(10, 10, 200, thresholds),
     );
     expect(linkRgba(makeLink({ flow: null }), "flow", 10)).toEqual([
-      100, 100, 100, 200,
+      ...NO_DATA_RGB,
+      200,
     ]);
   });
 
@@ -193,11 +225,11 @@ describe("linkRgba", () => {
     expect(linkRgba(makeLink({ headloss: 5 }), "headloss", 0)).toEqual(
       headlossRgba(5),
     );
-    expect(linkRgba(makeLink(), "headloss", 0)).toEqual([100, 100, 100, 200]);
-    // Pumps stay amber even for headloss.
+    expect(linkRgba(makeLink(), "headloss", 0)).toEqual([...NO_DATA_RGB, 200]);
+    // A pump's headloss is its headloss, like anything else's.
     expect(
       linkRgba(makeLink({ type: "pump", headloss: 5 }), "headloss", 0),
-    ).toEqual([212, 160, 23, 220]);
+    ).toEqual(headlossRgba(5));
   });
 
   it("dispatches to linkQualityRgba for the quality variable", () => {
@@ -216,7 +248,7 @@ describe("linkRgba", () => {
     expect(linkRgba(makeLink({ quality: 0.5 }), "quality", 0)).toEqual(
       linkQualityRgba(0.5, 0, 1),
     );
-    expect(linkRgba(makeLink(), "quality", 0)).toEqual([100, 100, 100, 200]);
+    expect(linkRgba(makeLink(), "quality", 0)).toEqual([...NO_DATA_RGB, 200]);
   });
 });
 
@@ -240,51 +272,113 @@ function makeNode(extra: Partial<Node> = {}): CanvasNode {
 const rgbaOf = (
   node: CanvasNode,
   nodeVar: "pressure" | "head" | "demand" | "quality",
-) => nodeRgba(node, nodeVar, 0, 100, 0, 10, 0, 1);
+  role?: string,
+) => nodeRgba(node, nodeVar, 0, 100, 0, 10, 0, 1, undefined, role);
 
 describe("nodeRgba", () => {
-  it("always uses the type colour for tanks and reservoirs", () => {
+  it("shows the at-rest palette for kinds carrying no value", () => {
+    // A tank and a reservoir have no pressure, head or demand of their own
+    // to plot, so they keep the network-at-rest appearance whatever
+    // variable is active — and it comes from the role the engine declared,
+    // not from this file knowing what a tank is.
     const tank = makeNode({ type: "tank", pressure: 5 });
     const reservoir = makeNode({ type: "reservoir", pressure: 5 });
     for (const v of ["pressure", "head", "demand", "quality"] as const) {
-      expect(rgbaOf(tank, v)).toEqual(nodeTypeRgba("tank"));
-      expect(rgbaOf(reservoir, v)).toEqual(nodeTypeRgba("reservoir"));
+      expect(rgbaOf(tank, v, "boundary")).toEqual(baseNodeRgba("boundary"));
+      expect(rgbaOf(reservoir, v, "boundary")).toEqual(
+        baseNodeRgba("boundary"),
+      );
     }
-    expect(nodeTypeRgba("tank")).toEqual([61, 175, 117, 255]);
-    expect(nodeTypeRgba("reservoir")).toEqual([74, 144, 217, 255]);
   });
 
-  it("colours junctions by pressure thresholds (default 24/35/45)", () => {
-    expect(rgbaOf(makeNode({ pressure: 10 }), "pressure")).toEqual([
-      201, 64, 64, 255,
-    ]); // below low
-    expect(rgbaOf(makeNode({ pressure: 30 }), "pressure")).toEqual([
-      212, 160, 23, 255,
-    ]); // low–required
-    expect(rgbaOf(makeNode({ pressure: 40 }), "pressure")).toEqual([
-      61, 175, 117, 255,
-    ]); // required–high
-    expect(rgbaOf(makeNode({ pressure: 50 }), "pressure")).toEqual([
-      74, 144, 217, 255,
-    ]); // above high
+  it("separates the three roles by lightness, not hue", () => {
+    const lum = (c: number[]) => 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
+    const conveyance = baseNodeRgba("conveyance");
+    const boundary = baseNodeRgba("boundary");
+    const control = baseNodeRgba("control");
+    // A boundary is where the model is fed or drained, so it reads first.
+    expect(lum(boundary)).toBeGreaterThan(lum(control));
+    expect(lum(control)).toBeGreaterThan(lum(conveyance));
+    // Neutral: no channel may run away from the others.
+    for (const c of [conveyance, boundary, control]) {
+      expect(
+        Math.max(c[0], c[1], c[2]) - Math.min(c[0], c[1], c[2]),
+      ).toBeLessThan(40);
+    }
   });
 
-  it("falls back to muted junction grey when the variable has no data", () => {
-    expect(rgbaOf(makeNode({ pressure: null }), "pressure")).toEqual([
-      180, 195, 215, 180,
-    ]);
-    expect(rgbaOf(makeNode({ quality: null }), "quality")).toEqual([
-      180, 195, 215, 180,
-    ]);
+  it("gives a kind with no role the quietest treatment", () => {
+    expect(baseNodeRgba(undefined)).toEqual(baseNodeRgba("conveyance"));
+  });
+
+  // The model carries no required service pressure — it is a regulatory
+  // and design input, and differs by jurisdiction, pressure zone and fire
+  // condition. So an unjudged map shows pressure as what it measurably is,
+  // a quantity, on the same ramp head and demand use. It used to render a
+  // verdict against defaults nobody had affirmed.
+  it("paints pressure as a magnitude when no bands are given", () => {
+    const low = rgbaOf(makeNode({ pressure: 10 }), "pressure");
+    const high = rgbaOf(makeNode({ pressure: 90 }), "pressure");
+    expect(low).toEqual(sequentialRgba(10, 0, 100));
+    expect(high).toEqual(sequentialRgba(90, 0, 100));
+    expect(low).not.toEqual(high);
+  });
+
+  // With bands, the reader has asked for the judgement. Under-service is
+  // the failure; over-pressure is worth noticing, so the scale is not
+  // monotonic — which is precisely why a magnitude ramp cannot express it.
+  it("renders a verdict when bands are given", () => {
+    const bands = { low: 24, required: 35, high: 45 };
+    const judged = (p: number) =>
+      nodeRgba(
+        makeNode({ pressure: p }),
+        "pressure",
+        0,
+        100,
+        0,
+        10,
+        0,
+        1,
+        bands,
+      );
+    expect(judged(10)).toEqual(verdictRgba("alarm"));
+    expect(judged(30)).toEqual(verdictRgba("caution"));
+    expect(judged(40)).toEqual(verdictRgba("nominal"));
+    expect(judged(50)).toEqual(verdictRgba("caution"));
+  });
+
+  it("marks a missing reading as missing, not as a resting element", () => {
+    // A reading that should exist and does not is a different statement
+    // from a network with no results at all, so it gets its own dim
+    // neutral rather than the at-rest palette.
+    const missing = [110, 116, 126, 190];
+    expect(rgbaOf(makeNode({ pressure: null }), "pressure")).toEqual(missing);
+    expect(rgbaOf(makeNode({ quality: null }), "quality")).toEqual(missing);
+    expect(missing).not.toEqual(baseNodeRgba("conveyance"));
   });
 
   it("uses the sequential ramp for head and demand", () => {
-    // head 0 of [0, 100] → t=0 → deep blue end of the ramp.
-    expect(rgbaOf(makeNode({ head: 0 }), "head")).toEqual([0, 0, 255, 220]);
-    // demand 10 of [0, 10] → t=1 → orange end of the ramp.
+    expect(rgbaOf(makeNode({ head: 0 }), "head")).toEqual([...seqRgb(0), 220]);
     expect(rgbaOf(makeNode({ demand: 10 }), "demand")).toEqual([
-      255, 0, 0, 220,
+      ...seqRgb(1),
+      220,
     ]);
+  });
+
+  it("keeps the sequential ramp monotonic in lightness", () => {
+    // What a rainbow could not promise: every step darker than the last,
+    // so the ramp survives greyscale and colour-vision deficiency, and
+    // invents no boundary the data does not have.
+    const lum = (c: number[]) => 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
+    // Brighter as the value rises: the canvas ground is near-black, so a
+    // ramp that darkened toward its maximum hid the values these maps are
+    // read for.
+    let previous = Number.NEGATIVE_INFINITY;
+    for (let i = 0; i <= 10; i++) {
+      const here = lum(sequentialRgba(i, 0, 10));
+      expect(here).toBeGreaterThan(previous);
+      previous = here;
+    }
   });
 });
 

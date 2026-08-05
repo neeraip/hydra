@@ -102,7 +102,7 @@ export function PumpEnergyPanel() {
                   width: `${pct}%`,
                   height: "100%",
                   background:
-                    "linear-gradient(90deg, var(--accent) 0%, rgba(74,144,217,0.6) 100%)",
+                    "linear-gradient(90deg, var(--accent) 0%, rgba(205,211,223,0.55) 100%)",
                   borderRadius: 5,
                 }}
               />

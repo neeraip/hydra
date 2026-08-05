@@ -535,7 +535,7 @@ export function ProjectSwitcher() {
                 style={{
                   background: "var(--accent)",
                   border: "1px solid var(--accent)",
-                  color: "#fff",
+                  color: "var(--accent-fg)",
                   borderRadius: 5,
                   padding: "7px 14px",
                   fontSize: "var(--text-md)",

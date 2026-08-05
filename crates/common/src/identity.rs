@@ -113,6 +113,16 @@ impl EngineDescriptor {
 /// Every engine compiled into this distribution, in presentation order
 /// (spec §2.4) — planned engines included, so applications can present
 /// the full modelling scope rather than only what ships today.
+///
+/// Accents are chosen to be distinct from one another **and** from any hue
+/// that carries state meaning in a consuming application — green reads as
+/// success, amber as caution, red as failure, so an engine wearing one
+/// would say something it does not mean. (The APWA Uniform Color Code
+/// would put drainage on green; that standard governs excavation markings
+/// on pavement, not software identity, and green is spoken for here.)
+/// These are identity, not data presentation — the contract keeps colour
+/// out of the element and result catalogs precisely so applications own
+/// *those* palettes (spec §6).
 pub const ENGINES: &[EngineDescriptor] = &[
     EngineDescriptor {
         key: "wds",
@@ -144,7 +154,7 @@ pub const ENGINES: &[EngineDescriptor] = &[
         key: "och",
         label: "Open Channel",
         pill: "OC",
-        accent: "#3daf75",
+        accent: "#2f9e9e",
         summary: "River and open-channel hydraulics — steady and unsteady flow \
                   on the HEC-RAS data model.",
         status: EngineStatus::Planned,

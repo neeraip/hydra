@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useActiveProject, useAppState } from "../../AppContext";
 import { ControlsEditor } from "../../components/editors/ControlsEditor";
 import { CurveEditor } from "../../components/editors/CurveEditor";
@@ -14,21 +14,56 @@ import {
   useRules,
 } from "../../hooks";
 import { DraftProvider, useDraft } from "../../hooks/DraftContext";
+import {
+  type EditorSection,
+  EditorShell,
+  EditorStatusBar,
+} from "./EditorShell";
+import type { Section } from "./NetworkEditor/ElementsEditor";
 import { ElementsEditor } from "./NetworkEditor/ElementsEditor";
+import {
+  collectDirtyKinds,
+  ELEMENT_KIND_ORDER,
+  elementCounts,
+} from "./NetworkEditor/elementsEditorDerivations";
 
-type EditorSectionId = "elements" | "curves" | "patterns" | "controls";
+/**
+ * The rail lists every element kind and every collection as one flat
+ * inventory, so `Junctions` and `Patterns` are siblings.
+ *
+ * They were two levels before — an `Elements` entry containing six kinds,
+ * beside three collection entries — which made one rail item mean
+ * something different from the other three, and pushed the kinds into a
+ * horizontal strip that hid them behind an invisible scroll once there
+ * were enough. A vertical list scrolls honestly and shows every kind's
+ * count without a click.
+ */
+type CollectionId = "curves" | "patterns" | "controls";
+type EditorSectionId = Section | CollectionId;
 
-interface EditorSectionSpec {
-  id: EditorSectionId;
-  label: string;
-  count: number;
-}
+/** Kind id (as the model names it) → its rail section. */
+const SECTION_FOR_KIND: Record<string, Section> = {
+  junction: "junctions",
+  pipe: "pipes",
+  pump: "pumps",
+  tank: "tanks",
+  reservoir: "reservoirs",
+  valve: "valves",
+};
 
-const EDITOR_SECTIONS: EditorSectionSpec[] = [
-  { id: "elements", label: "Elements", count: 0 },
-  { id: "curves", label: "Pump curves", count: 0 },
-  { id: "patterns", label: "Patterns", count: 0 },
-  { id: "controls", label: "Controls", count: 0 },
+const KIND_LABEL: Record<string, string> = {
+  junction: "Junctions",
+  pipe: "Pipes",
+  pump: "Pumps",
+  tank: "Tanks",
+  reservoir: "Reservoirs",
+  valve: "Valves",
+};
+
+const COLLECTIONS: { id: CollectionId; label: string; kindId: string }[] = [
+  { id: "curves", label: "Pump curves", kindId: "curve" },
+  { id: "patterns", label: "Patterns", kindId: "pattern" },
+  { id: "controls", label: "Controls", kindId: "control" },
 ];
 
 export function NetworkEditor() {
@@ -55,20 +90,52 @@ function NetworkEditorInner() {
     discardAll,
     saveAll,
     isSaving,
+    elementsDraft,
+    pendingAdds,
+    pendingDeletes,
   } = useDraft();
-  const elementsCount = allNodes.length + allLinks.length;
-  const sections = EDITOR_SECTIONS.map((s) => {
-    if (s.id === "elements") return { ...s, count: elementsCount };
-    if (s.id === "curves") return { ...s, count: curves.length };
-    if (s.id === "patterns") return { ...s, count: patterns.length };
-    if (s.id === "controls")
-      return { ...s, count: controls.length + rules.length };
-    return s;
-  });
-
-  const [activeSectionId, setActiveSectionId] = useState<EditorSectionId>(
-    sections[0].id,
+  const counts = useMemo(
+    () => elementCounts(allNodes, allLinks, pendingAdds, pendingDeletes),
+    [allNodes, allLinks, pendingAdds, pendingDeletes],
   );
+  const dirtyKinds = useMemo(
+    () =>
+      collectDirtyKinds({
+        draftEntries: Array.from(elementsDraft.values()),
+        pendingAdds,
+        pendingDeletes,
+      }),
+    [elementsDraft, pendingAdds, pendingDeletes],
+  );
+
+  const collectionCount: Record<CollectionId, number> = {
+    curves: curves.length,
+    patterns: patterns.length,
+    controls: controls.length + rules.length,
+  };
+
+  const sections: EditorSection[] = [
+    ...ELEMENT_KIND_ORDER.map((kind) => ({
+      id: SECTION_FOR_KIND[kind] as EditorSectionId,
+      label: KIND_LABEL[kind],
+      count: counts[kind],
+      dirtyCount: dirtyKinds.has(kind) ? 1 : 0,
+      kindId: kind,
+    })),
+    ...COLLECTIONS.map((c, i) => ({
+      id: c.id as EditorSectionId,
+      label: c.label,
+      count: collectionCount[c.id],
+      dirtyCount: dirtyBySection[c.id],
+      kindId: c.kindId,
+      // The collections are a different sort of thing from the spatial
+      // kinds above; one rule parts them rather than a second nav level.
+      startsGroup: i === 0,
+    })),
+  ];
+
+  const [activeSectionId, setActiveSectionId] =
+    useState<EditorSectionId>("junctions");
   const [previewOpen, setPreviewOpen] = useState(false);
   const [confirmDiscardOpen, setConfirmDiscardOpen] = useState(false);
   // General "reveal this element" request forwarded to the ElementsEditor:
@@ -82,7 +149,7 @@ function NetworkEditorInner() {
   } | null>(null);
 
   function handleNavigateToPump(pumpId: string) {
-    setActiveSectionId("elements");
+    setActiveSectionId("pumps");
     setElementFocus({ kind: "pump", id: pumpId, token: Date.now() });
   }
 
@@ -90,7 +157,10 @@ function NetworkEditorInner() {
   // every request so re-opening the same element re-runs the jump.
   useEffect(() => {
     if (!editorFocus) return;
-    setActiveSectionId("elements");
+    // Reveal the kind's own rail entry, not a generic "elements" tab —
+    // the rail is the navigation now.
+    const target = SECTION_FOR_KIND[editorFocus.kind];
+    if (target) setActiveSectionId(target);
     setElementFocus({
       kind: editorFocus.kind,
       id: editorFocus.id,
@@ -113,297 +183,111 @@ function NetworkEditorInner() {
     else performDiscard();
   }
 
-  const validSection = sections.find((s) => s.id === activeSectionId)
+  const validSection: EditorSectionId = sections.some(
+    (s) => s.id === activeSectionId,
+  )
     ? activeSectionId
-    : sections[0].id;
+    : "junctions";
 
-  const sectionDirty: Record<EditorSectionId, number> = {
-    elements: dirtyBySection.elements,
-    curves: dirtyBySection.curves,
-    patterns: dirtyBySection.patterns,
-    controls: dirtyBySection.controls,
-  };
+  const isElementSection = (id: EditorSectionId): id is Section =>
+    id !== "curves" && id !== "patterns" && id !== "controls";
+  const elementSection: Section = isElementSection(validSection)
+    ? validSection
+    : "junctions";
 
   return (
-    <div
-      style={{
-        flex: 1,
-        display: "flex",
-        flexDirection: "column",
-        overflow: "hidden",
-        minHeight: 0,
-        animation: "fadeIn 150ms ease-out",
-      }}
-    >
-      <div
-        style={{ flex: 1, display: "flex", overflow: "hidden", minHeight: 0 }}
-      >
-        <div
-          style={{
-            width: 180,
-            flexShrink: 0,
-            background: "var(--bg-panel)",
-            borderRight: "1px solid var(--border)",
-            display: "flex",
-            flexDirection: "column",
-            overflow: "auto",
-            paddingTop: 8,
-          }}
-        >
-          {sections.map((s) => {
-            const active = s.id === validSection;
-            return (
+    <EditorShell
+      sections={sections}
+      activeSectionId={validSection}
+      onSelectSection={(id) => setActiveSectionId(id as EditorSectionId)}
+      footer={
+        <EditorStatusBar tone={dirtyCount > 0 ? "dirty" : "quiet"}>
+          {dirtyCount > 0 ? (
+            <>
+              <span
+                style={{ color: "rgba(220, 160, 40, 0.9)", fontWeight: 500 }}
+              >
+                {dirtyCount} unsaved change{dirtyCount !== 1 ? "s" : ""}
+              </span>
+              <div style={{ flex: 1 }} />
+              <SecondaryButton onClick={() => setPreviewOpen(true)}>
+                Preview changes
+              </SecondaryButton>
+              <SecondaryButton onClick={handleDiscardClick} disabled={isSaving}>
+                Discard
+              </SecondaryButton>
               <button
                 type="button"
-                key={s.id}
-                onClick={() => setActiveSectionId(s.id)}
-                onMouseEnter={(e) => {
-                  if (!active)
-                    (e.currentTarget as HTMLButtonElement).style.background =
-                      "rgba(255,255,255,0.05)";
-                }}
-                onMouseLeave={(e) => {
-                  if (!active)
-                    (e.currentTarget as HTMLButtonElement).style.background =
-                      "transparent";
-                }}
+                onClick={() => void saveAll()}
+                disabled={isSaving}
                 style={{
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "space-between",
-                  width: "100%",
-                  padding: "8px 14px",
-                  border: "none",
-                  background: active ? "var(--accent-dim)" : "transparent",
-                  borderLeft: active
-                    ? "2px solid var(--accent)"
-                    : "2px solid transparent",
-                  color: active
-                    ? "var(--text-primary)"
-                    : "var(--text-secondary)",
-                  cursor: "pointer",
-                  fontSize: "var(--text-lg)",
+                  padding: "4px 12px",
+                  borderRadius: 5,
+                  border: "1px solid rgba(220, 160, 40, 0.4)",
+                  background: "rgba(220, 160, 40, 0.12)",
+                  color: "rgba(220, 160, 40, 0.95)",
                   fontFamily: "var(--font-ui)",
-                  textAlign: "left",
-                  transition: "background var(--t-fast)",
+                  fontSize: "var(--text-md)",
+                  fontWeight: 500,
+                  cursor: isSaving ? "default" : "pointer",
+                  opacity: isSaving ? 0.7 : 1,
                 }}
               >
-                <span>{s.label}</span>
-                <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
-                  {sectionDirty[s.id] > 0 && (
-                    <span
-                      style={{
-                        width: 6,
-                        height: 6,
-                        borderRadius: "50%",
-                        background: "rgba(220, 160, 40, 0.9)",
-                        display: "inline-block",
-                        flexShrink: 0,
-                      }}
-                    />
-                  )}
-                  <span
-                    style={{
-                      fontSize: "var(--text-sm)",
-                      fontFamily: "var(--font-mono)",
-                      color: active ? "var(--accent)" : "var(--text-tertiary)",
-                    }}
-                  >
-                    {s.count}
-                  </span>
-                </div>
+                {isSaving ? "Saving…" : "Save changes"}
               </button>
-            );
-          })}
-        </div>
-
-        <div
-          style={{
-            flex: 1,
-            display: "flex",
-            flexDirection: "column",
-            overflow: "hidden",
-            minHeight: 0,
-          }}
-        >
-          {/* All four editors stay mounted so neither draft data nor
-              per-tab UI state (selection, expanded rows, etc.) is lost
-              when switching tabs — only visibility toggles. */}
-          <div
-            style={{
-              display: validSection === "elements" ? "flex" : "none",
-              flex: 1,
-              minHeight: 0,
-            }}
-          >
-            <ElementsEditor
-              focusKind={elementFocus?.kind}
-              focusId={elementFocus?.id}
-              focusToken={elementFocus?.token}
-            />
-          </div>
-          <div
-            style={{
-              display: validSection === "curves" ? "flex" : "none",
-              flex: 1,
-              minHeight: 0,
-            }}
-          >
-            <CurveEditor
-              accent={accent}
-              onNavigateToPump={handleNavigateToPump}
-            />
-          </div>
-          <div
-            style={{
-              display: validSection === "patterns" ? "flex" : "none",
-              flex: 1,
-              minHeight: 0,
-            }}
-          >
-            <PatternEditor accent={accent} />
-          </div>
-          <div
-            style={{
-              display: validSection === "controls" ? "flex" : "none",
-              flex: 1,
-              minHeight: 0,
-            }}
-          >
-            <ControlsEditor accent={accent} />
-          </div>
-        </div>
-      </div>
-
-      {/* Unified status / save bar — spans all four tabs. */}
+            </>
+          ) : (
+            <span style={{ color: "var(--text-tertiary)" }}>
+              No unsaved changes
+            </span>
+          )}
+        </EditorStatusBar>
+      }
+    >
+      {/* Every section stays mounted so neither draft data nor per-section
+          UI state (selection, sort, expanded rows) is lost when the rail
+          moves; only visibility toggles. */}
       <div
         style={{
-          display: "flex",
-          alignItems: "center",
-          gap: 8,
-          padding: "6px 16px",
-          borderTop: `1px solid ${dirtyCount > 0 ? "rgba(220, 160, 40, 0.3)" : "var(--border)"}`,
-          flexShrink: 0,
-          fontSize: "var(--text-md)",
-          background: dirtyCount > 0 ? "rgba(220, 160, 40, 0.07)" : undefined,
-          transition: "background 200ms",
+          display: isElementSection(validSection) ? "flex" : "none",
+          flex: 1,
+          minHeight: 0,
         }}
       >
-        {dirtyCount > 0 ? (
-          <>
-            <span style={{ color: "rgba(220, 160, 40, 0.9)", fontWeight: 500 }}>
-              {dirtyCount} unsaved change{dirtyCount !== 1 ? "s" : ""}
-            </span>
-            <div style={{ flex: 1 }} />
-            <button
-              type="button"
-              onClick={() => setPreviewOpen(true)}
-              onMouseEnter={(e) => {
-                (e.currentTarget as HTMLButtonElement).style.background =
-                  "var(--nav-hover)";
-                (e.currentTarget as HTMLButtonElement).style.borderColor =
-                  "var(--border-hover)";
-                (e.currentTarget as HTMLButtonElement).style.color =
-                  "var(--text-primary)";
-              }}
-              onMouseLeave={(e) => {
-                (e.currentTarget as HTMLButtonElement).style.background =
-                  "transparent";
-                (e.currentTarget as HTMLButtonElement).style.borderColor =
-                  "var(--border)";
-                (e.currentTarget as HTMLButtonElement).style.color =
-                  "var(--text-secondary)";
-              }}
-              style={{
-                padding: "4px 12px",
-                borderRadius: 5,
-                border: "1px solid var(--border)",
-                background: "transparent",
-                color: "var(--text-secondary)",
-                fontFamily: "var(--font-ui)",
-                fontSize: "var(--text-md)",
-                cursor: "pointer",
-                transition:
-                  "background var(--t-fast), border-color var(--t-fast), color var(--t-fast)",
-              }}
-            >
-              Preview changes
-            </button>
-            <button
-              type="button"
-              onClick={handleDiscardClick}
-              disabled={isSaving}
-              onMouseEnter={(e) => {
-                (e.currentTarget as HTMLButtonElement).style.background =
-                  "var(--nav-hover)";
-                (e.currentTarget as HTMLButtonElement).style.borderColor =
-                  "var(--border-hover)";
-                (e.currentTarget as HTMLButtonElement).style.color =
-                  "var(--text-primary)";
-              }}
-              onMouseLeave={(e) => {
-                (e.currentTarget as HTMLButtonElement).style.background =
-                  "transparent";
-                (e.currentTarget as HTMLButtonElement).style.borderColor =
-                  "var(--border)";
-                (e.currentTarget as HTMLButtonElement).style.color =
-                  "var(--text-secondary)";
-              }}
-              style={{
-                padding: "4px 12px",
-                borderRadius: 5,
-                border: "1px solid var(--border)",
-                background: "transparent",
-                color: "var(--text-secondary)",
-                fontFamily: "var(--font-ui)",
-                fontSize: "var(--text-md)",
-                cursor: "pointer",
-                transition:
-                  "background var(--t-fast), border-color var(--t-fast), color var(--t-fast)",
-              }}
-            >
-              Discard
-            </button>
-            <button
-              type="button"
-              onClick={() => void saveAll()}
-              disabled={isSaving}
-              onMouseEnter={(e) => {
-                if (isSaving) return;
-                (e.currentTarget as HTMLButtonElement).style.background =
-                  "rgba(220, 160, 40, 0.22)";
-                (e.currentTarget as HTMLButtonElement).style.borderColor =
-                  "rgba(220, 160, 40, 0.65)";
-              }}
-              onMouseLeave={(e) => {
-                (e.currentTarget as HTMLButtonElement).style.background =
-                  "rgba(220, 160, 40, 0.12)";
-                (e.currentTarget as HTMLButtonElement).style.borderColor =
-                  "rgba(220, 160, 40, 0.4)";
-              }}
-              style={{
-                padding: "4px 12px",
-                borderRadius: 5,
-                border: "1px solid rgba(220, 160, 40, 0.4)",
-                background: "rgba(220, 160, 40, 0.12)",
-                color: "rgba(220, 160, 40, 0.95)",
-                fontFamily: "var(--font-ui)",
-                fontSize: "var(--text-md)",
-                fontWeight: 500,
-                cursor: isSaving ? "default" : "pointer",
-                opacity: isSaving ? 0.7 : 1,
-                transition:
-                  "background var(--t-fast), border-color var(--t-fast)",
-              }}
-            >
-              {isSaving ? "Saving…" : "Save changes"}
-            </button>
-          </>
-        ) : (
-          <span style={{ color: "var(--text-tertiary)" }}>
-            No unsaved changes
-          </span>
-        )}
+        <ElementsEditor
+          section={elementSection}
+          onSectionChange={setActiveSectionId}
+          focusKind={elementFocus?.kind}
+          focusId={elementFocus?.id}
+          focusToken={elementFocus?.token}
+        />
+      </div>
+      <div
+        style={{
+          display: validSection === "curves" ? "flex" : "none",
+          flex: 1,
+          minHeight: 0,
+        }}
+      >
+        <CurveEditor accent={accent} onNavigateToPump={handleNavigateToPump} />
+      </div>
+      <div
+        style={{
+          display: validSection === "patterns" ? "flex" : "none",
+          flex: 1,
+          minHeight: 0,
+        }}
+      >
+        <PatternEditor accent={accent} />
+      </div>
+      <div
+        style={{
+          display: validSection === "controls" ? "flex" : "none",
+          flex: 1,
+          minHeight: 0,
+        }}
+      >
+        <ControlsEditor accent={accent} />
       </div>
 
       {previewOpen && (
@@ -432,6 +316,38 @@ function NetworkEditorInner() {
         onCancel={() => setConfirmDiscardOpen(false)}
         onConfirm={performDiscard}
       />
-    </div>
+    </EditorShell>
+  );
+}
+
+/** The status bar's neutral action styling, repeated three times before. */
+function SecondaryButton({
+  onClick,
+  disabled,
+  children,
+}: {
+  onClick: () => void;
+  disabled?: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      className="legend-btn-secondary"
+      style={{
+        padding: "4px 12px",
+        borderRadius: 5,
+        border: "1px solid var(--border)",
+        background: "transparent",
+        color: "var(--text-secondary)",
+        fontFamily: "var(--font-ui)",
+        fontSize: "var(--text-md)",
+        cursor: disabled ? "default" : "pointer",
+      }}
+    >
+      {children}
+    </button>
   );
 }

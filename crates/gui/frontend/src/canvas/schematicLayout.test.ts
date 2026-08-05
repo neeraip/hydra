@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { Link, Node } from "../types";
+import type { Link, Node, Region } from "../types";
 import { computeSchematicLayout } from "./schematicLayout";
 
 /** Positions only — most assertions here are about coordinates. */
@@ -343,5 +343,173 @@ describe("computeSchematicLayout – detached nodes", () => {
     const links = [pipe("P1", "R1", "J1"), pipe("P2", "J1", "J2")];
     const layout = layoutOf(nodes, links);
     expect([...layout.values()].map(([x]) => x)).toEqual([0, 120, 240]);
+  });
+});
+
+// ── Inlet couplings (dual drainage) ────────────────────────────────────────────
+//
+// Topology taken from a real SWMM model whose surface street network the
+// layout reported as a detached group of six: the streets touch the sewer
+// only through inlet capture, never through a link.
+
+describe("computeSchematicLayout – inlet couplings", () => {
+  const outfall = (id: string): Node => ({
+    id,
+    type: "outfall",
+    x: 0,
+    y: 0,
+    pressure: null,
+    demand: null,
+  });
+  const streets = ["Aux1", "Aux2", "Aux4", "Aux5", "Aux6", "Aux7"];
+  const nodes = [
+    ...streets.map(junction),
+    ...["J1", "J2", "J2a", "J11"].map(junction),
+    outfall("O1"),
+  ];
+  const links = [
+    pipe("Street1", "Aux1", "Aux2"),
+    pipe("Street2", "Aux2", "Aux4"),
+    pipe("Street3", "Aux4", "Aux5"),
+    pipe("Street4", "Aux5", "Aux6"),
+    pipe("Street5", "Aux6", "Aux7"),
+    pipe("P2", "J2a", "J2"),
+    pipe("P3", "J2", "J11"),
+    pipe("C11", "J11", "O1"),
+  ];
+  const couplings = [
+    { link: "Street1", node: "J1" },
+    { link: "Street3", node: "J2a" },
+    { link: "Street4", node: "J2" },
+    { link: "Street5", node: "J11" },
+  ];
+
+  it("calls the street chain separate when couplings are unknown", () => {
+    const layout = computeSchematicLayout(nodes, links);
+    expect([...layout.detachedIds].sort()).toEqual([...streets, "J1"].sort());
+  });
+
+  it("counts inlet capture as connectivity, leaving nothing separate", () => {
+    const layout = computeSchematicLayout(
+      nodes,
+      links,
+      { x: 1, y: 1 },
+      couplings,
+    );
+    expect([...layout.detachedIds]).toEqual([]);
+    // Every node still gets a position.
+    expect(layout.positions.size).toBe(nodes.length);
+  });
+
+  it("ignores a coupling naming an element that is not present", () => {
+    const layout = computeSchematicLayout(nodes, links, { x: 1, y: 1 }, [
+      { link: "NoSuchStreet", node: "J2" },
+      { link: "Street1", node: "NoSuchNode" },
+    ]);
+    expect(layout.detachedIds.has("Aux1")).toBe(true);
+  });
+});
+
+// ── catchment glyphs ──────────────────────────────────────────────────────────
+
+describe("computeSchematicLayout – region glyphs", () => {
+  /** A 2:1 rectangle, so aspect is checkable after placement. */
+  function catchment(id: string, outletId: string | null): Region {
+    return {
+      id,
+      type: "subcatchment",
+      outletId,
+      ring: [
+        [1000, 2000],
+        [1400, 2000],
+        [1400, 2200],
+        [1000, 2200],
+      ],
+    };
+  }
+
+  const nodes = [junction("J1"), junction("J2"), reservoir("R")];
+  const links = [pipe("P1", "R", "J1"), pipe("P2", "J1", "J2")];
+
+  it("anchors a catchment near the node it drains to", () => {
+    const layout = computeSchematicLayout(
+      nodes,
+      links,
+      undefined,
+      [],
+      [catchment("S1", "J1")],
+    );
+    const ring = layout.regionRings.get("S1");
+    expect(ring).toBeDefined();
+    if (!ring) return;
+    const outlet = getLayoutPoint(layout.positions, "J1");
+    // Within one layer's spacing of the outlet in each axis: the glyph is a
+    // placement beside the node, not a plan position half a network away.
+    for (const [x, y] of ring) {
+      expect(Math.abs(x - outlet[0])).toBeLessThan(120 * 1.5);
+      expect(Math.abs(y - outlet[1])).toBeLessThan(80 * 3);
+    }
+  });
+
+  it("preserves the catchment's aspect ratio", () => {
+    const layout = computeSchematicLayout(
+      nodes,
+      links,
+      undefined,
+      [],
+      [catchment("S1", "J1")],
+    );
+    const ring = layout.regionRings.get("S1") ?? [];
+    const xs = ring.map(([x]) => x);
+    const ys = ring.map(([, y]) => y);
+    const w = Math.max(...xs) - Math.min(...xs);
+    const h = Math.max(...ys) - Math.min(...ys);
+    expect(w / h).toBeCloseTo(2, 5);
+  });
+
+  it("fans catchments sharing one outlet so they do not coincide", () => {
+    const layout = computeSchematicLayout(
+      nodes,
+      links,
+      undefined,
+      [],
+      [catchment("S1", "J1"), catchment("S2", "J1")],
+    );
+    const a = layout.regionRings.get("S1") ?? [];
+    const b = layout.regionRings.get("S2") ?? [];
+    expect(a.length).toBeGreaterThan(0);
+    expect(b.length).toBeGreaterThan(0);
+    expect(a[0]).not.toEqual(b[0]);
+  });
+
+  it("never leaves a leader without the glyph it points from", () => {
+    // A leader explains a placed glyph. One without a ring is a line hanging
+    // in space — which is exactly what a stale layout looked like.
+    const layout = computeSchematicLayout(
+      nodes,
+      links,
+      undefined,
+      [],
+      [
+        catchment("S1", "J1"),
+        catchment("S2", null),
+        catchment("S3", "NoSuchNode"),
+      ],
+    );
+    for (const id of layout.regionLeaders.keys()) {
+      expect(layout.regionRings.has(id)).toBe(true);
+    }
+  });
+
+  it("omits a catchment with no node to hang off", () => {
+    const layout = computeSchematicLayout(
+      nodes,
+      links,
+      undefined,
+      [],
+      [catchment("S1", null), catchment("S2", "NoSuchNode")],
+    );
+    expect(layout.regionRings.size).toBe(0);
+    expect(layout.regionLeaders.size).toBe(0);
   });
 });

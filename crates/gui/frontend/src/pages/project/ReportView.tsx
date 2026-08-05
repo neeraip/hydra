@@ -173,7 +173,7 @@ export function ReportView() {
     if (!activeProjectId) return;
     let cancelled = false;
     void (async () => {
-      const blocks = await listReportBlocks();
+      const blocks = await listReportBlocks(activeProjectId);
       if (cancelled) return;
       setCatalog(blocks);
       const saved = await getReportTemplate(activeProjectId);
@@ -834,7 +834,7 @@ export function ReportView() {
                   borderRadius: 6,
                   border: "1px solid",
                   borderColor: active ? ACCENT : "transparent",
-                  background: active ? `${ACCENT}1a` : "transparent",
+                  background: active ? "var(--accent-dim)" : "transparent",
                   color: active ? ACCENT : "var(--text-secondary)",
                   cursor: "pointer",
                   fontSize: "var(--text-md)",

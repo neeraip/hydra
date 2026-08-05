@@ -17,7 +17,6 @@ import {
 
 export function BaseRow({
   isActive,
-  accent,
   onActivate,
   onNewScenario,
   canBranch,
@@ -29,7 +28,6 @@ export function BaseRow({
   clearAllDetail,
 }: {
   isActive: boolean;
-  accent: string;
   onActivate: () => void;
   onNewScenario: () => void;
   /** False while the project has no network — there is nothing to branch. */
@@ -62,7 +60,7 @@ export function BaseRow({
         padding: "12px 16px",
         gap: 12,
         borderBottom: "1px solid var(--border)",
-        background: isActive ? `${accent}0d` : undefined,
+        background: isActive ? "var(--selection-bg)" : undefined,
         transition: "background 0.15s",
       }}
     >
@@ -71,7 +69,7 @@ export function BaseRow({
           width: 3,
           alignSelf: "stretch",
           borderRadius: 2,
-          background: isActive ? accent : "transparent",
+          background: isActive ? "var(--accent)" : "transparent",
           flexShrink: 0,
         }}
       />
@@ -82,7 +80,7 @@ export function BaseRow({
             style={{
               fontSize: "var(--text-lg)",
               fontWeight: 600,
-              color: isActive ? accent : "var(--text-primary)",
+              color: isActive ? "var(--accent)" : "var(--text-primary)",
             }}
           >
             Base model
@@ -92,8 +90,8 @@ export function BaseRow({
               style={{
                 fontSize: "var(--text-xs)",
                 fontWeight: 600,
-                color: accent,
-                background: `${accent}22`,
+                color: "var(--accent)",
+                background: "var(--selection-bg-strong)",
                 borderRadius: 10,
                 padding: "1px 7px",
               }}
@@ -192,7 +190,6 @@ export function BaseRow({
 export function ScenarioRow({
   scenario,
   isActive,
-  accent,
   isRenaming,
   renameValue,
   renameInputRef,
@@ -213,7 +210,6 @@ export function ScenarioRow({
 }: {
   scenario: FlatScenario;
   isActive: boolean;
-  accent: string;
   isRenaming: boolean;
   renameValue: string;
   renameInputRef?: React.RefObject<HTMLInputElement | null>;
@@ -248,7 +244,7 @@ export function ScenarioRow({
         padding: "11px 16px",
         gap: 12,
         borderBottom: "1px solid var(--border)",
-        background: isActive ? `${accent}0d` : undefined,
+        background: isActive ? "var(--selection-bg)" : undefined,
         opacity: isDeleting ? 0.4 : 1,
         transition: "background 0.15s, opacity 0.15s",
       }}
@@ -259,7 +255,7 @@ export function ScenarioRow({
           width: 3,
           alignSelf: "stretch",
           borderRadius: 2,
-          background: isActive ? accent : "transparent",
+          background: isActive ? "var(--accent)" : "transparent",
           flexShrink: 0,
         }}
       />
@@ -301,7 +297,7 @@ export function ScenarioRow({
                 fontSize: "var(--text-lg)",
                 fontFamily: "var(--font-ui)",
                 background: "var(--bg-input)",
-                border: `1px solid ${accent}`,
+                border: "1px solid var(--accent)",
                 borderRadius: 4,
                 color: "var(--text-primary)",
                 padding: "3px 7px",
@@ -339,7 +335,7 @@ export function ScenarioRow({
               style={{
                 fontSize: "var(--text-lg)",
                 fontWeight: 500,
-                color: isActive ? accent : "var(--text-primary)",
+                color: isActive ? "var(--accent)" : "var(--text-primary)",
               }}
             >
               {scenario.name}
@@ -350,8 +346,8 @@ export function ScenarioRow({
                 style={{
                   fontSize: "var(--text-xs)",
                   fontWeight: 600,
-                  color: accent,
-                  background: `${accent}22`,
+                  color: "var(--accent)",
+                  background: "var(--selection-bg-strong)",
                   borderRadius: 10,
                   padding: "1px 7px",
                 }}

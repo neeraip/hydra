@@ -1,3 +1,7 @@
+import {
+  bandedGradientCss,
+  sequentialGradientCss,
+} from "./MapCanvas/colorUtils";
 /**
  * Colour utilities shared between MapCanvas layers and inspector panels.
  * All functions return a CSS colour string (an `rgb(...)` value, or a
@@ -100,61 +104,33 @@ export function statusColor(status: number | null | undefined): string {
 }
 
 /**
- * CSS gradient string matching the sequential colour ramp used by
- * `sequentialColor()` and `sequentialRgba()` in MapCanvas/colorUtils.
- * Use this in legend panels so the swatch exactly matches the rendered map.
+ * Legend gradients, derived from the ramp functions rather than restated.
  *
- * Stops derived from the piecewise formula at t = 0, 0.25, 0.5, 0.75, 1.0:
- *   t=0.00 → rgb(0,   0,   255)  #0000ff
- *   t=0.25 → rgb(0,   180, 200)  #00b4c8
- *   t=0.50 → rgb(0,   255, 0  )  #00ff00
- *   t=0.75 → rgb(255, 255, 0  )  #ffff00
- *   t=1.00 → rgb(255, 0,   0  )  #ff0000
+ * These used to be hand-written CSS copies of each palette, which is how
+ * the legend came to disagree with the map — and a comment saying the two
+ * must match is not a mechanism that makes them match.
  */
-export const SEQ_GRADIENT_CSS =
-  "linear-gradient(to right, #0000ff 0%, #00b4c8 25%, #00ff00 50%, #ffff00 75%, #ff0000 100%)";
+export const SEQ_GRADIENT_CSS = sequentialGradientCss("point");
+
+/** Quality is a magnitude, so it takes the sequential ramp. */
+export const QUALITY_GRADIENT_CSS = SEQ_GRADIENT_CSS;
+
+/** Flow and velocity are link variables, so they take the link family —
+ * the legend has to show the hue the map will actually draw. */
+export const FLOW_GRADIENT_CSS = sequentialGradientCss("polyline");
+
+export const VELOCITY_GRADIENT_CSS = FLOW_GRADIENT_CSS;
 
 /**
- * CSS gradient string matching the quality colour ramp used by
- * `qualityColor()` and `qualityRgba()` in MapCanvas/colorUtils.
- */
-export const QUALITY_GRADIENT_CSS =
-  "linear-gradient(to right, #4a90d9, #3daf75, #c94040)";
-
-/**
- * CSS gradient matching the flow magnitude ramp used by `flowMagnitudeRgba()` in MapCanvas/colorUtils:
- * cyan (no flow) → orange-red (max flow).
- */
-export const FLOW_GRADIENT_CSS =
-  "linear-gradient(to right, rgb(80,200,247) 0%, rgb(255,80,47) 100%)";
-
-/**
- * CSS gradient matching the velocity ramp used by `velocityRgba()` in MapCanvas/colorUtils:
- * blue (slow) → orange (fast).
- */
-export const VELOCITY_GRADIENT_CSS =
-  "linear-gradient(to right, rgb(74,144,217) 0%, rgb(201,80,23) 100%)";
-
-/**
- * 4-band pressure gradient: red (low) → amber → green → blue (high).
- * Matches the `pressureRgba()` colour bands used by MapCanvas/colorUtils.
+ * 4-band pressure gradient. Pressure is the one variable whose bands are
+ * bidirectional — too little and too much are both faults — so it keeps its
+ * own scale rather than borrowing the banded ramp's one-way severity.
  */
 export const PRESSURE_GRADIENT_CSS =
   "linear-gradient(to right, #c94040 0%, #c94040 25%, #d4a017 25%, #d4a017 50%, #3daf75 50%, #3daf75 75%, #4a90d9 75%, #4a90d9 100%)";
 
-/**
- * Generic smooth risk ramp: green (acceptable) → amber (caution) → red
- * (excessive). Note: the canvas legend uses `LINK_RISK_GRADIENT_CSS` for
- * threshold-mode velocity/flow because the map renders four discrete bands.
- */
-export const RISK_GRADIENT_CSS =
-  "linear-gradient(to right, #3daf75 0%, #d4a017 55%, #c94040 100%)";
+/** Smooth severity ramp for panels that want a continuous swatch. */
+export const RISK_GRADIENT_CSS = bandedGradientCss();
 
-/**
- * 4-band link risk gradient: green (below low) → amber (low–target) →
- * orange (target–high) → red (above high). Matches the threshold branches of
- * `velocityRgba()` / `flowMagnitudeRgba()` in MapCanvas/colorUtils:
- *   rgb(61,175,117) → rgb(212,160,23) → rgb(201,120,64) → rgb(201,64,64)
- */
-export const LINK_RISK_GRADIENT_CSS =
-  "linear-gradient(to right, #3daf75 0%, #3daf75 25%, #d4a017 25%, #d4a017 50%, #c97840 50%, #c97840 75%, #c94040 75%, #c94040 100%)";
+/** Threshold-mode velocity and flow, which the map draws as hard bands. */
+export const LINK_RISK_GRADIENT_CSS = bandedGradientCss();

@@ -4,6 +4,7 @@ import {
   FolderIcon,
 } from "@heroicons/react/24/outline";
 import { useActiveProject, useAppState, useTasks } from "../../AppContext";
+import logoGlyphUrl from "../../assets/logo-glyph.png";
 import { PROJECT_VIEWS } from "../../hooks";
 import { formatPrimaryShortcut, isMacLikePlatform } from "../../shortcuts";
 import { NavButton } from "../ui/NavButton";
@@ -19,7 +20,6 @@ export function ActivityBar() {
     openCommandPalette,
     toggleTaskTray,
     taskTrayOpen,
-    closeProject,
     activeProjectId,
   } = useAppState();
   const { project } = useActiveProject();
@@ -31,12 +31,16 @@ export function ActivityBar() {
   const commandPaletteShortcut = formatPrimaryShortcut("K");
   const isMac = isMacLikePlatform();
 
+  // Home goes home. It used to divert to Projects whenever a project was
+  // open — "up one level" behaviour under a control that says Home, in a rail
+  // where Projects is already its own item one row below. A control that does
+  // different things depending on where you stand is the thing to avoid, and
+  // for anyone reading the label rather than the picture it was simply wrong.
+  //
+  // The project stays open, so the rail keeps its sub-nav and going back is
+  // one click; leaving is what the project's own close does.
   function handleHomeClick() {
-    if (activeProjectId) {
-      closeProject();
-    } else {
-      setPage("home");
-    }
+    setPage("home");
   }
 
   return (
@@ -70,7 +74,10 @@ export function ActivityBar() {
           marginBottom: 8,
           border: "none",
           borderRadius: 9,
-          background: "var(--accent)",
+          // No plate: the rail's other items are bare icons, and one in the
+          // accent would make the app's own logo read as a selected control.
+          background: "transparent",
+          color: "var(--text-primary)",
           cursor: "pointer",
           display: "flex",
           alignItems: "center",
@@ -79,21 +86,35 @@ export function ActivityBar() {
           padding: 0,
         }}
       >
-        {/* Hydra wordmark glyph */}
-        <svg
-          width="18"
-          height="18"
-          viewBox="0 0 18 18"
-          fill="none"
+        {/*
+          The mark itself, lifted out of the app icon.
+
+          `icons/logo.png` is a plated icon — a black rounded tile with the
+          glyph knocked out of it — which is right for a dock and wrong for a
+          nav rail, where every neighbour is a bare monochrome icon and no
+          plate would follow the theme. So the glyph is extracted to an alpha
+          mask (ImageMagick: flatten on black, intensity to alpha, threshold
+          off the tile's antialiased edge, trim) and painted with the current
+          text colour. One asset, both themes, no inverted copy to keep in
+          step — and hover and focus can tint it like anything else.
+        */}
+        <span
           aria-hidden="true"
-        >
-          <path
-            d="M3 3v12M3 9h12M15 3v12"
-            stroke="#fff"
-            strokeWidth="2.2"
-            strokeLinecap="round"
-          />
-        </svg>
+          style={{
+            width: 21,
+            height: 21,
+            display: "block",
+            backgroundColor: "currentColor",
+            WebkitMaskImage: `url(${logoGlyphUrl})`,
+            maskImage: `url(${logoGlyphUrl})`,
+            WebkitMaskSize: "contain",
+            maskSize: "contain",
+            WebkitMaskRepeat: "no-repeat",
+            maskRepeat: "no-repeat",
+            WebkitMaskPosition: "center",
+            maskPosition: "center",
+          }}
+        />
       </button>
 
       {/* ── Global nav ─────────────────────────────────────────────────────── */}

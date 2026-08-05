@@ -20,9 +20,16 @@ import {
   TrashIcon,
 } from "@heroicons/react/16/solid";
 import type React from "react";
+import { useActiveProject } from "../../AppContext";
 import type { LinkVariable, NodeVariable } from "../../canvas/types";
+import {
+  engineComponents,
+  type GenericElementValue,
+} from "../../engine/registry";
 import type { Link, Node, ResultRanges } from "../../hooks";
 import { ACCENT } from "../../hooks";
+import { elementTypeBadge } from "../../types/elementTypes";
+import type { Region } from "../../types/network";
 import { Header } from "./ElementInspector/InspectorHeader";
 import { LinkBody } from "./ElementInspector/LinkBody";
 import { NodeBody } from "./ElementInspector/NodeBody";
@@ -51,11 +58,17 @@ interface NodeInspectorProps {
   onDelete?: () => void;
   onRename?: (newId: string) => void;
   onLocateRelated: (id: string) => void;
+  /** Select an areal element draining to this node, for engines that have
+   * them — the reverse of a catchment's own "discharges to". */
+  onLocateRegion?: (id: string) => void;
   onOpenPattern?: (id: string) => void;
   nodeVar?: NodeVariable;
   ranges?: ResultRanges;
   hasSimulation?: boolean;
   isTransitioning?: boolean;
+  /** Current-period catalog values for engines with generic results —
+   * consumed by the per-engine body slot; the wds body ignores it. */
+  genericResults?: GenericElementValue[] | null;
 }
 
 export function NodeInspector({
@@ -67,12 +80,20 @@ export function NodeInspector({
   onDelete,
   onRename,
   onLocateRelated,
+  onLocateRegion,
   onOpenPattern,
   nodeVar,
   ranges,
   hasSimulation,
   isTransitioning,
+  genericResults,
 }: NodeInspectorProps) {
+  // The body is engine vocabulary (attributes + result cards) — selected
+  // once from the registry; chrome (header, footer actions) stays shared.
+  const { engine } = useActiveProject();
+  const components = engineComponents(engine?.key);
+  const EngineBody = components.NodeInspectorBody;
+  const canOpenInEditor = components.editorFocusesElements;
   return (
     <div
       className="inspector-panel"
@@ -96,8 +117,8 @@ export function NodeInspector({
               width: 8,
               height: 8,
               borderRadius: "50%",
-              background: ACCENT,
-              boxShadow: `0 0 6px ${ACCENT}88`,
+              background: elementTypeBadge(node.type).color,
+              boxShadow: `0 0 6px ${elementTypeBadge(node.type).color}88`,
               flexShrink: 0,
             }}
           />
@@ -106,16 +127,25 @@ export function NodeInspector({
         onRename={onRename}
       />
 
-      <NodeBody
-        node={node}
-        accent={ACCENT}
-        nodeVar={nodeVar}
-        ranges={ranges}
-        hasSimulation={hasSimulation}
-        isTransitioning={isTransitioning}
-        onOpenPattern={onOpenPattern}
-        onLocateLink={onLocateRelated}
-      />
+      {EngineBody ? (
+        <EngineBody
+          node={node}
+          onLocateLink={onLocateRelated}
+          onLocateRegion={onLocateRegion}
+          results={genericResults}
+        />
+      ) : (
+        <NodeBody
+          node={node}
+          accent={ACCENT}
+          nodeVar={nodeVar}
+          ranges={ranges}
+          hasSimulation={hasSimulation}
+          isTransitioning={isTransitioning}
+          onOpenPattern={onOpenPattern}
+          onLocateLink={onLocateRelated}
+        />
+      )}
 
       <div
         style={{
@@ -126,14 +156,16 @@ export function NodeInspector({
           gap: 6,
         }}
       >
-        <button
-          type="button"
-          onClick={onOpenInEditor}
-          data-tooltip="Open in editor"
-          style={btnIcon}
-        >
-          <PencilSquareIcon style={{ width: 14, height: 14 }} />
-        </button>
+        {canOpenInEditor && (
+          <button
+            type="button"
+            onClick={onOpenInEditor}
+            data-tooltip="Open in editor"
+            style={btnIcon}
+          >
+            <PencilSquareIcon style={{ width: 14, height: 14 }} />
+          </button>
+        )}
         {onZoomTo && (
           <button
             type="button"
@@ -183,6 +215,8 @@ interface LinkInspectorProps {
   ranges?: ResultRanges;
   hasSimulation?: boolean;
   isTransitioning?: boolean;
+  /** See NodeInspectorProps.genericResults. */
+  genericResults?: GenericElementValue[] | null;
 }
 
 export function LinkInspector({
@@ -198,7 +232,13 @@ export function LinkInspector({
   ranges,
   hasSimulation,
   isTransitioning,
+  genericResults,
 }: LinkInspectorProps) {
+  // Same registry selection as NodeInspector — see the comment there.
+  const { engine } = useActiveProject();
+  const components = engineComponents(engine?.key);
+  const EngineBody = components.LinkInspectorBody;
+  const canOpenInEditor = components.editorFocusesElements;
   return (
     <div
       className="inspector-panel"
@@ -222,7 +262,10 @@ export function LinkInspector({
               width: 16,
               height: 3,
               borderRadius: 2,
-              background: LINK_TYPE_COLOR[link.type] ?? ACCENT,
+              // The badge's kind colour — LINK_TYPE_COLOR only knows wds
+              // kinds and the wds accent is engine identity, not a fallback.
+              background:
+                LINK_TYPE_COLOR[link.type] ?? elementTypeBadge(link.type).color,
               flexShrink: 0,
             }}
           />
@@ -231,15 +274,23 @@ export function LinkInspector({
         onRename={onRename}
       />
 
-      <LinkBody
-        link={link}
-        accent={ACCENT}
-        linkVar={linkVar}
-        ranges={ranges}
-        hasSimulation={hasSimulation}
-        isTransitioning={isTransitioning}
-        onLocateNode={onLocateNode}
-      />
+      {EngineBody ? (
+        <EngineBody
+          link={link}
+          onLocateNode={onLocateNode}
+          results={genericResults}
+        />
+      ) : (
+        <LinkBody
+          link={link}
+          accent={ACCENT}
+          linkVar={linkVar}
+          ranges={ranges}
+          hasSimulation={hasSimulation}
+          isTransitioning={isTransitioning}
+          onLocateNode={onLocateNode}
+        />
+      )}
 
       <div
         style={{
@@ -250,14 +301,16 @@ export function LinkInspector({
           gap: 6,
         }}
       >
-        <button
-          type="button"
-          onClick={onOpenInEditor}
-          data-tooltip="Open in editor"
-          style={btnIcon}
-        >
-          <PencilSquareIcon style={{ width: 14, height: 14 }} />
-        </button>
+        {canOpenInEditor && (
+          <button
+            type="button"
+            onClick={onOpenInEditor}
+            data-tooltip="Open in editor"
+            style={btnIcon}
+          >
+            <PencilSquareIcon style={{ width: 14, height: 14 }} />
+          </button>
+        )}
         {onZoomTo && (
           <button
             type="button"
@@ -288,6 +341,99 @@ export function LinkInspector({
           </button>
         )}
       </div>
+    </div>
+  );
+}
+
+// ── Public component: region variant ──────────────────────────────────────────
+
+interface RegionInspectorProps {
+  region: Region;
+  onClose: () => void;
+  onZoomTo?: () => void;
+  /** Select the element this region discharges to. */
+  onLocateOutlet: (id: string) => void;
+  /** See NodeInspectorProps.genericResults. */
+  genericResults?: GenericElementValue[] | null;
+}
+
+/**
+ * Inspector for an areal element (a subcatchment). Same chrome as the node
+ * and link variants — header with the kind badge, engine body, footer
+ * actions — minus the affordances an area has no meaning for: there is no
+ * "open in editor" (no engine edits areas here yet) and no rename/delete
+ * (only read-only engines have areas today). Renders nothing when the
+ * engine supplies no region body, which is also when nothing can select
+ * one.
+ */
+export function RegionInspector({
+  region,
+  onClose,
+  onZoomTo,
+  onLocateOutlet,
+  genericResults,
+}: RegionInspectorProps) {
+  const { engine } = useActiveProject();
+  const EngineBody = engineComponents(engine?.key).RegionInspectorBody;
+  if (!EngineBody) return null;
+  return (
+    <div
+      className="inspector-panel"
+      style={{
+        position: "absolute",
+        right: 0,
+        top: 0,
+        bottom: 0,
+        zIndex: 30,
+        display: "flex",
+        flexDirection: "column",
+      }}
+    >
+      <Header
+        id={region.id}
+        subtitle={region.type}
+        accentColor={ACCENT}
+        badge={
+          <div
+            style={{
+              width: 12,
+              height: 9,
+              borderRadius: 2,
+              border: `1.5px solid ${elementTypeBadge(region.type).color}`,
+              background: `${elementTypeBadge(region.type).color}33`,
+              flexShrink: 0,
+            }}
+          />
+        }
+        onClose={onClose}
+      />
+
+      <EngineBody
+        region={region}
+        onLocateOutlet={onLocateOutlet}
+        results={genericResults}
+      />
+
+      {onZoomTo && (
+        <div
+          style={{
+            flexShrink: 0,
+            borderTop: "1px solid var(--border)",
+            padding: 10,
+            display: "flex",
+            gap: 6,
+          }}
+        >
+          <button
+            type="button"
+            onClick={onZoomTo}
+            data-tooltip="Zoom to feature"
+            style={btnIcon}
+          >
+            <MagnifyingGlassPlusIcon style={{ width: 14, height: 14 }} />
+          </button>
+        </div>
+      )}
     </div>
   );
 }

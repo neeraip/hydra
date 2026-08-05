@@ -20,12 +20,7 @@ use std::time::Instant;
 
 use clap::{CommandFactory, Parser};
 use hydra::io;
-use hydra::io::out_writer::OutStreamWriter;
-use hydra::io::rpt_writer as rpt;
-use hydra::QualityMode;
 use hydra::{SessionError, Simulation};
-
-type CliOutWriter = OutStreamWriter<std::io::BufWriter<std::fs::File>>;
 
 // Exit-code contract (see module doc above and `docs/src/getting-started/cli.md`).
 /// Simulation completed (warnings may appear in the report).
@@ -39,10 +34,8 @@ const EXIT_IO: i32 = 3;
 /// Internal error (unexpected engine state; please report a bug).
 const EXIT_INTERNAL: i32 = 4;
 
-enum CliRunError {
-    Session(SessionError),
-    Io(std::io::Error),
-}
+// Per-engine run knowledge (phases, streaming, persistence timing) lives in
+// hydra::engines::EngineSession — the CLI drives every engine through it.
 
 /// Hydra — water infrastructure simulation.
 #[derive(Parser, Debug)]
@@ -286,17 +279,14 @@ fn resolve_engine(
 
 /// Drives the full simulation lifecycle.
 ///
-/// Session lifecycle:
+/// Session lifecycle (per-engine run shapes live in `EngineSession`):
 /// ```text
-/// sim = create()
-/// load(sim, model_bytes)        // exit 1 on validation failure
-/// begin_out_stream(sim, ...)    // write prolog + energy placeholder (if --output)
-/// step_hydraulics() until done  // exit 2 on solver error
-/// append_out_periods()          // after each successful hydraulic step
-/// step_quality() until done     // exit 2 on solver error; no-op if quality=None
-/// append_out_periods()          // after each successful quality step
-/// finish_out_stream(sim)        // patch n_periods + epilog (if --output)
-/// write_report(sim)             // plain text or JSON
+/// parse + load                    // exit 1 on parse/validation failure
+/// es = EngineSession::from_*(...)
+/// es.begin_results(sink)          // attach the --results sink, if any
+/// es.advance() until done         // exit 2 on solver error; warnings at phase ends
+/// es.finish_results()             // finalize the results file
+/// write_report(es)                // plain text or JSON
 /// ```
 ///
 /// Returns an exit code (0=ok, 1=input error, 2=solver error, 3=I/O error,
@@ -367,18 +357,12 @@ fn run(args: &RunArgs, cli: &Cli) -> i32 {
         }
     };
 
-    let duration = network.options.duration;
-    let quality_enabled = network.options.quality_mode != QualityMode::None;
-
     // ── Create session and load network ───────────────────────────────────────
     let mut session = Simulation::create();
     if let Err(e) = session.load(network) {
         emit_session_error(&e);
         return session_error_code(&e);
     }
-
-    let mut progress = ProgressReporter::new(std::io::stderr().is_terminal() && !cli.quiet);
-    progress.startup_banner();
 
     let output_units = match session.flow_units() {
         Some(u) => u,
@@ -388,80 +372,33 @@ fn run(args: &RunArgs, cli: &Cli) -> i32 {
         }
     };
 
-    let mut out_stream = if let Some(out_path) = args.results.as_deref() {
+    let mut es = hydra::engines::EngineSession::from_wds(session, output_units);
+
+    if let Some(out_path) = args.results.as_deref() {
         let report_path = args.summary.as_deref().unwrap_or("");
-        let stream_result = (|| -> anyhow::Result<CliOutWriter> {
-            let f = std::io::BufWriter::new(std::fs::File::create(out_path)?);
-            let mut stream =
-                OutStreamWriter::begin(f, &session, input_path, report_path, output_units)?;
-            stream.append_available(&session)?;
-            Ok(stream)
-        })();
-
-        match stream_result {
-            Ok(stream) => Some(stream),
-            Err(e) => {
-                emit_error("io/output", &e.to_string(), None, None);
-                return EXIT_IO;
-            }
-        }
-    } else {
-        None
-    };
-
-    // ── Run hydraulics ────────────────────────────────────────────────────────
-    if let Err(e) =
-        run_hydraulics_with_progress(&mut session, &mut progress, duration, &mut out_stream)
-    {
-        progress.finish_line();
-        match e {
-            CliRunError::Session(session_error) => {
-                emit_session_error(&session_error);
-                return session_error_code(&session_error);
-            }
-            CliRunError::Io(io_error) => {
-                emit_error("io/output", &io_error.to_string(), None, None);
-                return EXIT_IO;
-            }
-        }
-    }
-    progress.finish_phase(duration);
-
-    // Emit hydraulic warnings to stderr.
-    emit_warnings(&session, 0);
-
-    // ── Run quality ───────────────────────────────────────────────────────────
-    let n_warnings_before_quality = session.warnings().len();
-    if let Err(e) = run_quality_with_progress(
-        &mut session,
-        &mut progress,
-        duration,
-        quality_enabled,
-        &mut out_stream,
-    ) {
-        progress.finish_line();
-        match e {
-            CliRunError::Session(session_error) => {
-                emit_session_error(&session_error);
-                return session_error_code(&session_error);
-            }
-            CliRunError::Io(io_error) => {
-                emit_error("io/output", &io_error.to_string(), None, None);
-                return EXIT_IO;
-            }
-        }
-    }
-    progress.finish_phase(duration);
-
-    // Emit any new warnings generated during the quality phase.
-    emit_warnings(&session, n_warnings_before_quality);
-
-    // ── Finalize binary output stream (§4.1) ─────────────────────────────────
-    if let Some(out_writer) = out_stream.take() {
-        if let Err(e) = out_writer.finish(&session) {
+        let attach = std::fs::File::create(out_path).and_then(|f| {
+            es.begin_results(
+                Box::new(std::io::BufWriter::new(f)),
+                input_path,
+                report_path,
+            )
+        });
+        if let Err(e) = attach {
             emit_error("io/output", &e.to_string(), None, None);
             return EXIT_IO;
         }
+    }
+
+    let mut progress = ProgressReporter::new(std::io::stderr().is_terminal() && !cli.quiet);
+    progress.startup_banner();
+
+    if let Err(code) = drive_with_progress(&mut es, &mut progress) {
+        return code;
+    }
+
+    if let Err(e) = es.finish_results() {
+        emit_error("io/output", &e.to_string(), None, None);
+        return EXIT_IO;
     }
 
     // ── Write report ──────────────────────────────────────────────────────────
@@ -470,7 +407,7 @@ fn run(args: &RunArgs, cli: &Cli) -> i32 {
     if args.summary.is_none() && progress.enabled {
         let _ = writeln!(std::io::stderr());
     }
-    if let Err(e) = write_report(&session, args.summary.as_deref()) {
+    if let Err(e) = write_report(&es, args.summary.as_deref()) {
         emit_error("io/report", &e.to_string(), None, None);
         return EXIT_IO;
     }
@@ -478,55 +415,49 @@ fn run(args: &RunArgs, cli: &Cli) -> i32 {
     EXIT_OK
 }
 
-fn run_hydraulics_with_progress(
-    session: &mut Simulation,
+/// Pump an [`hydra::engines::EngineSession`] to completion, rendering
+/// per-phase progress and emitting each phase's warnings as it ends —
+/// shared by every engine's run path. On failure the progress line is
+/// closed and the mapped exit code returned.
+pub(crate) fn drive_with_progress(
+    es: &mut hydra::engines::EngineSession,
     progress: &mut ProgressReporter,
-    duration: f64,
-    out_stream: &mut Option<CliOutWriter>,
-) -> Result<(), CliRunError> {
-    let mut simulated_t = 0.0;
+) -> Result<(), i32> {
+    let duration = es.duration();
+    let mut current_phase = es.phase();
+    let mut emitted = 0usize;
+    progress.update(current_phase, 0.0, duration);
     loop {
-        progress.update("Hydraulics", simulated_t, duration);
-        let dt = session.step_hydraulics().map_err(CliRunError::Session)?;
-        if let Some(writer) = out_stream.as_mut() {
-            writer.append_available(session).map_err(CliRunError::Io)?;
+        let p = match es.advance() {
+            Ok(p) => p,
+            Err(e) => {
+                progress.finish_line();
+                return Err(match e {
+                    hydra::engines::AdvanceError::Wds(session_error) => {
+                        emit_session_error(&session_error);
+                        session_error_code(&session_error)
+                    }
+                    hydra::engines::AdvanceError::Io(io_error) => {
+                        emit_error("io/output", &io_error.to_string(), None, None);
+                        EXIT_IO
+                    }
+                });
+            }
+        };
+        if p.phase != current_phase {
+            // Phase boundary: close the finished phase's progress line and
+            // flush the warnings it produced before the next phase starts.
+            progress.finish_phase(duration);
+            emitted = emit_warnings(es, emitted);
+            current_phase = p.phase;
         }
-        if dt == 0.0 {
-            break;
+        progress.update(p.phase, p.t, duration);
+        if p.done {
+            progress.finish_phase(duration);
+            emit_warnings(es, emitted);
+            return Ok(());
         }
-        simulated_t += dt;
     }
-    Ok(())
-}
-
-fn run_quality_with_progress(
-    session: &mut Simulation,
-    progress: &mut ProgressReporter,
-    duration: f64,
-    quality_enabled: bool,
-    out_stream: &mut Option<CliOutWriter>,
-) -> Result<(), CliRunError> {
-    if !quality_enabled {
-        session.run_quality().map_err(CliRunError::Session)?;
-        if let Some(writer) = out_stream.as_mut() {
-            writer.append_available(session).map_err(CliRunError::Io)?;
-        }
-        return Ok(());
-    }
-
-    let mut simulated_t = 0.0;
-    loop {
-        progress.update("Water quality", simulated_t, duration);
-        let dt = session.step_quality().map_err(CliRunError::Session)?;
-        if let Some(writer) = out_stream.as_mut() {
-            writer.append_available(session).map_err(CliRunError::Io)?;
-        }
-        if dt == 0.0 {
-            break;
-        }
-        simulated_t += dt;
-    }
-    Ok(())
 }
 
 /// Writes human-readable progress to stderr during a simulation run.
@@ -749,22 +680,29 @@ fn fetch_http(url: &str) -> Result<Vec<u8>, FetchError> {
 // ── Report writing ───────────────────────────────────────────────────────────
 
 /// Write the simulation report to `path` (None → stdout).
-fn write_report(session: &Simulation, path: Option<&str>) -> anyhow::Result<()> {
+pub(crate) fn write_report(
+    es: &hydra::engines::EngineSession,
+    path: Option<&str>,
+) -> anyhow::Result<()> {
     match path {
         None => {
-            let text = rpt::build_text_report(session)?;
             let mut stdout = std::io::stdout().lock();
-            stdout.write_all(text.as_bytes())?;
+            es.write_summary_text(&mut stdout)?;
             Ok(())
         }
-        Some(p) if p.ends_with(".json") => {
-            let json = rpt::build_json_report(session)?;
-            std::fs::write(p, json)?;
-            Ok(())
-        }
+        Some(p) if p.ends_with(".json") => match es.summary_json() {
+            Some(json) => {
+                std::fs::write(p, json?)?;
+                Ok(())
+            }
+            None => {
+                anyhow::bail!("JSON summaries are not available for this engine — use a .rpt path")
+            }
+        },
         Some(p) => {
-            let text = rpt::build_text_report(session)?;
-            std::fs::write(p, text)?;
+            let mut w = std::io::BufWriter::new(std::fs::File::create(p)?);
+            es.write_summary_text(&mut w)?;
+            w.flush()?;
             Ok(())
         }
     }
@@ -804,24 +742,26 @@ pub(crate) fn emit_error(
     eprintln!("{line}");
 }
 
-/// Emit session warnings `[from..]` as JSON-line diagnostics on stderr.
+/// Emit session warnings `[from..]` as JSON-line diagnostics on stderr,
+/// returning the new emitted count.
 ///
-/// `from` lets the quality phase emit only the warnings it added, without
-/// repeating the hydraulic-phase warnings already printed.
-fn emit_warnings(session: &Simulation, from: usize) {
+/// `from` lets each phase emit only the warnings it added, without
+/// repeating those already printed.
+fn emit_warnings(es: &hydra::engines::EngineSession, from: usize) -> usize {
+    let warnings = es.warnings();
     let stderr = std::io::stderr();
     let mut buf = std::io::BufWriter::new(stderr.lock());
-    for w in &session.warnings()[from..] {
-        let (code, msg, oid) = rpt::describe_warning(w, session);
+    for w in &warnings[from..] {
         let line = serde_json::json!({
             "level": "warning",
-            "code": code,
-            "message": msg,
-            "object_id": oid,
-            "time_step": w.t,
+            "code": w.code,
+            "message": w.message,
+            "object_id": w.element,
+            "time_step": w.time,
         });
         let _ = writeln!(buf, "{line}");
     }
+    warnings.len()
 }
 
 fn emit_session_error(e: &SessionError) {

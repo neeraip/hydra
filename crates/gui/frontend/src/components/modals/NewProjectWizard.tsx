@@ -21,19 +21,21 @@ import {
 import { ClockIcon } from "@heroicons/react/24/outline";
 import { useEffect, useState } from "react";
 import { useAppState } from "../../AppContext";
+import { engineComponents } from "../../engine/registry";
 import {
   createProjectOnDisk,
   type EngineInfo,
   formatInpImportError,
   importExtensionLabel,
   isEngineAvailable,
-  isEngineGuiEditable,
+  isEngineGuiOpenable,
   openAndLoadNetwork,
   type Project,
   useEngines,
   useNetworkVersion,
   type ValidationFinding,
 } from "../../hooks";
+import { isTauri } from "../../hooks/ipc";
 import { NetworkThumbnail } from "../ui/NetworkThumbnail";
 import { PrimaryButton } from "../ui/PrimaryButton";
 
@@ -62,8 +64,15 @@ export function NewProjectWizard({ onClose }: Props) {
   const [detectedFindings, setDetectedFindings] = useState<ValidationFinding[]>(
     [],
   );
+  // §14.10 repairs the importer applied (nonstandard lines commented out)
+  // — shown on the review step; the repair contract forbids silence.
+  const [detectedRepairs, setDetectedRepairs] = useState<string[]>([]);
 
   const engine = engines.find((e) => e.key === engineKey) ?? null;
+  // Engines whose model this GUI cannot edit have no starter-network path —
+  // a project can only begin from an imported model.
+  const importRequired =
+    engine != null && !engineComponents(engine.key).modelEditable;
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
@@ -83,6 +92,7 @@ export function NewProjectWizard({ onClose }: Props) {
     setDetectedNodeCount(0);
     setDetectedLinkCount(0);
     setDetectedFindings([]);
+    setDetectedRepairs([]);
   }
 
   async function handleBrowse() {
@@ -91,9 +101,18 @@ export function NewProjectWizard({ onClose }: Props) {
     try {
       const result = await openAndLoadNetwork(engine.key);
       if (result) {
-        setDetectedNodeCount(result.network.nodes.length);
-        setDetectedLinkCount(result.network.links.length);
+        setDetectedNodeCount(result.nodeCount);
+        setDetectedLinkCount(result.linkCount);
         setDetectedFindings(result.findings);
+        setDetectedRepairs(result.repairs ?? []);
+        if (result.repairs?.length) {
+          showToast(
+            `Imported with ${result.repairs.length} repair${
+              result.repairs.length === 1 ? "" : "s"
+            } — nonstandard lines were commented out.`,
+            "warn",
+          );
+        }
         setFileDetected(true);
         bumpNetwork();
         if (!projectName.trim() && result.network.fileStem) {
@@ -120,6 +139,13 @@ export function NewProjectWizard({ onClose }: Props) {
       // state may still hold a previously-opened project's model.
       importLoadedNetwork: fileDetected,
     });
+
+    // Inside Tauri, a null answer means the backend refused (the error has
+    // already been surfaced through the IPC toast) — fabricating a project
+    // card here left the user with a phantom project backed by nothing on
+    // disk. The in-memory fallback exists only for the plain-browser dev
+    // server.
+    if (!persisted && isTauri()) return;
 
     const project: Project = persisted ?? {
       id,
@@ -244,7 +270,10 @@ export function NewProjectWizard({ onClose }: Props) {
                 value={projectName}
                 onChange={(e) => setProjectName(e.target.value)}
                 onKeyDown={(e) => {
-                  if (e.key === "Enter") setStep(3);
+                  // Same gate as the Next button: import-only engines
+                  // cannot advance without a source model.
+                  if (e.key === "Enter" && !(importRequired && !fileDetected))
+                    setStep(3);
                   if (e.key === "Escape") onClose();
                 }}
                 placeholder="e.g. South Side Rehabilitation Study"
@@ -263,7 +292,9 @@ export function NewProjectWizard({ onClose }: Props) {
               />
             </div>
 
-            <div style={fieldLabelStyle}>Source model (optional)</div>
+            <div style={fieldLabelStyle}>
+              {importRequired ? "Source model" : "Source model (optional)"}
+            </div>
             <p
               style={{
                 fontSize: "var(--text-md)",
@@ -272,8 +303,9 @@ export function NewProjectWizard({ onClose }: Props) {
                 lineHeight: 1.6,
               }}
             >
-              Skip this to start from a single reservoir and build the network
-              in the editor.
+              {importRequired
+                ? `${engine.label} projects start from an imported model — add one to continue.`
+                : "Skip this to start from a single reservoir and build the network in the editor."}
             </p>
 
             <div
@@ -373,6 +405,27 @@ export function NewProjectWizard({ onClose }: Props) {
                       Issues &amp; Notifications.
                     </div>
                   )}
+                  {detectedRepairs.length > 0 && (
+                    <div
+                      style={{
+                        fontSize: "var(--text-md)",
+                        color: "var(--status-warning, #d4a017)",
+                        marginTop: 8,
+                        lineHeight: 1.5,
+                        maxWidth: 320,
+                        textAlign: "left",
+                      }}
+                    >
+                      {detectedRepairs.length === 1
+                        ? "1 nonstandard line was commented out during import:"
+                        : `${detectedRepairs.length} nonstandard lines were commented out during import:`}
+                      <ul style={{ margin: "4px 0 0", paddingLeft: 18 }}>
+                        {detectedRepairs.map((r) => (
+                          <li key={r}>{r}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
                 </div>
               ) : (
                 <div>
@@ -437,7 +490,20 @@ export function NewProjectWizard({ onClose }: Props) {
             <FooterRow
               left={<BackButton onClick={() => setStep(1)} />}
               right={
-                <PrimaryButton onClick={() => setStep(3)}>
+                <PrimaryButton
+                  onClick={() => setStep(3)}
+                  disabled={importRequired && !fileDetected}
+                  title={
+                    importRequired && !fileDetected
+                      ? "Import a source model to continue"
+                      : undefined
+                  }
+                  style={
+                    importRequired && !fileDetected
+                      ? { opacity: 0.5, cursor: "not-allowed" }
+                      : undefined
+                  }
+                >
                   <NextLabel />
                 </PrimaryButton>
               }
@@ -538,7 +604,7 @@ function EngineCard({
   selected: boolean;
   onSelect: () => void;
 }) {
-  const available = isEngineGuiEditable(engine);
+  const available = isEngineGuiOpenable(engine);
   return (
     <button
       type="button"

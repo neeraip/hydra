@@ -15,12 +15,17 @@ function CanvasRail() {
   const {
     selectNode,
     selectLink,
+    selectRegion,
     selectedNodeId,
     selectedLinkId,
+    selectedRegionId,
     simNodes,
     simLinks,
+    simRegions,
+    simColumns,
     zoomToNode,
     zoomToLink,
+    zoomToRegion,
   } = useCanvasSelection();
 
   return (
@@ -32,8 +37,15 @@ function CanvasRail() {
       activeLinkId={selectedLinkId}
       nodes={simNodes ?? undefined}
       links={simLinks ?? undefined}
+      regions={simRegions ?? undefined}
+      nodeResultColumns={simColumns?.node ?? undefined}
+      linkResultColumns={simColumns?.link ?? undefined}
+      regionResultColumns={simColumns?.region ?? undefined}
       onZoomToNode={zoomToNode}
       onZoomToLink={zoomToLink}
+      onSelectRegion={selectRegion}
+      onZoomToRegion={zoomToRegion}
+      activeRegionId={selectedRegionId}
     />
   );
 }

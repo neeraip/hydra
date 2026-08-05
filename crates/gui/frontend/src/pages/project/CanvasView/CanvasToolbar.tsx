@@ -13,9 +13,11 @@ import {
   basemapPickerGroups,
   clampBasemapOpacity,
 } from "../../../canvas/Basemap";
+import { LOCAL_CRS } from "../../../canvas/coords";
 import { useCanvasLayers } from "../../../canvas/layers-context";
 import type { MeasurePoint } from "../../../canvas/measureSnap";
 import type { CanvasTool, ViewMode } from "../../../canvas/types";
+import { useRegions } from "../../../hooks";
 import {
   useBasemapProviders,
   useBasemapVisibility,
@@ -43,7 +45,9 @@ const ICON_14: CSSProperties = { width: 14, height: 14 };
  * `data-toolbar-dropdown` markers rendered here).
  */
 export function CanvasToolbar({
+  editable,
   viewMode,
+  localGrid = false,
   onViewModeChange,
   coordStatus,
   coordMissingCount,
@@ -64,7 +68,12 @@ export function CanvasToolbar({
   measureDistanceM,
   onClearAnnotations,
 }: {
+  /** Whether model-editing tools (edit, add node, add link) appear. */
+  editable: boolean;
   viewMode: ViewMode;
+  /** The model has no georeference: there is no map to switch to, and no
+   * basemap to draw under it. */
+  localGrid?: boolean;
   onViewModeChange: (m: ViewMode) => void;
   coordStatus: "complete" | "partial" | "empty";
   coordMissingCount: number;
@@ -90,6 +99,9 @@ export function CanvasToolbar({
   onClearAnnotations: () => void;
 }) {
   const { layers: canvasLayers, setLayer } = useCanvasLayers();
+  // Region polygons exist only for models that drew any — the toggle
+  // follows the data, not the engine.
+  const hasRegions = useRegions().length > 0;
   const basemapProviders = useBasemapProviders();
   const basemapVisibility = useBasemapVisibility();
 
@@ -132,12 +144,23 @@ export function CanvasToolbar({
     );
   }
 
-  const mapOnly = viewMode !== "map";
+  // A local grid never enters map mode, so the map-only affordances stay
+  // hidden rather than offering a basemap for coordinates no basemap can
+  // place.
+  const mapOnly = localGrid || viewMode !== "map";
   const mapOnlyDim: CSSProperties = {
     opacity: mapOnly ? 0.38 : undefined,
     cursor: mapOnly ? "not-allowed" : undefined,
   };
-  const mapOnlyTooltip = (label: string) => (mapOnly ? "Map mode only" : label);
+  // A local grid is disabled for a different reason than the schematic is:
+  // it has real coordinates, it simply has no georeference, so saying "map
+  // mode only" to someone already looking at their plan reads as a bug.
+  const mapOnlyTooltip = (label: string) =>
+    !mapOnly
+      ? label
+      : localGrid
+        ? "Needs a georeferenced model"
+        : "Map mode only";
 
   return (
     <div
@@ -162,6 +185,11 @@ export function CanvasToolbar({
             flexShrink: 0,
           }}
         >
+          {/* Both views exist for every project. What differs is what the
+              first one *is*: a georeferenced model gets a map, a local grid
+              gets its plan — the model's own coordinates with no basemap to
+              put them on. Both are real positions, which is what separates
+              them from the schematic's invented ones. */}
           {(["map", "schematic"] as ViewMode[]).map((m) => (
             <button
               type="button"
@@ -184,19 +212,22 @@ export function CanvasToolbar({
                 flexShrink: 0,
               }}
               data-tooltip={
-                m === "map"
-                  ? "Geographic layout"
-                  : "Idealised orthogonal layout"
+                m === "schematic"
+                  ? "Idealised orthogonal layout"
+                  : localGrid
+                    ? "The model's own coordinates — its CRS is a local grid"
+                    : "Geographic layout"
               }
               data-tooltip-pos="bottom"
             >
-              {m === "map" ? "Map" : "Schematic"}
+              {m === "schematic" ? "Schematic" : localGrid ? "Plan" : "Map"}
             </button>
           ))}
         </div>
 
         {/* Coordinate-coverage indicator — only shown when coords are missing */}
-        {viewMode === "map" &&
+        {!localGrid &&
+          viewMode === "map" &&
           coordStatus !== "complete" &&
           coordTotalCount > 0 && (
             <CoordStatusIndicator
@@ -237,7 +268,7 @@ export function CanvasToolbar({
               style={{ width: 12, height: 12, verticalAlign: "middle" }}
             />
           </button>
-          {showBasemapDropdown && viewMode === "map" && (
+          {showBasemapDropdown && viewMode === "map" && !localGrid && (
             <div
               style={{
                 position: "absolute",
@@ -372,15 +403,15 @@ export function CanvasToolbar({
           )}
         </div>
 
-        {/* CRS status + modal launcher */}
-        <div
-          data-toolbar-dropdown
-          style={{ position: "relative", opacity: mapOnlyDim.opacity }}
-        >
+        {/* CRS status + modal launcher.
+            Never gated on the view: which coordinate system a model is in
+            is a property of the model, not of how it is being drawn — and
+            gating it on `localGrid` was a trap, since this is the control
+            you would use to say a model is *not* on a local grid. */}
+        <div data-toolbar-dropdown style={{ position: "relative" }}>
           <button
             type="button"
             className="tool-btn"
-            disabled={mapOnly}
             style={{
               width: "auto",
               padding: "0 8px",
@@ -388,22 +419,17 @@ export function CanvasToolbar({
               gap: 4,
               display: "flex",
               alignItems: "center",
-              cursor: mapOnlyDim.cursor,
-              borderColor:
-                !mapOnly && crsError ? "var(--status-error)" : undefined,
+              borderColor: crsError ? "var(--status-error)" : undefined,
             }}
             onClick={(e) => {
-              if (mapOnly) return;
               e.stopPropagation();
               setShowBasemapDropdown(false);
               onOpenCrsModal();
             }}
-            data-tooltip={mapOnlyTooltip(
-              crsError ?? "Set source coordinate reference system",
-            )}
+            data-tooltip={crsError ?? "Set source coordinate reference system"}
             data-tooltip-pos="bottom"
           >
-            {sourceCrs}{" "}
+            {sourceCrs === LOCAL_CRS ? "Local grid" : sourceCrs}{" "}
             <ChevronUpDownIcon
               style={{ width: 12, height: 12, verticalAlign: "middle" }}
             />
@@ -426,47 +452,51 @@ export function CanvasToolbar({
           <CursorArrowRaysIcon style={ICON_14} />
         </button>
 
-        <button
-          type="button"
-          className={`tool-btn${activeTool === "edit" ? " active" : ""}`}
-          onClick={() => onToolChange("edit")}
-          disabled={mapOnly}
-          data-tooltip={mapOnlyTooltip("Edit / move nodes (E)")}
-          data-tooltip-pos="bottom"
-          aria-label="Edit"
-          style={{ ...ICON_BTN_STYLE, ...mapOnlyDim }}
-        >
-          <PencilSquareIcon style={ICON_14} />
-        </button>
+        {editable && (
+          <>
+            <button
+              type="button"
+              className={`tool-btn${activeTool === "edit" ? " active" : ""}`}
+              onClick={() => onToolChange("edit")}
+              disabled={mapOnly}
+              data-tooltip={mapOnlyTooltip("Edit / move nodes (E)")}
+              data-tooltip-pos="bottom"
+              aria-label="Edit"
+              style={{ ...ICON_BTN_STYLE, ...mapOnlyDim }}
+            >
+              <PencilSquareIcon style={ICON_14} />
+            </button>
 
-        <button
-          type="button"
-          className={`tool-btn${activeTool === "add-node" ? " active" : ""}`}
-          disabled={mapOnly}
-          onClick={() => onToolChange("add-node")}
-          data-tooltip={mapOnlyTooltip("Add node (N)")}
-          data-tooltip-pos="bottom"
-          aria-label="Add node"
-          style={{ ...ICON_BTN_STYLE, ...mapOnlyDim }}
-        >
-          <MapPinIcon style={ICON_14} />
-        </button>
+            <button
+              type="button"
+              className={`tool-btn${activeTool === "add-node" ? " active" : ""}`}
+              disabled={mapOnly}
+              onClick={() => onToolChange("add-node")}
+              data-tooltip={mapOnlyTooltip("Add node (N)")}
+              data-tooltip-pos="bottom"
+              aria-label="Add node"
+              style={{ ...ICON_BTN_STYLE, ...mapOnlyDim }}
+            >
+              <MapPinIcon style={ICON_14} />
+            </button>
 
-        {/* Not map-only, unlike its neighbours: a link carries no coordinates of
+            {/* Not map-only, unlike its neighbours: a link carries no coordinates of
             its own — `create_link` takes two node ids — so the schematic's
             synthetic positions are irrelevant to it. Connecting nodes is often
             easier there, where the layout makes connectivity legible. */}
-        <button
-          type="button"
-          className={`tool-btn${activeTool === "add-link" ? " active" : ""}`}
-          onClick={() => onToolChange("add-link")}
-          data-tooltip="Add link (L)"
-          data-tooltip-pos="bottom"
-          aria-label="Add link"
-          style={ICON_BTN_STYLE}
-        >
-          <LinkIcon style={ICON_14} />
-        </button>
+            <button
+              type="button"
+              className={`tool-btn${activeTool === "add-link" ? " active" : ""}`}
+              onClick={() => onToolChange("add-link")}
+              data-tooltip="Add link (L)"
+              data-tooltip-pos="bottom"
+              aria-label="Add link"
+              style={ICON_BTN_STYLE}
+            >
+              <LinkIcon style={ICON_14} />
+            </button>
+          </>
+        )}
 
         {/* Measure distance, with its readout anchored underneath */}
         <div style={{ position: "relative", display: "inline-flex" }}>
@@ -549,6 +579,29 @@ export function CanvasToolbar({
             }}
           />
         </button>
+
+        {hasRegions && (
+          <button
+            type="button"
+            className={`tool-btn${canvasLayers.regions ? " active" : ""}`}
+            onClick={() => setLayer("regions", !canvasLayers.regions)}
+            data-tooltip="Toggle subcatchment areas (map view only)"
+            data-tooltip-pos="bottom"
+            aria-label="Toggle regions"
+            style={ICON_BTN_STYLE}
+          >
+            <span
+              aria-hidden
+              style={{
+                width: 11,
+                height: 9,
+                borderRadius: 2,
+                border: "1.5px solid currentColor",
+                transform: "skewX(-8deg)",
+              }}
+            />
+          </button>
+        )}
 
         <button
           type="button"

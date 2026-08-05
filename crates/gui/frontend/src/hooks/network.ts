@@ -1,3 +1,4 @@
+import type { GenericQuantity } from "./results";
 /**
  * Network model hooks and mutation commands: nodes/links/patterns/curves,
  * element patching, controls & rules, and the diff-preview seam.
@@ -48,6 +49,8 @@ const SNAPSHOT_FLAG_PRESENT = 1;
 // the source CRS, exclusive of the endpoints); `headloss` is merged per
 // reporting period by the canvas from PeriodResults.linkHeadloss. Both are
 // optional, so every existing Link consumer keeps compiling untouched.
+import type { Region } from "../types/network";
+
 declare module "../types/network" {
   interface Link {
     /** Intermediate polyline vertices [x, y] in source-CRS coordinates
@@ -70,6 +73,136 @@ const SNAPSHOT_LINK_TYPES: readonly LinkType[] = ["pipe", "pump", "valve"];
 /** v3 `initialStatus` code → `Link.initialStatus` value (pipes only). */
 const SNAPSHOT_LINK_STATUSES = ["open", "closed", "cv"] as const;
 
+// ── Generic (engine-neutral) snapshot, layout v4 ─────────────────────────────
+// Emitted for engines the GUI views through the element-class contract
+// (hydra-common §4.1): classed points, polylines, and regions with a kind
+// string table. Produced by `commands/uds_view.rs`; layout documented there.
+
+const GENERIC_SNAPSHOT_VERSION = 4;
+const GENERIC_HEADER_BYTES = 48;
+
+function decodeGenericSnapshot(
+  buf: ArrayBuffer,
+  view: DataView,
+): { nodes: Node[]; links: Link[]; regions: Region[] } | null {
+  const flags = view.getUint32(4, true);
+  if ((flags & SNAPSHOT_FLAG_PRESENT) === 0) return null;
+  const nPoints = view.getUint32(8, true);
+  const nPolylines = view.getUint32(12, true);
+  const nRegions = view.getUint32(16, true);
+  const nKinds = view.getUint32(20, true);
+  const totalBends = view.getUint32(24, true);
+  const totalRing = view.getUint32(28, true);
+
+  let offset = GENERIC_HEADER_BYTES;
+  const takeF64 = (len: number): Float64Array => {
+    const arr = new Float64Array(buf, offset, len);
+    offset += 8 * len;
+    return arr;
+  };
+  const takeI32 = (len: number): Int32Array => {
+    // May be unaligned after odd f64 totals never occur (all blocks are
+    // 8-byte multiples before this point), but copy defensively anyway.
+    const bytes = new Uint8Array(buf, offset, 4 * len);
+    offset += 4 * len;
+    return new Int32Array(bytes.slice().buffer);
+  };
+  const takeU8 = (len: number): Uint8Array => {
+    const arr = new Uint8Array(buf, offset, len);
+    offset += len;
+    return arr;
+  };
+  const takeStrings = (count: number): string[] => {
+    const byteLen = new DataView(buf, offset, 4).getUint32(0, true);
+    offset += 4;
+    const text = new TextDecoder().decode(new Uint8Array(buf, offset, byteLen));
+    offset += byteLen;
+    if (count === 0) return [];
+    const parts = text.split("\n");
+    if (parts.length !== count) {
+      throw snapshotError(
+        `string column has ${parts.length} entries, expected ${count}`,
+      );
+    }
+    return parts;
+  };
+
+  const px = takeF64(nPoints);
+  const py = takeF64(nPoints);
+  const bx = takeF64(totalBends);
+  const by = takeF64(totalBends);
+  const rx = takeF64(totalRing);
+  const ry = takeF64(totalRing);
+  const from = takeI32(nPolylines);
+  const to = takeI32(nPolylines);
+  const outlet = takeI32(nRegions);
+  const bendCount = takeI32(nPolylines);
+  const ringCount = takeI32(nRegions);
+  const pointKind = takeU8(nPoints);
+  const polylineKind = takeU8(nPolylines);
+  const regionKind = takeU8(nRegions);
+  const kinds = takeStrings(nKinds);
+  const pointIds = takeStrings(nPoints);
+  const polylineIds = takeStrings(nPolylines);
+  const regionIds = takeStrings(nRegions);
+
+  const kindOf = (arr: Uint8Array, i: number): string =>
+    kinds[arr[i]] ?? "unknown";
+
+  const nodes: Node[] = [];
+  for (let i = 0; i < nPoints; i += 1) {
+    // No attribute fields: the v4 snapshot is geometry + identity only.
+    // Fabricating zeros here made every consumer print "Elevation 0.00 m"
+    // as if it were model data.
+    nodes.push({
+      id: pointIds[i],
+      type: kindOf(pointKind, i),
+      x: px[i],
+      y: py[i],
+      pressure: null,
+      demand: null,
+    });
+  }
+
+  const links: Link[] = [];
+  let bendAt = 0;
+  for (let i = 0; i < nPolylines; i += 1) {
+    const n = bendCount[i];
+    const vertices: Array<[number, number]> = [];
+    for (let k = 0; k < n; k += 1) {
+      vertices.push([bx[bendAt + k], by[bendAt + k]]);
+    }
+    bendAt += n;
+    const link: Link = {
+      id: polylineIds[i],
+      type: kindOf(polylineKind, i),
+      fromId: from[i] >= 0 ? pointIds[from[i]] : "",
+      toId: to[i] >= 0 ? pointIds[to[i]] : "",
+    };
+    if (vertices.length > 0) link.vertices = vertices;
+    links.push(link);
+  }
+
+  const regions: Region[] = [];
+  let ringAt = 0;
+  for (let i = 0; i < nRegions; i += 1) {
+    const n = ringCount[i];
+    const ring: Array<[number, number]> = [];
+    for (let k = 0; k < n; k += 1) {
+      ring.push([rx[ringAt + k], ry[ringAt + k]]);
+    }
+    ringAt += n;
+    regions.push({
+      id: regionIds[i],
+      type: kindOf(regionKind, i),
+      ring,
+      outletId: outlet[i] >= 0 ? pointIds[outlet[i]] : null,
+    });
+  }
+
+  return { nodes, links, regions };
+}
+
 function snapshotError(detail: string): Error {
   return new Error(`network snapshot decode failed: ${detail}`);
 }
@@ -89,12 +222,15 @@ function snapshotError(detail: string): Error {
  */
 export function decodeNetworkSnapshot(
   buf: ArrayBuffer,
-): { nodes: Node[]; links: Link[] } | null {
+): { nodes: Node[]; links: Link[]; regions: Region[] } | null {
   if (buf.byteLength < SNAPSHOT_HEADER_BYTES) {
     throw snapshotError(`buffer too short (${buf.byteLength} bytes)`);
   }
   const view = new DataView(buf);
   const version = view.getUint32(0, true);
+  if (version === GENERIC_SNAPSHOT_VERSION) {
+    return decodeGenericSnapshot(buf, view);
+  }
   if (version !== SNAPSHOT_VERSION) {
     throw snapshotError(`unsupported version ${version}`);
   }
@@ -279,7 +415,7 @@ export function decodeNetworkSnapshot(
     );
   }
 
-  return { nodes, links };
+  return { nodes, links, regions: [] };
 }
 
 /**
@@ -291,6 +427,7 @@ export function decodeNetworkSnapshot(
 export async function fetchNetworkSnapshot(): Promise<{
   nodes: Node[];
   links: Link[];
+  regions: Region[];
 } | null> {
   const buf = await tryInvoke<ArrayBuffer>("get_network_snapshot");
   // `null` = outside Tauri or the command failed (reported via onIpcError).
@@ -339,7 +476,16 @@ export interface ImportedModel {
     links: Link[];
     fileStem: string;
   };
+  /** Element counts of the imported model. Authoritative over the array
+   * lengths above: engines whose element data arrives via the viewer
+   * snapshot return an empty `network` here, but never empty counts. */
+  nodeCount: number;
+  linkCount: number;
   findings: ValidationFinding[];
+  /** Repairs applied during import (one message per line the importer
+   * commented out); empty when the file imported as written. Callers must
+   * surface these — the repair contract forbids applying them silently. */
+  repairs: string[];
 }
 
 /** Convert backend/Tauri import errors into concise toast-safe text. */
@@ -394,7 +540,7 @@ export function formatInpImportError(err: unknown): string {
 export async function loadProjectNetwork(
   projectId: string,
   scenarioId: string | null,
-): Promise<{ nodes: Node[]; links: Link[] } | null> {
+): Promise<{ nodes: Node[]; links: Link[]; regions: Region[] } | null> {
   const buf = await tryInvoke<ArrayBuffer>("load_project_network", {
     projectId,
     scenarioId,
@@ -659,6 +805,12 @@ export function useLinks(_version = 0): Link[] {
   return links;
 }
 
+/** Areal elements (subcatchments); empty for engines without them. */
+export function useRegions(): Region[] {
+  const { regions } = useNetworkData();
+  return regions;
+}
+
 export function useNetworkSummary(): NetworkSummary {
   const { summary } = useNetworkData();
   return summary;
@@ -877,4 +1029,290 @@ export async function getNetworkTitle(): Promise<string[]> {
  * validation failure so callers can surface the message. */
 export async function updateNetworkTitle(lines: string[]): Promise<void> {
   await invoke<void>("update_network_title", { lines });
+}
+
+// ── Engine-generic element details ──────────────────────────────────────────
+
+/** §5 quantity descriptor accompanying a numeric attribute — everything the
+ * frontend needs to convert the SI value to the active display system. */
+export interface ElementAttributeQuantity {
+  key: string;
+  siLabel: string;
+  usLabel: string;
+  siToUsScale: number;
+  siToUsOffset: number;
+  siDecimals: number;
+  usDecimals: number;
+}
+
+/** One Properties row of the engine-generic element inspector: an
+ * engine-authored label with either a numeric SI value or a display text. */
+export interface ElementAttribute {
+  label: string;
+  number?: number;
+  text?: string;
+  quantity?: ElementAttributeQuantity;
+}
+
+/** Display string for an attribute row in the given unit system. */
+export function formatElementAttribute(
+  attr: ElementAttribute,
+  sys: "si" | "us",
+): string {
+  if (attr.text != null) return attr.text;
+  if (attr.number == null) return "—";
+  const q = attr.quantity;
+  if (!q) {
+    // Unitless: enough precision for roughness-scale values.
+    return String(Number(attr.number.toFixed(4)));
+  }
+  const value =
+    sys === "us" ? attr.number * q.siToUsScale + q.siToUsOffset : attr.number;
+  const decimals = sys === "us" ? q.usDecimals : q.siDecimals;
+  const unit = sys === "us" ? q.usLabel : q.siLabel;
+  return `${value.toFixed(decimals)} ${unit}`;
+}
+
+/**
+ * Engine-described attribute rows for one element. `null` outside Tauri,
+ * for engines that serve attributes elsewhere (wds), or for an unknown id.
+ */
+export async function getElementDetails(
+  projectId: string,
+  scenarioId: string | null | undefined,
+  elementId: string,
+): Promise<ElementAttribute[] | null> {
+  return tryInvokeOr<ElementAttribute[] | null>(
+    "get_element_details",
+    { projectId, scenarioId: scenarioId ?? null, elementId },
+    null,
+  );
+}
+
+// ── Inlet couplings (dual drainage) ─────────────────────────────────────────
+
+/**
+ * A hydraulic connection that is **not a link**: a street conduit capturing
+ * flow into a sewer node through an inlet. In a dual-drainage model the
+ * surface network reaches the buried sewer only this way, so anything
+ * reasoning about connectivity from links alone would wrongly call the
+ * street network detached.
+ */
+export interface InletCoupling {
+  /** Id of the street conduit carrying the inlet. */
+  link: string;
+  /** Id of the node receiving captured flow. */
+  node: string;
+}
+
+/** Inlet couplings for a target; empty for engines that have none. */
+export async function getInletCouplings(
+  projectId: string,
+  scenarioId?: string | null,
+): Promise<InletCoupling[]> {
+  return tryInvokeOr<InletCoupling[]>(
+    "get_inlet_couplings",
+    { projectId, scenarioId: scenarioId ?? null },
+    [],
+  );
+}
+
+/** Inlet couplings for the given target, refetched when it changes. */
+export function useInletCouplings(
+  projectId: string | null | undefined,
+  scenarioId: string | null | undefined,
+): { couplings: InletCoupling[]; resolved: boolean } {
+  // `resolved` is the point of the shape. An empty array cannot say whether
+  // this model has no couplings or has not been asked yet, and a layout that
+  // guesses "none" declares every street conduit detached from the sewer it
+  // drains into — briefly, until the answer arrives.
+  const [state, setState] = useState<{
+    couplings: InletCoupling[];
+    resolved: boolean;
+  }>({ couplings: EMPTY_COUPLINGS, resolved: false });
+  useEffect(() => {
+    if (!projectId) {
+      setState({ couplings: EMPTY_COUPLINGS, resolved: true });
+      return;
+    }
+    let cancelled = false;
+    setState({ couplings: EMPTY_COUPLINGS, resolved: false });
+    void getInletCouplings(projectId, scenarioId)
+      .then((c) => {
+        if (!cancelled) setState({ couplings: c, resolved: true });
+      })
+      .catch(() => {
+        // A failed read is still an answer: draw the network without
+        // couplings rather than never drawing it.
+        if (!cancelled) {
+          setState({ couplings: EMPTY_COUPLINGS, resolved: true });
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [projectId, scenarioId]);
+  return state;
+}
+
+/** Stable empty, so a coupling-less model does not hand the layout a fresh
+ * array identity on every render and invalidate its cache. */
+const EMPTY_COUPLINGS: InletCoupling[] = [];
+
+// ── Per-kind element tables ────────────────────────────────────────────────
+
+/** One column of a kind's property table: an engine-declared attribute
+ * (§4.4) with every element's value, parallel to `ids`. */
+export interface KindColumn {
+  key: string;
+  label: string;
+  /** Present for numeric columns; values are SI and convert through it. */
+  quantity?: ElementAttributeQuantity;
+  /** Number, string, or null where the element lacks the attribute. */
+  values: Array<number | string | null>;
+}
+
+/** Every element of one kind with its declared properties. */
+export interface KindElements {
+  /** Element ids in model order — the row order every column follows. */
+  ids: string[];
+  columns: KindColumn[];
+}
+
+const EMPTY_KIND_ELEMENTS: KindElements = { ids: [], columns: [] };
+
+export async function getKindElements(
+  projectId: string,
+  scenarioId: string | null | undefined,
+  kind: string,
+): Promise<KindElements> {
+  return tryInvokeOr<KindElements>(
+    "get_kind_elements",
+    { projectId, scenarioId: scenarioId ?? null, kind },
+    EMPTY_KIND_ELEMENTS,
+  );
+}
+
+/**
+ * The contents of one collection element — a curve's points, a pattern's
+ * factors, a rule's clauses.
+ *
+ * One shape for every container: `rows` under `columns` when the content
+ * is tabular, `lines` when it is language. A consumer renders whichever
+ * is non-empty.
+ */
+export interface CollectionDetail {
+  columns: string[];
+  /** The §5 quantity each column carries; `null` where dimensionless.
+   * Values are SI, so this is what makes them displayable. */
+  quantities: (GenericQuantity | null)[];
+  rows: number[][];
+  lines: string[];
+}
+
+const EMPTY_DETAIL: CollectionDetail = {
+  columns: [],
+  quantities: [],
+  rows: [],
+  lines: [],
+};
+
+export async function getCollectionDetail(
+  projectId: string,
+  scenarioId: string | null | undefined,
+  kind: string,
+  id: string,
+): Promise<CollectionDetail> {
+  return tryInvokeOr<CollectionDetail>(
+    "get_collection_detail",
+    { projectId, scenarioId: scenarioId ?? null, kind, id },
+    EMPTY_DETAIL,
+  );
+}
+
+/** The contents of the selected container, or empty when none is chosen. */
+export function useCollectionDetail(
+  projectId: string | null | undefined,
+  scenarioId: string | null | undefined,
+  kind: string | null,
+  id: string | null,
+): CollectionDetail {
+  const [detail, setDetail] = useState<CollectionDetail>(EMPTY_DETAIL);
+  useEffect(() => {
+    if (!projectId || !kind || !id) {
+      setDetail(EMPTY_DETAIL);
+      return;
+    }
+    let cancelled = false;
+    void getCollectionDetail(projectId, scenarioId, kind, id).then((d) => {
+      if (!cancelled) setDetail(d);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [projectId, scenarioId, kind, id]);
+  return detail;
+}
+
+/** How many elements each declared kind holds, keyed by kind id. */
+export async function getKindCounts(
+  projectId: string,
+  scenarioId: string | null | undefined,
+): Promise<Record<string, number>> {
+  return tryInvokeOr<Record<string, number>>(
+    "get_kind_counts",
+    { projectId, scenarioId: scenarioId ?? null },
+    {},
+  );
+}
+
+/**
+ * Per-kind element counts for a target.
+ *
+ * The editor's rail needs every kind's size at once, which the per-kind
+ * fetch cannot give without one call per kind — including the collections,
+ * whose contents nothing else loads.
+ */
+export function useKindCounts(
+  projectId: string | null | undefined,
+  scenarioId: string | null | undefined,
+): Record<string, number> {
+  const [counts, setCounts] = useState<Record<string, number>>({});
+  useEffect(() => {
+    if (!projectId) {
+      setCounts({});
+      return;
+    }
+    let cancelled = false;
+    void getKindCounts(projectId, scenarioId).then((c) => {
+      if (!cancelled) setCounts(c);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [projectId, scenarioId]);
+  return counts;
+}
+
+/** The elements of `kind` for a target, refetched when any of them change. */
+export function useKindElements(
+  projectId: string | null | undefined,
+  scenarioId: string | null | undefined,
+  kind: string | null,
+): KindElements {
+  const [elements, setElements] = useState<KindElements>(EMPTY_KIND_ELEMENTS);
+  useEffect(() => {
+    if (!projectId || !kind) {
+      setElements(EMPTY_KIND_ELEMENTS);
+      return;
+    }
+    let cancelled = false;
+    void getKindElements(projectId, scenarioId, kind).then((e) => {
+      if (!cancelled) setElements(e);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [projectId, scenarioId, kind]);
+  return elements;
 }

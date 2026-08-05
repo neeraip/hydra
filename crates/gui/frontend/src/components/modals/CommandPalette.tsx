@@ -3,6 +3,7 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAppState, useSimulation } from "../../AppContext";
 import { useCanvasSelection } from "../../canvas/selection-context";
+import { engineComponents } from "../../engine/registry";
 import {
   type Command,
   type CommandCategory,
@@ -14,6 +15,7 @@ import {
   useNetworkVersion,
   useNodes,
   useProjects,
+  useRegions,
   useScenarios,
 } from "../../hooks";
 import { tryInvoke } from "../../hooks/ipc";
@@ -95,7 +97,13 @@ export function searchElements(
       id: l.id,
       kind: "link",
       subtype: l.type,
-      description: `${l.type} · ${l.fromId} → ${l.toId} · ⌀${formatQtyRaw(l.diameter, "diameter", sys)}`,
+      // Diameter only when the engine served one — "⌀0 m" on every
+      // attribute-less link read as data.
+      description: `${l.type} · ${l.fromId} → ${l.toId}${
+        l.diameter != null && l.diameter > 0
+          ? ` · ⌀${formatQtyRaw(l.diameter, "diameter", sys)}`
+          : ""
+      }`,
     });
     found += 1;
   }
@@ -171,6 +179,9 @@ export function CommandPalette() {
   // to pick the right file filter and parser.
   const activeProjectEngine =
     projects.find((p) => p.id === activeProjectId)?.engine ?? null;
+  // Same gate as the toolbar and shortcuts: editing tool commands do not
+  // exist for read-only engines — the palette must not bypass the registry.
+  const modelEditable = engineComponents(activeProjectEngine).modelEditable;
   // Scenario quick-switch entries — only meaningful with a project open.
   const scenarios = useScenarios(
     page === "project" ? activeProjectId : null,
@@ -178,12 +189,15 @@ export function CommandPalette() {
   );
   const allNodes = useNodes();
   const allLinks = useLinks();
+  const allRegions = useRegions();
   const {
     setSelectedNodeId,
     setSelectedLinkId,
     setInspectorView,
     zoomToNode,
     zoomToLink,
+    simNodes,
+    simLinks,
   } = useCanvasSelection();
   const { resultMeta } = useSimulation();
   const { bumpNetwork } = useNetworkVersion();
@@ -282,7 +296,7 @@ export function CommandPalette() {
           id: "n4",
           label: "Network Editor",
           category: "Navigate",
-          description: "Open the network editor view",
+          description: "Open the editor view",
           shortcut: navEditorShortcut,
           action: "nav-editor",
         },
@@ -291,7 +305,7 @@ export function CommandPalette() {
         {
           id: "s1",
           label: "Run simulation",
-          description: "Run hydraulics for the active scenario",
+          description: "Run a simulation of the active scenario",
           category: "Simulate",
           shortcut: runShortcut,
           action: "run-sim",
@@ -308,7 +322,7 @@ export function CommandPalette() {
         {
           id: "a-export-inp",
           label: "Export INP…",
-          description: "Save the current network as an EPANET INP file",
+          description: "Save the current network as a model input file",
           category: "Actions",
         },
         // Only listed when simulation results exist for the active scenario.
@@ -374,30 +388,37 @@ export function CommandPalette() {
           shortcut: "S",
           action: "canvas-tool-select",
         },
-        {
-          id: "p-tool-edit",
-          label: "Use edit tool",
-          description: "Activate move/edit nodes tool",
-          category: "Page",
-          shortcut: "E",
-          action: "canvas-tool-edit",
-        },
-        {
-          id: "p-tool-add-node",
-          label: "Use add node tool",
-          description: "Activate add node tool",
-          category: "Page",
-          shortcut: "N",
-          action: "canvas-tool-add-node",
-        },
-        {
-          id: "p-tool-add-link",
-          label: "Use add link tool",
-          description: "Activate add link tool",
-          category: "Page",
-          shortcut: "L",
-          action: "canvas-tool-add-link",
-        },
+        // Editing tools exist only for engines whose model this GUI edits
+        // (the CanvasView event listener re-checks, but a listed command
+        // that no-ops would read as broken).
+        ...(modelEditable
+          ? [
+              {
+                id: "p-tool-edit",
+                label: "Use edit tool",
+                description: "Activate move/edit nodes tool",
+                category: "Page",
+                shortcut: "E",
+                action: "canvas-tool-edit",
+              } satisfies DynamicCommand,
+              {
+                id: "p-tool-add-node",
+                label: "Use add node tool",
+                description: "Activate add node tool",
+                category: "Page",
+                shortcut: "N",
+                action: "canvas-tool-add-node",
+              } satisfies DynamicCommand,
+              {
+                id: "p-tool-add-link",
+                label: "Use add link tool",
+                description: "Activate add link tool",
+                category: "Page",
+                shortcut: "L",
+                action: "canvas-tool-add-link",
+              } satisfies DynamicCommand,
+            ]
+          : []),
         {
           id: "p-tool-measure",
           label: "Use measure tool",
@@ -475,6 +496,7 @@ export function CommandPalette() {
     projectView,
     activeProjectId,
     resultMeta,
+    modelEditable,
     navCanvasShortcut,
     navEditorShortcut,
     navAnalysisShortcut,
@@ -600,7 +622,14 @@ export function CommandPalette() {
           .then((imported) => {
             if (imported) {
               bumpNetwork();
-              const { network, findings } = imported;
+              const { network, findings, repairs } = imported;
+              // Repairs must be surfaced (repair-by-omission contract).
+              if (repairs?.length) {
+                showToast(
+                  `${repairs.length} nonstandard line${repairs.length === 1 ? "" : "s"} commented out during import`,
+                  "warn",
+                );
+              }
               // A model that read but is not yet simulable must not report as
               // a plain success — the Issues panel is where it gets resolved.
               showToast(
@@ -652,13 +681,17 @@ export function CommandPalette() {
           showToast("Run a simulation first", "warn");
           return;
         }
+        // Sim-merged arrays carry the engine-generic per-period values
+        // (`resultValues`, SI) — plain arrays otherwise.
+        const exportNodes = simNodes ?? allNodes;
+        const exportLinks = simLinks ?? allLinks;
         const nodeCoords = new Map(
-          allNodes.map((n) => [n.id, [n.x, n.y] as [number, number]]),
+          exportNodes.map((n) => [n.id, [n.x, n.y] as [number, number]]),
         );
         const fc = {
           type: "FeatureCollection" as const,
           features: [
-            ...allNodes.map((n) => ({
+            ...exportNodes.map((n) => ({
               type: "Feature" as const,
               geometry: { type: "Point" as const, coordinates: [n.x, n.y] },
               properties: {
@@ -670,36 +703,57 @@ export function CommandPalette() {
                 ...(n.head != null ? { head: n.head } : {}),
                 ...(n.demand != null ? { demand: n.demand } : {}),
                 ...(n.quality != null ? { quality: n.quality } : {}),
+                ...(n.resultValues ?? {}),
               },
             })),
-            ...allLinks.map((l) => {
+            ...exportLinks.map((l) => {
               const from = nodeCoords.get(l.fromId) ?? [0, 0];
               const to = nodeCoords.get(l.toId) ?? [0, 0];
               return {
                 type: "Feature" as const,
                 geometry: {
                   type: "LineString" as const,
-                  coordinates: [from, to],
+                  // Intermediate vertices included — a straight from→to
+                  // line flattened every polyline conduit.
+                  coordinates: [from, ...(l.vertices ?? []), to],
                 },
                 properties: {
                   id: l.id,
                   type: l.type,
-                  diameter: l.diameter,
                   // Static attributes, then result values when available.
+                  // Absent attributes are omitted, never exported as 0.
+                  ...(l.diameter != null && l.diameter > 0
+                    ? { diameter: l.diameter }
+                    : {}),
                   ...(l.length != null && l.length > 0
                     ? { length: l.length }
                     : {}),
                   // `velocity` is only meaningful once sim data is merged in
-                  // (it defaults to 0 pre-run) — gate it on `flow` like the
-                  // other result values.
+                  // — gate it on `flow` like the other result values.
                   ...(l.flow != null
                     ? { flow: l.flow, velocity: l.velocity }
                     : {}),
                   ...(l.status != null ? { status: l.status } : {}),
                   ...(l.quality != null ? { quality: l.quality } : {}),
+                  ...(l.resultValues ?? {}),
                 },
               };
             }),
+            // Areal elements (subcatchments) as closed polygons.
+            ...allRegions
+              .filter((r) => r.ring.length >= 3)
+              .map((r) => ({
+                type: "Feature" as const,
+                geometry: {
+                  type: "Polygon" as const,
+                  coordinates: [[...r.ring, r.ring[0]]],
+                },
+                properties: {
+                  id: r.id,
+                  type: r.type,
+                  ...(r.outletId != null ? { outlet: r.outletId } : {}),
+                },
+              })),
           ],
         };
         const blob = new Blob([JSON.stringify(fc, null, 2)], {
@@ -858,6 +912,9 @@ export function CommandPalette() {
       resultMeta,
       allNodes,
       allLinks,
+      allRegions,
+      simNodes,
+      simLinks,
       bumpNetwork,
       openIssuesPanel,
       toggleTaskTray,

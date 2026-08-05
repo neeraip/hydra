@@ -256,3 +256,51 @@ export function collectDirtyKinds(args: {
   for (const pending of pendingDeletes) kinds.add(pending.kind);
   return kinds;
 }
+
+/** The six kinds in the order the editor lists them. */
+export const ELEMENT_KIND_ORDER: readonly ElementKind[] = [
+  "junction",
+  "pipe",
+  "pump",
+  "tank",
+  "reservoir",
+  "valve",
+];
+
+/**
+ * How many elements of each kind the editor is showing, counting staged
+ * work: additions not yet saved are included, deletions not yet saved are
+ * not.
+ *
+ * Extracted because two surfaces need the same answer — the rail that
+ * lists the kinds, and the tables that fill them — and a rail saying 12
+ * pumps beside a table listing 11 is the kind of disagreement nobody
+ * reports as a bug; they just stop trusting the number.
+ */
+export function elementCounts(
+  nodes: { type: string }[],
+  links: { type: string }[],
+  pendingAdds: readonly PendingAdd[],
+  pendingDeletes: readonly PendingDelete[],
+): Record<ElementKind, number> {
+  const counts = Object.fromEntries(
+    ELEMENT_KIND_ORDER.map((k) => [k, 0]),
+  ) as Record<ElementKind, number>;
+  for (const e of [...nodes, ...links]) {
+    if (e.type in counts) counts[e.type as ElementKind] += 1;
+  }
+  for (const d of pendingDeletes) {
+    if (d.kind in counts) counts[d.kind] -= 1;
+  }
+  for (const a of pendingAdds) {
+    if (a.kind in counts) counts[a.kind] += 1;
+  }
+  // A model cannot hold fewer than none of something. Staged state can
+  // momentarily disagree with the network it was staged against — a
+  // deletion whose element has already gone — and a negative badge would
+  // advertise that inconsistency rather than absorb it.
+  for (const k of ELEMENT_KIND_ORDER) {
+    if (counts[k] < 0) counts[k] = 0;
+  }
+  return counts;
+}

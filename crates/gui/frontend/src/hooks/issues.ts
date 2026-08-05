@@ -19,6 +19,30 @@ export interface Issue {
   link?: { view: ProjectView; assetId?: string; label?: string };
   firstSeen: string;
 }
+/**
+ * Fold a freshly derived issue list onto the one already on screen,
+ * keeping each surviving issue's original `firstSeen`.
+ *
+ * The list is re-derived from scratch whenever anything it watches
+ * changes — a run finishes, the model is edited, validation reruns — and
+ * every derivation stamps `firstSeen` as *now*. Without this merge an
+ * issue that has been present for an hour would report itself as new on
+ * every refresh, which makes "how long has this been wrong" meaningless
+ * and hides a persistent fault among transient ones.
+ *
+ * Identity is the issue's id, which is why those ids are built from
+ * stable code + element keys rather than anything positional.
+ */
+export function mergeIssues(previous: Issue[], next: Issue[]): Issue[] {
+  const seenBefore = new Map(previous.map((i) => [i.id, i.firstSeen]));
+  // Ordered and filtered by `next`: an issue that no longer derives has
+  // been resolved and must leave, however long it was present.
+  return next.map((issue) => {
+    const firstSeen = seenBefore.get(issue.id);
+    return firstSeen ? { ...issue, firstSeen } : issue;
+  });
+}
+
 export interface IssueCounts {
   error: number;
   warn: number;
