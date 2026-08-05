@@ -43,13 +43,43 @@ import {
   useRegions,
 } from "../../hooks";
 import { perfTrace } from "../../perfTrace";
+import { readTextScale } from "../../textScale";
 import type { Region } from "../../types";
 import { toDisplay, unitLabel, useUnitSystem } from "../../units";
 import { MiddleTruncate } from "../ui/MiddleTruncate";
 import { TypeBadge } from "../ui/TypeBadge";
 import { activeElement, activeKey, isActiveRow } from "./activeElement";
 
-const ROW_HEIGHT = 27;
+/** Padding and border of a row — chrome, so it does not move with text. */
+const ROW_CHROME = 12;
+/** Line box of the id at text scale 1 (11px text). */
+const ID_LINE_AT_SCALE_1 = 15;
+/** Line box of the context line at text scale 1 (9px text). */
+const CONTEXT_LINE_AT_SCALE_1 = 12;
+
+/**
+ * Height of one row of the network list.
+ *
+ * The virtualiser positions every row by this number, so a height that
+ * does not account for what a row actually renders does not clip the
+ * overflow — it lays the next row on top of it.
+ *
+ * Two things change it. A search adds a second line to rows that matched
+ * on what they connect to, and the text scale grows the lines but not the
+ * padding around them — so only the text portion is interpolated, which
+ * is exact rather than merely closer than a constant. The same reasoning
+ * as `editorRowHeight`, and for the same reason: the error repeats once
+ * per row, and this list runs to tens of thousands of them.
+ *
+ * One height for the whole list rather than per row: the second line is
+ * present or absent for every row at once, so measuring each would buy
+ * nothing and cost the fixed-size fast path on a 46k-element network.
+ * Rows with no second line centre in the taller slot.
+ */
+export function inspectorRowHeight(scale: number, searching: boolean): number {
+  const text = ID_LINE_AT_SCALE_1 + (searching ? CONTEXT_LINE_AT_SCALE_1 : 0);
+  return Math.round(ROW_CHROME + text * scale);
+}
 
 /** Opacity of a row whose element is off screen. Low enough to recede at a
  * glance, high enough that the id stays readable — the row is still a
@@ -456,12 +486,21 @@ export function NetworkInspectorHome({
   }, [visible, sys]);
 
   const scrollRef = useRef<HTMLDivElement>(null);
+  const rowHeight = inspectorRowHeight(readTextScale(), searching);
   const rowVirtualizer = useVirtualizer({
     count: visible.length,
     getScrollElement: () => scrollRef.current,
-    estimateSize: () => ROW_HEIGHT,
+    estimateSize: () => rowHeight,
     overscan: 12,
   });
+
+  // The virtualiser caches measurements, so a changed `estimateSize` alone
+  // leaves every row positioned at the old pitch — the first search would
+  // lay the taller rows out on the shorter spacing.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: remeasure on pitch change
+  useEffect(() => {
+    rowVirtualizer.measure();
+  }, [rowHeight, rowVirtualizer]);
 
   // Class *and* id: an element id is unique only within its class, so a
   // junction and a pipe may both be called "2".
