@@ -13,6 +13,7 @@
  * whose boundary condition means nothing to a storage unit.
  */
 
+import { LockClosedIcon } from "@heroicons/react/16/solid";
 import { useMemo, useState } from "react";
 import { useActiveProject, useAppState } from "../../AppContext";
 import { useCanvasSelection } from "../../canvas/selection-context";
@@ -28,7 +29,6 @@ import {
   EditorShell,
   EditorStatusBar,
 } from "../../pages/project/EditorShell";
-import { engineComponents } from "../registry";
 import { CollectionDetail } from "./CollectionDetail";
 
 export function UdsElementsView() {
@@ -45,26 +45,19 @@ export function UdsElementsView() {
 
   const kinds = useElementKinds(project?.engine);
   const counts = useKindCounts(project?.id, activeScenarioId);
-  const { modelEditable } = engineComponents(project?.engine);
 
-  // Which kinds earn a rail entry depends on whether the model can be
-  // edited, not on which engine it is.
+  // Every kind the engine declares gets a rail entry, including the ones
+  // this model has none of.
   //
-  // In an editable model an empty kind is where the first weir gets
-  // added, so it has to be reachable even at zero. In a read-only one it
-  // is a table that can be neither read nor filled, so listing it offers
-  // a click that leads nowhere. The water-distribution and drainage
-  // editors already behaved this way; deriving it from the capability
-  // makes that a rule rather than a coincidence.
-  //
-  // Collections are included like any other kind — they are the model's
-  // pollutants, curves, time series, patterns and rules.
+  // Hiding empty kinds looked tidier and cost more than it saved: a rail
+  // showing five entries left no way to tell a sparse model from an
+  // incomplete application. "This model has no pollutants" is a fact
+  // worth reading, and it was indistinguishable from "pollutants cannot
+  // be shown". An empty entry is dimmed rather than absent, so what the
+  // model *has* still reads at a glance.
   const present = useMemo(
-    () =>
-      kinds
-        .map((k) => ({ ...k, count: counts[k.id] ?? 0 }))
-        .filter((k) => modelEditable || k.count > 0),
-    [kinds, counts, modelEditable],
+    () => kinds.map((k) => ({ ...k, count: counts[k.id] ?? 0 })),
+    [kinds, counts],
   );
 
   const [activeKind, setActiveKind] = useState<string | null>(null);
@@ -120,7 +113,11 @@ export function UdsElementsView() {
     else setOpenContainer(id);
   }
 
-  if (present.length === 0) {
+  // `present` is empty only before the engine's catalog arrives, which is
+  // not the same as an empty model — that is every count being zero.
+  // Conflating them would greet a loading project with "no network yet".
+  if (present.length === 0) return null;
+  if (present.every((k) => k.count === 0)) {
     return (
       <div
         style={{
@@ -141,11 +138,42 @@ export function UdsElementsView() {
       onSelectSection={setActiveKind}
       footer={
         <EditorStatusBar>
-          {/* The status bar says why it is empty rather than leaving a bar
-              that looks like something failed to load. Read-only engines
-              hide edit affordances instead of offering ones that refuse. */}
+          {/* This bar is where the Editor reports the state of editing —
+              water distribution says "3 unsaved changes" here. Drainage's
+              answer is that there is no editing at all, and it is said
+              once, in that same place, rather than repeated beside every
+              table.
+              
+              It reads as a state rather than a caption: WDS's version
+              earns peripheral attention by warming to amber when work is
+              staged, and this one never changes, so it leans on the icon
+              and a secondary weight instead of tertiary body text. */}
+          <span
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 6,
+              color: "var(--text-secondary)",
+              fontWeight: 500,
+            }}
+          >
+            <LockClosedIcon
+              style={{ width: 12, height: 12, flexShrink: 0 }}
+              aria-hidden="true"
+            />
+            Read-only
+          </span>
+          {/* "Edited outside Hydra" read as a design stance — as though
+              drainage models were deliberately someone else's to change.
+              The truth is narrower and temporary: the engine simulates
+              drainage fully from the CLI and the SDK, and only the GUI's
+              editing has not been built. Say that, so the sentence stops
+              being wrong the day it ships rather than merely stale.
+
+              Remove this whole footer when drainage becomes editable;
+              `modelEditable` in the engine registry is the switch. */}
           <span style={{ color: "var(--text-tertiary)" }}>
-            Read-only — drainage models are edited outside Hydra
+            Editing drainage models here isn't built yet.
           </span>
         </EditorStatusBar>
       }

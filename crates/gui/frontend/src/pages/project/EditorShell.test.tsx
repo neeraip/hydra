@@ -123,6 +123,51 @@ describe("EditorShell", () => {
     expect(container.querySelectorAll("hr")).toHaveLength(1);
   });
 
+  // An absent kind and an empty one are different facts. Hiding empties
+  // left no way to tell a sparse model from an application that cannot
+  // show them — so they are listed, but recede.
+  it("dims a section the model has nothing in", () => {
+    renderShell({
+      sections: [
+        { id: "junctions", label: "Junctions", count: 12 },
+        { id: "weirs", label: "Weirs", count: 0 },
+      ],
+      activeSectionId: "junctions",
+    });
+    const opacity = (label: string) =>
+      Number.parseFloat(
+        (screen.getByText(label).closest("button") as HTMLButtonElement).style
+          .opacity || "1",
+      );
+    expect(opacity("Weirs")).toBeLessThan(opacity("Junctions"));
+  });
+
+  // Opening it and reading "no elements of this kind" is the confirmation
+  // the entry exists to give, so it must stay reachable.
+  it("keeps an empty section selectable", () => {
+    const { onSelectSection } = renderShell({
+      sections: [{ id: "weirs", label: "Weirs", count: 0 }],
+      activeSectionId: "junctions",
+    });
+    const button = screen.getByText("Weirs").closest("button");
+    expect((button as HTMLButtonElement).disabled).toBe(false);
+    fireEvent.click(button as HTMLButtonElement);
+    expect(onSelectSection).toHaveBeenCalledWith("weirs");
+  });
+
+  it("does not dim the active section, empty or not", () => {
+    renderShell({
+      sections: [{ id: "weirs", label: "Weirs", count: 0 }],
+      activeSectionId: "weirs",
+    });
+    const style = (
+      screen.getByText("Weirs").closest("button") as HTMLButtonElement
+    ).style;
+    expect(style.opacity === "" || Number.parseFloat(style.opacity) === 1).toBe(
+      true,
+    );
+  });
+
   it("survives an engine that has no sections yet", () => {
     expect(() => renderShell({ sections: [] })).not.toThrow();
   });

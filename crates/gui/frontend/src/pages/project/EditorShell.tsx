@@ -13,9 +13,12 @@
  * pages that do the same job should not have to be learned twice, and the
  * fix is a shared skeleton rather than a switch inside one page.
  *
- * Sections are given, never derived here: an engine offering a section it
- * cannot fill would be an affordance that refuses, which this GUI does not
- * do (see `modelEditable`).
+ * Sections are given, never derived here — each engine decides what its
+ * model is made of. An engine is expected to list every kind it declares,
+ * including ones the loaded model has none of: that a model has no
+ * pollutants is a fact worth reading, and hiding the entry made it
+ * indistinguishable from the application being unable to show them.
+ * Empty sections are drawn quieter rather than dropped.
  */
 
 import { Fragment, type ReactNode } from "react";
@@ -97,6 +100,12 @@ export function EditorShell({
         >
           {sections.map((s) => {
             const active = s.id === activeSectionId;
+            // A kind the model has none of is still listed — that absence
+            // is information — but it recedes so the kinds that do have
+            // content are what the eye lands on. Never disabled: opening
+            // it and reading "no elements of this kind" is the
+            // confirmation the entry exists to give.
+            const empty = s.count === 0;
             return (
               <Fragment key={s.id}>
                 {/* The divider is its own element, not the row's top
@@ -161,7 +170,9 @@ export function EditorShell({
                     fontSize: "var(--text-md)",
                     fontFamily: "var(--font-ui)",
                     textAlign: "left",
-                    transition: "background var(--t-fast)",
+                    opacity: empty && !active ? 0.45 : 1,
+                    transition:
+                      "background var(--t-fast), opacity var(--t-fast)",
                   }}
                 >
                   <span
