@@ -116,7 +116,10 @@ export function ConnectedNodeChip({
   accent,
   onLocate,
 }: {
-  label: "From" | "To";
+  /** What this node is to the element being inspected — "From", "To", or
+   *  a relationship a link's endpoints do not cover, such as the node a
+   *  street inlet captures into. */
+  label: string;
   nodeId: string;
   allNodes: Node[];
   accent: string;

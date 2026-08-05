@@ -1,9 +1,16 @@
 import { useMemo } from "react";
+import { useActiveProject, useAppState } from "../../AppContext";
 import { useHoverActions } from "../../canvas/hover-context";
 import { ConnectedLink } from "../../components/panels/ElementInspector/ConnectedElements";
 import { SectionLabel } from "../../components/ui/SectionLabel";
-import { useLinksConnectedTo, useRegions } from "../../hooks";
+import {
+  useInletCouplings,
+  useLinks,
+  useLinksConnectedTo,
+  useRegions,
+} from "../../hooks";
 import type { NodeInspectorBodyProps } from "../registry";
+import { capturedFrom } from "./couplings";
 import {
   GenericResultsCards,
   GenericTimeSeriesCard,
@@ -22,6 +29,8 @@ export function UdsNodeInspectorBody({
   onLocateRegion,
   results,
 }: NodeInspectorBodyProps) {
+  const { project } = useActiveProject();
+  const { activeScenarioId } = useAppState();
   const connectedLinks = useLinksConnectedTo(node.id);
   const attributes = useElementDetails(node.id, node.type);
   const { hoverRegion, clearHover } = useHoverActions();
@@ -34,6 +43,17 @@ export function UdsNodeInspectorBody({
     () => regions.filter((r) => r.outletId === node.id),
     [regions, node.id],
   );
+
+  // Street conduits that discharge into this node through an inlet. Kept
+  // apart from "connected links" rather than folded in: those share an
+  // endpoint with this node, these do not touch it at all — which is the
+  // distinction the map draws as a dashed line instead of a pipe.
+  const { couplings } = useInletCouplings(project?.id, activeScenarioId);
+  const allLinks = useLinks();
+  const capturingLinks = useMemo(() => {
+    const ids = new Set(capturedFrom(couplings, node.id));
+    return allLinks.filter((l) => ids.has(l.id));
+  }, [couplings, allLinks, node.id]);
   return (
     <div style={{ flex: 1, overflowY: "auto", padding: 12 }}>
       <PropertiesSection {...attributes} />
@@ -53,6 +73,27 @@ export function UdsNodeInspectorBody({
             }}
           >
             {connectedLinks.map((l) => (
+              <ConnectedLink key={l.id} link={l} onLocate={onLocateLink} />
+            ))}
+          </div>
+        </>
+      )}
+
+      {capturingLinks.length > 0 && (
+        <>
+          <SectionLabel>
+            Captured from {capturingLinks.length} street
+            {capturingLinks.length === 1 ? "" : "s"}
+          </SectionLabel>
+          <div
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              gap: 4,
+              marginBottom: 14,
+            }}
+          >
+            {capturingLinks.map((l) => (
               <ConnectedLink key={l.id} link={l} onLocate={onLocateLink} />
             ))}
           </div>
