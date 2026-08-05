@@ -28,7 +28,6 @@ import type React from "react";
 import { lazy, Suspense, useEffect } from "react";
 import { useAppState } from "../../AppContext";
 import { loadSettingsContent } from "../../lazyChunks";
-import { ModalBackdrop, stopBackdropEvents } from "../ui/ModalBackdrop";
 import { Spinner } from "../ui/Spinner";
 
 const SettingsContent = lazy(() =>
@@ -52,7 +51,7 @@ export const SETTINGS_COLUMN: React.CSSProperties = {
   width: "100%",
   maxWidth: 680,
   margin: "0 auto",
-  padding: "40px 48px",
+  padding: "40px 44px",
 };
 
 export function SettingsDrawer() {
@@ -73,18 +72,30 @@ export function SettingsDrawer() {
 
   if (!settingsOpen) return null;
   return (
-    <ModalBackdrop
-      onDismiss={closeSettings}
-      zIndex={200}
-      style={{ justifyContent: "flex-end", alignItems: "stretch" }}
+    /* No backdrop, and not `aria-modal`: the drawer covers the right of
+       the window and everything it does not cover stays live — the canvas
+       still pans, the activity bar still switches, and a setting can be
+       changed while watching what it does.
+    
+       That also means no dismiss-on-outside-click. A click outside a
+       non-modal panel belongs to whatever it landed on; stealing it to
+       close the drawer would make the rest of the window a dismiss target
+       rather than the app. Escape and the close button remain. */
+    <div
+      role="dialog"
+      aria-label="Settings"
+      style={{
+        position: "fixed",
+        top: 0,
+        right: 0,
+        bottom: 0,
+        zIndex: 200,
+        display: "flex",
+      }}
     >
       <div
-        {...stopBackdropEvents}
-        role="dialog"
-        aria-modal="true"
-        aria-label="Settings"
         style={{
-          width: "min(760px, 100vw)",
+          width: "min(680px, 100vw)",
           height: "100%",
           background: "var(--bg-app)",
           borderLeft: "1px solid var(--border)",
@@ -182,7 +193,7 @@ export function SettingsDrawer() {
           </Suspense>
         </div>
       </div>
-    </ModalBackdrop>
+    </div>
   );
 }
 
