@@ -174,6 +174,7 @@ export function CommandPalette() {
     projectsVersion,
     scenariosVersion,
     requestClearResults,
+    toggleSettings,
   } = useAppState();
 
   const projects = useProjects(projectsVersion);
@@ -259,16 +260,6 @@ export function CommandPalette() {
           description: "View all saved projects",
           category: "Page",
           action: "nav-projects",
-        },
-      ];
-    }
-    if (page === "settings") {
-      return [
-        {
-          id: "p-back-home",
-          label: "Back to home",
-          category: "Page",
-          action: "nav-home",
         },
       ];
     }
@@ -739,7 +730,9 @@ export function CommandPalette() {
           setProjectView("editor");
           break;
         case "nav-settings":
-          setPage("settings");
+          // An overlay, so it opens over wherever you are rather than
+          // navigating — the page underneath is left alone.
+          toggleSettings();
           break;
         case "nav-home":
           if (activeProjectId) {
@@ -858,6 +851,7 @@ export function CommandPalette() {
       setTheme,
       openRunModal,
       openScenariosModal,
+      toggleSettings,
       resultMeta,
       allNodes,
       allLinks,

@@ -20,6 +20,8 @@ export function ActivityBar() {
     openCommandPalette,
     toggleTaskTray,
     taskTrayOpen,
+    toggleSettings,
+    settingsOpen,
     activeProjectId,
   } = useAppState();
   const { project } = useActiveProject();
@@ -206,8 +208,8 @@ export function ActivityBar() {
       <NavButton
         icon={<Cog6ToothIcon {...ICON} />}
         label="Settings"
-        active={page === "settings"}
-        onClick={() => setPage("settings")}
+        active={settingsOpen}
+        onClick={toggleSettings}
       />
     </div>
   );

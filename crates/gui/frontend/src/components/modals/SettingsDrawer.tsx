@@ -1,19 +1,21 @@
+import { XMarkIcon } from "@heroicons/react/16/solid";
 import { useEffect, useState } from "react";
-import { useAppState } from "../AppContext";
-import { Toggle } from "../components/ui/Toggle";
-import { getVersions, openDataFolder, type Versions } from "../hooks";
-import { useUpdater } from "../hooks/useUpdater";
+import { useAppState } from "../../AppContext";
+import { getVersions, openDataFolder, type Versions } from "../../hooks";
+import { useUpdater } from "../../hooks/useUpdater";
 import {
   parseTextScale,
   readTextScale,
   setTextScale,
   TEXT_SCALES,
-} from "../textScale";
+} from "../../textScale";
 import {
   setUnitPreference,
   type UnitPreference,
   useUnitPreference,
-} from "../units";
+} from "../../units";
+import { ModalBackdrop, stopBackdropEvents } from "../ui/ModalBackdrop";
+import { Toggle } from "../ui/Toggle";
 
 /** Matches the `inputStyle` the editors use for their selects, so a
  * dropdown looks the same wherever it appears. */
@@ -290,7 +292,62 @@ function UnitSystemToggle() {
   );
 }
 
-export function SettingsPage() {
+/**
+ * Settings, as a drawer over whatever is underneath.
+ *
+ * It was a page, and being a page cost it twice: it joined navigation
+ * history, so Back walked through settings visits, and arriving at it
+ * counted as leaving your project, which erased what the next launch would
+ * have reopened. Both followed from calling a detour a destination.
+ *
+ * As an overlay the page beneath is untouched — open it mid-project,
+ * change a unit, dismiss, and you are exactly where you were. `Page` no
+ * longer has a `"settings"` member, so neither problem is expressible.
+ *
+ * The panel is full-height and right-aligned rather than centred: the
+ * content is a long single column of rows, which a centred dialog would
+ * either crop or float in a lot of empty width.
+ */
+export function SettingsDrawer() {
+  const { settingsOpen, closeSettings } = useAppState();
+  if (!settingsOpen) return null;
+  return (
+    <ModalBackdrop
+      onDismiss={closeSettings}
+      zIndex={200}
+      style={{ justifyContent: "flex-end", alignItems: "stretch" }}
+    >
+      <div
+        {...stopBackdropEvents}
+        role="dialog"
+        aria-modal="true"
+        aria-label="Settings"
+        style={{
+          width: "min(760px, 100vw)",
+          height: "100%",
+          background: "var(--bg-app)",
+          borderLeft: "1px solid var(--border)",
+          boxShadow: "var(--shadow-key)",
+          display: "flex",
+          flexDirection: "column",
+          animation: "slideInRight 180ms ease-out",
+        }}
+      >
+        <SettingsBody onClose={closeSettings} />
+      </div>
+    </ModalBackdrop>
+  );
+}
+
+function SettingsBody({ onClose }: { onClose: () => void }) {
+  // Close on Escape, as every other modal in the app does.
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") onClose();
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
   const { openBasemapProvidersModal } = useAppState();
   const [reducedMotion, setReducedMotionRaw] = useState(() =>
     getBool(SK.reducedMotion, false),
@@ -349,16 +406,57 @@ export function SettingsPage() {
           padding: "40px 48px",
         }}
       >
-        <h1
+        <div
           style={{
-            margin: "0 0 4px",
-            fontSize: "var(--text-3xl)",
-            fontWeight: 700,
-            letterSpacing: "-0.015em",
+            display: "flex",
+            alignItems: "flex-start",
+            justifyContent: "space-between",
+            gap: 16,
           }}
         >
-          Settings
-        </h1>
+          <h1
+            style={{
+              margin: "0 0 4px",
+              fontSize: "var(--text-3xl)",
+              fontWeight: 700,
+              letterSpacing: "-0.015em",
+            }}
+          >
+            Settings
+          </h1>
+          {/* A drawer needs a visible way out. The backdrop and Escape both
+              close it, but neither is discoverable. */}
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close settings"
+            data-tooltip="Close"
+            style={{
+              flexShrink: 0,
+              marginTop: 6,
+              width: 28,
+              height: 28,
+              display: "inline-flex",
+              alignItems: "center",
+              justifyContent: "center",
+              borderRadius: 6,
+              border: "1px solid var(--border)",
+              background: "transparent",
+              color: "var(--text-secondary)",
+              cursor: "pointer",
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.background = "var(--nav-hover)";
+              e.currentTarget.style.color = "var(--text-primary)";
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.background = "transparent";
+              e.currentTarget.style.color = "var(--text-secondary)";
+            }}
+          >
+            <XMarkIcon style={{ width: 15, height: 15 }} />
+          </button>
+        </div>
         <p
           style={{
             margin: "0 0 4px",

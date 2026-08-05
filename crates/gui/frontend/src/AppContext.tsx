@@ -26,7 +26,17 @@ import { useNetworkVersion } from "./hooks/NetworkVersionContext";
 import { startPerfSpan } from "./perfTrace";
 import { SimulationProvider } from "./SimulationContext";
 
-export type Page = "home" | "projects" | "project" | "settings";
+/**
+ * The three places the app can *be*.
+ *
+ * Settings is deliberately absent: it is an overlay you return from, not a
+ * location you travel to. As a page it took part in navigation history —
+ * so Back walked you through settings visits — and, worse, visiting it
+ * counted as leaving your project, which erased the session restore's
+ * memory of what you had open. Both were consequences of calling a detour
+ * a destination; neither is expressible now.
+ */
+export type Page = "home" | "projects" | "project";
 export type { ProjectView } from "./hooks";
 
 /** A point in the in-app navigation history. */
@@ -81,6 +91,9 @@ interface AppState {
   }[];
   /** Project created in-session via the New Project wizard. Cleared on closeProject. */
   createdProject: Project | null;
+  /** Whether the Settings drawer is open. An overlay over whatever page is
+   *  underneath, which is left untouched. */
+  settingsOpen: boolean;
   /** True when a real INP file has been loaded via the wizard. */
   isNetworkLoaded: boolean;
   /** Bumped whenever the on-disk project list mutates (create/delete/rename), so
@@ -117,6 +130,8 @@ interface AppActions {
    *  omit it to resume the project's last-active tab. */
   openProject: (id: string, view?: ProjectView) => void;
   closeProject: () => void;
+  toggleSettings: () => void;
+  closeSettings: () => void;
   toggleRail: () => void;
   openCommandPalette: () => void;
   closeCommandPalette: () => void;
@@ -305,6 +320,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     const base: AppState = {
       page: "home",
       projectView: "canvas",
+      settingsOpen: false,
       railOpen: false,
       commandPaletteOpen: false,
       runModalOpen: false,
@@ -369,8 +385,16 @@ export function AppProvider({ children }: { children: ReactNode }) {
     sRef.current = s;
   });
 
-  // Session restore: remember the open project so the next launch can reopen
-  // it, and clear it whenever the user leaves for a non-project page.
+  // Session restore: remember the open project so the next launch can
+  // reopen it, and forget it when the user leaves for a page that is not a
+  // project — Home or Projects, the only two there are.
+  //
+  // That "only two" is the point. Settings used to be a page as well, so
+  // opening it to change one setting counted as leaving, and the next
+  // launch had forgotten the project you were mid-way through. Settings is
+  // an overlay now and `Page` has three members, so a detour cannot be
+  // mistaken for a departure — not because this condition enumerates the
+  // exceptions correctly, but because there are none to enumerate.
   useEffect(() => {
     if (s.page === "project" && s.activeProjectId) {
       localStorage.setItem(STORAGE_LAST_PROJECT, s.activeProjectId);
@@ -755,6 +779,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setPage("projects");
   }, [setPage]);
 
+  const toggleSettings = useCallback(() => {
+    setS((prev) => ({ ...prev, settingsOpen: !prev.settingsOpen }));
+  }, []);
+  const closeSettings = useCallback(() => {
+    setS((prev) =>
+      prev.settingsOpen ? { ...prev, settingsOpen: false } : prev,
+    );
+  }, []);
+
   // Session restore fallback: when we launched straight into a restored
   // project, verify it still exists once the project list resolves and drop
   // back to Home if it was deleted since the last session. One-shot.
@@ -1083,6 +1116,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
       focusInEditor,
       openProject,
       closeProject,
+      toggleSettings,
+      closeSettings,
       toggleRail,
       openCommandPalette,
       closeCommandPalette,
@@ -1128,6 +1163,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
       focusInEditor,
       openProject,
       closeProject,
+      toggleSettings,
+      closeSettings,
       toggleRail,
       openCommandPalette,
       closeCommandPalette,

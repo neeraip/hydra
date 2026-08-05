@@ -66,14 +66,19 @@ const ProjectPage = lazy(() =>
     default: m.ProjectPage,
   })),
 );
-const SettingsPage = lazy(() =>
-  import("./pages/SettingsPage").then((m) => ({ default: m.SettingsPage })),
+const SettingsDrawer = lazy(() =>
+  import("./components/modals/SettingsDrawer").then((m) => ({
+    default: m.SettingsDrawer,
+  })),
 );
 const ProjectsPage = lazy(() =>
   import("./pages/ProjectsPage").then((m) => ({ default: m.ProjectsPage })),
 );
 
-const PAGE_ORDER: Page[] = ["home", "projects", "project", "settings"];
+// Drives the page-transition direction. Settings is absent because it is
+// an overlay now — it slides in over whatever page is showing rather than
+// replacing it, so it has no place in a left-to-right ordering.
+const PAGE_ORDER: Page[] = ["home", "projects", "project"];
 
 // ⌘1–⌘4 project view shortcuts (also advertised in CommandPalette hints).
 const VIEW_SHORTCUTS: Record<string, ProjectView> = {
@@ -95,6 +100,7 @@ export function App() {
     simSettingsModalOpen,
     activeProjectId,
     taskTrayOpen,
+    settingsOpen,
     setProjectView,
     issuesPanelOpen,
     toggleIssuesPanel,
@@ -336,7 +342,6 @@ export function App() {
                 {page === "home" && <HomePage />}
                 {page === "projects" && <ProjectsPage />}
                 {page === "project" && <ProjectPage />}
-                {page === "settings" && <SettingsPage />}
               </Suspense>
             </div>
           </div>
@@ -365,6 +370,13 @@ export function App() {
       <Suspense fallback={null}>
         <CrsModal />
       </Suspense>
+      {/* Below the modals it can itself open — BasemapProviders sits at
+          205, above this drawer's 200. */}
+      {settingsOpen && (
+        <Suspense fallback={null}>
+          <SettingsDrawer />
+        </Suspense>
+      )}
       <Suspense fallback={null}>
         <BasemapProvidersModal />
       </Suspense>
