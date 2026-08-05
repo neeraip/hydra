@@ -331,8 +331,8 @@ export function CrsPicker() {
 
   const rowStyle = (code: string): React.CSSProperties => ({
     display: "flex",
-    flexDirection: "column",
-    gap: 2,
+    flexDirection: "row",
+    gap: 10,
     alignItems: "flex-start",
     width: "100%",
     border: "none",
@@ -343,7 +343,61 @@ export function CrsPicker() {
     padding: "9px 14px",
     cursor: saving ? "wait" : "pointer",
     fontFamily: "var(--font-ui)",
+    transition: "background var(--t-fast)",
   });
+
+  /** Hover feedback for a row that is not the current answer. */
+  const rowHover = (code: string) => ({
+    onMouseEnter: (e: React.MouseEvent<HTMLElement>) => {
+      if (normalized !== code)
+        e.currentTarget.style.background = "var(--nav-hover)";
+    },
+    onMouseLeave: (e: React.MouseEvent<HTMLElement>) => {
+      if (normalized !== code) e.currentTarget.style.background = "transparent";
+    },
+  });
+
+  /** The real control, kept off-screen but focusable: the row's semantics
+   * are a native radio's, and the mark beside it is only its presentation. */
+  const HIDDEN_INPUT: React.CSSProperties = {
+    position: "absolute",
+    opacity: 0,
+    width: 1,
+    height: 1,
+    margin: 0,
+    pointerEvents: "none",
+  };
+
+  /**
+   * The mark that says a row is an option.
+   *
+   * Without it a row carried no resting affordance at all: no border, no
+   * fill, ordinary text, and `cursor: pointer` — which cannot be seen
+   * until the pointer is already on it. The tint on the current answer
+   * only says *which* one is chosen; it says nothing about the rest being
+   * choosable, and when nothing matches, no row is tinted and the whole
+   * list reads as static text.
+   *
+   * A radio rather than a chevron or a button face: these are
+   * mutually-exclusive answers staged as a draft and committed by the
+   * button below, which is exactly what a radio means. A chevron would
+   * promise navigation, and a button face would promise the click acts.
+   */
+  const RadioMark = ({ on }: { on: boolean }) => (
+    <span
+      aria-hidden="true"
+      style={{
+        width: 13,
+        height: 13,
+        borderRadius: "50%",
+        flexShrink: 0,
+        marginTop: 2,
+        border: `1px solid ${on ? "var(--accent)" : "var(--border-hover)"}`,
+        background: on ? "var(--accent)" : "transparent",
+        boxShadow: on ? "inset 0 0 0 2.5px var(--bg-card)" : undefined,
+      }}
+    />
+  );
 
   return (
     <ModalBackdrop onDismiss={dismiss} zIndex={70}>
@@ -433,8 +487,14 @@ export function CrsPicker() {
                 color: "var(--text-secondary)",
               }}
             >
+              {/* An observation about the file's numbers, not a claim
+                  about the answer. Values outside lon/lat range are
+                  equally consistent with a projected system and with an
+                  arbitrary site grid — and saying "projected" while the
+                  reader has Local grid selected contradicts the very
+                  option they chose. */}
               {reading.projected
-                ? "These coordinates are too large to be longitude and latitude, so they are measured in some projected system."
+                ? "These coordinates fall outside longitude and latitude range, so they come from a projected system or a local grid."
                 : "These coordinates are within longitude and latitude range."}
             </span>
             <span
@@ -485,87 +545,121 @@ export function CrsPicker() {
               fontFamily: "var(--font-ui)",
             }}
           >
+            {/* This slot describes what the list below currently holds.
+                A bare "Suggestions" beside a counter read as a control —
+                a filter to click — because it named a category where its
+                siblings gave a count. */}
             {loading
               ? "Searching…"
               : searching
                 ? `${listed.length} of ${total.toLocaleString()}`
-                : "Suggestions"}
+                : `${listed.length} suggestion${listed.length === 1 ? "" : "s"}`}
           </span>
         </div>
 
         {/* ── Answers ────────────────────────────────────────────────── */}
-        <div style={{ overflowY: "auto", flex: 1, minHeight: 180 }}>
+        {/* The rows look like a radio group, so they are one: a reader
+            using assistive technology is told the same thing the mark
+            tells a sighted one — a set of exclusive answers, with the
+            current one announced. */}
+        <div
+          role="radiogroup"
+          aria-label="Coordinate system"
+          style={{ overflowY: "auto", flex: 1, minHeight: 180 }}
+        >
           {/* "None of these" is an answer, so it is a row like any other,
               chosen the same way and committed by the same button. It is
               never filtered out: it is not a search result. */}
-          <button
-            type="button"
-            onClick={() => setDraft(LOCAL_CRS)}
-            disabled={saving}
+          <label
+            className="crs-row"
             style={rowStyle(LOCAL_CRS)}
+            {...rowHover(LOCAL_CRS)}
           >
-            <span style={{ fontSize: "var(--text-md)" }}>Local grid</span>
-            <span
-              style={{
-                fontSize: "var(--text-sm)",
-                color: "var(--text-tertiary)",
-              }}
-            >
-              Coordinates are a drawing grid with no relation to the earth.
-              Drawn to scale, without a basemap.
-            </span>
-          </button>
-
-          {listed.map((c) => (
-            <button
-              type="button"
-              key={c.code}
-              onClick={() =>
-                choose(
-                  c.code,
-                  results.find((r) => normalizeEpsgCode(r.epsg) === c.code),
-                )
-              }
+            <input
+              type="radio"
+              name="crs-choice"
+              checked={normalized === LOCAL_CRS}
+              onChange={() => setDraft(LOCAL_CRS)}
               disabled={saving}
-              style={rowStyle(c.code)}
-            >
+              style={HIDDEN_INPUT}
+            />
+            <RadioMark on={normalized === LOCAL_CRS} />
+            <span style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+              <span style={{ fontSize: "var(--text-md)" }}>Local grid</span>
               <span
                 style={{
-                  fontSize: "var(--text-md)",
-                  display: "inline-flex",
-                  gap: 6,
-                  alignItems: "center",
+                  fontSize: "var(--text-sm)",
+                  color: "var(--text-tertiary)",
                 }}
               >
-                {c.label}
-                {c.custom && (
+                Coordinates are a drawing grid with no relation to the earth.
+                Drawn to scale, without a basemap.
+              </span>
+            </span>
+          </label>
+
+          {listed.map((c) => (
+            <label
+              key={c.code}
+              className="crs-row"
+              style={rowStyle(c.code)}
+              {...rowHover(c.code)}
+            >
+              <input
+                type="radio"
+                name="crs-choice"
+                checked={normalized === c.code}
+                onChange={() =>
+                  choose(
+                    c.code,
+                    results.find((r) => normalizeEpsgCode(r.epsg) === c.code),
+                  )
+                }
+                disabled={saving}
+                style={HIDDEN_INPUT}
+              />
+              <RadioMark on={normalized === c.code} />
+              <span
+                style={{ display: "flex", flexDirection: "column", gap: 2 }}
+              >
+                <span
+                  style={{
+                    fontSize: "var(--text-md)",
+                    display: "inline-flex",
+                    gap: 6,
+                    alignItems: "center",
+                  }}
+                >
+                  {c.label}
+                  {c.custom && (
+                    <span
+                      data-tooltip="You defined this — not an entry from the standard catalogue"
+                      style={{
+                        fontSize: "var(--text-2xs)",
+                        fontWeight: 700,
+                        letterSpacing: "0.05em",
+                        color: "var(--text-tertiary)",
+                        border: "1px solid var(--border)",
+                        borderRadius: 4,
+                        padding: "0 4px",
+                      }}
+                    >
+                      CUSTOM
+                    </span>
+                  )}
+                </span>
+                {c.detail && (
                   <span
-                    data-tooltip="You defined this — not an entry from the standard catalogue"
                     style={{
-                      fontSize: "var(--text-2xs)",
-                      fontWeight: 700,
-                      letterSpacing: "0.05em",
+                      fontSize: "var(--text-sm)",
                       color: "var(--text-tertiary)",
-                      border: "1px solid var(--border)",
-                      borderRadius: 4,
-                      padding: "0 4px",
                     }}
                   >
-                    CUSTOM
+                    {c.detail}
                   </span>
                 )}
               </span>
-              {c.detail && (
-                <span
-                  style={{
-                    fontSize: "var(--text-sm)",
-                    color: "var(--text-tertiary)",
-                  }}
-                >
-                  {c.detail}
-                </span>
-              )}
-            </button>
+            </label>
           ))}
 
           {searching && !loading && listed.length === 0 && (
