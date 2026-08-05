@@ -17,6 +17,7 @@ import { Toast } from "./components/ui/Toast";
 import { TooltipPortal } from "./components/ui/TooltipPortal";
 import { tryInvoke } from "./hooks/ipc";
 import { useUndoRedo } from "./hooks/useUndoRedo";
+import { loadSettingsDrawer, whenIdle } from "./lazyChunks";
 import { startMainThreadStallWatch } from "./perfTrace";
 import type { ProjectView } from "./projectConfig";
 import {
@@ -67,9 +68,7 @@ const ProjectPage = lazy(() =>
   })),
 );
 const SettingsDrawer = lazy(() =>
-  import("./components/modals/SettingsDrawer").then((m) => ({
-    default: m.SettingsDrawer,
-  })),
+  loadSettingsDrawer().then((m) => ({ default: m.SettingsDrawer })),
 );
 const ProjectsPage = lazy(() =>
   import("./pages/ProjectsPage").then((m) => ({ default: m.ProjectsPage })),
@@ -132,6 +131,11 @@ export function App() {
   // Dev-only: log any main-thread stall >250ms so perf regressions on huge
   // networks show up as `[hydra-perf] main-thread-stall` console lines.
   useEffect(() => startMainThreadStallWatch(), []);
+
+  // Warm the Settings chunk once the app has settled. It is small and most
+  // sessions open it at least once, so paying for it during an idle moment
+  // costs nothing and removes the pause that otherwise lands on the click.
+  useEffect(() => whenIdle(() => void loadSettingsDrawer()), []);
 
   useEffect(() => {
     let cancelled = false;
