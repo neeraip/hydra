@@ -28,7 +28,7 @@ import { lazy, Suspense, useEffect } from "react";
 import { useAppState } from "../../AppContext";
 import { loadSettingsContent } from "../../lazyChunks";
 import { ModalBackdrop, stopBackdropEvents } from "../ui/ModalBackdrop";
-import { SettingsSkeleton } from "./SettingsSkeleton";
+import { Spinner } from "../ui/Spinner";
 
 const SettingsContent = lazy(() =>
   loadSettingsContent().then((m) => ({ default: m.SettingsContent })),
@@ -141,14 +141,47 @@ export function SettingsDrawer() {
           >
             Appearance, accessibility, and maintenance tools.
           </p>
-          {/* The real layout with only the controls standing in, so the
-              headings and rows are already where they will be and the
-              arriving content fills them rather than displacing them. */}
-          <Suspense fallback={<SettingsSkeleton />}>
-            <SettingsContent />
+          {/* A spinner rather than a skeleton of the rows.
+
+              A skeleton has to mirror what it stands in for, and the
+              mirroring is what kept failing: every row it got wrong by a
+              control's width or a description's wrap put the layout back
+              where it started — moving. Maintaining that likeness by hand
+              buys stillness only while it stays exactly right, and it did
+              not.
+
+              So the loading state stops pretending to be the content. It
+              says it is loading, in a reserved block, and the content
+              fades in — nothing claims to be in the right place before it
+              is. */}
+          <Suspense fallback={<SettingsLoading />}>
+            <div style={{ animation: "fadeIn 200ms ease-out" }}>
+              <SettingsContent />
+            </div>
           </Suspense>
         </div>
       </div>
     </ModalBackdrop>
+  );
+}
+
+/** The reserved block the rows arrive into. Tall enough that the drawer
+ *  does not look empty, and centred so nothing sits where a row will. */
+function SettingsLoading() {
+  return (
+    <div
+      style={{
+        minHeight: 280,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        gap: 10,
+        color: "var(--text-tertiary)",
+        fontSize: "var(--text-lg)",
+      }}
+    >
+      <Spinner />
+      Loading…
+    </div>
   );
 }

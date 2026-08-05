@@ -533,6 +533,12 @@ body,
   }
 }
 
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 @keyframes pulseDot {
   0%,
   100% {

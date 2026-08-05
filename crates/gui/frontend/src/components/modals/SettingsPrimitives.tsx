@@ -2,11 +2,11 @@
  * The two shapes every settings row is built from — a section heading and a
  * labelled row with its control on the right.
  *
- * Shared so the loading skeleton can be built from the *same* pieces as the
- * real thing rather than a copy of their measurements. A skeleton whose
- * paddings and type sizes are restated somewhere else drifts from what it
- * stands in for, and the drift shows up as exactly the jump the skeleton
- * exists to prevent.
+ * A file of their own so the row's geometry is stated once. The control
+ * sits in a fixed lane and the label takes the slack, which keeps every
+ * row's label column the same width no matter how wide its control is —
+ * without that, a wide control narrowed its own label and re-wrapped the
+ * description while its neighbours stayed put.
  */
 
 import type React from "react";
