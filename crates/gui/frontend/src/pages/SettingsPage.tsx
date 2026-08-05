@@ -269,38 +269,24 @@ const UNIT_OPTIONS: Array<{ value: UnitPreference; label: string }> = [
   { value: "us", label: "US customary" },
 ];
 
+/** Matches the text-size control beside it: one closed list of named
+ * choices reads the same way as another, and three buttons in a row said
+ * nothing the dropdown does not. */
 function UnitSystemToggle() {
   const unitSystem = useUnitPreference();
   return (
-    <div style={{ display: "flex", gap: 6 }}>
+    <select
+      aria-label="Default display units"
+      value={unitSystem}
+      onChange={(e) => setUnitPreference(e.target.value as UnitPreference)}
+      style={SETTINGS_SELECT}
+    >
       {UNIT_OPTIONS.map((o) => (
-        <button
-          type="button"
-          key={o.value}
-          onClick={() => setUnitPreference(o.value)}
-          style={{
-            padding: "5px 14px",
-            border: "1px solid",
-            borderColor:
-              unitSystem === o.value ? "var(--accent)" : "var(--border-hover)",
-            borderRadius: 6,
-            background:
-              unitSystem === o.value ? "var(--accent-dim)" : "transparent",
-            color:
-              unitSystem === o.value
-                ? "var(--accent)"
-                : "var(--text-secondary)",
-            cursor: "pointer",
-            fontSize: "var(--text-lg)",
-            fontFamily: "var(--font-ui)",
-            fontWeight: unitSystem === o.value ? 500 : 400,
-            transition: "all var(--t-fast)",
-          }}
-        >
+        <option key={o.value} value={o.value}>
           {o.label}
-        </button>
+        </option>
       ))}
-    </div>
+    </select>
   );
 }
 
