@@ -6,6 +6,7 @@ import {
   Square2StackIcon,
 } from "@heroicons/react/16/solid";
 import type { CSSProperties } from "react";
+import type { ViewAction } from "../CanvasView";
 
 const ICON_14: CSSProperties = { width: 14, height: 14 };
 
@@ -26,8 +27,8 @@ export function ViewportControls({
   onZoomOut,
   onResetNorth,
   onFit,
-  onClearView,
-  clearableCount,
+  onToggleView,
+  viewAction,
 }: {
   /** True in schematic mode — reset-north only applies to the map. */
   mapOnly: boolean;
@@ -38,10 +39,11 @@ export function ViewportControls({
   /** Dismiss everything covering the map. Deliberately does not move the
    * camera — Fit network above is that, and a reset that also jumped the
    * viewport would be the most disorienting button on the canvas. */
-  onClearView: () => void;
+  onToggleView: () => void;
   /** How many things are currently covering the map. Zero disables the
    * button rather than offering an action with no visible effect. */
-  clearableCount: number;
+  /** What the press does next — see `viewButtonAction`. */
+  viewAction: ViewAction;
 }) {
   const mapOnlyDim: CSSProperties = {
     opacity: mapOnly ? 0.38 : undefined,
@@ -117,22 +119,25 @@ export function ViewportControls({
         <ArrowsPointingOutIcon style={ICON_14} />
       </button>
 
+      {/* One button, both directions. It used to disable itself once the
+          view was clear — a permanent slot on the toolbar that was dead in
+          the state it had just produced. The same press now brings the
+          panels back, so clearing is somewhere you can return from.
+
+          The glyph does not change with the direction: a control that
+          swaps its icon under the cursor reads as two buttons sharing a
+          position, and the tooltip already says which way it will go. */}
       <button
         type="button"
         className="tool-btn"
-        onClick={onClearView}
-        disabled={clearableCount === 0}
+        onClick={onToggleView}
         data-tooltip={
-          clearableCount === 0
-            ? "Nothing covering the map"
+          viewAction === "restore"
+            ? "Restore panels — reopen the list and legend"
             : "Clear view — close panels, overlays and measurements"
         }
         data-tooltip-pos="left"
-        aria-label="Clear view"
-        style={{
-          opacity: clearableCount === 0 ? 0.38 : undefined,
-          cursor: clearableCount === 0 ? "not-allowed" : undefined,
-        }}
+        aria-label={viewAction === "restore" ? "Restore panels" : "Clear view"}
       >
         <Square2StackIcon style={ICON_14} />
       </button>
