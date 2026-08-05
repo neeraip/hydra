@@ -27,6 +27,7 @@ const COL_COUNT = 7;
 const NODE_LIST_ID = "valve-node-options";
 
 export function ValveTable({
+  referenceIds,
   rows,
   sortField,
   sortAsc,
@@ -41,6 +42,8 @@ export function ValveTable({
   scrollContainerRef,
   onRowAction,
 }: {
+  /** Ids this table's reference column may name (draft-aware). */
+  referenceIds: readonly string[];
   rows: ValveRow[];
   sortField: string;
   sortAsc: boolean;
@@ -336,6 +339,7 @@ export function ValveTable({
                     placeholder={isPendingRow || !row.curve}
                     isPending={pendingKeys.has(`valve:${row.id}:valveCurve`)}
                     onCommit={(v) => onPatch("valve", row.id, "valveCurve", v)}
+                    options={referenceIds}
                   />
                 ) : (
                   <EditableCell

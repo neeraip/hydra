@@ -1,9 +1,10 @@
 import { ChevronDownIcon, ChevronUpIcon } from "@heroicons/react/16/solid";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import type React from "react";
-import { memo, useRef, useState } from "react";
+import { memo, useId, useRef, useState } from "react";
 import { readTextScale } from "../../../textScale";
 import { parseNumericInput } from "../../../units";
+import { referenceError } from "./referenceIds";
 import { shouldUseRefDatalist } from "./tableSearch";
 
 /* ── Row virtualization ──────────────────────────────────────────────────────── */
@@ -105,6 +106,7 @@ export function EditableCell({
   inputType = "text",
   min,
   max,
+  options,
 }: {
   /** Text shown in read mode (the cell label). */
   display: string;
@@ -124,8 +126,16 @@ export function EditableCell({
   min?: number;
   /** Inclusive maximum for number inputs. */
   max?: number;
+  /**
+   * For cells holding a *reference* to another element: the ids that may
+   * be named. Offered as suggestions while typing, and enforced on commit
+   * — a reference to something that does not exist is a dangling one, and
+   * the cell that accepted it is where it should be refused.
+   */
+  options?: readonly string[];
 }) {
   const editValue = value ?? display;
+  const datalistId = useId();
   const [draft, setDraft] = useState(editValue);
   const [focused, setFocused] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -145,6 +155,9 @@ export function EditableCell({
   // parseFloat would prefix-salvage ("8F.6G2Y" → 8), while tolerating a
   // pasted display unit ("8.62 m" → 8.62).
   function validate(raw: string): { err: string | null; normalized: string } {
+    if (options) {
+      return { err: referenceError(raw, options), normalized: raw };
+    }
     if (inputType !== "number") return { err: null, normalized: raw };
     const parsed = parseNumericInput(raw);
     if (parsed.kind !== "number")
@@ -226,7 +239,19 @@ export function EditableCell({
       }}
       title={error ?? undefined}
     >
+      {/* Suggestions, not a closed select: the ids are the model's own and
+          a list is how you discover them, while typing still reaches a
+          long one faster than scrolling does. Validity is enforced on
+          commit rather than by the widget. */}
+      {options && (
+        <datalist id={datalistId}>
+          {options.map((o) => (
+            <option key={o} value={o} />
+          ))}
+        </datalist>
+      )}
       <input
+        list={options ? datalistId : undefined}
         value={focused || isPending ? draft : display}
         onChange={(e) => {
           setDraft(e.target.value);
