@@ -1,4 +1,4 @@
-import { type ReactNode, useCallback, useRef } from "react";
+import { type ReactNode, useCallback, useEffect, useRef } from "react";
 import {
   clampSliderValue,
   SLIDER_DEFAULT,
@@ -56,6 +56,46 @@ export function CanvasSlider({
   bottomGlyph: ReactNode;
 }) {
   const trackRef = useRef<HTMLDivElement>(null);
+  // True for the length of a drag. See the effect below.
+  const draggingRef = useRef(false);
+
+  /**
+   * Stop a drag from selecting text across the rest of the page.
+   *
+   * The track sets `user-select: none`, which is enough to keep a selection
+   * from *starting* on it — but `setPointerCapture` only retargets pointer
+   * events. Native selection runs off the mouse events underneath, and those
+   * still reach whatever the cursor happens to be over, so a drag that left
+   * the track dragged a highlight across the panel behind it.
+   *
+   * Suppressing `selectstart` for the duration is the narrow fix. Preventing
+   * the default on `pointerdown` would also work and is the usual advice,
+   * but it suppresses the compatibility mouse events with it — including the
+   * double-click that resets this slider.
+   *
+   * The listener lives for the component's lifetime and reads a ref, rather
+   * than being added and removed around each drag. A listener added on
+   * pointerdown has to be removed on an event that is not guaranteed to
+   * arrive, and the failure mode there is a page where nothing can be
+   * selected until reload. This way React's own teardown is the only
+   * cleanup that has to work, and a missed pointerup costs nothing.
+   */
+  useEffect(() => {
+    const suppress = (e: Event) => {
+      if (draggingRef.current) e.preventDefault();
+    };
+    const end = () => {
+      draggingRef.current = false;
+    };
+    document.addEventListener("selectstart", suppress);
+    window.addEventListener("pointerup", end);
+    window.addEventListener("pointercancel", end);
+    return () => {
+      document.removeEventListener("selectstart", suppress);
+      window.removeEventListener("pointerup", end);
+      window.removeEventListener("pointercancel", end);
+    };
+  }, []);
   // Coalesce pointer moves to one update per frame: each change re-lays out the
   // network, ~12ms at 46k elements, so a raw pointermove stream would queue
   // several of those per frame and the drag would visibly lag.
@@ -85,6 +125,7 @@ export function CanvasSlider({
 
   const handlePointerDown = useCallback(
     (e: React.PointerEvent<HTMLDivElement>) => {
+      draggingRef.current = true;
       // Pointer capture, so a drag that slips off the narrow track keeps working
       // instead of stopping the moment the cursor moves sideways.
       e.currentTarget.setPointerCapture(e.pointerId);
