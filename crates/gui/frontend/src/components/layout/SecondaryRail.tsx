@@ -246,7 +246,12 @@ export function SecondaryRail() {
         <div
           onMouseDown={handleResizeMouseDown}
           onDoubleClick={handleResizeDoubleClick}
-          data-tooltip="Drag to resize · double-click to fit"
+          // No tooltip: this strip is the full height of the rail, and
+          // tooltips anchor to their element's box, so a hint on it
+          // appeared level with the top of the panel however far down the
+          // pointer was. An affordance that points somewhere else is
+          // worse than none.
+          title="Drag to resize, double-click to fit"
           style={{
             position: "absolute",
             top: 0,
