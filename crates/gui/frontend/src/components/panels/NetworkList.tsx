@@ -19,11 +19,7 @@
 // Kinds, labels and result variables come from the engine catalogs, so this
 // file names no kind and no engine.
 
-import {
-  EyeIcon,
-  MagnifyingGlassPlusIcon,
-  XMarkIcon,
-} from "@heroicons/react/16/solid";
+import { EyeIcon, XMarkIcon } from "@heroicons/react/16/solid";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useActiveProject } from "../../AppContext";
@@ -33,27 +29,22 @@ import {
   useViewportActions,
   useViewportKey,
 } from "../../canvas/viewport-context";
-import type { ElementClass, Link, Node } from "../../hooks";
-import {
-  formatGenericValue,
-  genericUnitLabel,
-  useElementKinds,
-  useLinks,
-  useNodes,
-  useRegions,
-} from "../../hooks";
+import type { Link, Node } from "../../hooks";
+import { useElementKinds, useLinks, useNodes, useRegions } from "../../hooks";
 import { perfTrace } from "../../perfTrace";
 import { readTextScale } from "../../textScale";
 import type { Region } from "../../types";
-import {
-  toDisplay,
-  type UnitSystem,
-  unitLabel,
-  useUnitSystem,
-} from "../../units";
-import { MiddleTruncate } from "../ui/MiddleTruncate";
+import { type UnitSystem, useUnitSystem } from "../../units";
 import { TypeBadge } from "../ui/TypeBadge";
 import { activeElement, activeKey, isActiveRow } from "./activeElement";
+import {
+  formatMeta,
+  formatValue,
+  NetworkListRow,
+  type Row,
+  unitOf,
+} from "./NetworkListRow";
+import { fitContent } from "./networkListFit";
 
 /** Padding and border of a row — chrome, so it does not move with text. */
 const ROW_CHROME = 12;
@@ -81,7 +72,10 @@ const CONTEXT_LINE_AT_SCALE_1 = 12;
  * nothing and cost the fixed-size fast path on a 46k-element network.
  * Rows with no second line centre in the taller slot.
  */
-export function inspectorRowHeight(scale: number, searching: boolean): number {
+export function networkListRowHeight(
+  scale: number,
+  searching: boolean,
+): number {
   const text = ID_LINE_AT_SCALE_1 + (searching ? CONTEXT_LINE_AT_SCALE_1 : 0);
   return Math.round(ROW_CHROME + text * scale);
 }
@@ -106,25 +100,19 @@ function useDebouncedValue<T>(value: T, delayMs: number): T {
   return debounced;
 }
 
-// ── The row model ─────────────────────────────────────────────────────────────
+/** The measured row is inert; it exists to be sized, not used. */
+const NOOP = () => {};
 
-/** One line of the finder. Classes are flattened into a single sequence, so
- * everything the list needs to draw and rank a row lives here rather than
- * behind three parallel code paths. */
-export interface Row {
-  id: string;
-  /** Element-kind id — drives the badge and the kind chips. */
-  kind: string;
-  cls: ElementClass;
-  /** Secondary text the search also matches: what a link joins, or the node
-   * a catchment drains to. Shown as the row's subtitle when searching. */
-  context: string;
-  /** Current-period value, already SI, or null before a run. */
-  value: number | null;
-  /** The column this value came from, for its label and unit. */
-  format: SimResultColumn | null;
-  canZoom: boolean;
-}
+/** A row with nothing in it, for building the one the measurer renders. */
+const BLANK_ROW: Row = {
+  id: "",
+  kind: "",
+  cls: "point",
+  context: "",
+  value: null,
+  format: null,
+  canZoom: false,
+};
 
 /** What the value column's header says, and how wide a unit lane the rows
  * need beneath it. */
@@ -268,41 +256,7 @@ function currentValue(
   return { value, format: column };
 }
 
-function formatValue(row: Row, sys: "si" | "us"): string {
-  if (row.value == null || !row.format) return "—";
-  if (row.format.quantity) {
-    return formatGenericValue(row.value, row.format.quantity, sys, false);
-  }
-  if (row.format.unit) {
-    return toDisplay(row.value, row.format.unit, sys).toFixed(
-      sys === "si" ? 2 : 1,
-    );
-  }
-  // Dimensionless: quality carries whatever unit its mode implies, and a
-  // status code is an enum. Neither converts.
-  return String(Number(row.value.toFixed(2)));
-}
-
-/** The name and engineering symbol for a row's value. */
-function formatMeta(f: Row["format"]): { name: string; symbol: string } | null {
-  if (f == null) return null;
-  return {
-    name: f.label,
-    symbol: f.symbol ?? f.label.charAt(0).toUpperCase(),
-  };
-}
-
-function unitOf(row: Row, sys: "si" | "us"): string {
-  if (!row.format) return "";
-  if (row.format.quantity) {
-    return genericUnitLabel(row.format.quantity, sys) ?? "";
-  }
-  return row.format.unit ? unitLabel(row.format.unit, sys) : "";
-}
-
 // ── Styles ────────────────────────────────────────────────────────────────────
-
-const BADGE_COL_WIDTH = 28;
 
 const HEADER_BAR: React.CSSProperties = {
   display: "flex",
@@ -372,6 +326,9 @@ interface Props {
   onZoomToLink?: (id: string) => void;
   onSelectRegion?: (id: string) => void;
   onZoomToRegion?: (id: string) => void;
+  /** Registers a function reporting the width that would fit every listed
+   *  row, for the rail's fit-to-content gesture. */
+  onFitWidth?: (measure: () => number | null) => void;
   activeRegionId?: string | null;
   /** Generic result-column headers (engines whose values ride on
    * `resultValues`); absent for wds, whose pressure and flow ride inline. */
@@ -382,7 +339,7 @@ interface Props {
   embedded?: boolean;
 }
 
-export function NetworkInspectorHome({
+export function NetworkList({
   onClose,
   onSelectNode,
   onSelectLink,
@@ -395,6 +352,7 @@ export function NetworkInspectorHome({
   onZoomToLink,
   onSelectRegion,
   onZoomToRegion,
+  onFitWidth,
   activeRegionId,
   nodeResultColumns,
   linkResultColumns,
@@ -549,13 +507,67 @@ export function NetworkInspectorHome({
 
   const searching = query.trim().length > 0;
 
+  // The widest content the list currently holds, rendered once off-screen
+  // so the panel can be fitted to it. A synthetic row rather than a real
+  // one: the longest id and the longest subtitle need not belong to the
+  // same element, and what has to fit is the widest of each.
+  const fitColumn = linkResultColumns?.[0] ?? nodeResultColumns?.[0] ?? null;
+  const fit = useMemo(
+    () => fitContent(visible, searching, fitColumn?.range),
+    [visible, searching, fitColumn],
+  );
+  const measureRow: Row | null = useMemo(() => {
+    if (!fit) return null;
+    const column = fitColumn;
+    // Whichever extreme renders longer sets the value lane — two
+    // formatting calls for the whole list, not one per row.
+    const value =
+      fit.extremes == null
+        ? null
+        : formatValue(
+              { ...BLANK_ROW, value: fit.extremes[0], format: column },
+              sys,
+            ).length >=
+            formatValue(
+              { ...BLANK_ROW, value: fit.extremes[1], format: column },
+              sys,
+            ).length
+          ? fit.extremes[0]
+          : fit.extremes[1];
+    return {
+      ...BLANK_ROW,
+      id: fit.id,
+      context: fit.context ?? "",
+      canZoom: fit.zoomable,
+      value,
+      format: column,
+    };
+  }, [fit, fitColumn, sys]);
+
   const valueHeading = useMemo(
     () => valueColumnHeading(visible, sys),
     [visible, sys],
   );
 
   const scrollRef = useRef<HTMLDivElement>(null);
-  const rowHeight = inspectorRowHeight(readTextScale(), searching);
+  const measureRef = useRef<HTMLDivElement>(null);
+
+  // Report the width this list would need to show everything, so the rail
+  // can fit itself to it. Measured off a rendered row rather than
+  // computed, so the badge lane, gaps and padding are the row's own.
+  useEffect(() => {
+    if (!onFitWidth) return;
+    onFitWidth(() => {
+      const row = measureRef.current?.firstElementChild;
+      const scroller = scrollRef.current;
+      if (!row || !scroller) return null;
+      // The scrollbar is inside the panel, so its track is width the rows
+      // do not get. Zero where scrollbars are overlays.
+      const scrollbar = scroller.offsetWidth - scroller.clientWidth;
+      return Math.ceil(row.getBoundingClientRect().width + scrollbar);
+    });
+  }, [onFitWidth]);
+  const rowHeight = networkListRowHeight(readTextScale(), searching);
   const rowVirtualizer = useVirtualizer({
     count: visible.length,
     getScrollElement: () => scrollRef.current,
@@ -640,7 +652,7 @@ export function NetworkInspectorHome({
       };
 
   return (
-    <div className="inspector-panel" style={shell}>
+    <div className="side-panel" style={shell}>
       <div style={HEADER_BAR}>
         <input
           value={queryInput}
@@ -833,201 +845,60 @@ export function NetworkInspectorHome({
                     opacity: offscreen ? OFFSCREEN_OPACITY : 1,
                   }}
                 >
-                  {/* The row is the button; the zoom control is its sibling
-                      rather than its child, because a button inside a button
-                      is invalid and gives the row two focus stops. */}
-                  <button
-                    type="button"
-                    // Select on click, zoom on double-click — the file-list
-                    // idiom, where opening is what you do to the thing you
-                    // just picked.
-                    //
-                    // Neither handler waits to see whether another click is
-                    // coming. Debouncing the first would put a quarter-second
-                    // of latency on every selection to serve the rarer
-                    // gesture, so instead each one reads `event.detail`, the
-                    // browser's own count of clicks in this burst, and the
-                    // pair is arranged to land on the same result either way.
-                    onClick={(e) => {
-                      // Selection *toggles*, so letting the second click
-                      // through undid the first: a double-click selected,
-                      // deselected, then zoomed to something no longer
-                      // selected. The second click of a burst does nothing
-                      // and leaves the outcome to the double-click handler.
-                      if (!clickSelects(e.detail)) return;
-                      select(row);
-                    }}
-                    onDoubleClick={
-                      zoomable
-                        ? () => {
-                            // One click has landed, so a row that started
-                            // selected is now deselected and vice versa.
-                            // Select whatever is not, and a double-click
-                            // always ends selected *and* zoomed, from
-                            // either starting state.
-                            if (doubleClickSelects(isActiveRow(row, active))) {
-                              select(row);
-                            }
-                            zoomTo(row);
-                          }
-                        : undefined
-                    }
-                    style={{
-                      width: "100%",
-                      height: "100%",
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 6,
-                      padding: `0 ${zoomable ? 26 : 8}px 0 8px`,
-                      textAlign: "left",
-                      font: "inherit",
-                      cursor: "pointer",
-                      userSelect: "none",
-                      boxSizing: "border-box",
-                      border: "none",
-                      borderBottom: "1px solid rgba(255,255,255,0.04)",
-                      background: isActive
-                        ? "var(--selection-bg)"
-                        : "transparent",
-                      outline: isActive
-                        ? "1px solid var(--selection-border)"
-                        : undefined,
-                      outlineOffset: "-1px",
-                    }}
-                    onMouseEnter={(e) => {
-                      if (!isActive)
-                        e.currentTarget.style.background =
-                          "rgba(255,255,255,0.04)";
-                      hover(row);
-                    }}
-                    onMouseLeave={(e) => {
-                      if (!isActive)
-                        e.currentTarget.style.background = "transparent";
-                      clearHover();
-                    }}
-                    onFocus={() => hover(row)}
-                    onBlur={() => clearHover()}
-                  >
-                    <span
-                      style={{
-                        width: BADGE_COL_WIDTH - 6,
-                        display: "flex",
-                        justifyContent: "center",
-                        flexShrink: 0,
-                      }}
-                      data-tooltip={kindLabel.get(row.kind) ?? row.kind}
-                    >
-                      <TypeBadge type={row.kind} />
-                    </span>
-                    <span
-                      style={{
-                        flex: 1,
-                        minWidth: 0,
-                        display: "flex",
-                        flexDirection: "column",
-                        justifyContent: "center",
-                        overflow: "hidden",
-                      }}
-                    >
-                      <span
-                        style={{
-                          color: "var(--accent)",
-                          fontFamily: "var(--font-mono)",
-                          fontSize: "var(--text-sm)",
-                          fontWeight: 500,
-                          overflow: "hidden",
-                        }}
-                      >
-                        <MiddleTruncate text={row.id} />
-                      </span>
-                      {/* What a row connects to is the disambiguator when a
-                        query matched it there rather than on its id. */}
-                      {searching && row.context && (
-                        <span
-                          style={{
-                            fontSize: "var(--text-2xs)",
-                            color: "var(--text-tertiary)",
-                            fontFamily: "var(--font-mono)",
-                            overflow: "hidden",
-                            textOverflow: "ellipsis",
-                            whiteSpace: "nowrap",
-                          }}
-                        >
-                          {row.context}
-                        </span>
-                      )}
-                    </span>
-                    <span
-                      style={{
-                        fontFamily: "var(--font-mono)",
-                        fontSize: "var(--text-sm)",
-                        color:
-                          row.value == null
-                            ? "var(--text-disabled)"
-                            : "var(--text-secondary)",
-                        flexShrink: 0,
-                      }}
-                      data-tooltip={
-                        row.value != null
-                          ? `${formatMeta(row.format)?.name ?? ""} ${unitOf(
-                              row,
-                              sys,
-                            )}`.trim() || undefined
-                          : undefined
-                      }
-                    >
-                      {formatValue(row, sys)}
-                      {/* A lane of its own, so the numbers right-align on
-                          one edge instead of being pushed around by units
-                          of different widths — "8.153 m" and "0.8695 m/s"
-                          right-aligned as one group put their digits at
-                          different offsets, which is exactly what the
-                          column exists to let you compare.
-
-                          Reserved even when a row has no value, or the
-                          rows that do would shift out from under the ones
-                          that don't. */}
-                      {valueHeading.perRowUnits && (
-                        <span
-                          style={{
-                            color: "var(--text-tertiary)",
-                            marginLeft: 3,
-                            display: "inline-block",
-                            width: `${valueHeading.unitWidth}ch`,
-                            textAlign: "left",
-                          }}
-                        >
-                          {row.value != null ? unitOf(row, sys) : ""}
-                        </span>
-                      )}
-                    </span>
-                  </button>
-                  {zoomable && (
-                    <button
-                      type="button"
-                      onClick={() => zoomTo(row)}
-                      aria-label={`Zoom to ${row.id}`}
-                      data-tooltip="Zoom to"
-                      style={{
-                        position: "absolute",
-                        right: 6,
-                        top: "50%",
-                        transform: "translateY(-50%)",
-                        background: "none",
-                        border: "none",
-                        cursor: "pointer",
-                        color: "var(--text-tertiary)",
-                        display: "flex",
-                        padding: 0,
-                      }}
-                    >
-                      <MagnifyingGlassPlusIcon width={13} height={13} />
-                    </button>
-                  )}
+                  <NetworkListRow
+                    row={row}
+                    isActive={isActive}
+                    zoomable={zoomable}
+                    searching={searching}
+                    sys={sys}
+                    valueHeading={valueHeading}
+                    kindLabel={kindLabel}
+                    onSelect={select}
+                    onZoom={zoomTo}
+                    onHover={hover}
+                    onClearHover={clearHover}
+                  />
                 </div>
               );
             })}
           </div>
+        </div>
+      )}
+
+      {/* The row the panel would have to be wide enough to show, kept off
+          screen. Rendered rather than modelled: the width that matters is
+          the one this component produces, and a second description of its
+          badge lane, gaps and padding would drift from it.
+
+          One row, so the virtualiser is beside the point — and it changes
+          only when the listed content does. */}
+      {measureRow && (
+        <div
+          ref={measureRef}
+          aria-hidden
+          style={{
+            position: "absolute",
+            visibility: "hidden",
+            pointerEvents: "none",
+            top: 0,
+            left: 0,
+            width: "max-content",
+          }}
+        >
+          <NetworkListRow
+            intrinsic
+            row={measureRow}
+            isActive={false}
+            zoomable={measureRow.canZoom}
+            searching={searching}
+            sys={sys}
+            valueHeading={valueHeading}
+            kindLabel={kindLabel}
+            onSelect={NOOP}
+            onZoom={NOOP}
+            onHover={NOOP}
+            onClearHover={NOOP}
+          />
         </div>
       )}
     </div>

@@ -1,9 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  clickSelects,
-  doubleClickSelects,
-  rankRow,
-} from "./NetworkInspectorHome";
+import { clickSelects, doubleClickSelects, rankRow } from "./NetworkList";
 
 type Row = Parameters<typeof rankRow>[0];
 

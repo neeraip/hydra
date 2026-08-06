@@ -10,6 +10,12 @@ import { statusLabel } from "../../../canvas/MapCanvas/colorUtils";
 import type { LinkVariable, NodeVariable } from "../../../canvas/types";
 import type { Link, Node, ResultRanges } from "../../../hooks";
 import { formatQty, useUnitSystem } from "../../../units";
+import {
+  LINK_SI_DECIMALS,
+  linkCardLabel,
+  linkCardQuantity,
+  linkCardVariables,
+} from "./linkCards";
 import { BigValue, SecondaryCell } from "./primitives";
 
 // ── Empty state (no simulation run yet) ─────────────────────────────────────
@@ -239,64 +245,52 @@ export function LinkResultsCard({
     }
   }
 
-  let primaryLabel = "Flow";
-  let primaryValue = "—";
-  let primaryColor = accent;
-  if (link.flow != null) {
-    primaryLabel = "Flow";
-    primaryValue = formatQty(
-      link.flow,
-      "flow",
-      sys,
-      sys === "si" ? 2 : undefined,
-    );
-    primaryColor = valueColor("flow", link.flow);
-  }
-  if (linkVar === "velocity" && link.velocity != null) {
-    primaryLabel = "Velocity";
-    primaryValue = formatQty(
-      link.velocity,
-      "velocity",
-      sys,
-      sys === "si" ? 3 : undefined,
-    );
-    primaryColor = valueColor("velocity", link.velocity);
-  }
-  if (linkVar === "status" && link.status != null) {
-    primaryLabel = "Status";
-    primaryValue = statusLabel(link.status);
-    primaryColor = valueColor("status", link.status);
+  // Derived from what the link actually carries — see `linkCards`. The
+  // hand-written run of `if`s this replaces had lost `headloss` entirely
+  // and showed `status` and `quality` even when the run produced neither.
+  const { primary, secondaries: secondaryVars } = linkCardVariables(
+    link,
+    linkVar,
+  );
+
+  /** One card's text and colour, whichever variable it is. */
+  function cardFor(variable: LinkVariable) {
+    const raw = link[variable];
+    const label = linkCardLabel(variable, link.type);
+    if (variable === "status") {
+      return {
+        label,
+        value: statusLabel(link.status),
+        color:
+          link.status != null ? valueColor("status", link.status) : undefined,
+      };
+    }
+    if (raw == null) return { label, value: "—", color: undefined };
+    if (variable === "quality") {
+      return { label, value: raw.toFixed(4), color: valueColor(variable, raw) };
+    }
+    const quantity = linkCardQuantity(variable, link.type);
+    return {
+      label,
+      value: quantity
+        ? formatQty(
+            raw,
+            quantity,
+            sys,
+            sys === "si" ? LINK_SI_DECIMALS[variable] : undefined,
+          )
+        : String(raw),
+      color: valueColor(variable, raw),
+    };
   }
 
-  const secondaries: Array<{ label: string; value: string; color?: string }> =
-    [];
-  if (linkVar !== "flow" && link.flow != null)
-    secondaries.push({
-      label: "Flow",
-      value: formatQty(link.flow, "flow", sys, sys === "si" ? 2 : undefined),
-      color: valueColor("flow", link.flow),
-    });
-  if (linkVar !== "velocity" && link.velocity != null)
-    secondaries.push({
-      label: "Velocity",
-      value: formatQty(
-        link.velocity,
-        "velocity",
-        sys,
-        sys === "si" ? 3 : undefined,
-      ),
-      color: valueColor("velocity", link.velocity),
-    });
-  if (linkVar !== "status")
-    secondaries.push({
-      label: "Status",
-      value: statusLabel(link.status),
-      color: link.status != null ? statusColor(link.status) : undefined,
-    });
-  secondaries.push({
-    label: "Quality",
-    value: link.quality != null ? link.quality.toFixed(4) : "—",
-  });
+  const {
+    label: primaryLabel,
+    value: primaryValue,
+    color: primaryColorRaw,
+  } = cardFor(primary);
+  const primaryColor = primaryColorRaw ?? accent;
+  const secondaries = secondaryVars.map(cardFor);
 
   return (
     <div

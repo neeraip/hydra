@@ -30,6 +30,7 @@ import {
   EditorStatusBar,
 } from "../../pages/project/EditorShell";
 import { CollectionDetail } from "./CollectionDetail";
+import { railGroupBreak } from "./railGroups";
 
 export function UdsElementsView() {
   const { project } = useActiveProject();
@@ -90,11 +91,16 @@ export function UdsElementsView() {
   // has no geometry to highlight.
   const [openContainer, setOpenContainer] = useState<string | null>(null);
 
-  const sections: EditorSection[] = present.map((k) => ({
+  // One rule parts the kinds that sit on the map from the ones that do
+  // not, rather than a second level of navigation — the same break the
+  // wds editor draws above its collections.
+  const groupBreak = railGroupBreak(present.map((k) => k.class));
+  const sections: EditorSection[] = present.map((k, i) => ({
     id: k.id,
     label: k.labelPlural,
     count: k.count,
     kindId: k.id,
+    startsGroup: i === groupBreak,
   }));
 
   // The highlight follows whichever selection the visible class owns: a

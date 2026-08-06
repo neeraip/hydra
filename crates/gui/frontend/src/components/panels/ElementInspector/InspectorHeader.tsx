@@ -171,6 +171,7 @@ export function Header({
         type="button"
         onClick={onClose}
         data-tooltip="Close inspector"
+        aria-label="Close inspector"
         style={{
           background: "transparent",
           border: "none",

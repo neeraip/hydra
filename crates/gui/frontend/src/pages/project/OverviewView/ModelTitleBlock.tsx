@@ -170,6 +170,7 @@ export function ModelTitleBlock() {
         onClick={beginEdit}
         className="model-title-edit-target"
         data-tooltip="Click to edit (stored in the INP [TITLE])"
+        aria-label="Edit model title"
         style={{
           display: "block",
           width: "100%",

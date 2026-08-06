@@ -1,4 +1,5 @@
 import {
+  ArrowPathRoundedSquareIcon,
   BackwardIcon,
   ChevronDoubleLeftIcon,
   ChevronDoubleRightIcon,
@@ -15,6 +16,8 @@ import {
   useState,
 } from "react";
 import type { ResultMeta } from "../hooks";
+import { playheadTransition } from "./timelineMotion";
+import { clockWidthCh, periodCounterWidthCh } from "./timelineReadout";
 
 /** Fallback time-axis labels (00:00–24:00) used before resultMeta is loaded. */
 const EMPTY_LABELS: string[] = Array.from(
@@ -50,7 +53,11 @@ function TransportButton({
       type="button"
       className={className}
       onClick={onClick}
+      // `data-tooltip` draws the hint; it is a styling hook and carries no
+      // accessible name, so an icon-only button needs the label stated too
+      // or it announces as an unnamed button.
       data-tooltip={tooltip}
+      aria-label={tooltip}
       style={TRANSPORT_BTN_STYLE}
     >
       {children}
@@ -102,6 +109,10 @@ export function Timeline({
 
   const timeLabels = liveLabels ?? EMPTY_LABELS;
 
+  // Reserved so the readout cannot resize the scrubber beside it.
+  const clockCh = useMemo(() => clockWidthCh(timeLabels), [timeLabels]);
+  const periodCh = periodCounterWidthCh(effectiveMaxStep + 1);
+
   /** Label for a step index; clamps out-of-range indices to the last label. */
   const labelAt = (i: number) =>
     timeLabels[i] ?? timeLabels[timeLabels.length - 1];
@@ -148,7 +159,14 @@ export function Timeline({
   // updates the playhead live, pointerup ends the scrub. Plain clicks still
   // work via onClick (it fires after pointerup with the same value — a
   // harmless no-op set), and keyboard handling is untouched.
+  //
+  // Two holders for one fact, deliberately: the handlers read it
+  // synchronously (a pointermove can arrive before a re-render, and a stale
+  // closure would drop the scrub), while the render needs it to decide
+  // whether the playhead animates. They are only ever written together,
+  // immediately below.
   const scrubbingRef = useRef(false);
+  const [scrubbing, setScrubbing] = useState(false);
   const scrubTo = useCallback(
     (clientX: number) => {
       const frac = trackFrac(clientX);
@@ -162,6 +180,7 @@ export function Timeline({
       // Primary button / touch / pen only — don't scrub on right-click.
       if (e.pointerType === "mouse" && e.button !== 0) return;
       scrubbingRef.current = true;
+      setScrubbing(true);
       e.currentTarget.setPointerCapture(e.pointerId);
       scrubTo(e.clientX);
     },
@@ -178,6 +197,7 @@ export function Timeline({
   const endScrub = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
     if (!scrubbingRef.current) return;
     scrubbingRef.current = false;
+    setScrubbing(false);
     if (e.currentTarget.hasPointerCapture(e.pointerId)) {
       e.currentTarget.releasePointerCapture(e.pointerId);
     }
@@ -276,14 +296,13 @@ export function Timeline({
           <option value={4}>4×</option>
           <option value={8}>8×</option>
         </select>
-        <button
-          type="button"
+        <TransportButton
           className={`tl-btn ${loop ? "tl-active" : ""}`}
           onClick={() => setLoop(!loop)}
-          data-tooltip={loop ? "Loop on" : "Loop off"}
+          tooltip={loop ? "Loop on" : "Loop off"}
         >
-          ⟳
-        </button>
+          <ArrowPathRoundedSquareIcon style={TRANSPORT_ICON_STYLE} />
+        </TransportButton>
       </div>
 
       {/* Time readout */}
@@ -296,6 +315,10 @@ export function Timeline({
           gap: 1,
         }}
       >
+        {/* Both lines reserve the widest string they can ever hold. The
+            scrubber takes the width these leave, so a line that grows with
+            its own content — "period 9" to "period 10" — narrows the track
+            and shifts the playhead under the cursor. */}
         <span
           style={{
             fontSize: "var(--text-2xl)",
@@ -303,6 +326,8 @@ export function Timeline({
             color: "var(--text-primary)",
             fontWeight: 600,
             lineHeight: 1,
+            minWidth: `${clockCh}ch`,
+            whiteSpace: "nowrap",
           }}
         >
           {labelAt(currentHour)}
@@ -312,6 +337,8 @@ export function Timeline({
             fontSize: "var(--text-xs)",
             color: "var(--text-tertiary)",
             fontFamily: "var(--font-mono)",
+            minWidth: `${periodCh}ch`,
+            whiteSpace: "nowrap",
           }}
         >
           {/* Counted from one, because it counts reported periods rather
@@ -372,7 +399,7 @@ export function Timeline({
               borderRadius: TRACK_H / 2,
               background: "var(--accent)",
               opacity: 0.55,
-              transition: "width 80ms linear",
+              transition: playheadTransition("width", scrubbing),
             }}
           />
 
@@ -421,6 +448,7 @@ export function Timeline({
               border: "2px solid var(--bg-panel)",
               boxShadow: "0 0 0 1px var(--accent)",
               pointerEvents: "none",
+              transition: playheadTransition("left", scrubbing),
             }}
           />
         </div>

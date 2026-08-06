@@ -421,5 +421,7 @@ $RECYCLE.BIN/
 # End of https://www.toptal.com/developers/gitignore/api/linux,macos,windows,visualstudiocode,python,rust,node
 
 # Vitest browser-mode failure screenshots — written beside the layout tests
-# when one fails, useful while debugging and never worth committing.
+# when one fails, useful while debugging and never worth committing. Vitest
+# writes them to both of these; which one depends on the version.
 __screenshots__/
+.vitest-attachments/

@@ -396,6 +396,7 @@ export function RunModal() {
             className="tl-btn"
             onClick={closeRunModal}
             data-tooltip="Close (Esc)"
+            aria-label="Close"
             style={{
               width: 26,
               height: 26,
@@ -610,6 +611,7 @@ export function RunModal() {
             type="button"
             onClick={runSimulation}
             disabled={!canRun}
+            aria-label="Run simulation"
             data-tooltip={
               canRun
                 ? `Run (${runShortcut})`

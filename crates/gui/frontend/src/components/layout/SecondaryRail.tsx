@@ -2,7 +2,7 @@ import type React from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { type ProjectView, useAppState } from "../../AppContext";
 import { useCanvasSelection } from "../../canvas/selection-context";
-import { NetworkInspectorHome } from "../panels/NetworkInspectorHome";
+import { NetworkList } from "../panels/NetworkList";
 
 const RAIL_MIN = 200;
 const RAIL_MAX = 520;
@@ -11,7 +11,11 @@ const STORAGE_KEY = "hydra2-rail-width";
 
 // ── Rail content per view ─────────────────────────────────────────────────────
 
-function CanvasRail() {
+function CanvasRail({
+  onFitWidth,
+}: {
+  onFitWidth?: (measure: () => number | null) => void;
+}) {
   const {
     selectNode,
     selectLink,
@@ -29,7 +33,7 @@ function CanvasRail() {
   } = useCanvasSelection();
 
   return (
-    <NetworkInspectorHome
+    <NetworkList
       embedded
       onSelectNode={selectNode}
       onSelectLink={selectLink}
@@ -45,6 +49,7 @@ function CanvasRail() {
       onZoomToLink={zoomToLink}
       onSelectRegion={selectRegion}
       onZoomToRegion={zoomToRegion}
+      onFitWidth={onFitWidth}
       activeRegionId={selectedRegionId}
     />
   );
@@ -55,7 +60,15 @@ function CanvasRail() {
 // Rails are defined only for views with meaningful side-panel content.
 // Views without an entry here (overview) collapse the rail entirely
 // so the body fills the window.
-const RAIL_CONTENT: Partial<Record<ProjectView, React.ComponentType>> = {
+/** A rail view may register how wide its content would like to be, for
+ *  the fit-to-content gesture on the resize edge. */
+interface RailContentProps {
+  onFitWidth?: (measure: () => number | null) => void;
+}
+
+const RAIL_CONTENT: Partial<
+  Record<ProjectView, React.ComponentType<RailContentProps>>
+> = {
   canvas: CanvasRail,
 };
 
@@ -89,6 +102,31 @@ export function SecondaryRail() {
       open ? px : "0px",
     );
   }, []);
+
+  // Registered by the list, which is the only thing that knows how wide
+  // its own content is.
+  const fitMeasure = useRef<(() => number | null) | null>(null);
+  const registerFit = useCallback((measure: () => number | null) => {
+    fitMeasure.current = measure;
+  }, []);
+
+  /**
+   * Double-clicking the edge fits the panel to what it is showing.
+   *
+   * The same gesture a spreadsheet's column border has, and it means the
+   * same thing here. Clamped like a drag: a list of long ids can want
+   * more than the rail is allowed, and the answer there is the maximum
+   * rather than an exception to the maximum.
+   */
+  const handleResizeDoubleClick = useCallback(() => {
+    const ideal = fitMeasure.current?.();
+    if (ideal == null) return;
+    const next = Math.min(RAIL_MAX, Math.max(RAIL_MIN, ideal));
+    applyWidth(next, true);
+    railWidthRef.current = next;
+    localStorage.setItem(STORAGE_KEY, String(next));
+    setRailWidth(next);
+  }, [applyWidth]);
 
   const handleResizeMouseDown = useCallback(
     (e: React.MouseEvent) => {
@@ -199,7 +237,7 @@ export function SecondaryRail() {
               overflow: "hidden",
             }}
           >
-            <Content />
+            <Content onFitWidth={registerFit} />
           </div>
         )}
 
@@ -207,6 +245,13 @@ export function SecondaryRail() {
         {/* biome-ignore lint/a11y/noStaticElementInteractions: resize handle is pointer-driven only. */}
         <div
           onMouseDown={handleResizeMouseDown}
+          onDoubleClick={handleResizeDoubleClick}
+          // No tooltip: this strip is the full height of the rail, and
+          // tooltips anchor to their element's box, so a hint on it
+          // appeared level with the top of the panel however far down the
+          // pointer was. An affordance that points somewhere else is
+          // worse than none.
+          title="Drag to resize, double-click to fit"
           style={{
             position: "absolute",
             top: 0,

@@ -261,6 +261,7 @@ export function SimSettingsModal() {
             className="tl-btn"
             onClick={closeSimSettingsModal}
             data-tooltip="Close (Esc)"
+            aria-label="Close"
             style={{
               width: 26,
               height: 26,
@@ -335,6 +336,7 @@ export function SimSettingsModal() {
               type="button"
               onClick={save}
               disabled={saving || !dirty}
+              aria-label="Save simulation settings"
               data-tooltip={dirty ? `Save (${saveHint})` : "No changes"}
               style={{
                 background: !saving && dirty ? ACCENT : "var(--bg-card)",

@@ -40,6 +40,29 @@ export interface SimResultColumn {
   quantity?: GenericQuantity;
   /** Quantity key for a fixed-variable engine's own conversion. */
   unit?: Quantity;
+  /**
+   * The states of a column whose values are codes rather than
+   * measurements, keyed by stored value.
+   *
+   * Supplied by whoever declares the column, so a list rendering it does
+   * not have to know which variables are enumerations — the alternative
+   * is a second copy of the table, which is exactly how the hover chip
+   * once came to report every open link as "cv".
+   *
+   * `severity` is the engine's own judgement of the state, and carrying
+   * it is what lets a reader colour the state without knowing what the
+   * state means: the same judgement the legend and the canvas colour
+   * from.
+   */
+  codes?: Readonly<Record<number, { label: string; severity?: string }>>;
+  /**
+   * The variable's range over the whole run, in SI.
+   *
+   * Present so a reader can reason about every value the column will ever
+   * hold, not just this period's. Fitting the panel needs exactly that:
+   * sized to the moment, it comes undone as soon as the timeline moves.
+   */
+  range?: readonly [number, number];
 }
 
 /**
