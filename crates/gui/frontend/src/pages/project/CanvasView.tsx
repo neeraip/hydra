@@ -20,7 +20,9 @@ import type { ScaleMode } from "../../canvas/legend-primitives";
 import { MapCanvas } from "../../canvas/MapCanvas";
 import { wdsBandColors } from "../../canvas/MapCanvas/colorUtils";
 import type { MeasurePoint } from "../../canvas/measureSnap";
+import { NODE_SCALE_DEFAULT } from "../../canvas/nodeScale";
 import { usePublishCurrentPeriod } from "../../canvas/period-context";
+import { stepIntervalMs } from "../../canvas/playback";
 import {
   ASPECT_SLIDER_DEFAULT,
   aspectScales,
@@ -82,6 +84,7 @@ import { type Quantity, toDisplay, useUnitSystem } from "../../units";
 import { CanvasErrorBoundary } from "./CanvasView/CanvasErrorBoundary";
 import { CanvasToolbar } from "./CanvasView/CanvasToolbar";
 import { InvalidCrsOverlay } from "./CanvasView/InvalidCrsOverlay";
+import { NodeSizeSlider } from "./CanvasView/NodeSizeSlider";
 import { SchematicAspectSlider } from "./CanvasView/SchematicAspectSlider";
 import { useCrsReprojection } from "./CanvasView/useCrsReprojection";
 import { ViewportControls } from "./CanvasView/ViewportControls";
@@ -116,6 +119,8 @@ interface CanvasPrefs {
   /** Schematic layout aspect slider position. Missing in older prefs →
    * defaults to the midpoint, i.e. the layout's native 120:80 spacing. */
   schematicAspect: number;
+  /** Node-size slider position. Missing in older prefs → the default. */
+  nodeScale: number;
   /**
    * What the colour ramps are scaled against: the whole run, the current
    * step, or the project's criteria bands.
@@ -159,6 +164,7 @@ const CANVAS_PREF_DEFAULTS: CanvasPrefs = {
   nodeVar: "pressure",
   linkVar: "velocity",
   schematicAspect: ASPECT_SLIDER_DEFAULT,
+  nodeScale: NODE_SCALE_DEFAULT,
   scaleMode: "run",
   legendOpen: false,
   genericSelection: { point: "", polyline: "", region: "" },
@@ -714,6 +720,7 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
   const [schematicAspect, setSchematicAspect] = useState(
     CANVAS_PREF_DEFAULTS.schematicAspect,
   );
+  const [nodeScale, setNodeScale] = useState(CANVAS_PREF_DEFAULTS.nodeScale);
   // Memoised: MapCanvas keys its layout cache off this, and a fresh object per
   // render would re-lay out the whole network every render.
   const schematicScale = useMemo(
@@ -754,6 +761,11 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
     setGenericSelection(readGenericSelection(prefs));
     // Clamp already maps missing/corrupt values to the default.
     setSchematicAspect(clampSliderValue(prefs?.schematicAspect ?? Number.NaN));
+    setNodeScale(
+      Number.isFinite(prefs?.nodeScale)
+        ? (prefs?.nodeScale as number)
+        : CANVAS_PREF_DEFAULTS.nodeScale,
+    );
     setPrefsLoadedFor(id);
   }, [project?.id]);
   // Cold-load gate: until the project row has arrived (an async fetch — it
@@ -773,6 +785,7 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
       nodeVar,
       linkVar,
       schematicAspect,
+      nodeScale,
       scaleMode,
       legendOpen,
       genericSelection,
@@ -791,6 +804,7 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
     nodeVar,
     linkVar,
     schematicAspect,
+    nodeScale,
     scaleMode,
     legendOpen,
     genericSelection,
@@ -1192,7 +1206,7 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
 
   // ── Timeline transport ──────────────────────────────────────────
   const [isPlaying, setIsPlaying] = useState(false);
-  const [speed, setSpeed] = useState(1); // 0.5 / 1 / 2 / 4 / 8 ×
+  const [speed, setSpeed] = useState(1); // see PLAYBACK_SPEEDS
   const [loop, setLoop] = useState(true);
 
   // `maxStep` is the last valid step index: 0..maxStep.
@@ -1224,10 +1238,10 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
     setCurrentHour((h) => Math.max(0, Math.min(maxStep, h)));
   }, [maxStep]);
 
-  // Auto-advance the playhead. 1× = 800 ms / step.
+  // Auto-advance the playhead. See `stepIntervalMs` for what 1× means.
   useEffect(() => {
     if (!isPlaying) return;
-    const intervalMs = 800 / speed;
+    const intervalMs = stepIntervalMs(speed);
     const id = window.setInterval(() => {
       setCurrentHour((h) => {
         if (h >= maxStep) {
@@ -2420,6 +2434,7 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
                 // multipliers. Converting here keeps the geometric mapping in
                 // one place instead of duplicating it in the canvas.
                 schematicScale={schematicScale}
+                nodeScale={nodeScale}
                 nodeVar={nodeVar}
                 linkVar={linkVar}
                 animateLinks={animateLinks}
@@ -2475,6 +2490,7 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
               selection={genericSelection}
               onSelect={handleGenericSelect}
               scaleMode={scaleMode}
+              multiStep={!isSteadyState}
               onScaleModeChange={setScaleMode}
               effectiveRanges={{
                 // The catalog path carries its own rescaled variable; wds
@@ -2614,6 +2630,10 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
                 onChange={setSchematicAspect}
               />
             )}
+            {/* Both views: how big a node is against the links around it is
+                the ratio zoom cannot change, and that is as true of a plan
+                as of a schematic. */}
+            <NodeSizeSlider value={nodeScale} onChange={setNodeScale} />
             <ViewportControls
               mapOnly={mapOnly}
               onZoomIn={() => {

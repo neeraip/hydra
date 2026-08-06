@@ -7,7 +7,7 @@ import {
   ExclamationTriangleIcon,
   InformationCircleIcon,
 } from "@heroicons/react/24/outline";
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 import {
   useActiveProject,
   useAppState,
@@ -61,7 +61,6 @@ export function StatusBar() {
   const solverColor = solverDotColor(solver);
   const solverBg = solverPillBg(solver);
 
-  const [historyOpen, setHistoryOpen] = useState(false);
   const issueCounts = countIssues(issues);
   const issuesShortcut = formatShortcut([
     primaryModifierLabel(),
@@ -198,38 +197,29 @@ export function StatusBar() {
         </span>
       </Pill>
 
-      {/* Timestep count — shown after a simulation has run */}
+      {/* Reporting steps in the last run. A readout, not a control: the
+          popover this used to open held the same number a second time and a
+          line promising solver diagnostics that never arrived. Warnings from
+          a run are in the Issues panel, which is where they belong. */}
       {project && timestepCount !== null && (
-        <button
-          type="button"
-          onClick={() => setHistoryOpen((v) => !v)}
+        <span
           style={{
             display: "inline-flex",
             alignItems: "center",
             gap: 10,
-            background: historyOpen ? "var(--bg-card)" : "transparent",
-            border: "none",
             color: "var(--text-secondary)",
             padding: "0 10px",
-            cursor: "pointer",
             borderLeft: "1px solid var(--border)",
             fontFamily: "var(--font-mono)",
             fontSize: "var(--text-sm)",
           }}
-          data-tooltip="Simulation info"
+          data-tooltip="Reporting steps in the last run"
         >
           <span>
             <span style={{ color: "var(--text-tertiary)" }}>steps</span>{" "}
             {timestepCount}
           </span>
-        </button>
-      )}
-
-      {historyOpen && timestepCount !== null && (
-        <SolverHistoryPopover
-          onClose={() => setHistoryOpen(false)}
-          timestepCount={timestepCount}
-        />
+        </span>
       )}
     </div>
   );
@@ -319,79 +309,5 @@ function Pill({
     >
       {children}
     </span>
-  );
-}
-
-function SolverHistoryPopover({
-  onClose,
-  timestepCount,
-}: {
-  onClose: () => void;
-  timestepCount: number;
-}) {
-  return (
-    // biome-ignore lint/a11y/noStaticElementInteractions: popover container only stops backdrop clicks.
-    // biome-ignore lint/a11y/useKeyWithClickEvents: popover container only stops backdrop clicks.
-    <div
-      onClick={(e) => e.stopPropagation()}
-      style={{
-        position: "absolute",
-        right: 220,
-        bottom: 28,
-        width: 220,
-        padding: 12,
-        background: "var(--bg-panel)",
-        border: "1px solid var(--border)",
-        borderRadius: 6,
-        boxShadow: "var(--shadow-2)",
-      }}
-    >
-      <div
-        style={{
-          fontSize: "var(--text-xs)",
-          fontWeight: 600,
-          color: "var(--text-tertiary)",
-          textTransform: "uppercase",
-          letterSpacing: 0.4,
-          marginBottom: 8,
-        }}
-      >
-        Last simulation
-      </div>
-      <div
-        style={{
-          fontSize: "var(--text-md)",
-          color: "var(--text-primary)",
-          fontFamily: "var(--font-mono)",
-        }}
-      >
-        {timestepCount} timestep{timestepCount !== 1 ? "s" : ""} computed
-      </div>
-      <div
-        style={{
-          fontSize: "var(--text-sm)",
-          color: "var(--text-tertiary)",
-          marginTop: 4,
-        }}
-      >
-        Detailed solver diagnostics will be available in a future update.
-      </div>
-      <button
-        type="button"
-        onClick={onClose}
-        style={{
-          marginTop: 10,
-          fontSize: "var(--text-sm)",
-          color: "var(--accent)",
-          background: "transparent",
-          border: "none",
-          cursor: "pointer",
-          fontFamily: "var(--font-ui)",
-          padding: 0,
-        }}
-      >
-        Dismiss
-      </button>
-    </div>
   );
 }

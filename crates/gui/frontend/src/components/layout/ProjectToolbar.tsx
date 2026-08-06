@@ -85,6 +85,36 @@ interface PickerAnchor {
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
+/**
+ * Corner radii for the scenario strip.
+ *
+ * A scenario chip is a pill: at the strip's height, fourteen is fully
+ * round. The base model is squarer, because it is not one of the scenarios
+ * beside it — it has no parent, cannot be deleted, and every lineage ends
+ * there.
+ *
+ * Eight rather than the four-to-six this app gives its buttons. That much
+ * squarer stops reading as "a chip playing a different role" and starts
+ * reading as "a different control", which it is not: it is the same choice
+ * about a different kind of model.
+ */
+export const CHIP_RADIUS = 14;
+export const BASE_CHIP_RADIUS = 8;
+
+/**
+ * One weight for every chip in the strip, active or not.
+ *
+ * Weight used to mark the active chip, and bold text is wider than medium,
+ * so selecting one grew it and shoved every chip to its right along. In a
+ * strip you select from, the thing you click moves the things beside it,
+ * which is the worst place for it.
+ *
+ * Nothing is lost by dropping it: active already carries an accent border,
+ * an accent-dim fill and accent text. Weight was a fourth signal and the
+ * only one that costs layout.
+ */
+export const CHIP_WEIGHT = 500;
+
 const STATE_COLOR: Record<ScenarioState, string> = {
   "not-run": "#6b7480",
   draft: "#6b7480",
@@ -179,7 +209,7 @@ function ChildrenStub({
         gap: 4,
         padding: "4px 9px",
         border: "1px dashed var(--border-hover)",
-        borderRadius: 14,
+        borderRadius: CHIP_RADIUS,
         background: open ? "var(--nav-hover)" : "transparent",
         color: "var(--text-tertiary)",
         fontSize: "var(--text-sm)",
@@ -497,9 +527,19 @@ export function ProjectToolbar() {
         )}
       </div>
 
-      {/* Base pill — the base model itself; always present and rendered bold so
-          it reads as *the* base model, not a scenario named "Base". Active when
-          no scenario is selected. */}
+      {/* The base model itself, always present and active when no scenario
+          is selected.
+
+          Squarer than the scenario chips beside it, because it is not one of
+          them: it has no parent, cannot be deleted, and every scenario's
+          lineage ends here. Shape rather than weight, which is what this
+          used to use — bold said "base", and bold also said "active", so
+          the two collided exactly when a scenario was selected and the
+          distinction vanished when it was most needed.
+
+          Eight, not the four-to-six the buttons in this app use. That much
+          squarer reads as a different sort of control, and it is not one:
+          it is the same choice about a different kind of model. */}
       <button
         type="button"
         onClick={() => setActiveScenarioId(null)}
@@ -530,13 +570,13 @@ export function ProjectToolbar() {
           border: baseActive
             ? "1px solid var(--accent)"
             : "1px solid var(--border)",
-          borderRadius: 14,
+          borderRadius: BASE_CHIP_RADIUS,
           background: baseActive
             ? "var(--selection-bg-strong)"
             : "var(--bg-card)",
           color: baseActive ? "var(--accent)" : "var(--text-secondary)",
           fontSize: "var(--text-sm)",
-          fontWeight: 700,
+          fontWeight: CHIP_WEIGHT,
           cursor: "pointer",
           fontFamily: "var(--font-ui)",
           transition: "background var(--t-fast), border-color var(--t-fast)",
@@ -864,7 +904,18 @@ export function ProjectToolbar() {
             padding: "0 8px",
             borderTopLeftRadius: 0,
             borderBottomLeftRadius: 0,
-            borderLeft: "1px solid rgba(255,255,255,0.28)",
+            // Parts the two halves in whatever colour the button's own text
+            // is, dimmed. White was right while the fill was a saturated
+            // blue; it is invisible on the achromatic fill, which is
+            // near-white in the dark theme, and it drew as a stray white
+            // line on the outline variant, whose fill is nothing at all.
+            //
+            // Where `color-mix` is not understood the declaration is
+            // dropped and the border falls back to `currentColor` at full
+            // strength: a heavier divider, never a missing one.
+            borderLeft: "1px solid",
+            borderLeftColor:
+              "color-mix(in srgb, currentColor 32%, transparent)",
           }}
         >
           <Cog6ToothIcon style={{ width: 13, height: 13 }} />
@@ -894,7 +945,7 @@ function ToolbarDivider({ style }: { style?: React.CSSProperties }) {
 
 /** One lineage chip: the scenario itself (click = activate) plus, when it
  * has siblings, an attached ▾ "+N" segment opening the sibling picker. */
-function ScenarioChip({
+export function ScenarioChip({
   scenario,
   isActive,
   isAncestor = false,
@@ -942,7 +993,7 @@ function ScenarioChip({
         display: "inline-flex",
         alignItems: "stretch",
         border: `1px solid ${borderColor}`,
-        borderRadius: 14,
+        borderRadius: CHIP_RADIUS,
         background: isActive ? "var(--accent-dim)" : "var(--bg-card)",
         overflow: "hidden",
         transition: "background var(--t-fast), border-color var(--t-fast)",
@@ -972,7 +1023,7 @@ function ScenarioChip({
           background: "transparent",
           color: textColor,
           fontSize: "var(--text-sm)",
-          fontWeight: isActive ? 700 : 500,
+          fontWeight: CHIP_WEIGHT,
           cursor: "pointer",
           fontFamily: "var(--font-ui)",
           transition: "background var(--t-fast)",

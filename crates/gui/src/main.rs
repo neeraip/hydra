@@ -104,6 +104,7 @@ fn main() {
             commands::get_run_warnings,
             commands::load_result_meta,
             commands::get_network_digest,
+            commands::get_project_sketch,
             commands::get_period_results,
             commands::get_element_details,
             commands::get_inlet_couplings,

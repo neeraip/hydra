@@ -98,3 +98,53 @@ describe("the timeline's scrubber", () => {
     expectSameWidth(await trackWidth(120, 120), early);
   });
 });
+
+/**
+ * The scrubber's rail, and the fill that shows how far through a run you
+ * are.
+ *
+ * The track is a flex column of a fixed height holding the rail and the
+ * axis labels beneath it. Nothing stopped the rail from shrinking when
+ * they did not both fit, so it gave up its height rather than the labels
+ * theirs: it drew about five pixels instead of eight, and the fill inside
+ * it — which takes its height from the rail's padding box — drew three. At
+ * 55% opacity that reads as no fill at all, which is how it was reported.
+ *
+ * Heights, so jsdom cannot answer any of it.
+ */
+describe("the scrubber's rail", () => {
+  async function rail(currentHour: number) {
+    const host = await mount(<Bar currentHour={currentHour} maxStep={24} />);
+    const el = host.querySelector('[role="slider"]')?.firstElementChild;
+    if (!el) throw new Error("no rail");
+    return el;
+  }
+
+  it("keeps its full height rather than giving it to the labels", async () => {
+    expect((await rail(12)).getBoundingClientRect().height).toBe(8);
+  });
+
+  /** The fill fills it. A rail with a fill two pixels shorter than itself
+   *  is the shape the defect took. */
+  it("gives the fill the whole rail to sit in", async () => {
+    const el = await rail(12);
+    const fill = el.firstElementChild;
+    if (!fill) throw new Error("no fill");
+    const railH = el.getBoundingClientRect().height;
+    const fillH = fill.getBoundingClientRect().height;
+    // Two pixels of border, and nothing else.
+    expect(railH - fillH).toBe(2);
+  });
+
+  /** And it is drawn in proportion to how far through the run you are. */
+  it("is as wide as the run is done", async () => {
+    const half = (await rail(12)).firstElementChild;
+    const start = (await rail(0)).firstElementChild;
+    if (!half || !start) throw new Error("no fill");
+    // Against the rail's padding box, which is what an absolutely
+    // positioned child is measured in — the border is not track.
+    const inner = (await rail(12)).clientWidth;
+    expect(half.getBoundingClientRect().width).toBeCloseTo(inner / 2, 0);
+    expect(start.getBoundingClientRect().width).toBe(0);
+  });
+});

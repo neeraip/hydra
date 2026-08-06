@@ -72,15 +72,39 @@ export function ProjectPage() {
   return (
     <ResolvedUnitSystem.Provider value={resolvedUnits}>
       <ProjectPeriodProvider>
+        {/* The engine's colour reaches the primary button through this
+            subtree. Setting it is opt-in and the fallback is achromatic, so
+            a surface says whether it belongs to an engine rather than
+            inheriting an answer from where it happens to be mounted.
+
+            Position in the tree is not that question, which is worth
+            stating because this comment first claimed it was. The Settings
+            drawer is a sibling of this element and should be achromatic —
+            true. The run modal is also a sibling and should *not* be: it
+            runs one engine's model and draws that engine's badge. It sets
+            the variable itself, as does the simulation settings modal.
+
+            Both halves travel together: a fill and what can be read on it.
+            The engine accents are mid-tone by design and carry white; the
+            achromatic accent is near-white in the dark theme and cannot,
+            which is what `--accent-fg` is for. */}
         <div
-          style={{
-            flex: 1,
-            height: "100%",
-            display: "flex",
-            flexDirection: "column",
-            overflow: "hidden",
-            animation: "fadeIn 150ms ease-out",
-          }}
+          style={
+            {
+              flex: 1,
+              height: "100%",
+              display: "flex",
+              flexDirection: "column",
+              overflow: "hidden",
+              animation: "fadeIn 150ms ease-out",
+              ...(engine?.accent
+                ? {
+                    "--engine-accent": engine.accent,
+                    "--engine-accent-fg": "#fff",
+                  }
+                : null),
+            } as React.CSSProperties
+          }
         >
           <ProjectToolbar />
           <div

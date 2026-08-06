@@ -1035,19 +1035,36 @@ body,
   border-color: var(--status-error);
   color: var(--status-error);
 }
+/* Not the water distribution engine's blue, which is what this was. An
+   informational toast belongs to the app, not to an engine. */
 .toast.info {
-  border-color: #4a90d9;
-  color: #4a90d9;
+  border-color: var(--accent);
+  color: var(--accent);
 }
 
-/* ── Gradient run / primary button ──────────────────────────────────────────*/
+/* ── Primary button ─────────────────────────────────────────────────────────
+   Achromatic by default, and the engine's colour inside a project.
+
+   It used to be `#4a90d9` everywhere, which is the water distribution
+   engine's own identity colour — so a drainage project's Simulate button
+   asserted an engine it had nothing to do with, and every button outside a
+   project asserted one that was not open. Selection stays achromatic
+   regardless: that is the rule the accent tokens exist for, and it is about
+   what "selected" looks like, not about what the primary action looks like.
+
+   `--engine-accent` is set on the project subtree only. Where it is unset
+   the fallback is the achromatic accent, so nothing has to opt out. */
 .btn-run {
-  background: linear-gradient(135deg, #4a90d9 0%, #2f6dba 100%);
+  background: var(--engine-accent, var(--accent));
   box-shadow:
     0 2px 8px var(--shadow-key),
     inset 0 1px 0 rgba(255, 255, 255, 0.1);
-  color: #fff;
-  border: none;
+  color: var(--engine-accent-fg, var(--accent-fg));
+  /* Transparent rather than absent, so the outline variant's real border
+     costs no width. With `none` here, a scenario that had been simulated
+     rendered its Simulate button three pixels wider than one that had not,
+     and the toolbar shifted as you moved between them. */
+  border: 1.5px solid transparent;
   border-radius: 6px;
   padding: 0 12px;
   height: 30px;
@@ -1083,22 +1100,26 @@ body,
   transform: none;
   box-shadow: none;
 }
+/* Amber survives the achromatic rule because it is a *status*, not an
+   identity: "this model changed since its results" is the same warning the
+   status tokens carry everywhere else. Colour still means one thing. */
 .btn-run--stale {
-  background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
+  background: var(--status-warning);
+  color: #1a1405;
   box-shadow:
-    0 2px 8px rgba(245, 158, 11, 0.35),
-    inset 0 1px 0 rgba(255, 255, 255, 0.1);
+    0 2px 8px var(--shadow-key),
+    inset 0 1px 0 rgba(255, 255, 255, 0.12);
 }
 .btn-run--stale:hover {
   box-shadow:
-    0 4px 16px rgba(245, 158, 11, 0.5),
-    inset 0 1px 0 rgba(255, 255, 255, 0.14);
+    0 6px 18px var(--shadow-key),
+    inset 0 1px 0 rgba(255, 255, 255, 0.16);
   transform: translateY(-1px);
 }
 .btn-run--outline {
   background: transparent;
-  border: 1.5px solid #4a90d9;
-  color: #4a90d9;
+  border: 1.5px solid var(--engine-accent, var(--accent));
+  color: var(--engine-accent, var(--accent));
   box-shadow: none;
 }
 .btn-run--outline:hover {
@@ -1215,32 +1236,10 @@ input[type="range"]::-moz-range-track {
     rgba(46, 114, 194, 0.04) 100%
   );
 }
-/* Excluding the modifiers is load-bearing, not tidiness. This selector
-   outweighs `.btn-run--stale` and `.btn-run--outline` — one class plus an
-   attribute against one class — so without the exclusions it repainted
-   both of them blue in the light theme: the outline button became a blue
-   fill still carrying its blue text, and the amber "edited since last run"
-   warning stopped being amber at all. */
-[data-theme="light"] .btn-run:not(.btn-run--stale):not(.btn-run--outline) {
-  background: linear-gradient(135deg, #2e72c2 0%, #1e5aa0 100%);
-  box-shadow:
-    0 2px 8px rgba(46, 114, 194, 0.28),
-    inset 0 1px 0 rgba(255, 255, 255, 0.2);
-}
-[data-theme="light"]
-  .btn-run:not(.btn-run--stale):not(.btn-run--outline):hover {
-  box-shadow:
-    0 4px 16px rgba(46, 114, 194, 0.4),
-    inset 0 1px 0 rgba(255, 255, 255, 0.25);
-}
-
-/* The outline's blue is chosen against a dark panel; on white it lands
-   near 3:1, which is under AA for text this size. The light theme's own
-   accent clears it. */
-[data-theme="light"] .btn-run--outline {
-  border-color: #2e72c2;
-  color: #2e72c2;
-}
+/* No light-theme override for the primary button. It used to restate the
+   blue in a darker shade, and the specificity of doing so is what once
+   repainted the outline and stale variants. The accent tokens already flip
+   with the theme, so there is nothing left to restate. */
 [data-theme="light"] input[type="range"]::-webkit-slider-thumb {
   box-shadow:
     0 0 0 3px rgba(46, 114, 194, 0.2),

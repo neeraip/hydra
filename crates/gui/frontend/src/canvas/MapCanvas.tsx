@@ -58,6 +58,12 @@ import {
 } from "./MapCanvas/geoUtils";
 import { nearestPointOnPath, type SnapResult } from "./measureSnap";
 import {
+  NODE_SCALE_DEFAULT,
+  nodeRadius,
+  nodeScaleFactor,
+  typicalLinkLength,
+} from "./nodeScale";
+import {
   computeSchematicLayout,
   type LayoutCoupling,
   type SchematicLayout,
@@ -273,6 +279,9 @@ interface MapCanvasProps {
    * matters: scaling both equally is arithmetically the same as zooming, and
    * the camera refit below removes it. Ignored in map mode. */
   schematicScale?: { x: number; y: number };
+  /** Node-size slider position; the midpoint is the size derived from the
+   *  network's own spacing. See `nodeScale`. */
+  nodeScale?: number;
   nodeVar: NodeVariable;
   linkVar: LinkVariable;
   /** Animate the Flow/Velocity pulse effect. Already accounts for the user
@@ -417,6 +426,7 @@ export const MapCanvas = memo(function MapCanvas({
   regions,
   viewMode,
   schematicScale = IDENTITY_SCALE,
+  nodeScale = NODE_SCALE_DEFAULT,
   nodeVar,
   linkVar,
   animateLinks = true,
@@ -1044,6 +1054,24 @@ export const MapCanvas = memo(function MapCanvas({
       };
     }, [links, nodes, renderCoords, topological]);
 
+  /**
+   * The network's own spacing, for sizing nodes against it.
+   *
+   * Geographic view only. A schematic layout's distances are ours rather
+   * than the model's — `computeSchematicLayout` builds them from a fixed
+   * spacing multiplied by the aspect scale — so measuring them would make
+   * node size a function of the spread slider, and that slider would stop
+   * being only a spread slider. A fixed radius was always right there,
+   * because the spacing it sits in is uniform and chosen.
+   *
+   * `null` therefore falls back to the constant the schematic has always
+   * used, and the size slider still multiplies it.
+   */
+  const typicalLink = useMemo(
+    () => (topological ? null : typicalLinkLength(linkData)),
+    [linkData, topological],
+  );
+
   // ── Viewport probe ─────────────────────────────────────────────────────────
   // The network list asks "is this element on screen"; only this component
   // knows both the viewport and the display coordinates. Answered per call
@@ -1208,8 +1236,26 @@ export const MapCanvas = memo(function MapCanvas({
       ? ("common" as const)
       : ("meters" as const);
 
-    const junctionRadius = 7;
-    const specialRadius = 9;
+    // Sized against the network rather than fixed, so the node-to-link
+    // ratio holds whether junctions are fifty metres or five kilometres
+    // apart. See `nodeScale` for why zoom cannot substitute for this.
+    //
+    // Measured from the positions actually drawn, which in schematic view
+    // are the laid-out ones rather than the model's own.
+    const junctionRadius = nodeRadius(typicalLink, nodeScale);
+    const specialRadius = junctionRadius * (9 / 7);
+
+    // The clamps move with the slider, or it does nothing where it is most
+    // wanted. A world radius is only visible between the floor and the
+    // ceiling: zoomed out on a dense network every multiple of it is below
+    // the floor, and zoomed in on a spread-out one every multiple is above
+    // the ceiling. Scaling the bounds by the same factor keeps the control
+    // effective at both ends while leaving the neutral position exactly
+    // where the fixed values had it.
+    const sizeFactor = nodeScaleFactor(nodeScale);
+    const nodeMinPx = NODE_RADIUS_MIN_PX * sizeFactor;
+    const nodeMaxPx = NODE_RADIUS_MAX_PX * sizeFactor;
+    const nodeGlowMaxPx = NODE_GLOW_MAX_PX * sizeFactor;
 
     // Threshold bands only apply in "threshold" colour mode.
     const velThresh =
@@ -1407,7 +1453,7 @@ export const MapCanvas = memo(function MapCanvas({
         coordinateSystem: coordSystem,
         getPosition: (d: typeof node) => d.position,
         radiusUnits: nodeRadiusUnits,
-        radiusMaxPixels: NODE_GLOW_MAX_PX,
+        radiusMaxPixels: nodeGlowMaxPx,
         stroked: false,
         pickable: false as const,
         updateTriggers: {},
@@ -1429,7 +1475,7 @@ export const MapCanvas = memo(function MapCanvas({
             // (clamped) node at far zooms. Sharing the node's own floor here
             // made the rings converge with the node and selection became
             // invisible when zoomed out.
-            radiusMinPixels: NODE_RADIUS_MIN_PX + radiusPad,
+            radiusMinPixels: nodeMinPx + radiusPad,
           }),
       );
     };
@@ -1951,8 +1997,8 @@ export const MapCanvas = memo(function MapCanvas({
           getRadius: (d) =>
             d.type === "junction" ? junctionRadius : specialRadius,
           radiusUnits: nodeRadiusUnits,
-          radiusMinPixels: NODE_RADIUS_MIN_PX,
-          radiusMaxPixels: NODE_RADIUS_MAX_PX,
+          radiusMinPixels: nodeMinPx,
+          radiusMaxPixels: nodeMaxPx,
           // Pickable in measure mode too: snapping to a node needs it. The
           // hover/click handlers below bail out in measure mode.
           pickable: true,
@@ -2244,6 +2290,10 @@ export const MapCanvas = memo(function MapCanvas({
     velocityMax,
     measurePoints,
     schematicLayout,
+    // Node radius is derived from these, so the layers must rebuild when
+    // either the network's spacing or the slider changes.
+    typicalLink,
+    nodeScale,
   ]);
 
   useEffect(() => {

@@ -16,6 +16,7 @@ import {
   useState,
 } from "react";
 import type { ResultMeta } from "../hooks";
+import { PLAYBACK_SPEEDS } from "./playback";
 import { playheadTransition } from "./timelineMotion";
 import { clockWidthCh, periodCounterWidthCh } from "./timelineReadout";
 
@@ -290,11 +291,11 @@ export function Timeline({
           onChange={(e) => setSpeed(Number(e.target.value))}
           data-tooltip="Playback speed"
         >
-          <option value={0.5}>0.5×</option>
-          <option value={1}>1×</option>
-          <option value={2}>2×</option>
-          <option value={4}>4×</option>
-          <option value={8}>8×</option>
+          {PLAYBACK_SPEEDS.map((s) => (
+            <option key={s} value={s}>
+              {s}×
+            </option>
+          ))}
         </select>
         <TransportButton
           className={`tl-btn ${loop ? "tl-active" : ""}`}
@@ -382,6 +383,13 @@ export function Timeline({
           style={{
             position: "relative",
             height: TRACK_H,
+            // The track is a flex column of a fixed height holding this and
+            // the axis labels. Without this the rail is what gives way when
+            // they do not both fit: it compressed to about five pixels, and
+            // the fill inside it — sized from the rail's padding box — to
+            // three, which at 55% opacity reads as no fill at all rather
+            // than as a thin one.
+            flexShrink: 0,
             borderRadius: TRACK_H / 2,
             background: "rgba(0,0,0,0.35)",
             border: "1px solid var(--border)",

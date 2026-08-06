@@ -26,8 +26,6 @@ import {
 import { useUnitSystem } from "../units";
 import {
   CategorySwatches,
-  CRITERIA_SCALE_OPTION,
-  DATA_SCALE_OPTIONS,
   LEGEND_BAR_STYLE,
   LEGEND_POPOVER_STYLE,
   LEGEND_ROOT_STYLE,
@@ -49,6 +47,11 @@ import {
   hardStopGradient,
   sequentialGradientCss,
 } from "./MapCanvas/colorUtils";
+import {
+  effectiveScaleMode,
+  scaleControlShown,
+  scaleOptions,
+} from "./scaleOptions";
 
 export type GenericClassKey = "point" | "polyline" | "region";
 
@@ -163,6 +166,7 @@ export function GenericLegend({
   onScaleModeChange,
   effectiveRanges,
   criteriaVariables,
+  multiStep,
   criteriaAnnotation,
   bandColors,
   onLocateExtreme,
@@ -189,6 +193,8 @@ export function GenericLegend({
    * is offered only while one of them is selected — an engine or a
    * variable with no bands simply never sees the option. */
   criteriaVariables?: readonly string[];
+  /** False when the run produced a single reporting step. */
+  multiStep?: boolean;
   /** Read-only band text for a variable, shown beneath its ramp. The
    * legend displays criteria; it does not author them (they are project
    * analysis inputs, edited in Analysis). */
@@ -271,9 +277,11 @@ export function GenericLegend({
   const anyCriteria = classes.some((c) =>
     criteriaVariables?.includes(selected(c).id),
   );
-  const scaleOptions = anyCriteria
-    ? [...DATA_SCALE_OPTIONS, CRITERIA_SCALE_OPTION]
-    : DATA_SCALE_OPTIONS;
+  // Same rule one step further: a steady-state run has one reporting step,
+  // so scaling to *this* step and across the *whole run* are one scale, and
+  // offering both is offering a choice with one outcome.
+  const options = scaleOptions(anyCriteria, multiStep !== false);
+  const activeScale = effectiveScaleMode(scaleMode, options);
 
   // Animation is a property of the moving quantity, not of a class slot:
   // enabled when any currently-selected variable is one the caller says it
@@ -385,11 +393,13 @@ export function GenericLegend({
             );
           })}
 
-          <ScaleControl
-            value={scaleMode}
-            options={scaleOptions}
-            onChange={onScaleModeChange}
-          />
+          {scaleControlShown(options) && (
+            <ScaleControl
+              value={activeScale}
+              options={options}
+              onChange={onScaleModeChange}
+            />
+          )}
         </div>
       )}
 

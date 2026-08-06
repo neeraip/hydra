@@ -1825,7 +1825,11 @@ pub fn load_project_network(
         if let Some(first) = diags.iter().find(|d| d.kind.is_error()) {
             return Err(format!("Cannot open this model: {first}"));
         }
-        let encoded = super::uds_view::encode_uds_snapshot(&super::uds_view::build_view(&network));
+        let view = super::uds_view::build_view(&network);
+        // Same outline for the home page as the distribution path draws,
+        // from the viewer's own geometry rather than a network DTO.
+        super::sketch::refresh_uds(&app_data, &project_id, &view);
+        let encoded = super::uds_view::encode_uds_snapshot(&view);
         *state.0.lock() = NetworkStateInner::LoadedUds {
             raw_text: text,
             network: std::sync::Arc::new(network),
@@ -1851,6 +1855,11 @@ pub fn load_project_network(
     // outside the mutex, and (unlike the old JSON path) no nodes/links clone
     // is needed to build the response.
     let encoded = encode_network_snapshot(&dto);
+    // Draw the project's outline for the home page while its geometry is
+    // already in hand. Once per open, and skipped entirely when the model
+    // has not moved since the last drawing. A failure here is not a load
+    // failure: the home page falls back to the engine's mark.
+    super::sketch::refresh(&app_data, &project_id, &dto);
     *state.0.lock() = NetworkStateInner::Loaded {
         raw_bytes: bytes,
         dirty: false,

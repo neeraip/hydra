@@ -6,7 +6,10 @@ import remarkGfm from "remark-gfm";
 import { useAppState } from "../AppContext";
 import { NewProjectWizard } from "../components/modals/NewProjectWizard";
 import { ReleaseNotesModal } from "../components/modals/ReleaseNotesModal";
+import { EngineGlyph } from "../components/ui/EngineGlyph";
+import { NetworkSketch, type Sketch } from "../components/ui/NetworkSketch";
 import { PrimaryButton } from "../components/ui/PrimaryButton";
+import { placeholderSketch } from "../components/ui/placeholderSketch";
 import {
   ACCENT,
   engineByKey,
@@ -14,6 +17,7 @@ import {
   useEngines,
   useProjects,
 } from "../hooks";
+import { useSketches } from "../hooks/sketches";
 import {
   releaseHasNotes,
   releasesWithContent,
@@ -22,6 +26,11 @@ import {
   useReleaseNotes,
 } from "../hooks/useReleaseNotes";
 import { type UpdaterState, useUpdater } from "../hooks/useUpdater";
+import {
+  modelSize,
+  projectStatus,
+  type StatusTone,
+} from "./HomePage/projectStatus";
 
 /** The updater banner's icon, sized to the label it sits beside. */
 const UPDATE_ICON: React.CSSProperties = {
@@ -29,6 +38,217 @@ const UPDATE_ICON: React.CSSProperties = {
   height: "1.15em",
   flexShrink: 0,
 };
+
+// ── Layout ───────────────────────────────────────────────────────────────────
+
+/** The first-run welcome. Full window, because there is nothing else yet. */
+const WELCOME: React.CSSProperties = {
+  flex: 1,
+  background:
+    "linear-gradient(135deg, var(--bg-activity) 0%, var(--bg-elevated) 50%, var(--bg-app) 100%)",
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  position: "relative",
+  overflow: "hidden",
+};
+
+const WELCOME_GLOW: React.CSSProperties = {
+  position: "absolute",
+  width: 480,
+  height: 480,
+  borderRadius: "50%",
+  background:
+    "radial-gradient(circle, rgba(205,211,223,0.10) 0%, transparent 68%)",
+  pointerEvents: "none",
+};
+
+const WORDMARK: React.CSSProperties = {
+  fontSize: "var(--text-display)",
+  fontWeight: 800,
+  color: "var(--text-primary)",
+  letterSpacing: "-0.04em",
+  lineHeight: 1,
+  marginBottom: 14,
+};
+
+const TAGLINE: React.CSSProperties = {
+  fontSize: "var(--text-xl)",
+  color: "var(--text-secondary)",
+  marginBottom: 40,
+  letterSpacing: "0.01em",
+  lineHeight: 1.5,
+};
+
+/**
+ * The returning shape: the work beside a rail.
+ *
+ * Two columns rather than one long scroll. Everything the rail holds —
+ * an update, what changed, where to get help — was below the fold when
+ * this was a single column, which is the same as not being there. The page
+ * itself does not scroll; whichever column runs out of room does.
+ */
+const WORKING: React.CSSProperties = {
+  flex: 1,
+  minHeight: 0,
+  display: "flex",
+  background: "var(--bg-app)",
+};
+
+const MAIN_COLUMN: React.CSSProperties = {
+  flex: 1,
+  minWidth: 0,
+  overflow: "auto",
+  padding: "32px 28px 40px",
+  display: "flex",
+  flexDirection: "column",
+};
+
+/** Narrow and fixed. It holds reading, not work, and a rail that grows with
+ *  the window takes room the cards use better. */
+const RAIL: React.CSSProperties = {
+  flex: "0 0 300px",
+  overflow: "auto",
+  borderLeft: "1px solid var(--border)",
+  background: "var(--bg-panel)",
+  padding: "32px 20px 40px",
+  display: "flex",
+  flexDirection: "column",
+  gap: 24,
+};
+
+const HEADER_MARK: React.CSSProperties = {
+  fontSize: "var(--text-3xl)",
+  fontWeight: 800,
+  color: "var(--text-primary)",
+  letterSpacing: "-0.03em",
+  lineHeight: 1.1,
+};
+
+const HEADER_SUB: React.CSSProperties = {
+  fontSize: "var(--text-md)",
+  color: "var(--text-tertiary)",
+  marginTop: 2,
+};
+
+/** Two across at this measure, one on a narrow window. */
+const CARD_GRID: React.CSSProperties = {
+  display: "grid",
+  gridTemplateColumns: "repeat(auto-fill, minmax(230px, 1fr))",
+  gap: 12,
+};
+
+const CARD: React.CSSProperties = {
+  display: "flex",
+  flexDirection: "column",
+  textAlign: "left",
+  background: "var(--bg-card)",
+  border: "1px solid var(--border)",
+  borderRadius: 10,
+  padding: 0,
+  overflow: "hidden",
+  cursor: "pointer",
+  font: "inherit",
+  transition: "background var(--t-fast), border-color var(--t-fast)",
+};
+
+/**
+ * The drawing's frame.
+ *
+ * The ratio sets the height and the contents are taken out of flow, so a
+ * card holding a full-size drawing and one holding a small placeholder are
+ * the same height. With the contents in flow they were not, and a row of
+ * cards stepped up and down depending on what each had to show.
+ */
+export const CARD_ART: React.CSSProperties = {
+  // Stated rather than inherited from being a flex child, so the frame has
+  // a width of its own wherever it is put.
+  display: "block",
+  position: "relative",
+  aspectRatio: "16 / 9",
+  background: "var(--bg-elevated)",
+  borderBottom: "1px solid var(--border)",
+  overflow: "hidden",
+};
+
+/** Inset from the frame, absolutely, so nothing here can set a height. */
+export const CARD_ART_INNER: React.CSSProperties = {
+  position: "absolute",
+  inset: 14,
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+};
+
+const CARD_BODY: React.CSSProperties = {
+  display: "flex",
+  flexDirection: "column",
+  gap: 2,
+  padding: "10px 12px 12px",
+  minWidth: 0,
+};
+
+const CARD_TOP: React.CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "space-between",
+  gap: 8,
+  marginBottom: 4,
+};
+
+const ROW_NAME: React.CSSProperties = {
+  display: "block",
+  fontSize: "var(--text-lg)",
+  fontWeight: 500,
+  color: "var(--text-primary)",
+  overflow: "hidden",
+  textOverflow: "ellipsis",
+  whiteSpace: "nowrap",
+};
+
+const ROW_SIZE: React.CSSProperties = {
+  display: "block",
+  fontSize: "var(--text-sm)",
+  color: "var(--text-tertiary)",
+  marginTop: 1,
+};
+
+const ROW_WHEN: React.CSSProperties = {
+  fontSize: "var(--text-sm)",
+  color: "var(--text-tertiary)",
+  flexShrink: 0,
+  whiteSpace: "nowrap",
+};
+
+const ALL_PROJECTS: React.CSSProperties = {
+  alignSelf: "flex-start",
+  marginTop: 10,
+  background: "transparent",
+  border: "none",
+  padding: "4px 0",
+  cursor: "pointer",
+  font: "inherit",
+  fontSize: "var(--text-md)",
+  color: "var(--text-secondary)",
+};
+
+/** Colour follows the engine's own judgement of the state, the way the
+ *  legend and the network list already colour a categorical value. */
+const TONE_COLOR: Record<StatusTone, string> = {
+  quiet: "var(--text-tertiary)",
+  attention: "var(--status-warning)",
+  alarm: "var(--status-error)",
+  busy: "var(--accent)",
+};
+
+function statusStyle(tone: StatusTone): React.CSSProperties {
+  return {
+    fontSize: "var(--text-sm)",
+    color: TONE_COLOR[tone],
+    flexShrink: 0,
+    whiteSpace: "nowrap",
+  };
+}
 
 const HELP_LINKS = [
   {
@@ -261,7 +481,8 @@ function SidebarSection({ title }: { title: string }) {
 // ── Home page ─────────────────────────────────────────────────────────────────
 
 export function HomePage() {
-  const { projectsVersion, createdProject, openProject } = useAppState();
+  const { projectsVersion, createdProject, openProject, setPage } =
+    useAppState();
   const notes = useReleaseNotes();
   const { lastSeen, markSeen } = useLastSeenGuiVersion();
   const { updater, install, restart } = useUpdater();
@@ -303,6 +524,11 @@ export function HomePage() {
 
   const [showWizard, setShowWizard] = useState(false);
 
+  // The page has two shapes. With nothing to return to, the welcome is the
+  // whole window; once there is work, the work is.
+  const hasProjects = recentProjects.length > 0;
+  const sketches = useSketches(recentProjects.map((p) => p.id));
+
   function openRecentProject(project: Project) {
     // Navigate immediately; AppContext loads and primes network data in the background.
     openProject(project.id);
@@ -318,110 +544,329 @@ export function HomePage() {
         animation: "fadeIn 180ms ease-out",
       }}
     >
-      {/* ── Hero ─────────────────────────────────────────────────────────── */}
-      <div
-        style={{
-          flex: "0 0 62%",
-          background:
-            "linear-gradient(135deg, var(--bg-activity) 0%, var(--bg-elevated) 50%, var(--bg-app) 100%)",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          position: "relative",
-          overflow: "hidden",
-        }}
-      >
-        {/* Ambient glow */}
-        <div
-          style={{
-            position: "absolute",
-            width: 480,
-            height: 480,
-            borderRadius: "50%",
-            background:
-              "radial-gradient(circle, rgba(205,211,223,0.10) 0%, transparent 68%)",
-            pointerEvents: "none",
-          }}
-        />
-
-        {/* Content */}
-        <div
-          style={{
-            position: "relative",
-            textAlign: "center",
-            padding: "0 40px",
-          }}
-        >
+      {/* ── Welcome, first run only ─────────────────────────────────────
+          Full width while there is nothing else to show. A wordmark and a
+          tagline earn the window once; after that the work does. */}
+      {!hasProjects && (
+        <div style={WELCOME}>
+          <div style={WELCOME_GLOW} />
           <div
             style={{
-              fontSize: "var(--text-display)",
-              fontWeight: 800,
-              color: "var(--text-primary)",
-              letterSpacing: "-0.04em",
-              lineHeight: 1,
-              marginBottom: 14,
+              position: "relative",
+              textAlign: "center",
+              padding: "0 40px",
             }}
           >
-            Hydra
-          </div>
-          <div
-            style={{
-              fontSize: "var(--text-xl)",
-              color: "var(--text-secondary)",
-              marginBottom: 40,
-              letterSpacing: "0.01em",
-              lineHeight: 1.5,
-            }}
-          >
-            A modern platform for water infrastructure simulation.
-          </div>
-          <div style={{ display: "inline-flex" }}>
-            <PrimaryButton onClick={() => setShowWizard(true)}>
-              + New project
-            </PrimaryButton>
+            <div style={WORDMARK}>Hydra</div>
+            <div style={TAGLINE}>
+              Simulate water distribution and urban drainage networks.
+            </div>
+            <div style={{ display: "inline-flex", gap: 10 }}>
+              <PrimaryButton onClick={() => setShowWizard(true)}>
+                + New project
+              </PrimaryButton>
+              <PrimaryButton
+                className="btn-run--outline"
+                onClick={() => setShowWizard(true)}
+              >
+                Open a model file
+              </PrimaryButton>
+            </div>
           </div>
         </div>
-      </div>
+      )}
 
-      {/* ── Sidebar ──────────────────────────────────────────────────────── */}
-      <div
-        style={{
-          flex: "0 0 38%",
-          background: "var(--bg-panel)",
-          borderLeft: "1px solid var(--border)",
-          overflow: "auto",
-          display: "flex",
-          flexDirection: "column",
-          padding: "28px 24px",
-          gap: 28,
-        }}
-      >
-        {/* Recent projects */}
-        <section>
-          <SidebarSection title="Recent" />
-          {recentProjects.length === 0 ? (
-            <div
+      {/* ── The working home ─────────────────────────────────────────────
+          One column. What you were doing, then what changed. */}
+      {hasProjects && (
+        <div style={WORKING}>
+          {/* The work. Cards take the room; the rail keeps the
+              secondary content in sight without a scroll. */}
+          <div style={MAIN_COLUMN}>
+            <header
               style={{
-                fontSize: "var(--text-lg)",
-                color: "var(--text-tertiary)",
-                lineHeight: 1.5,
+                display: "flex",
+                alignItems: "baseline",
+                justifyContent: "space-between",
+                gap: 16,
+                marginBottom: 22,
               }}
             >
-              No projects yet. Create one to get started.
-            </div>
-          ) : (
-            <div style={{ display: "flex", flexDirection: "column", gap: 1 }}>
-              {recentProjects.map((p) => {
-                const engine = engineByKey(engines, p.engine);
-                return (
-                  <button
-                    type="button"
-                    key={p.id}
-                    onClick={() => openRecentProject(p)}
+              <div>
+                <div style={HEADER_MARK}>Hydra</div>
+                <div style={HEADER_SUB}>
+                  Simulate water distribution and urban drainage networks.
+                </div>
+              </div>
+              <div style={{ display: "inline-flex", gap: 8, flexShrink: 0 }}>
+                <PrimaryButton size="sm" onClick={() => setShowWizard(true)}>
+                  + New project
+                </PrimaryButton>
+              </div>
+            </header>
+
+            <section style={{ marginBottom: 26 }}>
+              <SidebarSection title="Recent" />
+              {/* A grid rather than a list, because each card carries a
+                  drawing of its network and a drawing needs area. Rows with
+                  padding would be the projects table with less in it. */}
+              <div style={CARD_GRID}>
+                {recentProjects.map((p) => {
+                  const engine = engineByKey(engines, p.engine);
+                  const status = projectStatus(p);
+                  const size = modelSize(p);
+                  // The real outline when it has been drawn, and a shape
+                  // typical of the engine when it has not.
+                  const sketch = sketches.get(p.id);
+                  const stand = sketch ? null : placeholderSketch(p.engine);
+                  return (
+                    <button
+                      key={p.id}
+                      type="button"
+                      onClick={() => openRecentProject(p)}
+                      style={CARD}
+                      onMouseEnter={(e) => {
+                        e.currentTarget.style.background =
+                          "var(--bg-card-hover)";
+                        e.currentTarget.style.borderColor =
+                          "var(--border-hover)";
+                      }}
+                      onMouseLeave={(e) => {
+                        e.currentTarget.style.background = "var(--bg-card)";
+                        e.currentTarget.style.borderColor = "var(--border)";
+                      }}
+                    >
+                      <span style={CARD_ART}>
+                        <span style={CARD_ART_INNER}>
+                          {sketch || stand ? (
+                            <NetworkSketch
+                              sketch={(sketch ?? stand) as Sketch}
+                              style={{
+                                color: engine?.accent ?? "var(--accent)",
+                                // Faint where it stands in for a model we
+                                // have not drawn, so nobody reads an invented
+                                // network as their own.
+                                opacity: sketch ? 1 : 0.28,
+                              }}
+                            />
+                          ) : (
+                            <span style={{ opacity: 0.5 }}>
+                              <EngineGlyph engine={engine} />
+                            </span>
+                          )}
+                        </span>
+                      </span>
+                      <span style={CARD_BODY}>
+                        <span style={CARD_TOP}>
+                          <EngineGlyph engine={engine} size="sm" />
+                          <span style={ROW_WHEN}>{p.modifiedLabel}</span>
+                        </span>
+                        <span style={ROW_NAME}>{p.name}</span>
+                        {size && <span style={ROW_SIZE}>{size}</span>}
+                        <span style={statusStyle(status.tone)}>
+                          {status.label}
+                        </span>
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+              <button
+                type="button"
+                onClick={() => setPage("projects")}
+                style={ALL_PROJECTS}
+              >
+                All projects →
+              </button>
+            </section>
+          </div>
+
+          <aside style={RAIL}>
+            {/* What's new */}
+            <section>
+              <SidebarSection title="What's New" />
+              <UpdateRow
+                updater={updater}
+                install={install}
+                restart={restart}
+              />
+              {notes.status === "loading" && (
+                <div
+                  style={{
+                    fontSize: "var(--text-lg)",
+                    color: "var(--text-tertiary)",
+                    lineHeight: 1.5,
+                  }}
+                >
+                  Loading…
+                </div>
+              )}
+              {notes.status === "unavailable" && (
+                <div
+                  style={{
+                    fontSize: "var(--text-lg)",
+                    color: "var(--text-tertiary)",
+                    lineHeight: 1.5,
+                  }}
+                >
+                  No release information available.
+                </div>
+              )}
+              {latest && (
+                <button
+                  type="button"
+                  onClick={() => setWhatsNewOpen(true)}
+                  onMouseEnter={(e) => {
+                    (e.currentTarget as HTMLButtonElement).style.background =
+                      "var(--nav-hover)";
+                  }}
+                  onMouseLeave={(e) => {
+                    (e.currentTarget as HTMLButtonElement).style.background =
+                      "transparent";
+                  }}
+                  style={{
+                    display: "block",
+                    width: "100%",
+                    background: "transparent",
+                    border: "none",
+                    cursor: "pointer",
+                    padding: "8px 10px",
+                    margin: "-8px -10px",
+                    borderRadius: 6,
+                    textAlign: "left",
+                    fontFamily: "var(--font-ui)",
+                    transition: "background var(--t-fast)",
+                  }}
+                >
+                  {/* Header: newest version + date (+ New badge) */}
+                  <div
                     style={{
                       display: "flex",
                       alignItems: "center",
-                      gap: 10,
+                      gap: 6,
+                      fontSize: "var(--text-md)",
+                      fontWeight: 600,
+                      color: "var(--text-secondary)",
+                    }}
+                  >
+                    <span>
+                      v{latest.version}
+                      {latest.date ? ` · ${latest.date}` : ""}
+                    </span>
+                    {unseen.length > 0 && (
+                      <span
+                        style={{
+                          fontSize: "var(--text-2xs)",
+                          fontWeight: 700,
+                          letterSpacing: "0.07em",
+                          textTransform: "uppercase",
+                          color: ACCENT,
+                          background: "var(--selection-bg-strong)",
+                          border: "1px solid var(--selection-border)",
+                          borderRadius: 4,
+                          padding: "1px 5px",
+                        }}
+                      >
+                        New
+                      </span>
+                    )}
+                  </div>
+
+                  {/* Clamped markdown teaser with bottom fade — explicit muted
+                  empty state when cleanup left no notes. */}
+                  {!releaseHasNotes(latest) && (
+                    <div
+                      style={{
+                        marginTop: 7,
+                        fontSize: "var(--text-md)",
+                        color: "var(--text-tertiary)",
+                        lineHeight: 1.55,
+                      }}
+                    >
+                      No release notes
+                    </div>
+                  )}
+                  {releaseHasNotes(latest) && (
+                    <div style={{ position: "relative", marginTop: 7 }}>
+                      <div
+                        style={{
+                          display: "-webkit-box",
+                          WebkitBoxOrient: "vertical",
+                          WebkitLineClamp: 6,
+                          overflow: "hidden",
+                          // Fallback clamp for engines without -webkit-box:
+                          // ~6 lines at 12px/1.55.
+                          maxHeight: 6 * 12 * 1.55,
+                          color: "var(--text-secondary)",
+                        }}
+                      >
+                        <ReactMarkdown
+                          remarkPlugins={[remarkGfm]}
+                          components={TEASER_COMPONENTS}
+                          skipHtml
+                        >
+                          {latest.body}
+                        </ReactMarkdown>
+                      </div>
+                      {/* Fade-out into the Read-more affordance */}
+                      <div
+                        style={{
+                          position: "absolute",
+                          left: 0,
+                          right: 0,
+                          bottom: 0,
+                          height: 24,
+                          background:
+                            "linear-gradient(to bottom, transparent, var(--bg-panel))",
+                          pointerEvents: "none",
+                        }}
+                      />
+                    </div>
+                  )}
+
+                  <div
+                    style={{
+                      marginTop: 5,
+                      fontSize: "var(--text-sm)",
+                      color: ACCENT,
+                    }}
+                  >
+                    Read more
+                  </div>
+                  {earlierCount > 0 && (
+                    <div
+                      style={{
+                        marginTop: 3,
+                        fontSize: "var(--text-sm)",
+                        color: "var(--text-tertiary)",
+                      }}
+                    >
+                      +{earlierCount} earlier update
+                      {earlierCount !== 1 ? "s" : ""}
+                    </div>
+                  )}
+                </button>
+              )}
+            </section>
+
+            {/* Divider */}
+            <div
+              style={{ height: 1, background: "var(--border)", flexShrink: 0 }}
+            />
+
+            {/* Help links */}
+            <section>
+              <SidebarSection title="Help" />
+              <div style={{ display: "flex", flexDirection: "column", gap: 1 }}>
+                {HELP_LINKS.map(({ label, url }) => (
+                  <button
+                    type="button"
+                    key={label}
+                    onClick={() => openUrl(url)}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "space-between",
                       background: "transparent",
                       border: "none",
                       cursor: "pointer",
@@ -440,277 +885,29 @@ export function HomePage() {
                         "transparent";
                     }}
                   >
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div
-                        style={{
-                          fontSize: "var(--text-lg)",
-                          fontWeight: 500,
-                          color: "var(--text-primary)",
-                          overflow: "hidden",
-                          textOverflow: "ellipsis",
-                          whiteSpace: "nowrap",
-                        }}
-                      >
-                        {p.name}
-                      </div>
-                      <div
-                        style={{
-                          fontSize: "var(--text-sm)",
-                          color: "var(--text-tertiary)",
-                          marginTop: 1,
-                        }}
-                      >
-                        {p.modifiedLabel}
-                      </div>
-                    </div>
                     <span
-                      title={engine ? engine.label : "Unsupported engine"}
                       style={{
-                        fontSize: "var(--text-xs)",
-                        fontWeight: 700,
-                        letterSpacing: "0.06em",
-                        color: engine?.accent ?? "var(--text-tertiary)",
-                        background: `${engine?.accent ?? "#888888"}22`,
-                        border: `1px solid ${engine?.accent ?? "#888888"}44`,
-                        borderRadius: 4,
-                        padding: "2px 6px",
-                        flexShrink: 0,
+                        fontSize: "var(--text-lg)",
+                        color: "var(--text-secondary)",
                       }}
                     >
-                      {engine?.pill ?? "??"}
+                      {label}
+                    </span>
+                    <span
+                      style={{
+                        fontSize: "var(--text-md)",
+                        color: "var(--text-tertiary)",
+                      }}
+                    >
+                      ↗
                     </span>
                   </button>
-                );
-              })}
-            </div>
-          )}
-        </section>
-
-        {/* Divider */}
-        <div
-          style={{ height: 1, background: "var(--border)", flexShrink: 0 }}
-        />
-
-        {/* What's new */}
-        <section>
-          <SidebarSection title="What's New" />
-          <UpdateRow updater={updater} install={install} restart={restart} />
-          {notes.status === "loading" && (
-            <div
-              style={{
-                fontSize: "var(--text-lg)",
-                color: "var(--text-tertiary)",
-                lineHeight: 1.5,
-              }}
-            >
-              Loading…
-            </div>
-          )}
-          {notes.status === "unavailable" && (
-            <div
-              style={{
-                fontSize: "var(--text-lg)",
-                color: "var(--text-tertiary)",
-                lineHeight: 1.5,
-              }}
-            >
-              No release information available.
-            </div>
-          )}
-          {latest && (
-            <button
-              type="button"
-              onClick={() => setWhatsNewOpen(true)}
-              onMouseEnter={(e) => {
-                (e.currentTarget as HTMLButtonElement).style.background =
-                  "var(--nav-hover)";
-              }}
-              onMouseLeave={(e) => {
-                (e.currentTarget as HTMLButtonElement).style.background =
-                  "transparent";
-              }}
-              style={{
-                display: "block",
-                width: "100%",
-                background: "transparent",
-                border: "none",
-                cursor: "pointer",
-                padding: "8px 10px",
-                margin: "-8px -10px",
-                borderRadius: 6,
-                textAlign: "left",
-                fontFamily: "var(--font-ui)",
-                transition: "background var(--t-fast)",
-              }}
-            >
-              {/* Header: newest version + date (+ New badge) */}
-              <div
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 6,
-                  fontSize: "var(--text-md)",
-                  fontWeight: 600,
-                  color: "var(--text-secondary)",
-                }}
-              >
-                <span>
-                  v{latest.version}
-                  {latest.date ? ` · ${latest.date}` : ""}
-                </span>
-                {unseen.length > 0 && (
-                  <span
-                    style={{
-                      fontSize: "var(--text-2xs)",
-                      fontWeight: 700,
-                      letterSpacing: "0.07em",
-                      textTransform: "uppercase",
-                      color: ACCENT,
-                      background: "var(--selection-bg-strong)",
-                      border: "1px solid var(--selection-border)",
-                      borderRadius: 4,
-                      padding: "1px 5px",
-                    }}
-                  >
-                    New
-                  </span>
-                )}
+                ))}
               </div>
-
-              {/* Clamped markdown teaser with bottom fade — explicit muted
-                  empty state when cleanup left no notes. */}
-              {!releaseHasNotes(latest) && (
-                <div
-                  style={{
-                    marginTop: 7,
-                    fontSize: "var(--text-md)",
-                    color: "var(--text-tertiary)",
-                    lineHeight: 1.55,
-                  }}
-                >
-                  No release notes
-                </div>
-              )}
-              {releaseHasNotes(latest) && (
-                <div style={{ position: "relative", marginTop: 7 }}>
-                  <div
-                    style={{
-                      display: "-webkit-box",
-                      WebkitBoxOrient: "vertical",
-                      WebkitLineClamp: 6,
-                      overflow: "hidden",
-                      // Fallback clamp for engines without -webkit-box:
-                      // ~6 lines at 12px/1.55.
-                      maxHeight: 6 * 12 * 1.55,
-                      color: "var(--text-secondary)",
-                    }}
-                  >
-                    <ReactMarkdown
-                      remarkPlugins={[remarkGfm]}
-                      components={TEASER_COMPONENTS}
-                      skipHtml
-                    >
-                      {latest.body}
-                    </ReactMarkdown>
-                  </div>
-                  {/* Fade-out into the Read-more affordance */}
-                  <div
-                    style={{
-                      position: "absolute",
-                      left: 0,
-                      right: 0,
-                      bottom: 0,
-                      height: 24,
-                      background:
-                        "linear-gradient(to bottom, transparent, var(--bg-panel))",
-                      pointerEvents: "none",
-                    }}
-                  />
-                </div>
-              )}
-
-              <div
-                style={{
-                  marginTop: 5,
-                  fontSize: "var(--text-sm)",
-                  color: ACCENT,
-                }}
-              >
-                Read more
-              </div>
-              {earlierCount > 0 && (
-                <div
-                  style={{
-                    marginTop: 3,
-                    fontSize: "var(--text-sm)",
-                    color: "var(--text-tertiary)",
-                  }}
-                >
-                  +{earlierCount} earlier update
-                  {earlierCount !== 1 ? "s" : ""}
-                </div>
-              )}
-            </button>
-          )}
-        </section>
-
-        {/* Divider */}
-        <div
-          style={{ height: 1, background: "var(--border)", flexShrink: 0 }}
-        />
-
-        {/* Help links */}
-        <section>
-          <SidebarSection title="Help" />
-          <div style={{ display: "flex", flexDirection: "column", gap: 1 }}>
-            {HELP_LINKS.map(({ label, url }) => (
-              <button
-                type="button"
-                key={label}
-                onClick={() => openUrl(url)}
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "space-between",
-                  background: "transparent",
-                  border: "none",
-                  cursor: "pointer",
-                  padding: "8px 10px",
-                  borderRadius: 6,
-                  textAlign: "left",
-                  fontFamily: "var(--font-ui)",
-                  transition: "background var(--t-fast)",
-                }}
-                onMouseEnter={(e) => {
-                  (e.currentTarget as HTMLButtonElement).style.background =
-                    "var(--nav-hover)";
-                }}
-                onMouseLeave={(e) => {
-                  (e.currentTarget as HTMLButtonElement).style.background =
-                    "transparent";
-                }}
-              >
-                <span
-                  style={{
-                    fontSize: "var(--text-lg)",
-                    color: "var(--text-secondary)",
-                  }}
-                >
-                  {label}
-                </span>
-                <span
-                  style={{
-                    fontSize: "var(--text-md)",
-                    color: "var(--text-tertiary)",
-                  }}
-                >
-                  ↗
-                </span>
-              </button>
-            ))}
-          </div>
-        </section>
-      </div>
+            </section>
+          </aside>
+        </div>
+      )}
 
       {showWizard && <NewProjectWizard onClose={() => setShowWizard(false)} />}
       {whatsNewOpen && releases.length > 0 && (

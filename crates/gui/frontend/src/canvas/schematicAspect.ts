@@ -62,34 +62,13 @@ export function aspectScales(sliderValue: number): { x: number; y: number } {
   return { x: root, y: 1 / root };
 }
 
-/**
- * Coerce any stored or computed position into the track.
- *
- * Non-finite input resolves to the default rather than propagating: a NaN would
- * reach the layout as a NaN coordinate and blank the canvas, with the corrupt
- * value persisted so reopening the project would not recover.
- */
-export function clampSliderValue(value: number): number {
-  if (!Number.isFinite(value)) return ASPECT_SLIDER_DEFAULT;
-  return Math.min(ASPECT_SLIDER_MAX, Math.max(ASPECT_SLIDER_MIN, value));
-}
+// The track arithmetic is shared with the node-size slider: same range,
+// same neutral midpoint, same inverted drag. Re-exported so callers that
+// think in aspect terms need not know where it lives.
+export {
+  clampSliderValue,
+  sliderValueFromPointer,
+  thumbOffsetPercent,
+} from "./verticalSlider";
 
-/**
- * Slider position for a pointer at `clientY` over a track spanning
- * `top`..`top + height`. Inverted against screen coordinates so dragging up
- * increases the value.
- */
-export function sliderValueFromPointer(
-  clientY: number,
-  top: number,
-  height: number,
-): number {
-  if (height <= 0) return ASPECT_SLIDER_DEFAULT;
-  const fromTop = (clientY - top) / height;
-  return clampSliderValue((1 - fromTop) * ASPECT_SLIDER_MAX);
-}
-
-/** Percentage from the bottom of the track, for positioning the thumb. */
-export function thumbOffsetPercent(sliderValue: number): number {
-  return clampSliderValue(sliderValue);
-}
+import { clampSliderValue } from "./verticalSlider";

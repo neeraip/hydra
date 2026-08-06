@@ -3,7 +3,6 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useActiveProject, useAppState } from "../../AppContext";
 import { engineComponents } from "../../engine/registry";
 import {
-  ACCENT,
   getSimParams,
   type SimParams,
   updateSimParams,
@@ -24,6 +23,7 @@ import {
   TextInput,
   TimeInput,
 } from "../editors/SimulationSettings/FormControls";
+import { EngineGlyph } from "../ui/EngineGlyph";
 import { ModalBackdrop, stopBackdropEvents } from "../ui/ModalBackdrop";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -194,7 +194,16 @@ export function SimSettingsModal() {
     >
       <div
         {...stopBackdropEvents}
+        // Editing a model's simulation settings is an engine's business, so
+        // the modal carries its colour even though it mounts at the app
+        // root rather than inside the project.
         style={{
+          ...(engine?.accent
+            ? ({
+                "--engine-accent": engine.accent,
+                "--engine-accent-fg": "#fff",
+              } as React.CSSProperties)
+            : null),
           width: "100%",
           maxWidth: 640,
           maxHeight: "86vh",
@@ -219,20 +228,7 @@ export function SimSettingsModal() {
             borderBottom: "1px solid var(--border)",
           }}
         >
-          <span
-            style={{
-              fontSize: "var(--text-sm)",
-              fontWeight: 700,
-              letterSpacing: "0.06em",
-              color: ACCENT,
-              background: "var(--accent-dim)",
-              border: "1px solid var(--selection-border)",
-              padding: "3px 8px",
-              borderRadius: 4,
-            }}
-          >
-            {engine?.pill ?? "??"}
-          </span>
+          <EngineGlyph engine={engine} />
           <div style={{ flex: 1 }}>
             <div
               style={{
@@ -321,12 +317,24 @@ export function SimSettingsModal() {
             style={{
               background: "transparent",
               border: "1px solid var(--border)",
+              transition:
+                "background var(--t-fast), border-color var(--t-fast), color var(--t-fast)",
               color: "var(--text-secondary)",
               borderRadius: 5,
               padding: "7px 14px",
               fontSize: "var(--text-md)",
               cursor: "pointer",
               fontFamily: "var(--font-ui)",
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.background = "var(--nav-hover)";
+              e.currentTarget.style.borderColor = "var(--border-hover)";
+              e.currentTarget.style.color = "var(--text-primary)";
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.background = "transparent";
+              e.currentTarget.style.borderColor = "var(--border)";
+              e.currentTarget.style.color = "var(--text-secondary)";
             }}
           >
             {components.settingsEditable ? "Cancel" : "Close"}
@@ -337,10 +345,25 @@ export function SimSettingsModal() {
               onClick={save}
               disabled={saving || !dirty}
               aria-label="Save simulation settings"
+              onMouseEnter={(e) => {
+                if (!saving && dirty) {
+                  e.currentTarget.style.filter = "brightness(1.12)";
+                }
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.filter = "";
+              }}
               data-tooltip={dirty ? `Save (${saveHint})` : "No changes"}
               style={{
-                background: !saving && dirty ? ACCENT : "var(--bg-card)",
-                border: `1px solid ${!saving && dirty ? ACCENT : "var(--border)"}`,
+                background:
+                  !saving && dirty
+                    ? "var(--engine-accent, var(--accent))"
+                    : "var(--bg-card)",
+                border: `1px solid ${
+                  !saving && dirty
+                    ? "var(--engine-accent, var(--accent))"
+                    : "var(--border)"
+                }`,
                 color:
                   !saving && dirty
                     ? "var(--accent-fg)"
@@ -350,6 +373,7 @@ export function SimSettingsModal() {
                 fontSize: "var(--text-md)",
                 fontWeight: 600,
                 cursor: !saving && dirty ? "pointer" : "not-allowed",
+                transition: "filter var(--t-fast)",
                 opacity: !saving && dirty ? 1 : 0.6,
                 fontFamily: "var(--font-ui)",
                 display: "inline-flex",

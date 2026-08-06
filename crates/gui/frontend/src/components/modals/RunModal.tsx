@@ -4,7 +4,6 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useActiveProject, useAppState } from "../../AppContext";
 import { engineComponents } from "../../engine/registry";
 import {
-  ACCENT,
   enqueueRuns,
   fetchValidationFindings,
   getSimParams,
@@ -19,6 +18,7 @@ import {
   primaryModifierLabel,
   primaryModifierPressed,
 } from "../../shortcuts";
+import { EngineGlyph } from "../ui/EngineGlyph";
 import { ModalBackdrop, stopBackdropEvents } from "../ui/ModalBackdrop";
 import {
   ActiveBadge,
@@ -327,9 +327,19 @@ export function RunModal() {
       zIndex={200}
       style={{ animation: "fadeIn 120ms ease-out" }}
     >
+      {/* This modal has an engine to speak for, so it says so. It mounts at
+          the app root rather than inside the project, which is why the
+          variable does not simply reach it — position in the tree is not
+          the same question as whether a surface belongs to an engine. */}
       <div
         {...stopBackdropEvents}
         style={{
+          ...(engine?.accent
+            ? ({
+                "--engine-accent": engine.accent,
+                "--engine-accent-fg": "#fff",
+              } as React.CSSProperties)
+            : null),
           width: "100%",
           maxWidth: 560,
           maxHeight: "82vh",
@@ -354,24 +364,7 @@ export function RunModal() {
             borderBottom: "1px solid var(--border)",
           }}
         >
-          <span
-            style={{
-              fontSize: "var(--text-sm)",
-              fontWeight: 700,
-              letterSpacing: "0.06em",
-              // The *engine's* colour, not the app's. Engine identity
-              // publishes one (`EngineInfo.accent`) precisely so a model
-              // announces which engine it belongs to; the app accent is
-              // achromatic by design, which left this pill grey.
-              color: engine?.accent ?? "var(--accent)",
-              background: engine ? `${engine.accent}1f` : "var(--accent-dim)",
-              border: `1px solid ${engine ? `${engine.accent}55` : "var(--selection-border)"}`,
-              padding: "3px 8px",
-              borderRadius: 4,
-            }}
-          >
-            {engine?.pill ?? "??"}
-          </span>
+          <EngineGlyph engine={engine} />
           <div style={{ flex: 1 }}>
             <div
               style={{
@@ -603,6 +596,18 @@ export function RunModal() {
               fontSize: "var(--text-md)",
               cursor: "pointer",
               fontFamily: "var(--font-ui)",
+              transition:
+                "background var(--t-fast), border-color var(--t-fast), color var(--t-fast)",
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.background = "var(--nav-hover)";
+              e.currentTarget.style.borderColor = "var(--border-hover)";
+              e.currentTarget.style.color = "var(--text-primary)";
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.background = "transparent";
+              e.currentTarget.style.borderColor = "var(--border)";
+              e.currentTarget.style.color = "var(--text-secondary)";
             }}
           >
             Cancel
@@ -620,13 +625,21 @@ export function RunModal() {
                   : "No model loaded"
             }
             style={{
-              background: canRun ? ACCENT : "var(--bg-card)",
-              border: `1px solid ${canRun ? ACCENT : "var(--border)"}`,
+              background: canRun
+                ? "var(--engine-accent, var(--accent))"
+                : "var(--bg-card)",
+              // The fill's own colour, not the achromatic accent. Left as
+              // it was, an engine-coloured button wore a near-white outline.
+              border: `1px solid ${
+                canRun ? "var(--engine-accent, var(--accent))" : "var(--border)"
+              }`,
               // White on the accent was legible while the accent was a
               // saturated blue; achromatic it is a light grey, and white
               // text on it barely reads. `--accent-fg` is the pair the
               // accent publishes for exactly this.
-              color: canRun ? "var(--accent-fg)" : "var(--text-disabled)",
+              color: canRun
+                ? "var(--engine-accent-fg, var(--accent-fg))"
+                : "var(--text-disabled)",
               borderRadius: 5,
               padding: "7px 16px",
               fontSize: "var(--text-md)",
@@ -637,6 +650,13 @@ export function RunModal() {
               display: "inline-flex",
               alignItems: "center",
               gap: 6,
+              transition: "filter var(--t-fast)",
+            }}
+            onMouseEnter={(e) => {
+              if (canRun) e.currentTarget.style.filter = "brightness(1.12)";
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.filter = "";
             }}
           >
             <PlayIcon style={{ width: 14, height: 14 }} /> {runLabel}
