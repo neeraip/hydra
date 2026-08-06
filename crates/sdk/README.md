@@ -50,4 +50,4 @@ It does **not** model pressure transients, water-hammer, or multi-phase flow.
 
 ## License
 
-[AGPL v3](https://github.com/neeraip/hydra/blob/main/LICENSE) — see [COMMERCIAL_LICENSE.md](https://github.com/neeraip/hydra/blob/main/.github/COMMERCIAL_LICENSE.md) for commercial licensing options.
+[AGPL v3](https://github.com/neeraip/hydra/blob/main/LICENSE) — see [COMMERCIAL_LICENSE.md](https://github.com/neeraip/hydra/blob/main/COMMERCIAL_LICENSE.md) for commercial licensing options.

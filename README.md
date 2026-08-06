@@ -115,7 +115,7 @@ Contributions are welcome. Please read [CONTRIBUTING.md](.github/CONTRIBUTING.md
 ## License
 
 Hydra is published under the [GNU Affero General Public License v3.0](LICENSE), with a
-[commercial license](.github/COMMERCIAL_LICENSE.md) available for the cases the AGPL does not fit.
+[commercial license](COMMERCIAL_LICENSE.md) available for the cases the AGPL does not fit.
 
 **Using Hydra asks nothing of you.** Run the CLI, drive it from a script, model in the desktop app,
 check its results against another engine, or change it for your own purposes — none of that carries
@@ -128,7 +128,7 @@ same license with its source made available. Calling `hydra` as a separate progr
 file, reading what it writes — is use, not incorporation.
 
 If reciprocity does not suit — a proprietary product, a hosted service you cannot open — the
-[commercial license](.github/COMMERCIAL_LICENSE.md) grants those same rights without it.
+[commercial license](COMMERCIAL_LICENSE.md) grants those same rights without it.
 
 This is a summary and not legal advice: the [license text](LICENSE) is what governs, and a case near
 the line deserves a lawyer rather than a README.
