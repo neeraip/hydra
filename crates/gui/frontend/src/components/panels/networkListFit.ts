@@ -20,13 +20,16 @@
  * built. One pass over the rows reads two string lengths and compares two
  * numbers per row — no allocation, nothing formatted.
  *
- * The value lane is the exception, and it is the reason this does not
- * format anything per row: with a fixed number of decimals and a constant
- * unit label, the widest rendering is one of the two extremes, so the
- * pass tracks the smallest and largest numbers and the caller formats
- * exactly those two. Formatting every row instead would allocate one
- * string per element, which at 50k elements is the whole cost of the
- * feature and all of it avoidable.
+ * The value lane is not read from the rows at all. Its width has to hold
+ * for the whole run rather than for the period on screen — a panel fitted
+ * to this moment's numbers is wrong the moment the timeline moves, and
+ * wrong in a way that reads as an unrelated bug: the value lane never
+ * shrinks, so a wider number at a later step takes its room from the id
+ * beside it, and ids start truncating in a panel the user just fitted.
+ *
+ * So the extremes come from the column's own whole-run range, which the
+ * engine's catalog already publishes. That makes the fit stable across
+ * the timeline, costs nothing, and means this pass never touches a value.
  */
 
 import type { Row } from "./NetworkListRow";
@@ -44,8 +47,12 @@ export interface FitContent {
    */
   context: string | null;
   /**
-   * The two extreme values, for the caller to format. Whichever renders
-   * longer sets the value lane; `null` when no row carries a value.
+   * The two extreme values the column can ever hold, for the caller to
+   * format. Whichever renders longer sets the value lane. `null` before a
+   * run, when the column declares no range.
+   *
+   * From the run's range rather than the rows: see the note above on why
+   * fitting to the visible period comes undone on the next scrub.
    */
   extremes: readonly [number, number] | null;
   /**
@@ -65,11 +72,14 @@ export interface FitContent {
  * @param searching whether the secondary line is being shown; it is not
  *                  rendered outside a search, and a width reserved for a
  *                  line nobody can see is just a wider panel.
+ * @param range     the value column's range over the whole run, so the fit
+ *                  survives the timeline moving.
  * @returns `null` for an empty list, which has no content to fit.
  */
 export function fitContent(
   rows: readonly Row[],
   searching: boolean,
+  range?: readonly [number, number],
 ): FitContent | null {
   if (rows.length === 0) return null;
 
@@ -77,8 +87,6 @@ export function fitContent(
   let idLength = -1;
   let context: string | null = null;
   let contextLength = -1;
-  let min = Number.POSITIVE_INFINITY;
-  let max = Number.NEGATIVE_INFINITY;
   let zoomable = false;
 
   for (const row of rows) {
@@ -99,18 +107,13 @@ export function fitContent(
         context = rowContext;
       }
     }
-    const value = row.value;
-    if (value != null) {
-      if (value < min) min = value;
-      if (value > max) max = value;
-    }
     if (row.canZoom) zoomable = true;
   }
 
   return {
     id,
     context,
-    extremes: min <= max ? [min, max] : null,
+    extremes: range ?? null,
     zoomable,
   };
 }

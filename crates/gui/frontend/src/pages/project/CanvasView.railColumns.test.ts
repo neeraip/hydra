@@ -60,6 +60,8 @@ describe("railColumns", () => {
         label: "RAINFALL",
         symbol: undefined,
         quantity: undefined,
+        codes: undefined,
+        range: [0, 1],
         at: 0,
       },
     ]);
@@ -125,5 +127,20 @@ describe("railColumns and categorical variables", () => {
     const cols = railColumns([STATUS, VARS[0]], VARS[0].id);
     expect(cols[0].key).toBe(VARS[0].id);
     expect(cols.find((c) => c.key === "status")?.codes?.[3].label).toBe("Open");
+  });
+});
+
+/**
+ * The whole-run range travels with the column.
+ *
+ * Fitting the network list to its contents needs every value the column
+ * will ever hold, not this period's — sized to the moment, the panel came
+ * undone on the next scrub, and did it by truncating ids rather than
+ * values, since the value lane never gives room back.
+ */
+describe("railColumns and the run's range", () => {
+  it("carries each variable's range", () => {
+    const [col] = railColumns(VARS, VARS[0].id);
+    expect(col.range).toEqual([VARS[0].min, VARS[0].max]);
   });
 });

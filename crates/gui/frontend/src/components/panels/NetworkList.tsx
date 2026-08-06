@@ -511,13 +511,14 @@ export function NetworkList({
   // so the panel can be fitted to it. A synthetic row rather than a real
   // one: the longest id and the longest subtitle need not belong to the
   // same element, and what has to fit is the widest of each.
+  const fitColumn = linkResultColumns?.[0] ?? nodeResultColumns?.[0] ?? null;
   const fit = useMemo(
-    () => fitContent(visible, searching),
-    [visible, searching],
+    () => fitContent(visible, searching, fitColumn?.range),
+    [visible, searching, fitColumn],
   );
   const measureRow: Row | null = useMemo(() => {
     if (!fit) return null;
-    const column = linkResultColumns?.[0] ?? nodeResultColumns?.[0] ?? null;
+    const column = fitColumn;
     // Whichever extreme renders longer sets the value lane — two
     // formatting calls for the whole list, not one per row.
     const value =
@@ -541,7 +542,7 @@ export function NetworkList({
       value,
       format: column,
     };
-  }, [fit, linkResultColumns, nodeResultColumns, sys]);
+  }, [fit, fitColumn, sys]);
 
   const valueHeading = useMemo(
     () => valueColumnHeading(visible, sys),

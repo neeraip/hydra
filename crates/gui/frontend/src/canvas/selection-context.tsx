@@ -55,6 +55,14 @@ export interface SimResultColumn {
    * from.
    */
   codes?: Readonly<Record<number, { label: string; severity?: string }>>;
+  /**
+   * The variable's range over the whole run, in SI.
+   *
+   * Present so a reader can reason about every value the column will ever
+   * hold, not just this period's. Fitting the panel needs exactly that:
+   * sized to the moment, it comes undone as soon as the timeline moves.
+   */
+  range?: readonly [number, number];
 }
 
 /**

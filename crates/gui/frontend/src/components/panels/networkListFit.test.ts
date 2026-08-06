@@ -52,27 +52,36 @@ describe("the content a fit would have to show", () => {
   });
 
   /**
-   * The value lane is bounded by its extremes, so a caller formats two
-   * numbers instead of every row. A negative minimum matters: the minus
-   * sign is a character the maximum does not have.
+   * The value lane is bounded by two numbers, so a caller formats those
+   * rather than every row. A negative minimum matters: the minus sign is
+   * a character the maximum does not have.
    */
-  it("reports the extreme values, not every value", () => {
-    const rows = [
-      row({ value: 5 }),
-      row({ value: -120.5 }),
-      row({ value: 42 }),
-    ];
-    expect(fitContent(rows, false)?.extremes).toEqual([-120.5, 42]);
+  it("reports the extremes for the caller to format", () => {
+    expect(fitContent([row({})], false, [-120.5, 42])?.extremes).toEqual([
+      -120.5, 42,
+    ]);
   });
 
-  it("reports no extremes before a run has produced values", () => {
+  /**
+   * The defect this shape exists to prevent: fitted to the values on
+   * screen, the panel came undone as soon as the timeline moved. The
+   * value lane never shrinks, so a wider number one step later took its
+   * room from the id beside it — and ids began truncating in a panel that
+   * had just been fitted.
+   *
+   * The extremes therefore come from the run's range, and the values in
+   * the rows are not consulted at all.
+   */
+  it("ignores this period's values entirely", () => {
+    const thisPeriod = [row({ value: 1 }), row({ value: 2 })];
+    const another = [row({ value: -99999 }), row({ value: 88888 })];
+    const range = [0, 500] as const;
+    expect(fitContent(thisPeriod, false, range)?.extremes).toEqual([0, 500]);
+    expect(fitContent(another, false, range)?.extremes).toEqual([0, 500]);
+  });
+
+  it("reports no extremes before a run declares a range", () => {
     expect(fitContent([row({}), row({})], false)?.extremes).toBeNull();
-  });
-
-  /** Rows without a value must not drag the extremes toward zero. */
-  it("ignores rows carrying no value", () => {
-    const rows = [row({ value: null }), row({ value: 7 }), row({ value: 9 })];
-    expect(fitContent(rows, false)?.extremes).toEqual([7, 9]);
   });
 
   /** The zoom affordance widens a row's padding, so a fit that ignores it
@@ -122,6 +131,8 @@ describe("the content a fit would have to show", () => {
     // a re-read would not show up anywhere else until someone noticed the
     // panel took a moment to resize.
     expect(idReads).toBe(rows.length);
-    expect(valueReads).toBe(rows.length);
+    // Zero, not one: the value lane is sized from the run's range, so the
+    // rows' own values are never touched.
+    expect(valueReads).toBe(0);
   });
 });

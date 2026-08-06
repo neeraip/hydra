@@ -382,6 +382,7 @@ export const railColumns = (
   symbol?: string;
   quantity?: GenericQuantity;
   codes?: Readonly<Record<number, { label: string; severity?: string }>>;
+  range?: readonly [number, number];
   at: number;
 }> => {
   // No catalog, no columns. `Math.max(0, -1)` below would otherwise turn
@@ -401,6 +402,7 @@ export const railColumns = (
     symbol: vars[i].symbol,
     quantity: vars[i].quantity,
     codes: categoryLabels(vars[i].ramp),
+    range: [vars[i].min, vars[i].max] as const,
     at: i,
   }));
 };
