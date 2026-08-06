@@ -3,6 +3,7 @@ import {
   type ClearableView,
   clearableCountOf,
   readGenericSelection,
+  viewButtonAction,
 } from "./CanvasView";
 
 const clear: ClearableView = {
@@ -78,5 +79,56 @@ describe("readGenericSelection", () => {
     expect(
       readGenericSelection({ genericSelection: { point: 3, polyline: null } }),
     ).toEqual({ point: "", polyline: "", region: "" });
+  });
+});
+
+describe("viewButtonAction", () => {
+  const nothing = {
+    rail: false,
+    selection: false,
+    legend: false,
+    basemapMenu: false,
+    tool: false,
+    measurements: false,
+  };
+
+  /**
+   * The button used to disable itself once the view was clear — a
+   * permanent slot on the toolbar, dead in the state it had just produced.
+   * Clearing is now somewhere you can come back from.
+   */
+  it("restores when nothing is covering the map", () => {
+    expect(viewButtonAction(nothing)).toBe("restore");
+  });
+
+  /** Any one thing is enough to make the press mean "clear". */
+  it("clears when anything at all is covering the map", () => {
+    for (const key of Object.keys(nothing) as Array<keyof typeof nothing>) {
+      expect(viewButtonAction({ ...nothing, [key]: true }), key).toBe("clear");
+    }
+  });
+
+  /**
+   * The two directions must not overlap: a state that both clears and
+   * restores would make the button's effect depend on which branch was
+   * written first.
+   */
+  it("is exactly the inverse of having something to clear", () => {
+    const states = [
+      nothing,
+      { ...nothing, rail: true },
+      { ...nothing, legend: true, tool: true },
+      {
+        rail: true,
+        selection: true,
+        legend: true,
+        basemapMenu: true,
+        tool: true,
+        measurements: true,
+      },
+    ];
+    for (const s of states) {
+      expect(viewButtonAction(s) === "restore").toBe(clearableCountOf(s) === 0);
+    }
   });
 });

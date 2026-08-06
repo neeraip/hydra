@@ -4,7 +4,14 @@ import { ProjectPeriodProvider } from "../../canvas/period-context";
 import { ProjectToolbar } from "../../components/layout/ProjectToolbar";
 import { SecondaryRail } from "../../components/layout/SecondaryRail";
 import { engineComponents } from "../../engine/registry";
+import { useModelUnitSystem } from "../../hooks";
 import { startPerfSpan } from "../../perfTrace";
+import {
+  ResolvedUnitSystem,
+  resolveUnitSystem,
+  type UnitPreference,
+  useUnitPreference,
+} from "../../units";
 
 const OverviewView = lazy(() =>
   import("./OverviewView").then((m) => ({ default: m.OverviewView })),
@@ -26,8 +33,20 @@ export function ProjectPage() {
   // Deferred: the tab highlight (TopBar) reads the urgent value; the heavy
   // view subtrees flip one interruptible render later so the click paints
   // instantly even on 46k-element networks.
-  const { deferredProjectView: projectView } = useAppState();
+  const { deferredProjectView: projectView, activeScenarioId } = useAppState();
   const { project, engine } = useActiveProject();
+
+  // Everything below this point reads units through `useUnitSystem`, which
+  // needs the *resolved* system — and resolving it needs the active
+  // project. Hence a provider here rather than in the module store: only
+  // this subtree has a model to follow.
+  const appDefault = useUnitPreference();
+  const modelUnits = useModelUnitSystem(project?.id, activeScenarioId);
+  const resolvedUnits = resolveUnitSystem(
+    project?.unitSystem as UnitPreference | undefined,
+    appDefault,
+    modelUnits,
+  );
   const engineViews = engineComponents(engine?.key);
   const EditorView = engineViews.EditorView;
   const EngineAnalysisView = engineViews.AnalysisView;
@@ -51,87 +70,93 @@ export function ProjectPage() {
   }, [projectView]);
 
   return (
-    <ProjectPeriodProvider>
-      <div
-        style={{
-          flex: 1,
-          height: "100%",
-          display: "flex",
-          flexDirection: "column",
-          overflow: "hidden",
-          animation: "fadeIn 150ms ease-out",
-        }}
-      >
-        <ProjectToolbar />
+    <ResolvedUnitSystem.Provider value={resolvedUnits}>
+      <ProjectPeriodProvider>
         <div
           style={{
             flex: 1,
-            position: "relative",
-            overflow: "hidden",
+            height: "100%",
             display: "flex",
             flexDirection: "column",
+            overflow: "hidden",
+            animation: "fadeIn 150ms ease-out",
           }}
         >
-          <SecondaryRail />
-          {project && (
-            <Suspense fallback={null}>
-              <div
-                style={{
-                  flex: 1,
-                  overflow: "auto",
-                  padding: 32,
-                  display: projectView === "overview" ? "block" : "none",
-                }}
-              >
-                <OverviewView />
-              </div>
-              <div
-                style={{
-                  flex: 1,
-                  display: projectView === "canvas" ? "flex" : "none",
-                  flexDirection: "column",
-                  overflow: "hidden",
-                  minHeight: 0,
-                }}
-              >
-                <CanvasView isActive={projectView === "canvas"} />
-              </div>
-              <div
-                style={{
-                  flex: 1,
-                  display: projectView === "editor" ? "flex" : "none",
-                  overflow: "hidden",
-                  minHeight: 0,
-                }}
-              >
-                {EditorView ? <EditorView /> : <NetworkEditor />}
-              </div>
-              <div
-                style={{
-                  flex: 1,
-                  display: projectView === "analysis" ? "flex" : "none",
-                  flexDirection: "column",
-                  overflow: "hidden",
-                  minHeight: 0,
-                }}
-              >
-                {EngineAnalysisView ? <EngineAnalysisView /> : <AnalysisView />}
-              </div>
-              <div
-                style={{
-                  flex: 1,
-                  display: projectView === "report" ? "flex" : "none",
-                  flexDirection: "column",
-                  overflow: "hidden",
-                  minHeight: 0,
-                }}
-              >
-                <ReportView />
-              </div>
-            </Suspense>
-          )}
+          <ProjectToolbar />
+          <div
+            style={{
+              flex: 1,
+              position: "relative",
+              overflow: "hidden",
+              display: "flex",
+              flexDirection: "column",
+            }}
+          >
+            <SecondaryRail />
+            {project && (
+              <Suspense fallback={null}>
+                <div
+                  style={{
+                    flex: 1,
+                    overflow: "auto",
+                    padding: 32,
+                    display: projectView === "overview" ? "block" : "none",
+                  }}
+                >
+                  <OverviewView />
+                </div>
+                <div
+                  style={{
+                    flex: 1,
+                    display: projectView === "canvas" ? "flex" : "none",
+                    flexDirection: "column",
+                    overflow: "hidden",
+                    minHeight: 0,
+                  }}
+                >
+                  <CanvasView isActive={projectView === "canvas"} />
+                </div>
+                <div
+                  style={{
+                    flex: 1,
+                    display: projectView === "editor" ? "flex" : "none",
+                    overflow: "hidden",
+                    minHeight: 0,
+                  }}
+                >
+                  {EditorView ? <EditorView /> : <NetworkEditor />}
+                </div>
+                <div
+                  style={{
+                    flex: 1,
+                    display: projectView === "analysis" ? "flex" : "none",
+                    flexDirection: "column",
+                    overflow: "hidden",
+                    minHeight: 0,
+                  }}
+                >
+                  {EngineAnalysisView ? (
+                    <EngineAnalysisView />
+                  ) : (
+                    <AnalysisView />
+                  )}
+                </div>
+                <div
+                  style={{
+                    flex: 1,
+                    display: projectView === "report" ? "flex" : "none",
+                    flexDirection: "column",
+                    overflow: "hidden",
+                    minHeight: 0,
+                  }}
+                >
+                  <ReportView />
+                </div>
+              </Suspense>
+            )}
+          </div>
         </div>
-      </div>
-    </ProjectPeriodProvider>
+      </ProjectPeriodProvider>
+    </ResolvedUnitSystem.Provider>
   );
 }

@@ -2,7 +2,7 @@ import { flowColor, pressureColor } from "../../../canvas/colors";
 import { useHoverActions } from "../../../canvas/hover-context";
 import type { Link, Node } from "../../../hooks";
 import { toDisplay, unitLabel, useUnitSystem } from "../../../units";
-import { LINK_TYPE_COLOR } from "./ResultsCards";
+import { TypeBadge } from "../../ui/TypeBadge";
 
 // ── Connected-elements section ─────────────────────────────────────────────────
 
@@ -45,17 +45,10 @@ export function ConnectedLink({
       onFocus={() => hoverLink(link.id)}
       onBlur={() => clearHover()}
     >
-      {/* Link type stripe */}
-      <span
-        style={{
-          display: "inline-block",
-          width: 14,
-          height: 3,
-          borderRadius: 2,
-          background: LINK_TYPE_COLOR[link.type] ?? "var(--text-secondary)",
-          flexShrink: 0,
-        }}
-      />
+      {/* The badge replaces a bare colour stripe that carried the same
+          fact with less of it: both say "pipe" by hue, only one says it in
+          a glyph a reader can name without learning the palette. */}
+      <TypeBadge type={link.type} size="sm" />
       <span
         style={{
           fontSize: "var(--text-sm)",
@@ -116,7 +109,10 @@ export function ConnectedNodeChip({
   accent,
   onLocate,
 }: {
-  label: "From" | "To";
+  /** What this node is to the element being inspected — "From", "To", or
+   *  a relationship a link's endpoints do not cover, such as the node a
+   *  street inlet captures into. */
+  label: string;
   nodeId: string;
   allNodes: Node[];
   accent: string;
@@ -186,11 +182,15 @@ export function ConnectedNodeChip({
       {node?.type && (
         <span
           style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 5,
             fontSize: "var(--text-xs)",
             color: "var(--text-tertiary)",
             textTransform: "capitalize",
           }}
         >
+          <TypeBadge type={node.type} size="sm" />
           {node.type}
         </span>
       )}

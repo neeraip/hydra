@@ -31,8 +31,10 @@ describe("railOpenForLocation", () => {
     );
   });
 
+  // Settings is absent because it is no longer a page — it opens as a
+  // drawer over whatever is underneath, whose rail is none of its business.
   it("closes the rail on pages that have none", () => {
-    for (const page of ["home", "projects", "settings"] as const) {
+    for (const page of ["home", "projects"] as const) {
       expect(railOpenForLocation(loc({ page }), () => true)).toBe(false);
     }
   });

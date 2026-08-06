@@ -43,12 +43,48 @@ import {
   useRegions,
 } from "../../hooks";
 import { perfTrace } from "../../perfTrace";
+import { readTextScale } from "../../textScale";
 import type { Region } from "../../types";
-import { toDisplay, unitLabel, useUnitSystem } from "../../units";
+import {
+  toDisplay,
+  type UnitSystem,
+  unitLabel,
+  useUnitSystem,
+} from "../../units";
 import { MiddleTruncate } from "../ui/MiddleTruncate";
 import { TypeBadge } from "../ui/TypeBadge";
+import { activeElement, activeKey, isActiveRow } from "./activeElement";
 
-const ROW_HEIGHT = 27;
+/** Padding and border of a row — chrome, so it does not move with text. */
+const ROW_CHROME = 12;
+/** Line box of the id at text scale 1 (11px text). */
+const ID_LINE_AT_SCALE_1 = 15;
+/** Line box of the context line at text scale 1 (9px text). */
+const CONTEXT_LINE_AT_SCALE_1 = 12;
+
+/**
+ * Height of one row of the network list.
+ *
+ * The virtualiser positions every row by this number, so a height that
+ * does not account for what a row actually renders does not clip the
+ * overflow — it lays the next row on top of it.
+ *
+ * Two things change it. A search adds a second line to rows that matched
+ * on what they connect to, and the text scale grows the lines but not the
+ * padding around them — so only the text portion is interpolated, which
+ * is exact rather than merely closer than a constant. The same reasoning
+ * as `editorRowHeight`, and for the same reason: the error repeats once
+ * per row, and this list runs to tens of thousands of them.
+ *
+ * One height for the whole list rather than per row: the second line is
+ * present or absent for every row at once, so measuring each would buy
+ * nothing and cost the fixed-size fast path on a 46k-element network.
+ * Rows with no second line centre in the taller slot.
+ */
+export function inspectorRowHeight(scale: number, searching: boolean): number {
+  const text = ID_LINE_AT_SCALE_1 + (searching ? CONTEXT_LINE_AT_SCALE_1 : 0);
+  return Math.round(ROW_CHROME + text * scale);
+}
 
 /** Opacity of a row whose element is off screen. Low enough to recede at a
  * glance, high enough that the id stays readable — the row is still a
@@ -75,7 +111,7 @@ function useDebouncedValue<T>(value: T, delayMs: number): T {
 /** One line of the finder. Classes are flattened into a single sequence, so
  * everything the list needs to draw and rank a row lives here rather than
  * behind three parallel code paths. */
-interface Row {
+export interface Row {
   id: string;
   /** Element-kind id — drives the badge and the kind chips. */
   kind: string;
@@ -88,6 +124,108 @@ interface Row {
   /** The column this value came from, for its label and unit. */
   format: SimResultColumn | null;
   canZoom: boolean;
+}
+
+/** What the value column's header says, and how wide a unit lane the rows
+ * need beneath it. */
+export interface ValueColumnHeading {
+  /** Header text — a variable name, or the symbols when several are shown. */
+  text: string;
+  /** Tooltip spelling out the symbols; absent when the header is already
+   * spelled out. */
+  tip: string | undefined;
+  /** Whether each row must carry its own unit. */
+  perRowUnits: boolean;
+  /** Width to reserve for that unit, in characters; 0 when unused. */
+  unitWidth: number;
+}
+
+/**
+ * The value column's header and unit lane, from the rows on screen.
+ *
+ * One slot, but not one meaning: with junctions and conduits side by side
+ * it holds depth for some rows and flow for others. Naming the variables
+ * is the only honest header — "Current" said nothing, and a column of bare
+ * numbers meaning different things is worse than none.
+ *
+ * With a single variable the unit belongs in the header, and repeating it
+ * on every row would only break the column's alignment. With several, each
+ * row must carry its own — so the rows get a lane wide enough for the
+ * widest, and the numbers right-align against one edge instead of being
+ * shoved about by units of different widths.
+ *
+ * The lane is sized to what is displayed, not to the widest unit either
+ * engine can produce: that is `ft/kft`, and a 320px rail cannot spare six
+ * characters permanently for a variable rarely in view.
+ *
+ * Extracted and tested because the unit scan shares its loop — and its
+ * early exit — with the symbol scan. That exit is correct only while a
+ * class has exactly one variable, and nothing in the loop says so.
+ */
+export function valueColumnHeading(
+  visible: readonly Row[],
+  sys: UnitSystem,
+): ValueColumnHeading {
+  const symbolByName = new Map<string, string>();
+  let unit = "";
+  let unitWidth = 0;
+  for (const r of visible) {
+    const meta = formatMeta(r.format);
+    if (!meta) continue;
+    if (!symbolByName.has(meta.name)) {
+      symbolByName.set(meta.name, meta.symbol);
+      unitWidth = Math.max(unitWidth, unitOf(r, sys).length);
+      if (symbolByName.size === 1) unit = unitOf(r, sys);
+    }
+    // One variable per class, so three is every variable there can be.
+    if (symbolByName.size >= 3) break;
+  }
+  if (symbolByName.size === 0) {
+    return { text: "", tip: undefined, perRowUnits: false, unitWidth: 0 };
+  }
+  if (symbolByName.size === 1) {
+    const name = [...symbolByName.keys()][0];
+    return {
+      text: unit ? `${name} (${unit})` : name,
+      tip: undefined,
+      perRowUnits: false,
+      unitWidth: 0,
+    };
+  }
+  return {
+    text: [...symbolByName.values()].join(" · "),
+    tip: [...symbolByName.keys()].join(" · "),
+    perRowUnits: true,
+    unitWidth,
+  };
+}
+
+/**
+ * Whether this click should toggle the selection.
+ *
+ * `detail` is the browser's count of clicks in the current burst. Only the
+ * first acts: selection *toggles*, so letting the second through undid the
+ * first, and a double-click selected, deselected, then zoomed to something
+ * it had just deselected.
+ *
+ * The alternative — waiting to see whether a second click arrives — puts a
+ * quarter-second of latency on every selection to serve the rarer gesture.
+ * The click count is free and already there.
+ */
+export function clickSelects(detail: number): boolean {
+  return detail <= 1;
+}
+
+/**
+ * Whether the double-click must select, having seen one click already.
+ *
+ * That click toggled, so a row that started selected is now deselected and
+ * vice versa. Selecting whatever is not selected lands both starting
+ * states on the same result — selected, and zoomed to — which is what
+ * "double-click to zoom" should mean either way.
+ */
+export function doubleClickSelects(isActive: boolean): boolean {
+  return !isActive;
 }
 
 /** Rank a row against a lowercased query. Lower is better; -1 is no match.
@@ -411,74 +549,49 @@ export function NetworkInspectorHome({
 
   const searching = query.trim().length > 0;
 
-  /** The value column means one thing only when one class is in view. With
-   * junctions and conduits side by side it is depth for some rows and flow
-   * for others, so the header says so rather than lying with one name. */
-  const valueHeading = useMemo(() => {
-    // One slot, but not one meaning: with junctions and conduits side by
-    // side it holds depth for some rows and flow for others. Naming the
-    // variables is the only honest header — "Current" said nothing, and a
-    // column of bare numbers meaning different things is worse than none.
-    const symbolByName = new Map<string, string>();
-    let unit = "";
-    for (const r of visible) {
-      const meta = formatMeta(r.format);
-      if (!meta) continue;
-      if (!symbolByName.has(meta.name)) {
-        symbolByName.set(meta.name, meta.symbol);
-        if (symbolByName.size === 1) unit = unitOf(r, sys);
-      }
-      // One variable per class, so three is every variable there can be.
-      if (symbolByName.size >= 3) break;
-    }
-    if (symbolByName.size === 0) {
-      return { text: "", tip: undefined, perRowUnits: false };
-    }
-    if (symbolByName.size === 1) {
-      const name = [...symbolByName.keys()][0];
-      return {
-        text: unit ? `${name} (${unit})` : name,
-        tip: undefined,
-        // The header already says what the unit is; repeating it on every
-        // row would only break the column's alignment.
-        perRowUnits: false,
-      };
-    }
-    // Several variables at once: their symbols fit where their names do
-    // not, and each row carries its own unit, which is what actually tells
-    // depth from flow at a glance.
-    return {
-      text: [...symbolByName.values()].join(" · "),
-      tip: [...symbolByName.keys()].join(" · "),
-      perRowUnits: true,
-    };
-  }, [visible, sys]);
+  const valueHeading = useMemo(
+    () => valueColumnHeading(visible, sys),
+    [visible, sys],
+  );
 
   const scrollRef = useRef<HTMLDivElement>(null);
+  const rowHeight = inspectorRowHeight(readTextScale(), searching);
   const rowVirtualizer = useVirtualizer({
     count: visible.length,
     getScrollElement: () => scrollRef.current,
-    estimateSize: () => ROW_HEIGHT,
+    estimateSize: () => rowHeight,
     overscan: 12,
   });
 
-  const activeId = activeNodeId ?? activeLinkId ?? activeRegionId ?? null;
+  // The virtualiser caches measurements, so a changed `estimateSize` alone
+  // leaves every row positioned at the old pitch — the first search would
+  // lay the taller rows out on the shorter spacing.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: remeasure on pitch change
+  useEffect(() => {
+    rowVirtualizer.measure();
+  }, [rowHeight, rowVirtualizer]);
+
+  // Class *and* id: an element id is unique only within its class, so a
+  // junction and a pipe may both be called "2".
+  const active = activeElement(activeNodeId, activeLinkId, activeRegionId);
+  const activeScrollKey = activeKey(active);
 
   // Selection arriving from the canvas scrolls its row into view. Keyed on
-  // the id alone: re-running on every list identity would fight the user's
-  // own scrolling on each timeline scrub.
+  // the selected element rather than the whole list: re-running on every
+  // list identity would fight the user's own scrolling on each timeline
+  // scrub.
   const lastScrolledTo = useRef<string | null>(null);
   useEffect(() => {
-    if (activeId == null) {
+    if (active == null || activeScrollKey == null) {
       lastScrolledTo.current = null;
       return;
     }
-    if (lastScrolledTo.current === activeId) return;
-    const index = visible.findIndex((r) => r.id === activeId);
+    if (lastScrolledTo.current === activeScrollKey) return;
+    const index = visible.findIndex((r) => isActiveRow(r, active));
     if (index < 0) return;
-    lastScrolledTo.current = activeId;
+    lastScrolledTo.current = activeScrollKey;
     rowVirtualizer.scrollToIndex(index, { align: "auto" });
-  }, [activeId, visible, rowVirtualizer]);
+  }, [active, activeScrollKey, visible, rowVirtualizer]);
 
   /** Hovering a row lights the element up on the canvas, exactly as
    * hovering the element itself does. */
@@ -700,7 +813,7 @@ export function NetworkInspectorHome({
           >
             {rowVirtualizer.getVirtualItems().map((v) => {
               const row = visible[v.index];
-              const isActive = row.id === activeId;
+              const isActive = isActiveRow(row, active);
               const zoomable = canZoomTo(row);
               // Probed per rendered row — the virtualizer keeps that to a
               // couple of dozen. The selected row never dims: having panned
@@ -725,7 +838,40 @@ export function NetworkInspectorHome({
                       is invalid and gives the row two focus stops. */}
                   <button
                     type="button"
-                    onClick={() => select(row)}
+                    // Select on click, zoom on double-click — the file-list
+                    // idiom, where opening is what you do to the thing you
+                    // just picked.
+                    //
+                    // Neither handler waits to see whether another click is
+                    // coming. Debouncing the first would put a quarter-second
+                    // of latency on every selection to serve the rarer
+                    // gesture, so instead each one reads `event.detail`, the
+                    // browser's own count of clicks in this burst, and the
+                    // pair is arranged to land on the same result either way.
+                    onClick={(e) => {
+                      // Selection *toggles*, so letting the second click
+                      // through undid the first: a double-click selected,
+                      // deselected, then zoomed to something no longer
+                      // selected. The second click of a burst does nothing
+                      // and leaves the outcome to the double-click handler.
+                      if (!clickSelects(e.detail)) return;
+                      select(row);
+                    }}
+                    onDoubleClick={
+                      zoomable
+                        ? () => {
+                            // One click has landed, so a row that started
+                            // selected is now deselected and vice versa.
+                            // Select whatever is not, and a double-click
+                            // always ends selected *and* zoomed, from
+                            // either starting state.
+                            if (doubleClickSelects(isActiveRow(row, active))) {
+                              select(row);
+                            }
+                            zoomTo(row);
+                          }
+                        : undefined
+                    }
                     style={{
                       width: "100%",
                       height: "100%",
@@ -831,14 +977,27 @@ export function NetworkInspectorHome({
                       }
                     >
                       {formatValue(row, sys)}
-                      {valueHeading.perRowUnits && row.value != null && (
+                      {/* A lane of its own, so the numbers right-align on
+                          one edge instead of being pushed around by units
+                          of different widths — "8.153 m" and "0.8695 m/s"
+                          right-aligned as one group put their digits at
+                          different offsets, which is exactly what the
+                          column exists to let you compare.
+
+                          Reserved even when a row has no value, or the
+                          rows that do would shift out from under the ones
+                          that don't. */}
+                      {valueHeading.perRowUnits && (
                         <span
                           style={{
                             color: "var(--text-tertiary)",
-                            marginLeft: 2,
+                            marginLeft: 3,
+                            display: "inline-block",
+                            width: `${valueHeading.unitWidth}ch`,
+                            textAlign: "left",
                           }}
                         >
-                          {unitOf(row, sys)}
+                          {row.value != null ? unitOf(row, sys) : ""}
                         </span>
                       )}
                     </span>

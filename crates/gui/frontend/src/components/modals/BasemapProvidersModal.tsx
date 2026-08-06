@@ -408,7 +408,7 @@ function ProviderCard({
  * connection state, paid-token connect/replace/disconnect, and per-style /
  * per-provider visibility eyes feeding the (per-machine) hidden-styles pref.
  * Opened from the canvas basemap picker ("Manage basemaps…") and from the
- * Settings page.
+ * Settings drawer.
  */
 export function BasemapProvidersModal() {
   const { basemapProvidersModalOpen, closeBasemapProvidersModal, showToast } =

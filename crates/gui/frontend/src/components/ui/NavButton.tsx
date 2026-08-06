@@ -11,6 +11,13 @@ interface NavButtonProps {
   pulse?: boolean;
   /** Extra class names */
   className?: string;
+  /**
+   * Fired when a pointer arrives or the button takes focus — the earliest
+   * reliable signal that its destination is about to be wanted, which is
+   * where a code-split chunk gets warmed so the wait does not land on the
+   * click.
+   */
+  onPrefetch?: () => void;
 }
 
 /**
@@ -28,6 +35,7 @@ export function NavButton({
   badgeCount,
   pulse,
   className = "",
+  onPrefetch,
 }: NavButtonProps) {
   return (
     <button
@@ -36,6 +44,8 @@ export function NavButton({
       aria-label={label}
       aria-current={active ? "page" : undefined}
       onClick={onClick}
+      onPointerEnter={onPrefetch}
+      onFocus={onPrefetch}
       data-tooltip={label}
       data-tooltip-pos="right"
     >

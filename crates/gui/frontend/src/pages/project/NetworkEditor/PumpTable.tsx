@@ -17,6 +17,7 @@ const COL_COUNT = 7;
 const NODE_LIST_ID = "pump-node-options";
 
 export function PumpTable({
+  referenceIds,
   rows,
   sortField,
   sortAsc,
@@ -31,6 +32,8 @@ export function PumpTable({
   scrollContainerRef,
   onRowAction,
 }: {
+  /** Ids this table's reference column may name (draft-aware). */
+  referenceIds: readonly string[];
   rows: PumpRow[];
   sortField: string;
   sortAsc: boolean;
@@ -232,6 +235,7 @@ export function PumpTable({
                   placeholder={isPendingRow || row.curve == null}
                   isPending={pendingKeys.has(`pump:${row.id}:curve`)}
                   onCommit={(v) => onPatch("pump", row.id, "curve", v)}
+                  options={referenceIds}
                 />
                 <EditableCell
                   key={`${discardGen}-${row.id}-powerKw`}

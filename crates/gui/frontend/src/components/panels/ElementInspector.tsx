@@ -14,9 +14,13 @@
  * • Footer actions — Open in editor
  */
 
+// "Open in editor" carries the Editor tab's own icon, not a pencil. The
+// action is navigation — it reveals the element's row — and a pencil
+// promised editing, which for a read-only engine is a promise the
+// destination cannot keep.
 import {
   MagnifyingGlassPlusIcon,
-  PencilSquareIcon,
+  TableCellsIcon,
   TrashIcon,
 } from "@heroicons/react/16/solid";
 import type React from "react";
@@ -163,7 +167,7 @@ export function NodeInspector({
             data-tooltip="Open in editor"
             style={btnIcon}
           >
-            <PencilSquareIcon style={{ width: 14, height: 14 }} />
+            <TableCellsIcon style={{ width: 14, height: 14 }} />
           </button>
         )}
         {onZoomTo && (
@@ -308,7 +312,7 @@ export function LinkInspector({
             data-tooltip="Open in editor"
             style={btnIcon}
           >
-            <PencilSquareIcon style={{ width: 14, height: 14 }} />
+            <TableCellsIcon style={{ width: 14, height: 14 }} />
           </button>
         )}
         {onZoomTo && (
@@ -353,6 +357,8 @@ interface RegionInspectorProps {
   onZoomTo?: () => void;
   /** Select the element this region discharges to. */
   onLocateOutlet: (id: string) => void;
+  /** Reveal this element in the Editor. */
+  onOpenInEditor: () => void;
   /** See NodeInspectorProps.genericResults. */
   genericResults?: GenericElementValue[] | null;
 }
@@ -360,21 +366,30 @@ interface RegionInspectorProps {
 /**
  * Inspector for an areal element (a subcatchment). Same chrome as the node
  * and link variants — header with the kind badge, engine body, footer
- * actions — minus the affordances an area has no meaning for: there is no
- * "open in editor" (no engine edits areas here yet) and no rename/delete
- * (only read-only engines have areas today). Renders nothing when the
- * engine supplies no region body, which is also when nothing can select
- * one.
+ * actions — minus rename/delete, which need an engine whose model this GUI
+ * edits, and only read-only engines have areas today.
+ *
+ * "Open in editor" is *not* one of those exclusions. It was, on the
+ * reasoning that no engine edits areas here — but revealing an element is
+ * navigation, not editing, and the Editor lists subcatchments as a kind
+ * like any other. Excluding it meant a node and a conduit could be found
+ * from the map and the subcatchment between them could not.
+ *
+ * Renders nothing when the engine supplies no region body, which is also
+ * when nothing can select one.
  */
 export function RegionInspector({
   region,
   onClose,
   onZoomTo,
   onLocateOutlet,
+  onOpenInEditor,
   genericResults,
 }: RegionInspectorProps) {
   const { engine } = useActiveProject();
-  const EngineBody = engineComponents(engine?.key).RegionInspectorBody;
+  const components = engineComponents(engine?.key);
+  const EngineBody = components.RegionInspectorBody;
+  const canOpenInEditor = components.editorFocusesElements;
   if (!EngineBody) return null;
   return (
     <div
@@ -414,7 +429,7 @@ export function RegionInspector({
         results={genericResults}
       />
 
-      {onZoomTo && (
+      {(onZoomTo || canOpenInEditor) && (
         <div
           style={{
             flexShrink: 0,
@@ -424,14 +439,26 @@ export function RegionInspector({
             gap: 6,
           }}
         >
-          <button
-            type="button"
-            onClick={onZoomTo}
-            data-tooltip="Zoom to feature"
-            style={btnIcon}
-          >
-            <MagnifyingGlassPlusIcon style={{ width: 14, height: 14 }} />
-          </button>
+          {canOpenInEditor && (
+            <button
+              type="button"
+              onClick={onOpenInEditor}
+              data-tooltip="Open in editor"
+              style={btnIcon}
+            >
+              <TableCellsIcon style={{ width: 14, height: 14 }} />
+            </button>
+          )}
+          {onZoomTo && (
+            <button
+              type="button"
+              onClick={onZoomTo}
+              data-tooltip="Zoom to feature"
+              style={btnIcon}
+            >
+              <MagnifyingGlassPlusIcon style={{ width: 14, height: 14 }} />
+            </button>
+          )}
         </div>
       )}
     </div>

@@ -26,13 +26,29 @@ export interface TextScaleOption {
  * that is a claim we verify per step rather than for arbitrary input.
  */
 export const TEXT_SCALES: readonly TextScaleOption[] = [
-  { value: 0.9, label: "Small" },
-  { value: 1, label: "Default" },
-  { value: 1.1, label: "Large" },
-  { value: 1.25, label: "Larger" },
+  { value: 0.9, label: "Smaller" },
+  { value: 1, label: "Small" },
+  { value: 1.1, label: "Default" },
+  { value: 1.25, label: "Large" },
+  { value: 1.4, label: "Larger" },
 ] as const;
 
-export const DEFAULT_TEXT_SCALE = 1;
+/**
+ * The scale applied when nobody has chosen one.
+ *
+ * Must stay the value of the step labelled "Default" — a control whose
+ * "Default" option is not the default is the plainest form of a label and
+ * a value disagreeing, and `default_is_the_step_that_says_so` pins them
+ * together.
+ *
+ * It moved from 1 to 1.1 when the ladder shifted: what used to be the
+ * baseline is now offered as "Small", because the app's own type scale
+ * runs small enough that the old baseline read as cramped on most
+ * displays. Anyone who had explicitly chosen a size keeps it — their
+ * stored value is still an offered step — so only users who never opened
+ * Settings see the change.
+ */
+export const DEFAULT_TEXT_SCALE = 1.1;
 
 /**
  * Coerce a persisted value to a supported scale.

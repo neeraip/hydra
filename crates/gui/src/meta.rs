@@ -35,6 +35,16 @@ pub struct ProjectMeta {
     pub node_count: u32,
     #[serde(default)]
     pub link_count: u32,
+    /// How this project's values are displayed, overriding the app-wide
+    /// default: `"source"` (the model's own system), `"si"`, or `"us"`.
+    ///
+    /// `None` means "follow the default", which is deliberately distinct
+    /// from a value that happens to equal the current default — the first
+    /// tracks a later change to Settings, the second pins against one.
+    /// Sits beside `source_crs` because it is the same kind of thing: a
+    /// per-project decision about how to read the model, not about it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unit_system: Option<String>,
 }
 
 fn v1() -> u32 {

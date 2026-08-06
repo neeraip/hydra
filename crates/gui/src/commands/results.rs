@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use crate::meta::{self, bundle};
 
 use super::binary_codec::encode_period_results;
-use super::network_dto::{format_read_error, NetworkState, NetworkStateInner, FT3_TO_M3, FT_TO_MM};
+use super::network_dto::{format_read_error, NetworkState, NetworkStateInner, L_TO_M3, M_TO_MM};
 use super::projects::{
     app_data_dir, model_path_for, read_model_bytes, results_path_for, validate_target_ids,
 };
@@ -1226,7 +1226,7 @@ pub fn get_result_analytics(
                 .map(|n| n.base.id.clone())
                 .unwrap_or_default();
             let diameter_mm = match &link.kind {
-                hydra::LinkKind::Pipe(p) => p.diameter * FT_TO_MM,
+                hydra::LinkKind::Pipe(p) => p.diameter * M_TO_MM,
                 _ => 0.0,
             };
             Some(TopPipeDto {
@@ -1268,11 +1268,16 @@ pub fn get_result_analytics(
         .map(|l| l.base.id.clone());
     let max_velocity_ms = max_velocity.map(|(_, v)| v);
 
-    // Convert demand accumulations from ft³/s·period to m³ (multiply by
-    // period duration in seconds then by the module-level ft³→m³ factor).
+    // The scan accumulates demand in the results file's own units, and the
+    // engine always writes `.out` in L/s — so a period's contribution is
+    // L/s × seconds = litres, and litres become m³.
+    //
+    // This used to apply a ft³→m³ factor, which overstated both totals by
+    // 28.3×. The balance percentage was right regardless, because the same
+    // factor divides out of a ratio; only the absolute volumes were wrong.
     let report_step_s = meta.report_step;
-    let inflow_m3 = total_inflow * report_step_s * FT3_TO_M3;
-    let outflow_m3 = total_outflow * report_step_s * FT3_TO_M3;
+    let inflow_m3 = total_inflow * report_step_s * L_TO_M3;
+    let outflow_m3 = total_outflow * report_step_s * L_TO_M3;
     let balance_pct = if inflow_m3 > 0.0 {
         (outflow_m3 / inflow_m3 * 100.0).min(100.0)
     } else {
@@ -2267,5 +2272,180 @@ Duration  0
         assert_eq!(cache.len(), 1);
         assert!(scan_cache_take(&mut cache, &key("a.out", 1)).is_none());
         assert!(scan_cache_take(&mut cache, &key("a.out", 2)).is_some());
+    }
+}
+
+/// End-to-end verification that simulated results reach the frontend in the
+/// units the wire format claims, checked against **hydraulics that can be
+/// worked out by hand** rather than against the code that produced them.
+///
+/// The model-side DTO carried a unit error for the life of the repo, caught
+/// only when someone compared a served value to the source file. Results
+/// ride a different path — the engine writes `results.out`, always in L/s,
+/// and this module passes the arrays through untouched — so nothing that
+/// fixed the model side proves anything about this one. These tests close
+/// that gap by running the real streaming path and asserting physics:
+/// a static network's pressure is its reservoir head minus its elevation, and
+/// a single-path flow is its demand, whatever the solver does in between.
+#[cfg(test)]
+mod results_units_end_to_end {
+    use crate::commands::binary_codec::encode_period_results;
+    use crate::commands::simulation::run_sim_loops;
+
+    /// Reservoir at 200 ft, junction at 100 ft, joined by one 1000 ft × 12 in
+    /// pipe. US-customary on purpose: in a metric model the file's own
+    /// numbers and the SI ones coincide, so it cannot tell a correct
+    /// conversion from a missing one.
+    fn model(demand_gpm: f64) -> String {
+        format!(
+            "[JUNCTIONS]\nJ1  100  {demand_gpm}\n\n\
+             [RESERVOIRS]\nR1  200\n\n\
+             [PIPES]\nP1  R1  J1  1000  12  100  0  Open\n\n\
+             [OPTIONS]\nUnits  GPM\nHeadloss  H-W\n\n\
+             [TIMES]\nDuration  0\n"
+        )
+    }
+
+    /// The columns of one decoded period, in wire order.
+    struct Period {
+        demand: Vec<f32>,
+        head: Vec<f32>,
+        pressure: Vec<f32>,
+        flow: Vec<f32>,
+        velocity: Vec<f32>,
+    }
+
+    /// Run through the same streaming path production uses and decode the
+    /// payload `get_period_results` hands the frontend.
+    fn period_arrays(inp: &str) -> Period {
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path().join("results.out");
+        let network = hydra::io::parse(inp.as_bytes()).unwrap();
+        let mut sim = hydra::Simulation::create();
+        sim.load(network).unwrap();
+        let (_s, err, _w, _st) = run_sim_loops(
+            hydra::engines::EngineSession::from_wds(sim, hydra::FlowUnits::Lps),
+            Some(out.clone()),
+            0.0,
+            false,
+            None,
+            |_, _, _, _, _| {},
+            || false,
+        );
+        assert!(err.is_none(), "fixture run must succeed: {err:?}");
+
+        let meta = hydra::io::out_reader::read_metadata_checked(&out).unwrap();
+        let pr = hydra::io::out_reader::read_period(&out, &meta, 0).unwrap();
+        let buf = encode_period_results(&pr, meta.quality_flag != 0);
+
+        let n_nodes = u32::from_le_bytes(buf[0..4].try_into().unwrap()) as usize;
+        let n_links = u32::from_le_bytes(buf[4..8].try_into().unwrap()) as usize;
+        let f32s = |start: usize, n: usize| -> Vec<f32> {
+            (0..n)
+                .map(|i| {
+                    let o = start + 4 * i;
+                    f32::from_le_bytes(buf[o..o + 4].try_into().unwrap())
+                })
+                .collect()
+        };
+        Period {
+            demand: f32s(12, n_nodes),
+            head: f32s(12 + 4 * n_nodes, n_nodes),
+            pressure: f32s(12 + 8 * n_nodes, n_nodes),
+            flow: f32s(12 + 12 * n_nodes, n_links),
+            velocity: f32s(12 + 12 * n_nodes + 4 * n_links, n_links),
+        }
+    }
+
+    /// Relative comparison — the engine converts through EPANET's rounded
+    /// factors, so a hand-computed metre lands within about five significant
+    /// figures, never exactly. Far tighter than any unit error.
+    fn close(a: f64, b: f64) -> bool {
+        (a - b).abs() <= 1e-4 * b.abs().max(1.0)
+    }
+
+    /// With no demand there is no flow, so no head loss, so the junction sits
+    /// at exactly the reservoir's head. Every number here is determined by
+    /// the model file alone — the solver cannot move any of them.
+    #[test]
+    fn a_static_network_reports_head_and_pressure_in_metres() {
+        let p = period_arrays(&model(0.0));
+        let (head, pressure) = (p.head, p.pressure);
+        // Node order is the file's: J1 then R1.
+        // Head at J1 = the reservoir's 200 ft = 60.96 m.
+        assert!(
+            close(head[0] as f64, 60.96),
+            "J1 sits at the reservoir's head, 200 ft = 60.96 m, got {}",
+            head[0]
+        );
+        // Pressure = head − elevation = (200 − 100) ft = 30.48 m. Serving
+        // 9.29 would mean metres scaled as though they were feet; serving
+        // 100 would mean no conversion happened at all.
+        assert!(
+            close(pressure[0] as f64, 30.48),
+            "J1 is 100 ft below the reservoir = 30.48 m of head, got {}",
+            pressure[0]
+        );
+    }
+
+    /// One junction, one pipe, one source: conservation of mass fixes the
+    /// pipe's flow at the junction's demand, and the pipe's velocity at that
+    /// flow over its area — regardless of head loss or the solver's path to
+    /// convergence.
+    #[test]
+    fn flow_velocity_and_demand_are_reported_in_si() {
+        let p = period_arrays(&model(50.0));
+        let (demand, flow, velocity) = (p.demand, p.flow, p.velocity);
+        // 50 gpm = 3.1545 L/s.
+        assert!(
+            close(demand[0] as f64, 3.1545),
+            "J1 demands 50 gpm = 3.1545 L/s, got {}",
+            demand[0]
+        );
+        // The pipe is the only path to J1, so it carries exactly that.
+        assert!(
+            close(flow[0] as f64, 3.1545),
+            "P1 is the only supply to J1, so it carries 3.1545 L/s, got {}",
+            flow[0]
+        );
+        // v = Q/A, A = π/4 · (0.3048 m)² = 0.0729656 m²
+        //       → 0.0031545 / 0.0729656 = 0.043233 m/s.
+        let area = std::f64::consts::PI / 4.0 * 0.3048_f64.powi(2);
+        let expected_v = 0.0031545 / area;
+        assert!(
+            close(velocity[0] as f64, expected_v),
+            "P1 carries 3.1545 L/s through 0.0729656 m², so {expected_v:.6} m/s, got {}",
+            velocity[0]
+        );
+    }
+
+    /// The analytics scan reads the same file by a different route (a
+    /// streaming pass rather than one period), so it gets its own check
+    /// against the same hand-computed pressure.
+    #[test]
+    fn the_analytics_scan_agrees_with_the_period_reader() {
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path().join("results.out");
+        let network = hydra::io::parse(model(0.0).as_bytes()).unwrap();
+        let mut sim = hydra::Simulation::create();
+        sim.load(network).unwrap();
+        let (_s, err, _w, _st) = run_sim_loops(
+            hydra::engines::EngineSession::from_wds(sim, hydra::FlowUnits::Lps),
+            Some(out.clone()),
+            0.0,
+            false,
+            None,
+            |_, _, _, _, _| {},
+            || false,
+        );
+        assert!(err.is_none(), "fixture run must succeed: {err:?}");
+
+        let meta = hydra::io::out_reader::read_metadata_checked(&out).unwrap();
+        let scan = hydra::io::out_reader::scan_analytics(&out, &meta).unwrap();
+        assert!(
+            close(scan.node_min_pressure[0] as f64, 30.48),
+            "the scan's minimum pressure for J1 is 30.48 m, got {}",
+            scan.node_min_pressure[0]
+        );
     }
 }

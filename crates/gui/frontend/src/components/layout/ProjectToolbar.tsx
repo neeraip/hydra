@@ -20,6 +20,7 @@ import {
   variantTail,
 } from "../panels/ScenariosPanel/shared";
 import { PrimaryButton } from "../ui/PrimaryButton";
+import { UnitSystemPicker } from "./UnitSystemPicker";
 
 /* ─── ProjectToolbar ────────────────────────────────────────────────────────
    Persistent toolbar across the top of every project view. Holds scenario
@@ -46,10 +47,16 @@ import { PrimaryButton } from "../ui/PrimaryButton";
    real path down to it: one chip per level, a true parent→child arrow between
    each, a ▾ "+N" segment on chips with siblings, and a trailing ▾ stub to keep
    descending. Every other variant stays summarised. Everything else lives in
-   the Manage modal.
+   the Scenarios modal.
 
    Layout (left → right):
-     [Base pill] [variant] → [summary] │ [variant] → [active path… → ▾ stub] · Manage | [Simulate ▸ ⚙]
+     [Scenarios ▸ 🔍] [Base pill] [variant] → [summary] │ [variant] → [active
+     path… → ▾ stub] │ [units] │ [Simulate ▸ ⚙]
+
+   The Scenarios split button leads rather than trails: it names the strip
+   that follows, the way a section heading does, and the strip is the part
+   that clips when scenarios are many — so the controls sit on the side
+   that never scrolls out of reach.
 */
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -204,6 +211,7 @@ export function ProjectToolbar() {
   const { isEdited, markEdited } = useNetworkVersion();
 
   const rawDtos = useScenarios(project?.id ?? null, scenariosVersion);
+  const hasScenarios = rawDtos.length > 0;
 
   // Active path Base → … → active. Empty when Base is active or the stored
   // id is stale/unknown (the reset effect below then falls back to Base).
@@ -390,20 +398,104 @@ export function ProjectToolbar() {
         fontFamily: "var(--font-ui)",
       }}
     >
-      {/* Section label — names the whole selector (Base model + scenarios) */}
-      <span
+      {/* Scenarios — names the strip that follows *and* opens it, in the
+          space a static "SCENARIOS" label used to occupy. A label that only
+          names a region spends toolbar width on a word; this spends the
+          same width on a word that also acts.
+
+          Leading, not trailing, for the same reason a section heading
+          precedes its section — and because the strip beside it is the part
+          that gets clipped when scenarios are many, so the controls belong
+          on the side that never scrolls away.
+
+          Split like the Simulate button opposite it: the wide segment does
+          the obvious thing, the narrow one an adjacent thing. */}
+      <div
         style={{
-          fontSize: "var(--text-xs)",
-          fontWeight: 600,
-          letterSpacing: "0.07em",
-          textTransform: "uppercase",
-          color: "var(--text-disabled)",
           flexShrink: 0,
-          userSelect: "none",
+          display: "inline-flex",
+          alignItems: "stretch",
+          height: 26,
         }}
       >
-        Scenarios
-      </span>
+        <button
+          type="button"
+          onClick={() => openScenariosModal()}
+          data-tooltip="Manage scenarios"
+          data-tooltip-pos="bottom"
+          onMouseEnter={(e) => {
+            (e.currentTarget as HTMLButtonElement).style.background =
+              "var(--nav-hover)";
+            (e.currentTarget as HTMLButtonElement).style.color =
+              "var(--text-primary)";
+          }}
+          onMouseLeave={(e) => {
+            (e.currentTarget as HTMLButtonElement).style.background =
+              "transparent";
+            (e.currentTarget as HTMLButtonElement).style.color =
+              "var(--text-secondary)";
+          }}
+          style={{
+            border: "1px solid var(--border)",
+            borderRight: hasScenarios ? "none" : "1px solid var(--border)",
+            borderRadius: hasScenarios ? "5px 0 0 5px" : 5,
+            background: "transparent",
+            color: "var(--text-secondary)",
+            padding: "0 9px",
+            fontSize: "var(--text-sm)",
+            fontWeight: 600,
+            fontFamily: "var(--font-ui)",
+            cursor: "pointer",
+            transition: "background var(--t-fast), color var(--t-fast)",
+          }}
+        >
+          Scenarios
+        </button>
+        {/* Nothing to search until a scenario exists — the segment is absent
+            rather than disabled, and the label rounds off on its own. */}
+        {hasScenarios && (
+          <button
+            type="button"
+            data-scenario-picker
+            aria-label="Find scenario"
+            data-tooltip="Find scenario"
+            data-tooltip-pos="bottom"
+            onClick={(e) =>
+              togglePicker(
+                { kind: "search", id: null },
+                e.currentTarget.getBoundingClientRect(),
+              )
+            }
+            onMouseEnter={(e) => {
+              (e.currentTarget as HTMLButtonElement).style.background =
+                "var(--nav-hover)";
+              (e.currentTarget as HTMLButtonElement).style.color =
+                "var(--text-primary)";
+            }}
+            onMouseLeave={(e) => {
+              (e.currentTarget as HTMLButtonElement).style.background =
+                picker?.kind === "search" ? "var(--nav-hover)" : "transparent";
+              (e.currentTarget as HTMLButtonElement).style.color =
+                "var(--text-secondary)";
+            }}
+            style={{
+              border: "1px solid var(--border)",
+              borderRadius: "0 5px 5px 0",
+              background:
+                picker?.kind === "search" ? "var(--nav-hover)" : "transparent",
+              color: "var(--text-secondary)",
+              padding: "0 8px",
+              cursor: "pointer",
+              display: "inline-flex",
+              alignItems: "center",
+              justifyContent: "center",
+              transition: "background var(--t-fast), color var(--t-fast)",
+            }}
+          >
+            <MagnifyingGlassIcon style={{ width: 12, height: 12 }} />
+          </button>
+        )}
+      </div>
 
       {/* Base pill — the base model itself; always present and rendered bold so
           it reads as *the* base model, not a scenario named "Base". Active when
@@ -718,114 +810,19 @@ export function ProjectToolbar() {
         </div>
       )}
 
-      {/* Quick-jump — searchable list of ALL scenarios */}
-      {rawDtos.length > 0 && (
-        <button
-          type="button"
-          data-scenario-picker
-          aria-label="Find scenario"
-          data-tooltip="Find scenario"
-          data-tooltip-pos="bottom"
-          onClick={(e) =>
-            togglePicker(
-              { kind: "search", id: null },
-              e.currentTarget.getBoundingClientRect(),
-            )
-          }
-          onMouseEnter={(e) => {
-            (e.currentTarget as HTMLButtonElement).style.background =
-              "var(--nav-hover)";
-            (e.currentTarget as HTMLButtonElement).style.borderColor =
-              "var(--border-hover)";
-            (e.currentTarget as HTMLButtonElement).style.color =
-              "var(--text-primary)";
-          }}
-          onMouseLeave={(e) => {
-            (e.currentTarget as HTMLButtonElement).style.background =
-              picker?.kind === "search" ? "var(--nav-hover)" : "transparent";
-            (e.currentTarget as HTMLButtonElement).style.borderColor =
-              "var(--border)";
-            (e.currentTarget as HTMLButtonElement).style.color =
-              "var(--text-secondary)";
-          }}
-          style={{
-            flexShrink: 0,
-            width: 26,
-            height: 26,
-            border: "1px solid var(--border)",
-            background:
-              picker?.kind === "search" ? "var(--nav-hover)" : "transparent",
-            color: "var(--text-secondary)",
-            borderRadius: 5,
-            padding: 0,
-            cursor: "pointer",
-            display: "inline-flex",
-            alignItems: "center",
-            justifyContent: "center",
-            transition:
-              "background var(--t-fast), border-color var(--t-fast), color var(--t-fast)",
-          }}
-        >
-          <MagnifyingGlassIcon style={{ width: 12, height: 12 }} />
-        </button>
-      )}
+      {/* Display units — a group of one, flanked rather than attached.
+          It is neither a scenario control nor a run control, and it began
+          pressed against the divider below, where equal spacing next to
+          Simulate read as "run in these units". Both dividers earn their
+          place: the bar holds three different kinds of thing — which data,
+          how it is shown, and act — not two.
 
-      {/* Manage — opens the Scenarios management modal */}
-      <button
-        type="button"
-        onClick={() => openScenariosModal()}
-        data-tooltip="Manage scenarios"
-        data-tooltip-pos="bottom"
-        onMouseEnter={(e) => {
-          (e.currentTarget as HTMLButtonElement).style.background =
-            "var(--nav-hover)";
-          (e.currentTarget as HTMLButtonElement).style.borderColor =
-            "var(--border-hover)";
-          (e.currentTarget as HTMLButtonElement).style.color =
-            "var(--text-primary)";
-        }}
-        onMouseLeave={(e) => {
-          (e.currentTarget as HTMLButtonElement).style.background =
-            "transparent";
-          (e.currentTarget as HTMLButtonElement).style.borderColor =
-            "var(--border)";
-          (e.currentTarget as HTMLButtonElement).style.color =
-            "var(--text-secondary)";
-        }}
-        style={{
-          flexShrink: 0,
-          height: 26,
-          border: "1px solid var(--border)",
-          background: "transparent",
-          color: "var(--text-secondary)",
-          borderRadius: 5,
-          padding: "0 8px",
-          fontSize: "var(--text-sm)",
-          fontWeight: 600,
-          cursor: "pointer",
-          fontFamily: "var(--font-ui)",
-          display: "inline-flex",
-          alignItems: "center",
-          gap: 4,
-          transition:
-            "background var(--t-fast), border-color var(--t-fast), color var(--t-fast)",
-        }}
-      >
-        <Cog6ToothIcon style={{ width: 12, height: 12 }} />
-        Manage
-      </button>
-
-      {/* Divider separating scenario controls from the run controls.
-          marginLeft: auto pushes this + the split button to the far right. */}
-      <span
-        style={{
-          width: 1,
-          height: 22,
-          background: "var(--border)",
-          flexShrink: 0,
-          marginLeft: "auto",
-        }}
-      />
+          This divider carries the `marginLeft: auto`, so the whole
+          right-hand cluster is pushed over when there is no lineage strip
+          to fill the middle. */}
+      <ToolbarDivider style={{ marginLeft: "auto" }} />
+      <UnitSystemPicker />
+      <ToolbarDivider />
 
       {/* Split Simulate button — left segment runs; right (gear) segment opens
           the simulation-settings modal. */}
@@ -874,6 +871,22 @@ export function ProjectToolbar() {
         </PrimaryButton>
       </div>
     </div>
+  );
+}
+
+/** A hairline separating one group of toolbar controls from the next. */
+function ToolbarDivider({ style }: { style?: React.CSSProperties }) {
+  return (
+    <span
+      aria-hidden
+      style={{
+        width: 1,
+        height: 22,
+        background: "var(--border)",
+        flexShrink: 0,
+        ...style,
+      }}
+    />
   );
 }
 

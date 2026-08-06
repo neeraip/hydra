@@ -1,15 +1,27 @@
-/* WD pump-curve editor — head/flow scatter+spline with editable points.
+/* WD curve editor — an x/y scatter+spline with editable points.
    Edits are staged into the shared DraftContext, not committed to the
    backend immediately — they become part of the unified Network Editor
-   draft alongside Elements/Patterns/Controls, saved or discarded together. */
+   draft alongside Elements/Patterns/Controls, saved or discarded together.
+
+   Every axis label, unit and conversion comes from the curve's own
+   engine-described axes. It used to name them "Flow" and "Head" and
+   convert as though every curve were a pump curve, which showed a tank's
+   volume curve and a valve's loss-ratio curve in the wrong units under
+   the wrong names. */
 
 import { TrashIcon } from "@heroicons/react/16/solid";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useAppState } from "../../AppContext";
+import { useActiveProject, useAppState } from "../../AppContext";
 import {
+  type CurveAxis,
   type CurvePoint,
+  genericFromDisplay,
+  genericToDisplay,
+  genericUnitLabel,
   type PumpCurve,
   renameCurve,
+  UNKNOWN_CURVE_AXES,
+  useCurveAxes,
   useCurves,
 } from "../../hooks";
 import { useDraft } from "../../hooks/DraftContext";
@@ -20,29 +32,36 @@ import {
   useVirtualRows,
   VirtualSpacerRow,
 } from "../../pages/project/NetworkEditor/TablePrimitives";
-import {
-  formatQtyRaw,
-  fromDisplay,
-  toDisplay,
-  unitLabel,
-  useUnitSystem,
-} from "../../units";
+import { useUnitSystem } from "../../units";
 import { DeleteConfirmModal } from "../modals/DeleteConfirmModal";
+import { curveRoleLabel } from "./curveRole";
 import { EditorSidebarList } from "./EditorSidebarList";
 
 const DEFAULT_CURVE_POINTS: CurvePoint[] = [
-  { flow: 0, head: 50 },
-  { flow: 5, head: 0 },
+  { x: 0, y: 50 },
+  { x: 5, y: 0 },
 ];
+
+/**
+ * The kind a curve created here will be.
+ *
+ * `create_curve` makes a pump-head curve, so a staged add is shown — and
+ * has its axes looked up — under this key. The one fact still stated on
+ * both sides of the IPC boundary; the Rust half is
+ * `a_created_curve_is_the_kind_the_editor_stages_it_as`.
+ */
+export const stagedCurveRole = "pump-head";
+
+/** "Flow (L/s)", or just "Position" when the axis carries no unit. */
+function axisTitle(axis: CurveAxis, sys: "si" | "us"): string {
+  const unit = genericUnitLabel(axis.quantity, sys);
+  return unit ? `${axis.label} (${unit})` : axis.label;
+}
 
 /** Above this many points the chart skips per-point hover markers (the
  * polyline itself is a single element at any size). Curves this long come
  * from imported files, not hand editing. */
 const MAX_CHART_POINT_MARKERS = 500;
-
-function classifyCurveType(n: number): PumpCurve["curveType"] {
-  return n === 1 ? "single-point" : n === 3 ? "three-point" : "multi-point";
-}
 
 export function CurveEditor({
   accent,
@@ -56,7 +75,14 @@ export function CurveEditor({
   const sys = useUnitSystem();
   const { showToast } = useAppState();
   const { bumpNetwork } = useNetworkVersion();
+  const { engine } = useActiveProject();
   const curves = useCurves();
+  // Axes come from the engine, keyed by curve kind — so a curve staged in
+  // the draft resolves exactly like a saved one, with the same units. It
+  // used to carry hand-written axes with no quantity at all, which showed
+  // a new curve's points unconverted and stored whatever the user typed as
+  // though it were already SI.
+  const axesByKind = useCurveAxes(engine?.key);
   const {
     curveAdds,
     setCurveAdds,
@@ -91,17 +117,17 @@ export function CurveEditor({
       .map((c) => {
         const staged = curveEdits.get(c.id);
         if (!staged) return c;
-        return {
-          ...c,
-          points: staged,
-          curveType: classifyCurveType(staged.length),
-        };
+        // Editing the points cannot change what the curve is for — the
+        // role follows the model's references, not the values.
+        return { ...c, points: staged };
       });
     const added: PumpCurve[] = Array.from(curveAdds.entries()).map(
       ([id, points]) => ({
         id,
         pumpId: "",
-        curveType: classifyCurveType(points.length),
+        // What this add will become when the draft is saved, which is also
+        // the key its axes are looked up under.
+        role: stagedCurveRole,
         points,
       }),
     );
@@ -111,6 +137,10 @@ export function CurveEditor({
   const curve =
     mergedCurves.find((c) => c.id === activeId) ??
     (mergedCurves.length > 0 ? mergedCurves[0] : null);
+  // Before the table resolves, or for a kind it does not describe, two bare
+  // magnitudes — never a guessed unit.
+  const axes: [CurveAxis, CurveAxis] =
+    (curve && axesByKind[curve.role]) ?? UNKNOWN_CURVE_AXES;
 
   // Keep the rename draft in sync when the active curve changes (render-time
   // reconciliation, mirroring PatternEditor's header).
@@ -235,18 +265,16 @@ export function CurveEditor({
     }
   }
 
-  function handleCommitPoint(
-    index: number,
-    field: "flow" | "head",
-    raw: string,
-  ) {
+  function handleCommitPoint(index: number, axis: 0 | 1, raw: string) {
     if (!curve) return;
     const parsed = parseFloat(raw);
     if (!Number.isFinite(parsed)) return;
-    // Entered in display units — store SI.
-    const v = fromDisplay(parsed, field, sys);
+    // Entered in the display system — store SI, using this axis's own
+    // quantity rather than assuming every curve plots flow against head.
+    const v = genericFromDisplay(parsed, axes[axis].quantity, sys);
+    const key = axis === 0 ? "x" : "y";
     commitPoints(
-      curve.points.map((p, i) => (i === index ? { ...p, [field]: v } : p)),
+      curve.points.map((p, i) => (i === index ? { ...p, [key]: v } : p)),
     );
   }
 
@@ -255,7 +283,7 @@ export function CurveEditor({
     const last = curve.points[curve.points.length - 1];
     commitPoints([
       ...curve.points,
-      { flow: (last?.flow ?? 0) + 1, head: Math.max(0, (last?.head ?? 0) - 1) },
+      { x: (last?.x ?? 0) + 1, y: Math.max(0, (last?.y ?? 0) - 1) },
     ]);
   }
 
@@ -332,7 +360,7 @@ export function CurveEditor({
                   marginTop: 2,
                 }}
               >
-                {c.curveType} · {c.points.length} pts
+                {curveRoleLabel(c.role)} · {c.points.length} pts
               </div>
             </button>
           );
@@ -543,26 +571,12 @@ export function CurveEditor({
                 </span>
               )}
             </div>
-            {curve.bep != null && (
-              <div
-                style={{
-                  fontSize: "var(--text-sm)",
-                  color: "var(--text-tertiary)",
-                  marginLeft: "auto",
-                }}
-              >
-                BEP{" "}
-                <span style={{ color: "var(--text-secondary)" }}>
-                  {formatQtyRaw(curve.bep, "flow", sys)}
-                </span>
-              </div>
-            )}
             <button
               type="button"
               onClick={() => setPendingDeleteId(curve.id)}
               title="Delete curve"
               style={{
-                marginLeft: curve.bep != null ? undefined : "auto",
+                marginLeft: "auto",
                 flexShrink: 0,
                 border: "none",
                 background: "transparent",
@@ -594,6 +608,7 @@ export function CurveEditor({
           >
             <div style={{ flex: 1, padding: 16, minWidth: 0 }}>
               <CurveChart
+                axes={axes}
                 curve={curve}
                 accent={accent}
                 hoverIdx={hoverIdx}
@@ -611,6 +626,7 @@ export function CurveEditor({
               }}
             >
               <PointsTable
+                axes={axes}
                 scrollRef={pointsScrollRef}
                 curve={curve}
                 accent={accent}
@@ -662,11 +678,14 @@ export function CurveEditor({
 }
 
 function CurveChart({
+  axes,
   curve,
   accent,
   hoverIdx,
   setHoverIdx,
 }: {
+  /** The curve's engine-described axes, resolved by its kind. */
+  axes: [CurveAxis, CurveAxis];
   curve: PumpCurve;
   accent: string;
   hoverIdx: number | null;
@@ -697,12 +716,13 @@ function CurveChart({
 
   // The whole chart works in display units so axis ticks land on nice
   // numbers in either system; the stored points stay SI.
+  const [axX, axY] = axes;
   const dispPoints = curve.points.map((p) => ({
-    flow: toDisplay(p.flow, "flow", sys),
-    head: toDisplay(p.head, "head", sys),
+    x: genericToDisplay(p.x, axX.quantity, sys),
+    y: genericToDisplay(p.y, axY.quantity, sys),
   }));
-  const flows = dispPoints.map((p) => p.flow);
-  const heads = dispPoints.map((p) => p.head);
+  const flows = dispPoints.map((p) => p.x);
+  const heads = dispPoints.map((p) => p.y);
   const fMax = Math.max(...flows, 1);
   const hMax = Math.max(...heads, 1);
   const fNice = niceMax(fMax);
@@ -712,9 +732,9 @@ function CurveChart({
   const sy = (h: number) => padT + innerH - (h / hNice) * innerH;
 
   const polyline = dispPoints
-    .map((p) => `${sx(p.flow).toFixed(2)},${sy(p.head).toFixed(2)}`)
+    .map((p) => `${sx(p.x).toFixed(2)},${sy(p.y).toFixed(2)}`)
     .join(" ");
-  const areaPath = `M ${sx(dispPoints[0].flow)} ${sy(0)} L ${dispPoints.map((p) => `${sx(p.flow)} ${sy(p.head)}`).join(" L ")} L ${sx(dispPoints[dispPoints.length - 1].flow)} ${sy(0)} Z`;
+  const areaPath = `M ${sx(dispPoints[0].x)} ${sy(0)} L ${dispPoints.map((p) => `${sx(p.x)} ${sy(p.y)}`).join(" L ")} L ${sx(dispPoints[dispPoints.length - 1].x)} ${sy(0)} Z`;
 
   const xTicks = ticks(0, fNice, 5);
   const yTicks = ticks(0, hNice, 5);
@@ -812,7 +832,7 @@ function CurveChart({
           textAnchor="middle"
           transform={`rotate(-90 ${padL - 40} ${padT + innerH / 2})`}
         >
-          Head ({unitLabel("head", sys)})
+          {axisTitle(axY, sys)}
         </text>
         <text
           x={padL + innerW / 2}
@@ -821,7 +841,7 @@ function CurveChart({
           fill="var(--text-tertiary)"
           textAnchor="middle"
         >
-          Flow ({unitLabel("flow", sys)})
+          {axisTitle(axX, sys)}
         </text>
 
         {/* fill */}
@@ -836,20 +856,6 @@ function CurveChart({
           strokeLinejoin="round"
         />
 
-        {/* BEP */}
-        {curve.bep != null && (
-          <line
-            x1={sx(toDisplay(curve.bep, "flow", sys))}
-            x2={sx(toDisplay(curve.bep, "flow", sys))}
-            y1={padT}
-            y2={H - padB}
-            stroke={accent}
-            strokeWidth={1}
-            strokeDasharray="3 3"
-            opacity={0.6}
-          />
-        )}
-
         {/* points — markers are skipped for very long imported curves; the
             polyline above stays a single element at any size */}
         {dispPoints.length <= MAX_CHART_POINT_MARKERS &&
@@ -858,9 +864,9 @@ function CurveChart({
             return (
               // biome-ignore lint/a11y/noStaticElementInteractions: SVG points only expose hover feedback.
               <circle
-                key={`${p.flow}-${p.head}`}
-                cx={sx(p.flow)}
-                cy={sy(p.head)}
+                key={`${p.x}-${p.y}`}
+                cx={sx(p.x)}
+                cy={sy(p.y)}
                 r={r}
                 fill={hoverIdx === i ? accent : "var(--bg-app)"}
                 stroke={accent}
@@ -877,6 +883,7 @@ function CurveChart({
 }
 
 function PointsTable({
+  axes,
   curve,
   accent,
   hoverIdx,
@@ -886,11 +893,13 @@ function PointsTable({
   onRemovePoint,
   scrollRef,
 }: {
+  /** The curve's engine-described axes, resolved by its kind. */
+  axes: [CurveAxis, CurveAxis];
   curve: PumpCurve;
   accent: string;
   hoverIdx: number | null;
   setHoverIdx: (n: number | null) => void;
-  onCommitPoint: (index: number, field: "flow" | "head", raw: string) => void;
+  onCommitPoint: (index: number, axis: 0 | 1, raw: string) => void;
   onAddPoint: () => void;
   onRemovePoint: (index: number) => void;
   /** The points column's scrolling ancestor (owned by CurveEditor). */
@@ -955,10 +964,10 @@ function PointsTable({
           <tr>
             <th style={thStyle}>#</th>
             <th style={{ ...thStyle, textAlign: "right" }}>
-              Flow ({unitLabel("flow", sys)})
+              {axisTitle(axes[0], sys)}
             </th>
             <th style={{ ...thStyle, textAlign: "right" }}>
-              Head ({unitLabel("head", sys)})
+              {axisTitle(axes[1], sys)}
             </th>
             <th style={thStyle} />
           </tr>
@@ -974,7 +983,7 @@ function PointsTable({
                 // Points have no stable id; edits append/remove/edit in
                 // place rather than reordering, so the index-derived key is
                 // stable enough.
-                key={`${p.flow}-${p.head}-${i}`}
+                key={`${p.x}-${p.y}-${i}`}
                 onMouseEnter={() => setHoverIdx(i)}
                 onMouseLeave={() => setHoverIdx(null)}
                 style={{
@@ -988,19 +997,23 @@ function PointsTable({
                   {i + 1}
                 </td>
                 <EditableCell
-                  display={toDisplay(p.flow, "flow", sys).toFixed(1)}
+                  display={genericToDisplay(p.x, axes[0].quantity, sys).toFixed(
+                    1,
+                  )}
                   align="right"
                   inputType="number"
                   min={0}
-                  onCommit={(v) => onCommitPoint(i, "flow", v)}
+                  onCommit={(v) => onCommitPoint(i, 0, v)}
                 />
                 <EditableCell
-                  display={toDisplay(p.head, "head", sys).toFixed(1)}
+                  display={genericToDisplay(p.y, axes[1].quantity, sys).toFixed(
+                    1,
+                  )}
                   align="right"
                   inputType="number"
                   min={0}
                   style={{ color: isHover ? accent : undefined }}
-                  onCommit={(v) => onCommitPoint(i, "head", v)}
+                  onCommit={(v) => onCommitPoint(i, 1, v)}
                 />
                 <td style={{ ...tdStyle, padding: "0 6px" }}>
                   <button

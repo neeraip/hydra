@@ -42,6 +42,16 @@ export interface ElementSeries {
 }
 
 /**
+ * Which class of element a series is addressed against.
+ *
+ * One name for the three classes, so widening the set is a single edit
+ * rather than four literal unions that can drift apart. `region` was added
+ * once the drainage reader's subcatchment records were routed through —
+ * engines with no areal elements simply never ask for it.
+ */
+export type ElementSeriesKind = "node" | "link" | "region";
+
+/**
  * Fetch the per-period series for one element by its network-order index.
  * Returns `null` outside Tauri, when the command is missing/fails, or when
  * no results exist for the project/scenario.
@@ -49,7 +59,7 @@ export interface ElementSeries {
 export async function getElementSeries(
   projectId: string,
   scenarioId: string | null | undefined,
-  kind: "node" | "link",
+  kind: ElementSeriesKind,
   index: number,
 ): Promise<ElementSeries | null> {
   return tryInvoke<ElementSeries | null>("get_element_series", {
@@ -276,6 +286,16 @@ export function genericToDisplay(
 ): number {
   if (!quantity || sys === "si") return value;
   return value * quantity.siToUsScale + quantity.siToUsOffset;
+}
+
+/** Inverse of [`genericToDisplay`]: a value the user typed, back to SI. */
+export function genericFromDisplay(
+  value: number,
+  quantity: GenericQuantity | undefined,
+  sys: "si" | "us",
+): number {
+  if (!quantity || sys === "si") return value;
+  return (value - quantity.siToUsOffset) / quantity.siToUsScale;
 }
 
 /** Unit label for the active display system, or undefined when unitless. */

@@ -221,7 +221,27 @@ export function clearableCountOf(c: ClearableView): number {
 }
 
 /**
- * Whether clearing the view should also re-fit the network.
+ * What the view button does next.
+ *
+ * It used to sit disabled once the view was clear, which is a control that
+ * spends a permanent slot on the toolbar and is dead in the state it
+ * created. The same press now brings the panels back, so the button is a
+ * way in and out of an uncluttered map rather than a one-way trip.
+ *
+ * `restore` opens only what a reader can meaningfully be given back: the
+ * rail and the legend. The rest of `ClearableView` has no inverse — there
+ * is no selection to restore, no measurement to recreate, and reopening a
+ * basemap dropdown nobody asked for would be an interruption rather than a
+ * restoration.
+ */
+export type ViewAction = "clear" | "restore";
+
+export function viewButtonAction(c: ClearableView): ViewAction {
+  return clearableCountOf(c) === 0 ? "restore" : "clear";
+}
+
+/**
+ * Whether a change in what covers the map should also re-fit the network.
  *
  * "Fitted" is a state, not a past action. Fit frames the network against
  * the *visible* map, so the moment a panel closes the viewport grows and
@@ -240,7 +260,7 @@ export function clearableCountOf(c: ClearableView): number {
  * exactly as it was, and a camera animation with no visible cause reads
  * as a glitch.
  */
-export function shouldRefitOnClear(
+export function shouldRefitAfterOcclusionChange(
   viewportIsAppOwned: boolean,
   occlusionChanged: boolean,
 ): boolean {
@@ -794,7 +814,9 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
   useEffect(() => {
     function onViewportCommand(e: Event) {
       const cmd = (
-        e as CustomEvent<"zoom-in" | "zoom-out" | "fit" | "reset-north">
+        e as CustomEvent<
+          "zoom-in" | "zoom-out" | "fit" | "reset-north" | "toggle-view"
+        >
       ).detail;
       if (cmd === "zoom-in") {
         setZoomInKey((k) => k + 1);
@@ -804,6 +826,8 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
         setMapFitKey((k) => k + 1);
       } else if (cmd === "reset-north") {
         setResetNorthKey((k) => k + 1);
+      } else if (cmd === "toggle-view") {
+        handleToggleViewRef.current();
       }
     }
     window.addEventListener("hydra:canvas-viewport", onViewportCommand);
@@ -1755,12 +1779,29 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
       measurePoints.length,
     ],
   );
-  const clearableCount = useMemo(
-    () => clearableCountOf(clearable),
-    [clearable],
-  );
+  const viewAction = useMemo(() => viewButtonAction(clearable), [clearable]);
 
-  const handleClearView = useCallback(() => {
+  // The viewport-command listener mounts once, so it reads the handler
+  // through a ref rather than closing over the render that installed it —
+  // otherwise the palette would clear a view as it stood at mount.
+  const handleToggleViewRef = useRef<() => void>(() => {});
+
+  const handleToggleView = useCallback(() => {
+    if (viewButtonAction(clearable) === "restore") {
+      // Nothing is covering the map, so the press means the opposite: give
+      // the panels back. Only the two that can be given back — see
+      // `viewButtonAction`.
+      if (!clearable.rail) toggleRail();
+      setLegendOpen(true);
+      // Opening the rail shrinks the map exactly as closing it grew it, so
+      // a framing the app owns stops being a fit either way.
+      if (
+        shouldRefitAfterOcclusionChange(!viewportUserOwnedRef.current, true)
+      ) {
+        setMapFitKey((k) => k + 1);
+      }
+      return;
+    }
     // Only these actually shrink the map; the rest sit over it without
     // changing what Fit has to work with.
     const occlusionChanged = clearable.rail || clearable.selection;
@@ -1773,10 +1814,17 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
     if (clearable.basemapMenu) setShowBasemapDropdown(false);
     if (clearable.tool) setActiveTool("select");
     if (clearable.measurements) clearAnnotations();
-    if (shouldRefitOnClear(!viewportUserOwnedRef.current, occlusionChanged)) {
+    if (
+      shouldRefitAfterOcclusionChange(
+        !viewportUserOwnedRef.current,
+        occlusionChanged,
+      )
+    ) {
       setMapFitKey((k) => k + 1);
     }
   }, [clearable, toggleRail, clearSelection, clearAnnotations]);
+
+  handleToggleViewRef.current = handleToggleView;
 
   const legendAnimation = useMemo(
     () => ({
@@ -2517,8 +2565,8 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
                 viewportUserOwnedRef.current = false;
                 setMapFitKey((k) => k + 1);
               }}
-              onClearView={handleClearView}
-              clearableCount={clearableCount}
+              onToggleView={handleToggleView}
+              viewAction={viewAction}
             />
           </div>
 
@@ -2593,6 +2641,9 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
                 onLocateOutlet={(id) => {
                   if (nodeMap.has(id)) selectNode(id);
                 }}
+                onOpenInEditor={() =>
+                  focusInEditor(selectedRegion.type, selectedRegion.id)
+                }
                 genericResults={genericRegionResults}
               />
             )}

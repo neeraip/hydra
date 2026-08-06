@@ -18,6 +18,7 @@ import {
 const COL_COUNT = 6;
 
 export function ReservoirTable({
+  referenceIds,
   rows,
   sortField,
   sortAsc,
@@ -31,6 +32,8 @@ export function ReservoirTable({
   scrollContainerRef,
   onRowAction,
 }: {
+  /** Ids this table's reference column may name (draft-aware). */
+  referenceIds: readonly string[];
   rows: ReservoirRow[];
   sortField: string;
   sortAsc: boolean;
@@ -191,6 +194,7 @@ export function ReservoirTable({
                 placeholder={isPendingRow || row.pattern == null}
                 isPending={pendingKeys.has(`reservoir:${row.id}:headPattern`)}
                 onCommit={(v) => onPatch("reservoir", row.id, "headPattern", v)}
+                options={referenceIds}
               />
               <EditableCell
                 key={`${discardGen}-${row.id}-x`}

@@ -17,6 +17,7 @@ import { Toast } from "./components/ui/Toast";
 import { TooltipPortal } from "./components/ui/TooltipPortal";
 import { tryInvoke } from "./hooks/ipc";
 import { useUndoRedo } from "./hooks/useUndoRedo";
+import { loadSettingsContent, whenIdle } from "./lazyChunks";
 import { startMainThreadStallWatch } from "./perfTrace";
 import type { ProjectView } from "./projectConfig";
 import {
@@ -66,14 +67,19 @@ const ProjectPage = lazy(() =>
     default: m.ProjectPage,
   })),
 );
-const SettingsPage = lazy(() =>
-  import("./pages/SettingsPage").then((m) => ({ default: m.SettingsPage })),
-);
+
+// Eager: the drawer's chrome is what has to appear on the click. Only its
+// contents are split — see `SettingsDrawer`.
+import { SettingsDrawer } from "./components/modals/SettingsDrawer";
+
 const ProjectsPage = lazy(() =>
   import("./pages/ProjectsPage").then((m) => ({ default: m.ProjectsPage })),
 );
 
-const PAGE_ORDER: Page[] = ["home", "projects", "project", "settings"];
+// Drives the page-transition direction. Settings is absent because it is
+// an overlay now — it slides in over whatever page is showing rather than
+// replacing it, so it has no place in a left-to-right ordering.
+const PAGE_ORDER: Page[] = ["home", "projects", "project"];
 
 // ⌘1–⌘4 project view shortcuts (also advertised in CommandPalette hints).
 const VIEW_SHORTCUTS: Record<string, ProjectView> = {
@@ -95,6 +101,9 @@ export function App() {
     simSettingsModalOpen,
     activeProjectId,
     taskTrayOpen,
+    shortcutCardOpen,
+    toggleShortcutCard,
+    closeShortcutCard,
     setProjectView,
     issuesPanelOpen,
     toggleIssuesPanel,
@@ -117,7 +126,7 @@ export function App() {
   }, [activeProjectId]);
 
   const { undo, redo } = useUndoRedo();
-  const [shortcutCardOpen, setShortcutCardOpen] = useState(false);
+
   const [animKey, setAnimKey] = useState(0);
   const [animDir, setAnimDir] = useState<"right" | "left">("right");
   const prevPageRef = useRef<Page>(page);
@@ -126,6 +135,11 @@ export function App() {
   // Dev-only: log any main-thread stall >250ms so perf regressions on huge
   // networks show up as `[hydra-perf] main-thread-stall` console lines.
   useEffect(() => startMainThreadStallWatch(), []);
+
+  // Warm the Settings chunk once the app has settled. It is small and most
+  // sessions open it at least once, so paying for it during an idle moment
+  // costs nothing and removes the pause that otherwise lands on the click.
+  useEffect(() => whenIdle(() => void loadSettingsContent()), []);
 
   useEffect(() => {
     let cancelled = false;
@@ -204,7 +218,7 @@ export function App() {
         !e.altKey &&
         !inEditable
       ) {
-        setShortcutCardOpen((prev) => !prev);
+        toggleShortcutCard();
       }
       // ⌘Z undo / ⌘⇧Z redo — committed network edits, project page only.
       // Skipped while typing (text fields have their own undo) and while the
@@ -241,7 +255,7 @@ export function App() {
       }
       if (e.key === "Escape") {
         if (shortcutCardOpen) {
-          setShortcutCardOpen(false);
+          closeShortcutCard();
         } else if (issuesPanelOpen) {
           closeIssuesPanel();
         } else if (commandPaletteOpen) {
@@ -276,6 +290,8 @@ export function App() {
     closeIssuesPanel,
     undo,
     redo,
+    toggleShortcutCard,
+    closeShortcutCard,
   ]);
 
   // Alternate between identical base/-alt keyframe names so the animation
@@ -336,7 +352,6 @@ export function App() {
                 {page === "home" && <HomePage />}
                 {page === "projects" && <ProjectsPage />}
                 {page === "project" && <ProjectPage />}
-                {page === "settings" && <SettingsPage />}
               </Suspense>
             </div>
           </div>
@@ -365,12 +380,15 @@ export function App() {
       <Suspense fallback={null}>
         <CrsModal />
       </Suspense>
+      {/* Below the modals it can itself open — BasemapProviders sits at
+          205, above this drawer's 200. */}
+      <SettingsDrawer />
       <Suspense fallback={null}>
         <BasemapProvidersModal />
       </Suspense>
       {shortcutCardOpen && (
         <Suspense fallback={null}>
-          <ShortcutCard onClose={() => setShortcutCardOpen(false)} />
+          <ShortcutCard onClose={closeShortcutCard} />
         </Suspense>
       )}
       {taskTrayOpen && <TaskTray />}

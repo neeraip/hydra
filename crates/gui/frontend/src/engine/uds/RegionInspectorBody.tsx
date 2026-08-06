@@ -3,6 +3,7 @@ import { SectionLabel } from "../../components/ui/SectionLabel";
 import type { RegionInspectorBodyProps } from "../registry";
 import {
   GenericResultsCards,
+  GenericTimeSeriesCard,
   PropertiesSection,
   useElementDetails,
 } from "./inspector-shared";
@@ -11,11 +12,8 @@ import {
  * Urban-drainage subcatchment inspector body, following the same section
  * structure as the node and link bodies: Properties (the §4 schema's rows
  * — rain gage, outlet, area, width, slope, imperviousness), the outlet it
- * discharges to, and Results as cards (rainfall / runoff / infiltration at
- * the current timeline step).
- *
- * No time-series section: the results file's element series are addressed
- * by node/link record, and areal series have no equivalent addressing yet.
+ * discharges to, Results as cards (rainfall / runoff / infiltration at the
+ * current timeline step), and the same series over the whole run.
  */
 export function UdsRegionInspectorBody({
   region,
@@ -57,6 +55,8 @@ export function UdsRegionInspectorBody({
       )}
 
       <GenericResultsCards results={results} />
+
+      <GenericTimeSeriesCard kind="region" elementId={region.id} />
     </div>
   );
 }

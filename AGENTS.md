@@ -212,6 +212,32 @@ Brief inline progress notes during multi-step work are fine (e.g. "running cargo
 
 ---
 
+## Interface Rules
+
+**Never name an element kind in words alone.** Wherever the interface
+identifies an element's kind, it shows the kind's glyph — either the glyph
+by itself, or the glyph beside the name. Never the name on its own.
+
+An element id is unique only *within* its class: a junction `2` and a pipe
+`2` are two different elements that happen to share a name. So a kind is
+not decoration, it is half the identity, and the reader needs it at a
+glance rather than in a word they must stop and read. The glyph also
+carries the kind's colour, which a word does not, and it is the same mark
+the canvas, the network list and the editor tables use — so the reader
+learns one vocabulary instead of one per surface.
+
+Render it with `TypeBadge` (`components/ui/TypeBadge.tsx`), the single
+renderer for element badges. Never hand-roll a coloured dot, letter or
+stripe: those drift from the catalog and from each other, and a stripe
+tinted by kind says less than the badge while looking like it says the
+same.
+
+The exception is running prose. A sentence that happens to contain a kind's
+name — "Editing drainage models here isn't built yet", "3 catchments drain
+here" — is describing, not identifying, and needs no glyph.
+
+---
+
 ## Regression Discipline
 
 Every defect that reaches the running app gets a test that would have
@@ -242,17 +268,48 @@ give each half a test asserting they are independent.
 | Rust unit | Solver maths, parsers, catalogs, DTO shape and gating | Beside the code, `#[cfg(test)]` |
 | Pure TS | Decisions, formatting, preference migration, geometry | `*.test.ts`, `environment: node` |
 | Component | What the user actually reads: which elements render, what dismisses, what is offered | `*.test.tsx` with `@vitest-environment jsdom` |
+| Layout | Boxes: a width that must not depend on its content, a row that must fit its own second line | `*.layout.test.tsx`, real Chromium |
 
 Component tests need the `@vitest-environment jsdom` docblock; without it
 they run in Node and fail on `document`. Cleanup is automatic
 (`src/test-setup.ts`).
+
+**Layout tests run in a browser because jsdom performs none.** It answers
+every question about width, height or overflow with a zero, so a box that
+sizes to its content instead of its declaration is invisible to the other
+three layers — two such bugs reached users before this layer existed.
+`*.layout.test.tsx` files run under the `layout` project against real
+Chromium (`just test-layout`; `just setup-layout-tests` fetches the
+browser once). They load `app.css`, because layout is a product of the
+cascade: without the global `border-box` reset a column declared 680px
+wide measures 776.
+
+Keep this layer small and keep it measuring *numbers about elements*.
+Screenshot diffing is deliberately not done: font rasterisation differs
+between a developer's machine and CI, so image baselines churn without
+catching much, while "this box is 680px wide whatever it holds" is stable
+and says exactly what broke. Assert against the component's own exported
+styles rather than a copy — `SETTINGS_COLUMN` exists so its test cannot
+drift from what ships.
 
 **Cross-boundary invariants get a test on each side.** The Rust DTO and the
 TypeScript interface are hand-mirrored, so a claim that matters on both
 sides (an engine publishes a catalog but does not serve generic periods)
 is asserted in both places. Neither test alone would have caught the drift.
 
+**Two things make a component untestable in jsdom, and both are worth
+knowing before spending an afternoon on it.** A **virtualised list**
+renders no rows: `useVirtualizer` measures its scroll element, jsdom
+reports zero height, and the list concludes nothing is visible — so the
+row behaviour of the network list, the editor tables and the curve points
+table cannot be reached there. And **`AppProvider` cannot be mounted**: it
+registers Tauri event listeners that do not exist under jsdom and throws
+before its children render, so a component reading app state has to have
+that one hook mocked rather than the provider supplied.
+
 **Not currently covered, and known:** no end-to-end test drives the real
-Tauri shell, and nothing checks appearance — a purely visual regression
-(a stray gradient, a wrong colour) will not be caught by any test here.
+Tauri shell; nothing checks *appearance* — the layout layer measures
+geometry, so a stray gradient or a wrong colour still passes everything
+here; and no test exercises a virtualised row's own interactions, for the
+reason above.
 

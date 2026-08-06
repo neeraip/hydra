@@ -7,7 +7,7 @@ import {
   ExclamationTriangleIcon,
   InformationCircleIcon,
 } from "@heroicons/react/24/outline";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import {
   useActiveProject,
   useAppState,
@@ -15,12 +15,13 @@ import {
   useTasks,
 } from "../../AppContext";
 import { useCanvasSelection } from "../../canvas/selection-context";
-import { countIssues } from "../../hooks";
+import { countIssues, useLinks, useNodes } from "../../hooks";
 import {
   formatShortcut,
   primaryModifierLabel,
   shiftModifierLabel,
 } from "../../shortcuts";
+import { TypeBadge } from "../ui/TypeBadge";
 
 type SolverState = "idle" | "loading" | "running" | "converged" | "warning";
 
@@ -29,6 +30,19 @@ export function StatusBar() {
   const { project, accent, engine } = useActiveProject();
   const { resultMeta, resultMetaLoading, issues } = useSimulation();
   const { selectedNodeId, selectedLinkId } = useCanvasSelection();
+  // The selected element's own kind — "node" and "link" are classes, and
+  // the badge names the kind within one. Resolved from the base network
+  // arrays, which change only on reload, so this costs one lookup per
+  // selection rather than per render.
+  const allNodes = useNodes();
+  const allLinks = useLinks();
+  const selectedType = useMemo(() => {
+    if (selectedNodeId != null)
+      return allNodes.find((n) => n.id === selectedNodeId)?.type;
+    if (selectedLinkId != null)
+      return allLinks.find((l) => l.id === selectedLinkId)?.type;
+    return undefined;
+  }, [selectedNodeId, selectedLinkId, allNodes, allLinks]);
   const tasks = useTasks();
 
   // Derive solver state from simulation context.
@@ -133,8 +147,21 @@ export function StatusBar() {
 
       {/* Selected element — a quick read-out of the current canvas selection */}
       {project && (selectedNodeId || selectedLinkId) && (
-        <Pill title={`Selected ${selectedNodeId ? "node" : "link"}`}>
+        <Pill
+          title={`Selected ${selectedType ?? (selectedNodeId ? "node" : "link")}`}
+        >
+          {/* The glyph, not the word "node"/"link": an element id is unique
+              only within its class, so a bare "2" does not say whether the
+              junction or the pipe of that name is in hand — and the badge
+              says *which* junction-or-pipe, which "node" never did. Same
+              renderer as the network list and the canvas hover chip, so
+              the three cannot disagree about a kind's letters. */}
           <span style={{ color: "var(--text-tertiary)" }}>Selected</span>
+          {selectedType && (
+            <span style={{ marginLeft: 6, display: "inline-flex" }}>
+              <TypeBadge type={selectedType} size="sm" />
+            </span>
+          )}
           <span
             style={{
               marginLeft: 6,

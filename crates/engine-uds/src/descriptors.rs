@@ -202,6 +202,29 @@ pub const ELEMENT_KINDS: &[ElementKind] = &[
         role: None,
         badge: "Tr",
     },
+    // A street cross-section: the roadway geometry a conduit routes surface
+    // flow across in a dual-drainage model. A named registry like transects
+    // and curves, referenced by conduits rather than placed on the map.
+    ElementKind {
+        id: "street",
+        label: "Street",
+        label_plural: "Streets",
+        class: ElementClass::Collection,
+        role: None,
+        badge: "St",
+    },
+    // An inlet design: the grate, curb opening or slotted drain through
+    // which a street captures flow into the sewer below. One design serves
+    // any number of streets, which is why it is a registry entry and not a
+    // property of the conduit that uses it.
+    ElementKind {
+        id: "inlet",
+        label: "Inlet design",
+        label_plural: "Inlet designs",
+        class: ElementClass::Collection,
+        role: None,
+        badge: "In",
+    },
 ];
 
 // ── Quantities (spec §5) ──────────────────────────────────────────────────────
@@ -441,6 +464,32 @@ pub fn attribute_schema(kind_id: &str) -> Vec<AttributeDescriptor> {
             attr("nLeft", "Left-bank roughness", num(), None),
             attr("nRight", "Right-bank roughness", num(), None),
             attr("stations", "Stations", num(), None),
+        ],
+        "street" => vec![
+            attr("crownWidth", "Crown width", num(), Some("length")),
+            attr("curbHeight", "Curb height", num(), Some("length")),
+            attr("crossSlope", "Cross slope", num(), Some("percent")),
+            attr("roughness", "Roughness", num(), None),
+            attr("gutterWidth", "Gutter width", num(), Some("length")),
+            attr(
+                "gutterDepression",
+                "Gutter depression",
+                num(),
+                Some("length"),
+            ),
+            attr("sides", "Sides", num(), None),
+        ],
+        "inlet" => vec![
+            // What the design *is* — a combination inlet carries more than
+            // one, so this is a summary rather than a single type.
+            attr("openings", "Openings", text(), None),
+            attr("grateLength", "Grate length", num(), Some("length")),
+            attr("grateWidth", "Grate width", num(), Some("length")),
+            attr("grateType", "Grate type", text(), None),
+            attr("curbLength", "Curb length", num(), Some("length")),
+            attr("curbHeight", "Curb opening height", num(), Some("length")),
+            attr("slottedLength", "Slotted length", num(), Some("length")),
+            attr("slottedWidth", "Slotted width", num(), Some("length")),
         ],
         _ => Vec::new(),
     }

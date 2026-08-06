@@ -155,7 +155,7 @@ pub fn apply_unit_conversion(
             t.min_level /= ucf.elev;
             t.max_level /= ucf.elev;
             t.diameter /= ucf.elev; // tank diameter is in ft/m, not inches/mm
-            t.min_volume /= ucf.vol; // user volume units → internal (ft³)
+            t.min_volume /= ucf.vol; // user volume units → internal (m³)
             t.bulk_coeff /= 86400.0; // per-day → per-second
                                      // Adjust elevation convention: INP uses bottom elevation,
                                      // our data model uses elevation = bottom + min_level (§2.4.4).

@@ -1,7 +1,10 @@
+import { useMemo } from "react";
+import { useActiveProject, useAppState } from "../../AppContext";
 import { ConnectedNodeChip } from "../../components/panels/ElementInspector/ConnectedElements";
 import { SectionLabel } from "../../components/ui/SectionLabel";
-import { ACCENT, useNodes } from "../../hooks";
+import { ACCENT, useInletCouplings, useNodes } from "../../hooks";
 import type { LinkInspectorBodyProps } from "../registry";
+import { capturedInto } from "./couplings";
 import {
   GenericResultsCards,
   GenericTimeSeriesCard,
@@ -19,8 +22,18 @@ export function UdsLinkInspectorBody({
   onLocateNode,
   results,
 }: LinkInspectorBodyProps) {
+  const { project } = useActiveProject();
+  const { activeScenarioId } = useAppState();
   const allNodes = useNodes();
   const attributes = useElementDetails(link.id, link.type);
+  // Where this street's inlets discharge to. Not an endpoint — the sewer
+  // node is somewhere below the middle of the street, joined by no pipe —
+  // so it is a section of its own rather than a third "connected node".
+  const { couplings } = useInletCouplings(project?.id, activeScenarioId);
+  const captureNodes = useMemo(
+    () => capturedInto(couplings, link.id),
+    [couplings, link.id],
+  );
   return (
     <div style={{ flex: 1, overflowY: "auto", padding: 12 }}>
       <PropertiesSection {...attributes} />
@@ -42,6 +55,31 @@ export function UdsLinkInspectorBody({
           onLocate={onLocateNode}
         />
       </div>
+
+      {captureNodes.length > 0 && (
+        <>
+          <SectionLabel>Captures into</SectionLabel>
+          <div
+            style={{
+              display: "flex",
+              flexWrap: "wrap",
+              gap: 6,
+              marginBottom: 14,
+            }}
+          >
+            {captureNodes.map((c) => (
+              <ConnectedNodeChip
+                key={c.node}
+                label={c.design}
+                nodeId={c.node}
+                allNodes={allNodes}
+                accent={ACCENT}
+                onLocate={onLocateNode}
+              />
+            ))}
+          </div>
+        </>
+      )}
 
       <GenericResultsCards results={results} />
 

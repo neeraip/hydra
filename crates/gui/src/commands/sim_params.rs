@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::meta::bundle;
 
-use super::network_dto::{format_read_error, NetworkState, NetworkStateInner, FT_TO_M};
+use super::network_dto::{format_read_error, NetworkState, NetworkStateInner};
 use super::projects::{app_data_dir, list_scenario_ids, validate_id};
 
 // ── Simulation parameters (TIMES + OPTIONS, INP-canonical) ────────────────────
@@ -115,8 +115,9 @@ fn options_to_dto(o: &hydra::SimulationOptions) -> SimParamsDto {
         head_loss_formula,
         demand_model,
         demand_multiplier: o.demand_multiplier,
-        pda_min_pressure: o.pda_min_pressure * FT_TO_M,
-        pda_required_pressure: o.pda_required_pressure * FT_TO_M,
+        // Pressures are metres internally and metres on the wire.
+        pda_min_pressure: o.pda_min_pressure,
+        pda_required_pressure: o.pda_required_pressure,
         pda_pressure_exponent: o.pda_pressure_exponent,
         quality_mode,
         trace_node: o.trace_node.clone(),
@@ -173,8 +174,8 @@ fn apply_dto_to_options(
         s => return Err(format!("unknown demand model '{s}'")),
     };
     o.demand_multiplier = dto.demand_multiplier;
-    o.pda_min_pressure = dto.pda_min_pressure / FT_TO_M;
-    o.pda_required_pressure = dto.pda_required_pressure / FT_TO_M;
+    o.pda_min_pressure = dto.pda_min_pressure;
+    o.pda_required_pressure = dto.pda_required_pressure;
     o.pda_pressure_exponent = dto.pda_pressure_exponent;
     o.quality_mode = match dto.quality_mode.as_str() {
         "none" => QualityMode::None,

@@ -120,8 +120,15 @@ A curve is a piecewise-linear mapping from an $x$-value to a $y$-value.
 | Property | Description | Constraints |
 |---|---|---|
 | `id` | Unique string identifier | non-empty |
-| `kind` | `PUMP_HEAD`, `PUMP_EFFICIENCY`, `PUMP_VOLUME` (constant-HP), `TANK_VOLUME`, `GPV_HEADLOSS`, `PCV_LOSS_RATIO` | — |
+| `kind` | `GENERIC`, `PUMP_HEAD`, `PUMP_EFFICIENCY`, `TANK_VOLUME`, `GPV_HEADLOSS`, `PCV_LOSS_RATIO` | — |
 | `points` | Ordered list of $(x_i, y_i)$ pairs | length ≥ 2; $x$ strictly increasing |
+
+A curve's kind is not declared in the model — it is inferred from what
+references the curve (a pump's head or efficiency curve, a tank's volume
+curve, a GPV's or PCV's setting curve). `GENERIC` is the kind of a curve
+nothing references: its purpose is unknown, so the kind-specific
+invariants below do not apply to it, and no unit interpretation is
+imposed on its $x$ and $y$.
 
 **Additional invariants by kind**:
 - `PUMP_HEAD`: $y$ strictly decreasing (head must fall with increasing flow)

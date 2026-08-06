@@ -8,7 +8,9 @@ import {
   type PumpRow,
   type ReservoirRow,
   type TankRow,
+  useCurves,
   useJunctionRows,
+  usePatterns,
   usePipeRows,
   usePumpRows,
   useReservoirRows,
@@ -25,6 +27,7 @@ import { PipeTable } from "./PipeTable";
 import { PumpTable } from "./PumpTable";
 import { ReservoirTable } from "./ReservoirTable";
 import type { RowAction } from "./RowActionsCell";
+import { referenceIds } from "./referenceIds";
 import { editorRowHeight } from "./TablePrimitives";
 import { TankTable } from "./TankTable";
 import {
@@ -85,7 +88,35 @@ export function ElementsEditor({
     pendingDeletes,
     setPendingDeletes,
     nextTempIndex,
+    curveAdds,
+    curveDeletes,
+    patternAdds,
+    patternDeletes,
   } = useDraft();
+  // Ids the reference columns may name. Draft-aware: a curve added in the
+  // Curves tab is referenceable before the draft is saved, and one staged
+  // for deletion is not — answering from the saved network alone would get
+  // both backwards.
+  const savedCurves = useCurves();
+  const savedPatterns = usePatterns();
+  const curveIds = useMemo(
+    () =>
+      referenceIds(
+        savedCurves.map((c) => c.id),
+        curveAdds.keys(),
+        curveDeletes,
+      ),
+    [savedCurves, curveAdds, curveDeletes],
+  );
+  const patternIds = useMemo(
+    () =>
+      referenceIds(
+        savedPatterns.map((p) => p.id),
+        patternAdds.keys(),
+        patternDeletes,
+      ),
+    [savedPatterns, patternAdds, patternDeletes],
+  );
   const junctionRowsAll = useJunctionRows();
   const pipeRowsAll = usePipeRows();
   const pumpRowsAll = usePumpRows();
@@ -955,6 +986,7 @@ export function ElementsEditor({
         )}
         {activeSection === "pumps" && (
           <PumpTable
+            referenceIds={curveIds}
             rows={pumpRows}
             sortField={sortField ?? ""}
             sortAsc={sortAsc}
@@ -972,6 +1004,7 @@ export function ElementsEditor({
         )}
         {activeSection === "tanks" && (
           <TankTable
+            referenceIds={curveIds}
             rows={tankRows}
             sortField={sortField ?? ""}
             sortAsc={sortAsc}
@@ -988,6 +1021,7 @@ export function ElementsEditor({
         )}
         {activeSection === "reservoirs" && (
           <ReservoirTable
+            referenceIds={patternIds}
             rows={reservoirRows}
             sortField={sortField ?? ""}
             sortAsc={sortAsc}
@@ -1004,6 +1038,7 @@ export function ElementsEditor({
         )}
         {activeSection === "valves" && (
           <ValveTable
+            referenceIds={curveIds}
             rows={valveRows}
             sortField={sortField ?? ""}
             sortAsc={sortAsc}

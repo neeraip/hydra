@@ -33,8 +33,6 @@ export interface CanvasLayers {
   regions: boolean;
   nodeLabels: boolean; // Node label text
   linkLabels: boolean; // Link label text
-  pressZone: boolean; // Pressure zone overlay (future)
-  measure: boolean; // Measurement data overlay (future)
 }
 
 interface CanvasLayersCtx {
@@ -42,14 +40,17 @@ interface CanvasLayersCtx {
   setLayer: (id: keyof CanvasLayers, on: boolean) => void;
 }
 
+// Only layers the toolbar actually offers. `pressZone` and `measure` sat
+// here as declared-and-defaulted placeholders for overlays that were never
+// built, so the type promised two toggles the app had no way to reach —
+// and `pressZone` named a water-distribution concept in the one file that
+// documents itself as engine-neutral.
 const DEFAULT: CanvasLayers = {
   nodes: true,
   links: true,
   regions: true,
   nodeLabels: false,
   linkLabels: false,
-  pressZone: false,
-  measure: false,
 };
 
 const Ctx = createContext<CanvasLayersCtx>({

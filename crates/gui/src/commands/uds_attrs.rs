@@ -442,6 +442,49 @@ pub fn collection_detail(net: &Network, kind: &str, id: &str) -> CollectionDetai
                 )
             })
             .unwrap_or_default(),
+        // A registry entry's "contents" is what references it. A street
+        // section and an inlet design are flat property records — the row
+        // in the table already carries every field — so the detail answers
+        // the question the table cannot: who uses this, and to what end.
+        // Without it, following an inlet name from the inspector arrives
+        // somewhere that says nothing the inspector had not.
+        "street" => {
+            let Some(idx) = net.streets.iter().position(|st| st.id == id) else {
+                return CollectionDetailDto::default();
+            };
+            CollectionDetailDto {
+                lines: net
+                    .links
+                    .iter()
+                    .filter(|l| {
+                        l.cross_section.as_ref().and_then(|x| x.referent)
+                            == Some(hydra::uds::model::XsectReferent::Street(idx))
+                    })
+                    .map(|l| l.id.clone())
+                    .collect(),
+                ..Default::default()
+            }
+        }
+        "inlet" => {
+            let Some(idx) = net.inlets.iter().position(|i| i.id == id) else {
+                return CollectionDetailDto::default();
+            };
+            CollectionDetailDto {
+                lines: net
+                    .inlet_usage
+                    .iter()
+                    .filter(|u| u.design == idx)
+                    .filter_map(|u| {
+                        Some(format!(
+                            "{} → {}",
+                            net.links.get(u.link)?.id,
+                            net.vertices.get(u.capture_vertex)?.id
+                        ))
+                    })
+                    .collect(),
+                ..Default::default()
+            }
+        }
         "pattern" => net
             .patterns
             .iter()
@@ -748,6 +791,68 @@ fn collection_rows(
                 (t.id.clone(), m)
             })
             .collect(),
+        "street" => net
+            .streets
+            .iter()
+            .map(|st| {
+                let mut m = HashMap::new();
+                m.insert("crownWidth", Number(st.crown_width));
+                m.insert("curbHeight", Number(st.curb_height));
+                // Stored as a fraction, declared as a percent.
+                m.insert("crossSlope", Number(st.cross_slope * 100.0));
+                m.insert("roughness", Number(st.roughness));
+                m.insert("gutterWidth", Number(st.gutter_width));
+                m.insert("gutterDepression", Number(st.gutter_depression));
+                m.insert("sides", Number(f64::from(st.sides)));
+                (st.id.clone(), m)
+            })
+            .collect(),
+        "inlet" => net
+            .inlets
+            .iter()
+            .map(|i| {
+                let mut m = HashMap::new();
+                // A design may carry several openings at once — a
+                // combination inlet is one design with both a grate and a
+                // curb opening — so the summary names what is present
+                // rather than pretending there is a single type.
+                let mut openings: Vec<&str> = Vec::new();
+                if i.grate.is_some() {
+                    openings.push("grate");
+                }
+                if i.curb.is_some() {
+                    openings.push("curb");
+                }
+                if i.slotted.is_some() {
+                    openings.push("slotted");
+                }
+                if i.custom_curve.is_some() {
+                    openings.push("custom");
+                }
+                m.insert(
+                    "openings",
+                    Text(if openings.is_empty() {
+                        "—".to_string()
+                    } else {
+                        openings.join(" + ")
+                    }),
+                );
+                if let Some(g) = &i.grate {
+                    m.insert("grateLength", Number(g.length));
+                    m.insert("grateWidth", Number(g.width));
+                    m.insert("grateType", Text(format!("{:?}", g.grate)));
+                }
+                if let Some(c) = &i.curb {
+                    m.insert("curbLength", Number(c.length));
+                    m.insert("curbHeight", Number(c.height));
+                }
+                if let Some(sl) = &i.slotted {
+                    m.insert("slottedLength", Number(sl.length));
+                    m.insert("slottedWidth", Number(sl.width));
+                }
+                (i.id.clone(), m)
+            })
+            .collect(),
         _ => return None,
     };
     Some(rows)
@@ -814,6 +919,9 @@ pub struct InletCouplingDto {
     pub link: String,
     /// The vertex receiving captured flow.
     pub node: String,
+    /// Id of the inlet design doing the capturing — a `street`/`inlet`
+    /// registry entry, so the GUI can name it and follow it.
+    pub design: String,
 }
 
 /// Inlet couplings of the target's model, empty for engines without them.
@@ -842,6 +950,7 @@ pub fn get_inlet_couplings(
             Some(InletCouplingDto {
                 link: net.links.get(u.link)?.id.clone(),
                 node: net.vertices.get(u.capture_vertex)?.id.clone(),
+                design: net.inlets.get(u.design)?.id.clone(),
             })
         })
         .collect())
@@ -1113,5 +1222,138 @@ mod tests {
         // Fractions become percent, matching the schema's quantity.
         assert!((by("Slope").number.unwrap() - 1.5).abs() < 1e-6);
         assert!((by("Imperviousness").number.unwrap() - 40.0).abs() < 1e-6);
+    }
+}
+
+/// Street sections and inlet designs — the two registries a dual-drainage
+/// model carries that the GUI showed nowhere.
+///
+/// The canvas drew inlet couplings as dashed connectors and the inspector
+/// learned to follow them, but the design at the end of that connector was
+/// a name with no home: no rail entry, no table, nothing to open. These
+/// tests pin both kinds as first-class collections, so the name is a place
+/// the reader can go.
+#[cfg(test)]
+mod street_and_inlet_kinds {
+    use super::*;
+
+    /// The dual-drainage shape: a street channel with a combination inlet
+    /// (grate **and** curb, one design) capturing into a sewer junction.
+    const MODEL: &str = "\
+[OPTIONS]
+FLOW_UNITS  CFS
+
+[JUNCTIONS]
+J1   100  4
+J2   99   4
+SEW  90   8
+
+[OUTFALLS]
+O1  95  FREE
+O2  85  FREE
+
+[CONDUITS]
+GUT1  J1   J2  300  0.016  0  0
+C2    J2   O1  300  0.016  0  0
+SEW1  SEW  O2  300  0.013  0  0
+
+[XSECTIONS]
+GUT1  STREET    ST1
+C2    STREET    ST1
+SEW1  CIRCULAR  1.5  0  0  0
+
+[STREETS]
+ST1  20  0.5  2  0.016  0.1  2  1  10  4  0.02
+
+[INLETS]
+CB1  GRATE  2  2  P_BAR-50
+CB1  CURB   2  0.5  HORIZONTAL
+
+[INLET_USAGE]
+GUT1  CB1  SEW  1  0  0  0  0  ON_GRADE
+";
+
+    fn network() -> Network {
+        hydra::uds::io::objects::parse_network(MODEL).0
+    }
+
+    /// Both are declared kinds, so the Editor's catalog-driven rail lists
+    /// them without knowing they exist.
+    #[test]
+    fn both_registries_are_declared_element_kinds() {
+        let ids: Vec<&str> = hydra::uds::descriptors::ELEMENT_KINDS
+            .iter()
+            .map(|k| k.id)
+            .collect();
+        assert!(ids.contains(&"street"), "streets are a kind");
+        assert!(ids.contains(&"inlet"), "inlet designs are a kind");
+    }
+
+    #[test]
+    fn a_street_section_lists_with_its_geometry() {
+        let net = network();
+        let table = kind_elements(&net, "street");
+        assert_eq!(table.ids, vec!["ST1"]);
+        let col = |key: &str| {
+            table
+                .columns
+                .iter()
+                .find(|c| c.key == key)
+                .unwrap_or_else(|| panic!("street table has a {key} column"))
+        };
+        // 20 ft of crown width arrives as 6.096 m — the importer converts,
+        // and the column declares a length so the GUI can show either.
+        assert_eq!(col("crownWidth").quantity.unwrap().key, "length");
+        // Cross slope is a fraction in the model and a percent on screen.
+        assert_eq!(col("crossSlope").quantity.unwrap().key, "percent");
+    }
+
+    /// A combination inlet is *one* design carrying both a grate and a curb
+    /// opening. Reporting a single "type" would have to pick one and drop
+    /// the other, which is why the summary names what is present.
+    #[test]
+    fn a_combination_inlet_reports_both_its_openings() {
+        let net = network();
+        let table = kind_elements(&net, "inlet");
+        assert_eq!(table.ids, vec!["CB1"]);
+        let openings = table
+            .columns
+            .iter()
+            .find(|c| c.key == "openings")
+            .expect("inlet table has an openings column");
+        let summary = openings.values[0]
+            .as_str()
+            .unwrap_or_else(|| panic!("openings is text, got {:?}", openings.values[0]));
+        assert!(summary.contains("grate"), "got {summary}");
+        assert!(summary.contains("curb"), "got {summary}");
+    }
+
+    /// A registry entry's detail answers what its row cannot: who uses it.
+    /// Following an inlet's name from the inspector has to arrive somewhere
+    /// that says more than the inspector already did.
+    #[test]
+    fn a_registry_entry_lists_what_references_it() {
+        let net = network();
+        // Two conduits share the one street section.
+        let street = collection_detail(&net, "street", "ST1");
+        assert_eq!(street.lines, vec!["GUT1", "C2"]);
+        // The inlet says which street captures where through it.
+        let inlet = collection_detail(&net, "inlet", "CB1");
+        assert_eq!(inlet.lines, vec!["GUT1 → SEW"]);
+    }
+
+    /// The coupling the canvas draws now names the design at its end, so
+    /// the inspector can label the connector with how it captures and not
+    /// only where.
+    #[test]
+    fn a_coupling_names_the_design_doing_the_capturing() {
+        let net = network();
+        let coupling = net
+            .inlet_usage
+            .first()
+            .expect("the fixture has one inlet usage");
+        assert_eq!(net.links[coupling.link].id, "GUT1");
+        assert_eq!(net.vertices[coupling.capture_vertex].id, "SEW");
+        assert_eq!(net.inlets[coupling.design].id, "CB1");
     }
 }

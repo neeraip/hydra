@@ -6,6 +6,7 @@ import {
 import { useActiveProject, useAppState, useTasks } from "../../AppContext";
 import logoGlyphUrl from "../../assets/logo-glyph.png";
 import { PROJECT_VIEWS } from "../../hooks";
+import { loadSettingsContent } from "../../lazyChunks";
 import { formatPrimaryShortcut, isMacLikePlatform } from "../../shortcuts";
 import { NavButton } from "../ui/NavButton";
 
@@ -20,6 +21,8 @@ export function ActivityBar() {
     openCommandPalette,
     toggleTaskTray,
     taskTrayOpen,
+    toggleSettings,
+    settingsOpen,
     activeProjectId,
   } = useAppState();
   const { project } = useActiveProject();
@@ -206,8 +209,13 @@ export function ActivityBar() {
       <NavButton
         icon={<Cog6ToothIcon {...ICON} />}
         label="Settings"
-        active={page === "settings"}
-        onClick={() => setPage("settings")}
+        active={settingsOpen}
+        onClick={toggleSettings}
+        // Belt and braces with the idle prefetch in `App`: a pointer
+        // arriving here is the earliest reliable signal that the drawer is
+        // about to be wanted, and it lands a few hundred milliseconds
+        // before the click. Repeat calls are free.
+        onPrefetch={() => void loadSettingsContent()}
       />
     </div>
   );

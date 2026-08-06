@@ -1,16 +1,22 @@
-import { MagnifyingGlassIcon, MapPinIcon } from "@heroicons/react/24/outline";
+import { MagnifyingGlassIcon } from "@heroicons/react/24/outline";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useAppState, useSimulation } from "../../AppContext";
+import {
+  getDraftDirtyCount,
+  saveDraftsViaGuard,
+  useActiveProject,
+  useAppState,
+  useSimulation,
+} from "../../AppContext";
 import { useCanvasSelection } from "../../canvas/selection-context";
 import { engineComponents } from "../../engine/registry";
+import { buildResultsGeoJson } from "../../export/resultsGeoJson";
 import {
-  type Command,
-  type CommandCategory,
   formatInpImportError,
   type Link,
   type Node,
   openAndLoadNetwork,
+  updateProjectUnits,
   useLinks,
   useNetworkVersion,
   useNodes,
@@ -19,23 +25,28 @@ import {
   useScenarios,
 } from "../../hooks";
 import { tryInvoke } from "../../hooks/ipc";
+import { useUndoRedo } from "../../hooks/useUndoRedo";
 import {
   formatPrimaryShortcut,
   formatShortcut,
   primaryModifierLabel,
   shiftModifierLabel,
 } from "../../shortcuts";
-import { formatQtyRaw, type UnitSystem, useUnitSystem } from "../../units";
+import type { DisplayCategory, DynamicCommand } from "../../types/ui";
+import {
+  formatQtyRaw,
+  setUnitPreference,
+  type UnitPreference,
+  type UnitSystem,
+  useUnitPreference,
+  useUnitSystem,
+} from "../../units";
 import { lineageLabel } from "../panels/ScenariosPanel/shared";
 import { ModalBackdrop, stopBackdropEvents } from "../ui/ModalBackdrop";
+import { TypeBadge } from "../ui/TypeBadge";
+import { unitCommands } from "./unitCommands";
 
-/**
- * Display-only category union — extends the data-layer `CommandCategory`
- * with a synthetic "Page" group that the palette injects dynamically based
- * on the user's current view. The data layer doesn't know about "Page".
- */
-type DisplayCategory = CommandCategory | "Page" | "Scenarios";
-
+/** The order the groups are shown in. */
 const CATEGORY_ORDER: DisplayCategory[] = [
   "Page",
   "Recent",
@@ -44,13 +55,6 @@ const CATEGORY_ORDER: DisplayCategory[] = [
   "Scenarios",
   "Actions",
 ];
-
-interface DynamicCommand extends Omit<Command, "category"> {
-  projectId?: string;
-  /** Target for the "switch-scenario" action. */
-  scenarioId?: string;
-  category: DisplayCategory;
-}
 
 export interface ElementMatch {
   id: string;
@@ -85,7 +89,7 @@ export function searchElements(
       id: n.id,
       kind: "node",
       subtype: n.type,
-      description: `${n.type} · (${n.x}, ${n.y})`,
+      description: `(${n.x}, ${n.y})`,
     });
     found += 1;
   }
@@ -99,7 +103,7 @@ export function searchElements(
       subtype: l.type,
       // Diameter only when the engine served one — "⌀0 m" on every
       // attribute-less link read as data.
-      description: `${l.type} · ${l.fromId} → ${l.toId}${
+      description: `${l.fromId} → ${l.toId}${
         l.diameter != null && l.diameter > 0
           ? ` · ⌀${formatQtyRaw(l.diameter, "diameter", sys)}`
           : ""
@@ -140,6 +144,13 @@ const STATIC_COMMANDS: DynamicCommand[] = [
     action: "theme-system",
   },
   {
+    id: "a-shortcuts",
+    label: "Keyboard shortcuts",
+    description: "Show every shortcut this app listens for",
+    category: "Actions",
+    action: "shortcut-card",
+  },
+  {
     id: "a-docs",
     label: "Open documentation",
     description: "Open the Hydra docs in your browser",
@@ -172,7 +183,13 @@ export function CommandPalette() {
     projectsVersion,
     scenariosVersion,
     requestClearResults,
+    toggleSettings,
+    toggleShortcutCard,
+    bumpProjects,
   } = useAppState();
+  const { undo, redo } = useUndoRedo();
+  const { project: activeProject } = useActiveProject();
+  const appDefaultUnits = useUnitPreference();
 
   const projects = useProjects(projectsVersion);
   // Engine key of the open project — the "import model file" action needs it
@@ -198,6 +215,7 @@ export function CommandPalette() {
     zoomToLink,
     simNodes,
     simLinks,
+    simRegions,
   } = useCanvasSelection();
   const { resultMeta } = useSimulation();
   const { bumpNetwork } = useNetworkVersion();
@@ -223,17 +241,26 @@ export function CommandPalette() {
           projectId: p.id,
         })),
       ...STATIC_COMMANDS,
+      ...unitCommands(
+        activeProjectId !== null,
+        activeProject?.unitSystem ?? null,
+        appDefaultUnits,
+      ),
     ],
-    [projects, query],
+    [projects, query, activeProjectId, activeProject, appDefaultUnits],
   );
   const [activeIdx, setActiveIdx] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const modifier = primaryModifierLabel();
+  const navOverviewShortcut = formatShortcut([modifier, "1"]);
   const navCanvasShortcut = formatShortcut([modifier, "2"]);
   const navEditorShortcut = formatShortcut([modifier, "3"]);
   const navAnalysisShortcut = formatShortcut([modifier, "4"]);
   const runShortcut = formatPrimaryShortcut("R");
+  const undoShortcut = formatPrimaryShortcut("Z");
+  const redoShortcut = formatShortcut([modifier, shiftModifierLabel(), "Z"]);
+  const saveShortcut = formatPrimaryShortcut("S");
   const toggleLayoutShortcut = formatPrimaryShortcut("M");
   const zoomInShortcut = formatPrimaryShortcut("=");
   const zoomOutShortcut = formatPrimaryShortcut("-");
@@ -259,18 +286,17 @@ export function CommandPalette() {
         },
       ];
     }
-    if (page === "settings") {
-      return [
-        {
-          id: "p-back-home",
-          label: "Back to home",
-          category: "Page",
-          action: "nav-home",
-        },
-      ];
-    }
     if (page === "project" && activeProjectId) {
       const nav: DynamicCommand[] = [
+        {
+          // ⌘1, and the only numbered view the palette used to omit.
+          id: "n0",
+          label: "Overview",
+          category: "Navigate",
+          description: "Open the project overview",
+          shortcut: navOverviewShortcut,
+          action: "nav-overview",
+        },
         {
           id: "n1",
           label: "Canvas",
@@ -284,21 +310,38 @@ export function CommandPalette() {
           category: "Navigate",
           action: "nav-scenarios",
         },
+        // Labels are the tab labels, verbatim. They had drifted — the tabs
+        // read "Results" and "Editor" while the palette offered "Analysis"
+        // and "Network Editor", so searching the palette for what is
+        // written on screen found nothing. "Network Editor" was doubly
+        // wrong for a read-only engine, which has an Editor but edits
+        // nothing.
+        //
+        // The former labels survive in the descriptions, which the filter
+        // also searches — renaming a command should not strip the word a
+        // user has been typing for a year.
         {
           id: "n3",
-          label: "Analysis",
+          label: "Results",
           category: "Navigate",
-          description: "Open the analysis view",
+          description: "Open the results and analysis view",
           shortcut: navAnalysisShortcut,
           action: "nav-analysis",
         },
         {
           id: "n4",
-          label: "Network Editor",
+          label: "Editor",
           category: "Navigate",
-          description: "Open the editor view",
+          description: "Open the network editor view",
           shortcut: navEditorShortcut,
           action: "nav-editor",
+        },
+        {
+          id: "n5",
+          label: "Report",
+          category: "Navigate",
+          description: "Open the report builder — and export from there",
+          action: "nav-report",
         },
       ];
       const simulate: DynamicCommand[] = [
@@ -316,7 +359,7 @@ export function CommandPalette() {
           id: "a2",
           label: "Export results to GeoJSON",
           description:
-            "Export nodes/links with attributes and result values when available",
+            "Export every element with its attributes and result values when available",
           category: "Actions",
         },
         {
@@ -350,6 +393,30 @@ export function CommandPalette() {
               } satisfies DynamicCommand,
             ]
           : []),
+        {
+          id: "a-undo",
+          label: "Undo",
+          description: "Reverse the last committed network edit",
+          category: "Actions",
+          shortcut: undoShortcut,
+          action: "undo",
+        },
+        {
+          id: "a-redo",
+          label: "Redo",
+          description: "Reapply the edit that was undone",
+          category: "Actions",
+          shortcut: redoShortcut,
+          action: "redo",
+        },
+        {
+          id: "a-save",
+          label: "Save changes",
+          description: "Write staged editor changes to the model",
+          category: "Actions",
+          shortcut: saveShortcut,
+          action: "save-changes",
+        },
         {
           id: "a4",
           label: "Import model file…",
@@ -452,6 +519,14 @@ export function CommandPalette() {
           action: "canvas-fit-network",
         },
         {
+          id: "p-toggle-view",
+          label: "Clear view / restore panels",
+          description:
+            "Close everything covering the map — or bring the panels back",
+          category: "Page",
+          action: "canvas-toggle-view",
+        },
+        {
           id: "p-reset-north",
           label: "Reset north",
           description: "Reset map bearing to north-up",
@@ -500,7 +575,11 @@ export function CommandPalette() {
     navCanvasShortcut,
     navEditorShortcut,
     navAnalysisShortcut,
+    navOverviewShortcut,
     runShortcut,
+    undoShortcut,
+    redoShortcut,
+    saveShortcut,
     toggleLayoutShortcut,
     zoomInShortcut,
     zoomOutShortcut,
@@ -682,80 +761,16 @@ export function CommandPalette() {
           return;
         }
         // Sim-merged arrays carry the engine-generic per-period values
-        // (`resultValues`, SI) — plain arrays otherwise.
-        const exportNodes = simNodes ?? allNodes;
-        const exportLinks = simLinks ?? allLinks;
-        const nodeCoords = new Map(
-          exportNodes.map((n) => [n.id, [n.x, n.y] as [number, number]]),
+        // (`resultValues`, SI) — plain arrays otherwise. All three classes
+        // take the same merged source: reading the unmerged regions here
+        // exported subcatchments with their geometry and none of their
+        // runoff, while the nodes and links in the same file carried a
+        // full result set.
+        const fc = buildResultsGeoJson(
+          simNodes ?? allNodes,
+          simLinks ?? allLinks,
+          simRegions ?? allRegions,
         );
-        const fc = {
-          type: "FeatureCollection" as const,
-          features: [
-            ...exportNodes.map((n) => ({
-              type: "Feature" as const,
-              geometry: { type: "Point" as const, coordinates: [n.x, n.y] },
-              properties: {
-                id: n.id,
-                type: n.type,
-                // Static attributes, then result values when available.
-                ...(n.elevation != null ? { elevation: n.elevation } : {}),
-                ...(n.pressure != null ? { pressure: n.pressure } : {}),
-                ...(n.head != null ? { head: n.head } : {}),
-                ...(n.demand != null ? { demand: n.demand } : {}),
-                ...(n.quality != null ? { quality: n.quality } : {}),
-                ...(n.resultValues ?? {}),
-              },
-            })),
-            ...exportLinks.map((l) => {
-              const from = nodeCoords.get(l.fromId) ?? [0, 0];
-              const to = nodeCoords.get(l.toId) ?? [0, 0];
-              return {
-                type: "Feature" as const,
-                geometry: {
-                  type: "LineString" as const,
-                  // Intermediate vertices included — a straight from→to
-                  // line flattened every polyline conduit.
-                  coordinates: [from, ...(l.vertices ?? []), to],
-                },
-                properties: {
-                  id: l.id,
-                  type: l.type,
-                  // Static attributes, then result values when available.
-                  // Absent attributes are omitted, never exported as 0.
-                  ...(l.diameter != null && l.diameter > 0
-                    ? { diameter: l.diameter }
-                    : {}),
-                  ...(l.length != null && l.length > 0
-                    ? { length: l.length }
-                    : {}),
-                  // `velocity` is only meaningful once sim data is merged in
-                  // — gate it on `flow` like the other result values.
-                  ...(l.flow != null
-                    ? { flow: l.flow, velocity: l.velocity }
-                    : {}),
-                  ...(l.status != null ? { status: l.status } : {}),
-                  ...(l.quality != null ? { quality: l.quality } : {}),
-                  ...(l.resultValues ?? {}),
-                },
-              };
-            }),
-            // Areal elements (subcatchments) as closed polygons.
-            ...allRegions
-              .filter((r) => r.ring.length >= 3)
-              .map((r) => ({
-                type: "Feature" as const,
-                geometry: {
-                  type: "Polygon" as const,
-                  coordinates: [[...r.ring, r.ring[0]]],
-                },
-                properties: {
-                  id: r.id,
-                  type: r.type,
-                  ...(r.outletId != null ? { outlet: r.outletId } : {}),
-                },
-              })),
-          ],
-        };
         const blob = new Blob([JSON.stringify(fc, null, 2)], {
           type: "application/json",
         });
@@ -789,8 +804,39 @@ export function CommandPalette() {
         case "nav-editor":
           setProjectView("editor");
           break;
+        case "nav-overview":
+          setProjectView("overview");
+          break;
+        case "nav-report":
+          setProjectView("report");
+          break;
+        case "undo":
+          undo();
+          break;
+        case "redo":
+          redo();
+          break;
+        case "save-changes":
+          // Same guard the shortcut uses: saving nothing would toast a
+          // success for work that was never staged.
+          if (getDraftDirtyCount() > 0) void saveDraftsViaGuard();
+          else showToast("No unsaved changes", "info");
+          break;
+        case "shortcut-card":
+          toggleShortcutCard();
+          break;
+        case "canvas-toggle-view":
+          setProjectView("canvas");
+          window.dispatchEvent(
+            new CustomEvent("hydra:canvas-viewport", {
+              detail: "toggle-view",
+            }),
+          );
+          break;
         case "nav-settings":
-          setPage("settings");
+          // An overlay, so it opens over wherever you are rather than
+          // navigating — the page underneath is left alone.
+          toggleSettings();
           break;
         case "nav-home":
           if (activeProjectId) {
@@ -888,6 +934,29 @@ export function CommandPalette() {
         case "theme-system":
           setTheme("system");
           break;
+        case "units-default-source":
+        case "units-default-si":
+        case "units-default-us":
+          setUnitPreference(
+            cmd.action.slice("units-default-".length) as UnitPreference,
+          );
+          break;
+        case "units-project-source":
+        case "units-project-si":
+        case "units-project-us":
+        case "units-project-inherit": {
+          if (!activeProjectId) break;
+          const next =
+            cmd.action === "units-project-inherit"
+              ? null
+              : (cmd.action.slice("units-project-".length) as UnitPreference);
+          // Persisted like every other project field, then announced: the
+          // picker in the toolbar reads the same project record, so without
+          // the bump the palette would change the units and leave the
+          // control that shows them reading the old value.
+          void updateProjectUnits(activeProjectId, next).then(bumpProjects);
+          break;
+        }
         default:
           break;
       }
@@ -909,16 +978,22 @@ export function CommandPalette() {
       setTheme,
       openRunModal,
       openScenariosModal,
+      toggleSettings,
+      toggleShortcutCard,
+      undo,
+      redo,
       resultMeta,
       allNodes,
       allLinks,
       allRegions,
       simNodes,
       simLinks,
+      simRegions,
       bumpNetwork,
       openIssuesPanel,
       toggleTaskTray,
       showToast,
+      bumpProjects,
     ],
   );
 
@@ -1126,14 +1201,12 @@ export function CommandPalette() {
                         : "2px solid transparent",
                     }}
                   >
-                    <MapPinIcon
-                      style={{
-                        width: 16,
-                        height: 16,
-                        flexShrink: 0,
-                        color: m.kind === "node" ? "#4a90d9" : "#3daf75",
-                      }}
-                    />
+                    {/* The kind's own glyph, not a generic pin tinted by
+                        class: the pin said "this is an element" twice over
+                        — the list is nothing else — where the badge says
+                        which kind, in the same letters every other surface
+                        uses. */}
+                    <TypeBadge type={m.subtype} />
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div
                         style={{
@@ -1151,7 +1224,7 @@ export function CommandPalette() {
                             fontFamily: "var(--font-ui)",
                           }}
                         >
-                          {m.kind} · {m.subtype}
+                          {m.subtype}
                         </span>
                       </div>
                       <div

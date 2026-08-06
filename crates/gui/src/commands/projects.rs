@@ -53,6 +53,10 @@ pub struct Project {
     pub link_count: u32,
     /// EPSG code for the coordinate reference system of the INP \[COORDINATES\].
     pub source_crs: String,
+    /// This project's display-unit override — `"source"`, `"si"`, `"us"`,
+    /// or absent when it follows the app-wide default.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub unit_system: Option<String>,
     pub insights: Option<ProjectInsights>,
     /// `true` when the project's on-disk bundle directory is absent. Always
     /// `false` now that projects are discovered by scanning the filesystem;
@@ -283,6 +287,9 @@ pub fn create_project(
         source_crs: source_crs_for_model(&inp_bytes),
         node_count,
         link_count,
+        // No override: a new project follows the app-wide default until
+        // someone says otherwise.
+        unit_system: None,
     };
     meta::write_project_meta(&project_dir, &meta)?;
 
@@ -383,10 +390,82 @@ fn source_crs_for_model(bytes: &[u8]) -> String {
     "EPSG:4326".to_string()
 }
 
+/// The unit system a target's own model declares — `"si"` or `"us"`.
+///
+/// This is what the `"source"` display preference resolves to. Both engines
+/// declare a named flow unit (GPM, CFS, LPS, CMS, …) that falls into one of
+/// two coherent groups, and that group is the finest distinction the §5
+/// quantity descriptors can express: they carry one SI label and one US
+/// label, so a CFS model and a GPM model both resolve to `"us"` and both
+/// display gpm. Reports are finer-grained — they name the model's exact
+/// flow unit — which is why the setting this feeds is about a *system*,
+/// not about matching the file's every label.
+///
+/// `None` when the target has no model yet, or its engine declares none.
+#[tauri::command(async)]
+pub fn get_model_unit_system(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, NetworkState>,
+    project_id: String,
+    scenario_id: Option<String>,
+) -> Result<Option<String>, String> {
+    validate_target_ids(&project_id, scenario_id.as_deref())?;
+    let app_data = app_data_dir(&app)?;
+    let si = |b: bool| Ok(Some(if b { "si" } else { "us" }.to_string()));
+    match project_engine_key(&app_data, &project_id).as_str() {
+        "wds" => {
+            let network = super::results::network_for_target(
+                &app_data,
+                &state,
+                &project_id,
+                scenario_id.as_deref(),
+            )?;
+            si(hydra::io::units::is_si(network.options.flow_units))
+        }
+        "uds" => {
+            let network = super::results::uds_network_for_target(
+                &app_data,
+                &state,
+                &project_id,
+                scenario_id.as_deref(),
+            )?;
+            si(!network.options.flow_units.is_us())
+        }
+        _ => Ok(None),
+    }
+}
+
+/// Set a project's display unit system, or clear the override back to the
+/// app-wide default with `None`. Returns `true` when the metadata was
+/// updated, `false` when the project is not found on disk.
+#[tauri::command]
+pub fn update_project_units(
+    app: tauri::AppHandle,
+    id: String,
+    unit_system: Option<String>,
+) -> Result<bool, String> {
+    validate_id(&id)?;
+    if let Some(v) = unit_system.as_deref() {
+        if !matches!(v, "source" | "si" | "us") {
+            return Err(format!("unknown unit system '{v}'"));
+        }
+    }
+    let app_data = app_data_dir(&app)?;
+    let project_dir = bundle::project_dir(&app_data, &id);
+    if !project_dir.exists() {
+        return Ok(false);
+    }
+    let mut project_meta = meta::read_project_meta(&project_dir)?;
+    // `None` clears the override — back to following the default, which is
+    // not the same as pinning the value the default currently holds.
+    project_meta.unit_system = unit_system;
+    meta::write_project_meta(&project_dir, &project_meta)?;
+    Ok(true)
+}
+
 /// Update the source CRS for a project. Returns `true` when the metadata was
 /// updated, `false` when the project is not found on disk.
 #[tauri::command]
-/// Update the `source_crs` field in project `meta.json`.
 pub fn update_project_crs(app: tauri::AppHandle, id: String, crs: String) -> Result<bool, String> {
     validate_id(&id)?;
     let app_data = app_data_dir(&app)?;
@@ -1350,6 +1429,7 @@ fn project_to_dto(
         node_count: meta.node_count,
         link_count: meta.link_count,
         source_crs: meta.source_crs.clone(),
+        unit_system: meta.unit_system.clone(),
         insights: None,
         folder_missing,
     }
@@ -2364,6 +2444,47 @@ mod tests {
         assert!(!err.contains("not available yet"), "got: {err}");
     }
 
+    /// The wds Editor's rail is declared by hand rather than built from
+    /// this catalog — each of its sections is a bespoke editable table, so
+    /// there is nothing to derive a section from that would not still need
+    /// a hand-written kind→component map beside it.
+    ///
+    /// The cost of declaring it is drift, and it has already been paid
+    /// once: the rail called the Curves section "Pump curves" long after
+    /// this catalog called it "Curves" and the curve payload distinguished
+    /// tank-volume and valve-headloss curves from pump ones.
+    ///
+    /// So the claim is pinned on both sides. This half notices the engine
+    /// changing; the frontend half — `editorRail.test.ts` — notices the
+    /// rail changing, and asserts every kind listed here reaches exactly
+    /// one section under its own label. Changing this list without
+    /// changing that one fails the pair, which is the point.
+    #[test]
+    fn the_gui_editor_rail_mirrors_this_catalog() {
+        let catalog: Vec<(&str, &str)> = list_element_kinds("wds".into())
+            .iter()
+            .map(|k| (k.id, k.label_plural))
+            .collect();
+        assert_eq!(
+            catalog,
+            vec![
+                ("junction", "Junctions"),
+                ("reservoir", "Reservoirs"),
+                ("tank", "Tanks"),
+                ("pipe", "Pipes"),
+                ("pump", "Pumps"),
+                ("valve", "Valves"),
+                ("pattern", "Patterns"),
+                ("curve", "Curves"),
+                ("control", "Controls"),
+                ("rule", "Rules"),
+            ],
+            "the wds catalog changed — update the Editor rail in \
+             crates/gui/frontend/src/pages/project/NetworkEditor/editorRail.ts \
+             and the CATALOG mirror in its test, then update this list"
+        );
+    }
+
     // ── deleting simulation results ──────────────────────────────────────
 
     #[test]
@@ -2635,6 +2756,7 @@ R1  0.0  0.0
             source_crs: "EPSG:4326".into(),
             node_count: nodes,
             link_count: links,
+            unit_system: None,
         }
     }
 
@@ -2938,6 +3060,71 @@ R1  0.0  0.0
         assert_eq!(
             meta::read_project_meta(&project_dir).unwrap().name,
             "renamed"
+        );
+    }
+}
+
+/// What `get_model_unit_system` reports, and what the project override
+/// persists — the two inputs the GUI's display-unit resolution reads.
+#[cfg(test)]
+mod unit_preference {
+    use super::*;
+
+    fn group_of(inp: &str) -> bool {
+        let network = hydra::io::parse(inp.as_bytes()).expect("fixture parses");
+        hydra::io::units::is_si(network.options.flow_units)
+    }
+
+    const MODEL: &str = "[JUNCTIONS]\nJ1 100 0\n\n[RESERVOIRS]\nR1 200\n\n\
+                         [PIPES]\nP1 R1 J1 1000 12 100 0 Open\n\n\
+                         [OPTIONS]\nUnits  ";
+
+    /// Every named flow unit falls into one of the two groups the §5
+    /// descriptors can express. This is the mapping `"source"` resolves
+    /// through, so a variant landing in the wrong group would show a whole
+    /// model in the wrong system.
+    #[test]
+    fn every_flow_unit_resolves_to_the_right_group() {
+        for us in ["CFS", "GPM", "MGD", "IMGD", "AFD"] {
+            assert!(
+                !group_of(&format!("{MODEL}{us}\n")),
+                "{us} is a US customary flow unit"
+            );
+        }
+        for si in ["LPS", "LPM", "MLD", "CMH", "CMD", "CMS"] {
+            assert!(
+                group_of(&format!("{MODEL}{si}\n")),
+                "{si} is an SI flow unit"
+            );
+        }
+    }
+
+    /// `None` clears the override rather than storing a value, because
+    /// "follow the default" and "pin the value the default currently
+    /// holds" must stay distinguishable — they diverge the moment the
+    /// default changes.
+    #[test]
+    fn clearing_the_override_is_distinct_from_pinning_its_value() {
+        let mut meta = meta::ProjectMeta {
+            version: 1,
+            name: "p".into(),
+            engine: "wds".into(),
+            source_crs: "EPSG:4326".into(),
+            node_count: 0,
+            link_count: 0,
+            unit_system: None,
+        };
+        assert_eq!(meta.unit_system, None, "a new project inherits");
+
+        meta.unit_system = Some("source".into());
+        let pinned = serde_json::to_string(&meta).unwrap();
+        assert!(pinned.contains("unitSystem"), "a pin is written");
+
+        meta.unit_system = None;
+        let inherited = serde_json::to_string(&meta).unwrap();
+        assert!(
+            !inherited.contains("unitSystem"),
+            "inheriting is the absence of the field, not a value: {inherited}"
         );
     }
 }

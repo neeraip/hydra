@@ -148,7 +148,12 @@ const UDS: EngineComponents = {
   NodeInspectorBody: UdsNodeInspectorBody,
   LinkInspectorBody: UdsLinkInspectorBody,
   RegionInspectorBody: UdsRegionInspectorBody,
-  editorFocusesElements: false,
+  // The drainage Editor reveals a focused element: it shows the element's
+  // own kind and scrolls to its row. It could not when it was a single
+  // unnavigable table, which is why this was false — being read-only was
+  // never the reason, and hiding the affordance for a viewer confused "you
+  // cannot change this" with "you cannot find this".
+  editorFocusesElements: true,
   settingsEditable: false,
   modelEditable: false,
   // Drainage has no compliance standard in the project criteria file.

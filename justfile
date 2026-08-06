@@ -63,9 +63,19 @@ test-cli:
 test-gui:
     cargo test -p hydra-gui
 
-# Run frontend tests only
+# Run frontend unit + component tests only
 test-frontend:
     cd crates/gui/frontend && pnpm test
+
+# Run the layout tests only — a real browser, because jsdom performs no
+# layout and answers every question about a box with a zero. Needs the
+# Chromium Playwright downloads (`just setup-layout-tests`).
+test-layout:
+    cd crates/gui/frontend && pnpm test:layout
+
+# One-time: fetch the browser the layout tests drive.
+setup-layout-tests:
+    cd crates/gui/frontend && pnpm exec playwright install chromium
 
 # Run Python script unit tests
 test-scripts:
@@ -223,7 +233,7 @@ docs:
 # Skips the slower CI-only steps (deny, docs-api, catalog drift, lockfile
 # check, python scripts); run `just ci` for the full set.
 # Fast local gate: every static check plus the Rust and frontend test suites
-verify: lint test test-frontend
+verify: lint test test-frontend test-layout
 
 # Fails when package.json and pnpm-lock.yaml have drifted (e.g. a hand-edited
 # dependency without a corresponding install); fast no-op when in sync.
@@ -234,7 +244,7 @@ check-frontend-lockfile:
 # `test` already covers every workspace crate with CI's exact flags, so the
 # per-crate test recipes are not repeated here.
 # Run all checks that CI runs (mirrors cargo-ci + pnpm-ci + scripts-ci)
-ci: deny check-frontend-lockfile lint docs-api test check-crs-catalog build-frontend test-frontend test-scripts
+ci: deny check-frontend-lockfile lint docs-api test check-crs-catalog build-frontend test-frontend test-layout test-scripts
 
 # ── Release ───────────────────────────────────────────────────────────────────
 

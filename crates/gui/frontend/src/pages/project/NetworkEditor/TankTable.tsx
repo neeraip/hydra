@@ -18,6 +18,7 @@ import {
 const COL_COUNT = 10;
 
 export function TankTable({
+  referenceIds,
   rows,
   sortField,
   sortAsc,
@@ -31,6 +32,8 @@ export function TankTable({
   scrollContainerRef,
   onRowAction,
 }: {
+  /** Ids this table's reference column may name (draft-aware). */
+  referenceIds: readonly string[];
   rows: TankRow[];
   sortField: string;
   sortAsc: boolean;
@@ -320,6 +323,7 @@ export function TankTable({
                 placeholder={isPendingRow || row.volumeCurve == null}
                 isPending={pendingKeys.has(`tank:${row.id}:volumeCurve`)}
                 onCommit={(v) => onPatch("tank", row.id, "volumeCurve", v)}
+                options={referenceIds}
               />
               <EditableCell
                 key={`${discardGen}-${row.id}-x`}

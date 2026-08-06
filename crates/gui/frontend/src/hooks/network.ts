@@ -847,16 +847,95 @@ export function usePatterns(_version = 0): Pattern[] {
 
 // ── Curve / pattern editor types ───────────────────────────────────────────
 
+/**
+ * One sample on a curve, in the SI display units of its curve's axes.
+ *
+ * Named `x`/`y` because only the curve knows what they are: flow and head
+ * on a pump curve, level and volume on a tank curve, a valve position and
+ * a loss ratio on a PCV curve. They were `flow`/`head`, which made every
+ * curve read as a pump curve and every axis label a lie for four of the
+ * six kinds.
+ */
 export interface CurvePoint {
-  flow: number; // L/s
-  head: number; // m
+  x: number;
+  y: number;
+}
+
+/** What one axis of a curve measures, and in what — engine-authored. */
+export interface CurveAxis {
+  label: string;
+  /** §5 quantity for this axis's values; absent = unitless. */
+  quantity?: GenericQuantity;
+}
+
+interface CurveKindAxesDto {
+  kind: string;
+  axes: [CurveAxis, CurveAxis];
+}
+
+/**
+ * Axes for a curve whose kind is not (yet) known, or whose engine
+ * publishes none: two bare magnitudes, converted by nothing.
+ *
+ * Deliberately not pump-head axes. A wrong unit is worse than no unit —
+ * it invites the reader to trust a number that has not been converted,
+ * and this is exactly what a value typed into a not-yet-created curve
+ * used to be stored as.
+ */
+export const UNKNOWN_CURVE_AXES: [CurveAxis, CurveAxis] = [
+  { label: "X" },
+  { label: "Y" },
+];
+
+/**
+ * The engine's curve axes by kind, keyed for lookup.
+ *
+ * Static per engine — a property of the domain, not of any model — so one
+ * fetch serves every curve, saved or staged. Empty before it resolves, and
+ * for engines whose curves this GUI does not edit.
+ */
+export function useCurveAxes(
+  engineKey: string | null | undefined,
+): Record<string, [CurveAxis, CurveAxis]> {
+  const [byKind, setByKind] = useState<Record<string, [CurveAxis, CurveAxis]>>(
+    {},
+  );
+  useEffect(() => {
+    if (!engineKey) {
+      setByKind({});
+      return;
+    }
+    let cancelled = false;
+    void tryInvokeOr<CurveKindAxesDto[]>(
+      "list_curve_axes",
+      { engine: engineKey },
+      [],
+    ).then((rows) => {
+      if (cancelled) return;
+      setByKind(Object.fromEntries(rows.map((r) => [r.kind, r.axes])));
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [engineKey]);
+  return byKind;
 }
 export interface PumpCurve {
   id: string;
   pumpId: string;
-  curveType: "single-point" | "three-point" | "multi-point";
+  /**
+   * What the curve is for, as the engine classified it from the model's
+   * own references: `pump-head`, `pump-efficiency`, `tank-volume`,
+   * `gpv-headloss`, `pcv-loss-ratio`, or `generic` for one nothing
+   * references.
+   *
+   * This replaced a `curveType` field that was not a type at all — it
+   * held `single-point`/`three-point`/`multi-point`, a restatement of
+   * `points.length` under a name that read as the curve's role, while the
+   * engine's actual role travelled in the same payload and was dropped.
+   */
+  role: string;
   points: CurvePoint[];
-  bep?: number;
   notes?: string;
 }
 export interface TimePattern {
@@ -891,19 +970,13 @@ export function useCurves(version = 0): PumpCurve[] {
     }
     return dtos.map((d) => {
       const points: CurvePoint[] = d.x.map((x, i) => ({
-        flow: x,
-        head: d.y[i] ?? 0,
+        x,
+        y: d.y[i] ?? 0,
       }));
-      const curveType: PumpCurve["curveType"] =
-        points.length === 1
-          ? "single-point"
-          : points.length === 3
-            ? "three-point"
-            : "multi-point";
       return {
         id: d.id,
         pumpId: pumpByCurveId.get(d.id) ?? "",
-        curveType,
+        role: d.kind,
         points,
       };
     });
@@ -1103,6 +1176,9 @@ export interface InletCoupling {
   link: string;
   /** Id of the node receiving captured flow. */
   node: string;
+  /** Id of the inlet design doing the capturing — an `inlet` registry
+   * entry, listed in the Editor like any other collection. */
+  design: string;
 }
 
 /** Inlet couplings for a target; empty for engines that have none. */

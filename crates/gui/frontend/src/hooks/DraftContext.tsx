@@ -537,8 +537,8 @@ export function DraftProvider({ children }: { children: ReactNode }) {
         await record(`update curve '${id}'`, () =>
           updateCurvePoints(
             id,
-            points.map((p) => p.flow),
-            points.map((p) => p.head),
+            points.map((p) => p.x),
+            points.map((p) => p.y),
           ),
         );
       }
@@ -550,8 +550,8 @@ export function DraftProvider({ children }: { children: ReactNode }) {
           await createCurve(id);
           await updateCurvePoints(
             id,
-            points.map((p) => p.flow),
-            points.map((p) => p.head),
+            points.map((p) => p.x),
+            points.map((p) => p.y),
           );
         });
       }

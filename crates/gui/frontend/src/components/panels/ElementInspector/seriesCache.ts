@@ -8,6 +8,7 @@
  * runs is a hit and never refetches.
  */
 
+import type { ElementSeriesKind } from "../../../hooks/results";
 import type { Quantity } from "../../../units";
 
 /**
@@ -30,7 +31,7 @@ export interface ElementSeriesKeyParts {
   scenarioId: string | null;
   /** Freshness token from `useSimulation().resultGeneration`. */
   resultGeneration: number;
-  kind: "node" | "link";
+  kind: ElementSeriesKind;
   elementId: string;
 }
 

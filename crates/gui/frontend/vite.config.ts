@@ -1,5 +1,6 @@
 import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
+import { playwright } from "@vitest/browser-playwright";
 import { defineConfig } from "vite";
 
 export default defineConfig({
@@ -44,12 +45,46 @@ export default defineConfig({
     chunkSizeWarningLimit: 2000,
   },
   test: {
-    // Run in a Node environment — no DOM needed for pure logic tests.
-    // Tests that need the browser environment can opt in with a
-    // `@vitest-environment jsdom` docblock comment (after installing jsdom).
-    environment: "node",
-    include: ["src/**/*.test.ts", "src/**/*.test.tsx"],
-    // Applies to every test; the DOM-only parts no-op under `node`.
-    setupFiles: ["./src/test-setup.ts"],
+    projects: [
+      {
+        extends: true,
+        test: {
+          name: "unit",
+          // Node by default — no DOM needed for pure logic tests. Tests
+          // that need one opt in with a `@vitest-environment jsdom`
+          // docblock.
+          environment: "node",
+          include: ["src/**/*.test.ts", "src/**/*.test.tsx"],
+          exclude: ["src/**/*.layout.test.tsx"],
+          // Applies to every test; the DOM-only parts no-op under `node`.
+          setupFiles: ["./src/test-setup.ts"],
+        },
+      },
+      {
+        extends: true,
+        test: {
+          name: "layout",
+          // A real browser, because jsdom performs no layout at all:
+          // `getBoundingClientRect` returns zeros there, so every question
+          // about width, height or overflow is unanswerable. Two bugs that
+          // reached users — a settings column that sized to its content and
+          // a list row too short for its own second line — were invisible
+          // to the suite for exactly that reason.
+          //
+          // Deliberately narrow. These assert *numbers about elements*, not
+          // screenshots: font rasterisation differs between a developer's
+          // machine and CI, so pixel diffing would churn without catching
+          // much. A box that must stay one width does neither.
+          include: ["src/**/*.layout.test.tsx"],
+          setupFiles: ["./src/layout-setup.ts"],
+          browser: {
+            enabled: true,
+            provider: playwright(),
+            headless: true,
+            instances: [{ browser: "chromium" }],
+          },
+        },
+      },
+    ],
   },
 });
