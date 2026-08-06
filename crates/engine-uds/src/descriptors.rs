@@ -626,6 +626,40 @@ fn var(
 
 #[cfg(test)]
 mod tests {
+    /// The kinds placed on a map come first, and the ones that are not
+    /// come last — with no interleaving.
+    ///
+    /// Applications lean on this. The drainage editor's rail draws one
+    /// rule between the two groups rather than offering a second level of
+    /// navigation, and it finds that rule by looking for the first
+    /// collection: a spatial kind declared after the collections would put
+    /// the rule in the middle of them, and the rail would read as though
+    /// a curve belonged on the canvas.
+    ///
+    /// Ordering a catalog is this crate's business, so the guarantee is
+    /// asserted here rather than assumed there.
+    #[test]
+    fn spatial_kinds_precede_the_collections() {
+        use super::ElementClass;
+        let first_collection = super::ELEMENT_KINDS
+            .iter()
+            .position(|k| k.class == ElementClass::Collection)
+            .expect("the catalog declares collections");
+        assert!(
+            super::ELEMENT_KINDS[..first_collection]
+                .iter()
+                .all(|k| k.class != ElementClass::Collection),
+            "a collection precedes the first one found"
+        );
+        assert!(
+            super::ELEMENT_KINDS[first_collection..]
+                .iter()
+                .all(|k| k.class == ElementClass::Collection),
+            "a kind placed on the map is declared after the collections, \
+             which would put the editor rail's divider inside them"
+        );
+    }
+
     /// A signed quantity needs a ramp with a middle. Node inflows are net
     /// figures — a node can shed more than it takes — and link flow already
     /// says so; declaring the same physical quantity sequential at a node
