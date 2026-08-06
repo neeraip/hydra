@@ -15,6 +15,6 @@ keywords = ["water", "hydraulics", "simulation", "engine"]
 categories = ["science", "simulation"]
 
 [dependencies]
-hydra-common = { path = "../common", version = "7.0.1" }
-hydra-engine-uds = { path = "../engine-uds", version = "7.0.1" }
-hydra-engine-wds = { path = "../engine-wds", version = "7.0.1" }
+hydra-common = { path = "../common", version = "8.0.0" }
+hydra-engine-uds = { path = "../engine-uds", version = "8.0.0" }
+hydra-engine-wds = { path = "../engine-wds", version = "8.0.0" }

@@ -65,7 +65,7 @@ See [crates/cli/README.md](crates/cli/README.md) for the full option reference.
 
 ```toml
 [dependencies]
-hydra-sdk = "7"
+hydra-sdk = "8"
 ```
 
 ```rust

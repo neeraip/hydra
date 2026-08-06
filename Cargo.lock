@@ -2491,7 +2491,7 @@ dependencies = [
 
 [[package]]
 name = "hydra-common"
-version = "7.0.1"
+version = "8.0.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -2499,11 +2499,11 @@ dependencies = [
 
 [[package]]
 name = "hydra-engine-och"
-version = "7.0.1"
+version = "8.0.0"
 
 [[package]]
 name = "hydra-engine-uds"
-version = "7.0.1"
+version = "8.0.0"
 dependencies = [
  "hydra-common",
  "serde_json",
@@ -2511,7 +2511,7 @@ dependencies = [
 
 [[package]]
 name = "hydra-engine-wds"
-version = "7.0.1"
+version = "8.0.0"
 dependencies = [
  "approx",
  "chrono",
@@ -2526,7 +2526,7 @@ dependencies = [
 
 [[package]]
 name = "hydra-engines"
-version = "7.0.1"
+version = "8.0.0"
 dependencies = [
  "hydra-common",
  "hydra-engine-uds",
@@ -2559,7 +2559,7 @@ dependencies = [
 
 [[package]]
 name = "hydra-report"
-version = "7.0.1"
+version = "8.0.0"
 dependencies = [
  "hydra-common",
  "serde",
@@ -2572,7 +2572,7 @@ dependencies = [
 
 [[package]]
 name = "hydra-sdk"
-version = "7.0.1"
+version = "8.0.0"
 dependencies = [
  "hydra-common",
  "hydra-engine-uds",
