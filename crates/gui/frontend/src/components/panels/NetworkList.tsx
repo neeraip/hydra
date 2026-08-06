@@ -37,7 +37,14 @@ import type { Region } from "../../types";
 import { type UnitSystem, useUnitSystem } from "../../units";
 import { TypeBadge } from "../ui/TypeBadge";
 import { activeElement, activeKey, isActiveRow } from "./activeElement";
-import { formatMeta, NetworkListRow, type Row, unitOf } from "./NetworkListRow";
+import {
+  formatMeta,
+  formatValue,
+  NetworkListRow,
+  type Row,
+  unitOf,
+} from "./NetworkListRow";
+import { fitContent } from "./networkListFit";
 
 /** Padding and border of a row — chrome, so it does not move with text. */
 const ROW_CHROME = 12;
@@ -92,6 +99,20 @@ function useDebouncedValue<T>(value: T, delayMs: number): T {
   }, [delayMs, value]);
   return debounced;
 }
+
+/** The measured row is inert; it exists to be sized, not used. */
+const NOOP = () => {};
+
+/** A row with nothing in it, for building the one the measurer renders. */
+const BLANK_ROW: Row = {
+  id: "",
+  kind: "",
+  cls: "point",
+  context: "",
+  value: null,
+  format: null,
+  canZoom: false,
+};
 
 /** What the value column's header says, and how wide a unit lane the rows
  * need beneath it. */
@@ -305,6 +326,9 @@ interface Props {
   onZoomToLink?: (id: string) => void;
   onSelectRegion?: (id: string) => void;
   onZoomToRegion?: (id: string) => void;
+  /** Registers a function reporting the width that would fit every listed
+   *  row, for the rail's fit-to-content gesture. */
+  onFitWidth?: (measure: () => number | null) => void;
   activeRegionId?: string | null;
   /** Generic result-column headers (engines whose values ride on
    * `resultValues`); absent for wds, whose pressure and flow ride inline. */
@@ -328,6 +352,7 @@ export function NetworkList({
   onZoomToLink,
   onSelectRegion,
   onZoomToRegion,
+  onFitWidth,
   activeRegionId,
   nodeResultColumns,
   linkResultColumns,
@@ -482,12 +507,65 @@ export function NetworkList({
 
   const searching = query.trim().length > 0;
 
+  // The widest content the list currently holds, rendered once off-screen
+  // so the panel can be fitted to it. A synthetic row rather than a real
+  // one: the longest id and the longest subtitle need not belong to the
+  // same element, and what has to fit is the widest of each.
+  const fit = useMemo(
+    () => fitContent(visible, searching),
+    [visible, searching],
+  );
+  const measureRow: Row | null = useMemo(() => {
+    if (!fit) return null;
+    const column = linkResultColumns?.[0] ?? nodeResultColumns?.[0] ?? null;
+    // Whichever extreme renders longer sets the value lane — two
+    // formatting calls for the whole list, not one per row.
+    const value =
+      fit.extremes == null
+        ? null
+        : formatValue(
+              { ...BLANK_ROW, value: fit.extremes[0], format: column },
+              sys,
+            ).length >=
+            formatValue(
+              { ...BLANK_ROW, value: fit.extremes[1], format: column },
+              sys,
+            ).length
+          ? fit.extremes[0]
+          : fit.extremes[1];
+    return {
+      ...BLANK_ROW,
+      id: fit.id,
+      context: fit.context ?? "",
+      canZoom: fit.zoomable,
+      value,
+      format: column,
+    };
+  }, [fit, linkResultColumns, nodeResultColumns, sys]);
+
   const valueHeading = useMemo(
     () => valueColumnHeading(visible, sys),
     [visible, sys],
   );
 
   const scrollRef = useRef<HTMLDivElement>(null);
+  const measureRef = useRef<HTMLDivElement>(null);
+
+  // Report the width this list would need to show everything, so the rail
+  // can fit itself to it. Measured off a rendered row rather than
+  // computed, so the badge lane, gaps and padding are the row's own.
+  useEffect(() => {
+    if (!onFitWidth) return;
+    onFitWidth(() => {
+      const row = measureRef.current?.firstElementChild;
+      const scroller = scrollRef.current;
+      if (!row || !scroller) return null;
+      // The scrollbar is inside the panel, so its track is width the rows
+      // do not get. Zero where scrollbars are overlays.
+      const scrollbar = scroller.offsetWidth - scroller.clientWidth;
+      return Math.ceil(row.getBoundingClientRect().width + scrollbar);
+    });
+  }, [onFitWidth]);
   const rowHeight = networkListRowHeight(readTextScale(), searching);
   const rowVirtualizer = useVirtualizer({
     count: visible.length,
@@ -783,6 +861,43 @@ export function NetworkList({
               );
             })}
           </div>
+        </div>
+      )}
+
+      {/* The row the panel would have to be wide enough to show, kept off
+          screen. Rendered rather than modelled: the width that matters is
+          the one this component produces, and a second description of its
+          badge lane, gaps and padding would drift from it.
+
+          One row, so the virtualiser is beside the point — and it changes
+          only when the listed content does. */}
+      {measureRow && (
+        <div
+          ref={measureRef}
+          aria-hidden
+          style={{
+            position: "absolute",
+            visibility: "hidden",
+            pointerEvents: "none",
+            top: 0,
+            left: 0,
+            width: "max-content",
+          }}
+        >
+          <NetworkListRow
+            intrinsic
+            row={measureRow}
+            isActive={false}
+            zoomable={measureRow.canZoom}
+            searching={searching}
+            sys={sys}
+            valueHeading={valueHeading}
+            kindLabel={kindLabel}
+            onSelect={NOOP}
+            onZoom={NOOP}
+            onHover={NOOP}
+            onClearHover={NOOP}
+          />
         </div>
       )}
     </div>

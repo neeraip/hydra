@@ -11,7 +11,11 @@ const STORAGE_KEY = "hydra2-rail-width";
 
 // ── Rail content per view ─────────────────────────────────────────────────────
 
-function CanvasRail() {
+function CanvasRail({
+  onFitWidth,
+}: {
+  onFitWidth?: (measure: () => number | null) => void;
+}) {
   const {
     selectNode,
     selectLink,
@@ -45,6 +49,7 @@ function CanvasRail() {
       onZoomToLink={zoomToLink}
       onSelectRegion={selectRegion}
       onZoomToRegion={zoomToRegion}
+      onFitWidth={onFitWidth}
       activeRegionId={selectedRegionId}
     />
   );
@@ -55,7 +60,15 @@ function CanvasRail() {
 // Rails are defined only for views with meaningful side-panel content.
 // Views without an entry here (overview) collapse the rail entirely
 // so the body fills the window.
-const RAIL_CONTENT: Partial<Record<ProjectView, React.ComponentType>> = {
+/** A rail view may register how wide its content would like to be, for
+ *  the fit-to-content gesture on the resize edge. */
+interface RailContentProps {
+  onFitWidth?: (measure: () => number | null) => void;
+}
+
+const RAIL_CONTENT: Partial<
+  Record<ProjectView, React.ComponentType<RailContentProps>>
+> = {
   canvas: CanvasRail,
 };
 
@@ -89,6 +102,31 @@ export function SecondaryRail() {
       open ? px : "0px",
     );
   }, []);
+
+  // Registered by the list, which is the only thing that knows how wide
+  // its own content is.
+  const fitMeasure = useRef<(() => number | null) | null>(null);
+  const registerFit = useCallback((measure: () => number | null) => {
+    fitMeasure.current = measure;
+  }, []);
+
+  /**
+   * Double-clicking the edge fits the panel to what it is showing.
+   *
+   * The same gesture a spreadsheet's column border has, and it means the
+   * same thing here. Clamped like a drag: a list of long ids can want
+   * more than the rail is allowed, and the answer there is the maximum
+   * rather than an exception to the maximum.
+   */
+  const handleResizeDoubleClick = useCallback(() => {
+    const ideal = fitMeasure.current?.();
+    if (ideal == null) return;
+    const next = Math.min(RAIL_MAX, Math.max(RAIL_MIN, ideal));
+    applyWidth(next, true);
+    railWidthRef.current = next;
+    localStorage.setItem(STORAGE_KEY, String(next));
+    setRailWidth(next);
+  }, [applyWidth]);
 
   const handleResizeMouseDown = useCallback(
     (e: React.MouseEvent) => {
@@ -199,7 +237,7 @@ export function SecondaryRail() {
               overflow: "hidden",
             }}
           >
-            <Content />
+            <Content onFitWidth={registerFit} />
           </div>
         )}
 
@@ -207,6 +245,8 @@ export function SecondaryRail() {
         {/* biome-ignore lint/a11y/noStaticElementInteractions: resize handle is pointer-driven only. */}
         <div
           onMouseDown={handleResizeMouseDown}
+          onDoubleClick={handleResizeDoubleClick}
+          data-tooltip="Drag to resize · double-click to fit"
           style={{
             position: "absolute",
             top: 0,
