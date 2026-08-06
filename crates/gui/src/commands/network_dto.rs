@@ -176,8 +176,8 @@ pub struct CurveDto {
     /// "generic" | "pump-head" | "pump-efficiency" | "tank-volume" |
     /// "gpv-headloss" | "pcv-loss-ratio"
     ///
-    /// ("pump-volume" is emitted for the engine's `PumpVolume` kind, but
-    /// nothing can produce one — see that variant's own note.)
+    /// A kind the engine gains after this build is reported as "generic",
+    /// since that is what an unrecognised purpose already means here.
     pub kind: String,
     /// x-axis values, in the SI display unit of this kind's first axis
     /// (see `list_curve_axes`).
@@ -885,14 +885,13 @@ pub(crate) fn curve_kind_id(kind: hydra::CurveKind) -> &'static str {
     match kind {
         PumpHead => "pump-head",
         PumpEfficiency => "pump-efficiency",
-        // Unreachable: nothing constructs `PumpVolume`. The arm exists
-        // only because the match is exhaustive, and the frontend has no
-        // label for it on purpose.
-        PumpVolume => "pump-volume",
         TankVolume => "tank-volume",
         GpvHeadloss => "gpv-headloss",
         PcvLossRatio => "pcv-loss-ratio",
-        Generic => "generic",
+        // `Generic`, and any kind added to the engine after this build:
+        // both mean "purpose unknown here", which is what `generic`
+        // already denotes — unlabelled, unscaled axes rather than a guess.
+        _ => "generic",
     }
 }
 
@@ -920,27 +919,22 @@ pub struct CurveKindAxesDto {
 /// because those curves are only ever read.
 #[tauri::command]
 pub fn list_curve_axes(engine: String) -> Vec<CurveKindAxesDto> {
-    use hydra::CurveKind::*;
     if engine != "wds" {
         return Vec::new();
     }
-    [
-        Generic,
-        PumpHead,
-        PumpEfficiency,
-        TankVolume,
-        GpvHeadloss,
-        PcvLossRatio,
-    ]
-    .into_iter()
-    .map(|k| {
-        let [x, y] = curve_axes(k);
-        CurveKindAxesDto {
-            kind: curve_kind_id(k).to_string(),
-            axes: [x.dto(), y.dto()],
-        }
-    })
-    .collect()
+    // The engine's own list, not a copy of it: `CurveKind` is
+    // `#[non_exhaustive]`, so a kind added there would never make the
+    // compiler look at this function.
+    hydra::CurveKind::ALL
+        .iter()
+        .map(|&k| {
+            let [x, y] = curve_axes(k);
+            CurveKindAxesDto {
+                kind: curve_kind_id(k).to_string(),
+                axes: [x.dto(), y.dto()],
+            }
+        })
+        .collect()
 }
 
 /// What a curve's two axes are, by what the curve is *for*.
@@ -986,7 +980,10 @@ pub(crate) fn curve_axes(kind: hydra::CurveKind) -> [CurveAxis; 2] {
         // convert its points either, so they are still in whatever units
         // the source file used. Naming a quantity here would be a guess
         // that changes the numbers.
-        Generic | PumpVolume => [axis("X", None, 1.0), axis("Y", None, 1.0)],
+        //
+        // A kind added to the engine after this build lands here for the
+        // same reason: unknown purpose, so unlabelled and unscaled.
+        _ => [axis("X", None, 1.0), axis("Y", None, 1.0)],
     }
 }
 
@@ -2020,40 +2017,73 @@ mod curve_axis_boundary {
         }
     }
 
+    /// `CurveKind` is `#[non_exhaustive]`, so this crate's two matches over
+    /// it now end in a wildcard — and a wildcard is exactly where a new
+    /// kind can be silently mislabelled instead of caught by the compiler.
+    ///
+    /// What the wildcard must do is decline to guess: an unrecognised kind
+    /// is unlabelled and unscaled, the same treatment `Generic` gets, so
+    /// its points are shown as the raw numbers they are. The failure this
+    /// guards against is someone giving the wildcard a real quantity to
+    /// make some future kind render nicely, which would silently convert
+    /// every *other* future kind's numbers.
+    #[test]
+    fn an_unrecognised_kind_is_never_given_units() {
+        let [x, y] = axes_of(hydra::CurveKind::Generic);
+        assert_eq!(x.label, "X");
+        assert_eq!(y.label, "Y");
+        assert_eq!(quantity_key(&x), None);
+        assert_eq!(quantity_key(&y), None);
+
+        // Unscaled as well as unlabelled: the importer leaves such a
+        // curve's points in whatever units the source file used, so any
+        // factor here would change numbers it cannot interpret.
+        let [raw_x, raw_y] = curve_axes(hydra::CurveKind::Generic);
+        assert_eq!(raw_x.scale(), 1.0);
+        assert_eq!(raw_y.scale(), 1.0);
+
+        assert_eq!(curve_kind_id(hydra::CurveKind::Generic), "generic");
+    }
+
     /// The command the frontend actually reads: one entry per kind a model
     /// can contain, keyed by the same string `CurveDto.kind` carries — so a
     /// curve staged in the draft, which has no DTO at all, resolves its
     /// axes exactly as a saved one does.
     #[test]
     fn the_served_table_covers_every_kind_a_curve_dto_can_report() {
-        use hydra::CurveKind::*;
         let served = list_curve_axes("wds".into());
         let keys: Vec<&str> = served.iter().map(|r| r.kind.as_str()).collect();
-        for kind in [
-            Generic,
-            PumpHead,
-            PumpEfficiency,
-            TankVolume,
-            GpvHeadloss,
-            PcvLossRatio,
-        ] {
+        // Driven by the engine's list rather than a copy of it.
+        for &kind in hydra::CurveKind::ALL {
             let id = curve_kind_id(kind);
             assert!(keys.contains(&id), "{id} is missing from the served table");
         }
+
+        // And the keys are distinct — which is the assertion that actually
+        // catches a kind this crate has not labelled yet, now that
+        // `#[non_exhaustive]` has taken that job from the compiler. The
+        // loop above cannot: `curve_kind_id` routes an unrecognised kind to
+        // "generic", so an unlabelled kind would find that key already
+        // present and pass. What it cannot do is avoid colliding with the
+        // real generic entry.
+        let mut distinct = keys.clone();
+        distinct.sort_unstable();
+        distinct.dedup();
+        assert_eq!(
+            distinct.len(),
+            keys.len(),
+            "two kinds served under one key — a new `CurveKind` needs an id \
+             and axes in this crate"
+        );
+
         // Each entry says what `curve_axes` says — one authority, two
         // readers (the DTO's value scaling and this table's labels).
         for row in &served {
-            let kind = [
-                Generic,
-                PumpHead,
-                PumpEfficiency,
-                TankVolume,
-                GpvHeadloss,
-                PcvLossRatio,
-            ]
-            .into_iter()
-            .find(|k| curve_kind_id(*k) == row.kind)
-            .expect("served kind is one of the above");
+            let kind = hydra::CurveKind::ALL
+                .iter()
+                .find(|&&k| curve_kind_id(k) == row.kind)
+                .copied()
+                .expect("served kind is one the engine publishes");
             let [x, y] = curve_axes(kind);
             assert_eq!(row.axes[0].label, x.dto().label);
             assert_eq!(row.axes[1].label, y.dto().label);

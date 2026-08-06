@@ -13,12 +13,10 @@
  * added to the engine shows up as a slightly ugly label instead of a blank
  * line.
  *
- * That fallback is why `pump-volume` is deliberately absent. The engine
- * still has a `PumpVolume` curve kind, but nothing can produce one — it
- * names a curve type that exists in neither EPANET nor Hydra (a
- * constant-horsepower pump carries a power value and no curve), and it is
- * queued for removal at the next breaking release. Labelling it would
- * advertise a curve kind this GUI can never be shown.
+ * That fallback is what makes the map safe to leave incomplete, and it is
+ * the whole reason this is a lookup with a default rather than an
+ * exhaustive union: the engine's kind list is open, so a build of this GUI
+ * older than the engine it talks to has to render an id it has never seen.
  */
 
 const ROLE_LABEL: Record<string, string> = {

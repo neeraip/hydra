@@ -401,7 +401,13 @@ impl Pattern {
 // ── §2.3 Curves ───────────────────────────────────────────────────────────────
 
 /// Semantic kind of a piecewise-linear curve (§2.3).
+///
+/// Non-exhaustive: a curve's kind is inferred from what references it, so
+/// this list grows whenever a new object gains a curve of its own. Adding
+/// a variant is a routine change to this crate and should not be a
+/// breaking one for everything built on it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum CurveKind {
     /// A curve not yet assigned to a specific usage. Skips kind-specific
     /// validation (y-monotonicity, range checks) since its purpose is unknown.
@@ -410,29 +416,32 @@ pub enum CurveKind {
     PumpHead,
     /// Pump efficiency vs. flow curve.
     PumpEfficiency,
-    /// Unreachable, and not a real curve kind — scheduled for removal at
-    /// the next breaking release of this crate (it is public API, so it
-    /// cannot go in a patch).
-    ///
-    /// Nothing constructs this: no parser path assigns it, no solver reads
-    /// it, and §2.3 does not list it. Its name conflated two separate
-    /// EPANET concepts — the curve's own type (volume/pump/efficiency/
-    /// headloss) and a pump's characteristic type (constant-HP/power-
-    /// function/custom). There is no constant-HP volume curve in either
-    /// EPANET or Hydra: a constant-horsepower pump is
-    /// [`PumpCurveType::ConstHp`] with a `power` value and **no curve at
-    /// all**.
-    ///
-    /// Do not give this variant behaviour, units, or a display label. If
-    /// you are here because a `match` demanded an arm, route it with the
-    /// unknown kinds.
-    PumpVolume,
     /// Tank volume vs. level curve.
     TankVolume,
     /// General Purpose Valve headloss vs. flow curve.
     GpvHeadloss,
     /// Positional Control Valve loss ratio (%) vs. percent-open position curve.
     PcvLossRatio,
+}
+
+impl CurveKind {
+    /// Every kind, in the order §2.3 lists them.
+    ///
+    /// This is the counterpart to `#[non_exhaustive]`, and the reason the
+    /// attribute is safe rather than merely permissive. Callers outside
+    /// this crate can no longer `match` a kind exhaustively, so without a
+    /// published list the only way to enumerate kinds is to hand-copy them
+    /// — and a hand-copy goes stale silently, which is precisely the
+    /// failure the attribute would otherwise introduce. Iterate this
+    /// instead, and a kind added here appears downstream on its own.
+    pub const ALL: &'static [CurveKind] = &[
+        CurveKind::Generic,
+        CurveKind::PumpHead,
+        CurveKind::PumpEfficiency,
+        CurveKind::TankVolume,
+        CurveKind::GpvHeadloss,
+        CurveKind::PcvLossRatio,
+    ];
 }
 
 /// A single (x, y) sample point on a curve.
@@ -1301,6 +1310,54 @@ impl Network {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── CurveKind ─────────────────────────────────────────────────────────────
+
+    /// `CurveKind::ALL` is what every consumer iterates now that the enum
+    /// is `#[non_exhaustive]`, so a kind missing from it is invisible
+    /// downstream instead of being a compile error there.
+    ///
+    /// Two different things are going on here, and it is worth being exact
+    /// about which is enforced.
+    ///
+    /// The ordering assertion is enforced: `ALL` must hold each variant at
+    /// its own declaration position, so a reordered, duplicated, or dropped
+    /// entry fails — the trailing entry included, which is why the last
+    /// kind is named explicitly rather than left to the loop. (The loop
+    /// alone cannot see a missing final entry: the remaining positions
+    /// still line up, so it has nothing to disagree with.)
+    ///
+    /// The `match` is a tripwire rather than a proof. `#[non_exhaustive]`
+    /// does not apply inside the crate that declares the type, so adding a
+    /// variant stops this test compiling and lands the author in the one
+    /// function that also names `ALL` — but once they add the arm, nothing
+    /// here can *prove* they added it to `ALL`, because Rust offers no way
+    /// to enumerate an enum's variants without a derive. The GUI's
+    /// `the_served_table_covers_every_kind_a_curve_dto_can_report` is the
+    /// second net: an unlisted kind collides with `generic` there.
+    #[test]
+    fn all_lists_every_kind() {
+        for (position, kind) in CurveKind::ALL.iter().enumerate() {
+            let declared = match kind {
+                CurveKind::Generic => 0,
+                CurveKind::PumpHead => 1,
+                CurveKind::PumpEfficiency => 2,
+                CurveKind::TankVolume => 3,
+                CurveKind::GpvHeadloss => 4,
+                CurveKind::PcvLossRatio => 5,
+            };
+            assert_eq!(
+                position, declared,
+                "`ALL` holds {kind:?} at {position}, but it is declared at \
+                 {declared} — add the kind you just introduced, in order"
+            );
+        }
+        assert_eq!(
+            CurveKind::ALL.last(),
+            Some(&CurveKind::PcvLossRatio),
+            "`ALL` must end at the last-declared kind"
+        );
+    }
 
     // ── Pattern::eval ─────────────────────────────────────────────────────────
 
