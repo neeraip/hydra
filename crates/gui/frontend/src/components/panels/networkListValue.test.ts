@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import type { Row } from "./NetworkList";
-import { formatValue, valueColor } from "./NetworkList";
+import type { Row } from "./NetworkListRow";
+import { formatValue, valueColor } from "./NetworkListRow";
 
 /**
  * How the network list prints a value.

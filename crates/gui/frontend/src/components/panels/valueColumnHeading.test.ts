@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { SimResultColumn } from "../../canvas/selection-context";
-import { type Row, valueColumnHeading } from "./NetworkList";
+import { valueColumnHeading } from "./NetworkList";
+import type { Row } from "./NetworkListRow";
 
 function row(label: string, unit: SimResultColumn["unit"], id = "X"): Row {
   return {

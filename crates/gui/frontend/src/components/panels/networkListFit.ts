@@ -29,7 +29,7 @@
  * feature and all of it avoidable.
  */
 
-import type { Row } from "./NetworkList";
+import type { Row } from "./NetworkListRow";
 
 /** The widest content the list holds, for a caller to render and measure. */
 export interface FitContent {

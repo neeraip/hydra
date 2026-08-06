@@ -19,42 +19,25 @@
 // Kinds, labels and result variables come from the engine catalogs, so this
 // file names no kind and no engine.
 
-import {
-  EyeIcon,
-  MagnifyingGlassPlusIcon,
-  XMarkIcon,
-} from "@heroicons/react/16/solid";
+import { EyeIcon, XMarkIcon } from "@heroicons/react/16/solid";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useActiveProject } from "../../AppContext";
 import { useHoverActions } from "../../canvas/hover-context";
-import { categoryRgba } from "../../canvas/MapCanvas/colorUtils";
 import type { SimResultColumn } from "../../canvas/selection-context";
 import {
   useViewportActions,
   useViewportKey,
 } from "../../canvas/viewport-context";
-import type { ElementClass, Link, Node } from "../../hooks";
-import {
-  formatGenericValue,
-  genericUnitLabel,
-  useElementKinds,
-  useLinks,
-  useNodes,
-  useRegions,
-} from "../../hooks";
+import type { Link, Node } from "../../hooks";
+import { useElementKinds, useLinks, useNodes, useRegions } from "../../hooks";
 import { perfTrace } from "../../perfTrace";
 import { readTextScale } from "../../textScale";
 import type { Region } from "../../types";
-import {
-  toDisplay,
-  type UnitSystem,
-  unitLabel,
-  useUnitSystem,
-} from "../../units";
-import { MiddleTruncate } from "../ui/MiddleTruncate";
+import { type UnitSystem, useUnitSystem } from "../../units";
 import { TypeBadge } from "../ui/TypeBadge";
 import { activeElement, activeKey, isActiveRow } from "./activeElement";
+import { formatMeta, NetworkListRow, type Row, unitOf } from "./NetworkListRow";
 
 /** Padding and border of a row — chrome, so it does not move with text. */
 const ROW_CHROME = 12;
@@ -108,26 +91,6 @@ function useDebouncedValue<T>(value: T, delayMs: number): T {
     return () => window.clearTimeout(id);
   }, [delayMs, value]);
   return debounced;
-}
-
-// ── The row model ─────────────────────────────────────────────────────────────
-
-/** One line of the finder. Classes are flattened into a single sequence, so
- * everything the list needs to draw and rank a row lives here rather than
- * behind three parallel code paths. */
-export interface Row {
-  id: string;
-  /** Element-kind id — drives the badge and the kind chips. */
-  kind: string;
-  cls: ElementClass;
-  /** Secondary text the search also matches: what a link joins, or the node
-   * a catchment drains to. Shown as the row's subtitle when searching. */
-  context: string;
-  /** Current-period value, already SI, or null before a run. */
-  value: number | null;
-  /** The column this value came from, for its label and unit. */
-  format: SimResultColumn | null;
-  canZoom: boolean;
 }
 
 /** What the value column's header says, and how wide a unit lane the rows
@@ -272,66 +235,7 @@ function currentValue(
   return { value, format: column };
 }
 
-export function formatValue(row: Row, sys: "si" | "us"): string {
-  if (row.value == null || !row.format) return "—";
-  // A coded column brings its own labels, so the list never has to know
-  // which variables are enumerations. An unrecognised code falls through
-  // to the number, which is more use than a dash when the engine has
-  // grown a state this build does not name.
-  if (row.format.codes) {
-    return row.format.codes[row.value]?.label ?? String(row.value);
-  }
-  if (row.format.quantity) {
-    return formatGenericValue(row.value, row.format.quantity, sys, false);
-  }
-  if (row.format.unit) {
-    return toDisplay(row.value, row.format.unit, sys).toFixed(
-      sys === "si" ? 2 : 1,
-    );
-  }
-  // Dimensionless: quality carries whatever unit its mode implies, and a
-  // status code is an enum. Neither converts.
-  return String(Number(row.value.toFixed(2)));
-}
-
-/**
- * The colour a row's value is drawn in.
- *
- * A coded value is coloured by the severity its engine gave the state —
- * the same judgement the legend and the canvas colour from, so a closed
- * link reads the same on all three. States the engine passed no judgement
- * on, and every measured value, keep the column's ordinary foreground: a
- * land-use class or a material has no alarming member, and inventing one
- * would be the app asserting something the engine declined to.
- */
-export function valueColor(row: Row): string {
-  if (row.value == null) return "var(--text-disabled)";
-  const severity = row.format?.codes?.[row.value]?.severity;
-  if (!severity) return "var(--text-secondary)";
-  const [r, g, b] = categoryRgba(0, 255, severity);
-  return `rgb(${r}, ${g}, ${b})`;
-}
-
-/** The name and engineering symbol for a row's value. */
-function formatMeta(f: Row["format"]): { name: string; symbol: string } | null {
-  if (f == null) return null;
-  return {
-    name: f.label,
-    symbol: f.symbol ?? f.label.charAt(0).toUpperCase(),
-  };
-}
-
-function unitOf(row: Row, sys: "si" | "us"): string {
-  if (!row.format) return "";
-  if (row.format.quantity) {
-    return genericUnitLabel(row.format.quantity, sys) ?? "";
-  }
-  return row.format.unit ? unitLabel(row.format.unit, sys) : "";
-}
-
 // ── Styles ────────────────────────────────────────────────────────────────────
-
-const BADGE_COL_WIDTH = 28;
 
 const HEADER_BAR: React.CSSProperties = {
   display: "flex",
@@ -862,194 +766,19 @@ export function NetworkList({
                     opacity: offscreen ? OFFSCREEN_OPACITY : 1,
                   }}
                 >
-                  {/* The row is the button; the zoom control is its sibling
-                      rather than its child, because a button inside a button
-                      is invalid and gives the row two focus stops. */}
-                  <button
-                    type="button"
-                    // Select on click, zoom on double-click — the file-list
-                    // idiom, where opening is what you do to the thing you
-                    // just picked.
-                    //
-                    // Neither handler waits to see whether another click is
-                    // coming. Debouncing the first would put a quarter-second
-                    // of latency on every selection to serve the rarer
-                    // gesture, so instead each one reads `event.detail`, the
-                    // browser's own count of clicks in this burst, and the
-                    // pair is arranged to land on the same result either way.
-                    onClick={(e) => {
-                      // Selection *toggles*, so letting the second click
-                      // through undid the first: a double-click selected,
-                      // deselected, then zoomed to something no longer
-                      // selected. The second click of a burst does nothing
-                      // and leaves the outcome to the double-click handler.
-                      if (!clickSelects(e.detail)) return;
-                      select(row);
-                    }}
-                    onDoubleClick={
-                      zoomable
-                        ? () => {
-                            // One click has landed, so a row that started
-                            // selected is now deselected and vice versa.
-                            // Select whatever is not, and a double-click
-                            // always ends selected *and* zoomed, from
-                            // either starting state.
-                            if (doubleClickSelects(isActiveRow(row, active))) {
-                              select(row);
-                            }
-                            zoomTo(row);
-                          }
-                        : undefined
-                    }
-                    style={{
-                      width: "100%",
-                      height: "100%",
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 6,
-                      padding: `0 ${zoomable ? 26 : 8}px 0 8px`,
-                      textAlign: "left",
-                      font: "inherit",
-                      cursor: "pointer",
-                      userSelect: "none",
-                      boxSizing: "border-box",
-                      border: "none",
-                      borderBottom: "1px solid rgba(255,255,255,0.04)",
-                      background: isActive
-                        ? "var(--selection-bg)"
-                        : "transparent",
-                      outline: isActive
-                        ? "1px solid var(--selection-border)"
-                        : undefined,
-                      outlineOffset: "-1px",
-                    }}
-                    onMouseEnter={(e) => {
-                      if (!isActive)
-                        e.currentTarget.style.background =
-                          "rgba(255,255,255,0.04)";
-                      hover(row);
-                    }}
-                    onMouseLeave={(e) => {
-                      if (!isActive)
-                        e.currentTarget.style.background = "transparent";
-                      clearHover();
-                    }}
-                    onFocus={() => hover(row)}
-                    onBlur={() => clearHover()}
-                  >
-                    <span
-                      style={{
-                        width: BADGE_COL_WIDTH - 6,
-                        display: "flex",
-                        justifyContent: "center",
-                        flexShrink: 0,
-                      }}
-                      data-tooltip={kindLabel.get(row.kind) ?? row.kind}
-                    >
-                      <TypeBadge type={row.kind} />
-                    </span>
-                    <span
-                      style={{
-                        flex: 1,
-                        minWidth: 0,
-                        display: "flex",
-                        flexDirection: "column",
-                        justifyContent: "center",
-                        overflow: "hidden",
-                      }}
-                    >
-                      <span
-                        style={{
-                          color: "var(--accent)",
-                          fontFamily: "var(--font-mono)",
-                          fontSize: "var(--text-sm)",
-                          fontWeight: 500,
-                          overflow: "hidden",
-                        }}
-                      >
-                        <MiddleTruncate text={row.id} />
-                      </span>
-                      {/* What a row connects to is the disambiguator when a
-                        query matched it there rather than on its id. */}
-                      {searching && row.context && (
-                        <span
-                          style={{
-                            fontSize: "var(--text-2xs)",
-                            color: "var(--text-tertiary)",
-                            fontFamily: "var(--font-mono)",
-                            overflow: "hidden",
-                            textOverflow: "ellipsis",
-                            whiteSpace: "nowrap",
-                          }}
-                        >
-                          {row.context}
-                        </span>
-                      )}
-                    </span>
-                    <span
-                      style={{
-                        fontFamily: "var(--font-mono)",
-                        fontSize: "var(--text-sm)",
-                        color: valueColor(row),
-                        flexShrink: 0,
-                      }}
-                      data-tooltip={
-                        row.value != null
-                          ? `${formatMeta(row.format)?.name ?? ""} ${unitOf(
-                              row,
-                              sys,
-                            )}`.trim() || undefined
-                          : undefined
-                      }
-                    >
-                      {formatValue(row, sys)}
-                      {/* A lane of its own, so the numbers right-align on
-                          one edge instead of being pushed around by units
-                          of different widths — "8.153 m" and "0.8695 m/s"
-                          right-aligned as one group put their digits at
-                          different offsets, which is exactly what the
-                          column exists to let you compare.
-
-                          Reserved even when a row has no value, or the
-                          rows that do would shift out from under the ones
-                          that don't. */}
-                      {valueHeading.perRowUnits && (
-                        <span
-                          style={{
-                            color: "var(--text-tertiary)",
-                            marginLeft: 3,
-                            display: "inline-block",
-                            width: `${valueHeading.unitWidth}ch`,
-                            textAlign: "left",
-                          }}
-                        >
-                          {row.value != null ? unitOf(row, sys) : ""}
-                        </span>
-                      )}
-                    </span>
-                  </button>
-                  {zoomable && (
-                    <button
-                      type="button"
-                      onClick={() => zoomTo(row)}
-                      aria-label={`Zoom to ${row.id}`}
-                      data-tooltip="Zoom to"
-                      style={{
-                        position: "absolute",
-                        right: 6,
-                        top: "50%",
-                        transform: "translateY(-50%)",
-                        background: "none",
-                        border: "none",
-                        cursor: "pointer",
-                        color: "var(--text-tertiary)",
-                        display: "flex",
-                        padding: 0,
-                      }}
-                    >
-                      <MagnifyingGlassPlusIcon width={13} height={13} />
-                    </button>
-                  )}
+                  <NetworkListRow
+                    row={row}
+                    isActive={isActive}
+                    zoomable={zoomable}
+                    searching={searching}
+                    sys={sys}
+                    valueHeading={valueHeading}
+                    kindLabel={kindLabel}
+                    onSelect={select}
+                    onZoom={zoomTo}
+                    onHover={hover}
+                    onClearHover={clearHover}
+                  />
                 </div>
               );
             })}

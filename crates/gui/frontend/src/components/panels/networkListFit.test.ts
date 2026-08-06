@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { Row } from "./NetworkList";
+import type { Row } from "./NetworkListRow";
 import { fitContent } from "./networkListFit";
 
 /**
