@@ -710,7 +710,9 @@ HDS-5's sign convention.
 
 > **CORRESPONDENCE:** the predecessor codes the mitered slope correction at
 > ten times its published magnitude (its convention's $-0.7\,S_O$ entered as
-> $-7.0$), so a mitered culvert on any appreciable slope carries an
+> $-7.0$ — `culvert.c:209`, whose own comment reads "-7 for mitered inlets",
+> so it is written down rather than mistyped), so a mitered culvert on any
+> appreciable slope carries an
 > order-of-magnitude overcorrection. This engine uses the published value;
 > mitered-culvert models differ accordingly, in this engine's favour against
 > the standard the feature claims to implement.

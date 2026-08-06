@@ -100,6 +100,14 @@ including its defects. It is the map of the predecessor; this is the design of
 the successor. Where the two differ, the declarative register is used: *the
 predecessor does X; this engine does Y*, followed by the reason.
 
+**Every claim these specifications make about the predecessor is made against
+SWMM 5.2.4**, in the Open Water Analytics build at commit `27dc699`. Where a
+`CORRESPONDENCE` note cites a file and line — `culvert.c:209` — it is that
+source that is meant, and the citation is there so a reader can check the claim
+rather than take it. A claim about someone else's software that cannot be
+checked is an assertion, and this engine's whole argument for departing from
+the predecessor rests on those claims being true.
+
 ### 1.4 Obligations, in Three Tiers
 
 Compatibility with the predecessor is not one obligation but three, of
