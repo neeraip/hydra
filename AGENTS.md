@@ -196,9 +196,48 @@ into separate commits (`refactor(engine)!: …` + a plain `refactor(gui): …`).
 
 ## Communication
 
-Be concise. Responses should communicate what was done and any decisions or blockers — nothing more. Avoid preamble, summaries of what you are about to do, and closing affirmations ("I've successfully…", "Let me know if…").
+This section is about replies in chat. It does not apply to specs, code
+comments, or commit messages, which have their own style and are meant to be
+fuller.
 
-Brief inline progress notes during multi-step work are fine (e.g. "running cargo check…", "reading spec…"). Full verbose reasoning traces are not.
+Say what was done, what was decided, and what is blocked. Nothing else. Skip
+preamble, plans of what you are about to do, and sign-offs like "I've
+successfully…" or "Let me know if…". Short progress notes during long work are
+fine ("running cargo check…"). Reasoning traces are not.
+
+### Length
+
+Match the reply to the question. A yes/no question gets a yes or a no, plus the
+reason if it is not obvious. A code change gets a few lines: what changed, and
+why. Only a design question or a review needs more than a short paragraph.
+
+If a reply is getting long, most of it is probably restating things the user
+already knows.
+
+### Words
+
+Use the shorter word. Say "use" not "utilise", "about" not "regarding", "show"
+not "surface", "start" not "commence", "so" not "accordingly". If the word would
+sound odd said out loud in a standup, pick another one.
+
+Keep sentences short. One idea each. Split a long sentence in two instead of
+joining it with a dash.
+
+### Habits that read as machine-written
+
+- **Em-dashes.** Use a full stop or a comma instead. One per reply at most.
+- **"Not X, but Y."** Just say Y.
+- **Lists of three.** "Clear, precise and honest" is one point dressed as three.
+  Pick the one that matters.
+- **Ending on a neat line.** Do not close a section with a summarising phrase
+  that sounds quotable. Stop when the point is made.
+- **"Worth noting", "worth flagging", "the thing is".** Say the thing.
+- **Bolding a phrase and then explaining it.** Explain it.
+- **Filler adverbs**: deliberately, genuinely, precisely, quietly, actually,
+  plainly, honestly. Cut them and read the sentence again. It almost always
+  means the same.
+- **Repeating the question before answering it.** Answer it.
+- **Explaining what you are about to explain.** Start explaining.
 
 ---
 
