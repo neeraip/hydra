@@ -18,10 +18,7 @@ import {
 } from "../../canvas/GenericLegend";
 import type { ScaleMode } from "../../canvas/legend-primitives";
 import { MapCanvas } from "../../canvas/MapCanvas";
-import {
-  STATUS_LABELS,
-  wdsBandColors,
-} from "../../canvas/MapCanvas/colorUtils";
+import { wdsBandColors } from "../../canvas/MapCanvas/colorUtils";
 import type { MeasurePoint } from "../../canvas/measureSnap";
 import { usePublishCurrentPeriod } from "../../canvas/period-context";
 import {
@@ -345,6 +342,26 @@ const EMPTY_REGIONS: Region[] = [];
  * and nothing serves descriptors for them. Symbols follow the same notation
  * the catalog engines use: p pressure, H head, q demand, Q flow, v velocity,
  * hL headloss, C concentration. */
+
+/**
+ * The labels a categorical variable's states go by, keyed by stored value.
+ *
+ * A categorical variable's values are codes, not measurements: link status
+ * 3 means "Open". The engine publishes those states in the variable's own
+ * ramp hint, so this reads them across rather than keeping a table of its
+ * own — the contract's note on `Categorical` says exactly why, and the
+ * frontend has already once shipped a private copy that drifted.
+ */
+function categoryLabels(
+  ramp: GenericVariable["ramp"],
+): Readonly<Record<number, { label: string; severity?: string }>> | undefined {
+  if (ramp?.type !== "categorical") return undefined;
+  const out: Record<number, { label: string; severity?: string }> = {};
+  for (const item of ramp.items) {
+    out[item.value] = { label: item.label, severity: item.severity };
+  }
+  return out;
+}
 /** How many result variables ride along on each rail element. The rail
  * shows one; the rest are there for the GeoJSON export. */
 const RAIL_RESULT_COLUMNS = 3;
@@ -364,6 +381,7 @@ export const railColumns = (
   label: string;
   symbol?: string;
   quantity?: GenericQuantity;
+  codes?: Readonly<Record<number, { label: string; severity?: string }>>;
   at: number;
 }> => {
   // No catalog, no columns. `Math.max(0, -1)` below would otherwise turn
@@ -382,6 +400,7 @@ export const railColumns = (
     label: vars[i].label,
     symbol: vars[i].symbol,
     quantity: vars[i].quantity,
+    codes: categoryLabels(vars[i].ramp),
     at: i,
   }));
 };
@@ -402,16 +421,12 @@ const WDS_LINK_VARS: Record<
     label: string;
     symbol: string;
     unit?: Quantity;
-    codes?: Readonly<Record<number, string>>;
   }
 > = {
   flow: { label: "Flow", symbol: "Q", unit: "flow" },
   velocity: { label: "Velocity", symbol: "v", unit: "velocity" },
   headloss: { label: "Headloss", symbol: "hL", unit: "elevation" },
-  // Status is an enumeration, not a measurement, so it travels with the
-  // table that decodes it rather than as a bare number the list would
-  // print as "3".
-  status: { label: "Status", symbol: "St", codes: STATUS_LABELS },
+  status: { label: "Status", symbol: "St" },
   quality: { label: "Quality", symbol: "C" },
 };
 
@@ -1590,7 +1605,6 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
           label: WDS_LINK_VARS[linkVar].label,
           symbol: WDS_LINK_VARS[linkVar].symbol,
           unit: WDS_LINK_VARS[linkVar].unit,
-          codes: WDS_LINK_VARS[linkVar].codes,
         },
       ],
       region: [],

@@ -65,3 +65,65 @@ describe("railColumns", () => {
     ]);
   });
 });
+
+/**
+ * A categorical variable's states reach the rail.
+ *
+ * Link status is a code — 3 means "Open" — and the network list printed
+ * the code while the inspector beside it printed the name. The states are
+ * published by the engine in the variable's own ramp hint, so the fix is
+ * for the column to carry them across; the contract's note on
+ * `Categorical` warns that a variable whose states are dropped in transit
+ * cannot be drawn as anything but a gradient over status codes.
+ *
+ * The first attempt at this patched the fixed-variable path instead, which
+ * only runs before a simulation exists — so it changed nothing a user
+ * could see. These pin the path that actually serves a simulated run.
+ */
+describe("railColumns and categorical variables", () => {
+  const STATUS: GenericVariable = {
+    id: "status",
+    label: "Status",
+    ramp: {
+      type: "categorical",
+      items: [
+        { value: 2, label: "Closed", severity: "alarm" },
+        { value: 3, label: "Open", severity: "nominal" },
+      ],
+    },
+    min: 0,
+    max: 3,
+  } as GenericVariable;
+
+  it("carries a categorical variable's state labels", () => {
+    const [col] = railColumns([STATUS], "status");
+    expect(col.codes?.[2].label).toBe("Closed");
+    expect(col.codes?.[3].label).toBe("Open");
+  });
+
+  /** The engine's judgement of each state travels with it, so a reader
+   *  can colour the state without knowing what the state means. */
+  it("carries the severity the engine gave each state", () => {
+    const [col] = railColumns([STATUS], "status");
+    expect(col.codes?.[2].severity).toBe("alarm");
+    expect(col.codes?.[3].severity).toBe("nominal");
+  });
+
+  it("leaves a measured variable without a code table", () => {
+    const [col] = railColumns(VARS, "volume");
+    expect(col.codes).toBeUndefined();
+  });
+
+  /**
+   * The states ride along on a non-selected column too, for the GeoJSON
+   * export — but only while the variable is inside the handful of columns
+   * the rail carries. A catalog longer than that drops the tail, selected
+   * variable aside, which is the existing cap rather than anything to do
+   * with categories.
+   */
+  it("carries them on a column that is not the selected one", () => {
+    const cols = railColumns([STATUS, VARS[0]], VARS[0].id);
+    expect(cols[0].key).toBe(VARS[0].id);
+    expect(cols.find((c) => c.key === "status")?.codes?.[3].label).toBe("Open");
+  });
+});

@@ -28,6 +28,7 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useActiveProject } from "../../AppContext";
 import { useHoverActions } from "../../canvas/hover-context";
+import { categoryRgba } from "../../canvas/MapCanvas/colorUtils";
 import type { SimResultColumn } from "../../canvas/selection-context";
 import {
   useViewportActions,
@@ -278,7 +279,7 @@ export function formatValue(row: Row, sys: "si" | "us"): string {
   // to the number, which is more use than a dash when the engine has
   // grown a state this build does not name.
   if (row.format.codes) {
-    return row.format.codes[row.value] ?? String(row.value);
+    return row.format.codes[row.value]?.label ?? String(row.value);
   }
   if (row.format.quantity) {
     return formatGenericValue(row.value, row.format.quantity, sys, false);
@@ -291,6 +292,24 @@ export function formatValue(row: Row, sys: "si" | "us"): string {
   // Dimensionless: quality carries whatever unit its mode implies, and a
   // status code is an enum. Neither converts.
   return String(Number(row.value.toFixed(2)));
+}
+
+/**
+ * The colour a row's value is drawn in.
+ *
+ * A coded value is coloured by the severity its engine gave the state —
+ * the same judgement the legend and the canvas colour from, so a closed
+ * link reads the same on all three. States the engine passed no judgement
+ * on, and every measured value, keep the column's ordinary foreground: a
+ * land-use class or a material has no alarming member, and inventing one
+ * would be the app asserting something the engine declined to.
+ */
+export function valueColor(row: Row): string {
+  if (row.value == null) return "var(--text-disabled)";
+  const severity = row.format?.codes?.[row.value]?.severity;
+  if (!severity) return "var(--text-secondary)";
+  const [r, g, b] = categoryRgba(0, 255, severity);
+  return `rgb(${r}, ${g}, ${b})`;
 }
 
 /** The name and engineering symbol for a row's value. */
@@ -971,10 +990,7 @@ export function NetworkList({
                       style={{
                         fontFamily: "var(--font-mono)",
                         fontSize: "var(--text-sm)",
-                        color:
-                          row.value == null
-                            ? "var(--text-disabled)"
-                            : "var(--text-secondary)",
+                        color: valueColor(row),
                         flexShrink: 0,
                       }}
                       data-tooltip={
