@@ -5,7 +5,7 @@ Hydra is a water infrastructure simulation platform written in Rust. It is built
 | Engine | Domain | Source model | Status |
 |---|---|---|---|
 | **Water Distribution** (`wds`) | Pressurised supply networks — hydraulics, water quality, energy | EPANET `.inp` (2.x) | **Available** |
-| **Urban Drainage** (`uds`) | Stormwater and wastewater collection — runoff, routing, quality | SWMM `.inp` | **Available** (CLI and SDK) |
+| **Urban Drainage** (`uds`) | Stormwater and wastewater collection — runoff, routing, quality | SWMM `.inp` | **Available** |
 | **Open Channel** (`och`) | Rivers and channels — steady and unsteady flow | HEC-RAS project | Planned |
 
 <!-- PLANNED-ENGINE: och — revise the Status column as each engine ships. -->
@@ -55,7 +55,7 @@ See [INP Format Support](reference/inp-format.md) for current EPANET input cover
 
 ## Urban Drainage Engine
 
-Continuous and event simulation of stormwater and wastewater collection systems on the SWMM data model. It ships CLI-first: the `hydra` CLI and the Rust SDK run SWMM models today, while GUI editing is still to come.
+Continuous and event simulation of stormwater and wastewater collection systems on the SWMM data model. Available from the `hydra` CLI, the Rust SDK, and the desktop app, where a drainage model is imported, run and explored but not yet edited.
 
 - **Hydrology**: rainfall-runoff on subcatchments with Horton, Green-Ampt, and Curve Number infiltration; LID controls; snowmelt; groundwater; RDII unit hydrographs; climate files and the Hargreaves evaporation relation
 - **Hydraulics**: Preissmann-slot dynamic-wave routing through conduits, pumps, orifices, weirs, and outlets; storage nodes, flow dividers, and HEC-22 street inlets

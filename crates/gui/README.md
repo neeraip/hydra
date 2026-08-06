@@ -5,11 +5,11 @@ Tauri-based desktop GUI for Hydra, the water infrastructure simulation platform.
 The GUI is engine-aware: it resolves a project's engine through `hydra-common`'s
 registry rather than assuming water distribution.
 
-<!-- PLANNED-ENGINE: och — drop the planned-engine clause when the open channel engine ships. -->
-Engines the GUI cannot yet edit are presented but not selectable: the urban
-drainage engine ships CLI-first (its card reads "CLI only" until editor
-support lands), and the planned open channel engine appears in the registry
-with no implementation behind it.
+<!-- PLANNED-ENGINE: och — drop this paragraph when the open channel engine ships. -->
+An engine the GUI cannot edit offers no starter network, so its projects can
+only begin from an imported model — which is how a drainage project starts
+today. A planned engine appears in the registry with no implementation behind
+it, and cannot be selected at all.
 
 ## Developer diagnostics
 

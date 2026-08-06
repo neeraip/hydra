@@ -8,16 +8,17 @@ and the `hydra-sdk` Rust library.
 | Engine | Key | Domain | Source model | Status |
 |---|---|---|---|---|
 | Water Distribution | `wds` | Pressurised supply networks — hydraulics, water quality, energy | EPANET `.inp` (2.x) | **Available** |
-| Urban Drainage | `uds` | Stormwater and wastewater collection — runoff, routing, water quality | SWMM `.inp` | **Available** (CLI and SDK) |
+| Urban Drainage | `uds` | Stormwater and wastewater collection — runoff, routing, water quality | SWMM `.inp` | **Available** |
 | Open Channel | `och` | Rivers and open channels — steady and unsteady flow | HEC-RAS project archive | Planned |
 
 <!-- PLANNED-ENGINE: och — this page is the canonical statement of engine status. Revise the table above and the section below as each engine ships. -->
 
-The urban drainage engine ships **CLI-first**: it is available in the registry
-and runs SWMM models through the `hydra` CLI and the SDK, but the GUI cannot
-create or edit urban drainage projects yet — its engine card reads "CLI only"
-until editor support lands. Registry availability says what this build of
-Hydra can *simulate*; each application additionally knows what it can *edit*.
+Every available engine runs from all three surfaces. What differs is
+*editing*: the GUI can build and change a water distribution model, while a
+drainage project begins by importing a SWMM model and is then browsed,
+simulated and read rather than edited. Registry availability says what this
+build of Hydra can *simulate*; each application additionally knows what it
+can *edit*.
 
 ## Available vs. planned
 
