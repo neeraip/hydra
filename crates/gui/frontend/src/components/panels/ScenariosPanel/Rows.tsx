@@ -310,6 +310,7 @@ export function ScenarioRow({
               onClick={onRenameCommit}
               style={iconButtonStyle}
               data-tooltip="Save"
+              aria-label="Save name"
             >
               <CheckIcon style={{ width: 11, height: 11 }} />
             </button>
@@ -318,6 +319,7 @@ export function ScenarioRow({
               onClick={onRenameCancel}
               style={iconButtonStyle}
               data-tooltip="Cancel"
+              aria-label="Cancel rename"
             >
               <XMarkIcon style={{ width: 11, height: 11 }} />
             </button>
@@ -415,6 +417,7 @@ export function ScenarioRow({
               color: isRunning ? "var(--text-tertiary)" : "#7bbf95",
             }}
             data-tooltip="Run simulation"
+            aria-label="Run simulation"
           >
             <PlayIcon style={{ width: 12, height: 12 }} />
           </button>
@@ -536,6 +539,7 @@ export const CreateRow = React.forwardRef<
         onClick={onCancel}
         style={iconButtonStyle}
         data-tooltip="Cancel"
+        aria-label="Cancel new scenario"
       >
         <XMarkIcon style={{ width: 12, height: 12 }} />
       </button>

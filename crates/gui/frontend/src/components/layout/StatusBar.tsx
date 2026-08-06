@@ -113,6 +113,7 @@ export function StatusBar() {
         onClick={toggleIssuesPanel}
         disabled={!project}
         data-tooltip={`Issues & notifications (${issuesShortcut})`}
+        aria-label="Issues and notifications"
         style={{
           display: "inline-flex",
           alignItems: "center",
