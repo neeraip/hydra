@@ -40,6 +40,15 @@ export interface SimResultColumn {
   quantity?: GenericQuantity;
   /** Quantity key for a fixed-variable engine's own conversion. */
   unit?: Quantity;
+  /**
+   * Labels for a column whose values are codes rather than measurements.
+   *
+   * Supplied by whoever declares the column, so a list rendering it does
+   * not have to know which variables are enumerations — the alternative
+   * is a second copy of the table, which is exactly how the hover chip
+   * once came to report every open link as "cv".
+   */
+  codes?: Readonly<Record<number, string>>;
 }
 
 /**

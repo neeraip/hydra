@@ -268,8 +268,15 @@ function currentValue(
   return { value, format: column };
 }
 
-function formatValue(row: Row, sys: "si" | "us"): string {
+export function formatValue(row: Row, sys: "si" | "us"): string {
   if (row.value == null || !row.format) return "—";
+  // A coded column brings its own labels, so the list never has to know
+  // which variables are enumerations. An unrecognised code falls through
+  // to the number, which is more use than a dash when the engine has
+  // grown a state this build does not name.
+  if (row.format.codes) {
+    return row.format.codes[row.value] ?? String(row.value);
+  }
   if (row.format.quantity) {
     return formatGenericValue(row.value, row.format.quantity, sys, false);
   }

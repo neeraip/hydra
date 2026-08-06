@@ -18,7 +18,10 @@ import {
 } from "../../canvas/GenericLegend";
 import type { ScaleMode } from "../../canvas/legend-primitives";
 import { MapCanvas } from "../../canvas/MapCanvas";
-import { wdsBandColors } from "../../canvas/MapCanvas/colorUtils";
+import {
+  STATUS_LABELS,
+  wdsBandColors,
+} from "../../canvas/MapCanvas/colorUtils";
 import type { MeasurePoint } from "../../canvas/measureSnap";
 import { usePublishCurrentPeriod } from "../../canvas/period-context";
 import {
@@ -395,12 +398,20 @@ const WDS_NODE_VARS: Record<
 
 const WDS_LINK_VARS: Record<
   LinkVariable,
-  { label: string; symbol: string; unit?: Quantity }
+  {
+    label: string;
+    symbol: string;
+    unit?: Quantity;
+    codes?: Readonly<Record<number, string>>;
+  }
 > = {
   flow: { label: "Flow", symbol: "Q", unit: "flow" },
   velocity: { label: "Velocity", symbol: "v", unit: "velocity" },
   headloss: { label: "Headloss", symbol: "hL", unit: "elevation" },
-  status: { label: "Status", symbol: "St" },
+  // Status is an enumeration, not a measurement, so it travels with the
+  // table that decodes it rather than as a bare number the list would
+  // print as "3".
+  status: { label: "Status", symbol: "St", codes: STATUS_LABELS },
   quality: { label: "Quality", symbol: "C" },
 };
 
@@ -1579,6 +1590,7 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
           label: WDS_LINK_VARS[linkVar].label,
           symbol: WDS_LINK_VARS[linkVar].symbol,
           unit: WDS_LINK_VARS[linkVar].unit,
+          codes: WDS_LINK_VARS[linkVar].codes,
         },
       ],
       region: [],
