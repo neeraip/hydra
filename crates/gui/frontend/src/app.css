@@ -858,7 +858,11 @@ body,
 }
 
 /* ── Inspector panel ─────────────────────────────────────────────────────────*/
-.inspector-panel {
+/* Shared chrome for a panel docked to either side of the canvas — the
+   network list on the left and the element inspector on the right. Named
+   for the position rather than for one of its two users, which is what
+   `.inspector-panel` was doing while the list wore it too. */
+.side-panel {
   width: var(--inspector-w);
   height: 100%;
   background: rgba(13, 13, 18, 0.97);
@@ -881,7 +885,7 @@ body,
    That is the same panel showing something else, not a panel arriving, so
    it must not replay the entrance — which faded the whole panel back
    through transparent and let the canvas show through it. */
-[data-inspector-entering="false"] .inspector-panel {
+[data-inspector-entering="false"] .side-panel {
   animation: none;
 }
 
@@ -1201,7 +1205,7 @@ input[type="range"]::-moz-range-track {
   border-color: rgba(23, 33, 55, 0.14);
   background: rgba(23, 33, 55, 0.03);
 }
-[data-theme="light"] .inspector-panel {
+[data-theme="light"] .side-panel {
   background: rgba(242, 245, 252, 0.97);
 }
 [data-theme="light"] .metric-chip {

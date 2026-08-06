@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { STATUS_LABELS } from "../../canvas/MapCanvas/colorUtils";
-import type { Row } from "./NetworkInspectorHome";
-import { formatValue } from "./NetworkInspectorHome";
+import type { Row } from "./NetworkList";
+import { formatValue } from "./NetworkList";
 
 /**
  * How the network list prints a value.

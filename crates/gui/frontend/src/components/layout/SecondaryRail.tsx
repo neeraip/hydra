@@ -2,7 +2,7 @@ import type React from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { type ProjectView, useAppState } from "../../AppContext";
 import { useCanvasSelection } from "../../canvas/selection-context";
-import { NetworkInspectorHome } from "../panels/NetworkInspectorHome";
+import { NetworkList } from "../panels/NetworkList";
 
 const RAIL_MIN = 200;
 const RAIL_MAX = 520;
@@ -29,7 +29,7 @@ function CanvasRail() {
   } = useCanvasSelection();
 
   return (
-    <NetworkInspectorHome
+    <NetworkList
       embedded
       onSelectNode={selectNode}
       onSelectLink={selectLink}

@@ -100,7 +100,7 @@ export function NodeInspector({
   const canOpenInEditor = components.editorFocusesElements;
   return (
     <div
-      className="inspector-panel"
+      className="side-panel"
       style={{
         position: "absolute",
         right: 0,
@@ -248,7 +248,7 @@ export function LinkInspector({
   const canOpenInEditor = components.editorFocusesElements;
   return (
     <div
-      className="inspector-panel"
+      className="side-panel"
       style={{
         position: "absolute",
         right: 0,
@@ -399,7 +399,7 @@ export function RegionInspector({
   if (!EngineBody) return null;
   return (
     <div
-      className="inspector-panel"
+      className="side-panel"
       style={{
         position: "absolute",
         right: 0,

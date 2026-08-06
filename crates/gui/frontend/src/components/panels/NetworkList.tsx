@@ -81,7 +81,10 @@ const CONTEXT_LINE_AT_SCALE_1 = 12;
  * nothing and cost the fixed-size fast path on a 46k-element network.
  * Rows with no second line centre in the taller slot.
  */
-export function inspectorRowHeight(scale: number, searching: boolean): number {
+export function networkListRowHeight(
+  scale: number,
+  searching: boolean,
+): number {
   const text = ID_LINE_AT_SCALE_1 + (searching ? CONTEXT_LINE_AT_SCALE_1 : 0);
   return Math.round(ROW_CHROME + text * scale);
 }
@@ -389,7 +392,7 @@ interface Props {
   embedded?: boolean;
 }
 
-export function NetworkInspectorHome({
+export function NetworkList({
   onClose,
   onSelectNode,
   onSelectLink,
@@ -562,7 +565,7 @@ export function NetworkInspectorHome({
   );
 
   const scrollRef = useRef<HTMLDivElement>(null);
-  const rowHeight = inspectorRowHeight(readTextScale(), searching);
+  const rowHeight = networkListRowHeight(readTextScale(), searching);
   const rowVirtualizer = useVirtualizer({
     count: visible.length,
     getScrollElement: () => scrollRef.current,
@@ -647,7 +650,7 @@ export function NetworkInspectorHome({
       };
 
   return (
-    <div className="inspector-panel" style={shell}>
+    <div className="side-panel" style={shell}>
       <div style={HEADER_BAR}>
         <input
           value={queryInput}
