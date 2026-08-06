@@ -15,12 +15,34 @@
 // engine's §4.4 attribute schema — so a kind this file has never heard of
 // renders correctly, and so does an engine that does not exist yet.
 
+import {
+  ChevronDownIcon,
+  ChevronUpDownIcon,
+  ChevronUpIcon,
+} from "@heroicons/react/16/solid";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { KindElements } from "../../hooks";
 import { formatElementAttribute } from "../../hooks/network";
 import { useUnitSystem } from "../../units";
 
 type SortDir = "asc" | "desc";
+
+/**
+ * The sort mark beside a column heading.
+ *
+ * Sized in `em` rather than pixels because it sits inside the heading's
+ * own text: the app's text-size setting moves that text through five
+ * steps, and an icon pinned to one of them drifts from the word it
+ * belongs to at the other four. The baseline nudge centres it against
+ * lowercase rather than letting it sit on the baseline.
+ */
+const SORT_ICON: React.CSSProperties = {
+  width: "1em",
+  height: "1em",
+  marginLeft: 3,
+  verticalAlign: "-0.15em",
+  flexShrink: 0,
+};
 
 const TH: React.CSSProperties = {
   padding: "6px 10px",
@@ -143,14 +165,13 @@ export function KindTable({
     });
   }, [elements, sortCol, sortDir, matches]);
 
-  const indicator = (col: string) =>
-    sortCol !== col ? (
-      <span style={{ opacity: 0.25, marginLeft: 3 }}>↕</span>
-    ) : (
-      <span style={{ marginLeft: 3, color: "var(--accent)" }}>
-        {sortDir === "asc" ? "↑" : "↓"}
-      </span>
-    );
+  const indicator = (col: string) => {
+    if (sortCol !== col) {
+      return <ChevronUpDownIcon style={{ ...SORT_ICON, opacity: 0.25 }} />;
+    }
+    const Arrow = sortDir === "asc" ? ChevronUpIcon : ChevronDownIcon;
+    return <Arrow style={{ ...SORT_ICON, color: "var(--accent)" }} />;
+  };
 
   if (elements.ids.length === 0) {
     return (
@@ -225,6 +246,7 @@ export function KindTable({
             style={{
               width: "100%",
               borderCollapse: "collapse",
+              WebkitUserSelect: "none",
               userSelect: "none",
             }}
           >

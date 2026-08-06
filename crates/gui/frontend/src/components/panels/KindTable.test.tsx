@@ -130,6 +130,54 @@ describe("KindTable", () => {
     expect(screen.getByText("J1")).toBeDefined();
   });
 
+  /**
+   * The sort marks were `↕`, `↑` and `↓` — characters, so their shape came
+   * from whatever font the platform resolved and their size from the text
+   * rather than from any icon rule.
+   *
+   * Asserted over every heading rather than one, so a heading added later
+   * has to carry a real mark too.
+   */
+  it("draws its sort marks as icons, not characters", () => {
+    const { container } = render(<KindTable elements={junctions} />);
+    const headers = [...container.querySelectorAll("th")];
+    expect(headers.length).toBeGreaterThan(0);
+    for (const th of headers) {
+      expect(
+        th.querySelector("svg"),
+        `"${th.textContent}" has no sort mark`,
+      ).not.toBeNull();
+      // Named explicitly: an icon added *beside* a surviving character
+      // would pass the check above while still drawing the glyph.
+      expect(th.textContent).not.toMatch(/[↕↑↓]/);
+    }
+  });
+
+  /**
+   * The mark is the only thing on screen saying which column is sorted and
+   * which way, so it has to differ in all three states — and a swap of
+   * icons could put ascending and descending the wrong way round without
+   * the sort tests above noticing, since those assert row order only.
+   */
+  it("marks only the sorted column, and follows its direction", () => {
+    const { container } = render(<KindTable elements={junctions} />);
+    const [idHeader, invertHeader] = [...container.querySelectorAll("th")];
+    const neutral = idHeader?.querySelector("svg")?.innerHTML;
+    expect(neutral).toBeTruthy();
+
+    if (!idHeader) throw new Error("no ID header");
+    fireEvent.click(idHeader);
+    const ascending = idHeader.querySelector("svg")?.innerHTML;
+    expect(ascending).not.toBe(neutral);
+    // The column that is not sorted keeps the neutral mark.
+    expect(invertHeader?.querySelector("svg")?.innerHTML).toBe(neutral);
+
+    fireEvent.click(idHeader);
+    const descending = idHeader.querySelector("svg")?.innerHTML;
+    expect(descending).not.toBe(ascending);
+    expect(descending).not.toBe(neutral);
+  });
+
   // Selecting a row is not a reveal request. Only the token clears the
   // search — otherwise every click would wipe the filter under the user.
   it("leaves the search alone when no reveal is requested", () => {
