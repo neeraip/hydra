@@ -4,6 +4,7 @@ import {
   formatBytes,
   formatDistance,
   formatQty,
+  formatQtyCompact,
   formatQtyRaw,
   formatQtyValue,
   fromDisplay,
@@ -359,5 +360,58 @@ describe("formatBytes", () => {
     // Beyond TB it keeps counting in TB rather than reaching for PB, which
     // no results file will ever need.
     expect(formatBytes(5e15)).toBe("5000 TB");
+  });
+});
+
+/**
+ * A connected-element card is a chip: a badge, an id, a type and a couple
+ * of numbers on one line. The diameter used to branch on the unit system
+ * and print the model's own value in SI, unrounded — for a pipe imported
+ * from inches that is what f32 made of 12 in, `Ø304.79998779296875mm`, and
+ * it pushed the id it sits beside down to an ellipsis. The id is the one
+ * thing the card exists to show.
+ */
+describe("formatQtyCompact", () => {
+  it("rounds away an imported diameter's float noise", () => {
+    expect(formatQtyCompact(304.79998779296875, "diameter", "si")).toBe(
+      "305mm",
+    );
+  });
+
+  it("stays short whatever the stored precision", () => {
+    expect(
+      formatQtyCompact(304.79998779296875, "diameter", "si").length,
+    ).toBeLessThanOrEqual(7);
+  });
+
+  it("converts as well as rounds", () => {
+    expect(formatQtyCompact(304.79998779296875, "diameter", "us")).toBe(
+      "12.00in",
+    );
+  });
+
+  /** No space: the chip is tight and the Ø already binds the two together. */
+  it("runs the unit up against the number", () => {
+    expect(formatQtyCompact(250, "diameter", "si")).not.toContain(" ");
+  });
+
+  it("takes an explicit decimal count", () => {
+    expect(formatQtyCompact(304.79998779296875, "diameter", "si", 1)).toBe(
+      "304.8mm",
+    );
+  });
+
+  /**
+   * The properties list keeps the raw value on purpose — it pre-fills an
+   * edit field, so rounding there would write the rounding into the model.
+   * These two must not be confused for one another.
+   */
+  it("is not the raw formatter", () => {
+    expect(formatQtyRaw(304.79998779296875, "diameter", "si")).toContain(
+      "304.79998779296875",
+    );
+    expect(
+      formatQtyCompact(304.79998779296875, "diameter", "si"),
+    ).not.toContain("304.79998779296875");
   });
 });

@@ -278,6 +278,30 @@ export function formatQtyRaw(v: number, q: Quantity, sys: UnitSystem): string {
 }
 
 /**
+ * Convert + format for a chip, where width is the scarce thing.
+ *
+ * No space before the unit, and always rounded. The connected-elements
+ * cards used to branch on the unit system and print the model's own number
+ * in SI, which for a pipe imported from inches is what f32 made of 12 in:
+ * `Ø304.79998779296875mm`, seventeen characters that squeezed the element's
+ * id down to an ellipsis. The id is what the card is for.
+ *
+ * Distinct from {@link formatQtyRaw}, which preserves the model's precision
+ * on purpose — that one backs the properties list, whose values pre-fill an
+ * edit field, so rounding there would write the rounding back into the
+ * model.
+ */
+export function formatQtyCompact(
+  v: number,
+  q: Quantity,
+  sys: UnitSystem,
+  decimals?: number,
+): string {
+  const d = decimals ?? defaultDecimals(q, sys);
+  return `${toDisplay(v, q, sys).toFixed(d)}${unitLabel(q, sys)}`;
+}
+
+/**
  * Convert + format an SI value as a bare number string — no unit label.
  *
  * Used by table cells whose column header already carries the unit (via

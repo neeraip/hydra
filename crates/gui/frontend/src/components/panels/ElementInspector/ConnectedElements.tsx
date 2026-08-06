@@ -1,7 +1,12 @@
 import { flowColor, pressureColor } from "../../../canvas/colors";
 import { useHoverActions } from "../../../canvas/hover-context";
 import type { Link, Node } from "../../../hooks";
-import { toDisplay, unitLabel, useUnitSystem } from "../../../units";
+import {
+  formatQtyCompact,
+  toDisplay,
+  unitLabel,
+  useUnitSystem,
+} from "../../../units";
 import { TypeBadge } from "../../ui/TypeBadge";
 
 // ── Connected-elements section ─────────────────────────────────────────────────
@@ -79,11 +84,7 @@ export function ConnectedLink({
             color: "var(--text-secondary)",
           }}
         >
-          Ø
-          {sys === "si"
-            ? `${link.diameter}`
-            : toDisplay(link.diameter, "diameter", sys).toFixed(2)}
-          {unitLabel("diameter", sys)}
+          Ø{formatQtyCompact(link.diameter, "diameter", sys)}
         </span>
       )}
       {hasFlow && (
