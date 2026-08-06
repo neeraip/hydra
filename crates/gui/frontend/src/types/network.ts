@@ -53,8 +53,10 @@ export interface Link {
   fromId: string;
   toId: string;
   /** Mean velocity (m/s) for the current reporting period; absent when the
-   * engine's snapshot carries no attribute data. */
-  velocity?: number;
+   * engine's snapshot carries no attribute data, and `null` when a period
+   * was read but carries no value here — the same distinction its sibling
+   * result fields below draw. */
+  velocity?: number | null;
   /** Flow in L/s for the current reporting period. `null` when no simulation has run. */
   flow?: number | null;
   /**

@@ -85,6 +85,7 @@ import { InvalidCrsOverlay } from "./CanvasView/InvalidCrsOverlay";
 import { SchematicAspectSlider } from "./CanvasView/SchematicAspectSlider";
 import { useCrsReprojection } from "./CanvasView/useCrsReprojection";
 import { ViewportControls } from "./CanvasView/ViewportControls";
+import { linkResultsAt, nodeResultsAt } from "./mergeResults";
 import {
   shouldZoomOnFollow,
   type ViewportCause,
@@ -1370,10 +1371,7 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
     if (!needSimObjects || !simMerged || !currentPeriodResult) return posNodes;
     return posNodes.map((n, i) => ({
       ...n,
-      pressure: currentPeriodResult.nodePressure[i],
-      demand: currentPeriodResult.nodeDemand[i],
-      head: currentPeriodResult.nodeHead[i],
-      quality: currentPeriodResult.nodeQuality?.[i] ?? null,
+      ...nodeResultsAt(currentPeriodResult, i),
     }));
   }, [posNodes, currentPeriodResult, simMerged, needSimObjects]);
 
@@ -1387,10 +1385,7 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
     }
     return baseLinks.map((l, i) => ({
       ...l,
-      velocity: currentPeriodResult.linkVelocity[i],
-      flow: currentPeriodResult.linkFlow[i],
-      status: currentPeriodResult.linkStatus[i],
-      quality: currentPeriodResult.linkQuality?.[i] ?? null,
+      ...linkResultsAt(currentPeriodResult, i),
     }));
   }, [baseLinks, currentPeriodResult, needSimObjects]);
 
