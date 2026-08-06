@@ -425,7 +425,15 @@ const WDS_LINK_VARS: Record<
 > = {
   flow: { label: "Flow", symbol: "Q", unit: "flow" },
   velocity: { label: "Velocity", symbol: "v", unit: "velocity" },
-  headloss: { label: "Headloss", symbol: "hL", unit: "elevation" },
+  // `headloss`, matching the catalog this same variable is served under
+  // once a run exists. It was `elevation`, a third answer agreeing with
+  // neither — harmless only because this table is the pre-run fallback and
+  // has no values to convert, which is exactly how it went unnoticed.
+  //
+  // Both this and the catalog still describe pumps and valves as m/km when
+  // the file stores their head loss as a total; that is inherent to the
+  // .out convention and is not something a label can fix here.
+  headloss: { label: "Headloss", symbol: "hL", unit: "headloss" },
   status: { label: "Status", symbol: "St" },
   quality: { label: "Quality", symbol: "C" },
 };
