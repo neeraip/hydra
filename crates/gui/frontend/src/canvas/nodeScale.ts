@@ -112,3 +112,28 @@ export function nodeRadius(typical: number | null, position: number): number {
       : typical * RADIUS_PER_LINK;
   return base * nodeScaleFactor(position);
 }
+
+/**
+ * What the drawn radius depends on, for the canvas's update triggers.
+ *
+ * The renderer computes a function accessor once into a buffer and reuses
+ * it until something in its trigger list changes. So a radius that varies
+ * with the slider and a trigger list that does not mention the slider give
+ * a frozen radius — and, because the pixel clamps around it are ordinary
+ * props that do update, a control that appears to work in one direction
+ * only: lowering the ceiling clips the stale radius, raising it does
+ * nothing.
+ *
+ * Returning the radius itself rather than the inputs it came from is the
+ * point. Any future input — another slider, a different derivation — is
+ * covered without anyone remembering to extend a list, because a radius
+ * that did not change cannot need a redraw and one that did always gets
+ * one. Numbers, so the renderer's shallow comparison holds across renders.
+ */
+export function nodeRadiusTrigger(
+  isSchematic: boolean,
+  typical: number | null,
+  position: number,
+): [boolean, number] {
+  return [isSchematic, nodeRadius(typical, position)];
+}

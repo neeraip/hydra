@@ -4,6 +4,7 @@ import {
   NODE_SCALE_MAX,
   NODE_SCALE_MIN,
   nodeRadius,
+  nodeRadiusTrigger,
   nodeScaleFactor,
   typicalLinkLength,
 } from "./nodeScale";
@@ -142,5 +143,62 @@ describe("a layout with no model spacing to measure", () => {
    *  any layout can move it. */
   it("is the same whatever the network looks like", () => {
     expect(nodeRadius(null, 60)).toBe(nodeRadius(null, 60));
+  });
+});
+
+/**
+ * The radius and the trigger that redraws it must not drift apart.
+ *
+ * The reported defect: the size slider only worked downward. The renderer
+ * caches a function accessor until its trigger list changes, the list was
+ * `[isSchematic]` from when the radius was a constant, and the pixel clamps
+ * beside it are plain props that update regardless. So the world radius
+ * froze while its ceiling moved, and only the direction that clipped the
+ * stale value had any visible effect.
+ *
+ * The assertion below is the whole of it: two settings that draw different
+ * sizes must produce different triggers. A list that mentions the inputs by
+ * name passes only while someone keeps it current; deriving it from the
+ * radius passes by construction.
+ */
+describe("the redraw trigger", () => {
+  const settings: Array<[boolean, number | null, number]> = [
+    [false, 60, NODE_SCALE_DEFAULT],
+    [false, 60, 100],
+    [false, 60, 0],
+    [false, 900, NODE_SCALE_DEFAULT],
+    [true, null, NODE_SCALE_DEFAULT],
+    [true, null, 75],
+  ];
+
+  it("changes whenever the drawn size does", () => {
+    for (const [aSchematic, aTypical, aPos] of settings) {
+      for (const [bSchematic, bTypical, bPos] of settings) {
+        const sameSize =
+          nodeRadius(aTypical, aPos) === nodeRadius(bTypical, bPos) &&
+          aSchematic === bSchematic;
+        if (sameSize) continue;
+        expect(nodeRadiusTrigger(aSchematic, aTypical, aPos)).not.toEqual(
+          nodeRadiusTrigger(bSchematic, bTypical, bPos),
+        );
+      }
+    }
+  });
+
+  /**
+   * And holds still otherwise, or every render would rebuild the buffer for
+   * a network that has not changed — the reason the trigger list exists.
+   */
+  it("is stable when nothing has changed", () => {
+    expect(nodeRadiusTrigger(false, 60, 40)).toEqual(
+      nodeRadiusTrigger(false, 60, 40),
+    );
+  });
+
+  /** Comparison is shallow, so the entries have to be primitives. */
+  it("holds only primitives", () => {
+    for (const part of nodeRadiusTrigger(false, 60, 70)) {
+      expect(["boolean", "number"]).toContain(typeof part);
+    }
   });
 });

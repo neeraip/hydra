@@ -41,6 +41,12 @@ import { HoverChip, type HoverTip } from "./HoverChip";
 import { useHoverActions, useHoverState } from "./hover-context";
 import { useCanvasLayers } from "./layers-context";
 import {
+  pulseApplies,
+  pulseKindFor,
+  pulsePattern,
+  pulseSpeed,
+} from "./linkPulse";
+import {
   baseLinkRgba,
   baseNodeRgba,
   genericRgba,
@@ -60,6 +66,7 @@ import { nearestPointOnPath, type SnapResult } from "./measureSnap";
 import {
   NODE_SCALE_DEFAULT,
   nodeRadius,
+  nodeRadiusTrigger,
   nodeScaleFactor,
   typicalLinkLength,
 } from "./nodeScale";
@@ -1913,7 +1920,7 @@ export const MapCanvas = memo(function MapCanvas({
         // ids for the same class-transfer reason as above. FlowPathLayer is
         // already a PathLayer, so it renders the full polyline in both the
         // straight and vertex cases under its single id.
-        ...(animateLinks && pr && (linkVar === "flow" || linkVar === "velocity")
+        ...(animateLinks && pr && pulseApplies(linkVar)
           ? [
               new FlowPathLayer({
                 id: "links-flow",
@@ -1931,22 +1938,22 @@ export const MapCanvas = memo(function MapCanvas({
                 jointRounded: true,
                 pickable: false,
                 flowTime: flowAnimRef.current,
-                getFlowParams: (d) => {
-                  const l = linkSim(d);
-                  const v = l.velocity;
-                  const f = l.flow;
-                  const speed =
-                    v != null && v > 0
-                      ? Math.min(1, v / 1.5)
-                      : f != null
-                        ? Math.min(1, Math.abs(f) / Math.max(0.01, flowMax))
-                        : 0.2;
-                  const dir = f != null && f < 0 ? -1 : 1;
-                  return [speed * dir, hashStr(d.id) * 6.28318];
-                },
+                // What kind of claim the motion is making. See `linkPulse`.
+                flowPattern: pulsePattern(pulseKindFor(linkVar)),
+                // Speed and direction come from the link's own flow, not
+                // from the coloured variable — what differs between
+                // variables is only what motion is being asked to say. See
+                // `linkPulse`.
+                getFlowParams: (d) => [
+                  pulseSpeed(pulseKindFor(linkVar), linkSim(d), flowMax),
+                  hashStr(d.id) * 6.28318,
+                ],
                 updateTriggers: {
                   getColor: linkColorTriggers,
-                  getFlowParams: [flowMax, pr],
+                  // `linkVar` belongs here: it decides the pulse kind, and a
+                  // cached accessor would keep the previous variable's motion
+                  // after a switch between two that both animate.
+                  getFlowParams: [flowMax, pr, linkVar],
                 },
               }),
             ]
@@ -2075,7 +2082,7 @@ export const MapCanvas = memo(function MapCanvas({
               genNode?.values,
               genNode?.variable,
             ],
-            getRadius: [isSchematic],
+            getRadius: nodeRadiusTrigger(isSchematic, typicalLink, nodeScale),
           },
         }),
       );
@@ -2753,9 +2760,7 @@ export const MapCanvas = memo(function MapCanvas({
   // Mirrors the flow layer's own condition — with no results there is no
   // flow layer to drive, so the loop must not run either.
   const linkAnimationActive =
-    animateLinks &&
-    hasPeriodResults &&
-    (linkVar === "flow" || linkVar === "velocity");
+    animateLinks && hasPeriodResults && pulseApplies(linkVar);
 
   // Flow-animation loop — one RAF effect drives both view modes, pushing
   // fresh layers to the schematic deck or the map overlay. The clock resets

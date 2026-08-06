@@ -28,6 +28,7 @@ import { PathLayer, type PathLayerProps } from "@deck.gl/layers";
 const flowUniformBlock = `\
 layout(std140) uniform flowUniforms {
   float time;
+  float pattern;
 } flow;
 `;
 
@@ -36,12 +37,20 @@ layout(std140) uniform flowUniforms {
 const flowUniforms = {
   name: "flow" as const,
   fs: flowUniformBlock,
-  uniformTypes: { time: "f32" as const },
+  uniformTypes: { time: "f32" as const, pattern: "f32" as const },
 };
 
 export type FlowPathLayerProps<DataT = unknown> = {
   /** Global animation clock in seconds; drives the pulse phase. */
   flowTime?: number;
+  /**
+   * Which pattern the motion draws: `0` a continuous wave, `1` hard marks,
+   * `2` soft parcels. Layer-wide rather than per-link — it says what kind of
+   * claim the motion is making, which is a property of the variable on show
+   * and not of any one pipe. A uniform also keeps it off the attribute
+   * budget.
+   */
+  flowPattern?: number;
   /** Per-link [speed -1..1 (sign = direction along the path), phaseOffset
    * radians]. */
   getFlowParams?: Accessor<DataT, [number, number]>;
@@ -49,6 +58,7 @@ export type FlowPathLayerProps<DataT = unknown> = {
 
 const defaultProps: DefaultProps<FlowPathLayerProps> = {
   flowTime: { type: "number", value: 0 },
+  flowPattern: { type: "number", value: 0 },
   getFlowParams: {
     type: "accessor",
     value: [1, 0] as [number, number],
@@ -119,14 +129,53 @@ export class FlowPathLayer<DataT = unknown> extends PathLayer<
       // a different amount each. Quantising the coefficient to 0.05 steps
       // guarantees it: 3600 * 0.05 = 180, so 3600 * k is always an integer.
       // 19 steps across a 0.95–1.85 range is far finer than the eye resolves.
-      float flowRate = 0.95 + 0.05 * floor(flowSpeed * 18.0 + 0.5);
+      // A speed of exactly zero means still, and still has to look still.
+      // Left to the expression below it would resolve to 0.95 — nearly the
+      // rate of a full-speed link, since the whole range is only 0.95–1.85 —
+      // so a link carrying nothing would march along at almost full pelt.
+      // That was survivable while every animated variable was a rate, and is
+      // not now: telling a stationary link from a moving one is the entire
+      // content of the discrete pattern.
+      float flowRate = flowSpeed <= 0.0
+        ? 0.0
+        : 0.95 + 0.05 * floor(flowSpeed * 18.0 + 0.5);
       float phase = pathCoord * 0.083
         - flow.time * flowRate * flowDir
         + flowPhaseOffset;
 
-      float w1 = 0.5 + 0.5 * sin(6.28318530718 * phase);
-      float w2 = 0.5 + 0.5 * sin(6.28318530718 * (phase * 1.61803398875 + 0.21));
-      float pulse = clamp(0.72 * w1 + 0.28 * w2, 0.0, 1.0);
+      float pulse;
+      if (flow.pattern > 1.5) {
+        // Soft parcels, for motion that means "carrying" rather than
+        // "carrying at this rate". Discrete, so it cannot be read as a
+        // continuous quantity; soft-edged, so it cannot be confused with the
+        // hard marks below, which answer a different question. Measured from
+        // the middle of each period outward, giving a bump about 0.44 of the
+        // period wide with clear water between one and the next.
+        float c = abs(fract(phase) - 0.5);
+        pulse = 1.0 - smoothstep(0.0, 0.22, c);
+      } else if (flow.pattern > 0.5) {
+        // Discrete marks, for motion that means "carrying" rather than
+        // "carrying this much". Hard edges read as countable; the wave below
+        // reads as a scale, which is a claim a categorical legend cannot
+        // support. 0.34 of each period is marked, with an edge just soft
+        // enough that the leading face does not crawl with aliasing.
+        float f = fract(phase);
+        pulse = smoothstep(0.0, 0.06, f) - smoothstep(0.28, 0.34, f);
+      } else {
+        // Two sines beating against each other: a travelling swell with no
+        // hard edge anywhere, which is what a continuous quantity should
+        // look like.
+        float w1 = 0.5 + 0.5 * sin(6.28318530718 * phase);
+        float w2 = 0.5 + 0.5 * sin(6.28318530718 * (phase * 1.61803398875 + 0.21));
+        pulse = clamp(0.72 * w1 + 0.28 * w2, 0.0, 1.0);
+      }
+
+      // A still link draws solid at full colour rather than at the pattern's
+      // trough: it is not mid-cycle, it has no cycle, and dimming it would
+      // read as a third state that means nothing.
+      if (flowRate <= 0.0) {
+        pulse = 1.0;
+      }
 
       float widthCore = 1.0 - smoothstep(0.45, 1.0, crossPos);
       float intensity = max(0.22, (0.22 + 0.78 * pulse) * (0.40 + 0.60 * widthCore));
@@ -148,7 +197,12 @@ export class FlowPathLayer<DataT = unknown> extends PathLayer<
         };
       }
     ).model;
-    model?.shaderInputs.setProps({ flow: { time: this.props.flowTime ?? 0 } });
+    model?.shaderInputs.setProps({
+      flow: {
+        time: this.props.flowTime ?? 0,
+        pattern: this.props.flowPattern ?? 0,
+      },
+    });
     super.draw(opts);
   }
 }

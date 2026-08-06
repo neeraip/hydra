@@ -7,6 +7,12 @@ import {
   isValidBasemapId,
 } from "../../canvas/Basemap";
 import {
+  LINK_VARIABLES,
+  linkVariableFor,
+  NODE_VARIABLES,
+  nodeVariableFor,
+} from "../../canvas/canvasVariables";
+import {
   haversineMeters,
   LOCAL_CRS,
   wgs84ToSourceCrs,
@@ -17,12 +23,17 @@ import {
   type GenericSelection,
 } from "../../canvas/GenericLegend";
 import type { ScaleMode } from "../../canvas/legend-primitives";
+import {
+  ANIMATED_LINK_VARIABLES,
+  animationAppliesHint,
+} from "../../canvas/linkPulse";
 import { MapCanvas } from "../../canvas/MapCanvas";
 import { wdsBandColors } from "../../canvas/MapCanvas/colorUtils";
 import type { MeasurePoint } from "../../canvas/measureSnap";
 import { NODE_SCALE_DEFAULT } from "../../canvas/nodeScale";
 import { usePublishCurrentPeriod } from "../../canvas/period-context";
 import { stepIntervalMs } from "../../canvas/playback";
+import { withQualityAvailability } from "../../canvas/qualityAvailability";
 import {
   ASPECT_SLIDER_DEFAULT,
   aspectScales,
@@ -446,22 +457,13 @@ const WDS_LINK_VARS: Record<
   quality: { label: "Quality", symbol: "C" },
 };
 
-const PREF_NODE_VARS: readonly NodeVariable[] = [
-  "pressure",
-  "head",
-  "demand",
-  "quality",
-];
-const PREF_LINK_VARS: readonly LinkVariable[] = [
-  "flow",
-  "velocity",
-  "status",
-  "headloss",
-  "quality",
-];
+const PREF_NODE_VARS: readonly NodeVariable[] = NODE_VARIABLES;
+const PREF_LINK_VARS: readonly LinkVariable[] = LINK_VARIABLES;
 
-/** Variables whose links animate in flow direction. */
-const ANIMATED_VARIABLES: readonly string[] = ["flow", "velocity"];
+/** Named with this engine's own words for its variables. */
+const ANIMATION_APPLIES_HINT = animationAppliesHint(
+  (v) => WDS_LINK_VARS[v].label,
+);
 
 function readCanvasPrefs(projectId: string): Partial<CanvasPrefs> | null {
   try {
@@ -528,12 +530,6 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
   useEffect(() => {
     setCurrentHour(0);
   }, [project?.id]);
-  const [nodeVar, setNodeVar] = useState<NodeVariable>(
-    CANVAS_PREF_DEFAULTS.nodeVar,
-  );
-  const [linkVar, setLinkVar] = useState<LinkVariable>(
-    CANVAS_PREF_DEFAULTS.linkVar,
-  );
   // ── Link animation (Flow/Velocity pulse) — user toggle, persisted, and
   // forced off entirely while the "Reduce motion" accessibility setting is on.
   const [linkAnimation, setLinkAnimationRaw] = useState(
@@ -644,6 +640,18 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
   const [genericSelection, setGenericSelection] = useState<GenericSelection>(
     CANVAS_PREF_DEFAULTS.genericSelection,
   );
+  // Derived, not stored. See `canvasVariables`: holding these separately
+  // from the legend's selection is what let the two name different
+  // variables, with nothing on screen to say which one to believe.
+  const nodeVar = useMemo(
+    () => nodeVariableFor(genericSelection.point, CANVAS_PREF_DEFAULTS.nodeVar),
+    [genericSelection.point],
+  );
+  const linkVar = useMemo(
+    () =>
+      linkVariableFor(genericSelection.polyline, CANVAS_PREF_DEFAULTS.linkVar),
+    [genericSelection.polyline],
+  );
   const unitSystem = useUnitSystem();
   // Threshold bands come from the project's criteria file. Previously they
   // were component state, so velocity and flow carried across project
@@ -753,12 +761,22 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
     setBasemap(pick("basemap", (v) => isValidBasemapId(v)));
     // Clamp already maps missing/corrupt values to the default.
     setBasemapOpacity(clampBasemapOpacity(prefs?.basemapOpacity));
-    setNodeVar(pick("nodeVar", (v) => PREF_NODE_VARS.includes(v)));
-    setLinkVar(pick("linkVar", (v) => PREF_LINK_VARS.includes(v)));
+
     // Reads the merged key, falling back to the pre-merge pair.
     setScaleMode(readScaleMode(prefs));
     setLegendOpen(pick("legendOpen", (v) => typeof v === "boolean"));
-    setGenericSelection(readGenericSelection(prefs));
+    // Seeded from the legacy pair when no selection was saved — prefs
+    // written before the legend became the single store have only those.
+    const savedSelection = readGenericSelection(prefs);
+    setGenericSelection({
+      ...savedSelection,
+      point:
+        savedSelection.point ||
+        pick("nodeVar", (v) => PREF_NODE_VARS.includes(v)),
+      polyline:
+        savedSelection.polyline ||
+        pick("linkVar", (v) => PREF_LINK_VARS.includes(v)),
+    });
     // Clamp already maps missing/corrupt values to the default.
     setSchematicAspect(clampSliderValue(prefs?.schematicAspect ?? Number.NaN));
     setNodeScale(
@@ -998,36 +1016,13 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
 
   const handleGenericSelect = useCallback(
     (cls: GenericClassKey, id: string) => {
+      // One store. wds paints from typed variable names whose spellings are
+      // its catalog ids, so this selection is all either side needs — and
+      // there is no second copy left to fall out of step.
       setGenericSelection((s) => ({ ...s, [cls]: id }));
-      // wds colours its canvas from these typed variable names rather than
-      // from the catalog payload. Its catalog ids are the same strings, so
-      // the legend drives both without either side naming an engine — and
-      // this is what keeps the persisted prefs in step with the picker.
-      if (
-        cls === "point" &&
-        (PREF_NODE_VARS as readonly string[]).includes(id)
-      ) {
-        setNodeVar(id as NodeVariable);
-      }
-      if (
-        cls === "polyline" &&
-        (PREF_LINK_VARS as readonly string[]).includes(id)
-      ) {
-        setLinkVar(id as LinkVariable);
-      }
     },
     [],
   );
-  // The saved wds variables are the starting selection, so a reopened
-  // project shows the legend it was left on.
-  useEffect(() => {
-    if (!prefsReady) return;
-    setGenericSelection((s) => ({
-      ...s,
-      point: s.point || nodeVar,
-      polyline: s.polyline || linkVar,
-    }));
-  }, [prefsReady, nodeVar, linkVar]);
   const genericCanvas = useMemo<GenericCanvasResults | null>(() => {
     // Null for engines whose values arrive as fixed arrays, so the canvas
     // takes its own colouring path rather than a catalog channel that will
@@ -1214,16 +1209,19 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
   // with a fallback for when no simulation has run yet.
   const maxStep = stableResultMeta ? stableResultMeta.times.length - 1 : 24;
 
-  // The "quality" node variable is only offered when the loaded result has
-  // quality data; switching to a scenario without it left the picker stuck on
-  // a removed option and every junction rendered the null-quality grey.
+  // Quality is only worth showing when the loaded result has quality data;
+  // switching to a scenario without it left the picker on an option with
+  // nothing behind it and every junction rendering the null-quality grey.
+  //
+  // All four stores move together — the two the canvas paints from and the
+  // two the legend's picker shows. Correcting only the first pair left the
+  // legend saying Quality while the hover chip and the inspector showed
+  // velocity, and nothing on screen said which to believe.
   const qualityMode = stableResultMeta?.qualityMode ?? "none";
   useEffect(() => {
-    if (qualityMode === "none") {
-      setNodeVar((v) => (v === "quality" ? "pressure" : v));
-      // Same gating for the link quality variable.
-      setLinkVar((v) => (v === "quality" ? "velocity" : v));
-    }
+    setGenericSelection((s) =>
+      withQualityAvailability(s, qualityMode !== "none"),
+    );
   }, [qualityMode]);
   // Derived from the *loaded result*, not current simParams: editing the
   // duration without re-running must not flip the banner/scrubber for a
@@ -1912,7 +1910,8 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
     () => ({
       playing: linkAnimation,
       onToggle: setLinkAnimation,
-      appliesTo: ANIMATED_VARIABLES,
+      appliesTo: ANIMATED_LINK_VARIABLES,
+      appliesToHint: ANIMATION_APPLIES_HINT,
       reducedMotion,
     }),
     [linkAnimation, setLinkAnimation, reducedMotion],

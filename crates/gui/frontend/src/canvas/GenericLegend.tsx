@@ -153,6 +153,14 @@ export interface AnimationControl {
   onToggle: (playing: boolean) => void;
   /** Variable ids the animation applies to; others disable the button. */
   appliesTo: readonly string[];
+  /**
+   * What to tell a reader whose selection is not one of them. Supplied
+   * rather than written here: this legend is shared by every engine, and
+   * naming one engine's variables in it would be naming the wrong ones for
+   * the rest — which is also how the old sentence went stale unnoticed,
+   * being the only copy of the list nothing else read.
+   */
+  appliesToHint: string;
   /** Global "Reduce motion" preference — always wins over the toggle. */
   reducedMotion: boolean;
 }
@@ -466,7 +474,7 @@ export function GenericLegend({
             const tooltip = animation.reducedMotion
               ? "Animation off (Reduce motion is enabled in Settings)"
               : !animatable
-                ? "Animation applies to flow and velocity"
+                ? animation.appliesToHint
                 : animation.playing
                   ? "Pause link animation"
                   : "Play link animation";
