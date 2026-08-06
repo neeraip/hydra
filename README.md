@@ -3,6 +3,7 @@
 [![Library](https://img.shields.io/github/v/release/neeraip/hydra?filter=v*&label=Library)](https://github.com/neeraip/hydra/releases?q=Hydra+Library&expanded=true)
 [![CLI](https://img.shields.io/github/v/release/neeraip/hydra?filter=cli-v*&label=CLI)](https://github.com/neeraip/hydra/releases?q=Hydra+CLI&expanded=true)
 [![GUI](https://img.shields.io/github/v/release/neeraip/hydra?filter=gui-v*&label=GUI)](https://github.com/neeraip/hydra/releases?q=Hydra+GUI&expanded=true)
+[![CI](https://img.shields.io/github/actions/workflow/status/neeraip/hydra/cargo-ci.yml?branch=main&label=CI)](https://github.com/neeraip/hydra/actions/workflows/cargo-ci.yml)
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](LICENSE)
 
 Hydra is a water infrastructure simulation platform written in Rust. It is built as a suite of domain engines sharing one toolchain: a desktop GUI, a `hydra` CLI, and a Rust SDK.
@@ -20,7 +21,7 @@ A planned engine is registered in the shared engine registry, so its key and cra
 
 Every available engine runs from all three surfaces. Model *editing* in the desktop app is water distribution only for now: a drainage project is created by importing a SWMM model, and is then browsed, simulated and read like any other.
 
-**[→ Full documentation](https://neeraip.github.io/hydra/)**
+**[→ Download](https://github.com/neeraip/hydra/releases/latest)** · **[→ Full documentation](https://neeraip.github.io/hydra/)**
 
 ## Water distribution engine
 
