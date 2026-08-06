@@ -1,3 +1,4 @@
+import { ArrowDownTrayIcon, ArrowPathIcon } from "@heroicons/react/24/outline";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { useMemo, useState } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
@@ -21,6 +22,13 @@ import {
   useReleaseNotes,
 } from "../hooks/useReleaseNotes";
 import { type UpdaterState, useUpdater } from "../hooks/useUpdater";
+
+/** The updater banner's icon, sized to the label it sits beside. */
+const UPDATE_ICON: React.CSSProperties = {
+  width: "1.15em",
+  height: "1.15em",
+  flexShrink: 0,
+};
 
 const HELP_LINKS = [
   {
@@ -181,9 +189,14 @@ function UpdateRow({
           color: ACCENT,
         }}
       >
-        <span aria-hidden style={{ fontSize: "var(--text-lg)", lineHeight: 1 }}>
-          {updater.phase === "ready" ? "↻" : "↓"}
-        </span>
+        {/* Decorative: the label beside it already says what this is, and
+            the button carries the action. Sized in `em` so it tracks the
+            label through the app's text-size setting. */}
+        {updater.phase === "ready" ? (
+          <ArrowPathIcon aria-hidden style={UPDATE_ICON} />
+        ) : (
+          <ArrowDownTrayIcon aria-hidden style={UPDATE_ICON} />
+        )}
         <span>{label}</span>
       </div>
       {sublabel && (

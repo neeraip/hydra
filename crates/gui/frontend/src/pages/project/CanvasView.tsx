@@ -85,6 +85,12 @@ import { InvalidCrsOverlay } from "./CanvasView/InvalidCrsOverlay";
 import { SchematicAspectSlider } from "./CanvasView/SchematicAspectSlider";
 import { useCrsReprojection } from "./CanvasView/useCrsReprojection";
 import { ViewportControls } from "./CanvasView/ViewportControls";
+import { linkResultsAt, nodeResultsAt } from "./mergeResults";
+import {
+  shouldZoomOnFollow,
+  type ViewportCause,
+  viewportIsUserOwned,
+} from "./viewportCause";
 
 const NODE_KIND_PREFIX: Record<string, string> = {
   junction: "J",
@@ -336,6 +342,26 @@ const EMPTY_REGIONS: Region[] = [];
  * and nothing serves descriptors for them. Symbols follow the same notation
  * the catalog engines use: p pressure, H head, q demand, Q flow, v velocity,
  * hL headloss, C concentration. */
+
+/**
+ * The labels a categorical variable's states go by, keyed by stored value.
+ *
+ * A categorical variable's values are codes, not measurements: link status
+ * 3 means "Open". The engine publishes those states in the variable's own
+ * ramp hint, so this reads them across rather than keeping a table of its
+ * own — the contract's note on `Categorical` says exactly why, and the
+ * frontend has already once shipped a private copy that drifted.
+ */
+function categoryLabels(
+  ramp: GenericVariable["ramp"],
+): Readonly<Record<number, { label: string; severity?: string }>> | undefined {
+  if (ramp?.type !== "categorical") return undefined;
+  const out: Record<number, { label: string; severity?: string }> = {};
+  for (const item of ramp.items) {
+    out[item.value] = { label: item.label, severity: item.severity };
+  }
+  return out;
+}
 /** How many result variables ride along on each rail element. The rail
  * shows one; the rest are there for the GeoJSON export. */
 const RAIL_RESULT_COLUMNS = 3;
@@ -355,6 +381,8 @@ export const railColumns = (
   label: string;
   symbol?: string;
   quantity?: GenericQuantity;
+  codes?: Readonly<Record<number, { label: string; severity?: string }>>;
+  range?: readonly [number, number];
   at: number;
 }> => {
   // No catalog, no columns. `Math.max(0, -1)` below would otherwise turn
@@ -373,6 +401,8 @@ export const railColumns = (
     label: vars[i].label,
     symbol: vars[i].symbol,
     quantity: vars[i].quantity,
+    codes: categoryLabels(vars[i].ramp),
+    range: [vars[i].min, vars[i].max] as const,
     at: i,
   }));
 };
@@ -389,11 +419,23 @@ const WDS_NODE_VARS: Record<
 
 const WDS_LINK_VARS: Record<
   LinkVariable,
-  { label: string; symbol: string; unit?: Quantity }
+  {
+    label: string;
+    symbol: string;
+    unit?: Quantity;
+  }
 > = {
   flow: { label: "Flow", symbol: "Q", unit: "flow" },
   velocity: { label: "Velocity", symbol: "v", unit: "velocity" },
-  headloss: { label: "Headloss", symbol: "hL", unit: "elevation" },
+  // `headloss`, matching the catalog this same variable is served under
+  // once a run exists. It was `elevation`, a third answer agreeing with
+  // neither — harmless only because this table is the pre-run fallback and
+  // has no values to convert, which is exactly how it went unnoticed.
+  //
+  // Both this and the catalog still describe pumps and valves as m/km when
+  // the file stores their head loss as a total; that is inherent to the
+  // .out convention and is not something a label can fix here.
+  headloss: { label: "Headloss", symbol: "hL", unit: "headloss" },
   status: { label: "Status", symbol: "St" },
   quality: { label: "Quality", symbol: "C" },
 };
@@ -527,8 +569,39 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
   // places out of five.
   useEffect(() => {
     if (flyToState.key === 0) return;
-    viewportUserOwnedRef.current = true;
+    lastViewportCauseRef.current = "feature";
   }, [flyToState.key]);
+
+  /**
+   * Follow a relationship named in the inspector to the element it names.
+   *
+   * Distinct from selecting, which is what a click on the canvas or a row
+   * in the network list does — those already have the element in view, and
+   * reframing them would be taking a camera the user is holding. Following
+   * is navigation: the element is somewhere else by definition, and the
+   * card naming it is the only thing on screen that knows where.
+   *
+   * Whether that reframes is `shouldZoomOnFollow`'s call, not this
+   * function's. Note the fly-to marks the cause `"feature"` on its way
+   * through, so following again keeps framing — the chain sustains itself
+   * until the user pans.
+   */
+  const followElement = useCallback(
+    (kind: "node" | "link" | "region", id: string) => {
+      if (kind === "node") selectNode(id);
+      else if (kind === "link") selectLink(id);
+      else selectRegion(id);
+
+      if (!shouldZoomOnFollow(lastViewportCauseRef.current)) return;
+      setFlyToState((prev) => ({
+        nodeId: kind === "node" ? id : null,
+        linkId: kind === "link" ? id : null,
+        regionId: kind === "region" ? id : null,
+        key: prev.key + 1,
+      }));
+    },
+    [selectNode, selectLink, selectRegion],
+  );
 
   // Register zoom callbacks into the selection context so siblings (e.g. the
   // rail's network list) can trigger canvas fly-to without prop drilling.
@@ -744,19 +817,17 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
   // the new network.  Does NOT increment on scenario switch so the user's
   // chosen pan/zoom position is preserved during scenario comparisons.
   /**
-   * Whether the current camera is the user's rather than the app's.
+   * What last moved the camera — see `viewportCause`, which explains why
+   * this is a cause rather than the boolean it used to be.
    *
-   * Set by any deliberate framing — a drag or scroll-zoom on the canvas,
-   * the zoom buttons, reset-north, or flying to an element — and cleared
-   * only by a fit, which is the app framing the network itself. Defaults
-   * to false because a freshly loaded project is auto-fitted.
+   * Starts at `"fit"` because a freshly loaded project is auto-fitted.
    *
    * A ref, not state: nothing renders from it, and making it state would
    * re-render the whole canvas on every pan frame.
    */
-  const viewportUserOwnedRef = useRef(false);
+  const lastViewportCauseRef = useRef<ViewportCause>("fit");
   const markViewportUserOwned = useCallback(() => {
-    viewportUserOwnedRef.current = true;
+    lastViewportCauseRef.current = "user";
   }, []);
   const [mapFitKey, setMapFitKey] = useState(0);
   const [zoomInKey, setZoomInKey] = useState(0);
@@ -1336,10 +1407,7 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
     if (!needSimObjects || !simMerged || !currentPeriodResult) return posNodes;
     return posNodes.map((n, i) => ({
       ...n,
-      pressure: currentPeriodResult.nodePressure[i],
-      demand: currentPeriodResult.nodeDemand[i],
-      head: currentPeriodResult.nodeHead[i],
-      quality: currentPeriodResult.nodeQuality?.[i] ?? null,
+      ...nodeResultsAt(currentPeriodResult, i),
     }));
   }, [posNodes, currentPeriodResult, simMerged, needSimObjects]);
 
@@ -1353,10 +1421,7 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
     }
     return baseLinks.map((l, i) => ({
       ...l,
-      velocity: currentPeriodResult.linkVelocity[i],
-      flow: currentPeriodResult.linkFlow[i],
-      status: currentPeriodResult.linkStatus[i],
-      quality: currentPeriodResult.linkQuality?.[i] ?? null,
+      ...linkResultsAt(currentPeriodResult, i),
     }));
   }, [baseLinks, currentPeriodResult, needSimObjects]);
 
@@ -1796,7 +1861,10 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
       // Opening the rail shrinks the map exactly as closing it grew it, so
       // a framing the app owns stops being a fit either way.
       if (
-        shouldRefitAfterOcclusionChange(!viewportUserOwnedRef.current, true)
+        shouldRefitAfterOcclusionChange(
+          !viewportIsUserOwned(lastViewportCauseRef.current),
+          true,
+        )
       ) {
         setMapFitKey((k) => k + 1);
       }
@@ -1816,7 +1884,7 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
     if (clearable.measurements) clearAnnotations();
     if (
       shouldRefitAfterOcclusionChange(
-        !viewportUserOwnedRef.current,
+        !viewportIsUserOwned(lastViewportCauseRef.current),
         occlusionChanged,
       )
     ) {
@@ -2562,7 +2630,7 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
               }}
               onFit={() => {
                 // A fit hands framing back to the app.
-                viewportUserOwnedRef.current = false;
+                lastViewportCauseRef.current = "fit";
                 setMapFitKey((k) => k + 1);
               }}
               onToggleView={handleToggleView}
@@ -2616,9 +2684,9 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
                   setProjectView("editor");
                 }}
                 onLocateRelated={(id) => {
-                  if (linkMap.has(id)) selectLink(id);
+                  if (linkMap.has(id)) followElement("link", id);
                 }}
-                onLocateRegion={(id) => selectRegion(id)}
+                onLocateRegion={(id) => followElement("region", id)}
                 nodeVar={nodeVar}
                 ranges={stableResultMeta?.ranges}
                 hasSimulation={!!stableResultMeta}
@@ -2639,7 +2707,7 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
                   }))
                 }
                 onLocateOutlet={(id) => {
-                  if (nodeMap.has(id)) selectNode(id);
+                  if (nodeMap.has(id)) followElement("node", id);
                 }}
                 onOpenInEditor={() =>
                   focusInEditor(selectedRegion.type, selectedRegion.id)
@@ -2683,7 +2751,7 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
                     : undefined
                 }
                 onLocateNode={(id) => {
-                  if (nodeMap.has(id)) selectNode(id);
+                  if (nodeMap.has(id)) followElement("node", id);
                 }}
                 linkVar={linkVar}
                 ranges={stableResultMeta?.ranges}

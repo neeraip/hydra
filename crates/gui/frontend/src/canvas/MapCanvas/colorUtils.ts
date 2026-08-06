@@ -530,15 +530,18 @@ export function flowMagnitudeRgba(
  * copy of it elsewhere is how the hover chip came to report every open link
  * as "cv".
  */
+export const STATUS_LABELS: Readonly<Record<number, string>> = {
+  0: "Closed (XHead)",
+  1: "Temp Closed",
+  2: "Closed",
+  3: "Open",
+  4: "Active",
+  6: "Active (XFcv)",
+  7: "Active (XPressure)",
+};
+
 export function statusLabel(s: number | null | undefined): string {
-  if (s === 3) return "Open";
-  if (s === 2) return "Closed";
-  if (s === 4) return "Active";
-  if (s === 0) return "Closed (XHead)";
-  if (s === 1) return "Temp Closed";
-  if (s === 6) return "Active (XFcv)";
-  if (s === 7) return "Active (XPressure)";
-  return "—";
+  return (s == null ? undefined : STATUS_LABELS[s]) ?? "—";
 }
 
 /**

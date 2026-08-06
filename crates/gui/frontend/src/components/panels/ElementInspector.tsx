@@ -100,7 +100,7 @@ export function NodeInspector({
   const canOpenInEditor = components.editorFocusesElements;
   return (
     <div
-      className="inspector-panel"
+      className="side-panel"
       style={{
         position: "absolute",
         right: 0,
@@ -165,6 +165,7 @@ export function NodeInspector({
             type="button"
             onClick={onOpenInEditor}
             data-tooltip="Open in editor"
+            aria-label="Open in editor"
             style={btnIcon}
           >
             <TableCellsIcon style={{ width: 14, height: 14 }} />
@@ -176,6 +177,7 @@ export function NodeInspector({
             onClick={onZoomTo}
             disabled={disableZoomTo}
             data-tooltip="Zoom to feature"
+            aria-label="Zoom to feature"
             style={{
               ...btnIcon,
               opacity: disableZoomTo ? 0.45 : 1,
@@ -190,6 +192,7 @@ export function NodeInspector({
             type="button"
             onClick={onDelete}
             data-tooltip="Delete element"
+            aria-label="Delete element"
             style={{
               ...btnIcon,
               color: "var(--color-danger, #ef4444)",
@@ -245,7 +248,7 @@ export function LinkInspector({
   const canOpenInEditor = components.editorFocusesElements;
   return (
     <div
-      className="inspector-panel"
+      className="side-panel"
       style={{
         position: "absolute",
         right: 0,
@@ -310,6 +313,7 @@ export function LinkInspector({
             type="button"
             onClick={onOpenInEditor}
             data-tooltip="Open in editor"
+            aria-label="Open in editor"
             style={btnIcon}
           >
             <TableCellsIcon style={{ width: 14, height: 14 }} />
@@ -321,6 +325,7 @@ export function LinkInspector({
             onClick={onZoomTo}
             disabled={disableZoomTo}
             data-tooltip="Zoom to feature"
+            aria-label="Zoom to feature"
             style={{
               ...btnIcon,
               opacity: disableZoomTo ? 0.45 : 1,
@@ -335,6 +340,7 @@ export function LinkInspector({
             type="button"
             onClick={onDelete}
             data-tooltip="Delete element"
+            aria-label="Delete element"
             style={{
               ...btnIcon,
               color: "var(--color-danger, #ef4444)",
@@ -393,7 +399,7 @@ export function RegionInspector({
   if (!EngineBody) return null;
   return (
     <div
-      className="inspector-panel"
+      className="side-panel"
       style={{
         position: "absolute",
         right: 0,
@@ -444,6 +450,7 @@ export function RegionInspector({
               type="button"
               onClick={onOpenInEditor}
               data-tooltip="Open in editor"
+              aria-label="Open in editor"
               style={btnIcon}
             >
               <TableCellsIcon style={{ width: 14, height: 14 }} />
@@ -454,6 +461,7 @@ export function RegionInspector({
               type="button"
               onClick={onZoomTo}
               data-tooltip="Zoom to feature"
+              aria-label="Zoom to feature"
               style={btnIcon}
             >
               <MagnifyingGlassPlusIcon style={{ width: 14, height: 14 }} />
