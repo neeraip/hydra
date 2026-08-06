@@ -769,6 +769,11 @@ body,
   padding: 0 12px;
   gap: 12px;
   flex-shrink: 0;
+  /* Both forms, for the reason the canvas toolbar states: WKWebView — which
+     is what the app actually runs in on macOS — ignores the unprefixed
+     property, so scrubbing the timeline highlighted the clock and the axis
+     labels it dragged past. */
+  -webkit-user-select: none;
   user-select: none;
 }
 
@@ -1206,16 +1211,31 @@ input[type="range"]::-moz-range-track {
     rgba(46, 114, 194, 0.04) 100%
   );
 }
-[data-theme="light"] .btn-run {
+/* Excluding the modifiers is load-bearing, not tidiness. This selector
+   outweighs `.btn-run--stale` and `.btn-run--outline` — one class plus an
+   attribute against one class — so without the exclusions it repainted
+   both of them blue in the light theme: the outline button became a blue
+   fill still carrying its blue text, and the amber "edited since last run"
+   warning stopped being amber at all. */
+[data-theme="light"] .btn-run:not(.btn-run--stale):not(.btn-run--outline) {
   background: linear-gradient(135deg, #2e72c2 0%, #1e5aa0 100%);
   box-shadow:
     0 2px 8px rgba(46, 114, 194, 0.28),
     inset 0 1px 0 rgba(255, 255, 255, 0.2);
 }
-[data-theme="light"] .btn-run:hover {
+[data-theme="light"]
+  .btn-run:not(.btn-run--stale):not(.btn-run--outline):hover {
   box-shadow:
     0 4px 16px rgba(46, 114, 194, 0.4),
     inset 0 1px 0 rgba(255, 255, 255, 0.25);
+}
+
+/* The outline's blue is chosen against a dark panel; on white it lands
+   near 3:1, which is under AA for text this size. The light theme's own
+   accent clears it. */
+[data-theme="light"] .btn-run--outline {
+  border-color: #2e72c2;
+  color: #2e72c2;
 }
 [data-theme="light"] input[type="range"]::-webkit-slider-thumb {
   box-shadow:
@@ -1266,6 +1286,27 @@ input[type="range"]::-moz-range-track {
 .tool-btn:focus-visible {
   outline: 2px solid var(--border-focus);
   outline-offset: 2px;
+}
+
+/* ── Native select popups ────────────────────────────────────────────────────*/
+/* The open list of a <select> is drawn by the browser, not by us.
+   On Windows it takes a system background regardless of `color-scheme`,
+   while still applying whatever `color` the <select> carries — so a select
+   styled with a muted foreground (the timeline's speed picker, say) drew
+   grey text on a white sheet in dark mode, readable only under the row
+   highlight.
+
+   Stating both on the option fixes it where the popup is author-styleable,
+   which is Chromium and therefore the WebView2 the Windows build runs in,
+   and is ignored where it is not: macOS draws the popup natively and
+   already follows `color-scheme`.
+
+   `--bg-card` rather than `--bg-panel` because it must be opaque. The
+   panel token is translucent by design, and there is nothing of ours
+   behind this sheet for it to composite against — only the desktop. */
+option {
+  background-color: var(--bg-card);
+  color: var(--text-primary);
 }
 
 /* ── Input / textarea polished focus ─────────────────────────────────────────*/
