@@ -4,7 +4,7 @@
 [![CLI](https://img.shields.io/github/v/release/neeraip/hydra?filter=cli-v*&label=CLI)](https://github.com/neeraip/hydra/releases?q=Hydra+CLI&expanded=true)
 [![GUI](https://img.shields.io/github/v/release/neeraip/hydra?filter=gui-v*&label=GUI)](https://github.com/neeraip/hydra/releases?q=Hydra+GUI&expanded=true)
 [![CI](https://img.shields.io/github/actions/workflow/status/neeraip/hydra/cargo-ci.yml?branch=main&label=CI)](https://github.com/neeraip/hydra/actions/workflows/cargo-ci.yml)
-[![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](LICENSE)
+[![License](https://img.shields.io/badge/license-AGPL--3.0_or_commercial-blue)](#license)
 
 Hydra is a water infrastructure simulation platform written in Rust. It is built as a suite of domain engines sharing one toolchain: a desktop GUI, a `hydra` CLI, and a Rust SDK.
 
@@ -114,4 +114,21 @@ Contributions are welcome. Please read [CONTRIBUTING.md](.github/CONTRIBUTING.md
 
 ## License
 
-[AGPL v3](LICENSE): free to use and modify. Commercial products built on Hydra must either release their source under AGPL v3 or obtain a separate commercial license. See [COMMERCIAL_LICENSE.md](.github/COMMERCIAL_LICENSE.md) for details.
+Hydra is published under the [GNU Affero General Public License v3.0](LICENSE), with a
+[commercial license](.github/COMMERCIAL_LICENSE.md) available for the cases the AGPL does not fit.
+
+**Using Hydra asks nothing of you.** Run the CLI, drive it from a script, model in the desktop app,
+check its results against another engine, or change it for your own purposes — none of that carries
+an obligation. Your models, your results, and whatever else you run alongside Hydra stay yours, and
+you may use them commercially.
+
+**Building Hydra into something you distribute is what the AGPL governs.** Link the crates into your
+own application and ship it, or run a modified Hydra as a network service, and that work carries the
+same license with its source made available. Calling `hydra` as a separate program — handing it a
+file, reading what it writes — is use, not incorporation.
+
+If reciprocity does not suit — a proprietary product, a hosted service you cannot open — the
+[commercial license](.github/COMMERCIAL_LICENSE.md) grants those same rights without it.
+
+This is a summary and not legal advice: the [license text](LICENSE) is what governs, and a case near
+the line deserves a lawyer rather than a README.
