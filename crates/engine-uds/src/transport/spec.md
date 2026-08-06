@@ -109,6 +109,8 @@ closed: evaporated volume concentrates the remainder.
 > Under §11 a ledger leak is not adoptable semantics; this engine
 > conserves, and ponded concentrations after evaporative periods run
 > correspondingly higher.
+>
+> *Source: `surfqual.c:363–388`.*
 
 ### 8.4 Network Transport
 
@@ -133,6 +135,8 @@ the larger of the reactor and inflow concentrations.
 > surviving only on a routing path this engine does not have. The
 > exponential is exact, costs nothing, and is used here; slowly-decaying
 > constituents on long steps differ in the predecessor's disfavour.
+>
+> *Source: `qualrout.c:411` and `:538`; `consts.h:39`.*
 
 Below the dry thresholds — 1 litre of volume or 1 mm of depth — an
 element's remaining mass flushes to final storage and its concentration

@@ -46,6 +46,8 @@ precedence — `A AND B OR C` means `(A AND B) OR C`.
 > water-distribution sibling, where the identical artifact was ratified away.
 > Rules mixing `AND` and `OR` without intent-revealing structure may fire
 > differently; import (§14) flags them.
+>
+> *Source: `controls.c:517–535`.*
 
 **Actions and conflicts**: a setting may be a constant, a curve lookup
 (evaluated at the last-compared premise's left-hand value), a time-series
@@ -147,6 +149,8 @@ hydrology step; subsurface elevation and moisture report end-of-step values.
 > runoff computation has not yet seen. A reported rainfall series can thus be
 > offset by an interval from the series that produced the reported runoff.
 > This engine reports the forcing actually applied.
+>
+> *Source: `gage.c:31` (`OneSecond`) and `:561`.*
 
 **Series extension** — delivering §2.9's per-consumer contract: outfall
 stage, temperature, and rule-driven series actions **hold** their first or
@@ -201,6 +205,8 @@ inflow moved by more than 5 % — is not carried.
 > where the §6.5 error estimate is what certifies the quiet. Continuous-run
 > wall-clock differs; if dry-weather cost proves material on real corpora,
 > the remedy is revisiting the growth policy, not reintroducing frozen state.
+>
+> *Source: `routing.c:383–386` (`isInSteadyState`), reached from `:240`.*
 
 ## 11. Conservation
 

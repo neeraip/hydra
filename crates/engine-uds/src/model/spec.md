@@ -261,6 +261,8 @@ Physical constants take their exact standard values:
 > discharge through a head-driven structure is below 0.05 %, one to two orders
 > of magnitude smaller than the uncertainty in the empirical coefficients those
 > relations carry, so no coefficient is refitted.
+>
+> *Source: `consts.h:38–39`; the second value at `inlet.c:1666` and `:1749`.*
 
 A constant that embeds a unit system — a coefficient differing between US
 customary and SI forms of the same relation — is identified as such where it

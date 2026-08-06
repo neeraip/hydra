@@ -52,6 +52,12 @@ compose from the elementary pieces.
 > function that has a closed form, and none of it is carried. Differences from
 > the tabulated values are bounded by the tables' own interpolation error and
 > are largest in the near-empty regime the quadratic patch existed to serve.
+>
+> *Source: `xsect.dat:31–58`, four 51-entry circular tables; `xsect.c`
+> `lookup()`, quadratic only where `i < 2`; `xsect.c:2582–2590`, whose
+> 40-pass loop ends `return theta1` — the seed it started from — and whose
+> clamp is guarded by `d > 1.0` alone, which is what leaves the `SIGN`
+> sign-transfer inert.*
 
 ### 5.3 Tabulated Families
 
@@ -100,6 +106,8 @@ $R_{full} = 0.2991\,y_{full}$ over the same transcribed tables.
 > fixed-ratio ellipse whatever the user drew — this engine solves the ellipse
 > the user specified, and import (§14) notices user-dimensioned ellipses,
 > whose results differ accordingly.
+>
+> *Source: `xsect.c:572–573` (horizontal), `600–601` (vertical).*
 
 ### 5.5 Custom Shapes
 
@@ -151,6 +159,8 @@ no fixed-resolution resampling intervenes.
 > tabulated transect and street hydraulic radius $(1.486/1.49)^{3/2} \approx
 > 0.40\,\%$ low — an intent visible in the code's single named constant, and
 > honoured here by using one constant in both directions.
+>
+> *Source: `transect.c:463` (inverse) against `consts.h:47` + `transect.c:563` (forward).*
 
 ### 5.7 Inversions and Characteristic Depths
 
@@ -185,6 +195,8 @@ no normal depth in the section and reports the section full.
 > fixed iteration budgets whose exhaustion returns the initial estimate — a
 > non-converged geometry query silently answering with its seed. Bracketed
 > solves terminate; the failure mode is removed rather than tolerated.
+>
+> *Source: `xsect.c` `getYcritEnum()` (25 steps); `findroot.c:17` (`MAXIT 60`) and `:137`, which answers `-1.e20` on exhaustion.*
 
 ---
 
@@ -229,6 +241,8 @@ import (§14). Everything below specifies the full dynamic treatment.
 > storage effects the reduced method could not represent are represented.
 > Divergences on such models are attributed to the method difference, and the
 > import layer reports the substitution.
+>
+> *Source: `enums.h:337–340` — `SF`, `KW`, `DW` as user-selectable methods.*
 
 ### 6.2 The Pressurisation Closure
 
@@ -297,6 +311,8 @@ of the full-flow area — the storage artifact the celerity choice bounds.
 > is run in its slot mode where surcharge dominates, and residual differences
 > are attributable to the width model, which here is a stated celerity rather
 > than a fitted curve.
+>
+> *Source: `dynwave.c:676–689` — the separate "determine if node is EXTRAN surcharged" branch.*
 
 ### 6.3 Spatial Discretisation
 
@@ -404,6 +420,8 @@ Within a trial step the scheme iterates to self-consistency:
 > removes it: structure results are a function of the model alone. Where the
 > predecessor's order-sensitivity is material, results differ, attributed
 > here.
+>
+> *Source: `dynwave.c:145`, `:284`, `:338` — each phase walks `Nobjects[LINK]` in definition order.*
 
 Flows and heads are under-relaxed against the previous iterate with a fixed
 factor $\omega = 0.5$; pumps are exempt from flow relaxation and vertices
@@ -441,6 +459,8 @@ state is accepted and carries a per-vertex degraded-accuracy warning.
 > that the predecessor completed with unconverged steps differ here — either
 > in wall-clock (retries) or in results (the retried steps converge to
 > something else); both are the removal of accepted non-solutions.
+>
+> *Source: `dynwave.c:232–244` — iteration ends on a budget, and the unconverged iterate is kept.*
 
 ### 6.5 Time Integration and Error Control
 
@@ -509,6 +529,8 @@ degraded-accuracy warning naming the worst vertex.
 > the network given, short channels cost small steps, and the cost is visible
 > in the step diagnostics rather than hidden in falsified geometry. Import
 > flags models whose stub channels will Courant-limit the run (§14).
+>
+> *Source: `link.c:1104–1107` and `:1247–1248` — `LengtheningStep`.*
 
 ### 6.6 Flow Limits and Special Classes
 
@@ -573,6 +595,8 @@ file's numeric value is the import contract of §14.
 > $\sqrt{\text{ft}\to\text{m}}$ dimensional conversion in disguise. This
 > engine computes in SI throughout; the same conversions happen once,
 > explicitly, at import (§14).
+>
+> *Source: `link.c:2159` and `:2190`, both commented "for CFS flow units".*
 
 ### 7.1 Pumps
 
@@ -612,6 +636,8 @@ Type 5 included.**
 > evident oversight from the type's later addition rather than a modelled
 > distinction. This engine protects all of them; a Type 5 pump drawing a
 > shallow non-storage vertex differs accordingly.
+>
+> *Source: `dynwave.c:485–497`; `enums.h:424`.*
 
 Pump energy is tallied from the physics, $P = \rho g\,Q\,\Delta H$, without
 an efficiency factor, replacing the predecessor's chain of US-unit
@@ -710,12 +736,14 @@ HDS-5's sign convention.
 
 > **CORRESPONDENCE:** the predecessor codes the mitered slope correction at
 > ten times its published magnitude (its convention's $-0.7\,S_O$ entered as
-> $-7.0$ — `culvert.c:209`, whose own comment reads "-7 for mitered inlets",
-> so it is written down rather than mistyped), so a mitered culvert on any
-> appreciable slope carries an
+> $-7.0$, in a line whose own comment reads "-7 for mitered inlets", so it is
+> written down rather than mistyped), so a mitered culvert on any appreciable
+> slope carries an
 > order-of-magnitude overcorrection. This engine uses the published value;
 > mitered-culvert models differ accordingly, in this engine's favour against
 > the standard the feature claims to implement.
+>
+> *Source: `culvert.c:204–210`, applied at `:218`, `:301`, `:351`.*
 
 A **roadway weir** applies the FHWA head-dependent coefficient when road
 width and surface are given (otherwise the user's constant), from the
@@ -752,6 +780,8 @@ paraboloid included.
 > exfiltration was written — and no default over an unzeroed allocation, so
 > a paraboloid unit with seepage reads uninitialised geometry. The evident
 > intent of covering every shape is implemented here.
+>
+> *Source: `exfil.c:93–151` and `:234`; `enums.h:402`.*
 
 **Force mains** — circular, pressurised — substitute their friction relation
 for Manning's while full: Hazen–Williams, or Darcy–Weisbach with the

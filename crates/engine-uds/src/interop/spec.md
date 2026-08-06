@@ -80,6 +80,8 @@ warned as deprecated.
 > silently enlarges its output file. The intended branch is present in its
 > source and cannot execute; this engine executes it. No working predecessor
 > file is affected: the `YES` form never ran there at all.
+>
+> *Source: `input.c:798`; `keywords.c:111–113`; `report.c:106–123`.*
 
 > **DEVIATION from SWMM:** the predecessor's grate-type table lists
 > `P_BAR-50` before `P_BAR-50x100`, so its prefix matching resolves the
@@ -122,6 +124,8 @@ retirement. `NORMAL_FLOW_LIMITED` maps directly (§6.6 keeps its semantics).
 > and date-driven lookup sits 1 ms past nominal. The offset is an epoch-
 > arithmetic guard, not a semantic; timestamps here are exact, and a reader
 > comparing timestamps across engines sees the millisecond.
+>
+> *Source: `swmm5.c:1591` — `datetime_addSeconds(StartDateTime, (elapsedMsec+1)/1000.0)`.*
 
 ### 14.5 Sections
 
@@ -222,6 +226,8 @@ factor of 1.
 > phase. Nothing about a tide is relative to when a simulation began; this
 > engine indexes by clock time, and import notices any non-midnight start
 > whose tidal results differ accordingly.
+>
+> *Source: `node.c:1446–1452` against `:1454–1458`.*
 
 ### 14.8 Interface Files
 

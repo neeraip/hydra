@@ -271,6 +271,8 @@ infiltration opportunity, the predecessor's semantics for the flag.
 > recirculates. Adding a passive measure cannot create runoff; this
 > engine's loop conserves, and its totals differ from the predecessor's
 > on returned-flow models accordingly. Initial saturation pre-fills soil and storage
+>
+> *Source: `subcatch.c:69` (`VlidReturn`) and `:586`.*
 and shrinks the Green–Ampt deficit accordingly. Gravel and pavement layers
 may clog on cumulative treated volume: the file's clogging factor scales
 the layer's own void depth — thickness × void fraction, further × the
