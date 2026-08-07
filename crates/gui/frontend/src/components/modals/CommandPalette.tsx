@@ -126,6 +126,7 @@ const STATIC_COMMANDS: DynamicCommand[] = [
     label: "Settings",
     category: "Navigate",
     action: "nav-settings",
+    shortcut: formatPrimaryShortcut(","),
   },
   {
     id: "a-theme-dark",
@@ -152,6 +153,7 @@ const STATIC_COMMANDS: DynamicCommand[] = [
     id: "a-shortcuts",
     label: "Keyboard shortcuts",
     description: "Show every shortcut this app listens for",
+    shortcut: "?",
     category: "Actions",
     action: "shortcut-card",
   },
@@ -268,6 +270,7 @@ export function CommandPalette() {
   const navEditorShortcut = formatShortcut([modifier, "3"]);
   const navAnalysisShortcut = formatShortcut([modifier, "4"]);
   const runShortcut = formatPrimaryShortcut("R");
+  const findShortcut = formatPrimaryShortcut("F");
   const undoShortcut = formatPrimaryShortcut("Z");
   const redoShortcut = formatShortcut([modifier, shiftModifierLabel(), "Z"]);
   const saveShortcut = formatPrimaryShortcut("S");
@@ -565,6 +568,9 @@ export function CommandPalette() {
               id: "p-canvas-find",
               label: "Find element on canvas…",
               description: "Locate a node or link by ID (type # in search)",
+              // The palette is where people learn a shortcut exists, so a
+              // command with one that does not say so teaches nobody.
+              shortcut: findShortcut,
               category: "Page",
             },
             ...nav,
@@ -595,6 +601,7 @@ export function CommandPalette() {
     zoomOutShortcut,
     fitShortcut,
     issuesShortcut,
+    findShortcut,
   ]);
 
   // "Find element" mode. Searches model nodes + links. See `elementFinder`

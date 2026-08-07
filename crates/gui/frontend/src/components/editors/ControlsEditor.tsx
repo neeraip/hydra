@@ -1187,6 +1187,8 @@ function PremiseRow({
       <button
         type="button"
         onClick={onRemove}
+        aria-label="Remove"
+        data-tooltip="Remove"
         style={{
           background: "none",
           border: "none",
@@ -1286,6 +1288,8 @@ function ActionRow({
       <button
         type="button"
         onClick={onRemove}
+        aria-label="Remove"
+        data-tooltip="Remove"
         style={{
           background: "none",
           border: "none",

@@ -104,6 +104,7 @@ export function App() {
     taskTrayOpen,
     shortcutCardOpen,
     toggleShortcutCard,
+    toggleSettings,
     closeShortcutCard,
     setProjectView,
     goToProjectView,
@@ -209,6 +210,13 @@ export function App() {
         goToProjectView("canvas");
         openCommandPalette(elementFinderSeed());
       }
+      // ⌘, / Ctrl-, — Settings. The convention on every desktop platform,
+      // and the palette already carries the command; this is the one people
+      // try first and were finding nothing.
+      if (primary && key === ",") {
+        e.preventDefault();
+        toggleSettings();
+      }
       // ⌘R / Ctrl-R — open Run modal (only when a project is open)
       if (primary && key === "r" && projectOpen) {
         e.preventDefault();
@@ -309,10 +317,11 @@ export function App() {
     undo,
     redo,
     toggleShortcutCard,
-    closeShortcutCard, // Not `setProjectView`: reselecting the view you are already on is
+    closeShortcutCard,
     // the rail gesture, so pressing this on the canvas collapsed the
     // network list instead of searching it.
     goToProjectView,
+    toggleSettings,
   ]);
 
   // Alternate between identical base/-alt keyframe names so the animation

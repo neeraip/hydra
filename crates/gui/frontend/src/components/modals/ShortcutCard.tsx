@@ -1,25 +1,37 @@
 import { primaryModifierLabel, shiftModifierLabel } from "../../shortcuts";
 import { ModalBackdrop, stopBackdropEvents } from "../ui/ModalBackdrop";
 
-interface ShortcutRow {
+export interface ShortcutRow {
   action: string;
   keys: string[];
 }
 
-interface ShortcutSection {
+export interface ShortcutSection {
   title: string;
   rows: ShortcutRow[];
 }
 
-export function ShortcutCard({ onClose }: { onClose: () => void }) {
-  const modifier = primaryModifierLabel();
-  const shift = shiftModifierLabel();
-
+/**
+ * Everything the card claims this app listens for.
+ *
+ * Separated from the component so it can be checked. It is a hand-written
+ * list beside a hand-written switch of key handlers, which is a pairing
+ * that drifts — and the drift is invisible, because a card is only ever
+ * read by someone who does not already know the answer.
+ *
+ * The modifier labels are parameters rather than being read here, so a test
+ * does not depend on which platform it runs on.
+ */
+export function shortcutSections(
+  modifier: string,
+  shift: string,
+): ShortcutSection[] {
   const sections: ShortcutSection[] = [
     {
       title: "Global",
       rows: [
         { action: "Command palette", keys: [modifier, "K"] },
+        { action: "Settings", keys: [modifier, ","] },
         { action: "Run simulation", keys: [modifier, "R"] },
         { action: "Save editor changes", keys: [modifier, "S"] },
         { action: "Undo network edit", keys: [modifier, "Z"] },
@@ -70,6 +82,14 @@ export function ShortcutCard({ onClose }: { onClose: () => void }) {
       ],
     },
   ];
+
+  return sections;
+}
+
+export function ShortcutCard({ onClose }: { onClose: () => void }) {
+  const modifier = primaryModifierLabel();
+  const shift = shiftModifierLabel();
+  const sections = shortcutSections(modifier, shift);
 
   return (
     <ModalBackdrop
