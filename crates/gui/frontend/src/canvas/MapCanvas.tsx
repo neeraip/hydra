@@ -28,6 +28,7 @@ import {
   type BasemapProvider,
   useBasemapProviders,
 } from "../hooks/basemapProviders";
+import { useReducedMotion } from "../hooks/useReducedMotion";
 import { startPerfSpan } from "../perfTrace";
 import type { Region } from "../types";
 import { useUnitSystem } from "../units";
@@ -37,6 +38,12 @@ import {
   parseProviderBasemapId,
 } from "./Basemap";
 import { FlowPathLayer } from "./FlowPathLayer";
+import {
+  FIT_DURATION_MS,
+  interpolateOrtho,
+  type OrthoView,
+  shouldAnimateFit,
+} from "./fitTransition";
 import { HoverChip, type HoverTip } from "./HoverChip";
 import { useHoverActions, useHoverState } from "./hover-context";
 import { useCanvasLayers } from "./layers-context";
@@ -525,6 +532,31 @@ export const MapCanvas = memo(function MapCanvas({
   const measureCursorRef = useRef<[number, number] | null>(null);
   /** What the cursor is over while measuring, for the measure-only highlight. */
   const measureHoverRef = useRef<SnapResult["target"]>(null);
+  /**
+   * The frame handle of a fit in flight, or null.
+   *
+   * The schematic camera is tweened here rather than by deck's own
+   * transition. deck is driven in controlled mode — `viewState` is a prop
+   * and `onViewStateChange` writes it back — and a deck transition works by
+   * emitting interpolated states the app is expected to store and return.
+   * The returned value carries no transition props, which is what ends the
+   * transition; not returning it leaves deck rendering the destination prop
+   * at once. Either way the camera snaps. Running the frames here sidesteps
+   * the question: every frame is a plain view state, exactly like a gesture
+   * produces.
+   */
+  const fitFrameRef = useRef<number | null>(null);
+  // A flight outlives the component otherwise: the loop reschedules itself
+  // until it lands, and a canvas closed mid-fit would keep waking up to
+  // move a camera that is gone.
+  useEffect(
+    () => () => {
+      if (fitFrameRef.current != null)
+        cancelAnimationFrame(fitFrameRef.current);
+    },
+    [],
+  );
+
   // Seeded lazily on first render: roughGeoViewState scans every node, so it
   // must not run as a useRef initializer argument (those are evaluated on
   // every render even though only the first value is kept).
@@ -2375,6 +2407,12 @@ export const MapCanvas = memo(function MapCanvas({
             interactionState?.isRotating
           ) {
             userMovedRef.current?.();
+            // Reaching for the camera cancels a fit in flight. Continuing
+            // to drive it would fight the hand on the mouse.
+            if (fitFrameRef.current != null) {
+              cancelAnimationFrame(fitFrameRef.current);
+              fitFrameRef.current = null;
+            }
           }
           const nextViewState: SchematicViewState = {
             target: viewState.target as [number, number, number],
@@ -2753,6 +2791,8 @@ export const MapCanvas = memo(function MapCanvas({
   useEffect(() => {
     const deck = deckRef.current;
     if (!isActive || !deck || viewMode !== "schematic") return;
+    // The ref holds wherever the camera is right now, mid-flight included,
+    // so this is safe to send at any time.
     deck.setProps({ layers: buildLayers(), viewState: viewStateRef.current });
     markFirstFrame("schematic");
   }, [buildLayers, isActive, markFirstFrame, viewMode]);
@@ -2902,6 +2942,10 @@ export const MapCanvas = memo(function MapCanvas({
   //    fitKey changes (explicit project switch).  Does NOT fire on scenario
   //    switches so the user's chosen view position is preserved.
   const prevHasNodesRef = useRef(nodes.length > 0);
+  // Read here rather than passed in: the fit is this component's to make,
+  // and a prop would be a second copy of an answer the document already
+  // carries.
+  const reducedMotion = useReducedMotion();
   const prevFitKeyRef = useRef(fitKey);
   useEffect(() => {
     if (!isActive) return;
@@ -2917,23 +2961,57 @@ export const MapCanvas = memo(function MapCanvas({
     // the couplings say which parts of the network are actually connected.
     if (topological && !couplingsResolved) return;
 
+    // A fit someone asked for travels; the one on first load has nowhere
+    // to travel from. See `fitTransition`.
+    const animate = shouldAnimateFit(
+      fitKeyChanged ? "request" : "load",
+      reducedMotion,
+    );
+
     if (viewMode === "schematic") {
       const deck = ensureDeck();
       if (!deck) return;
       const { target, zoom } = orthoCenterFromMap(renderCoords);
-      const vs = { target, zoom };
-      viewStateRef.current = vs;
-      deck.setProps({
-        views: orthoViewRef.current,
-        viewState: vs,
-        layers: buildLayers(),
-      });
+      const to: OrthoView = { target, zoom };
+
+      if (fitFrameRef.current != null) {
+        cancelAnimationFrame(fitFrameRef.current);
+        fitFrameRef.current = null;
+      }
+
+      if (!animate) {
+        viewStateRef.current = to;
+        deck.setProps({
+          views: orthoViewRef.current,
+          viewState: to,
+          layers: buildLayers(),
+        });
+        return;
+      }
+
+      const from = viewStateRef.current as OrthoView;
+      const started = performance.now();
+      deck.setProps({ views: orthoViewRef.current, layers: buildLayers() });
+      const step = () => {
+        const t = (performance.now() - started) / FIT_DURATION_MS;
+        const next = t >= 1 ? to : interpolateOrtho(from, to, t);
+        viewStateRef.current = next;
+        deckRef.current?.setProps({ viewState: next });
+        if (labelsOnRef.current) scheduleLabelRefresh("schematic");
+        reportViewportMovedRef.current();
+        fitFrameRef.current = t >= 1 ? null : requestAnimationFrame(step);
+      };
+      fitFrameRef.current = requestAnimationFrame(step);
     } else {
       const map = mapRef.current;
       if (!map) return;
       const bounds = geoBounds(nodes);
       if (bounds) {
-        fitMapExtents(nodes, map, { padding: visibleMapPadding(map) });
+        fitMapExtents(nodes, map, {
+          padding: visibleMapPadding(map),
+          animate,
+          duration: FIT_DURATION_MS,
+        });
       } else {
         map.jumpTo({ center: [0, 20], zoom: 1 });
       }
@@ -2945,9 +3023,11 @@ export const MapCanvas = memo(function MapCanvas({
     fitKey,
     isActive,
     nodes,
+    reducedMotion,
     renderCoords,
     topological,
     viewMode,
+    scheduleLabelRefresh,
   ]);
 
   // ── Generic viewport controls (zoom +/- and north reset) ───────────────

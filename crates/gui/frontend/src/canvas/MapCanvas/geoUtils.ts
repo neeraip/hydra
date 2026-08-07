@@ -81,7 +81,13 @@ export function roughGeoViewState(nodes: Node[]): {
 export function fitMapExtents(
   nodes: Node[],
   map: maplibregl.Map,
-  opts: { animate?: boolean; padding?: maplibregl.PaddingOptions } = {},
+  opts: {
+    animate?: boolean;
+    /** Flight time in ms. MapLibre's own default scales with the distance
+     *  travelled, which across a national network is several seconds. */
+    duration?: number;
+    padding?: maplibregl.PaddingOptions;
+  } = {},
 ): void {
   const bounds = geoBounds(nodes);
   if (!bounds) return;
@@ -104,6 +110,7 @@ export function fitMapExtents(
       center: [center.lng, center.lat],
       zoom: camera.zoom ?? 12,
       curve: 1,
+      duration: opts.duration,
     });
   } else {
     map.jumpTo({ center: [center.lng, center.lat], zoom: camera.zoom ?? 12 });
