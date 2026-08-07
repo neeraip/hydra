@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { gridCoversView, gridLines, gridSpacing, visibleBounds } from "./grid";
+import {
+  gridCoversView,
+  gridLines,
+  gridRgba,
+  gridSpacing,
+  visibleBounds,
+} from "./grid";
 
 /**
  * A schematic has no basemap, so without a grid the network floats on a
@@ -135,5 +141,38 @@ describe("when the drawn grid stops covering the view", () => {
 
   it("has nothing to cover before anything is drawn", () => {
     expect(gridCoversView(null, [0, 0, 0], 0, VIEW)).toBe(false);
+  });
+});
+
+/**
+ * The grid is there to say what kind of surface this is, not to be read, so
+ * normally it sits at the edge of noticing.
+ *
+ * Except for a reader who has asked for high contrast, who has asked to be
+ * able to see things — including this. A faint grid is the first thing to
+ * disappear for exactly the person who needed it drawn plainly.
+ */
+describe("how present the grid is", () => {
+  it("is faint by default", () => {
+    const [, , , alpha] = gridRgba(false);
+    expect(alpha).toBeGreaterThan(0);
+    expect(alpha).toBeLessThan(gridRgba(true)[3]);
+  });
+
+  it("is stronger under high contrast", () => {
+    expect(gridRgba(true)[3]).toBeGreaterThan(gridRgba(false)[3]);
+  });
+
+  /** Neutral grey either way, so it works on a dark ground and a light one
+   *  without knowing which it is on. */
+  it("keeps the same neutral hue at both weights", () => {
+    const [r, g, b] = gridRgba(false);
+    expect(gridRgba(true).slice(0, 3)).toEqual([r, g, b]);
+    expect(Math.max(r, g, b) - Math.min(r, g, b)).toBeLessThan(20);
+  });
+
+  /** Still a background: never so strong it competes with the network. */
+  it("stays well short of opaque", () => {
+    expect(gridRgba(true)[3]).toBeLessThan(80);
   });
 });

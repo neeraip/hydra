@@ -120,14 +120,41 @@ export function gridLines(bounds: GridBounds, spacing: number): GridLine[] {
 }
 
 /**
- * The grid's colour.
+ * The grid's hue: a mid grey.
  *
- * A mid grey at low alpha, so it reads as a faint lightening on a dark
- * ground and a faint darkening on a light one without needing to know
- * which it is on. The network is drawn over it at full strength, so the
- * grid never competes with the thing it sits under.
+ * Neutral on purpose, so it reads as a faint lightening on a dark ground
+ * and a faint darkening on a light one without needing to know which it is
+ * on. The network is drawn over it at full strength, so the grid never
+ * competes with the thing it sits under.
  */
-export const GRID_RGBA: [number, number, number, number] = [128, 132, 140, 38];
+const GRID_RGB: [number, number, number] = [128, 132, 140];
+
+/**
+ * How present the grid is, normally.
+ *
+ * The grid is there to say what kind of surface this is, not to be read. At
+ * this weight it registers as texture and the eye passes over it.
+ */
+const GRID_ALPHA = 20;
+
+/**
+ * And under "High contrast".
+ *
+ * Someone who has asked for more contrast has asked to be able to see
+ * things, including this. A faint grid is the first thing to disappear for
+ * a reader who needed it drawn plainly in the first place.
+ */
+const GRID_ALPHA_HIGH_CONTRAST = 38;
+
+/** The grid's colour, at the weight this reader has asked for. */
+export function gridRgba(
+  highContrast: boolean,
+): [number, number, number, number] {
+  return [
+    ...GRID_RGB,
+    highContrast ? GRID_ALPHA_HIGH_CONTRAST : GRID_ALPHA,
+  ] as [number, number, number, number];
+}
 
 /**
  * How much beyond the viewport the grid is drawn.

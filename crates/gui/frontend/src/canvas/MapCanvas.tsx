@@ -28,6 +28,7 @@ import {
   type BasemapProvider,
   useBasemapProviders,
 } from "../hooks/basemapProviders";
+import { useHighContrast } from "../hooks/useHighContrast";
 import { useReducedMotion } from "../hooks/useReducedMotion";
 import { startPerfSpan } from "../perfTrace";
 import type { Region } from "../types";
@@ -78,11 +79,11 @@ import {
 } from "./MapCanvas/geoUtils";
 import {
   GRID_OVERDRAW,
-  GRID_RGBA,
   type GridCoverage,
   type GridLine,
   gridCoversView,
   gridLines,
+  gridRgba,
   gridSpacing,
   visibleBounds,
 } from "./MapCanvas/grid";
@@ -1271,6 +1272,11 @@ export const MapCanvas = memo(function MapCanvas({
       ? generic.region
       : null;
 
+  // Read here for the same reason as reduced motion: the canvas paints into
+  // a GL context the stylesheet cannot reach, so a setting the cascade
+  // would otherwise apply has to be applied by hand.
+  const highContrast = useHighContrast();
+
   const buildLayers = useCallback((): Layer[] => {
     const isSchematic = viewMode === "schematic";
     const coordSystem = isSchematic
@@ -1560,11 +1566,16 @@ export const MapCanvas = memo(function MapCanvas({
             coordinateSystem: coordSystem,
             getSourcePosition: (d: GridLine) => d.from,
             getTargetPosition: (d: GridLine) => d.to,
-            getColor: GRID_RGBA as unknown as RGBA,
+            getColor: gridRgba(highContrast) as unknown as RGBA,
             getWidth: 1,
             widthUnits: "pixels",
             pickable: false,
-            updateTriggers: {},
+            updateTriggers: {
+              // The colour is cached into a buffer until something here
+              // changes, so a High contrast toggle repainted nothing until
+              // the canvas was rebuilt. Same trap the node radius fell into.
+              getColor: [highContrast],
+            },
           }),
         );
       }
@@ -2381,6 +2392,7 @@ export const MapCanvas = memo(function MapCanvas({
     // either the network's spacing or the slider changes.
     typicalLink,
     nodeScale,
+    highContrast,
   ]);
 
   useEffect(() => {
