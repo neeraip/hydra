@@ -8,8 +8,9 @@
  * rather than a limit on what could be shown, and the toggle sat inert on
  * the other selections.
  *
- * Two of those selections have an honest animation, and they are not the
- * same animation.
+ * Every selection has an honest animation now, and they are not all the
+ * same animation: what differs is not the motion but what the motion is
+ * claiming.
  */
 
 import { LINK_VARIABLES } from "./canvasVariables";

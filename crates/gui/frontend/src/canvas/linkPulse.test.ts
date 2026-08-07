@@ -12,15 +12,16 @@ import {
 import type { LinkVariable } from "./types";
 
 /**
- * The animation toggle used to sit inert on two of the five link variables,
- * because the pulse was gated on Flow and Velocity by name. The gate was
- * written when those were the only variables the canvas offered; the pulse
- * itself never read the coloured variable at all.
+ * The animation toggle used to sit inert on three of the five link
+ * variables, because the pulse was gated on Flow and Velocity by name. The
+ * gate was written when those were the only variables the canvas offered;
+ * the pulse itself never read the coloured variable at all.
  *
- * The gate is now one function, which matters twice over: it was written
- * out by hand in two places — the layer and the animation clock — and a
- * variable added to one but not the other renders a pulse that never
- * advances.
+ * The gate is now one function, which matters four times over: it had been
+ * written out by hand in the layer, the animation clock, the legend's own
+ * list and the sentence a reader sees — and a variable added to one but not
+ * the others renders a pulse that never advances, or one no control can
+ * switch on.
  */
 
 const ALL_LINK_VARS: readonly LinkVariable[] = LINK_VARIABLES;

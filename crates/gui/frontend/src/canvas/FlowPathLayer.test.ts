@@ -3,7 +3,7 @@
  *
  * WebGL guarantees only 16 vertex attribute slots and the base PathLayer
  * already consumes 13, so the per-link flow inputs must stay packed into a
- * single vec3 instanced attribute (`instanceFlowParams`) with the animation
+ * single vec2 instanced attribute (`instanceFlowParams`) with the animation
  * clock as a uniform. These tests lock in that shader/props contract so a
  * refactor back to one-attribute-per-input (which fails shader linking with
  * "Too many attributes") cannot land silently.
