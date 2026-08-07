@@ -24,7 +24,15 @@ export function ShortcutCard({ onClose }: { onClose: () => void }) {
         { action: "Save editor changes", keys: [modifier, "S"] },
         { action: "Undo network edit", keys: [modifier, "Z"] },
         { action: "Redo network edit", keys: [modifier, shift, "Z"] },
-        { action: "Search projects", keys: [modifier, "F"] },
+        // One key, one meaning, two things to search: the projects list
+        // searches projects, an open project searches its elements. Two
+        // rows showing the same keys read as a clash, which is what this
+        // looked like before — they are the same shortcut doing the
+        // obvious thing wherever you are.
+        {
+          action: "Search — projects, or elements in a project",
+          keys: [modifier, "F"],
+        },
         { action: "Toggle geographic/orthogonal", keys: [modifier, "M"] },
         { action: "Zoom in", keys: [modifier, "="] },
         { action: "Zoom out", keys: [modifier, "-"] },

@@ -24,6 +24,7 @@ import { formatIpcError, isTauri, onIpcError } from "./hooks/ipc";
 import { useNetworkData } from "./hooks/NetworkDataContext";
 import { useNetworkVersion } from "./hooks/NetworkVersionContext";
 import { startPerfSpan } from "./perfTrace";
+import { reselectsCurrentView } from "./projectViewNav";
 import { SimulationProvider } from "./SimulationContext";
 
 /**
@@ -66,6 +67,9 @@ interface AppState {
   projectView: ProjectView;
   railOpen: boolean;
   commandPaletteOpen: boolean;
+  /** The query the palette opens with. A shortcut can land the user in a
+   *  mode — element search, say — rather than at a blank prompt. */
+  commandPaletteQuery: string;
   runModalOpen: boolean;
   simSettingsModalOpen: boolean;
   scenariosModalOpen: boolean;
@@ -126,6 +130,9 @@ interface AppActions {
   networkLoadFailure: string | null;
   setPage: (page: Page) => void;
   setProjectView: (view: ProjectView) => void;
+  /** Be on this view. Unlike `setProjectView`, arriving where you already
+   *  are is a no-op rather than the rail gesture. */
+  goToProjectView: (view: ProjectView) => void;
   /** Navigate to the Network Editor and reveal `id` (scroll + select its row).
    *  `kind` is the element kind ("junction" | "pipe" | …). */
   focusInEditor: (kind: string, id: string) => void;
@@ -139,7 +146,9 @@ interface AppActions {
   toggleShortcutCard: () => void;
   closeShortcutCard: () => void;
   toggleRail: () => void;
-  openCommandPalette: () => void;
+  /** Opens the palette, optionally with the query already filled in — a
+   *  shortcut that lands in a mode rather than at a blank prompt. */
+  openCommandPalette: (initialQuery?: string) => void;
   closeCommandPalette: () => void;
   openRunModal: () => void;
   closeRunModal: () => void;
@@ -302,6 +311,33 @@ function readRailOpen(id: string): boolean {
 }
 
 const projectViewKey = (id: string) => `hydra2-project-view:${id}`;
+
+/**
+ * Move to a project view: remember it, push history, and restore the rail.
+ *
+ * Shared by the two entry points, which differ only in what they do when
+ * the requested view is already the current one — `setProjectView` reads
+ * that as the rail gesture, `goToProjectView` as nothing to do.
+ *
+ * The rail is restored from its persisted preference rather than forced
+ * open: force-opening flipped `needSimObjects` and rebuilt the 92k merged
+ * sim-object arrays on every view switch.
+ */
+function navigateToView(prev: AppState, view: ProjectView) {
+  if (prev.activeProjectId) {
+    localStorage.setItem(projectViewKey(prev.activeProjectId), view);
+  }
+  const nav = pushNav(prev, {
+    page: prev.page,
+    projectView: view,
+    activeProjectId: prev.activeProjectId,
+    activeScenarioId: prev.activeScenarioId,
+  });
+  const railOpen = prev.activeProjectId
+    ? readRailOpen(prev.activeProjectId)
+    : prev.railOpen;
+  return { ...prev, ...nav, projectView: view, railOpen };
+}
 /** Last-used view for a project, persisted by `setProjectView`. */
 function readProjectView(id: string): ProjectView | null {
   return localStorage.getItem(projectViewKey(id)) as ProjectView | null;
@@ -330,6 +366,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       shortcutCardOpen: false,
       railOpen: false,
       commandPaletteOpen: false,
+      commandPaletteQuery: "",
       runModalOpen: false,
       simSettingsModalOpen: false,
       scenariosModalOpen: false,
@@ -675,7 +712,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const setProjectView = useCallback((view: ProjectView) => {
     setS((prev) => {
-      if (prev.page === "project" && prev.projectView === view) {
+      // Reselecting the current tab collapses the rail. See
+      // `reselectsCurrentView`, and use `goToProjectView` if you only mean
+      // to be on this view.
+      if (reselectsCurrentView(prev.page, prev.projectView, view)) {
         const next = !prev.railOpen;
         if (prev.activeProjectId)
           localStorage.setItem(
@@ -684,23 +724,23 @@ export function AppProvider({ children }: { children: ReactNode }) {
           );
         return { ...prev, railOpen: next };
       }
-      if (prev.activeProjectId) {
-        localStorage.setItem(projectViewKey(prev.activeProjectId), view);
-      }
-      const nav = pushNav(prev, {
-        page: prev.page,
-        projectView: view,
-        activeProjectId: prev.activeProjectId,
-        activeScenarioId: prev.activeScenarioId,
-      });
-      // Restore the persisted per-project rail preference rather than forcing
-      // the rail open: force-opening flipped needSimObjects and rebuilt the
-      // 92k merged sim-object arrays on every view switch.
-      const railOpen = prev.activeProjectId
-        ? readRailOpen(prev.activeProjectId)
-        : prev.railOpen;
-      return { ...prev, ...nav, projectView: view, railOpen };
+      return navigateToView(prev, view);
     });
+  }, []);
+
+  /**
+   * Be on this view, without the reselect meaning.
+   *
+   * For callers that navigate in order to do something else — a shortcut, a
+   * command — where arriving somewhere you already were has to be a no-op
+   * rather than a collapsed rail.
+   */
+  const goToProjectView = useCallback((view: ProjectView) => {
+    setS((prev) =>
+      reselectsCurrentView(prev.page, prev.projectView, view)
+        ? prev
+        : navigateToView(prev, view),
+    );
   }, []);
 
   const focusInEditor = useCallback((kind: string, id: string) => {
@@ -917,10 +957,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
     });
   }, []);
 
-  const openCommandPalette = useCallback(() => {
+  const openCommandPalette = useCallback((initialQuery = "") => {
     setS((prev) => ({
       ...prev,
       commandPaletteOpen: true,
+      commandPaletteQuery: initialQuery,
       taskTrayOpen: false,
     }));
   }, []);
@@ -1128,6 +1169,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       networkLoadFailure,
       setPage,
       setProjectView,
+      goToProjectView,
       focusInEditor,
       openProject,
       closeProject,
@@ -1177,6 +1219,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       networkLoadFailure,
       setPage,
       setProjectView,
+      goToProjectView,
       focusInEditor,
       openProject,
       closeProject,

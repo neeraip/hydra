@@ -11,6 +11,7 @@ import { ActivityBar } from "./components/layout/ActivityBar";
 import { StatusBar } from "./components/layout/StatusBar";
 import { TopBar } from "./components/layout/TopBar";
 import { ClearResultsModal } from "./components/modals/ClearResultsModal";
+import { elementFinderSeed } from "./components/modals/elementFinder";
 import { IssuesPanel } from "./components/panels/IssuesPanel";
 import { TaskTray } from "./components/panels/TaskTray";
 import { Toast } from "./components/ui/Toast";
@@ -105,6 +106,7 @@ export function App() {
     toggleShortcutCard,
     closeShortcutCard,
     setProjectView,
+    goToProjectView,
     issuesPanelOpen,
     toggleIssuesPanel,
     closeIssuesPanel,
@@ -191,6 +193,22 @@ export function App() {
         window.dispatchEvent(new CustomEvent(event, { detail }));
       };
 
+      // ⌘F / Ctrl-F — find an element, without going through the palette's
+      // command list first. Opens the palette already in element-search
+      // mode, which is exactly what the "Find an element on canvas…"
+      // command does — same destination, one keystroke.
+      //
+      // Switches to the canvas rather than firing only while already there,
+      // matching that command. A shortcut that silently does nothing on
+      // three of the four project tabs teaches people not to reach for it.
+      if (primary && key === "f" && projectOpen) {
+        e.preventDefault();
+        // Not `setProjectView`: reselecting the view you are already on is
+        // the rail gesture, so pressing this on the canvas collapsed the
+        // network list instead of searching it.
+        goToProjectView("canvas");
+        openCommandPalette(elementFinderSeed());
+      }
       // ⌘R / Ctrl-R — open Run modal (only when a project is open)
       if (primary && key === "r" && projectOpen) {
         e.preventDefault();
@@ -291,7 +309,10 @@ export function App() {
     undo,
     redo,
     toggleShortcutCard,
-    closeShortcutCard,
+    closeShortcutCard, // Not `setProjectView`: reselecting the view you are already on is
+    // the rail gesture, so pressing this on the canvas collapsed the
+    // network list instead of searching it.
+    goToProjectView,
   ]);
 
   // Alternate between identical base/-alt keyframe names so the animation

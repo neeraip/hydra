@@ -44,6 +44,11 @@ import {
 import { lineageLabel } from "../panels/ScenariosPanel/shared";
 import { ModalBackdrop, stopBackdropEvents } from "../ui/ModalBackdrop";
 import { TypeBadge } from "../ui/TypeBadge";
+import {
+  elementFinderSeed,
+  elementFinderTerm,
+  isElementFinderQuery,
+} from "./elementFinder";
 import { unitCommands } from "./unitCommands";
 
 /** The order the groups are shown in. */
@@ -169,6 +174,7 @@ export function CommandPalette() {
     closeProject,
     setPage,
     setProjectView,
+    goToProjectView,
     setTheme,
     openRunModal,
     openScenariosModal,
@@ -177,6 +183,7 @@ export function CommandPalette() {
     showToast,
     page,
     projectView,
+    commandPaletteQuery,
     activeProjectId,
     activeScenarioId,
     setActiveScenarioId,
@@ -220,7 +227,10 @@ export function CommandPalette() {
   const { resultMeta } = useSimulation();
   const { bumpNetwork } = useNetworkVersion();
 
-  const [query, setQuery] = useState("");
+  // Seeded from app state, not blank: the palette unmounts when closed, so
+  // whatever opened it can put the user straight into a mode. See
+  // `elementFinder`.
+  const [query, setQuery] = useState(commandPaletteQuery);
   // Recent projects when idle; all projects become searchable once the user
   // types, so quick-open reaches any project by name (not just the last 5).
   const allCommands = useMemo<DynamicCommand[]>(
@@ -587,9 +597,10 @@ export function CommandPalette() {
     issuesShortcut,
   ]);
 
-  // "Find element" mode: query starts with `#`. Searches model nodes + links.
-  const findMode = query.startsWith("#");
-  const findQuery = findMode ? query.slice(1).trim().toLowerCase() : "";
+  // "Find element" mode. Searches model nodes + links. See `elementFinder`
+  // for the marker and why it is not written out here.
+  const findMode = isElementFinderQuery(query);
+  const findQuery = elementFinderTerm(query);
 
   const elementMatches = useMemo<ElementMatch[]>(
     () =>
@@ -656,8 +667,10 @@ export function CommandPalette() {
       // Keep the palette open and switch to # mode so the user can directly
       // type an element id after selecting this helper command.
       if (cmd.id === "p-canvas-find") {
-        setProjectView("canvas");
-        setQuery("#");
+        // Same reason as the shortcut: this command was collapsing the
+        // network list for anyone who ran it from the canvas.
+        goToProjectView("canvas");
+        setQuery(elementFinderSeed());
         setActiveIdx(0);
         inputRef.current?.focus();
         return;
@@ -993,7 +1006,9 @@ export function CommandPalette() {
       openIssuesPanel,
       toggleTaskTray,
       showToast,
-      bumpProjects,
+      bumpProjects, // Same reason as the shortcut: this command was collapsing the
+      // network list for anyone who ran it from the canvas.
+      goToProjectView,
     ],
   );
 

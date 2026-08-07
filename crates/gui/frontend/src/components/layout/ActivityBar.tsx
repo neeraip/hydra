@@ -170,7 +170,10 @@ export function ActivityBar() {
       {/* ⌘K opens the command palette; ? opens keyboard shortcuts */}
       <button
         type="button"
-        onClick={openCommandPalette}
+        // Wrapped, not passed by reference: the handler receives a click
+        // event, and the palette's first parameter is now the query it
+        // opens with.
+        onClick={() => openCommandPalette()}
         data-tooltip={`Command Palette (${commandPaletteShortcut}) · Shortcuts (?)`}
         data-tooltip-pos="right"
         aria-label="Command Palette"
