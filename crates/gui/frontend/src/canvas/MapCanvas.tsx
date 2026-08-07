@@ -62,6 +62,12 @@ import {
   nodeRgba,
   type RGBA,
 } from "./MapCanvas/colorUtils";
+import {
+  mapZoomForNode,
+  orthoCameraForLink,
+  orthoCameraForNode,
+  regionFlyToSupported,
+} from "./MapCanvas/flyToCamera";
 import { planFraming } from "./MapCanvas/framingPlan";
 import {
   fitMapExtents,
@@ -939,7 +945,7 @@ export const MapCanvas = memo(function MapCanvas({
     // glyph in a schematic — but neither has the orthographic camera path
     // for it, so the request is dropped rather than aimed at nothing.
     if (regionId) {
-      if (viewMode !== "map") return;
+      if (!regionFlyToSupported(viewMode)) return;
       const map = mapRef.current;
       const region = regionsRef.current?.find((r) => r.id === regionId);
       if (!map || !region || region.ring.length === 0) return;
@@ -967,9 +973,7 @@ export const MapCanvas = memo(function MapCanvas({
         if (!center) return;
         // viewStateRef only tracks schematic view changes — MapLibre pans and
         // zooms never write it — so read the live zoom from the map itself.
-        const mapZoom = map.getZoom();
-        const currentZoom = Number.isFinite(mapZoom) ? mapZoom : 12;
-        const zoom = Math.max(currentZoom, 14);
+        const zoom = mapZoomForNode(map.getZoom());
         map.flyTo({
           center,
           zoom,
@@ -999,13 +1003,7 @@ export const MapCanvas = memo(function MapCanvas({
       if (nodeId) {
         const target = coords.get(nodeId);
         if (!target) return;
-        // Use a bounded zoom relative to whole-network fit to avoid runaway
-        // cumulative zooming in orthographic mode.
-        const zoom = Math.min(fitZoom + 1, 10);
-        const vs = {
-          target: [target[0], target[1], 0] as [number, number, number],
-          zoom,
-        };
+        const vs = orthoCameraForNode(target, fitZoom);
         viewStateRef.current = vs;
         deck.setProps({ viewState: vs });
       } else if (linkId) {
@@ -1014,23 +1012,16 @@ export const MapCanvas = memo(function MapCanvas({
         const from = coords.get(link.fromId);
         const to = coords.get(link.toId);
         if (!from || !to) return;
-        const cx = (from[0] + to[0]) / 2;
-        const cy = (from[1] + to[1]) / 2;
-        // Compute zoom so the link spans ~40% of the smaller viewport dimension.
         const canvas = deckCanvasRef.current;
-        const viewW = canvas?.clientWidth ?? 800;
-        const viewH = canvas?.clientHeight ?? 600;
-        const linkUnits = Math.sqrt(
-          (to[0] - from[0]) ** 2 + (to[1] - from[1]) ** 2,
+        const vs = orthoCameraForLink(
+          from,
+          to,
+          {
+            width: canvas?.clientWidth ?? 800,
+            height: canvas?.clientHeight ?? 600,
+          },
+          fitZoom,
         );
-        const targetSpanPx = Math.min(viewW, viewH) * 0.4;
-        // OrthographicView uses zoom in log2 scale (scale = 2^zoom). Convert
-        // desired pixels-per-unit to zoom and cap relative to fit zoom.
-        const zoom =
-          linkUnits > 0
-            ? Math.min(Math.log2(targetSpanPx / linkUnits), fitZoom + 3)
-            : Math.min(fitZoom + 2, 10);
-        const vs = { target: [cx, cy, 0] as [number, number, number], zoom };
         viewStateRef.current = vs;
         deck.setProps({ viewState: vs });
       }
