@@ -21,6 +21,11 @@ import {
   type UnitSystem,
   useUnitPreference,
 } from "../../units";
+import {
+  MenuGroupDivider,
+  MenuGroupLabel,
+  MenuRow,
+} from "../ui/InheritanceMenu";
 
 const SYSTEM_LABEL: Record<UnitSystem, string> = {
   si: "SI (metric)",
@@ -106,101 +111,6 @@ export function UnitSystemPicker() {
     bumpProjects();
   }
 
-  const row = (
-    label: string,
-    selected: boolean,
-    onClick: () => void,
-    key: string,
-    description?: string,
-  ) => (
-    <button
-      key={key}
-      type="button"
-      role="menuitemradio"
-      aria-checked={selected}
-      onClick={onClick}
-      // Restores to the *selected* colour rather than a constant: the
-      // checked row is accent-coloured, and resetting everything to
-      // secondary on mouse-out would quietly un-highlight it.
-      onMouseEnter={(e) => {
-        e.currentTarget.style.background = "var(--nav-hover)";
-        e.currentTarget.style.color = "var(--text-primary)";
-      }}
-      onMouseLeave={(e) => {
-        e.currentTarget.style.background = "transparent";
-        e.currentTarget.style.color = selected
-          ? "var(--accent)"
-          : "var(--text-secondary)";
-      }}
-      style={{
-        display: "flex",
-        alignItems: "flex-start",
-        gap: 8,
-        width: "100%",
-        padding: "5px 10px",
-        border: "none",
-        background: "transparent",
-        color: selected ? "var(--accent)" : "var(--text-secondary)",
-        fontFamily: "var(--font-ui)",
-        fontSize: "var(--text-md)",
-        fontWeight: selected ? 500 : 400,
-        cursor: "pointer",
-        textAlign: "left",
-        transition: "background var(--t-fast), color var(--t-fast)",
-      }}
-    >
-      <span style={{ width: 12, flexShrink: 0 }}>{selected ? "✓" : ""}</span>
-      <span
-        style={{
-          display: "flex",
-          flexDirection: "column",
-          gap: 1,
-          // Without this a flex child refuses to shrink below its content,
-          // so the description stretches the menu instead of wrapping.
-          minWidth: 0,
-        }}
-      >
-        {label}
-        {description && (
-          <span
-            style={{
-              fontSize: "var(--text-xs)",
-              fontWeight: 400,
-              color: "var(--text-tertiary)",
-              lineHeight: 1.4,
-            }}
-          >
-            {description}
-          </span>
-        )}
-      </span>
-    </button>
-  );
-
-  /**
-   * A group heading, optionally with a hint about what the whole group
-   * means.
-   *
-   * The Default group's explanation rides on its single row instead, where
-   * it describes what choosing that row does. Override has three rows and
-   * one shared consequence, so it belongs up here rather than repeated
-   * three times.
-   */
-  const groupLabel = (text: string, hint?: string) => (
-    <div
-      style={{
-        padding: "6px 10px 2px",
-        fontSize: "var(--text-xs)",
-        color: "var(--text-tertiary)",
-      }}
-    >
-      <span style={{ letterSpacing: "0.05em", textTransform: "uppercase" }}>
-        {text}
-      </span>
-      {hint && <span style={{ opacity: 0.85 }}> · {hint}</span>}
-    </div>
-  );
-
   return (
     <div ref={wrapRef} style={{ position: "relative", flexShrink: 0 }}>
       <button
@@ -272,7 +182,7 @@ export function UnitSystemPicker() {
             boxShadow: "var(--shadow-2)",
           }}
         >
-          {groupLabel("Default")}
+          <MenuGroupLabel>Default</MenuGroupLabel>
           {/* Says where the value came from, which the label alone cannot:
               the row shows the *resolved* system, so without this it reads
               as a third explicit choice rather than as deference to
@@ -282,34 +192,31 @@ export function UnitSystemPicker() {
               distinction in two words apiece — which is what these rows
               need, since they are identical in text whenever the default
               is Source. */}
-          {row(
-            appDefault === "source"
-              ? sourceOptionLabel(modelSystem)
-              : SYSTEM_LABEL[appDefault],
-            inherited,
-            () => choose(null),
-            "inherit",
-            "Follows your app Settings",
-          )}
-          <div
-            style={{
-              height: 1,
-              margin: "4px 0",
-              background: "var(--border)",
-            }}
+          <MenuRow
+            label={
+              appDefault === "source"
+                ? sourceOptionLabel(modelSystem)
+                : SYSTEM_LABEL[appDefault]
+            }
+            description="Follows your app Settings"
+            selected={inherited}
+            onSelect={() => choose(null)}
           />
+          <MenuGroupDivider />
           {/* "Fixed" against the Default row's "Follows" is what makes the
               duplicate `Source` entry above meaningful: these stay put when
               Settings moves. */}
-          {groupLabel("Override", "fixed for this project")}
-          {(["source", "si", "us"] as const).map((v) =>
-            row(
-              overrideOptionLabel(v, modelSystem),
-              override === v,
-              () => choose(v),
-              v,
-            ),
-          )}
+          <MenuGroupLabel hint="fixed for this project">
+            Override
+          </MenuGroupLabel>
+          {(["source", "si", "us"] as const).map((v) => (
+            <MenuRow
+              key={v}
+              label={overrideOptionLabel(v, modelSystem)}
+              selected={override === v}
+              onSelect={() => choose(v)}
+            />
+          ))}
         </div>
       )}
     </div>

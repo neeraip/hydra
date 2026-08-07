@@ -20,6 +20,11 @@ import {
   effectiveCanvasBackground,
   GROUND_LABEL,
 } from "../../../canvas/canvasBackground";
+import {
+  MenuGroupDivider,
+  MenuGroupLabel,
+  MenuRow,
+} from "../../../components/ui/InheritanceMenu";
 import { useResolvedTheme } from "../../../theme";
 
 export function CanvasBackgroundPicker({
@@ -56,92 +61,6 @@ export function CanvasBackgroundPicker({
     onChange(next);
     setOpen(false);
   };
-
-  const row = (
-    label: string,
-    selected: boolean,
-    onSelect: () => void,
-    key: string,
-    description?: string,
-  ) => (
-    <button
-      type="button"
-      key={key}
-      role="menuitemradio"
-      aria-checked={selected}
-      onClick={onSelect}
-      // Restores to the *selected* colour rather than a constant: the
-      // checked row is accent-coloured, and resetting everything to
-      // secondary on mouse-out would quietly un-highlight it.
-      onMouseEnter={(e) => {
-        e.currentTarget.style.background = "var(--nav-hover)";
-        e.currentTarget.style.color = "var(--text-primary)";
-      }}
-      onMouseLeave={(e) => {
-        e.currentTarget.style.background = "transparent";
-        e.currentTarget.style.color = selected
-          ? "var(--accent)"
-          : "var(--text-secondary)";
-      }}
-      style={{
-        display: "flex",
-        alignItems: "flex-start",
-        gap: 8,
-        width: "100%",
-        padding: "5px 10px",
-        border: "none",
-        background: "transparent",
-        color: selected ? "var(--accent)" : "var(--text-secondary)",
-        fontFamily: "var(--font-ui)",
-        fontSize: "var(--text-md)",
-        fontWeight: selected ? 500 : 400,
-        cursor: "pointer",
-        textAlign: "left",
-        transition: "background var(--t-fast), color var(--t-fast)",
-      }}
-    >
-      <span style={{ width: 12, flexShrink: 0 }}>{selected ? "✓" : ""}</span>
-      <span
-        style={{
-          display: "flex",
-          flexDirection: "column",
-          gap: 1,
-          // Without this a flex child refuses to shrink below its content,
-          // so the description stretches the menu instead of wrapping.
-          minWidth: 0,
-        }}
-      >
-        {label}
-        {description && (
-          <span
-            style={{
-              fontSize: "var(--text-xs)",
-              fontWeight: 400,
-              color: "var(--text-tertiary)",
-              lineHeight: 1.4,
-            }}
-          >
-            {description}
-          </span>
-        )}
-      </span>
-    </button>
-  );
-
-  const groupLabel = (text: string, hint?: string) => (
-    <div
-      style={{
-        padding: "6px 10px 2px",
-        fontSize: "var(--text-xs)",
-        color: "var(--text-tertiary)",
-      }}
-    >
-      <span style={{ letterSpacing: "0.05em", textTransform: "uppercase" }}>
-        {text}
-      </span>
-      {hint && <span style={{ opacity: 0.85 }}> · {hint}</span>}
-    </div>
-  );
 
   return (
     <div data-toolbar-dropdown ref={wrapRef} style={{ position: "relative" }}>
@@ -199,26 +118,30 @@ export function CanvasBackgroundPicker({
             boxShadow: "var(--shadow-2)",
           }}
         >
-          {groupLabel("Default")}
+          <MenuGroupLabel>Default</MenuGroupLabel>
           {/* Names what the theme currently resolves to, which "Match
               theme" alone cannot — and without it this row reads as a third
               explicit choice rather than as deference to the theme. The
               description is what separates it from the identical-looking
               override below whenever the two agree. */}
-          {row(
-            GROUND_LABEL[theme],
-            inherited,
-            () => choose("theme"),
-            "theme",
-            "Follows your app theme",
-          )}
-          <div
-            style={{ height: 1, margin: "4px 0", background: "var(--border)" }}
+          <MenuRow
+            label={GROUND_LABEL[theme]}
+            description="Follows your app theme"
+            selected={inherited}
+            onSelect={() => choose("theme")}
           />
-          {groupLabel("Override", "fixed for this project")}
-          {CANVAS_BACKGROUND_OVERRIDES.map((b) =>
-            row(GROUND_LABEL[b], value === b, () => choose(b), b),
-          )}
+          <MenuGroupDivider />
+          <MenuGroupLabel hint="fixed for this project">
+            Override
+          </MenuGroupLabel>
+          {CANVAS_BACKGROUND_OVERRIDES.map((b) => (
+            <MenuRow
+              key={b}
+              label={GROUND_LABEL[b]}
+              selected={value === b}
+              onSelect={() => choose(b)}
+            />
+          ))}
         </div>
       )}
     </div>
