@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { ScenarioDto } from "../../../hooks";
 import {
   activeLineage,
+  ancestryLabel,
   buildScenarioTree,
   descendants,
   directChildren,
@@ -154,6 +155,35 @@ describe("flattenSubtrees", () => {
   it("skips unknown ids and returns [] for none", () => {
     expect(flattenSubtrees(FOREST, ["nope"])).toEqual([]);
     expect(flattenSubtrees(FOREST, [])).toEqual([]);
+  });
+});
+
+/**
+ * The pickers show a scenario's name and, under it, where that scenario
+ * sits. They used `lineageLabel`, which ends with the scenario — so a
+ * top-level scenario's subtitle was its own name, printed directly beneath
+ * its own name. It read as the list stuttering.
+ */
+describe("ancestryLabel", () => {
+  it("names where a scenario sits, not what it is called", () => {
+    expect(ancestryLabel(FOREST, "d")).toBe("Scenario a \u25b8 Scenario b");
+  });
+
+  /** The reported defect: a root scenario had itself as its own subtitle. */
+  it("is empty for a scenario with no ancestors", () => {
+    expect(ancestryLabel(FOREST, "a")).toBe("");
+  });
+
+  /** Which is what lets a caller show nothing rather than a blank line. */
+  it("never repeats the scenario's own name", () => {
+    for (const id of ["a", "b", "d"]) {
+      const own = lineageLabel(FOREST, id).split(" \u25b8 ").pop();
+      expect(ancestryLabel(FOREST, id).split(" \u25b8 ")).not.toContain(own);
+    }
+  });
+
+  it("returns an empty string for unknown ids", () => {
+    expect(ancestryLabel(FOREST, "nope")).toBe("");
   });
 });
 

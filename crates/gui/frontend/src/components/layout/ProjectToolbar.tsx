@@ -12,14 +12,18 @@ import { useNetworkVersion } from "../../hooks/NetworkVersionContext";
 import { formatPrimaryShortcut } from "../../shortcuts";
 import {
   activeLineage,
+  ancestryLabel,
   type FlatScenario,
   flattenScenarios,
   flattenSubtrees,
-  lineageLabel,
   scenarioChildren,
   variantTail,
 } from "../panels/ScenariosPanel/shared";
 import { PrimaryButton } from "../ui/PrimaryButton";
+import {
+  type ScenarioPickerOption,
+  scenarioPickerOptions,
+} from "./scenarioPicker";
 import { UnitSystemPicker } from "./UnitSystemPicker";
 
 /* ─── ProjectToolbar ────────────────────────────────────────────────────────
@@ -356,13 +360,17 @@ export function ProjectToolbar() {
     );
   })();
 
-  // Quick-jump rows: every scenario in tree order, filtered as you type.
-  const searchOptions: ScenarioDto[] = (() => {
-    if (picker?.kind !== "search") return [];
-    const q = searchQuery.trim().toLowerCase();
-    const all = flattenScenarios(rawDtos);
-    return q ? all.filter((s) => s.name.toLowerCase().includes(q)) : all;
-  })();
+  // Quick-jump rows: the base model, then every scenario in tree order,
+  // filtered as you type. See `scenarioPicker` for why the base model has
+  // to be added rather than found.
+  const searchOptions: ScenarioPickerOption[] =
+    picker?.kind === "search"
+      ? scenarioPickerOptions(
+          flattenScenarios(rawDtos),
+          project.state ?? "draft",
+          searchQuery,
+        )
+      : [];
 
   const baseActive = activeScenarioId === null;
   const baseStale = isEdited(project.id, null) || project.state === "stale";
@@ -407,7 +415,7 @@ export function ProjectToolbar() {
     );
   };
 
-  const selectScenario = (id: string) => {
+  const selectScenario = (id: string | null) => {
     setActiveScenarioId(id);
     setPicker(null);
   };
@@ -838,9 +846,17 @@ export function ProjectToolbar() {
             )}
             {searchOptions.map((s) => (
               <PickerRow
-                key={s.id}
+                // The base model has no id; `null` is what it is called
+                // everywhere else, so it is a usable key here too.
+                key={s.id ?? "base"}
                 scenario={s}
-                subtitle={lineageLabel(rawDtos, s.id)}
+                // Where it sits, not what it is called — the name is
+                // already the line above. The base model is the root, so
+                // it has no ancestry, and neither does a top-level
+                // scenario.
+                subtitle={
+                  (s.id ? ancestryLabel(rawDtos, s.id) : "") || undefined
+                }
                 isStale={isEdited(project.id, s.id) || s.state === "stale"}
                 isActive={s.id === activeScenarioId}
                 onSelect={() => selectScenario(s.id)}
@@ -1109,7 +1125,9 @@ function PickerRow({
   isActive = false,
   onSelect,
 }: {
-  scenario: ScenarioDto;
+  // Only a name and a state: narrowed from the full record so the base
+  // model, which has no record, can be drawn by the same row.
+  scenario: { name: string; state: string };
   depth?: number;
   subtitle?: string;
   isStale: boolean;

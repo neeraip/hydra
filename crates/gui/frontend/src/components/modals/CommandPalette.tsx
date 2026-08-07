@@ -41,7 +41,7 @@ import {
   useUnitPreference,
   useUnitSystem,
 } from "../../units";
-import { lineageLabel } from "../panels/ScenariosPanel/shared";
+import { ancestryLabel } from "../panels/ScenariosPanel/shared";
 import { ModalBackdrop, stopBackdropEvents } from "../ui/ModalBackdrop";
 import { TypeBadge } from "../ui/TypeBadge";
 import {
@@ -621,7 +621,8 @@ export function CommandPalette() {
     return scenarios.map((s) => ({
       id: `sc-${s.id}`,
       label: s.name,
-      description: lineageLabel(scenarios, s.id),
+      // Where it sits. The label above is already its name.
+      description: ancestryLabel(scenarios, s.id) || undefined,
       category: "Scenarios",
       action: "switch-scenario",
       scenarioId: s.id,

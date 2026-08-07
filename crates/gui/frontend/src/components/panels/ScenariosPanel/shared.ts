@@ -179,6 +179,24 @@ export function lineageLabel(dtos: ScenarioDto[], id: string): string {
     .join(" ▸ ");
 }
 
+/**
+ * Where a scenario sits: the same breadcrumb without the scenario itself.
+ *
+ * For a subtitle under the scenario's own name, which is what both pickers
+ * show. `lineageLabel` ends with the scenario, so a root scenario's
+ * breadcrumb was just its name — printed directly beneath its name, which
+ * read as the list stuttering rather than as a lineage.
+ *
+ * Empty for a root scenario, which has nowhere to sit but the top. Callers
+ * show nothing rather than an empty line.
+ */
+export function ancestryLabel(dtos: ScenarioDto[], id: string): string {
+  return activeLineage(dtos, id)
+    .slice(0, -1)
+    .map((s) => s.name)
+    .join(" ▸ ");
+}
+
 export const STATE_LABEL: Record<string, string> = {
   "not-run": "Not run",
   running: "Running…",
