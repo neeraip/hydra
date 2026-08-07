@@ -1944,7 +1944,14 @@ export const MapCanvas = memo(function MapCanvas({
           onSelectLink(id === selectedLinkId ? null : id);
         }
       };
+      // Everything `linkColor` reads. deck caches the colour buffer until
+      // one of these changes, and a value the accessor uses but this omits
+      // is a colour that silently stops updating — see
+      // `colorTriggers.test.ts`, which checks the two against each other.
       const linkColorTriggers = [
+        kindRoles,
+        generic,
+        velocityMax,
         linkVar,
         flowMax,
         colorMode,
@@ -2159,7 +2166,12 @@ export const MapCanvas = memo(function MapCanvas({
             onSelectNode(id === selectedNodeId ? null : id);
           },
           updateTriggers: {
+            // Everything `nodeColor` reads; see `colorTriggers.test.ts`.
             getFillColor: [
+              kindRoles,
+              generic,
+              pressureMin,
+              pressureMax,
               nodeVar,
               headMin,
               headMax,
