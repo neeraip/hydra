@@ -15,7 +15,7 @@
  * analytics command already exchange.
  */
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useSyncExternalStore } from "react";
 import { invoke, tryInvokeOr } from "./ipc";
 
 export interface RequiredBand {
@@ -70,10 +70,56 @@ export async function updateProjectCriteria(
 }
 
 /**
+ * One criteria store per project, shared by everyone reading it.
+ *
+ * Every project view is mounted at once — hidden with `display: none`
+ * rather than unmounted — so the Analysis page and the canvas are both live
+ * whichever one you are looking at. Holding this in component state gave
+ * them a copy each: two fetches of the same file on open, and, once both
+ * could edit, a change on one side that the other never saw. The canvas
+ * went on colouring by the bands it had loaded with.
+ *
+ * That is the same shape as a value stored twice, and the fix is the same:
+ * one store, many readers. The unit preference is kept this way already.
+ */
+const cache = new Map<string, ProjectCriteria>();
+const savedFlags = new Map<string, boolean>();
+const inFlight = new Set<string>();
+const listeners = new Set<() => void>();
+
+function notify(): void {
+  for (const l of listeners) l();
+}
+
+function subscribe(cb: () => void): () => void {
+  listeners.add(cb);
+  return () => {
+    listeners.delete(cb);
+  };
+}
+
+/**
+ * Fetch once per project, however many readers ask.
+ *
+ * `inFlight` is what makes it once: two components mounting in the same
+ * frame both find nothing cached, and without this both would ask.
+ */
+function ensureLoaded(projectId: string): void {
+  if (cache.has(projectId) || inFlight.has(projectId)) return;
+  inFlight.add(projectId);
+  void getProjectCriteria(projectId).then((c) => {
+    inFlight.delete(projectId);
+    cache.set(projectId, c ?? DEFAULT_CRITERIA);
+    savedFlags.set(projectId, c !== null);
+    notify();
+  });
+}
+
+/**
  * The active project's criteria, with a setter that persists.
  *
- * Resets to the defaults while a new project's file is in flight, so one
- * project's criteria are never briefly applied to another's results.
+ * Readers of the same project share one value, so an edit on one screen is
+ * the same edit on every other.
  */
 export function useProjectCriteria(projectId: string | null): {
   criteria: ProjectCriteria;
@@ -83,36 +129,36 @@ export function useProjectCriteria(projectId: string | null): {
    * "not yet known" as "none saved". */
   saved: boolean | null;
 } {
-  const [criteria, setLocal] = useState<ProjectCriteria>(DEFAULT_CRITERIA);
-  const [saved, setSaved] = useState<boolean | null>(null);
-
   useEffect(() => {
-    if (!projectId) {
-      setLocal(DEFAULT_CRITERIA);
-      setSaved(null);
-      return;
-    }
-    let cancelled = false;
-    setLocal(DEFAULT_CRITERIA);
-    setSaved(null);
-    void getProjectCriteria(projectId).then((c) => {
-      if (cancelled) return;
-      setLocal(c ?? DEFAULT_CRITERIA);
-      setSaved(c !== null);
-    });
-    return () => {
-      cancelled = true;
-    };
+    if (projectId) ensureLoaded(projectId);
   }, [projectId]);
+
+  // Identity-stable while nothing changes, which is what lets a subscriber
+  // skip re-rendering — the defaults are one shared object rather than a
+  // fresh literal per call.
+  const snapshot = useCallback(
+    () =>
+      projectId ? (cache.get(projectId) ?? DEFAULT_CRITERIA) : DEFAULT_CRITERIA,
+    [projectId],
+  );
+  const criteria = useSyncExternalStore(subscribe, snapshot, snapshot);
+
+  const savedSnapshot = useCallback(
+    () => (projectId ? (savedFlags.get(projectId) ?? null) : null),
+    [projectId],
+  );
+  const saved = useSyncExternalStore(subscribe, savedSnapshot, savedSnapshot);
 
   const setCriteria = useCallback(
     (next: ProjectCriteria) => {
+      if (!projectId) return;
       // Applied locally first so the canvas repaints on the same frame as the
       // edit; the write is fire-and-forget because a failure loses a
       // preference, not model data.
-      setLocal(next);
-      setSaved(true);
-      if (projectId) void updateProjectCriteria(projectId, next);
+      cache.set(projectId, next);
+      savedFlags.set(projectId, true);
+      notify();
+      void updateProjectCriteria(projectId, next);
     },
     [projectId],
   );
