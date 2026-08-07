@@ -5,6 +5,7 @@ import {
   formatDistance,
   formatQty,
   formatQtyCompact,
+  formatQtyPrecise,
   formatQtyRaw,
   formatQtyValue,
   fromDisplay,
@@ -413,5 +414,85 @@ describe("formatQtyCompact", () => {
     expect(
       formatQtyCompact(304.79998779296875, "diameter", "si"),
     ).not.toContain("304.79998779296875");
+  });
+});
+
+/**
+ * The inspector showed `69.77999877929688 m` for an elevation of 69.78, and
+ * the unit wrapped to a line of its own.
+ *
+ * Those digits were never precision. Model properties cross to the
+ * interface as `f32`, so the value arriving is the double nearest that
+ * `f32` — seven digits of information and nine of debris from the widening.
+ * The panel was showing *less* precision than the model holds, in more
+ * characters than it has.
+ *
+ * So the question is the shortest decimal naming the same `f32`, not how
+ * many places to round to. Nothing is discarded: the answer widens back to
+ * identical bits.
+ */
+describe("formatQtyPrecise", () => {
+  /** The reported value. */
+  it("names an f32 in the digits it actually has", () => {
+    expect(formatQtyPrecise(69.77999877929688, "elevation", "si")).toBe(
+      "69.78",
+    );
+  });
+
+  /**
+   * The load-bearing property, and the reason this is not rounding: the
+   * string has to widen back to the same bits.
+   */
+  it("round-trips every value it is given", () => {
+    const values = [
+      69.77999877929688, 0, 1, 100, -12.5, 0.0001220703125, 1234.5678,
+      3.4028235e38,
+    ];
+    for (const v of values) {
+      const shown = formatQtyPrecise(v, "elevation", "si");
+      expect(Math.fround(Number(shown))).toBe(Math.fround(v));
+    }
+  });
+
+  it("leaves a value that was already short alone", () => {
+    expect(formatQtyPrecise(100, "elevation", "si")).toBe("100");
+    expect(formatQtyPrecise(0, "elevation", "si")).toBe("0");
+  });
+
+  it("keeps the sign", () => {
+    expect(formatQtyPrecise(-69.77999877929688, "elevation", "si")).toBe(
+      "-69.78",
+    );
+  });
+
+  /**
+   * A converted value is a fresh double carrying the original's noise
+   * through a multiply, so an exact round trip is not on offer. Matching to
+   * f32 resolution shows the digits the measurement supports and drops the
+   * rest — the same claim in the other system, not a second policy.
+   */
+  it("does not carry the noise into a converted value", () => {
+    const ft = formatQtyPrecise(69.77999877929688, "elevation", "us");
+    expect(
+      ft.replace(/[-.]/g, "").replace(/^0+/, "").length,
+    ).toBeLessThanOrEqual(9);
+  });
+
+  /** The unit goes in the label, so a long number cannot strand it. */
+  it("returns a bare number", () => {
+    expect(formatQtyPrecise(69.77999877929688, "elevation", "si")).not.toMatch(
+      /[a-z]/i,
+    );
+  });
+
+  /**
+   * Distinct from the two formatters it sits beside: `formatQty` rounds to
+   * a fixed place and can lose the stored value, `formatQtyCompact` rounds
+   * harder still for a chip. This one is the only one that must not.
+   */
+  it("keeps more than the rounding formatters do", () => {
+    const v = 69.77999877929688;
+    expect(formatQtyPrecise(v, "elevation", "si")).toBe("69.78");
+    expect(formatQty(v, "elevation", "si")).toContain("69.8");
   });
 });

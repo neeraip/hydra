@@ -1,7 +1,12 @@
 import type { NodeVariable } from "../../../canvas/types";
 import type { Node, ResultRanges } from "../../../hooks";
 import { useLinksConnectedTo } from "../../../hooks";
-import { formatQty, formatQtyRaw, useUnitSystem } from "../../../units";
+import {
+  formatQty,
+  formatQtyPrecise,
+  unitLabel,
+  useUnitSystem,
+} from "../../../units";
 import { SectionLabel } from "../../ui/SectionLabel";
 import { ConnectedLink } from "./ConnectedElements";
 import { PatternPreview } from "./PatternPreview";
@@ -52,8 +57,8 @@ export function NodeBody({
         <tbody>
           {node.elevation != null && (
             <PropRow
-              label="Elevation"
-              value={formatQtyRaw(node.elevation, "elevation", sys)}
+              label={`Elevation (${unitLabel("elevation", sys)})`}
+              value={formatQtyPrecise(node.elevation, "elevation", sys)}
             />
           )}
           {node.baseDemand != null && node.baseDemand !== 0 && (
@@ -74,26 +79,26 @@ export function NodeBody({
           {/* Tank fields */}
           {node.tankMinLevel != null && (
             <PropRow
-              label="Min level"
-              value={formatQtyRaw(node.tankMinLevel, "length", sys)}
+              label={`Min level (${unitLabel("length", sys)})`}
+              value={formatQtyPrecise(node.tankMinLevel, "length", sys)}
             />
           )}
           {node.tankMaxLevel != null && (
             <PropRow
-              label="Max level"
-              value={formatQtyRaw(node.tankMaxLevel, "length", sys)}
+              label={`Max level (${unitLabel("length", sys)})`}
+              value={formatQtyPrecise(node.tankMaxLevel, "length", sys)}
             />
           )}
           {node.tankInitialLevel != null && (
             <PropRow
-              label="Initial level"
-              value={formatQtyRaw(node.tankInitialLevel, "length", sys)}
+              label={`Initial level (${unitLabel("length", sys)})`}
+              value={formatQtyPrecise(node.tankInitialLevel, "length", sys)}
             />
           )}
           {node.tankDiameter != null && node.tankDiameter > 0 && (
             <PropRow
-              label="Tank diameter"
-              value={formatQtyRaw(node.tankDiameter, "length", sys)}
+              label={`Tank diameter (${unitLabel("length", sys)})`}
+              value={formatQtyPrecise(node.tankDiameter, "length", sys)}
             />
           )}
           {node.tankVolumeCurve && (

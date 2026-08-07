@@ -278,6 +278,47 @@ export function formatQtyRaw(v: number, q: Quantity, sys: UnitSystem): string {
 }
 
 /**
+ * As many digits as the value actually carries, and no more.
+ *
+ * Model properties reach the interface as `f32` — the network payload packs
+ * them that way (see the binary codec) — so a stored elevation of 69.78
+ * arrives as the double nearest that `f32` and printed itself as
+ * `69.77999877929688`. Sixteen digits, of which seven are information and
+ * nine are the debris of widening a narrow float. The inspector was showing
+ * *less* precision than the model holds, in more characters than it has.
+ *
+ * So this asks the only question worth asking: what is the shortest decimal
+ * that names the same `f32`? For that elevation it is `69.78`. Nothing is
+ * discarded — the answer widens back to the identical bits — and the row
+ * stops wrapping.
+ *
+ * The same rule survives unit conversion, where an exact round trip is not
+ * available: a converted value is a fresh double whose low digits are the
+ * original's noise carried through a multiply. Matching to `f32` resolution
+ * shows the ~7 digits the measurement actually supports and drops the rest,
+ * which is the same claim in the other system rather than a second policy.
+ *
+ * Bare number, no unit: pair it with a unit in the label. A value this long
+ * is exactly the one that would push its unit onto a line of its own.
+ */
+export function formatQtyPrecise(
+  v: number,
+  q: Quantity,
+  sys: UnitSystem,
+): string {
+  const display = toDisplay(v, q, sys);
+  if (!Number.isFinite(display)) return String(display);
+  const target = Math.fround(display);
+  // 9 is the most any f32 needs to be named uniquely; the loop almost
+  // always stops far earlier, and the guard is only so it terminates.
+  for (let p = 1; p <= 9; p += 1) {
+    const candidate = Number(display.toPrecision(p));
+    if (Math.fround(candidate) === target) return String(candidate);
+  }
+  return String(Number(display.toPrecision(9)));
+}
+
+/**
  * Convert + format for a chip, where width is the scarce thing.
  *
  * No space before the unit, and always rounded. The connected-elements

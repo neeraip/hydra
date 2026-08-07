@@ -1,7 +1,12 @@
 import type { LinkVariable } from "../../../canvas/types";
 import type { Link, ResultRanges } from "../../../hooks";
 import { useNodes } from "../../../hooks";
-import { formatQty, formatQtyRaw, useUnitSystem } from "../../../units";
+import {
+  formatQty,
+  formatQtyPrecise,
+  unitLabel,
+  useUnitSystem,
+} from "../../../units";
 import { SectionLabel } from "../../ui/SectionLabel";
 import { ConnectedNodeChip } from "./ConnectedElements";
 import { PropRow } from "./primitives";
@@ -78,8 +83,8 @@ export function LinkBody({
               )}
               {link.diameter != null && link.diameter > 0 && (
                 <PropRow
-                  label="Diameter"
-                  value={formatQtyRaw(link.diameter, "diameter", sys)}
+                  label={`Diameter (${unitLabel("diameter", sys)})`}
+                  value={formatQtyPrecise(link.diameter, "diameter", sys)}
                 />
               )}
               {link.roughness != null && link.roughness > 0 && (
