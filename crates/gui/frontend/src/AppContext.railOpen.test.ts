@@ -20,15 +20,30 @@ describe("railOpenForLocation", () => {
     expect(railOpenForLocation(loc(), () => false)).toBe(false);
   });
 
-  it("reads the preference of the project being navigated to", () => {
-    // History can cross projects; each keeps its own rail preference.
-    const saved = (id: string) => id === "p1";
-    expect(railOpenForLocation(loc({ activeProjectId: "p1" }), saved)).toBe(
-      true,
-    );
-    expect(railOpenForLocation(loc({ activeProjectId: "p2" }), saved)).toBe(
-      false,
-    );
+  /**
+   * The preference is one preference, not one per project. Kept per
+   * project, stepping through projects from the breadcrumb made the panel
+   * open and close on its own — which reads as the app doing something
+   * rather than as a choice being honoured. Whether the panel is open is a
+   * fact about how someone is working, like an editor's sidebar.
+   */
+  it("gives every project the same answer", () => {
+    const saved = () => true;
+    for (const id of ["p1", "p2", "p3"]) {
+      expect(railOpenForLocation(loc({ activeProjectId: id }), saved)).toBe(
+        true,
+      );
+    }
+  });
+
+  /**
+   * What stays per *location* is whether a rail exists at all. That is a
+   * different question from whether the reader wants one, and collapsing
+   * the two is what made leaving the project page overwrite the
+   * preference.
+   */
+  it("still says no rail on a page that has none, whatever the preference", () => {
+    expect(railOpenForLocation(loc({ page: "home" }), () => true)).toBe(false);
   });
 
   // Settings is absent because it is no longer a page — it opens as a

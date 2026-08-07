@@ -232,15 +232,17 @@ function pushNav(
  * and navigating back into the project then inherited that false and
  * ignored the preference the user had actually set.
  *
- * Keyed on the *target's* project, not the current one — history can cross
- * from one project to another, and each keeps its own preference.
+ * The preference itself is global, so crossing from one project to another
+ * lands on the same rail state. What is *not* global is whether a rail
+ * exists at all: off the project page there is none, which is a different
+ * question and the reason this function exists.
  */
 export function railOpenForLocation(
   loc: NavLocation,
-  savedPref: (projectId: string) => boolean,
+  savedPref: () => boolean,
 ): boolean {
   if (loc.page !== "project") return false;
-  return loc.activeProjectId ? savedPref(loc.activeProjectId) : true;
+  return loc.activeProjectId ? savedPref() : true;
 }
 
 /** Window within which identical backend-error toasts are suppressed. */
@@ -304,10 +306,34 @@ function confirmDiscardDrafts(verb: string): boolean {
 }
 
 const STORAGE_THEME = "hydra2-theme";
-const railOpenKey = (id: string) => `hydra2-rail-open:${id}`;
-function readRailOpen(id: string): boolean {
-  const v = localStorage.getItem(railOpenKey(id));
+/**
+ * One key, not one per project.
+ *
+ * Whether the network list is open is a fact about how someone is working,
+ * not about which project they opened — the same way an editor's sidebar
+ * does not reopen itself because you changed folder. Kept per project, it
+ * meant that stepping through projects from the breadcrumb made the panel
+ * open and close on its own, which reads as the app doing something rather
+ * than as a preference being honoured.
+ *
+ * Old `hydra2-rail-open:<id>` entries are left where they are. They are
+ * read by nothing now, and picking one project's answer to speak for all
+ * of them would be guessing.
+ */
+const RAIL_OPEN_KEY = "hydra2-rail-open";
+function readRailOpen(): boolean {
+  const v = localStorage.getItem(RAIL_OPEN_KEY);
   return v === null ? true : v === "1";
+}
+
+/** Written whichever project is open, and no longer gated on one being
+ *  open at all — the preference outlives the project it was set in. */
+function writeRailOpen(open: boolean): void {
+  try {
+    localStorage.setItem(RAIL_OPEN_KEY, open ? "1" : "0");
+  } catch {
+    // A panel preference is not worth failing a navigation over.
+  }
 }
 
 const projectViewKey = (id: string) => `hydra2-project-view:${id}`;
@@ -333,10 +359,7 @@ function navigateToView(prev: AppState, view: ProjectView) {
     activeProjectId: prev.activeProjectId,
     activeScenarioId: prev.activeScenarioId,
   });
-  const railOpen = prev.activeProjectId
-    ? readRailOpen(prev.activeProjectId)
-    : prev.railOpen;
-  return { ...prev, ...nav, projectView: view, railOpen };
+  return { ...prev, ...nav, projectView: view, railOpen: readRailOpen() };
 }
 /** Last-used view for a project, persisted by `setProjectView`. */
 function readProjectView(id: string): ProjectView | null {
@@ -409,7 +432,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       page: "project",
       projectView,
       activeProjectId: restoreId,
-      railOpen: readRailOpen(restoreId),
+      railOpen: readRailOpen(),
       navHistory: [
         {
           page: "project",
@@ -717,11 +740,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       // to be on this view.
       if (reselectsCurrentView(prev.page, prev.projectView, view)) {
         const next = !prev.railOpen;
-        if (prev.activeProjectId)
-          localStorage.setItem(
-            railOpenKey(prev.activeProjectId),
-            next ? "1" : "0",
-          );
+        writeRailOpen(next);
         return { ...prev, railOpen: next };
       }
       return navigateToView(prev, view);
@@ -761,9 +780,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         activeProjectId: prev.activeProjectId,
         activeScenarioId: prev.activeScenarioId,
       });
-      const railOpen = prev.activeProjectId
-        ? readRailOpen(prev.activeProjectId)
-        : prev.railOpen;
+      const railOpen = readRailOpen();
       return {
         ...prev,
         ...nav,
@@ -810,11 +827,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const openProject = useCallback(
     (id: string, view?: ProjectView) => {
-      goToProject(
-        id,
-        view ?? readProjectView(id) ?? "canvas",
-        readRailOpen(id),
-      );
+      goToProject(id, view ?? readProjectView(id) ?? "canvas", readRailOpen());
     },
     [goToProject],
   );
@@ -874,12 +887,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const enterLoadedProject = useCallback(
     (p: Project) => {
-      goToProject(
-        p.id,
-        readProjectView(p.id) ?? "overview",
-        readRailOpen(p.id),
-        { createdProject: p, isNetworkLoaded: p.nodeCount > 0 },
-      );
+      goToProject(p.id, readProjectView(p.id) ?? "overview", readRailOpen(), {
+        createdProject: p,
+        isNetworkLoaded: p.nodeCount > 0,
+      });
     },
     [goToProject],
   );
@@ -948,11 +959,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const toggleRail = useCallback(() => {
     setS((prev) => {
       const next = !prev.railOpen;
-      if (prev.activeProjectId)
-        localStorage.setItem(
-          railOpenKey(prev.activeProjectId),
-          next ? "1" : "0",
-        );
+      writeRailOpen(next);
       return { ...prev, railOpen: next };
     });
   }, []);
