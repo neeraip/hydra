@@ -76,6 +76,15 @@ import {
   roughGeoViewState,
   visibleMapPadding,
 } from "./MapCanvas/geoUtils";
+import {
+  classifyViewTransition,
+  linksPickableFor,
+  sizeUnitsFor,
+} from "./MapCanvas/renderRules";
+import {
+  deckMoveWasUserDriven,
+  mapMoveWasUserDriven,
+} from "./MapCanvas/userGesture";
 import { nearestPointOnPath, type SnapResult } from "./measureSnap";
 import {
   NODE_SCALE_DEFAULT,
@@ -1260,12 +1269,8 @@ export const MapCanvas = memo(function MapCanvas({
 
     // World-space units so sizes scale with zoom (metres on the geo map,
     // "common" units in the schematic). Per-layer pixel clamps bound them.
-    const nodeRadiusUnits = isSchematic
-      ? ("common" as const)
-      : ("meters" as const);
-    const linkWidthUnits = isSchematic
-      ? ("common" as const)
-      : ("meters" as const);
+    const nodeRadiusUnits = sizeUnitsFor(isSchematic);
+    const linkWidthUnits = sizeUnitsFor(isSchematic);
 
     // Sized against the network rather than fixed, so the node-to-link
     // ratio holds whether junctions are fifty metres or five kilometres
@@ -1894,8 +1899,7 @@ export const MapCanvas = memo(function MapCanvas({
       // handlers below no-op in measure mode and all of its interaction goes
       // through the map's own click/mousemove, which is where the snap radius
       // and the pick order (node before link) live.
-      const linksPickable =
-        tool === "select" || tool === "edit" || tool === "measure";
+      const linksPickable = linksPickableFor(tool);
       layers.push(
         // LineLayer cannot render polylines, so networks with link vertices
         // use PathLayer-based variants. Those get their OWN ids
@@ -2391,13 +2395,8 @@ export const MapCanvas = memo(function MapCanvas({
         }: ViewStateChangeParameters<OrthographicViewState>) => {
           // Only a gesture counts. deck moves the camera itself when the
           // layout is framed, and that must not read as the user choosing
-          // a view.
-          if (
-            interactionState?.isDragging ||
-            interactionState?.isPanning ||
-            interactionState?.isZooming ||
-            interactionState?.isRotating
-          ) {
+          // a view. See `userGesture` for the rule and its other spelling.
+          if (deckMoveWasUserDriven(interactionState)) {
             userMovedRef.current?.();
             // Reaching for the camera cancels a fit in flight. Continuing
             // to drive it would fight the hand on the mouse.
@@ -2468,11 +2467,10 @@ export const MapCanvas = memo(function MapCanvas({
     // point — but a report per frame would re-render the list at 60 Hz.
     map.on("move", () => reportViewportMovedRef.current());
 
-    // `originalEvent` is present only when input drove the move; fitBounds
-    // and easeTo arrive without one. That is the cleanest signal maplibre
-    // offers for "the user did this".
+    // The same question the schematic asks of its interaction state; see
+    // `userGesture`.
     map.on("movestart", (e) => {
-      if ((e as { originalEvent?: unknown }).originalEvent != null) {
+      if (mapMoveWasUserDriven(e as { originalEvent?: unknown })) {
         userMovedRef.current?.();
       }
     });
@@ -2872,10 +2870,12 @@ export const MapCanvas = memo(function MapCanvas({
   // wrong thing.
   useEffect(() => {
     if (!isActive) return;
-    const enteringMapMode =
-      viewMode === "map" && prevViewModeRef.current !== "map";
-    const leavingMapMode =
-      viewMode !== "map" && prevViewModeRef.current === "map";
+    const transition = classifyViewTransition(
+      prevViewModeRef.current,
+      viewMode,
+    );
+    const enteringMapMode = transition === "entering-map";
+    const leavingMapMode = transition === "leaving-map";
     prevViewModeRef.current = viewMode;
 
     if (viewMode === "schematic") {
