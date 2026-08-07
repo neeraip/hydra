@@ -16,6 +16,7 @@ import {
   type BasemapProvider,
   connectBasemapProvider,
   disconnectBasemapProvider,
+  needsCredential,
   refreshBasemapProviders,
   setBasemapStylesHidden,
   useBasemapProviders,
@@ -165,11 +166,15 @@ function ProviderCard({
           {provider.displayName}
         </span>
         <Badge text={isPaid ? "Paid" : "Free"} />
-        {provider.connected ? (
-          <Badge text="Connected" accent />
-        ) : (
-          <Badge text="Not connected" />
-        )}
+        {/* Only where there is something to connect. A free provider needs
+            no account and stores no credential, so "Connected" would be
+            reporting on a step that does not exist for it. */}
+        {needsCredential(provider) &&
+          (provider.connected ? (
+            <Badge text="Connected" accent />
+          ) : (
+            <Badge text="Not connected" />
+          ))}
         <div style={{ flex: 1 }} />
         <VisibilityToggle
           hidden={allHidden}

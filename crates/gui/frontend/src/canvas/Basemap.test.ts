@@ -160,15 +160,40 @@ describe("isBasemapStyleHidden", () => {
   });
 
   it("provider ids default to hidden; shown-list overrides", () => {
+    expect(isBasemapStyleHidden("provider:mapbox:satellite", vis())).toBe(true);
+    expect(
+      isBasemapStyleHidden(
+        "provider:mapbox:satellite",
+        vis([], ["provider:mapbox:satellite"]),
+      ),
+    ).toBe(false);
+  });
+
+  /**
+   * A provider style is hidden by default because most need an account
+   * before they draw anything. Esri's World Imagery needs none, and aerial
+   * imagery under a network is the first thing most people reach for, so it
+   * is in the picker without being asked for.
+   */
+  it("keeps the free aerial imagery visible without being asked", () => {
     expect(isBasemapStyleHidden("provider:esri:world-imagery", vis())).toBe(
-      true,
+      false,
     );
+  });
+
+  /**
+   * And hiding it has to stick. A style that starts visible records its
+   * override in the other list — routing it by "is it a provider style"
+   * would file the override where nothing reads it, and hiding would appear
+   * to do nothing.
+   */
+  it("lets that one be hidden like any other visible style", () => {
     expect(
       isBasemapStyleHidden(
         "provider:esri:world-imagery",
-        vis([], ["provider:esri:world-imagery"]),
+        vis(["provider:esri:world-imagery"]),
       ),
-    ).toBe(false);
+    ).toBe(true);
   });
 });
 
@@ -201,8 +226,30 @@ describe("basemapPickerGroups", () => {
   });
 
   it("hides connected providers' styles by default (until explicitly shown)", () => {
-    const groups = basemapPickerGroups([esri], vis());
+    const paid = provider({
+      id: "mapbox",
+      displayName: "Mapbox",
+      kind: "paid",
+      builtin: false,
+      tokenLabel: "Access token",
+      connected: true,
+      styles: [
+        {
+          id: "satellite",
+          displayName: "Satellite",
+          tileSize: 512,
+          maxZoom: 22,
+        },
+      ],
+    });
+    const groups = basemapPickerGroups([paid], vis());
     expect(groups.map((g) => g.providerId)).toEqual(["openfreemap"]);
+  });
+
+  /** Except the one that starts visible. */
+  it("lists the free aerial imagery without it being shown explicitly", () => {
+    const groups = basemapPickerGroups([esri], vis());
+    expect(groups.map((g) => g.providerId)).toEqual(["openfreemap", "esri"]);
   });
 
   it("lists explicitly shown styles of connected providers, skipping disconnected + builtin ones", () => {
@@ -235,14 +282,22 @@ describe("basemapPickerGroups", () => {
   });
 
   it("filters hidden legacy styles and drops emptied groups", () => {
-    const groups = basemapPickerGroups([esri], vis(["light"]));
+    // The aerial style is hidden here too: it starts visible now, so
+    // "everything else hidden" has to say so.
+    const groups = basemapPickerGroups(
+      [esri],
+      vis(["light", "provider:esri:world-imagery"]),
+    );
     expect(groups).toHaveLength(1);
     expect(groups[0].entries.map((e) => e.id)).toEqual(["streets", "dark"]);
   });
 
   it("returns no groups when everything is hidden", () => {
     expect(
-      basemapPickerGroups([esri], vis(["streets", "light", "dark"])),
+      basemapPickerGroups(
+        [esri],
+        vis(["streets", "light", "dark", "provider:esri:world-imagery"]),
+      ),
     ).toEqual([]);
   });
 });

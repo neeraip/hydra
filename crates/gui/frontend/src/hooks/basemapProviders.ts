@@ -15,11 +15,30 @@
 import { useEffect, useSyncExternalStore } from "react";
 import {
   type BasemapVisibility,
+  basemapStyleDefaultsVisible,
   parseProviderBasemapId,
 } from "../canvas/Basemap";
 import { invoke, tryInvoke } from "./ipc";
 
 // ── DTO types (match commands::basemap_providers serde camelCase) ────────────
+
+/**
+ * Whether this provider has anything to connect to.
+ *
+ * `connected` answers two questions at once: for a provider that needs a
+ * credential it means one is stored, and for a free one it is hard-coded
+ * true because there was never anything to store. Rendering it either way
+ * put a "Connected" badge on OpenFreeMap and Esri, which had connected to
+ * nothing — nothing was asked of the reader and nothing is being reported.
+ *
+ * The credential label is the honest test: a provider that needs one has a
+ * connection state worth showing, and one that does not has none.
+ */
+export function needsCredential(provider: {
+  tokenLabel?: string | null;
+}): boolean {
+  return provider.tokenLabel != null;
+}
 
 export interface BasemapProviderStyle {
   id: string;
@@ -198,13 +217,16 @@ export function setBasemapStylesHidden(ids: string[], hide: boolean): void {
   const hiddenLegacyIds = new Set(visibility.hiddenLegacyIds);
   const shownProviderIds = new Set(visibility.shownProviderIds);
   for (const id of ids) {
-    if (parseProviderBasemapId(id) !== null) {
-      if (hide) shownProviderIds.delete(id);
-      else shownProviderIds.add(id);
+    // Routed by the id's default rather than by whether it is a provider
+    // style: one provider style now starts visible, so recording it in the
+    // "explicitly shown" set would mean hiding it did nothing.
+    if (basemapStyleDefaultsVisible(id)) {
+      if (hide) hiddenLegacyIds.add(id);
+      else hiddenLegacyIds.delete(id);
     } else if (hide) {
-      hiddenLegacyIds.add(id);
+      shownProviderIds.delete(id);
     } else {
-      hiddenLegacyIds.delete(id);
+      shownProviderIds.add(id);
     }
   }
   if (

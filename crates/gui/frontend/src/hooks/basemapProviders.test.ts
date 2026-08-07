@@ -45,23 +45,23 @@ describe("visibility store", () => {
   it("routes ids to the override list matching their default, persisting best-effort", () => {
     const store = stubLocalStorage();
 
-    // Hide a legacy id (default visible) + show a provider id (default hidden).
+    // Hide a legacy id (default visible) + show a provider id (default
+    // hidden). Mapbox, not Esri: Esri's imagery starts visible now, so it
+    // is routed like a legacy id rather than like a provider one.
     setBasemapStylesHidden(["light"], true);
-    setBasemapStylesHidden(["provider:esri:world-imagery"], false);
+    setBasemapStylesHidden(["provider:mapbox:satellite"], false);
     expect(getBasemapVisibility().hiddenLegacyIds.has("light")).toBe(true);
     expect(
-      getBasemapVisibility().shownProviderIds.has(
-        "provider:esri:world-imagery",
-      ),
+      getBasemapVisibility().shownProviderIds.has("provider:mapbox:satellite"),
     ).toBe(true);
     expect(JSON.parse(store.get("hydra2-basemap-visibility") ?? "{}")).toEqual({
       hiddenLegacyIds: ["light"],
-      shownProviderIds: ["provider:esri:world-imagery"],
+      shownProviderIds: ["provider:mapbox:satellite"],
     });
 
     // Flip both back to their defaults — the overrides clear.
     setBasemapStylesHidden(["light"], false);
-    setBasemapStylesHidden(["provider:esri:world-imagery"], true);
+    setBasemapStylesHidden(["provider:mapbox:satellite"], true);
     expect(getBasemapVisibility().hiddenLegacyIds.size).toBe(0);
     expect(getBasemapVisibility().shownProviderIds.size).toBe(0);
   });
@@ -129,5 +129,33 @@ describe("connectBasemapProvider", () => {
     await expect(connectBasemapProvider("mapbox", "pk.token")).resolves.toEqual(
       row,
     );
+  });
+});
+
+/**
+ * A provider style is hidden by default because most need an account before
+ * they draw anything. Esri's World Imagery needs none, so it is in the
+ * picker without being asked for — and hiding it therefore records an
+ * override in the *other* list, because it is departing from visible.
+ *
+ * Routing it by "is this a provider style" instead would file the override
+ * where nothing reads it, and hiding would silently do nothing.
+ */
+describe("a provider style that starts visible", () => {
+  it("records hiding it as a departure from visible", () => {
+    stubLocalStorage();
+    setBasemapStylesHidden(["provider:esri:world-imagery"], true);
+    expect(
+      getBasemapVisibility().hiddenLegacyIds.has("provider:esri:world-imagery"),
+    ).toBe(true);
+    expect(getBasemapVisibility().shownProviderIds.size).toBe(0);
+  });
+
+  it("clears the override when it is shown again", () => {
+    stubLocalStorage();
+    setBasemapStylesHidden(["provider:esri:world-imagery"], true);
+    setBasemapStylesHidden(["provider:esri:world-imagery"], false);
+    expect(getBasemapVisibility().hiddenLegacyIds.size).toBe(0);
+    expect(getBasemapVisibility().shownProviderIds.size).toBe(0);
   });
 });

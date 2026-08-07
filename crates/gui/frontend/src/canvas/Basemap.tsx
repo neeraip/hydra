@@ -157,18 +157,52 @@ export function buildProviderRasterStyle(
  * Per-machine picker-visibility overrides. Defaults differ by style origin,
  * so the pref stores explicit overrides per direction:
  *
- * - OpenFreeMap's three styles are visible by default → `hiddenLegacyIds`
- *   lists the ones the user explicitly hid;
- * - every provider style is hidden by default (even when its provider is
- *   connected) → `shownProviderIds` lists the `provider:{providerId}:{styleId}`
- *   ids the user explicitly unhid.
+ * - styles that start visible — OpenFreeMap's three, and any provider style
+ *   in `DEFAULT_VISIBLE_PROVIDER_STYLES` → `hiddenLegacyIds` lists the ones
+ *   the user explicitly hid;
+ * - every other provider style is hidden by default (even when its provider
+ *   is connected) → `shownProviderIds` lists the
+ *   `provider:{providerId}:{styleId}` ids the user explicitly unhid.
+ *
+ * The field names predate a provider style ever defaulting to visible, so
+ * `hiddenLegacyIds` now holds provider ids too. They are the persisted
+ * keys, which is why they have not been renamed.
  */
 export interface BasemapVisibility {
   hiddenLegacyIds: ReadonlySet<string>;
   shownProviderIds: ReadonlySet<string>;
 }
 
-/** Nothing overridden: OpenFreeMap visible, all provider styles hidden. */
+/**
+ * Provider styles that start visible anyway.
+ *
+ * A provider style is hidden by default because most of them need an
+ * account before they will draw anything, so a picker full of them would be
+ * a picker full of dead entries. Esri's World Imagery needs none — the
+ * catalog has it as free with no credential — and aerial imagery under a
+ * network is the first thing most people reach for, so it earns its place
+ * in the picker without being asked for.
+ */
+export const DEFAULT_VISIBLE_PROVIDER_STYLES: ReadonlySet<string> = new Set([
+  "provider:esri:world-imagery",
+]);
+
+/**
+ * Whether this style is in the picker until someone hides it.
+ *
+ * The two override sets record departures from this, one per direction, so
+ * every caller that stores a preference has to agree with every caller that
+ * reads one about which default a given id has.
+ */
+export function basemapStyleDefaultsVisible(id: string): boolean {
+  return (
+    parseProviderBasemapId(id) === null ||
+    DEFAULT_VISIBLE_PROVIDER_STYLES.has(id)
+  );
+}
+
+/** Nothing overridden: OpenFreeMap and Esri imagery visible, the rest
+ *  hidden. */
 export const DEFAULT_BASEMAP_VISIBILITY: BasemapVisibility = {
   hiddenLegacyIds: new Set(),
   shownProviderIds: new Set(),
@@ -179,9 +213,12 @@ export function isBasemapStyleHidden(
   id: BasemapId,
   visibility: BasemapVisibility,
 ): boolean {
-  return parseProviderBasemapId(id) !== null
-    ? !visibility.shownProviderIds.has(id)
-    : visibility.hiddenLegacyIds.has(id);
+  // Which set answers depends on which default the id has, not on whether
+  // it belongs to a provider — those stopped being the same question when
+  // one provider style began visible.
+  return basemapStyleDefaultsVisible(id)
+    ? visibility.hiddenLegacyIds.has(id)
+    : !visibility.shownProviderIds.has(id);
 }
 
 // ── Picker grouping ──────────────────────────────────────────────────────────
