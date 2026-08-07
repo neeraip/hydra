@@ -62,7 +62,14 @@
   --rail-transition: 200ms cubic-bezier(0.4, 0, 0.2, 1);
 
   /* Backgrounds */
-  --bg-app: #0f0f12;
+  /* The two canvas grounds, named independently of which theme is active.
+     The canvas background picker pins to one of these, so a reader who
+     chooses "Light" gets exactly the ground the light theme would have
+     given them rather than a second opinion about what light means. */
+  --bg-app-dark: #0f0f12;
+  --bg-app-light: #eff1f7;
+
+  --bg-app: var(--bg-app-dark);
   --bg-activity: #0b0b0e;
   --bg-rail: #101015;
   --bg-panel: rgba(17, 17, 23, 0.94);
@@ -140,7 +147,7 @@
 :root[data-theme="light"] {
   color-scheme: light;
 
-  --bg-app: #eff1f7;
+  --bg-app: var(--bg-app-light);
   --bg-activity: #e3e6ef;
   --bg-rail: #e8ebf3;
   --bg-panel: rgba(255, 255, 255, 0.96);

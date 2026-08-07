@@ -13,6 +13,10 @@ import {
   basemapPickerGroups,
   clampBasemapOpacity,
 } from "../../../canvas/Basemap";
+import {
+  backgroundPickerShown,
+  type CanvasBackground,
+} from "../../../canvas/canvasBackground";
 import { LOCAL_CRS } from "../../../canvas/coords";
 import { useCanvasLayers } from "../../../canvas/layers-context";
 import type { MeasurePoint } from "../../../canvas/measureSnap";
@@ -22,6 +26,7 @@ import {
   useBasemapProviders,
   useBasemapVisibility,
 } from "../../../hooks/basemapProviders";
+import { CanvasBackgroundPicker } from "./CanvasBackgroundPicker";
 import { CoordStatusIndicator } from "./CoordStatusIndicator";
 import { MeasurePopover } from "./MeasurePopover";
 
@@ -58,6 +63,8 @@ export function CanvasToolbar({
   onBasemapOpacityChange,
   showBasemapDropdown,
   setShowBasemapDropdown,
+  canvasBackground,
+  onCanvasBackgroundChange,
   sourceCrs,
   crsError,
   onOpenCrsModal,
@@ -84,6 +91,10 @@ export function CanvasToolbar({
   basemapOpacity: number;
   onBasemapOpacityChange: (v: number) => void;
   showBasemapDropdown: boolean;
+  /** The ground under a canvas with no basemap. Shares the basemap
+   * picker's slot: they are alternatives, never both. */
+  canvasBackground: CanvasBackground;
+  onCanvasBackgroundChange: (b: CanvasBackground) => void;
   setShowBasemapDropdown: Dispatch<SetStateAction<boolean>>;
   sourceCrs: string;
   crsError: string | null;
@@ -237,171 +248,182 @@ export function CanvasToolbar({
             />
           )}
 
-        {/* Basemap dropdown */}
-        <div
-          data-toolbar-dropdown
-          style={{ position: "relative", opacity: mapOnlyDim.opacity }}
-        >
-          <button
-            type="button"
-            className="tool-btn"
-            disabled={mapOnly}
-            style={{
-              width: "auto",
-              padding: "0 8px",
-              fontSize: "var(--text-md)",
-              gap: 4,
-              display: "flex",
-              alignItems: "center",
-              cursor: mapOnlyDim.cursor,
-            }}
-            onClick={(e) => {
-              if (mapOnly) return;
-              e.stopPropagation();
-              setShowBasemapDropdown((v) => !v);
-            }}
-            data-tooltip={mapOnlyTooltip("Basemap")}
-            data-tooltip-pos="bottom"
+        {/* Basemap dropdown, or the background colour that takes its place
+            where no basemap is possible. A basemap *is* the ground when
+            there is one, so the two never appear together. */}
+        {backgroundPickerShown(mapOnly) ? (
+          <CanvasBackgroundPicker
+            value={canvasBackground}
+            onChange={onCanvasBackgroundChange}
+          />
+        ) : (
+          <div
+            data-toolbar-dropdown
+            style={{ position: "relative", opacity: mapOnlyDim.opacity }}
           >
-            {basemapDisplayLabel(basemap, basemapProviders)}{" "}
-            <ChevronUpDownIcon
-              style={{ width: 12, height: 12, verticalAlign: "middle" }}
-            />
-          </button>
-          {showBasemapDropdown && viewMode === "map" && !localGrid && (
-            <div
+            <button
+              type="button"
+              className="tool-btn"
+              disabled={mapOnly}
               style={{
-                position: "absolute",
-                top: "calc(100% + 4px)",
-                left: 0,
-                background: "var(--bg-panel)",
-                border: "1px solid var(--border)",
-                borderRadius: 7,
-                boxShadow: "var(--shadow-2)",
-                overflow: "hidden",
-                minWidth: 160,
-                zIndex: 20,
+                width: "auto",
+                padding: "0 8px",
+                fontSize: "var(--text-md)",
+                gap: 4,
+                display: "flex",
+                alignItems: "center",
+                cursor: mapOnlyDim.cursor,
               }}
+              onClick={(e) => {
+                if (mapOnly) return;
+                e.stopPropagation();
+                setShowBasemapDropdown((v) => !v);
+              }}
+              data-tooltip={mapOnlyTooltip("Basemap")}
+              data-tooltip-pos="bottom"
             >
-              {basemapEntry("none", "No basemap")}
-              {!activeIsListed &&
-                basemapEntry(
-                  basemap,
-                  `${basemapDisplayLabel(basemap, basemapProviders)} (hidden)`,
-                )}
-              {pickerGroups.map((g) => (
-                <div key={g.providerId}>
+              {basemapDisplayLabel(basemap, basemapProviders)}{" "}
+              <ChevronUpDownIcon
+                style={{ width: 12, height: 12, verticalAlign: "middle" }}
+              />
+            </button>
+            {showBasemapDropdown && viewMode === "map" && !localGrid && (
+              <div
+                style={{
+                  position: "absolute",
+                  top: "calc(100% + 4px)",
+                  left: 0,
+                  background: "var(--bg-panel)",
+                  border: "1px solid var(--border)",
+                  borderRadius: 7,
+                  boxShadow: "var(--shadow-2)",
+                  overflow: "hidden",
+                  minWidth: 160,
+                  zIndex: 20,
+                }}
+              >
+                {basemapEntry("none", "No basemap")}
+                {!activeIsListed &&
+                  basemapEntry(
+                    basemap,
+                    `${basemapDisplayLabel(basemap, basemapProviders)} (hidden)`,
+                  )}
+                {pickerGroups.map((g) => (
+                  <div key={g.providerId}>
+                    <div
+                      style={{
+                        padding: "6px 12px 2px",
+                        fontSize: "var(--text-xs)",
+                        fontWeight: 600,
+                        letterSpacing: "0.06em",
+                        textTransform: "uppercase",
+                        color: "var(--text-tertiary)",
+                        fontFamily: "var(--font-ui)",
+                      }}
+                    >
+                      {g.label}
+                    </div>
+                    {g.entries.map((e) => basemapEntry(e.id, e.label))}
+                  </div>
+                ))}
+                {!anyVisibleStyles && (
                   <div
                     style={{
-                      padding: "6px 12px 2px",
+                      padding: "7px 12px",
+                      fontSize: "var(--text-sm)",
+                      color: "var(--text-tertiary)",
+                      fontFamily: "var(--font-ui)",
+                    }}
+                  >
+                    All styles hidden — use Manage basemaps…
+                  </div>
+                )}
+                {/* Opacity slider — dims the basemap live while the dropdown
+                  stays open (it sits inside the data-toolbar-dropdown
+                  container, so the global click-outside never fires). */}
+                <div
+                  style={{
+                    borderTop: "1px solid var(--border)",
+                    marginTop: 2,
+                    padding: "7px 12px 8px",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 8,
+                  }}
+                >
+                  <span
+                    style={{
                       fontSize: "var(--text-xs)",
                       fontWeight: 600,
                       letterSpacing: "0.06em",
                       textTransform: "uppercase",
                       color: "var(--text-tertiary)",
                       fontFamily: "var(--font-ui)",
+                      whiteSpace: "nowrap",
                     }}
                   >
-                    {g.label}
-                  </div>
-                  {g.entries.map((e) => basemapEntry(e.id, e.label))}
+                    Opacity
+                  </span>
+                  <input
+                    type="range"
+                    min={0}
+                    max={100}
+                    step={1}
+                    value={Math.round(basemapOpacity * 100)}
+                    onChange={(e) =>
+                      onBasemapOpacityChange(
+                        clampBasemapOpacity(
+                          Number(e.currentTarget.value) / 100,
+                        ),
+                      )
+                    }
+                    aria-label="Basemap opacity"
+                    style={{
+                      flex: 1,
+                      minWidth: 80,
+                      accentColor: "var(--accent)",
+                    }}
+                  />
+                  <span
+                    style={{
+                      fontSize: "var(--text-xs)",
+                      color: "var(--text-secondary)",
+                      fontFamily: "var(--font-mono)",
+                      fontVariantNumeric: "tabular-nums",
+                      width: 30,
+                      textAlign: "right",
+                      flexShrink: 0,
+                    }}
+                  >
+                    {Math.round(basemapOpacity * 100)}%
+                  </span>
                 </div>
-              ))}
-              {!anyVisibleStyles && (
-                <div
+                <div style={{ borderTop: "1px solid var(--border)" }} />
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowBasemapDropdown(false);
+                    onOpenBasemapProviders();
+                  }}
                   style={{
+                    display: "block",
+                    width: "100%",
                     padding: "7px 12px",
-                    fontSize: "var(--text-sm)",
-                    color: "var(--text-tertiary)",
-                    fontFamily: "var(--font-ui)",
-                  }}
-                >
-                  All styles hidden — use Manage basemaps…
-                </div>
-              )}
-              {/* Opacity slider — dims the basemap live while the dropdown
-                  stays open (it sits inside the data-toolbar-dropdown
-                  container, so the global click-outside never fires). */}
-              <div
-                style={{
-                  borderTop: "1px solid var(--border)",
-                  marginTop: 2,
-                  padding: "7px 12px 8px",
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 8,
-                }}
-              >
-                <span
-                  style={{
-                    fontSize: "var(--text-xs)",
-                    fontWeight: 600,
-                    letterSpacing: "0.06em",
-                    textTransform: "uppercase",
-                    color: "var(--text-tertiary)",
-                    fontFamily: "var(--font-ui)",
-                    whiteSpace: "nowrap",
-                  }}
-                >
-                  Opacity
-                </span>
-                <input
-                  type="range"
-                  min={0}
-                  max={100}
-                  step={1}
-                  value={Math.round(basemapOpacity * 100)}
-                  onChange={(e) =>
-                    onBasemapOpacityChange(
-                      clampBasemapOpacity(Number(e.currentTarget.value) / 100),
-                    )
-                  }
-                  aria-label="Basemap opacity"
-                  style={{
-                    flex: 1,
-                    minWidth: 80,
-                    accentColor: "var(--accent)",
-                  }}
-                />
-                <span
-                  style={{
-                    fontSize: "var(--text-xs)",
+                    border: "none",
+                    background: "transparent",
                     color: "var(--text-secondary)",
-                    fontFamily: "var(--font-mono)",
-                    fontVariantNumeric: "tabular-nums",
-                    width: 30,
-                    textAlign: "right",
-                    flexShrink: 0,
+                    cursor: "pointer",
+                    fontSize: "var(--text-md)",
+                    textAlign: "left",
+                    fontFamily: "var(--font-ui)",
                   }}
                 >
-                  {Math.round(basemapOpacity * 100)}%
-                </span>
+                  Manage basemaps…
+                </button>
               </div>
-              <div style={{ borderTop: "1px solid var(--border)" }} />
-              <button
-                type="button"
-                onClick={() => {
-                  setShowBasemapDropdown(false);
-                  onOpenBasemapProviders();
-                }}
-                style={{
-                  display: "block",
-                  width: "100%",
-                  padding: "7px 12px",
-                  border: "none",
-                  background: "transparent",
-                  color: "var(--text-secondary)",
-                  cursor: "pointer",
-                  fontSize: "var(--text-md)",
-                  textAlign: "left",
-                  fontFamily: "var(--font-ui)",
-                }}
-              >
-                Manage basemaps…
-              </button>
-            </div>
-          )}
-        </div>
+            )}
+          </div>
+        )}
 
         {/* CRS status + modal launcher.
             Never gated on the view: which coordinate system a model is in

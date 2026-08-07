@@ -7,6 +7,12 @@ import {
   isValidBasemapId,
 } from "../../canvas/Basemap";
 import {
+  type CanvasBackground,
+  canvasBackgroundStyle,
+  DEFAULT_CANVAS_BACKGROUND,
+  readCanvasBackground,
+} from "../../canvas/canvasBackground";
+import {
   LINK_VARIABLES,
   linkVariableFor,
   NODE_VARIABLES,
@@ -133,6 +139,9 @@ interface CanvasPrefs {
   schematicAspect: number;
   /** Node-size slider position. Missing in older prefs → the default. */
   nodeScale: number;
+  /** The ground under a canvas with no basemap. Missing → tracks the app
+   * theme, which is what it did before it could be chosen. */
+  canvasBackground: CanvasBackground;
   /**
    * What the colour ramps are scaled against: the whole run, the current
    * step, or the project's criteria bands.
@@ -177,6 +186,7 @@ const CANVAS_PREF_DEFAULTS: CanvasPrefs = {
   linkVar: "velocity",
   schematicAspect: ASPECT_SLIDER_DEFAULT,
   nodeScale: NODE_SCALE_DEFAULT,
+  canvasBackground: DEFAULT_CANVAS_BACKGROUND,
   scaleMode: "run",
   legendOpen: false,
   genericSelection: { point: "", polyline: "", region: "" },
@@ -768,6 +778,9 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
     CANVAS_PREF_DEFAULTS.schematicAspect,
   );
   const [nodeScale, setNodeScale] = useState(CANVAS_PREF_DEFAULTS.nodeScale);
+  const [canvasBackground, setCanvasBackground] = useState<CanvasBackground>(
+    CANVAS_PREF_DEFAULTS.canvasBackground,
+  );
   // Memoised: MapCanvas keys its layout cache off this, and a fresh object per
   // render would re-lay out the whole network every render.
   const schematicScale = useMemo(
@@ -823,6 +836,8 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
         ? (prefs?.nodeScale as number)
         : CANVAS_PREF_DEFAULTS.nodeScale,
     );
+    // Coerces a missing or corrupt value to the default itself.
+    setCanvasBackground(readCanvasBackground(prefs?.canvasBackground));
     setPrefsLoadedFor(id);
   }, [project?.id]);
   // Cold-load gate: until the project row has arrived (an async fetch — it
@@ -843,6 +858,7 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
       linkVar,
       schematicAspect,
       nodeScale,
+      canvasBackground,
       scaleMode,
       legendOpen,
       genericSelection,
@@ -862,6 +878,7 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
     linkVar,
     schematicAspect,
     nodeScale,
+    canvasBackground,
     scaleMode,
     legendOpen,
     genericSelection,
@@ -2455,9 +2472,18 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
         }}
       >
         {/* Canvas area */}
+        {/* `background` is undefined while the preference tracks the theme,
+            leaving `.canvas-bg` to answer — the stylesheet re-answers on a
+            theme change, including one the OS makes while the app is open,
+            which nothing here would hear about. */}
         <div
           className="canvas-bg"
-          style={{ flex: 1, position: "relative", overflow: "hidden" }}
+          style={{
+            flex: 1,
+            position: "relative",
+            overflow: "hidden",
+            background: canvasBackgroundStyle(canvasBackground),
+          }}
         >
           {/* Map + Schematic — MapLibre GL JS + deck.gl. Held back until
                 prefsReady so MapLibre never initialises with the placeholder
@@ -2693,6 +2719,8 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
             editable={modelEditable}
             viewMode={viewMode}
             localGrid={localGrid}
+            canvasBackground={canvasBackground}
+            onCanvasBackgroundChange={setCanvasBackground}
             onViewModeChange={setViewMode}
             coordStatus={coordStatus}
             coordMissingCount={coordMissingCount}
