@@ -17,7 +17,7 @@
  * colour should use a CSS variable and let the cascade answer.
  */
 
-import { useEffect, useState } from "react";
+import { useRootAttribute } from "./hooks/useRootAttribute";
 
 export type ResolvedTheme = "dark" | "light";
 
@@ -39,24 +39,5 @@ export function resolvedThemeFrom(attribute: string | null): ResolvedTheme {
  * place needs no list of them.
  */
 export function useResolvedTheme(): ResolvedTheme {
-  const [theme, setTheme] = useState<ResolvedTheme>(() =>
-    typeof document === "undefined"
-      ? FALLBACK
-      : resolvedThemeFrom(document.documentElement.getAttribute("data-theme")),
-  );
-
-  useEffect(() => {
-    const root = document.documentElement;
-    const read = () =>
-      setTheme(resolvedThemeFrom(root.getAttribute("data-theme")));
-    read();
-    const observer = new MutationObserver(read);
-    observer.observe(root, {
-      attributes: true,
-      attributeFilter: ["data-theme"],
-    });
-    return () => observer.disconnect();
-  }, []);
-
-  return theme;
+  return resolvedThemeFrom(useRootAttribute("data-theme"));
 }
