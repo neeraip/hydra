@@ -77,6 +77,16 @@ import {
   visibleMapPadding,
 } from "./MapCanvas/geoUtils";
 import {
+  GRID_OVERDRAW,
+  GRID_RGBA,
+  type GridCoverage,
+  type GridLine,
+  gridCoversView,
+  gridLines,
+  gridSpacing,
+  visibleBounds,
+} from "./MapCanvas/grid";
+import {
   classifyViewTransition,
   linksPickableFor,
   sizeUnitsFor,
@@ -1518,6 +1528,48 @@ export const MapCanvas = memo(function MapCanvas({
 
     const layers: Layer[] = [];
 
+    // The ground, and only where we are the ground. A schematic has no
+    // basemap, and without one the network floats on a flat surface with
+    // nothing to say what kind of surface it is. See `grid`.
+    if (isSchematic) {
+      const vs = viewStateRef.current as SchematicViewState;
+      const canvas = deckCanvasRef.current;
+      const viewport = {
+        width: canvas?.clientWidth ?? 0,
+        height: canvas?.clientHeight ?? 0,
+      };
+      const spacing = gridSpacing(vs?.zoom ?? 0);
+      // Drawn wider than the view so panning stays inside it; see
+      // `GRID_OVERDRAW`.
+      const bounds = visibleBounds(
+        vs?.target ?? [0, 0, 0],
+        vs?.zoom ?? 0,
+        {
+          width: viewport.width * (1 + 2 * GRID_OVERDRAW),
+          height: viewport.height * (1 + 2 * GRID_OVERDRAW),
+        },
+        spacing,
+      );
+      gridBuiltRef.current = { bounds, spacing };
+      const lines = gridLines(bounds, spacing);
+      if (lines.length > 0) {
+        layers.push(
+          new LineLayer({
+            id: "schematic-grid",
+            data: lines,
+            coordinateSystem: coordSystem,
+            getSourcePosition: (d: GridLine) => d.from,
+            getTargetPosition: (d: GridLine) => d.to,
+            getColor: GRID_RGBA as unknown as RGBA,
+            getWidth: 1,
+            widthUnits: "pixels",
+            pickable: false,
+            updateTriggers: {},
+          }),
+        );
+      }
+    }
+
     // Subcatchment boundaries render beneath everything else: soft fills
     // with a hairline outline. In map mode the ring is the model's own plan
     // geometry; in the schematic it is the glyph the layout placed beside
@@ -2337,6 +2389,8 @@ export const MapCanvas = memo(function MapCanvas({
 
   // Viewport-culled labels need a layer rebuild when the view moves. Tracked
   // via refs + a rAF so pan/zoom with labels off costs nothing.
+  // What the grid on screen covers, so a pan only rebuilds when it leaves.
+  const gridBuiltRef = useRef<GridCoverage | null>(null);
   const labelsOnRef = useRef(false);
   useEffect(() => {
     labelsOnRef.current = canvasLayers.nodeLabels || canvasLayers.linkLabels;
@@ -2411,8 +2465,24 @@ export const MapCanvas = memo(function MapCanvas({
           };
           viewStateRef.current = nextViewState;
           deckRef.current?.setProps({ viewState: nextViewState });
-          // Labels are viewport-culled; refresh them as the view moves.
-          if (labelsOnRef.current) scheduleLabelRefresh("schematic");
+          // Labels are viewport-culled; refresh them as the view moves. The
+          // grid is drawn wider than the view, so it only asks when the
+          // camera leaves what was drawn or the spacing changes.
+          const gridCanvas = deckCanvasRef.current;
+          if (
+            labelsOnRef.current ||
+            !gridCoversView(
+              gridBuiltRef.current,
+              nextViewState.target,
+              nextViewState.zoom,
+              {
+                width: gridCanvas?.clientWidth ?? 0,
+                height: gridCanvas?.clientHeight ?? 0,
+              },
+            )
+          ) {
+            scheduleLabelRefresh("schematic");
+          }
           // Same report the map makes on "move": a plan view has a viewport
           // like any other, so the network list's dimming tracks it too.
           reportViewportMovedRef.current();
