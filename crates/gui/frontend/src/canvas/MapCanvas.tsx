@@ -62,6 +62,7 @@ import {
   nodeRgba,
   type RGBA,
 } from "./MapCanvas/colorUtils";
+import { planFraming } from "./MapCanvas/framingPlan";
 import {
   fitMapExtents,
   geoBounds,
@@ -2722,44 +2723,42 @@ export const MapCanvas = memo(function MapCanvas({
     pitch: number;
   } | null>(null);
   useEffect(() => {
-    // Leaving the orthographic renderer: keep the camera for the space it
-    // belonged to, so coming back returns you to it rather than framing the
-    // whole network again.
-    if (viewMode !== "schematic") {
-      const leaving = orthoSpaceRef.current;
-      if (leaving) {
-        savedOrthoViewRef.current[leaving] =
-          viewStateRef.current as SchematicViewState;
-      }
+    // The decision lives in `planFraming`; this applies it. See that module
+    // for why the two are apart.
+    const plan = planFraming({
+      viewMode,
+      isActive,
+      topological,
+      couplingsResolved,
+      currentSpace: orthoSpaceRef.current,
+      framedFor: framedForRef.current,
+      nodes,
+      links,
+      hasSavedCamera:
+        savedOrthoViewRef.current[topological ? "topological" : "plan"] != null,
+    });
+
+    if (plan.action === "wait") return;
+    if (plan.action === "stash") {
+      savedOrthoViewRef.current[plan.space] =
+        viewStateRef.current as SchematicViewState;
       return;
     }
-    if (!isActive) return;
-    // Nothing to frame yet: framing an empty layout would mark it framed and
-    // the real one would never get its turn.
-    if (topological && !couplingsResolved) return;
-    const space = topological ? "topological" : "plan";
-    const prevSpace = orthoSpaceRef.current;
-    if (prevSpace && prevSpace !== space) {
-      savedOrthoViewRef.current[prevSpace] =
+
+    if (plan.stashPrevious) {
+      savedOrthoViewRef.current[plan.stashPrevious] =
         viewStateRef.current as SchematicViewState;
     }
-    orthoSpaceRef.current = space;
-
-    const framed = framedForRef.current;
-    const networkChanged = framed?.nodes !== nodes || framed?.links !== links;
-    // A camera saved against a different network frames the wrong thing.
-    if (networkChanged) {
+    orthoSpaceRef.current = plan.space;
+    if (plan.discardSaved) {
       savedOrthoViewRef.current = { plan: null, topological: null };
       savedMapViewRef.current = null;
     }
     framedForRef.current = { nodes, links };
 
-    // Frame only when there is nothing to return to. A saved camera is the
-    // record of having been here before, so it answers both "have I framed
-    // this yet" and "where was I" — and fitting the network on every arrival
-    // is what made switching views feel like it kept pressing Fit network.
-    const saved = savedOrthoViewRef.current[space];
-    const vs = saved ?? orthoCenterFromMap(renderCoords);
+    const vs = plan.useSaved
+      ? (savedOrthoViewRef.current[plan.space] as SchematicViewState)
+      : orthoCenterFromMap(renderCoords);
 
     // Framed before the deck exists, so the deck can be born looking at the
     // right place rather than corrected a frame later.
