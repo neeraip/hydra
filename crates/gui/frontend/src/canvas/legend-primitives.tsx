@@ -299,49 +299,112 @@ export function ScaleControl({
   value,
   options,
   onChange,
+  onEditCriteria,
 }: {
   value: ScaleMode;
   options: readonly ScaleOption[];
   onChange: (mode: ScaleMode) => void;
+  /** Opens the criteria editor. Omitted where there is nothing to edit. */
+  onEditCriteria?: () => void;
 }) {
   return (
     <div
       style={{
         display: "flex",
-        // Wrap the buttons as whole units if a future label or translation
-        // outgrows the row: a second row of intact options is readable,
-        // a broken word is not.
-        flexWrap: "wrap",
-        gap: 3,
+        alignItems: "flex-start",
+        gap: 6,
         marginTop: 8,
         paddingTop: 8,
         borderTop: "1px solid var(--border)",
       }}
     >
-      {options.map(({ mode, label, tip }) => (
+      <div
+        style={{
+          display: "flex",
+          // Wrap the buttons as whole units if a future label or translation
+          // outgrows the row: a second row of intact options is readable,
+          // a broken word is not.
+          flexWrap: "wrap",
+          gap: 3,
+          flex: 1,
+          minWidth: 0,
+        }}
+      >
+        {options.map(({ mode, label, tip }) => (
+          <button
+            type="button"
+            key={mode}
+            onClick={() => onChange(mode)}
+            data-tooltip={tip}
+            style={{
+              flex: 1,
+              padding: "3px 6px",
+              borderRadius: 5,
+              border: "1px solid",
+              borderColor:
+                value === mode ? "var(--selection-border)" : "transparent",
+              background: value === mode ? "var(--accent-dim)" : "transparent",
+              color: value === mode ? "var(--accent)" : "var(--text-tertiary)",
+              fontSize: "var(--text-xs)",
+              fontFamily: "var(--font-ui)",
+              whiteSpace: "nowrap",
+              cursor: "pointer",
+            }}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+      {/* Outside the group and set apart from it. Flush against a segmented
+          control this would read as a fourth scale, and it is an action:
+          the others change what the colours mean, this changes the ruler
+          they are measured against. */}
+      {onEditCriteria && (
         <button
           type="button"
-          key={mode}
-          onClick={() => onChange(mode)}
-          data-tooltip={tip}
+          className="tool-btn"
+          onClick={onEditCriteria}
+          aria-label="Edit criteria"
+          data-tooltip="Edit the criteria these bands come from"
           style={{
-            flex: 1,
-            padding: "3px 6px",
+            flex: "0 0 auto",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: 4,
             borderRadius: 5,
-            border: "1px solid",
-            borderColor:
-              value === mode ? "var(--selection-border)" : "transparent",
-            background: value === mode ? "var(--accent-dim)" : "transparent",
-            color: value === mode ? "var(--accent)" : "var(--text-tertiary)",
-            fontSize: "var(--text-xs)",
-            fontFamily: "var(--font-ui)",
-            whiteSpace: "nowrap",
+            border: "1px solid transparent",
+            background: "transparent",
+            color: "var(--text-tertiary)",
             cursor: "pointer",
           }}
         >
-          {label}
+          {/* Sliders: the bands are cut points someone sets, and this is
+              where they are set. */}
+          <svg
+            width="13"
+            height="13"
+            viewBox="0 0 14 14"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.4"
+            strokeLinecap="round"
+            aria-hidden="true"
+            focusable="false"
+          >
+            <title>Edit criteria</title>
+            <path d="M2 4h10M2 10h10" />
+            <circle cx="5" cy="4" r="1.6" fill="currentColor" stroke="none" />
+            <circle
+              cx="9.5"
+              cy="10"
+              r="1.6"
+              fill="currentColor"
+              stroke="none"
+            />
+          </svg>
         </button>
-      ))}
+      )}
     </div>
   );
 }

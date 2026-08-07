@@ -48,6 +48,7 @@ import {
   sequentialGradientCss,
 } from "./MapCanvas/colorUtils";
 import {
+  criteriaEditShown,
   effectiveScaleMode,
   scaleControlShown,
   scaleOptions,
@@ -179,6 +180,8 @@ export function GenericLegend({
   bandColors,
   onLocateExtreme,
   animation,
+  onEditCriteria,
+  criteriaEditorOpen = false,
   detailsOpen,
   onDetailsOpenChange,
 }: {
@@ -212,6 +215,13 @@ export function GenericLegend({
   bandColors?: (variableId: string) => string[] | null;
   onLocateExtreme?: (cls: GenericClassKey, which: "min" | "max") => void;
   animation?: AnimationControl;
+  /** Opens the criteria editor. The legend reads criteria and does not
+   * author them, so all it owns here is the route. */
+  onEditCriteria?: () => void;
+  /** Whether that editor is currently showing. The legend stands down from
+   * Escape while it is: both listen on the window, so one press would
+   * otherwise close the editor and the popover behind it at once. */
+  criteriaEditorOpen?: boolean;
   /** Whether the ramp popover is showing. Owned by the caller so it
    * survives remounts and is remembered per project — it is a working
    * mode, not a transient menu. */
@@ -245,12 +255,16 @@ export function GenericLegend({
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
       if (e.key !== "Escape") return;
+      // The editor opened over this is the topmost layer and answers for
+      // itself. Without this the same press closes it and the popover it
+      // was opened from.
+      if (criteriaEditorOpen) return;
       if (openPicker != null) setOpenPicker(null);
       else if (detailsOpen) setDetailsOpen(false);
     }
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [openPicker, detailsOpen, setDetailsOpen]);
+  }, [openPicker, detailsOpen, setDetailsOpen, criteriaEditorOpen]);
 
   const classes: ClassConfig[] = [
     {
@@ -406,6 +420,11 @@ export function GenericLegend({
               value={activeScale}
               options={options}
               onChange={onScaleModeChange}
+              onEditCriteria={
+                criteriaEditShown(criteriaVariables, onEditCriteria != null)
+                  ? onEditCriteria
+                  : undefined
+              }
             />
           )}
         </div>
