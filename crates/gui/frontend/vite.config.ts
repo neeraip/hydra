@@ -20,7 +20,22 @@ export default defineConfig({
     port: 5174,
     strictPort: true,
     watch: {
-      ignored: ["**/src-tauri/**"],
+      // Test files are not in the app's module graph, so a change to one
+      // has nothing to hot-reload — but the watcher still wakes, and every
+      // wake is a chance for something downstream to decide a reload is
+      // warranted. Naming them here says they are not app source.
+      //
+      // The Rust side is covered by `.taurignore` rather than from here:
+      // Vite only watches its own root, so it never saw those files
+      // anyway.
+      ignored: [
+        "**/*.test.ts",
+        "**/*.test.tsx",
+        "**/*.layout.test.tsx",
+        "**/*.render.test.tsx",
+        "**/test-setup.ts",
+        "**/layoutTest.tsx",
+      ],
     },
   },
   // Vite env prefixes are literal startsWith strings (no globs): this

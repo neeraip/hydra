@@ -1,0 +1,22 @@
+# Paths the `tauri dev` file watcher should not restart the app for.
+#
+# Gitignore syntax, relative to this directory (the one holding
+# tauri.conf.json). The watcher's job is to rebuild and relaunch the Rust
+# binary; anything it cannot change has no business waking it.
+#
+# The frontend is the big one. It lives inside this directory, so by default
+# every file under it was watched — and a change to a `.tsx` file, or to a
+# test that the app never imports, tore down the window and rebuilt the Rust
+# app to show markup Vite had already hot-reloaded. Vite owns the frontend in
+# dev; `beforeDevCommand` starts it once and it does not need restarting.
+frontend/
+
+# Generated and vendored: nothing here is a source change.
+gen/
+target/
+
+# Prose and images. Editing a README should not cost a rebuild, and the
+# icons are read at build time from the packaged copies.
+README.md
+*.md
+icons/
