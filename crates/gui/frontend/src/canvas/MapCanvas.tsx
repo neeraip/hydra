@@ -38,13 +38,8 @@ import {
   buildProviderRasterStyle,
   parseProviderBasemapId,
 } from "./Basemap";
+import { FIT_DURATION_MS, shouldAnimateFit } from "./fitTransition";
 import { FlowPathLayer } from "./FlowPathLayer";
-import {
-  FIT_DURATION_MS,
-  interpolateOrtho,
-  type OrthoView,
-  shouldAnimateFit,
-} from "./fitTransition";
 import { HoverChip, type HoverTip } from "./HoverChip";
 import { useHoverActions, useHoverState } from "./hover-context";
 import { useCanvasLayers } from "./layers-context";
@@ -63,6 +58,7 @@ import {
   nodeRgba,
   type RGBA,
 } from "./MapCanvas/colorUtils";
+import { deckCamera } from "./MapCanvas/deckCamera";
 import {
   mapZoomForNode,
   orthoCameraForLink,
@@ -559,30 +555,6 @@ export const MapCanvas = memo(function MapCanvas({
   const measureCursorRef = useRef<[number, number] | null>(null);
   /** What the cursor is over while measuring, for the measure-only highlight. */
   const measureHoverRef = useRef<SnapResult["target"]>(null);
-  /**
-   * The frame handle of a fit in flight, or null.
-   *
-   * The schematic camera is tweened here rather than by deck's own
-   * transition. deck is driven in controlled mode — `viewState` is a prop
-   * and `onViewStateChange` writes it back — and a deck transition works by
-   * emitting interpolated states the app is expected to store and return.
-   * The returned value carries no transition props, which is what ends the
-   * transition; not returning it leaves deck rendering the destination prop
-   * at once. Either way the camera snaps. Running the frames here sidesteps
-   * the question: every frame is a plain view state, exactly like a gesture
-   * produces.
-   */
-  const fitFrameRef = useRef<number | null>(null);
-  // A flight outlives the component otherwise: the loop reschedules itself
-  // until it lands, and a canvas closed mid-fit would keep waking up to
-  // move a camera that is gone.
-  useEffect(
-    () => () => {
-      if (fitFrameRef.current != null)
-        cancelAnimationFrame(fitFrameRef.current);
-    },
-    [],
-  );
 
   // Seeded lazily on first render: roughGeoViewState scans every node, so it
   // must not run as a useRef initializer argument (those are evaluated on
@@ -1025,7 +997,7 @@ export const MapCanvas = memo(function MapCanvas({
         if (!target) return;
         const vs = orthoCameraForNode(target, fitZoom);
         viewStateRef.current = vs;
-        deck.setProps({ viewState: vs });
+        deck.setProps({ initialViewState: deckCamera(vs) });
       } else if (linkId) {
         const link = linksRef.current.find((l) => l.id === linkId);
         if (!link) return;
@@ -1043,7 +1015,7 @@ export const MapCanvas = memo(function MapCanvas({
           fitZoom,
         );
         viewStateRef.current = vs;
-        deck.setProps({ viewState: vs });
+        deck.setProps({ initialViewState: deckCamera(vs) });
       }
     }
   }, [flyToKey, isActive, viewMode, flyToLinkId, flyToNodeId, flyToRegionId]);
@@ -2464,7 +2436,17 @@ export const MapCanvas = memo(function MapCanvas({
         // and is styled by us before deck ever draws into it.
         canvas: deckCanvasRef.current,
         views: orthoViewRef.current,
-        viewState: initialViewState,
+        // Uncontrolled: deck owns the camera and we move it afterwards by
+        // handing it a new `initialViewState`. Held as a prop instead,
+        // every gesture had to be echoed back from `onViewStateChange` — a
+        // second copy of the camera, and the reason deck's own view
+        // transitions could not drive it: a transition emits interpolated
+        // states the app is expected to return, and the value returned
+        // carries no transition props, which is what ends the transition.
+        //
+        // Through `deckCamera` like every later write, so the first flight
+        // has a complete camera to start from — see that module.
+        initialViewState: deckCamera(initialViewState),
         controller: true,
         pickingRadius: 6,
         onViewStateChange: ({
@@ -2475,20 +2457,17 @@ export const MapCanvas = memo(function MapCanvas({
           // layout is framed, and that must not read as the user choosing
           // a view. See `userGesture` for the rule and its other spelling.
           if (deckMoveWasUserDriven(interactionState)) {
+            // A gesture interrupts a flight on its own now: deck stops
+            // transitioning the moment its controller takes the camera.
             userMovedRef.current?.();
-            // Reaching for the camera cancels a fit in flight. Continuing
-            // to drive it would fight the hand on the mouse.
-            if (fitFrameRef.current != null) {
-              cancelAnimationFrame(fitFrameRef.current);
-              fitFrameRef.current = null;
-            }
           }
           const nextViewState: SchematicViewState = {
             target: viewState.target as [number, number, number],
             zoom: Number(viewState.zoom ?? 0),
           };
+          // Recorded, not echoed: deck has already moved. The ref is what
+          // the grid, the labels and the viewport report read.
           viewStateRef.current = nextViewState;
-          deckRef.current?.setProps({ viewState: nextViewState });
           // Labels are viewport-culled; refresh them as the view moves. The
           // grid is drawn wider than the view, so it only asks when the
           // camera leaves what was drawn or the spacing changes.
@@ -2850,7 +2829,7 @@ export const MapCanvas = memo(function MapCanvas({
     viewStateRef.current = vs;
     deck.setProps({
       views: orthoViewRef.current,
-      viewState: vs,
+      initialViewState: deckCamera(vs),
       layers: buildLayersRef.current(),
     });
     markFirstFrame("schematic");
@@ -2875,7 +2854,9 @@ export const MapCanvas = memo(function MapCanvas({
     if (!isActive || !deck || viewMode !== "schematic") return;
     // The ref holds wherever the camera is right now, mid-flight included,
     // so this is safe to send at any time.
-    deck.setProps({ layers: buildLayers(), viewState: viewStateRef.current });
+    // Layers only. The camera is deck's now, and sending one here is what
+    // used to cut a flight short mid-frame.
+    deck.setProps({ layers: buildLayers() });
     markFirstFrame("schematic");
   }, [buildLayers, isActive, markFirstFrame, viewMode]);
 
@@ -3056,36 +3037,19 @@ export const MapCanvas = memo(function MapCanvas({
       const deck = ensureDeck();
       if (!deck) return;
       const { target, zoom } = orthoCenterFromMap(renderCoords);
-      const to: OrthoView = { target, zoom };
+      const to: SchematicViewState = { target, zoom };
 
-      if (fitFrameRef.current != null) {
-        cancelAnimationFrame(fitFrameRef.current);
-        fitFrameRef.current = null;
-      }
-
-      if (!animate) {
-        viewStateRef.current = to;
-        deck.setProps({
-          views: orthoViewRef.current,
-          viewState: to,
-          layers: buildLayers(),
-        });
-        return;
-      }
-
-      const from = viewStateRef.current as OrthoView;
-      const started = performance.now();
-      deck.setProps({ views: orthoViewRef.current, layers: buildLayers() });
-      const step = () => {
-        const t = (performance.now() - started) / FIT_DURATION_MS;
-        const next = t >= 1 ? to : interpolateOrtho(from, to, t);
-        viewStateRef.current = next;
-        deckRef.current?.setProps({ viewState: next });
-        if (labelsOnRef.current) scheduleLabelRefresh("schematic");
-        reportViewportMovedRef.current();
-        fitFrameRef.current = t >= 1 ? null : requestAnimationFrame(step);
-      };
-      fitFrameRef.current = requestAnimationFrame(step);
+      // deck flies it. This was a hand-rolled frame loop, because a
+      // transition cannot drive a camera the app is holding: deck emits
+      // interpolated states expecting them back, and the value returned
+      // carries no transition props, which ends the transition. With the
+      // camera deck's own, the transition is deck's to run.
+      viewStateRef.current = to;
+      deck.setProps({
+        views: orthoViewRef.current,
+        layers: buildLayers(),
+        initialViewState: deckCamera(to, animate ? FIT_DURATION_MS : 0),
+      });
     } else {
       const map = mapRef.current;
       if (!map) return;
@@ -3111,7 +3075,6 @@ export const MapCanvas = memo(function MapCanvas({
     renderCoords,
     topological,
     viewMode,
-    scheduleLabelRefresh,
   ]);
 
   // ── Generic viewport controls (zoom +/- and north reset) ───────────────
@@ -3155,7 +3118,7 @@ export const MapCanvas = memo(function MapCanvas({
             : Math.max(-6, Number(current.zoom ?? 0) - 1),
       };
       viewStateRef.current = vs;
-      deck.setProps({ viewState: vs });
+      deck.setProps({ initialViewState: deckCamera(vs) });
       return true;
     };
 
