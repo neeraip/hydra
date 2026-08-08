@@ -219,8 +219,10 @@ pub use hydra_engine_wds::descriptors;
 /// water-distribution types above (both have networks, simulations, and
 /// options). The session API is [`uds::simulation::engine::Simulation`]:
 /// `open` a model from its input text, `step`/`run` it, then write results
-/// with `write_out` and `write_report`. Model text is supplied in memory;
-/// the engine performs no file I/O.
+/// with `write_out` and `write_report`. Model text and auxiliary-file
+/// contents are supplied in memory; the engine's one filesystem surface is
+/// the path-based `.out` streaming reader (`uds::io::out_reader`), the
+/// same carve-out the water-distribution engine has.
 pub use hydra_engine_uds as uds;
 
 /// Report blocks the water-distribution engine can produce, per the
