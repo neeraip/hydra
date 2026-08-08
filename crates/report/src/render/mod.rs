@@ -29,11 +29,14 @@ pub(crate) fn derive_chart_table(chart: &Chart) -> Table {
                     name: chart.x_label.clone(),
                     unit: chart.x_unit.clone(),
                     kind: ValueKind::Text,
+                    // Bar categories are text; an x tag cannot reach them.
+                    quantity: None,
                 },
                 Column {
                     name: chart.y_label.clone(),
                     unit: chart.y_unit.clone(),
                     kind: ValueKind::Number,
+                    quantity: chart.y_quantity.clone(),
                 },
             ],
             rows: categories
@@ -44,7 +47,11 @@ pub(crate) fn derive_chart_table(chart: &Chart) -> Table {
                         Value::Text {
                             value: category.clone(),
                         },
-                        Value::Number { value, unit: None },
+                        Value::Number {
+                            value,
+                            unit: None,
+                            quantity: None,
+                        },
                     ]
                 })
                 .collect(),
@@ -61,11 +68,13 @@ pub(crate) fn derive_chart_table(chart: &Chart) -> Table {
                 name: chart.x_label.clone(),
                 unit: chart.x_unit.clone(),
                 kind: ValueKind::Number,
+                quantity: chart.x_quantity.clone(),
             }];
             columns.extend(series.iter().map(|s| Column {
                 name: s.name.clone(),
                 unit: chart.y_unit.clone(),
                 kind: ValueKind::Number,
+                quantity: chart.y_quantity.clone(),
             }));
 
             let rows = xs
@@ -74,6 +83,7 @@ pub(crate) fn derive_chart_table(chart: &Chart) -> Table {
                     let mut row = vec![Value::Number {
                         value: x,
                         unit: None,
+                        quantity: None,
                     }];
                     for s in series {
                         row.push(
@@ -83,6 +93,7 @@ pub(crate) fn derive_chart_table(chart: &Chart) -> Table {
                                 .map(|p| Value::Number {
                                     value: p[1],
                                     unit: None,
+                                    quantity: None,
                                 })
                                 .unwrap_or(Value::Absent),
                         );
@@ -121,7 +132,7 @@ pub(crate) fn human_number(value: f64) -> String {
 /// Human rendering of a value with its unit (spec §4.1). Absent → em dash.
 pub(crate) fn value_human(value: &Value) -> String {
     match value {
-        Value::Number { value, unit } => match unit {
+        Value::Number { value, unit, .. } => match unit {
             Some(unit) => format!("{} {unit}", human_number(*value)),
             None => human_number(*value),
         },
@@ -181,7 +192,8 @@ mod tests {
         assert_eq!(
             value_human(&Value::Number {
                 value: 2.5,
-                unit: Some("m".into())
+                unit: Some("m".into()),
+                quantity: None,
             }),
             "2.5 m"
         );
@@ -192,7 +204,8 @@ mod tests {
         assert_eq!(
             value_data(&Value::Number {
                 value: 0.1234567,
-                unit: None
+                unit: None,
+                quantity: None,
             }),
             "0.1234567"
         );

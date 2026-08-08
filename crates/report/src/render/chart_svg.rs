@@ -347,8 +347,10 @@ mod tests {
         Chart {
             x_label: "Minimum pressure".into(),
             x_unit: Some("m".into()),
+            x_quantity: None,
             y_label: "Junctions".into(),
             y_unit: None,
+            y_quantity: None,
             data: ChartData::Bar {
                 categories: vec!["0 – 14".into(), "14 – 28".into()],
                 values: vec![3.0, 7.0],
@@ -376,8 +378,10 @@ mod tests {
         let series_one = Chart {
             x_label: "Time".into(),
             x_unit: Some("h".into()),
+            x_quantity: None,
             y_label: "Head".into(),
             y_unit: Some("m".into()),
+            y_quantity: None,
             data: ChartData::Line {
                 series: vec![LineSeries {
                     name: "T1".into(),

@@ -14,7 +14,7 @@ pub use identity::{
     engine_by_key, EngineDescriptor, EngineStatus, ImportFormat, Recognition, UnknownEngineError,
     ENGINES,
 };
-pub use quantity::QuantityDescriptor;
+pub use quantity::{DisplayFamily, QuantityDescriptor};
 pub use report::{
     BlockDescriptor, BlockError, Chart, ChartData, ChoiceItem, Column, Fragment, FragmentItem,
     KeyValue, LineSeries, OptionDescriptor, OptionKind, Table, Value, ValueKind,

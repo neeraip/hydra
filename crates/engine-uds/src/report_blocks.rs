@@ -146,6 +146,7 @@ fn num(value: f64, unit: Option<&str>) -> Value {
     Value::Number {
         value,
         unit: unit.map(str::to_string),
+        quantity: None,
     }
 }
 
@@ -154,6 +155,7 @@ fn col(name: &str, unit: Option<&str>, kind: ValueKind) -> Column {
         name: name.into(),
         unit: unit.map(str::to_string),
         kind,
+        quantity: None,
     }
 }
 

@@ -132,6 +132,13 @@ pub enum Value {
         value: f64,
         #[serde(skip_serializing_if = "Option::is_none")]
         unit: Option<String>,
+        /// Quantity key from the producing engine's catalog (spec §3.3,
+        /// v1.7). When present, `value` is in that quantity's SI display
+        /// unit and `unit` is its SI label; a consumer holding the catalog
+        /// may re-express both in a chosen display family. Absent, the
+        /// value renders as written.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        quantity: Option<String>,
     },
     Integer {
         value: i64,
@@ -182,6 +189,11 @@ pub struct Column {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub unit: Option<String>,
     pub kind: ValueKind,
+    /// Quantity key applying to every number in this column (spec §3.3,
+    /// v1.7): values are in the quantity's SI display unit and `unit` is
+    /// its SI label, re-expressible by a consumer holding the catalog.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quantity: Option<String>,
 }
 
 /// Column descriptors plus row-major values (spec §3.3).
@@ -224,9 +236,16 @@ pub struct Chart {
     pub x_label: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub x_unit: Option<String>,
+    /// Quantity key for the x coordinates (spec §3.3, v1.7): tagged
+    /// coordinates are in the quantity's SI display unit.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub x_quantity: Option<String>,
     pub y_label: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub y_unit: Option<String>,
+    /// Quantity key for the y values (spec §3.3, v1.7), as `x_quantity`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub y_quantity: Option<String>,
     pub data: ChartData,
 }
 
@@ -300,6 +319,7 @@ mod tests {
         let v = Value::Number {
             value: 1.5,
             unit: Some("m".into()),
+            quantity: None,
         };
         assert_eq!(
             serde_json::to_string(&v).unwrap(),
@@ -308,6 +328,33 @@ mod tests {
         assert_eq!(
             serde_json::to_string(&Value::Absent).unwrap(),
             r#"{"type":"absent"}"#
+        );
+    }
+
+    /// The v1.7 tag is additive on the wire: absent means absent from the
+    /// JSON (the pre-v1.7 shape, byte for byte), and pre-v1.7 JSON still
+    /// deserializes. Both directions matter — saved templates and IPC
+    /// peers were written against the old shape.
+    #[test]
+    fn quantity_tags_are_additive_on_the_wire() {
+        let tagged = Value::Number {
+            value: 51.25,
+            unit: Some("m".into()),
+            quantity: Some("pressure".into()),
+        };
+        assert_eq!(
+            serde_json::to_string(&tagged).unwrap(),
+            r#"{"type":"number","value":51.25,"unit":"m","quantity":"pressure"}"#
+        );
+        let old: Value =
+            serde_json::from_str(r#"{"type":"number","value":1.5,"unit":"m"}"#).unwrap();
+        assert_eq!(
+            old,
+            Value::Number {
+                value: 1.5,
+                unit: Some("m".into()),
+                quantity: None,
+            }
         );
     }
 
@@ -328,6 +375,7 @@ mod tests {
                             name: "Quantity".into(),
                             unit: None,
                             kind: ValueKind::Text,
+                            quantity: None,
                         }],
                         rows: vec![vec![Value::Text {
                             value: "Pressure".into(),
@@ -349,8 +397,10 @@ mod tests {
         let chart = Chart {
             x_label: "Minimum pressure".into(),
             x_unit: Some("m".into()),
+            x_quantity: None,
             y_label: "Junctions".into(),
             y_unit: None,
+            y_quantity: None,
             data: ChartData::Bar {
                 categories: vec!["0 – 14".into()],
                 values: vec![3.0],

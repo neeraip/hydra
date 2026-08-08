@@ -162,6 +162,7 @@ mod tests {
                                     value: Value::Number {
                                         value: 51.25,
                                         unit: Some("m".into()),
+                                        quantity: None,
                                     },
                                 },
                             ],
@@ -173,11 +174,13 @@ mod tests {
                                         name: "Quantity".into(),
                                         unit: None,
                                         kind: ValueKind::Text,
+                                        quantity: None,
                                     },
                                     Column {
                                         name: "Max".into(),
                                         unit: Some("m".into()),
                                         kind: ValueKind::Number,
+                                        quantity: None,
                                     },
                                 ],
                                 rows: vec![vec![
@@ -187,6 +190,7 @@ mod tests {
                                     Value::Number {
                                         value: 51.25,
                                         unit: None,
+                                        quantity: None,
                                     },
                                 ]],
                             },

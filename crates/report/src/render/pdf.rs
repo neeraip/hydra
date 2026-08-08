@@ -332,11 +332,13 @@ mod tests {
                                         name: "Quantity".into(),
                                         unit: None,
                                         kind: ValueKind::Text,
+                                        quantity: None,
                                     },
                                     Column {
                                         name: "Max".into(),
                                         unit: Some("m".into()),
                                         kind: ValueKind::Number,
+                                        quantity: None,
                                     },
                                 ],
                                 rows: vec![vec![
@@ -346,6 +348,7 @@ mod tests {
                                     Value::Number {
                                         value: 51.25,
                                         unit: None,
+                                        quantity: None,
                                     },
                                 ]],
                             },
@@ -435,11 +438,13 @@ mod tests {
                                     name: "Node".into(),
                                     unit: None,
                                     kind: ValueKind::Text,
+                                    quantity: None,
                                 },
                                 Column {
                                     name: "Value".into(),
                                     unit: None,
                                     kind: ValueKind::Number,
+                                    quantity: None,
                                 },
                             ],
                             rows: (0..6)
@@ -451,6 +456,7 @@ mod tests {
                                         Value::Number {
                                             value: f64::from(r),
                                             unit: None,
+                                            quantity: None,
                                         },
                                     ]
                                 })
@@ -601,8 +607,10 @@ mod tests {
                 chart: Chart {
                     x_label: "Minimum pressure".into(),
                     x_unit: Some("m".into()),
+                    x_quantity: None,
                     y_label: "Junctions".into(),
                     y_unit: None,
+                    y_quantity: None,
                     data: ChartData::Bar {
                         categories: vec!["0 – 14".into(), "14 – 28".into()],
                         values: vec![3.0, 7.0],

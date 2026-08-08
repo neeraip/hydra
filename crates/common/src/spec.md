@@ -1,13 +1,16 @@
 # Hydra Common — Foundation Contract
 
-Status: **v1.6 — 2026-08-03** (v1.1 added opaque per-block options
+Status: **v1.7 — 2026-08-08** (v1.1 added opaque per-block options
 to the production contract, §3.4; v1.2 added the chart fragment item,
 §3.3; v1.3 added engine availability and import formats, §2.1–2.3; v1.4
 added the recognition contract and its routing rules, §2.5; v1.5 — with a
 second engine implemented and able to validate them — added the element
 taxonomy contract (§4), the quantity contract (§5), the result-variable
 contract (§6), and the run-dispatch layering rule (§2.6); v1.6 added the
-optional compact symbol on variable descriptors, §6.1).
+optional compact symbol on variable descriptors, §6.1; v1.7 let fragment
+numbers, table columns, and chart axes reference quantity keys, §3.3,
+joining the fragment model to the quantity contract so consumers format
+tagged values in a chosen display family, §5).
 This file is the module documentation
 of the `hydra-common` crate and follows the same spec-first workflow as the
 engine specs: implementation changes flow from changes here, never the
@@ -348,9 +351,41 @@ series, absent where a series lacks that x). A chart therefore never
 gates information behind a graphics-capable format.
 
 Values are typed: number (with optional unit *text*), integer, boolean,
-text, timestamp, or absent. Unit strings are display text in v1; a
-structured unit system in `common` is an explicit non-goal (§1).
+text, timestamp, or absent. Unit strings are display text; a structured
+unit system in `common` remains an explicit non-goal (§1).
 Nested sections and images are deferred to a later revision.
+
+**Quantity-tagged numbers** (v1.7). A number value, a table column, and a
+chart axis may each additionally reference a **quantity key** from the
+producing engine's quantity catalog (§5). The tag changes what the number
+*is*:
+
+- A tagged value is expressed in that quantity's **SI display unit** —
+  the same convention §5 already fixes for every quantity-bearing value
+  crossing an engine boundary. Its unit text, when present, is the
+  quantity's SI label. The producer performs no display formatting
+  beyond this; choosing a display family is the consumer's decision,
+  which is the reason the tag exists.
+- A consumer holding the producing engine's quantity catalog may
+  re-express the value in either display family using only the
+  descriptor: convert by the affine map, label from the family's unit
+  text, round by the family's advisory decimals. The catalog reaches
+  such a consumer from the application, which is the composition root
+  (§3.5) — this layer still never resolves a key to a descriptor itself.
+- A consumer holding no catalog renders the value and its unit text
+  as written. A fragment therefore remains self-describing: the tag
+  refines presentation, it never gates content.
+- An untagged number is what every number was before v1.7:
+  engine-authored display text, rendered as given. Tags are per-value
+  facts, not a fragment-wide mode — one table may carry tagged and
+  untagged columns side by side (a flow column beside an
+  engine-spelling text column, a count beside a pressure).
+
+A column's tag applies to every number in that column; a chart axis's tag
+applies to that axis's coordinates in the chart data. Keys are opaque and
+engine-scoped exactly as in §5; a tag naming a key the engine's catalog
+does not declare is a producer defect, and consumers treat the value as
+untagged rather than failing the fragment.
 
 ### 3.4 Production
 
@@ -368,7 +403,11 @@ An engine produces a fragment given:
   naming the problem. No option vocabulary may be defined in this layer.
 
 Production is read-only and deterministic: the same simulation artifacts,
-block id, and options always yield the same fragment. Production fails
+block id, and options always yield the same fragment. Production
+deliberately takes **no display-family input**: a producer emits
+quantity-tagged values in SI display units (§3.3) and untagged values as
+engine-authored text, and which family a reader sees is decided where the
+fragment is presented, not where it is produced. Production fails
 with one of three neutral, typed errors:
 
 - **unknown block** — the id is not in this engine's catalog;
@@ -553,8 +592,15 @@ attributes and variables *reference* which quantities is declared where
 those are declared (§4.3, §6).
 
 This contract deliberately does not model unit *systems* beyond the two
-display families applications offer, and it does not touch §3.3: fragment
-unit strings remain engine-authored display text, unchanged.
+display families applications offer. Since v1.7 it reaches into the
+fragment model: a fragment number, table column, or chart axis may
+reference a quantity key (§3.3), in which case the value is in the
+quantity's SI display unit and formatting for a display family belongs to
+whichever consumer presents it — the report layer at render time, a live
+application at display time. "Engines never format" thereby holds for
+fragments too: a producer that tags a value stops choosing its display
+family, and the engine-side conversion code that used to make that choice
+is deleted, not parameterised.
 
 ---
 

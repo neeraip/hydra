@@ -114,6 +114,7 @@ mod tests {
                             value: Value::Number {
                                 value: 0.1234567,
                                 unit: Some("m".into()),
+                                quantity: None,
                             },
                         }],
                     },
@@ -123,10 +124,12 @@ mod tests {
                                 name: "Flow".into(),
                                 unit: Some("LPS".into()),
                                 kind: ValueKind::Number,
+                                quantity: None,
                             }],
                             rows: vec![vec![Value::Number {
                                 value: 1.5,
                                 unit: None,
+                                quantity: None,
                             }]],
                         },
                     },

@@ -146,13 +146,18 @@ fn int(value: usize) -> Value {
 }
 
 fn num(value: f64) -> Value {
-    Value::Number { value, unit: None }
+    Value::Number {
+        value,
+        unit: None,
+        quantity: None,
+    }
 }
 
 fn num_unit(value: f64, unit: &str) -> Value {
     Value::Number {
         value,
         unit: Some(unit.into()),
+        quantity: None,
     }
 }
 
@@ -347,21 +352,25 @@ fn result_extremes(out_path: &Path, network: &Network) -> Result<Fragment, Block
                 name: "Quantity".into(),
                 unit: None,
                 kind: ValueKind::Text,
+                quantity: None,
             },
             Column {
                 name: "Minimum".into(),
                 unit: None,
                 kind: ValueKind::Number,
+                quantity: None,
             },
             Column {
                 name: "Maximum".into(),
                 unit: None,
                 kind: ValueKind::Number,
+                quantity: None,
             },
             Column {
                 name: "Unit".into(),
                 unit: None,
                 kind: ValueKind::Text,
+                quantity: None,
             },
         ],
         rows,
@@ -417,31 +426,37 @@ fn pump_energy(out_path: &Path, network: &Network) -> Result<Fragment, BlockErro
                 name: "Pump".into(),
                 unit: None,
                 kind: ValueKind::Text,
+                quantity: None,
             },
             Column {
                 name: "Utilization".into(),
                 unit: Some("%".into()),
                 kind: ValueKind::Number,
+                quantity: None,
             },
             Column {
                 name: "Avg. efficiency".into(),
                 unit: Some("%".into()),
                 kind: ValueKind::Number,
+                quantity: None,
             },
             Column {
                 name: "Avg. power".into(),
                 unit: Some("kW".into()),
                 kind: ValueKind::Number,
+                quantity: None,
             },
             Column {
                 name: "Peak power".into(),
                 unit: Some("kW".into()),
                 kind: ValueKind::Number,
+                quantity: None,
             },
             Column {
                 name: "Avg. cost per day".into(),
                 unit: None,
                 kind: ValueKind::Number,
+                quantity: None,
             },
         ],
         rows,
@@ -767,26 +782,31 @@ fn service_compliance(
                     name: "Junction".into(),
                     unit: None,
                     kind: ValueKind::Text,
+                    quantity: None,
                 },
                 Column {
                     name: "Out-of-limit share".into(),
                     unit: Some("%".into()),
                     kind: ValueKind::Number,
+                    quantity: None,
                 },
                 Column {
                     name: "Samples below min".into(),
                     unit: None,
                     kind: ValueKind::Integer,
+                    quantity: None,
                 },
                 Column {
                     name: "Worst deficit".into(),
                     unit: Some(pressure_unit.into()),
                     kind: ValueKind::Number,
+                    quantity: None,
                 },
                 Column {
                     name: "Longest violation streak".into(),
                     unit: Some("periods".into()),
                     kind: ValueKind::Integer,
+                    quantity: None,
                 },
             ],
             rows: worst
@@ -875,26 +895,31 @@ fn demand_reliability(
                     name: "Junction".into(),
                     unit: None,
                     kind: ValueKind::Text,
+                    quantity: None,
                 },
                 Column {
                     name: "Reliability".into(),
                     unit: Some("%".into()),
                     kind: ValueKind::Number,
+                    quantity: None,
                 },
                 Column {
                     name: "Unmet volume".into(),
                     unit: Some("m³".into()),
                     kind: ValueKind::Number,
+                    quantity: None,
                 },
                 Column {
                     name: "Deficit periods".into(),
                     unit: None,
                     kind: ValueKind::Integer,
+                    quantity: None,
                 },
                 Column {
                     name: "Longest deficit streak".into(),
                     unit: Some("periods".into()),
                     kind: ValueKind::Integer,
+                    quantity: None,
                 },
             ],
             rows: worst
@@ -1045,8 +1070,10 @@ fn threshold_fragment(
         chart: Chart {
             x_label: format!("{quantity_label} band"),
             x_unit: Some(unit.into()),
+            x_quantity: None,
             y_label: element_label.into(),
             y_unit: None,
+            y_quantity: None,
             data: ChartData::Bar {
                 categories,
                 values: counts.iter().map(|&c| c as f64).collect(),
@@ -1150,8 +1177,10 @@ fn mass_balance(out_path: &Path, network: &Network) -> Result<Fragment, BlockErr
                 chart: Chart {
                     x_label: "Time".into(),
                     x_unit: Some("h".into()),
+                    x_quantity: None,
                     y_label: "Closure".into(),
                     y_unit: Some("%".into()),
+                    y_quantity: None,
                     data: ChartData::Line {
                         series: vec![LineSeries {
                             name: "Closure".into(),
@@ -1217,11 +1246,13 @@ fn pipe_criticality(
                     name: "Pipe".into(),
                     unit: None,
                     kind: ValueKind::Text,
+                    quantity: None,
                 },
                 Column {
                     name: "Peak velocity".into(),
                     unit: Some(velocity_unit.into()),
                     kind: ValueKind::Number,
+                    quantity: None,
                 },
             ],
             rows,
@@ -1349,8 +1380,10 @@ fn distribution_fragment(
             chart: Chart {
                 x_label: quantity_label.into(),
                 x_unit: Some(unit.into()),
+                x_quantity: None,
                 y_label: element_label.into(),
                 y_unit: None,
+                y_quantity: None,
                 data: ChartData::Bar {
                     categories,
                     values: counts.iter().map(|&c| c as f64).collect(),
@@ -1425,8 +1458,10 @@ fn tank_levels(out_path: &Path, network: &Network) -> Result<Fragment, BlockErro
         chart: Chart {
             x_label: "Time".into(),
             x_unit: Some("h".into()),
+            x_quantity: None,
             y_label: "Hydraulic head".into(),
             y_unit: Some(length_unit.into()),
+            y_quantity: None,
             data: ChartData::Line { series },
         },
     }];
@@ -1809,7 +1844,8 @@ mod tests {
                 compliance.value,
                 Value::Number {
                     value: 100.0,
-                    unit: Some("%".into())
+                    unit: Some("%".into()),
+                    quantity: None,
                 }
             );
             let FragmentItem::Note { text } = &fragment.items[1] else {

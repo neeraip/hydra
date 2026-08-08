@@ -1,6 +1,8 @@
 # Hydra Report — Report Generation
 
-Status: **v1 — 2026-07-28.** This file is the module documentation of the
+Status: **v1.1 — 2026-08-08** (v1.1 added display-family formatting of
+quantity-tagged values, §4.0, following hydra-common v1.7).
+This file is the module documentation of the
 `hydra-report` crate and follows the spec-first workflow: implementation
 changes flow from changes here, never the reverse.
 
@@ -100,7 +102,30 @@ the offending id is the useful thing to do.
 ## 4. Renderers
 
 Each renderer is a pure function from a document to a string. Output is
-deterministic byte-for-byte for identical documents.
+deterministic byte-for-byte for identical documents and identical display
+settings (§4.0).
+
+### 4.0 Display settings
+
+Rendering takes optional **display settings**: a display family (`si` or
+`us`) and the producing engine's quantity catalog (hydra-common spec §5),
+supplied by the application alongside the document. They govern
+quantity-tagged values only (hydra-common spec §3.3):
+
+- A tagged number is converted from its SI display unit to the chosen
+  family by the descriptor's affine map, and its unit text (value unit,
+  column header unit, chart axis unit) is replaced by the family's label.
+  The descriptor's advisory decimals are **not** applied here — each
+  format keeps its own number style (§4.1), so choosing a family never
+  changes a format's precision rules.
+- A tag whose key the supplied catalog does not declare, and every tagged
+  value when no settings are supplied, renders as written: the SI value
+  with its SI text. Untagged values are never touched.
+
+Settings default to family `si` with no catalog, which renders every
+fragment exactly as its producer wrote it. The report layer still depends
+only on `hydra-common`: the catalog is neutral descriptor data handed in
+by the composition root, never looked up here.
 
 **Fidelity tiering (ratified 2026-07-28).** pdf is the flagship deliverable
 format: new visual features (charts, future branding/layout work) land

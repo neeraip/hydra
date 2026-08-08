@@ -8,7 +8,49 @@
 //! this layer has never heard of (a rainfall intensity, an infiltration
 //! rate) costs an application nothing to support.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
+
+/// One of the two display families applications offer (spec §5).
+///
+/// Not a unit *system* — that remains a non-goal (spec §1). This names
+/// which of a descriptor's two renderings a consumer wants: the label,
+/// conversion direction, and advisory decimals all follow from it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DisplayFamily {
+    /// SI/metric display units — also the identity family: every
+    /// quantity-tagged value crossing an engine boundary is already in
+    /// its quantity's SI display unit.
+    Si,
+    /// US-customary display units.
+    Us,
+}
+
+impl QuantityDescriptor {
+    /// The unit label for one display family.
+    pub fn label(&self, family: DisplayFamily) -> &'static str {
+        match family {
+            DisplayFamily::Si => self.si_label,
+            DisplayFamily::Us => self.us_label,
+        }
+    }
+
+    /// Re-express an SI display value in `family`.
+    pub fn from_si(&self, si: f64, family: DisplayFamily) -> f64 {
+        match family {
+            DisplayFamily::Si => si,
+            DisplayFamily::Us => self.si_to_us(si),
+        }
+    }
+
+    /// The advisory display precision for one family.
+    pub fn decimals(&self, family: DisplayFamily) -> u8 {
+        match family {
+            DisplayFamily::Si => self.si_decimals,
+            DisplayFamily::Us => self.us_decimals,
+        }
+    }
+}
 
 /// Descriptor of one physical quantity in an engine's catalog (spec §5).
 ///

@@ -62,6 +62,7 @@ fn fixture() -> ReportDocument {
                                 value: Value::Number {
                                     value: 24.0,
                                     unit: Some("h".into()),
+                                    quantity: None,
                                 },
                             },
                             KeyValue {
@@ -96,16 +97,19 @@ fn fixture() -> ReportDocument {
                                 name: "Node".into(),
                                 unit: None,
                                 kind: ValueKind::Text,
+                                quantity: None,
                             },
                             Column {
                                 name: "Pressure".into(),
                                 unit: Some("m".into()),
                                 kind: ValueKind::Number,
+                                quantity: None,
                             },
                             Column {
                                 name: "Reported".into(),
                                 unit: None,
                                 kind: ValueKind::Boolean,
+                                quantity: None,
                             },
                         ],
                         rows: vec![
@@ -116,6 +120,7 @@ fn fixture() -> ReportDocument {
                                 Value::Number {
                                     value: 31.845_123_456_789,
                                     unit: Some("m".into()),
+                                    quantity: None,
                                 },
                                 Value::Boolean { value: true },
                             ],
@@ -144,6 +149,7 @@ fn fixture() -> ReportDocument {
                                 Value::Number {
                                     value: -0.5,
                                     unit: Some("m".into()),
+                                    quantity: None,
                                 },
                                 Value::Absent,
                             ],
@@ -158,8 +164,10 @@ fn fixture() -> ReportDocument {
                         chart: Chart {
                             x_label: "Band".into(),
                             x_unit: Some("m".into()),
+                            x_quantity: None,
                             y_label: "Junctions".into(),
                             y_unit: None,
+                            y_quantity: None,
                             data: ChartData::Bar {
                                 categories: vec!["< 20".into(), "20–40".into(), "> 40".into()],
                                 values: vec![1.0, 2.0, 1.0],
@@ -170,8 +178,10 @@ fn fixture() -> ReportDocument {
                         chart: Chart {
                             x_label: "Time".into(),
                             x_unit: Some("h".into()),
+                            x_quantity: None,
                             y_label: "Head".into(),
                             y_unit: Some("m".into()),
+                            y_quantity: None,
                             data: ChartData::Line {
                                 series: vec![LineSeries {
                                     name: "T1".into(),
@@ -309,6 +319,7 @@ fn the_fixture_still_covers_every_shape_it_was_written_for() {
         Value::Number {
             value: 0.0,
             unit: None,
+            quantity: None,
         },
         Value::Integer { value: 0 },
         Value::Boolean { value: false },
