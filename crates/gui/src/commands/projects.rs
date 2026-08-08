@@ -65,7 +65,11 @@ pub struct Project {
     pub folder_missing: bool,
 }
 
-#[tauri::command]
+// Off the main thread: this stats every project, reads every `meta.json`
+// and counts every scenario directory, so its cost grows with the library
+// rather than staying constant — and it is the first thing the home page
+// asks for.
+#[tauri::command(async)]
 /// Scan the `projects/` directory and return all projects with their metadata.
 pub fn list_projects(app: tauri::AppHandle) -> Result<Vec<Project>, String> {
     let app_data = app_data_dir(&app)?;
@@ -312,7 +316,10 @@ pub fn create_project(
 
 /// Permanently delete a project. Returns `true` when the directory was removed,
 /// `false` when the id was not found on disk.
-#[tauri::command]
+// Off the main thread: the tree holds `results.out` files that run to
+// gigabytes, and unlinking those is not work to do where a window is
+// waiting to redraw.
+#[tauri::command(async)]
 /// Remove the project directory tree.
 pub fn delete_project(app: tauri::AppHandle, id: String) -> Result<bool, String> {
     validate_id(&id)?;
