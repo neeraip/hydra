@@ -440,12 +440,33 @@ implementation liberty.
 2. the **continuity residual** — the discrepancy between the vertex's net
    inflow and its stored-volume rate,
    $\big\lvert \sum Q - A_S\,(H^{(m)} - H^{t})/\Delta t \big\rvert$ — summed
-   over vertices, not exceeding `continuity_tol` (relative, default
-   $10^{-3}$) against the network's sum of flow magnitudes.
+   over vertices, not exceeding the allowance
+   $\varepsilon_Q = \texttt{continuity\_tol}\,\sum \lvert Q \rvert
+   + (\varepsilon_H/\Delta t) \sum_i A_{S,i}$ —
+   the relative term (`continuity_tol` default $10^{-3}$) against the
+   network's sum of flow magnitudes, plus the mass-equivalent of the head
+   tolerance: the flow rate that would move every vertex's head by exactly
+   $\varepsilon_H$ over the step, with $A_{S,i}$ each vertex's current
+   free-surface storage area.
 
 The first criterion certifies the iterates have settled; the second certifies
 that the state they settled at conserves mass. Iteration runs a minimum of 2
 and a maximum of `max_trials` (default 8) passes.
+
+The $\varepsilon_H$ term in $\varepsilon_Q$ is what keeps the two criteria
+consistent with each other. Criterion 1 accepts iterates whose heads still
+move by up to $\varepsilon_H$, so mass closure finer than
+$A_S\,\varepsilon_H/\Delta t$ per vertex is below the resolution the head
+gate certifies — a gate demanding it is measuring the settled iterates'
+own noise, not conservation. Without the term the allowance is purely
+relative and collapses with the flow while the residual's noise floor does
+not: a network draining at a dry-weather trickle ($\sum\lvert Q\rvert \sim
+10^{-3}$ m³/s) is allowed ~1 µL/s of summed residual, rejects every trial
+on criterion 2 alone with heads static to $10^{-7}$ m, runs its full
+iteration budget twice per step, and pins the entire run at the step floor
+under degraded-accuracy warnings — a 36-hour run taking ~134 000 steps of
+0.5 s where the fixed user step would take ~2 000. At high flow the
+relative term dominates and the gate is unchanged.
 
 **A non-converged trial is a rejected trial.** Exhausting the iteration
 budget does not produce an accepted state: the trial is discarded under the

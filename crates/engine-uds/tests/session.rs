@@ -2205,3 +2205,113 @@ C1  CIRCULAR  1.5  0  0  0
         "a case-only redeclaration is a duplicate"
     );
 }
+
+/// §6.4's continuity allowance must not collapse with the flow.
+///
+/// The dry-weather regression: after a storm, a network spends hours
+/// draining its runoff recession tail — a trickle of ~1 L/s spread over
+/// every junction, re-perturbed by each hydrology interval so the routing
+/// iterates never settle to machine noise. Under a purely relative mass
+/// allowance that regime is unconvergeable: the allowance shrinks with the
+/// flow while the residual's floor (the settled iterates' own noise across
+/// the vertices) does not, so every trial fails criterion 2, every step
+/// halves to the 0.5 s floor, and every floor step carries the
+/// degraded-accuracy warning. This 12-hour model took 30 629 steps with
+/// 16 644 degraded before the ε_H term entered the allowance; it takes
+/// ~900 clean steps after.
+///
+/// Constant-inflow miniatures do NOT reproduce this — with a fixed
+/// boundary the iterates settle to machine noise and the old gate passes.
+/// The rainfall-driven hydrology is load-bearing.
+#[test]
+fn a_runoff_recession_tail_converges_at_full_steps() {
+    let inp = "\
+[TITLE]
+Runoff recession tail through a small circular chain
+
+[OPTIONS]
+FLOW_UNITS           CFS
+INFILTRATION         HORTON
+FLOW_ROUTING         DYNWAVE
+START_DATE           01/01/1998
+START_TIME           00:00:00
+END_DATE             01/01/1998
+END_TIME             12:00:00
+REPORT_STEP          01:00:00
+WET_STEP             00:15:00
+DRY_STEP             01:00:00
+ROUTING_STEP         0:01:00
+VARIABLE_STEP        0.75
+
+[RAINGAGES]
+RG1  INTENSITY  1:00  1.0  TIMESERIES TS1
+
+[SUBCATCHMENTS]
+S1  RG1  J1  10  50  500  0.01  0
+S2  RG1  J2  5   50  500  0.01  0
+S3  RG1  J3  15  10  500  0.01  0
+
+[SUBAREAS]
+S1  0.001  0.10  0.05  0.05  25  OUTLET
+S2  0.001  0.10  0.05  0.05  25  OUTLET
+S3  0.001  0.10  0.05  0.05  25  OUTLET
+
+[INFILTRATION]
+S1  0.7  0.3  4.14  0.50  0
+S2  0.7  0.3  4.14  0.50  0
+S3  0.7  0.3  4.14  0.50  0
+
+[JUNCTIONS]
+J1  1000  3  0  0  0
+J2  995   3  0  0  0
+J3  990   3  0  0  0
+
+[OUTFALLS]
+O1  985  FREE
+
+[CONDUITS]
+C1  J1  J2  400  0.01  0  0  0  0
+C2  J2  J3  400  0.01  0  0  0  0
+C3  J3  O1  400  0.01  0  0  0  0
+
+[XSECTIONS]
+C1  CIRCULAR  1    0  0  0  1
+C2  CIRCULAR  1.5  0  0  0  1
+C3  CIRCULAR  1.5  0  0  0  1
+
+[TIMESERIES]
+TS1  0:00  0.4
+TS1  1:00  0.4
+TS1  2:00  0.0
+TS1  12:00 0.0
+
+[REPORT]
+";
+    let (mut sim, diags, findings) = Simulation::open(inp).expect("open");
+    assert!(!diags.iter().any(|d| d.kind.is_error()), "{diags:?}");
+    assert!(!findings.iter().any(|f| f.kind.is_error()), "{findings:?}");
+    sim.run();
+    let led = sim.report();
+
+    // No degraded-accuracy steps anywhere: the tail converges, it does not
+    // get force-accepted at the floor.
+    assert!(
+        led.degraded.is_empty(),
+        "recession tail degraded {} steps (first {:?})",
+        led.degraded.len(),
+        led.degraded.first()
+    );
+    // Steps stay near the user step; the pinned run is ~30 000.
+    assert!(
+        led.accepted < 5_000,
+        "accepted {} steps — the run pinned at the floor",
+        led.accepted
+    );
+    assert!(
+        led.rejected < 200,
+        "rejected {} trials — criterion 2 is fighting the noise floor",
+        led.rejected
+    );
+    // It rained and the water left: this is a real run, not a dry no-op.
+    assert!(led.outflow > 0.0, "nothing reached the outfall");
+}

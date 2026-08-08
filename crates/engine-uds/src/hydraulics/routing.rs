@@ -137,6 +137,34 @@ const OMEGA: f64 = 0.5;
 /// Step floor (s), §6.5; the run opens here.
 const DT_FLOOR: f64 = 0.5;
 
+/// The §6.4 criterion-2 allowance: how much summed continuity residual an
+/// iterate may carry and still count as conserving mass.
+///
+/// Two terms. The relative one, `continuity_tol · Σ|Q|`, is the accuracy
+/// statement — closure to a fraction of the flow actually moving. The
+/// second, `ε_H/Δt · ΣA_S`, is the *resolution* of that statement: it is
+/// the flow rate that would move every vertex's head by exactly the head
+/// tolerance over the step, and criterion 1 accepts iterates whose heads
+/// still move by that much. An allowance without it demands mass closure
+/// finer than the head gate certifies, which no amount of iteration can
+/// deliver — the residual's floor is the settled iterates' own noise.
+///
+/// The failure that proved the term necessary: a network draining at a
+/// dry-weather trickle (Σ|Q| ~ 1 L/s) got a ~1 µL/s allowance, rejected
+/// every trial on this gate alone with heads static to 1e-7 m, and pinned
+/// a 36-hour run at the 0.5 s step floor — ~134 000 steps, 130 000
+/// rejections, 76 000 degraded-accuracy warnings, and 39 seconds of wall
+/// clock for a run the fixed user step covers in ~2 000 steps.
+fn continuity_allowance(
+    continuity_tol: f64,
+    flow_scale: f64,
+    head_tol: f64,
+    dt: f64,
+    area_sum: f64,
+) -> f64 {
+    continuity_tol * flow_scale.max(Q_DRY) + head_tol / dt * area_sum
+}
+
 /// Why a network cannot be routed by this build stage.
 #[derive(Debug, Clone, PartialEq)]
 pub enum RouterRefusal {
@@ -1929,6 +1957,7 @@ impl Router {
             let mut max_dy = 0.0_f64;
             let mut residual = 0.0_f64;
             let mut flow_scale = 0.0_f64;
+            let mut area_sum = 0.0_f64;
             flood.iter_mut().for_each(|f| *f = 0.0);
             for vi in 0..nv {
                 let v = &self.verts[vi];
@@ -1966,10 +1995,13 @@ impl Router {
                         }
                         max_dy = max_dy.max((y_new - y[vi]).abs());
                         y[vi] = y_new;
-                        // Continuity residual for criterion 2 (§6.4).
+                        // Continuity residual for criterion 2 (§6.4). The
+                        // same area feeds the allowance's ε_H term, so the
+                        // gate and the residual measure the same storage.
                         let stored = area * (y_new - self.y[vi]) / dt;
                         residual +=
                             (0.5 * (self.net_flow[vi] + net_new[vi]) - stored - flood[vi]).abs();
+                        area_sum += area;
                     }
                 }
             }
@@ -1984,7 +2016,14 @@ impl Router {
             }
             if step >= 1
                 && max_dy <= self.head_tol
-                && residual <= self.continuity_tol * flow_scale.max(Q_DRY)
+                && residual
+                    <= continuity_allowance(
+                        self.continuity_tol,
+                        flow_scale,
+                        self.head_tol,
+                        dt,
+                        area_sum,
+                    )
             {
                 converged = true;
                 break;
@@ -3182,6 +3221,59 @@ C2  J2  O1  200  0.013  0  0
 C1  RECT_OPEN  3  2  0  0
 C2  RECT_OPEN  3  2  0  0
 ";
+
+    // ── §6.4 criterion-2 allowance ────────────────────────────────────────
+    //
+    // The decision, tested by name: what summed residual counts as
+    // conserving mass. The defect this guards against was an allowance
+    // that collapsed with the flow while the residual's noise floor did
+    // not, so a dry-weather trickle rejected every trial and pinned a
+    // 36-hour run at the step floor — 134k steps of 0.5 s, 39 s of wall
+    // clock, and 76k degraded-accuracy warnings on a healthy network.
+    //
+    // The behavioural reproduction needs hydrology-driven forcing and
+    // lives at the session level: tests/session.rs,
+    // a_runoff_recession_tail_converges_at_full_steps. Constant-inflow
+    // miniatures settle to machine noise and pass even the broken gate.
+
+    /// Criterion 1 accepts iterates whose heads still move by ε_H, so the
+    /// mass gate must always grant at least the flow that motion
+    /// represents — whatever the network's flow happens to be, including
+    /// none at all.
+    #[test]
+    fn the_allowance_never_demands_closure_finer_than_the_head_gate() {
+        let (head_tol, dt, area_sum) = (1.524e-3, 1.0, 26.0);
+        let floor = head_tol / dt * area_sum;
+        for flow_scale in [0.0, 1e-6, 1e-3, 1.0, 1e3] {
+            assert!(
+                continuity_allowance(1e-3, flow_scale, head_tol, dt, area_sum) >= floor,
+                "allowance under the head-gate floor at flow {flow_scale}"
+            );
+        }
+    }
+
+    /// At real flow the relative term is the gate — the ε_H term must not
+    /// have loosened the criterion where it used to bind.
+    #[test]
+    fn high_flow_is_governed_by_the_relative_term() {
+        // 10 m³/s through the network, a 10 s step, modest storage.
+        let allowance = continuity_allowance(1e-3, 10.0, 1.524e-3, 10.0, 30.0);
+        let relative = 1e-3 * 10.0;
+        assert!(allowance < 1.5 * relative, "{allowance} vs {relative}");
+        assert!(allowance >= relative);
+    }
+
+    /// The observed failure, in its own numbers: a 1 L/s trickle at a 1 s
+    /// step with ~26 m² of storage carried ~1.4e-5 of settled-noise
+    /// residual against a 1.2e-6 allowance. The fixed allowance admits it.
+    #[test]
+    fn the_dry_weather_trickle_case_is_admitted() {
+        let allowance = continuity_allowance(1e-3, 1.2e-3, 1.524e-3, 1.0, 26.0);
+        assert!(
+            allowance > 1.4e-5,
+            "allowance {allowance} still rejects the trickle"
+        );
+    }
 
     #[test]
     fn steady_flow_settles_at_manning_normal_depth() {
