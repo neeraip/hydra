@@ -127,6 +127,9 @@ export async function generateReport(args: {
   templateJson: string;
   format: ReportFormat;
   withTimestamp: boolean;
+  /** The reader's resolved display system. Omitted, the backend renders
+   *  in the model's own family — the pre-preference behaviour. */
+  unitSystem?: "si" | "us";
 }): Promise<string> {
   return invoke<string>("generate_report", {
     projectId: args.projectId,
@@ -134,6 +137,7 @@ export async function generateReport(args: {
     templateJson: args.templateJson,
     format: args.format,
     withTimestamp: args.withTimestamp,
+    unitSystem: args.unitSystem ?? null,
   });
 }
 
@@ -144,12 +148,15 @@ export async function exportReport(args: {
   scenarioId: string | null;
   templateJson: string;
   format: ReportFormat;
+  /** The reader's resolved display system; see {@link generateReport}. */
+  unitSystem?: "si" | "us";
 }): Promise<string | null> {
   return invoke<string | null>("export_report", {
     projectId: args.projectId,
     scenarioId: args.scenarioId,
     templateJson: args.templateJson,
     format: args.format,
+    unitSystem: args.unitSystem ?? null,
   });
 }
 

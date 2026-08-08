@@ -35,6 +35,7 @@ import {
   writeStoredFormat,
 } from "../../hooks/reports";
 import { useSimulation } from "../../SimulationContext";
+import { useUnitSystem } from "../../units";
 import { AddSectionPalette } from "./ReportView/AddSectionPalette";
 import type { OptionValues } from "./ReportView/BlockOptions";
 import { CsvPreview, type CsvPreviewHandle } from "./ReportView/CsvPreview";
@@ -245,6 +246,10 @@ export function ReportView() {
     [title, sections, headingById, optionsById],
   );
 
+  // The reader's resolved display system: the preview and the exported
+  // document follow it, so what you read is what you save.
+  const unitSystem = useUnitSystem();
+
   // ── Live preview (debounced; regenerates on scenario/format change) ────
   // biome-ignore lint/correctness/useExhaustiveDependencies: `resultGeneration` is an intentional retrigger — the preview renders from the run's results, so a completed run must regenerate it.
   useEffect(() => {
@@ -257,6 +262,7 @@ export function ReportView() {
         templateJson,
         format,
         withTimestamp: false,
+        unitSystem,
       })
         .then((rendered) => {
           setPreview({ format, content: rendered });
@@ -274,6 +280,7 @@ export function ReportView() {
     templateJson,
     format,
     resultGeneration,
+    unitSystem,
   ]);
 
   // ── Template persistence (debounced, best-effort) ──────────────────────
@@ -376,6 +383,7 @@ export function ReportView() {
         scenarioId: activeScenarioId,
         templateJson,
         format,
+        unitSystem,
       });
       if (path) showToast(`Report saved to ${path}`, "success");
     } catch (err) {

@@ -6,6 +6,7 @@
 import { useEffect, useState } from "react";
 import { useActiveProject, useAppState, useSimulation } from "../../AppContext";
 import { tryInvokeOr } from "../../hooks/ipc";
+import { useUnitSystem } from "../../units";
 
 // ── Fragment wire shapes (hydra-common §3.3, serde camelCase) ────────────────
 
@@ -212,6 +213,10 @@ export function UdsAnalysisView() {
   const { activeProjectId, activeScenarioId } = useAppState();
   const { project } = useActiveProject();
   const { resultGeneration } = useSimulation();
+  // The reader's resolved display system: tagged block values arrive from
+  // the backend already re-expressed in it, so this view renders what it
+  // is given and flipping the preference refetches.
+  const unitSystem = useUnitSystem();
   const [blocks, setBlocks] = useState<AnalysisBlock[] | null>(null);
 
   // resultGeneration is a re-run token: a completed run bumps it so the
@@ -223,7 +228,7 @@ export function UdsAnalysisView() {
     setBlocks(null);
     void tryInvokeOr<AnalysisBlock[]>(
       "get_analysis_blocks",
-      { projectId: activeProjectId, scenarioId: activeScenarioId },
+      { projectId: activeProjectId, scenarioId: activeScenarioId, unitSystem },
       [],
     ).then((b) => {
       if (!cancelled) setBlocks(b);
@@ -231,7 +236,7 @@ export function UdsAnalysisView() {
     return () => {
       cancelled = true;
     };
-  }, [activeProjectId, activeScenarioId, resultGeneration]);
+  }, [activeProjectId, activeScenarioId, resultGeneration, unitSystem]);
 
   if (!project) return null;
   if (blocks === null) {

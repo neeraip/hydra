@@ -154,6 +154,21 @@ pub fn run(cli: &ReportArgs, verbosity: &u8) -> i32 {
         context,
         |id, options| hydra::produce_report_block(id, results_path, &network, options),
     );
+    // Quantity-tagged values arrive in SI display units (hydra-common
+    // §3.3); the CLI has no reader preference to honour, so it resolves to
+    // the model's own family — which reproduces the file's values exactly.
+    let family = if hydra::io::units::is_si(network.options.flow_units) {
+        hydra::common::DisplayFamily::Si
+    } else {
+        hydra::common::DisplayFamily::Us
+    };
+    let document = hydra::report::resolve_display(
+        &document,
+        &hydra::report::DisplaySettings {
+            family,
+            catalog: hydra::descriptors::QUANTITIES,
+        },
+    );
 
     let format = cli.format.unwrap_or_else(|| {
         match cli

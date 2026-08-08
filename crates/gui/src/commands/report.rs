@@ -179,6 +179,7 @@ pub fn get_analysis_blocks(
     state: tauri::State<'_, NetworkState>,
     project_id: String,
     scenario_id: Option<String>,
+    unit_system: Option<String>,
 ) -> Result<Vec<AnalysisBlockDto>, String> {
     validate_target_ids(&project_id, scenario_id.as_deref())?;
     let app_data = app_data_dir(&app)?;
@@ -194,6 +195,16 @@ pub fn get_analysis_blocks(
                 &project_id,
                 scenario_id.as_deref(),
             )?;
+            // Tagged values resolve here, not in the frontend: the analysis
+            // surface and a rendered report must never disagree about what
+            // a value reads as (report spec §4.0).
+            let settings = hydra::report::DisplaySettings {
+                family: display_family_for(
+                    unit_system.as_deref(),
+                    !network.options.flow_units.is_us(),
+                ),
+                catalog: hydra::uds::descriptors::QUANTITIES,
+            };
             Ok(hydra::uds::report_blocks::report_catalog()
                 .iter()
                 .map(|block| {
@@ -205,7 +216,9 @@ pub fn get_analysis_blocks(
                             title: block.title.to_string(),
                             status: "ok",
                             reason: None,
-                            fragment: Some(fragment),
+                            fragment: Some(hydra::report::resolve_fragment_display(
+                                &fragment, &settings,
+                            )),
                         },
                         Err(hydra::common::BlockError::Unavailable { reason }) => {
                             AnalysisBlockDto {
@@ -272,6 +285,9 @@ pub fn save_report_template(
 /// bytes (IPC carries strings); the rest return the text verbatim.
 /// Preview calls pass `with_timestamp: false` so re-renders are stable;
 /// exports stamp the generation time.
+// Eight arguments because each is a named IPC field the frontend sends;
+// bundling them would rename the wire protocol, not simplify it.
+#[allow(clippy::too_many_arguments)]
 #[tauri::command(async)]
 pub fn generate_report(
     app: tauri::AppHandle,
@@ -281,6 +297,7 @@ pub fn generate_report(
     template_json: String,
     format: String,
     with_timestamp: bool,
+    unit_system: Option<String>,
 ) -> Result<String, String> {
     let template = ReportTemplate::from_json(&template_json).map_err(|e| e.to_string())?;
     render_for_target(
@@ -288,9 +305,12 @@ pub fn generate_report(
         &state,
         &project_id,
         scenario_id.as_deref(),
-        &template,
-        &format,
-        with_timestamp,
+        &RenderRequest {
+            template: &template,
+            format: &format,
+            with_timestamp,
+            unit_system: unit_system.as_deref(),
+        },
     )
 }
 
@@ -304,6 +324,7 @@ pub async fn export_report(
     scenario_id: Option<String>,
     template_json: String,
     format: String,
+    unit_system: Option<String>,
 ) -> Result<Option<String>, String> {
     use tauri_plugin_dialog::DialogExt;
 
@@ -313,9 +334,12 @@ pub async fn export_report(
         &state,
         &project_id,
         scenario_id.as_deref(),
-        &template,
-        &format,
-        true,
+        &RenderRequest {
+            template: &template,
+            format: &format,
+            with_timestamp: true,
+            unit_system: unit_system.as_deref(),
+        },
     )?;
 
     let (filter_name, ext) = match format.as_str() {
@@ -364,15 +388,51 @@ pub async fn export_report(
     Ok(Some(path.to_string_lossy().into_owned()))
 }
 
+/// The display family for tagged fragment values: the caller's choice
+/// where one arrived, else the model's own family — which reproduces the
+/// results file's values exactly, making "no preference" byte-compatible
+/// with the pre-tagging output.
+fn display_family_for(
+    unit_system: Option<&str>,
+    model_is_si: bool,
+) -> hydra::common::DisplayFamily {
+    match unit_system {
+        Some("si") => hydra::common::DisplayFamily::Si,
+        Some("us") => hydra::common::DisplayFamily::Us,
+        _ => {
+            if model_is_si {
+                hydra::common::DisplayFamily::Si
+            } else {
+                hydra::common::DisplayFamily::Us
+            }
+        }
+    }
+}
+
+/// How one render should read: the template, the output format, and the
+/// presentation choices that vary per call.
+struct RenderRequest<'a> {
+    template: &'a ReportTemplate,
+    format: &'a str,
+    with_timestamp: bool,
+    /// The reader's display system ("si"/"us"), or `None` for the model's
+    /// own family.
+    unit_system: Option<&'a str>,
+}
+
 fn render_for_target(
     app: &tauri::AppHandle,
     state: &NetworkState,
     project_id: &str,
     scenario_id: Option<&str>,
-    template: &ReportTemplate,
-    format: &str,
-    with_timestamp: bool,
+    request: &RenderRequest<'_>,
 ) -> Result<String, String> {
+    let RenderRequest {
+        template,
+        format,
+        with_timestamp,
+        unit_system,
+    } = *request;
     validate_target_ids(project_id, scenario_id)?;
     let app_data = app_data_dir(app)?;
     let out_path = results_path_for(&app_data, project_id, scenario_id);
@@ -420,7 +480,7 @@ fn render_for_target(
         "uds" => {
             let network =
                 super::results::uds_network_for_target(&app_data, state, project_id, scenario_id)?;
-            assemble(
+            let document = assemble(
                 template,
                 hydra::uds::report_blocks::report_catalog(),
                 context,
@@ -429,13 +489,32 @@ fn render_for_target(
                         id, &out_path, &network, options,
                     )
                 },
+            );
+            let family = display_family_for(unit_system, !network.options.flow_units.is_us());
+            hydra::report::resolve_display(
+                &document,
+                &hydra::report::DisplaySettings {
+                    family,
+                    catalog: hydra::uds::descriptors::QUANTITIES,
+                },
             )
         }
         _ => {
             let network = network_for_target(&app_data, state, project_id, scenario_id)?;
-            assemble(template, hydra::report_catalog(), context, |id, options| {
+            let document = assemble(template, hydra::report_catalog(), context, |id, options| {
                 hydra::produce_report_block(id, &out_path, &network, options)
-            })
+            });
+            let family = display_family_for(
+                unit_system,
+                hydra::io::units::is_si(network.options.flow_units),
+            );
+            hydra::report::resolve_display(
+                &document,
+                &hydra::report::DisplaySettings {
+                    family,
+                    catalog: hydra::descriptors::QUANTITIES,
+                },
+            )
         }
     };
     Ok(match format {
