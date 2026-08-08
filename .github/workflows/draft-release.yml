@@ -124,6 +124,64 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: gh release upload "${{ github.ref_name }}" "${{ env.ARCHIVE }}"
 
+  # ── Library: attach the browser demo as a single portable HTML file. ──────
+  #
+  # A library tag otherwise carries no assets — the release is the crates.io
+  # publish. hydra-try-<version>.html is the library in runnable form: the
+  # engines at exactly the tagged version, no install, runs from file://.
+  # Pinned here because /try on Pages is a rolling deploy; a support
+  # conversation ("open this file and send me the report") needs the
+  # immutable copy whose report header names the release under discussion.
+  #
+  # The assembler is deterministic by construction (gzip mtime pinned), so a
+  # re-run of this job produces the byte-identical asset.
+  wasm:
+    name: Browser demo
+    needs: prepare-release
+    if: startsWith(github.ref_name, 'v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    env:
+      CARGO_TERM_COLOR: always
+
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          fetch-depth: 1
+
+      - uses: actions-rust-lang/setup-rust-toolchain@v1.17.0
+        with:
+          target: wasm32-unknown-unknown
+          cache: false
+
+      - uses: Swatinem/rust-cache@v2.9.1
+        with:
+          # Same policy as the CLI job above: restore from main, never save
+          # under a tag ref nothing can restore from.
+          save-if: false
+
+      - uses: cargo-bins/cargo-binstall@v1.21.1
+
+      - name: Install wasm-pack
+        run: cargo binstall wasm-pack --no-confirm
+
+      # Only the no-modules bundle: it is all the single-file assembler
+      # consumes. The ES-module build is the /try deploy's concern.
+      - name: Build the single-file page
+        run: |
+          wasm-pack build crates/wasm --target no-modules --out-dir www/pkg-nomodules --out-name hydra
+          python3 scripts/build-wasm-single.py
+
+      - name: Upload to release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          asset="hydra-try-${version}.html"
+          cp crates/wasm/www/hydra.html "${asset}"
+          gh release upload "${{ github.ref_name }}" "${asset}"
+
   # ── 3. Build the Tauri desktop app and attach platform installers. ────────
   gui:
     name: GUI / ${{ matrix.platform }}

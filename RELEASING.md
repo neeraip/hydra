@@ -23,8 +23,11 @@ By default, each bump command asks: `Push commit and tags now? [y/N]`.
 just bump minor
 # respond y to the push prompt (or run: just bump minor --push)
 
-# 1. Review and publish the library draft release from the GitHub releases page
-# 2. Publishing triggers the publish-crates workflow — wait for it to go green
+# 1. The draft-release workflow attaches hydra-try-<version>.html — the
+#    browser demo as one portable file, the engines at exactly this tag.
+#    Wait for its job before publishing so the asset is on the draft.
+# 2. Review and publish the library draft release from the GitHub releases page
+# 3. Publishing triggers the publish-crates workflow — wait for it to go green
 #    (hydra-sdk must be on crates.io before the CLI publish can succeed)
 
 just bump-cli minor
