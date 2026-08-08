@@ -86,8 +86,13 @@ jobs:
       - name: Install cargo-binstall
         uses: cargo-bins/cargo-binstall@v1.21.1
 
+      # `command -v` first, and `--force` when it misses: the rust-cache
+      # restore can carry binstall's install manifest from a main run without
+      # carrying the binary itself, and binstall trusts the manifest — it
+      # reported "already installed", did nothing in 215 ms, and the test
+      # step found no wasm-pack on PATH. Trust the PATH, never the manifest.
       - name: Install wasm-pack
-        run: cargo binstall wasm-pack --no-confirm
+        run: command -v wasm-pack || cargo binstall wasm-pack --no-confirm --force
 
       - name: Test in a browser (just test-wasm)
         run: wasm-pack test --headless --chrome crates/wasm --test browser
