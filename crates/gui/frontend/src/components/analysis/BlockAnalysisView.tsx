@@ -14,7 +14,7 @@ import { useAppState, useSimulation } from "../../AppContext";
 import { tryInvokeOr } from "../../hooks/ipc";
 import { useUnitSystem } from "../../units";
 import { BlockPanel } from "./FragmentView";
-import type { AnalysisBlock } from "./fragments";
+import { type AnalysisBlock, blockSpan } from "./fragments";
 
 /** How long an edit may keep changing before the blocks refetch. Criteria
  * sliders emit per-tick; re-producing every block per tick would contend
@@ -103,12 +103,17 @@ export function BlockAnalysisView({
         flex: 1,
         overflowY: "auto",
         padding: 18,
-        display: "flex",
-        flexDirection: "column",
+        // Two-ish columns on a wide window, one on a narrow one; each
+        // block claims a cell or the whole row by its fragment's shape —
+        // presentation decided here, from neutral data, never by hints
+        // from an engine (hydra-common §3).
+        display: "grid",
+        gridTemplateColumns: "repeat(auto-fill, minmax(min(520px, 100%), 1fr))",
         gap: 12,
+        alignItems: "start",
       }}
     >
-      {header}
+      {header ? <div style={{ gridColumn: "1 / -1" }}>{header}</div> : null}
       {blocks.length === 0 ? (
         <div
           style={{ color: "var(--text-tertiary)", fontSize: "var(--text-md)" }}
@@ -116,7 +121,18 @@ export function BlockAnalysisView({
           Run a simulation to see results here.
         </div>
       ) : (
-        blocks.map((b) => <BlockPanel key={b.id} block={b} />)
+        blocks.map((b) => (
+          <div
+            key={b.id}
+            style={
+              blockSpan(b.fragment) === "full"
+                ? { gridColumn: "1 / -1" }
+                : undefined
+            }
+          >
+            <BlockPanel block={b} />
+          </div>
+        ))
       )}
     </div>
   );

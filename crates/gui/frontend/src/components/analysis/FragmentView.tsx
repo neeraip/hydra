@@ -183,10 +183,13 @@ export function FragmentBody({ fragment }: { fragment: Fragment }) {
  * elevations) can sit in disjoint bands, and one shared scale would
  * flatten all but the widest. */
 function FragmentChart({ chart }: { chart: ChartShape }) {
+  // Constrained: these are scalable SVGs, and at full panel width a
+  // 350-unit viewBox renders at 5× design size — bars like billboards.
+  const CHART_MAX_WIDTH = 560;
   if (chart.data.type === "bar") {
     const { bars, max } = chartBars(chart);
     return (
-      <div>
+      <div style={{ maxWidth: CHART_MAX_WIDTH }}>
         <HorizontalBarChart
           bars={bars.map((b) => ({ ...b, fill: SERIES_STROKES[0] }))}
           maxCount={max}
@@ -199,13 +202,21 @@ function FragmentChart({ chart }: { chart: ChartShape }) {
           }}
         >
           {chart.yLabel} by {chart.xLabel.toLowerCase()}
+          {chart.xUnit ? ` (${chart.xUnit})` : ""}
         </div>
       </div>
     );
   }
   const series = lineSeriesView(chart);
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+    <div
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        gap: 8,
+        maxWidth: CHART_MAX_WIDTH,
+      }}
+    >
       {series.map((s, i) => (
         <div key={s.name}>
           <div

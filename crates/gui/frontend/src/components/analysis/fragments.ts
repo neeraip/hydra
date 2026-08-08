@@ -122,3 +122,20 @@ export function lineSeriesView(chart: ChartShape): Array<{
     };
   });
 }
+
+/** How much of the grid a block deserves: a full row, or one cell.
+ *
+ * Sized from the fragment's own shape rather than from any engine hint —
+ * presentation is the consumer's decision (hydra-common §3), and the
+ * fragment already declares what it holds. Wide tables and long key-value
+ * lists need the row; charts and small summaries sit comfortably in a
+ * cell beside each other.
+ */
+export function blockSpan(fragment: Fragment | undefined): "full" | "cell" {
+  if (!fragment) return "cell";
+  for (const item of fragment.items) {
+    if (item.type === "table" && item.table.columns.length >= 5) return "full";
+    if (item.type === "keyValues" && item.entries.length >= 6) return "full";
+  }
+  return "cell";
+}

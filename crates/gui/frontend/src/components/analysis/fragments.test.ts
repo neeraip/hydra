@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  blockSpan,
   type ChartShape,
   chartBars,
   formatValue,
@@ -106,5 +107,57 @@ describe("lineSeriesView", () => {
   it("converts an hours axis to seconds for the time readout", () => {
     expect(lineSeriesView(line("h"))[0].times).toEqual([0, 3600]);
     expect(lineSeriesView(line(undefined))[0].times).toBeUndefined();
+  });
+});
+
+describe("blockSpan", () => {
+  const kv = (n: number) => ({
+    type: "keyValues" as const,
+    entries: Array.from({ length: n }, (_, i) => ({
+      label: `k${i}`,
+      value: { type: "integer" as const, value: i },
+    })),
+  });
+  const table = (cols: number) => ({
+    type: "table" as const,
+    table: {
+      columns: Array.from({ length: cols }, (_, i) => ({
+        name: `c${i}`,
+        kind: "number",
+      })),
+      rows: [],
+    },
+  });
+
+  /** The decision the grid renders from: wide content claims the row,
+   * compact content shares one. Sized from the fragment's own shape —
+   * an engine hint would put presentation into the neutral layer. */
+  it("wide tables and long key-value lists claim the full row", () => {
+    expect(blockSpan({ title: "t", items: [table(5)] })).toBe("full");
+    expect(blockSpan({ title: "t", items: [kv(6)] })).toBe("full");
+  });
+
+  it("charts and compact summaries share a row", () => {
+    expect(blockSpan({ title: "t", items: [table(3)] })).toBe("cell");
+    expect(blockSpan({ title: "t", items: [kv(4)] })).toBe("cell");
+    expect(
+      blockSpan({
+        title: "t",
+        items: [
+          {
+            type: "chart",
+            chart: {
+              xLabel: "x",
+              yLabel: "y",
+              data: { type: "bar", categories: [], values: [] },
+            },
+          },
+        ],
+      }),
+    ).toBe("cell");
+  });
+
+  it("a block with no fragment takes a cell", () => {
+    expect(blockSpan(undefined)).toBe("cell");
   });
 });
