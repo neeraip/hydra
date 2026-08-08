@@ -40,6 +40,20 @@ impl FlowUnits {
         matches!(self, FlowUnits::Cfs | FlowUnits::Gpm | FlowUnits::Mgd)
     }
 
+    /// m³/s per one declared flow unit — the factor the binary results
+    /// writer converts with, shared so the report blocks recover SI
+    /// display values by exactly the mapping the file was written under.
+    pub fn m3s_per_unit(self) -> f64 {
+        match self {
+            FlowUnits::Cfs => 0.028_316_846_592,
+            FlowUnits::Gpm => 6.309_019_64e-5,
+            FlowUnits::Mgd => 0.043_812_636_4,
+            FlowUnits::Cms => 1.0,
+            FlowUnits::Lps => 1.0e-3,
+            FlowUnits::Mld => 1.0 / 86.4,
+        }
+    }
+
     /// The variant for a binary-results unit code (the discriminant the
     /// writer stores, §14.9), or `None` for an unknown code.
     pub fn from_code(code: i32) -> Option<Self> {

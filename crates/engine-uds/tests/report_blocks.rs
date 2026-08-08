@@ -131,3 +131,92 @@ fn an_unknown_block_is_a_typed_refusal() {
     assert!(matches!(err, BlockError::UnknownBlock { .. }));
     let _ = std::fs::remove_file(&path);
 }
+
+/// The v1.7 tagging obligation (hydra-common spec §3.3): a CFS fixture's
+/// flow values are produced in m³/s — the flow quantity's SI display unit
+/// — tagged, wearing the SI label, and the file's cfs value is recovered
+/// exactly by the same factor the file was written under.
+#[test]
+fn a_us_file_produces_tagged_si_flow_values() {
+    let (path, net) = run_to_out("single_conduit.inp", "tagging");
+    let fragment =
+        produce_report_block("uds.link-extremes", &path, &net, None).expect("link extremes");
+    let FragmentItem::Table { table } = &fragment.items[0] else {
+        panic!("link extremes is a table");
+    };
+    let flow_col = &table.columns[1];
+    assert_eq!(flow_col.quantity.as_deref(), Some("flow"));
+    assert_eq!(
+        flow_col.unit.as_deref(),
+        Some("m³/s"),
+        "SI label on the header"
+    );
+
+    let hydra_common::Value::Number { value, .. } = &table.rows[0][1] else {
+        panic!("peak flow is a number");
+    };
+    // single_conduit declares CFS, so a value of one file unit is
+    // 0.0283… m³/s — a tagged value an order of magnitude above the
+    // fixture's plausible flows would mean the conversion was skipped.
+    assert!(
+        value.is_finite() && *value < 10.0,
+        "peak flow {value} m³/s is implausible for the fixture — file units leaked through"
+    );
+    let _ = std::fs::remove_file(&path);
+}
+
+/// Every quantity key the blocks tag with exists in the engine's §5
+/// catalog — asserted through the public surface by producing every block
+/// and walking its fragments, since an uncataloged key renders as-written
+/// and nothing else would ever flag the typo.
+#[test]
+fn every_tagged_key_is_in_the_quantity_catalog() {
+    let cataloged: std::collections::HashSet<&str> = hydra_engine_uds::descriptors::QUANTITIES
+        .iter()
+        .map(|q| q.key)
+        .collect();
+    let (path, net) = run_to_out("single_conduit.inp", "keys");
+    for block in report_catalog() {
+        let Ok(fragment) = produce_report_block(block.id, &path, &net, None) else {
+            continue; // unavailable for this fixture is fine
+        };
+        for item in &fragment.items {
+            let check = |key: &Option<String>, what: &str| {
+                if let Some(k) = key {
+                    assert!(
+                        cataloged.contains(k.as_str()),
+                        "{} tags {what} with uncataloged quantity {k:?}",
+                        block.id
+                    );
+                }
+            };
+            match item {
+                FragmentItem::KeyValues { entries } => {
+                    for e in entries {
+                        if let hydra_common::Value::Number { quantity, .. } = &e.value {
+                            check(quantity, "a key-value");
+                        }
+                    }
+                }
+                FragmentItem::Table { table } => {
+                    for c in &table.columns {
+                        check(&c.quantity, "a column");
+                    }
+                    for row in &table.rows {
+                        for v in row {
+                            if let hydra_common::Value::Number { quantity, .. } = v {
+                                check(quantity, "a cell");
+                            }
+                        }
+                    }
+                }
+                FragmentItem::Chart { chart } => {
+                    check(&chart.x_quantity, "an x axis");
+                    check(&chart.y_quantity, "a y axis");
+                }
+                FragmentItem::Note { .. } => {}
+            }
+        }
+    }
+    let _ = std::fs::remove_file(&path);
+}

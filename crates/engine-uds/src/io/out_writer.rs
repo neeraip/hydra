@@ -90,14 +90,7 @@ pub fn write_out(
 ) -> io::Result<()> {
     let cv = Cv {
         us: net.options.flow_units.is_us(),
-        flow: match net.options.flow_units {
-            crate::io::options::FlowUnits::Cfs => 0.028_316_846_592,
-            crate::io::options::FlowUnits::Gpm => 6.309_019_64e-5,
-            crate::io::options::FlowUnits::Mgd => 0.043_812_636_4,
-            crate::io::options::FlowUnits::Cms => 1.0,
-            crate::io::options::FlowUnits::Lps => 1.0e-3,
-            crate::io::options::FlowUnits::Mld => 1.0 / 86.4,
-        },
+        flow: net.options.flow_units.m3s_per_unit(),
         len: if net.options.flow_units.is_us() {
             0.3048
         } else {

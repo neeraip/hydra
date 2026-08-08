@@ -73,6 +73,14 @@ pub fn resolve_display(
     }
 }
 
+/// Resolve one fragment outside a document — the live-application path
+/// (spec §4.0): an analysis surface serving individual block fragments
+/// applies the same resolution a rendered report gets, so the two can
+/// never disagree about what a value reads as.
+pub fn resolve_fragment_display(fragment: &Fragment, settings: &DisplaySettings<'_>) -> Fragment {
+    resolve_fragment(fragment, settings)
+}
+
 fn resolve_fragment(fragment: &Fragment, settings: &DisplaySettings<'_>) -> Fragment {
     Fragment {
         title: fragment.title.clone(),

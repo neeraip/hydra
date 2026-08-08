@@ -3,11 +3,19 @@
 //! persisted §14.9 results file, and block-option descriptions.
 //!
 //! Every block here derives from the results file and the loaded network
-//! alone — production is read-only and deterministic (§3.4). Values are
-//! presented in the file's own unit system, labelled from its declared
-//! flow units; nothing here converts. Ids follow the block-id stability
-//! rule: report templates persist them, so removing or repurposing one is
-//! a compatibility break.
+//! alone — production is read-only and deterministic (§3.4). Ids follow
+//! the block-id stability rule: report templates persist them, so
+//! removing or repurposing one is a compatibility break.
+//!
+//! Quantity-bearing numbers are **quantity-tagged** (hydra-common spec
+//! §3.3, v1.7): produced in the referenced quantity's SI display unit and
+//! re-expressed per display family by whichever consumer presents them.
+//! The results file carries the model's declared units (§14.9), so
+//! production converts — flow by the same m³/s-per-unit factor the file
+//! was written under, linear quantities (depth, head, velocity, rainfall,
+//! infiltration) through the engine's §5 descriptor inverse, whose US→SI
+//! round trip is exact by construction. Dimensionless capacity, counts,
+//! and clock values stay untagged.
 
 use std::path::Path;
 
@@ -109,36 +117,65 @@ fn rows(options: Option<&serde_json::Value>) -> Result<usize, BlockError> {
     }
 }
 
-// ── Unit labels (the file's own system; §14.9 values are served as stored) ────
+// ── SI display conversion (module doc; hydra-common spec §3.3) ────────────────
 
-struct Units {
-    flow: &'static str,
-    depth: &'static str,
-    rain: &'static str,
+/// This engine's §5 quantity descriptor for `key`, or `None` for a key the
+/// catalog does not declare — ruled out for every key this module writes
+/// by `every_used_quantity_key_is_cataloged` in the crate's block tests.
+fn qty(key: &str) -> Option<&'static hydra_common::QuantityDescriptor> {
+    crate::descriptors::QUANTITIES.iter().find(|q| q.key == key)
 }
 
-fn units(meta: &OutMetadata) -> Units {
-    use crate::io::options::FlowUnits::*;
-    let flow = match meta.flow_units {
-        Cfs => "cfs",
-        Gpm => "gpm",
-        Mgd => "mgd",
-        Cms => "m³/s",
-        Lps => "L/s",
-        Mld => "ML/d",
-    };
-    if meta.flow_units.is_us() {
-        Units {
-            flow,
-            depth: "ft",
-            rain: "in/hr",
+/// Converts values read from the results file — the model's declared
+/// display units — into quantity-catalog SI display units.
+struct SiDisplay {
+    us: bool,
+    /// m³/s per declared flow unit — the factor the file was written under.
+    flow_to_m3s: f64,
+}
+
+impl SiDisplay {
+    fn new(meta: &OutMetadata) -> Self {
+        Self {
+            us: meta.flow_units.is_us(),
+            flow_to_m3s: meta.flow_units.m3s_per_unit(),
         }
-    } else {
-        Units {
-            flow,
-            depth: "m",
-            rain: "mm/hr",
+    }
+
+    /// A descriptor-covered linear quantity: depth, elevation, velocity,
+    /// rainfall, infiltration. Identity on SI files.
+    fn linear(&self, key: &str, file_value: f64) -> f64 {
+        if self.us {
+            qty(key).map_or(file_value, |d| d.us_to_si(file_value))
+        } else {
+            file_value
         }
+    }
+
+    /// Flow in the declared spelling → m³/s, the flow quantity's SI
+    /// display unit.
+    fn flow(&self, file_value: f64) -> f64 {
+        file_value * self.flow_to_m3s
+    }
+}
+
+/// A tagged key-value number wearing its quantity's SI label.
+fn q_num(value_si: f64, key: &str) -> Value {
+    Value::Number {
+        value: value_si,
+        unit: qty(key).map(|d| d.si_label.to_string()),
+        quantity: Some(key.into()),
+    }
+}
+
+/// A tagged column: the header carries the SI label, and the tag converts
+/// every number under it (hydra-common spec §3.3).
+fn q_col(name: &str, key: &str) -> Column {
+    Column {
+        name: name.into(),
+        unit: qty(key).map(|d| d.si_label.to_string()),
+        kind: ValueKind::Number,
+        quantity: Some(key.into()),
     }
 }
 
@@ -189,7 +226,7 @@ fn ranked(
 // ── Blocks ────────────────────────────────────────────────────────────────────
 
 fn run_summary(out_path: &Path, meta: &OutMetadata) -> Result<Fragment, BlockError> {
-    let u = units(meta);
+    let u = SiDisplay::new(meta);
     // System series indices per §14.9: 1 rainfall, 4 runoff, 9 total
     // lateral inflow, 10 flooding, 11 outflow.
     let mut peaks = [0f64; 5];
@@ -233,11 +270,14 @@ fn run_summary(out_path: &Path, meta: &OutMetadata) -> Result<Fragment, BlockErr
                 value: meta.pollutant_ids.len() as i64,
             },
         ),
-        kv("Peak rainfall", num(peaks[0], Some(u.rain))),
-        kv("Peak runoff", num(peaks[1], Some(u.flow))),
-        kv("Peak lateral inflow", num(peaks[2], Some(u.flow))),
-        kv("Peak flooding", num(peaks[3], Some(u.flow))),
-        kv("Peak outflow", num(peaks[4], Some(u.flow))),
+        kv(
+            "Peak rainfall",
+            q_num(u.linear("rainfall", peaks[0]), "rainfall"),
+        ),
+        kv("Peak runoff", q_num(u.flow(peaks[1]), "flow")),
+        kv("Peak lateral inflow", q_num(u.flow(peaks[2]), "flow")),
+        kv("Peak flooding", q_num(u.flow(peaks[3]), "flow")),
+        kv("Peak outflow", q_num(u.flow(peaks[4]), "flow")),
     ];
     Ok(Fragment {
         title: "Run Summary".into(),
@@ -262,7 +302,7 @@ fn subcatchment_peaks(
             reason: "The run reports no subcatchments.".into(),
         });
     }
-    let u = units(meta);
+    let u = SiDisplay::new(meta);
     let n = meta.subcatchment_ids.len();
     let nv = meta.n_subcatch_vars;
     // Subcatchment variables per §14.9: 0 rainfall, 3 infiltration, 4 runoff.
@@ -284,18 +324,18 @@ fn subcatchment_peaks(
     let table = Table {
         columns: vec![
             col("Subcatchment", None, ValueKind::Text),
-            col("Peak runoff", Some(u.flow), ValueKind::Number),
-            col("Peak rainfall", Some(u.rain), ValueKind::Number),
-            col("Peak infiltration", Some(u.rain), ValueKind::Number),
+            q_col("Peak runoff", "flow"),
+            q_col("Peak rainfall", "rainfall"),
+            q_col("Peak infiltration", "infiltration"),
         ],
         rows: ranked(rows_data, 2, keep)
             .into_iter()
             .map(|(id, m)| {
                 vec![
                     Value::Text { value: id },
-                    num(m[2], None),
-                    num(m[0], None),
-                    num(m[1], None),
+                    num(u.flow(m[2]), None),
+                    num(u.linear("rainfall", m[0]), None),
+                    num(u.linear("infiltration", m[1]), None),
                 ]
             })
             .collect(),
@@ -312,7 +352,7 @@ fn node_extremes(out_path: &Path, meta: &OutMetadata, keep: usize) -> Result<Fra
             reason: "The run reports no nodes.".into(),
         });
     }
-    let u = units(meta);
+    let u = SiDisplay::new(meta);
     let n = meta.node_ids.len();
     let nv = meta.n_node_vars;
     // Node variables per §14.9: 0 depth, 1 head, 4 total inflow, 5 flooding.
@@ -335,20 +375,20 @@ fn node_extremes(out_path: &Path, meta: &OutMetadata, keep: usize) -> Result<Fra
     let table = Table {
         columns: vec![
             col("Node", None, ValueKind::Text),
-            col("Max depth", Some(u.depth), ValueKind::Number),
-            col("Max head", Some(u.depth), ValueKind::Number),
-            col("Peak inflow", Some(u.flow), ValueKind::Number),
-            col("Peak flooding", Some(u.flow), ValueKind::Number),
+            q_col("Max depth", "depth"),
+            q_col("Max head", "elevation"),
+            q_col("Peak inflow", "flow"),
+            q_col("Peak flooding", "flow"),
         ],
         rows: ranked(rows_data, 0, keep)
             .into_iter()
             .map(|(id, m)| {
                 vec![
                     Value::Text { value: id },
-                    num(m[0], None),
-                    num(m[1], None),
-                    num(m[2], None),
-                    num(m[3], None),
+                    num(u.linear("depth", m[0]), None),
+                    num(u.linear("elevation", m[1]), None),
+                    num(u.flow(m[2]), None),
+                    num(u.flow(m[3]), None),
                 ]
             })
             .collect(),
@@ -365,7 +405,7 @@ fn link_extremes(out_path: &Path, meta: &OutMetadata, keep: usize) -> Result<Fra
             reason: "The run reports no links.".into(),
         });
     }
-    let u = units(meta);
+    let u = SiDisplay::new(meta);
     let n = meta.link_ids.len();
     let nv = meta.n_link_vars;
     // Link variables per §14.9: 0 flow, 2 velocity, 4 capacity.
@@ -387,16 +427,8 @@ fn link_extremes(out_path: &Path, meta: &OutMetadata, keep: usize) -> Result<Fra
     let table = Table {
         columns: vec![
             col("Link", None, ValueKind::Text),
-            col("Peak flow", Some(u.flow), ValueKind::Number),
-            col(
-                "Peak velocity",
-                Some(if meta.flow_units.is_us() {
-                    "ft/s"
-                } else {
-                    "m/s"
-                }),
-                ValueKind::Number,
-            ),
+            q_col("Peak flow", "flow"),
+            q_col("Peak velocity", "velocity"),
             col("Max capacity used", None, ValueKind::Number),
         ],
         rows: ranked(rows_data, 0, keep)
@@ -404,8 +436,8 @@ fn link_extremes(out_path: &Path, meta: &OutMetadata, keep: usize) -> Result<Fra
             .map(|(id, m)| {
                 vec![
                     Value::Text { value: id },
-                    num(m[0], None),
-                    num(m[1], None),
+                    num(u.flow(m[0]), None),
+                    num(u.linear("velocity", m[1]), None),
                     num(m[2], None),
                 ]
             })
@@ -423,7 +455,7 @@ fn flooding_summary(out_path: &Path, meta: &OutMetadata) -> Result<Fragment, Blo
             reason: "The run reports no nodes.".into(),
         });
     }
-    let u = units(meta);
+    let u = SiDisplay::new(meta);
     let n = meta.node_ids.len();
     let nv = meta.n_node_vars;
     // (peak flooding, periods flooded, first flooded period)
@@ -448,7 +480,14 @@ fn flooding_summary(out_path: &Path, meta: &OutMetadata) -> Result<Fragment, Blo
         .map(|(id, a)| {
             (
                 id.clone(),
-                vec![a.0, a.1 as f64, (a.2.unwrap_or(0) + 1) as f64 * step_hr],
+                // Peak flooding converts to m³/s here: its column is
+                // quantity-tagged, and a raw file-unit value under a
+                // tagged column would render as the wrong number.
+                vec![
+                    u.flow(a.0),
+                    a.1 as f64,
+                    (a.2.unwrap_or(0) + 1) as f64 * step_hr,
+                ],
             )
         })
         .collect();
@@ -463,7 +502,7 @@ fn flooding_summary(out_path: &Path, meta: &OutMetadata) -> Result<Fragment, Blo
     let table = Table {
         columns: vec![
             col("Node", None, ValueKind::Text),
-            col("Peak flooding", Some(u.flow), ValueKind::Number),
+            q_col("Peak flooding", "flow"),
             col("Periods flooded", None, ValueKind::Integer),
             col("First flooded", Some("hr"), ValueKind::Number),
         ],

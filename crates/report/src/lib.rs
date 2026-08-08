@@ -8,7 +8,7 @@ mod document;
 mod render;
 mod template;
 
-pub use display::{resolve_display, DisplaySettings};
+pub use display::{resolve_display, resolve_fragment_display, DisplaySettings};
 pub use document::{assemble, ReportContext, ReportDocument, Section};
 pub use render::{render_csv, render_html, render_txt};
 #[cfg(feature = "pdf")]
