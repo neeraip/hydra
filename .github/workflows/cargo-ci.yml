@@ -68,6 +68,30 @@ jobs:
       - name: Lint (clippy)
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
 
+      # The engines run in a browser (crates/wasm). This catches a dependency
+      # that will not build for this target at all; the runtime failures — a
+      # host call or a dependency that compiles and then panics — are guarded
+      # elsewhere or not yet. See the `check-wasm` recipe in the justfile.
+      - name: Add WebAssembly target
+        run: rustup target add wasm32-unknown-unknown
+
+      - name: Check WebAssembly build (just check-wasm)
+        run: cargo check -p hydra-sdk --target wasm32-unknown-unknown --locked
+
+      # The only step that *executes* engine code on wasm. Both bugs found
+      # while bringing the browser build up compiled cleanly and passed every
+      # host test; they appeared only when a browser ran them. Chrome is
+      # preinstalled on ubuntu-latest, and wasm-pack fetches its own matching
+      # chromedriver.
+      - name: Install cargo-binstall
+        uses: cargo-bins/cargo-binstall@v1.21.1
+
+      - name: Install wasm-pack
+        run: cargo binstall wasm-pack --no-confirm
+
+      - name: Test in a browser (just test-wasm)
+        run: wasm-pack test --headless --chrome crates/wasm --test browser
+
       - name: Check documentation
         run: cargo doc --workspace --no-deps
         env:

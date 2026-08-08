@@ -47,12 +47,25 @@ start from this grep.
 | `hydra-sdk` | **Hydra's public API** — the single crate third parties depend on to build on Hydra; curated re-exports of the full integrator-facing surface | Any new logic |
 | `hydra-cli` | CLI argument parsing; input source resolution; file I/O | All simulation logic |
 | `hydra-gui` | Tauri command surface; project/scenario persistence; background run queue; React frontend | Solver algorithms; session logic |
+| `hydra-wasm` | The engines in a browser: a `wasm_bindgen` surface over the SDK's run path, and a demo page that runs a dropped model and prints what the CLI prints. Not published — the artifact is the built bundle | All simulation logic; any output format of its own (the report and the diagnostics are the engine's and the CLI's) |
 
 **Each engine crate is a self-contained black box.** `hydra-engine-wds`'s internal module structure (`hydraulics/`, `quality/`, `simulation/`, `analysis/`, `model/`, `io/`) is an implementation detail; callers depend only on its public re-export surface. `hydra-engine-uds` is likewise self-contained (`hydrology/`, `hydraulics/`, `transport/`, `simulation/`, `model/`, `io/`, with specs additionally under `interop/`).
 
 **`hydra-sdk` is Hydra's public API, not an in-house convenience layer.** Its surface is sized by what a third-party integrator building on Hydra needs — never by what the official applications happen to use. Do not propose narrowing a re-export because the in-house apps don't exercise it; wholesale module re-exports (e.g. the engine's `io`) are correct when the module is genuinely public-facing.
 
-**`hydra-cli` and `hydra-gui` are reference consumers of that public API.** They depend on the umbrella crate under the exact contract any third-party integrator has — and double as the prime examples of building software on it. They never import from `hydra-engine-wds`, `hydra-common`, `hydra-report`, or any other internal crate directly.
+**`hydra-cli`, `hydra-gui` and `hydra-wasm` are reference consumers of that public API.** They depend on the umbrella crate under the exact contract any third-party integrator has — and double as the prime examples of building software on it. They never import from `hydra-engine-wds`, `hydra-common`, `hydra-report`, or any other internal crate directly.
+
+**The engines must keep working on `wasm32-unknown-unknown`.** They have no threads and no filesystem calls outside test code and `io::out_reader`, which is what makes a browser build possible at all. Three things break it, and only the first is caught by compiling:
+
+| Break | Example | Guarded by |
+|---|---|---|
+| A dependency that will not build for wasm | a build script needing a host | `just check-wasm` |
+| A host call that compiles and panics at runtime | `SystemTime::now()` | the engines' `clippy.toml` |
+| A dependency that compiles and panics at runtime | `chrono` without `wasmbind` | `just test-wasm` |
+
+Only the first is visible to a compiler. `just test-wasm` (`crates/wasm/tests/browser.rs`) runs a model in headless Chrome, and is the only check that executes engine code on wasm at all — both bugs found while bringing the browser build up compiled cleanly and passed every host test. It needs a **system Chrome**, unlike the layout tests, which drive Playwright's own download.
+
+Keep that file small. Everything it could assert about behaviour is already asserted on the host, where a failure names a line instead of a trap; it exists to answer one question, which is whether the engine survives a real run.
 
 **`hydra-sdk` contains no logic** — only re-exports. Never add functions, structs, or trait implementations to it. (Downstream crates import it under the alias `hydra`.)
 

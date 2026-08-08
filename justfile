@@ -19,6 +19,8 @@ setup: setup-tools setup-rust setup-frontend
 # Fetch Cargo dependencies for the whole workspace.
 setup-rust:
     cargo fetch
+    # `just check-wasm` is part of `just ci`, so the target is not optional.
+    rustup target add wasm32-unknown-unknown
 
 # Install frontend (pnpm) dependencies.
 setup-frontend:
@@ -26,7 +28,7 @@ setup-frontend:
 
 # Uses cargo-binstall for prebuilt binaries; skips tools already present, so
 # re-runs (e.g. via `just start`) are fast and offline-friendly. Installs:
-# tauri-cli, cargo-deny, cargo-audit, mdbook, cargo-llvm-cov.
+# tauri-cli, cargo-deny, cargo-audit, mdbook, cargo-llvm-cov, wasm-pack.
 # Install the cargo subcommand tools this justfile relies on
 setup-tools:
     @command -v cargo-binstall >/dev/null 2>&1 || cargo install cargo-binstall --locked
@@ -35,6 +37,7 @@ setup-tools:
     @command -v cargo-audit >/dev/null 2>&1 || cargo binstall cargo-audit --no-confirm
     @command -v mdbook >/dev/null 2>&1 || cargo binstall mdbook --no-confirm
     @command -v cargo-llvm-cov >/dev/null 2>&1 || cargo binstall cargo-llvm-cov --no-confirm
+    @command -v wasm-pack >/dev/null 2>&1 || cargo binstall wasm-pack --no-confirm
 
 # ── Test ──────────────────────────────────────────────────────────────────────
 
@@ -76,6 +79,17 @@ test-layout:
 # One-time: fetch the browser the layout tests drive.
 setup-layout-tests:
     cd crates/gui/frontend && pnpm exec playwright install chromium
+
+# The only check that executes engine code on wasm, and the only one that can
+# see the failures that matter there: a host call or a dependency that
+# compiles fine and then panics at runtime. `just check-wasm` compiles, which
+# both of those survive.
+#
+# Uses the *system* Chrome (wasm-pack fetches a matching chromedriver
+# itself), unlike the layout tests, which drive Playwright's own download.
+# Run the engines in a real browser
+test-wasm:
+    wasm-pack test --headless --chrome crates/wasm --test browser
 
 # Run Python script unit tests
 test-scripts:
@@ -126,7 +140,7 @@ typecheck-frontend:
     cd crates/gui/frontend && pnpm exec tsc --noEmit
 
 # Run every static check, Rust and frontend — no tests
-lint: fmt-check clippy typecheck-frontend lint-frontend
+lint: fmt-check clippy check-wasm typecheck-frontend lint-frontend
 
 # ── Security ──────────────────────────────────────────────────────────────────
 
@@ -180,6 +194,26 @@ check-crs-catalog: regen-crs-catalog
 check:
     cargo check --workspace --all-targets
 
+# Catches a dependency that will not build for wasm at all — a build script
+# needing a host, a crate with no wasm support. That is a real class and this
+# is the only thing that sees it.
+#
+# It does NOT catch either way the browser build has actually broken so far,
+# and the comment says so because the recipe name suggests otherwise:
+#
+#   * A host call that compiles and panics at runtime. `SystemTime::now()`
+#     is one. Guarded by the engines' `clippy.toml` files.
+#   * A dependency that compiles and panics at runtime. `chrono` without
+#     `wasmbind` is one, and removing that feature still passes this recipe.
+#     Guarded by nothing yet — only running the engine in a real browser
+#     would see it.
+#
+# Checks the SDK rather than crates/wasm because the SDK is the whole engine
+# surface, and it is the layer a third party would compile for wasm too.
+# Check that the engines still compile for WebAssembly
+check-wasm:
+    cargo check -p hydra-sdk --target wasm32-unknown-unknown --locked
+
 # NOTE: this is a compile check — it does NOT build the frontend and does NOT
 # enable hydra-gui/custom-protocol, so `target/debug/hydra-gui` from here shows
 # a white window (it tries to load the dev-server URL). Use `just dev` to run
@@ -214,6 +248,33 @@ release-native: build-frontend
 bundle:
     cd crates/gui && cargo tauri build
 
+# ── WebAssembly ───────────────────────────────────────────────────────────────
+
+# Deliberately outside `just ci`: the wasm bundle is a demo artifact, and CI
+# already covers the crate's logic through the ordinary workspace test run
+# (`crates/wasm` is a member, and every decision in it is plain Rust). What CI
+# does not cover is that the module loads in a browser — run `just wasm-serve`
+# for that.
+
+# Build the WebAssembly bundle into crates/wasm/www/pkg
+wasm:
+    wasm-pack build crates/wasm --target web --out-dir www/pkg --out-name hydra
+
+# The no-modules target rather than the web one: a file:// document has an
+# opaque origin, so it can neither import an ES module nor fetch the wasm.
+# See scripts/build-wasm-single.py for the rest of that story.
+# Build the whole demo as one portable HTML file that runs from file://
+wasm-single:
+    wasm-pack build crates/wasm --target no-modules --out-dir www/pkg-nomodules --out-name hydra
+    python3 scripts/build-wasm-single.py
+
+# Needs a server rather than a file:// open — ES modules and WebAssembly
+# streaming instantiation both require an http origin.
+# Build the wasm bundle and serve the demo page at http://localhost:8000
+wasm-serve: wasm
+    @echo "Hydra in the browser: http://localhost:8000"
+    cd crates/wasm/www && python3 -m http.server 8000
+
 # ── Docs ──────────────────────────────────────────────────────────────────────
 
 # Build the Rust API docs, failing on rustdoc warnings (the CI docs check)
@@ -233,7 +294,7 @@ docs:
 # Skips the slower CI-only steps (deny, docs-api, catalog drift, lockfile
 # check, python scripts); run `just ci` for the full set.
 # Fast local gate: every static check plus the Rust and frontend test suites
-verify: lint test test-frontend test-layout
+verify: lint test test-wasm test-frontend test-layout
 
 # Fails when package.json and pnpm-lock.yaml have drifted (e.g. a hand-edited
 # dependency without a corresponding install); fast no-op when in sync.
@@ -244,7 +305,7 @@ check-frontend-lockfile:
 # `test` already covers every workspace crate with CI's exact flags, so the
 # per-crate test recipes are not repeated here.
 # Run all checks that CI runs (mirrors cargo-ci + pnpm-ci + scripts-ci)
-ci: deny check-frontend-lockfile lint docs-api test check-crs-catalog build-frontend test-frontend test-layout test-scripts
+ci: deny check-frontend-lockfile lint docs-api test test-wasm check-crs-catalog build-frontend test-frontend test-layout test-scripts
 
 # ── Release ───────────────────────────────────────────────────────────────────
 

@@ -356,6 +356,14 @@ class TestTrackCoverage(unittest.TestCase):
         for crate, text in self._crate_dirs():
             if "version.workspace = true" not in text:
                 continue  # own version — belongs to its own track
+            if "publish = false" in text:
+                # Inheriting the version is a proxy for "released under the
+                # `v{version}` tag", and for a crate that is never published
+                # the proxy is wrong: it has no API to break and no release
+                # to signal, so a track would only make its commits ask for
+                # a library bump that publishes nothing. `just bump` still
+                # rewrites its version along with everyone else's.
+                continue
             self.assertIn(
                 f"crates/{crate}",
                 library_paths,

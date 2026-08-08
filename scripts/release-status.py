@@ -171,12 +171,16 @@ LEVEL_COLOR = {"major": "1;31", "minor": "33", "none": None}
 # foreground (no wrapping) so it stands out against the dimmed/highlighted ones.
 COMMIT_COLOR = {"dev": "2", "mixed": "33"}
 
-# The Library track must list EVERY crate that inherits the workspace version
-# (`version.workspace = true`), because they are all published together under
-# the one `v{version}` tag. A crate missing from this list is invisible to
+# The Library track must list EVERY published crate that inherits the workspace
+# version (`version.workspace = true`), because they are all released together
+# under the one `v{version}` tag. A crate missing from this list is invisible to
 # release-status: its commits — including breaking ones — are assigned to no
 # track and produce no bump signal at all. `test_library_track_covers_every_
 # workspace_versioned_crate` enforces this against the actual manifests.
+#
+# `crates/wasm` inherits the version but sets `publish = false`, so it is
+# deliberately absent: it releases nothing, and listing it would make a change
+# to the browser demo ask for a library bump that publishes no new code.
 LIBRARY_PATHS = [
     "Cargo.toml",
     "crates/common",
