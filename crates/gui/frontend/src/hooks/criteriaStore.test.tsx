@@ -19,9 +19,17 @@ const updateProjectCriteria = vi.fn();
 
 vi.mock("./ipc", () => ({
   invoke: (...args: unknown[]) => updateProjectCriteria(...args),
-  tryInvokeOr: (_cmd: string, args: { projectId: string }) =>
-    getProjectCriteria(args.projectId),
+  // Mirrors the real wrapper's two outcomes: a command that answered, and
+  // one that could not be asked. A mock that only ever answers cannot show
+  // the difference the store now turns on.
+  tryInvokeResult: async (_cmd: string, args: { projectId: string }) => {
+    const value = await getProjectCriteria(args.projectId);
+    return value === UNREADABLE ? { ok: false } : { ok: true, value };
+  },
 }));
+
+/** What the mocked wrapper treats as a failed call. */
+const UNREADABLE = Symbol("unreadable");
 
 const { DEFAULT_CRITERIA, useProjectCriteria } = await import("./criteria");
 
@@ -118,5 +126,56 @@ describe("two readers of one project's criteria", () => {
       expect(screen.getByTestId("analysis-value").textContent).toBe("22"),
     );
     expect(screen.getByTestId("canvas-value").textContent).toBe("11");
+  });
+});
+
+/**
+ * A read that fails is not a project without criteria.
+ *
+ * `saved === false` is the canvas's cue to seed pressure bands from the
+ * simulation options and *write* them. A failed read used to arrive as the
+ * same `null` a never-saved project does, so it set `saved` to false and
+ * the seeding wrote defaults over criteria sitting on disk intact. The
+ * in-flight case was already guarded and said so in a comment; this is the
+ * same sentence, for the other way of not knowing.
+ */
+describe("a criteria read that fails", () => {
+  it("leaves `saved` unknown rather than saying none are saved", async () => {
+    getProjectCriteria.mockResolvedValue(UNREADABLE);
+    render(<Reader id="unreadable" tag="canvas" />);
+    await waitFor(() => expect(getProjectCriteria).toHaveBeenCalled());
+    // `null`, which the seeding effect waits on. `false` would seed.
+    await waitFor(() =>
+      expect(screen.getByTestId("canvas-saved").textContent).toBe("null"),
+    );
+  });
+
+  it("still reads as the defaults, so nothing renders empty", async () => {
+    getProjectCriteria.mockResolvedValue(UNREADABLE);
+    render(<Reader id="unreadable-2" tag="canvas" />);
+    await waitFor(() =>
+      expect(screen.getByTestId("canvas-value").textContent).toBe(
+        String(DEFAULT_CRITERIA.minPressureM),
+      ),
+    );
+  });
+
+  /** A project with genuinely none still seeds — the case that must survive. */
+  it("is distinct from a project that has never had any", async () => {
+    getProjectCriteria.mockResolvedValue(null);
+    render(<Reader id="never-saved" tag="canvas" />);
+    await waitFor(() =>
+      expect(screen.getByTestId("canvas-saved").textContent).toBe("false"),
+    );
+  });
+
+  /** Not cached, so the next reader gets a fresh attempt. */
+  it("is retried rather than remembered", async () => {
+    getProjectCriteria.mockResolvedValue(UNREADABLE);
+    const { unmount } = render(<Reader id="retry" tag="canvas" />);
+    await waitFor(() => expect(getProjectCriteria).toHaveBeenCalledTimes(1));
+    unmount();
+    render(<Reader id="retry" tag="analysis" />);
+    await waitFor(() => expect(getProjectCriteria).toHaveBeenCalledTimes(2));
   });
 });

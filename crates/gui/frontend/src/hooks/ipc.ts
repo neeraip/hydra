@@ -44,28 +44,55 @@ export function onIpcError(handler: IpcErrorHandler): () => void {
   };
 }
 
+/** Either what a command answered, or the fact that it could not be asked. */
+export type IpcResult<T> = { ok: true; value: T } | { ok: false };
+
+/**
+ * Silent variant that keeps "answered nothing" apart from "could not ask".
+ *
+ * `tryInvoke` folds both into `null`, which is right for the many callers
+ * whose `T` cannot itself be null — an empty list, an absent DTO. It is
+ * wrong wherever `null` is a real answer the app then acts on: the
+ * project criteria read `null` for "this project has never had any", which
+ * is the app's cue to seed defaults and *write* them, so a failed read
+ * arriving as `null` overwrote criteria that were on disk and fine.
+ *
+ * Reach for this when a null answer and a failed call would lead somewhere
+ * different. Reach for `tryInvoke` otherwise.
+ */
+export async function tryInvokeResult<T>(
+  cmd: string,
+  args?: Record<string, unknown>,
+): Promise<IpcResult<T>> {
+  if (!isTauri()) return { ok: false };
+  try {
+    return { ok: true, value: await tauriInvoke<T>(cmd, args) };
+  } catch (err) {
+    // Surface in dev tools and notify the app shell, but don't crash
+    // callers — they get `ok: false`.
+    // eslint-disable-next-line no-console
+    console.warn(`[ipc] ${cmd} failed:`, err);
+    ipcErrorHandler?.(cmd, err);
+    return { ok: false };
+  }
+}
+
 /** Silent variant — returns `null` instead of throwing. Use for read-only
  *  data fetches where absence of data is an acceptable fallback.
  *
  *  Outside a Tauri shell (plain `vite` dev server) this resolves `null`
  *  silently — expected. Inside Tauri, a rejected command is a real backend
  *  error: it still resolves `null` so callers don't crash, but the error is
- *  reported to the `onIpcError` handler so the UI can surface it. */
+ *  reported to the `onIpcError` handler so the UI can surface it.
+ *
+ *  A `null` here means either, deliberately. Where those two must lead
+ *  somewhere different, use {@link tryInvokeResult}. */
 export async function tryInvoke<T>(
   cmd: string,
   args?: Record<string, unknown>,
 ): Promise<T | null> {
-  if (!isTauri()) return null;
-  try {
-    return await tauriInvoke<T>(cmd, args);
-  } catch (err) {
-    // Surface in dev tools and notify the app shell, but don't crash
-    // callers — they return null.
-    // eslint-disable-next-line no-console
-    console.warn(`[ipc] ${cmd} failed:`, err);
-    ipcErrorHandler?.(cmd, err);
-    return null;
-  }
+  const read = await tryInvokeResult<T>(cmd, args);
+  return read.ok ? read.value : null;
 }
 
 /** Like `tryInvoke`, but resolves `fallback` instead of `null` when the

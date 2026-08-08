@@ -16,7 +16,7 @@
  */
 
 import { useCallback, useEffect, useSyncExternalStore } from "react";
-import { invoke, tryInvokeOr } from "./ipc";
+import { invoke, tryInvokeResult } from "./ipc";
 
 export interface RequiredBand {
   low: number;
@@ -51,15 +51,33 @@ export const DEFAULT_CRITERIA: ProjectCriteria = {
   flow: { low: 0.1, target: 1.0, high: 10.0 },
 };
 
-/** The project's saved criteria, or `null` when it has never had any. */
+/**
+ * What a project has saved: the criteria, `null` for never having had any,
+ * or `undefined` when the question could not be answered.
+ *
+ * Three states rather than two, because two of them are acted on in
+ * opposite ways and the third had been collapsed into one of them. "None
+ * saved" is what makes the canvas seed bands from the simulation options
+ * and write them; "could not read" must do nothing at all. Through a plain
+ * `tryInvokeOr(…, null)` both arrived as `null`, so a failed read seeded
+ * defaults over criteria that were sitting on disk perfectly intact.
+ */
+export type CriteriaFetch = ProjectCriteria | null | undefined;
+
+/** The project's saved criteria. See {@link CriteriaFetch} for the states. */
 export async function getProjectCriteria(
   projectId: string,
-): Promise<ProjectCriteria | null> {
-  return tryInvokeOr<ProjectCriteria | null>(
+): Promise<CriteriaFetch> {
+  // `tryInvokeResult` rather than `tryInvokeOr`, so a command that answered
+  // `null` stays distinct from one that could not be reached. Outside a
+  // Tauri shell it reports unreachable too, which is the same "cannot say"
+  // — seeding a project's criteria from a bare dev server would be just as
+  // wrong as seeding them from a failed read.
+  const read = await tryInvokeResult<ProjectCriteria | null>(
     "get_project_criteria",
     { projectId },
-    null,
   );
+  return read.ok ? read.value : undefined;
 }
 
 export async function updateProjectCriteria(
@@ -107,10 +125,18 @@ function subscribe(cb: () => void): () => void {
 function ensureLoaded(projectId: string): void {
   if (cache.has(projectId) || inFlight.has(projectId)) return;
   inFlight.add(projectId);
-  void getProjectCriteria(projectId).then((c) => {
+  void getProjectCriteria(projectId).then((read) => {
     inFlight.delete(projectId);
-    cache.set(projectId, c ?? DEFAULT_CRITERIA);
-    savedFlags.set(projectId, c !== null);
+    if (read === undefined) {
+      // Unreadable. Readers fall back to the defaults as they always did,
+      // but `saved` stays unknown so nothing treats this as "never had
+      // any" and writes defaults over what is on disk. Not cached either,
+      // so the next reader retries instead of inheriting the failure.
+      notify();
+      return;
+    }
+    cache.set(projectId, read ?? DEFAULT_CRITERIA);
+    savedFlags.set(projectId, read !== null);
     notify();
   });
 }
@@ -124,9 +150,10 @@ function ensureLoaded(projectId: string): void {
 export function useProjectCriteria(projectId: string | null): {
   criteria: ProjectCriteria;
   setCriteria: (next: ProjectCriteria) => void;
-  /** Whether this project has criteria saved on disk. `null` while the fetch
-   * is in flight — callers that seed defaults must wait rather than treat
-   * "not yet known" as "none saved". */
+  /** Whether this project has criteria saved on disk, or `null` for not
+   * known — the fetch still in flight, or a fetch that failed. Callers that
+   * seed defaults must wait on `null` rather than read it as "none saved":
+   * seeding *writes*, so guessing here overwrites real criteria. */
   saved: boolean | null;
 } {
   useEffect(() => {
