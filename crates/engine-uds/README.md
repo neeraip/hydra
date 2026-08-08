@@ -12,6 +12,6 @@ It is one of Hydra's domain engines, alongside water distribution (`hydra-engine
 
 ## Scope
 
-This crate is the complete simulation engine and nothing else: data model, SWMM INP import, hydrology, hydraulics, water quality, controls, session API (`simulation::engine::Simulation`), and predecessor-format output writers. Model text is supplied in memory by callers; the crate performs no filesystem or network I/O.
+This crate is the complete simulation engine and nothing else: data model, SWMM INP import, hydrology, hydraulics, water quality, controls, session API (`simulation::engine::Simulation`), and predecessor-format output writers. Model text and auxiliary-file contents (climate records, hotstart state, routing interfaces) are supplied in memory by callers; the crate performs no network I/O. The one filesystem carve-out is the explicit path-based streaming of binary `.out` result files (`io::out_reader`), so large results never have to be loaded whole.
 
 The authoritative behaviour definition lives in the module-level specifications embedded in the rustdoc (model, hydrology, hydraulics, transport, simulation, interop).
