@@ -1,0 +1,13 @@
+# This engine reads no wall clock today, and the rule exists so that stays
+# true by accident rather than by memory.
+#
+# `wasm32-unknown-unknown` has no clock behind `SystemTime`, and `now()` does
+# not fail there — it panics, which compiled to wasm is an `unreachable` trap
+# with no message. A call added here would compile, pass every test in this
+# crate (they all run on the host), and only fail when someone opened the
+# browser demo. `hydra-engine-wds` had exactly that, and its `wall_clock`
+# module is the fix; if this engine ever needs the time, it wants the same
+# treatment rather than a direct call.
+disallowed-methods = [
+    { path = "std::time::SystemTime::now", reason = "SystemTime has no implementation on wasm32 and panics; see hydra-engine-wds's wall_clock module" },
+]

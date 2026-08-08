@@ -1,0 +1,21 @@
+# The engine reads the wall clock through `wall_clock::now()`, never through
+# `SystemTime::now()` directly.
+#
+# `wasm32-unknown-unknown` has no clock behind `SystemTime`, and `now()` does
+# not fail there — it panics, which compiled to wasm is an `unreachable` trap
+# with no message. So a direct call breaks the browser build in a way nothing
+# else catches: it compiles, and every one of this crate's tests passes,
+# because they all run on the host. The failure only appears when someone
+# opens the page, as an aborted module saying nothing about why.
+#
+# `Instant::now()` is deliberately not listed. It is a monotonic timer rather
+# than a wall clock, and its only uses here are behind `HYDRA_SOLVE_TIMING`,
+# which is never set on wasm (the env is empty), so those calls are
+# unreachable there. Listing it would mean eleven `#[allow]`s on code that is
+# already safe.
+#
+# Clippy resolves this file per crate, so it constrains this engine without
+# touching `hydra-cli`, whose own `Instant::now()` is native-only and correct.
+disallowed-methods = [
+    { path = "std::time::SystemTime::now", reason = "use crate::wall_clock::now() — SystemTime has no implementation on wasm32 and panics" },
+]

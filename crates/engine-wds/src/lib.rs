@@ -67,6 +67,7 @@ pub mod io;
 pub mod model;
 mod quality;
 pub mod simulation;
+mod wall_clock;
 
 #[cfg(feature = "test-support")]
 pub mod test_support;

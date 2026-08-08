@@ -1489,7 +1489,7 @@ mod tests {
     use crate::io::WritableSimulation;
     use std::io::Cursor as StdCursor;
     use std::sync::atomic::{AtomicU64, Ordering};
-    use std::time::{SystemTime, UNIX_EPOCH};
+    use std::time::UNIX_EPOCH;
 
     static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
@@ -1725,7 +1725,11 @@ mod tests {
 
     fn write_temp_bytes(data: &[u8]) -> std::path::PathBuf {
         let mut path = std::env::temp_dir();
-        let nanos = SystemTime::now()
+        // Through `wall_clock` like everywhere else. This is test code and
+        // could read the clock directly without breaking anything, but an
+        // exception here is an exception someone copies into code that
+        // ships — and the crate's `clippy.toml` says so out loud.
+        let nanos = crate::wall_clock::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_nanos();

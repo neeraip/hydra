@@ -22,6 +22,18 @@ chrono = { version = "0.4", default-features = false, features = ["clock"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
+# The report's date stamp asks the host what time it is. On every native
+# target chrono answers through `SystemTime`; on `wasm32-unknown-unknown`
+# there is no such clock, and the std stub panics with "time not implemented
+# on this platform" — so the first report a browser build tried to write
+# would abort the run rather than fail it. `wasmbind` makes chrono read the
+# clock and the zone offset from JS's `Date` instead.
+#
+# Target-gated so no native build gains a dependency it cannot use: this
+# pulls js-sys and wasm-bindgen into the wasm graph only.
+[target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dependencies]
+chrono = { version = "0.4", default-features = false, features = ["clock", "wasmbind"] }
+
 [dev-dependencies]
 approx = "0.5"
 criterion = { version = "0.8", features = ["html_reports"] }

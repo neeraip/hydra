@@ -111,14 +111,14 @@ impl Simulation {
     /// Requires the session to be in `Loaded` phase.
     pub fn run_hydraulics(&mut self) -> Result<(), SessionError> {
         self.require_phase(Phase::Loaded)?;
-        self.analysis_begun = Some(SystemTime::now());
+        self.analysis_begun = Some(crate::wall_clock::now());
         loop {
             let dt = self.step_hydraulics()?;
             if dt == 0.0 {
                 break;
             }
         }
-        self.analysis_ended = Some(SystemTime::now());
+        self.analysis_ended = Some(crate::wall_clock::now());
         Ok(())
     }
 
@@ -143,7 +143,7 @@ impl Simulation {
 
         // Record the wall-clock start time on the first step call.
         if self.analysis_begun.is_none() {
-            self.analysis_begun = Some(SystemTime::now());
+            self.analysis_begun = Some(crate::wall_clock::now());
         }
 
         let network = self
@@ -635,7 +635,7 @@ impl Simulation {
             .as_ref()
             .expect("invariant: network set in load()");
         if network.options.quality_mode == QualityMode::None {
-            self.analysis_ended = Some(SystemTime::now());
+            self.analysis_ended = Some(crate::wall_clock::now());
             self.phase = Phase::QualityDone;
             return Ok(());
         }
@@ -668,7 +668,7 @@ impl Simulation {
                 break;
             }
         }
-        self.analysis_ended = Some(SystemTime::now());
+        self.analysis_ended = Some(crate::wall_clock::now());
         Ok(())
     }
 
@@ -695,7 +695,7 @@ impl Simulation {
                 .as_ref()
                 .expect("invariant: network set in load()");
             if network.options.quality_mode == QualityMode::None {
-                self.analysis_ended = Some(SystemTime::now());
+                self.analysis_ended = Some(crate::wall_clock::now());
                 self.phase = Phase::QualityDone;
                 return Ok(0.0);
             }
@@ -726,7 +726,7 @@ impl Simulation {
         let duration = network.options.duration;
         let qt = self.quality_t;
         if qt >= duration {
-            self.analysis_ended = Some(SystemTime::now());
+            self.analysis_ended = Some(crate::wall_clock::now());
             self.phase = Phase::QualityDone;
             return Ok(0.0);
         }
