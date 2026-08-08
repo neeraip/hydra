@@ -34,6 +34,11 @@ const SettingsContent = lazy(() =>
   loadSettingsContent().then((m) => ({ default: m.SettingsContent })),
 );
 
+/** The column's own padding, named so the sticky header can bleed back
+ *  out to exactly its edges rather than restating the numbers. */
+const COLUMN_PAD_Y = 40;
+const COLUMN_PAD_X = 44;
+
 /**
  * The drawer's inner column.
  *
@@ -51,7 +56,38 @@ export const SETTINGS_COLUMN: React.CSSProperties = {
   width: "100%",
   maxWidth: 680,
   margin: "0 auto",
-  padding: "40px 44px",
+  padding: `${COLUMN_PAD_Y}px ${COLUMN_PAD_X}px`,
+};
+
+/**
+ * The header, kept in view while the rows scroll under it.
+ *
+ * The list is long enough to lose the way out: scroll to the maintenance
+ * tools at the bottom and the close button is somewhere above, so
+ * dismissing means scrolling back up first or knowing that Escape works.
+ * Pinning it means the drawer always says what it is and always offers the
+ * way out, which is what the header was for.
+ *
+ * The negative margin is the load-bearing part. This sits inside a column
+ * padded by 44px, so a sticky box would span only the text width and the
+ * gutters either side would stay transparent — rows sliding past would
+ * show through them while passing behind the middle. Bleeding back out to
+ * the column's edges and putting the padding back inside makes the header
+ * opaque across the full width.
+ *
+ * Both numbers come from the column's own padding rather than being
+ * written again. A second copy of 40 and 44 could drift, and the seam
+ * would only appear while scrolling — which is the one state a static
+ * reading of the file never shows.
+ */
+export const SETTINGS_HEADER: React.CSSProperties = {
+  position: "sticky",
+  top: 0,
+  zIndex: 1,
+  background: "var(--bg-app)",
+  borderBottom: "1px solid var(--border)",
+  margin: `-${COLUMN_PAD_Y}px -${COLUMN_PAD_X}px 20px`,
+  padding: `${COLUMN_PAD_Y}px ${COLUMN_PAD_X}px 14px`,
 };
 
 export function SettingsDrawer() {
@@ -114,65 +150,69 @@ export function SettingsDrawer() {
         <div style={SETTINGS_COLUMN}>
           {/* The header is chrome, not content: it names the drawer and
               offers the way out, both of which have to be there from the
-              first frame rather than after a load. */}
-          <div
-            style={{
-              display: "flex",
-              alignItems: "flex-start",
-              justifyContent: "space-between",
-              gap: 16,
-            }}
-          >
-            <h1
+              first frame rather than after a load — and stay there once the
+              rows are long enough to scroll the close button off. */}
+          <div style={SETTINGS_HEADER}>
+            <div
               style={{
-                margin: "0 0 4px",
-                fontSize: "var(--text-3xl)",
-                fontWeight: 700,
-                letterSpacing: "-0.015em",
+                display: "flex",
+                alignItems: "flex-start",
+                justifyContent: "space-between",
+                gap: 16,
               }}
             >
-              Settings
-            </h1>
-            <button
-              type="button"
-              onClick={closeSettings}
-              aria-label="Close settings"
-              data-tooltip="Close"
+              <h1
+                style={{
+                  margin: "0 0 4px",
+                  fontSize: "var(--text-3xl)",
+                  fontWeight: 700,
+                  letterSpacing: "-0.015em",
+                }}
+              >
+                Settings
+              </h1>
+              <button
+                type="button"
+                onClick={closeSettings}
+                aria-label="Close settings"
+                data-tooltip="Close"
+                style={{
+                  flexShrink: 0,
+                  marginTop: 6,
+                  width: 28,
+                  height: 28,
+                  display: "inline-flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  borderRadius: 6,
+                  border: "1px solid var(--border)",
+                  background: "transparent",
+                  color: "var(--text-secondary)",
+                  cursor: "pointer",
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.background = "var(--nav-hover)";
+                  e.currentTarget.style.color = "var(--text-primary)";
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.background = "transparent";
+                  e.currentTarget.style.color = "var(--text-secondary)";
+                }}
+              >
+                <XMarkIcon style={{ width: 15, height: 15 }} />
+              </button>
+            </div>
+            <p
               style={{
-                flexShrink: 0,
-                marginTop: 6,
-                width: 28,
-                height: 28,
-                display: "inline-flex",
-                alignItems: "center",
-                justifyContent: "center",
-                borderRadius: 6,
-                border: "1px solid var(--border)",
-                background: "transparent",
+                margin: 0,
                 color: "var(--text-secondary)",
-                cursor: "pointer",
-              }}
-              onMouseEnter={(e) => {
-                e.currentTarget.style.background = "var(--nav-hover)";
-                e.currentTarget.style.color = "var(--text-primary)";
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.background = "transparent";
-                e.currentTarget.style.color = "var(--text-secondary)";
+                fontSize: "var(--text-xl)",
               }}
             >
-              <XMarkIcon style={{ width: 15, height: 15 }} />
-            </button>
+              Appearance, accessibility, and maintenance tools.
+            </p>
           </div>
-          <p
-            style={{
-              margin: "0 0 4px",
-              color: "var(--text-secondary)",
-              fontSize: "var(--text-xl)",
-            }}
-          >
-            Appearance, accessibility, and maintenance tools.
-          </p>
+
           {/* A spinner rather than a skeleton of the rows.
 
               A skeleton has to mirror what it stands in for, and the
