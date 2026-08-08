@@ -110,7 +110,6 @@ export function BlockAnalysisView({
         display: "grid",
         gridTemplateColumns: "repeat(auto-fill, minmax(min(520px, 100%), 1fr))",
         gap: 12,
-        alignItems: "start",
       }}
     >
       {header ? <div style={{ gridColumn: "1 / -1" }}>{header}</div> : null}

@@ -36,6 +36,11 @@ export function BlockPanel({ block }: { block: AnalysisBlock }) {
         border: "1px solid var(--border)",
         borderRadius: 6,
         padding: "12px 14px",
+        // Fill the grid row: cards sharing a row share its height, so a
+        // short card ("The network has no tanks.") sits in a full-height
+        // card beside its neighbour instead of leaving a hole below.
+        height: "100%",
+        boxSizing: "border-box",
       }}
     >
       <div
