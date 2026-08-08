@@ -33,6 +33,12 @@ import {
   useUnitSystem,
 } from "../../units";
 import { DeleteConfirmModal } from "../modals/DeleteConfirmModal";
+import {
+  parseTriggerTime,
+  type TriggerTimeKind,
+  triggerTimeIsElapsed,
+  triggerTimeText,
+} from "./triggerTime";
 
 type ControlFilter = "all" | "simple" | "rule";
 
@@ -91,21 +97,6 @@ function settingUnitLabel(link: Link | undefined, sys: UnitSystem): string {
 /** SI → display for a numeric input, rounded so typing doesn't jitter. */
 function dispNum(v: number, q: Quantity | null, sys: UnitSystem): number {
   return q ? Number(toDisplay(v, q, sys).toFixed(4)) : v;
-}
-
-function secondsToHhmm(s: number | null): string {
-  if (s == null || !Number.isFinite(s)) return "00:00";
-  const total = Math.max(0, Math.round(s));
-  const h = Math.floor((total / 3600) % 24);
-  const m = Math.floor((total % 3600) / 60);
-  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
-}
-
-function hhmmToSeconds(v: string): number {
-  const [h, m] = v.split(":").map((n) => parseInt(n, 10));
-  return (
-    (Number.isFinite(h) ? h : 0) * 3600 + (Number.isFinite(m) ? m : 0) * 60
-  );
 }
 
 function defaultControl(links: Link[]): SimpleControlDto {
@@ -553,9 +544,9 @@ function summarizeControl(c: SimpleControlDto, sys: UnitSystem): string {
     `${v != null ? dispNum(v, "length", sys) : "?"} ${unitLabel("length", sys)}`;
   const trigger =
     c.triggerKind === "timer"
-      ? `AT TIME ${secondsToHhmm(c.triggerSeconds)}`
+      ? `AT TIME ${triggerTimeText("timer", c.triggerSeconds)}`
       : c.triggerKind === "clocktime"
-        ? `AT CLOCKTIME ${secondsToHhmm(c.triggerSeconds)}`
+        ? `AT CLOCKTIME ${triggerTimeText("clocktime", c.triggerSeconds)}`
         : c.triggerKind === "hiLevel"
           ? `IF ${c.triggerNodeId ?? "?"} ABOVE ${lvl(c.triggerValue)}`
           : `IF ${c.triggerNodeId ?? "?"} BELOW ${lvl(c.triggerValue)}`;
@@ -760,6 +751,73 @@ function Field({
  * under the option cap), validated against `validIds` on commit; an unknown
  * id reverts to the last valid value and shows the error style.
  */
+/**
+ * When a control fires, in whichever of the two senses it means.
+ *
+ * Elapsed time gets a text field: a native `time` input stops at 23:59 and
+ * renders an empty box for `30:00`, which is an ordinary trigger to find in
+ * an imported model. Time of day keeps the picker, where it belongs.
+ *
+ * Typed freely and committed on blur, like `RefIdInput` beside it, because
+ * a field that re-formats on every keystroke fights the person filling it
+ * in: `3` on the way to `30:00` parses as three o'clock, and rewriting the
+ * box to `03:00` under the cursor makes the next character land somewhere
+ * nobody asked for. Anything unreadable reverts on blur rather than
+ * committing — the old field read a cleared box as zero and moved the
+ * control to the start of the run.
+ */
+function TriggerTimeInput({
+  kind,
+  seconds,
+  onCommit,
+}: {
+  kind: TriggerTimeKind;
+  seconds: number | null;
+  onCommit: (seconds: number) => void;
+}) {
+  const shown = triggerTimeText(kind, seconds);
+  const [draft, setDraft] = useState(shown);
+
+  // Re-seed when the committed value changes from outside — a different
+  // card, or the trigger kind switching under the same one.
+  const prevShown = useRef(shown);
+  if (shown !== prevShown.current) {
+    prevShown.current = shown;
+    setDraft(shown);
+  }
+
+  function commit() {
+    const parsed = parseTriggerTime(kind, draft);
+    if (parsed == null) {
+      setDraft(shown);
+      return;
+    }
+    setDraft(triggerTimeText(kind, parsed));
+    if (parsed !== seconds) onCommit(parsed);
+  }
+
+  return (
+    <input
+      type={triggerTimeIsElapsed(kind) ? "text" : "time"}
+      inputMode="numeric"
+      value={draft}
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={commit}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          (e.target as HTMLInputElement).blur();
+        }
+        if (e.key === "Escape") {
+          setDraft(shown);
+          (e.target as HTMLInputElement).blur();
+        }
+      }}
+      style={inputStyle}
+    />
+  );
+}
+
 function RefIdInput({
   value,
   validIds,
@@ -980,14 +1038,17 @@ function ControlCard({
           </select>
         </Field>
         {draft.triggerKind === "timer" || draft.triggerKind === "clocktime" ? (
-          <Field label="Time (HH:MM)">
-            <input
-              type="time"
-              value={secondsToHhmm(draft.triggerSeconds)}
-              onChange={(e) =>
-                sync({ triggerSeconds: hhmmToSeconds(e.target.value) })
-              }
-              style={inputStyle}
+          <Field
+            label={
+              triggerTimeIsElapsed(draft.triggerKind)
+                ? "Elapsed (HH:MM)"
+                : "Clock time (HH:MM)"
+            }
+          >
+            <TriggerTimeInput
+              kind={draft.triggerKind}
+              seconds={draft.triggerSeconds}
+              onCommit={(triggerSeconds) => sync({ triggerSeconds })}
             />
           </Field>
         ) : (
