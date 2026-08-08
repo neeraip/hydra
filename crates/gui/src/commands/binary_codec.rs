@@ -60,6 +60,25 @@ const NETWORK_SNAPSHOT_FLAG_PRESENT: u32 = 1;
 /// order the link columns are emitted — so link *i*'s vertices are the
 /// `vertex_count[i]` entries starting at `Σ vertex_count[0..i]`.
 ///
+/// # Why coordinates are f64 and properties are f32
+///
+/// Coordinates are the one column where narrowing shows on screen. A
+/// projected easting runs to seven figures before the decimal point, so an
+/// f32 leaves under a metre of resolution and a network drawn from it
+/// visibly shifts. Everything else here is a property the canvas paints or
+/// the inspector prints — halving those columns is most of the payload on a
+/// 46k-element model, and f32 carries about seven significant figures,
+/// which is past any measured diameter or roughness.
+///
+/// What it is *not* is a value to edit or round-trip. `patch_elements`
+/// takes one field at a time and the frontend sends only fields the user
+/// actually changed, so nothing decoded here is ever written back — but a
+/// caller that started echoing a whole element would silently re-quantise
+/// every untouched property. The narrowing is also visible verbatim if a
+/// value is printed raw: a 304.8 mm diameter reads `304.79998779296875`,
+/// which is why the inspector rounds for display rather than trusting the
+/// digits it was handed.
+///
 /// Column ordering keeps every f64 column 8-byte-aligned and every f32
 /// column 4-byte-aligned relative to the buffer start, so the decoder can
 /// use zero-copy typed-array views (the trailing u32 vertex-count column may
