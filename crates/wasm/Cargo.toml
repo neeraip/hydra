@@ -1,0 +1,32 @@
+[package]
+name = "hydra-wasm"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+# Not published: this is a reference consumer of the public API, like the CLI
+# and the GUI, and the artifact people want is the built `.wasm` bundle rather
+# than a crate to depend on.
+publish = false
+repository.workspace = true
+homepage.workspace = true
+documentation.workspace = true
+description = "Hydra in the browser — the simulation engines compiled to WebAssembly"
+readme = "README.md"
+
+[lib]
+# `cdylib` is what wasm-bindgen links; `rlib` is what `cargo test` needs, and
+# the decisions in this crate are plain Rust precisely so the host can test
+# them without a browser in the loop.
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+hydra = { package = "hydra-sdk", path = "../sdk", version = "8.0.0" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+wasm-bindgen = "0.2"
+
+[dev-dependencies]
+# Only used by `tests/browser.rs`, which is `#![cfg(target_arch = "wasm32")]`
+# and so compiles to nothing on a host `cargo test`.
+wasm-bindgen-test = "0.3"

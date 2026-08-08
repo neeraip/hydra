@@ -9,6 +9,7 @@ members = [
     "crates/sdk",
     "crates/cli",
     "crates/gui",
+    "crates/wasm",
 ]
 resolver = "2"
 
@@ -23,10 +24,18 @@ homepage = "https://github.com/neeraip/hydra"
 documentation = "https://neeraip.github.io/hydra/"
 
 
-# Optimise the engine even in dev/test builds so that the test suite — and any
-# test that exercises the solver — runs at near-release speed without
-# requiring `--release`.
+# Optimise the engines even in dev/test builds so that the test suite — and any
+# test that exercises a solver — runs at near-release speed without requiring
+# `--release`. `profile.dev.package."*"` below does not cover these: it applies
+# to dependencies, and a workspace member is not one.
+#
+# The uds entry was added when a bundled example (a 36-hour dynamic-wave run)
+# took 65 seconds unoptimised and under a second with this. Routing is the
+# hot loop, and any test that routes pays for its absence.
 [profile.dev.package.hydra-engine-wds]
+opt-level = 2
+
+[profile.dev.package.hydra-engine-uds]
 opt-level = 2
 
 # Optimise all dependencies in dev (serde, tauri IPC, etc.): they rebuild only
