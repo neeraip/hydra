@@ -29,10 +29,6 @@ import {
   type GenericSelection,
 } from "../../canvas/GenericLegend";
 import type { ScaleMode } from "../../canvas/legend-primitives";
-import {
-  ANIMATED_LINK_VARIABLES,
-  animationAppliesHint,
-} from "../../canvas/linkPulse";
 import { MapCanvas } from "../../canvas/MapCanvas";
 import { wdsBandColors } from "../../canvas/MapCanvas/colorUtils";
 import type { MeasurePoint } from "../../canvas/measureSnap";
@@ -493,11 +489,6 @@ const CRITERIA_PANEL_STYLE: React.CSSProperties = {
   transition: "left var(--rail-transition)",
 };
 
-/** Named with this engine's own words for its variables. */
-const ANIMATION_APPLIES_HINT = animationAppliesHint(
-  (v) => WDS_LINK_VARS[v].label,
-);
-
 function readCanvasPrefs(projectId: string): Partial<CanvasPrefs> | null {
   try {
     const raw = localStorage.getItem(canvasPrefsKey(projectId));
@@ -525,7 +516,8 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
   const { project, engine } = useActiveProject();
   // Editing affordances exist only for engines whose model this GUI edits;
   // for read-only engines the tools hide rather than refuse per gesture.
-  const { modelEditable, criteriaVariables } = engineComponents(engine?.key);
+  const { modelEditable, criteriaVariables, animatedVariables } =
+    engineComponents(engine?.key);
   const { markEdited } = useNetworkVersion();
   const renameElementFlow = useElementRename();
   const simParams = useSimParams(project?.id);
@@ -1973,12 +1965,14 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
   const legendAnimation = useMemo(
     () => ({
       playing: linkAnimation,
+      // From the registry, not from this engine's list: the legend below
+      // is every engine's, and the sentence it builds for a reader whose
+      // selection is not animated is built from these ids.
+      appliesTo: animatedVariables,
       onToggle: setLinkAnimation,
-      appliesTo: ANIMATED_LINK_VARIABLES,
-      appliesToHint: ANIMATION_APPLIES_HINT,
       reducedMotion,
     }),
-    [linkAnimation, setLinkAnimation, reducedMotion],
+    [linkAnimation, setLinkAnimation, reducedMotion, animatedVariables],
   );
 
   /** Read-only band text under a criteria-backed variable's ramp. The

@@ -140,3 +140,72 @@ describe("GenericLegend", () => {
     expect(screen.queryByLabelText("Region variable")).toBeNull();
   });
 });
+
+/**
+ * The sentence a reader sees when the toggle will not do anything.
+ *
+ * This legend is every engine's. The sentence used to be handed to it as a
+ * finished string, and every engine was handed the water distribution one —
+ * so a drainage model, whose conduits publish flow, depth, velocity and
+ * capacity, offered "Animation applies to Flow, Velocity, Unit headloss,
+ * Quality, and Status". Three of those five do not exist in drainage.
+ *
+ * It is built from the catalog on screen now, which is the only list that
+ * cannot be the wrong engine's.
+ */
+describe("what the animation toggle says it applies to", () => {
+  const animation = (appliesTo: readonly string[]) => ({
+    playing: false,
+    onToggle: vi.fn(),
+    appliesTo,
+    reducedMotion: false,
+  });
+
+  /** A drainage-shaped catalog: no headloss, no quality, no status. */
+  const drainage = meta({
+    pointVars: [v({ id: "depth", label: "Depth" })],
+    polylineVars: [
+      v({ id: "flow", label: "Flow" }),
+      v({ id: "depth", label: "Depth" }),
+      v({ id: "velocity", label: "Velocity" }),
+      v({ id: "capacity", label: "Capacity used" }),
+    ],
+  });
+
+  function hintFor(over: Parameters<typeof renderLegend>[0]) {
+    const { container } = renderLegend(over);
+    const titles = Array.from(container.querySelectorAll("[title]")).map((el) =>
+      el.getAttribute("title"),
+    );
+    return titles.find((t) => t?.includes("Animation")) ?? "";
+  }
+
+  it("names only variables the catalog on screen publishes", () => {
+    const hint = hintFor({
+      meta: drainage,
+      selection: { point: "", polyline: "capacity", region: "" },
+      animation: animation(["flow", "velocity"]),
+    });
+    expect(hint).toBe("Animation applies to Flow and Velocity");
+  });
+
+  /** The exact words that used to reach a drainage reader. */
+  it("does not offer another engine's variables", () => {
+    const hint = hintFor({
+      meta: drainage,
+      selection: { point: "", polyline: "capacity", region: "" },
+      animation: animation(["flow", "velocity", "headloss", "quality"]),
+    });
+    expect(hint).not.toContain("headloss");
+    expect(hint).not.toContain("quality");
+  });
+
+  it("says nothing applies when nothing does", () => {
+    const hint = hintFor({
+      meta: drainage,
+      selection: { point: "", polyline: "capacity", region: "" },
+      animation: animation([]),
+    });
+    expect(hint).toBe("Animation does not apply to this model");
+  });
+});

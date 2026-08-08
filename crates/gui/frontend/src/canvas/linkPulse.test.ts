@@ -256,25 +256,31 @@ describe("the pattern each kind draws", () => {
  * was fixed.
  */
 describe("what the disabled toggle says", () => {
-  const label = (v: LinkVariable) => `«${v}»`;
-
-  it("names exactly the variables that animate", () => {
-    const hint = animationAppliesHint(label);
-    for (const v of ALL_LINK_VARS) {
-      expect(hint.includes(label(v))).toBe(pulseApplies(v));
-    }
-  });
-
   it("reads as a sentence rather than a list dump", () => {
-    expect(animationAppliesHint(label)).toMatch(
-      /^Animation applies to .+ and /,
+    // `Intl.ListFormat` under `en`, Oxford comma and all — which is what
+    // shipped before this and is not what is being changed here.
+    expect(animationAppliesHint(["Flow", "Velocity", "Status"])).toBe(
+      "Animation applies to Flow, Velocity, and Status",
     );
   });
 
-  /** The words belong to the engine, not to this module. */
-  it("uses the caller's words", () => {
-    expect(animationAppliesHint(() => "Zzz")).toContain("Zzz");
-    expect(animationAppliesHint(label)).not.toContain("Zzz");
+  it("handles a single name without inventing a conjunction", () => {
+    expect(animationAppliesHint(["Flow"])).toBe("Animation applies to Flow");
+  });
+
+  /**
+   * The words belong to the engine being looked at. This module knows the
+   * water distribution pulse, and taking ids to translate was still too
+   * much knowledge — the ids were this engine's, so drainage was told about
+   * Unit headloss and Quality.
+   */
+  it("says only what it was given", () => {
+    expect(animationAppliesHint(["Depth"])).not.toContain("headloss");
+  });
+
+  /** An engine with nothing to animate should not be promised anything. */
+  it("says so when nothing applies", () => {
+    expect(animationAppliesHint([])).not.toContain("applies to");
   });
 });
 

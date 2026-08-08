@@ -40,6 +40,7 @@ import {
   type ScaleMode,
   SECTION_LABEL_STYLE,
 } from "./legend-primitives";
+import { animationAppliesHint } from "./linkPulse";
 import {
   bandedGradientCss,
   categoryRgba,
@@ -141,6 +142,32 @@ function LocateRow({ onLocate }: { onLocate: (which: "min" | "max") => void }) {
   );
 }
 
+/**
+ * The engine's own names for the variables its motion can carry.
+ *
+ * Read off the catalog being displayed rather than from a list written
+ * anywhere else, and in catalog order — which is the order the pickers
+ * show, so the sentence reads in the order the reader's eye already has.
+ * Ids the catalog does not publish are dropped rather than named: a
+ * registry entry naming one variable too many should read as a shorter
+ * sentence, not as an offer of something that is not there.
+ */
+export function animatedVariableLabels(
+  classes: readonly { variables: readonly GenericVariable[] }[],
+  appliesTo: readonly string[],
+): string[] {
+  const seen = new Set<string>();
+  const labels: string[] = [];
+  for (const cls of classes) {
+    for (const v of cls.variables) {
+      if (!appliesTo.includes(v.id) || seen.has(v.id)) continue;
+      seen.add(v.id);
+      labels.push(v.label);
+    }
+  }
+  return labels;
+}
+
 interface ClassConfig {
   key: GenericClassKey;
   variables: GenericVariable[];
@@ -152,16 +179,19 @@ interface ClassConfig {
 export interface AnimationControl {
   playing: boolean;
   onToggle: (playing: boolean) => void;
-  /** Variable ids the animation applies to; others disable the button. */
-  appliesTo: readonly string[];
   /**
-   * What to tell a reader whose selection is not one of them. Supplied
-   * rather than written here: this legend is shared by every engine, and
-   * naming one engine's variables in it would be naming the wrong ones for
-   * the rest — which is also how the old sentence went stale unnoticed,
-   * being the only copy of the list nothing else read.
+   * Variable ids the animation applies to; others disable the button.
+   *
+   * Engine-specific, and so supplied per engine rather than written here.
+   * The sentence shown to a reader whose selection is not one of them used
+   * to be supplied alongside — and every engine was handed the water
+   * distribution one, so a drainage map offered "Flow, Velocity, Unit
+   * headloss, Quality and Status" for a catalog holding four variables,
+   * three of those names among them. It is built from these ids and this
+   * legend's own catalog now, so it can only ever be in the words of the
+   * engine being looked at.
    */
-  appliesToHint: string;
+  appliesTo: readonly string[];
   /** Global "Reduce motion" preference — always wins over the toggle. */
   reducedMotion: boolean;
 }
@@ -311,6 +341,11 @@ export function GenericLegend({
   const animatable =
     animation != null &&
     classes.some((c) => animation.appliesTo.includes(selected(c).id));
+  // Named from the catalog on screen, so the sentence is in this engine's
+  // words and can only list variables it actually publishes.
+  const appliesToHint = animation
+    ? animationAppliesHint(animatedVariableLabels(classes, animation.appliesTo))
+    : "";
 
   return (
     <div ref={rootRef} style={LEGEND_ROOT_STYLE}>
@@ -493,7 +528,7 @@ export function GenericLegend({
             const tooltip = animation.reducedMotion
               ? "Animation off (Reduce motion is enabled in Settings)"
               : !animatable
-                ? animation.appliesToHint
+                ? appliesToHint
                 : animation.playing
                   ? "Pause link animation"
                   : "Play link animation";

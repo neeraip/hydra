@@ -107,19 +107,18 @@ export const ANIMATED_LINK_VARIABLES: readonly string[] =
 /**
  * What to say when the animation toggle is offered but does not apply.
  *
- * Derived from the same list, because this sentence was the fourth copy of
- * it — after the layer, the clock and the legend's own gate — and the only
- * one a user ever reads. It went on naming flow and velocity long after the
- * other three had been extended.
+ * Only the sentence. Which variables belong in it, and what they are
+ * called, are both the caller's — this module knows the water distribution
+ * pulse and the legend showing the sentence is shared by every engine.
+ * Handing it a list of ids to translate was not enough separation: the ids
+ * were this engine's too, so a drainage reader was told about Unit headloss
+ * and Quality, neither of which drainage has.
  *
- * The labels arrive from the caller rather than being written here: which
- * words name a variable is the engine's business, and the legend that shows
- * this sentence is shared by all of them.
+ * Empty names give a sentence that says nothing applies, which is true and
+ * is what an engine with no animated variables should read.
  */
-export function animationAppliesHint(
-  label: (linkVar: LinkVariable) => string,
-): string {
-  const names = LINK_VARIABLES.filter(pulseApplies).map(label);
+export function animationAppliesHint(names: readonly string[]): string {
+  if (names.length === 0) return "Animation does not apply to this model";
   return `Animation applies to ${new Intl.ListFormat("en", {
     style: "long",
     type: "conjunction",

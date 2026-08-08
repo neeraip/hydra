@@ -12,6 +12,7 @@
  */
 
 import type { ComponentType } from "react";
+import { ANIMATED_LINK_VARIABLES } from "../canvas/linkPulse";
 import type { GenericQuantity, Link, Node } from "../hooks";
 import type { Region } from "../types/network";
 import { UdsAnalysisView } from "./uds/AnalysisView";
@@ -129,6 +130,21 @@ export interface EngineComponents {
    * offers the option.
    */
   criteriaVariables: readonly string[];
+  /**
+   * Result-variable ids whose motion the canvas can animate.
+   *
+   * The pulse reads a link's flow to decide how fast to move and what the
+   * movement is claiming, so what it can animate depends on what an engine
+   * publishes and on what that variable means. Matching by id alone would
+   * not do: `flow` and `velocity` happen to be spelled the same in both
+   * engines today, and the sentence offered to a reader whose selection is
+   * not animated was the water distribution one for everybody — a drainage
+   * map named Unit headloss and Quality, which drainage does not have.
+   *
+   * Empty means the engine has no animated variables and the toggle stays
+   * inert wherever it appears.
+   */
+  animatedVariables: readonly string[];
 }
 
 const WDS: EngineComponents = {
@@ -137,6 +153,7 @@ const WDS: EngineComponents = {
   settingsEditable: true,
   modelEditable: true,
   criteriaVariables: ["pressure", "velocity", "flow"],
+  animatedVariables: ANIMATED_LINK_VARIABLES,
 };
 
 const UDS: EngineComponents = {
@@ -158,6 +175,11 @@ const UDS: EngineComponents = {
   modelEditable: false,
   // Drainage has no compliance standard in the project criteria file.
   criteriaVariables: [],
+  // Conduit flow and velocity are rates the pulse can carry directly.
+  // Depth and capacity are states rather than rates — a full pipe is not a
+  // fast one — and animating them would have the motion assert something
+  // the number does not say.
+  animatedVariables: ["flow", "velocity"],
 };
 
 const REGISTRY: Record<string, EngineComponents> = {
