@@ -5,7 +5,13 @@ on:
     branches: [main]
     paths:
       - 'docs/**'
+      - 'crates/wasm/**'
+      - 'scripts/build-wasm-single.py'
       - '.github/workflows/docs.yml'
+  # Engine changes alter what /try computes but do not trigger a deploy —
+  # redeploying the demo on every solver commit would rebuild Pages far more
+  # often than it informs anyone. Dispatch manually after an engine release
+  # worth showing off.
   workflow_dispatch:
 
 permissions:
@@ -21,18 +27,46 @@ jobs:
   build:
     name: Build
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # The wasm release build is the long pole (fat LTO on the engines).
+    timeout-minutes: 25
 
     steps:
       - uses: actions/checkout@v7.0.1
 
-      - name: Install mdBook
+      - name: Install cargo-binstall
         uses: cargo-bins/cargo-binstall@v1.21.1
 
-      - run: cargo binstall mdbook --no-confirm
+      - name: Install mdBook and wasm-pack
+        run: cargo binstall mdbook wasm-pack --no-confirm
+
+      - name: Install Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1.17.0
+        with:
+          target: wasm32-unknown-unknown
+          cache: false
 
       - name: Build docs
         run: mdbook build docs
+
+      # The browser demo, deployed at /try. Everything runs client-side —
+      # a model opened there is read, solved and reported in the visitor's
+      # own tab, and never leaves it.
+      - name: Build the browser demo
+        run: |
+          wasm-pack build crates/wasm --target web --out-dir www/pkg --out-name hydra
+          wasm-pack build crates/wasm --target no-modules --out-dir www/pkg-nomodules --out-name hydra
+          python3 scripts/build-wasm-single.py
+
+      # After `mdbook build`, which recreates docs/book from scratch. The
+      # no-modules bundle exists only to assemble hydra.html and does not
+      # ship; hydra.html itself does, as the offline download the page
+      # offers.
+      - name: Place the demo at /try
+        run: |
+          mkdir -p docs/book/try
+          cp crates/wasm/www/index.html crates/wasm/www/app.js crates/wasm/www/app.css \
+             crates/wasm/www/hydra.html docs/book/try/
+          cp -R crates/wasm/www/pkg docs/book/try/pkg
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v5.0.0

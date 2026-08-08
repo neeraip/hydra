@@ -64,8 +64,12 @@
       <p>
         The report below is the engine's own summary — the same bytes
         <code>hydra run model.inp</code> writes to stdout. Lines beginning
-        <code>{</code> are the diagnostics it writes to stderr.
+        <code>{</code> are the diagnostics it writes to stderr. Models are
+        read, solved and reported in this tab; nothing is uploaded anywhere.
       </p>
+      <!-- Filled by app.js when a single-file build is published beside
+           this page; left empty when there is none to offer. -->
+      <p id="offline"></p>
     </footer>
 
     <!-- The demo first, as a classic script: classic scripts run before

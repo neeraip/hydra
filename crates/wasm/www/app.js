@@ -372,4 +372,29 @@ function startHydraDemo(hydra) {
   }
 
   line("Ready. Drop a model above, or pick an example.", "dim");
+
+  // Offer the single-file build for offline use — but only after checking
+  // it is actually published beside this page. The link is injected rather
+  // than written in the HTML so the single-file assembler's
+  // self-containedness check never sees a static reference. On a file://
+  // origin the probe is skipped without being attempted: the reader is
+  // already holding the offline version, and Chrome logs a fetch on file:
+  // as a console error even when the rejection is caught.
+  if (location.protocol === "file:") return;
+  fetch("hydra.html", { method: "HEAD" })
+    .then((r) => {
+      if (!r.ok) return;
+      const offline = document.getElementById("offline");
+      const a = document.createElement("a");
+      a.href = "hydra.html";
+      a.download = "hydra.html";
+      a.textContent = "Download the single-file version";
+      offline.appendChild(a);
+      offline.appendChild(
+        document.createTextNode(
+          " — one HTML file that runs the same engines offline, straight from your Downloads folder.",
+        ),
+      );
+    })
+    .catch(() => {});
 }
