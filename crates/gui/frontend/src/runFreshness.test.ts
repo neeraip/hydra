@@ -108,9 +108,9 @@ describe("run-derived data stays fresh", () => {
 
   it("discovers the wrappers it is meant to guard", () => {
     // A rename that empties this set would make every assertion below vacuous.
-    expect(wrappers.size).toBeGreaterThanOrEqual(5);
+    expect(wrappers.size).toBeGreaterThanOrEqual(4);
     expect(wrappers).toContain("probeReportBlocks");
-    expect(wrappers).toContain("getResultAnalytics");
+    expect(wrappers).toContain("getPumpEnergy");
   });
 
   it("every effect reading a completed run re-runs when one lands", () => {

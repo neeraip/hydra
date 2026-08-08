@@ -112,7 +112,6 @@ fn main() {
             commands::get_kind_counts,
             commands::get_collection_detail,
             commands::get_pump_energy,
-            commands::get_result_analytics,
             commands::load_project_network,
             commands::patch_elements,
             commands::patch_node_position,

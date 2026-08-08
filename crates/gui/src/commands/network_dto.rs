@@ -27,9 +27,6 @@ use serde::{Deserialize, Serialize};
 /// tests at the foot of this file, which assert absolute values instead.
 pub(crate) const M_TO_MM: f64 = 1000.0;
 pub(crate) const M3S_TO_LPS: f64 = 1000.0;
-/// Litres → m³, for accumulations read out of a results file (which the
-/// engine always writes in L/s, whatever the model's own unit system).
-pub(crate) const L_TO_M3: f64 = 0.001;
 
 // ── Network load commands ─────────────────────────────────────────────────────
 

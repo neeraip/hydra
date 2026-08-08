@@ -180,6 +180,7 @@ pub fn get_analysis_blocks(
     project_id: String,
     scenario_id: Option<String>,
     unit_system: Option<String>,
+    criteria: Option<meta::ProjectCriteria>,
 ) -> Result<Vec<AnalysisBlockDto>, String> {
     validate_target_ids(&project_id, scenario_id.as_deref())?;
     let app_data = app_data_dir(&app)?;
@@ -240,10 +241,124 @@ pub fn get_analysis_blocks(
                 })
                 .collect())
         }
-        // wds keeps its dedicated analytics surface until the Phase-D
-        // convergence moves it onto blocks too.
-        _ => Ok(Vec::new()),
+        _ => {
+            let network =
+                network_for_target(&app_data, &state, &project_id, scenario_id.as_deref())?;
+            let settings = hydra::report::DisplaySettings {
+                family: display_family_for(
+                    unit_system.as_deref(),
+                    hydra::io::units::is_si(network.options.flow_units),
+                ),
+                catalog: hydra::descriptors::QUANTITIES,
+            };
+            // The caller's criteria feed the criteria-shaped blocks, so
+            // the page and the canvas judge by the same numbers. They
+            // travel with the request — the frontend applies edits locally
+            // and persists fire-and-forget, so a disk read here could race
+            // an edit's own save. Absent (another caller), the saved ones
+            // apply. Criteria are stored in SI; block options are file
+            // display units by the engine's own spec, so the conversion
+            // happens here with the engine's factors — composition-root
+            // work.
+            let criteria = criteria.or_else(|| {
+                meta::read_project_criteria(&bundle::project_dir(&app_data, &project_id))
+            });
+            let options_by_id = wds_analysis_options(criteria.as_ref(), &network);
+            Ok(hydra::report_catalog()
+                .iter()
+                .map(|block| {
+                    let options = options_by_id.get(block.id);
+                    match hydra::produce_report_block(block.id, &out_path, &network, options) {
+                        Ok(fragment) => AnalysisBlockDto {
+                            id: block.id.to_string(),
+                            title: block.title.to_string(),
+                            status: "ok",
+                            reason: None,
+                            fragment: Some(hydra::report::resolve_fragment_display(
+                                &fragment, &settings,
+                            )),
+                        },
+                        Err(hydra::common::BlockError::Unavailable { reason }) => {
+                            AnalysisBlockDto {
+                                id: block.id.to_string(),
+                                title: block.title.to_string(),
+                                status: "unavailable",
+                                reason: Some(reason),
+                                fragment: None,
+                            }
+                        }
+                        Err(err) => AnalysisBlockDto {
+                            id: block.id.to_string(),
+                            title: block.title.to_string(),
+                            status: "failed",
+                            reason: Some(err.to_string()),
+                            fragment: None,
+                        },
+                    }
+                })
+                .collect())
+        }
     }
+}
+
+/// Options for the criteria-shaped wds blocks, from the project's saved
+/// criteria — absent criteria means absent options, which is each block's
+/// documented default.
+///
+/// Criteria are stored in SI (metres, m/s); wds block options are in the
+/// results file's display units (analysis spec §4.1.1), so US models
+/// convert with the engine's own §3.1 factors. Threshold edges must ascend
+/// strictly, so a degenerate band (two equal boundaries) sends no edges
+/// and the block falls back to its documented defaults rather than
+/// failing production.
+fn wds_analysis_options(
+    criteria: Option<&meta::ProjectCriteria>,
+    network: &hydra::Network,
+) -> std::collections::HashMap<&'static str, serde_json::Value> {
+    let mut options = std::collections::HashMap::new();
+    let Some(criteria) = criteria else {
+        return options;
+    };
+    let ucf =
+        hydra::io::units::make_ucf(network.options.flow_units, network.options.specific_gravity);
+    let si = hydra::io::units::is_si(network.options.flow_units);
+    let pressure = |m: f64| if si { m } else { m * ucf.pressure };
+    let velocity = |ms: f64| if si { ms } else { ms * ucf.elev };
+
+    options.insert(
+        "wds.service-compliance",
+        serde_json::json!({ "minPressure": pressure(criteria.min_pressure_m) }),
+    );
+    let ascending = |edges: &[f64]| edges.windows(2).all(|w| w[1] > w[0]);
+    let pressure_edges: Vec<f64> = [
+        criteria.pressure.low,
+        criteria.pressure.required,
+        criteria.pressure.high,
+    ]
+    .iter()
+    .map(|&m| pressure(m))
+    .collect();
+    if ascending(&pressure_edges) {
+        options.insert(
+            "wds.pressure-thresholds",
+            serde_json::json!({ "edges": pressure_edges }),
+        );
+    }
+    let velocity_edges: Vec<f64> = [
+        criteria.velocity.low,
+        criteria.velocity.target,
+        criteria.velocity.high,
+    ]
+    .iter()
+    .map(|&ms| velocity(ms))
+    .collect();
+    if ascending(&velocity_edges) {
+        options.insert(
+            "wds.velocity-thresholds",
+            serde_json::json!({ "edges": velocity_edges }),
+        );
+    }
+    options
 }
 
 fn template_path(app_data: &std::path::Path, project_id: &str) -> std::path::PathBuf {
@@ -528,4 +643,90 @@ fn render_for_target(
         }
         other => return Err(format!("unknown report format: {other:?}")),
     })
+}
+
+#[cfg(test)]
+mod wds_options_tests {
+    use super::*;
+
+    fn network(units_line: &str) -> hydra::Network {
+        let inp = format!(
+            "[JUNCTIONS]\nJ1  0  10\n\n[RESERVOIRS]\nR1  100\n\n\
+             [PIPES]\nP1  R1  J1  1000  300  100  0  Open\n\n\
+             [OPTIONS]\nUnits  {units_line}\nHeadloss  H-W\n\n[END]\n"
+        );
+        hydra::io::parse(inp.as_bytes()).expect("parse")
+    }
+
+    fn criteria() -> meta::ProjectCriteria {
+        serde_json::from_value(serde_json::json!({
+            "version": 1,
+            "minPressureM": 14.0,
+            "pressure": { "low": 24.0, "required": 35.0, "high": 45.0 },
+            "velocity": { "low": 0.1, "target": 0.5, "high": 1.5 },
+            "flow": { "low": 0.1, "target": 1.0, "high": 10.0 },
+        }))
+        .expect("criteria json")
+    }
+
+    /// Criteria are SI; an SI model's options pass through untouched.
+    #[test]
+    fn si_criteria_feed_si_options_unchanged() {
+        let options = wds_analysis_options(Some(&criteria()), &network("LPS"));
+        assert_eq!(
+            options["wds.service-compliance"]["minPressure"]
+                .as_f64()
+                .expect("number"),
+            14.0
+        );
+        let edges: Vec<f64> = options["wds.pressure-thresholds"]["edges"]
+            .as_array()
+            .expect("edges")
+            .iter()
+            .map(|v| v.as_f64().expect("number"))
+            .collect();
+        assert_eq!(edges, vec![24.0, 35.0, 45.0]);
+    }
+
+    /// Block options are file display units by the engine's spec, so a US
+    /// model's criteria convert with the engine's own factors — 14 m of
+    /// service pressure becomes ~20 psi, which is also the engine's own
+    /// US default for exactly that criterion.
+    #[test]
+    fn us_criteria_convert_to_file_units() {
+        let options = wds_analysis_options(Some(&criteria()), &network("GPM"));
+        let psi = options["wds.service-compliance"]["minPressure"]
+            .as_f64()
+            .expect("number");
+        assert!(
+            (psi - 19.9).abs() < 0.2,
+            "14 m should be ~20 psi, got {psi}"
+        );
+        let edges: Vec<f64> = options["wds.velocity-thresholds"]["edges"]
+            .as_array()
+            .expect("edges")
+            .iter()
+            .map(|v| v.as_f64().expect("number"))
+            .collect();
+        // m/s → ft/s.
+        assert!((edges[2] - 1.5 * 3.2808).abs() < 1e-6, "{edges:?}");
+    }
+
+    /// A degenerate band cannot make strictly-ascending edges; the block
+    /// falls back to its documented defaults rather than failing.
+    #[test]
+    fn a_degenerate_band_sends_no_edges() {
+        let mut c = criteria();
+        c.pressure.required = c.pressure.low;
+        let options = wds_analysis_options(Some(&c), &network("LPS"));
+        assert!(!options.contains_key("wds.pressure-thresholds"));
+        assert!(options.contains_key("wds.velocity-thresholds"));
+    }
+
+    /// No saved criteria means no options at all — every block runs on its
+    /// own documented defaults.
+    #[test]
+    fn absent_criteria_send_nothing() {
+        assert!(wds_analysis_options(None, &network("LPS")).is_empty());
+    }
 }

@@ -70,79 +70,7 @@ export async function getElementSeries(
   });
 }
 
-// ── Analytics DTOs ──────────────────────────────────────────────────────────
-
-export interface MassBalance {
-  inflowM3: number;
-  outflowM3: number;
-  balancePct: number;
-  series: number[];
-}
-
-export interface HistogramBucket {
-  lo: number;
-  hi: number;
-  count: number;
-}
-
-export interface TopPipe {
-  id: string;
-  fromId: string;
-  toId: string;
-  diameterMm: number;
-  maxVelocityMs: number;
-}
-
-export interface TankHeadSeries {
-  nodeId: string;
-  head: number[];
-}
-
-export interface WorstNode {
-  id: string;
-  /** Worst-case (minimum over all periods) pressure at this junction (m, SI). */
-  minPressureM: number;
-}
-
-export interface ResultAnalytics {
-  periodCount: number;
-  /**
-   * Junctions carrying finite pressure data — the population every pressure
-   * figure here is drawn from, and the sum of `pressureHistogram`'s counts.
-   * Reservoirs and tanks are excluded (head − elevation is not a service
-   * pressure). Use this, never the network's node count, as the denominator
-   * for pressure compliance.
-   */
-  junctionCount: number;
-  /**
-   * Pipes — the population `velocityHistogram` and `topPipes` are drawn from,
-   * and the sum of `velocityHistogram`'s counts. Pumps and valves are
-   * excluded: they have no pipe velocity.
-   */
-  pipeCount: number;
-  massBalance: MassBalance;
-  /** Absent (omitted or null) when no valid pressure data exists. */
-  minPressureNodeId?: string | null;
-  /** Absent (omitted or null) when no valid pressure data exists. */
-  minPressureM?: number | null;
-  /** Junctions below the minimum-pressure criterion passed to the fetch.
-   *  Always ≤ `junctionCount`. */
-  lowPressureCount: number;
-  /** Lowest-pressure junctions, ascending (up to 10). */
-  worstNodes: WorstNode[];
-  /** Absent (omitted or null) when no valid velocity data exists. */
-  maxVelocityLinkId?: string | null;
-  /** Absent (omitted or null) when no valid velocity data exists. */
-  maxVelocityMs?: number | null;
-  /** Per-junction minimum pressure, 8 bins. The first is unbounded below, so
-   *  negative pressures are counted rather than dropped. */
-  pressureHistogram: HistogramBucket[];
-  /** Per-pipe maximum velocity, 5 bins. */
-  velocityHistogram: HistogramBucket[];
-  topPipes: TopPipe[];
-  tankSeries: TankHeadSeries[];
-}
-
+/** Per-pump energy usage for the target's completed run. */
 export async function getPumpEnergy(
   projectId: string,
   scenarioId?: string | null,
@@ -151,22 +79,6 @@ export async function getPumpEnergy(
     "get_pump_energy",
     { projectId, scenarioId: scenarioId ?? null },
     [],
-  );
-}
-
-export async function getResultAnalytics(
-  projectId: string,
-  scenarioId?: string | null,
-  minPressure?: number | null,
-): Promise<ResultAnalytics | null> {
-  return tryInvokeOr<ResultAnalytics | null>(
-    "get_result_analytics",
-    {
-      projectId,
-      scenarioId: scenarioId ?? null,
-      minPressure: minPressure ?? null,
-    },
-    null,
   );
 }
 
