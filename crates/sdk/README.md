@@ -48,6 +48,17 @@ for t in sim.snapshot_times() {
 
 It does **not** model pressure transients, water-hammer, or multi-phase flow.
 
+## WebAssembly
+
+The crate compiles for `wasm32-unknown-unknown` — the engines take model
+bytes in memory and perform no file I/O of their own, so a browser or any
+other wasm host can run them. CI checks this target on every commit.
+[Hydra's browser demo](https://neeraip.github.io/hydra/try/) is this crate
+running in a tab; its source (`crates/wasm` in the repository) doubles as
+the integration example. The one surface that does not carry over is the
+path-based streaming reader for large `.out` result files, which exists
+precisely because a filesystem does.
+
 ## License
 
 [AGPL v3](https://github.com/neeraip/hydra/blob/main/LICENSE) — see [COMMERCIAL_LICENSE.md](https://github.com/neeraip/hydra/blob/main/COMMERCIAL_LICENSE.md) for commercial licensing options.

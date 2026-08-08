@@ -21,7 +21,9 @@ A planned engine is registered in the shared engine registry, so its key and cra
 
 Every available engine runs from all three surfaces. Model *editing* in the desktop app is water distribution only for now: a drainage project is created by importing a SWMM model, and is then browsed, simulated and read like any other.
 
-**[→ Download](https://github.com/neeraip/hydra/releases/latest)** · **[→ Full documentation](https://neeraip.github.io/hydra/)**
+**[→ Try it in your browser](https://neeraip.github.io/hydra/try/)** · **[→ Download](https://github.com/neeraip/hydra/releases/latest)** · **[→ Full documentation](https://neeraip.github.io/hydra/)**
+
+The browser demo runs the real engines, compiled to WebAssembly: drop an EPANET or SWMM model (or pick a bundled example) and read the same report the CLI prints. Everything runs in your tab — models are never uploaded. Each library release also attaches it as a single `hydra-try-<version>.html` you can keep and run offline.
 
 ## Water distribution engine
 

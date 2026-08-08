@@ -8,9 +8,17 @@ just wasm-serve      # build the bundle and serve http://localhost:8000
 just wasm-single     # build the whole thing as one portable HTML file
 ```
 
-Drop an EPANET or SWMM `.inp` file on the page. It is read, solved and
-reported locally — nothing is uploaded, and there is no server beyond the
-one handing over the static files.
+Drop an EPANET or SWMM `.inp` file on the page — or pick a bundled example
+(EPANET's Net1, SWMM's Simulation1; provenance in `models/NOTICE.md`). It
+is read, solved and reported locally — nothing is uploaded, and there is no
+server beyond the one handing over the static files. A uds model's
+`SAVE HOTSTART` ends as a download under the name the model declared.
+
+The demo deploys to GitHub Pages at
+[`/try`](https://neeraip.github.io/hydra/try/) (the docs workflow rebuilds
+it on demo or docs changes, or on manual dispatch), and every library
+release attaches the single-file build as `hydra-try-<version>.html`,
+pinned to that release's engines.
 
 ## The portable file
 
@@ -83,6 +91,8 @@ so capturing results is opt-in.
 | `src/progress.rs` | The CLI's progress line, so a page renders the same one |
 | `src/aux_files.rs` | Matching a model's declared file names against what the user supplied |
 | `src/sink.rs` | An in-memory `.out` sink the caller can still read after the run |
+| `src/examples.rs` | The bundled example models, compiled in so both delivery modes carry them |
+| `models/` | Those models' unmodified upstream files, with provenance and licences in `NOTICE.md` |
 | `src/lib.rs` | The `wasm_bindgen` shell, which holds no judgement of its own |
 | `www/` | The demo page — `index.html` serves it, `app.js` is the demo itself, and `scripts/build-wasm-single.py` folds all of it into one file |
 

@@ -13,6 +13,7 @@ Hydra is a multi-crate Rust workspace:
 | `hydra-sdk` | Umbrella facade: re-exports the complete user-facing API with all dependency versions pre-pinned |
 | `hydra-cli` | Command-line interface: resolves input, writes output files, generates reports; no simulation logic |
 | `hydra-gui` | Desktop application: Tauri shell with deck.gl canvas, timeline playback, network editor |
+| `hydra-wasm` | The engines compiled to WebAssembly, and the browser demo built on them. Not published to crates.io — the artifact is the built bundle |
 
 <!-- PLANNED-ENGINE: och — revise the scaffold row above and this paragraph as each engine ships. -->
 The empty engine scaffold exists so its crate name and versions track the
@@ -22,4 +23,4 @@ between `hydra-common`, the engines, and `hydra-report` is what lets a report be
 assembled from any engine's output: engines emit neutral fragments, and the
 report layer renders them without knowing which engine produced them.
 
-`hydra-cli` and `hydra-gui` are downstream consumers of Hydra in exactly the same way a third-party integrator would be: they depend on the umbrella crate and never import from `hydra-engine-wds` directly. Anyone who wants a different interface (HTTP, gRPC, Python bindings, etc.) follows the same pattern.
+`hydra-cli`, `hydra-gui` and `hydra-wasm` are downstream consumers of Hydra in exactly the same way a third-party integrator would be: they depend on the umbrella crate and never import from `hydra-engine-wds` directly. Anyone who wants a different interface (HTTP, gRPC, Python bindings, etc.) follows the same pattern — the wasm crate doubles as proof that the pattern reaches into a browser, where there is no filesystem and no thread to lean on.
