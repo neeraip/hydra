@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { readScaleMode } from "./CanvasView";
+import { readScaleMode } from "./CanvasView/canvasPrefs";
 
 describe("readScaleMode", () => {
   it("reads the merged key", () => {

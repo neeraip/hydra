@@ -1,23 +1,12 @@
 import { XMarkIcon } from "@heroicons/react/16/solid";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useActiveProject, useAppState, useSimulation } from "../../AppContext";
-import {
-  type BasemapId,
-  clampBasemapOpacity,
-  isValidBasemapId,
-} from "../../canvas/Basemap";
+import type { BasemapId } from "../../canvas/Basemap";
 import {
   type CanvasBackground,
   canvasBackgroundStyle,
-  DEFAULT_CANVAS_BACKGROUND,
-  readCanvasBackground,
 } from "../../canvas/canvasBackground";
-import {
-  LINK_VARIABLES,
-  linkVariableFor,
-  NODE_VARIABLES,
-  nodeVariableFor,
-} from "../../canvas/canvasVariables";
+import { linkVariableFor, nodeVariableFor } from "../../canvas/canvasVariables";
 import {
   haversineMeters,
   LOCAL_CRS,
@@ -32,15 +21,10 @@ import type { ScaleMode } from "../../canvas/legend-primitives";
 import { MapCanvas } from "../../canvas/MapCanvas";
 import { wdsBandColors } from "../../canvas/MapCanvas/colorUtils";
 import type { MeasurePoint } from "../../canvas/measureSnap";
-import { NODE_SCALE_DEFAULT } from "../../canvas/nodeScale";
 import { usePublishCurrentPeriod } from "../../canvas/period-context";
 import { stepIntervalMs } from "../../canvas/playback";
 import { withQualityAvailability } from "../../canvas/qualityAvailability";
-import {
-  ASPECT_SLIDER_DEFAULT,
-  aspectScales,
-  clampSliderValue,
-} from "../../canvas/schematicAspect";
+import { aspectScales } from "../../canvas/schematicAspect";
 import type { InspectorView } from "../../canvas/selection-context";
 import { useCanvasSelection } from "../../canvas/selection-context";
 import { Timeline } from "../../canvas/Timeline";
@@ -97,6 +81,13 @@ import type { Link, Node, Region } from "../../types/network";
 import { type Quantity, toDisplay, useUnitSystem } from "../../units";
 import { CanvasErrorBoundary } from "./CanvasView/CanvasErrorBoundary";
 import { CanvasToolbar } from "./CanvasView/CanvasToolbar";
+import {
+  CANVAS_PREF_DEFAULTS,
+  type CanvasPrefs,
+  readCanvasPrefs,
+  resolveCanvasPrefs,
+  writeCanvasPrefs,
+} from "./CanvasView/canvasPrefs";
 import { InvalidCrsOverlay } from "./CanvasView/InvalidCrsOverlay";
 import { NodeSizeSlider } from "./CanvasView/NodeSizeSlider";
 import { SchematicAspectSlider } from "./CanvasView/SchematicAspectSlider";
@@ -115,121 +106,6 @@ const NODE_KIND_PREFIX: Record<string, string> = {
   tank: "T",
 };
 
-// ── Per-project canvas prefs ────────────────────────────────────────────────
-// Persisted under one JSON key per project (unlike hydra2-link-animation,
-// which is deliberately a global preference and stays untouched).
-const canvasPrefsKey = (projectId: string) =>
-  `hydra2-canvas-prefs:${projectId}`;
-
-interface CanvasPrefs {
-  viewMode: ViewMode;
-  /** Legacy id ("streets"/"light"/"dark"/"none", stored unchanged for
-   * backwards compatibility) or `provider:{providerId}:{styleId}`. */
-  basemap: BasemapId;
-  /** Basemap dimming, 0–1. Missing in older prefs → defaults to 1. */
-  basemapOpacity: number;
-  nodeVar: NodeVariable;
-  linkVar: LinkVariable;
-  /** Schematic layout aspect slider position. Missing in older prefs →
-   * defaults to the midpoint, i.e. the layout's native 120:80 spacing. */
-  schematicAspect: number;
-  /** Node-size slider position. Missing in older prefs → the default. */
-  nodeScale: number;
-  /** The ground under a canvas with no basemap. Missing → tracks the app
-   * theme, which is what it did before it could be chosen. */
-  canvasBackground: CanvasBackground;
-  /**
-   * What the colour ramps are scaled against: the whole run, the current
-   * step, or the project's criteria bands.
-   *
-   * Supersedes the old `colorMode`, whose "relative"/"threshold" pair asked
-   * the same question with two of the three answers. Prefs written before
-   * the merge are migrated on read.
-   */
-  scaleMode: ScaleMode;
-  /** Whether the legend's ramp popover is showing. Persisted because it is
-   * a working mode — "keep the full legend up while I read the map" —
-   * rather than a menu the user reopens each time. */
-  legendOpen: boolean;
-  /**
-   * Selected catalog variable per element class.
-   *
-   * The variables a reader chose are what the map *means* to them, so they
-   * survive reopening the project like every other canvas choice. Only the
-   * wds pair was persisted before (as `nodeVar`/`linkVar`, which its canvas
-   * colours from); drainage lost its selection on every remount, and no
-   * engine remembered its areal variable at all.
-   *
-   * Ids are stored raw and validated on use rather than on read: the
-   * catalog they belong to depends on the run, and the legend already
-   * falls back to the first variable when an id is not in it.
-   */
-  genericSelection: GenericSelection;
-}
-
-/**
- * Defaults for every persisted canvas preference.
- *
- * Shared by the initial state and by the project-switch restore: a project
- * with no saved prefs must be reset to these, not left holding whatever the
- * previously open project was showing.
- */
-const CANVAS_PREF_DEFAULTS: CanvasPrefs = {
-  viewMode: "map",
-  basemap: "streets",
-  basemapOpacity: 1,
-  nodeVar: "pressure",
-  linkVar: "velocity",
-  schematicAspect: ASPECT_SLIDER_DEFAULT,
-  nodeScale: NODE_SCALE_DEFAULT,
-  canvasBackground: DEFAULT_CANVAS_BACKGROUND,
-  scaleMode: "run",
-  legendOpen: false,
-  genericSelection: { point: "", polyline: "", region: "" },
-};
-
-// Allowlists so corrupt/stale localStorage can never inject invalid state.
-// (Basemap ids are validated structurally via isValidBasemapId instead — the
-// provider catalog is open-ended.)
-const PREF_VIEW_MODES: readonly ViewMode[] = ["map", "schematic"];
-
-/**
- * What a colour ramp is scaled against.
- *
- * `run` — the whole simulation's range. Colours mean the same thing at
- * every step, so scrubbing shows a quantity rising and falling. The cost is
- * that a step whose values occupy a sliver of the run's range is painted in
- * a sliver of the ramp, and its spatial pattern is invisible.
- *
- * `step` — the current period's own range. Every frame uses the full ramp,
- * so the pattern *within* a moment is as legible as it can be. The cost is
- * that colours no longer compare between steps: a bright node now and a
- * bright node later are each the highest of their own moment, not equal.
- *
- * `criteria` — the project's threshold bands, ignoring the data range
- * entirely. Colours then answer "is this acceptable?" rather than "how
- * much?", and stay fixed while the model changes around them.
- */
-const PREF_SCALE_MODES: readonly ScaleMode[] = ["run", "step", "criteria"];
-
-/**
- * Read a persisted scale mode, migrating prefs written before the merge.
- *
- * `colorMode` asked "relative or threshold?" and `rangeMode` asked "whole
- * run or this step?" — the same question with two of the three answers, so
- * a saved "threshold" becomes `criteria` and a saved "relative" defers to
- * whatever range mode was stored alongside it.
- */
-/**
- * Read a persisted per-class variable selection, tolerating anything.
- *
- * Every field is optional and unvalidated against a catalog on purpose:
- * which variables exist depends on the run that produced the results, and
- * an id that is not in the current catalog is not corrupt — it is a
- * selection made against a different one. The legend falls back to the
- * catalog's first variable for those, which is the same thing it does for
- * a project that has never chosen.
- */
 /**
  * What "Clear view" would currently dismiss.
  *
@@ -295,32 +171,6 @@ export function shouldRefitAfterOcclusionChange(
   occlusionChanged: boolean,
 ): boolean {
   return viewportIsAppOwned && occlusionChanged;
-}
-
-export function readGenericSelection(raw: unknown): GenericSelection {
-  const empty = { point: "", polyline: "", region: "" };
-  if (typeof raw !== "object" || raw === null) return empty;
-  const sel = (raw as { genericSelection?: unknown }).genericSelection;
-  if (typeof sel !== "object" || sel === null) return empty;
-  const s = sel as Record<string, unknown>;
-  const str = (v: unknown) => (typeof v === "string" ? v : "");
-  return {
-    point: str(s.point),
-    polyline: str(s.polyline),
-    region: str(s.region),
-  };
-}
-
-export function readScaleMode(raw: unknown): ScaleMode {
-  if (typeof raw !== "object" || raw === null) return "run";
-  const p = raw as Record<string, unknown>;
-  if (typeof p.scaleMode === "string") {
-    const v = p.scaleMode as ScaleMode;
-    if (PREF_SCALE_MODES.includes(v)) return v;
-  }
-  if (p.colorMode === "threshold") return "criteria";
-  if (p.rangeMode === "step") return "step";
-  return "run";
 }
 
 /**
@@ -464,9 +314,6 @@ const WDS_LINK_VARS: Record<
   quality: { label: "Quality", symbol: "C" },
 };
 
-const PREF_NODE_VARS: readonly NodeVariable[] = NODE_VARIABLES;
-const PREF_LINK_VARS: readonly LinkVariable[] = LINK_VARIABLES;
-
 /**
  * The criteria editor's box on the canvas.
  *
@@ -488,17 +335,6 @@ const CRITERIA_PANEL_STYLE: React.CSSProperties = {
   borderRadius: 10,
   transition: "left var(--rail-transition)",
 };
-
-function readCanvasPrefs(projectId: string): Partial<CanvasPrefs> | null {
-  try {
-    const raw = localStorage.getItem(canvasPrefsKey(projectId));
-    if (!raw) return null;
-    const parsed = JSON.parse(raw) as Partial<CanvasPrefs>;
-    return typeof parsed === "object" && parsed !== null ? parsed : null;
-  } catch {
-    return null;
-  }
-}
 
 export function CanvasView({ isActive = true }: { isActive?: boolean }) {
   const {
@@ -788,48 +624,18 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
   useEffect(() => {
     const id = project?.id;
     if (!id) return;
-    const prefs = readCanvasPrefs(id);
-    // Every preference is assigned unconditionally, falling back to the
-    // shared default. Applying a value only when the stored one is present
-    // and valid left the previous project's setting in place for any project
-    // that had never saved prefs — and the persist effect below then wrote it
-    // under the new project's key, making the bleed permanent.
-    const pick = <K extends keyof CanvasPrefs>(
-      key: K,
-      valid: (v: CanvasPrefs[K]) => boolean,
-    ): CanvasPrefs[K] => {
-      const v = prefs?.[key];
-      return v !== undefined && valid(v) ? v : CANVAS_PREF_DEFAULTS[key];
-    };
-    setViewMode(pick("viewMode", (v) => PREF_VIEW_MODES.includes(v)));
-    setBasemap(pick("basemap", (v) => isValidBasemapId(v)));
-    // Clamp already maps missing/corrupt values to the default.
-    setBasemapOpacity(clampBasemapOpacity(prefs?.basemapOpacity));
-
-    // Reads the merged key, falling back to the pre-merge pair.
-    setScaleMode(readScaleMode(prefs));
-    setLegendOpen(pick("legendOpen", (v) => typeof v === "boolean"));
-    // Seeded from the legacy pair when no selection was saved — prefs
-    // written before the legend became the single store have only those.
-    const savedSelection = readGenericSelection(prefs);
-    setGenericSelection({
-      ...savedSelection,
-      point:
-        savedSelection.point ||
-        pick("nodeVar", (v) => PREF_NODE_VARS.includes(v)),
-      polyline:
-        savedSelection.polyline ||
-        pick("linkVar", (v) => PREF_LINK_VARS.includes(v)),
-    });
-    // Clamp already maps missing/corrupt values to the default.
-    setSchematicAspect(clampSliderValue(prefs?.schematicAspect ?? Number.NaN));
-    setNodeScale(
-      Number.isFinite(prefs?.nodeScale)
-        ? (prefs?.nodeScale as number)
-        : CANVAS_PREF_DEFAULTS.nodeScale,
-    );
-    // Coerces a missing or corrupt value to the default itself.
-    setCanvasBackground(readCanvasBackground(prefs?.canvasBackground));
+    // Every preference is answered, not only the ones that were stored —
+    // see `resolveCanvasPrefs` for the bleed that rule exists to stop.
+    const prefs = resolveCanvasPrefs(readCanvasPrefs(id));
+    setViewMode(prefs.viewMode);
+    setBasemap(prefs.basemap);
+    setBasemapOpacity(prefs.basemapOpacity);
+    setScaleMode(prefs.scaleMode);
+    setLegendOpen(prefs.legendOpen);
+    setGenericSelection(prefs.genericSelection);
+    setSchematicAspect(prefs.schematicAspect);
+    setNodeScale(prefs.nodeScale);
+    setCanvasBackground(prefs.canvasBackground);
     setPrefsLoadedFor(id);
   }, [project?.id]);
   // Cold-load gate: until the project row has arrived (an async fetch — it
@@ -855,11 +661,7 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
       legendOpen,
       genericSelection,
     };
-    try {
-      localStorage.setItem(canvasPrefsKey(id), JSON.stringify(prefs));
-    } catch {
-      // Quota/private-mode failures are non-fatal — prefs just don't persist.
-    }
+    writeCanvasPrefs(id, prefs);
   }, [
     project?.id,
     prefsLoadedFor,

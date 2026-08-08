@@ -2,9 +2,9 @@ import { describe, expect, it } from "vitest";
 import {
   type ClearableView,
   clearableCountOf,
-  readGenericSelection,
   viewButtonAction,
 } from "./CanvasView";
+import { readGenericSelection } from "./CanvasView/canvasPrefs";
 
 const clear: ClearableView = {
   rail: false,
