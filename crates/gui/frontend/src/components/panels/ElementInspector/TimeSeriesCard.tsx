@@ -11,9 +11,10 @@
  * Self-sourcing by design: project / scenario / result identity come from
  * AppContext hooks and the element's network-order index is derived from
  * the NetworkDataContext arrays, because the inspector body receives none
- * of these as props. The currently scrubbed period arrives through the
- * minimal `period-context` (provided by CanvasView) and is drawn as a
- * Sparkline `markerIndex`, clamped to each series' length; outside a
+ * of these as props. The currently scrubbed period arrives through
+ * `period-context` (provided by ProjectPage, published by whichever view
+ * owns the timeline) and is drawn as a Sparkline `markerIndex`, clamped to
+ * each series' length; outside a
  * timeline context the hook returns `null` and no marker is drawn.
  *
  * Steady-state runs (a single period) render nothing — there is no trend

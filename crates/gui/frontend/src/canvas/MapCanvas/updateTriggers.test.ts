@@ -19,12 +19,12 @@ import { describe, expect, it } from "vitest";
  * reload".
  *
  * Biome lints React's array. Nothing lints deck's, so this does: it reads
- * the source, finds what the colour accessors actually close over, and
- * requires each of those to appear in the trigger list beside them.
+ * the source, finds what each accessor actually closes over, and requires
+ * every one of those to appear in the trigger list beside it.
  *
- * Deliberately narrow. It covers the two accessors whose inputs are many
- * and keep growing; geometry accessors read only their datum, and deck
- * invalidates those itself when `data` changes.
+ * Deliberately narrow. It covers the accessors whose inputs are many and
+ * keep growing — the two colours and the pulse. Geometry accessors read
+ * only their datum, and deck invalidates those itself when `data` changes.
  */
 
 const SOURCE = readFileSync(
@@ -54,6 +54,32 @@ function accessorBody(name: string): string {
     }
   }
   throw new Error(`unterminated ${name}`);
+}
+
+/**
+ * The body of an accessor written inline in a layer's props.
+ *
+ * `getFlowParams: (d) => [ … ]` has no name to search for and returns an
+ * expression rather than a block, so it needs its own reader: find the
+ * arrow, then take whatever bracket opens after it to its match.
+ */
+function inlineAccessorBody(prop: string): string {
+  const at = SOURCE.indexOf(`${prop}: (`);
+  expect(at, `${prop} not found`).toBeGreaterThan(-1);
+  const arrow = SOURCE.indexOf("=>", at);
+  const open = SOURCE.slice(arrow + 2).search(/\S/) + arrow + 2;
+  const closing: Record<string, string> = { "[": "]", "{": "}", "(": ")" };
+  const shut = closing[SOURCE[open]];
+  expect(shut, `${prop} body is not bracketed`).toBeDefined();
+  let depth = 0;
+  for (let i = open; i < SOURCE.length; i += 1) {
+    if (SOURCE[i] === SOURCE[open]) depth += 1;
+    else if (SOURCE[i] === shut) {
+      depth -= 1;
+      if (depth === 0) return SOURCE.slice(open, i + 1);
+    }
+  }
+  throw new Error(`unterminated ${prop}`);
 }
 
 /** The contents of a bracketed trigger list, by the text that precedes it. */
@@ -111,7 +137,7 @@ const KEYWORDS = [
 ];
 
 /** The datum and what is read off it: per-element, not captured state. */
-const PER_DATUM = ["d", "role", "si", "type", "values", "variable"];
+const PER_DATUM = ["d", "id", "role", "si", "type", "values", "variable"];
 
 /** Class names passed to the shared ramp helpers. */
 const LITERALS = ["polyline", "point", "status"];
@@ -159,6 +185,26 @@ describe("the node colour trigger", () => {
       expect(
         list,
         `nodeColor reads \`${id}\`, trigger list does not`,
+      ).toContain(id);
+    }
+  });
+});
+
+describe("the pulse trigger", () => {
+  /**
+   * One of the three defects named above, and the only one still reachable:
+   * the pulse gained variables, the accessor started reading which one was
+   * selected, and the list went on naming only the flow scale — so
+   * switching between two animated variables kept the previous one's
+   * motion until something else invalidated the layer.
+   */
+  it("names everything the accessor reads", () => {
+    const body = inlineAccessorBody("getFlowParams");
+    const list = triggerList("getFlowParams: [");
+    for (const id of captured(body, NOT_STATE)) {
+      expect(
+        list,
+        `getFlowParams reads \`${id}\`, trigger list does not`,
       ).toContain(id);
     }
   });

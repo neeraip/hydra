@@ -27,19 +27,7 @@ import {
   useUnitSystem,
 } from "../../units";
 
-/**
- * The project's analysis criteria, edited in one place.
- *
- * These are engineering judgements about the network — the standard it is
- * being assessed against — not display settings, and they have more than
- * one consumer: the compliance figures on this page, and the map's
- * "Criteria" colour scale. They used to be authored in two unrelated
- * surfaces, with the minimum service pressure here and the three bands
- * inside the map legend's popover, so no screen ever showed the whole
- * ruler at once.
- *
- * Values are stored in SI and edited in the active display system.
- */
+/** Values are stored in SI and edited in the active display system. */
 export function CriteriaEditor({
   criteria,
   onChange,

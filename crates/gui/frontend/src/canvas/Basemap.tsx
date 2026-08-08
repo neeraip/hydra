@@ -90,6 +90,17 @@ export function clampBasemapOpacity(value: unknown): number {
  * scheme to `http://basemap.localhost` there, so the template is built
  * per-platform from the user agent.
  */
+/**
+ * What shows through where a basemap has not drawn.
+ *
+ * Under a raster style it is the gap between tiles — while they load, past
+ * the provider's coverage, above its maximum zoom — and it is the whole
+ * ground when the basemap is "None". Dark either way, because a partly
+ * loaded map on a pale ground flashes, and MapLibre needs a literal colour
+ * here rather than the theme token the rest of the canvas paints with.
+ */
+export const MAP_GROUND_COLOR = "#16181c";
+
 export function providerTileUrlTemplate(
   providerId: string,
   styleId: string,
@@ -140,7 +151,7 @@ export function buildProviderRasterStyle(
       {
         id: "background",
         type: "background",
-        paint: { "background-color": "#16181c" },
+        paint: { "background-color": MAP_GROUND_COLOR },
       },
       {
         id: "provider-tiles",
@@ -200,13 +211,6 @@ export function basemapStyleDefaultsVisible(id: string): boolean {
     DEFAULT_VISIBLE_PROVIDER_STYLES.has(id)
   );
 }
-
-/** Nothing overridden: OpenFreeMap and Esri imagery visible, the rest
- *  hidden. */
-export const DEFAULT_BASEMAP_VISIBILITY: BasemapVisibility = {
-  hiddenLegacyIds: new Set(),
-  shownProviderIds: new Set(),
-};
 
 /** Whether a picker style id is hidden under the given overrides. */
 export function isBasemapStyleHidden(

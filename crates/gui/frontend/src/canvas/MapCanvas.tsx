@@ -36,6 +36,7 @@ import { useUnitSystem } from "../units";
 import {
   type BasemapId,
   buildProviderRasterStyle,
+  MAP_GROUND_COLOR,
   parseProviderBasemapId,
 } from "./Basemap";
 import {
@@ -139,7 +140,7 @@ const BLANK_STYLE: maplibregl.StyleSpecification = {
     {
       id: "background",
       type: "background",
-      paint: { "background-color": "#16181c" },
+      paint: { "background-color": MAP_GROUND_COLOR },
     },
   ],
 };

@@ -13,32 +13,6 @@ export const inputStyle: React.CSSProperties = {
   boxSizing: "border-box",
 };
 
-export const ghostBtn: React.CSSProperties = {
-  background: "transparent",
-  border: "1px solid var(--border)",
-  color: "var(--text-secondary)",
-  borderRadius: 5,
-  padding: "5px 10px",
-  fontSize: "var(--text-sm)",
-  cursor: "pointer",
-  fontFamily: "var(--font-ui)",
-  display: "inline-flex",
-  alignItems: "center",
-  gap: 4,
-};
-
-export const primaryBtn: React.CSSProperties = {
-  background: "var(--accent)",
-  border: "1px solid var(--accent)",
-  color: "var(--accent-fg)",
-  borderRadius: 5,
-  padding: "5px 12px",
-  fontSize: "var(--text-sm)",
-  fontWeight: 600,
-  cursor: "pointer",
-  fontFamily: "var(--font-ui)",
-};
-
 export function fmtHours(seconds: number): string {
   if (seconds <= 0) return "0 h";
   const h = seconds / 3600;

@@ -1,7 +1,3 @@
-import {
-  bandedGradientCss,
-  sequentialGradientCss,
-} from "./MapCanvas/colorUtils";
 /**
  * Colour utilities shared between MapCanvas layers and inspector panels.
  * All functions return a CSS colour string (an `rgb(...)` value, or a
@@ -102,35 +98,3 @@ export function statusColor(status: number | null | undefined): string {
   if (status === 4 || status === 6 || status === 7) return "rgb(212,160,23)"; // active/controlled — amber
   return "rgb(120,150,185)"; // open (3) / unknown — blue-grey
 }
-
-/**
- * Legend gradients, derived from the ramp functions rather than restated.
- *
- * These used to be hand-written CSS copies of each palette, which is how
- * the legend came to disagree with the map — and a comment saying the two
- * must match is not a mechanism that makes them match.
- */
-export const SEQ_GRADIENT_CSS = sequentialGradientCss("point");
-
-/** Quality is a magnitude, so it takes the sequential ramp. */
-export const QUALITY_GRADIENT_CSS = SEQ_GRADIENT_CSS;
-
-/** Flow and velocity are link variables, so they take the link family —
- * the legend has to show the hue the map will actually draw. */
-export const FLOW_GRADIENT_CSS = sequentialGradientCss("polyline");
-
-export const VELOCITY_GRADIENT_CSS = FLOW_GRADIENT_CSS;
-
-/**
- * 4-band pressure gradient. Pressure is the one variable whose bands are
- * bidirectional — too little and too much are both faults — so it keeps its
- * own scale rather than borrowing the banded ramp's one-way severity.
- */
-export const PRESSURE_GRADIENT_CSS =
-  "linear-gradient(to right, #c94040 0%, #c94040 25%, #d4a017 25%, #d4a017 50%, #3daf75 50%, #3daf75 75%, #4a90d9 75%, #4a90d9 100%)";
-
-/** Smooth severity ramp for panels that want a continuous swatch. */
-export const RISK_GRADIENT_CSS = bandedGradientCss();
-
-/** Threshold-mode velocity and flow, which the map draws as hard bands. */
-export const LINK_RISK_GRADIENT_CSS = bandedGradientCss();
