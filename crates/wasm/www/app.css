@@ -88,6 +88,29 @@ code {
   font-size: 13px;
 }
 
+/* ── Examples ────────────────────────────────────────────────────────── */
+
+.examples {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-top: 10px;
+  font-size: 13px;
+}
+
+.examples #examples {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.examples button {
+  font-family: var(--mono);
+  font-size: 12px;
+  padding: 4px 10px;
+}
+
 /* ── Controls ────────────────────────────────────────────────────────── */
 
 .controls {

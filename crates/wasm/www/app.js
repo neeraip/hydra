@@ -13,7 +13,7 @@
 // the demo instead of one per delivery.
 
 function startHydraDemo(hydra) {
-  const { HydraRun, RunOptions, engines, versionInfo } = hydra;
+  const { HydraRun, RunOptions, engines, versionInfo, examples, exampleModel } = hydra;
 
   const term = document.getElementById("term");
   const dropZone = document.getElementById("drop");
@@ -23,8 +23,10 @@ function startHydraDemo(hydra) {
   const runButton = document.getElementById("run");
   const clearButton = document.getElementById("clear");
   const downloadButton = document.getElementById("download");
+  const hotstartButton = document.getElementById("hotstart");
   const copyButton = document.getElementById("copy");
   const commandLabel = document.getElementById("cmd");
+  const examplesRow = document.getElementById("examples");
 
   /** How long one budget of steps may take before we hand the frame back.
    *  Below a frame, so the page keeps painting; large enough that the
@@ -39,6 +41,7 @@ function startHydraDemo(hydra) {
   let auxFiles = [];
   let lastReport = "";
   let lastResults = null;
+  let lastHotstart = null;
   let running = false;
 
   // ── Terminal ──────────────────────────────────────────────────────────────
@@ -133,6 +136,28 @@ function startHydraDemo(hydra) {
     for (const a of auxFiles) line(`  + ${a.name}  ${a.bytes.length.toLocaleString()} bytes`, "dim");
   }
 
+  /** Load a bundled example, exactly as if its file had been dropped.
+   *
+   *  The same `model` slot, the same run path — an example is not a
+   *  special mode, it is a file the page happens to already have. The
+   *  engine label on the button is decoration; the run still routes the
+   *  model by its own contents. */
+  function chooseExample(example) {
+    const text = exampleModel(example.id);
+    if (text === undefined) return;
+    model = { name: example.file_name, bytes: new TextEncoder().encode(text) };
+    auxFiles = [];
+    runButton.disabled = false;
+    updateCommand();
+    clearTerm();
+    line(`${model.name}  ${model.bytes.length.toLocaleString()} bytes`, "accent");
+    line(example.description, "dim");
+    // The note exists so expected output does not read as failure — a
+    // wall of engine warnings on a bundled example looks like a broken
+    // example to anyone who was not told.
+    if (example.note) line(example.note, "warn");
+  }
+
   /** Mirror the run as the command that would produce it at a terminal. */
   function updateCommand() {
     if (!model) {
@@ -152,8 +177,10 @@ function startHydraDemo(hydra) {
     running = true;
     runButton.disabled = true;
     downloadButton.hidden = true;
+    hotstartButton.hidden = true;
     copyButton.hidden = true;
     lastResults = null;
+    lastHotstart = null;
     clearTerm();
 
     const versions = JSON.parse(versionInfo());
@@ -238,6 +265,18 @@ function startHydraDemo(hydra) {
         blank();
         line(`.out results: ${bytes.length.toLocaleString()} bytes`, "dim");
       }
+      // A hotstart the model asked to save. The CLI writes it beside the
+      // model; here it becomes a download under the model's own name.
+      const hotstart = session.hotstartBytes();
+      if (hotstart) {
+        lastHotstart = { name: session.hotstartName, bytes: hotstart };
+        hotstartButton.hidden = false;
+        blank();
+        line(
+          `hotstart saved: ${lastHotstart.name}  ${hotstart.length.toLocaleString()} bytes`,
+          "dim",
+        );
+      }
     }
 
     function drain(session) {
@@ -286,18 +325,25 @@ function startHydraDemo(hydra) {
   clearButton.addEventListener("click", () => {
     clearTerm();
     downloadButton.hidden = true;
+    hotstartButton.hidden = true;
     copyButton.hidden = true;
   });
 
-  copyButton.addEventListener("click", () => navigator.clipboard.writeText(lastReport));
-  downloadButton.addEventListener("click", () => {
-    if (!lastResults) return;
-    const url = URL.createObjectURL(new Blob([lastResults], { type: "application/octet-stream" }));
+  function offerDownload(bytes, name) {
+    const url = URL.createObjectURL(new Blob([bytes], { type: "application/octet-stream" }));
     const a = document.createElement("a");
     a.href = url;
-    a.download = model.name.replace(/\.inp$/i, ".out");
+    a.download = name;
     a.click();
     URL.revokeObjectURL(url);
+  }
+
+  copyButton.addEventListener("click", () => navigator.clipboard.writeText(lastReport));
+  downloadButton.addEventListener("click", () => {
+    if (lastResults) offerDownload(lastResults, model.name.replace(/\.inp$/i, ".out"));
+  });
+  hotstartButton.addEventListener("click", () => {
+    if (lastHotstart) offerDownload(lastHotstart.bytes, lastHotstart.name);
   });
 
   document.getElementById("version").textContent = `v${JSON.parse(versionInfo()).hydra}`;
@@ -313,5 +359,17 @@ function startHydraDemo(hydra) {
     engineSelect.appendChild(option);
   }
 
-  line("Ready. Drop a model above.", "dim");
+  // The bundled examples, one button each — most visitors have no .inp
+  // file to hand, and a drop target with nothing to drop demonstrates
+  // nothing.
+  for (const example of JSON.parse(examples())) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = `${example.file_name} (${example.engine})`;
+    button.title = example.description;
+    button.addEventListener("click", () => chooseExample(example));
+    examplesRow.appendChild(button);
+  }
+
+  line("Ready. Drop a model above, or pick an example.", "dim");
 }

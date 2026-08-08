@@ -27,6 +27,11 @@
         <input id="file" type="file" multiple hidden />
       </section>
 
+      <section class="examples" aria-label="Example models">
+        <span class="dim">No model to hand? Try one of these:</span>
+        <span id="examples"></span>
+      </section>
+
       <section class="controls">
         <label>
           Engine
@@ -47,6 +52,7 @@
         <div class="term-bar">
           <span id="cmd" class="dim">hydra run …</span>
           <span class="spacer"></span>
+          <button id="hotstart" type="button" hidden>Download hotstart</button>
           <button id="download" type="button" hidden>Download .out</button>
           <button id="copy" type="button" hidden>Copy report</button>
         </div>
@@ -67,9 +73,16 @@
          module below has a module to hand it. -->
     <script src="app.js"></script>
     <script type="module">
-      import init, { HydraRun, RunOptions, engines, versionInfo } from "./pkg/hydra.js";
+      import init, {
+        HydraRun,
+        RunOptions,
+        engines,
+        versionInfo,
+        examples,
+        exampleModel,
+      } from "./pkg/hydra.js";
       await init();
-      startHydraDemo({ HydraRun, RunOptions, engines, versionInfo });
+      startHydraDemo({ HydraRun, RunOptions, engines, versionInfo, examples, exampleModel });
     </script>
   </body>
 </html>
