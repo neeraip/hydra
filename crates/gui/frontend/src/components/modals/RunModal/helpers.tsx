@@ -166,21 +166,30 @@ export function ActiveBadge() {
   );
 }
 
-export function fmtHours(seconds: number): string {
+function fmtHours(seconds: number): string {
   if (seconds <= 0) return "0 h";
   const h = seconds / 3600;
   if (Number.isInteger(h)) return `${h} h`;
   return `${h.toFixed(2).replace(/\.?0+$/, "")} h`;
 }
 
-export function fmtMinutes(seconds: number): string {
+function fmtMinutes(seconds: number): string {
   if (seconds <= 0) return "0 min";
   if (seconds % 3600 === 0) return `${seconds / 3600} h`;
   if (seconds % 60 === 0) return `${seconds / 60} min`;
   return `${seconds} s`;
 }
 
-export function fmtClock(seconds: number): string {
+/**
+ * A time of day, wrapped at midnight.
+ *
+ * Only ever the run's start clock, which is a wall-clock reading and so
+ * genuinely cyclic. Elapsed time is not: `TaskTray/RunningCard` and the
+ * `Timeline` format that without wrapping, on purpose. Two questions that
+ * look identical in seconds, and a formatter borrowed across them is how
+ * the Controls editor came to show a 30-hour timer as 06:00.
+ */
+function fmtClock(seconds: number): string {
   const h = Math.floor(seconds / 3600) % 24;
   const m = Math.floor((seconds % 3600) / 60);
   return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;

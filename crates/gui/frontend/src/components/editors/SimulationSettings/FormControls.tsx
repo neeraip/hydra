@@ -13,26 +13,6 @@ export const inputStyle: React.CSSProperties = {
   boxSizing: "border-box",
 };
 
-export function fmtHours(seconds: number): string {
-  if (seconds <= 0) return "0 h";
-  const h = seconds / 3600;
-  if (Number.isInteger(h)) return `${h} h`;
-  return `${h.toFixed(2).replace(/\.?0+$/, "")} h`;
-}
-
-export function fmtMinutes(seconds: number): string {
-  if (seconds <= 0) return "0 min";
-  if (seconds % 3600 === 0) return `${seconds / 3600} h`;
-  if (seconds % 60 === 0) return `${seconds / 60} min`;
-  return `${seconds} s`;
-}
-
-export function fmtClock(seconds: number): string {
-  const h = Math.floor(seconds / 3600) % 24;
-  const m = Math.floor((seconds % 3600) / 60);
-  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
-}
-
 export function FieldGrid({ children }: { children: React.ReactNode }) {
   return (
     <div
