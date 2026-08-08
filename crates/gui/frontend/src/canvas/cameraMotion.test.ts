@@ -2,8 +2,10 @@ import { describe, expect, it } from "vitest";
 import {
   FIT_DURATION_MS,
   type FitTrigger,
+  FLY_DURATION_MS,
+  flyDurationMs,
   shouldAnimateFit,
-} from "./fitTransition";
+} from "./cameraMotion";
 
 /**
  * Fitting the network happens for two reasons, and they want different
@@ -49,7 +51,7 @@ describe("reduced motion", () => {
   });
 });
 
-describe("the flight time", () => {
+describe("the fit's flight time", () => {
   /**
    * Long enough to read as one movement rather than a cut, short enough
    * that someone fitting repeatedly is never waiting. MapLibre's own
@@ -59,5 +61,38 @@ describe("the flight time", () => {
   it("is a fixed, brief duration", () => {
     expect(FIT_DURATION_MS).toBeGreaterThan(150);
     expect(FIT_DURATION_MS).toBeLessThan(900);
+  });
+});
+
+describe("flying to one element", () => {
+  /**
+   * The defect this was written for. Reduce motion reached the fit and
+   * stopped there, so a reader who had asked for no motion still got an
+   * 800ms swoop every time they picked an element out of the network list
+   * — in the geographic view, where MapLibre was told to fly and never
+   * told not to.
+   *
+   * MapLibre honours the *operating system's* setting by itself. This is
+   * the app's own, which can be on while the OS setting is off, and only
+   * this passes it along.
+   */
+  it("does not move the camera under reduced motion", () => {
+    expect(flyDurationMs(true)).toBe(0);
+  });
+
+  /** Zero is the value both renderers already read as "jump". */
+  it("flies otherwise", () => {
+    expect(flyDurationMs(false)).toBe(FLY_DURATION_MS);
+    expect(FLY_DURATION_MS).toBeGreaterThan(0);
+  });
+
+  /**
+   * Longer than a fit, and deliberately so: a fit pulls back to something
+   * already on screen, while this crosses the network to land on one thing
+   * — and the flight is what shows the reader where it sits relative to
+   * where they were.
+   */
+  it("takes longer than a fit", () => {
+    expect(FLY_DURATION_MS).toBeGreaterThan(FIT_DURATION_MS);
   });
 });

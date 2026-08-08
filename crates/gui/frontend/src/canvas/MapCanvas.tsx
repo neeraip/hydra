@@ -38,7 +38,11 @@ import {
   buildProviderRasterStyle,
   parseProviderBasemapId,
 } from "./Basemap";
-import { FIT_DURATION_MS, shouldAnimateFit } from "./fitTransition";
+import {
+  FIT_DURATION_MS,
+  flyDurationMs,
+  shouldAnimateFit,
+} from "./cameraMotion";
 import { FlowPathLayer } from "./FlowPathLayer";
 import { HoverChip, type HoverTip } from "./HoverChip";
 import { useHoverActions, useHoverState } from "./hover-context";
@@ -923,10 +927,17 @@ export const MapCanvas = memo(function MapCanvas({
     renderCoordsRef.current = renderCoords;
   }, [renderCoords]);
 
+  // Read here rather than passed in: how the camera moves is this
+  // component's to decide, and a prop would be a second copy of an answer
+  // the document already carries. Both travelling gestures below read it —
+  // the flight to an element, and the fit.
+  const reducedMotion = useReducedMotion();
+
   // Fly/zoom to a specific element when flyToKey changes.
   useEffect(() => {
     if (!isActive) return;
     if (flyToKey == null) return;
+    const flyMs = flyDurationMs(reducedMotion);
     const nodeId = flyToNodeId;
     const linkId = flyToLinkId;
     const regionId = flyToRegionId;
@@ -952,7 +963,7 @@ export const MapCanvas = memo(function MapCanvas({
       map.fitBounds(bounds, {
         padding: visibleMapPadding(map),
         maxZoom: 18,
-        duration: 800,
+        duration: flyMs,
       });
       return;
     }
@@ -970,7 +981,7 @@ export const MapCanvas = memo(function MapCanvas({
           center,
           zoom,
           curve: 1,
-          duration: 800,
+          duration: flyMs,
           padding: visibleMapPadding(map),
         });
       } else if (linkId) {
@@ -983,7 +994,7 @@ export const MapCanvas = memo(function MapCanvas({
         map.fitBounds(bounds, {
           padding: visibleMapPadding(map),
           maxZoom: 18,
-          duration: 800,
+          duration: flyMs,
         });
       }
     } else {
@@ -997,7 +1008,7 @@ export const MapCanvas = memo(function MapCanvas({
         if (!target) return;
         const vs = orthoCameraForNode(target, fitZoom);
         viewStateRef.current = vs;
-        deck.setProps({ initialViewState: deckCamera(vs) });
+        deck.setProps({ initialViewState: deckCamera(vs, flyMs) });
       } else if (linkId) {
         const link = linksRef.current.find((l) => l.id === linkId);
         if (!link) return;
@@ -1015,10 +1026,18 @@ export const MapCanvas = memo(function MapCanvas({
           fitZoom,
         );
         viewStateRef.current = vs;
-        deck.setProps({ initialViewState: deckCamera(vs) });
+        deck.setProps({ initialViewState: deckCamera(vs, flyMs) });
       }
     }
-  }, [flyToKey, isActive, viewMode, flyToLinkId, flyToNodeId, flyToRegionId]);
+  }, [
+    flyToKey,
+    isActive,
+    viewMode,
+    flyToLinkId,
+    flyToNodeId,
+    flyToRegionId,
+    reducedMotion,
+  ]);
 
   // ── deck.gl data arrays ────────────────────────────────────────────────────
   // Memoized so their identity is stable across renders that don't change the
@@ -3007,10 +3026,6 @@ export const MapCanvas = memo(function MapCanvas({
   //    fitKey changes (explicit project switch).  Does NOT fire on scenario
   //    switches so the user's chosen view position is preserved.
   const prevHasNodesRef = useRef(nodes.length > 0);
-  // Read here rather than passed in: the fit is this component's to make,
-  // and a prop would be a second copy of an answer the document already
-  // carries.
-  const reducedMotion = useReducedMotion();
   const prevFitKeyRef = useRef(fitKey);
   useEffect(() => {
     if (!isActive) return;

@@ -1,6 +1,6 @@
 import { OrthographicViewport } from "@deck.gl/core";
 import { describe, expect, it } from "vitest";
-import { FIT_DURATION_MS } from "../fitTransition";
+import { FIT_DURATION_MS, FLY_DURATION_MS } from "../cameraMotion";
 import { deckCamera } from "./deckCamera";
 import type { OrthoCamera } from "./flyToCamera";
 
@@ -90,13 +90,16 @@ describe("what the camera asks deck to do", () => {
   /**
    * However long it is given, not a time of its own. A fit and a flight to
    * one element travel for different lengths, and the module that decides
-   * that is `fitTransition`; this one only carries the answer.
+   * that is `cameraMotion`; this one only carries the answer.
    */
   it("flies for exactly as long as it is told to", () => {
     expect(deckCamera(HERE, FIT_DURATION_MS).transitionDuration).toBe(
       FIT_DURATION_MS,
     );
-    expect(deckCamera(HERE, 1234).transitionDuration).toBe(1234);
+    expect(deckCamera(HERE, FLY_DURATION_MS).transitionDuration).toBe(
+      FLY_DURATION_MS,
+    );
+    expect(FIT_DURATION_MS).not.toBe(FLY_DURATION_MS);
   });
 
   /**
@@ -118,7 +121,7 @@ describe("what the camera asks deck to do", () => {
   });
 
   it("interpolates the target and every spelling of the zoom", () => {
-    const { transitionInterpolator } = deckCamera(HERE, FIT_DURATION_MS);
+    const { transitionInterpolator } = deckCamera(HERE, FLY_DURATION_MS);
     const flown = JSON.stringify(transitionInterpolator.opts);
     for (const prop of ["target", "zoom", "zoomX", "zoomY"]) {
       expect(flown).toContain(prop);
