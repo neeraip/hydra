@@ -298,12 +298,87 @@ fn run_summary(out_path: &Path, network: &Network) -> Result<Fragment, BlockErro
 }
 
 /// (pressure, length, velocity) display labels for the network's declared
-/// unit system (analysis spec §4.2).
+/// unit system (analysis spec §4.2). Used only where output stays
+/// file-flavored by spec: band labels, narrative notes, option echoes'
+/// prose, and composite units.
 fn unit_labels(network: &Network) -> (&'static str, &'static str, &'static str) {
     if is_si(network.options.flow_units) {
         ("m", "m", "m/s")
     } else {
         ("psi", "ft", "ft/s")
+    }
+}
+
+// ── SI display conversion (analysis spec §4.2 Units) ──────────────────────────
+
+/// This engine's §5 quantity descriptor for `key`, or `None` for a key the
+/// catalog does not declare — which `every_used_quantity_key_is_cataloged`
+/// below rules out for every key this module writes.
+fn qty(key: &str) -> Option<&'static hydra_common::QuantityDescriptor> {
+    crate::descriptors::QUANTITIES.iter().find(|q| q.key == key)
+}
+
+/// Converts values read from the results file — which carries the model's
+/// declared display units — into quantity-catalog SI display units, so a
+/// tagged value means what hydra-common §3.3 says it means.
+///
+/// Linear quantities convert through the §5 descriptor itself (its US→SI
+/// inverse): the descriptor is the presentation authority, and inverting
+/// it here makes US-family re-display reproduce the file's value exactly.
+/// Flow converts by the declared spelling's §3.1 factor to L/s — eleven
+/// spellings map onto one SI display unit, so an exact spelling round-trip
+/// is not a property any conversion could have.
+struct SiDisplay {
+    si: bool,
+    /// Declared flow units per m³/s (model spec §3.1).
+    flow_factor: f64,
+}
+
+impl SiDisplay {
+    fn new(network: &Network) -> Self {
+        let ucf = crate::io::units::make_ucf(
+            network.options.flow_units,
+            network.options.specific_gravity,
+        );
+        Self {
+            si: is_si(network.options.flow_units),
+            flow_factor: ucf.flow,
+        }
+    }
+
+    /// A descriptor-covered linear quantity: pressure, head, velocity,
+    /// volume. Identity on SI files; descriptor-inverse on US files.
+    fn linear(&self, key: &str, file_value: f64) -> f64 {
+        if self.si {
+            file_value
+        } else {
+            qty(key).map_or(file_value, |d| d.us_to_si(file_value))
+        }
+    }
+
+    /// Flow or demand in the declared spelling → L/s.
+    fn flow(&self, file_value: f64) -> f64 {
+        file_value * 1_000.0 / self.flow_factor
+    }
+}
+
+/// A tagged key-value number wearing its quantity's SI label.
+fn q_num(value_si: f64, key: &str) -> Value {
+    Value::Number {
+        value: value_si,
+        unit: qty(key).map(|d| d.si_label.to_string()),
+        quantity: Some(key.into()),
+    }
+}
+
+/// A tagged column: the header carries the SI label, and the tag converts
+/// every number under it (hydra-common spec §3.3).
+fn q_col(name: &str, key: &str) -> Column {
+    Column {
+        name: name.into(),
+        unit: qty(key).map(|d| d.si_label.to_string()),
+        kind: ValueKind::Number,
+        quantity: Some(key.into()),
     }
 }
 
@@ -317,33 +392,55 @@ fn result_extremes(out_path: &Path, network: &Network) -> Result<Fragment, Block
     let ranges = out_reader::scan_ranges(out_path, &meta, MAX_RANGE_SAMPLES)
         .map_err(|message| BlockError::Failed { message })?;
 
-    let flow = flow_unit_label(network.options.flow_units);
-    let (pressure, length, velocity) = unit_labels(network);
+    let u = SiDisplay::new(network);
 
+    // Rows mix quantities, so the min/max cells are tagged per value and
+    // wear their own unit text — a per-column unit or a text unit column
+    // could not follow a chosen display family (analysis spec §4.2 Units).
+    let tagged_row = |label: &str, min: f64, max: f64, key: &str| {
+        vec![text(label), q_num(min, key), q_num(max, key)]
+    };
     let mut rows = vec![
-        extremes_row(
+        tagged_row(
             "Pressure",
-            ranges.pressure_min,
-            ranges.pressure_max,
-            pressure,
+            u.linear("pressure", ranges.pressure_min),
+            u.linear("pressure", ranges.pressure_max),
+            "pressure",
         ),
-        extremes_row("Head", ranges.head_min, ranges.head_max, length),
-        extremes_row("Demand", ranges.demand_min, ranges.demand_max, flow),
-        extremes_row("Flow", ranges.flow_min, ranges.flow_max, flow),
-        extremes_row(
+        tagged_row(
+            "Head",
+            u.linear("head", ranges.head_min),
+            u.linear("head", ranges.head_max),
+            "head",
+        ),
+        tagged_row(
+            "Demand",
+            u.flow(ranges.demand_min),
+            u.flow(ranges.demand_max),
+            "demand",
+        ),
+        tagged_row(
+            "Flow",
+            u.flow(ranges.flow_min),
+            u.flow(ranges.flow_max),
+            "flow",
+        ),
+        tagged_row(
             "Velocity",
-            ranges.velocity_min,
-            ranges.velocity_max,
-            velocity,
+            u.linear("velocity", ranges.velocity_min),
+            u.linear("velocity", ranges.velocity_max),
+            "velocity",
         ),
     ];
     if let (Some(qmin), Some(qmax)) = (ranges.quality_min, ranges.quality_max) {
-        rows.push(extremes_row(
-            "Quality",
-            qmin,
-            qmax,
-            quality_unit(meta.quality_flag),
-        ));
+        // Quality's unit follows the mode and is identical in both display
+        // families, so it stays untagged text (analysis spec §4.2 Units).
+        let unit = quality_unit(meta.quality_flag);
+        rows.push(vec![
+            text("Quality"),
+            num_unit(qmin, unit),
+            num_unit(qmax, unit),
+        ]);
     }
 
     let table = Table {
@@ -366,12 +463,6 @@ fn result_extremes(out_path: &Path, network: &Network) -> Result<Fragment, Block
                 kind: ValueKind::Number,
                 quantity: None,
             },
-            Column {
-                name: "Unit".into(),
-                unit: None,
-                kind: ValueKind::Text,
-                quantity: None,
-            },
         ],
         rows,
     };
@@ -383,10 +474,6 @@ fn result_extremes(out_path: &Path, network: &Network) -> Result<Fragment, Block
         title: "Result Extremes".into(),
         items,
     })
-}
-
-fn extremes_row(quantity: &str, min: f64, max: f64, unit: &str) -> Vec<Value> {
-    vec![text(quantity), num(min), num(max), text(unit)]
 }
 
 fn pump_energy(out_path: &Path, network: &Network) -> Result<Fragment, BlockError> {
@@ -701,16 +788,20 @@ fn service_compliance(
     })?;
     let summary = &report.summary;
 
+    // The option arrives in file display units (§4.1.1, unchanged); its
+    // echo converts like any measured value so the block never mixes
+    // display families. The narrative note below stays file-flavored.
+    let u = SiDisplay::new(network);
     let entries = vec![
         entry("Junctions analysed", int(summary.node_count)),
         entry(
             "Minimum pressure criterion",
-            num_unit(min_pressure, pressure_unit),
+            q_num(u.linear("pressure", min_pressure), "pressure"),
         ),
         entry(
             "Maximum pressure criterion",
             match max_pressure {
-                Some(max) => num_unit(max, pressure_unit),
+                Some(max) => q_num(u.linear("pressure", max), "pressure"),
                 None => Value::Absent,
             },
         ),
@@ -719,8 +810,9 @@ fn service_compliance(
         entry("Samples above maximum", int(summary.above_max_samples)),
         entry(
             "Worst pressure deficit",
-            num_unit(summary.worst_below_min, pressure_unit),
+            q_num(u.linear("pressure", summary.worst_below_min), "pressure"),
         ),
+        // A composite unit no quantity covers: file-flavored by spec.
         entry(
             "Pressure deficit integral",
             num_unit(
@@ -796,12 +888,7 @@ fn service_compliance(
                     kind: ValueKind::Integer,
                     quantity: None,
                 },
-                Column {
-                    name: "Worst deficit".into(),
-                    unit: Some(pressure_unit.into()),
-                    kind: ValueKind::Number,
-                    quantity: None,
-                },
+                q_col("Worst deficit", "pressure"),
                 Column {
                     name: "Longest violation streak".into(),
                     unit: Some("periods".into()),
@@ -816,7 +903,7 @@ fn service_compliance(
                         text(node_id(network, n.node_index)),
                         num(n.violation_ratio() * 100.0),
                         int(n.below_min_count),
-                        num(n.worst_below_min),
+                        num(u.linear("pressure", n.worst_below_min)),
                         int(n.longest_violation_streak),
                     ]
                 })
@@ -857,9 +944,14 @@ fn demand_reliability(
     let entries = vec![
         entry("Junctions analysed", int(summary.node_count)),
         entry("Demand model", text(format!("{:?}", report.demand_model))),
-        entry("Required volume", num_unit(summary.required_volume, "m³")),
-        entry("Delivered volume", num_unit(summary.delivered_volume, "m³")),
-        entry("Unmet volume", num_unit(summary.unmet_volume, "m³")),
+        // Already computed in m³ (SI display units); tagging costs no
+        // conversion and buys family re-display.
+        entry("Required volume", q_num(summary.required_volume, "volume")),
+        entry(
+            "Delivered volume",
+            q_num(summary.delivered_volume, "volume"),
+        ),
+        entry("Unmet volume", q_num(summary.unmet_volume, "volume")),
         entry("Reliability", percent(summary.reliability_ratio())),
         entry(
             "Deficit (junction, period) pairs",
@@ -903,12 +995,7 @@ fn demand_reliability(
                     kind: ValueKind::Number,
                     quantity: None,
                 },
-                Column {
-                    name: "Unmet volume".into(),
-                    unit: Some("m³".into()),
-                    kind: ValueKind::Number,
-                    quantity: None,
-                },
+                q_col("Unmet volume", "volume"),
                 Column {
                     name: "Deficit periods".into(),
                     unit: None,
@@ -1150,11 +1237,11 @@ fn mass_balance(out_path: &Path, network: &Network) -> Result<Fragment, BlockErr
     };
 
     let entries = vec![
-        entry("Cumulative inflow", num_unit(scan.total_inflow, "m³")),
-        entry("Cumulative outflow", num_unit(scan.total_outflow, "m³")),
+        entry("Cumulative inflow", q_num(scan.total_inflow, "volume")),
+        entry("Cumulative outflow", q_num(scan.total_outflow, "volume")),
         entry(
             "Imbalance",
-            num_unit(scan.total_inflow - scan.total_outflow, "m³"),
+            q_num(scan.total_inflow - scan.total_outflow, "volume"),
         ),
         entry("Closure", num_unit(closure, "%")),
     ];
@@ -1209,7 +1296,7 @@ fn pipe_criticality(
     let top_count = opt_usize(options, "topCount")?.unwrap_or(DEFAULT_TOP_COUNT);
     let scan = out_reader::scan_analytics(out_path, &meta)
         .map_err(|message| BlockError::Failed { message })?;
-    let (_, _, velocity_unit) = unit_labels(network);
+    let u = SiDisplay::new(network);
 
     let mut ranked = pipe_max_velocities(&scan, network);
     if ranked.is_empty() {
@@ -1234,7 +1321,7 @@ fn pipe_criticality(
                 .get(*idx)
                 .map(|l| l.base.id.clone())
                 .unwrap_or_default();
-            vec![text(id), num_unit(*v, velocity_unit)]
+            vec![text(id), num(u.linear("velocity", *v))]
         })
         .collect();
 
@@ -1248,12 +1335,7 @@ fn pipe_criticality(
                     kind: ValueKind::Text,
                     quantity: None,
                 },
-                Column {
-                    name: "Peak velocity".into(),
-                    unit: Some(velocity_unit.into()),
-                    kind: ValueKind::Number,
-                    quantity: None,
-                },
+                q_col("Peak velocity", "velocity"),
             ],
             rows,
         },
@@ -1417,7 +1499,7 @@ fn tank_levels(out_path: &Path, network: &Network) -> Result<Fragment, BlockErro
     }
     let scan = out_reader::scan_analytics(out_path, &meta)
         .map_err(|message| BlockError::Failed { message })?;
-    let (_, length_unit, _) = unit_labels(network);
+    let u = SiDisplay::new(network);
     let tank_start = meta.n_nodes.saturating_sub(meta.n_tanks);
 
     // The scan's tank series cover tanks AND reservoirs (the prolog count
@@ -1448,7 +1530,7 @@ fn tank_levels(out_path: &Path, network: &Network) -> Result<Fragment, BlockErro
                 .enumerate()
                 .map(|(p, &head)| {
                     let hours = (meta.report_start + meta.report_step * p as f64) / 3600.0;
-                    [hours, head]
+                    [hours, u.linear("head", head)]
                 })
                 .collect(),
         })
@@ -1460,8 +1542,8 @@ fn tank_levels(out_path: &Path, network: &Network) -> Result<Fragment, BlockErro
             x_unit: Some("h".into()),
             x_quantity: None,
             y_label: "Hydraulic head".into(),
-            y_unit: Some(length_unit.into()),
-            y_quantity: None,
+            y_unit: qty("head").map(|d| d.si_label.to_string()),
+            y_quantity: Some("head".into()),
             data: ChartData::Line { series },
         },
     }];
@@ -1702,6 +1784,125 @@ mod tests {
         with_inp_out(FIXTURE_INP, f)
     }
 
+    // ── SI display tagging (analysis spec §4.2 Units) ────────────────────
+
+    /// The keys this module tags with must exist in the engine's §5
+    /// catalog: a tag naming an uncataloged key is a producer defect the
+    /// consumer silently renders as-written (hydra-common spec §3.3), so
+    /// only this test would ever catch the typo.
+    #[test]
+    fn every_used_quantity_key_is_cataloged() {
+        for key in ["pressure", "head", "demand", "flow", "velocity", "volume"] {
+            assert!(qty(key).is_some(), "quantity key {key:?} is not cataloged");
+        }
+    }
+
+    /// The core §3.3 obligation: a US-unit results file produces *SI*
+    /// display values, tagged, wearing SI labels — and re-expressing them
+    /// through the descriptor reproduces the file's value exactly, which
+    /// is what makes a US reader's report read like their file.
+    #[test]
+    fn us_files_produce_tagged_si_values_that_round_trip() {
+        with_inp_out(FIXTURE_INP_US, |path, network| {
+            let fragment =
+                produce_report_block("wds.result-extremes", path, network, None).expect("produce");
+            let FragmentItem::Table { table } = &fragment.items[0] else {
+                panic!("extremes table");
+            };
+            // Row 0 is pressure; columns are Quantity / Minimum / Maximum.
+            let Value::Number {
+                value,
+                unit,
+                quantity,
+            } = &table.rows[0][2]
+            else {
+                panic!("pressure maximum is a number");
+            };
+            assert_eq!(quantity.as_deref(), Some("pressure"));
+            assert_eq!(unit.as_deref(), Some("m"), "tagged values wear SI labels");
+
+            // The file's psi value, recovered exactly by the descriptor —
+            // the writer converted internal heads with the model-spec
+            // factors, so recover the file value the same way and compare
+            // round-trips rather than absolutes.
+            let d = qty("pressure").expect("cataloged");
+            let head_m: f64 = 50.0; // J1 head set by the harness
+            let elevation = 0.0;
+            let ucf = crate::io::units::make_ucf(
+                network.options.flow_units,
+                network.options.specific_gravity,
+            );
+            // The .out format stores f32, so the file's value is the
+            // f32 quantization of the writer's conversion — that, exactly,
+            // is what US re-display must reproduce.
+            let file_psi = f64::from(((head_m - elevation) * ucf.pressure) as f32);
+            assert!(
+                (d.si_to_us(*value) - file_psi).abs() < 1e-9 * file_psi.abs(),
+                "US re-display {} should reproduce the file's {}",
+                d.si_to_us(*value),
+                file_psi
+            );
+        });
+    }
+
+    /// On an SI file conversion is the identity: the same numbers as
+    /// before v1.7, now tagged. Guards against a conversion sneaking into
+    /// the SI path.
+    #[test]
+    fn si_files_tag_without_changing_values() {
+        with_inp_out(FIXTURE_INP, |path, network| {
+            let fragment =
+                produce_report_block("wds.result-extremes", path, network, None).expect("produce");
+            let FragmentItem::Table { table } = &fragment.items[0] else {
+                panic!("extremes table");
+            };
+            let Value::Number {
+                value, quantity, ..
+            } = &table.rows[0][2]
+            else {
+                panic!("pressure maximum is a number");
+            };
+            assert_eq!(quantity.as_deref(), Some("pressure"));
+            // J1: head 50, elevation 0 → 50 m of pressure, byte-identical
+            // to the pre-tagging output.
+            assert!((value - 50.0).abs() < 1e-9, "{value}");
+        });
+    }
+
+    /// The compliance criterion is authored in file units (§4.1.1) and its
+    /// echo is tagged: a 20 psi criterion must re-display as exactly
+    /// 20 psi for a US reader, or the report appears to misquote its own
+    /// input.
+    #[test]
+    fn a_us_criterion_echo_round_trips_exactly() {
+        with_inp_out(FIXTURE_INP_US, |path, network| {
+            let options = serde_json::json!({ "minPressure": 20.0 });
+            let fragment =
+                produce_report_block("wds.service-compliance", path, network, Some(&options))
+                    .expect("produce");
+            let FragmentItem::KeyValues { entries } = &fragment.items[0] else {
+                panic!("key values");
+            };
+            let echo = entries
+                .iter()
+                .find(|e| e.label == "Minimum pressure criterion")
+                .expect("criterion echo");
+            let Value::Number {
+                value, quantity, ..
+            } = &echo.value
+            else {
+                panic!("criterion is a number");
+            };
+            assert_eq!(quantity.as_deref(), Some("pressure"));
+            let d = qty("pressure").expect("cataloged");
+            assert!(
+                (d.si_to_us(*value) - 20.0).abs() < 1e-12,
+                "echo re-displays as {}, not 20 psi",
+                d.si_to_us(*value)
+            );
+        });
+    }
+
     fn with_inp_out(inp: &str, f: impl FnOnce(&Path, &crate::Network)) {
         let network = crate::io::parse(inp.as_bytes()).expect("parse network");
         let mut node_states: Vec<crate::NodeState> = network
@@ -1729,14 +1930,11 @@ mod tests {
         };
 
         let mut buf = std::io::Cursor::new(Vec::new());
-        crate::io::out_writer::write_binary_output(
-            &mut buf,
-            &session,
-            "test.inp",
-            "",
-            crate::FlowUnits::Lps,
-        )
-        .expect("write .out");
+        // The file carries the model's own declared units, as a real run's
+        // would — the US fixtures below depend on this.
+        let declared = session.network.options.flow_units;
+        crate::io::out_writer::write_binary_output(&mut buf, &session, "test.inp", "", declared)
+            .expect("write .out");
 
         let mut path = std::env::temp_dir();
         path.push(format!(

@@ -295,12 +295,38 @@ periods including the first and last). When the file holds more periods than
 the sample budget, the fragment carries a note disclosing sampling; below
 the budget, the scan is exhaustive.
 
-**Units:** unit labels are display text per the foundation contract. Flow
-and demand carry the network's declared flow unit; pressure, head, and
-velocity carry the unit-system-appropriate label (SI: m, m, m/s;
-US customary: psi, ft, ft/s). Quality carries mg/L (chemical — the file
-default), hours (age), or % (trace). Cost values carry no unit (currency
-is not modelled).
+**Units (revised with hydra-common v1.7):** quantity-bearing numbers are
+**quantity-tagged** (hydra-common spec §3.3): produced in the referenced
+quantity's SI display unit, wearing its SI label, and re-expressed in a
+display family by whichever consumer presents them. The results file
+carries the model's declared display units, so production converts:
+
+- **Linear quantities** — pressure, head, velocity, volume — convert
+  through the engine's own §5 quantity descriptor (its US→SI inverse).
+  The descriptor is the presentation authority, and inverting it at
+  production makes US-family re-display reproduce the file's value
+  exactly. This deliberately ignores specific gravity: the descriptor's
+  m↔psi relation is the water mapping, and display conversion is
+  presentation, not hydraulics — the solver's own sg-aware conversions
+  are untouched. Tank-level series and the demand-reliability and
+  mass-balance volumes (already computed in m³) tag the same way.
+- **Flow and demand** convert by the declared spelling's §3.1 factor to
+  L/s, the flow quantity's SI display unit. Eleven declared spellings map
+  onto one SI display unit, so a US-family reader sees the canonical US
+  label (gpm) rather than the file's spelling; the run summary still
+  records the declared spelling as text.
+- **Option echoes** (the compliance criteria) are tagged too: an option
+  arrives in file display units (§4.1.1, unchanged) and its echo converts
+  like any measured value, so one block never mixes families.
+
+**What stays file-flavored, deliberately:** engine-authored *text* that
+embeds numbers — threshold and distribution band labels, narrative notes,
+composite units (the pressure-deficit integral's `unit·h`) — and the
+untagged quantities whose units are identical in both families (percent,
+kW, mg/L, hours, counts, cost). Tags reach numbers, never prose.
+
+Quality carries mg/L (chemical — the file default), hours (age), or %
+(trace), untagged. Cost values carry no unit (currency is not modelled).
 
 **Errors:** unknown ids map to the foundation contract's unknown-block
 error; inapplicable blocks (`wds.pump-energy` with zero pumps,
