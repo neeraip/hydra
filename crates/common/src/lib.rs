@@ -3,12 +3,14 @@
 /// The crate version, taken from `Cargo.toml` at compile time.
 pub const HYDRA_COMMON_VERSION: &str = env!("CARGO_PKG_VERSION");
 
+mod criteria;
 mod elements;
 mod identity;
 mod quantity;
 mod report;
 mod variables;
 
+pub use criteria::{BandCut, CriterionDescriptor, CriterionKind};
 pub use elements::{AttributeDescriptor, ElementClass, ElementKind, ElementRole};
 pub use identity::{
     engine_by_key, EngineDescriptor, EngineStatus, ImportFormat, Recognition, UnknownEngineError,

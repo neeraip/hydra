@@ -49,6 +49,7 @@ headless CLI generation.
 | `blocks[].id` | Block reference | Opaque to this layer — validated only by the producing engine at assembly time. |
 | `blocks[].title` | Optional heading override | Plain text; replaces the block's default heading. |
 | `blocks[].options` | Optional per-block options | A JSON value passed to the producing engine verbatim (hydra-common spec §3.4); fully opaque to this layer. |
+| `removed` | Optional list of block ids the author deliberately excluded | Ignored by assembly and rendering. Template-editing consumers use it to distinguish "removed by the author" from "did not exist when this template was saved", so a block an engine adds later can join existing reports by default while deliberate removals stay removed. Absent (any template written before the field existed) means nothing was deliberately removed. |
 
 Unknown fields are ignored on read (additive evolution); a breaking
 change to the format requires a version bump. An empty `blocks` list is

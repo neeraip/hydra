@@ -226,8 +226,12 @@ pub use hydra_engine_wds::descriptors;
 pub use hydra_engine_uds as uds;
 
 /// Report blocks the water-distribution engine can produce, per the
-/// `common` reportable-output contract.
-pub use hydra_engine_wds::{produce_report_block, report_block_options, report_catalog};
+/// `common` reportable-output contract, and its criteria catalog and
+/// consumption per the `common` criteria contract.
+pub use hydra_engine_wds::{
+    criteria_block_options, criteria_catalog, produce_report_block, report_block_options,
+    report_catalog,
+};
 
 /// Report generation: JSON templates, document assembly from engine
 /// fragments, and deterministic txt/csv/html renderers. See the

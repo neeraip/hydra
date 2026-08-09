@@ -20,6 +20,7 @@
 #![doc = include_str!("hydraulics/spec.md")]
 #![doc = include_str!("transport/spec.md")]
 #![doc = include_str!("simulation/spec.md")]
+#![doc = include_str!("report_blocks/spec.md")]
 #![doc = include_str!("interop/spec.md")]
 
 pub mod descriptors;

@@ -112,6 +112,10 @@ pub const QUANTITIES: &[QuantityDescriptor] = &[
     q("velocity", "m/s", "ft/s", 3.280_84, 2, 2),
     q("pressure", "m", "psi", 1.421_970_2, 1, 1),
     q("headloss", "m/km", "ft/kft", 1.0, 2, 1),
+    // Identity in both display systems (analysis spec §5): the quality
+    // criteria read as mg/L and hours everywhere.
+    q("concentration", "mg/L", "mg/L", 1.0, 2, 2),
+    q("age", "h", "h", 1.0, 1, 1),
     // ft³, not gallons: an INP expresses every volume in cubic feet on a
     // US model (the importer divides by 35.315 ft³/m³), so a reader in US
     // mode must see the number their own file carries. Gallons made a
@@ -400,6 +404,8 @@ mod tests {
             ("pressure", "m", "psi", 1.421_970_2),
             ("headloss", "m/km", "ft/kft", 1.0),
             ("volume", "m³", "ft³", 35.314_667),
+            ("concentration", "mg/L", "mg/L", 1.0),
+            ("age", "h", "h", 1.0),
         ];
         for (key, si, us, scale) in expected {
             let q = QUANTITIES

@@ -169,11 +169,13 @@ mod tests {
                 id: "e.one",
                 title: "One",
                 summary: "",
+                category: "General",
             },
             BlockDescriptor {
                 id: "e.two",
                 title: "Two",
                 summary: "",
+                category: "General",
             },
         ];
         let t = ReportTemplate::covering("All", &catalog);

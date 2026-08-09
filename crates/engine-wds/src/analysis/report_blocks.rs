@@ -24,78 +24,108 @@ use crate::{FlowUnits, LinkKind, Network, NodeKind};
 /// `scan_ranges` guidance keeping scans under ~50 ms on long simulations.
 const MAX_RANGE_SAMPLES: usize = 2048;
 
+// Catalog order is presentation order (spec §3.2: a category first appears
+// where its first block does), so blocks sharing a category sit together.
+// Ids are position-independent; only their strings are compatibility.
 const CATALOG: &[BlockDescriptor] = &[
     BlockDescriptor {
         id: "wds.run-summary",
         title: "Run Summary",
         summary: "Network size, reporting window, units, and quality mode of the run.",
+        category: "Summary",
     },
     BlockDescriptor {
         id: "wds.result-extremes",
         title: "Result Extremes",
         summary: "Global minimum and maximum pressure, head, demand, flow, and velocity \
                   (plus quality when present) over the reporting horizon.",
-    },
-    BlockDescriptor {
-        id: "wds.pump-energy",
-        title: "Pump Energy",
-        summary: "Per-pump utilization, efficiency, power, and cost, plus the network \
-                  demand charge.",
-    },
-    BlockDescriptor {
-        id: "wds.quality-summary",
-        title: "Water Quality Summary",
-        summary: "Quality mode and global quality extremes.",
-    },
-    BlockDescriptor {
-        id: "wds.service-compliance",
-        title: "Pressure Adequacy",
-        summary: "Junction-pressure service compliance against a minimum (and optional \
-                  maximum) pressure criterion, with the worst-performing junctions.",
-    },
-    BlockDescriptor {
-        id: "wds.demand-reliability",
-        title: "Demand Reliability",
-        summary: "Delivered-vs-required demand volumes, reliability ratio, and the \
-                  worst-served junctions.",
-    },
-    BlockDescriptor {
-        id: "wds.pressure-distribution",
-        title: "Pressure Distribution",
-        summary: "Distribution of each junction's minimum pressure over the run.",
-    },
-    BlockDescriptor {
-        id: "wds.velocity-distribution",
-        title: "Velocity Distribution",
-        summary: "Distribution of each pipe's maximum velocity over the run \
-                  (pumps and valves excluded).",
-    },
-    BlockDescriptor {
-        id: "wds.tank-levels",
-        title: "Tank Levels",
-        summary: "Hydraulic head of each tank over the reporting horizon.",
+        category: "Summary",
     },
     BlockDescriptor {
         id: "wds.mass-balance",
         title: "Mass Balance",
         summary: "Cumulative network inflow and outflow, closure percentage, and \
                   per-period closure over the reporting horizon.",
+        category: "Summary",
     },
     BlockDescriptor {
-        id: "wds.pipe-criticality",
-        title: "Pipe Criticality",
-        summary: "Pipes ranked by peak velocity over the reporting horizon.",
+        id: "wds.service-compliance",
+        title: "Pressure Adequacy",
+        summary: "Junction-pressure service compliance against a minimum (and optional \
+                  maximum) pressure criterion, with the worst-performing junctions.",
+        category: "Compliance",
+    },
+    BlockDescriptor {
+        id: "wds.demand-reliability",
+        title: "Demand Reliability",
+        summary: "Delivered-vs-required demand volumes, reliability ratio, and the \
+                  worst-served junctions.",
+        category: "Compliance",
+    },
+    BlockDescriptor {
+        id: "wds.pressure-distribution",
+        title: "Pressure Distribution",
+        summary: "Distribution of each junction's minimum pressure over the run.",
+        category: "Compliance",
     },
     BlockDescriptor {
         id: "wds.pressure-thresholds",
         title: "Pressure Thresholds",
         summary: "Junction minimum pressure counted into caller-supplied threshold \
                   bands rather than observed-range bins.",
+        category: "Compliance",
+    },
+    BlockDescriptor {
+        id: "wds.velocity-distribution",
+        title: "Velocity Distribution",
+        summary: "Distribution of each pipe's maximum velocity over the run \
+                  (pumps and valves excluded).",
+        category: "Compliance",
     },
     BlockDescriptor {
         id: "wds.velocity-thresholds",
         title: "Velocity Thresholds",
         summary: "Pipe maximum velocity counted into caller-supplied threshold bands.",
+        category: "Compliance",
+    },
+    BlockDescriptor {
+        id: "wds.quality-summary",
+        title: "Water Quality Summary",
+        summary: "Quality mode and global quality extremes.",
+        category: "Quality",
+    },
+    BlockDescriptor {
+        id: "wds.quality-compliance",
+        title: "Quality Compliance",
+        summary: "Junction compliance against the residual (chemical) or age \
+                  criterion, with the worst-performing junctions.",
+        category: "Quality",
+    },
+    BlockDescriptor {
+        id: "wds.tank-levels",
+        title: "Tank Levels",
+        summary: "Hydraulic head of each tank over the reporting horizon.",
+        category: "Assets",
+    },
+    BlockDescriptor {
+        id: "wds.pump-energy",
+        title: "Pump Energy",
+        summary: "Per-pump utilization, efficiency, power, and cost, plus the network \
+                  demand charge.",
+        category: "Assets",
+    },
+    BlockDescriptor {
+        id: "wds.pipe-criticality",
+        title: "Pipe Criticality",
+        summary: "Pipes ranked by peak velocity over the reporting horizon.",
+        category: "Assets",
+    },
+    BlockDescriptor {
+        id: "wds.unit-headloss",
+        title: "Unit Headloss",
+        summary: "Pipes ranked by peak headloss per unit length — the \
+                  undersized-main finder.",
+        category: "Assets",
     },
 ];
 
@@ -118,6 +148,8 @@ pub fn produce_report_block(
         "wds.result-extremes" => result_extremes(out_path, network),
         "wds.pump-energy" => pump_energy(out_path, network),
         "wds.quality-summary" => quality_summary(out_path),
+        "wds.quality-compliance" => quality_compliance(out_path, network, options),
+        "wds.unit-headloss" => unit_headloss(out_path, network, options),
         "wds.service-compliance" => service_compliance(out_path, network, options),
         "wds.demand-reliability" => demand_reliability(out_path, network, options),
         "wds.pressure-distribution" => pressure_distribution(out_path, network),
@@ -587,6 +619,224 @@ fn quality_summary(out_path: &Path) -> Result<Fragment, BlockError> {
     })
 }
 
+fn quality_compliance(
+    out_path: &Path,
+    network: &Network,
+    options: Option<&serde_json::Value>,
+) -> Result<Fragment, BlockError> {
+    let meta = read_meta(out_path)?;
+    match meta.quality_flag {
+        0 => {
+            return Err(BlockError::Unavailable {
+                reason: "The run has no water-quality results.".into(),
+            })
+        }
+        3 => {
+            return Err(BlockError::Unavailable {
+                reason: "Trace runs have no compliance criterion.".into(),
+            })
+        }
+        _ => {}
+    }
+    let min_residual = opt_f64(options, "minResidual", true)?.unwrap_or(0.2);
+    let max_age = opt_f64(options, "maxAge", true)?.unwrap_or(24.0);
+    let worst_count = opt_usize(options, "worstCount")?.unwrap_or(DEFAULT_WORST_COUNT);
+    let scan = out_reader::scan_analytics(out_path, &meta)
+        .map_err(|message| BlockError::Failed { message })?;
+
+    // Spec §4.1: chemical mode judges each junction's minimum residual
+    // against `minResidual`; age mode judges maximum age against `maxAge`.
+    let age_mode = meta.quality_flag == 2;
+    let mut judged: Vec<(usize, f64)> = network
+        .nodes
+        .iter()
+        .enumerate()
+        .filter(|(_, n)| matches!(n.kind, crate::NodeKind::Junction(_)))
+        .map(|(i, _)| {
+            let v = if age_mode {
+                scan.node_max_quality[i]
+            } else {
+                scan.node_min_quality[i]
+            };
+            (i, v)
+        })
+        .filter(|(_, v)| v.is_finite())
+        .collect();
+    if judged.is_empty() {
+        return Err(BlockError::Unavailable {
+            reason: "The network has no junctions carrying quality results.".into(),
+        });
+    }
+
+    let compliant = judged
+        .iter()
+        .filter(|(_, v)| {
+            if age_mode {
+                *v <= max_age
+            } else {
+                *v >= min_residual
+            }
+        })
+        .count();
+    let total = judged.len();
+
+    // Worst first: the highest age, or the lowest residual. Node index
+    // breaks ties for determinism.
+    judged.sort_by(|a, b| {
+        let ord = if age_mode {
+            b.1.partial_cmp(&a.1)
+        } else {
+            a.1.partial_cmp(&b.1)
+        };
+        ord.unwrap_or(std::cmp::Ordering::Equal).then(a.0.cmp(&b.0))
+    });
+
+    let (criterion_label, criterion_value, judged_col) = if age_mode {
+        ("Max age criterion", q_num(max_age, "age"), "Max age")
+    } else {
+        (
+            "Min residual criterion",
+            q_num(min_residual, "concentration"),
+            "Min residual",
+        )
+    };
+    let quality_key = if age_mode { "age" } else { "concentration" };
+    let entries = vec![
+        entry("Quality mode", text(quality_mode_label(meta.quality_flag))),
+        entry(criterion_label, criterion_value),
+        entry(
+            "Compliant junctions",
+            text(format!("{compliant} of {total}")),
+        ),
+        entry(
+            "Compliance",
+            q_num(100.0 * compliant as f64 / total as f64, "percent"),
+        ),
+    ];
+
+    let rows: Vec<Vec<Value>> = judged
+        .iter()
+        .take(worst_count)
+        .map(|(i, v)| {
+            let id = network
+                .nodes
+                .get(*i)
+                .map(|n| n.base.id.clone())
+                .unwrap_or_default();
+            vec![text(id), num(*v)]
+        })
+        .collect();
+    let items = vec![
+        FragmentItem::KeyValues { entries },
+        FragmentItem::Table {
+            table: Table {
+                columns: vec![
+                    Column {
+                        name: "Junction".into(),
+                        unit: None,
+                        kind: ValueKind::Text,
+                        quantity: None,
+                    },
+                    q_col(judged_col, quality_key),
+                ],
+                rows,
+            },
+        },
+    ];
+    Ok(Fragment {
+        title: "Quality Compliance".into(),
+        items,
+    })
+}
+
+/// Default ranked-pipes table length for `wds.unit-headloss` (spec §4.1.1).
+const DEFAULT_HEADLOSS_COUNT: usize = 10;
+
+fn unit_headloss(
+    out_path: &Path,
+    network: &Network,
+    options: Option<&serde_json::Value>,
+) -> Result<Fragment, BlockError> {
+    let meta = read_meta(out_path)?;
+    if meta.n_periods == 0 {
+        return Err(BlockError::Failed {
+            message: "The results file holds no reporting periods.".into(),
+        });
+    }
+    let top_count = opt_usize(options, "topCount")?.unwrap_or(DEFAULT_HEADLOSS_COUNT);
+    let scan = out_reader::scan_analytics(out_path, &meta)
+        .map_err(|message| BlockError::Failed { message })?;
+
+    // Pipes only: the stored headloss variable is a length-normalised
+    // ratio for pipes (spec §4.1 — numerically identical in both display
+    // systems) and a head gain/loss for pumps and valves.
+    let mut ranked: Vec<(usize, f64)> = scan
+        .link_max_unit_headloss
+        .iter()
+        .enumerate()
+        .filter(|(i, v)| {
+            v.is_finite()
+                && network
+                    .links
+                    .get(*i)
+                    .is_some_and(|l| matches!(l.kind, crate::LinkKind::Pipe(_)))
+        })
+        .map(|(i, v)| (i, *v))
+        .collect();
+    if ranked.is_empty() {
+        return Err(BlockError::Unavailable {
+            reason: "The network has no pipes carrying headloss results.".into(),
+        });
+    }
+    ranked.sort_by(|a, b| {
+        b.1.partial_cmp(&a.1)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then(a.0.cmp(&b.0))
+    });
+
+    let rows: Vec<Vec<Value>> = ranked
+        .iter()
+        .take(top_count)
+        .map(|(i, v)| {
+            let (id, diameter_mm) = network
+                .links
+                .get(*i)
+                .map(|l| {
+                    let d = match &l.kind {
+                        crate::LinkKind::Pipe(p) => Some(p.diameter * 1000.0),
+                        _ => None,
+                    };
+                    (l.base.id.clone(), d)
+                })
+                .unwrap_or_default();
+            vec![
+                text(id),
+                diameter_mm.map(num).unwrap_or(Value::Absent),
+                num(*v),
+            ]
+        })
+        .collect();
+
+    Ok(Fragment {
+        title: "Unit Headloss".into(),
+        items: vec![FragmentItem::Table {
+            table: Table {
+                columns: vec![
+                    Column {
+                        name: "Pipe".into(),
+                        unit: None,
+                        kind: ValueKind::Text,
+                        quantity: None,
+                    },
+                    q_col("Diameter", "diameter"),
+                    q_col("Peak unit headloss", "headloss"),
+                ],
+                rows,
+            },
+        }],
+    })
+}
+
 // ── Option descriptions (analysis spec §4.1.1, hydra-common spec §3.2.1) ──────
 
 /// Describe the options `id` accepts, resolved for `network`.
@@ -662,6 +912,46 @@ pub fn report_block_options(id: &str, network: &Network) -> Vec<OptionDescriptor
             },
             unit: None,
         }],
+        "wds.unit-headloss" => vec![OptionDescriptor {
+            key: "topCount".into(),
+            label: "Rows in the ranked-pipes table".into(),
+            help: "How many pipes to list, highest peak unit headloss first.".into(),
+            kind: OptionKind::Integer {
+                default: Some(DEFAULT_HEADLOSS_COUNT as i64),
+                min: Some(1),
+                max: None,
+            },
+            unit: None,
+        }],
+        "wds.quality-compliance" => vec![
+            OptionDescriptor {
+                key: "minResidual".into(),
+                label: "Minimum acceptable residual".into(),
+                help: "Chemical runs: junctions whose residual ever falls below \
+                       this are non-compliant."
+                    .into(),
+                kind: OptionKind::Number {
+                    default: Some(0.2),
+                    min: Some(0.0),
+                    max: None,
+                },
+                unit: Some("mg/L".into()),
+            },
+            OptionDescriptor {
+                key: "maxAge".into(),
+                label: "Maximum acceptable water age".into(),
+                help: "Age runs: junctions whose age ever exceeds this are \
+                       non-compliant."
+                    .into(),
+                kind: OptionKind::Number {
+                    default: Some(24.0),
+                    min: Some(0.0),
+                    max: None,
+                },
+                unit: Some("hours".into()),
+            },
+            worst_count("junctions"),
+        ],
         "wds.pressure-thresholds" => vec![OptionDescriptor {
             key: "edges".into(),
             label: "Band boundaries".into(),
@@ -1600,6 +1890,28 @@ mod tests {
         assert_eq!(ids.len(), CATALOG.len(), "block ids must be unique");
     }
 
+    /// Catalog order is presentation order (spec §3.2): a category's blocks
+    /// sit together, so consumers deriving tabs get each category once.
+    #[test]
+    fn catalog_categories_are_contiguous() {
+        let mut seen: Vec<&str> = Vec::new();
+        for block in CATALOG {
+            assert!(!block.category.is_empty(), "{}: empty category", block.id);
+            match seen.last() {
+                Some(&last) if last == block.category => {}
+                _ => {
+                    assert!(
+                        !seen.contains(&block.category),
+                        "category {:?} appears in two runs; blocks sharing a \
+                         category must be adjacent in the catalog",
+                        block.category
+                    );
+                    seen.push(block.category);
+                }
+            }
+        }
+    }
+
     #[test]
     fn unknown_block_id_is_rejected() {
         let network = crate::io::parse(FIXTURE_INP.as_bytes()).expect("parse network");
@@ -1945,6 +2257,169 @@ mod tests {
         std::fs::write(&path, buf.into_inner()).expect("persist .out");
         f(&path, &session.network);
         let _ = std::fs::remove_file(&path);
+    }
+
+    /// The two-pipe fixture with a quality mode and per-node quality
+    /// values, in node order (J1, J2, R1).
+    fn with_quality_out(
+        quality_line: &str,
+        node_quality: &[f64],
+        f: impl FnOnce(&Path, &crate::Network),
+    ) {
+        let inp = format!(
+            "[JUNCTIONS]\nJ1  0  10\nJ2  0  10\n\n\
+             [RESERVOIRS]\nR1  100\n\n\
+             [PIPES]\nP1  R1  J1  1000  300  100  0  Open\nP2  J1  J2  800  250  100  0  Open\n\n\
+             [OPTIONS]\nUnits  LPS\nHeadloss  H-W\nQuality  {quality_line}\n\n[END]\n"
+        );
+        let network = crate::io::parse(inp.as_bytes()).expect("parse network");
+        let mut node_states: Vec<crate::NodeState> = network
+            .nodes
+            .iter()
+            .map(|n| crate::NodeState {
+                head: n.base.elevation,
+                ..crate::NodeState::default()
+            })
+            .collect();
+        for (state, &q) in node_states.iter_mut().zip(node_quality) {
+            state.quality = q;
+        }
+        let link_states = network
+            .links
+            .iter()
+            .map(|_| crate::LinkState::default())
+            .collect();
+        let session = MockSession {
+            network,
+            snapshots: vec![crate::io::HydSnapshot {
+                t: 0.0,
+                node_states,
+                link_states,
+            }],
+        };
+        let mut buf = std::io::Cursor::new(Vec::new());
+        let declared = session.network.options.flow_units;
+        crate::io::out_writer::write_binary_output(&mut buf, &session, "test.inp", "", declared)
+            .expect("write .out");
+        let mut path = std::env::temp_dir();
+        path.push(format!(
+            "hydra-quality-blocks-{}-{:?}.out",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        std::fs::write(&path, buf.into_inner()).expect("persist .out");
+        f(&path, &session.network);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// Spec §4.1: pipes ranked by the stored length-normalised ratio. The
+    /// fixture's heads make P1 drop 50 m over 1000 m (50 m/km) and P2
+    /// drop 5 m over 800 m (6.25 m/km).
+    #[test]
+    fn unit_headloss_ranks_pipes_by_the_stored_ratio() {
+        with_fixture_out(|path, network| {
+            let fragment = produce_report_block("wds.unit-headloss", path, network, None)
+                .expect("produce unit headloss");
+            let FragmentItem::Table { table } = &fragment.items[0] else {
+                panic!("expected a table");
+            };
+            assert_eq!(table.columns[1].quantity.as_deref(), Some("diameter"));
+            assert_eq!(table.columns[2].quantity.as_deref(), Some("headloss"));
+            assert_eq!(table.rows.len(), 2);
+            assert_eq!(table.rows[0][0], text("P1"));
+            let Value::Number { value, .. } = table.rows[0][2] else {
+                panic!("peak unit headloss is a number");
+            };
+            assert!((value - 50.0).abs() < 1e-4, "P1 unit headloss {value}");
+            // Diameter arrives in the SI display unit (mm) from the model.
+            let Value::Number { value: d, .. } = table.rows[0][1] else {
+                panic!("diameter is a number");
+            };
+            assert!((d - 300.0).abs() < 1e-6, "P1 diameter {d}");
+        });
+    }
+
+    /// Spec §4.1: chemical mode judges each junction's minimum residual;
+    /// the reservoir is not judged, the worst junction leads the table.
+    #[test]
+    fn chemical_compliance_counts_junctions_against_the_residual() {
+        with_quality_out("Chlorine mg/L", &[0.5, 0.05, 1.0], |path, network| {
+            let fragment = produce_report_block("wds.quality-compliance", path, network, None)
+                .expect("produce quality compliance");
+            let FragmentItem::KeyValues { entries } = &fragment.items[0] else {
+                panic!("expected key-values first");
+            };
+            let get = |label: &str| {
+                &entries
+                    .iter()
+                    .find(|e| e.label == label)
+                    .unwrap_or_else(|| panic!("missing entry {label:?}"))
+                    .value
+            };
+            assert_eq!(get("Compliant junctions"), &text("1 of 2"));
+            let Value::Number {
+                value, quantity, ..
+            } = get("Min residual criterion")
+            else {
+                panic!("criterion echo is a number");
+            };
+            assert_eq!(*value, 0.2);
+            assert_eq!(quantity.as_deref(), Some("concentration"));
+
+            let FragmentItem::Table { table } = &fragment.items[1] else {
+                panic!("expected a worst-junctions table");
+            };
+            assert_eq!(table.columns[1].quantity.as_deref(), Some("concentration"));
+            assert_eq!(table.rows[0][0], text("J2"), "worst junction first");
+        });
+    }
+
+    /// Spec §4.1: age mode judges maximum age against `maxAge`, and the
+    /// judged column tags the age quantity.
+    #[test]
+    fn age_compliance_judges_the_maximum_age() {
+        with_quality_out("Age", &[30.0, 5.0, 0.0], |path, network| {
+            let fragment = produce_report_block("wds.quality-compliance", path, network, None)
+                .expect("produce quality compliance");
+            let FragmentItem::KeyValues { entries } = &fragment.items[0] else {
+                panic!("expected key-values first");
+            };
+            let compliant = entries
+                .iter()
+                .find(|e| e.label == "Compliant junctions")
+                .expect("compliant entry");
+            assert_eq!(compliant.value, text("1 of 2"));
+            let FragmentItem::Table { table } = &fragment.items[1] else {
+                panic!("expected a worst-junctions table");
+            };
+            assert_eq!(table.columns[1].quantity.as_deref(), Some("age"));
+            assert_eq!(table.rows[0][0], text("J1"), "oldest water first");
+        });
+    }
+
+    /// Spec §4.1: no-quality and trace runs are unavailable, distinctly.
+    #[test]
+    fn quality_compliance_requires_a_judgeable_mode() {
+        with_fixture_out(|path, network| {
+            let err = produce_report_block("wds.quality-compliance", path, network, None)
+                .expect_err("no-quality run must be unavailable");
+            assert_eq!(
+                err,
+                BlockError::Unavailable {
+                    reason: "The run has no water-quality results.".into()
+                }
+            );
+        });
+        with_quality_out("Trace R1", &[0.0, 0.0, 100.0], |path, network| {
+            let err = produce_report_block("wds.quality-compliance", path, network, None)
+                .expect_err("trace run must be unavailable");
+            assert_eq!(
+                err,
+                BlockError::Unavailable {
+                    reason: "Trace runs have no compliance criterion.".into()
+                }
+            );
+        });
     }
 
     #[test]

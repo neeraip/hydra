@@ -28,6 +28,10 @@ pub struct BlockDescriptor {
     pub title: &'static str,
     /// What this block contains, for the template-builder UI.
     pub summary: &'static str,
+    /// Engine-authored grouping heading (spec §3.2). Blocks sharing the
+    /// exact string belong together; group order is catalog order. Display
+    /// text only — carries no semantics beyond equality.
+    pub category: &'static str,
 }
 
 /// One selectable item of a [`OptionKind::Choice`] or

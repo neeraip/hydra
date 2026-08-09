@@ -117,16 +117,19 @@ mod tests {
             id: "e.ok",
             title: "All Good",
             summary: "",
+            category: "General",
         },
         BlockDescriptor {
             id: "e.gone",
             title: "Pump Energy",
             summary: "",
+            category: "General",
         },
         BlockDescriptor {
             id: "e.opt",
             title: "Optioned",
             summary: "",
+            category: "General",
         },
     ];
 

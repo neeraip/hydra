@@ -181,6 +181,8 @@ neutral content fragments for one completed simulation.
 | `wds.tank-levels` | Hydraulic head of each tank over the reporting horizon as a line chart (one series per tank, first 8 in node order with a note when more exist). | the network has ≥ 1 tank |
 | `wds.mass-balance` | Network volumetric balance: cumulative inflow and outflow, their difference and closure percentage, plus per-period closure as a line chart. | the file holds ≥ 1 reporting period |
 | `wds.pipe-criticality` | Pipes ranked by peak velocity: a table of the top *N* with peak velocity and the period it occurred in. | the network has ≥ 1 pipe |
+| `wds.unit-headloss` | Pipes ranked by peak unit headloss: a table of the top *N* with peak unit headloss and pipe diameter — the undersized-main finder. Unit headloss is the length-normalised ratio the results file stores for pipes, numerically identical in both display systems (m/km ≡ ft/kft). | the network has ≥ 1 pipe |
+| `wds.quality-compliance` | Junction water-quality compliance: in chemical mode each junction's **minimum residual** over the horizon is judged against `minResidual`; in age mode each junction's **maximum age** is judged against `maxAge`. Compliant/total counts, the compliance ratio, and a worst-junctions table (ranked by the judged value, worst first). Trace runs have no compliance criterion and are unavailable, distinctly from no-quality runs. | the run produced chemical or age quality results |
 | `wds.pressure-thresholds` | Junction minimum pressure counted into **caller-supplied threshold bands** rather than observed-range bins (§4.1.2), as a bar chart. | the file holds ≥ 1 reporting period |
 | `wds.velocity-thresholds` | Pipe maximum velocity counted into caller-supplied threshold bands, as a bar chart. | the file holds ≥ 1 reporting period |
 
@@ -197,6 +199,10 @@ JSON authored per template block; this engine defines:
 | `wds.demand-reliability` | `deficitTolerance` | Deficit flow-rate tolerance (m³/s) below which a per-period shortfall is not counted | 1e-9 |
 | `wds.demand-reliability` | `worstCount` | Rows in the worst-junctions table | 10 |
 | `wds.pipe-criticality` | `topCount` | Rows in the ranked-pipes table | 5 |
+| `wds.unit-headloss` | `topCount` | Rows in the ranked-pipes table | 10 |
+| `wds.quality-compliance` | `minResidual` | Minimum acceptable residual (chemical mode), in the file's quality display unit (mg/L) | 0.2 |
+| `wds.quality-compliance` | `maxAge` | Maximum acceptable water age (age mode), hours | 24 |
+| `wds.quality-compliance` | `worstCount` | Rows in the worst-junctions table | 10 |
 | `wds.pressure-thresholds` | `edges` | Ascending band boundaries in the results file's pressure display unit | `[0, 10, 20, 30, 40, 50, 60]` (SI, m) / `[0, 15, 30, 45, 60, 75, 85]` (US, psi) |
 | `wds.velocity-thresholds` | `edges` | Ascending band boundaries in the velocity display unit | `[0.1, 0.3, 0.6, 1.0]` (SI, m/s) / `[0.3, 1.0, 2.0, 3.3]` (US, ft/s) |
 
@@ -333,3 +339,46 @@ error; inapplicable blocks (`wds.pump-energy` with zero pumps,
 `wds.quality-summary` for a hydraulics-only file) map to its unavailable
 error with a reason; read failures map to its failed error. The engine
 never renders placeholders — that is the report layer's decision.
+
+## 5. Criteria
+
+The engine publishes a criteria catalog under the foundation criteria
+contract (hydra-common §7) — the standard a water-distribution network is
+assessed against:
+
+| Key | Kind | Quantity | Defaults (SI display units) |
+|---|---|---|---|
+| `minPressure` | value | pressure | 14 m (the conventional ~20 psi service minimum) |
+| `pressure` | band `low`/`required`/`high` | pressure | 24 / 35 / 45 m |
+| `velocity` | band `low`/`target`/`high` | velocity | 0.1 / 0.5 / 1.5 m/s |
+| `flow` | band `low`/`target`/`high` | flow | 0.1 / 1 / 10 L/s |
+| `minResidual` | value | concentration | 0.2 mg/L (a conventional disinfectant-residual floor) |
+| `maxAge` | value | age | 24 h |
+
+The quality criteria brought two quantities into the engine's §5 catalog —
+`concentration` (mg/L) and `age` (h) — both identical in the two display
+systems, so their conversions are the identity.
+
+**Consumption (hydra-common §7.4).** A valuation derives options for the
+criteria-shaped blocks: `minPressure` becomes `wds.service-compliance`'s
+`minPressure` option; the `pressure` and `velocity` bands become the
+`edges` of `wds.pressure-thresholds` and `wds.velocity-thresholds`; and
+`minResidual` and `maxAge` become `wds.quality-compliance`'s options of
+the same names — identity conversions, since their quantities read the
+same in both display systems, and both are always sent because which one
+applies is the run's quality mode, which the block judges. Block
+options are file-display-unit inputs (§4.1.1), so consumption converts
+each SI value with the engine's own unit-conversion factors — the model's
+specific gravity included, because an option participates in computation
+against file values and is not presentation. A band that is not strictly
+ascending after conversion cannot make threshold edges; its block is
+omitted from the answer and runs on its documented defaults — a
+degenerate band is an editing state, not an error (hydra-common §7.3).
+Absent keys take the catalog defaults; a malformed valuation (wrong
+shape, non-finite number) is refused with a message naming the
+criterion.
+
+The `flow` band drives no block. It is cataloged because the catalog
+describes the whole standard, and applications judge with it elsewhere
+(the map's criteria colour scale) — hydra-common §7.4 provides for
+exactly this.

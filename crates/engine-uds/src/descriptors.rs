@@ -240,6 +240,10 @@ pub const QUANTITIES: &[QuantityDescriptor] = &[
     q("velocity", "m/s", "ft/s", 3.280_84, 0.0, 2, 2),
     q("rainfall", "mm/hr", "in/hr", 0.039_370_1, 0.0, 1, 2),
     q("infiltration", "mm/hr", "in/hr", 0.039_370_1, 0.0, 2, 3),
+    // Accumulated depth of precipitation or loss (§13.3) — a distinct
+    // quantity from the rates above and from node "depth" (metres):
+    // storm totals read in millimetres and inches.
+    q("precipitation", "mm", "in", 0.039_370_1, 0.0, 1, 2),
     q("area", "ha", "ac", 2.471_05, 0.0, 2, 2),
     q("volume", "m³", "ft³", 35.314_7, 0.0, 1, 0),
     q("concentration", "mg/L", "mg/L", 1.0, 0.0, 2, 2),

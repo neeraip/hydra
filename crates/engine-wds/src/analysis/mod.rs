@@ -4,12 +4,14 @@
 pub const HYDRA_ANALYSIS_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 mod binning;
+mod criteria;
 mod demand_reliability;
 mod errors;
 mod report_blocks;
 mod service_compliance;
 
 pub use binning::threshold_bands;
+pub use criteria::{criteria_block_options, criteria_catalog};
 pub use demand_reliability::{
     compute_demand_reliability_from_out, compute_demand_reliability_from_out_with_options,
     DemandReliabilityNode, DemandReliabilityOptions, DemandReliabilityReport,

@@ -94,6 +94,7 @@ authoritative definition of Hydra's mathematical behaviour:
 | `crates/engine-uds/src/hydraulics/spec.md` | Section geometry, dynamic-wave routing, structures, inlets |
 | `crates/engine-uds/src/transport/spec.md` | Buildup, washoff, treatment, network transport |
 | `crates/engine-uds/src/simulation/spec.md` | Controls, orchestration, accounting, statistics, session API |
+| `crates/engine-uds/src/report_blocks/spec.md` | Post-simulation analytics: report-block catalog, derivations, options |
 | `crates/engine-uds/src/interop/spec.md` | INP import, interface files, OUT/RPT output, recognition |
 
 **Always update the relevant spec before changing solver/model/analysis implementation.**

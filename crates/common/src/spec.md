@@ -1,6 +1,6 @@
 # Hydra Common — Foundation Contract
 
-Status: **v1.7 — 2026-08-08** (v1.1 added opaque per-block options
+Status: **v1.9 — 2026-08-08** (v1.1 added opaque per-block options
 to the production contract, §3.4; v1.2 added the chart fragment item,
 §3.3; v1.3 added engine availability and import formats, §2.1–2.3; v1.4
 added the recognition contract and its routing rules, §2.5; v1.5 — with a
@@ -10,7 +10,10 @@ contract (§6), and the run-dispatch layering rule (§2.6); v1.6 added the
 optional compact symbol on variable descriptors, §6.1; v1.7 let fragment
 numbers, table columns, and chart axes reference quantity keys, §3.3,
 joining the fragment model to the quantity contract so consumers format
-tagged values in a chosen display family, §5).
+tagged values in a chosen display family, §5; v1.8 added the
+engine-authored category on block descriptors, §3.2; v1.9 — with a second
+engine's criteria implemented to validate it — added the criteria
+contract, §7, moving Evolution to §8).
 This file is the module documentation
 of the `hydra-common` crate and follows the same spec-first workflow as the
 engine specs: implementation changes flow from changes here, never the
@@ -242,7 +245,7 @@ implementation, because a neutral session contract in this layer remains
 an explicit non-goal (§1): it would have to be abstracted from two run
 shapes that genuinely differ, and this layer must not freeze a guess. When
 a later engine proves the common shape, the surface graduates here as a
-new contract, additively (§7).
+new contract, additively (§8).
 
 ---
 
@@ -269,13 +272,23 @@ engine-specific.
 | `id` | Stable block identifier | Namespaced by engine key: `<engine>.<name>` (e.g. `wds.pressure-summary`). **Never changes once released** — report templates reference it. |
 | `title` | Default human-facing heading | Plain text. |
 | `summary` | What this block contains, for the template-builder UI | One or two sentences, plain text. |
+| `category` | Engine-authored grouping heading | Plain text, short (one or two words). Blocks sharing the exact string belong together. |
 
-The descriptor deliberately carries **no result-class or prerequisite
-vocabulary** — what a block needs from a simulation is the producing
-engine's internal concern, expressed only through the production error
-contract (§3.4). Encoding result taxonomies (hydraulic vs. quality vs.
-anything else) here would bake one engine family's domain into the
-foundation layer.
+`category` lets a consumer with many blocks on screen group them — as
+tabs, section headings, or not at all; the choice is the consumer's.
+Group order is catalog order: a category first appears where its first
+block does. The string is display text with **no foundation-defined
+vocabulary** — two engines using the same word ("Summary") are not
+thereby related, exactly as with quantity keys (§5).
+
+The descriptor otherwise deliberately carries **no result-class or
+prerequisite vocabulary** — what a block needs from a simulation is the
+producing engine's internal concern, expressed only through the
+production error contract (§3.4). Encoding result taxonomies (hydraulic
+vs. quality vs. anything else) here would bake one engine family's
+domain into the foundation layer; a category is not that — it is an
+opaque engine-authored label carrying no semantics the foundation or the
+report layer can act on beyond equality.
 
 Removing a block id, or changing the *meaning* of an existing id, is a
 breaking change to every saved template that references it and must be
@@ -682,7 +695,85 @@ or they re-create the closed-set coupling this contract exists to remove.
 
 ---
 
-## 7. Evolution
+## 7. Criteria Contract
+
+The contract by which an engine describes — and consumes — the
+**assessment criteria** a user asserts over a model's simulated
+behaviour: minimum service pressure, a self-cleansing velocity, a
+freeboard allowance. Criteria are engineering judgements about the
+network, not display settings and not part of the model; they belong to
+the person assessing, travel with a project, and outlive any single run.
+
+### 7.1 Concepts
+
+| Term | Meaning |
+|---|---|
+| **Criterion** | One field of the assessment standard, described by the engine. |
+| **Criteria catalog** | The engine's complete, static, model-free list of criterion descriptors. |
+| **Valuation** | A caller-held assignment of values to criterion keys. |
+
+The foundation stays engine-blind, exactly as in §4–§6: criterion keys
+are opaque, meaning travels only through engine-authored text, and no
+criterion vocabulary (pressure, freeboard, anything else) enters this
+layer.
+
+### 7.2 Criterion descriptor
+
+| Field | Meaning | Constraints |
+|---|---|---|
+| `key` | Stable criterion identifier | Unique within the engine; persisted by applications, so renaming one is a break. |
+| `label` | Human-facing name | Plain text, engine-authored. |
+| `help` | One or two sentences on what the criterion judges | Plain text, engine-authored. |
+| `quantity` | §5 quantity key, or absent | Values of this criterion are expressed in the quantity's **SI display unit**; absent means dimensionless. |
+| `kind` | Shape of the value | Below. |
+
+`kind` is one of:
+
+- **value** — a single number, with a required `default`;
+- **band** — an ordered list of named cut points, each `{key, label,
+  default}`, defaults strictly ascending. A band's value is a same-length
+  list of numbers, ascending in the same order.
+
+Defaults are the engine's judgement of a conventional standard; they are
+advisory for editors and binding for consumption (§7.4).
+
+### 7.3 Valuation
+
+A valuation is a JSON object: criterion key → number (value kind) or
+array of numbers (band kind), every number in the criterion's SI display
+unit. A key absent from the valuation means the criterion's defaults; a
+key the catalog does not declare is ignored, so a persisted valuation
+survives catalog growth. A value of the wrong shape or holding a
+non-finite number is **malformed**, and consumption refuses it with a
+message naming the criterion. A band value out of ascending order is
+well-formed but **degenerate** — an editor mid-edit produces one
+transiently, so it must not poison the whole valuation; consumption
+handles it per §7.4.
+
+### 7.4 Consumption
+
+An engine derives **per-block options** from a valuation: given a
+valuation and a model, it answers with an options object (§3.2.1 shapes)
+for each of its criteria-shaped blocks. This mapping is the engine's
+own — which blocks a criterion drives, and in what units their options
+are expressed, is engine knowledge that never leaks to the caller. A
+criterion no block consumes may still be cataloged: applications judge
+with criteria in more places than block production (a map colour scale),
+and the catalog is the single description of the standard.
+
+An engine omits a block from its answer when the valuation cannot shape
+it (a degenerate band, §7.3); the block then runs on its documented
+option defaults. Consumption of a well-formed valuation never fails.
+
+### 7.5 Persistence and dependency rules
+
+Persistence is the application's concern: where a valuation lives, and
+per what scope (a project, a scenario), is not this contract's business.
+The layering of §3.5 applies unchanged: engines depend on this crate,
+applications compose catalogs, valuations, and production, and this
+crate depends on nothing.
+
+## 8. Evolution
 
 - All contracts evolve **additively**; fields are added, never
   repurposed.

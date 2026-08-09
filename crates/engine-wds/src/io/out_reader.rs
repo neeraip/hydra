@@ -1100,6 +1100,15 @@ pub struct AnalyticsScan {
     pub node_min_pressure: Vec<f64>,
     /// Per-link maximum absolute velocity across all periods.
     pub link_max_velocity: Vec<f64>,
+    /// Per-link maximum unit headloss across all periods, in the file's
+    /// stored ratio (m/km ≡ ft/kft for pipes; head gain/loss for pumps
+    /// and valves, which consumers filter out).
+    pub link_max_unit_headloss: Vec<f64>,
+    /// Per-node minimum quality across all periods (mode's unit).
+    /// `f64::INFINITY` when no data.
+    pub node_min_quality: Vec<f64>,
+    /// Per-node maximum quality across all periods (mode's unit).
+    pub node_max_quality: Vec<f64>,
     /// Per-period mass-balance percentage (outflow / inflow × 100, capped at 100).
     pub mb_series: Vec<f64>,
     /// Cumulative demand summed over all nodes and periods where demand is positive
@@ -1126,6 +1135,9 @@ pub fn scan_analytics(path: &std::path::Path, meta: &OutMetadata) -> Result<Anal
 
     let mut node_min_pressure: Vec<f64> = vec![f64::INFINITY; n_nodes];
     let mut link_max_velocity: Vec<f64> = vec![0.0_f64; n_links];
+    let mut link_max_unit_headloss: Vec<f64> = vec![0.0_f64; n_links];
+    let mut node_min_quality: Vec<f64> = vec![f64::INFINITY; n_nodes];
+    let mut node_max_quality: Vec<f64> = vec![0.0_f64; n_nodes];
     let mut mb_series: Vec<f64> = vec![0.0_f64; n_periods];
     let mut total_inflow: f64 = 0.0;
     let mut total_outflow: f64 = 0.0;
@@ -1169,11 +1181,29 @@ pub fn scan_analytics(path: &std::path::Path, meta: &OutMetadata) -> Result<Anal
                 link_max_velocity[i] = v;
             }
         }
+        for (i, &h_val) in pr.link_headloss.iter().enumerate() {
+            let h = (h_val as f64).abs();
+            if h > link_max_unit_headloss[i] {
+                link_max_unit_headloss[i] = h;
+            }
+        }
+        for (i, &q_val) in pr.node_quality.iter().enumerate() {
+            let q = q_val as f64;
+            if q < node_min_quality[i] {
+                node_min_quality[i] = q;
+            }
+            if q > node_max_quality[i] {
+                node_max_quality[i] = q;
+            }
+        }
     }
 
     Ok(AnalyticsScan {
         node_min_pressure,
         link_max_velocity,
+        link_max_unit_headloss,
+        node_min_quality,
+        node_max_quality,
         mb_series,
         total_inflow,
         total_outflow,
