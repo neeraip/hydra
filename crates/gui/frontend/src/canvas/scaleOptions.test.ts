@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import {
-  criteriaEditShown,
   effectiveScaleMode,
   scaleControlShown,
   scaleOptions,
@@ -81,31 +80,3 @@ describe("the scale in force", () => {
  * nothing on the canvas said where. A reader who thought a band was wrong
  * had to already know which page owned it.
  */
-describe("the route to the criteria editor", () => {
-  it("is offered when the engine has criteria", () => {
-    expect(criteriaEditShown(["pressure", "velocity", "flow"], true)).toBe(
-      true,
-    );
-  });
-
-  /**
-   * The load-bearing one. The Criteria *scale* greys out when the selected
-   * variable has no bands, and that is exactly when someone wants to find
-   * out what criteria are. A route that vanishes when you need it is worse
-   * than no route, so this does not depend on the selection at all.
-   */
-  it("does not depend on which variable is selected", () => {
-    expect(criteriaEditShown(["pressure"], true)).toBe(true);
-  });
-
-  /** An engine with no such standard — the registry's existing answer. */
-  it("is absent for an engine with no criteria", () => {
-    expect(criteriaEditShown([], true)).toBe(false);
-    expect(criteriaEditShown(undefined, true)).toBe(false);
-  });
-
-  /** And absent where the host offers nowhere to go. */
-  it("is absent without a handler", () => {
-    expect(criteriaEditShown(["pressure"], false)).toBe(false);
-  });
-});

@@ -2,12 +2,16 @@ import { describe, expect, it } from "vitest";
 import { LINK_VARIABLES } from "./canvasVariables";
 import {
   ANIMATED_LINK_VARIABLES,
+  animatesVariable,
   animationAppliesHint,
+  canvasAnimates,
+  genericPulseInputs,
   type PulseKind,
   pulseApplies,
   pulseKindFor,
   pulsePattern,
   pulseSpeed,
+  pulseVariableOf,
 } from "./linkPulse";
 import type { LinkVariable } from "./types";
 
@@ -303,5 +307,119 @@ describe("a transport pulse", () => {
     expect(
       pulseSpeed("transport", { flow: -4, velocity: 0.8 }, 10),
     ).toBeLessThan(0);
+  });
+});
+
+/**
+ * The pulse on an engine that is not water distribution.
+ *
+ * Two things kept it still on a drainage map. The gate asked this module
+ * whether a variable animates, and this module knows only the wds names —
+ * an id it had never heard of fell off the end of the switch and came back
+ * `undefined`, which every caller read as "yes". And the values came from
+ * the water-distribution result channel, which a catalog-keyed engine never
+ * fills: exactly one of the two channels is ever populated, and the flow
+ * layer was built from the wrong one, so it was never built at all.
+ */
+
+describe("animatesVariable", () => {
+  it("takes the engine's answer, not this module's", () => {
+    // Drainage animates flow and velocity, and nothing else — depth and
+    // capacity are states, not rates.
+    const drainage = ["flow", "velocity"];
+    expect(animatesVariable("flow", drainage)).toBe(true);
+    expect(animatesVariable("capacity", drainage)).toBe(false);
+    // The wds module would have said "yes" to both: `capacity` is not in
+    // its switch, and the fall-through read as animating.
+    expect(pulseKindFor("capacity")).toBe("magnitude");
+  });
+
+  it("an engine that animates nothing animates nothing", () => {
+    expect(animatesVariable("flow", [])).toBe(false);
+  });
+});
+
+describe("genericPulseInputs", () => {
+  it("reads a flow channel as signed rate", () => {
+    // Direction lives in the sign, so the value goes to `flow` whole.
+    expect(genericPulseInputs("flow", -3)).toEqual({ flow: -3 });
+    expect(pulseSpeed("magnitude", genericPulseInputs("flow", -3), 6)).toBe(
+      -0.5,
+    );
+  });
+
+  it("reads a velocity channel as rate plus direction", () => {
+    // `pulseSpeed` takes its rate from velocity and its direction from the
+    // sign of flow, so a reversed conduit still runs backwards on screen.
+    expect(genericPulseInputs("velocity", -1)).toEqual({
+      flow: -1,
+      velocity: 1,
+    });
+    expect(
+      pulseSpeed("magnitude", genericPulseInputs("velocity", -1), 1),
+    ).toBeLessThan(0);
+    expect(
+      pulseSpeed("magnitude", genericPulseInputs("velocity", 1), 1),
+    ).toBeGreaterThan(0);
+  });
+
+  it("an unreported element yields nothing to animate", () => {
+    // NaN marks an element the results file does not report.
+    expect(genericPulseInputs("flow", Number.NaN)).toEqual({});
+    expect(genericPulseInputs("flow", undefined)).toEqual({});
+  });
+});
+
+describe("pulseVariableOf", () => {
+  /**
+   * The canvas coerces its `linkVar` into the water-distribution union,
+   * answering with a *fallback* for any id outside it — so on a drainage
+   * project it reads "flow" whatever is selected. Judging the pulse by
+   * that made Depth and Capacity animate while the legend, reading the
+   * engine's list, correctly said only Flow and Velocity do.
+   */
+  it("prefers the generic channel's own variable", () => {
+    // Selected Capacity: the coerced id has fallen back to "flow".
+    expect(pulseVariableOf("capacity", "flow")).toBe("capacity");
+    expect(pulseVariableOf("depth", "flow")).toBe("depth");
+  });
+
+  it("is what stops a state variable from pulsing", () => {
+    const drainage = ["flow", "velocity"];
+    const coerced = "flow";
+    // What shipped: the fallback said yes for every drainage variable.
+    expect(animatesVariable(coerced, drainage)).toBe(true);
+    // What the channel says, which is the truth on screen.
+    expect(
+      animatesVariable(pulseVariableOf("capacity", coerced), drainage),
+    ).toBe(false);
+    expect(animatesVariable(pulseVariableOf("flow", coerced), drainage)).toBe(
+      true,
+    );
+  });
+
+  it("leaves an engine without a generic channel alone", () => {
+    // wds serves the fixed-variable channel, where the two agree.
+    expect(pulseVariableOf(undefined, "headloss")).toBe("headloss");
+  });
+});
+
+describe("canvasAnimates", () => {
+  /**
+   * Links and nodes share one clock and one layer rebuild, so whether it
+   * runs is a question about the canvas, not about either class. Asked
+   * about the links alone, a drainage map coloured by node flooding —
+   * while its link variable was a state that never pulses — built its
+   * rings once at time zero and left them there.
+   */
+  it("runs for either class on its own", () => {
+    expect(canvasAnimates(true, false)).toBe(true);
+    // The reported case: nothing pulses along the links, and the rings
+    // still need the clock.
+    expect(canvasAnimates(false, true)).toBe(true);
+  });
+
+  it("stops only when neither is moving", () => {
+    expect(canvasAnimates(false, false)).toBe(false);
   });
 });

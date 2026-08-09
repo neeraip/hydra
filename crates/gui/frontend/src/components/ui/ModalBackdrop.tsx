@@ -50,8 +50,14 @@ export function ModalBackdrop({
         background,
         zIndex,
         display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
+        // `safe` centring: a child taller than the window overflows *both*
+        // ways under plain `center`, putting its head above the top edge
+        // where nothing can scroll to it. `safe` falls back to start
+        // alignment exactly when that would happen, so a tall modal scrolls
+        // from its top and a short one stays centred.
+        alignItems: "safe center",
+        justifyContent: "safe center",
+        overflow: "auto",
         ...style,
       }}
     >

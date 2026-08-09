@@ -43,7 +43,13 @@ export const PICKER_LIST_STYLE: CSSProperties = {
   zIndex: 40,
 };
 
-/** Root container: bottom-left of the canvas, above the timeline. */
+/** Root container: bottom-left of the canvas, above the timeline.
+ *
+ * Transparent to the pointer, and the parts that are not are marked so
+ * individually. Hit testing works on a box, not on painted pixels: this
+ * one shrink-wraps around both the bar and the popover, so with the
+ * popover open the empty rectangle beside the narrower card was still
+ * swallowing every click, drag and hover meant for the canvas behind it. */
 export const LEGEND_ROOT_STYLE: CSSProperties = {
   position: "absolute",
   bottom: 14,
@@ -53,6 +59,7 @@ export const LEGEND_ROOT_STYLE: CSSProperties = {
   flexDirection: "column",
   alignItems: "flex-start",
   transition: "left var(--rail-transition)",
+  pointerEvents: "none",
 };
 
 /** The expandable details card that opens above the control bar. */
@@ -70,6 +77,8 @@ export const LEGEND_POPOVER_STYLE: CSSProperties = {
   display: "flex",
   flexDirection: "column",
   gap: 12,
+  // Its own box is real; the root's is not (see LEGEND_ROOT_STYLE).
+  pointerEvents: "auto",
 };
 
 /**
@@ -91,7 +100,7 @@ export const LEGEND_POPOVER_STYLE: CSSProperties = {
 export const LEGEND_SWATCH_BTN_STYLE: CSSProperties = {
   width: "auto",
   height: "auto",
-  padding: "5px 9px 5px 11px",
+  padding: "5px 6px 5px 8px",
   borderRadius: "16px 6px 6px 16px",
 };
 
@@ -105,6 +114,10 @@ export const LEGEND_BAR_STYLE: CSSProperties = {
   borderRadius: 20,
   backdropFilter: "blur(20px) saturate(160%)",
   WebkitBackdropFilter: "blur(20px) saturate(160%)",
+  // As the popover: the bar is solid to the pointer even though the root
+  // it sits in is not. Picker lists are descendants of this, so they are
+  // re-enabled with it however far outside its box they are drawn.
+  pointerEvents: "auto",
 };
 
 export interface PickerOption<T extends string> {
@@ -184,6 +197,8 @@ export function PickerButton<T extends string>({
   onSelect,
   icon,
   pickerLabel,
+  animating = false,
+  dimmed = false,
 }: {
   value: T;
   options: PickerOption<T>[];
@@ -194,6 +209,16 @@ export function PickerButton<T extends string>({
   icon?: ReactNode;
   /** Accessible name + tooltip, e.g. "Node variable". */
   pickerLabel?: string;
+  /** Whether this class's current selection is moving on the canvas right
+   * now. Pulses the glyph — the answer to "is animation doing anything
+   * here", which the animation toggle deliberately no longer answers. */
+  animating?: boolean;
+  /** Whether the class this picker colours is hidden on the canvas. Dims
+   * the button — a variable chosen for elements nobody can see is still a
+   * real choice, worth keeping and worth showing as inert. The list it
+   * opens stays at full strength: those rows are as clickable as ever, and
+   * dimming them would say the choice is unavailable. */
+  dimmed?: boolean;
 }) {
   const current = options.find((o) => o.value === value);
   return (
@@ -206,11 +231,26 @@ export function PickerButton<T extends string>({
           onToggle();
         }}
         aria-label={pickerLabel}
-        data-tooltip={pickerLabel}
+        data-tooltip={
+          dimmed
+            ? `${pickerLabel} (hidden on the canvas)`
+            : animating
+              ? `${pickerLabel} — animating`
+              : (pickerLabel ?? "")
+        }
         data-tooltip-pos="top"
-        style={PICKER_BTN_STYLE}
+        // Only the button dims; the list it opens is a sibling, so those
+        // rows keep their own strength.
+        style={
+          dimmed ? { ...PICKER_BTN_STYLE, opacity: 0.45 } : PICKER_BTN_STYLE
+        }
       >
-        {icon}
+        <span
+          className={animating ? "legend-anim-pulse" : undefined}
+          style={{ display: "inline-flex", alignItems: "center" }}
+        >
+          {icon}
+        </span>
         {current?.label ?? value}
         <ChevronUpDownIcon style={{ width: 12, height: 12 }} />
       </button>
@@ -224,22 +264,14 @@ export function PickerButton<T extends string>({
               type="button"
               key={o.value}
               onClick={() => onSelect(o.value)}
-              style={{
-                display: "block",
-                width: "100%",
-                padding: "6px 10px",
-                border: "none",
-                background:
-                  o.value === value
-                    ? "var(--selection-bg-strong)"
-                    : "transparent",
-                color:
-                  o.value === value ? "var(--accent)" : "var(--text-secondary)",
-                cursor: "pointer",
-                fontSize: "var(--text-sm)",
-                textAlign: "left",
-                fontFamily: "var(--font-ui)",
-              }}
+              // Styled by class, not inline: an inline background wins
+              // against the stylesheet, so a `:hover` rule could never
+              // show through it.
+              className={
+                o.value === value
+                  ? "legend-picker-option legend-picker-option--selected"
+                  : "legend-picker-option"
+              }
             >
               {o.label}
             </button>
@@ -270,12 +302,12 @@ export interface ScaleOption {
 export const DATA_SCALE_OPTIONS: readonly ScaleOption[] = [
   {
     mode: "run",
-    label: "Whole run",
+    label: "Run",
     tip: "One scale for every step: colours compare across time",
   },
   {
     mode: "step",
-    label: "This step",
+    label: "Step",
     tip: "Rescale each step: the pattern within a moment reads fully",
   },
 ];
@@ -299,13 +331,10 @@ export function ScaleControl({
   value,
   options,
   onChange,
-  onEditCriteria,
 }: {
   value: ScaleMode;
   options: readonly ScaleOption[];
   onChange: (mode: ScaleMode) => void;
-  /** Opens the criteria editor. Omitted where there is nothing to edit. */
-  onEditCriteria?: () => void;
 }) {
   return (
     <div
@@ -355,56 +384,6 @@ export function ScaleControl({
           </button>
         ))}
       </div>
-      {/* Outside the group and set apart from it. Flush against a segmented
-          control this would read as a fourth scale, and it is an action:
-          the others change what the colours mean, this changes the ruler
-          they are measured against. */}
-      {onEditCriteria && (
-        <button
-          type="button"
-          className="tool-btn"
-          onClick={onEditCriteria}
-          aria-label="Edit criteria"
-          data-tooltip="Edit the criteria these bands come from"
-          style={{
-            flex: "0 0 auto",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            padding: 4,
-            borderRadius: 5,
-            border: "1px solid transparent",
-            background: "transparent",
-            color: "var(--text-tertiary)",
-            cursor: "pointer",
-          }}
-        >
-          {/* Sliders: the bands are cut points someone sets, and this is
-              where they are set. */}
-          <svg
-            width="13"
-            height="13"
-            viewBox="0 0 14 14"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="1.4"
-            strokeLinecap="round"
-            aria-hidden="true"
-            focusable="false"
-          >
-            <title>Edit criteria</title>
-            <path d="M2 4h10M2 10h10" />
-            <circle cx="5" cy="4" r="1.6" fill="currentColor" stroke="none" />
-            <circle
-              cx="9.5"
-              cy="10"
-              r="1.6"
-              fill="currentColor"
-              stroke="none"
-            />
-          </svg>
-        </button>
-      )}
     </div>
   );
 }

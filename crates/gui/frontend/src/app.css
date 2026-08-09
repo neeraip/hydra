@@ -737,6 +737,108 @@ body,
   background: var(--selection-bg-strong);
 }
 
+/* ── Lists ────────────────────────────────────────────────────────────────────*/
+/* Tailwind's Preflight strips the marker from every `ul` and `ol`, on the
+   reasonable assumption that most lists in an application are menus. Every
+   list in this app is prose — what the importer changed, what a release
+   changed — so they rendered as indented paragraphs with nothing to say
+   where one item ended and the next began, which is the entire job of a
+   list. The markers are the browser's own; a list used as a menu can set
+   `list-style: none` back on itself. */
+ul,
+ol {
+  list-style: revert;
+}
+
+/* ── Legend picker options ────────────────────────────────────────────────────*/
+/* A row you can click should say so under the pointer. These were styled
+   inline, which meant no hover state was possible without a handler per
+   row — so the list was the one menu in the app that gave nothing back. */
+.legend-picker-option {
+  display: block;
+  width: 100%;
+  padding: 6px 10px;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: var(--text-sm);
+  text-align: left;
+  font-family: var(--font-ui);
+  transition:
+    background var(--t-fast),
+    color var(--t-fast);
+}
+.legend-picker-option:hover {
+  background: var(--nav-hover);
+  color: var(--text-primary);
+}
+/* The current value keeps its fill under the pointer: it is already the
+   lit row, and swapping it for the hover colour would read as leaving the
+   selection rather than pointing at it. */
+.legend-picker-option--selected,
+.legend-picker-option--selected:hover {
+  background: var(--selection-bg-strong);
+  color: var(--accent);
+}
+
+/* ── Legend picker: "this one is moving" ──────────────────────────────────────*/
+/* The animation toggle says what the reader wants; this says whether the
+   variable they are looking at is granting it. A state variable — depth,
+   capacity, stored volume — never moves, and before this the only way to
+   find that out was to notice that nothing on the canvas did.
+
+   Opacity only, on the class glyph: it must not be mistaken for the
+   selection fill, and the glyph is the mark that stands for the elements
+   actually pulsing out there. */
+@keyframes legend-anim-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.4;
+  }
+}
+.legend-anim-pulse {
+  animation: legend-anim-pulse 1.6s ease-in-out infinite;
+}
+/* Belt and braces: callers already withhold this when Reduce motion is on,
+   but a CSS animation should answer the cascade's own setting too. */
+@media (prefers-reduced-motion: reduce) {
+  .legend-anim-pulse {
+    animation: none;
+  }
+}
+
+/* ── Analysis block grid ──────────────────────────────────────────────────────*/
+/* Exactly one or two columns, switched by the panel's own width — never
+   three, because the span-pairing decision (`layoutSpans`) guarantees
+   hole-free rows only for a two-column grid. The scroll wrapper is the
+   size container; a container query, not a media query, because rails and
+   panels make the panel narrower than the viewport. */
+.analysis-scroll {
+  container-type: inline-size;
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
+}
+.analysis-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 12px;
+  /* Rows pack to the top; the default (stretch) would balloon a sparse
+     tab's single row to viewport height. Items within a row still
+     stretch to share its height. */
+  align-content: start;
+  padding: 18px;
+}
+@container (min-width: 1088px) {
+  .analysis-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
 /* ── Context menu ──────────────────────────────────────────────────────────────*/
 .context-menu-item {
   display: flex;

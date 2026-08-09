@@ -41,7 +41,6 @@ import {
   type NodeCreatePayload,
 } from "../../components/modals/CreateNodeModal";
 import { DeleteConfirmModal } from "../../components/modals/DeleteConfirmModal";
-import { CriteriaEditor } from "../../components/panels/CriteriaEditor";
 import {
   LinkInspector,
   NodeInspector,
@@ -314,28 +313,6 @@ const WDS_LINK_VARS: Record<
   quality: { label: "Quality", symbol: "C" },
 };
 
-/**
- * The criteria editor's box on the canvas.
- *
- * Top-left under the toolbar, clear of the legend it is opened from — a
- * panel that covered the legend would hide the bands whose effect you came
- * to watch. Scrolls rather than grows, so a short window cannot push the
- * fields off the bottom.
- */
-const CRITERIA_PANEL_STYLE: React.CSSProperties = {
-  position: "absolute",
-  top: 64,
-  left: "calc(var(--rail-effective-w, 0px) + 16px)",
-  zIndex: 31,
-  width: 520,
-  maxWidth: "calc(100% - 32px)",
-  maxHeight: "calc(100% - 150px)",
-  overflowY: "auto",
-  padding: 14,
-  borderRadius: 10,
-  transition: "left var(--rail-transition)",
-};
-
 export function CanvasView({ isActive = true }: { isActive?: boolean }) {
   const {
     activeScenarioId,
@@ -354,6 +331,12 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
   // for read-only engines the tools hide rather than refuse per gesture.
   const { modelEditable, criteriaVariables, animatedVariables } =
     engineComponents(engine?.key);
+  /** Every animated id, both classes — what the legend's one toggle
+   * governs and what its sentence is built from. */
+  const animatedIds = useMemo(
+    () => [...animatedVariables.point, ...animatedVariables.polyline],
+    [animatedVariables],
+  );
   const { markEdited } = useNetworkVersion();
   const renameElementFlow = useElementRename();
   const simParams = useSimParams(project?.id);
@@ -522,22 +505,6 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
     setCriteria,
     saved: criteriaSaved,
   } = useProjectCriteria(project?.id ?? null);
-  /**
-   * Whether the criteria editor is open over the canvas.
-   *
-   * Over the canvas rather than on the Analysis page that also edits them,
-   * because the reason to reach criteria from here is to move a band and
-   * watch the map recolour under it. Sending the reader to another tab
-   * makes that a round trip they have to remember the answer across.
-   *
-   * The same component and the same store as Analysis — two editors for one
-   * value is how the halves of a setting come to disagree.
-   */
-  const [criteriaOpen, setCriteriaOpen] = useState(false);
-  // Read by the shortcut handler, which is bound once and must not be
-  // rebound on every open and close.
-  const criteriaOpenRef = useRef(false);
-  criteriaOpenRef.current = criteriaOpen;
   const thresholds = useMemo(
     () => ({
       pressure: criteria.pressure,
@@ -1175,14 +1142,6 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
           if (modelEditable) setActiveTool("add-link");
           break;
         case "Escape":
-          // The criteria panel is the topmost thing Escape can mean, and
-          // one press must not both close it and reset the tool behind it.
-          // Handled here rather than by a second window listener, so the
-          // precedence is written down instead of decided by bind order.
-          if (criteriaOpenRef.current) {
-            setCriteriaOpen(false);
-            break;
-          }
           setActiveTool("select");
           break;
         case "Delete":
@@ -1770,11 +1729,16 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
       // From the registry, not from this engine's list: the legend below
       // is every engine's, and the sentence it builds for a reader whose
       // selection is not animated is built from these ids.
-      appliesTo: animatedVariables,
+      //
+      // Both classes in one list: the legend already asks whether *any*
+      // selected variable animates, and names every animated variable its
+      // catalog publishes — so a node rate and a link rate belong in the
+      // same sentence, and one toggle governs both.
+      appliesTo: animatedIds,
       onToggle: setLinkAnimation,
       reducedMotion,
     }),
-    [linkAnimation, setLinkAnimation, reducedMotion, animatedVariables],
+    [linkAnimation, setLinkAnimation, reducedMotion, animatedIds],
   );
 
   /** Read-only band text under a criteria-backed variable's ramp. The
@@ -2306,6 +2270,8 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
                 nodeVar={nodeVar}
                 linkVar={linkVar}
                 animateLinks={animateLinks}
+                animatedVariables={animatedVariables.polyline}
+                animatedNodeVariables={animatedVariables.point}
                 basemap={basemap}
                 basemapOpacity={basemapOpacity}
                 selectedNodeId={selectedNodeId}
@@ -2357,8 +2323,6 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
               hasRegions={canvasRegions.length > 0}
               selection={genericSelection}
               onSelect={handleGenericSelect}
-              onEditCriteria={() => setCriteriaOpen(true)}
-              criteriaEditorOpen={criteriaOpen}
               scaleMode={scaleMode}
               multiStep={!isSteadyState}
               onScaleModeChange={setScaleMode}
@@ -2387,66 +2351,6 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
               detailsOpen={legendOpen}
               onDetailsOpenChange={setLegendOpen}
             />
-          )}
-
-          {/* Deliberately not a modal: a backdrop would dim the map, and
-              seeing the map is the whole reason for editing criteria from
-              here rather than from Analysis. */}
-          {criteriaOpen && (
-            <div
-              className="legend-glass legend-glass--raised"
-              role="dialog"
-              aria-label="Criteria"
-              style={CRITERIA_PANEL_STYLE}
-            >
-              <div
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  marginBottom: 10,
-                }}
-              >
-                <span
-                  style={{
-                    fontSize: "var(--text-sm)",
-                    fontWeight: 600,
-                    color: "var(--text-primary)",
-                    fontFamily: "var(--font-ui)",
-                  }}
-                >
-                  Criteria
-                </span>
-                <span
-                  style={{
-                    marginLeft: 8,
-                    fontSize: "var(--text-xs)",
-                    color: "var(--text-tertiary)",
-                    fontFamily: "var(--font-ui)",
-                  }}
-                >
-                  {criteriaSaved ? "Saved" : "Saving…"}
-                </span>
-                <button
-                  type="button"
-                  className="tool-btn"
-                  aria-label="Close criteria"
-                  onClick={() => setCriteriaOpen(false)}
-                  style={{
-                    marginLeft: "auto",
-                    background: "transparent",
-                    border: "1px solid transparent",
-                    color: "var(--text-tertiary)",
-                    cursor: "pointer",
-                    borderRadius: 5,
-                    padding: "2px 6px",
-                    fontSize: "var(--text-sm)",
-                  }}
-                >
-                  ✕
-                </button>
-              </div>
-              <CriteriaEditor criteria={criteria} onChange={setCriteria} />
-            </div>
           )}
 
           {/* Topology-stale notice — results exist but are hidden because

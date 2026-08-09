@@ -14,6 +14,7 @@ import type { AnalysisBlock } from "./fragments";
 const BLOCK: AnalysisBlock = {
   id: "wds.everything",
   title: "Everything",
+  category: "Summary",
   status: "ok",
   fragment: {
     title: "Everything",
@@ -98,6 +99,7 @@ describe("BlockPanel", () => {
         block={{
           id: "wds.pump-energy",
           title: "Pump Energy",
+          category: "Assets",
           status: "unavailable",
           reason: "The network has no pumps.",
         }}

@@ -48,9 +48,32 @@ export interface Fragment {
 export interface AnalysisBlock {
   id: string;
   title: string;
+  /** Engine-authored grouping heading (hydra-common §3.2). */
+  category: string;
   status: "ok" | "unavailable" | "failed";
   reason?: string;
   fragment?: Fragment;
+}
+
+/** The tab set: each distinct category, in first-appearance order — which
+ * is catalog order, the engine's own ordering (hydra-common §3.2). */
+export function categoriesOf(blocks: AnalysisBlock[]): string[] {
+  const seen: string[] = [];
+  for (const b of blocks) {
+    if (!seen.includes(b.category)) seen.push(b.category);
+  }
+  return seen;
+}
+
+/** Which tab is active: the user's pick while it still exists, else the
+ * first tab. A pick can stop existing — a re-run whose results drop a
+ * category (quality turned off) must not leave the page on a ghost tab. */
+export function activeCategoryOf(
+  preferred: string | null,
+  categories: string[],
+): string | null {
+  if (preferred !== null && categories.includes(preferred)) return preferred;
+  return categories[0] ?? null;
 }
 
 /** One value as display text. Numbers keep engine-resolved units verbatim;
@@ -138,4 +161,26 @@ export function blockSpan(fragment: Fragment | undefined): "full" | "cell" {
     if (item.type === "keyValues" && item.entries.length >= 6) return "full";
   }
   return "cell";
+}
+
+/** Spans for a whole tab's blocks, in order. Per-block `blockSpan` cannot
+ * see its neighbours, so an odd run of cell-blocks stranded one card
+ * beside a hole; here the straggler of every odd run is promoted to the
+ * full row, so in the two-column grid no row is ever left ragged. */
+export function layoutSpans(
+  fragments: Array<Fragment | undefined>,
+): Array<"full" | "cell"> {
+  const spans = fragments.map(blockSpan);
+  let runStart = -1;
+  for (let i = 0; i <= spans.length; i++) {
+    const isCell = i < spans.length && spans[i] === "cell";
+    if (isCell && runStart < 0) runStart = i;
+    if (!isCell && runStart >= 0) {
+      // Pairs fill rows; an odd run's last card takes the row alone,
+      // full-width, instead of half-width beside a hole.
+      if ((i - runStart) % 2 === 1) spans[i - 1] = "full";
+      runStart = -1;
+    }
+  }
+  return spans;
 }

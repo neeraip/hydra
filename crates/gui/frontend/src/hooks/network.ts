@@ -463,6 +463,21 @@ export async function openAndLoadNetwork(
 }
 
 /**
+ * Open a model file of any format the app supports and let the file say
+ * which engine owns it (hydra-common §2.5.1 recognition).
+ *
+ * The inverse of [`openAndLoadNetwork`], for the reader who has a `.inp`
+ * and should not have to know whether EPANET or SWMM wrote it. Rejects —
+ * rather than guesses — when no engine claims the file definitively, so
+ * the caller must be ready to report why. `null` means the dialog was
+ * cancelled.
+ */
+export async function openAndRecogniseNetwork(): Promise<ImportedModel | null> {
+  if (!isTauri()) return null;
+  return await invoke<ImportedModel | null>("open_and_recognise_network", {});
+}
+
+/**
  * A model just read by the import dialog.
  *
  * `findings` is empty when the model is ready to run. Non-empty means it was
@@ -486,6 +501,13 @@ export interface ImportedModel {
    * commented out); empty when the file imported as written. Callers must
    * surface these — the repair contract forbids applying them silently. */
   repairs: string[];
+  /** Whether the model's coordinates rule out longitude and latitude.
+   * Answered by the importer, not here: a drainage import returns no
+   * elements at all, so the frontend has nothing to read them from. */
+  coordinatesProjected: boolean;
+  /** The engine that owns this model — recognised from the file when the
+   * caller did not name one. */
+  engine: string;
 }
 
 /** Convert backend/Tauri import errors into concise toast-safe text. */

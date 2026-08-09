@@ -49,10 +49,14 @@ import { HoverChip, type HoverTip } from "./HoverChip";
 import { useHoverActions, useHoverState } from "./hover-context";
 import { useCanvasLayers } from "./layers-context";
 import {
-  pulseApplies,
+  ANIMATED_LINK_VARIABLES,
+  animatesVariable,
+  canvasAnimates,
+  genericPulseInputs,
   pulseKindFor,
   pulsePattern,
   pulseSpeed,
+  pulseVariableOf,
 } from "./linkPulse";
 import {
   baseLinkRgba,
@@ -98,6 +102,7 @@ import {
   mapMoveWasUserDriven,
 } from "./MapCanvas/userGesture";
 import { nearestPointOnPath, type SnapResult } from "./measureSnap";
+import { ringApplies } from "./nodePulse";
 import {
   NODE_SCALE_DEFAULT,
   nodeRadius,
@@ -210,6 +215,9 @@ const EMPTY_LINK_DATA: never[] = [];
 const EMPTY_REGION_DATA: never[] = [];
 const EMPTY_NODE_DATA: never[] = [];
 
+/** No point variable animates unless an engine says one does. */
+const EMPTY_ANIMATED: readonly string[] = [];
+
 /** Stable default so map-mode callers omitting the prop never invalidate the
  * schematic layout cache. */
 const IDENTITY_SCALE = { x: 1, y: 1 } as const;
@@ -291,6 +299,27 @@ const EMPTY_MEASURE_POINTS: readonly [number, number][] = [];
 const MEASURE_AMBER: [number, number, number, number] = [212, 160, 23, 255];
 const NODE_RADIUS_MIN_PX = 2.5;
 const NODE_RADIUS_MAX_PX = 13;
+
+/** How far a node ring travels, in node radii. Wide enough to read as
+ * leaving the node, tight enough that neighbouring rings do not overlap
+ * into a wash on a dense network. */
+const NODE_RING_FIELD = 3.2;
+
+/** Rings in flight at once, as fractions of a cycle apart. Two, so an arc
+ * leaves about every half second — one ring every other second reads as a
+ * coincidence rather than a pulse. */
+const RING_PHASES = [0, 0.5];
+
+/** How many times a second a ring completes its journey outward. */
+const RING_CYCLES_PER_SECOND = 0.9;
+
+/** Peak opacity of a ring, before its own fade in and out.
+ *
+ * Well under solid: the ring answers "something is leaving this node",
+ * which the colour beside it has already said — it is there to be caught
+ * in peripheral vision, not to be looked at. At full strength it competed
+ * with the node it belongs to. */
+const RING_ALPHA = 70;
 const NODE_GLOW_MAX_PX = 26;
 const LINK_WIDTH_MIN_PX = 2.5;
 const LINK_WIDTH_MAX_PX = 9;
@@ -383,6 +412,14 @@ interface MapCanvasProps {
   selectedRegionId?: string | null;
   /** Called when a region polygon is clicked (select tool, map mode). */
   onSelectRegion?: (id: string | null) => void;
+  /** Link-variable ids the active engine animates (the registry's
+   * `animatedVariables`). The canvas is shared, so which variables pulse
+   * is the engine's answer, not this module's. Defaults to the
+   * water-distribution set for callers that predate engine dispatch. */
+  animatedVariables?: readonly string[];
+  /** Point-variable ids the active engine animates as rings. Empty (the
+   * default) means this engine rings no nodes. */
+  animatedNodeVariables?: readonly string[];
   /** Result ranges used to normalise colour scales. */
   headMin?: number;
   headMax?: number;
@@ -491,6 +528,8 @@ export const MapCanvas = memo(function MapCanvas({
   demandMin = 0,
   demandMax = 1,
   flowMax = 1,
+  animatedVariables = ANIMATED_LINK_VARIABLES,
+  animatedNodeVariables = EMPTY_ANIMATED,
   qualityMin = 0,
   qualityMax = 1,
   colorMode = "relative" as const,
@@ -1264,6 +1303,70 @@ export const MapCanvas = memo(function MapCanvas({
       ? generic.region
       : null;
 
+  // ── Pulse inputs, whichever channel this engine serves results on ──────
+  //
+  // Exactly one of the two per-period channels is ever populated (see
+  // `CanvasView`), and the pulse used to read only the water-distribution
+  // one — so on a catalog-keyed engine the flow layer was never built and
+  // the animation loop never started, however the toggle was set.
+  const genLinkValues = genLink?.values ?? null;
+  /** The variable on screen. `linkVar` cannot answer this for a catalog
+   * engine — it falls back to a wds id for anything outside that union. */
+  const pulseVar = pulseVariableOf(genLink?.variable.id, linkVar);
+  /** Rate that reads as "full speed". The wds path is handed `flowMax`;
+   * a generic channel carries its own per-run range, and the pulse scales
+   * by magnitude, so the wider end of that range is the scale. */
+  const pulseScale = genLink
+    ? Math.max(
+        Math.abs(genLink.variable.min),
+        Math.abs(genLink.variable.max),
+        0.01,
+      )
+    : flowMax;
+  /** Whether the pulse can run at all: this engine animates the variable,
+   * and some channel has values to drive it. */
+  const canPulse =
+    animatesVariable(pulseVar, animatedVariables) &&
+    (hasPeriodResults || genLinkValues != null);
+
+  // ── Node rings ────────────────────────────────────────────────────────
+  //
+  // The point-class counterpart, on the same terms: the engine says which
+  // variables are rates, and only a node with something crossing its
+  // boundary draws anything. The moving set is therefore as small as the
+  // event is — which on flooding, zero nearly everywhere, is a handful.
+  const genNodeValues = genNode?.values ?? null;
+  const pulseNodeVar = pulseVariableOf(genNode?.variable.id, nodeVar);
+  const nodeRingScale = genNode
+    ? Math.max(
+        Math.abs(genNode.variable.min),
+        Math.abs(genNode.variable.max),
+        1e-9,
+      )
+    : 0;
+  const canRingNodes =
+    animatesVariable(pulseNodeVar, animatedNodeVariables) &&
+    genNodeValues != null;
+  /** Only the nodes that qualify. Filtering here rather than ringing every
+   * node and hiding most of them is what keeps both costs down: the
+   * attribute pass runs over the few, and there is nothing to overdraw
+   * where the network is quiet. */
+  const ringNodes = useMemo(
+    () =>
+      canRingNodes && genNodeValues
+        ? nodeData.filter((n) =>
+            ringApplies(genNodeValues[n.si], nodeRingScale),
+          )
+        : EMPTY_NODE_DATA,
+    [canRingNodes, genNodeValues, nodeData, nodeRingScale],
+  );
+  /** Whether node rings are on screen: the engine animates the point
+   * variable being coloured, some node qualifies, and the nodes are shown.
+   * Named once because both the layer and the clock that drives it must
+   * agree — a third copy of this condition is how the two came apart. */
+  const ringsActive =
+    canvasLayers.nodes && canRingNodes && ringNodes.length > 0;
+
   // Read here for the same reason as reduced motion: the canvas paints into
   // a GL context the stylesheet cannot reach, so a setting the cascade
   // would otherwise apply has to be applied by hand.
@@ -2010,7 +2113,7 @@ export const MapCanvas = memo(function MapCanvas({
         // ids for the same class-transfer reason as above. FlowPathLayer is
         // already a PathLayer, so it renders the full polyline in both the
         // straight and vertex cases under its single id.
-        ...(animateLinks && pr && pulseApplies(linkVar)
+        ...(animateLinks && canPulse
           ? [
               new FlowPathLayer({
                 id: "links-flow",
@@ -2029,21 +2132,30 @@ export const MapCanvas = memo(function MapCanvas({
                 pickable: false,
                 flowTime: flowAnimRef.current,
                 // What kind of claim the motion is making. See `linkPulse`.
-                flowPattern: pulsePattern(pulseKindFor(linkVar)),
+                flowPattern: pulsePattern(pulseKindFor(pulseVar)),
                 // Speed and direction come from the link's own flow, not
                 // from the coloured variable — what differs between
                 // variables is only what motion is being asked to say. See
                 // `linkPulse`.
                 getFlowParams: (d) => [
-                  pulseSpeed(pulseKindFor(linkVar), linkSim(d), flowMax),
+                  pulseSpeed(
+                    pulseKindFor(pulseVar),
+                    // Whichever channel carries this engine's results; the
+                    // generic one holds the variable being coloured, which
+                    // for an animated variable is the rate itself.
+                    genLinkValues
+                      ? genericPulseInputs(pulseVar, genLinkValues[d.si])
+                      : linkSim(d),
+                    pulseScale,
+                  ),
                   hashStr(d.id) * 6.28318,
                 ],
                 updateTriggers: {
                   getColor: linkColorTriggers,
-                  // `linkVar` belongs here: it decides the pulse kind, and a
-                  // cached accessor would keep the previous variable's motion
-                  // after a switch between two that both animate.
-                  getFlowParams: [flowMax, pr, linkVar],
+                  // `pulseVar` belongs here: it decides the pulse kind, and
+                  // a cached accessor would keep the previous variable's
+                  // motion after a switch between two that both animate.
+                  getFlowParams: [pulseScale, pr, genLinkValues, pulseVar],
                 },
               }),
             ]
@@ -2085,6 +2197,61 @@ export const MapCanvas = memo(function MapCanvas({
                   },
                 }),
               ]),
+        // Rings expanding from the nodes that qualify (see `nodePulse`).
+        //
+        // Plain layers with a CPU-driven radius, not the shader the link
+        // pulse uses. That shader exists because the pulse animates every
+        // link on the map and per-frame CPU work over thousands of them is
+        // not affordable. The opposite is true here: this set is the nodes
+        // *currently* flooding — one, in the model this was built against —
+        // so animating them from the clock costs nothing measurable, and
+        // buys geometry that can be read in the source rather than only in
+        // a running GPU.
+        ...(animateLinks && ringsActive
+          ? RING_PHASES.map((offset, i) => {
+              // Two rings in flight, half a cycle apart, so an arc leaves
+              // roughly every half second.
+              const phase =
+                (flowAnimRef.current * RING_CYCLES_PER_SECOND + offset) % 1;
+              // Fade in clear of the node and out at the rim: a ring at
+              // full strength on the mark reads as a flash, and one cut
+              // off at the edge reads as clipping.
+              const fade =
+                Math.min(1, phase / 0.15) *
+                (1 - Math.max(0, (phase - 0.7) / 0.3));
+              const grow = 1 + phase * (NODE_RING_FIELD - 1);
+              return new ScatterplotLayer({
+                id: `nodes-ring-${i}`,
+                data: ringNodes,
+                coordinateSystem: coordSystem,
+                getPosition: (d) => d.position,
+                // A stroke, not a disc: the ring is the shape, and a
+                // filled circle over its neighbours would be a wash.
+                stroked: true,
+                filled: false,
+                lineWidthUnits: "pixels",
+                getLineWidth: 2,
+                getLineColor: (d) => {
+                  const c = nodeColor(d);
+                  return [
+                    c[0],
+                    c[1],
+                    c[2],
+                    Math.round(RING_ALPHA * fade),
+                  ] as RGBA;
+                },
+                getRadius: junctionRadius * grow,
+                radiusUnits: nodeRadiusUnits,
+                radiusMinPixels: nodeMinPx * grow,
+                radiusMaxPixels: nodeMaxPx * NODE_RING_FIELD,
+                pickable: false,
+                updateTriggers: {
+                  getLineColor: [fade, genNode?.values, genNode?.variable],
+                  getRadius: [grow],
+                },
+              });
+            })
+          : []),
         new ScatterplotLayer({
           id: "nodes",
           data: nd,
@@ -2368,6 +2535,16 @@ export const MapCanvas = memo(function MapCanvas({
     nodeVar,
     linkVar,
     animateLinks,
+    // The pulse's gate and its data, which differ per engine: whether the
+    // flow layer is built at all, and which channel drives it.
+    canPulse,
+    genLinkValues,
+    pulseScale,
+    pulseVar,
+    // …and the node rings' equivalents: whether they run, which nodes
+    // qualify, and the scale their rate is read against.
+    ringNodes,
+    ringsActive,
     headMin,
     headMax,
     demandMin,
@@ -2882,8 +3059,13 @@ export const MapCanvas = memo(function MapCanvas({
 
   // Mirrors the flow layer's own condition — with no results there is no
   // flow layer to drive, so the loop must not run either.
-  const linkAnimationActive =
-    animateLinks && hasPeriodResults && pulseApplies(linkVar);
+  // Anything moving on the canvas keeps the clock running: the pulse along
+  // links, the rings at nodes, or both. They share one clock and one layer
+  // rebuild, so either is reason enough — gating this on the links alone
+  // left node rings built once, at time zero, and frozen wherever the
+  // selected link variable happened not to animate.
+  const canvasAnimationActive =
+    animateLinks && canvasAnimates(canPulse, ringsActive);
 
   // Flow-animation loop — one RAF effect drives both view modes, pushing
   // fresh layers to the schematic deck or the map overlay. The clock resets
@@ -2892,10 +3074,10 @@ export const MapCanvas = memo(function MapCanvas({
   // schematic effect reset the clock in exactly those states and the map loop
   // then advanced it from zero.
   useEffect(() => {
-    if (!isActive || !linkAnimationActive || viewMode !== "schematic") {
+    if (!isActive || !canvasAnimationActive || viewMode !== "schematic") {
       flowAnimRef.current = 0;
     }
-    if (!isActive || !linkAnimationActive) return;
+    if (!isActive || !canvasAnimationActive) return;
     const isSchematic = viewMode === "schematic";
     let rafId: number;
     let lastTs = performance.now();
@@ -2910,7 +3092,7 @@ export const MapCanvas = memo(function MapCanvas({
     }
     rafId = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(rafId);
-  }, [isActive, linkAnimationActive, viewMode]);
+  }, [isActive, canvasAnimationActive, viewMode]);
 
   // Update overlay when data/layers change in map mode.
   useEffect(() => {

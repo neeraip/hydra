@@ -21,11 +21,13 @@ import {
 import { ClockIcon } from "@heroicons/react/24/outline";
 import { useEffect, useState } from "react";
 import { useAppState } from "../../AppContext";
+import { LOCAL_CRS } from "../../canvas/coords";
 import { engineComponents } from "../../engine/registry";
 import {
   createProjectOnDisk,
   type EngineInfo,
   formatInpImportError,
+  type ImportedModel,
   importExtensionLabel,
   isEngineAvailable,
   isEngineGuiOpenable,
@@ -41,32 +43,166 @@ import { PrimaryButton } from "../ui/PrimaryButton";
 
 interface Props {
   onClose: () => void;
+  /** A model already read by the recognition path, which chose the engine
+   * from the file itself. Absent for the ordinary flow, where the wizard
+   * asks for the engine first and filters the picker to its formats. */
+  initial?: ImportedModel | null;
 }
 
 const TOTAL_STEPS = 3;
 
-export function NewProjectWizard({ onClose }: Props) {
+/** The review panel's detail column.
+ *
+ * Left-aligned inside a drop zone that centres everything else, and
+ * deliberately so: the heading above it ("Model loaded", the counts) is a
+ * result and reads well centred, while everything here is prose and
+ * controls, which do not. Ragged-centre radio rows were the whole of what
+ * made this panel look broken.
+ */
+const REVIEW_DETAILS: React.CSSProperties = {
+  textAlign: "left",
+  marginTop: 16,
+  paddingTop: 14,
+  borderTop: "1px solid var(--border)",
+  display: "flex",
+  flexDirection: "column",
+  gap: 14,
+};
+
+/** Section heading inside the detail column — the same small-caps label the
+ * wizard's own step headings use, so the panel reads as part of the page. */
+const REVIEW_LABEL: React.CSSProperties = {
+  fontSize: "var(--text-xs)",
+  fontWeight: 600,
+  letterSpacing: "0.06em",
+  textTransform: "uppercase",
+  color: "var(--text-tertiary)",
+  marginBottom: 4,
+};
+
+/** For sections the reader must not skim past: what the importer changed,
+ * and what still stands between the model and a run. Colour on the label
+ * alone — a whole paragraph in amber reads as an alarm, and these are
+ * facts. */
+const REVIEW_WARN_LABEL: React.CSSProperties = {
+  ...REVIEW_LABEL,
+  color: "var(--status-warning)",
+};
+
+const REVIEW_BODY: React.CSSProperties = {
+  fontSize: "var(--text-md)",
+  color: "var(--text-secondary)",
+  lineHeight: 1.5,
+};
+
+/** One answer to the coordinate question, as a row you click rather than a
+ * bare radio: the choice carries a sentence of explanation, and a label
+ * beside a 13px control wraps into a ragged block that reads as neither. */
+function CrsChoice({
+  checked,
+  onSelect,
+  title,
+  detail,
+}: {
+  checked: boolean;
+  onSelect: () => void;
+  title: string;
+  detail: string;
+}) {
+  return (
+    <label
+      style={{
+        display: "flex",
+        gap: 9,
+        alignItems: "flex-start",
+        cursor: "pointer",
+        padding: "8px 10px",
+        borderRadius: 7,
+        border: `1px solid ${checked ? "var(--accent)" : "var(--border)"}`,
+        background: checked ? "var(--selection-bg)" : "transparent",
+        transition: "border-color var(--t-fast), background var(--t-fast)",
+      }}
+    >
+      <input
+        type="radio"
+        name="wizard-crs"
+        checked={checked}
+        onChange={onSelect}
+        style={{ marginTop: 2, flexShrink: 0 }}
+      />
+      <span>
+        <span
+          style={{
+            display: "block",
+            fontSize: "var(--text-md)",
+            color: "var(--text-primary)",
+            fontWeight: 500,
+          }}
+        >
+          {title}
+        </span>
+        <span
+          style={{
+            display: "block",
+            fontSize: "var(--text-sm)",
+            color: "var(--text-tertiary)",
+            lineHeight: 1.45,
+            marginTop: 2,
+          }}
+        >
+          {detail}
+        </span>
+      </span>
+    </label>
+  );
+}
+
+export function NewProjectWizard({ onClose, initial = null }: Props) {
   const { createProject, showToast } = useAppState();
   const { bumpNetwork } = useNetworkVersion();
   const engines = useEngines();
 
-  const [step, setStep] = useState<1 | 2 | 3>(1);
-  const [engineKey, setEngineKey] = useState<string | null>(null);
-  const [projectName, setProjectName] = useState("");
+  // A model chosen before the wizard opened has already answered the first
+  // two questions — which engine, and which file — so the wizard opens on
+  // the step that reports what was read rather than asking again. It still
+  // opens *there* and not on the name: what the importer changed, and the
+  // coordinate question, are shown before the project is committed to.
+  const [step, setStep] = useState<1 | 2 | 3>(initial ? 2 : 1);
+  const [engineKey, setEngineKey] = useState<string | null>(
+    initial?.engine ?? null,
+  );
+  const [projectName, setProjectName] = useState(
+    initial?.network.fileStem ?? "",
+  );
   const [detecting, setDetecting] = useState(false);
-  const [fileDetected, setFileDetected] = useState(false);
-  const [detectedNodeCount, setDetectedNodeCount] = useState(0);
-  const [detectedLinkCount, setDetectedLinkCount] = useState(0);
+  const [fileDetected, setFileDetected] = useState(initial != null);
+  const [detectedNodeCount, setDetectedNodeCount] = useState(
+    initial?.nodeCount ?? 0,
+  );
+  const [detectedLinkCount, setDetectedLinkCount] = useState(
+    initial?.linkCount ?? 0,
+  );
   // Why the imported model is not yet simulable, empty when it is. Kept so the
   // review step can say so before the user commits: the model imports either
   // way, and finding out only after landing in the project is a worse surprise
   // than being told here.
   const [detectedFindings, setDetectedFindings] = useState<ValidationFinding[]>(
-    [],
+    initial?.findings ?? [],
   );
   // §14.10 repairs the importer applied (nonstandard lines commented out)
   // — shown on the review step; the repair contract forbids silence.
-  const [detectedRepairs, setDetectedRepairs] = useState<string[]>([]);
+  const [detectedRepairs, setDetectedRepairs] = useState<string[]>(
+    initial?.repairs ?? [],
+  );
+  // Whether the model's coordinates rule out longitude and latitude. The
+  // wizard cannot host the real CRS picker — that one proves an answer by
+  // showing where the network lands on a basemap, and there is no map here
+  // — but it can say so before the map does, and take the one answer that
+  // needs no map: a drawing grid is not a coordinate system at all.
+  const [coordsProjected, setCoordsProjected] = useState(
+    initial?.coordinatesProjected ?? false,
+  );
+  const [crsAnswer, setCrsAnswer] = useState<"later" | "local">("later");
 
   const engine = engines.find((e) => e.key === engineKey) ?? null;
   // Engines whose model this GUI cannot edit have no starter-network path —
@@ -93,6 +229,8 @@ export function NewProjectWizard({ onClose }: Props) {
     setDetectedLinkCount(0);
     setDetectedFindings([]);
     setDetectedRepairs([]);
+    setCoordsProjected(false);
+    setCrsAnswer("later");
   }
 
   async function handleBrowse() {
@@ -105,11 +243,13 @@ export function NewProjectWizard({ onClose }: Props) {
         setDetectedLinkCount(result.linkCount);
         setDetectedFindings(result.findings);
         setDetectedRepairs(result.repairs ?? []);
+        setCoordsProjected(result.coordinatesProjected ?? false);
+        setCrsAnswer("later");
         if (result.repairs?.length) {
           showToast(
             `Imported with ${result.repairs.length} repair${
               result.repairs.length === 1 ? "" : "s"
-            } — nonstandard lines were commented out.`,
+            } — see the review step for what changed.`,
             "warn",
           );
         }
@@ -156,7 +296,12 @@ export function NewProjectWizard({ onClose }: Props) {
       modifiedLabel: "Just now",
       nodeCount: detectedNodeCount,
       linkCount: detectedLinkCount,
-      sourceCrs: "EPSG:4326",
+      // Degrees unless the model's own numbers say otherwise. A drawing
+      // grid is recorded as such so the canvas stops trying to place it on
+      // the earth; anything else keeps today's default and is answered on
+      // the map, where the choice can be checked.
+      sourceCrs:
+        coordsProjected && crsAnswer === "local" ? LOCAL_CRS : "EPSG:4326",
       insights: null,
       folderMissing: false,
     };
@@ -174,8 +319,16 @@ export function NewProjectWizard({ onClose }: Props) {
         zIndex: 600,
         background: "rgba(0,0,0,0.55)",
         display: "flex",
-        alignItems: "center",
+        // `flex-start` with `margin: auto` on the card, rather than
+        // `center`: a centred flex item taller than its container
+        // overflows *both* ways, so the head of a long step — the engine
+        // list, or a review with repairs and a coordinate question — was
+        // cut off above the top of the window with no way to reach it.
+        // This way the card centres while it fits and scrolls from its
+        // top once it does not.
+        alignItems: "flex-start",
         justifyContent: "center",
+        overflowY: "auto",
         padding: 24,
         animation: "fadeIn 120ms ease-out",
       }}
@@ -189,6 +342,9 @@ export function NewProjectWizard({ onClose }: Props) {
           position: "relative",
           width: "100%",
           maxWidth: step === 1 ? 760 : 580,
+          // Centres the card in the leftover space when there is any, and
+          // simply sits at the top when there is not.
+          margin: "auto",
         }}
       >
         {/* Always-available exit. The footer only offers "Cancel" on step 1 —
@@ -387,43 +543,74 @@ export function NewProjectWizard({ onClose }: Props) {
                     {detectedNodeCount.toLocaleString()} nodes ·{" "}
                     {detectedLinkCount.toLocaleString()} links
                   </div>
-                  {detectedFindings.length > 0 && (
-                    <div
-                      style={{
-                        fontSize: "var(--text-md)",
-                        color: "var(--text-secondary)",
-                        marginTop: 8,
-                        lineHeight: 1.5,
-                        maxWidth: 320,
-                      }}
-                    >
-                      {detectedFindings.length === 1
-                        ? "1 issue must be resolved before this model can be simulated."
-                        : `${detectedFindings.length} issues must be resolved before this model can be simulated.`}{" "}
-                      The project will open with{" "}
-                      {detectedFindings.length === 1 ? "it" : "them"} listed in
-                      Issues &amp; Notifications.
-                    </div>
-                  )}
-                  {detectedRepairs.length > 0 && (
-                    <div
-                      style={{
-                        fontSize: "var(--text-md)",
-                        color: "var(--status-warning, #d4a017)",
-                        marginTop: 8,
-                        lineHeight: 1.5,
-                        maxWidth: 320,
-                        textAlign: "left",
-                      }}
-                    >
-                      {detectedRepairs.length === 1
-                        ? "1 nonstandard line was commented out during import:"
-                        : `${detectedRepairs.length} nonstandard lines were commented out during import:`}
-                      <ul style={{ margin: "4px 0 0", paddingLeft: 18 }}>
-                        {detectedRepairs.map((r) => (
-                          <li key={r}>{r}</li>
-                        ))}
-                      </ul>
+                  {(coordsProjected ||
+                    detectedFindings.length > 0 ||
+                    detectedRepairs.length > 0) && (
+                    <div style={REVIEW_DETAILS}>
+                      {coordsProjected && (
+                        <div>
+                          <div style={REVIEW_LABEL}>Coordinates</div>
+                          <div style={REVIEW_BODY}>
+                            These are not longitude and latitude.
+                          </div>
+                          <div
+                            style={{
+                              display: "flex",
+                              flexDirection: "column",
+                              gap: 6,
+                              marginTop: 8,
+                            }}
+                          >
+                            <CrsChoice
+                              checked={crsAnswer === "later"}
+                              onSelect={() => setCrsAnswer("later")}
+                              title="A coordinate system"
+                              detail="Choose which one on the map, where you can see where the network lands."
+                            />
+                            <CrsChoice
+                              checked={crsAnswer === "local"}
+                              onSelect={() => setCrsAnswer("local")}
+                              title="A drawing grid"
+                              detail="This model is not placed on the earth."
+                            />
+                          </div>
+                        </div>
+                      )}
+                      {detectedFindings.length > 0 && (
+                        <div>
+                          <div style={REVIEW_WARN_LABEL}>Not yet simulable</div>
+                          <div style={REVIEW_BODY}>
+                            {detectedFindings.length === 1
+                              ? "1 issue must be resolved"
+                              : `${detectedFindings.length} issues must be resolved`}{" "}
+                            before this model can run. The project opens with{" "}
+                            {detectedFindings.length === 1 ? "it" : "them"}{" "}
+                            listed in Issues &amp; Notifications.
+                          </div>
+                        </div>
+                      )}
+                      {detectedRepairs.length > 0 && (
+                        <div>
+                          <div style={REVIEW_WARN_LABEL}>
+                            {detectedRepairs.length === 1
+                              ? "1 change made on import"
+                              : `${detectedRepairs.length} changes made on import`}
+                          </div>
+                          <ul
+                            style={{
+                              ...REVIEW_BODY,
+                              margin: "2px 0 0",
+                              paddingLeft: 16,
+                            }}
+                          >
+                            {detectedRepairs.map((r) => (
+                              <li key={r} style={{ marginTop: 3 }}>
+                                {r}
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>

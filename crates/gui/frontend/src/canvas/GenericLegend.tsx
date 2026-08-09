@@ -24,6 +24,7 @@ import {
   genericUnitLabel,
 } from "../hooks/results";
 import { useUnitSystem } from "../units";
+import { type CanvasLayers, useCanvasLayers } from "./layers-context";
 import {
   CategorySwatches,
   LEGEND_BAR_STYLE,
@@ -49,7 +50,6 @@ import {
   sequentialGradientCss,
 } from "./MapCanvas/colorUtils";
 import {
-  criteriaEditShown,
   effectiveScaleMode,
   scaleControlShown,
   scaleOptions,
@@ -168,6 +168,82 @@ export function animatedVariableLabels(
   return labels;
 }
 
+/**
+ * What motion means on this map, in the engine's own words.
+ *
+ * The point is not which variables the feature supports — it is that motion
+ * can only honestly show a *rate*. A depth or a stored volume is a state,
+ * and a pulse keeping pace with one would assert a speed the number does
+ * not have. The toggle's tooltip lists the animated variables, which labels
+ * the outcome without teaching the rule, and it is reachable only by
+ * hovering a control you are not looking at while you wonder why nothing
+ * moves.
+ *
+ * Deliberately does *not* say the rest are states. Most are, but not all —
+ * a rate can be left unanimated for other reasons, as demand is here — and
+ * the sentence must not claim a partition it cannot know. It states the
+ * rule in the direction that is always true: a state never moves.
+ *
+ * Empty when nothing this catalog publishes animates: there is no rule to
+ * explain where there is no motion.
+ */
+export function motionExplanation(
+  classes: readonly { variables: readonly GenericVariable[] }[],
+  appliesTo: readonly string[],
+): string {
+  const names = animatedVariableLabels(classes, appliesTo);
+  if (names.length === 0) return "";
+  const list = new Intl.ListFormat("en", {
+    style: "long",
+    type: "conjunction",
+  }).format(names);
+  return `Motion shows rates — ${list}. A variable that measures a state stays still.`;
+}
+
+/**
+ * Whether one class's *current* selection is actually moving on the canvas.
+ *
+ * The toggle says what the reader wants — "animate whenever it can" — and
+ * keeps saying it whether or not this moment allows it. This says whether
+ * the wish is being granted for this class right now, which is a different
+ * question and belongs next to the variable that answers it. Before, the
+ * two were collapsed into one disabled button: picking a state variable
+ * greyed out the control, which read as "you may not want this" rather
+ * than "this variable does not move".
+ */
+export function classIsAnimating(
+  animation: AnimationControl | undefined,
+  selectedId: string,
+): boolean {
+  if (!animation?.playing || animation.reducedMotion) return false;
+  return animation.appliesTo.includes(selectedId);
+}
+
+/** The canvas layer each legend class colours — the toolbar's "Toggle
+ * nodes / links / subcatchments". */
+const LAYER_FOR_CLASS: Record<GenericClassKey, keyof CanvasLayers> = {
+  point: "nodes",
+  polyline: "links",
+  region: "regions",
+};
+
+/**
+ * Whether the elements this class colours are hidden on the canvas.
+ *
+ * A variable picked for a hidden class is still a real choice — it is what
+ * the map will show the moment the layer comes back — so the control keeps
+ * working and reads as inert rather than disappearing or refusing. Without
+ * this, a legend picker beside an empty canvas looked exactly like one
+ * beside a coloured one, and a reader who had turned nodes off had nothing
+ * on screen to remind them why the node ramp explained nothing.
+ */
+export function classIsHidden(
+  cls: GenericClassKey,
+  layers: CanvasLayers,
+): boolean {
+  return !layers[LAYER_FOR_CLASS[cls]];
+}
+
 interface ClassConfig {
   key: GenericClassKey;
   variables: GenericVariable[];
@@ -210,8 +286,6 @@ export function GenericLegend({
   bandColors,
   onLocateExtreme,
   animation,
-  onEditCriteria,
-  criteriaEditorOpen = false,
   detailsOpen,
   onDetailsOpenChange,
 }: {
@@ -245,13 +319,6 @@ export function GenericLegend({
   bandColors?: (variableId: string) => string[] | null;
   onLocateExtreme?: (cls: GenericClassKey, which: "min" | "max") => void;
   animation?: AnimationControl;
-  /** Opens the criteria editor. The legend reads criteria and does not
-   * author them, so all it owns here is the route. */
-  onEditCriteria?: () => void;
-  /** Whether that editor is currently showing. The legend stands down from
-   * Escape while it is: both listen on the window, so one press would
-   * otherwise close the editor and the popover behind it at once. */
-  criteriaEditorOpen?: boolean;
   /** Whether the ramp popover is showing. Owned by the caller so it
    * survives remounts and is remembered per project — it is a working
    * mode, not a transient menu. */
@@ -259,6 +326,11 @@ export function GenericLegend({
   onDetailsOpenChange: (open: boolean) => void;
 }) {
   const sys = useUnitSystem();
+  // Read here rather than passed: the toggles are canvas state, and the
+  // legend sits inside the same provider the canvas does. The context's
+  // default is everything-visible, so a legend rendered outside one dims
+  // nothing.
+  const { layers: canvasLayers } = useCanvasLayers();
   const [openPicker, setOpenPicker] = useState<GenericClassKey | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
   const setDetailsOpen = onDetailsOpenChange;
@@ -285,16 +357,12 @@ export function GenericLegend({
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
       if (e.key !== "Escape") return;
-      // The editor opened over this is the topmost layer and answers for
-      // itself. Without this the same press closes it and the popover it
-      // was opened from.
-      if (criteriaEditorOpen) return;
       if (openPicker != null) setOpenPicker(null);
       else if (detailsOpen) setDetailsOpen(false);
     }
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [openPicker, detailsOpen, setDetailsOpen, criteriaEditorOpen]);
+  }, [openPicker, detailsOpen, setDetailsOpen]);
 
   const classes: ClassConfig[] = [
     {
@@ -345,6 +413,9 @@ export function GenericLegend({
   // words and can only list variables it actually publishes.
   const appliesToHint = animation
     ? animationAppliesHint(animatedVariableLabels(classes, animation.appliesTo))
+    : "";
+  const motionHint = animation
+    ? motionExplanation(classes, animation.appliesTo)
     : "";
 
   return (
@@ -455,12 +526,23 @@ export function GenericLegend({
               value={activeScale}
               options={options}
               onChange={onScaleModeChange}
-              onEditCriteria={
-                criteriaEditShown(criteriaVariables, onEditCriteria != null)
-                  ? onEditCriteria
-                  : undefined
-              }
             />
+          )}
+
+          {/* Why some selections move and others do not, where a reader is
+              already looking to find out what the colours mean. */}
+          {motionHint && (
+            <div
+              style={{
+                fontSize: "var(--text-xs)",
+                color: "var(--text-tertiary)",
+                lineHeight: 1.5,
+                borderTop: "1px solid var(--border)",
+                paddingTop: 8,
+              }}
+            >
+              {motionHint}
+            </div>
           )}
         </div>
       )}
@@ -514,6 +596,8 @@ export function GenericLegend({
             }))}
             icon={c.glyph}
             pickerLabel={c.pickerLabel}
+            animating={classIsAnimating(animation, selected(c).id)}
+            dimmed={classIsHidden(c.key, canvasLayers)}
             isOpen={openPicker === c.key}
             onToggle={() => setOpenPicker((p) => (p === c.key ? null : c.key))}
             onSelect={(id) => {
@@ -524,15 +608,31 @@ export function GenericLegend({
         ))}
         {animation &&
           (() => {
-            const disabled = animation.reducedMotion || !animatable;
+            // Only a global "reduce motion" can refuse the wish; which
+            // variable happens to be selected cannot. A toggle that greys
+            // out when you pick a state variable reads as "you may not
+            // want this", when the truth is "this variable does not move"
+            // — which the pickers now say, beside the variable itself.
+            const disabled = animation.reducedMotion;
             const tooltip = animation.reducedMotion
               ? "Animation off (Reduce motion is enabled in Settings)"
               : !animatable
                 ? appliesToHint
                 : animation.playing
-                  ? "Pause link animation"
-                  : "Play link animation";
+                  ? "Pause animation"
+                  : "Play animation";
+            // The fill shows the standing wish, not this moment's outcome:
+            // it stays lit over a variable that does not move, because the
+            // setting has not changed.
             const active = animation.playing && !disabled;
+            // The button's own fill, which hover composites on top of
+            // rather than replacing: `--selection-bg-strong` is three times
+            // the weight of `--nav-hover`, so swapping one for the other
+            // would *dim* a lit button under the pointer. Stacking the
+            // hover tint as a gradient layer lifts both states, and uses
+            // only tokens, so it follows the theme.
+            const fill = active ? "var(--selection-bg-strong)" : "transparent";
+            const hoverFill = `linear-gradient(var(--nav-hover), var(--nav-hover)), ${fill}`;
             return (
               <button
                 type="button"
@@ -545,12 +645,34 @@ export function GenericLegend({
                 title={tooltip}
                 data-tooltip={tooltip}
                 data-tooltip-pos="top"
+                // Inline styles beat the stylesheet, so `.tool-btn:hover`
+                // could never show through the state fill set below.
+                onMouseEnter={(e) => {
+                  if (disabled) return;
+                  e.currentTarget.style.background = hoverFill;
+                  if (!active) {
+                    e.currentTarget.style.color = "var(--text-primary)";
+                  }
+                }}
+                onMouseLeave={(e) => {
+                  if (disabled) return;
+                  e.currentTarget.style.background = fill;
+                  if (!active) {
+                    e.currentTarget.style.color = "var(--text-secondary)";
+                  }
+                }}
                 style={{
                   ...PICKER_BTN_STYLE,
-                  padding: "4px 8px 4px 6px",
+                  padding: "4px 6px 4px 6px",
+                  marginRight: "3px",
                   // Right corners nest inside the bar's 20px rounding so the
                   // hover fill is never clipped at the bar's rounded end.
                   borderRadius: "6px 16px 16px 6px",
+                  // On reads as filled, off as empty — the same language
+                  // every other toggle in this bar uses. Dimming the icon
+                  // instead made "off" and "unavailable" the same picture,
+                  // and left the on-state legible only by hue.
+                  background: fill,
                   color: active
                     ? "var(--accent)"
                     : disabled

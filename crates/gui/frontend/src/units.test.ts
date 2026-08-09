@@ -215,6 +215,8 @@ const ENGINE_CATALOG: Array<[Quantity, string, string, number]> = [
   ["pressure", "m", "psi", 1.4219702],
   ["headloss", "m/km", "ft/kft", 1.0],
   ["volume", "m³", "ft³", 35.314667],
+  ["concentration", "mg/L", "mg/L", 1.0],
+  ["age", "h", "h", 1.0],
 ];
 
 describe("the engine quantity catalog", () => {

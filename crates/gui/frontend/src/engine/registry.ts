@@ -13,6 +13,10 @@
 
 import type { ComponentType } from "react";
 import { ANIMATED_LINK_VARIABLES } from "../canvas/linkPulse";
+import {
+  CatalogCriteriaControl,
+  WdsCriteriaControl,
+} from "../components/panels/CriteriaControl";
 import type { GenericQuantity, Link, Node } from "../hooks";
 import type { Region } from "../types/network";
 import { UdsAnalysisView } from "./uds/AnalysisView";
@@ -94,6 +98,11 @@ export interface EngineComponents {
   EditorView?: ComponentType;
   /** Body of the Results project view. Absent = the wds analysis panels. */
   AnalysisView?: ComponentType;
+  /** The project toolbar's criteria control: a chip opening this engine's
+   * criteria editor. Criteria are project-scoped, so the control is too —
+   * it reaches the canvas it recolours, the results it judges, and the
+   * report it is exported into. Absent = the wds editor. */
+  CriteriaControl?: ComponentType;
   /** The Overview page's "Network" KPI grid. Absent = the wds composition
    * (pipes/tanks/pumps with lengths and diameters). */
   OverviewComposition?: ComponentType<OverviewCompositionProps>;
@@ -131,29 +140,52 @@ export interface EngineComponents {
    */
   criteriaVariables: readonly string[];
   /**
-   * Result-variable ids whose motion the canvas can animate.
+   * Result-variable ids whose motion the canvas can animate, per element
+   * class.
    *
-   * The pulse reads a link's flow to decide how fast to move and what the
-   * movement is claiming, so what it can animate depends on what an engine
-   * publishes and on what that variable means. Matching by id alone would
-   * not do: `flow` and `velocity` happen to be spelled the same in both
-   * engines today, and the sentence offered to a reader whose selection is
-   * not animated was the water distribution one for everybody — a drainage
-   * map named Unit headloss and Quality, which drainage does not have.
+   * Motion says how fast and which way, so what it can animate depends on
+   * what an engine publishes and on what that variable means — always a
+   * **rate**, never a state. A conduit's capacity and a node's depth are
+   * states (a full pipe is not a fast one), and animating them would have
+   * the motion assert something the number does not say.
    *
-   * Empty means the engine has no animated variables and the toggle stays
-   * inert wherever it appears.
+   * Keyed by class because the two animate differently and qualify
+   * separately: links pulse along their length, points ring outward from
+   * their centre. A single flat list served the links and silently
+   * answered for everything else.
+   *
+   * Matching by id alone would not do either: `flow` and `velocity` happen
+   * to be spelled the same in both engines today, and the sentence offered
+   * to a reader whose selection is not animated was the water distribution
+   * one for everybody — a drainage map named Unit headloss and Quality,
+   * which drainage does not have.
+   *
+   * Empty lists mean the engine animates nothing of that class, and the
+   * toggle stays inert wherever it appears.
    */
-  animatedVariables: readonly string[];
+  animatedVariables: {
+    /** Point (node) variables — rates crossing the node's boundary. */
+    readonly point: readonly string[];
+    /** Polyline (link) variables — rates along the conveyance. */
+    readonly polyline: readonly string[];
+  };
 }
 
 const WDS: EngineComponents = {
   RunSettingsSummary: WdsRunSettingsSummary,
+  CriteriaControl: WdsCriteriaControl,
   editorFocusesElements: true,
   settingsEditable: true,
   modelEditable: true,
   criteriaVariables: ["pressure", "velocity", "flow"],
-  animatedVariables: ANIMATED_LINK_VARIABLES,
+  animatedVariables: {
+    // Demand is a rate and would ring honestly, but it is nonzero at
+    // nearly every junction — unlike drainage flooding, whose sparsity is
+    // what makes the rings cheap and worth reading. Measure before
+    // turning it on.
+    point: [],
+    polyline: ANIMATED_LINK_VARIABLES,
+  },
 };
 
 const UDS: EngineComponents = {
@@ -161,6 +193,7 @@ const UDS: EngineComponents = {
   SettingsView: UdsSettingsView,
   EditorView: UdsElementsView,
   AnalysisView: UdsAnalysisView,
+  CriteriaControl: CatalogCriteriaControl,
   OverviewComposition: UdsOverviewComposition,
   NodeInspectorBody: UdsNodeInspectorBody,
   LinkInspectorBody: UdsLinkInspectorBody,
@@ -179,7 +212,15 @@ const UDS: EngineComponents = {
   // Depth and capacity are states rather than rates — a full pipe is not a
   // fast one — and animating them would have the motion assert something
   // the number does not say.
-  animatedVariables: ["flow", "velocity"],
+  //
+  // Flooding is the node counterpart: a rate leaving the network at the
+  // surface, which a ring expanding from the node is the picture of. It is
+  // also zero nearly everywhere, so the colour ramp over it is almost
+  // uniform and the handful of nodes that matter are hard to find — which
+  // is the case for motion, and what keeps the moving set small. The
+  // inflows are rates too and would work identically; they are nonzero
+  // nearly everywhere, so they wait on measurement.
+  animatedVariables: { point: ["flooding"], polyline: ["flow", "velocity"] },
 };
 
 const REGISTRY: Record<string, EngineComponents> = {

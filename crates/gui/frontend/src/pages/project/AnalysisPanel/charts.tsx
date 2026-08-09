@@ -261,6 +261,16 @@ export interface BarEntry {
   fill: string;
 }
 
+/** The label gutter in viewBox units: the longest label at the chart's
+ * 10-unit monospace type (~6 units per glyph) plus breathing room. Fixed
+ * at 88 the gutter fit the wds bin labels ("< 20 psi"), but a sentence
+ * label ("Below self-cleansing") painted leftward out of the SVG — the
+ * chart draws with `overflow: visible` — across the neighbouring card. */
+export function barLabelGutter(labels: string[]): number {
+  const longest = labels.reduce((n, l) => Math.max(n, l.length), 0);
+  return Math.max(88, longest * 6 + 10);
+}
+
 export function HorizontalBarChart({
   bars,
   maxCount,
@@ -269,7 +279,7 @@ export function HorizontalBarChart({
   maxCount: number;
 }) {
   const rowH = 22;
-  const labelW = 88;
+  const labelW = barLabelGutter(bars.map((b) => b.label));
   const barAreaW = 240;
   const height = bars.length * rowH;
 

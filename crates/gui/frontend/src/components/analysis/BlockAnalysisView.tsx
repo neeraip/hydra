@@ -2,11 +2,17 @@
  * active target and render its fragment — the analysis-as-blocks
  * convergence, shared by every engine.
  *
- * Engine-specific concerns arrive as props, never as switches: a `header`
- * (the wds criteria editor), and `criteria` forwarded to the backend,
- * which maps them onto the criteria-shaped blocks' options with the
- * engine's own unit factors. Criteria travel with the request rather than
- * being re-read from disk so an edit can never race its own save.
+ * Blocks arrive grouped by their engine-authored category (hydra-common
+ * §3.2), and the categories present become the tab bar — derived from the
+ * data, so an engine reshapes this page by editing only its catalog. One
+ * category means no tabs: a small engine is not forced to wear chrome.
+ *
+ * Engine-specific concerns arrive as props, never as switches: `criteria`
+ * is forwarded to the backend, which maps it onto the criteria-shaped
+ * blocks' options with the engine's own unit factors. It travels with the
+ * request rather than being re-read from disk so an edit — made from the
+ * project toolbar, which owns the criteria control — can never race its
+ * own save.
  */
 
 import { useEffect, useState } from "react";
@@ -14,7 +20,12 @@ import { useAppState, useSimulation } from "../../AppContext";
 import { tryInvokeOr } from "../../hooks/ipc";
 import { useUnitSystem } from "../../units";
 import { BlockPanel } from "./FragmentView";
-import { type AnalysisBlock, blockSpan } from "./fragments";
+import {
+  type AnalysisBlock,
+  activeCategoryOf,
+  categoriesOf,
+  layoutSpans,
+} from "./fragments";
 
 /** How long an edit may keep changing before the blocks refetch. Criteria
  * sliders emit per-tick; re-producing every block per tick would contend
@@ -22,11 +33,8 @@ import { type AnalysisBlock, blockSpan } from "./fragments";
 const REFETCH_DEBOUNCE_MS = 300;
 
 export function BlockAnalysisView({
-  header,
   criteria,
 }: {
-  /** Rendered above the panels; scrolls with them. */
-  header?: React.ReactNode;
   /** Forwarded verbatim to the backend's criteria→options mapping. The
    * object's JSON identity is the refetch key. */
   criteria?: unknown;
@@ -38,6 +46,7 @@ export function BlockAnalysisView({
   // given, and flipping the preference refetches.
   const unitSystem = useUnitSystem();
   const [blocks, setBlocks] = useState<AnalysisBlock[] | null>(null);
+  const [pickedCategory, setPickedCategory] = useState<string | null>(null);
 
   // Serialised so the effect re-runs on value changes, not on the fresh
   // object identity every render produces.
@@ -80,58 +89,123 @@ export function BlockAnalysisView({
     criteriaKey,
   ]);
 
-  // A target switch shows loading rather than the previous target's panels.
+  // A target switch shows loading rather than the previous target's
+  // panels, on that target's tab.
   // biome-ignore lint/correctness/useExhaustiveDependencies: the deps ARE the point — this effect exists to fire on target switches, and reads nothing else.
   useEffect(() => {
     setBlocks(null);
+    setPickedCategory(null);
   }, [activeProjectId, activeScenarioId]);
 
   if (!activeProjectId) return null;
-  if (blocks === null) {
-    return (
-      <div style={{ padding: 18 }}>
-        {header}
-        <div style={{ paddingTop: 12, color: "var(--text-tertiary)" }}>
-          Loading…
-        </div>
-      </div>
-    );
-  }
+
+  const categories = blocks === null ? [] : categoriesOf(blocks);
+  const activeCategory = activeCategoryOf(pickedCategory, categories);
+  const visible =
+    activeCategory === null
+      ? (blocks ?? [])
+      : (blocks ?? []).filter((b) => b.category === activeCategory);
+  const spans = layoutSpans(visible.map((b) => b.fragment));
+
   return (
     <div
       style={{
         flex: 1,
-        overflowY: "auto",
-        padding: 18,
-        // Two-ish columns on a wide window, one on a narrow one; each
-        // block claims a cell or the whole row by its fragment's shape —
-        // presentation decided here, from neutral data, never by hints
-        // from an engine (hydra-common §3).
-        display: "grid",
-        gridTemplateColumns: "repeat(auto-fill, minmax(min(520px, 100%), 1fr))",
-        gap: 12,
+        display: "flex",
+        flexDirection: "column",
+        overflow: "hidden",
+        minHeight: 0,
       }}
     >
-      {header ? <div style={{ gridColumn: "1 / -1" }}>{header}</div> : null}
-      {blocks.length === 0 ? (
+      {categories.length > 1 && (
         <div
-          style={{ color: "var(--text-tertiary)", fontSize: "var(--text-md)" }}
+          style={{
+            flexShrink: 0,
+            display: "flex",
+            alignItems: "flex-end",
+            gap: 2,
+            padding: "0 18px",
+            borderBottom: "1px solid var(--border)",
+            background: "var(--bg-panel)",
+          }}
         >
-          Run a simulation to see results here.
+          {categories.map((category) => {
+            const isActive = category === activeCategory;
+            return (
+              <button
+                type="button"
+                key={category}
+                onClick={() => setPickedCategory(category)}
+                style={{
+                  padding: "10px 16px 9px",
+                  fontSize: "var(--text-md)",
+                  fontWeight: isActive ? 600 : 500,
+                  fontFamily: "var(--font-ui)",
+                  color: isActive
+                    ? "var(--text-primary)"
+                    : "var(--text-tertiary)",
+                  background: "transparent",
+                  border: "none",
+                  borderBottom: isActive
+                    ? "2px solid var(--accent)"
+                    : "2px solid transparent",
+                  cursor: "pointer",
+                  transition: "color var(--t-fast), border-color var(--t-fast)",
+                  whiteSpace: "nowrap",
+                  marginBottom: -1,
+                }}
+                onMouseEnter={(e) => {
+                  if (!isActive)
+                    (e.currentTarget as HTMLButtonElement).style.color =
+                      "var(--text-secondary)";
+                }}
+                onMouseLeave={(e) => {
+                  if (!isActive)
+                    (e.currentTarget as HTMLButtonElement).style.color =
+                      "var(--text-tertiary)";
+                }}
+              >
+                {category}
+              </button>
+            );
+          })}
+        </div>
+      )}
+      {blocks === null ? (
+        <div style={{ padding: 18, color: "var(--text-tertiary)" }}>
+          Loading…
         </div>
       ) : (
-        blocks.map((b) => (
-          <div
-            key={b.id}
-            style={
-              blockSpan(b.fragment) === "full"
-                ? { gridColumn: "1 / -1" }
-                : undefined
-            }
-          >
-            <BlockPanel block={b} />
+        <div className="analysis-scroll">
+          {/* One or two columns (app.css, container query); each block
+              claims a cell or the whole row by its fragment's shape,
+              paired so no row is left ragged (`layoutSpans`) —
+              presentation decided here, from neutral data, never by
+              hints from an engine (hydra-common §3). */}
+          <div className="analysis-grid">
+            {blocks.length === 0 ? (
+              <div
+                style={{
+                  color: "var(--text-tertiary)",
+                  fontSize: "var(--text-md)",
+                }}
+              >
+                Run a simulation to see results here.
+              </div>
+            ) : (
+              visible.map((b, i) => (
+                <div
+                  key={b.id}
+                  style={
+                    spans[i] === "full" ? { gridColumn: "1 / -1" } : undefined
+                  }
+                >
+                  <BlockPanel block={b} />
+                </div>
+              ))
+            )}
           </div>
-        ))
+        </div>
       )}
     </div>
   );

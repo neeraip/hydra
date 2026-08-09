@@ -59,7 +59,9 @@ export type Quantity =
   | "pressure"
   | "headloss"
   | "volume"
-  | "demand";
+  | "demand"
+  | "concentration"
+  | "age";
 
 // ── App-wide default ─────────────────────────────────────────────────────────
 
@@ -179,6 +181,8 @@ const SI_TO_US: Record<Quantity, number> = {
   pressure: 1.4219702, // m (head) → psi
   headloss: 1.0, // m/km → ft/kft (numerically identical, see above)
   volume: 35.314667, // m³ → ft³ (an INP's volumes are cubic feet)
+  concentration: 1.0, // mg/L in both systems
+  age: 1.0, // hours in both systems
 };
 
 const SI_LABEL: Record<Quantity, string> = {
@@ -192,6 +196,8 @@ const SI_LABEL: Record<Quantity, string> = {
   pressure: "m",
   headloss: "m/km",
   volume: "m³",
+  concentration: "mg/L",
+  age: "h",
 };
 
 const US_LABEL: Record<Quantity, string> = {
@@ -205,6 +211,8 @@ const US_LABEL: Record<Quantity, string> = {
   pressure: "psi",
   headloss: "ft/kft",
   volume: "ft³",
+  concentration: "mg/L",
+  age: "h",
 };
 
 /** Convert a stored SI value to the given display system. */

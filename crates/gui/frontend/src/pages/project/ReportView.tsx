@@ -242,8 +242,9 @@ export function ReportView() {
   }, [activeProjectId, activeScenarioId, resultGeneration]);
 
   const templateJson = useMemo(
-    () => buildTemplateJson({ title, sections, headingById, optionsById }),
-    [title, sections, headingById, optionsById],
+    () =>
+      buildTemplateJson({ title, sections, headingById, optionsById }, catalog),
+    [title, sections, headingById, optionsById, catalog],
   );
 
   // The reader's resolved display system: the preview and the exported
@@ -797,7 +798,10 @@ export function ReportView() {
             borderRadius: 6,
             border: "none",
             background: exporting ? "var(--bg-elevated)" : ACCENT,
-            color: exporting ? "var(--text-tertiary)" : "#ffffff",
+            // --accent-fg, never white: the dark theme's accent is
+            // near-white, and white-on-accent is exactly the pairing the
+            // token exists to prevent (app.css).
+            color: exporting ? "var(--text-tertiary)" : "var(--accent-fg)",
             cursor: exporting ? "default" : "pointer",
             fontSize: "var(--text-lg)",
             fontWeight: 600,

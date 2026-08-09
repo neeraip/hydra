@@ -24,11 +24,12 @@ import { useAppState } from "../../AppContext";
 import { DeleteConfirmModal } from "../../components/modals/DeleteConfirmModal";
 import { DeleteProjectModal } from "../../components/modals/DeleteProjectModal";
 import { NewProjectWizard } from "../../components/modals/NewProjectWizard";
-import { PrimaryButton } from "../../components/ui/PrimaryButton";
+import { NewProjectButton } from "../../components/ui/NewProjectButton";
 import { RowMenu } from "../../components/ui/RowMenu";
 import {
   deleteAllSimulations,
   deleteProjectOnDisk,
+  type ImportedModel,
   openBaseFolder,
   type Project,
   type ProjectState,
@@ -78,6 +79,9 @@ export function ProjectsPage() {
   const { projectsVersion, openProject, bumpProjects, showToast } =
     useAppState();
   const [showWizard, setShowWizard] = useState(false);
+  // A model recognised before the wizard opened, so it can start from what
+  // was read rather than asking for it again.
+  const [wizardModel, setWizardModel] = useState<ImportedModel | null>(null);
 
   // ── Bulk actions on the checkbox selection ───────────────────────────────
   const runBulk = useCallback(
@@ -505,10 +509,21 @@ export function ProjectsPage() {
           gap: 10,
         }}
       >
-        {/* New Project button */}
-        <PrimaryButton size="sm" onClick={() => setShowWizard(true)}>
-          + New project
-        </PrimaryButton>
+        {/* New Project button — the main action opens the wizard; the
+            caret starts from a model file instead, which names its own
+            engine. */}
+        <NewProjectButton
+          size="sm"
+          onNew={() => {
+            setWizardModel(null);
+            setShowWizard(true);
+          }}
+          onImported={(model) => {
+            setWizardModel(model);
+            setShowWizard(true);
+          }}
+          onError={(message) => showToast(message, "error")}
+        />
 
         {/* Global search */}
         <div style={{ position: "relative", flex: "0 1 280px" }}>
@@ -944,6 +959,7 @@ export function ProjectsPage() {
 
       {showWizard && (
         <NewProjectWizard
+          initial={wizardModel}
           onClose={() => {
             setShowWizard(false);
             bumpProjects();

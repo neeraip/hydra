@@ -71,7 +71,7 @@ const UNKNOWN_SPEED = 0.2;
  * The line: motion shares colour's pattern where the two rise and fall
  * together, and takes its own where they are free to disagree.
  */
-export function pulseKindFor(linkVar: LinkVariable): PulseKind {
+export function pulseKindFor(linkVar: string): PulseKind {
   switch (linkVar) {
     case "flow":
     case "velocity":
@@ -81,12 +81,100 @@ export function pulseKindFor(linkVar: LinkVariable): PulseKind {
       return "transport";
     case "status":
       return "presence";
+    default:
+      // An id from another engine's catalog. Only variables that engine
+      // said it animates reach here (see `animatesVariable`), and what an
+      // engine animates is a rate — so magnitude is the reading, not a
+      // guess. Before this was explicit the switch fell off its end and
+      // returned `undefined`, which every caller read as "animates".
+      return "magnitude";
   }
 }
 
-/** Whether a variable animates at all. */
+/** Whether a variable animates at all — the water-distribution answer.
+ *
+ * Only for wds callers and for deriving [`ANIMATED_LINK_VARIABLES`]; a
+ * shared surface must ask the engine instead (`animatesVariable`). */
 export function pulseApplies(linkVar: LinkVariable): boolean {
   return pulseKindFor(linkVar) !== "none";
+}
+
+/**
+ * Whether the active engine animates `linkVar`.
+ *
+ * The engine's own list decides, published as `animatedVariables` in the
+ * component registry. This module knows the water-distribution variables
+ * and nothing else: asked about a drainage id it used to fall through its
+ * switch to `undefined`, which read as "animates" — so the wds list was
+ * quietly answering for every engine on a shared canvas.
+ */
+export function animatesVariable(
+  linkVar: string,
+  animated: readonly string[],
+): boolean {
+  return animated.includes(linkVar);
+}
+
+/**
+ * The variable actually on screen, which the pulse must judge.
+ *
+ * Not `linkVar`: that one is coerced into the water-distribution union by
+ * `linkVariableFor`, which answers with a *fallback* for any id outside it
+ * — so on a catalog-keyed engine it reads "flow" whatever is selected. The
+ * generic channel names its own variable, and that is the honest answer.
+ *
+ * Two meanings had been riding on one identifier: "the wds variable to
+ * colour by" and "the variable on screen". They agree on wds and diverge
+ * everywhere else, which is how Depth and Capacity came to pulse on a
+ * drainage map while the legend correctly said only Flow and Velocity do.
+ */
+export function pulseVariableOf(
+  genericVariableId: string | undefined,
+  linkVar: string,
+): string {
+  return genericVariableId ?? linkVar;
+}
+
+/**
+ * Whether the canvas's shared animation clock should run.
+ *
+ * Links and nodes are drawn by different layers but driven by one clock
+ * and one layer rebuild, so this is a question about the canvas rather
+ * than about either class. It was asked about the links alone, and a
+ * drainage map coloured by node flooding — while its link variable was a
+ * state that never pulses — built its rings once at time zero and left
+ * them there: drawn, correct, and motionless.
+ */
+export function canvasAnimates(
+  linkPulses: boolean,
+  nodeRings: boolean,
+): boolean {
+  return linkPulses || nodeRings;
+}
+
+/**
+ * One link's pulse inputs from an engine-generic result channel.
+ *
+ * The water-distribution path reads flow and velocity as separate stored
+ * columns. A catalog-keyed engine serves one variable at a time — the one
+ * the canvas is colouring by — which is enough, because the only variables
+ * an engine animates are rates, and a rate carries both parts the pulse
+ * needs: magnitude, and direction in its sign.
+ *
+ * Mapping that value onto the field of the same name leaves [`pulseSpeed`]
+ * untouched, so both engines pulse by one rule rather than two. `flow`
+ * always carries the signed value because that is where direction is read
+ * from; velocity additionally sets the rate when it is the variable on
+ * screen.
+ */
+export function genericPulseInputs(
+  linkVar: string,
+  value: number | undefined,
+): { flow?: number; velocity?: number } {
+  if (value == null || !Number.isFinite(value)) return {};
+  return linkVar === "velocity"
+    ? { flow: value, velocity: Math.abs(value) }
+    : { flow: value };
 }
 
 /**
@@ -158,7 +246,10 @@ export function pulsePattern(kind: PulseKind): number {
  * only: a link with any real flow in it is above this, and deciding what
  * counts as *worth* showing is not a decision to bury here.
  */
-function isMoving(flow: number | null, flowMax: number): boolean {
+export function isMoving(
+  flow: number | null | undefined,
+  flowMax: number,
+): boolean {
   if (flow == null || !Number.isFinite(flow)) return false;
   const eps = Math.max(1e-12, Math.abs(flowMax) * 1e-9);
   return Math.abs(flow) > eps;

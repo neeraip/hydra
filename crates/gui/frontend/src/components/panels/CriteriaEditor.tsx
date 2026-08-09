@@ -37,6 +37,8 @@ export function CriteriaEditor({
 }) {
   const isDefault =
     criteria.minPressureM === DEFAULT_CRITERIA.minPressureM &&
+    criteria.minResidualMgL === DEFAULT_CRITERIA.minResidualMgL &&
+    criteria.maxAgeH === DEFAULT_CRITERIA.maxAgeH &&
     (["pressure", "velocity", "flow"] as const).every((k) =>
       Object.keys(criteria[k]).every(
         (f) =>
@@ -105,6 +107,18 @@ export function CriteriaEditor({
           value={criteria.minPressureM}
           onCommit={(v) => onChange({ ...criteria, minPressureM: v })}
         />
+        <CriteriaField
+          label="Min residual"
+          quantity="concentration"
+          value={criteria.minResidualMgL}
+          onCommit={(v) => onChange({ ...criteria, minResidualMgL: v })}
+        />
+        <CriteriaField
+          label="Max water age"
+          quantity="age"
+          value={criteria.maxAgeH}
+          onCommit={(v) => onChange({ ...criteria, maxAgeH: v })}
+        />
         <CriteriaBand
           label="Pressure"
           quantity="pressure"
@@ -143,6 +157,16 @@ export function CriteriaEditor({
   );
 }
 
+/** Stepper increment per criterion, in the active display unit. Coarse
+ * enough that a click visibly moves a band, fine enough not to leap past
+ * sensible values. */
+function stepFor(quantity: Quantity, sys: "si" | "us"): number {
+  if (quantity === "velocity") return 0.1;
+  if (quantity === "flow") return sys === "us" ? 1 : 0.1;
+  if (quantity === "concentration") return 0.05;
+  return 1;
+}
+
 /** One SI-backed numeric input shown in the active display system. */
 function CriteriaInput({
   value,
@@ -165,26 +189,38 @@ function CriteriaInput({
     setDraft(String(Number(toDisplay(value, quantity, sys).toFixed(2))));
   }, [value, quantity, sys]);
 
-  const commit = () => {
-    const n = Number(draft);
+  const commitDraft = (next: string) => {
+    const n = Number(next);
     // A rejected edit reverts rather than storing NaN — a criterion that
     // silently became "not a number" would blank every figure derived from
     // it with no indication why.
-    if (draft.trim() !== "" && Number.isFinite(n) && n >= 0) {
+    if (next.trim() !== "" && Number.isFinite(n) && n >= 0) {
       onCommit(fromDisplay(n, quantity, sys));
-    } else {
-      setDraft(asDisplay(value));
+      return true;
     }
+    return false;
   };
 
   return (
     <input
+      type="number"
+      min={0}
+      step={stepFor(quantity, sys)}
       value={draft}
-      onChange={(e) => setDraft(e.target.value)}
-      onBlur={commit}
+      onChange={(e) => {
+        setDraft(e.target.value);
+        // Steppers (and typed digits) commit as they land — the same
+        // live behaviour as the canvas criteria sliders; the store's
+        // save and the block refetch are both debounced downstream.
+        commitDraft(e.target.value);
+      }}
+      onBlur={() => {
+        // Whatever invalid remnant is left ("", "3e") reverts to the
+        // stored value rather than lingering.
+        if (!commitDraft(draft)) setDraft(asDisplay(value));
+      }}
       onKeyDown={(e) => {
-        if (e.key === "Enter") commit();
-        else if (e.key === "Escape") setDraft(asDisplay(value));
+        if (e.key === "Escape") setDraft(asDisplay(value));
       }}
       inputMode="decimal"
       style={{

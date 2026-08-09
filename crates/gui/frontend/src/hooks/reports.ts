@@ -177,8 +177,20 @@ export interface BuilderState {
 /** Serialise builder state to template JSON (`crates/report` format v1) —
  * the same file `hydra report --template` consumes. Options and headings are
  * written only when set, so a report left at its defaults produces the same
- * bytes a hand-authored default template would. */
-export function buildTemplateJson(state: BuilderState): string {
+ * bytes a hand-authored default template would.
+ *
+ * Catalog blocks not in the report are written to `removed` (report spec
+ * §2): at save time the whole catalog was on offer, so absence is a
+ * choice — recording it lets restore tell a deliberate removal apart from
+ * a block that did not exist yet. Written only when non-empty, so a
+ * report holding every block produces the same bytes as before the field
+ * existed. */
+export function buildTemplateJson(
+  state: BuilderState,
+  catalog: readonly ReportBlockInfo[],
+): string {
+  const included = new Set(state.sections);
+  const removed = catalog.map((b) => b.id).filter((id) => !included.has(id));
   return JSON.stringify(
     {
       version: 1,
@@ -193,6 +205,7 @@ export function buildTemplateJson(state: BuilderState): string {
             : {}),
         };
       }),
+      ...(removed.length > 0 ? { removed } : {}),
     },
     null,
     2,
@@ -204,7 +217,14 @@ export function buildTemplateJson(state: BuilderState): string {
  *
  * Ids the catalog does not know are dropped: a template may outlive the block
  * it names, and keeping it would put a row in the outline that can never
- * render. Duplicates collapse to their first occurrence. */
+ * render. Duplicates collapse to their first occurrence.
+ *
+ * Catalog blocks in neither `blocks` nor `removed` are **appended, in
+ * catalog order**: they did not exist when the template was saved, and a
+ * new engine block should join existing reports by default, exactly as it
+ * joins the Analysis page. Only `removed` (report spec §2) keeps a block
+ * out — absence alone is not a decision. Appended rather than slotted so
+ * the author's chosen order is never disturbed. */
 export function builderStateFromTemplate(
   templateJson: string,
   catalog: ReportBlockInfo[],
@@ -234,6 +254,17 @@ export function builderStateFromTemplate(
       sections.push(block.id);
       if (typeof block.title === "string") headingById[block.id] = block.title;
       if (block.options !== undefined) optionsById[block.id] = block.options;
+    }
+    const removedRaw = (parsed as { removed?: unknown }).removed;
+    const removed = new Set(
+      (Array.isArray(removedRaw) ? removedRaw : []).filter(
+        (id): id is string => typeof id === "string",
+      ),
+    );
+    for (const b of catalog) {
+      if (!sections.includes(b.id) && !removed.has(b.id)) {
+        sections.push(b.id);
+      }
     }
     return {
       title: (parsed as { title: string }).title,

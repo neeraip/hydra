@@ -99,42 +99,70 @@ describe("addableBlocks", () => {
 });
 
 describe("buildTemplateJson", () => {
-  it("writes only the sections in the report, in order", () => {
+  it("writes the sections in order and the exclusions as removals", () => {
+    // At save time the whole catalog was on offer, so absence is a
+    // decision worth recording (report spec §2).
     const json = JSON.parse(
-      buildTemplateJson({
-        title: "Report",
-        sections: ["wds.tank-levels", "wds.run-summary"],
-        headingById: {},
-        optionsById: {},
-      }),
+      buildTemplateJson(
+        {
+          title: "Report",
+          sections: ["wds.tank-levels", "wds.run-summary"],
+          headingById: {},
+          optionsById: {},
+        },
+        CATALOG,
+      ),
     );
     expect(json).toEqual({
       version: 1,
       title: "Report",
       blocks: [{ id: "wds.tank-levels" }, { id: "wds.run-summary" }],
+      removed: ["wds.mass-balance"],
     });
+  });
+
+  it("a report holding every block writes no removed field", () => {
+    // Byte-identical to a template written before the field existed.
+    const json = JSON.parse(
+      buildTemplateJson(
+        {
+          title: "Report",
+          sections: CATALOG.map((b) => b.id),
+          headingById: {},
+          optionsById: {},
+        },
+        CATALOG,
+      ),
+    );
+    expect("removed" in json).toBe(false);
   });
 
   it("omits a blank heading rather than writing an empty title", () => {
     const json = JSON.parse(
-      buildTemplateJson({
-        title: "Report",
-        sections: ["wds.run-summary"],
-        headingById: { "wds.run-summary": "   " },
-        optionsById: {},
-      }),
+      buildTemplateJson(
+        {
+          title: "Report",
+          sections: ["wds.run-summary"],
+          headingById: { "wds.run-summary": "   " },
+          optionsById: {},
+        },
+        CATALOG,
+      ),
     );
     expect(json.blocks[0]).toEqual({ id: "wds.run-summary" });
   });
 
   it("writes a heading override when set", () => {
     const json = JSON.parse(
-      buildTemplateJson({
-        title: "Report",
-        sections: ["wds.run-summary"],
-        headingById: { "wds.run-summary": "Overview" },
-        optionsById: {},
-      }),
+      buildTemplateJson(
+        {
+          title: "Report",
+          sections: ["wds.run-summary"],
+          headingById: { "wds.run-summary": "Overview" },
+          optionsById: {},
+        },
+        CATALOG,
+      ),
     );
     expect(json.blocks[0]).toEqual({
       id: "wds.run-summary",
@@ -145,30 +173,63 @@ describe("buildTemplateJson", () => {
   it("does not carry options or headings for a removed section", () => {
     // Removing a section keeps its configuration in memory so re-adding
     // restores it — but the template must not mention a section that is not
-    // in the document.
+    // in the document beyond its removal.
     const json = JSON.parse(
-      buildTemplateJson({
-        title: "Report",
-        sections: ["wds.run-summary"],
-        headingById: { "wds.mass-balance": "Balance" },
-        optionsById: { "wds.mass-balance": { worstCount: 3 } },
-      }),
+      buildTemplateJson(
+        {
+          title: "Report",
+          sections: ["wds.run-summary"],
+          headingById: { "wds.mass-balance": "Balance" },
+          optionsById: { "wds.mass-balance": { worstCount: 3 } },
+        },
+        CATALOG,
+      ),
     );
     expect(json.blocks).toEqual([{ id: "wds.run-summary" }]);
   });
 });
 
 describe("builderStateFromTemplate", () => {
-  it("round-trips a built template", () => {
+  it("round-trips a built template, exclusions included", () => {
     const state = {
       title: "My Report",
       sections: ["wds.mass-balance", "wds.run-summary"],
       headingById: { "wds.mass-balance": "Closure" },
       optionsById: { "wds.run-summary": { worstCount: 4 } },
     };
-    expect(builderStateFromTemplate(buildTemplateJson(state), CATALOG)).toEqual(
-      state,
-    );
+    expect(
+      builderStateFromTemplate(buildTemplateJson(state, CATALOG), CATALOG),
+    ).toEqual(state);
+  });
+
+  it("a block the catalog gained after saving joins the report", () => {
+    // The defect this field exists for: a template saved before a block
+    // existed must not read as having removed it. Only `removed` keeps a
+    // block out; the newcomer appends so the author's order is untouched.
+    const json = JSON.stringify({
+      version: 1,
+      title: "R",
+      blocks: [{ id: "wds.run-summary" }],
+      removed: ["wds.mass-balance"],
+    });
+    expect(builderStateFromTemplate(json, CATALOG)?.sections).toEqual([
+      "wds.run-summary",
+      "wds.tank-levels",
+    ]);
+  });
+
+  it("a pre-field template adopts every block it does not name", () => {
+    // No `removed` list means nothing was ever deliberately removed.
+    const json = JSON.stringify({
+      version: 1,
+      title: "R",
+      blocks: [{ id: "wds.tank-levels" }],
+    });
+    expect(builderStateFromTemplate(json, CATALOG)?.sections).toEqual([
+      "wds.tank-levels",
+      "wds.run-summary",
+      "wds.mass-balance",
+    ]);
   });
 
   it("drops ids the catalog does not know", () => {
@@ -178,6 +239,7 @@ describe("builderStateFromTemplate", () => {
       version: 1,
       title: "R",
       blocks: [{ id: "wds.run-summary" }, { id: "wds.retired" }],
+      removed: ["wds.mass-balance", "wds.tank-levels"],
     });
     expect(builderStateFromTemplate(json, CATALOG)?.sections).toEqual([
       "wds.run-summary",
@@ -189,14 +251,20 @@ describe("builderStateFromTemplate", () => {
       version: 1,
       title: "R",
       blocks: [{ id: "wds.run-summary" }, { id: "wds.run-summary" }],
+      removed: ["wds.mass-balance", "wds.tank-levels"],
     });
     expect(builderStateFromTemplate(json, CATALOG)?.sections).toEqual([
       "wds.run-summary",
     ]);
   });
 
-  it("reads a template with no blocks as an empty report", () => {
-    const json = JSON.stringify({ version: 1, title: "R", blocks: [] });
+  it("reads an emptied report as empty when its removals say so", () => {
+    const json = JSON.stringify({
+      version: 1,
+      title: "R",
+      blocks: [],
+      removed: CATALOG.map((b) => b.id),
+    });
     expect(builderStateFromTemplate(json, CATALOG)?.sections).toEqual([]);
   });
 

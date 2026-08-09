@@ -22,8 +22,8 @@ const CanvasView = lazy(() =>
 const NetworkEditor = lazy(() =>
   import("./NetworkEditor").then((m) => ({ default: m.NetworkEditor })),
 );
-const AnalysisView = lazy(() =>
-  import("./AnalysisView").then((m) => ({ default: m.AnalysisView })),
+const AnalysisPanel = lazy(() =>
+  import("./AnalysisPanel").then((m) => ({ default: m.AnalysisPanel })),
 );
 const ReportView = lazy(() =>
   import("./ReportView").then((m) => ({ default: m.ReportView })),
@@ -162,7 +162,7 @@ export function ProjectPage() {
                   {EngineAnalysisView ? (
                     <EngineAnalysisView />
                   ) : (
-                    <AnalysisView />
+                    <AnalysisPanel />
                   )}
                 </div>
                 <div

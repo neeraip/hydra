@@ -7,6 +7,7 @@ import {
 } from "@heroicons/react/16/solid";
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { useActiveProject, useAppState } from "../../AppContext";
+import { engineComponents } from "../../engine/registry";
 import { type ScenarioDto, useScenarios } from "../../hooks";
 import { useNetworkVersion } from "../../hooks/NetworkVersionContext";
 import { formatPrimaryShortcut } from "../../shortcuts";
@@ -241,8 +242,9 @@ export function ProjectToolbar() {
     setActiveScenarioId,
     scenariosVersion,
   } = useAppState();
-  const { project } = useActiveProject();
+  const { project, engine } = useActiveProject();
   const { isEdited, markEdited } = useNetworkVersion();
+  const CriteriaControl = engineComponents(engine?.key).CriteriaControl;
 
   const rawDtos = useScenarios(project?.id ?? null, scenariosVersion);
   const hasScenarios = rawDtos.length > 0;
@@ -877,6 +879,11 @@ export function ProjectToolbar() {
           right-hand cluster is pushed over when there is no lineage strip
           to fill the middle. */}
       <ToolbarDivider style={{ marginLeft: "auto" }} />
+      {/* Criteria are project-scoped, and three surfaces read them — the
+          canvas colours by them, the results judge by them, the report is
+          exported against them. The engine picks the editor; this never
+          switches on one (the engine-UI rule). */}
+      {CriteriaControl ? <CriteriaControl /> : null}
       <UnitSystemPicker />
       <ToolbarDivider />
 

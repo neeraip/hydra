@@ -33,6 +33,10 @@ export interface TargetBand {
 export interface ProjectCriteria {
   version: number;
   minPressureM: number;
+  /** Minimum disinfectant residual (mg/L), chemical-quality runs. */
+  minResidualMgL: number;
+  /** Maximum water age (hours), age-quality runs. */
+  maxAgeH: number;
   pressure: RequiredBand;
   velocity: TargetBand;
   flow: TargetBand;
@@ -46,6 +50,8 @@ export const DEFAULT_MIN_PRESSURE_M = 14;
 export const DEFAULT_CRITERIA: ProjectCriteria = {
   version: 1,
   minPressureM: DEFAULT_MIN_PRESSURE_M,
+  minResidualMgL: 0.2,
+  maxAgeH: 24,
   pressure: { low: 24, required: 35, high: 45 },
   velocity: { low: 0.1, target: 0.5, high: 1.5 },
   flow: { low: 0.1, target: 1.0, high: 10.0 },

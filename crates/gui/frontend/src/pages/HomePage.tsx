@@ -8,11 +8,15 @@ import { NewProjectWizard } from "../components/modals/NewProjectWizard";
 import { ReleaseNotesModal } from "../components/modals/ReleaseNotesModal";
 import { EngineGlyph } from "../components/ui/EngineGlyph";
 import { NetworkSketch, type Sketch } from "../components/ui/NetworkSketch";
+import { NewProjectButton } from "../components/ui/NewProjectButton";
 import { PrimaryButton } from "../components/ui/PrimaryButton";
 import { placeholderSketch } from "../components/ui/placeholderSketch";
 import {
   ACCENT,
   engineByKey,
+  formatInpImportError,
+  type ImportedModel,
+  openAndRecogniseNetwork,
   type Project,
   useEngines,
   useProjects,
@@ -481,7 +485,7 @@ function SidebarSection({ title }: { title: string }) {
 // ── Home page ─────────────────────────────────────────────────────────────────
 
 export function HomePage() {
-  const { projectsVersion, createdProject, openProject, setPage } =
+  const { projectsVersion, createdProject, openProject, setPage, showToast } =
     useAppState();
   const notes = useReleaseNotes();
   const { lastSeen, markSeen } = useLastSeenGuiVersion();
@@ -523,6 +527,27 @@ export function HomePage() {
   }, [backendProjects, createdProject]);
 
   const [showWizard, setShowWizard] = useState(false);
+  // A model recognised before the wizard opened, so it starts from what was
+  // read rather than asking for the engine and the file again.
+  const [wizardModel, setWizardModel] = useState<ImportedModel | null>(null);
+
+  function startNewProject() {
+    setWizardModel(null);
+    setShowWizard(true);
+  }
+
+  /** Open a model file and let it name its own engine (hydra-common
+   * §2.5.1), then hand it to the wizard. */
+  async function openModelFile() {
+    try {
+      const model = await openAndRecogniseNetwork();
+      if (!model) return; // cancelled
+      setWizardModel(model);
+      setShowWizard(true);
+    } catch (e) {
+      showToast(formatInpImportError(e), "error");
+    }
+  }
 
   // The page has two shapes. With nothing to return to, the welcome is the
   // whole window; once there is work, the work is.
@@ -562,12 +587,14 @@ export function HomePage() {
               Simulate water distribution and urban drainage networks.
             </div>
             <div style={{ display: "inline-flex", gap: 10 }}>
-              <PrimaryButton onClick={() => setShowWizard(true)}>
+              <PrimaryButton onClick={startNewProject}>
                 + New project
               </PrimaryButton>
+              {/* Now does what it says: the file names its own engine, so
+                  there is nothing to choose before opening it. */}
               <PrimaryButton
                 className="btn-run--outline"
-                onClick={() => setShowWizard(true)}
+                onClick={() => void openModelFile()}
               >
                 Open a model file
               </PrimaryButton>
@@ -599,9 +626,15 @@ export function HomePage() {
                 </div>
               </div>
               <div style={{ display: "inline-flex", gap: 8, flexShrink: 0 }}>
-                <PrimaryButton size="sm" onClick={() => setShowWizard(true)}>
-                  + New project
-                </PrimaryButton>
+                <NewProjectButton
+                  size="sm"
+                  onNew={startNewProject}
+                  onImported={(model) => {
+                    setWizardModel(model);
+                    setShowWizard(true);
+                  }}
+                  onError={(message) => showToast(message, "error")}
+                />
               </div>
             </header>
 
@@ -909,7 +942,12 @@ export function HomePage() {
         </div>
       )}
 
-      {showWizard && <NewProjectWizard onClose={() => setShowWizard(false)} />}
+      {showWizard && (
+        <NewProjectWizard
+          initial={wizardModel}
+          onClose={() => setShowWizard(false)}
+        />
+      )}
       {whatsNewOpen && releases.length > 0 && (
         <ReleaseNotesModal
           releases={releases}

@@ -55,25 +55,3 @@ export function effectiveScaleMode(
   if (options.some((o) => o.mode === stored)) return stored;
   return options[0]?.mode ?? "run";
 }
-
-/**
- * Whether the legend offers a route to the criteria editor.
- *
- * Criteria are read on the canvas — a colour scale and the band text under
- * a ramp — and authored somewhere else. Until this, nothing on the canvas
- * said where. A reader who thought a band was wrong had to already know
- * which page owned it.
- *
- * Offered whenever the project's engine has criteria at all, not merely
- * while a criteria-backed variable is selected. The scale toggle greys out
- * in that case, and that is exactly the moment someone wants to find out
- * what criteria are — a route that disappears when you need it is worse
- * than none. An engine with no such standard shows nothing, which is the
- * registry's existing answer rather than a new judgement here.
- */
-export function criteriaEditShown(
-  criteriaVariables: readonly string[] | undefined,
-  hasHandler: boolean,
-): boolean {
-  return hasHandler && (criteriaVariables?.length ?? 0) > 0;
-}

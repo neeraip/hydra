@@ -108,10 +108,49 @@ const rowButton: React.CSSProperties = {
  * front of the rows it was heading for. */
 const ROW_TOOLTIP_DELAY_MS = 850;
 
-/** One size for every icon in a row. They had drifted across four values
+/** One size for every icon in a row's control cluster — the drag handle,
+ * the chevron, the remove button. They had drifted across four values
  * (11, 12, 13), which is invisible per icon and exactly why the cluster never
- * quite settled. */
+ * quite settled.
+ *
+ * Icons standing *inside* the title are a different problem: see
+ * [`TEXT_MARKER`]. */
 const ICON_PX = 12;
+
+/** Share of the em box a capital letter fills in the UI font. */
+const CAP_HEIGHT_EM = 0.72;
+
+/** A marker standing inside a line of text, rather than alone in the
+ * control cluster.
+ *
+ * Sized from the text it stands in, never from `ICON_PX`: a control icon
+ * is alone in its own box, where 12px is right, but beside 13px text the
+ * same 12px out-measures the capitals it sits next to — they fill only
+ * ~9.4px — so it bulged over the cap line and hung below the baseline,
+ * reading as an emoji dropped into the name rather than part of it.
+ *
+ * Lifted, too, because `align-items: center` centres on the *line box*,
+ * whose middle sits below the capitals' own: the box reserves room for
+ * descenders that a capital does not use. Half a pixel here, but it is
+ * the half that makes a glyph sit *in* a word instead of under it.
+ *
+ * Exported so its test measures what ships rather than a copy. */
+const TEXT_MARKER_LIFT: React.CSSProperties = {
+  // `em` against the title's own size — a marker is a sibling of the
+  // title span, so without this it would resolve against the row's
+  // inherited size and stop tracking the title.
+  fontSize: TITLE_FONT,
+  position: "relative",
+  top: "-0.05em",
+};
+
+/** The unavailability marker: cap-height, and lifted with every other
+ * marker in the name (see [`TEXT_MARKER_LIFT`]). */
+export const TEXT_MARKER: React.CSSProperties = {
+  ...TEXT_MARKER_LIFT,
+  width: `${CAP_HEIGHT_EM}em`,
+  height: `${CAP_HEIGHT_EM}em`,
+};
 
 /** A section's name, with the name it replaced faintly above it when renamed.
  *
@@ -456,9 +495,7 @@ export function SectionList({
                               color: "var(--warn, #c98a1b)",
                             }}
                           >
-                            <ExclamationTriangleIcon
-                              style={{ width: ICON_PX, height: ICON_PX }}
-                            />
+                            <ExclamationTriangleIcon style={TEXT_MARKER} />
                           </span>
                         ) : null}
                         {/* A plain dot, not a control: opening the settings is
@@ -468,6 +505,7 @@ export function SectionList({
                           <span
                             data-tooltip={`Changed from defaults: ${customised.join(", ")}`}
                             style={{
+                              ...TEXT_MARKER_LIFT,
                               width: 6,
                               height: 6,
                               borderRadius: "50%",

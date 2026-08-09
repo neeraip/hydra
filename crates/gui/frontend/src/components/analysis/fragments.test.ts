@@ -1,9 +1,14 @@
 import { describe, expect, it } from "vitest";
 import {
+  type AnalysisBlock,
+  activeCategoryOf,
   blockSpan,
   type ChartShape,
+  categoriesOf,
   chartBars,
+  type Fragment,
   formatValue,
+  layoutSpans,
   lineSeriesView,
 } from "./fragments";
 
@@ -159,5 +164,98 @@ describe("blockSpan", () => {
 
   it("a block with no fragment takes a cell", () => {
     expect(blockSpan(undefined)).toBe("cell");
+  });
+});
+
+describe("layoutSpans", () => {
+  // Shapes that individually span a cell / the full row.
+  const cell = (): Fragment => ({ title: "c", items: [] });
+  const full = (): Fragment => ({
+    title: "f",
+    items: [
+      {
+        type: "table",
+        table: {
+          columns: Array.from({ length: 5 }, (_, i) => ({
+            name: `c${i}`,
+            kind: "number",
+          })),
+          rows: [],
+        },
+      },
+    ],
+  });
+
+  it("a lone cell before a full row takes the whole row itself", () => {
+    // The screenshot case: Subcatchment Peaks (cell) stranded beside a
+    // hole because Runoff Summary (full) opened its own row.
+    expect(layoutSpans([cell(), full()])).toEqual(["full", "full"]);
+  });
+
+  it("even runs pair up untouched", () => {
+    expect(layoutSpans([cell(), cell(), full()])).toEqual([
+      "cell",
+      "cell",
+      "full",
+    ]);
+  });
+
+  it("an odd run promotes only its straggler", () => {
+    expect(layoutSpans([cell(), cell(), cell(), full()])).toEqual([
+      "cell",
+      "cell",
+      "full",
+      "full",
+    ]);
+    // A trailing odd run promotes too — the last row must also be whole.
+    expect(layoutSpans([full(), cell()])).toEqual(["full", "full"]);
+  });
+
+  it("blocks without fragments count as cells in the pairing", () => {
+    expect(layoutSpans([undefined, undefined])).toEqual(["cell", "cell"]);
+    expect(layoutSpans([undefined])).toEqual(["full"]);
+  });
+});
+
+const block = (id: string, category: string): AnalysisBlock => ({
+  id,
+  title: id,
+  category,
+  status: "ok",
+});
+
+describe("categoriesOf", () => {
+  it("keeps first-appearance order, which is catalog order", () => {
+    expect(
+      categoriesOf([
+        block("a", "Summary"),
+        block("b", "Compliance"),
+        block("c", "Summary"),
+        block("d", "Assets"),
+      ]),
+    ).toEqual(["Summary", "Compliance", "Assets"]);
+  });
+
+  it("no blocks means no tabs", () => {
+    expect(categoriesOf([])).toEqual([]);
+  });
+});
+
+describe("activeCategoryOf", () => {
+  const tabs = ["Summary", "Compliance"];
+
+  it("honours the user's pick while it exists", () => {
+    expect(activeCategoryOf("Compliance", tabs)).toBe("Compliance");
+  });
+
+  it("falls back to the first tab when the pick vanishes or is unset", () => {
+    // A re-run can drop a category (quality turned off); the page must
+    // not stay on a ghost tab.
+    expect(activeCategoryOf("Quality", tabs)).toBe("Summary");
+    expect(activeCategoryOf(null, tabs)).toBe("Summary");
+  });
+
+  it("no tabs means no active category", () => {
+    expect(activeCategoryOf("Summary", [])).toBeNull();
   });
 });
