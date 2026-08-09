@@ -16,7 +16,7 @@ Hydra is built as a suite of domain engines. Water distribution (`wds`) and urba
 
 ```toml
 [dependencies]
-hydra-sdk = "8"
+hydra-sdk = "9"
 ```
 
 ## Quick start
