@@ -778,6 +778,40 @@ pub fn get_project_criteria(
     )))
 }
 
+/// The project's saved criteria valuation for its engine (hydra-common
+/// spec §7.3), or `null` when none is saved. Engine-generic: the wds
+/// legacy store is separate (`get_project_criteria`).
+#[tauri::command]
+pub fn get_criteria_valuation(
+    app: tauri::AppHandle,
+    project_id: String,
+) -> Result<Option<serde_json::Value>, String> {
+    validate_id(&project_id)?;
+    let app_data = app_data_dir(&app)?;
+    let engine = project_engine_key(&app_data, &project_id);
+    Ok(meta::read_criteria_valuation(
+        &bundle::project_dir(&app_data, &project_id),
+        &engine,
+    ))
+}
+
+/// Persist the project's criteria valuation for its engine.
+#[tauri::command]
+pub fn update_criteria_valuation(
+    app: tauri::AppHandle,
+    project_id: String,
+    valuation: serde_json::Value,
+) -> Result<(), String> {
+    validate_id(&project_id)?;
+    let app_data = app_data_dir(&app)?;
+    let engine = project_engine_key(&app_data, &project_id);
+    meta::write_criteria_valuation(
+        &bundle::project_dir(&app_data, &project_id),
+        &engine,
+        &valuation,
+    )
+}
+
 /// Persist the project's analysis criteria.
 #[tauri::command]
 pub fn update_project_criteria(
@@ -1496,20 +1530,104 @@ pub struct ImportedModel {
     /// out. Empty when the file imported as written. Must be surfaced —
     /// the repair contract forbids applying these silently.
     pub repairs: Vec<String>,
+    /// Whether the model's own coordinates rule out longitude/latitude
+    /// (see [`coordinates_are_projected`]). Answered here rather than in
+    /// the wizard because a uds import returns no elements at all — the
+    /// one engine whose models most often carry projected coordinates
+    /// could never have been asked on the frontend.
+    pub coordinates_projected: bool,
+    /// The engine that owns this model. Echoed even when the caller named
+    /// it, so the one path that *discovers* it (recognition, §2.5.1) and
+    /// the one that is told it return the same shape.
+    pub engine: String,
+}
+
+/// Whether a model's own coordinates rule out longitude and latitude.
+///
+/// The strongest fact available before any coordinate system is chosen,
+/// and deliberately the same test the canvas applies once one is —
+/// `crsInference`'s `projected` on the frontend, and the WGS84 range check
+/// in `useCrsReprojection`. A point outside ±180/±90 is not degrees,
+/// whatever else it may be.
+///
+/// Placeholder points are ignored: the importer writes (0, 0) for an
+/// element with no coordinate at all, and counting those would drag every
+/// reading towards null island.
+fn coordinates_are_projected(points: impl Iterator<Item = (f64, f64)>) -> bool {
+    points
+        .filter(|(x, y)| !(*x == 0.0 && *y == 0.0))
+        .any(|(x, y)| !(-180.0..=180.0).contains(&x) || !(-90.0..=90.0).contains(&y))
+}
+
+/// Select every element for reporting when the model selects none.
+///
+/// A drainage model's `[REPORT]` selections default to nothing — the
+/// predecessor's behaviour, which the engine keeps faithfully — so a file
+/// that never names one runs to completion and writes a *valid* results
+/// file containing only the system-wide series. Opened here that reads as
+/// a total failure: every element grey, every value absent, and nothing on
+/// screen to say why, because as far as the file is concerned nothing was
+/// asked about.
+///
+/// Selecting everything is the repair, and it is safe in the way §14.10's
+/// omissions are: it asks for output, changes no physics, and leaves the
+/// run identical in every other respect. Appended rather than edited in
+/// place — a later directive overrides an earlier one, so the author's own
+/// text survives untouched and readable.
+///
+/// Only when *nothing* is selected. A model naming some elements has made
+/// a choice, and widening it would be guessing at what it meant.
+fn ensure_uds_reporting(
+    text: String,
+    network: hydra::uds::model::Network,
+) -> (String, hydra::uds::model::Network, Option<String>) {
+    use hydra::uds::model::ReportSelection;
+    let unset = |s: &ReportSelection| matches!(s, ReportSelection::None);
+    if !(unset(&network.report.parcels)
+        && unset(&network.report.vertices)
+        && unset(&network.report.links))
+    {
+        return (text, network, None);
+    }
+    let widened = format!(
+        "{}\n\n[REPORT]\n\
+         ; [added by Hydra import] the model selected no elements to report\n\
+         SUBCATCHMENTS ALL\nNODES ALL\nLINKS ALL\n",
+        text.trim_end()
+    );
+    let (reparsed, diags) = hydra::uds::io::objects::parse_network(&widened);
+    if diags.iter().any(|d| d.kind.is_error()) {
+        // Cannot happen for an appended section on text that already
+        // parsed; keep the file as written rather than serve one that no
+        // longer reads.
+        return (text, network, None);
+    }
+    (
+        widened,
+        reparsed,
+        Some(
+            "Selected all elements for reporting — the model selected none, \
+             so the run would have produced no per-element results"
+                .into(),
+        ),
+    )
 }
 
 /// Parse uds model text, applying §14.10 repair-by-omission when that is
 /// the only thing standing between the file and a clean import: when every
 /// refusal is repairable, the offending lines are commented out (original
-/// text preserved behind the `;`) and the text re-read. Returns the served
-/// text, the parsed network, and one message per repair applied.
+/// text preserved behind the `;`) and the text re-read. A model that
+/// selects nothing for reporting is then widened to select everything (see
+/// [`ensure_uds_reporting`]). Returns the served text, the parsed network,
+/// and one message per repair applied.
 fn import_uds_text(
     text: String,
 ) -> Result<(String, hydra::uds::model::Network, Vec<String>), String> {
     let (network, diags) = hydra::uds::io::objects::parse_network(&text);
     let errors: Vec<_> = diags.iter().filter(|d| d.kind.is_error()).collect();
     if errors.is_empty() {
-        return Ok((text, network, Vec::new()));
+        let (text, network, widened) = ensure_uds_reporting(text, network);
+        return Ok((text, network, widened.into_iter().collect()));
     }
     if !errors.iter().all(|d| d.kind.repairable_by_omission()) {
         // At least one refusal carries meaning omission would change —
@@ -1542,10 +1660,12 @@ fn import_uds_text(
         // omissions) — refuse rather than loop.
         return Err(format!("Cannot import this model: {first}"));
     }
-    let repairs = errors
+    let mut repairs: Vec<String> = errors
         .iter()
         .map(|d| format!("Commented out {d}"))
         .collect();
+    let (repaired, network, widened) = ensure_uds_reporting(repaired, network);
+    repairs.extend(widened);
     Ok((repaired, network, repairs))
 }
 
@@ -1613,7 +1733,23 @@ pub async fn open_and_load_network(
     //
     // Runs still use the strict `parse`, so an unsimulable network cannot
     // reach the solver.
-    let network = match descriptor.key {
+    load_model_bytes(descriptor.key, bytes, file_stem, &state)
+}
+
+/// Parse model bytes with the engine that owns them, hold the result in
+/// managed state, and describe it for the wizard.
+///
+/// Shared by the two ways a model reaches the wizard: choosing an engine and
+/// then a file, and choosing a file and letting the recognition contract
+/// name the engine (hydra-common spec §2.5.1). Both must produce the same
+/// project from the same file, which one body is the only way to guarantee.
+fn load_model_bytes(
+    engine_key: &str,
+    bytes: Vec<u8>,
+    file_stem: String,
+    state: &tauri::State<'_, NetworkState>,
+) -> Result<Option<ImportedModel>, String> {
+    let network = match engine_key {
         "wds" => {
             let (network, _validation_errors) =
                 hydra::io::parse_tolerant(&bytes).map_err(format_read_error)?;
@@ -1635,6 +1771,8 @@ pub async fn open_and_load_network(
             };
             let (node_count, link_count) =
                 (network.vertices.len() as u32, network.links.len() as u32);
+            let coordinates_projected =
+                coordinates_are_projected(super::uds_view::model_coordinates(&network));
             *state.0.lock() = NetworkStateInner::LoadedUds {
                 raw_text: text,
                 network: std::sync::Arc::new(network),
@@ -1647,6 +1785,8 @@ pub async fn open_and_load_network(
                 link_count,
                 findings: Vec::new(),
                 repairs,
+                coordinates_projected,
+                engine: engine_key.to_string(),
             }));
         }
         other => return Err(format!("no importer for engine {other:?}")),
@@ -1660,6 +1800,7 @@ pub async fn open_and_load_network(
 
     let mut dto = network_to_dto(&network);
     dto.file_stem = file_stem;
+    let coordinates_projected = coordinates_are_projected(network.coordinates.values().copied());
 
     *state.0.lock() = NetworkStateInner::Loaded {
         raw_bytes: bytes,
@@ -1676,7 +1817,70 @@ pub async fn open_and_load_network(
         link_count,
         findings,
         repairs: Vec::new(),
+        coordinates_projected,
+        engine: engine_key.to_string(),
     }))
+}
+
+/// Open a native file-picker across every model format the GUI can open,
+/// and let the file say which engine owns it.
+///
+/// The inverse of [`open_and_load_network`], which is told the engine and
+/// filters the picker to its formats. Here the user has a file and may not
+/// know — or care — which tool wrote it, so the recognition contract
+/// answers instead (hydra-common spec §2.5.1): every engine judges the
+/// bytes, and only a single definite claim routes. A file two engines call
+/// plausible is *not* routed, because "I cannot tell this from another
+/// engine's model" is not a basis for choosing — the refusal names the
+/// candidates so the caller can ask the user.
+///
+/// Returns `null` when the dialog is cancelled.
+#[tauri::command]
+pub async fn open_and_recognise_network(
+    state: tauri::State<'_, NetworkState>,
+    app: tauri::AppHandle,
+) -> Result<Option<ImportedModel>, String> {
+    use tauri_plugin_dialog::DialogExt;
+
+    // Every format every openable engine imports, as one filter: the point
+    // of this path is that the user does not have to know whose file it is.
+    let mut filters: Vec<(&'static str, &'static [&'static str])> = Vec::new();
+    for engine in hydra::common::ENGINES {
+        if require_gui_openable_engine(engine.key).is_err() {
+            continue;
+        }
+        for format in engine.import {
+            filters.push((format.label, format.extensions));
+        }
+    }
+
+    let dialog_app = app.clone();
+    let path = tauri::async_runtime::spawn_blocking(move || {
+        let mut dialog = dialog_app.dialog().file();
+        for (label, extensions) in filters {
+            dialog = dialog.add_filter(label, extensions);
+        }
+        dialog.blocking_pick_file()
+    })
+    .await
+    .map_err(|e| format!("file dialog task panicked: {e}"))?;
+
+    let file_path = match path {
+        Some(p) => p,
+        None => return Ok(None), // user cancelled
+    };
+    let path_buf = file_path.into_path().map_err(|e| e.to_string())?;
+    let file_stem = path_buf
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("")
+        .to_string();
+    let bytes = std::fs::read(&path_buf).map_err(|e| e.to_string())?;
+
+    let descriptor = hydra::engines::route(&bytes).map_err(|e| e.to_string())?;
+    // Routing says whose the file is, not that this build can open it.
+    require_gui_openable_engine(descriptor.key)?;
+    load_model_bytes(descriptor.key, bytes, file_stem, &state)
 }
 
 /// Persist the currently loaded network (`NetworkState`) back into the named
@@ -2396,9 +2600,10 @@ mod tests {
                      [XSECTIONS]\nC1 CIRCULAR 1.5 0 0 0\n";
         let (text, network, repairs) =
             import_uds_text(model.to_string()).expect("repairable import");
-        assert_eq!(repairs.len(), 1);
         assert!(
-            repairs[0].contains("DATA_STEP") && repairs[0].contains("line 3"),
+            repairs
+                .iter()
+                .any(|r| r.contains("DATA_STEP") && r.contains("line 3")),
             "repair names the line and token: {repairs:?}"
         );
         // The original line survives behind a comment marker, and the
@@ -2411,6 +2616,105 @@ mod tests {
         let bad = "[OPTIONS]\nFLOW_UNITS FURLONGS\n[JUNCTIONS]\nJ1 100 4\n";
         let err = import_uds_text(bad.to_string()).unwrap_err();
         assert!(err.contains("Cannot import this model"), "{err}");
+    }
+
+    /// A drainage model that names no elements to report runs fine and
+    /// writes a results file with nothing in it but the system series —
+    /// which opened here is a grey network, no values anywhere, and no
+    /// stated reason. The importer widens the selection and says so.
+    #[test]
+    fn uds_import_selects_every_element_when_the_model_selects_none() {
+        let model = "[OPTIONS]\nFLOW_UNITS CFS\n\
+                     [JUNCTIONS]\nJ1 100 4\n[OUTFALLS]\nO1 98 FREE\n\
+                     [CONDUITS]\nC1 J1 O1 400 0.013 0 0\n\
+                     [XSECTIONS]\nC1 CIRCULAR 1.5 0 0 0\n";
+        let (text, network, repairs) = import_uds_text(model.to_string()).expect("import");
+        assert!(
+            repairs
+                .iter()
+                .any(|r| r.contains("all elements for reporting")),
+            "the widening must be reported, never silent: {repairs:?}"
+        );
+        use hydra::uds::model::ReportSelection;
+        assert_eq!(network.report.vertices, ReportSelection::All);
+        assert_eq!(network.report.links, ReportSelection::All);
+        assert_eq!(network.report.parcels, ReportSelection::All);
+        // The author's own text is untouched; the request is appended.
+        assert!(text.starts_with("[OPTIONS]"));
+        assert!(text.contains("[added by Hydra import]"));
+    }
+
+    /// The coordinate reading the import wizard asks its question from.
+    /// The same rule the canvas applies once a system is chosen, so the
+    /// two cannot disagree about whether a model is in degrees.
+    #[test]
+    fn projected_coordinates_are_told_from_degrees() {
+        // Longitude and latitude: nothing to ask about.
+        assert!(!coordinates_are_projected(
+            [(-1.55, 53.80), (-1.54, 53.81)].into_iter()
+        ));
+        // Eastings and northings: not degrees, whatever else they are.
+        assert!(coordinates_are_projected(
+            [(429000.0, 434000.0)].into_iter()
+        ));
+        // Latitude out of range alone is enough.
+        assert!(coordinates_are_projected([(10.0, 95.0)].into_iter()));
+    }
+
+    /// The importer writes (0, 0) for an element with no coordinate, so a
+    /// model with no geometry at all must not read as anything.
+    #[test]
+    fn placeholder_coordinates_say_nothing() {
+        assert!(!coordinates_are_projected(
+            [(0.0, 0.0), (0.0, 0.0)].into_iter()
+        ));
+        assert!(!coordinates_are_projected(std::iter::empty()));
+        // And they do not mask a real projected point beside them.
+        assert!(coordinates_are_projected(
+            [(0.0, 0.0), (500000.0, 180000.0)].into_iter()
+        ));
+    }
+
+    /// A drainage model's coordinates live in a preserved display section
+    /// rather than the parsed model, and its import returns no elements at
+    /// all — so this is the only place the question can be answered for it.
+    #[test]
+    fn a_drainage_model_is_read_from_its_coordinates_section() {
+        let model = "[OPTIONS]\nFLOW_UNITS CFS\n\
+                     [JUNCTIONS]\nJ1 100 4\n[OUTFALLS]\nO1 98 FREE\n\
+                     [CONDUITS]\nC1 J1 O1 400 0.013 0 0\n\
+                     [XSECTIONS]\nC1 CIRCULAR 1.5 0 0 0\n\
+                     [COORDINATES]\nJ1 429000 434000\nO1 429100 434100\n";
+        let (_, network, _) = import_uds_text(model.to_string()).expect("import");
+        assert!(coordinates_are_projected(
+            super::super::uds_view::model_coordinates(&network)
+        ));
+
+        let degrees = model.replace(
+            "[COORDINATES]\nJ1 429000 434000\nO1 429100 434100",
+            "[COORDINATES]\nJ1 -1.55 53.80\nO1 -1.54 53.81",
+        );
+        let (_, network, _) = import_uds_text(degrees).expect("import");
+        assert!(!coordinates_are_projected(
+            super::super::uds_view::model_coordinates(&network)
+        ));
+    }
+
+    /// A model that names some elements has made a choice. Widening it
+    /// would be guessing at what it meant, so nothing is touched.
+    #[test]
+    fn uds_import_leaves_a_deliberate_report_selection_alone() {
+        let model = "[OPTIONS]\nFLOW_UNITS CFS\n\
+                     [JUNCTIONS]\nJ1 100 4\n[OUTFALLS]\nO1 98 FREE\n\
+                     [CONDUITS]\nC1 J1 O1 400 0.013 0 0\n\
+                     [XSECTIONS]\nC1 CIRCULAR 1.5 0 0 0\n\
+                     [REPORT]\nNODES J1\n";
+        let (text, network, repairs) = import_uds_text(model.to_string()).expect("import");
+        assert!(repairs.is_empty(), "nothing to repair: {repairs:?}");
+        assert!(!text.contains("[added by Hydra import]"));
+        use hydra::uds::model::ReportSelection;
+        assert_ne!(network.report.vertices, ReportSelection::None);
+        assert_eq!(network.report.links, ReportSelection::None);
     }
 
     /// EPANET starter — the fall-through that once wrote the starter into a

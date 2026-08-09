@@ -82,6 +82,13 @@ pub(crate) struct UdsView {
 /// Parse `id x y` triples from a preserved display section, tolerating and
 /// skipping malformed lines (the sections are display metadata — a bad line
 /// costs one element its geometry, never the load).
+/// The map positions the model carries, for callers asking only where the
+/// network sits — the import wizard's coordinate-system question, which is
+/// asked before any viewer snapshot exists.
+pub(crate) fn model_coordinates(net: &Network) -> impl Iterator<Item = (f64, f64)> + '_ {
+    parse_xy_lines(net, "[COORDINATES]").map(|(_, x, y)| (x, y))
+}
+
 fn parse_xy_lines<'a>(
     net: &'a Network,
     header: &'a str,

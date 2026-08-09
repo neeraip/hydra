@@ -106,6 +106,12 @@ pub struct ProjectCriteria {
     /// Minimum service pressure (m) for the compliance figures.
     #[serde(default = "default_min_pressure")]
     pub min_pressure_m: f64,
+    /// Minimum disinfectant residual (mg/L) for chemical-quality runs.
+    #[serde(default = "default_min_residual")]
+    pub min_residual_mg_l: f64,
+    /// Maximum water age (hours) for age-quality runs.
+    #[serde(default = "default_max_age")]
+    pub max_age_h: f64,
     #[serde(default = "default_pressure_band")]
     pub pressure: RequiredBand,
     #[serde(default = "default_velocity_band")]
@@ -117,6 +123,16 @@ pub struct ProjectCriteria {
 /// EPANET/AWWA-typical minimum service pressure, ~20 psi.
 fn default_min_pressure() -> f64 {
     14.0
+}
+
+/// Conventional disinfectant-residual floor (analysis spec §5).
+fn default_min_residual() -> f64 {
+    0.2
+}
+
+/// Conventional water-age ceiling (analysis spec §5).
+fn default_max_age() -> f64 {
+    24.0
 }
 
 fn default_pressure_band() -> RequiredBand {
@@ -148,6 +164,8 @@ impl Default for ProjectCriteria {
         Self {
             version: 1,
             min_pressure_m: default_min_pressure(),
+            min_residual_mg_l: default_min_residual(),
+            max_age_h: default_max_age(),
             pressure: default_pressure_band(),
             velocity: default_velocity_band(),
             flow: default_flow_band(),
@@ -173,6 +191,28 @@ pub fn read_project_criteria(dir: &Path) -> Option<ProjectCriteria> {
 
 pub fn write_project_criteria(dir: &Path, criteria: &ProjectCriteria) -> Result<(), String> {
     write_meta_named(dir, "criteria.json", criteria)
+}
+
+/// A criteria valuation (hydra-common spec §7.3) saved per engine, as the
+/// raw JSON object the contract defines — no per-engine struct, so a new
+/// engine's criteria need no new persistence code. The wds store above
+/// predates the contract and stays (the canvas reads it); wds valuations
+/// are bridged from it rather than stored here.
+pub fn read_criteria_valuation(dir: &Path, engine: &str) -> Option<serde_json::Value> {
+    let bytes = std::fs::read(dir.join(format!("criteria-{engine}.json"))).ok()?;
+    let value: serde_json::Value = serde_json::from_slice(&bytes).ok()?;
+    value.is_object().then_some(value)
+}
+
+pub fn write_criteria_valuation(
+    dir: &Path,
+    engine: &str,
+    valuation: &serde_json::Value,
+) -> Result<(), String> {
+    if !valuation.is_object() {
+        return Err("a criteria valuation must be a JSON object".into());
+    }
+    write_meta_named(dir, &format!("criteria-{engine}.json"), valuation)
 }
 
 // ── Scenario metadata ─────────────────────────────────────────────────────────
