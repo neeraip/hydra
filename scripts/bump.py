@@ -24,12 +24,19 @@ from _release import commit_and_tag, maybe_push, next_version, parse_level_arg, 
 
 # Every manifest carrying intra-workspace dep pins. Used both to rewrite the
 # pins and to stage the result — see commit_and_tag below.
+#
+# Unpublished crates (hydra-gui, hydra-wasm) are absent on purpose: nothing
+# resolves them from a registry, so their path deps carry no version at all
+# and there is nothing here to rewrite.
 CRATE_MANIFESTS = (
     "crates/sdk/Cargo.toml",
     "crates/engines/Cargo.toml",
     "crates/engine-wds/Cargo.toml",
     "crates/engine-uds/Cargo.toml",
     "crates/report/Cargo.toml",
+    # Published, so its hydra-sdk pin is real and must move with the
+    # workspace. Its own package version is a separate track (bump-cli).
+    "crates/cli/Cargo.toml",
 )
 
 WORKSPACE_DEPS = (
@@ -38,6 +45,7 @@ WORKSPACE_DEPS = (
     "hydra-engine-uds",
     "hydra-engines",
     "hydra-report",
+    "hydra-sdk",
 )
 
 
@@ -49,10 +57,6 @@ def main():
     cargo = pathlib.Path("Cargo.toml")
     version = next_version(read_version(cargo), level)
     set_version(cargo, version)
-
-    # Update only the hydra-sdk dep pin in hydra-cli (not the cli package version).
-    cli = pathlib.Path("crates/cli/Cargo.toml")
-    cli.write_text(re.sub(r'(hydra-sdk[^\n]+version = ")\d+\.\d+\.\d+"', rf'\g<1>{version}"', cli.read_text()))
 
     # Update every intra-workspace dep pin. Keyed off the crate name so a new
     # workspace dependency is picked up by adding it to one list, not by
@@ -81,7 +85,6 @@ def main():
         [
             "Cargo.toml",
             "Cargo.lock",
-            "crates/cli/Cargo.toml",
             *CRATE_MANIFESTS,
             *SDK_PIN_DOCS,
         ],
