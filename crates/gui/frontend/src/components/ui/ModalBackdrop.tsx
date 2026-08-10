@@ -22,10 +22,20 @@
  * all of which redefine where "fixed" is fixed to. Portalling makes the
  * overlay a child of the body wherever it is written, so the modal reads
  * naturally at its trigger site and still belongs to the window.
+ *
+ * # Focus
+ *
+ * It also owns what a dialog owes the keyboard — focus in on open, Tab
+ * kept inside, focus back to the opener on close (see `dialogFocus`).
+ * That lives here rather than in each modal because every modal already
+ * renders one of these, and thirteen hand-written copies of a focus trap
+ * is thirteen chances to write twelve of them.
  */
 
 import type { CSSProperties, ReactNode, SyntheticEvent } from "react";
+import { useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
+import { initialFocus, nextFocus, restoreFocus } from "./dialogFocus";
 
 /**
  * Spread onto a modal's panel element so pointer/keyboard events inside the
@@ -50,6 +60,15 @@ interface ModalBackdropProps {
   children: ReactNode;
 }
 
+/**
+ * The stack of open backdrops, innermost last.
+ *
+ * Only the top one may hold focus: two open at once — a confirmation over
+ * a panel — would otherwise both pull Tab back to themselves, and the
+ * reader would find the ring bouncing between two dialogs.
+ */
+const openBackdrops: HTMLElement[] = [];
+
 export function ModalBackdrop({
   onDismiss,
   zIndex,
@@ -57,10 +76,47 @@ export function ModalBackdrop({
   style,
   children,
 }: ModalBackdropProps) {
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const container = ref.current;
+    if (!container) return;
+    // Captured before focus moves anywhere, so what is restored is the
+    // control that opened this — not whatever the dialog focused first.
+    const opener = document.activeElement;
+    openBackdrops.push(container);
+
+    initialFocus(container, document.activeElement)?.focus();
+
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key !== "Tab") return;
+      if (openBackdrops[openBackdrops.length - 1] !== container) return;
+      const next = nextFocus(
+        container as HTMLElement,
+        document.activeElement,
+        e.shiftKey,
+      );
+      if (next) {
+        e.preventDefault();
+        next.focus();
+      }
+    }
+    // Capture, so the wrap happens before any handler inside the dialog
+    // sees the key and regardless of where focus currently is.
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown, true);
+      const at = openBackdrops.indexOf(container);
+      if (at !== -1) openBackdrops.splice(at, 1);
+      restoreFocus(opener);
+    };
+  }, []);
+
   const overlay = (
     // biome-ignore lint/a11y/noStaticElementInteractions: backdrop closes the modal on pointer interaction.
     // biome-ignore lint/a11y/useKeyWithClickEvents: backdrop closes the modal on pointer interaction.
     <div
+      ref={ref}
       onClick={onDismiss}
       style={{
         position: "fixed",
