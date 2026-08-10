@@ -47,6 +47,40 @@ pub struct ClearedResults {
     pub skipped: u32,
 }
 
+/// Where the diagnostic log is being written, or `None` when no file could
+/// be opened. Managed state rather than recomputed: whether logging to a
+/// file succeeded is a fact about this run, not something to ask the
+/// filesystem about twice.
+pub struct LogLocation(pub Option<std::path::PathBuf>);
+
+#[tauri::command]
+/// Reveal the folder holding the diagnostic log.
+///
+/// Fails with something a reader can act on when there is no log rather
+/// than opening their home directory: "logging to a file is not working"
+/// and "here are your logs" must not look the same.
+pub fn open_log_folder(
+    app: tauri::AppHandle,
+    location: tauri::State<'_, LogLocation>,
+) -> Result<(), String> {
+    use tauri_plugin_opener::OpenerExt;
+    let Some(dir) = location.0.clone() else {
+        return Err(
+            "This run is not writing a log file — the log folder could not be created.".into(),
+        );
+    };
+    // The newest file rather than the folder it is in: a week of dated
+    // files is a directory listing to interpret, and the one the reader
+    // wants is almost always today's. Revealing it selects it in the file
+    // manager, so the folder is right there anyway.
+    let target = crate::logging::log_files(&dir)
+        .pop()
+        .unwrap_or_else(|| dir.clone());
+    app.opener()
+        .reveal_item_in_dir(&target)
+        .map_err(|e| e.to_string())
+}
+
 /// Total size of everything under `dir`, following no symlinks.
 ///
 /// Unreadable entries count as nothing rather than failing the walk: this

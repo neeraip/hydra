@@ -1,12 +1,14 @@
 import { lazy, Suspense, useEffect, useState } from "react";
 import { useAppState } from "../../AppContext";
 import { getVersions, openDataFolder, type Versions } from "../../hooks";
+import { formatIpcError } from "../../hooks/ipc";
 import {
   clearAllResults,
   type DataUsage,
   describeCleared,
   describeUsage,
   getDataUsage,
+  openLogFolder,
 } from "../../hooks/storage";
 import {
   readAutoUpdateCheck,
@@ -359,6 +361,9 @@ export function SettingsContent() {
   // back to default, and nothing on screen admits to having acted.
   const [dataNote, setDataNote] = useState<string | null>(null);
   const [clearing, setClearing] = useState(false);
+  // Separate from `dataNote`: an unreadable log belongs in the log row,
+  // not in the sentence about clearing results.
+  const [logNote, setLogNote] = useState<string | null>(null);
   // Destructive-ish actions ask once, in place, rather than opening a
   // dialog over a drawer that is itself an overlay.
   const [confirming, setConfirming] = useState<"results" | "prefs" | null>(
@@ -578,6 +583,25 @@ export function SettingsContent() {
         description="Hydra asks GitHub for update information and release notes, and requests map tiles from whichever basemap provider you have chosen — those requests carry your key and the area you are looking at. Your models, results and reports are never uploaded anywhere."
       >
         {null}
+      </SettingRow>
+      {/* Beside the version info, because they are collected for the same
+          reason and by the same person. */}
+      <SettingRow
+        label="Diagnostic log"
+        description={
+          logNote ??
+          "What Hydra recorded while running — the other half of a bug report. One file per day, the last seven kept."
+        }
+      >
+        <button
+          type="button"
+          onClick={() => {
+            openLogFolder().catch((err) => setLogNote(formatIpcError(err)));
+          }}
+          style={ROW_BUTTON}
+        >
+          Reveal…
+        </button>
       </SettingRow>
       <UpdatesRow />
       <SettingRow

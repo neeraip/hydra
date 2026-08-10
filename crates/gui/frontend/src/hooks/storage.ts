@@ -6,7 +6,7 @@
  * writes. Models, scenarios and reports are not.
  */
 
-import { tryInvoke } from "./ipc";
+import { invoke, tryInvoke } from "./ipc";
 
 export interface DataUsage {
   /** Everything under the data folder, results included. */
@@ -29,6 +29,17 @@ export async function getDataUsage(): Promise<DataUsage | null> {
 
 export async function clearAllResults(): Promise<ClearedResults | null> {
   return tryInvoke<ClearedResults>("clear_all_results");
+}
+
+/**
+ * Reveal today's diagnostic log in the file manager.
+ *
+ * Rejects rather than resolving quietly when this run has no log file:
+ * "here are your logs" and "logging is not working" must not look the
+ * same to someone collecting them for a bug report.
+ */
+export async function openLogFolder(): Promise<void> {
+  await invoke("open_log_folder");
 }
 
 /**

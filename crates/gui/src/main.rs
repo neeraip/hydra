@@ -2,18 +2,25 @@
 
 mod basemap_providers;
 mod commands;
+mod logging;
 mod meta;
 
 fn main() {
-    // Log to stderr; default level `warn` unless RUST_LOG overrides it.
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn")),
-        )
-        .init();
     tauri::Builder::default()
         .setup(|app| {
+            // Logging starts here rather than at the top of `main` because
+            // the log directory is a question only the app handle can
+            // answer. The little that happens before this point does not
+            // log; the guard keeps the file writer's worker alive and is
+            // handed to the app so it lives as long as the process.
+            use tauri::Manager;
+            let log_dir = app.path().app_log_dir().ok();
+            let (guard, dir) = logging::init(log_dir);
+            app.manage(commands::LogLocation(dir));
+            if let Some(guard) = guard {
+                app.manage(guard);
+            }
+
             // Bring the main window forward on every start.
             //
             // After a Windows update the app is relaunched by the NSIS
@@ -22,7 +29,6 @@ fn main() {
             // guarantees the window is visible either, so this is
             // unconditional rather than gated on the platform or on having
             // just updated.
-            use tauri::Manager;
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.unminimize();
                 let _ = window.show();
@@ -141,6 +147,7 @@ fn main() {
             commands::get_versions,
             commands::get_license_info,
             commands::get_data_usage,
+            commands::open_log_folder,
             commands::clear_all_results,
             commands::list_third_party_components,
             commands::get_third_party_license_text,
