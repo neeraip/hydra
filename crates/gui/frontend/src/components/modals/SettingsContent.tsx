@@ -2,11 +2,19 @@ import { lazy, Suspense, useEffect, useState } from "react";
 import { useAppState } from "../../AppContext";
 import { getVersions, openDataFolder, type Versions } from "../../hooks";
 import {
+  clearAllResults,
+  type DataUsage,
+  describeCleared,
+  describeUsage,
+  getDataUsage,
+} from "../../hooks/storage";
+import {
   readAutoUpdateCheck,
   setAutoUpdateCheck,
   useUpdater,
 } from "../../hooks/useUpdater";
 import { loadLicensesModal } from "../../lazyChunks";
+import { resetPreferences } from "../../preferences";
 import {
   parseTextScale,
   readTextScale,
@@ -64,6 +72,26 @@ const SK = {
 function getBool(key: string, fallback: boolean): boolean {
   const v = localStorage.getItem(key);
   return v === null ? fallback : v === "true";
+}
+
+/**
+ * The lines a bug report needs, in one paste.
+ *
+ * Three facts, each from somewhere else: the app and engine versions come
+ * from the backend, the platform is the binary's own target rather than
+ * anything the webview knows, and the user agent names the webview, which
+ * on macOS and Linux is the system's and not ours. Anyone answering a
+ * report asks for all three, and until now the reporter had to find them.
+ */
+export function diagnosticsText(
+  versions: Versions | null,
+  userAgent: string,
+): string {
+  return [
+    `Hydra ${versions?.app ?? "unknown"} (engine ${versions?.hydra ?? "unknown"})`,
+    `Platform: ${versions?.platform ?? "unknown"}`,
+    `Webview: ${userAgent}`,
+  ].join("\n");
 }
 
 /** Section heading. A real `<h2>` rather than a styled div: the page has one
@@ -128,6 +156,44 @@ function TextSizeToggle() {
         </option>
       ))}
     </select>
+  );
+}
+
+/**
+ * The confirm step for an action that cannot be undone.
+ *
+ * In the row rather than in a dialog: Settings is already an overlay, and
+ * a confirmation modal over a drawer over the app is three layers deep to
+ * answer a yes-or-no question. The affirmative says what it will do
+ * ("Clear them", "Reset everything") rather than "OK", so a reader who
+ * arrived at this row by accident is told what they are agreeing to.
+ */
+function ConfirmPair({
+  label,
+  onConfirm,
+  onCancel,
+}: {
+  label: string;
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  return (
+    <div style={{ display: "flex", gap: 6 }}>
+      <button type="button" onClick={onCancel} style={ROW_BUTTON}>
+        Cancel
+      </button>
+      <button
+        type="button"
+        onClick={onConfirm}
+        style={{
+          ...ROW_BUTTON,
+          borderColor: "var(--status-error)",
+          color: "var(--status-error)",
+        }}
+      >
+        {label}
+      </button>
+    </div>
   );
 }
 
@@ -273,7 +339,7 @@ function UnitSystemToggle() {
  * either crop or float in a lot of empty width.
  */
 export function SettingsContent() {
-  const { openBasemapProvidersModal } = useAppState();
+  const { openBasemapProvidersModal, toggleShortcutCard } = useAppState();
   const [reducedMotion, setReducedMotionRaw] = useState(() =>
     getBool(SK.reducedMotion, false),
   );
@@ -287,6 +353,18 @@ export function SettingsContent() {
   // Which tab the licences panel opens on, or null while it is closed —
   // the two rows below open the same panel at different pages.
   const [licenseTab, setLicenseTab] = useState<LicenseTab | null>(null);
+  const [usage, setUsage] = useState<DataUsage | null>(null);
+  // What the Data and reset rows say after they have done something. Both
+  // actions are invisible otherwise: the folder is smaller, the theme is
+  // back to default, and nothing on screen admits to having acted.
+  const [dataNote, setDataNote] = useState<string | null>(null);
+  const [clearing, setClearing] = useState(false);
+  // Destructive-ish actions ask once, in place, rather than opening a
+  // dialog over a drawer that is itself an overlay.
+  const [confirming, setConfirming] = useState<"results" | "prefs" | null>(
+    null,
+  );
+  const [copied, setCopied] = useState(false);
 
   // Wrap setters to also persist to localStorage.
   const setRestoreSession = (v: boolean) => {
@@ -311,7 +389,42 @@ export function SettingsContent() {
         // Leave `versions` null — the UI falls back to "—".
         console.error("Failed to load version info:", err);
       });
+    void getDataUsage().then(setUsage);
   }, []);
+
+  async function clearResults() {
+    setConfirming(null);
+    setClearing(true);
+    const cleared = await clearAllResults();
+    setClearing(false);
+    if (cleared === null) return;
+    setDataNote(describeCleared(cleared));
+    // Re-measure rather than subtracting: the figure is what is on disk,
+    // and a run that finished while the clear was working would make
+    // arithmetic disagree with the folder.
+    void getDataUsage().then(setUsage);
+  }
+
+  function resetToDefaults() {
+    setConfirming(null);
+    const cleared = resetPreferences();
+    // Reload rather than re-applying each preference here: every one of
+    // them is read at startup by the module that owns it, and rebuilding
+    // that here would be a second, quietly diverging copy of the defaults.
+    if (cleared > 0) window.location.reload();
+    else setDataNote("Nothing to reset — everything is already at default.");
+  }
+
+  async function copyDiagnostics() {
+    const text = diagnosticsText(versions, navigator.userAgent);
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch (err) {
+      console.error("Could not copy version info:", err);
+    }
+  }
 
   // The drawer owns the panel, the width and the header; this is only the
   // rows inside them. Fragment rather than another wrapper so the two files
@@ -335,6 +448,37 @@ export function SettingsContent() {
         description="How values are shown and entered, for projects that do not set their own. Source follows each model's declared unit system. Files and exports (INP, CSV, GeoJSON) always remain in the model's native/SI units."
       >
         <UnitSystemToggle />
+      </SettingRow>
+      {/* The card was reachable only from the command palette, which is
+          itself a shortcut — so the list of shortcuts was behind knowing
+          one. */}
+      <SettingRow
+        label="Keyboard shortcuts"
+        description="Every shortcut Hydra listens for, on one card."
+      >
+        <button type="button" onClick={toggleShortcutCard} style={ROW_BUTTON}>
+          Show…
+        </button>
+      </SettingRow>
+      <SettingRow
+        label="Reset preferences"
+        description="Put every setting on this page, and how the panels and canvas are arranged, back to default. Your projects, models and results are untouched."
+      >
+        {confirming === "prefs" ? (
+          <ConfirmPair
+            label="Reset everything"
+            onConfirm={resetToDefaults}
+            onCancel={() => setConfirming(null)}
+          />
+        ) : (
+          <button
+            type="button"
+            onClick={() => setConfirming("prefs")}
+            style={ROW_BUTTON}
+          >
+            Reset…
+          </button>
+        )}
       </SettingRow>
       {/* Appearance */}
       <Section>Appearance</Section>
@@ -379,7 +523,7 @@ export function SettingsContent() {
       <Section>Data</Section>
       <SettingRow
         label="Data folder"
-        description="Projects, scenarios, models and results are stored here, alongside your custom CRS definitions."
+        description={`Projects, scenarios, models and results are stored here, alongside your custom CRS definitions. ${describeUsage(usage)}`}
       >
         <button
           type="button"
@@ -389,8 +533,52 @@ export function SettingsContent() {
           Reveal…
         </button>
       </SettingRow>
+      {/* Results are the only thing offered for deletion: they are derived,
+          they are reproducible by running again, and they are most of what
+          is on disk. Models and reports are neither. */}
+      <SettingRow
+        label="Simulation results"
+        description={
+          dataNote ??
+          "Clearing results returns every project to its unsimulated state. The models are kept, so a run puts them back."
+        }
+      >
+        {confirming === "results" ? (
+          <ConfirmPair
+            label="Clear them"
+            onConfirm={() => void clearResults()}
+            onCancel={() => setConfirming(null)}
+          />
+        ) : (
+          <button
+            type="button"
+            disabled={clearing || usage?.resultsBytes === 0}
+            onClick={() => setConfirming("results")}
+            style={{
+              ...ROW_BUTTON,
+              color:
+                clearing || usage?.resultsBytes === 0
+                  ? "var(--text-tertiary)"
+                  : "var(--text-primary)",
+              cursor:
+                clearing || usage?.resultsBytes === 0 ? "default" : "pointer",
+            }}
+          >
+            {clearing ? "Clearing…" : "Clear results…"}
+          </button>
+        )}
+      </SettingRow>
       {/* About */}
       <Section>About</Section>
+      {/* Everything the app sends anywhere, in one place. It makes three
+          kinds of call and said so nowhere — and one of them carries the
+          reader's own map keys and, implicitly, where their network is. */}
+      <SettingRow
+        label="What Hydra sends"
+        description="Hydra asks GitHub for update information and release notes, and requests map tiles from whichever basemap provider you have chosen — those requests carry your key and the area you are looking at. Your models, results and reports are never uploaded anywhere."
+      >
+        {null}
+      </SettingRow>
       <UpdatesRow />
       <SettingRow
         label="Licence"
@@ -458,6 +646,28 @@ export function SettingsContent() {
             v{versions?.hydra ?? "—"}
           </span>
         </div>
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            fontSize: "var(--text-lg)",
+          }}
+        >
+          <span style={{ color: "var(--text-secondary)" }}>Platform</span>
+          <span style={{ color: "var(--text-primary)" }}>
+            {versions?.platform ?? "—"}
+          </span>
+        </div>
+        {/* The "Report a bug" link on the home page opens an issue form
+            that asks for all of this. Reading it off three rows and typing
+            it back is the kind of work nobody does accurately. */}
+        <button
+          type="button"
+          onClick={() => void copyDiagnostics()}
+          style={{ ...ROW_BUTTON, alignSelf: "flex-start", marginTop: 4 }}
+        >
+          {copied ? "Copied" : "Copy version info"}
+        </button>
       </div>
       {/* Above the drawer it was opened from: it is a document to read, so
           it takes the middle of the window rather than a column of rows.

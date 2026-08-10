@@ -323,11 +323,16 @@ export async function saveProjectOnDisk(
 export interface Versions {
   hydra: string;
   app: string;
+  /** The platform the binary was built for, as `os/arch`. Not the same
+   *  question as the webview's user agent, which names the system's
+   *  browser engine rather than this build. */
+  platform: string;
 }
 
 export async function getVersions(): Promise<Versions> {
   return tryInvokeOr<Versions>("get_versions", undefined, {
     hydra: "0.0.0",
     app: "0.0.0",
+    platform: "unknown",
   });
 }

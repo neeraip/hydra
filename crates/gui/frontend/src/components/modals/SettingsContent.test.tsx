@@ -16,16 +16,35 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
  * so the app hooks are mocked rather than provided.
  */
 
-const { setAutoUpdateCheck, autoCheck } = vi.hoisted(() => ({
-  setAutoUpdateCheck: vi.fn(),
-  autoCheck: { value: true },
-}));
+const { setAutoUpdateCheck, autoCheck, toggleShortcutCard, clearAllResults } =
+  vi.hoisted(() => ({
+    setAutoUpdateCheck: vi.fn(),
+    autoCheck: { value: true },
+    toggleShortcutCard: vi.fn(),
+    clearAllResults: vi.fn(async () => ({ removed: 3, skipped: 0 })),
+  }));
+
+vi.mock("../../hooks/storage", async () => {
+  const actual = await vi.importActual<typeof import("../../hooks/storage")>(
+    "../../hooks/storage",
+  );
+  return {
+    ...actual,
+    getDataUsage: async () => ({
+      totalBytes: 1024 ** 3 * 4,
+      resultsBytes: 1024 ** 3 * 3,
+      projectCount: 2,
+    }),
+    clearAllResults,
+  };
+});
 
 vi.mock("../../AppContext", () => ({
   useAppState: () => ({
     theme: "dark",
     setTheme: vi.fn(),
     openBasemapProvidersModal: vi.fn(),
+    toggleShortcutCard,
   }),
 }));
 
@@ -51,7 +70,7 @@ vi.mock("../../hooks/useUpdater", () => ({
   setAutoUpdateCheck,
 }));
 
-import { SettingsContent } from "./SettingsContent";
+import { diagnosticsText, SettingsContent } from "./SettingsContent";
 
 /** The section heading a row sits under, by document order. */
 function sectionOf(container: HTMLElement, label: string): string | null {
@@ -69,6 +88,8 @@ function sectionOf(container: HTMLElement, label: string): string | null {
 beforeEach(() => {
   autoCheck.value = true;
   setAutoUpdateCheck.mockClear();
+  clearAllResults.mockClear();
+  toggleShortcutCard.mockClear();
 });
 
 describe("where each setting is filed", () => {
@@ -119,5 +140,84 @@ describe("the launch update check", () => {
     autoCheck.value = false;
     render(<SettingsContent />);
     expect(screen.getByText("Check for updates automatically")).toBeTruthy();
+  });
+});
+
+describe("the Data section", () => {
+  it("says how much is stored and how much of it is results", async () => {
+    const { container } = render(<SettingsContent />);
+    // The figure arrives from the backend, so the row starts by admitting
+    // it does not have one yet.
+    expect(sectionOf(container, "Data folder")).toBe("Data");
+    expect(
+      await screen.findByText(/of which 3.0 GB is simulation results/),
+    ).toBeTruthy();
+  });
+
+  it("asks before clearing, and says what it did", async () => {
+    render(<SettingsContent />);
+    await screen.findByText(/simulation results/);
+    fireEvent.click(screen.getByRole("button", { name: "Clear results…" }));
+    // The affirmative says what it will do, not "OK".
+    expect(clearAllResults).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Clear them" }));
+    expect(clearAllResults).toHaveBeenCalled();
+    expect(await screen.findByText("3 results cleared.")).toBeTruthy();
+  });
+
+  it("lets the confirmation be backed out of", async () => {
+    render(<SettingsContent />);
+    await screen.findByText(/simulation results/);
+    fireEvent.click(screen.getByRole("button", { name: "Clear results…" }));
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(clearAllResults).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "Clear results…" })).toBeTruthy();
+  });
+});
+
+describe("the other new rows", () => {
+  it("offers the shortcut card, which was only reachable by shortcut", () => {
+    render(<SettingsContent />);
+    const row = screen.getByText("Keyboard shortcuts").parentElement
+      ?.parentElement as HTMLElement;
+    fireEvent.click(row.querySelector("button") as HTMLButtonElement);
+    expect(toggleShortcutCard).toHaveBeenCalled();
+  });
+
+  it("states every call the app makes, and what it never sends", () => {
+    const { container } = render(<SettingsContent />);
+    const row = screen.getByText("What Hydra sends").parentElement
+      ?.parentElement as HTMLElement;
+    expect(sectionOf(container, "What Hydra sends")).toBe("About");
+    expect(row.textContent).toContain("GitHub");
+    expect(row.textContent).toContain("map tiles");
+    expect(row.textContent).toContain("never uploaded");
+  });
+
+  it("asks before resetting preferences", () => {
+    render(<SettingsContent />);
+    fireEvent.click(screen.getByRole("button", { name: "Reset…" }));
+    expect(
+      screen.getByRole("button", { name: "Reset everything" }),
+    ).toBeTruthy();
+  });
+});
+
+describe("diagnosticsText", () => {
+  it("carries the three things a bug report is asked for", () => {
+    const text = diagnosticsText(
+      { app: "2.14.0", hydra: "9.0.0", platform: "macos/aarch64" },
+      "Mozilla/5.0 (Macintosh) AppleWebKit/605",
+    );
+    expect(text).toContain("Hydra 2.14.0 (engine 9.0.0)");
+    expect(text).toContain("Platform: macos/aarch64");
+    expect(text).toContain("Webview: Mozilla/5.0");
+  });
+
+  it("says what it does not know rather than printing nothing", () => {
+    // The versions call can fail; a paste reading "Hydra  (engine )" would
+    // look like a filled-in report with the numbers rubbed out.
+    expect(diagnosticsText(null, "agent")).toContain("Hydra unknown");
+    expect(diagnosticsText(null, "agent")).toContain("Platform: unknown");
   });
 });

@@ -61,6 +61,7 @@ mod run_queue;
 mod sim_params;
 mod simulation;
 mod sketch;
+mod storage;
 #[cfg(test)]
 mod test_fixtures;
 mod uds_attrs;
@@ -79,4 +80,5 @@ pub use run_queue::*;
 pub use sim_params::*;
 pub use simulation::*;
 pub use sketch::*;
+pub use storage::*;
 pub use uds_attrs::*;

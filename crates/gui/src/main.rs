@@ -140,6 +140,8 @@ fn main() {
             commands::preview_patches,
             commands::get_versions,
             commands::get_license_info,
+            commands::get_data_usage,
+            commands::clear_all_results,
             commands::list_third_party_components,
             commands::get_third_party_license_text,
             commands::list_engines,

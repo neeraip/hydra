@@ -872,7 +872,7 @@ pub fn delete_simulation(
 /// maintains the invariant that "warnings can never exist without results";
 /// deleting only `results.out` would leave the previous run's warnings being
 /// served for a target that now reports as unsimulated.
-fn remove_results_file(path: &std::path::Path) -> Result<bool, String> {
+pub(crate) fn remove_results_file(path: &std::path::Path) -> Result<bool, String> {
     let removed = match std::fs::remove_file(path) {
         Ok(()) => true,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => false,
@@ -892,6 +892,25 @@ fn remove_results_file(path: &std::path::Path) -> Result<bool, String> {
 fn results_bytes(path: &std::path::Path) -> u64 {
     let file_len = |p: &std::path::Path| std::fs::metadata(p).map(|m| m.len()).unwrap_or(0);
     file_len(path) + file_len(&super::simulation::run_warnings_path(path))
+}
+
+/// Every project id on disk, in directory order.
+///
+/// Deliberately tolerant where `list_projects` is not: this backs the
+/// data-folder figures and the clear-everything action, both of which
+/// should describe what is actually there. A project whose `meta.json` is
+/// missing or unreadable still occupies disk and still holds results, so
+/// it is counted and cleared — `list_projects` skips it, because a project
+/// it cannot describe is one it cannot render.
+pub(crate) fn project_ids(app_data: &std::path::Path) -> Vec<String> {
+    let Ok(entries) = std::fs::read_dir(bundle::projects_root(app_data)) else {
+        return Vec::new();
+    };
+    entries
+        .flatten()
+        .filter(|e| e.path().is_dir())
+        .filter_map(|e| e.file_name().to_str().map(str::to_owned))
+        .collect()
 }
 
 /// Scenario ids of `project_id`, discovered from the bundle directory.
@@ -2190,6 +2209,12 @@ pub struct Versions {
     pub hydra: &'static str,
     /// Version of this application binary (hydra-gui crate).
     pub app: &'static str,
+    /// The platform this build runs on, as `os/arch` — `macos/aarch64`.
+    ///
+    /// Here because every bug report needs it and nothing in the app said
+    /// it: the frontend can read a user agent, but that names the webview,
+    /// which is not the same question as which binary is running.
+    pub platform: String,
 }
 
 #[tauri::command]
@@ -2224,6 +2249,7 @@ pub fn get_versions() -> Versions {
     Versions {
         hydra: HYDRA_VERSION,
         app: env!("CARGO_PKG_VERSION"),
+        platform: format!("{}/{}", std::env::consts::OS, std::env::consts::ARCH),
     }
 }
 
