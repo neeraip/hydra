@@ -630,14 +630,15 @@ export function Ramp({
           style={{
             position: "absolute",
             bottom: "100%",
-            // Anchored to one side of the pointer rather than centred on
-            // it. Centred, the chip ran off the left of the canvas at the
-            // start of the bar — and the legend floats near the edge, so
-            // there was nothing to clamp against. It sits to the right
-            // until the pointer passes the middle, then flips.
-            ...(reading.t <= 0.5
-              ? { left: `${reading.t * 100}%` }
-              : { right: `${(1 - reading.t) * 100}%` }),
+            // Always to the right of the pointer, never centred and never
+            // flipped. Centred, the chip ran off the left of the canvas at
+            // the start of the bar, since the legend floats near that edge
+            // with nothing to clamp against. Flipping at the halfway mark
+            // fixed the overflow and cost more: the chip jumped sides
+            // mid-drag, which reads as a glitch in the very gesture that
+            // is meant to be a steady read. Overflow to the right lands on
+            // the canvas, which clips nothing.
+            left: `${reading.t * 100}%`,
             transform: "translateY(-4px)",
             pointerEvents: "none",
             whiteSpace: "nowrap",

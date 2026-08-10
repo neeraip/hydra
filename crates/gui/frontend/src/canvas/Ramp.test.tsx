@@ -89,11 +89,11 @@ describe("Ramp readout", () => {
     expect(container.querySelectorAll("div").length).toBeLessThan(5);
   });
 
-  it("anchors beside the pointer, never centred on it", () => {
+  it("sits to the right of the pointer, wherever the pointer is", () => {
     // Centred, the chip ran off the left of the canvas at the start of the
-    // bar — the legend floats near the edge, so there was nothing to clamp
-    // against. It sits to the right of the pointer until the halfway mark,
-    // then flips to the left of it.
+    // bar. Flipping sides at the halfway mark fixed that and cost more:
+    // the chip jumped mid-drag, in the one gesture meant to be a steady
+    // read. It is anchored the same way at both ends now.
     const { container } = render(
       <Ramp
         gradient="linear-gradient(90deg, red, blue)"
@@ -113,10 +113,8 @@ describe("Ramp readout", () => {
 
     fireEvent.mouseMove(el, { clientX: 90 });
     const nearRight = screen.getByText("0.9").style;
-    // Floating point: the anchor is 1 − 0.9, so assert the side rather
-    // than the exact percentage.
-    expect(Number.parseFloat(nearRight.right)).toBeCloseTo(10);
-    expect(nearRight.left).toBe("");
+    expect(Number.parseFloat(nearRight.left)).toBeCloseTo(90);
+    expect(nearRight.right).toBe("");
   });
 
   it("clears when the pointer leaves", () => {
