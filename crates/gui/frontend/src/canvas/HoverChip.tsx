@@ -13,9 +13,14 @@ import type { GenericCanvasResults, LinkVariable, NodeVariable } from "./types";
 export interface HoverTip {
   x: number;
   y: number;
-  kind: "node" | "link";
-  /** Specific element type ("junction", "pump", …) — drives the letter badge.
-   * `kind` alone cannot: it only distinguishes nodes from links. */
+  /** Which class of element, and therefore which result channel the index
+   * below belongs to. A region's index is its position in the region
+   * array, which is a different sequence from the node and link ones —
+   * reading it against the wrong channel prints a real number for the
+   * wrong element, which is worse than printing nothing. */
+  kind: "node" | "link" | "region";
+  /** Specific element type ("junction", "pump", "subcatchment", …) — drives
+   * the letter badge. `kind` alone cannot: it only distinguishes classes. */
   type: string;
   si: number;
   id: string;
@@ -39,6 +44,11 @@ function hoverTipValue(
       ? null
       : `${toDisplay(v, kind, sys).toFixed(dp)} ${unitLabel(kind, sys)}`;
   const i = tip.si;
+  // The water-distribution channels have no areal class at all, and the
+  // `else` below is the link branch — so without this a subcatchment's
+  // index would be read against `linkFlow` and the chip would report
+  // another element's flow as if it were the catchment's.
+  if (tip.kind === "region") return null;
   if (tip.kind === "node") {
     switch (nodeVar) {
       case "pressure":
@@ -85,7 +95,12 @@ function genericTipValue(
   generic: GenericCanvasResults,
   sys: ReturnType<typeof useUnitSystem>,
 ): string | null {
-  const channel = tip.kind === "node" ? generic.node : generic.link;
+  const channel =
+    tip.kind === "node"
+      ? generic.node
+      : tip.kind === "link"
+        ? generic.link
+        : generic.region;
   const v = channel?.values?.[tip.si];
   if (channel == null || v == null || !Number.isFinite(v)) return null;
   return formatGenericValue(v, channel.variable.quantity, sys);

@@ -1764,10 +1764,34 @@ export const MapCanvas = memo(function MapCanvas({
             const obj = info.object as Region | undefined;
             if (obj) onSelectRegion?.(obj.id);
           },
-          onHover: (info: { object?: unknown }) => {
+          onHover: (info: { object?: unknown; x?: number; y?: number }) => {
             if (!regionsPickable) return;
             const obj = info.object as Region | undefined;
             setHoveredRegionId(obj?.id ?? null);
+            // `si` is the region's place in the region array, which is
+            // what the generic region channel is indexed by — not the
+            // node or link sequence.
+            //
+            // Clearing is conditional, and that is the load-bearing part.
+            // Regions sit beneath nodes and links, so moving the pointer
+            // onto a node over a catchment fires this layer with no
+            // object at the same moment the node layer raises its own
+            // tip. Clearing unconditionally would wipe the node's chip
+            // and leave the catchment underneath answering for it.
+            setHoverTip((prev) =>
+              obj && info.x != null && info.y != null
+                ? {
+                    x: info.x,
+                    y: info.y,
+                    kind: "region",
+                    type: obj.type,
+                    si: regionOrder.get(obj.id) ?? -1,
+                    id: obj.id,
+                  }
+                : prev?.kind === "region"
+                  ? null
+                  : prev,
+            );
           },
           updateTriggers: {
             getPolygon: [topological, schematicLayout.regionRings],
@@ -3341,7 +3365,12 @@ export const MapCanvas = memo(function MapCanvas({
         // being rebuilt. Naming the level removes the ambiguity.
         zIndex: 0,
         cursor:
-          hoveredNodeId != null || hoveredLinkId != null
+          hoveredNodeId != null ||
+          hoveredLinkId != null ||
+          // A hovered region is only ever hovered when it is pickable, so
+          // it is always clickable when it is here — and it selects, the
+          // same as the other two.
+          hoveredRegionId != null
             ? "pointer"
             : "default",
       }}
