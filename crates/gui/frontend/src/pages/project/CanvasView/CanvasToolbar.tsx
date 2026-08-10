@@ -155,14 +155,21 @@ export function CanvasToolbar({
     );
   }
 
-  // A local grid never enters map mode, so the map-only affordances stay
-  // hidden rather than offering a basemap for coordinates no basemap can
-  // place.
+  // Two different questions, which one flag used to answer for both.
+  //
+  // A basemap needs a georeference, so a local grid can never have one.
+  // *Placing* something needs the positions on screen to be the model's
+  // own — which a plan's are; only the schematic invents them. Conflating
+  // the two is what left a local grid unable to move a node in any view,
+  // on coordinates that were real the whole time.
   const mapOnly = localGrid || viewMode !== "map";
-  const mapOnlyDim: CSSProperties = {
-    opacity: mapOnly ? 0.38 : undefined,
-    cursor: mapOnly ? "not-allowed" : undefined,
-  };
+  const placementOnly = viewMode !== "map";
+  const dimWhen = (off: boolean): CSSProperties => ({
+    opacity: off ? 0.38 : undefined,
+    cursor: off ? "not-allowed" : undefined,
+  });
+  const mapOnlyDim = dimWhen(mapOnly);
+  const placementDim = dimWhen(placementOnly);
   // A local grid is disabled for a different reason than the schematic is:
   // it has real coordinates, it simply has no georeference, so saying "map
   // mode only" to someone already looking at their plan reads as a bug.
@@ -172,6 +179,14 @@ export function CanvasToolbar({
       : localGrid
         ? "Needs a georeferenced model"
         : "Map mode only";
+  // The schematic's positions are a drawing of the connectivity, so a node
+  // dropped there would be given a coordinate the model never had. Say
+  // that, rather than "map mode only" — a plan is not map mode either and
+  // these work perfectly well in it.
+  const placementTooltip = (label: string) =>
+    !placementOnly
+      ? label
+      : "Not in the schematic — its positions are drawn, not the model's";
 
   return (
     <div
@@ -480,11 +495,11 @@ export function CanvasToolbar({
               type="button"
               className={`tool-btn${activeTool === "edit" ? " active" : ""}`}
               onClick={() => onToolChange("edit")}
-              disabled={mapOnly}
-              data-tooltip={mapOnlyTooltip("Edit / move nodes (E)")}
+              disabled={placementOnly}
+              data-tooltip={placementTooltip("Edit / move nodes (E)")}
               data-tooltip-pos="bottom"
               aria-label="Edit"
-              style={{ ...ICON_BTN_STYLE, ...mapOnlyDim }}
+              style={{ ...ICON_BTN_STYLE, ...placementDim }}
             >
               <PencilSquareIcon style={ICON_14} />
             </button>
@@ -492,12 +507,12 @@ export function CanvasToolbar({
             <button
               type="button"
               className={`tool-btn${activeTool === "add-node" ? " active" : ""}`}
-              disabled={mapOnly}
+              disabled={placementOnly}
               onClick={() => onToolChange("add-node")}
-              data-tooltip={mapOnlyTooltip("Add node (N)")}
+              data-tooltip={placementTooltip("Add node (N)")}
               data-tooltip-pos="bottom"
               aria-label="Add node"
-              style={{ ...ICON_BTN_STYLE, ...mapOnlyDim }}
+              style={{ ...ICON_BTN_STYLE, ...placementDim }}
             >
               <MapPinIcon style={ICON_14} />
             </button>

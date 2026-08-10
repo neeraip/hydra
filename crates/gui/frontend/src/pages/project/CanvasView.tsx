@@ -29,6 +29,7 @@ import type { InspectorView } from "../../canvas/selection-context";
 import { useCanvasSelection } from "../../canvas/selection-context";
 import { Timeline } from "../../canvas/Timeline";
 import type {
+  CanvasPoint,
   CanvasTool,
   GenericCanvasResults,
   LinkVariable,
@@ -87,6 +88,7 @@ import {
   resolveCanvasPrefs,
   writeCanvasPrefs,
 } from "./CanvasView/canvasPrefs";
+import { sourceCoordinate } from "./CanvasView/dropPoint";
 import { InvalidCrsOverlay } from "./CanvasView/InvalidCrsOverlay";
 import { NodeSizeSlider } from "./CanvasView/NodeSizeSlider";
 import { SchematicAspectSlider } from "./CanvasView/SchematicAspectSlider";
@@ -392,10 +394,8 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
     id: string;
   } | null>(null);
   // ── Pending node / link creation ─────────────────────────────────────────
-  const [pendingCreateNode, setPendingCreateNode] = useState<{
-    lng: number;
-    lat: number;
-  } | null>(null);
+  const [pendingCreateNode, setPendingCreateNode] =
+    useState<CanvasPoint | null>(null);
   const [pendingCreateLink, setPendingCreateLink] = useState<{
     fromId: string;
     toId: string;
@@ -555,11 +555,18 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
     return m;
   }, [elementKinds]);
 
-  // Tools that need the geographic renderer's pointer handling — dragging a
-  // node, placing one, measuring between two points. A plan view has real
-  // coordinates but draws them through the orthographic path, which has no
-  // handlers for any of that.
+  // Two questions, kept apart.
+  //
+  // `geographic` is "can this be placed on a basemap" — measuring uses the
+  // map's own projection, so it asks this one.
+  //
+  // `positioned` is "are the coordinates on screen the model's own". A
+  // plan's are: they have no georeference, which is a different thing from
+  // being invented. Only the schematic invents them, and only there is
+  // moving or placing a node meaningless. These were one flag, and that is
+  // why a local grid could not edit its geometry in any view.
   const geographic = viewMode === "map" && !localGrid;
+  const positioned = viewMode === "map";
   const [basemap, setBasemap] = useState<BasemapId>(
     CANVAS_PREF_DEFAULTS.basemap,
   );
@@ -1124,17 +1131,17 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
             clearAnnotations();
           }
           break;
-        // Map-only tools are gated here as well as on their buttons: the
-        // shortcut was the one way to reach them in schematic view, where a
-        // placed or moved node would take a coordinate from the synthetic BFS
-        // layout rather than the network's own geometry.
+        // Gated here as well as on their buttons: the shortcut was the one
+        // way to reach them in schematic view, where a placed or moved node
+        // would take a coordinate from the synthetic BFS layout rather than
+        // the network's own geometry.
         case "e":
         case "E":
-          if (geographic && modelEditable) setActiveTool("edit");
+          if (positioned && modelEditable) setActiveTool("edit");
           break;
         case "n":
         case "N":
-          if (geographic && modelEditable) setActiveTool("add-node");
+          if (positioned && modelEditable) setActiveTool("add-node");
           break;
         // Not map-gated: creating a link writes only its two node ids.
         case "l":
@@ -1161,7 +1168,14 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [clearAnnotations, maxStep, projectView, geographic, modelEditable]);
+  }, [
+    clearAnnotations,
+    maxStep,
+    projectView,
+    geographic,
+    positioned,
+    modelEditable,
+  ]);
 
   const baseNodes = useNodes();
   const baseLinks = useLinks();
@@ -1958,20 +1972,18 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
   const mapOnly = !geographic;
 
   const handleNodeMoved = useCallback(
-    async (
-      id: string,
-      lng: number,
-      lat: number,
-    ): Promise<undefined | false> => {
+    async (id: string, at: CanvasPoint): Promise<undefined | false> => {
       if (!project) return;
-      // MapLibre hands us the drop point in WGS84 — the backend coordinate
-      // store holds SOURCE-CRS values, so inverse-project before patching.
-      // (Identity when sourceCrs is EPSG:4326.) Committing raw lng/lat into
-      // a projected store corrupts the coordinate.
+      // The backend coordinate store holds SOURCE-CRS values. A drop on the
+      // basemap arrives in WGS84 and must be inverse-projected (identity
+      // when sourceCrs is EPSG:4326); a drop in a plan is already in the
+      // model's own coordinates and must not be touched.
       let x: number;
       let y: number;
       try {
-        [x, y] = wgs84ToSourceCrs([lng, lat], sourceCrs);
+        [x, y] = sourceCoordinate(at, (lngLat) =>
+          wgs84ToSourceCrs(lngLat, sourceCrs),
+        );
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
         showToast(`Move cancelled — ${msg}`, "error");
@@ -2091,8 +2103,8 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
     [allLinks],
   );
 
-  const handleCreateNodeRequest = useCallback((lng: number, lat: number) => {
-    setPendingCreateNode({ lng, lat });
+  const handleCreateNodeRequest = useCallback((at: CanvasPoint) => {
+    setPendingCreateNode(at);
   }, []);
 
   const handleCreateLinkRequest = useCallback(
@@ -2105,12 +2117,14 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
   const handleConfirmCreateNode = useCallback(
     async (payload: NodeCreatePayload) => {
       if (!pendingCreateNode || !project) return;
-      const { lng, lat } = pendingCreateNode;
-      // The map click arrives in WGS84 but the backend coordinate store holds
-      // SOURCE-CRS values — inverse-project before creating (identity for
-      // EPSG:4326). Throws on failure, which the modal catches and displays,
-      // so an unconvertible point never commits a corrupt coordinate.
-      const [x, y] = wgs84ToSourceCrs([lng, lat], sourceCrs);
+      // A basemap click arrives in WGS84 and is inverse-projected into the
+      // source CRS the backend stores (identity for EPSG:4326); a plan
+      // click is already in it. Throws on failure, which the modal catches
+      // and displays, so an unconvertible point never commits a corrupt
+      // coordinate.
+      const [x, y] = sourceCoordinate(pendingCreateNode, (lngLat) =>
+        wgs84ToSourceCrs(lngLat, sourceCrs),
+      );
       // Throws on backend error — the modal catches and stays open with the error message.
       await createNode(
         payload.kind,
@@ -2667,8 +2681,7 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
       <CreateNodeModal
         open={!!pendingCreateNode}
         suggestId={suggestNodeId}
-        lng={pendingCreateNode?.lng ?? 0}
-        lat={pendingCreateNode?.lat ?? 0}
+        at={pendingCreateNode}
         onConfirm={handleConfirmCreateNode}
         onCancel={() => setPendingCreateNode(null)}
       />

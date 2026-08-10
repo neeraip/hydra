@@ -127,6 +127,7 @@ import {
 const EMPTY_COUPLINGS: LayoutCoupling[] = [];
 
 import type {
+  CanvasPoint,
   CanvasTool,
   GenericCanvasResults,
   LinkVariable,
@@ -443,15 +444,15 @@ interface MapCanvasProps {
   velocityMax?: number;
   /** Active canvas tool; affects cursor and interaction mode. */
   tool?: CanvasTool;
-  /** Called (after mouseup) when the user drags a node to a new position.
-   * `x` and `y` are geographic coordinates (longitude and latitude).
+  /** Called (after the drop) when the user drags a node to a new position.
+   * The point carries the space it is in — a georeferenced map reports
+   * WGS84, a plan reports the model's own coordinates (see `CanvasPoint`).
    * Return (or resolve) `false` to signal the move was NOT committed — the
    * canvas immediately clears the drag preview so the node snaps back to its
    * stored position instead of waiting for the 5 s fallback timer. */
   onNodeMoved?: (
     id: string,
-    x: number,
-    y: number,
+    at: CanvasPoint,
   ) => undefined | boolean | Promise<undefined | boolean>;
   /** Called for **every** measure click, first included, with the snapped
    * position and what it snapped to (`null` for empty space). The parent owns
@@ -463,7 +464,7 @@ interface MapCanvasProps {
   /** Committed measure points, in click order. Drives the rubber band. */
   measurePoints?: readonly [number, number][];
   /** Called when the user clicks empty canvas in add-node mode. */
-  onCreateNodeRequest?: (lng: number, lat: number) => void;
+  onCreateNodeRequest?: (at: CanvasPoint) => void;
   /** Called when the user selects two nodes in add-link mode. */
   onCreateLinkRequest?: (fromId: string, toId: string) => void;
   /** When flyToKey changes and flyToNodeId/flyToLinkId is set, the canvas animates to that element. */
@@ -586,10 +587,14 @@ export const MapCanvas = memo(function MapCanvas({
   const overlayRef = useRef<MapboxOverlay | null>(null);
   const deckRef = useRef<Deck<OrthographicView> | null>(null);
   const deckCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  /** The dragged node's live position, in whatever space the renderer
+   *  draws in — lng/lat on a basemap, grid units in a plan. Named x/y
+   *  because it is neither one specifically, and calling it lng/lat is
+   *  part of what made the plan path look impossible. */
   const draggingNodePosRef = useRef<{
     id: string;
-    lng: number;
-    lat: number;
+    x: number;
+    y: number;
   } | null>(null);
   const ghostLinkRef = useRef<{
     from: [number, number];
@@ -877,6 +882,91 @@ export const MapCanvas = memo(function MapCanvas({
   // positions in a plan view aimed the camera at an empty map, which is why
   // "Fit network" flew to nowhere.
   const renderCoords = topological ? schematicCoords : geoCoords;
+
+  /**
+   * Whether a drag on the plan renderer should move a node.
+   *
+   * A plan is the orthographic renderer drawing the model's *own*
+   * coordinates — which is why the schematic is excluded and the basemap
+   * is not: the schematic's positions are invented by a layout, so
+   * dragging one would write a number the model never had.
+   *
+   * A ref because deck reads it inside layer callbacks that are created
+   * once per layer build; a stale closure here would arm dragging in the
+   * schematic or disarm it in the plan.
+   */
+  const planDraggingRef = useRef(false);
+  planDraggingRef.current =
+    viewMode === "schematic" && !topological && tool === "edit";
+
+  /**
+   * Finish a node drag, wherever it came from.
+   *
+   * Both renderers end here so the preview, the snap-back on a declined
+   * commit and the fallback timer are decided once. They were written
+   * inside maplibre's `mouseup`, which is why a plan could not have them.
+   */
+  const commitNodeDrag = useCallback((nodeId: string, at: CanvasPoint) => {
+    const redraw = () => {
+      overlayRef.current?.setProps({ layers: buildLayersRef.current() });
+      deckRef.current?.setProps({ layers: buildLayersRef.current() });
+    };
+    // The preview stays until the parent re-renders with the stored
+    // position, so the node does not jump back and forth across the
+    // round trip.
+    const moveResult = onNodeMovedRef.current?.(nodeId, at);
+    Promise.resolve(moveResult)
+      // A rejected handler also means "not committed" (backend patch threw).
+      .catch(() => false as const)
+      .then((committed) => {
+        if (
+          committed === false &&
+          !draggingNodeIdRef.current &&
+          draggingNodePosRef.current?.id === nodeId
+        ) {
+          draggingNodePosRef.current = null;
+          redraw();
+        }
+      });
+    // Failed/absent position patches never refresh geoCoords, which is what
+    // normally clears the drag override — without this fallback the drag
+    // branch of buildLayers (fresh 46k arrays per frame) stays pinned on.
+    dragFallbackTimerRef.current = window.setTimeout(() => {
+      dragFallbackTimerRef.current = null;
+      if (!draggingNodeIdRef.current && draggingNodePosRef.current) {
+        draggingNodePosRef.current = null;
+        redraw();
+      }
+    }, 5000);
+  }, []);
+
+  /** The maplibre handlers are registered once, in an effect that must not
+   *  re-run; they reach the commit through this rather than closing over
+   *  it. */
+  const commitNodeDragRef = useRef(commitNodeDrag);
+  commitNodeDragRef.current = commitNodeDrag;
+
+  /**
+   * Cancel a plan drag that was released where deck could not see it.
+   *
+   * deck reports `onDragEnd` for a release over its own canvas; let go
+   * over a panel or outside the window and it never fires, leaving the
+   * node pinned to the pointer's last position with the drag still armed.
+   * The basemap path has the same guard against maplibre.
+   *
+   * A normal drop reaches deck's handler on the canvas before this one on
+   * the window, so by the time it runs there is nothing left to cancel.
+   */
+  useEffect(() => {
+    function onPointerUp() {
+      if (!planDraggingRef.current || !draggingNodeIdRef.current) return;
+      draggingNodeIdRef.current = null;
+      draggingNodePosRef.current = null;
+      deckRef.current?.setProps({ layers: buildLayersRef.current() });
+    }
+    window.addEventListener("pointerup", onPointerUp);
+    return () => window.removeEventListener("pointerup", onPointerUp);
+  }, []);
 
   useEffect(() => {
     selectedNodeIdRef.current = selectedNodeId;
@@ -1419,7 +1509,7 @@ export const MapCanvas = memo(function MapCanvas({
     let ld = linkData;
     let nd = nodeData;
     if (drag) {
-      const dragPos: [number, number] = [drag.lng, drag.lat];
+      const dragPos: [number, number] = [drag.x, drag.y];
       ld = linkData.map((l) => {
         if (l.fromId !== drag.id && l.toId !== drag.id) return l;
         const from = l.fromId === drag.id ? dragPos : l.from;
@@ -2290,6 +2380,57 @@ export const MapCanvas = memo(function MapCanvas({
           // Pickable in measure mode too: snapping to a node needs it. The
           // hover/click handlers below bail out in measure mode.
           pickable: true,
+          // ── Dragging in a plan ──────────────────────────────────────
+          // The basemap path drags through maplibre's own pointer
+          // handlers (see the `mousedown`/`mousemove`/`mouseup` block
+          // below), which a plan has none of: it is drawn by the
+          // orthographic deck, and deck's own drag callbacks are the
+          // equivalent. Returning true keeps the gesture from reaching
+          // the controller, which would otherwise pan the view under the
+          // node being dragged.
+          //
+          // Both paths meet again at `commitNodeDrag`, so the preview,
+          // the snap-back and the fallback timer are decided once.
+          onDragStart: (info) => {
+            if (!planDraggingRef.current) return false;
+            const obj = info.object as { id: string } | undefined;
+            const at = info.coordinate;
+            if (!obj || !at) return false;
+            didDragRef.current = false;
+            if (dragFallbackTimerRef.current != null) {
+              window.clearTimeout(dragFallbackTimerRef.current);
+              dragFallbackTimerRef.current = null;
+            }
+            draggingNodeIdRef.current = obj.id;
+            draggingNodePosRef.current = { id: obj.id, x: at[0], y: at[1] };
+            return true;
+          },
+          onDrag: (info) => {
+            const id = draggingNodeIdRef.current;
+            if (!planDraggingRef.current || !id) return false;
+            const at = info.coordinate;
+            if (!at) return true;
+            didDragRef.current = true;
+            draggingNodePosRef.current = { id, x: at[0], y: at[1] };
+            deckRef.current?.setProps({ layers: buildLayersRef.current() });
+            return true;
+          },
+          onDragEnd: (info) => {
+            const id = draggingNodeIdRef.current;
+            if (!planDraggingRef.current || !id) return false;
+            draggingNodeIdRef.current = null;
+            // The drop point, or where the drag last was: deck reports no
+            // coordinate for a release outside the viewport, and the last
+            // position is what the preview is already showing.
+            const at = info.coordinate ?? [
+              draggingNodePosRef.current?.x ?? 0,
+              draggingNodePosRef.current?.y ?? 0,
+            ];
+            // A plan draws the model's own coordinates, so the drop point
+            // is the stored value — projecting it would corrupt it.
+            commitNodeDrag(id, { space: "source", x: at[0], y: at[1] });
+            return true;
+          },
           onHover: (info) => {
             // Measure draws its own highlight and its own readout; the normal
             // hover ring and value chip would compete with both.
@@ -2598,6 +2739,9 @@ export const MapCanvas = memo(function MapCanvas({
     typicalLink,
     nodeScale,
     highContrast,
+    // Stable (`useCallback` with no deps), so naming it here costs no
+    // rebuilds — the plan's drag handlers reach it directly.
+    commitNodeDrag,
   ]);
 
   useEffect(() => {
@@ -2836,8 +2980,8 @@ export const MapCanvas = memo(function MapCanvas({
       draggingNodeIdRef.current = nodeId;
       draggingNodePosRef.current = {
         id: nodeId,
-        lng: e.lngLat.lng,
-        lat: e.lngLat.lat,
+        x: e.lngLat.lng,
+        y: e.lngLat.lat,
       };
       map.dragPan.disable();
       map.getCanvas().style.cursor = "grabbing";
@@ -2850,8 +2994,8 @@ export const MapCanvas = memo(function MapCanvas({
         didDragRef.current = true;
         draggingNodePosRef.current = {
           id: draggingNodeIdRef.current,
-          lng,
-          lat,
+          x: lng,
+          y: lat,
         };
         overlayRef.current?.setProps({ layers: buildLayersRef.current() });
         return;
@@ -2884,38 +3028,14 @@ export const MapCanvas = memo(function MapCanvas({
       // position until the parent re-renders with updated coordinates from the backend.
       map.dragPan.enable();
       map.getCanvas().style.cursor = "";
-      const moveResult = onNodeMovedRef.current?.(
-        nodeId,
-        e.lngLat.lng,
-        e.lngLat.lat,
-      );
       // A handler that returns/resolves `false` declined the commit (e.g. the
-      // drop point can't be converted to the source CRS) — snap the node back
-      // to its stored position right away rather than leaving the preview
-      // pinned until the fallback timer below fires.
-      Promise.resolve(moveResult)
-        // A rejected handler also means "not committed" (backend patch threw).
-        .catch(() => false as const)
-        .then((committed) => {
-          if (
-            committed === false &&
-            !draggingNodeIdRef.current &&
-            draggingNodePosRef.current?.id === nodeId
-          ) {
-            draggingNodePosRef.current = null;
-            overlayRef.current?.setProps({ layers: buildLayersRef.current() });
-          }
-        });
-      // Failed/absent position patches never refresh geoCoords, which is what
-      // normally clears the drag override — without this fallback the drag
-      // branch of buildLayers (fresh 46k arrays per frame) stays pinned on.
-      dragFallbackTimerRef.current = window.setTimeout(() => {
-        dragFallbackTimerRef.current = null;
-        if (!draggingNodeIdRef.current && draggingNodePosRef.current) {
-          draggingNodePosRef.current = null;
-          overlayRef.current?.setProps({ layers: buildLayersRef.current() });
-        }
-      }, 5000);
+      // drop point can't be converted to the source CRS); `commitNodeDrag`
+      // snaps the node back rather than leaving the preview pinned.
+      commitNodeDragRef.current(nodeId, {
+        space: "wgs84",
+        x: e.lngLat.lng,
+        y: e.lngLat.lat,
+      });
     });
     // Releasing the button outside the map canvas (over a panel, outside the
     // window) never fires map "mouseup" — the drag stayed armed with dragPan
@@ -2944,7 +3064,7 @@ export const MapCanvas = memo(function MapCanvas({
       }
       if (toolRef.current !== "add-node") return;
       if (hoveredNodeIdRef.current || hoveredLinkIdRef.current) return;
-      onCreateNodeRequestRef.current?.(lng, lat);
+      onCreateNodeRequestRef.current?.({ space: "wgs84", x: lng, y: lat });
     });
 
     return () => {

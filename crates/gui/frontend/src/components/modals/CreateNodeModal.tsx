@@ -1,6 +1,21 @@
 import { useEffect, useRef, useState } from "react";
+import type { CanvasPoint } from "../../canvas/types";
 import { inpIdError } from "../../inpId";
 import { fromDisplay, toDisplay, unitLabel, useUnitSystem } from "../../units";
+
+/**
+ * The click position, read back to confirm where the node will land.
+ *
+ * Degrees get six decimals, which is about a tenth of a metre; a plan's
+ * own coordinates get three, because they are already in the model's
+ * units and six would claim a micron. The label says which is which —
+ * "4.89, 52.37" and "4890, 52370" are otherwise the same two numbers.
+ */
+export function formatDropPoint(at: CanvasPoint): string {
+  return at.space === "wgs84"
+    ? `${at.x.toFixed(6)}, ${at.y.toFixed(6)} (lon, lat)`
+    : `${at.x.toFixed(3)}, ${at.y.toFixed(3)} (model grid)`;
+}
 
 export interface NodeCreatePayload {
   kind: string;
@@ -17,8 +32,8 @@ interface Props {
   /** Returns a suggested ID for the given node kind prefix. */
   suggestId: (kind: string) => string;
   /** Click location in geographic coordinates. */
-  lng: number;
-  lat: number;
+  /** Where the click landed, and in which space. Null while closed. */
+  at: CanvasPoint | null;
   onConfirm: (payload: NodeCreatePayload) => Promise<void>;
   onCancel: () => void;
 }
@@ -37,8 +52,7 @@ const DEFAULT_INITIAL_LEVEL_M = 1.5;
 export function CreateNodeModal({
   open,
   suggestId,
-  lng,
-  lat,
+  at,
   onConfirm,
   onCancel,
 }: Props) {
@@ -337,7 +351,7 @@ export function CreateNodeModal({
             fontFamily: "var(--font-mono)",
           }}
         >
-          {lng.toFixed(6)}, {lat.toFixed(6)}
+          {at ? formatDropPoint(at) : ""}
         </div>
 
         {/* Actions */}
