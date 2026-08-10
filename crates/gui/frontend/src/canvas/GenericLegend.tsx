@@ -41,6 +41,8 @@ import {
   PickerButton,
   Ramp,
   RegionGlyph,
+  rampScaleOf,
+  rampValueAt,
   ScaleControl,
   type ScaleMode,
   SECTION_LABEL_STYLE,
@@ -501,6 +503,26 @@ export function GenericLegend({
                   <>
                     <Ramp
                       animating={classIsAnimating(animation, v.id)}
+                      // Reading a colour off the bar: the caller owns this
+                      // because the scale, the unit system and the
+                      // quantity's formatting are all its knowledge.
+                      // Null where a position names a band rather than a
+                      // value — see `rampScaleOf`.
+                      readAt={(t) => {
+                        const scale = rampScaleOf(
+                          v.ramp,
+                          range.min,
+                          range.max,
+                          (bandColors?.(v.id)?.length ?? 0) > 0,
+                        );
+                        return scale
+                          ? formatGenericValue(
+                              rampValueAt(scale, t),
+                              v.quantity,
+                              sys,
+                            )
+                          : null;
+                      }}
                       gradient={rampGradient(v.ramp, c.key, bandColors?.(v.id))}
                       min={formatGenericValue(
                         range.min,

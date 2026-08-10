@@ -9,6 +9,7 @@
 
 import { ChevronUpDownIcon } from "@heroicons/react/16/solid";
 import type { CSSProperties, ReactNode } from "react";
+import { useState } from "react";
 
 export const SECTION_LABEL_STYLE: CSSProperties = {
   fontSize: "var(--text-xs)",
@@ -430,6 +431,65 @@ export function CategorySwatches({
   );
 }
 
+/**
+ * How a position along a ramp maps to a value — or that it does not.
+ *
+ * Three different bars wear the same shape, and only one of them is the
+ * obvious linear scale:
+ *
+ * - `linear` — a sequential ramp, and a banded one the caller is painting
+ *   as a magnitude: the bar runs from `min` to `max`.
+ * - `symmetric` — a diverging ramp. The gradient is built over −1…+1 and
+ *   the map scales values by `max(|min|, |max|)`, so the bar is centred on
+ *   zero, and reading it as `min`…`max` would be wrong wherever the two are
+ *   not mirror images — which is most runs.
+ * - `null` — a banded ramp drawn in a criterion's colours. Those segments
+ *   are laid out in equal widths (`hardStopGradient`), not at the
+ *   thresholds they stand for, so a position names a band and not a value.
+ *   Reporting a number there would be inventing one.
+ */
+export type RampScale =
+  | { kind: "linear"; min: number; max: number }
+  | { kind: "symmetric"; scale: number };
+
+export function rampScaleOf(
+  ramp: { type: string },
+  min: number,
+  max: number,
+  /** Whether the caller is painting this variable in a criterion's band
+   *  colours right now. */
+  banded: boolean,
+): RampScale | null {
+  if (!Number.isFinite(min) || !Number.isFinite(max)) return null;
+  if (ramp.type === "categorical") return null;
+  if (ramp.type === "banded" && banded) return null;
+  if (ramp.type === "diverging") {
+    const scale = Math.max(Math.abs(min), Math.abs(max));
+    return scale > 0 ? { kind: "symmetric", scale } : null;
+  }
+  return max > min ? { kind: "linear", min, max } : null;
+}
+
+/** The value at fraction `t` (0 at the left edge, 1 at the right). */
+export function rampValueAt(scale: RampScale, t: number): number {
+  const clamped = Math.max(0, Math.min(1, t));
+  return scale.kind === "symmetric"
+    ? scale.scale * (2 * clamped - 1)
+    : scale.min + clamped * (scale.max - scale.min);
+}
+
+/**
+ * Where along a bar a pointer is, as a fraction.
+ *
+ * A zero-width box answers null rather than dividing by zero: the bar is
+ * measured from the live document, and a hover can arrive in the frame
+ * before layout.
+ */
+export function rampFractionAt(clientX: number, rect: DOMRect): number | null {
+  if (!(rect.width > 0)) return null;
+  return Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+}
+
 /** Gradient bar with min/max labels. Numbers are formatted `toFixed(1)`;
  * pass strings when a variable needs its own precision.
  *
@@ -443,23 +503,76 @@ export function Ramp({
   min,
   max,
   animating = false,
+  readAt,
 }: {
   gradient: string;
   min: number | string;
   max: number | string;
   animating?: boolean;
+  /** Formats the value at fraction `t` along the bar, or answers null
+   *  where a position does not name one. Supplied by the caller because
+   *  the units, the display system and the ramp's own scale are all
+   *  its knowledge — see `rampScaleOf`. Absent means no readout. */
+  readAt?: (t: number) => string | null;
 }) {
   const label = (v: number | string) =>
     typeof v === "number" ? v.toFixed(1) : v;
+  const [reading, setReading] = useState<{ x: number; text: string } | null>(
+    null,
+  );
+
+  /** Follow the pointer along the bar, reading off the value under it.
+   *  The bar is measured live rather than remembered: the popover resizes
+   *  with the panel and a stale width would report the wrong value. */
+  const onMove = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (!readAt) return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    const t = rampFractionAt(e.clientX, rect);
+    const text = t === null ? null : readAt(t);
+    setReading(text === null ? null : { x: (t ?? 0) * rect.width, text });
+  };
+
   return (
-    <div>
+    <div style={{ position: "relative" }}>
+      {/* Above the bar rather than under the pointer: the bar is ten
+          pixels tall and a chip on top of it would cover the colour the
+          reader is trying to match. */}
+      {reading && (
+        <div
+          style={{
+            position: "absolute",
+            bottom: "100%",
+            left: reading.x,
+            transform: "translate(-50%, -4px)",
+            pointerEvents: "none",
+            whiteSpace: "nowrap",
+            background: "var(--tooltip-bg, #1e1e2a)",
+            color: "var(--tooltip-text, #e2e2ec)",
+            border: "1px solid var(--border-hover)",
+            borderRadius: 5,
+            padding: "2px 6px",
+            fontSize: "var(--text-xs)",
+            fontVariantNumeric: "tabular-nums",
+            boxShadow: "var(--shadow-2)",
+            zIndex: 1,
+          }}
+        >
+          {reading.text}
+        </div>
+      )}
+      {/* biome-ignore lint/a11y/noStaticElementInteractions: pointer-only
+          enhancement of a bar whose ends are already stated in text below
+          it, so nothing here is reachable only by hovering. */}
       <div
         className={`legend-ramp${animating ? " legend-ramp--animating" : ""}`}
+        onMouseMove={onMove}
+        onMouseLeave={() => setReading(null)}
         style={{
           height: 10,
           borderRadius: 5,
           background: gradient,
           marginBottom: 4,
+          cursor: readAt ? "crosshair" : undefined,
         }}
       />
       <div style={{ display: "flex", justifyContent: "space-between" }}>

@@ -1,5 +1,5 @@
 /** @vitest-environment jsdom */
-import { render } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { Ramp } from "./legend-primitives";
 
@@ -47,5 +47,72 @@ describe("Ramp", () => {
     expect(bar(moving.container).style.background).toBe(
       bar(still.container).style.background,
     );
+  });
+});
+
+describe("Ramp readout", () => {
+  /** jsdom lays nothing out, so the bar is given a box to be measured in. */
+  function withWidth(el: HTMLElement, left: number, width: number) {
+    el.getBoundingClientRect = () => ({ left, width }) as DOMRect;
+  }
+
+  it("reads the value under the pointer", () => {
+    const { container } = render(
+      <Ramp
+        gradient="linear-gradient(90deg, red, blue)"
+        min="40"
+        max="100"
+        readAt={(t) => `${40 + t * 60} L/s`}
+      />,
+    );
+    const el = bar(container);
+    withWidth(el, 100, 200);
+    fireEvent.mouseMove(el, { clientX: 200 });
+    expect(screen.getByText("70 L/s")).toBeTruthy();
+  });
+
+  it("shows nothing where a position does not name a value", () => {
+    // A criteria-banded bar: equal-width segments that stand for bands, so
+    // the caller answers null and the chip must not appear at all.
+    const { container } = render(
+      <Ramp
+        gradient="linear-gradient(90deg, red, blue)"
+        min="0"
+        max="5"
+        readAt={() => null}
+      />,
+    );
+    const el = bar(container);
+    withWidth(el, 0, 100);
+    fireEvent.mouseMove(el, { clientX: 50 });
+    expect(container.textContent).not.toContain("L/s");
+    expect(container.querySelectorAll("div").length).toBeLessThan(5);
+  });
+
+  it("clears when the pointer leaves", () => {
+    const { container } = render(
+      <Ramp
+        gradient="linear-gradient(90deg, red, blue)"
+        min="0"
+        max="10"
+        readAt={(t) => `${t * 10}`}
+      />,
+    );
+    const el = bar(container);
+    withWidth(el, 0, 100);
+    fireEvent.mouseMove(el, { clientX: 50 });
+    expect(screen.getByText("5")).toBeTruthy();
+    fireEvent.mouseLeave(el);
+    expect(screen.queryByText("5")).toBeNull();
+  });
+
+  it("has no readout at all when the caller offers none", () => {
+    const { container } = render(
+      <Ramp gradient="linear-gradient(90deg, red, blue)" min="0" max="1" />,
+    );
+    const el = bar(container);
+    withWidth(el, 0, 100);
+    fireEvent.mouseMove(el, { clientX: 50 });
+    expect(el.style.cursor).toBe("");
   });
 });
