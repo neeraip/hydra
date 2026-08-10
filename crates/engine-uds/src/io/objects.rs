@@ -1485,11 +1485,19 @@ fn parse_xsection(net: &mut Network, s: &Survey, line: &TokenLine, diags: &mut V
             let Some(c) = resolve(s, ObjectKind::Curve, &t[3], diags, l) else {
                 return;
             };
+            // Barrels and the culvert code sit at tokens 6 and 7 for
+            // *every* shape: a custom section spends only two of the four
+            // geometry slots, but the two it skips are still written (as
+            // placeholders) and still counted. Reading barrels at token 4
+            // takes a shape's third geometry slot for its barrel count.
+            let Some(culvert) = culvert_code(t, diags, l) else {
+                return;
+            };
             CrossSection {
                 shape,
                 geom_user: [y_full, 0.0, 0.0, 0.0],
-                barrels: barrels(t, 4, diags, l).unwrap_or(1),
-                culvert_code: 0,
+                barrels: barrels(t, 6, diags, l).unwrap_or(1),
+                culvert_code: culvert,
                 referent: Some(XsectReferent::Curve(c)),
             }
         }
@@ -1505,15 +1513,8 @@ fn parse_xsection(net: &mut Network, s: &Survey, line: &TokenLine, diags: &mut V
                 *g = v;
             }
             let b = barrels(t, 6, diags, l).unwrap_or(1);
-            let culvert = match t.get(7) {
-                Some(tok) => match tok.parse::<u32>() {
-                    Ok(v) => v,
-                    Err(_) => {
-                        diags.push(err(l, DiagnosticKind::BadValue { token: tok.clone() }));
-                        return;
-                    }
-                },
-                None => 0,
+            let Some(culvert) = culvert_code(t, diags, l) else {
+                return;
             };
             CrossSection {
                 shape,
@@ -1525,6 +1526,22 @@ fn parse_xsection(net: &mut Network, s: &Survey, line: &TokenLine, diags: &mut V
         }
     };
     net.links[link_i].cross_section = Some(xs);
+}
+
+/// The optional culvert code at token 7 of an `[XSECTIONS]` line, absent
+/// meaning "not a culvert". `None` reports a token that is present but not
+/// a code, the caller abandoning the line.
+fn culvert_code(t: &[String], diags: &mut Vec<Diagnostic>, l: usize) -> Option<u32> {
+    match t.get(7) {
+        None => Some(0),
+        Some(tok) => match tok.parse::<u32>() {
+            Ok(v) => Some(v),
+            Err(_) => {
+                diags.push(err(l, DiagnosticKind::BadValue { token: tok.clone() }));
+                None
+            }
+        },
+    }
 }
 
 fn barrels(t: &[String], i: usize, diags: &mut Vec<Diagnostic>, l: usize) -> Option<u32> {
@@ -1758,6 +1775,62 @@ C1  CIRCULAR  4.0  0  0  0  2
         assert_eq!(xs.shape, XsectShape::Circular);
         assert_eq!(xs.geom_user[0], 4.0, "geometry stays in file units (§5)");
         assert_eq!(xs.barrels, 2);
+    }
+
+    /// Barrels come from the same token whatever the shape.
+    ///
+    /// The defect this guards: a `CUSTOM` section was read as
+    /// `depth curve barrels`, taking token 4 — but the predecessor parses
+    /// custom shapes in the same branch as every other one, so the line is
+    /// `depth curve _ _ barrels culvert` with two placeholders and barrels
+    /// at token 6. A twin-barrel custom conduit therefore routed as one
+    /// barrel while a placeholder was read as the count.
+    #[test]
+    fn a_custom_section_reads_barrels_where_every_shape_does() {
+        let inp = "\
+[JUNCTIONS]
+J1  10  2
+J2   9  2
+
+[CONDUITS]
+C1  J1  J2  100  0.013  0  0
+
+[CURVES]
+SHP  SHAPE  0.0  0.0  1.0  1.0
+
+[XSECTIONS]
+C1  CUSTOM  4  SHP  0  0  3
+";
+        let (net, diags) = parse(inp);
+        assert!(errors(&diags).is_empty(), "{diags:?}");
+        let xs = net.links[0].cross_section.as_ref().unwrap();
+        assert_eq!(xs.shape, XsectShape::Custom);
+        assert_eq!(xs.geom_user[0], 4.0);
+        assert_eq!(xs.barrels, 3, "token 4 is a placeholder, not the count");
+        assert_eq!(xs.culvert_code, 0);
+    }
+
+    /// The same line without its optional tail keeps the default of one,
+    /// rather than mistaking a geometry placeholder for a barrel count.
+    #[test]
+    fn a_custom_section_without_a_tail_is_one_barrel() {
+        let inp = "\
+[JUNCTIONS]
+J1  10  2
+J2   9  2
+
+[CONDUITS]
+C1  J1  J2  100  0.013  0  0
+
+[CURVES]
+SHP  SHAPE  0.0  0.0  1.0  1.0
+
+[XSECTIONS]
+C1  CUSTOM  4  SHP  0  0
+";
+        let (net, diags) = parse(inp);
+        assert!(errors(&diags).is_empty(), "{diags:?}");
+        assert_eq!(net.links[0].cross_section.as_ref().unwrap().barrels, 1);
     }
 
     #[test]
