@@ -50,6 +50,10 @@ pub struct Section {
     y_at_w_max: f64,
     psi_max: f64,
     y_at_psi_max: f64,
+    /// The critical-depth relation at full depth, $A^3/W$ evaluated once
+    /// at build — a constant of the section that the solve's full check
+    /// was re-deriving on every call.
+    crit_full: f64,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -150,30 +154,102 @@ enum Kind {
 }
 
 /// A transect's evaluation-ready geometry (§5.6): the survey polyline
-/// with vertical end walls, elevations relative to the invert, bank
-/// stations, and the three roughness zones (the channel's meander-inflated).
+/// with vertical end walls, elevations relative to the invert, compiled
+/// to per-segment constants (run, ordered end elevations, slant length,
+/// zone roughness, sub-section boundaries) so a sweep re-derives nothing
+/// that does not depend on the water line.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TransectGeom {
-    xs: Vec<f64>,
-    zs: Vec<f64>,
-    x_left: f64,
-    x_right: f64,
-    n_left: f64,
-    n_right: f64,
     n_channel: f64,
+    segs: Vec<TransectSeg>,
+}
+
+/// One survey segment, everything about it that is independent of depth.
+#[derive(Debug, Clone, PartialEq)]
+struct TransectSeg {
+    /// Horizontal run |x₁ − x₀| (m).
+    dx: f64,
+    /// End elevations, ordered.
+    lo: f64,
+    hi: f64,
+    /// Full slant length √(dx² + (hi − lo)²) (m).
+    wp_full: f64,
+    /// The end station's elevation — the re-emergence check reads the
+    /// polyline's own order, not the sorted pair.
+    z1: f64,
+    /// Zone roughness, by the predecessor's rule.
+    n: f64,
+    /// A bank-roughness boundary ends the sub-section after this segment.
+    flush_bank: bool,
+    /// The lowest `lo` from this segment onward — when the water line
+    /// sits at or below it, nothing ahead is wet and a walk with empty
+    /// accumulators can stop.
+    min_lo_ahead: f64,
+}
+
+/// One depth's sweep with its depth-derivatives (§5.7): what the
+/// characteristic-depth Newton steps read.
+struct SweepD {
+    area: f64,
+    width: f64,
+    /// d(width)/dy — from the partly-submerged slices; a submerged
+    /// segment's width is constant.
+    dw: f64,
+    /// Conveyance sum over sub-sections.
+    k: f64,
+    /// d(conveyance)/dy.
+    dk: f64,
 }
 
 impl TransectGeom {
-    /// Manning n for the segment between stations `k-1` and `k`, by the
-    /// predecessor's zone rule.
-    fn segment_n(&self, k: usize) -> f64 {
-        if self.xs[k - 1] < self.x_left {
-            self.n_left
-        } else if self.xs[k] > self.x_right {
-            self.n_right
-        } else {
-            self.n_channel
+    fn new(
+        xs: &[f64],
+        zs: &[f64],
+        x_left: f64,
+        x_right: f64,
+        n_left: f64,
+        n_right: f64,
+        n_channel: f64,
+    ) -> TransectGeom {
+        let n = xs.len();
+        let mut segs = Vec::with_capacity(n.saturating_sub(1));
+        for k in 1..n {
+            let (z0, z1) = (zs[k - 1], zs[k]);
+            let (lo, hi) = if z0 <= z1 { (z0, z1) } else { (z1, z0) };
+            // Manning n by the predecessor's zone rule.
+            let n_seg = if xs[k - 1] < x_left {
+                n_left
+            } else if xs[k] > x_right {
+                n_right
+            } else {
+                n_channel
+            };
+            let dx = (xs[k] - xs[k - 1]).abs();
+            // A bank-roughness change ends the sub-section (a vertical
+            // bank wall stays with its channel side, as the predecessor
+            // keeps it).
+            let flush_bank = k + 1 < n && {
+                let at_left = xs[k] == x_left && n_left != n_channel && xs[k] != xs[k - 1];
+                let at_right = xs[k] == x_right && n_right != n_channel && xs[k] != xs[k + 1];
+                at_left || at_right
+            };
+            segs.push(TransectSeg {
+                dx,
+                lo,
+                hi,
+                wp_full: (dx * dx + (hi - lo) * (hi - lo)).sqrt(),
+                z1,
+                n: n_seg,
+                flush_bank,
+                min_lo_ahead: 0.0,
+            });
         }
+        let mut min_lo = f64::INFINITY;
+        for sg in segs.iter_mut().rev() {
+            min_lo = min_lo.min(sg.lo);
+            sg.min_lo_ahead = min_lo;
+        }
+        TransectGeom { n_channel, segs }
     }
 
     /// Sweep the polyline at depth `y`: total area, top width, geometric
@@ -191,22 +267,22 @@ impl TransectGeom {
             *a_t = 0.0;
             *p_t = 0.0;
         };
-        let n = self.xs.len();
-        for k in 1..n {
-            let (z0, z1) = (self.zs[k - 1], self.zs[k]);
-            let (lo, hi) = if z0 <= z1 { (z0, z1) } else { (z1, z0) };
-            let n_seg = self.segment_n(k);
-            if lo < y {
-                let dx = (self.xs[k] - self.xs[k - 1]).abs();
-                let mut w = dx;
-                let mut wp = (dx * dx + (hi - lo) * (hi - lo)).sqrt();
+        for sg in &self.segs {
+            // Nothing ahead is wet and nothing is pending: every further
+            // step would add zero and flush nothing.
+            if a_t == 0.0 && sg.min_lo_ahead >= y {
+                break;
+            }
+            if sg.lo < y {
+                let mut w = sg.dx;
+                let mut wp = sg.wp_full;
                 let a;
-                if y > hi {
-                    a = dx * ((y - hi) + (y - lo)) / 2.0;
+                if y > sg.hi {
+                    a = sg.dx * ((y - sg.hi) + (y - sg.lo)) / 2.0;
                 } else {
                     // Partly submerged slice.
-                    let ratio = (y - lo) / (hi - lo);
-                    a = dx * (hi - lo) / 2.0 * ratio * ratio;
+                    let ratio = (y - sg.lo) / (sg.hi - sg.lo);
+                    a = sg.dx * (sg.hi - sg.lo) / 2.0 * ratio * ratio;
                     w *= ratio;
                     wp *= ratio;
                 }
@@ -217,26 +293,113 @@ impl TransectGeom {
                 p_t += wp;
             }
             // Ground at or above the water line ends the sub-section.
-            if z1 >= y {
-                flush(&mut a_t, &mut p_t, n_seg);
+            if sg.z1 >= y {
+                flush(&mut a_t, &mut p_t, sg.n);
                 continue;
             }
-            // A bank-roughness change ends it too (a vertical bank wall
-            // stays with its channel side, as the predecessor keeps it).
-            if k + 1 < n {
-                let at_left = self.xs[k] == self.x_left
-                    && self.n_left != self.n_channel
-                    && self.xs[k] != self.xs[k - 1];
-                let at_right = self.xs[k] == self.x_right
-                    && self.n_right != self.n_channel
-                    && self.xs[k] != self.xs[k + 1];
-                if at_left || at_right {
-                    flush(&mut a_t, &mut p_t, n_seg);
-                }
+            if sg.flush_bank {
+                flush(&mut a_t, &mut p_t, sg.n);
             }
         }
-        flush(&mut a_t, &mut p_t, self.segment_n(n - 1));
+        let last_n = self.segs.last().map_or(self.n_channel, |s| s.n);
+        flush(&mut a_t, &mut p_t, last_n);
         (area, width, perim, k_sum)
+    }
+
+    /// The sweep without its conveyance sum: area, top width, and wetted
+    /// perimeter alone. What `area`, `top_width` and `perimeter_open`
+    /// actually need — the full sweep spends an $x^{2/3}$ per sub-section
+    /// on a conveyance those callers throw away.
+    fn sweep_geom(&self, y: f64) -> (f64, f64, f64) {
+        let (mut area, mut width, mut perim) = (0.0, 0.0, 0.0);
+        for sg in &self.segs {
+            if sg.min_lo_ahead >= y {
+                break;
+            }
+            if sg.lo < y {
+                let mut w = sg.dx;
+                let mut wp = sg.wp_full;
+                let a;
+                if y > sg.hi {
+                    a = sg.dx * ((y - sg.hi) + (y - sg.lo)) / 2.0;
+                } else {
+                    let ratio = (y - sg.lo) / (sg.hi - sg.lo);
+                    a = sg.dx * (sg.hi - sg.lo) / 2.0 * ratio * ratio;
+                    w *= ratio;
+                    wp *= ratio;
+                }
+                area += a;
+                width += w;
+                perim += wp;
+            }
+        }
+        (area, width, perim)
+    }
+
+    /// The same walk carrying depth-derivatives (§5.7). Values are the
+    /// sweep's own; the derivatives come from the identical slices — a
+    /// partly-submerged segment's width and slant grow at `dx/dz` and
+    /// `slant/dz`, a submerged one's not at all — so a Newton step costs
+    /// one walk, exactly like the evaluation it accelerates.
+    fn sweep_d(&self, y: f64) -> SweepD {
+        let (mut area, mut width, mut dw, mut k_sum, mut dk_sum) = (0.0, 0.0, 0.0, 0.0, 0.0);
+        // The running sub-section: area, perimeter, width, d(perimeter).
+        let (mut a_t, mut p_t, mut w_t, mut dp_t) = (0.0, 0.0, 0.0, 0.0);
+        let mut flush = |a_t: &mut f64, p_t: &mut f64, w_t: &mut f64, dp_t: &mut f64, n: f64| {
+            if *a_t > 0.0 && *p_t > 0.0 {
+                let ki = (1.0 / n) * *a_t * (*a_t / *p_t).powf(2.0 / 3.0);
+                k_sum += ki;
+                // dK/dy = K·((5/3)·A'/A − (2/3)·P'/P), with A' the
+                // sub-section's width.
+                dk_sum += ki * (5.0 / 3.0 * *w_t / *a_t - 2.0 / 3.0 * *dp_t / *p_t);
+            }
+            *a_t = 0.0;
+            *p_t = 0.0;
+            *w_t = 0.0;
+            *dp_t = 0.0;
+        };
+        for sg in &self.segs {
+            if a_t == 0.0 && sg.min_lo_ahead >= y {
+                break;
+            }
+            if sg.lo < y {
+                let mut w = sg.dx;
+                let mut wp = sg.wp_full;
+                let a;
+                if y > sg.hi {
+                    a = sg.dx * ((y - sg.hi) + (y - sg.lo)) / 2.0;
+                } else {
+                    let dz = sg.hi - sg.lo;
+                    let ratio = (y - sg.lo) / dz;
+                    a = sg.dx * dz / 2.0 * ratio * ratio;
+                    w *= ratio;
+                    wp *= ratio;
+                    dw += sg.dx / dz;
+                    dp_t += sg.wp_full / dz;
+                }
+                area += a;
+                width += w;
+                a_t += a;
+                p_t += wp;
+                w_t += w;
+            }
+            if sg.z1 >= y {
+                flush(&mut a_t, &mut p_t, &mut w_t, &mut dp_t, sg.n);
+                continue;
+            }
+            if sg.flush_bank {
+                flush(&mut a_t, &mut p_t, &mut w_t, &mut dp_t, sg.n);
+            }
+        }
+        let last_n = self.segs.last().map_or(self.n_channel, |s| s.n);
+        flush(&mut a_t, &mut p_t, &mut w_t, &mut dp_t, last_n);
+        SweepD {
+            area,
+            width,
+            dw,
+            k: k_sum,
+            dk: dk_sum,
+        }
     }
 }
 
@@ -311,9 +474,25 @@ fn maximise(f: &dyn Fn(f64) -> f64, mut a: f64, mut b: f64) -> (f64, f64) {
 /// Bisection on a monotone-increasing function: find `y` in `[a, b]` with
 /// `f(y) = target`. A bracketed solve on a monotone relation cannot fail
 /// (§5.7); 100 halvings resolve the bracket to floating-point exactness.
+/// The §5.7 stated tolerance (m): a bracketed solve stops at a bracket
+/// this narrow and answers with its midpoint. Three orders below the
+/// tightest §6.4 head tolerance, so nothing downstream can tell the
+/// answer from the exact root — while sparing the ~30 further halvings
+/// f64 exhaustion would run, each a full section evaluation.
+const INVERT_TOL: f64 = 1e-6;
+
+/// Bracketed root-finding on a monotone non-decreasing `f` over `[a, b]`,
+/// to the §5.7 stated tolerance, answering with the bracket midpoint.
 fn invert(f: &dyn Fn(f64) -> f64, mut a: f64, mut b: f64, target: f64) -> f64 {
     for _ in 0..100 {
         let m = 0.5 * (a + b);
+        // Stop at the stated tolerance — or at adjacent doubles, where
+        // the midpoint is one of the ends and further halving reproduces
+        // this state (a bracket can open that narrow when it starts
+        // narrow).
+        if b - a <= INVERT_TOL || m <= a || m >= b {
+            break;
+        }
         if f(m) < target {
             a = m;
         } else {
@@ -878,15 +1057,9 @@ pub fn build_transect_section(t: &crate::model::Transect) -> Result<SectionBuild
     };
     Ok(SectionBuild {
         section: Section::assemble(
-            Kind::Transect(TransectGeom {
-                xs,
-                zs,
-                x_left: t.x_left,
-                x_right: t.x_right,
-                n_left,
-                n_right,
-                n_channel,
-            }),
+            Kind::Transect(TransectGeom::new(
+                &xs, &zs, t.x_left, t.x_right, n_left, n_right, n_channel,
+            )),
             y_full,
         ),
         radius_raised: None,
@@ -940,15 +1113,9 @@ pub fn build_street_section(st: &crate::model::Street) -> Result<SectionBuild, B
     }
     Ok(SectionBuild {
         section: Section::assemble(
-            Kind::Transect(TransectGeom {
-                xs,
-                zs,
-                x_left,
-                x_right,
-                n_left,
-                n_right,
-                n_channel,
-            }),
+            Kind::Transect(TransectGeom::new(
+                &xs, &zs, x_left, x_right, n_left, n_right, n_channel,
+            )),
             y_max,
         ),
         radius_raised: None,
@@ -1013,6 +1180,7 @@ impl Section {
                 y_at_w_max: 0.0,
                 psi_max: 0.0,
                 y_at_psi_max: 0.0,
+                crit_full: 0.0,
             };
         }
         // The filled circle measures depth above the fill.
@@ -1029,8 +1197,20 @@ impl Section {
             y_at_w_max: 0.0,
             psi_max: 0.0,
             y_at_psi_max: 0.0,
+            crit_full: 0.0,
         };
         s.a_full = s.area(y_full);
+        s.crit_full = match &s.kind {
+            Kind::Circle { .. } => s.a_full.powi(3) / s.top_width(y_full).max(1e-30),
+            Kind::Transect(t) => {
+                let (a, w, _, _) = t.sweep(y_full);
+                a.powi(3) / w.max(1e-30)
+            }
+            _ => {
+                let (a, w, _) = s.geom(y_full);
+                a.powi(3) / w.max(1e-30)
+            }
+        };
         // Full-depth perimeter includes any flat lid; a catalogue-anchored
         // ellipse lands on its published radius through its scale (§5.4).
         s.r_full = s.a_full / (s.perimeter_open(y_full) + s.lid_width());
@@ -1217,7 +1397,7 @@ impl Section {
                     None => a_full * inv_lookup(yn, family.y_table().unwrap_or(&[0.0, 1.0])),
                 }
             }
-            Kind::Transect(t) => t.sweep(y).0,
+            Kind::Transect(t) => t.sweep_geom(y).0,
             Kind::Custom { ys, ws } => {
                 let mut area = 0.0;
                 for i in 1..ys.len() {
@@ -1278,7 +1458,7 @@ impl Section {
             Kind::Tabulated { family, w_max, .. } => {
                 w_max * lookup(y / self.y_full, family.w_table())
             }
-            Kind::Transect(t) => t.sweep(y).1,
+            Kind::Transect(t) => t.sweep_geom(y).1,
             Kind::Custom { ys, ws } => interp(ys, ws, y),
         }
     }
@@ -1388,7 +1568,7 @@ impl Section {
                     self.area(y) / r
                 }
             }
-            Kind::Transect(t) => t.sweep(y).2,
+            Kind::Transect(t) => t.sweep_geom(y).2,
             Kind::Custom { ys, ws } => {
                 // Bottom width plus the two side slants.
                 let mut p = ws[0];
@@ -1407,37 +1587,90 @@ impl Section {
         }
     }
 
+    /// Area, top width and open perimeter at depth `y`, in one pass.
+    ///
+    /// Each is available on its own, and asking for them separately makes
+    /// a shape rebuild whatever the three have in common: the circle's
+    /// filled angle costs an inverse cosine every time it is asked for,
+    /// and a transect re-walks its entire survey. §5.7's inversions and
+    /// §6's trials want two or three of them at every iteration, which is
+    /// where that repetition lands. The values are the ones `area`,
+    /// `top_width` and `perimeter_open` give, to the last bit — this
+    /// shares the arithmetic rather than approximating it.
+    fn geom(&self, y: f64) -> (f64, f64, f64) {
+        let y = y.clamp(0.0, self.y_full);
+        match &self.kind {
+            Kind::Circle { d } => {
+                let t = circle_theta(*d, y);
+                (
+                    d * d / 8.0 * (t - t.sin()),
+                    d * (t / 2.0).sin(),
+                    d * t / 2.0,
+                )
+            }
+            Kind::FilledCircle {
+                d,
+                y_bot,
+                a_bot,
+                p_bot,
+                w_bot,
+            } => {
+                let t = circle_theta(*d, y + y_bot);
+                (
+                    d * d / 8.0 * (t - t.sin()) - a_bot,
+                    d * (t / 2.0).sin(),
+                    d * t / 2.0 - p_bot + w_bot,
+                )
+            }
+            Kind::Transect(t) => t.sweep_geom(y),
+            _ => (self.area(y), self.top_width(y), self.perimeter_open(y)),
+        }
+    }
+
     /// Hydraulic radius (m) at depth `y`.
     pub fn hyd_radius(&self, y: f64) -> f64 {
-        let y = y.clamp(0.0, self.y_full);
-        if y <= 0.0 {
-            return 0.0;
+        self.area_and_radius(y).1
+    }
+
+    /// Area and hydraulic radius together, the two halves of the section
+    /// factor (§5.1).
+    ///
+    /// Asked for separately they build the section twice, and §5.7's
+    /// normal-depth inversion asks for both at every one of its
+    /// iterations — which is where the repetition costs most.
+    pub(crate) fn area_and_radius(&self, y: f64) -> (f64, f64) {
+        let yc = y.clamp(0.0, self.y_full);
+        if yc <= 0.0 {
+            return (self.area(y), 0.0);
         }
-        if y >= self.y_full {
-            return self.r_full;
+        if yc >= self.y_full {
+            return (self.area(y), self.r_full);
         }
         if matches!(self.kind, Kind::Tabulated { .. }) {
-            return self.tabulated_radius(y);
+            return (self.area(y), self.tabulated_radius(yc));
         }
         if let Kind::Transect(t) = &self.kind {
             // Composite roughness by conveyance summation (§5.6): the
             // effective radius back-computed through the channel n, the
             // same constant in both directions.
-            let (a, _, _, k) = t.sweep(y);
+            let (a, _, _, k) = t.sweep(yc);
             if a <= 0.0 {
-                return 0.0;
+                return (a, 0.0);
             }
-            return (t.n_channel * k / a).powf(1.5);
+            return (a, (t.n_channel * k / a).powf(1.5));
         }
-        let p = self.perimeter_open(y);
+        let (a, _, p) = self.geom(yc);
         if p <= 0.0 {
-            return 0.0;
+            return (a, 0.0);
         }
-        let r = self.area(y) / p;
-        match &self.kind {
-            Kind::Ellipse { r_scale, .. } => r * r_scale,
-            _ => r,
-        }
+        let r = a / p;
+        (
+            a,
+            match &self.kind {
+                Kind::Ellipse { r_scale, .. } => r * r_scale,
+                _ => r,
+            },
+        )
     }
 
     /// A tabulated family's hydraulic radius: from its R table where one
@@ -1483,8 +1716,8 @@ impl Section {
                 return s_full * lookup(self.area(y) / a_full, t);
             }
         }
-        let a = self.area(y);
-        a * self.hyd_radius(y).powf(2.0 / 3.0)
+        let (a, r) = self.area_and_radius(y);
+        a * r.powf(2.0 / 3.0)
     }
 
     /// Depth from area (§5.7): closed form where §5.2 provides one,
@@ -1536,12 +1769,46 @@ impl Section {
                     .powf(1.0 / e)
                     .min(self.y_full)
             }
+            Kind::Circle { d } => {
+                // §5.7: solved on the filled angle. The full check is the
+                // generic arm's, precomputed.
+                if self.crit_full < target {
+                    self.y_full
+                } else {
+                    // W(θ) is 0 at exactly 2π; stop a hair short so its
+                    // logarithm exists.
+                    let theta_hi = 2.0 * std::f64::consts::PI - 1e-9;
+                    circle_char_solve(*d, 3.0, 1.0, true, target.ln(), theta_hi).min(self.y_full)
+                }
+            }
+            Kind::Transect(t) => {
+                // §5.7: Newton on depth, the derivatives from the same
+                // survey walk as the values.
+                if self.crit_full < target {
+                    self.y_full
+                } else {
+                    let target_ln = target.ln();
+                    newton_bracketed(
+                        &|y| {
+                            let s = t.sweep_d(y);
+                            let a = s.area.max(1e-300);
+                            let w = s.width.max(1e-30);
+                            (
+                                3.0 * a.ln() - w.ln() - target_ln,
+                                3.0 * s.width / a - s.dw / w,
+                            )
+                        },
+                        0.0,
+                        self.y_full,
+                    )
+                }
+            }
             _ => {
                 let f = |y: f64| {
-                    let w = self.top_width(y).max(1e-30);
-                    self.area(y).powi(3) / w
+                    let (a, w, _) = self.geom(y);
+                    a.powi(3) / w.max(1e-30)
                 };
-                if f(self.y_full) < target {
+                if self.crit_full < target {
                     self.y_full
                 } else {
                     invert(&f, 0.0, self.y_full, target)
@@ -1560,8 +1827,147 @@ impl Section {
         if target_psi > self.psi_max {
             return None;
         }
+        if let Kind::Circle { d } = &self.kind {
+            // §5.7: solved on the filled angle, over the monotone branch
+            // below the section-factor peak.
+            let theta_hi = circle_theta(*d, self.y_at_psi_max);
+            return Some(
+                circle_char_solve(*d, 5.0 / 3.0, 2.0 / 3.0, false, target_psi.ln(), theta_hi)
+                    .min(self.y_at_psi_max),
+            );
+        }
+        if let Kind::Transect(t) = &self.kind {
+            // §5.7: for the transect Ψ = A·R^{2/3} collapses to n_C·K —
+            // the §5.6 effective radius is defined through K — so the
+            // solve is on the conveyance sum, derivative from the same
+            // walk.
+            let target_ln = target_psi.ln();
+            return Some(
+                newton_bracketed(
+                    &|y| {
+                        let s = t.sweep_d(y);
+                        let k = (t.n_channel * s.k).max(1e-300);
+                        (k.ln() - target_ln, s.dk / s.k.max(1e-300))
+                    },
+                    0.0,
+                    self.y_at_psi_max,
+                )
+                .min(self.y_at_psi_max),
+            );
+        }
         Some(invert(&|y| self.psi(y), 0.0, self.y_at_psi_max, target_psi))
     }
+}
+
+/// Safeguarded Newton on depth (§5.7): `eval` answers the residual of a
+/// monotone non-decreasing relation and its depth-derivative. Steps are
+/// confined to a maintained bracket — one leaving it becomes the
+/// midpoint, so termination is as sure as bisection — and the solve stops
+/// when successive iterates agree within the stated tolerance.
+fn newton_bracketed(eval: &dyn Fn(f64) -> (f64, f64), mut lo: f64, mut hi: f64) -> f64 {
+    let mut y = 0.5 * (lo + hi);
+    let mut y_prev = f64::NAN;
+    for _ in 0..60 {
+        let (g, dg) = eval(y);
+        if g < 0.0 {
+            lo = y;
+        } else {
+            hi = y;
+        }
+        if (y - y_prev).abs() <= 0.5 * INVERT_TOL {
+            return y;
+        }
+        y_prev = y;
+        let mut y_next = if dg.is_finite() && dg > 0.0 {
+            y - g / dg
+        } else {
+            f64::NAN
+        };
+        if !(y_next > lo && y_next < hi) {
+            y_next = 0.5 * (lo + hi);
+        }
+        if hi - lo <= INVERT_TOL {
+            break;
+        }
+        y = y_next;
+    }
+    0.5 * (lo + hi)
+}
+
+/// The circle's two characteristic-depth solves (§5.7), by Newton on
+/// $u = \ln\theta$ with a maintained bracket.
+///
+/// Both relations have the form $k_A \ln A - k_D \ln D = \ln t$ with $D$
+/// the top width (critical depth) or wetted perimeter (normal depth), and
+/// both are asymptotically affine in $u$ at the dry end — which gives a
+/// closed-form seed and makes the iteration converge in a handful of
+/// steps, none of which needs an inverse trigonometric call. A Newton
+/// step leaving the bracket is replaced by its midpoint, so the solve
+/// terminates as surely as bisection; it stops when successive iterates
+/// agree within the stated depth tolerance.
+/// `theta_hi` is the top of the monotone range: a hair under $2\pi$ for
+/// critical depth, the section-factor peak's angle for normal depth.
+fn circle_char_solve(
+    d: f64,
+    ka: f64,
+    kd: f64,
+    den_is_width: bool,
+    target_ln: f64,
+    theta_hi: f64,
+) -> f64 {
+    let y_of = |theta: f64| d / 2.0 * (1.0 - (theta / 2.0).cos());
+    // θ ≈ 8×10⁻⁷ is a depth of ~10⁻¹³·d — dry beyond anything downstream
+    // reads; a root below the bracket answers as that trickle.
+    let mut u_lo = -14.0_f64;
+    let mut u_hi = theta_hi.ln();
+    // Dry-end asymptote: A → d²θ³/48 and both denominators → dθ/2, so
+    // G(u) ≈ (3k_A − k_D)·u + c₀ − ln t. Solving that seeds the iteration
+    // within about one unit of the root for any physical depth.
+    let c0 = ka * (d * d / 48.0).ln() - kd * (d / 2.0).ln();
+    let mut u = ((target_ln - c0) / (3.0 * ka - kd)).clamp(u_lo, u_hi);
+    let mut y_prev = f64::NAN;
+    for _ in 0..60 {
+        let theta = u.exp();
+        let (s, c) = theta.sin_cos();
+        let (sh, ch) = (theta / 2.0).sin_cos();
+        let a_t = theta - s;
+        let den = if den_is_width {
+            d * sh
+        } else {
+            d * theta / 2.0
+        };
+        let g = ka * (d * d / 8.0 * a_t).ln() - kd * den.ln() - target_ln;
+        if g < 0.0 {
+            u_lo = u;
+        } else {
+            u_hi = u;
+        }
+        let y = d / 2.0 * (1.0 - ch);
+        if (y - y_prev).abs() <= 0.5 * INVERT_TOL {
+            return y;
+        }
+        y_prev = y;
+        let dg_dtheta = ka * (1.0 - c) / a_t
+            - kd * if den_is_width {
+                ch / (2.0 * sh)
+            } else {
+                1.0 / theta
+            };
+        let dg_du = theta * dg_dtheta;
+        let mut u_next = if dg_du.is_finite() && dg_du > 0.0 {
+            u - g / dg_du
+        } else {
+            f64::NAN
+        };
+        if !(u_next > u_lo && u_next < u_hi) {
+            u_next = 0.5 * (u_lo + u_hi);
+        }
+        if u_hi - u_lo < 1e-12 {
+            break;
+        }
+        u = u_next;
+    }
+    y_of((0.5 * (u_lo + u_hi)).exp())
 }
 
 /// Area of a circular segment of radius `r` filled to depth `y` from the
@@ -1613,6 +2019,132 @@ mod tests {
         assert!((0.93..0.95).contains(&y), "peak depth {y}");
         let ratio = p / (s.a_full() * s.r_full().powf(2.0 / 3.0));
         assert!((1.07..1.08).contains(&ratio), "peak ratio {ratio}");
+    }
+
+    /// The circle's Newton-on-θ solves (§5.7) answer the same question
+    /// the bracketed inversion answers, to the stated tolerance.
+    ///
+    /// The reference is an 80-halving bisection on the identical relation,
+    /// run right here — so this holds the fast path to the slow one over
+    /// the whole monotone range, from a trickle to just under the caps.
+    #[test]
+    fn circle_characteristic_depths_match_fine_bisection() {
+        let s = build(XsectShape::Circular, [1.2, 0.0, 0.0, 0.0]);
+
+        for q in [1e-4, 0.01, 0.1, 0.5, 1.5, 4.0] {
+            let yc = s.critical_depth(q);
+            let f = |y: f64| s.area(y).powi(3) / s.top_width(y).max(1e-30);
+            let target = q * q / GRAVITY;
+            if f(s.y_full()) < target {
+                assert_eq!(yc, s.y_full(), "q={q} should cap at full");
+                continue;
+            }
+            let (mut a, mut b) = (0.0, s.y_full());
+            for _ in 0..80 {
+                let m = 0.5 * (a + b);
+                if f(m) < target {
+                    a = m;
+                } else {
+                    b = m;
+                }
+            }
+            let reference = 0.5 * (a + b);
+            assert!(
+                (yc - reference).abs() < 2e-6,
+                "critical q={q}: {yc} vs {reference}"
+            );
+        }
+
+        let (y_peak, psi_max) = s.psi_max();
+        for frac in [1e-6, 1e-3, 0.05, 0.3, 0.7, 0.95, 0.999] {
+            let t = frac * psi_max;
+            let yn = s.normal_depth(t).expect("below the peak");
+            let (mut a, mut b) = (0.0, y_peak);
+            for _ in 0..80 {
+                let m = 0.5 * (a + b);
+                if s.psi(m) < t {
+                    a = m;
+                } else {
+                    b = m;
+                }
+            }
+            let reference = 0.5 * (a + b);
+            assert!(
+                (yn - reference).abs() < 2e-6,
+                "normal frac={frac}: {yn} vs {reference}"
+            );
+        }
+    }
+
+    /// The transect's Newton-on-depth solves (§5.7) answer what the
+    /// bracketed inversion answers, to the stated tolerance — same
+    /// fine-bisection reference as the circle's test, on a surveyed
+    /// section with distinct overbank roughness and a re-emerging bank.
+    #[test]
+    fn transect_characteristic_depths_match_fine_bisection() {
+        let s = build_transect_section(&crate::model::Transect {
+            id: "t".into(),
+            stations: vec![
+                (5.0, 0.0),
+                (4.5, 55.0),
+                (0.0, 60.0),
+                (2.0, 95.0),
+                (4.0, 115.0),
+                (6.0, 160.0),
+            ],
+            x_left: 55.0,
+            x_right: 115.0,
+            n_left: 0.06,
+            n_right: 0.05,
+            n_channel: 0.035,
+            meander_factor: 1.0,
+        })
+        .unwrap()
+        .section;
+
+        for q in [1e-3, 0.5, 5.0, 40.0, 200.0] {
+            let yc = s.critical_depth(q);
+            let f = |y: f64| s.area(y).powi(3) / s.top_width(y).max(1e-30);
+            let target = q * q / GRAVITY;
+            if f(s.y_full()) < target {
+                assert_eq!(yc, s.y_full(), "q={q} should cap at full");
+                continue;
+            }
+            let (mut a, mut b) = (0.0, s.y_full());
+            for _ in 0..80 {
+                let m = 0.5 * (a + b);
+                if f(m) < target {
+                    a = m;
+                } else {
+                    b = m;
+                }
+            }
+            let reference = 0.5 * (a + b);
+            assert!(
+                (yc - reference).abs() < 2e-6,
+                "critical q={q}: {yc} vs {reference}"
+            );
+        }
+
+        let (y_peak, psi_max) = s.psi_max();
+        for frac in [1e-5, 1e-2, 0.2, 0.6, 0.9, 0.999] {
+            let t = frac * psi_max;
+            let yn = s.normal_depth(t).expect("below the peak");
+            let (mut a, mut b) = (0.0, y_peak);
+            for _ in 0..80 {
+                let m = 0.5 * (a + b);
+                if s.psi(m) < t {
+                    a = m;
+                } else {
+                    b = m;
+                }
+            }
+            let reference = 0.5 * (a + b);
+            assert!(
+                (yn - reference).abs() < 2e-6,
+                "normal frac={frac}: {yn} vs {reference}"
+            );
+        }
     }
 
     #[test]
@@ -1699,7 +2231,10 @@ mod tests {
             for f in [0.1, 0.4, 0.8, 0.99] {
                 let y = f * s.y_full();
                 let back = s.depth_of_area(s.area(y));
-                assert!((back - y).abs() < 1e-9, "{back} vs {y}");
+                // To the §5.7 stated tolerance: the bracketed inversions
+                // answer within half a micron bracket, not to machine
+                // precision.
+                assert!((back - y).abs() < 1e-6, "{back} vs {y}");
             }
         }
     }
@@ -1710,7 +2245,10 @@ mod tests {
         let (_, psi_max) = s.psi_max();
         assert_eq!(s.normal_depth(psi_max * 1.01), None);
         let y = s.normal_depth(psi_max * 0.5).unwrap();
-        assert!((s.psi(y) - psi_max * 0.5).abs() < 1e-9);
+        // The depth answers to §5.7's stated micron tolerance, and the
+        // section factor is smooth (order-one slope for this circle), so
+        // its residual is of the same order.
+        assert!((s.psi(y) - psi_max * 0.5).abs() < 1e-6);
     }
 
     #[test]

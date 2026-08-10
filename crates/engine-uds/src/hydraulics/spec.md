@@ -191,6 +191,35 @@ $\Psi(y_N) = \dfrac{n\,Q}{\sqrt{S_0}}$ in SI form, on the monotone branch
 below the section's $\Psi_{max}$ (§5.1); a demand exceeding $\Psi_{max}$ has
 no normal depth in the section and reports the section full.
 
+The stated tolerance for all three bracketed solves is a bracket width of
+$10^{-6}$ m: the solve stops there — or at adjacent machine numbers,
+whichever comes first — and answers with the bracket midpoint. A micron is
+three orders below the tightest head tolerance the acceptance criteria read
+(§6.4, default $1.524\times10^{-3}$ m), so no quantity downstream of a
+characteristic depth can distinguish the answer from the exact root; halving
+past it buys digits nothing reads.
+
+A section whose relations are smooth in a natural parameter may solve there
+instead, by derivative (Newton) steps confined to a maintained bracket —
+any step leaving the bracket is replaced by its midpoint, so termination
+stays guaranteed — stopping when successive iterates agree within the same
+stated tolerance in depth. Two sections take this route. The **circle**
+solves on the filled angle $\theta$, where both characteristic relations
+become logarithmically near-linear ($\ln(A^3/W)$ and $\ln(A^{5/3}/P^{2/3})$
+are asymptotically affine in $\ln\theta$ at the dry end), so a handful of
+iterations answers where uniform halving of the depth bracket needs twenty
+— and the iteration needs no inverse trigonometry at all. The **transect**
+(§5.6) solves on depth itself: its survey walk yields the derivatives
+beside the values — a partly-submerged segment's width and slant grow at
+$dx/\Delta z$ and $\ell/\Delta z$, a submerged one's not at all, and the
+conveyance sum differentiates sub-section by sub-section as
+$K_i^{\,\prime} = K_i\big(\tfrac{5}{3}A_i'/A_i - \tfrac{2}{3}P_i'/P_i\big)$
+— so a Newton step costs one walk, the same as the evaluation it replaces
+(its normal-depth relation is the conveyance itself, since §5.6 defines
+the effective radius through $K$: $\Psi = A R^{2/3} = n_C K$). Piecewise
+kinks where the water line crosses a station are what the bracket
+safeguard is for.
+
 > **CORRESPONDENCE:** the predecessor's characteristic-depth searches carry
 > fixed iteration budgets whose exhaustion returns the initial estimate — a
 > non-converged geometry query silently answering with its seed. Bracketed

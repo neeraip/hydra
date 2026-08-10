@@ -265,11 +265,21 @@ impl SlotGeom {
         self.sec.area(y_full) + self.band_full + self.w_slot * (y - y_full)
     }
 
-    fn hyd_radius(&self, y: f64) -> f64 {
-        if y >= self.sec.y_full() {
-            return self.sec.r_full();
+    /// Area and hydraulic radius together, sharing one pass over the
+    /// section where the slot logic allows it — the §6.3 update wants
+    /// both at the same depth, and asking twice rebuilds the geometry
+    /// twice. Above full depth the radius holds at its full value.
+    fn area_and_radius(&self, y: f64) -> (f64, f64) {
+        let y_full = self.sec.y_full();
+        if y >= y_full {
+            return (self.area(y), self.sec.r_full());
         }
-        self.sec.hyd_radius(y)
+        if self.w_slot == 0.0 || y <= self.y_x {
+            return self.sec.area_and_radius(y);
+        }
+        // In the crown band the area is the slot's, but the radius is
+        // still the section's own.
+        (self.area(y), self.sec.hyd_radius(y))
     }
 }
 
@@ -2664,11 +2674,14 @@ impl Router {
         let a_old = self.a_mid[ci].max(DRY);
 
         // ── Flow classification and surface-area assembly (§6.6) ───────
-        let class = self.flow_class(ci, q_last, h1, h2, y1, y2);
+        // One characteristic-depth answer serves both, per channel per
+        // update.
+        let mut cd = None;
+        let class = self.flow_class(ci, q_last, h1, h2, y1, y2, &mut cd);
         let (s1, s2);
         {
             let (cls_s1, cls_s2, ny1, ny2, nh1, nh2) =
-                self.assemble_surface(ci, class, y1, y2, q_last);
+                self.assemble_surface(ci, class, y1, y2, q_last, &mut cd);
             s1 = cls_s1 * c.barrels;
             s2 = cls_s2 * c.barrels;
             y1 = ny1;
@@ -2681,12 +2694,10 @@ impl Router {
             }
         }
 
-        let a1 = sec.area(y1);
+        let (a1, r1) = sec.area_and_radius(y1);
         let a2 = sec.area(y2);
-        let r1 = sec.hyd_radius(y1);
         let y_mid = 0.5 * (y1 + y2);
-        let a_mid = sec.area(y_mid);
-        let r_mid = sec.hyd_radius(y_mid);
+        let (a_mid, r_mid) = sec.area_and_radius(y_mid);
         let is_full = y1 >= y_full && y2 >= y_full;
 
         // Dry channels carry no flow this trial (§6.6); a channel closed
@@ -2839,7 +2850,26 @@ impl Router {
         )
     }
 
-    fn flow_class(&self, ci: usize, q: f64, h1: f64, h2: f64, y1: f64, y2: f64) -> FlowClass {
+    /// §6.6's characteristic depths for this channel and flow, computed
+    /// at most once per §6.3 update. `flow_class` and `assemble_surface`
+    /// both want them for the same `(ci, q)`, and each normal/critical
+    /// pair is two bracketed inversions — much too heavy to solve twice
+    /// for one answer.
+    fn char_depths_memo(&self, ci: usize, q: f64, memo: &mut Option<(f64, f64)>) -> (f64, f64) {
+        *memo.get_or_insert_with(|| self.char_depths(ci, q))
+    }
+
+    #[allow(clippy::too_many_arguments)] // the §6.6 classification's natural inputs
+    fn flow_class(
+        &self,
+        ci: usize,
+        q: f64,
+        h1: f64,
+        h2: f64,
+        y1: f64,
+        y2: f64,
+        cd: &mut Option<(f64, f64)>,
+    ) -> FlowClass {
         let c = &self.chans[ci];
         if y1 >= c.geom.sec.y_full() && y2 >= c.geom.sec.y_full() {
             return FlowClass::Subcritical;
@@ -2857,12 +2887,12 @@ impl Router {
         let wet2 = y2 > DRY;
         if wet1 && wet2 {
             if q < 0.0 && z1 > 0.0 {
-                let (yn, yc) = self.char_depths(ci, q);
+                let (yn, yc) = self.char_depths_memo(ci, q, cd);
                 if y1 < yn.min(yc) {
                     return FlowClass::UpCritical;
                 }
             } else if q >= 0.0 && z2 > 0.0 {
-                let (yn, yc) = self.char_depths(ci, q);
+                let (yn, yc) = self.char_depths_memo(ci, q, cd);
                 if y2 < yn.min(yc) {
                     return FlowClass::DownCritical;
                 }
@@ -2911,6 +2941,7 @@ impl Router {
         y1: f64,
         y2: f64,
         q: f64,
+        cd: &mut Option<(f64, f64)>,
     ) -> (f64, f64, f64, f64, Option<f64>, Option<f64>) {
         let c = &self.chans[ci];
         let w = |y: f64| c.geom.width(y.max(DRY));
@@ -2921,7 +2952,7 @@ impl Router {
                 // the downstream contribution.
                 let mut fasnh = 1.0;
                 if c.off2 > 0.0 && q >= 0.0 && y1 > DRY && y2 > DRY {
-                    let (yn, yc) = self.char_depths(ci, q);
+                    let (yn, yc) = self.char_depths_memo(ci, q, cd);
                     let (lo, hi) = (yn.min(yc), yn.max(yc));
                     if y2 < hi && y2 >= lo {
                         fasnh = if hi - lo < DRY {
@@ -2942,7 +2973,7 @@ impl Router {
                 )
             }
             FlowClass::UpCritical => {
-                let (yn, yc) = self.char_depths(ci, q);
+                let (yn, yc) = self.char_depths_memo(ci, q, cd);
                 let y1n = yn.min(yc).max(DRY);
                 let y_mid = (0.5 * (y1n + y2)).max(DRY);
                 let h1 = self.verts[c.from].invert + c.off1 + y1n;
@@ -2956,7 +2987,7 @@ impl Router {
                 )
             }
             FlowClass::DownCritical => {
-                let (yn, yc) = self.char_depths(ci, q);
+                let (yn, yc) = self.char_depths_memo(ci, q, cd);
                 let y2n = yn.min(yc).max(DRY);
                 let y_mid = (0.5 * (y1 + y2n)).max(DRY);
                 let h2 = self.verts[c.to].invert + c.off2 + y2n;
