@@ -432,50 +432,62 @@ export function CategorySwatches({
 }
 
 /**
- * How a position along a ramp maps to a value — or that it does not.
+ * What a position along a ramp names.
  *
- * Three different bars wear the same shape, and only one of them is the
- * obvious linear scale:
+ * Two bars wear the same shape and mean different things:
  *
- * - `linear` — a sequential ramp, and a banded one the caller is painting
- *   as a magnitude: the bar runs from `min` to `max`.
- * - `symmetric` — a diverging ramp. The gradient is built over −1…+1 and
- *   the map scales values by `max(|min|, |max|)`, so the bar is centred on
- *   zero, and reading it as `min`…`max` would be wrong wherever the two are
- *   not mirror images — which is most runs.
- * - `null` — a banded ramp drawn in a criterion's colours. Those segments
+ * - `linear` — a sequential ramp, a diverging one (whose gradient is
+ *   clipped to the same range its end labels state), and a banded one the
+ *   caller is painting as a plain magnitude. A position is a value.
+ * - `bands` — a banded ramp drawn in a criterion's colours. Those segments
  *   are laid out in equal widths (`hardStopGradient`), not at the
- *   thresholds they stand for, so a position names a band and not a value.
- *   Reporting a number there would be inventing one.
+ *   thresholds they stand for, so a position names one of the regions
+ *   between the cuts rather than a number. Interpolating across it would
+ *   report values the bar does not carry.
  */
 export type RampScale =
   | { kind: "linear"; min: number; max: number }
-  | { kind: "symmetric"; scale: number };
+  | { kind: "bands"; cuts: readonly number[] };
+
+export type RampReading =
+  | { kind: "value"; value: number }
+  /** A region between two cuts; `null` at an open end. */
+  | { kind: "band"; from: number | null; to: number | null };
 
 export function rampScaleOf(
   ramp: { type: string },
   min: number,
   max: number,
-  /** Whether the caller is painting this variable in a criterion's band
-   *  colours right now. */
-  banded: boolean,
+  /** The criterion's cut values, when the caller is painting this variable
+   *  in their colours right now. */
+  cuts: readonly number[] | null,
 ): RampScale | null {
-  if (!Number.isFinite(min) || !Number.isFinite(max)) return null;
   if (ramp.type === "categorical") return null;
-  if (ramp.type === "banded" && banded) return null;
-  if (ramp.type === "diverging") {
-    const scale = Math.max(Math.abs(min), Math.abs(max));
-    return scale > 0 ? { kind: "symmetric", scale } : null;
+  if (ramp.type === "banded" && cuts && cuts.length > 0) {
+    return { kind: "bands", cuts };
   }
+  if (!Number.isFinite(min) || !Number.isFinite(max)) return null;
   return max > min ? { kind: "linear", min, max } : null;
 }
 
-/** The value at fraction `t` (0 at the left edge, 1 at the right). */
-export function rampValueAt(scale: RampScale, t: number): number {
+/** What sits at fraction `t` (0 at the left edge, 1 at the right). */
+export function rampReadingAt(scale: RampScale, t: number): RampReading {
   const clamped = Math.max(0, Math.min(1, t));
-  return scale.kind === "symmetric"
-    ? scale.scale * (2 * clamped - 1)
-    : scale.min + clamped * (scale.max - scale.min);
+  if (scale.kind === "linear") {
+    return {
+      kind: "value",
+      value: scale.min + clamped * (scale.max - scale.min),
+    };
+  }
+  // One more region than there are cuts, in equal widths — the same
+  // layout `hardStopGradient` paints.
+  const regions = scale.cuts.length + 1;
+  const i = Math.min(regions - 1, Math.floor(clamped * regions));
+  return {
+    kind: "band",
+    from: i > 0 ? scale.cuts[i - 1] : null,
+    to: i < regions - 1 ? scale.cuts[i] : null,
+  };
 }
 
 /**
@@ -517,7 +529,7 @@ export function Ramp({
 }) {
   const label = (v: number | string) =>
     typeof v === "number" ? v.toFixed(1) : v;
-  const [reading, setReading] = useState<{ x: number; text: string } | null>(
+  const [reading, setReading] = useState<{ t: number; text: string } | null>(
     null,
   );
 
@@ -529,7 +541,7 @@ export function Ramp({
     const rect = e.currentTarget.getBoundingClientRect();
     const t = rampFractionAt(e.clientX, rect);
     const text = t === null ? null : readAt(t);
-    setReading(text === null ? null : { x: (t ?? 0) * rect.width, text });
+    setReading(text === null ? null : { t: t ?? 0, text });
   };
 
   return (
@@ -542,8 +554,15 @@ export function Ramp({
           style={{
             position: "absolute",
             bottom: "100%",
-            left: reading.x,
-            transform: "translate(-50%, -4px)",
+            // Anchored to one side of the pointer rather than centred on
+            // it. Centred, the chip ran off the left of the canvas at the
+            // start of the bar — and the legend floats near the edge, so
+            // there was nothing to clamp against. It sits to the right
+            // until the pointer passes the middle, then flips.
+            ...(reading.t <= 0.5
+              ? { left: `${reading.t * 100}%` }
+              : { right: `${(1 - reading.t) * 100}%` }),
+            transform: "translateY(-4px)",
             pointerEvents: "none",
             whiteSpace: "nowrap",
             background: "var(--tooltip-bg, #1e1e2a)",

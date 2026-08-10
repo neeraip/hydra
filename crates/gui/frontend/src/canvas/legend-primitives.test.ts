@@ -4,8 +4,8 @@ import {
   LEGEND_POPOVER_STYLE,
   LEGEND_ROOT_STYLE,
   rampFractionAt,
+  rampReadingAt,
   rampScaleOf,
-  rampValueAt,
 } from "./legend-primitives";
 
 /**
@@ -37,9 +37,9 @@ describe("the legend's pointer surface", () => {
 /**
  * Reading a value off the colour bar.
  *
- * The bar is one shape wearing three different scales, and two of them are
- * not the obvious one. Getting it wrong would not look broken — it would
- * quietly report a number, which is worse than reporting none.
+ * The bar is one shape wearing two different meanings, and the second one
+ * would not look broken if it were wrong — it would quietly report a
+ * number, which is worse than reporting none.
  */
 describe("rampScaleOf", () => {
   const seq = { type: "sequential" };
@@ -47,33 +47,37 @@ describe("rampScaleOf", () => {
   const banded = { type: "banded" };
 
   it("runs a sequential bar from min to max", () => {
-    expect(rampScaleOf(seq, 40.41, 104.22, false)).toEqual({
+    expect(rampScaleOf(seq, 40.41, 104.22, null)).toEqual({
       kind: "linear",
       min: 40.41,
       max: 104.22,
     });
   });
 
-  it("centres a diverging bar on zero, not on the run's own range", () => {
-    // The gradient is built over −1…+1 and the map scales by the larger
-    // magnitude, so a run from −2 to +8 draws −8…+8. Reading it as −2…+8
-    // would put zero a third of the way along a bar whose middle is zero.
-    expect(rampScaleOf(div, -2, 8, false)).toEqual({
-      kind: "symmetric",
-      scale: 8,
+  it("reads a diverging bar as its own range too", () => {
+    // Its gradient is clipped to the same range the end labels state, so
+    // the bar carries exactly those values. Drawn whole it did not: a run
+    // of 40…104 was painted over a ramp whose left edge is −104, and the
+    // hover readout said so out loud.
+    expect(rampScaleOf(div, 40.41, 104.22, null)).toEqual({
+      kind: "linear",
+      min: 40.41,
+      max: 104.22,
     });
   });
 
-  it("declines a banded bar drawn in a criterion's colours", () => {
-    // Those segments are equal widths, not the thresholds they stand for,
-    // so a position names a band and not a value.
-    expect(rampScaleOf(banded, 0, 5, true)).toBeNull();
+  it("reads a banded bar as its regions", () => {
+    // Equal-width segments standing for cuts that are not evenly spaced,
+    // so a position names a region and interpolation would invent values.
+    expect(rampScaleOf(banded, 0, 5, [0.6, 3])).toEqual({
+      kind: "bands",
+      cuts: [0.6, 3],
+    });
   });
 
-  it("reads a banded bar as a magnitude when it is painted as one", () => {
-    // No criterion in play: the same variable takes the sequential ramp,
-    // and the position means what it looks like it means.
-    expect(rampScaleOf(banded, 0, 5, false)).toEqual({
+  it("reads a banded bar as a magnitude when painted as one", () => {
+    // No criterion in play: the same variable takes the sequential ramp.
+    expect(rampScaleOf(banded, 0, 5, null)).toEqual({
       kind: "linear",
       min: 0,
       max: 5,
@@ -81,34 +85,53 @@ describe("rampScaleOf", () => {
   });
 
   it("declines the cases with nothing to report", () => {
-    expect(rampScaleOf({ type: "categorical" }, 0, 5, false)).toBeNull();
+    expect(rampScaleOf({ type: "categorical" }, 0, 5, null)).toBeNull();
     // A flat run: every position is the same value, and a readout sliding
     // across an unchanging number reads as a fault.
-    expect(rampScaleOf(seq, 3, 3, false)).toBeNull();
-    expect(rampScaleOf(div, 0, 0, false)).toBeNull();
-    expect(rampScaleOf(seq, Number.NaN, 5, false)).toBeNull();
+    expect(rampScaleOf(seq, 3, 3, null)).toBeNull();
+    expect(rampScaleOf(seq, Number.NaN, 5, null)).toBeNull();
   });
 });
 
-describe("rampValueAt", () => {
+describe("rampReadingAt", () => {
   it("interpolates a linear scale across the bar", () => {
     const scale = { kind: "linear", min: 40, max: 100 } as const;
-    expect(rampValueAt(scale, 0)).toBe(40);
-    expect(rampValueAt(scale, 0.5)).toBe(70);
-    expect(rampValueAt(scale, 1)).toBe(100);
+    expect(rampReadingAt(scale, 0)).toEqual({ kind: "value", value: 40 });
+    expect(rampReadingAt(scale, 0.5)).toEqual({ kind: "value", value: 70 });
+    expect(rampReadingAt(scale, 1)).toEqual({ kind: "value", value: 100 });
   });
 
-  it("puts zero at the middle of a symmetric scale", () => {
-    const scale = { kind: "symmetric", scale: 8 } as const;
-    expect(rampValueAt(scale, 0)).toBe(-8);
-    expect(rampValueAt(scale, 0.5)).toBe(0);
-    expect(rampValueAt(scale, 1)).toBe(8);
+  it("names the region a banded position falls in", () => {
+    // Two cuts, three equal-width regions: the ends are open, because
+    // there is no further cut to bound them.
+    const scale = { kind: "bands", cuts: [0.6, 3] } as const;
+    expect(rampReadingAt(scale, 0.1)).toEqual({
+      kind: "band",
+      from: null,
+      to: 0.6,
+    });
+    expect(rampReadingAt(scale, 0.5)).toEqual({
+      kind: "band",
+      from: 0.6,
+      to: 3,
+    });
+    expect(rampReadingAt(scale, 0.9)).toEqual({
+      kind: "band",
+      from: 3,
+      to: null,
+    });
   });
 
   it("clamps a pointer that ran past either end", () => {
     const scale = { kind: "linear", min: 0, max: 10 } as const;
-    expect(rampValueAt(scale, -0.4)).toBe(0);
-    expect(rampValueAt(scale, 1.7)).toBe(10);
+    expect(rampReadingAt(scale, -0.4)).toEqual({ kind: "value", value: 0 });
+    expect(rampReadingAt(scale, 1.7)).toEqual({ kind: "value", value: 10 });
+    // Including the last band, which the naive floor() would overrun.
+    expect(rampReadingAt({ kind: "bands", cuts: [1] }, 1)).toEqual({
+      kind: "band",
+      from: 1,
+      to: null,
+    });
   });
 });
 

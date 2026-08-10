@@ -41,8 +41,8 @@ import {
   PickerButton,
   Ramp,
   RegionGlyph,
+  rampReadingAt,
   rampScaleOf,
-  rampValueAt,
   ScaleControl,
   type ScaleMode,
   SECTION_LABEL_STYLE,
@@ -78,11 +78,16 @@ function rampGradient(
    * and assuming one palette is how the legend came to advertise an
    * orange scale over a map of reds, greens and blues. */
   bands?: readonly string[] | null,
+  /** The run's own range. A diverging gradient is clipped to it, so the
+   *  bar shows the colours the map actually uses and its end labels are
+   *  true of its edges. */
+  min = -1,
+  max = 1,
 ): string {
   if (ramp.type === "banded" && bands && bands.length > 0) {
     return hardStopGradient(bands);
   }
-  if (ramp.type === "diverging") return divergingGradientCss();
+  if (ramp.type === "diverging") return divergingGradientCss(min, max);
   // A banded variable the caller supplied no colours for is not being
   // judged right now — it is painted as a magnitude, and the legend says
   // so rather than showing bands the map is not using.
@@ -299,6 +304,7 @@ export function GenericLegend({
   multiStep,
   criteriaAnnotation,
   bandColors,
+  bandEdges,
   onLocateExtreme,
   animation,
   detailsOpen,
@@ -332,6 +338,11 @@ export function GenericLegend({
   /** The colours a banded variable is actually painted in, ascending, or
    * null to use the shared banded ramp. */
   bandColors?: (variableId: string) => string[] | null;
+  /** The criterion's cut values for a banded variable, ascending — what
+   * the equal-width segments of its bar stand for. Lets a hover read back
+   * the region it is over; without them a position on a banded bar names
+   * a colour and nothing else. */
+  bandEdges?: (variableId: string) => number[] | null;
   onLocateExtreme?: (cls: GenericClassKey, which: "min" | "max") => void;
   animation?: AnimationControl;
   /** Whether the ramp popover is showing. Owned by the caller so it
@@ -513,17 +524,33 @@ export function GenericLegend({
                           v.ramp,
                           range.min,
                           range.max,
-                          (bandColors?.(v.id)?.length ?? 0) > 0,
+                          bandColors?.(v.id)
+                            ? (bandEdges?.(v.id) ?? null)
+                            : null,
                         );
-                        return scale
-                          ? formatGenericValue(
-                              rampValueAt(scale, t),
-                              v.quantity,
-                              sys,
-                            )
+                        if (!scale) return null;
+                        const show = (n: number) =>
+                          formatGenericValue(n, v.quantity, sys);
+                        const reading = rampReadingAt(scale, t);
+                        if (reading.kind === "value")
+                          return show(reading.value);
+                        // A band names a region, so it reads as one — open
+                        // at the ends, where there is no further cut.
+                        if (reading.from === null && reading.to !== null)
+                          return `< ${show(reading.to)}`;
+                        if (reading.to === null && reading.from !== null)
+                          return `≥ ${show(reading.from)}`;
+                        return reading.from !== null && reading.to !== null
+                          ? `${show(reading.from)} – ${show(reading.to)}`
                           : null;
                       }}
-                      gradient={rampGradient(v.ramp, c.key, bandColors?.(v.id))}
+                      gradient={rampGradient(
+                        v.ramp,
+                        c.key,
+                        bandColors?.(v.id),
+                        range.min,
+                        range.max,
+                      )}
                       min={formatGenericValue(
                         range.min,
                         v.quantity,

@@ -1860,6 +1860,14 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
     [criteriaBands],
   );
 
+  /** The cut values behind those colours, so hovering a band reads back
+   *  the region rather than nothing. */
+  const criteriaBandEdges = useCallback(
+    (variableId: string): number[] | null =>
+      criteriaBands.get(variableId)?.bands.cuts ?? null,
+    [criteriaBands],
+  );
+
   // MapCanvas gets the *stable* position/base arrays plus the flat period
   // result — colours update via the periodResult prop without new arrays, so
   // the old flicker-latch over merged arrays is no longer needed. During the
@@ -2442,6 +2450,9 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
               // variables are painted as plain magnitudes.
               bandColors={
                 scaleMode === "criteria" ? criteriaBandColors : NO_BAND_COLORS
+              }
+              bandEdges={
+                scaleMode === "criteria" ? criteriaBandEdges : NO_BAND_COLORS
               }
               onLocateExtreme={
                 currentPeriodResult ? handleLocateExtreme : undefined

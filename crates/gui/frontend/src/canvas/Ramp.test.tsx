@@ -89,6 +89,36 @@ describe("Ramp readout", () => {
     expect(container.querySelectorAll("div").length).toBeLessThan(5);
   });
 
+  it("anchors beside the pointer, never centred on it", () => {
+    // Centred, the chip ran off the left of the canvas at the start of the
+    // bar — the legend floats near the edge, so there was nothing to clamp
+    // against. It sits to the right of the pointer until the halfway mark,
+    // then flips to the left of it.
+    const { container } = render(
+      <Ramp
+        gradient="linear-gradient(90deg, red, blue)"
+        min="0"
+        max="10"
+        readAt={(t) => `${t}`}
+      />,
+    );
+    const el = bar(container);
+    withWidth(el, 0, 100);
+
+    fireEvent.mouseMove(el, { clientX: 10 });
+    const nearLeft = screen.getByText("0.1").style;
+    expect(nearLeft.left).toBe("10%");
+    expect(nearLeft.right).toBe("");
+    expect(nearLeft.transform).not.toContain("-50%");
+
+    fireEvent.mouseMove(el, { clientX: 90 });
+    const nearRight = screen.getByText("0.9").style;
+    // Floating point: the anchor is 1 − 0.9, so assert the side rather
+    // than the exact percentage.
+    expect(Number.parseFloat(nearRight.right)).toBeCloseTo(10);
+    expect(nearRight.left).toBe("");
+  });
+
   it("clears when the pointer leaves", () => {
     const { container } = render(
       <Ramp

@@ -653,16 +653,29 @@ export function sequentialGradientCss(cls = "point"): string {
 }
 
 /** The diverging ramp as a CSS gradient, negative → zero → positive. */
-export function divergingGradientCss(): string {
+export function divergingGradientCss(min = -1, max = 1): string {
+  // Clipped to the run's own range rather than drawn whole.
+  //
+  // The map scales a diverging value by the larger magnitude either side
+  // of zero, so a run of 40…104 is painted from the middle of the ramp to
+  // its warm end and never touches the cool half at all. Drawing the whole
+  // ramp advertised colours no element wears, and — since the bar is
+  // labelled with the run's own min and max — claimed 40 sat at an edge
+  // whose value is −104. The hover readout is what made that visible: it
+  // reported the number the gradient really carried there.
+  const scale = Math.max(Math.abs(min), Math.abs(max));
+  const from = scale > 0 ? min / scale : -1;
+  const to = scale > 0 ? max / scale : 1;
+  const span = to - from;
   const stops = Array.from({ length: 9 }, (_, i) => {
-    const t = i / 8;
-    const value = -1 + 2 * t;
+    const along = i / 8;
+    const value = from + span * along;
     const c = genericRgba(value, {
       min: -1,
       max: 1,
       ramp: { type: "diverging" },
     });
-    return `${css([c[0], c[1], c[2]])} ${Math.round(t * 100)}%`;
+    return `${css([c[0], c[1], c[2]])} ${Math.round(along * 100)}%`;
   });
   return `linear-gradient(to right, ${stops.join(", ")})`;
 }
