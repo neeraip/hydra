@@ -64,14 +64,24 @@ export interface CanvasPrefs {
    * theme, which is what it did before it could be chosen. */
   canvasBackground: CanvasBackground;
   /**
-   * What the colour ramps are scaled against: the whole run, the current
-   * step, or the project's criteria bands.
+   * The range the colour ramps span: the whole run, or the current step.
    *
-   * Supersedes the old `colorMode`, whose "relative"/"threshold" pair asked
-   * the same question with two of the three answers. Prefs written before
-   * the merge are migrated on read.
+   * Was three-valued, with `criteria` as a third answer. That merged two
+   * questions — see `criteriaScale` — so a saved `criteria` migrates to
+   * `run` plus the toggle. Prefs written before *that* merge, when this
+   * was `colorMode` and `rangeMode`, are migrated on read as well.
    */
   scaleMode: ScaleMode;
+  /**
+   * Whether variables with criteria are coloured by their verdict.
+   *
+   * Independent of the range above, which is the point: with depth on
+   * nodes and velocity on links, "rescale to this step" and "judge
+   * velocity" are both wanted at once, and one three-valued control could
+   * not say so. A variable with no criteria simply keeps its magnitude
+   * colouring on whichever range is chosen.
+   */
+  criteriaScale: boolean;
   /** Whether the legend's ramp popover is showing. Persisted because it is
    * a working mode — "keep the full legend up while I read the map" —
    * rather than a menu the user reopens each time. */
@@ -109,6 +119,7 @@ export const CANVAS_PREF_DEFAULTS: CanvasPrefs = {
   nodeScale: NODE_SCALE_DEFAULT,
   canvasBackground: DEFAULT_CANVAS_BACKGROUND,
   scaleMode: "run",
+  criteriaScale: false,
   legendOpen: false,
   genericSelection: { point: "", polyline: "", region: "" },
 };
@@ -131,11 +142,11 @@ const PREF_VIEW_MODES: readonly ViewMode[] = ["map", "schematic"];
  * that colours no longer compare between steps: a bright node now and a
  * bright node later are each the highest of their own moment, not equal.
  *
- * `criteria` — the project's threshold bands, ignoring the data range
- * entirely. Colours then answer "is this acceptable?" rather than "how
- * much?", and stay fixed while the model changes around them.
+ * Judging against the project's threshold bands is not a range at all —
+ * it answers "is this acceptable?" rather than "how much?" — so it lives
+ * in `criteriaScale` and combines with either of these.
  */
-const PREF_SCALE_MODES: readonly ScaleMode[] = ["run", "step", "criteria"];
+const PREF_SCALE_MODES: readonly ScaleMode[] = ["run", "step"];
 
 /**
  * Read a persisted per-class variable selection, tolerating anything.
@@ -162,12 +173,15 @@ export function readGenericSelection(raw: unknown): GenericSelection {
 }
 
 /**
- * Read a persisted scale mode, migrating prefs written before the merge.
+ * Read a persisted range, migrating both earlier shapes.
  *
- * `colorMode` asked "relative or threshold?" and `rangeMode` asked "whole
- * run or this step?" — the same question with two of the three answers, so
- * a saved "threshold" becomes `criteria` and a saved "relative" defers to
- * whatever range mode was stored alongside it.
+ * Two migrations sit on top of each other. The oldest prefs held
+ * `colorMode` (relative | threshold) beside `rangeMode` (run | step);
+ * those became one three-valued `scaleMode`, and that has now split again
+ * into a range plus `criteriaScale`. A stored `criteria` therefore has no
+ * range of its own to recover — it was the answer to the other question —
+ * and resolves to `run`, which is what it always behaved as (nothing but
+ * `step` ever rescaled).
  */
 export function readScaleMode(raw: unknown): ScaleMode {
   if (typeof raw !== "object" || raw === null) return "run";
@@ -175,10 +189,33 @@ export function readScaleMode(raw: unknown): ScaleMode {
   if (typeof p.scaleMode === "string") {
     const v = p.scaleMode as ScaleMode;
     if (PREF_SCALE_MODES.includes(v)) return v;
+    // A saved `criteria` falls through to the range it was drawn on.
   }
-  if (p.colorMode === "threshold") return "criteria";
+  // A saved `criteria` was the answer to the *other* question and carries
+  // no range of its own; nothing but `step` ever rescaled, so it behaved
+  // as `run` and still does.
+  if (p.scaleMode === "criteria") return "run";
+  // `colorMode` is deliberately not consulted here. In the oldest shape it
+  // sat *beside* `rangeMode`, so "threshold" and "step" were both saved
+  // and both meant — a combination the merge discarded and the split can
+  // honour again.
   if (p.rangeMode === "step") return "step";
   return "run";
+}
+
+/**
+ * Read whether criteria colouring is on, from any of the three shapes.
+ *
+ * Both older shapes carried the same intent under other names — a
+ * three-valued `scaleMode` of `criteria`, and before that a `colorMode` of
+ * `threshold` — so a reader who had turned it on keeps it on rather than
+ * finding their canvas quietly back on magnitudes.
+ */
+export function readCriteriaScale(raw: unknown): boolean {
+  if (typeof raw !== "object" || raw === null) return false;
+  const p = raw as Record<string, unknown>;
+  if (typeof p.criteriaScale === "boolean") return p.criteriaScale;
+  return p.scaleMode === "criteria" || p.colorMode === "threshold";
 }
 
 const PREF_NODE_VARS: readonly NodeVariable[] = NODE_VARIABLES;
@@ -241,6 +278,7 @@ export function resolveCanvasPrefs(
     canvasBackground: readCanvasBackground(stored?.canvasBackground),
     // Reads the merged key, falling back to the pre-merge pair.
     scaleMode: readScaleMode(stored),
+    criteriaScale: readCriteriaScale(stored),
     legendOpen: pick("legendOpen", (v) => typeof v === "boolean"),
     nodeVar,
     linkVar,

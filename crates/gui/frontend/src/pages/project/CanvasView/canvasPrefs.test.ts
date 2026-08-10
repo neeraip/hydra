@@ -132,25 +132,46 @@ describe("a variable selection", () => {
   });
 });
 
-describe("the scale mode", () => {
-  /** Prefs written before the two keys merged into one. */
-  it("migrates the pre-merge pair", () => {
-    expect(
-      resolveCanvasPrefs({ colorMode: "threshold" } as unknown as CanvasPrefs)
-        .scaleMode,
-    ).toBe("criteria");
-    expect(
-      resolveCanvasPrefs({ rangeMode: "step" } as unknown as CanvasPrefs)
-        .scaleMode,
-    ).toBe("step");
+describe("the scale mode and the criteria toggle", () => {
+  /** Prefs written before the two keys merged, read as two again. */
+  it("migrates the pre-merge pair, keeping both answers", () => {
+    const judging = resolveCanvasPrefs({
+      colorMode: "threshold",
+    } as unknown as CanvasPrefs);
+    expect(judging.criteriaScale).toBe(true);
+    expect(judging.scaleMode).toBe("run");
+
+    const stepped = resolveCanvasPrefs({
+      rangeMode: "step",
+    } as unknown as CanvasPrefs);
+    expect(stepped.scaleMode).toBe("step");
+    expect(stepped.criteriaScale).toBe(false);
+
+    // The combination the merge could not hold: both were saved, and the
+    // one slot it had went to criteria.
+    const both = resolveCanvasPrefs({
+      colorMode: "threshold",
+      rangeMode: "step",
+    } as unknown as CanvasPrefs);
+    expect(both.scaleMode).toBe("step");
+    expect(both.criteriaScale).toBe(true);
   });
 
-  it("prefers the merged key when both are present", () => {
-    expect(
-      resolveCanvasPrefs({
-        scaleMode: "run",
-        colorMode: "threshold",
-      } as unknown as CanvasPrefs).scaleMode,
-    ).toBe("run");
+  it("carries a merged criteria mode across the split", () => {
+    const resolved = resolveCanvasPrefs({
+      scaleMode: "criteria",
+    } as unknown as CanvasPrefs);
+    expect(resolved.criteriaScale).toBe(true);
+    expect(resolved.scaleMode).toBe("run");
+  });
+
+  it("prefers the current keys over the shapes they replaced", () => {
+    const resolved = resolveCanvasPrefs({
+      scaleMode: "run",
+      criteriaScale: false,
+      colorMode: "threshold",
+    } as unknown as CanvasPrefs);
+    expect(resolved.scaleMode).toBe("run");
+    expect(resolved.criteriaScale).toBe(false);
   });
 });

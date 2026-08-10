@@ -284,14 +284,23 @@ export function PickerButton<T extends string>({
 }
 
 /**
- * What a ramp is scaled against.
+ * What range a ramp spans.
  *
- * These are three answers to one question, not two independent settings,
- * which is why they share a control: `criteria` pins the scale to the
- * project's threshold bands and ignores the data range entirely, so it
- * cannot meaningfully combine with either data-derived range.
+ * Two answers to one question. Judging against criteria used to be a third
+ * — the reasoning being that thresholds ignore the data range, so they
+ * cannot combine with either answer to it. True of the *judged* variable
+ * and false of the map: a legend shows several classes at once, and with
+ * depth on nodes and velocity on links, "rescale to this step" and "judge
+ * velocity" are both wanted at once and were not expressible. Criteria is
+ * a separate toggle now, and this asks only about the range.
+ *
+ * The prefs history reads the same way from the other side: `colorMode`
+ * (relative | threshold) and `rangeMode` (run | step) were once two keys,
+ * merged into one three-valued mode. The merge was right that the two
+ * controls overlapped and wrong that they were one question — it dropped
+ * the threshold-and-step combination on the way through.
  */
-export type ScaleMode = "run" | "step" | "criteria";
+export type ScaleMode = "run" | "step";
 
 export interface ScaleOption {
   mode: ScaleMode;
@@ -313,12 +322,13 @@ export const DATA_SCALE_OPTIONS: readonly ScaleOption[] = [
   },
 ];
 
-/** Offered only for variables the project has criteria bands for. */
-export const CRITERIA_SCALE_OPTION: ScaleOption = {
-  mode: "criteria",
+/** The criteria toggle's own words. Not a `ScaleOption`: it answers a
+ *  different question and sits beside the range control rather than in
+ *  it. */
+export const CRITERIA_TOGGLE = {
   label: "Criteria",
-  tip: "Pin the scale to the project's threshold bands",
-};
+  tip: "Colour by the project's threshold bands, where a variable has them",
+} as const;
 
 /**
  * Segmented control selecting what the ramps above it are scaled against.
@@ -332,10 +342,15 @@ export function ScaleControl({
   value,
   options,
   onChange,
+  criteria,
 }: {
   value: ScaleMode;
   options: readonly ScaleOption[];
   onChange: (mode: ScaleMode) => void;
+  /** The criteria toggle, when this model has anything to judge. Beside
+   *  the range rather than inside it: the two are different questions and
+   *  a reader may want both answers at once. */
+  criteria?: { on: boolean; onChange: (on: boolean) => void };
 }) {
   return (
     <div
@@ -385,6 +400,31 @@ export function ScaleControl({
           </button>
         ))}
       </div>
+      {criteria && (
+        <button
+          type="button"
+          onClick={() => criteria.onChange(!criteria.on)}
+          data-tooltip={CRITERIA_TOGGLE.tip}
+          aria-pressed={criteria.on}
+          style={{
+            padding: "3px 8px",
+            borderRadius: 5,
+            border: "1px solid",
+            borderColor: criteria.on
+              ? "var(--selection-border)"
+              : "var(--border)",
+            background: criteria.on ? "var(--accent-dim)" : "transparent",
+            color: criteria.on ? "var(--accent)" : "var(--text-tertiary)",
+            fontSize: "var(--text-xs)",
+            fontFamily: "var(--font-ui)",
+            whiteSpace: "nowrap",
+            cursor: "pointer",
+            flexShrink: 0,
+          }}
+        >
+          {CRITERIA_TOGGLE.label}
+        </button>
+      )}
     </div>
   );
 }

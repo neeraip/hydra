@@ -17,7 +17,7 @@ import {
   GenericLegend,
   motionExplanation,
 } from "./GenericLegend";
-import { CRITERIA_SCALE_OPTION, DATA_SCALE_OPTIONS } from "./legend-primitives";
+import { CRITERIA_TOGGLE, DATA_SCALE_OPTIONS } from "./legend-primitives";
 
 const v = (over: Partial<GenericVariable>): GenericVariable => ({
   id: "depth",
@@ -40,6 +40,7 @@ function renderLegend(
   props: Partial<Parameters<typeof GenericLegend>[0]> = {},
 ) {
   const onScaleModeChange = vi.fn();
+  const onCriteriaScaleChange = vi.fn();
   const onDetailsOpenChange = vi.fn();
   const utils = render(
     <GenericLegend
@@ -49,12 +50,18 @@ function renderLegend(
       onSelect={vi.fn()}
       scaleMode="run"
       onScaleModeChange={onScaleModeChange}
+      onCriteriaScaleChange={onCriteriaScaleChange}
       detailsOpen
       onDetailsOpenChange={onDetailsOpenChange}
       {...props}
     />,
   );
-  return { ...utils, onScaleModeChange, onDetailsOpenChange };
+  return {
+    ...utils,
+    onScaleModeChange,
+    onCriteriaScaleChange,
+    onDetailsOpenChange,
+  };
 }
 
 describe("GenericLegend", () => {
@@ -95,7 +102,7 @@ describe("GenericLegend", () => {
   // domain, because both engines publish a variable called `flow`.
   it("offers no Criteria scale to an engine with no bands", () => {
     renderLegend({ criteriaVariables: [] });
-    expect(screen.queryByText(CRITERIA_SCALE_OPTION.label)).toBeNull();
+    expect(screen.queryByText(CRITERIA_TOGGLE.label)).toBeNull();
     // Read from the options themselves rather than spelled out: these
     // labels are wording, and a test that hardcodes them fails on a
     // rename that broke nothing.
@@ -104,12 +111,24 @@ describe("GenericLegend", () => {
     }
   });
 
-  it("offers Criteria when the selected variable has bands", () => {
+  it("offers Criteria when the model has bands anywhere", () => {
     renderLegend({
       criteriaVariables: ["flow"],
       selection: { point: "", polyline: "flow", region: "" },
     });
-    expect(screen.getByText(CRITERIA_SCALE_OPTION.label)).toBeDefined();
+    expect(screen.getByText(CRITERIA_TOGGLE.label)).toBeDefined();
+  });
+
+  it("keeps offering it while a variable without bands is selected", () => {
+    // The state mismatch this replaced: the option was withdrawn as the
+    // reader changed variable, so the control fell back to a range while
+    // the stored preference stayed on criteria — displaying one thing,
+    // remembering another, and jumping back unasked.
+    renderLegend({
+      criteriaVariables: ["flow"],
+      selection: { point: "", polyline: "depth", region: "" },
+    });
+    expect(screen.getByText(CRITERIA_TOGGLE.label)).toBeDefined();
   });
 
   it("annotates only variables the engine has bands for", () => {

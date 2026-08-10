@@ -6,24 +6,26 @@ import {
 } from "./scaleOptions";
 
 /**
- * Which scales the legend offers.
+ * Which ranges the legend offers.
  *
- * The legend already declines to offer criteria bands to a variable with
- * none, so the control never presents a scale that would do nothing. A
- * steady-state run is the same case one step further: with a single
- * reporting step, "this step" and "the whole run" are one scale.
+ * With a single reporting step, "this step" and "the whole run" are one
+ * scale, and a choice between two identical outcomes is not a choice.
+ *
+ * Criteria used to be a third option here. It answers a different question
+ * — magnitude or verdict, rather than which range — and rides its own
+ * toggle now, so it neither appears nor disappears with these.
  */
 
 const modes = (o: ReturnType<typeof scaleOptions>) => o.map((x) => x.mode);
 
-describe("the scales on offer", () => {
-  it("offers both data scales over a run with several steps", () => {
-    expect(modes(scaleOptions(false, true))).toEqual(["run", "step"]);
+describe("the ranges on offer", () => {
+  it("offers both over a run with several steps", () => {
+    expect(modes(scaleOptions(true))).toEqual(["run", "step"]);
   });
 
   /** The reported case. */
-  it("offers one data scale for a single step", () => {
-    expect(modes(scaleOptions(false, false))).toEqual(["run"]);
+  it("offers one for a single step", () => {
+    expect(modes(scaleOptions(false))).toEqual(["run"]);
   });
 
   /**
@@ -31,34 +33,34 @@ describe("the scales on offer", () => {
    * it describes both truthfully, because the whole run is that step.
    */
   it("keeps the option whose label is still true", () => {
-    expect(modes(scaleOptions(true, false))).toEqual(["run", "criteria"]);
+    expect(modes(scaleOptions(false))).toEqual(["run"]);
   });
 
-  it("still offers criteria alongside both data scales", () => {
-    expect(modes(scaleOptions(true, true))).toEqual([
-      "run",
-      "step",
-      "criteria",
-    ]);
+  it("never offers criteria among them", () => {
+    // Judging is not a range. Offered here it came and went with the
+    // selected variable, so the control displayed one scale while the
+    // preference remembered another.
+    expect(modes(scaleOptions(true))).not.toContain("criteria");
+    expect(modes(scaleOptions(false))).not.toContain("criteria");
   });
 });
 
-describe("whether to draw the control", () => {
+describe("whether to draw the range control", () => {
   /** One segment offers nothing and cannot be turned off, which reads as a
-   *  broken toggle rather than an absent choice. */
+   *  broken toggle rather than an absent choice. The legend draws the row
+   *  anyway when there is a criteria toggle to put beside it. */
   it("hides a control with a single option", () => {
-    expect(scaleControlShown(scaleOptions(false, false))).toBe(false);
+    expect(scaleControlShown(scaleOptions(false))).toBe(false);
   });
 
   it("shows it whenever there is a choice", () => {
-    expect(scaleControlShown(scaleOptions(true, false))).toBe(true);
-    expect(scaleControlShown(scaleOptions(false, true))).toBe(true);
+    expect(scaleControlShown(scaleOptions(true))).toBe(true);
   });
 });
 
 describe("the scale in force", () => {
   it("keeps a stored preference that is still offered", () => {
-    expect(effectiveScaleMode("step", scaleOptions(false, true))).toBe("step");
+    expect(effectiveScaleMode("step", scaleOptions(true))).toBe("step");
   });
 
   /**
@@ -68,10 +70,7 @@ describe("the scale in force", () => {
    * behaves identically instead of leaving nothing selected.
    */
   it("falls back when the stored preference is no longer offered", () => {
-    expect(effectiveScaleMode("step", scaleOptions(false, false))).toBe("run");
-    expect(effectiveScaleMode("criteria", scaleOptions(false, true))).toBe(
-      "run",
-    );
+    expect(effectiveScaleMode("step", scaleOptions(false))).toBe("run");
   });
 });
 

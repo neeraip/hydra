@@ -494,6 +494,11 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
   const [scaleMode, setScaleMode] = useState<ScaleMode>(
     CANVAS_PREF_DEFAULTS.scaleMode,
   );
+  /** Judging against criteria: a separate question from the range above,
+   *  and answerable at the same time — see `ScaleMode`. */
+  const [criteriaScale, setCriteriaScale] = useState(
+    CANVAS_PREF_DEFAULTS.criteriaScale,
+  );
   const [legendOpen, setLegendOpen] = useState(CANVAS_PREF_DEFAULTS.legendOpen);
   const [genericSelection, setGenericSelection] = useState<GenericSelection>(
     CANVAS_PREF_DEFAULTS.genericSelection,
@@ -618,6 +623,7 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
     setBasemap(prefs.basemap);
     setBasemapOpacity(prefs.basemapOpacity);
     setScaleMode(prefs.scaleMode);
+    setCriteriaScale(prefs.criteriaScale);
     setLegendOpen(prefs.legendOpen);
     setGenericSelection(prefs.genericSelection);
     setSchematicAspect(prefs.schematicAspect);
@@ -645,6 +651,7 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
       nodeScale,
       canvasBackground,
       scaleMode,
+      criteriaScale,
       legendOpen,
       genericSelection,
     };
@@ -661,6 +668,7 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
     nodeScale,
     canvasBackground,
     scaleMode,
+    criteriaScale,
     legendOpen,
     genericSelection,
   ]);
@@ -938,10 +946,9 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
       // Criteria is a scale like the other two, so it is chosen here
       // rather than by the map: the bands travel with the channel, and a
       // variable with none simply keeps its ramp.
-      const bands =
-        scaleMode === "criteria"
-          ? (criteriaBands.get(v.id)?.bands ?? null)
-          : null;
+      const bands = criteriaScale
+        ? (criteriaBands.get(v.id)?.bands ?? null)
+        : null;
       return { variable, values, bands };
     };
     return {
@@ -967,6 +974,7 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
     fetchedGenericValues,
     genericSelection,
     scaleMode,
+    criteriaScale,
     criteriaBands,
   ]);
 
@@ -2396,7 +2404,7 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
                 pressureMin={wdsRanges.pressure.min}
                 pressureMax={wdsRanges.pressure.max}
                 velocityMax={wdsRanges.velocity.max}
-                colorMode={scaleMode === "criteria" ? "threshold" : "relative"}
+                colorMode={criteriaScale ? "threshold" : "relative"}
                 pressureThresholds={thresholds.pressure}
                 velocityThresholds={thresholds.velocity}
                 tool={activeTool}
@@ -2431,6 +2439,8 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
               scaleMode={scaleMode}
               multiStep={!isSteadyState}
               onScaleModeChange={setScaleMode}
+              criteriaScale={criteriaScale}
+              onCriteriaScaleChange={setCriteriaScale}
               effectiveRanges={{
                 // The catalog path carries its own rescaled variable; wds
                 // scales through the props above, so its numbers come from
@@ -2448,12 +2458,8 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
               // The verdict's colours describe the map only while the map
               // is showing the verdict; in the data-range modes these
               // variables are painted as plain magnitudes.
-              bandColors={
-                scaleMode === "criteria" ? criteriaBandColors : NO_BAND_COLORS
-              }
-              bandEdges={
-                scaleMode === "criteria" ? criteriaBandEdges : NO_BAND_COLORS
-              }
+              bandColors={criteriaScale ? criteriaBandColors : NO_BAND_COLORS}
+              bandEdges={criteriaScale ? criteriaBandEdges : NO_BAND_COLORS}
               onLocateExtreme={
                 currentPeriodResult ? handleLocateExtreme : undefined
               }

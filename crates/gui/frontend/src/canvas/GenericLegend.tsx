@@ -322,6 +322,8 @@ export function GenericLegend({
   onSelect,
   scaleMode,
   onScaleModeChange,
+  criteriaScale = false,
+  onCriteriaScaleChange,
   effectiveRanges,
   criteriaVariables,
   multiStep,
@@ -342,6 +344,10 @@ export function GenericLegend({
   /** What the ramps are scaled against. */
   scaleMode: ScaleMode;
   onScaleModeChange: (mode: ScaleMode) => void;
+  /** Whether variables with criteria are coloured by their verdict.
+   *  Independent of the range above — see `ScaleMode`. */
+  criteriaScale?: boolean;
+  onCriteriaScaleChange?: (on: boolean) => void;
   /** The range each class's ramp actually spans. The popover shows these
    * rather than the catalog's declared ones, so the numbers always say what
    * the colours currently mean. */
@@ -445,7 +451,7 @@ export function GenericLegend({
   // Same rule one step further: a steady-state run has one reporting step,
   // so scaling to *this* step and across the *whole run* are one scale, and
   // offering both is offering a choice with one outcome.
-  const options = scaleOptions(anyCriteria, multiStep !== false);
+  const options = scaleOptions(multiStep !== false);
   const activeScale = effectiveScaleMode(scaleMode, options);
 
   // Animation is a property of the moving quantity, not of a class slot:
@@ -603,11 +609,19 @@ export function GenericLegend({
             );
           })}
 
-          {scaleControlShown(options) && (
+          {/* Drawn when there is any choice to make: two ranges, or one
+              range and something to judge. A single range with no criteria
+              is not a control, it is a label. */}
+          {(scaleControlShown(options) || anyCriteria) && (
             <ScaleControl
               value={activeScale}
               options={options}
               onChange={onScaleModeChange}
+              criteria={
+                anyCriteria && onCriteriaScaleChange
+                  ? { on: criteriaScale, onChange: onCriteriaScaleChange }
+                  : undefined
+              }
             />
           )}
 

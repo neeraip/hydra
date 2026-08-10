@@ -1,32 +1,29 @@
 /**
- * Which scales the legend offers, and which one is in force.
+ * Which ranges the legend offers, and which one is in force.
  *
- * The legend already declines to offer criteria bands to a variable that
- * has none, "so the control never presents a scale that would do nothing".
- * A steady-state run is the same case: with one reporting step, rescaling
- * to *this* step and scaling across the *whole run* are the same scale, and
- * a choice between two identical outcomes is not a choice.
+ * With one reporting step, rescaling to *this* step and scaling across the
+ * *whole run* are the same scale, and a choice between two identical
+ * outcomes is not a choice.
+ *
+ * Judging against criteria is no longer among these: it answers a
+ * different question and rides its own toggle, so it neither appears nor
+ * disappears with the range options.
  */
 
 import type { ScaleMode, ScaleOption } from "./legend-primitives";
-import { CRITERIA_SCALE_OPTION, DATA_SCALE_OPTIONS } from "./legend-primitives";
+import { DATA_SCALE_OPTIONS } from "./legend-primitives";
 
 /**
- * The options worth showing.
+ * The ranges worth showing.
  *
- * @param hasCriteria whether any selected variable has threshold bands.
- * @param multiStep   whether the run has more than one reporting step.
+ * @param multiStep whether the run has more than one reporting step.
  */
-export function scaleOptions(
-  hasCriteria: boolean,
-  multiStep: boolean,
-): readonly ScaleOption[] {
+export function scaleOptions(multiStep: boolean): readonly ScaleOption[] {
   // "Whole run" survives rather than "This step": on a single step it is
   // the truthful description of both, since the whole run *is* that step.
-  const data = multiStep
+  return multiStep
     ? DATA_SCALE_OPTIONS
     : DATA_SCALE_OPTIONS.filter((o) => o.mode === "run");
-  return hasCriteria ? [...data, CRITERIA_SCALE_OPTION] : data;
 }
 
 /**
