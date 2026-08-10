@@ -431,21 +431,30 @@ export function CategorySwatches({
 }
 
 /** Gradient bar with min/max labels. Numbers are formatted `toFixed(1)`;
- * pass strings when a variable needs its own precision. */
+ * pass strings when a variable needs its own precision.
+ *
+ * `animating` sends a slow sheen along the bar while the canvas is
+ * animating this variable. It travels *over* the gradient rather than
+ * moving the gradient itself: the colours are the data, and sliding them
+ * would have the legend show values the map does not hold.
+ */
 export function Ramp({
   gradient,
   min,
   max,
+  animating = false,
 }: {
   gradient: string;
   min: number | string;
   max: number | string;
+  animating?: boolean;
 }) {
   const label = (v: number | string) =>
     typeof v === "number" ? v.toFixed(1) : v;
   return (
     <div>
       <div
+        className={`legend-ramp${animating ? " legend-ramp--animating" : ""}`}
         style={{
           height: 10,
           borderRadius: 5,

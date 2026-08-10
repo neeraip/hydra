@@ -221,6 +221,12 @@
   transition-duration: 1ms !important;
   /* biome-ignore lint/complexity/noImportantStyles: must beat inline animation styles. */
   transition-delay: 0ms !important;
+  /* Without this an *infinite* animation does not stop, it strobes: a 1ms
+     duration repeating forever is worse than the motion it was meant to
+     remove. The OS-level block above has always capped the count; this one
+     had not, and the app's own Reduce motion setting goes through here. */
+  /* biome-ignore lint/complexity/noImportantStyles: must beat inline animation styles. */
+  animation-iteration-count: 1 !important;
 }
 
 /* ── Accessibility: high contrast ───────────────────────────────────────────── */
@@ -829,6 +835,53 @@ ol {
   .legend-anim-pulse {
     animation: none;
   }
+}
+
+/* ── Legend ramp: motion ──────────────────────────────────────────────────────
+   A sheen travelling along the bar while the canvas animates this variable.
+
+   Over the gradient, never moving it: the colours are the data, and sliding
+   them would have the legend show values the map does not hold. White at low
+   alpha reads on both themes because the ramp's colours are the engine's
+   rather than the theme's.
+
+   Slower than the canvas pulse on purpose. This is a statement that motion
+   is on, not a second reading of the rate — matching speeds would invite
+   the bar to be read as a measurement. */
+@keyframes legend-ramp-sheen {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(100%);
+  }
+}
+.legend-ramp {
+  position: relative;
+  overflow: hidden;
+}
+.legend-ramp--animating::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(255, 255, 255, 0.3) 50%,
+    transparent 100%
+  );
+  animation: legend-ramp-sheen 2.4s linear infinite;
+}
+/* Belt and braces: `classIsAnimating` already answers false when Reduce
+   motion is on, so the class is never applied — but a CSS animation should
+   answer the cascade's own setting too. */
+@media (prefers-reduced-motion: reduce) {
+  .legend-ramp--animating::after {
+    animation: none;
+  }
+}
+:root[data-reduced-motion="true"] .legend-ramp--animating::after {
+  animation: none;
 }
 
 /* ── Analysis block grid ──────────────────────────────────────────────────────*/

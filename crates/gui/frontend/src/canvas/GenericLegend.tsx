@@ -51,6 +51,7 @@ import {
   categoryRgba,
   divergingGradientCss,
   hardStopGradient,
+  NO_RESULT_RGBA,
   sequentialGradientCss,
 } from "./MapCanvas/colorUtils";
 import {
@@ -499,6 +500,7 @@ export function GenericLegend({
                 ) : (
                   <>
                     <Ramp
+                      animating={classIsAnimating(animation, v.id)}
                       gradient={rampGradient(v.ramp, c.key, bandColors?.(v.id))}
                       min={formatGenericValue(
                         range.min,
@@ -541,36 +543,75 @@ export function GenericLegend({
             />
           )}
 
-          {/* Why some selections move and others do not — kept where a
-              reader already is, but folded into a mark they can ask.
-              Spelled out it was three lines of standing explanation under
-              a panel whose job is the colours, and it was read once. */}
-          {motionHint && (
-            <div style={{ display: "flex", justifyContent: "flex-end" }}>
-              {/* The sentence is rendered, not merely attached: a tooltip
-                  is pointer-only here, so a screen reader would otherwise
-                  get an icon and nothing to read. */}
-              <span className="sr-only">{motionHint}</span>
+          {/* The foot of the panel: what the grey means, and — behind the
+              mark — why some selections move. The motion note was three
+              lines of standing explanation here, read once and in the way
+              ever after.
+
+              The key the map most often raises and the legend never
+              answered: an element the results do not report for this
+              variable — a pump with no velocity, an element absent from a
+              period — is drawn in this grey. Read as a colour on the ramp
+              it means nothing; named, it is the answer to "why is that one
+              plain". Left of the mark, because it is a legend entry rather
+              than an aside. */}
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              gap: 8,
+            }}
+          >
+            <span
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 5,
+                fontSize: "var(--text-xs)",
+                color: "var(--text-tertiary)",
+              }}
+            >
+              {/* The map's own constant, so the swatch cannot drift from
+                  the colour it stands for. */}
               <span
-                className="tool-btn"
-                data-tooltip={motionHint}
-                data-tooltip-pos="top"
-                aria-hidden="true"
                 style={{
-                  width: 18,
-                  height: 18,
-                  borderRadius: 5,
-                  color: "var(--text-tertiary)",
-                  display: "inline-flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  cursor: "help",
+                  width: 10,
+                  height: 10,
+                  borderRadius: 3,
+                  flexShrink: 0,
+                  background: `rgb(${NO_RESULT_RGBA[0]}, ${NO_RESULT_RGBA[1]}, ${NO_RESULT_RGBA[2]})`,
                 }}
-              >
-                <InformationCircleIcon style={{ width: 12, height: 12 }} />
-              </span>
-            </div>
-          )}
+              />
+              Not reported
+            </span>
+            {motionHint && (
+              <>
+                {/* The sentence is rendered, not merely attached: a
+                    tooltip is pointer-only here, so a screen reader would
+                    otherwise get an icon and nothing to read. */}
+                <span className="sr-only">{motionHint}</span>
+                <span
+                  className="tool-btn"
+                  data-tooltip={motionHint}
+                  data-tooltip-pos="top"
+                  aria-hidden="true"
+                  style={{
+                    width: 18,
+                    height: 18,
+                    borderRadius: 5,
+                    color: "var(--text-tertiary)",
+                    display: "inline-flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    cursor: "help",
+                  }}
+                >
+                  <InformationCircleIcon style={{ width: 12, height: 12 }} />
+                </span>
+              </>
+            )}
+          </div>
         </div>
       )}
 
