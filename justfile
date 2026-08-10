@@ -148,6 +148,18 @@ lint: fmt-check clippy check-wasm typecheck-frontend lint-frontend
 deny:
     cargo deny check
 
+# The notices the app shows under Settings → About, generated from the GUI's
+# own dependency graph. Run after any dependency change, Rust or frontend,
+# and commit the result — `just ci` fails on a stale file, because notices
+# that no longer describe the binary are not notices.
+# Regenerate the bundled third-party licence notices
+licenses:
+    python3 scripts/licenses.py
+
+# Fail when the committed third-party notices no longer match the dependencies
+licenses-check:
+    python3 scripts/licenses.py --check
+
 # Audit Rust dependencies for known vulnerabilities
 audit:
     cargo audit
@@ -305,7 +317,7 @@ check-frontend-lockfile:
 # `test` already covers every workspace crate with CI's exact flags, so the
 # per-crate test recipes are not repeated here.
 # Run all checks that CI runs (mirrors cargo-ci + pnpm-ci + scripts-ci)
-ci: deny check-frontend-lockfile lint docs-api test test-wasm check-crs-catalog build-frontend test-frontend test-layout test-scripts
+ci: deny check-frontend-lockfile lint docs-api test test-wasm check-crs-catalog licenses-check build-frontend test-frontend test-layout test-scripts
 
 # ── Release ───────────────────────────────────────────────────────────────────
 
