@@ -13,6 +13,7 @@ import {
   type AnimationControl,
   classIsAnimating,
   classIsHidden,
+  criteriaScaleOffered,
   GenericLegend,
   motionExplanation,
 } from "./GenericLegend";
@@ -443,5 +444,45 @@ describe("motionExplanation", () => {
 
   it("says nothing where nothing moves", () => {
     expect(motionExplanation(drainage, [])).toBe("");
+  });
+});
+
+/**
+ * Whether the criteria scale is on offer.
+ *
+ * The bug it fixes is a state mismatch rather than a wrong colour: with
+ * Criteria chosen and a banded variable selected, switching to one without
+ * criteria used to withdraw the option. The control fell back to Run while
+ * the stored preference stayed Criteria — so it displayed one scale,
+ * remembered another, and jumped back without being asked the moment a
+ * banded variable was selected again.
+ */
+describe("criteriaScaleOffered", () => {
+  const drainage = [
+    { variables: [v({ id: "depth", label: "Depth" })] },
+    {
+      variables: [
+        v({ id: "velocity", label: "Velocity" }),
+        v({ id: "depth", label: "Depth" }),
+      ],
+    },
+  ];
+
+  it("is offered for a model that has a banded variable anywhere", () => {
+    expect(criteriaScaleOffered(drainage, ["velocity"])).toBe(true);
+  });
+
+  it("stays offered while a variable without criteria is selected", () => {
+    // The selection is not consulted at all — which is the fix. Depth is
+    // selected in both classes here and the option remains.
+    expect(criteriaScaleOffered(drainage, ["velocity"])).toBe(true);
+  });
+
+  it("is withheld from a model with no criteria at all", () => {
+    // Nothing to pin a scale to: the control would present a scale that
+    // does nothing for every variable, in every selection.
+    expect(criteriaScaleOffered(drainage, [])).toBe(false);
+    expect(criteriaScaleOffered(drainage, undefined)).toBe(false);
+    expect(criteriaScaleOffered(drainage, ["pressure"])).toBe(false);
   });
 });

@@ -181,6 +181,29 @@ export function animatedVariableLabels(
 }
 
 /**
+ * Whether the criteria scale is worth offering for this model.
+ *
+ * Asked of every variable the catalogs publish, not of the ones selected
+ * right now. Keyed to the selection, the option appeared and vanished as
+ * the reader changed variable, and the control silently fell back to Run
+ * while the stored preference stayed Criteria: it said one thing,
+ * remembered another, and jumped back the moment a banded variable was
+ * selected again.
+ *
+ * The scale is a wish about the map, the same way the animation toggle is.
+ * Whether a given variable can grant it is a separate question, and its
+ * own ramp answers that by being banded or not.
+ */
+export function criteriaScaleOffered(
+  classes: readonly { variables: readonly GenericVariable[] }[],
+  criteriaVariables: readonly string[] | undefined,
+): boolean {
+  return classes.some((c) =>
+    c.variables.some((v) => criteriaVariables?.includes(v.id)),
+  );
+}
+
+/**
  * What motion means on this map, in the engine's own words.
  *
  * The point is not which variables the feature supports — it is what the
@@ -418,11 +441,7 @@ export function GenericLegend({
   const selected = (c: ClassConfig): GenericVariable =>
     c.variables.find((v) => v.id === selection[c.key]) ?? c.variables[0];
 
-  // Criteria is offered only when a selected variable actually has bands,
-  // so the control never presents a scale that would do nothing.
-  const anyCriteria = classes.some((c) =>
-    criteriaVariables?.includes(selected(c).id),
-  );
+  const anyCriteria = criteriaScaleOffered(classes, criteriaVariables);
   // Same rule one step further: a steady-state run has one reporting step,
   // so scaling to *this* step and across the *whole run* are one scale, and
   // offering both is offering a choice with one outcome.
