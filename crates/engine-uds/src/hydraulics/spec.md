@@ -594,8 +594,17 @@ with the average, over connecting links **that carry an initial flow**, of
 link end depth plus the link's offset at that end, at non-outfall,
 non-storage vertices only — a vertex whose connecting links all start dry
 starts dry itself, because an offset alone is geometry, not water; channels
-without an initial flow then take the mean of their end-vertex depths. A
-checkpoint restore (§12) bypasses the seeding entirely.
+without an initial flow then take the mean of their end-vertex depths.
+
+An **outfall** is seeded from its own boundary condition instead: the depth
+that boundary imposes at the initial flows, evaluated exactly as §6.4
+evaluates it every step thereafter. A staged boundary is water standing
+against the outlet before the run begins, and the channel reaching it holds
+that water, so both belong to the opening storage of §11.1. Seeded dry, they
+would instead arrive as volume created on the first step, and the flow ledger
+would carry the difference for the rest of the run.
+
+A checkpoint restore (§12) bypasses the seeding entirely.
 
 ## 7. Structures
 
@@ -644,8 +653,22 @@ negated curve slope divided by the speed setting, Type 4 by forward
 difference; the stepwise types supply none. Pumps contribute no surface
 area to their end vertices.
 
-Startup and shutoff depths latch the pump on and off around its
-characteristic. At a storage inlet vertex — and the virtual wet well a Type 1
+A pump carries one piece of operational state, the speed setting $\omega$
+itself. It begins at the model's initial status — zero for a pump declared
+off, one for a pump declared on — and operational control (§9.1) writes it
+directly. A pump at $\omega = 0$ passes no flow, and nothing but a write to
+$\omega$ starts it again.
+
+Startup and shutoff depths, where given, override that setting each step
+before the characteristic is evaluated, and the override is written back to
+it, so the pair latches: a running pump whose inlet depth falls below the
+shutoff depth takes $\omega = 0$, and a stopped pump whose inlet depth rises
+above the startup depth takes $\omega = 1$. A variable speed therefore does
+not survive a shutoff-and-restart cycle — the pump resumes at full speed
+until control sets it again. A depth left unspecified imposes nothing, which
+leaves a pump given neither entirely control-driven.
+
+At a storage inlet vertex — and the virtual wet well a Type 1
 pump receives elsewhere — flow is clamped so the vertex cannot be drawn below
 empty, $Q \le Q_{in} + V/\Delta t$; at non-storage vertices, a depth-driven
 pump whose projected end-of-step depth would go negative falls back to

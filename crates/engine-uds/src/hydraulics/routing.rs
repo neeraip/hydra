@@ -548,12 +548,15 @@ pub struct Router {
     q: Vec<f64>,
     /// Structure flows (m³/s).
     sq: Vec<f64>,
-    /// Pump on/off latches (§7.1).
-    pump_on: Vec<bool>,
     /// §9 operational settings per structure: pump speed, orifice/weir
-    /// opening fraction, outlet scale. Default 1. `sett` is the target;
+    /// opening fraction, outlet scale. Seeded from the model's initial
+    /// status, 1 for everything that has none. `sett` is the target;
     /// `sett_cur` is the acting value, which slews for orifices with an
     /// open/close rate (§7.2) and follows instantly otherwise.
+    ///
+    /// A pump's setting is its *whole* on/off state (§7.1): the startup and
+    /// shutoff depths write it, and so does control, so there is one answer
+    /// to "is this pump running" rather than two that can disagree.
     sett: Vec<f64>,
     sett_cur: Vec<f64>,
     /// §9 channel open/closed states. Default open.
@@ -882,7 +885,8 @@ impl Router {
         }
 
         let mut structs = Vec::new();
-        let mut pump_on = Vec::new();
+        // Initial settings, in step with `structs` (§7.1).
+        let mut sett0: Vec<f64> = Vec::new();
         for (li, link) in net.links.iter().enumerate() {
             let off1 = match &link.kind {
                 LinkKind::Orifice { offset, .. }
@@ -947,7 +951,7 @@ impl Router {
                             }
                         }
                     };
-                    pump_on.push(*initial_on);
+                    sett0.push(if *initial_on { 1.0 } else { 0.0 });
                     structs.push(Structure {
                         from: link.from,
                         to: link.to,
@@ -1031,7 +1035,7 @@ impl Router {
                 StructKind::Orifice { sec, .. } | StructKind::Weir { sec, .. } => eq_length(sec),
                 _ => 0.0,
             };
-            pump_on.push(true);
+            sett0.push(1.0);
             structs.push(Structure {
                 from: link.from,
                 to: link.to,
@@ -1071,9 +1075,8 @@ impl Router {
             y: vec![0.0; nv],
             q: vec![0.0; nc],
             sq: vec![0.0; ns],
-            pump_on,
-            sett: vec![1.0; ns],
-            sett_cur: vec![1.0; ns],
+            sett: sett0.clone(),
+            sett_cur: sett0,
             chan_open: vec![true; nc],
             struct_flip_t: vec![0.0; ns],
             chan_flip_t: vec![0.0; nc],
@@ -1154,6 +1157,24 @@ impl Router {
             } else if count[vi] > 0 && matches!(self.verts[vi].class, VertClass::Junction) {
                 self.y[vi] = sum[vi] / f64::from(count[vi]);
             }
+        }
+        // §6.7: an outfall takes the depth its own boundary imposes at the
+        // initial flows, not one averaged from its neighbours. Measured
+        // before the mid-areas below, because the channel reaching a
+        // staged outfall holds that water from the start — left dry here,
+        // it would read as volume created on the first step and the flow
+        // ledger would carry the difference all run.
+        let outfall_y: Vec<(usize, f64)> = self
+            .verts
+            .iter()
+            .enumerate()
+            .filter_map(|(vi, v)| match &v.class {
+                VertClass::Outfall(b) => Some((vi, self.outfall_depth(vi, b, &self.q))),
+                _ => None,
+            })
+            .collect();
+        for (vi, y) in outfall_y {
+            self.y[vi] = y;
         }
         // Channels without an initial flow take the mean of their end
         // depths; every channel records its starting mid area.
@@ -1471,16 +1492,15 @@ impl Router {
     }
 
     /// Whether model link `li` is currently open: a positive setting,
-    /// and for pumps the §7.1 latch as well.
+    /// which for a pump is also its §7.1 on/off state.
     pub fn is_open(&self, li: usize) -> Option<bool> {
         if let Some(ci) = self.chans.iter().position(|c| c.link == li) {
             return Some(self.chan_open[ci]);
         }
-        self.structs.iter().position(|s| s.link == li).map(|si| {
-            let latched_off =
-                matches!(self.structs[si].kind, StructKind::Pump { .. }) && !self.pump_on[si];
-            self.sett[si] > 0.0 && !latched_off
-        })
+        self.structs
+            .iter()
+            .position(|s| s.link == li)
+            .map(|si| self.sett[si] > 0.0)
     }
 
     /// Flow in the element routed for model link `li` (m³/s), in the
@@ -1979,7 +1999,9 @@ impl Router {
                         }
                         let area = area.max(self.min_surface_area);
                         let dv = 0.5 * (self.net_flow[vi] + net_new[vi]) * dt;
-                        let mut y_new = self.y[vi] + dv / area;
+                        // The mass balance, before relaxation touches it.
+                        let y_raw = self.y[vi] + dv / area;
+                        let mut y_new = y_raw;
                         // Under-relax below the crown (§6.4).
                         if step > 0 && !(v.crown > 0.0 && y[vi] > v.crown) {
                             y_new = (1.0 - OMEGA) * y[vi] + OMEGA * y_new;
@@ -1987,10 +2009,18 @@ impl Router {
                         if y_new < 0.0 {
                             y_new = 0.0;
                         }
-                        // Flooding: pin and report the surplus (§6.6).
+                        // Flooding: pin and report the surplus (§6.6). The
+                        // surplus is measured against `y_raw`, not the
+                        // relaxed iterate: relaxation is a device for
+                        // reaching the fixed point, and charging it against
+                        // the overflow would discard the difference — the
+                        // vertex is pinned either way, so whatever the
+                        // relaxed depth hides leaves no ledger entry at
+                        // all. At a vertex held at its rim for hours that
+                        // is a factor of ω off the flood volume.
                         let cap = v.y_max + v.surcharge;
                         if y_new > cap && !(self.allow_ponding && v.ponded_area > 0.0) {
-                            flood[vi] = (y_new - cap) * area / dt;
+                            flood[vi] = (y_raw - cap).max(0.0) * area / dt;
                             y_new = cap;
                         }
                         max_dy = max_dy.max((y_new - y[vi]).abs());
@@ -2080,6 +2110,12 @@ impl Router {
 
     /// §7.1 startup/shutoff latching, evaluated from the accepted state
     /// so retried trials see the same pump states.
+    ///
+    /// The override is written back into the setting, which is what makes
+    /// it latch rather than merely gate: a pump restarted by its startup
+    /// depth resumes at full speed, losing any variable speed control had
+    /// given it, and stays running until the shutoff depth or control says
+    /// otherwise.
     fn update_pump_latches(&mut self) {
         for (si, st) in self.structs.iter().enumerate() {
             let StructKind::Pump {
@@ -2089,12 +2125,12 @@ impl Router {
                 continue;
             };
             let y1 = self.y[st.from];
-            if *shutoff > 0.0 && self.pump_on[si] && y1 < *shutoff {
-                self.pump_on[si] = false;
+            if *shutoff > 0.0 && self.sett[si] > 0.0 && y1 < *shutoff {
+                self.sett[si] = 0.0;
                 self.struct_flip_t[si] = self.t;
             }
-            if *startup > 0.0 && !self.pump_on[si] && y1 > *startup {
-                self.pump_on[si] = true;
+            if *startup > 0.0 && self.sett[si] == 0.0 && y1 > *startup {
+                self.sett[si] = 1.0;
                 self.struct_flip_t[si] = self.t;
             }
         }
@@ -2128,7 +2164,7 @@ impl Router {
             }
             StructKind::Pump { kind, .. } => {
                 let speed = self.sett[si];
-                if !self.pump_on[si] || speed <= 0.0 {
+                if speed <= 0.0 {
                     return (0.0, 0.0, 0.0);
                 }
                 let y1 = y_vert[st.from];
@@ -3422,6 +3458,126 @@ C1  CIRCULAR  0.3  0  0  0
         );
     }
 
+    /// An outfall opens at the depth its boundary imposes (§6.7), and the
+    /// channel reaching it opens holding that water.
+    ///
+    /// The defect this guards: seeding skipped outfall vertices entirely,
+    /// so a channel running to a staged outfall measured its opening
+    /// volume with one end dry — then filled to the boundary on the very
+    /// first step. The water arrived from nowhere, and because opening
+    /// storage is a single snapshot the flow ledger carried the difference
+    /// for the whole run rather than settling. extran8a opened 0.47 of
+    /// 2.46 acre-feet short, a 19% continuity error where the predecessor
+    /// managed 1%.
+    #[test]
+    fn a_staged_outfall_opens_at_its_boundary_depth() {
+        let inp = "\
+[OPTIONS]
+FLOW_UNITS    CMS
+ROUTING_STEP  5
+
+[JUNCTIONS]
+J1  100.0  4
+
+[OUTFALLS]
+O1  98.0  FIXED  100.0
+
+[CONDUITS]
+C1  J1  O1  500  0.015  0  0  0  0
+
+[XSECTIONS]
+C1  CIRCULAR  2.0  0  0  0
+";
+        let (net, r) = build(inp);
+        let o = net
+            .vertices
+            .iter()
+            .position(|v| v.id == "O1")
+            .expect("the outfall");
+        // Stage 100.0 over invert 98.0 is 2 m standing against the outlet.
+        assert!(
+            (r.y[o] - 2.0).abs() < 1e-9,
+            "outfall opened dry: {}",
+            r.y[o]
+        );
+
+        // So the opening volume is the channel at the mid-depth its two
+        // ends imply — 2 m against the outlet, dry at the junction, half
+        // full between — and not the sliver a dry outfall left behind.
+        let half_full = r.chans[0].geom.area(1.0) * 500.0;
+        let dry_end = r.chans[0].geom.area(0.5) * 500.0;
+        let in_channel = r.report.initial_storage
+            - (0..r.verts.len())
+                .map(|v| r.vertex_volume_now(v))
+                .sum::<f64>();
+        assert!(
+            (in_channel - half_full).abs() < 1e-6 * half_full,
+            "channel opened with {in_channel} m³, expected {half_full}",
+        );
+        assert!(
+            half_full > 1.5 * dry_end,
+            "fixture too weak to tell the two seedings apart",
+        );
+    }
+
+    /// The surplus is the *inflow* surplus (§6.6), not the surplus of the
+    /// under-relaxed iterate.
+    ///
+    /// The defect this guards: the overflow was measured after §6.4's
+    /// relaxation had pulled the new depth back toward the old one. The
+    /// vertex was pinned at its rim either way, so the difference — a
+    /// factor of ω of the overflow — left the model with no ledger entry
+    /// anywhere. extran6 lost 4.6 of 33.5 acre-feet that way, a 13.7%
+    /// continuity error against the predecessor's 0.05%.
+    ///
+    /// It needs a rim at or below the highest connecting crown, because
+    /// §6.4 exempts a vertex *above* its crown from relaxation — which is
+    /// why `flooding_pins_the_rim_and_reports_the_surplus`, whose junction
+    /// floods 0.6 m up a 0.3 m pipe, never reached the faulty branch.
+    #[test]
+    fn a_rim_at_the_crown_still_reports_its_whole_overflow() {
+        let inp = "\
+[OPTIONS]
+FLOW_UNITS    CMS
+ROUTING_STEP  5
+
+[JUNCTIONS]
+J1  100.0  0.3
+
+[OUTFALLS]
+O1  99.0  FREE
+
+[CONDUITS]
+C1  J1  O1  100  0.013  0  0
+
+[XSECTIONS]
+C1  CIRCULAR  0.3  0  0  0
+";
+        let (_, mut r) = build(inp);
+        // The rim and the pipe crown coincide at 0.3 m, so the vertex is
+        // never above its crown and relaxation is in force throughout.
+        assert!((r.verts[0].crown - 0.3).abs() < 1e-12);
+        assert!((r.verts[0].y_max - 0.3).abs() < 1e-12);
+
+        r.advance(1800.0, &inflow_at(0, 0.2));
+        assert!((r.y[0] - 0.3).abs() < 1e-9, "not pinned: y = {}", r.y[0]);
+        assert!(r.report.flooding > 0.0, "nothing flooded");
+
+        // Nothing is stored — the vertex ends where it was pinned — so the
+        // inflow is wholly accounted for by what left through the pipe and
+        // what left over the rim. Under the defect roughly half the
+        // overflow was missing from both.
+        let led = &r.report;
+        let gap = led.inflow - led.outflow - led.flooding;
+        assert!(
+            gap.abs() < 0.01 * led.inflow,
+            "unaccounted {gap:.4} m³ of in {} out {} flood {}",
+            led.inflow,
+            led.outflow,
+            led.flooding
+        );
+    }
+
     #[test]
     fn quiet_flow_grows_the_step_to_the_user_maximum() {
         let (_, mut r) = build(CHAIN);
@@ -3630,6 +3786,69 @@ PC  PUMP4  0  0  2  0.2
         assert!((led.outflow - led.inflow).abs() < 0.05 * led.inflow);
     }
 
+    /// A pump declared `OFF` is off because its *setting* is zero — not
+    /// because of a second on/off state that control cannot reach.
+    ///
+    /// The defect this guards: the initial status seeded a separate latch
+    /// flag, and only the §7.1 startup and shutoff depths ever wrote it. A
+    /// pump given neither depth — extran10's five, and every pump switched
+    /// purely by rule — could be commanded on, would report itself open,
+    /// and would still pass no water for the whole run. The node it drained
+    /// filled to its maximum and flooded, for a 47% continuity error.
+    ///
+    /// Same fixture as `inline_pump_finds_its_operating_point`, declared
+    /// off and then started, so it must reach the identical operating
+    /// point: control has to be able to undo the initial status exactly.
+    #[test]
+    fn a_pump_declared_off_can_be_started_by_control() {
+        let inp = "\
+[OPTIONS]
+FLOW_UNITS    CMS
+ROUTING_STEP  5
+
+[STORAGE]
+SU1  100.0  3  0  FUNCTIONAL  0  0  20
+
+[JUNCTIONS]
+J2  103.0  2
+
+[OUTFALLS]
+O1  102.5  FREE
+
+[PUMPS]
+P1  SU1  J2  PC  OFF  0  0
+
+[CONDUITS]
+C1  J2  O1  50  0.013  0  0
+
+[XSECTIONS]
+C1  CIRCULAR  0.5  0  0  0
+
+[CURVES]
+PC  PUMP4  0  0  2  0.2
+";
+        let (net, mut r) = build(inp);
+        let p = net
+            .links
+            .iter()
+            .position(|l| l.id == "P1")
+            .expect("the pump");
+        let q_in = 0.05;
+
+        assert_eq!(r.is_open(p), Some(false), "declared OFF");
+        r.advance(600.0, &inflow_at(0, q_in));
+        assert_eq!(r.sq[0], 0.0, "an off pump passes no flow");
+
+        assert_eq!(r.set_setting(p, 1.0), Some(true), "the setting changed");
+        assert_eq!(r.is_open(p), Some(true), "control started it");
+        r.advance(7800.0, &inflow_at(0, q_in));
+        assert!((r.y[0] - 0.5).abs() < 0.02, "well depth {}", r.y[0]);
+        assert!((r.sq[0] - q_in).abs() < 0.02 * q_in, "pump {}", r.sq[0]);
+    }
+
+    /// The startup and shutoff depths write the same setting control does,
+    /// which is what makes them latch — and what stops the two from
+    /// disagreeing about whether the pump is running.
     #[test]
     fn pump_latches_cycle_between_startup_and_shutoff() {
         let inp = "\
@@ -3667,7 +3886,7 @@ PC  PUMP2  0  0.2  3  0.2
         while t < 7200.0 {
             t += 30.0;
             r.advance(t, &inflow_at(0, 0.02));
-            if r.pump_on[0] {
+            if r.sett[0] > 0.0 {
                 saw_on = true;
             } else if saw_on {
                 saw_off_again = true;
