@@ -715,7 +715,7 @@ export function GenericLegend({
             setDetailsOpen(!detailsOpen);
             setOpenPicker(null);
           }}
-          title="Color scale"
+          aria-label="Color scale"
           data-tooltip="Color scale"
           data-tooltip-pos="top"
           className="tool-btn"
@@ -796,7 +796,7 @@ export function GenericLegend({
                   e.stopPropagation();
                   animation.onToggle(!animation.playing);
                 }}
-                title={tooltip}
+                aria-label={tooltip}
                 data-tooltip={tooltip}
                 data-tooltip-pos="top"
                 // Inline styles beat the stylesheet, so `.tool-btn:hover`
@@ -817,7 +817,7 @@ export function GenericLegend({
                 }}
                 style={{
                   ...PICKER_BTN_STYLE,
-                  padding: "4px 6px 4px 6px",
+                  padding: "4px 7px 4px 6px",
                   marginRight: "3px",
                   // Right corners nest inside the bar's 20px rounding so the
                   // hover fill is never clipped at the bar's rounded end.

@@ -241,12 +241,15 @@ describe("what the animation toggle says it applies to", () => {
     ],
   });
 
+  /** Read from `data-tooltip`, which is the tooltip a reader sees. It
+   *  used to read `title` — the browser's own, which this control no
+   *  longer carries: an element with both draws two. */
   function hintFor(over: Parameters<typeof renderLegend>[0]) {
     const { container } = renderLegend(over);
-    const titles = Array.from(container.querySelectorAll("[title]")).map((el) =>
-      el.getAttribute("title"),
+    const tips = Array.from(container.querySelectorAll("[data-tooltip]")).map(
+      (el) => el.getAttribute("data-tooltip"),
     );
-    return titles.find((t) => t?.includes("Animation")) ?? "";
+    return tips.find((t) => t?.includes("Animation")) ?? "";
   }
 
   it("names only variables the catalog on screen publishes", () => {
@@ -306,7 +309,7 @@ describe("the animation toggle", () => {
   function toggle(over: Parameters<typeof renderLegend>[0]) {
     const { container } = renderLegend(over);
     return Array.from(container.querySelectorAll("button")).find((b) =>
-      b.getAttribute("title")?.match(/animation/i),
+      b.getAttribute("data-tooltip")?.match(/animation/i),
     );
   }
 
