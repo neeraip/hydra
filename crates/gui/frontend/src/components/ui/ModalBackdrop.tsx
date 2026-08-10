@@ -4,10 +4,28 @@
  * Renders the fixed-inset, flex-centering overlay div that every modal
  * previously declared inline. Visual differences between modals (z-index,
  * background colour, entry animation, alignment) are passed through props;
- * the rendered DOM is a single <div>, identical to the former inline markup.
+ * the rendered DOM is a single <div>.
+ *
+ * # Why it portals to the body
+ *
+ * Every modal here used to be rendered by the app shell or a page root,
+ * where "fixed, inset 0" means the window and nothing more is needed. The
+ * licences panel is opened by a row *inside* the settings drawer — a
+ * fixed, 680px-wide, scrolling column on the right of the window — and
+ * inherited that column as its frame: the backdrop covered the drawer
+ * rather than the window, and the centred panel had its left edge, its
+ * title and its first tab outside the visible strip. It read as a card
+ * stacked on the drawer with no way back to the tab it opened on.
+ *
+ * A full-window overlay must not be a descendant of whatever opened it,
+ * because that thing may be scrolled, clipped, transformed or animated —
+ * all of which redefine where "fixed" is fixed to. Portalling makes the
+ * overlay a child of the body wherever it is written, so the modal reads
+ * naturally at its trigger site and still belongs to the window.
  */
 
 import type { CSSProperties, ReactNode, SyntheticEvent } from "react";
+import { createPortal } from "react-dom";
 
 /**
  * Spread onto a modal's panel element so pointer/keyboard events inside the
@@ -39,7 +57,7 @@ export function ModalBackdrop({
   style,
   children,
 }: ModalBackdropProps) {
-  return (
+  const overlay = (
     // biome-ignore lint/a11y/noStaticElementInteractions: backdrop closes the modal on pointer interaction.
     // biome-ignore lint/a11y/useKeyWithClickEvents: backdrop closes the modal on pointer interaction.
     <div
@@ -64,4 +82,5 @@ export function ModalBackdrop({
       {children}
     </div>
   );
+  return createPortal(overlay, document.body);
 }
