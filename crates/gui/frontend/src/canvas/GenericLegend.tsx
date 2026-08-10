@@ -533,6 +533,26 @@ export function GenericLegend({
                   <>
                     <Ramp
                       animating={classIsAnimating(animation, v.id)}
+                      // A judged bar is labelled at the seams between its
+                      // bands, not at the run's extremes: its segments are
+                      // regions, and the data range belongs to a different
+                      // axis. One cut more than there are seams would
+                      // over-run the bar, so the positions come from the
+                      // same count the gradient is built with.
+                      boundaries={(() => {
+                        const cuts = judging ? bandEdges?.(v.id) : null;
+                        if (!cuts || cuts.length === 0) return undefined;
+                        const regions = cuts.length + 1;
+                        return cuts.map((cut, i) => ({
+                          at: (i + 1) / regions,
+                          label: formatGenericValue(
+                            cut,
+                            v.quantity,
+                            sys,
+                            false,
+                          ),
+                        }));
+                      })()}
                       // Reading a colour off the bar: the caller owns this
                       // because the scale, the unit system and the
                       // quantity's formatting are all its knowledge.

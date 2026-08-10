@@ -355,6 +355,8 @@ export function CriteriaCheckbox({
     <label
       data-tooltip={CRITERIA_TOGGLE.tip}
       style={{
+        position: "relative",
+        top: "2px",
         display: "inline-flex",
         alignItems: "center",
         gap: 4,
@@ -566,8 +568,15 @@ export function rampFractionAt(clientX: number, rect: DOMRect): number | null {
   return Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
 }
 
-/** Gradient bar with min/max labels. Numbers are formatted `toFixed(1)`;
+/** Gradient bar with its ends labelled. Numbers are formatted `toFixed(1)`;
  * pass strings when a variable needs its own precision.
+ *
+ * `boundaries` replaces those ends for a bar whose axis is not the data
+ * range — a banded ramp, whose equal-width segments stand for the
+ * criterion's regions. There the run's min and max belong to a different
+ * axis entirely: a bar of drainage velocity bands sat under "0.00" and
+ * "8.599" while the hover readout said "≥ 9.843", all three correct and
+ * describing two different things.
  *
  * `animating` sends a slow sheen along the bar while the canvas is
  * animating this variable. It travels *over* the gradient rather than
@@ -578,12 +587,15 @@ export function Ramp({
   gradient,
   min,
   max,
+  boundaries,
   animating = false,
   readAt,
 }: {
   gradient: string;
   min: number | string;
   max: number | string;
+  /** Labels at fractions along the bar, instead of its two ends. */
+  boundaries?: readonly { at: number; label: string }[];
   animating?: boolean;
   /** Formats the value at fraction `t` along the bar, or answers null
    *  where a position does not name one. Supplied by the caller because
@@ -658,20 +670,50 @@ export function Ramp({
           cursor: readAt ? "crosshair" : undefined,
         }}
       />
-      <div style={{ display: "flex", justifyContent: "space-between" }}>
-        <span
-          className="mono"
-          style={{ fontSize: "var(--text-xs)", color: "var(--text-tertiary)" }}
-        >
-          {label(min)}
-        </span>
-        <span
-          className="mono"
-          style={{ fontSize: "var(--text-xs)", color: "var(--text-tertiary)" }}
-        >
-          {label(max)}
-        </span>
-      </div>
+      {boundaries ? (
+        // Centred on the seam each one marks, so a number sits where the
+        // colour actually changes rather than at an end that means
+        // nothing on this bar.
+        <div style={{ position: "relative", height: "1.2em" }}>
+          {boundaries.map((b) => (
+            <span
+              key={b.label}
+              className="mono"
+              style={{
+                position: "absolute",
+                left: `${b.at * 100}%`,
+                transform: "translateX(-50%)",
+                fontSize: "var(--text-xs)",
+                color: "var(--text-tertiary)",
+                whiteSpace: "nowrap",
+              }}
+            >
+              {b.label}
+            </span>
+          ))}
+        </div>
+      ) : (
+        <div style={{ display: "flex", justifyContent: "space-between" }}>
+          <span
+            className="mono"
+            style={{
+              fontSize: "var(--text-xs)",
+              color: "var(--text-tertiary)",
+            }}
+          >
+            {label(min)}
+          </span>
+          <span
+            className="mono"
+            style={{
+              fontSize: "var(--text-xs)",
+              color: "var(--text-tertiary)",
+            }}
+          >
+            {label(max)}
+          </span>
+        </div>
+      )}
     </div>
   );
 }

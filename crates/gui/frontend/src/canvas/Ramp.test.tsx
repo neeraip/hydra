@@ -146,3 +146,56 @@ describe("Ramp readout", () => {
     expect(el.style.cursor).toBe("");
   });
 });
+
+describe("Ramp labels", () => {
+  it("labels the two ends of a data-range bar", () => {
+    const { container } = render(
+      <Ramp
+        gradient="linear-gradient(90deg, red, blue)"
+        min="0.00"
+        max="8.6"
+      />,
+    );
+    expect(container.textContent).toContain("0.00");
+    expect(container.textContent).toContain("8.6");
+  });
+
+  it("labels a banded bar at its seams instead", () => {
+    // The reported bug: a bar of velocity bands sat under "0.00" and
+    // "8.599" — the run's range — while the hover readout said "≥ 9.843".
+    // All three were correct and two of them belonged to another axis.
+    const { container } = render(
+      <Ramp
+        gradient="linear-gradient(90deg, red, blue)"
+        min="0.00"
+        max="8.599"
+        boundaries={[
+          { at: 1 / 3, label: "1.969" },
+          { at: 2 / 3, label: "9.843" },
+        ]}
+      />,
+    );
+    expect(container.textContent).toContain("1.969");
+    expect(container.textContent).toContain("9.843");
+    expect(container.textContent).not.toContain("8.599");
+    expect(container.textContent).not.toContain("0.00");
+  });
+
+  it("puts each seam label where its colour changes", () => {
+    render(
+      <Ramp
+        gradient="linear-gradient(90deg, red, blue)"
+        min="0"
+        max="1"
+        boundaries={[
+          { at: 1 / 3, label: "a" },
+          { at: 2 / 3, label: "b" },
+        ]}
+      />,
+    );
+    const first = screen.getByText("a") as HTMLElement;
+    // A third along, centred on the seam — not at an end.
+    expect(Number.parseFloat(first.style.left)).toBeCloseTo(33.3, 0);
+    expect(first.style.transform).toContain("-50%");
+  });
+});
