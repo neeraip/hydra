@@ -30,6 +30,17 @@ export function loadSettingsContent() {
 }
 
 /**
+ * The licences panel.
+ *
+ * Split because it is the app's largest rarely-read document: the AGPL
+ * text, the commercial-licence document and nine hundred component rows,
+ * none of which a session that never opens About should download.
+ */
+export function loadLicensesModal() {
+  return import("./components/modals/LicensesModal");
+}
+
+/**
  * Run `fn` when the browser is next idle, or shortly after paint where
  * that is unavailable.
  *

@@ -4,9 +4,11 @@
  * On first use the hook asks the backend whether this install can
  * self-update at all (`updater_supported` — false in dev builds and on
  * Linux deb/rpm installs, which update via their package manager), then
- * polls the updater endpoint once per app session; Settings can trigger
- * additional checks via `checkNow`. State lives in a module-level store so
- * a download keeps its progress when pages unmount and remount.
+ * polls the updater endpoint once per app session unless the reader has
+ * declined the launch check (`shouldCheckOnLaunch`); Settings can trigger
+ * additional checks via `checkNow` whatever that preference says. State
+ * lives in a module-level store so a download keeps its progress when
+ * pages unmount and remount.
  *
  * Phases: idle → checking → (upToDate | checkFailed | available) →
  * downloading → ready (restart), with error as a retryable side exit from
@@ -24,6 +26,10 @@ import { useCallback, useEffect, useSyncExternalStore } from "react";
 import { tryInvokeOr } from "./ipc";
 
 const MOCK_KEY = "hydra2-updater-mock";
+
+/** Whether the launch-time check runs. Lives here rather than beside the
+ *  other Settings keys because this module is what obeys it. */
+const AUTO_CHECK_KEY = "hydra2-auto-update-check";
 
 export type UpdaterState =
   | { phase: "idle" }
@@ -56,6 +62,37 @@ export function downloadPercent(
 export function mockUpdateVersion(raw: string | null): string | null {
   if (raw === null) return null;
   return /^\d+(\.\d+){0,2}$/.test(raw.trim()) ? raw.trim() : null;
+}
+
+/**
+ * Whether the launch-time check runs, given the stored preference.
+ *
+ * Only an explicit "false" stops it: an absent key is a fresh install,
+ * which checks, and an unreadable value is a corrupted preference, which
+ * is not a reason to leave someone on a version with a security fix in
+ * it. The preference exists because the check is a network call to GitHub
+ * that happens before the user has done anything — it should be
+ * declinable, not accidentally lost.
+ */
+export function shouldCheckOnLaunch(raw: string | null): boolean {
+  return raw !== "false";
+}
+
+export function readAutoUpdateCheck(): boolean {
+  try {
+    if (typeof localStorage === "undefined") return true;
+    return shouldCheckOnLaunch(localStorage.getItem(AUTO_CHECK_KEY));
+  } catch {
+    return true;
+  }
+}
+
+export function setAutoUpdateCheck(on: boolean): void {
+  try {
+    localStorage.setItem(AUTO_CHECK_KEY, String(on));
+  } catch {
+    // A preference that cannot be stored is not worth failing a click over.
+  }
 }
 
 // ── Module-level store ───────────────────────────────────────────────────────
@@ -150,6 +187,29 @@ async function checkOnce(): Promise<void> {
   if (checkStarted) return;
   checkStarted = true;
   await runCheck();
+}
+
+/**
+ * Settle whether this install can self-update, without asking the network.
+ *
+ * `runCheck` resolves this on its way past, so nothing needed it
+ * separately while every launch checked. Now that a launch may not, it
+ * does: Settings hides the whole updates group until this is true, so
+ * skipping the check would also hide the toggle that turns it back on —
+ * a preference you could set once and never reach again.
+ *
+ * The call behind it is a local capability question (dev build? AppImage?),
+ * not a poll, so it costs nothing to answer either way.
+ */
+async function resolveSupported(): Promise<void> {
+  if (supported !== null) return;
+  if (readMockVersion() !== null) {
+    setSupported(true);
+    return;
+  }
+  setSupported(
+    await tryInvokeOr<boolean>("updater_supported", undefined, false),
+  );
 }
 
 async function install(): Promise<void> {
@@ -254,7 +314,8 @@ export function useUpdater(): {
   const supportedNow = useSyncExternalStore(subscribe, () => supported);
 
   useEffect(() => {
-    void checkOnce();
+    if (readAutoUpdateCheck()) void checkOnce();
+    else void resolveSupported();
   }, []);
 
   return {

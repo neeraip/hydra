@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { downloadPercent, mockUpdateVersion } from "./useUpdater";
+import {
+  downloadPercent,
+  mockUpdateVersion,
+  shouldCheckOnLaunch,
+} from "./useUpdater";
 
 describe("downloadPercent", () => {
   it("computes whole-number percentages", () => {
@@ -39,5 +43,26 @@ describe("mockUpdateVersion", () => {
     expect(mockUpdateVersion("2.5.0-beta")).toBeNull();
     expect(mockUpdateVersion("not a version")).toBeNull();
     expect(mockUpdateVersion("1.2.3.4")).toBeNull();
+  });
+});
+
+describe("shouldCheckOnLaunch", () => {
+  it("checks on a fresh install, where nothing has been stored", () => {
+    expect(shouldCheckOnLaunch(null)).toBe(true);
+  });
+
+  it("does not check once the reader has said so", () => {
+    // The check is a network call to GitHub made before the user has done
+    // anything, so declining it has to actually stop it.
+    expect(shouldCheckOnLaunch("false")).toBe(false);
+  });
+
+  it("checks when the stored value is anything else", () => {
+    // A corrupted preference is not a reason to strand someone on an old
+    // build: only an explicit refusal counts as one.
+    expect(shouldCheckOnLaunch("true")).toBe(true);
+    expect(shouldCheckOnLaunch("")).toBe(true);
+    expect(shouldCheckOnLaunch("no")).toBe(true);
+    expect(shouldCheckOnLaunch("0")).toBe(true);
   });
 });

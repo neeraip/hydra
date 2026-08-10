@@ -1,6 +1,6 @@
 import { ArrowDownTrayIcon, ArrowPathIcon } from "@heroicons/react/24/outline";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { useMemo, useState } from "react";
+import { lazy, Suspense, useMemo, useState } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { useAppState } from "../AppContext";
@@ -30,11 +30,16 @@ import {
   useReleaseNotes,
 } from "../hooks/useReleaseNotes";
 import { type UpdaterState, useUpdater } from "../hooks/useUpdater";
+import { loadLicensesModal } from "../lazyChunks";
 import {
   modelSize,
   projectStatus,
   type StatusTone,
 } from "./HomePage/projectStatus";
+
+const LicensesModal = lazy(() =>
+  loadLicensesModal().then((m) => ({ default: m.LicensesModal })),
+);
 
 /** The updater banner's icon, sized to the label it sits beside. */
 const UPDATE_ICON: React.CSSProperties = {
@@ -269,6 +274,63 @@ const HELP_LINKS = [
   },
 ];
 
+/**
+ * One row in the Help rail.
+ *
+ * The trailing mark is what tells the two kinds apart: a link leaves for
+ * the browser, and a row without one opens something here. Both are the
+ * same row otherwise, so neither reads as the odd one out.
+ */
+function HelpRow({
+  label,
+  external,
+  onClick,
+}: {
+  label: string;
+  external: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      style={{
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        background: "transparent",
+        border: "none",
+        cursor: "pointer",
+        padding: "8px 10px",
+        borderRadius: 6,
+        textAlign: "left",
+        fontFamily: "var(--font-ui)",
+        transition: "background var(--t-fast)",
+      }}
+      onMouseEnter={(e) => {
+        (e.currentTarget as HTMLButtonElement).style.background =
+          "var(--nav-hover)";
+      }}
+      onMouseLeave={(e) => {
+        (e.currentTarget as HTMLButtonElement).style.background = "transparent";
+      }}
+    >
+      <span
+        style={{ fontSize: "var(--text-lg)", color: "var(--text-secondary)" }}
+      >
+        {label}
+      </span>
+      {external && (
+        <span
+          style={{ fontSize: "var(--text-md)", color: "var(--text-tertiary)" }}
+        >
+          ↗
+        </span>
+      )}
+    </button>
+  );
+}
+
 // ── What's-new teaser markdown ────────────────────────────────────────────────
 // Restricted component map for the clamped sidebar teaser: headings become
 // bold lines, lists collapse to compact "·" lines, links render as inert
@@ -491,6 +553,7 @@ export function HomePage() {
   const { lastSeen, markSeen } = useLastSeenGuiVersion();
   const { updater, install, restart } = useUpdater();
   const [whatsNewOpen, setWhatsNewOpen] = useState(false);
+  const [licensesOpen, setLicensesOpen] = useState(false);
 
   const releases = notes.status === "loaded" ? notes.releases : [];
   const latest = releases[0] ?? null;
@@ -892,50 +955,21 @@ export function HomePage() {
               <SidebarSection title="Help" />
               <div style={{ display: "flex", flexDirection: "column", gap: 1 }}>
                 {HELP_LINKS.map(({ label, url }) => (
-                  <button
-                    type="button"
+                  <HelpRow
                     key={label}
+                    label={label}
+                    external
                     onClick={() => openUrl(url)}
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "space-between",
-                      background: "transparent",
-                      border: "none",
-                      cursor: "pointer",
-                      padding: "8px 10px",
-                      borderRadius: 6,
-                      textAlign: "left",
-                      fontFamily: "var(--font-ui)",
-                      transition: "background var(--t-fast)",
-                    }}
-                    onMouseEnter={(e) => {
-                      (e.currentTarget as HTMLButtonElement).style.background =
-                        "var(--nav-hover)";
-                    }}
-                    onMouseLeave={(e) => {
-                      (e.currentTarget as HTMLButtonElement).style.background =
-                        "transparent";
-                    }}
-                  >
-                    <span
-                      style={{
-                        fontSize: "var(--text-lg)",
-                        color: "var(--text-secondary)",
-                      }}
-                    >
-                      {label}
-                    </span>
-                    <span
-                      style={{
-                        fontSize: "var(--text-md)",
-                        color: "var(--text-tertiary)",
-                      }}
-                    >
-                      ↗
-                    </span>
-                  </button>
+                  />
                 ))}
+                {/* Hydra is AGPL software built on nine hundred open-source
+                    packages, and a user who never opens Settings should
+                    still be one click from knowing that. */}
+                <HelpRow
+                  label="Licences"
+                  external={false}
+                  onClick={() => setLicensesOpen(true)}
+                />
               </div>
             </section>
           </aside>
@@ -947,6 +981,11 @@ export function HomePage() {
           initial={wizardModel}
           onClose={() => setShowWizard(false)}
         />
+      )}
+      {licensesOpen && (
+        <Suspense fallback={null}>
+          <LicensesModal tab="hydra" onClose={() => setLicensesOpen(false)} />
+        </Suspense>
       )}
       {whatsNewOpen && releases.length > 0 && (
         <ReleaseNotesModal

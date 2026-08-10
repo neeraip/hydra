@@ -1,7 +1,12 @@
-import { useEffect, useState } from "react";
+import { lazy, Suspense, useEffect, useState } from "react";
 import { useAppState } from "../../AppContext";
 import { getVersions, openDataFolder, type Versions } from "../../hooks";
-import { useUpdater } from "../../hooks/useUpdater";
+import {
+  readAutoUpdateCheck,
+  setAutoUpdateCheck,
+  useUpdater,
+} from "../../hooks/useUpdater";
+import { loadLicensesModal } from "../../lazyChunks";
 import {
   parseTextScale,
   readTextScale,
@@ -14,7 +19,25 @@ import {
   useUnitPreference,
 } from "../../units";
 import { Toggle } from "../ui/Toggle";
+import type { LicenseTab } from "./LicensesModal";
 import { Section, SettingRow } from "./SettingsPrimitives";
+
+const LicensesModal = lazy(() =>
+  loadLicensesModal().then((m) => ({ default: m.LicensesModal })),
+);
+
+/** The row controls all look like this — a bordered button that opens
+ *  something. Written once so a new one cannot arrive slightly different. */
+const ROW_BUTTON: React.CSSProperties = {
+  padding: "5px 14px",
+  border: "1px solid var(--border-hover)",
+  borderRadius: 6,
+  background: "transparent",
+  color: "var(--text-primary)",
+  cursor: "pointer",
+  fontSize: "var(--text-lg)",
+  fontFamily: "var(--font-ui)",
+};
 
 /** Matches the `inputStyle` the editors use for their selects, so a
  * dropdown looks the same wherever it appears. */
@@ -108,13 +131,20 @@ function TextSizeToggle() {
   );
 }
 
-/** "Software updates" row: manual update check with inline status. Hidden
- * entirely when this install can't self-update (dev builds, Linux deb/rpm —
- * those update via the package manager). The row's description doubles as
- * the status line; the single button carries the whole flow. */
+/** The update rows: whether to look on launch, and the manual check with
+ * its inline status. Hidden entirely when this install can't self-update
+ * (dev builds, Linux deb/rpm — those update via the package manager). The
+ * status row's description doubles as the status line; the single button
+ * carries the whole flow. */
 function UpdatesRow() {
   const { updater, supported, install, restart, checkNow } = useUpdater();
+  const [autoCheck, setAutoCheckRaw] = useState(readAutoUpdateCheck);
   if (supported !== true) return null;
+
+  const setAutoCheck = (v: boolean) => {
+    setAutoCheckRaw(v);
+    setAutoUpdateCheck(v);
+  };
 
   const description =
     updater.phase === "checking"
@@ -170,26 +200,29 @@ function UpdatesRow() {
         : checkNow;
 
   return (
-    <SettingRow label="Software updates" description={description}>
-      <button
-        type="button"
-        disabled={busy}
-        onClick={onClick}
-        style={{
-          padding: "5px 14px",
-          border: "1px solid var(--border-hover)",
-          borderRadius: 6,
-          background: "transparent",
-          color: busy ? "var(--text-tertiary)" : "var(--text-primary)",
-          cursor: busy ? "default" : "pointer",
-          fontSize: "var(--text-lg)",
-          fontFamily: "var(--font-ui)",
-          fontVariantNumeric: "tabular-nums",
-        }}
+    <>
+      <SettingRow
+        label="Check for updates automatically"
+        description="Ask GitHub whether a newer version exists when Hydra starts. Turning this off leaves the check to you — the button below still works."
       >
-        {label}
-      </button>
-    </SettingRow>
+        <Toggle checked={autoCheck} onChange={setAutoCheck} />
+      </SettingRow>
+      <SettingRow label="Software updates" description={description}>
+        <button
+          type="button"
+          disabled={busy}
+          onClick={onClick}
+          style={{
+            ...ROW_BUTTON,
+            color: busy ? "var(--text-tertiary)" : "var(--text-primary)",
+            cursor: busy ? "default" : "pointer",
+            fontVariantNumeric: "tabular-nums",
+          }}
+        >
+          {label}
+        </button>
+      </SettingRow>
+    </>
   );
 }
 
@@ -251,6 +284,9 @@ export function SettingsContent() {
     getBool(SK.restoreSession, true),
   );
   const [versions, setVersions] = useState<Versions | null>(null);
+  // Which tab the licences panel opens on, or null while it is closed —
+  // the two rows below open the same panel at different pages.
+  const [licenseTab, setLicenseTab] = useState<LicenseTab | null>(null);
 
   // Wrap setters to also persist to localStorage.
   const setRestoreSession = (v: boolean) => {
@@ -290,17 +326,20 @@ export function SettingsContent() {
       >
         <Toggle checked={restoreSession} onChange={setRestoreSession} />
       </SettingRow>
-      {/* Appearance — theme, units and basemap are all "how things are
-            shown", and each had its own header for a single row. */}
-      <Section>Appearance</Section>
-      <SettingRow label="Theme" description="Choose dark or light mode.">
-        <ThemeToggle />
-      </SettingRow>
+      {/* Units sat under Appearance, which read them as a look. They are
+          not: this setting decides what number you type into a diameter
+          field and what a report says the answer is. That is a convention
+          you work in, which is what General is for. */}
       <SettingRow
         label="Default display units"
         description="How values are shown and entered, for projects that do not set their own. Source follows each model's declared unit system. Files and exports (INP, CSV, GeoJSON) always remain in the model's native/SI units."
       >
         <UnitSystemToggle />
+      </SettingRow>
+      {/* Appearance */}
+      <Section>Appearance</Section>
+      <SettingRow label="Theme" description="Choose dark or light mode.">
+        <ThemeToggle />
       </SettingRow>
       <SettingRow
         label="Basemap providers"
@@ -309,16 +348,7 @@ export function SettingsContent() {
         <button
           type="button"
           onClick={openBasemapProvidersModal}
-          style={{
-            padding: "5px 14px",
-            border: "1px solid var(--border-hover)",
-            borderRadius: 6,
-            background: "transparent",
-            color: "var(--text-primary)",
-            cursor: "pointer",
-            fontSize: "var(--text-lg)",
-            fontFamily: "var(--font-ui)",
-          }}
+          style={ROW_BUTTON}
         >
           Manage providers…
         </button>
@@ -343,9 +373,10 @@ export function SettingsContent() {
       >
         <Toggle checked={highContrast} onChange={setHighContrast} />
       </SettingRow>
-      {/* About */}
-      <Section>About</Section>
-      <UpdatesRow />
+      {/* Data — where the work lives. It was the one storage row in About,
+          a section that otherwise answers "what is this program": version,
+          licence, source. A folder full of your projects is not that. */}
+      <Section>Data</Section>
       <SettingRow
         label="Data folder"
         description="Projects, scenarios, models and results are stored here, alongside your custom CRS definitions."
@@ -353,18 +384,36 @@ export function SettingsContent() {
         <button
           type="button"
           onClick={() => void openDataFolder()}
-          style={{
-            padding: "5px 14px",
-            border: "1px solid var(--border-hover)",
-            borderRadius: 6,
-            background: "transparent",
-            color: "var(--text-primary)",
-            cursor: "pointer",
-            fontSize: "var(--text-lg)",
-            fontFamily: "var(--font-ui)",
-          }}
+          style={ROW_BUTTON}
         >
           Reveal…
+        </button>
+      </SettingRow>
+      {/* About */}
+      <Section>About</Section>
+      <UpdatesRow />
+      <SettingRow
+        label="Licence"
+        description="Hydra is free software under the GNU Affero General Public License v3. Using it, and everything it produces, is yours to do as you like with; sharing Hydra's code inside your own product asks the same licence of that product."
+      >
+        <button
+          type="button"
+          onClick={() => setLicenseTab("hydra")}
+          style={ROW_BUTTON}
+        >
+          View licence…
+        </button>
+      </SettingRow>
+      <SettingRow
+        label="Open-source components"
+        description="The licences and copyright notices of every open-source package Hydra is built from, as those licences ask."
+      >
+        <button
+          type="button"
+          onClick={() => setLicenseTab("components")}
+          style={ROW_BUTTON}
+        >
+          View notices…
         </button>
       </SettingRow>
       <div
@@ -410,6 +459,15 @@ export function SettingsContent() {
           </span>
         </div>
       </div>
+      {/* Above the drawer it was opened from: it is a document to read, so
+          it takes the middle of the window rather than a column of rows.
+          No fallback while the chunk loads — the drawer stays where it is
+          and the panel arrives over it. */}
+      {licenseTab !== null && (
+        <Suspense fallback={null}>
+          <LicensesModal tab={licenseTab} onClose={() => setLicenseTab(null)} />
+        </Suspense>
+      )}
     </>
   );
 }
