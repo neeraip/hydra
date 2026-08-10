@@ -1573,7 +1573,13 @@ export const MapCanvas = memo(function MapCanvas({
       const role = kindRoles?.get(d.type);
       if (generic) {
         return genNode
-          ? genericRgba(genNode.values?.[d.si], genNode.variable, 220, "point")
+          ? genericRgba(
+              genNode.values?.[d.si],
+              genNode.variable,
+              220,
+              "point",
+              genNode.bands,
+            )
           : baseNodeRgba(role);
       }
       if (!pr) return baseNodeRgba(role);
@@ -1601,6 +1607,7 @@ export const MapCanvas = memo(function MapCanvas({
               genLink.variable,
               220,
               "polyline",
+              genLink.bands,
             )
           : baseLinkRgba(role);
       }
@@ -1795,6 +1802,7 @@ export const MapCanvas = memo(function MapCanvas({
               genRegion.variable,
               110,
               "region",
+              genRegion.bands,
             )
         : // At rest, before any result: neutral like every other class, so
           // the network reads by role rather than by hue. The green belongs
@@ -1888,6 +1896,7 @@ export const MapCanvas = memo(function MapCanvas({
             getFillColor: [
               genRegion?.values,
               genRegion?.variable,
+              genRegion?.bands,
               selectedRegionId,
               hoveredRegionId,
             ],
@@ -2171,6 +2180,7 @@ export const MapCanvas = memo(function MapCanvas({
         pr,
         genLink?.values,
         genLink?.variable,
+        genLink?.bands,
       ];
       // Link hover/click is only meaningful in select/edit; skipping the
       // pick pass for other tools halves per-mousemove GPU picking cost.
@@ -2508,6 +2518,10 @@ export const MapCanvas = memo(function MapCanvas({
               pr,
               genNode?.values,
               genNode?.variable,
+              // The verdict scale changes the colours without changing the
+              // values or the variable, so it has to be named here or the
+              // map keeps painting magnitudes after the reader switches.
+              genNode?.bands,
             ],
             getRadius: nodeRadiusTrigger(isSchematic, typicalLink, nodeScale),
           },

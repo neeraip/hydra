@@ -13,13 +13,18 @@ import {
   wgs84ToSourceCrs,
 } from "../../canvas/coords";
 import {
+  annotationFor,
+  bandsFor,
+  type CriterionBands,
+} from "../../canvas/criteriaBands";
+import {
   type GenericClassKey,
   GenericLegend,
   type GenericSelection,
 } from "../../canvas/GenericLegend";
 import type { ScaleMode } from "../../canvas/legend-primitives";
 import { MapCanvas } from "../../canvas/MapCanvas";
-import { wdsBandColors } from "../../canvas/MapCanvas/colorUtils";
+import { verdictCss } from "../../canvas/MapCanvas/colorUtils";
 import type { MeasurePoint } from "../../canvas/measureSnap";
 import { usePublishCurrentPeriod } from "../../canvas/period-context";
 import { stepIntervalMs } from "../../canvas/playback";
@@ -36,6 +41,8 @@ import type {
   NodeVariable,
   ViewMode,
 } from "../../canvas/types";
+import type { Criterion, Valuation } from "../../components/analysis/criteria";
+import { toDisplayValue } from "../../components/analysis/criteria";
 import { CreateLinkModal } from "../../components/modals/CreateLinkModal";
 import {
   CreateNodeModal,
@@ -69,6 +76,8 @@ import {
   useRegions,
   useSimParams,
 } from "../../hooks";
+import { useCriteriaCatalog } from "../../hooks/criteriaCatalog";
+import { useCriteriaValuation } from "../../hooks/criteriaValuation";
 import { useNetworkVersion } from "../../hooks/NetworkVersionContext";
 import {
   pushUndoEntry,
@@ -78,7 +87,7 @@ import {
 import { useElementRename } from "../../hooks/useElementRename";
 import { useReducedMotion } from "../../hooks/useReducedMotion";
 import type { Link, Node, Region } from "../../types/network";
-import { type Quantity, toDisplay, useUnitSystem } from "../../units";
+import { type Quantity, useUnitSystem } from "../../units";
 import { CanvasErrorBoundary } from "./CanvasView/CanvasErrorBoundary";
 import { CanvasToolbar } from "./CanvasView/CanvasToolbar";
 import {
@@ -89,6 +98,12 @@ import {
   writeCanvasPrefs,
 } from "./CanvasView/canvasPrefs";
 import { sourceCoordinate } from "./CanvasView/dropPoint";
+import { wdsValuation } from "./criteriaValuation";
+
+/** Stable "no bands" answer, so the legend's prop keeps its identity
+ *  between renders in the data-range modes. */
+const NO_BAND_COLORS = () => null;
+
 import { InvalidCrsOverlay } from "./CanvasView/InvalidCrsOverlay";
 import { NodeSizeSlider } from "./CanvasView/NodeSizeSlider";
 import { SchematicAspectSlider } from "./CanvasView/SchematicAspectSlider";
@@ -331,8 +346,7 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
   const { project, engine } = useActiveProject();
   // Editing affordances exist only for engines whose model this GUI edits;
   // for read-only engines the tools hide rather than refuse per gesture.
-  const { modelEditable, criteriaVariables, animatedVariables } =
-    engineComponents(engine?.key);
+  const { modelEditable, animatedVariables } = engineComponents(engine?.key);
   /** Every animated id, both classes — what the legend's one toggle
    * governs and what its sentence is built from. */
   const animatedIds = useMemo(
@@ -847,6 +861,57 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
     },
     [],
   );
+  /**
+   * Which variables can be scaled by criteria, with the bands to do it.
+   *
+   * Derived from the two contracts rather than from a per-engine list: a
+   * variable says which criterion bands it (§6.1) and the criterion says
+   * what its regions mean (§7.2). The list this replaced named three
+   * water-distribution variables, so drainage — which has had criteria of
+   * its own since the contract landed — was never offered the scale.
+   *
+   * The valuation comes from whichever store the engine keeps its
+   * standard in: wds still has its typed one, which predates the contract
+   * and which its editors write; everything else uses the generic one.
+   */
+  const { valuation: savedValuation } = useCriteriaValuation(
+    project?.id ?? null,
+  );
+  const criteriaCatalog = useCriteriaCatalog(project?.id ?? null);
+  const valuation = useMemo(
+    () =>
+      engine?.key === "wds"
+        ? (wdsValuation(criteria) as Valuation)
+        : (savedValuation ?? {}),
+    [engine?.key, criteria, savedValuation],
+  );
+  const criteriaBands = useMemo(() => {
+    const found = new Map<
+      string,
+      { criterion: Criterion; bands: CriterionBands }
+    >();
+    const all = [
+      ...(genericMeta?.pointVars ?? []),
+      ...(genericMeta?.polylineVars ?? []),
+      ...(genericMeta?.regionVars ?? []),
+    ];
+    for (const v of all) {
+      const bands = bandsFor(v.ramp, criteriaCatalog, valuation);
+      const criterion =
+        v.ramp.type === "banded"
+          ? criteriaCatalog.find(
+              (c) => c.key === (v.ramp as { criterion: string }).criterion,
+            )
+          : undefined;
+      if (bands && criterion) found.set(v.id, { criterion, bands });
+    }
+    return found;
+  }, [genericMeta, criteriaCatalog, valuation]);
+  const criteriaVariables = useMemo(
+    () => [...criteriaBands.keys()],
+    [criteriaBands],
+  );
+
   const genericCanvas = useMemo<GenericCanvasResults | null>(() => {
     // Null for engines whose values arrive as fixed arrays, so the canvas
     // takes its own colouring path rather than a catalog channel that will
@@ -871,7 +936,14 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
         scaleMode === "step"
           ? { ...v, ...periodRange(values, v.min, v.max) }
           : v;
-      return { variable, values };
+      // Criteria is a scale like the other two, so it is chosen here
+      // rather than by the map: the bands travel with the channel, and a
+      // variable with none simply keeps its ramp.
+      const bands =
+        scaleMode === "criteria"
+          ? (criteriaBands.get(v.id)?.bands ?? null)
+          : null;
+      return { variable, values, bands };
     };
     return {
       node: channel(
@@ -896,6 +968,7 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
     fetchedGenericValues,
     genericSelection,
     scaleMode,
+    criteriaBands,
   ]);
 
   // On project change, discard stale period results immediately: a different
@@ -1760,20 +1833,32 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
    * are edited. */
   const criteriaAnnotation = useCallback(
     (variableId: string): string | null => {
-      const show = (v: number, q: Quantity) =>
-        `${Number(toDisplay(v, q, unitSystem).toFixed(2))}`;
-      if (variableId === "pressure") {
-        const b = criteria.pressure;
-        return `< ${show(b.low, "pressure")} low · ${show(b.required, "pressure")} required · > ${show(b.high, "pressure")} high`;
-      }
-      if (variableId === "velocity" || variableId === "flow") {
-        const b = variableId === "velocity" ? criteria.velocity : criteria.flow;
-        const q: Quantity = variableId === "velocity" ? "velocity" : "flow";
-        return `< ${show(b.low, q)} low · ${show(b.target, q)} target · > ${show(b.high, q)} high`;
-      }
-      return null;
+      const found = criteriaBands.get(variableId);
+      if (!found) return null;
+      // Displayed through the criterion's own quantity descriptor, so the
+      // numbers under the ramp are in the unit system the reader chose.
+      return annotationFor(found.criterion, found.bands, (si) =>
+        String(
+          Number(
+            toDisplayValue(si, found.criterion.quantity, unitSystem).toFixed(2),
+          ),
+        ),
+      );
     },
-    [criteria, unitSystem],
+    [criteriaBands, unitSystem],
+  );
+
+  /**
+   * The colours the legend's bar wears in criteria mode: one per region,
+   * ascending, from the severities the engine stated.
+   */
+  const criteriaBandColors = useCallback(
+    (variableId: string): string[] | null => {
+      const found = criteriaBands.get(variableId);
+      if (!found) return null;
+      return found.bands.severities.map((s) => verdictCss(s));
+    },
+    [criteriaBands],
   );
 
   // MapCanvas gets the *stable* position/base arrays plus the flat period
@@ -2357,7 +2442,9 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
               // The verdict's colours describe the map only while the map
               // is showing the verdict; in the data-range modes these
               // variables are painted as plain magnitudes.
-              bandColors={scaleMode === "criteria" ? wdsBandColors : () => null}
+              bandColors={
+                scaleMode === "criteria" ? criteriaBandColors : NO_BAND_COLORS
+              }
               onLocateExtreme={
                 currentPeriodResult ? handleLocateExtreme : undefined
               }

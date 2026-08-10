@@ -1,6 +1,6 @@
 # Hydra Common — Foundation Contract
 
-Status: **v1.9 — 2026-08-08** (v1.1 added opaque per-block options
+Status: **v1.10 — 2026-08-09** (v1.1 added opaque per-block options
 to the production contract, §3.4; v1.2 added the chart fragment item,
 §3.3; v1.3 added engine availability and import formats, §2.1–2.3; v1.4
 added the recognition contract and its routing rules, §2.5; v1.5 — with a
@@ -13,7 +13,11 @@ joining the fragment model to the quantity contract so consumers format
 tagged values in a chosen display family, §5; v1.8 added the
 engine-authored category on block descriptors, §3.2; v1.9 — with a second
 engine's criteria implemented to validate it — added the criteria
-contract, §7, moving Evolution to §8).
+contract, §7, moving Evolution to §8; v1.10 joined the two: a `banded`
+variable now names the criterion its thresholds come from, §6.1, and a
+criterion says what each of its regions means, §7.2 — without which a
+threshold scale could only be offered to variables an application
+recognised by name).
 This file is the module documentation
 of the `hydra-common` crate and follows the same spec-first workflow as the
 engine specs: implementation changes flow from changes here, never the
@@ -644,11 +648,23 @@ and they are shape statements, never colours:
 |---|---|
 | `sequential` | Magnitude on a continuous low→high scale. |
 | `diverging` | Signed values around a meaningful zero (e.g. flow direction). |
-| `banded` | Values classed into user-configurable threshold bands. |
+| `banded` | Values classed against a criterion's threshold bands (§7); the hint carries the `criterion` key whose valuation supplies them. |
 | `categorical` | A closed set of discrete states; the descriptor carries the engine-authored items described below, as a §3.2.1 choice does. |
 
-An application chooses palettes, band edges, and legend styling; the
-engine says only which shape is truthful for the data.
+An application chooses palettes and legend styling; the engine says only
+which shape is truthful for the data — and, for `banded`, which criterion
+the thresholds come from.
+
+That last part is not decoration. A banded variable without it is
+uninterpretable: an application holding a valuation of several criteria
+cannot tell which of them bands *this* variable, and matching them by
+quantity is a guess — two criteria may share a quantity, and two engines
+may publish a variable of the same name meaning different things. The
+consequence of guessing was observed: a drainage map was offered a
+threshold scale annotated with water-distribution numbers. The criterion
+named here must exist in the same engine's criteria catalog (§7.1) and
+must carry severities (§7.2); an application that cannot resolve it
+renders the variable as a plain magnitude rather than inventing bands.
 
 #### Categorical items
 
@@ -726,6 +742,7 @@ layer.
 | `help` | One or two sentences on what the criterion judges | Plain text, engine-authored. |
 | `quantity` | §5 quantity key, or absent | Values of this criterion are expressed in the quantity's **SI display unit**; absent means dimensionless. |
 | `kind` | Shape of the value | Below. |
+| `severities` | What each region between the cut points means, ascending, or empty | Empty means the criterion is judged in reports but never drawn. When present, exactly one more entry than the criterion has cut points: a **value** criterion has one cut and so two regions, a **band** of *n* cuts has *n+1*. Each entry is `nominal`, `caution` or `alarm` — the §6.1 vocabulary, so a compliance verdict and a categorical state read alike. |
 
 `kind` is one of:
 
@@ -733,6 +750,13 @@ layer.
 - **band** — an ordered list of named cut points, each `{key, label,
   default}`, defaults strictly ascending. A band's value is a same-length
   list of numbers, ascending in the same order.
+
+Severities are a claim about the domain, and the reason they are the
+engine's to make is that compliance is rarely monotonic. Service pressure
+is worst when too low, acceptable in a middle, and worth attention again
+when too high; conduit velocity is worth attention when too slow and wrong
+when too fast. An application given only the numbers would have to decide
+which end is bad, and it has no basis for that in either direction.
 
 Defaults are the engine's judgement of a conventional standard; they are
 advisory for editors and binding for consumption (§7.4).

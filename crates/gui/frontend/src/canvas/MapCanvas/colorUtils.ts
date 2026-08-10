@@ -1,6 +1,7 @@
 import type { Link, Node } from "../../hooks";
 import type { RampHint } from "../../hooks/results";
 import { PRESSURE_THRESHOLD } from "../../types";
+import { type CriterionBands, verdictAt } from "../criteriaBands";
 import type { LinkVariable, NodeVariable } from "../types";
 
 export type RGBA = [number, number, number, number];
@@ -149,6 +150,12 @@ export type Verdict = "nominal" | "caution" | "alarm";
 
 export function verdictRgba(v: Verdict, alpha = 255): RGBA {
   return [...SEVERITY_RGB[v], alpha];
+}
+
+/** The same verdict as CSS, for the legend's bar. One table, so a band
+ *  cannot read one colour on the map and another under it. */
+export function verdictCss(v: Verdict): string {
+  return css(SEVERITY_RGB[v]);
 }
 
 /** Under-service is the failure; over-pressure is worth noticing. */
@@ -452,8 +459,15 @@ export function genericRgba(
   /** Element class, selecting the sequential hue family. Diverging and
    * banded are class-independent — see their own notes. */
   cls = "point",
+  /** The criterion's thresholds, when the reader has asked to be shown
+   * the verdict rather than the magnitude. Present only in that mode, and
+   * only for a variable whose criterion resolves. */
+  bands?: CriterionBands | null,
 ): RGBA {
   if (value == null || !Number.isFinite(value)) return NO_RESULT_RGBA;
+  // A judgement, not a magnitude — so it takes the severity colours the
+  // rest of the app judges with, and the ramp shape is set aside.
+  if (bands) return verdictRgba(verdictAt(value, bands), alpha);
   const { min, max, ramp } = variable;
   if (ramp.type === "categorical") {
     const i = ramp.items.findIndex((it) => it.value === value);

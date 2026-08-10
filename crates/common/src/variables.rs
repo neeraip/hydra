@@ -60,8 +60,20 @@ pub enum RampHint {
     Sequential,
     /// Signed values around a meaningful zero (e.g. flow direction).
     Diverging,
-    /// Values classed into user-configurable threshold bands.
-    Banded,
+    /// Values classed against a criterion's threshold bands (spec §7).
+    ///
+    /// The criterion is named rather than left to the application to
+    /// work out: a valuation holds several criteria, and matching them to
+    /// variables by quantity is a guess — two criteria can share one, and
+    /// two engines can publish a variable of the same name meaning
+    /// different things. Guessing produced a drainage map offered a
+    /// threshold scale annotated with water-distribution numbers.
+    Banded {
+        /// Key of the criterion (spec §7.1) whose valuation supplies the
+        /// thresholds. Must exist in the same engine's criteria catalog
+        /// and carry severities.
+        criterion: &'static str,
+    },
     /// A closed set of discrete states, with engine-authored items.
     Categorical { items: Vec<CategoryItem> },
 }

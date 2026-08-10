@@ -1,28 +1,25 @@
 import { describe, expect, it } from "vitest";
 import { engineComponents } from "./registry";
 
-describe("criteriaVariables", () => {
-  // The project criteria file is a water-distribution compliance standard.
-  it("offers the wds bands to wds", () => {
-    expect(engineComponents("wds").criteriaVariables).toEqual([
-      "pressure",
-      "velocity",
-      "flow",
-    ]);
-  });
-
-  // Both engines publish a variable called `flow` and mean different
-  // quantities by it, so matching on id alone handed a drainage map the
-  // water-distribution bands — a Criteria scale annotated with numbers
-  // from another domain.
-  it("offers none to drainage, which has no such standard", () => {
-    expect(engineComponents("uds").criteriaVariables).toEqual([]);
-  });
-
-  it("falls back to wds for unknown or absent engine keys", () => {
-    for (const key of [null, undefined, "och"]) {
-      expect(engineComponents(key).criteriaVariables).toContain("pressure");
-    }
+/**
+ * `criteriaVariables` is gone from the registry.
+ *
+ * It named three water-distribution variables, which is why a drainage
+ * project — with criteria of its own since the contract landed — was
+ * never offered the threshold scale. The answer now comes from the two
+ * contracts instead: a variable names the criterion that bands it
+ * (hydra-common §6.1) and the criterion says what its regions mean
+ * (§7.2), so the resolution is `bandsFor` and its tests, and the engines'
+ * own tests hold that every banded variable resolves.
+ *
+ * This is left as a reminder rather than deleted outright: re-adding a
+ * per-engine list here would silently take the scale away from every
+ * engine not on it, which is exactly the failure it caused.
+ */
+describe("the retired criteria list", () => {
+  it("is not something the registry answers any more", () => {
+    expect("criteriaVariables" in engineComponents("wds")).toBe(false);
+    expect("criteriaVariables" in engineComponents("uds")).toBe(false);
   });
 });
 

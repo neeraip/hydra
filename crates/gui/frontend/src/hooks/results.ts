@@ -175,7 +175,11 @@ export interface RampCategory {
 export type RampHint =
   | { type: "sequential" }
   | { type: "diverging" }
-  | { type: "banded" }
+  /** Classed against a criterion's thresholds; `criterion` is the key
+   *  (spec §7.1) whose valuation supplies them. Named by the engine
+   *  because matching criteria to variables by quantity is a guess —
+   *  which once offered a drainage map water-distribution numbers. */
+  | { type: "banded"; criterion: string }
   | { type: "categorical"; items: RampCategory[] };
 
 export interface GenericVariable {

@@ -255,7 +255,9 @@ pub fn result_variables(class: ElementClass) -> Vec<VariableDescriptor> {
                 "Pressure",
                 "p",
                 Some("pressure"),
-                RampHint::Banded,
+                RampHint::Banded {
+                    criterion: "pressure",
+                },
             ),
             var("head", "Head", "H", Some("head"), RampHint::Sequential),
             var(
@@ -274,7 +276,9 @@ pub fn result_variables(class: ElementClass) -> Vec<VariableDescriptor> {
                 "Velocity",
                 "v",
                 Some("velocity"),
-                RampHint::Banded,
+                RampHint::Banded {
+                    criterion: "velocity",
+                },
             ),
             var(
                 "headloss",

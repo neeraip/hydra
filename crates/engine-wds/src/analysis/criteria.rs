@@ -4,7 +4,7 @@
 
 use std::collections::HashMap;
 
-use hydra_common::{BandCut, CriterionDescriptor, CriterionKind};
+use hydra_common::{BandCut, CategorySeverity, CriterionDescriptor, CriterionKind};
 
 use crate::model::Network;
 
@@ -18,6 +18,7 @@ const CRITERIA: &[CriterionDescriptor] = &[
                the compliance figures judge against it.",
         quantity: Some("pressure"),
         kind: CriterionKind::Value { default: 14.0 },
+        severities: &[CategorySeverity::Alarm, CategorySeverity::Nominal],
     },
     CriterionDescriptor {
         key: "pressure",
@@ -43,6 +44,12 @@ const CRITERIA: &[CriterionDescriptor] = &[
                 },
             ],
         },
+        severities: &[
+            CategorySeverity::Alarm,
+            CategorySeverity::Caution,
+            CategorySeverity::Nominal,
+            CategorySeverity::Caution,
+        ],
     },
     CriterionDescriptor {
         key: "velocity",
@@ -68,6 +75,12 @@ const CRITERIA: &[CriterionDescriptor] = &[
                 },
             ],
         },
+        severities: &[
+            CategorySeverity::Caution,
+            CategorySeverity::Nominal,
+            CategorySeverity::Nominal,
+            CategorySeverity::Alarm,
+        ],
     },
     CriterionDescriptor {
         key: "minResidual",
@@ -76,6 +89,7 @@ const CRITERIA: &[CriterionDescriptor] = &[
                quality runs).",
         quantity: Some("concentration"),
         kind: CriterionKind::Value { default: 0.2 },
+        severities: &[CategorySeverity::Alarm, CategorySeverity::Nominal],
     },
     CriterionDescriptor {
         key: "maxAge",
@@ -83,6 +97,7 @@ const CRITERIA: &[CriterionDescriptor] = &[
         help: "The water age no junction may exceed (age quality runs).",
         quantity: Some("age"),
         kind: CriterionKind::Value { default: 24.0 },
+        severities: &[CategorySeverity::Nominal, CategorySeverity::Alarm],
     },
     CriterionDescriptor {
         key: "flow",
@@ -108,6 +123,7 @@ const CRITERIA: &[CriterionDescriptor] = &[
                 },
             ],
         },
+        severities: &[],
     },
 ];
 
@@ -239,6 +255,66 @@ fn band_cuts(key: &str) -> &'static [BandCut] {
 
 #[cfg(test)]
 mod tests {
+
+    /// Every banded variable names a criterion this catalog declares, and
+    /// every criterion it names says what its regions mean.
+    ///
+    /// The pair is what lets an application colour a threshold scale
+    /// without recognising a variable by name — the contract's whole point
+    /// (hydra-common spec §6.1, §7.2). A variable pointing at a criterion
+    /// that is missing, or at one with no severities, would leave the map
+    /// with thresholds it cannot interpret.
+    #[test]
+    fn every_banded_variable_resolves_to_a_criterion_with_severities() {
+        let catalog = criteria_catalog();
+        for class in [
+            hydra_common::ElementClass::Point,
+            hydra_common::ElementClass::Polyline,
+            hydra_common::ElementClass::Region,
+        ] {
+            for v in crate::descriptors::result_variables(class) {
+                let hydra_common::RampHint::Banded { criterion } = v.ramp else {
+                    continue;
+                };
+                let found = catalog
+                    .iter()
+                    .find(|c| c.key == criterion)
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "variable {:?} bands by unknown criterion {criterion:?}",
+                            v.id
+                        )
+                    });
+                assert!(
+                    !found.severities.is_empty(),
+                    "variable {:?} bands by criterion {criterion:?}, which states no severities",
+                    v.id
+                );
+            }
+        }
+    }
+
+    /// One region more than there are cuts, or the top or bottom band has
+    /// no meaning and the map has to invent one.
+    #[test]
+    fn severities_describe_one_region_more_than_there_are_cuts() {
+        for d in criteria_catalog() {
+            if d.severities.is_empty() {
+                continue;
+            }
+            let cuts = match d.kind {
+                hydra_common::CriterionKind::Value { .. } => 1,
+                hydra_common::CriterionKind::Band { cuts } => cuts.len(),
+            };
+            assert_eq!(
+                d.severities.len(),
+                cuts + 1,
+                "criterion {:?} has {cuts} cut(s) and {} severities",
+                d.key,
+                d.severities.len()
+            );
+        }
+    }
     use super::*;
 
     fn network(units_line: &str) -> Network {

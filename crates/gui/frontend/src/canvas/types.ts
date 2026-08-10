@@ -1,4 +1,5 @@
 import type { GenericVariable } from "../hooks/results";
+import type { CriterionBands } from "./criteriaBands";
 
 export type NodeVariable = "pressure" | "head" | "demand" | "quality";
 export type LinkVariable =
@@ -51,6 +52,12 @@ export type CanvasPoint =
 export interface GenericChannel {
   variable: GenericVariable;
   values: Float32Array | null;
+  /** The criterion's thresholds, present only while the reader has chosen
+   *  the criteria scale for a variable that resolves to some. Their
+   *  presence is what makes the canvas paint a verdict instead of a
+   *  magnitude — the same rule the water-distribution path has always
+   *  used for its own thresholds. */
+  bands?: CriterionBands | null;
 }
 
 /**

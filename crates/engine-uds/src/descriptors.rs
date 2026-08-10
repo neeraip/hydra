@@ -581,14 +581,18 @@ pub fn result_variables(class: ElementClass) -> Vec<VariableDescriptor> {
                 "Velocity",
                 "v",
                 Some("velocity"),
-                RampHint::Banded,
+                RampHint::Banded {
+                    criterion: "velocity",
+                },
             ),
             var(
                 "capacity",
                 "Capacity used",
                 "y/D",
                 Some("percent"),
-                RampHint::Banded,
+                RampHint::Banded {
+                    criterion: "capacity",
+                },
             ),
         ],
         ElementClass::Region => vec![

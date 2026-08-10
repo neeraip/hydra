@@ -125,21 +125,6 @@ export interface EngineComponents {
    * affordances entirely rather than offering gestures that refuse. */
   modelEditable: boolean;
   /**
-   * Result-variable ids this engine's projects hold criteria bands for.
-   *
-   * The project criteria file is a water-distribution compliance standard
-   * (minimum service pressure and pressure/velocity/flow bands), so its
-   * bands mean something only for the engine they were designed for.
-   * Matching on variable id alone is not enough: two engines can publish a
-   * variable called `flow` and mean different quantities by it, and a
-   * drainage map was briefly offered a Criteria scale annotated with
-   * water-distribution numbers.
-   *
-   * Empty means this engine has no such standard, and the legend never
-   * offers the option.
-   */
-  criteriaVariables: readonly string[];
-  /**
    * Result-variable ids whose motion the canvas can animate, per element
    * class.
    *
@@ -177,7 +162,6 @@ const WDS: EngineComponents = {
   editorFocusesElements: true,
   settingsEditable: true,
   modelEditable: true,
-  criteriaVariables: ["pressure", "velocity", "flow"],
   animatedVariables: {
     // Demand is a rate and would ring honestly, but it is nonzero at
     // nearly every junction — unlike drainage flooding, whose sparsity is
@@ -206,8 +190,6 @@ const UDS: EngineComponents = {
   editorFocusesElements: true,
   settingsEditable: false,
   modelEditable: false,
-  // Drainage has no compliance standard in the project criteria file.
-  criteriaVariables: [],
   // Conduit flow and velocity are rates the pulse can carry directly.
   // Depth and capacity are states rather than rates — a full pipe is not a
   // fast one — and animating them would have the motion assert something

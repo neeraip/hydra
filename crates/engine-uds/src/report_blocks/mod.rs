@@ -1323,6 +1323,11 @@ const CRITERIA: &[hydra_common::CriterionDescriptor] = &[
                judge against it.",
         quantity: Some("depth"),
         kind: hydra_common::CriterionKind::Value { default: 0.3 },
+        // Below the freeboard the node is surcharging toward its rim.
+        severities: &[
+            hydra_common::CategorySeverity::Alarm,
+            hydra_common::CategorySeverity::Nominal,
+        ],
     },
     hydra_common::CriterionDescriptor {
         key: "capacity",
@@ -1331,6 +1336,12 @@ const CRITERIA: &[hydra_common::CriterionDescriptor] = &[
                capacity figures.",
         quantity: Some("percent"),
         kind: hydra_common::CriterionKind::Value { default: 80.0 },
+        // A conduit under the threshold has capacity in hand; at or over
+        // it, it is running full and is where surcharge begins.
+        severities: &[
+            hydra_common::CategorySeverity::Nominal,
+            hydra_common::CategorySeverity::Alarm,
+        ],
     },
     hydra_common::CriterionDescriptor {
         key: "velocity",
@@ -1352,6 +1363,13 @@ const CRITERIA: &[hydra_common::CriterionDescriptor] = &[
                 },
             ],
         },
+        // Too slow deposits solids — a maintenance problem, not a failure.
+        // Too fast scours the invert, which is one.
+        severities: &[
+            hydra_common::CategorySeverity::Caution,
+            hydra_common::CategorySeverity::Nominal,
+            hydra_common::CategorySeverity::Alarm,
+        ],
     },
 ];
 
@@ -1420,4 +1438,68 @@ pub fn criteria_block_options(
         );
     }
     Ok(options)
+}
+
+#[cfg(test)]
+mod criteria_tests {
+    use super::*;
+
+    /// Every banded variable names a criterion this catalog declares, and
+    /// every criterion it names says what its regions mean.
+    ///
+    /// The pair is what lets an application colour a threshold scale
+    /// without recognising a variable by name — the contract's whole point
+    /// (hydra-common spec §6.1, §7.2), and the reason drainage variables
+    /// could not be offered one before it existed.
+    #[test]
+    fn every_banded_variable_resolves_to_a_criterion_with_severities() {
+        let catalog = criteria_catalog();
+        for class in [
+            hydra_common::ElementClass::Point,
+            hydra_common::ElementClass::Polyline,
+            hydra_common::ElementClass::Region,
+        ] {
+            for v in crate::descriptors::result_variables(class) {
+                let hydra_common::RampHint::Banded { criterion } = v.ramp else {
+                    continue;
+                };
+                let found = catalog
+                    .iter()
+                    .find(|c| c.key == criterion)
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "variable {:?} bands by unknown criterion {criterion:?}",
+                            v.id
+                        )
+                    });
+                assert!(
+                    !found.severities.is_empty(),
+                    "variable {:?} bands by criterion {criterion:?}, which states no severities",
+                    v.id
+                );
+            }
+        }
+    }
+
+    /// One region more than there are cuts, or the top or bottom band has
+    /// no meaning and the map has to invent one.
+    #[test]
+    fn severities_describe_one_region_more_than_there_are_cuts() {
+        for d in criteria_catalog() {
+            if d.severities.is_empty() {
+                continue;
+            }
+            let cuts = match d.kind {
+                hydra_common::CriterionKind::Value { .. } => 1,
+                hydra_common::CriterionKind::Band { cuts } => cuts.len(),
+            };
+            assert_eq!(
+                d.severities.len(),
+                cuts + 1,
+                "criterion {:?} has {cuts} cut(s) and {} severities",
+                d.key,
+                d.severities.len()
+            );
+        }
+    }
 }

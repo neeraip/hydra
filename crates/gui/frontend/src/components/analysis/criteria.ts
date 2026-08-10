@@ -33,6 +33,11 @@ export interface Criterion {
   help: string;
   quantity?: QuantityInfo;
   kind: CriterionKind;
+  /** What each region between the cuts means, ascending — one more entry
+   * than the criterion has cuts (§7.2). Empty for a criterion that is
+   * judged in reports but never drawn, which is what tells the canvas it
+   * cannot offer a threshold scale for it. */
+  severities?: Array<"nominal" | "caution" | "alarm">;
 }
 
 /** A valuation: criterion key → SI number (value) or SI list (band). */

@@ -167,6 +167,10 @@ pub struct CriterionDto {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub quantity: Option<hydra::common::QuantityDescriptor>,
     pub kind: hydra::common::CriterionKind,
+    /// What each region between the cuts means, ascending (spec §7.2).
+    /// Empty for a criterion that is judged but never drawn — which is
+    /// what tells the canvas it cannot offer a threshold scale for it.
+    pub severities: &'static [hydra::common::CategorySeverity],
 }
 
 /// The active engine's criteria catalog (hydra-common spec §7.2).
@@ -195,6 +199,7 @@ pub fn get_criteria_catalog(
                 .quantity
                 .and_then(|key| quantities.iter().find(|q| q.key == key).copied()),
             kind: c.kind,
+            severities: c.severities,
         })
         .collect())
 }

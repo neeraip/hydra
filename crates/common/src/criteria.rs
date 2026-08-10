@@ -8,6 +8,7 @@
 //! and have no type here — they are caller-held data this layer never
 //! interprets.
 
+use crate::CategorySeverity;
 use serde::Serialize;
 
 /// Descriptor of one criterion in an engine's criteria catalog (spec §7.2).
@@ -28,6 +29,15 @@ pub struct CriterionDescriptor {
     pub quantity: Option<&'static str>,
     /// Shape of the criterion's value.
     pub kind: CriterionKind,
+    /// What each region between the cut points means, ascending — one
+    /// more entry than the criterion has cuts (spec §7.2).
+    ///
+    /// Empty for a criterion that is judged in reports but never drawn.
+    /// The engine's to state because compliance is rarely monotonic:
+    /// service pressure is worst when low, acceptable in a middle and
+    /// worth attention again when high, and nothing in the numbers says
+    /// which end is which.
+    pub severities: &'static [CategorySeverity],
 }
 
 /// Shape of one criterion's value (spec §7.2).
@@ -73,11 +83,15 @@ mod tests {
             help: "Clearance kept below the rim.",
             quantity: Some("depth"),
             kind: CriterionKind::Value { default: 0.3 },
+            severities: &[CategorySeverity::Alarm, CategorySeverity::Nominal],
         };
         let json = serde_json::to_value(d).unwrap();
         assert_eq!(json["quantity"], "depth");
         assert_eq!(json["kind"]["type"], "value");
         assert_eq!(json["kind"]["default"], 0.3);
+        // Two regions for one cut: below the freeboard and at or above it.
+        assert_eq!(json["severities"][0], "alarm");
+        assert_eq!(json["severities"][1], "nominal");
 
         let band = CriterionDescriptor {
             key: "velocity",
@@ -98,9 +112,15 @@ mod tests {
                     },
                 ],
             },
+            severities: &[
+                CategorySeverity::Caution,
+                CategorySeverity::Nominal,
+                CategorySeverity::Alarm,
+            ],
         };
         let json = serde_json::to_value(band).unwrap();
         assert_eq!(json["kind"]["type"], "band");
         assert_eq!(json["kind"]["cuts"][1]["key"], "erosive");
+        assert_eq!(json["severities"][2], "alarm");
     }
 }
