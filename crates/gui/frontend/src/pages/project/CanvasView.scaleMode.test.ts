@@ -51,31 +51,53 @@ describe("readScaleMode", () => {
 });
 
 describe("readCriteriaScale", () => {
-  it("reads the current key", () => {
-    expect(readCriteriaScale({ criteriaScale: true })).toBe(true);
-    expect(readCriteriaScale({ criteriaScale: false })).toBe(false);
+  const ALL_ON = { point: true, polyline: true, region: true };
+  const ALL_OFF = { point: false, polyline: false, region: false };
+
+  it("reads the current per-class key", () => {
+    expect(readCriteriaScale({ criteriaScale: ALL_ON })).toEqual(ALL_ON);
+    expect(
+      readCriteriaScale({
+        criteriaScale: { point: true, polyline: false, region: false },
+      }),
+    ).toEqual({ point: true, polyline: false, region: false });
   });
 
-  it("keeps a reader judging who was judging under either older shape", () => {
-    expect(readCriteriaScale({ scaleMode: "criteria" })).toBe(true);
-    expect(readCriteriaScale({ colorMode: "threshold" })).toBe(true);
+  it("fills in a class the stored object does not mention", () => {
+    // Written by an older build, or by hand. An absent class is not
+    // judging: the map shows a magnitude, which is what it did before
+    // anyone asked for a verdict.
+    expect(readCriteriaScale({ criteriaScale: { point: true } })).toEqual({
+      point: true,
+      polyline: false,
+      region: false,
+    });
+  });
+
+  it("turns every class on for a reader who was judging before", () => {
+    // Three earlier shapes all meant "judge whatever can be judged": a
+    // `colorMode` of threshold, a three-valued `scaleMode` of criteria,
+    // and the single boolean that briefly replaced it.
+    expect(readCriteriaScale({ criteriaScale: true })).toEqual(ALL_ON);
+    expect(readCriteriaScale({ scaleMode: "criteria" })).toEqual(ALL_ON);
+    expect(readCriteriaScale({ colorMode: "threshold" })).toEqual(ALL_ON);
     expect(
       readCriteriaScale({ colorMode: "threshold", rangeMode: "step" }),
-    ).toBe(true);
+    ).toEqual(ALL_ON);
   });
 
   it("is off for every shape that was not judging", () => {
-    expect(readCriteriaScale({ scaleMode: "step" })).toBe(false);
-    expect(readCriteriaScale({ colorMode: "relative" })).toBe(false);
-    expect(readCriteriaScale(null)).toBe(false);
-    expect(readCriteriaScale({})).toBe(false);
-    expect(readCriteriaScale("nonsense")).toBe(false);
+    expect(readCriteriaScale({ criteriaScale: false })).toEqual(ALL_OFF);
+    expect(readCriteriaScale({ scaleMode: "step" })).toEqual(ALL_OFF);
+    expect(readCriteriaScale({ colorMode: "relative" })).toEqual(ALL_OFF);
+    expect(readCriteriaScale(null)).toEqual(ALL_OFF);
+    expect(readCriteriaScale({})).toEqual(ALL_OFF);
+    expect(readCriteriaScale("nonsense")).toEqual(ALL_OFF);
   });
 
   it("prefers the current key over the shapes it replaced", () => {
-    // A canvas saved after the split, whose older keys happen to linger.
     expect(
-      readCriteriaScale({ criteriaScale: false, scaleMode: "criteria" }),
-    ).toBe(false);
+      readCriteriaScale({ criteriaScale: ALL_OFF, scaleMode: "criteria" }),
+    ).toEqual(ALL_OFF);
   });
 });

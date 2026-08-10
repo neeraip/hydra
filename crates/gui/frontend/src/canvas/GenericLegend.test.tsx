@@ -13,7 +13,6 @@ import {
   type AnimationControl,
   classIsAnimating,
   classIsHidden,
-  criteriaScaleOffered,
   GenericLegend,
   motionExplanation,
 } from "./GenericLegend";
@@ -111,24 +110,61 @@ describe("GenericLegend", () => {
     }
   });
 
-  it("offers Criteria when the model has bands anywhere", () => {
-    renderLegend({
-      criteriaVariables: ["flow"],
-      selection: { point: "", polyline: "flow", region: "" },
-    });
-    expect(screen.getByText(CRITERIA_TOGGLE.label)).toBeDefined();
+  it("offers the criteria switch beside a variable that has bands", () => {
+    renderLegend({ criteriaVariables: ["flow"] });
+    expect(
+      screen.getByRole("checkbox", { name: CRITERIA_TOGGLE.label }),
+    ).toBeDefined();
   });
 
-  it("keeps offering it while a variable without bands is selected", () => {
-    // The state mismatch this replaced: the option was withdrawn as the
-    // reader changed variable, so the control fell back to a range while
-    // the stored preference stayed on criteria — displaying one thing,
-    // remembering another, and jumping back unasked.
+  it("offers none beside a variable that has none", () => {
+    // Per variable, not per map: the switch appears where it can act.
+    // There is nothing to judge depth against, so nothing to offer — and
+    // the flow beside it is not banded either, since it is not in the
+    // list this model publishes criteria for.
+    renderLegend({ criteriaVariables: [] });
+    expect(screen.queryByRole("checkbox")).toBeNull();
+  });
+
+  it("offers it for one class and not the other", () => {
+    // Depth on nodes has no criteria; flow on links does.
+    renderLegend({ criteriaVariables: ["flow"] });
+    expect(screen.getAllByRole("checkbox")).toHaveLength(1);
+  });
+
+  it("switches one class without touching another", () => {
+    // The reading a single switch could not express: judge the flows,
+    // leave depth as a magnitude. Both engines band variables in two
+    // classes, so this is the ordinary case rather than a corner.
+    const { onCriteriaScaleChange } = renderLegend({
+      criteriaVariables: ["flow", "depth"],
+    });
+    const boxes = screen.getAllByRole("checkbox");
+    expect(boxes).toHaveLength(2);
+    fireEvent.click(boxes[1]);
+    expect(onCriteriaScaleChange).toHaveBeenCalledWith("polyline", true);
+  });
+
+  it("annotates a variable only while it is being judged", () => {
+    // Thresholds read beneath a magnitude ramp describe a colouring that
+    // is not on screen.
+    const annotation = vi.fn(() => "< 0.1 low");
     renderLegend({
       criteriaVariables: ["flow"],
-      selection: { point: "", polyline: "depth", region: "" },
+      criteriaAnnotation: annotation,
+      criteriaScale: { polyline: false },
     });
-    expect(screen.getByText(CRITERIA_TOGGLE.label)).toBeDefined();
+    expect(screen.queryByText("< 0.1 low")).toBeNull();
+  });
+
+  it("annotates it once it is", () => {
+    const annotation = vi.fn(() => "< 0.1 low");
+    renderLegend({
+      criteriaVariables: ["flow"],
+      criteriaAnnotation: annotation,
+      criteriaScale: { polyline: true },
+    });
+    expect(screen.getByText("< 0.1 low")).toBeDefined();
   });
 
   it("annotates only variables the engine has bands for", () => {
@@ -466,6 +502,101 @@ describe("motionExplanation", () => {
   });
 });
 
+describe("motionExplanation", () => {
+  const drainage = [
+    { variables: [v({ id: "depth", label: "Depth" })] },
+    {
+      variables: [
+        v({ id: "flow", label: "Flow" }),
+        v({ id: "capacity", label: "Capacity used" }),
+      ],
+    },
+  ];
+
+  /**
+   * Water distribution, whose animated list is the mixed one: three rates,
+   * a categorical state (Status, pulsed for presence — conveying against
+   * idle) and a carried concentration (Quality). It is the case the
+   * fixtures here used to miss entirely, and the one the old wording was
+   * wrong about.
+   */
+  const distribution = [
+    { variables: [v({ id: "pressure", label: "Pressure" })] },
+    {
+      variables: [
+        v({ id: "flow", label: "Flow" }),
+        v({ id: "velocity", label: "Velocity" }),
+        v({ id: "headloss", label: "Unit headloss" }),
+        v({ id: "quality", label: "Quality" }),
+        v({
+          id: "status",
+          label: "Status",
+          ramp: { type: "categorical", items: [] },
+        }),
+      ],
+    },
+  ];
+  const EVERY_WDS_LINK_VAR = [
+    "flow",
+    "velocity",
+    "status",
+    "headloss",
+    "quality",
+  ];
+
+  it("states the rule and names what it applies to", () => {
+    expect(motionExplanation(drainage, ["flow"])).toBe(
+      "Motion follows the water — Flow. Anything else on this map is a still reading.",
+    );
+  });
+
+  it("does not call a state a rate", () => {
+    // The sentence read "Motion shows rates — …, Status, …" and then said a
+    // variable measuring a state stays still: it listed one that does not.
+    // Status animates because the pulse shows whether water is moving at
+    // all, which is about the water and not about the status code.
+    const sentence = motionExplanation(distribution, EVERY_WDS_LINK_VAR);
+    expect(sentence).toContain("Status");
+    expect(sentence).not.toContain("rates");
+    expect(sentence).not.toContain("measures a state");
+  });
+
+  it("covers the carried case as well as the moving one", () => {
+    // Quality is a concentration travelling at the water's speed; the
+    // motion is honest about the water and says nothing about the number
+    // the colour shows.
+    expect(motionExplanation(distribution, EVERY_WDS_LINK_VAR)).toContain(
+      "Quality",
+    );
+  });
+
+  it("names them in the engine's own words and catalog order", () => {
+    const withFlooding = [
+      { variables: [v({ id: "flooding", label: "Flooding" })] },
+      { variables: [v({ id: "flow", label: "Flow" })] },
+    ];
+    expect(motionExplanation(withFlooding, ["flow", "flooding"])).toContain(
+      "Flooding and Flow",
+    );
+  });
+
+  /**
+   * The load-bearing omission: it must not say the rest are states. Most
+   * are — depth, capacity — but a rate can be left unanimated for other
+   * reasons, as wds demand is, and the sentence cannot know which is which.
+   */
+  it("never claims the unlisted variables are states", () => {
+    const sentence = motionExplanation(drainage, ["flow"]);
+    expect(sentence).not.toContain("the rest are");
+    expect(sentence).not.toContain("Capacity");
+    expect(sentence).not.toContain("Depth");
+  });
+
+  it("says nothing where nothing moves", () => {
+    expect(motionExplanation(drainage, [])).toBe("");
+  });
+});
+
 /**
  * Whether the criteria scale is on offer.
  *
@@ -476,32 +607,3 @@ describe("motionExplanation", () => {
  * remembered another, and jumped back without being asked the moment a
  * banded variable was selected again.
  */
-describe("criteriaScaleOffered", () => {
-  const drainage = [
-    { variables: [v({ id: "depth", label: "Depth" })] },
-    {
-      variables: [
-        v({ id: "velocity", label: "Velocity" }),
-        v({ id: "depth", label: "Depth" }),
-      ],
-    },
-  ];
-
-  it("is offered for a model that has a banded variable anywhere", () => {
-    expect(criteriaScaleOffered(drainage, ["velocity"])).toBe(true);
-  });
-
-  it("stays offered while a variable without criteria is selected", () => {
-    // The selection is not consulted at all — which is the fix. Depth is
-    // selected in both classes here and the option remains.
-    expect(criteriaScaleOffered(drainage, ["velocity"])).toBe(true);
-  });
-
-  it("is withheld from a model with no criteria at all", () => {
-    // Nothing to pin a scale to: the control would present a scale that
-    // does nothing for every variable, in every selection.
-    expect(criteriaScaleOffered(drainage, [])).toBe(false);
-    expect(criteriaScaleOffered(drainage, undefined)).toBe(false);
-    expect(criteriaScaleOffered(drainage, ["pressure"])).toBe(false);
-  });
-});

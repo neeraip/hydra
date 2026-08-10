@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { fireEvent, render, screen } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { ScaleControl } from "./legend-primitives";
 import { scaleOptions } from "./scaleOptions";
@@ -15,9 +15,9 @@ import { scaleOptions } from "./scaleOptions";
  * against a segmented control still reads as one more scale, so the row
  * must never grow one back.
  *
- * The criteria toggle is a different thing and is allowed: it is a state,
- * not an action, and it is the answer to a question the segments do not
- * ask. Its own tests are below.
+ * That includes the criteria switch, which briefly sat here: as a fourth
+ * rectangle in the same row it read as a fourth range. It belongs to the
+ * variable it judges, and lives beside that variable's ramp.
  */
 
 const OPTIONS = scaleOptions(true);
@@ -48,46 +48,14 @@ describe("the scale row", () => {
   });
 });
 
-describe("the criteria toggle beside the ranges", () => {
-  it("is absent when the caller offers none", () => {
-    // A model with nothing to judge: the row is ranges alone.
+describe("the criteria checkbox", () => {
+  it("is not in this row at all", () => {
+    // It belongs to a variable, not to the map: both engines band
+    // variables in two classes, and one switch could not say "judge the
+    // pressures, show velocity as a magnitude". It lives beside the ramp
+    // it applies to — see `CriteriaCheckbox` and the legend's tests.
     render(<ScaleControl value="run" options={OPTIONS} onChange={() => {}} />);
-    expect(screen.queryByText("Criteria")).toBeNull();
+    expect(screen.queryByRole("checkbox")).toBeNull();
     expect(screen.getAllByRole("button")).toHaveLength(OPTIONS.length);
-  });
-
-  it("reports its own state rather than a range", () => {
-    // The bug this design replaces: picking criteria used to *deselect*
-    // the range, so a reader could not scale to the step and judge at the
-    // same time even though the two are separate questions.
-    const onChange = vi.fn();
-    const onCriteria = vi.fn();
-    render(
-      <ScaleControl
-        value="step"
-        options={OPTIONS}
-        onChange={onChange}
-        criteria={{ on: false, onChange: onCriteria }}
-      />,
-    );
-    fireEvent.click(screen.getByText("Criteria"));
-    expect(onCriteria).toHaveBeenCalledWith(true);
-    // The range was not touched.
-    expect(onChange).not.toHaveBeenCalled();
-    expect(screen.getByText("Step").style.color).toBe("var(--accent)");
-  });
-
-  it("says whether it is on", () => {
-    render(
-      <ScaleControl
-        value="run"
-        options={OPTIONS}
-        onChange={() => {}}
-        criteria={{ on: true, onChange: () => {} }}
-      />,
-    );
-    expect(screen.getByText("Criteria").getAttribute("aria-pressed")).toBe(
-      "true",
-    );
   });
 });

@@ -31,6 +31,7 @@ import { useUnitSystem } from "../units";
 import { type CanvasLayers, useCanvasLayers } from "./layers-context";
 import {
   CategorySwatches,
+  CriteriaCheckbox,
   LEGEND_BAR_STYLE,
   LEGEND_POPOVER_STYLE,
   LEGEND_ROOT_STYLE,
@@ -181,29 +182,6 @@ export function animatedVariableLabels(
 }
 
 /**
- * Whether the criteria scale is worth offering for this model.
- *
- * Asked of every variable the catalogs publish, not of the ones selected
- * right now. Keyed to the selection, the option appeared and vanished as
- * the reader changed variable, and the control silently fell back to Run
- * while the stored preference stayed Criteria: it said one thing,
- * remembered another, and jumped back the moment a banded variable was
- * selected again.
- *
- * The scale is a wish about the map, the same way the animation toggle is.
- * Whether a given variable can grant it is a separate question, and its
- * own ramp answers that by being banded or not.
- */
-export function criteriaScaleOffered(
-  classes: readonly { variables: readonly GenericVariable[] }[],
-  criteriaVariables: readonly string[] | undefined,
-): boolean {
-  return classes.some((c) =>
-    c.variables.some((v) => criteriaVariables?.includes(v.id)),
-  );
-}
-
-/**
  * What motion means on this map, in the engine's own words.
  *
  * The point is not which variables the feature supports — it is what the
@@ -322,7 +300,7 @@ export function GenericLegend({
   onSelect,
   scaleMode,
   onScaleModeChange,
-  criteriaScale = false,
+  criteriaScale,
   onCriteriaScaleChange,
   effectiveRanges,
   criteriaVariables,
@@ -344,10 +322,11 @@ export function GenericLegend({
   /** What the ramps are scaled against. */
   scaleMode: ScaleMode;
   onScaleModeChange: (mode: ScaleMode) => void;
-  /** Whether variables with criteria are coloured by their verdict.
-   *  Independent of the range above — see `ScaleMode`. */
-  criteriaScale?: boolean;
-  onCriteriaScaleChange?: (on: boolean) => void;
+  /** Which classes colour by verdict rather than magnitude, for a class
+   *  whose selected variable has criteria. Per class because both engines
+   *  band variables in two of them and the readings are independent. */
+  criteriaScale?: Partial<Record<GenericClassKey, boolean>>;
+  onCriteriaScaleChange?: (cls: GenericClassKey, on: boolean) => void;
   /** The range each class's ramp actually spans. The popover shows these
    * rather than the catalog's declared ones, so the numbers always say what
    * the colours currently mean. */
@@ -447,7 +426,6 @@ export function GenericLegend({
   const selected = (c: ClassConfig): GenericVariable =>
     c.variables.find((v) => v.id === selection[c.key]) ?? c.variables[0];
 
-  const anyCriteria = criteriaScaleOffered(classes, criteriaVariables);
   // Same rule one step further: a steady-state run has one reporting step,
   // so scaling to *this* step and across the *whole run* are one scale, and
   // offering both is offering a choice with one outcome.
@@ -506,24 +484,40 @@ export function GenericLegend({
               min: v.min,
               max: v.max,
             };
-            // Gated on the same list that offers the Criteria scale, so a
-            // variable can never be annotated with bands it cannot be
-            // scaled by.
-            const bands = criteriaVariables?.includes(v.id)
-              ? (criteriaAnnotation?.(v.id) ?? null)
-              : null;
+            // Whether this variable *can* be judged, and whether it is.
+            // The thresholds are shown only while they are in force: read
+            // beneath a magnitude ramp they describe a colouring that is
+            // not on screen.
+            const judgeable = criteriaVariables?.includes(v.id) ?? false;
+            const judging = judgeable && (criteriaScale?.[c.key] ?? false);
+            const bands = judging ? (criteriaAnnotation?.(v.id) ?? null) : null;
             return (
               <div key={c.key}>
+                {/* The variable's name, and — where it has thresholds —
+                    the switch that judges it against them. Beside the
+                    thing it applies to rather than in the scale row: it
+                    is a property of this variable, and both engines band
+                    variables in two classes at once. */}
                 <div
-                  style={
-                    // Only the first label runs alongside the close button;
+                  style={{
+                    display: "flex",
+                    alignItems: "baseline",
+                    justifyContent: "space-between",
+                    gap: 8,
+                    // Only the first row runs alongside the close button;
                     // the rest have the full width.
-                    i === 0
+                    ...(i === 0
                       ? { ...SECTION_LABEL_STYLE, paddingRight: 20 }
-                      : SECTION_LABEL_STYLE
-                  }
+                      : SECTION_LABEL_STYLE),
+                  }}
                 >
-                  {optionLabel(v, sys)}
+                  <span>{optionLabel(v, sys)}</span>
+                  {judgeable && onCriteriaScaleChange && (
+                    <CriteriaCheckbox
+                      on={criteriaScale?.[c.key] ?? false}
+                      onChange={(on) => onCriteriaScaleChange(c.key, on)}
+                    />
+                  )}
                 </div>
                 {v.ramp.type === "categorical" ? (
                   <CategorySwatches
@@ -549,9 +543,7 @@ export function GenericLegend({
                           v.ramp,
                           range.min,
                           range.max,
-                          bandColors?.(v.id)
-                            ? (bandEdges?.(v.id) ?? null)
-                            : null,
+                          judging ? (bandEdges?.(v.id) ?? null) : null,
                         );
                         if (!scale) return null;
                         const show = (n: number) =>
@@ -572,7 +564,7 @@ export function GenericLegend({
                       gradient={rampGradient(
                         v.ramp,
                         c.key,
-                        bandColors?.(v.id),
+                        judging ? bandColors?.(v.id) : null,
                         range.min,
                         range.max,
                       )}
@@ -609,19 +601,11 @@ export function GenericLegend({
             );
           })}
 
-          {/* Drawn when there is any choice to make: two ranges, or one
-              range and something to judge. A single range with no criteria
-              is not a control, it is a label. */}
-          {(scaleControlShown(options) || anyCriteria) && (
+          {scaleControlShown(options) && (
             <ScaleControl
               value={activeScale}
               options={options}
               onChange={onScaleModeChange}
-              criteria={
-                anyCriteria && onCriteriaScaleChange
-                  ? { on: criteriaScale, onChange: onCriteriaScaleChange }
-                  : undefined
-              }
             />
           )}
 

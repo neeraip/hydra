@@ -98,17 +98,12 @@ import {
   writeCanvasPrefs,
 } from "./CanvasView/canvasPrefs";
 import { sourceCoordinate } from "./CanvasView/dropPoint";
-import { wdsValuation } from "./criteriaValuation";
-
-/** Stable "no bands" answer, so the legend's prop keeps its identity
- *  between renders in the data-range modes. */
-const NO_BAND_COLORS = () => null;
-
 import { InvalidCrsOverlay } from "./CanvasView/InvalidCrsOverlay";
 import { NodeSizeSlider } from "./CanvasView/NodeSizeSlider";
 import { SchematicAspectSlider } from "./CanvasView/SchematicAspectSlider";
 import { useCrsReprojection } from "./CanvasView/useCrsReprojection";
 import { ViewportControls } from "./CanvasView/ViewportControls";
+import { wdsValuation } from "./criteriaValuation";
 import { linkResultsAt, nodeResultsAt } from "./mergeResults";
 import {
   shouldZoomOnFollow,
@@ -494,10 +489,16 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
   const [scaleMode, setScaleMode] = useState<ScaleMode>(
     CANVAS_PREF_DEFAULTS.scaleMode,
   );
-  /** Judging against criteria: a separate question from the range above,
-   *  and answerable at the same time — see `ScaleMode`. */
+  /** Which classes judge against criteria. Per class, because both
+   *  engines band variables in two of them and "judge the pressures, show
+   *  velocity as a magnitude" is a real reading — see `CanvasPrefs`. */
   const [criteriaScale, setCriteriaScale] = useState(
     CANVAS_PREF_DEFAULTS.criteriaScale,
+  );
+  const setClassCriteria = useCallback(
+    (cls: GenericClassKey, on: boolean) =>
+      setCriteriaScale((prev) => ({ ...prev, [cls]: on })),
+    [],
   );
   const [legendOpen, setLegendOpen] = useState(CANVAS_PREF_DEFAULTS.legendOpen);
   const [genericSelection, setGenericSelection] = useState<GenericSelection>(
@@ -928,6 +929,8 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
       vars: GenericVariable[],
       arrays: Float32Array[] | null,
       selected: string,
+      /** Whether this class is judging — the bands travel only then. */
+      on: boolean,
     ) => {
       if (vars.length === 0) return null;
       const i = Math.max(
@@ -946,9 +949,7 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
       // Criteria is a scale like the other two, so it is chosen here
       // rather than by the map: the bands travel with the channel, and a
       // variable with none simply keeps its ramp.
-      const bands = criteriaScale
-        ? (criteriaBands.get(v.id)?.bands ?? null)
-        : null;
+      const bands = on ? (criteriaBands.get(v.id)?.bands ?? null) : null;
       return { variable, values, bands };
     };
     return {
@@ -956,16 +957,19 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
         genericMeta.pointVars,
         fetchedGenericValues?.points ?? null,
         genericSelection.point,
+        criteriaScale.point,
       ),
       link: channel(
         genericMeta.polylineVars,
         fetchedGenericValues?.polylines ?? null,
         genericSelection.polyline,
+        criteriaScale.polyline,
       ),
       region: channel(
         genericMeta.regionVars,
         fetchedGenericValues?.regions ?? null,
         genericSelection.region,
+        criteriaScale.region,
       ),
     };
   }, [
@@ -2404,9 +2408,17 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
                 pressureMin={wdsRanges.pressure.min}
                 pressureMax={wdsRanges.pressure.max}
                 velocityMax={wdsRanges.velocity.max}
-                colorMode={criteriaScale ? "threshold" : "relative"}
-                pressureThresholds={thresholds.pressure}
-                velocityThresholds={thresholds.velocity}
+                // The wds canvas judges a class exactly when it was handed
+                // that class's thresholds — the same statement the catalog
+                // path makes by carrying bands on a channel. It used to be
+                // said twice, here and again through a `colorMode` prop
+                // that gated them at the other end.
+                pressureThresholds={
+                  criteriaScale.point ? thresholds.pressure : undefined
+                }
+                velocityThresholds={
+                  criteriaScale.polyline ? thresholds.velocity : undefined
+                }
                 tool={activeTool}
                 onNodeMoved={handleNodeMoved}
                 onCreateNodeRequest={handleCreateNodeRequest}
@@ -2440,7 +2452,7 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
               multiStep={!isSteadyState}
               onScaleModeChange={setScaleMode}
               criteriaScale={criteriaScale}
-              onCriteriaScaleChange={setCriteriaScale}
+              onCriteriaScaleChange={setClassCriteria}
               effectiveRanges={{
                 // The catalog path carries its own rescaled variable; wds
                 // scales through the props above, so its numbers come from
@@ -2458,8 +2470,8 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
               // The verdict's colours describe the map only while the map
               // is showing the verdict; in the data-range modes these
               // variables are painted as plain magnitudes.
-              bandColors={criteriaScale ? criteriaBandColors : NO_BAND_COLORS}
-              bandEdges={criteriaScale ? criteriaBandEdges : NO_BAND_COLORS}
+              bandColors={criteriaBandColors}
+              bandEdges={criteriaBandEdges}
               onLocateExtreme={
                 currentPeriodResult ? handleLocateExtreme : undefined
               }

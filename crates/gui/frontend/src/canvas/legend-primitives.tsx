@@ -323,12 +323,66 @@ export const DATA_SCALE_OPTIONS: readonly ScaleOption[] = [
 ];
 
 /** The criteria toggle's own words. Not a `ScaleOption`: it answers a
- *  different question and sits beside the range control rather than in
- *  it. */
+ *  different question, and it belongs to one variable rather than to the
+ *  map. */
 export const CRITERIA_TOGGLE = {
   label: "Criteria",
-  tip: "Colour by the project's threshold bands, where a variable has them",
+  tip: "Colour this variable by the project's threshold bands",
 } as const;
+
+/**
+ * The per-variable criteria switch, shown beside a ramp whose variable has
+ * thresholds to judge against.
+ *
+ * One per class rather than one for the map, because both engines band two
+ * variables in different classes — pressure and velocity, velocity and
+ * capacity — and "judge the pressures, show me velocity as a magnitude" is
+ * a real reading a single switch cannot express.
+ *
+ * A checkbox and not a segment: as a fourth rectangle beside Run and Step
+ * it read as a fourth range, which is the opposite of what it is. Not the
+ * app's switch either — that is the Settings vocabulary for an app-wide
+ * preference, and at 36×20 it would outweigh the ramp it annotates.
+ */
+export function CriteriaCheckbox({
+  on,
+  onChange,
+}: {
+  on: boolean;
+  onChange: (on: boolean) => void;
+}) {
+  return (
+    <label
+      data-tooltip={CRITERIA_TOGGLE.tip}
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 4,
+        flexShrink: 0,
+        cursor: "pointer",
+        fontSize: "var(--text-xs)",
+        fontFamily: "var(--font-ui)",
+        color: on ? "var(--accent)" : "var(--text-tertiary)",
+        whiteSpace: "nowrap",
+      }}
+    >
+      <input
+        type="checkbox"
+        checked={on}
+        onChange={(e) => onChange(e.target.checked)}
+        style={{
+          accentColor: "var(--accent)",
+          width: 12,
+          height: 12,
+          flexShrink: 0,
+          margin: 0,
+          cursor: "pointer",
+        }}
+      />
+      {CRITERIA_TOGGLE.label}
+    </label>
+  );
+}
 
 /**
  * Segmented control selecting what the ramps above it are scaled against.
@@ -342,21 +396,16 @@ export function ScaleControl({
   value,
   options,
   onChange,
-  criteria,
 }: {
   value: ScaleMode;
   options: readonly ScaleOption[];
   onChange: (mode: ScaleMode) => void;
-  /** The criteria toggle, when this model has anything to judge. Beside
-   *  the range rather than inside it: the two are different questions and
-   *  a reader may want both answers at once. */
-  criteria?: { on: boolean; onChange: (on: boolean) => void };
 }) {
   return (
     <div
       style={{
         display: "flex",
-        alignItems: "flex-start",
+        alignItems: "center",
         gap: 6,
         marginTop: 8,
         paddingTop: 8,
@@ -400,31 +449,6 @@ export function ScaleControl({
           </button>
         ))}
       </div>
-      {criteria && (
-        <button
-          type="button"
-          onClick={() => criteria.onChange(!criteria.on)}
-          data-tooltip={CRITERIA_TOGGLE.tip}
-          aria-pressed={criteria.on}
-          style={{
-            padding: "3px 8px",
-            borderRadius: 5,
-            border: "1px solid",
-            borderColor: criteria.on
-              ? "var(--selection-border)"
-              : "var(--border)",
-            background: criteria.on ? "var(--accent-dim)" : "transparent",
-            color: criteria.on ? "var(--accent)" : "var(--text-tertiary)",
-            fontSize: "var(--text-xs)",
-            fontFamily: "var(--font-ui)",
-            whiteSpace: "nowrap",
-            cursor: "pointer",
-            flexShrink: 0,
-          }}
-        >
-          {CRITERIA_TOGGLE.label}
-        </button>
-      )}
     </div>
   );
 }

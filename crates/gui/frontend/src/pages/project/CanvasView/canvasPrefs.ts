@@ -29,7 +29,10 @@ import {
   LINK_VARIABLES,
   NODE_VARIABLES,
 } from "../../../canvas/canvasVariables";
-import type { GenericSelection } from "../../../canvas/GenericLegend";
+import type {
+  GenericClassKey,
+  GenericSelection,
+} from "../../../canvas/GenericLegend";
 import type { ScaleMode } from "../../../canvas/legend-primitives";
 import { NODE_SCALE_DEFAULT } from "../../../canvas/nodeScale";
 import { ASPECT_SLIDER_DEFAULT } from "../../../canvas/schematicAspect";
@@ -73,15 +76,19 @@ export interface CanvasPrefs {
    */
   scaleMode: ScaleMode;
   /**
-   * Whether variables with criteria are coloured by their verdict.
+   * Which element classes are coloured by their verdict rather than by
+   * magnitude, when the variable they are showing has criteria.
    *
-   * Independent of the range above, which is the point: with depth on
-   * nodes and velocity on links, "rescale to this step" and "judge
-   * velocity" are both wanted at once, and one three-valued control could
-   * not say so. A variable with no criteria simply keeps its magnitude
-   * colouring on whichever range is chosen.
+   * Per class rather than one switch for the map. Both engines band two
+   * variables in different classes — pressure and velocity, velocity and
+   * capacity — and "judge the pressures, show me velocity as a magnitude"
+   * is a real reading that a single flag cannot express.
+   *
+   * Independent of the range above: a variable with no criteria, or a
+   * class with this off, keeps its magnitude colouring on whichever range
+   * is chosen.
    */
-  criteriaScale: boolean;
+  criteriaScale: Record<GenericClassKey, boolean>;
   /** Whether the legend's ramp popover is showing. Persisted because it is
    * a working mode — "keep the full legend up while I read the map" —
    * rather than a menu the user reopens each time. */
@@ -119,7 +126,7 @@ export const CANVAS_PREF_DEFAULTS: CanvasPrefs = {
   nodeScale: NODE_SCALE_DEFAULT,
   canvasBackground: DEFAULT_CANVAS_BACKGROUND,
   scaleMode: "run",
-  criteriaScale: false,
+  criteriaScale: { point: false, polyline: false, region: false },
   legendOpen: false,
   genericSelection: { point: "", polyline: "", region: "" },
 };
@@ -204,18 +211,32 @@ export function readScaleMode(raw: unknown): ScaleMode {
 }
 
 /**
- * Read whether criteria colouring is on, from any of the three shapes.
+ * Read which classes judge against criteria, from any earlier shape.
  *
- * Both older shapes carried the same intent under other names — a
- * three-valued `scaleMode` of `criteria`, and before that a `colorMode` of
- * `threshold` — so a reader who had turned it on keeps it on rather than
- * finding their canvas quietly back on magnitudes.
+ * Three shapes preceded this and every one of them said "all of them":
+ * a `colorMode` of `threshold`, a three-valued `scaleMode` of `criteria`,
+ * and the single boolean that briefly replaced it. A reader who had
+ * turned judging on keeps it on for every class rather than finding their
+ * canvas quietly back on magnitudes.
  */
-export function readCriteriaScale(raw: unknown): boolean {
-  if (typeof raw !== "object" || raw === null) return false;
+export function readCriteriaScale(
+  raw: unknown,
+): Record<GenericClassKey, boolean> {
+  const all = (on: boolean) => ({ point: on, polyline: on, region: on });
+  if (typeof raw !== "object" || raw === null) return all(false);
   const p = raw as Record<string, unknown>;
-  if (typeof p.criteriaScale === "boolean") return p.criteriaScale;
-  return p.scaleMode === "criteria" || p.colorMode === "threshold";
+  const stored = p.criteriaScale;
+  if (typeof stored === "boolean") return all(stored);
+  if (typeof stored === "object" && stored !== null) {
+    const s = stored as Record<string, unknown>;
+    const flag = (k: string) => s[k] === true;
+    return {
+      point: flag("point"),
+      polyline: flag("polyline"),
+      region: flag("region"),
+    };
+  }
+  return all(p.scaleMode === "criteria" || p.colorMode === "threshold");
 }
 
 const PREF_NODE_VARS: readonly NodeVariable[] = NODE_VARIABLES;

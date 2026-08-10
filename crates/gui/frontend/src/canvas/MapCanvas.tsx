@@ -429,13 +429,18 @@ interface MapCanvasProps {
   flowMax?: number;
   qualityMin?: number;
   qualityMax?: number;
-  /** "relative" = full min–max ramp (default); "threshold" = user-defined bands. */
-  colorMode?: "relative" | "threshold";
-  /** Custom pressure thresholds (low / required / high in metres). */
+  /**
+   * The criterion's pressure bands, supplied only while the point class is
+   * being judged.
+   *
+   * Their presence *is* the instruction. A `colorMode` prop used to say
+   * the same thing a second time, gating these at the far end, so two
+   * places had to agree about one fact — and per class they could not,
+   * since one mode answered for the whole map.
+   */
   pressureThresholds?: { low: number; required: number; high: number };
-  /** Custom velocity thresholds used when colorMode is "threshold". */
+  /** As above, for the polyline class. */
   velocityThresholds?: { low: number; target: number; high: number };
-  /** Custom flow-magnitude thresholds used when colorMode is "threshold". */
   /** Run ranges for the magnitude ramps pressure and velocity take when the
    * reader has not asked for the verdict. */
   pressureMin?: number;
@@ -532,7 +537,6 @@ export const MapCanvas = memo(function MapCanvas({
   animatedNodeVariables = EMPTY_ANIMATED,
   qualityMin = 0,
   qualityMax = 1,
-  colorMode = "relative" as const,
   pressureThresholds,
   velocityThresholds,
   pressureMin = 0,
@@ -1493,10 +1497,8 @@ export const MapCanvas = memo(function MapCanvas({
     const nodeGlowMaxPx = NODE_GLOW_MAX_PX * sizeFactor;
 
     // Threshold bands only apply in "threshold" colour mode.
-    const velThresh =
-      colorMode === "threshold" ? velocityThresholds : undefined;
-    const pressThresh =
-      colorMode === "threshold" ? pressureThresholds : undefined;
+    const velThresh = velocityThresholds;
+    const pressThresh = pressureThresholds;
 
     // While a node is being dragged (edit tool), patch the dragged node and
     // its incident links into fresh arrays so deck picks up the new
@@ -2168,7 +2170,6 @@ export const MapCanvas = memo(function MapCanvas({
         velocityMax,
         linkVar,
         flowMax,
-        colorMode,
         velocityThresholds,
         qualityMin,
         qualityMax,
@@ -2508,7 +2509,6 @@ export const MapCanvas = memo(function MapCanvas({
               demandMax,
               qualityMin,
               qualityMax,
-              colorMode,
               pressureThresholds,
               pr,
               genNode?.values,
@@ -2734,7 +2734,6 @@ export const MapCanvas = memo(function MapCanvas({
     hoveredNodeId,
     hoveredLinkId,
     tool,
-    colorMode,
     pressureThresholds,
     velocityThresholds,
     pressureMin,

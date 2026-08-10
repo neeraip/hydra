@@ -138,14 +138,14 @@ describe("the scale mode and the criteria toggle", () => {
     const judging = resolveCanvasPrefs({
       colorMode: "threshold",
     } as unknown as CanvasPrefs);
-    expect(judging.criteriaScale).toBe(true);
+    expect(judging.criteriaScale.polyline).toBe(true);
     expect(judging.scaleMode).toBe("run");
 
     const stepped = resolveCanvasPrefs({
       rangeMode: "step",
     } as unknown as CanvasPrefs);
     expect(stepped.scaleMode).toBe("step");
-    expect(stepped.criteriaScale).toBe(false);
+    expect(stepped.criteriaScale.polyline).toBe(false);
 
     // The combination the merge could not hold: both were saved, and the
     // one slot it had went to criteria.
@@ -154,24 +154,28 @@ describe("the scale mode and the criteria toggle", () => {
       rangeMode: "step",
     } as unknown as CanvasPrefs);
     expect(both.scaleMode).toBe("step");
-    expect(both.criteriaScale).toBe(true);
+    expect(both.criteriaScale.point).toBe(true);
   });
 
   it("carries a merged criteria mode across the split", () => {
     const resolved = resolveCanvasPrefs({
       scaleMode: "criteria",
     } as unknown as CanvasPrefs);
-    expect(resolved.criteriaScale).toBe(true);
+    expect(resolved.criteriaScale).toEqual({
+      point: true,
+      polyline: true,
+      region: true,
+    });
     expect(resolved.scaleMode).toBe("run");
   });
 
   it("prefers the current keys over the shapes they replaced", () => {
     const resolved = resolveCanvasPrefs({
       scaleMode: "run",
-      criteriaScale: false,
+      criteriaScale: { point: false, polyline: false, region: false },
       colorMode: "threshold",
     } as unknown as CanvasPrefs);
     expect(resolved.scaleMode).toBe("run");
-    expect(resolved.criteriaScale).toBe(false);
+    expect(resolved.criteriaScale.point).toBe(false);
   });
 });
