@@ -128,11 +128,15 @@ export interface EngineComponents {
    * Result-variable ids whose motion the canvas can animate, per element
    * class.
    *
-   * Motion says how fast and which way, so what it can animate depends on
-   * what an engine publishes and on what that variable means — always a
-   * **rate**, never a state. A conduit's capacity and a node's depth are
-   * states (a full pipe is not a fast one), and animating them would have
-   * the motion assert something the number does not say.
+   * Motion is about the water, so what it can animate depends on what an
+   * engine publishes and on what that variable means. Mostly that is a
+   * **rate** — how fast and which way. It is not only rates: water
+   * distribution animates Status, whose pulse says whether anything is
+   * moving at all rather than how fast, and Quality, a concentration the
+   * water carries at its own speed. What never animates is a reading that
+   * stands still while the water does not — a conduit's capacity and a
+   * node's depth are states (a full pipe is not a fast one), and animating
+   * them would have the motion assert something the number does not say.
    *
    * Keyed by class because the two animate differently and qualify
    * separately: links pulse along their length, points ring outward from

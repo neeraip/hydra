@@ -171,18 +171,26 @@ export function animatedVariableLabels(
 /**
  * What motion means on this map, in the engine's own words.
  *
- * The point is not which variables the feature supports — it is that motion
- * can only honestly show a *rate*. A depth or a stored volume is a state,
- * and a pulse keeping pace with one would assert a speed the number does
- * not have. The toggle's tooltip lists the animated variables, which labels
- * the outcome without teaching the rule, and it is reachable only by
- * hovering a control you are not looking at while you wonder why nothing
- * moves.
+ * The point is not which variables the feature supports — it is what the
+ * pulse is claiming, so a reader wondering why depth sits still has the
+ * rule rather than a list. The toggle's tooltip names the animated
+ * variables, which labels the outcome without teaching anything, and is
+ * reachable only by hovering a control you are not looking at.
  *
- * Deliberately does *not* say the rest are states. Most are, but not all —
- * a rate can be left unanimated for other reasons, as demand is here — and
- * the sentence must not claim a partition it cannot know. It states the
- * rule in the direction that is always true: a state never moves.
+ * It read "Motion shows rates", which was true of the engine it was
+ * written for and false of the other. Water distribution animates Status,
+ * a categorical state, and Quality, a concentration the water carries —
+ * neither is a rate, and the sentence went on to say that a variable
+ * measuring a state stays still while listing one that does not. The rule
+ * that survives all three pulse kinds — a rate keeping pace with the
+ * colour, something being carried, and whether anything is moving at all —
+ * is that the motion is about the water rather than about the reading.
+ *
+ * Deliberately does *not* characterise what is left out. Most of it is
+ * states, but not all — a rate can be unanimated for other reasons, as
+ * demand is here — so the closing clause says only that the rest are
+ * still, which is a fact about this map rather than a claim about those
+ * variables.
  *
  * Empty when nothing this catalog publishes animates: there is no rule to
  * explain where there is no motion.
@@ -197,7 +205,7 @@ export function motionExplanation(
     style: "long",
     type: "conjunction",
   }).format(names);
-  return `Motion shows rates — ${list}. A variable that measures a state stays still.`;
+  return `Motion follows the water — ${list}. Anything else on this map is a still reading.`;
 }
 
 /**

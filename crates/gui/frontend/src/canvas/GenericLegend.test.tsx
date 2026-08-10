@@ -362,9 +362,60 @@ describe("motionExplanation", () => {
     },
   ];
 
+  /**
+   * Water distribution, whose animated list is the mixed one: three rates,
+   * a categorical state (Status, pulsed for presence — conveying against
+   * idle) and a carried concentration (Quality). It is the case the
+   * fixtures here used to miss entirely, and the one the old wording was
+   * wrong about.
+   */
+  const distribution = [
+    { variables: [v({ id: "pressure", label: "Pressure" })] },
+    {
+      variables: [
+        v({ id: "flow", label: "Flow" }),
+        v({ id: "velocity", label: "Velocity" }),
+        v({ id: "headloss", label: "Unit headloss" }),
+        v({ id: "quality", label: "Quality" }),
+        v({
+          id: "status",
+          label: "Status",
+          ramp: { type: "categorical", items: [] },
+        }),
+      ],
+    },
+  ];
+  const EVERY_WDS_LINK_VAR = [
+    "flow",
+    "velocity",
+    "status",
+    "headloss",
+    "quality",
+  ];
+
   it("states the rule and names what it applies to", () => {
     expect(motionExplanation(drainage, ["flow"])).toBe(
-      "Motion shows rates — Flow. A variable that measures a state stays still.",
+      "Motion follows the water — Flow. Anything else on this map is a still reading.",
+    );
+  });
+
+  it("does not call a state a rate", () => {
+    // The sentence read "Motion shows rates — …, Status, …" and then said a
+    // variable measuring a state stays still: it listed one that does not.
+    // Status animates because the pulse shows whether water is moving at
+    // all, which is about the water and not about the status code.
+    const sentence = motionExplanation(distribution, EVERY_WDS_LINK_VAR);
+    expect(sentence).toContain("Status");
+    expect(sentence).not.toContain("rates");
+    expect(sentence).not.toContain("measures a state");
+  });
+
+  it("covers the carried case as well as the moving one", () => {
+    // Quality is a concentration travelling at the water's speed; the
+    // motion is honest about the water and says nothing about the number
+    // the colour shows.
+    expect(motionExplanation(distribution, EVERY_WDS_LINK_VAR)).toContain(
+      "Quality",
     );
   });
 
