@@ -150,13 +150,50 @@ class TestReleaseHelpers(unittest.TestCase):
 
             return R()
 
+        # The prompt path needs a terminal: without one the helper does
+        # not ask, which is the case below.
         with mock.patch.object(release, "sh", new=fake_sh):
-            with mock.patch("builtins.input", return_value="y"):
-                with contextlib.redirect_stdout(io.StringIO()):
-                    release.maybe_push(None)
+            with mock.patch.object(
+                release.sys.stdin, "isatty", return_value=True
+            ):
+                with mock.patch("builtins.input", return_value="y"):
+                    with contextlib.redirect_stdout(io.StringIO()):
+                        release.maybe_push(None)
 
         self.assertEqual(calls[0][0], ("git", "push"))
         self.assertEqual(calls[1][0], ("git", "push", "--tags"))
+
+    def test_maybe_push_without_a_terminal_does_not_ask(self):
+        """The commit and the tag already exist by this point.
+
+        Calling `input()` with no terminal raised EOFError *after* the
+        release had been half-made, printing a traceback over a repository
+        that now held a tag nobody had approved. Not pushing is the safe
+        half of the question, and the line printed says how to finish.
+        """
+        calls = []
+
+        def fake_sh(*args, **kwargs):
+            calls.append((args, kwargs))
+
+            class R:
+                stdout = ""
+
+            return R()
+
+        out = io.StringIO()
+        with mock.patch.object(release, "sh", new=fake_sh):
+            with mock.patch.object(
+                release.sys.stdin, "isatty", return_value=False
+            ):
+                with mock.patch(
+                    "builtins.input", side_effect=AssertionError("asked")
+                ):
+                    with contextlib.redirect_stdout(out):
+                        release.maybe_push(None)
+
+        self.assertEqual(calls, [])
+        self.assertIn("not pushing", out.getvalue().lower())
 
 
 class TestEnsureSdkPublished(unittest.TestCase):
@@ -216,3 +253,30 @@ class TestEnsureSdkPublished(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestUpstreamState(unittest.TestCase):
+    """How a branch stands against origin, and which states may be tagged.
+
+    A release tag is immutable here (RELEASING.md), so one cut from a
+    stale checkout cannot be moved — only superseded. The bump therefore
+    fetches first and refuses the two states where the tag would name a
+    tree missing commits that are already on the remote.
+    """
+
+    def test_ahead_is_the_normal_release(self):
+        # The commits being tagged are exactly the ones not yet pushed.
+        self.assertEqual(release.upstream_state(22, 0), "ahead")
+
+    def test_synced_is_fine_too(self):
+        # Bumping work that is already pushed: nothing is missing.
+        self.assertEqual(release.upstream_state(0, 0), "synced")
+
+    def test_behind_is_refused(self):
+        # The failure this exists for: someone else's commits are on the
+        # remote, the tag would not contain them, and the release builds
+        # from the tag — so the omission is silent and permanent.
+        self.assertEqual(release.upstream_state(0, 3), "behind")
+
+    def test_diverged_is_refused(self):
+        self.assertEqual(release.upstream_state(2, 3), "diverged")

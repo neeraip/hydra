@@ -46,6 +46,7 @@ just bump-cli patch   # and/or just bump-gui patch
 
 ## Important rules
 
+- **The bump refuses a stale checkout.** It fetches `origin/main` first and stops if this branch is behind or has diverged. A release tag here is immutable, so one cut from a checkout missing someone else's commits cannot be moved afterwards — only superseded by another version.
 - **Never push a `cli-v*` or `gui-v*` tag at the same time as a `v*` tag.** The CLI publish will race against the library publish and fail because `hydra-sdk` won't be on crates.io yet.
 - **Regenerate the third-party notices whenever dependencies moved** — `just licenses`, committed. The app shows them under Settings → About, and the licences of the packages Hydra ships ask that their copyright notices travel with the binary. `just ci` runs `just licenses-check` and fails on a stale file, so this normally lands with the dependency change rather than at release time.
 - **Never use these recipes just to set a version without intending a release.** They commit and tag, which triggers CI/CD. To reset or change a version without releasing, edit the relevant `Cargo.toml`, `tauri.conf.json`, and `crates/gui/frontend/package.json` files directly, run `cargo update --workspace`, and commit — no tag.

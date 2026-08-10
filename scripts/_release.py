@@ -57,6 +57,79 @@ def require_clean_main():
     branch = sh("git", "branch", "--show-current").stdout.strip()
     if branch != "main":
         fail(f"must be on main branch to bump (currently on '{branch}')")
+    require_up_to_date_with_origin()
+
+
+def upstream_state(local, remote):
+    """How this branch stands against its remote, from two rev-lists.
+
+    `local` is the commits here and not there, `remote` the reverse — the
+    two halves of `git rev-list --left-right --count`. Returned as a word
+    so the caller's decision reads as a sentence and can be tested without
+    a repository:
+
+    - `"ahead"` — the normal state for a release. The commits being tagged
+      are exactly the ones not yet pushed.
+    - `"synced"` — also fine; a bump of work that is already pushed.
+    - `"behind"` / `"diverged"` — refused. The tag would name a tree
+      missing commits that are already on the remote, and nothing
+      downstream would say so: the release builds from the tag, so the
+      omission is silent and permanent.
+    """
+    if remote and local:
+        return "diverged"
+    if remote:
+        return "behind"
+    if local:
+        return "ahead"
+    return "synced"
+
+
+def require_up_to_date_with_origin():
+    """Refuse to bump a branch that is missing commits from origin/main.
+
+    A release tag is immutable in this project (see RELEASING.md), so a
+    tag cut from a stale checkout cannot be moved afterwards — it can only
+    be superseded by another version. Fetching first is the one check that
+    prevents it, and it costs a second.
+
+    A clone with no origin is not an error: the check simply does not
+    apply, and a local-only repository must still be bumpable. An origin
+    that cannot be reached *is* an error, because "I could not look" and
+    "there is nothing new" are the two answers this must not confuse.
+    """
+    remotes = sh("git", "remote", check=False).stdout.split()
+    if "origin" not in remotes:
+        return
+    fetched = sh("git", "fetch", "--quiet", "origin", "main", check=False)
+    if fetched.returncode != 0:
+        fail(
+            "could not reach origin to check for newer commits — a tag cut "
+            "from a stale checkout cannot be moved later. Connect and retry, "
+            "or fetch by hand if you are certain this branch is current."
+        )
+    counts = sh(
+        "git",
+        "rev-list",
+        "--left-right",
+        "--count",
+        "HEAD...origin/main",
+        check=False,
+    )
+    if counts.returncode != 0:
+        return
+    local, remote = (int(n) for n in counts.stdout.split())
+    state = upstream_state(local, remote)
+    if state == "behind":
+        fail(
+            f"main is {remote} commit(s) behind origin/main — pull before "
+            f"bumping, or the tag will name a tree missing them"
+        )
+    if state == "diverged":
+        fail(
+            f"main has diverged from origin/main ({local} here, {remote} "
+            f"there) — reconcile before bumping"
+        )
 
 
 def next_version(current, level):
@@ -90,8 +163,16 @@ def commit_and_tag(files, message, tag):
 
 def maybe_push(push_pref):
     if push_pref is None:
-        answer = input("Push commit and tags now? [y/N]: ").strip().lower()
-        push_pref = answer in {"y", "yes"}
+        # Without a terminal there is nobody to ask, and by this point the
+        # commit and the tag already exist. Raising here left the release
+        # half-made and printed a traceback over it; not pushing is the
+        # safe half of the question, and the line below says how to finish.
+        if not sys.stdin.isatty():
+            print("Not a terminal, so not pushing. Pass --push to push.")
+            push_pref = False
+        else:
+            answer = input("Push commit and tags now? [y/N]: ").strip().lower()
+            push_pref = answer in {"y", "yes"}
 
     if push_pref:
         sh("git", "push", capture=False)
