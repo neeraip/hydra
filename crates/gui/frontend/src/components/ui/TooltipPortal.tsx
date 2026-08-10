@@ -12,6 +12,39 @@ const GAP = 8;
 const DEFAULT_SHOW_DELAY_MS = 350;
 
 /**
+ * Past this many characters a tooltip is a sentence rather than a label,
+ * and is allowed to wrap.
+ *
+ * Labels must not wrap: "Close", "Basemap", a criteria summary read as one
+ * line, and a stray break in one of those looks like a rendering fault.
+ * But a tooltip carrying an explanation cannot stay on one line — clamped
+ * to the viewport it would simply run off both edges — and an explanation
+ * is exactly what the legend's motion note became when it stopped being
+ * three lines of the panel.
+ */
+const WRAP_ABOVE_CHARS = 60;
+
+/** The width a wrapped tooltip is allowed, in pixels. Roughly a comfortable
+ *  measure at the tooltip's own font size — long enough for two or three
+ *  lines of a sentence, short enough not to span the window. */
+const WRAP_WIDTH = 280;
+
+/**
+ * How a tooltip lays out its text: one line, or a wrapped block.
+ *
+ * A decision rather than a style so it can be read without a browser —
+ * the difference is invisible to jsdom, which measures every box as zero.
+ */
+export function tooltipTextLayout(text: string): {
+  whiteSpace: "nowrap" | "normal";
+  maxWidth?: number;
+} {
+  return text.length > WRAP_ABOVE_CHARS
+    ? { whiteSpace: "normal", maxWidth: WRAP_WIDTH }
+    : { whiteSpace: "nowrap" };
+}
+
+/**
  * Mounts a single global tooltip that listens for mouseenter/mouseleave on
  * any element with a [data-tooltip] attribute. Renders via a React portal
  * directly on <body> so it is never clipped by overflow:hidden ancestors.
@@ -260,7 +293,7 @@ export function TooltipPortal() {
     position: "fixed",
     zIndex: 99999,
     pointerEvents: "none",
-    whiteSpace: "nowrap",
+    ...tooltipTextLayout(tip.text),
     background: "var(--tooltip-bg, #1e1e2a)",
     color: "var(--tooltip-text, #e2e2ec)",
     fontSize: "var(--text-md)",

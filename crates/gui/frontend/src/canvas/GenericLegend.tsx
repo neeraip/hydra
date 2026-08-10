@@ -15,7 +15,11 @@
 // on inside: an engine that has no such notion simply passes nothing and
 // the affordance is absent rather than faked.
 
-import { PlayIcon, XMarkIcon } from "@heroicons/react/16/solid";
+import {
+  InformationCircleIcon,
+  PlayIcon,
+  XMarkIcon,
+} from "@heroicons/react/16/solid";
 import { useEffect, useRef, useState } from "react";
 import {
   formatGenericValue,
@@ -537,19 +541,34 @@ export function GenericLegend({
             />
           )}
 
-          {/* Why some selections move and others do not, where a reader is
-              already looking to find out what the colours mean. */}
+          {/* Why some selections move and others do not — kept where a
+              reader already is, but folded into a mark they can ask.
+              Spelled out it was three lines of standing explanation under
+              a panel whose job is the colours, and it was read once. */}
           {motionHint && (
-            <div
-              style={{
-                fontSize: "var(--text-xs)",
-                color: "var(--text-tertiary)",
-                lineHeight: 1.5,
-                borderTop: "1px solid var(--border)",
-                paddingTop: 8,
-              }}
-            >
-              {motionHint}
+            <div style={{ display: "flex", justifyContent: "flex-end" }}>
+              {/* The sentence is rendered, not merely attached: a tooltip
+                  is pointer-only here, so a screen reader would otherwise
+                  get an icon and nothing to read. */}
+              <span className="sr-only">{motionHint}</span>
+              <span
+                className="tool-btn"
+                data-tooltip={motionHint}
+                data-tooltip-pos="top"
+                aria-hidden="true"
+                style={{
+                  width: 18,
+                  height: 18,
+                  borderRadius: 5,
+                  color: "var(--text-tertiary)",
+                  display: "inline-flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  cursor: "help",
+                }}
+              >
+                <InformationCircleIcon style={{ width: 12, height: 12 }} />
+              </span>
             </div>
           )}
         </div>

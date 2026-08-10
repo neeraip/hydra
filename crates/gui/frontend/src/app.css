@@ -423,6 +423,26 @@ body,
   flex-shrink: 0;
 }
 
+/* ── Visually hidden ────────────────────────────────────────────────────────
+   Read by a screen reader, occupying no space on screen.
+
+   For text a sighted reader gets another way — the legend's motion note is
+   an icon with a tooltip, and a tooltip is pointer-only, so the sentence
+   itself has to be somewhere a keyboard or screen-reader user can reach.
+   `display: none` would not do: it removes the text from the accessibility
+   tree as well as from the page. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
 /* ── Tooltip (portal-based, see TooltipPortal.tsx) ──────────────────────────*/
 /* The [data-tooltip] attribute is consumed by TooltipPortal via event
    delegation; no CSS pseudo-element is needed. */
