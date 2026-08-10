@@ -351,7 +351,6 @@ assessed against:
 | `minPressure` | value | pressure | 14 m (the conventional ~20 psi service minimum) |
 | `pressure` | band `low`/`required`/`high` | pressure | 24 / 35 / 45 m |
 | `velocity` | band `low`/`target`/`high` | velocity | 0.1 / 0.5 / 1.5 m/s |
-| `flow` | band `low`/`target`/`high` | flow | 0.1 / 1 / 10 L/s |
 | `minResidual` | value | concentration | 0.2 mg/L (a conventional disinfectant-residual floor) |
 | `maxAge` | value | age | 24 h |
 
@@ -378,7 +377,13 @@ Absent keys take the catalog defaults; a malformed valuation (wrong
 shape, non-finite number) is refused with a message naming the
 criterion.
 
-The `flow` band drives no block. It is cataloged because the catalog
-describes the whole standard, and applications judge with it elsewhere
-(the map's criteria colour scale) — hydra-common §7.4 provides for
-exactly this.
+A `flow` band was cataloged once, for the map's threshold colour scale
+and for nothing else. It is retired: flow's ramp is **diverging**
+(hydra-common §6.1) because the sign carries direction, so it can never
+resolve to a criterion under §6.1's banded rule, and the scale it existed
+for cannot be offered for it. A valuation saved while it existed still
+parses — §7.3 ignores keys the catalog does not declare.
+
+Every criterion that remains either drives a block or bands a variable,
+which is the property worth keeping: a criterion the user can set and
+nothing consumes is a control that does nothing.

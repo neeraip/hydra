@@ -523,7 +523,6 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
     () => ({
       pressure: criteria.pressure,
       velocity: criteria.velocity,
-      flow: criteria.flow,
     }),
     [criteria],
   );
@@ -2392,7 +2391,6 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
                 colorMode={scaleMode === "criteria" ? "threshold" : "relative"}
                 pressureThresholds={thresholds.pressure}
                 velocityThresholds={thresholds.velocity}
-                flowThresholds={thresholds.flow}
                 tool={activeTool}
                 onNodeMoved={handleNodeMoved}
                 onCreateNodeRequest={handleCreateNodeRequest}

@@ -269,7 +269,10 @@ fn wds_valuation_of(c: &meta::ProjectCriteria) -> serde_json::Value {
         "maxAge": c.max_age_h,
         "pressure": [c.pressure.low, c.pressure.required, c.pressure.high],
         "velocity": [c.velocity.low, c.velocity.target, c.velocity.high],
-        "flow": [c.flow.low, c.flow.target, c.flow.high],
+        // No `flow`: the criterion is retired. Flow is diverging, so it can
+        // never band the map, and its band drove no block — sending the key
+        // would send something nothing reads. The saved shape keeps the
+        // field; §7.3 ignores keys the catalog does not declare.
     })
 }
 
@@ -754,7 +757,10 @@ mod criteria_bridge_tests {
         assert_eq!(v["minPressure"], 14.0);
         assert_eq!(v["pressure"], serde_json::json!([24.0, 35.0, 45.0]));
         assert_eq!(v["velocity"], serde_json::json!([0.1, 0.5, 1.5]));
-        assert_eq!(v["flow"], serde_json::json!([0.1, 1.0, 10.0]));
+        // The saved shape still carries a flow band and the bridge drops
+        // it, which the key comparison above already holds — stated here
+        // too because it is the point of this change.
+        assert!(v.get("flow").is_none());
     }
 
     /// The bridged valuation consumes through the engine identically to

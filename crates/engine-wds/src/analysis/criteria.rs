@@ -99,32 +99,6 @@ const CRITERIA: &[CriterionDescriptor] = &[
         kind: CriterionKind::Value { default: 24.0 },
         severities: &[CategorySeverity::Nominal, CategorySeverity::Alarm],
     },
-    CriterionDescriptor {
-        key: "flow",
-        label: "Flow",
-        help: "The flow bands used by the map's criteria colour scale.",
-        quantity: Some("flow"),
-        kind: CriterionKind::Band {
-            cuts: &[
-                BandCut {
-                    key: "low",
-                    label: "Low",
-                    default: 0.1,
-                },
-                BandCut {
-                    key: "target",
-                    label: "Target",
-                    default: 1.0,
-                },
-                BandCut {
-                    key: "high",
-                    label: "High",
-                    default: 10.0,
-                },
-            ],
-        },
-        severities: &[],
-    },
 ];
 
 /// The engine's criteria catalog (hydra-common spec §7.2).
@@ -237,10 +211,6 @@ pub fn criteria_block_options(
         }),
     );
 
-    // The flow band drives no block (spec §5): validated for §7.3
-    // malformation like every criterion, then unused here.
-    band_of(valuation, "flow", band_cuts("flow"))?;
-
     Ok(options)
 }
 
@@ -331,6 +301,9 @@ mod tests {
             "minPressure": 14.0,
             "pressure": [24.0, 35.0, 45.0],
             "velocity": [0.1, 0.5, 1.5],
+            // A key the catalog no longer declares, kept here on purpose:
+            // §7.3 says an unknown key is ignored, and a project saved
+            // before the flow criterion was retired still holds one.
             "flow": [0.1, 1.0, 10.0],
         })
     }

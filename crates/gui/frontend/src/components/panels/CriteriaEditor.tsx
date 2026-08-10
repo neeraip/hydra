@@ -39,7 +39,11 @@ export function CriteriaEditor({
     criteria.minPressureM === DEFAULT_CRITERIA.minPressureM &&
     criteria.minResidualMgL === DEFAULT_CRITERIA.minResidualMgL &&
     criteria.maxAgeH === DEFAULT_CRITERIA.maxAgeH &&
-    (["pressure", "velocity", "flow"] as const).every((k) =>
+    // Flow is absent on purpose: its band drives no block and can no
+    // longer band the map (flow is diverging — the sign is the reading),
+    // so it is not part of the standard any more. A project saved with
+    // one keeps the field; nothing reads it.
+    (["pressure", "velocity"] as const).every((k) =>
       Object.keys(criteria[k]).every(
         (f) =>
           criteria[k][f as keyof (typeof criteria)[typeof k]] ===
@@ -141,15 +145,6 @@ export function CriteriaEditor({
               ...criteria,
               velocity: { ...criteria.velocity, [k]: v },
             })
-          }
-        />
-        <CriteriaBand
-          label="Flow"
-          quantity="flow"
-          fields={["low", "target", "high"]}
-          values={criteria.flow}
-          onCommit={(k, v) =>
-            onChange({ ...criteria, flow: { ...criteria.flow, [k]: v } })
           }
         />
       </div>

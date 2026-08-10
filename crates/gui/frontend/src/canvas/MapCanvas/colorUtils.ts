@@ -517,16 +517,8 @@ export function flowMagnitudeRgba(
   flow: number | null | undefined,
   maxFlow: number,
   alpha = 200,
-  thresholds?: { low: number; target: number; high: number },
 ): RGBA {
   if (flow == null) return [...NO_DATA_RGB, alpha];
-  if (thresholds) {
-    const abs = Math.abs(flow);
-    if (abs < thresholds.low) return [...BAND_STEPS[0], alpha];
-    if (abs < thresholds.target) return [...BAND_STEPS[2], alpha];
-    if (abs < thresholds.high) return [...BAND_STEPS[3], alpha];
-    return [...BAND_STEPS[4], alpha];
-  }
   const t = maxFlow > 0 ? Math.min(1, Math.abs(flow) / maxFlow) : 0;
   return [...seqRgb(t, "polyline"), alpha];
 }
@@ -619,7 +611,6 @@ export function linkRgba(
   flowMax: number,
   /** As with pressure: present only when the verdict was asked for. */
   velocityThresh?: { low: number; target: number; high: number },
-  flowThresh?: { low: number; target: number; high: number },
   qualityMin = 0,
   qualityMax = 1,
   /** Run range for the magnitude ramp velocity takes when unjudged. */
@@ -627,7 +618,7 @@ export function linkRgba(
 ): RGBA {
   switch (linkVar) {
     case "flow":
-      return flowMagnitudeRgba(link.flow, flowMax, 200, flowThresh);
+      return flowMagnitudeRgba(link.flow, flowMax, 200);
     case "velocity":
       // Absent (engine served no velocity) is unknown, not 0 m/s.
       return link.velocity == null

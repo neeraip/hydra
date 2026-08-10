@@ -58,36 +58,17 @@ describe("flowMagnitudeRgba", () => {
     ]);
   });
 
-  it("bands |flow| against thresholds when provided", () => {
-    // Thresholds make it a judgement, so it speaks the banded ramp rather
-    // than a warm palette of its own.
-    const thresholds = { low: 10, target: 20, high: 30 };
-    expect(flowMagnitudeRgba(5, 100, 200, thresholds)).toEqual([
-      ...BAND_STEPS[0],
-      200,
-    ]);
-    expect(flowMagnitudeRgba(15, 100, 200, thresholds)).toEqual([
-      ...BAND_STEPS[2],
-      200,
-    ]);
-    expect(flowMagnitudeRgba(25, 100, 200, thresholds)).toEqual([
-      ...BAND_STEPS[3],
-      200,
-    ]);
-    expect(flowMagnitudeRgba(35, 100, 200, thresholds)).toEqual([
-      ...BAND_STEPS[4],
-      200,
-    ]); // excessive
-    // Band edges are exclusive lower bounds: exactly `low` is moderate.
-    expect(flowMagnitudeRgba(10, 100, 200, thresholds)).toEqual([
-      ...BAND_STEPS[2],
-      200,
-    ]);
-    // Sign is ignored — reverse flow bands by magnitude.
-    expect(flowMagnitudeRgba(-35, 100, 200, thresholds)).toEqual([
-      ...BAND_STEPS[4],
-      200,
-    ]);
+  it("never bands: flow is a direction, not a verdict", () => {
+    // It used to take threshold bands from the criteria a user set, which
+    // made it the one variable that painted a judgement its legend could
+    // not name — flow's ramp is diverging, because the sign is most of the
+    // reading, so it can never resolve to a criterion (hydra-common §6.1).
+    // Only the magnitude scale remains, and it is the same colour whatever
+    // criteria say.
+    // Continuous, not stepped: two flows inside what used to be one band
+    // now read as different colours.
+    expect(flowMagnitudeRgba(9, 100)).not.toEqual(flowMagnitudeRgba(11, 100));
+    expect(flowMagnitudeRgba(35, 100)).not.toEqual([...BAND_STEPS[4], 200]);
   });
 
   it("takes the sequential ramp by |flow|/maxFlow without thresholds", () => {
@@ -195,11 +176,7 @@ describe("linkRgba", () => {
   it("dispatches to flowMagnitudeRgba for the flow variable", () => {
     const link = makeLink({ flow: 10 });
     expect(linkRgba(link, "flow", 10)).toEqual(flowMagnitudeRgba(10, 10));
-    // flow alpha is fixed at 200 and flow thresholds are forwarded.
-    const thresholds = { low: 1, target: 2, high: 3 };
-    expect(linkRgba(link, "flow", 10, undefined, thresholds)).toEqual(
-      flowMagnitudeRgba(10, 10, 200, thresholds),
-    );
+    // Alpha is fixed at 200; there is no threshold argument to forward.
     expect(linkRgba(makeLink({ flow: null }), "flow", 10)).toEqual([
       ...NO_DATA_RGB,
       200,
@@ -234,15 +211,7 @@ describe("linkRgba", () => {
 
   it("dispatches to linkQualityRgba for the quality variable", () => {
     expect(
-      linkRgba(
-        makeLink({ quality: 15 }),
-        "quality",
-        0,
-        undefined,
-        undefined,
-        10,
-        20,
-      ),
+      linkRgba(makeLink({ quality: 15 }), "quality", 0, undefined, 10, 20),
     ).toEqual(linkQualityRgba(15, 10, 20));
     // Range defaults to [0, 1] when not supplied.
     expect(linkRgba(makeLink({ quality: 0.5 }), "quality", 0)).toEqual(

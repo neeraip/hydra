@@ -150,7 +150,7 @@ const LITERALS = ["polyline", "point", "status"];
  * Named here rather than silently skipped, because an exception nobody can
  * see is how the list drifts in the first place.
  */
-const DERIVED_FROM_LISTED = ["velThresh", "flowThresh", "pressThresh"];
+const DERIVED_FROM_LISTED = ["velThresh", "pressThresh"];
 
 const NOT_STATE = [
   ...KEYWORDS,

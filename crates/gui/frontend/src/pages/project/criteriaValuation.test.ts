@@ -11,6 +11,13 @@ import { wdsValuation } from "./criteriaValuation";
  */
 
 describe("wdsValuation", () => {
+  it("omits the retired flow band", () => {
+    // The criterion is gone from the catalog: flow is diverging, so it can
+    // never band the map, and its band drove no report block. Sending the
+    // key would be sending something nothing reads.
+    expect("flow" in wdsValuation(DEFAULT_CRITERIA)).toBe(false);
+  });
+
   it("maps the saved shape onto the cataloged keys, bands in cut order", () => {
     expect(wdsValuation(DEFAULT_CRITERIA)).toEqual({
       minPressure: 14,
@@ -18,7 +25,6 @@ describe("wdsValuation", () => {
       maxAge: 24,
       pressure: [24, 35, 45],
       velocity: [0.1, 0.5, 1.5],
-      flow: [0.1, 1, 10],
     });
   });
 });

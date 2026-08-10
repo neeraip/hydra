@@ -436,7 +436,6 @@ interface MapCanvasProps {
   /** Custom velocity thresholds used when colorMode is "threshold". */
   velocityThresholds?: { low: number; target: number; high: number };
   /** Custom flow-magnitude thresholds used when colorMode is "threshold". */
-  flowThresholds?: { low: number; target: number; high: number };
   /** Run ranges for the magnitude ramps pressure and velocity take when the
    * reader has not asked for the verdict. */
   pressureMin?: number;
@@ -536,7 +535,6 @@ export const MapCanvas = memo(function MapCanvas({
   colorMode = "relative" as const,
   pressureThresholds,
   velocityThresholds,
-  flowThresholds,
   pressureMin = 0,
   pressureMax = 100,
   velocityMax = 1.5,
@@ -1497,7 +1495,6 @@ export const MapCanvas = memo(function MapCanvas({
     // Threshold bands only apply in "threshold" colour mode.
     const velThresh =
       colorMode === "threshold" ? velocityThresholds : undefined;
-    const flowThresh = colorMode === "threshold" ? flowThresholds : undefined;
     const pressThresh =
       colorMode === "threshold" ? pressureThresholds : undefined;
 
@@ -1619,7 +1616,6 @@ export const MapCanvas = memo(function MapCanvas({
         linkVar,
         flowMax,
         velThresh,
-        flowThresh,
         qualityMin,
         qualityMax,
         velocityMax,
@@ -2174,7 +2170,6 @@ export const MapCanvas = memo(function MapCanvas({
         flowMax,
         colorMode,
         velocityThresholds,
-        flowThresholds,
         qualityMin,
         qualityMax,
         pr,
@@ -2742,7 +2737,6 @@ export const MapCanvas = memo(function MapCanvas({
     colorMode,
     pressureThresholds,
     velocityThresholds,
-    flowThresholds,
     pressureMin,
     pressureMax,
     velocityMax,
