@@ -5,8 +5,6 @@ import {
 } from "@heroicons/react/16/solid";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { useEffect, useState } from "react";
-import ReactMarkdown, { type Components } from "react-markdown";
-import remarkGfm from "remark-gfm";
 import {
   ALL_RELEASES_URL,
   compareSemver,
@@ -14,110 +12,8 @@ import {
   type GuiRelease,
   releaseHasNotes,
 } from "../../hooks/useReleaseNotes";
+import { MarkdownBody } from "../ui/MarkdownBody";
 import { ModalBackdrop, stopBackdropEvents } from "../ui/ModalBackdrop";
-
-/** Full-body markdown component map: normal document rendering (headings,
- * lists, tables via remark-gfm, code, images) with app typography; links
- * open externally through the opener plugin. Raw HTML stays disabled —
- * react-markdown's default. */
-const MODAL_COMPONENTS: Components = {
-  a: ({ href, children }) => (
-    <button
-      type="button"
-      onClick={() => {
-        if (href) void openUrl(href);
-      }}
-      style={{
-        background: "transparent",
-        border: "none",
-        padding: 0,
-        color: "var(--accent)",
-        cursor: "pointer",
-        fontSize: "inherit",
-        fontFamily: "inherit",
-        textDecoration: "underline",
-        textUnderlineOffset: 2,
-      }}
-    >
-      {children}
-    </button>
-  ),
-  h1: ({ children }) => <div style={headingStyle(14)}>{children}</div>,
-  h2: ({ children }) => <div style={headingStyle(13)}>{children}</div>,
-  h3: ({ children }) => <div style={headingStyle(12.5)}>{children}</div>,
-  h4: ({ children }) => <div style={headingStyle(12)}>{children}</div>,
-  h5: ({ children }) => <div style={headingStyle(12)}>{children}</div>,
-  h6: ({ children }) => <div style={headingStyle(12)}>{children}</div>,
-  p: ({ children }) => (
-    <p
-      style={{ margin: "0 0 8px", fontSize: "var(--text-md)", lineHeight: 1.6 }}
-    >
-      {children}
-    </p>
-  ),
-  ul: ({ children }) => (
-    <ul style={{ margin: "0 0 8px", paddingLeft: 18 }}>{children}</ul>
-  ),
-  ol: ({ children }) => (
-    <ol style={{ margin: "0 0 8px", paddingLeft: 18 }}>{children}</ol>
-  ),
-  li: ({ children }) => (
-    <li
-      style={{ fontSize: "var(--text-md)", lineHeight: 1.6, marginBottom: 2 }}
-    >
-      {children}
-    </li>
-  ),
-  code: ({ children }) => (
-    <code
-      style={{
-        fontFamily: "var(--font-mono)",
-        fontSize: "var(--text-sm)",
-        background: "var(--bg-input, rgba(127,127,127,0.12))",
-        borderRadius: 3,
-        padding: "1px 4px",
-      }}
-    >
-      {children}
-    </code>
-  ),
-  pre: ({ children }) => (
-    <pre
-      style={{
-        margin: "0 0 8px",
-        padding: "8px 10px",
-        background: "var(--bg-input, rgba(127,127,127,0.12))",
-        border: "1px solid var(--border)",
-        borderRadius: 6,
-        overflowX: "auto",
-        fontSize: "var(--text-sm)",
-        lineHeight: 1.5,
-      }}
-    >
-      {children}
-    </pre>
-  ),
-  img: ({ src, alt }) => (
-    <img
-      src={typeof src === "string" ? src : undefined}
-      alt={alt ?? ""}
-      style={{ maxWidth: "100%", borderRadius: 6, margin: "4px 0 8px" }}
-    />
-  ),
-  hr: () => (
-    <div style={{ height: 1, background: "var(--border)", margin: "10px 0" }} />
-  ),
-};
-
-function headingStyle(fontSize: number): React.CSSProperties {
-  return {
-    fontSize,
-    fontWeight: 700,
-    color: "var(--text-primary)",
-    margin: "10px 0 6px",
-    lineHeight: 1.4,
-  };
-}
 
 /** Accent "New" pill shown on releases newer than the last-seen marker. */
 function NewBadge() {
@@ -403,13 +299,7 @@ export function ReleaseNotesModal({
                 </div>
                 {isOpen && (
                   <div style={{ padding: "0 0 10px 22px" }}>
-                    <ReactMarkdown
-                      remarkPlugins={[remarkGfm]}
-                      components={MODAL_COMPONENTS}
-                      skipHtml
-                    >
-                      {r.body}
-                    </ReactMarkdown>
+                    <MarkdownBody>{r.body}</MarkdownBody>
                   </div>
                 )}
               </div>
