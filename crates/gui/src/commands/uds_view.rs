@@ -8,6 +8,11 @@
 //! regions — the hydra-common §4.1 element classes) and encodes them as
 //! **snapshot layout v4**, the generic sibling of the wds-specific v3.
 //!
+//! The leading `u32` is how the frontend decoder tells the two layouts
+//! apart, so it answers "which format" and "which version of it" at once
+//! and the two numbers share one namespace. See
+//! [`GENERIC_SNAPSHOT_VERSION`].
+//!
 //! Layout version 4:
 //!
 //! ```text
@@ -47,6 +52,18 @@
 use std::collections::HashMap;
 
 use hydra::uds::model::{LinkKind, Network, ParcelOutlet, VertexKind};
+
+/// Leading `u32` of a generic viewer snapshot.
+///
+/// It is a format discriminator as much as a version: the frontend reads
+/// this word to choose between this layout and the water-distribution one,
+/// so it must never equal
+/// [`NETWORK_SNAPSHOT_VERSION`](super::binary_codec::NETWORK_SNAPSHOT_VERSION)
+/// — bumping either for a new column would hand every snapshot of one kind
+/// to the other's decoder. `a_snapshot_word_names_one_layout` holds that
+/// line here; `network.test.ts` holds it on the far side, because neither
+/// compiler can see the other's constant.
+pub(crate) const GENERIC_SNAPSHOT_VERSION: u32 = 4;
 
 /// One located element of the viewer snapshot.
 pub(crate) struct ViewPoint {
@@ -380,7 +397,7 @@ pub(crate) fn encode_uds_snapshot(view: &UdsView) -> Vec<u8> {
 
     let mut buf = Vec::new();
     for v in [
-        4u32,
+        GENERIC_SNAPSHOT_VERSION,
         1, // flags: present
         view.points.len() as u32,
         view.polylines.len() as u32,
@@ -452,6 +469,23 @@ pub(crate) fn encode_uds_snapshot(view: &UdsView) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// One word, one layout.
+    ///
+    /// The frontend picks a decoder by reading the first `u32`, so these two
+    /// constants are not independent version counters — they are names in a
+    /// shared namespace. Bumping either to the other's value would route
+    /// every snapshot of one engine into the other's decoder, and neither
+    /// constant's own file would look wrong while it happened.
+    #[test]
+    fn a_snapshot_word_names_one_layout() {
+        assert_ne!(
+            GENERIC_SNAPSHOT_VERSION,
+            super::super::binary_codec::NETWORK_SNAPSHOT_VERSION,
+            "the generic and water-distribution snapshots must stay \
+             distinguishable by their leading word"
+        );
+    }
 
     const MODEL: &str = "[OPTIONS]\nFLOW_UNITS CFS\nFLOW_ROUTING DYNWAVE\n\
         [RAINGAGES]\nG1 INTENSITY 0:15 1.0 TIMESERIES R1\n\

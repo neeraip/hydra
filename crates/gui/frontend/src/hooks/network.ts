@@ -42,7 +42,18 @@ import type { SidecarRef } from "./projects";
 // optional string columns use the empty string.
 
 const SNAPSHOT_HEADER_BYTES = 32;
-const SNAPSHOT_VERSION = 3;
+/**
+ * The leading `u32` of a snapshot answers two questions at once — which of
+ * the two layouts this is, and which version of it — because the decoder
+ * picks the layout by reading it. So these two numbers share one namespace
+ * and must never meet: bumping this to 4 for a new column would silently
+ * hand every water-distribution snapshot to the generic decoder.
+ *
+ * Kept in step with `NETWORK_SNAPSHOT_VERSION` in `commands/binary_codec.rs`
+ * and `GENERIC_SNAPSHOT_VERSION` in `commands/uds_view.rs`; asserted distinct
+ * on both sides, since neither compiler can see the other's constant.
+ */
+export const SNAPSHOT_VERSION = 3;
 const SNAPSHOT_FLAG_PRESENT = 1;
 
 // Canvas-facing fields carried on Link beyond the backend DTO baseline:
@@ -79,7 +90,8 @@ const SNAPSHOT_LINK_STATUSES = ["open", "closed", "cv"] as const;
 // (hydra-common §4.1): classed points, polylines, and regions with a kind
 // string table. Produced by `commands/uds_view.rs`; layout documented there.
 
-const GENERIC_SNAPSHOT_VERSION = 4;
+/** See [`SNAPSHOT_VERSION`] — one namespace, two layouts. */
+export const GENERIC_SNAPSHOT_VERSION = 4;
 const GENERIC_HEADER_BYTES = 48;
 
 function decodeGenericSnapshot(

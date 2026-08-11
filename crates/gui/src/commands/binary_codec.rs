@@ -5,7 +5,7 @@
 use super::network_dto::{NetworkDto, NetworkState, NetworkStateInner};
 
 /// Version stamped into the first header word of the binary network snapshot.
-const NETWORK_SNAPSHOT_VERSION: u32 = 3;
+pub(crate) const NETWORK_SNAPSHOT_VERSION: u32 = 3;
 /// Flag bit set in the header's `flags` word when the payload carries a
 /// snapshot. Clear = "no network for this target" — the binary equivalent of
 /// the old `null` return from `load_project_network`.

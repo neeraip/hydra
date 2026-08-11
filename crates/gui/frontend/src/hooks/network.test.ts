@@ -37,8 +37,10 @@ import { normalizeNodes } from "./NetworkDataContext";
 import {
   decodeNetworkSnapshot,
   fetchNetworkSnapshot,
+  GENERIC_SNAPSHOT_VERSION,
   isStructuralNetworkChange,
   loadProjectNetwork,
+  SNAPSHOT_VERSION,
 } from "./network";
 
 const mockInvoke = vi.mocked(invoke);
@@ -179,6 +181,21 @@ function buildEmptySnapshot(): ArrayBuffer {
   for (let i = 0; i < 9; i += 1) w.strCol([]);
   return w.build();
 }
+
+describe("snapshot layout versions", () => {
+  /**
+   * The decoder picks a layout by reading the first word, so these two
+   * constants live in one namespace rather than counting independently.
+   * Bumping either to the other's value would route every snapshot of one
+   * engine into the other engine's decoder, and nothing in either
+   * constant's own file would look wrong while it happened. Asserted here
+   * and again in `uds_view.rs`, because neither side can see the other's
+   * number.
+   */
+  it("give each layout a word of its own", () => {
+    expect(SNAPSHOT_VERSION).not.toBe(GENERIC_SNAPSHOT_VERSION);
+  });
+});
 
 describe("decodeNetworkSnapshot", () => {
   it("decodes nodes into the exact JSON-path object shape", () => {
