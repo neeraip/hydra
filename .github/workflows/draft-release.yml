@@ -122,7 +122,20 @@ jobs:
         shell: bash
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release upload "${{ github.ref_name }}" "${{ env.ARCHIVE }}"
+        run: |
+          # Retried for the reason the GUI upload step sets out: a draft
+          # release resolves only through a paginated listing, and this
+          # matrix uploads to it from four targets at once. `--clobber`
+          # is what makes a retry safe — without it, retrying an upload
+          # that actually succeeded fails on the existing asset.
+          for attempt in 1 2 3 4 5; do
+            gh release upload "${{ github.ref_name }}" "${{ env.ARCHIVE }}" --clobber && exit 0
+            if [ "$attempt" = 5 ]; then
+              echo "gh release upload failed after 5 attempts" >&2
+              exit 1
+            fi
+            sleep $(( 2 ** (attempt - 1) ))
+          done
 
   # ── Library: attach the browser demo as a single portable HTML file. ──────
   #
@@ -183,7 +196,16 @@ jobs:
           version="${GITHUB_REF_NAME#v}"
           asset="hydra-try-${version}.html"
           cp crates/wasm/www/hydra.html "${asset}"
-          gh release upload "${{ github.ref_name }}" "${asset}"
+          # Retried like the others: this job races nothing, but a draft
+          # lookup or a plain 5xx should not cost the release its demo.
+          for attempt in 1 2 3 4 5; do
+            gh release upload "${{ github.ref_name }}" "${asset}" --clobber && exit 0
+            if [ "$attempt" = 5 ]; then
+              echo "gh release upload failed after 5 attempts" >&2
+              exit 1
+            fi
+            sleep $(( 2 ** (attempt - 1) ))
+          done
 
   # ── 3. Build the Tauri desktop app and attach platform installers. ────────
   gui:
@@ -297,7 +319,7 @@ jobs:
           TAG: ${{ github.ref_name }}
         run: |
           python3 << 'EOF'
-          import json, os, shutil, subprocess
+          import json, os, shutil, subprocess, time
 
           paths = json.loads(os.environ['ARTIFACT_PATHS'])
           tag    = os.environ['TAG']
@@ -322,14 +344,44 @@ jobs:
                       return ext + '.sig'
               return None
 
+          uploads = []
           for src in paths:
               ext = classify(src)
               if ext is None:
-                  print(f'Skipping: {os.path.basename(src)}')
+                  print(f'Skipping: {os.path.basename(src)}', flush=True)
                   continue
               dst_name = f'hydra-gui-{version}-{target}{ext}'
               dst = os.path.join(os.path.dirname(src), dst_name)
               shutil.copy2(src, dst)
-              subprocess.run(['gh', 'release', 'upload', tag, dst, '--clobber'], check=True)
-              print(f'Uploaded: {dst_name}')
+              uploads.append(dst)
+
+          if not uploads:
+              raise SystemExit(f'no uploadable artifacts among: {paths}')
+
+          # One call for every artifact, and retried.
+          #
+          # A draft release cannot be fetched by tag — GitHub's by-tag
+          # endpoint serves published releases only — so `gh` finds it by
+          # paging the release list, and that listing is eventually
+          # consistent. Three platform jobs uploading at once, six
+          # artifacts each, one lookup per artifact, and `--clobber`
+          # deleting before it writes, was enough for a lookup to come back
+          # empty: 2.16.0 lost its .rpm and .AppImage to a "release not
+          # found" on the third of six uploads, after the first two had
+          # gone up.
+          #
+          # Uploading in one call takes that from six lookups per platform
+          # to one. The retry covers the rest, and covers a plain 5xx too.
+          for attempt in range(5):
+              result = subprocess.run(['gh', 'release', 'upload', tag, *uploads, '--clobber'])
+              if result.returncode == 0:
+                  break
+              if attempt == 4:
+                  raise SystemExit(f'gh release upload failed after 5 attempts')
+              delay = 2 ** attempt
+              print(f'Upload failed; retrying in {delay}s', flush=True)
+              time.sleep(delay)
+
+          for dst in uploads:
+              print(f'Uploaded: {os.path.basename(dst)}', flush=True)
           EOF
