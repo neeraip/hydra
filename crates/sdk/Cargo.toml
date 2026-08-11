@@ -14,11 +14,11 @@ categories = ["science", "simulation"]
 publish = true
 
 [dependencies]
-hydra-common = { path = "../common", version = "10.0.1" }
-hydra-engine-uds = { path = "../engine-uds", version = "10.0.1" }
-hydra-engine-wds = { path = "../engine-wds", version = "10.0.1" }
-hydra-engines = { path = "../engines", version = "10.0.1" }
-hydra-report = { path = "../report", version = "10.0.1" }
+hydra-common = { path = "../common", version = "10.1.0" }
+hydra-engine-uds = { path = "../engine-uds", version = "10.1.0" }
+hydra-engine-wds = { path = "../engine-wds", version = "10.1.0" }
+hydra-engines = { path = "../engines", version = "10.1.0" }
+hydra-report = { path = "../report", version = "10.1.0" }
 
 [features]
 # Enables the PDF renderer in hydra::report (heavyweight: embeds Typst).
