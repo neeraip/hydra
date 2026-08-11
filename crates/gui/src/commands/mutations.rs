@@ -1214,6 +1214,37 @@ pub(crate) fn create_curve_in_network(
     Ok(())
 }
 
+/// Ids of the elements that reference `curve_id`, in node-then-link order.
+///
+/// Every place a curve can be named, in one list, because the two callers
+/// that care must agree: deletion refuses while this is non-empty, and
+/// renaming rewrites exactly these. They disagreed once — a pump's
+/// efficiency curve was rewritten by a rename but invisible to the delete
+/// guard, so deleting it left the pump naming a curve that no longer
+/// existed, which survives into the saved file.
+fn curve_references(network: &hydra::Network, curve_id: &str) -> Vec<String> {
+    let names = |c: &Option<String>| c.as_deref() == Some(curve_id);
+    let mut refs: Vec<String> = Vec::new();
+    for n in &network.nodes {
+        if let hydra::NodeKind::Tank(t) = &n.kind {
+            if names(&t.volume_curve) {
+                refs.push(n.base.id.clone());
+            }
+        }
+    }
+    for l in &network.links {
+        let hit = match &l.kind {
+            hydra::LinkKind::Pump(p) => names(&p.head_curve) || names(&p.efficiency_curve),
+            hydra::LinkKind::Valve(v) => names(&v.curve),
+            hydra::LinkKind::Pipe(_) => false,
+        };
+        if hit {
+            refs.push(l.base.id.clone());
+        }
+    }
+    refs
+}
+
 /// Delete a curve from the network.
 ///
 /// Fails if any pump, valve, or tank still references the curve (by
@@ -1231,26 +1262,7 @@ pub fn delete_curve(
             return Err(format!("curve '{}' not found", id));
         }
 
-        let mut referenced_by: Vec<String> = Vec::new();
-        for l in &network.links {
-            if let hydra::LinkKind::Pump(p) = &l.kind {
-                if p.head_curve.as_deref() == Some(id.as_str()) {
-                    referenced_by.push(l.base.id.clone());
-                }
-            }
-            if let hydra::LinkKind::Valve(v) = &l.kind {
-                if v.curve.as_deref() == Some(id.as_str()) {
-                    referenced_by.push(l.base.id.clone());
-                }
-            }
-        }
-        for n in &network.nodes {
-            if let hydra::NodeKind::Tank(t) = &n.kind {
-                if t.volume_curve.as_deref() == Some(id.as_str()) {
-                    referenced_by.push(n.base.id.clone());
-                }
-            }
-        }
+        let referenced_by = curve_references(network, &id);
         if !referenced_by.is_empty() {
             return Err(format!(
                 "curve '{}' is still attached to {}; detach it first",
@@ -2022,6 +2034,39 @@ mod tests {
     use crate::commands::test_fixtures::{loaded_state, TEST_INP};
 
     // ── structural-mutation helper ────────────────────────────────────────
+
+    /// Every way a curve can be referenced must block its deletion.
+    ///
+    /// The guard exists so the model can never hold a curve id that resolves
+    /// to nothing, and a pump's efficiency curve is a reference like any
+    /// other — `rename_curve_in_network` already treats it as one. Left out
+    /// of the guard, deleting it succeeded and the dangling id survived into
+    /// the saved file.
+    #[test]
+    fn every_curve_reference_blocks_its_deletion() {
+        let inp = TEST_INP.replace(
+            "[PIPES]",
+            "[PUMPS]\nPU1  R1  J1  HEAD C1\n\n[CURVES]\nC1  0  50\nC1  5  0\nE1  0  0.7\nE1  5  0.8\n\n[ENERGY]\nPump  PU1  EFFIC  E1\n\n[PIPES]",
+        );
+        let network = hydra::io::parse(inp.as_bytes()).expect("fixture must parse");
+        let attached = network.links.iter().find_map(|l| match &l.kind {
+            hydra::LinkKind::Pump(p) => p.efficiency_curve.clone(),
+            _ => None,
+        });
+        assert_eq!(
+            attached,
+            Some("E1".to_string()),
+            "fixture must actually attach an efficiency curve"
+        );
+
+        assert_eq!(
+            curve_references(&network, "E1"),
+            ["PU1"],
+            "an efficiency curve is a reference too"
+        );
+        assert_eq!(curve_references(&network, "C1"), ["PU1"]);
+        assert!(curve_references(&network, "nobody").is_empty());
+    }
 
     /// A network whose `[REPORT]` section names two nodes and a link.
     fn reported_network() -> hydra::Network {
