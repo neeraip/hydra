@@ -662,13 +662,17 @@ pub(super) fn valve_py(
     _link: &crate::Link,
     status: LinkStatus,
     curves: &[crate::Curve],
+    curve_idx: Option<usize>,
 ) -> Result<Py, HydraulicError> {
     let abs_q = q.abs();
     let km = v.minor_loss;
+    // Resolved once when the solver context was built, for the same reason
+    // a pump's is: this runs per valve, per iteration, per step.
+    let valve_curve = || curve_idx.and_then(|idx| curves.get(idx));
 
     let py = match v.valve_type {
         ValveType::Gpv => {
-            if let Some(curve) = curves.iter().find(|c| v.curve.as_deref() == Some(&c.id)) {
+            if let Some(curve) = valve_curve() {
                 let qe = abs_q.max(1.0e-14);
                 let (h0, slope) = curve_segment(curve, qe);
                 let slope_pos = slope.max(G_MIN);
@@ -729,9 +733,7 @@ pub(super) fn valve_py(
                     }
                 }
             } else {
-                let kv = if let Some(curve) =
-                    curves.iter().find(|c| v.curve.as_deref() == Some(&c.id))
-                {
+                let kv = if let Some(curve) = valve_curve() {
                     (curve.eval(setting) / 100.0).clamp(1.0e-6, 1.0)
                 } else {
                     (setting / 100.0).clamp(1.0e-6, 1.0)

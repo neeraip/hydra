@@ -19,7 +19,7 @@ pub(super) fn initialise_flows(
     statuses: &[LinkStatus],
     settings: &[f64],
     pump_coeffs: &[Option<PumpCoeffs>],
-    pump_curve_idx: &[Option<usize>],
+    link_curve_idx: &[Option<usize>],
 ) {
     for (k, link) in network.links.iter().enumerate() {
         let is_closed = matches!(
@@ -38,7 +38,7 @@ pub(super) fn initialise_flows(
                 LinkKind::Pump(_) => {
                     let omega = settings[k];
                     let q_design =
-                        pump_design_flow(k, link, pump_coeffs, pump_curve_idx, &network.curves);
+                        pump_design_flow(k, link, pump_coeffs, link_curve_idx, &network.curves);
                     omega * q_design
                 }
                 LinkKind::Pipe(pipe) => std::f64::consts::PI * pipe.diameter * pipe.diameter / 4.0,
@@ -53,7 +53,7 @@ fn pump_design_flow(
     k: usize,
     link: &Link,
     pump_coeffs: &[Option<PumpCoeffs>],
-    pump_curve_idx: &[Option<usize>],
+    link_curve_idx: &[Option<usize>],
     curves: &[Curve],
 ) -> f64 {
     let LinkKind::Pump(pump) = &link.kind else {
@@ -63,7 +63,7 @@ fn pump_design_flow(
         PumpCurveType::ConstHp => 0.028317, // 1 ft³/s initial guess in m³/s
         PumpCurveType::PowerFunction => {
             // Use precomputed index instead of linear scan (§2.9).
-            if let Some(idx) = pump_curve_idx[k] {
+            if let Some(idx) = link_curve_idx[k] {
                 let curve = &curves[idx];
                 if curve.points.len() >= 2 {
                     return curve.points[curve.points.len() / 2].x;
@@ -76,7 +76,7 @@ fn pump_design_flow(
             }
         }
         PumpCurveType::Custom => {
-            if let Some(idx) = pump_curve_idx[k] {
+            if let Some(idx) = link_curve_idx[k] {
                 let curve = &curves[idx];
                 if curve.points.len() >= 2 {
                     let x0 = curve.points.first().unwrap().x;
@@ -158,7 +158,7 @@ pub(super) fn link_py(
     formula: HeadLossFormula,
     viscosity: f64,
     sp_grav: f64,
-    pump_curve_idx_k: Option<usize>,
+    curve_idx_k: Option<usize>,
     rq_tol: f64,
 ) -> Result<Py, HydraulicError> {
     // PRV/PSV/FCV with a live setting are ALWAYS handled exclusively by
@@ -289,7 +289,7 @@ pub(super) fn link_py(
                         }
                     }
                     PumpCurveType::Custom => {
-                        if let Some(curve) = pump_curve_idx_k.and_then(|idx| curves.get(idx)) {
+                        if let Some(curve) = curve_idx_k.and_then(|idx| curves.get(idx)) {
                             let omega = setting;
                             let q_adj = q.abs().max(1.0e-12) / omega;
                             let (h0_seg, slope) = curve_segment(curve, q_adj);
@@ -306,7 +306,7 @@ pub(super) fn link_py(
                 })
             }
         }
-        LinkKind::Valve(v) => valve_py(v, q, setting, link, status, curves),
+        LinkKind::Valve(v) => valve_py(v, q, setting, link, status, curves, curve_idx_k),
     }
 }
 

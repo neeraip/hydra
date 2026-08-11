@@ -160,7 +160,7 @@ pub struct SolverContext {
     pub(super) junction_demand_terms: Vec<Vec<DemandTerm>>,
     pub(crate) pipe_r: Vec<f64>,
     pub(crate) pump_coeffs: Vec<Option<PumpCoeffs>>,
-    pub(crate) pump_curve_idx: Vec<Option<usize>>,
+    pub(crate) link_curve_idx: Vec<Option<usize>>,
     pump_qmax_inner: Vec<f64>,
     pub(crate) link_aij_pos: Vec<Option<usize>>,
     pub(crate) link_from: Vec<usize>,
@@ -335,19 +335,32 @@ pub fn build_solver_context(
         }
     }
 
-    let curve_id_to_index: std::collections::HashMap<&str, usize> = network
-        .curves
-        .iter()
-        .enumerate()
-        .map(|(idx, curve)| (curve.id.as_str(), idx))
-        .collect();
+    // First occurrence wins, which is what a scan for the id would find.
+    // The reader accumulates each curve's points under one id, so a network
+    // read from a file has no duplicates to disagree about; one assembled
+    // in memory might.
+    let mut curve_id_to_index: std::collections::HashMap<&str, usize> =
+        std::collections::HashMap::with_capacity(network.curves.len());
+    for (idx, curve) in network.curves.iter().enumerate() {
+        curve_id_to_index.entry(curve.id.as_str()).or_insert(idx);
+    }
 
     let mut pump_coeffs: Vec<Option<PumpCoeffs>> = vec![None; n_links];
-    let mut pump_curve_idx: Vec<Option<usize>> = vec![None; n_links];
+    let mut link_curve_idx: Vec<Option<usize>> = vec![None; n_links];
     for (k, link) in network.links.iter().enumerate() {
+        // A GPV's headloss curve and a PCV's loss-ratio curve are read on
+        // every iteration of every step, exactly like a pump's head curve,
+        // and were the one curve reference still resolved by scanning the
+        // whole curve list and comparing ids as strings. On a model with
+        // many curves that scan dominated the run.
+        if let LinkKind::Valve(valve) = &link.kind {
+            if let Some(curve_id) = &valve.curve {
+                link_curve_idx[k] = curve_id_to_index.get(curve_id.as_str()).copied();
+            }
+        }
         if let LinkKind::Pump(pump) = &link.kind {
             if let Some(curve_id) = &pump.head_curve {
-                pump_curve_idx[k] = curve_id_to_index.get(curve_id.as_str()).copied();
+                link_curve_idx[k] = curve_id_to_index.get(curve_id.as_str()).copied();
             }
             if matches!(
                 pump.curve_type,
@@ -436,7 +449,7 @@ pub fn build_solver_context(
                     }
                 }
                 PumpCurveType::Custom => {
-                    if let Some(curve_idx) = pump_curve_idx[k] {
+                    if let Some(curve_idx) = link_curve_idx[k] {
                         network.curves[curve_idx]
                             .points
                             .last()
@@ -501,7 +514,7 @@ pub fn build_solver_context(
         junction_demand_terms,
         pipe_r: vec![0.0; n_links],
         pump_coeffs,
-        pump_curve_idx,
+        link_curve_idx,
         pump_qmax_inner,
         link_aij_pos,
         link_from,
@@ -606,7 +619,7 @@ pub fn solve_hydraulic_step(
             &ctx.statuses,
             &ctx.settings,
             &ctx.pump_coeffs,
-            &ctx.pump_curve_idx,
+            &ctx.link_curve_idx,
         );
         ctx.initialised = true;
     }
@@ -1059,7 +1072,7 @@ fn compute_py_coeffs(network: &Network, ctx: &mut SolverContext) -> Result<(), H
     let settings = &ctx.settings;
     let pipe_r = &ctx.pipe_r;
     let pump_coeffs = &ctx.pump_coeffs;
-    let pump_curve_idx = &ctx.pump_curve_idx;
+    let link_curve_idx = &ctx.link_curve_idx;
     let p = &mut ctx.p;
     let y = &mut ctx.y;
 
@@ -1071,7 +1084,7 @@ fn compute_py_coeffs(network: &Network, ctx: &mut SolverContext) -> Result<(), H
         .zip(statuses.iter())
         .zip(settings.iter())
         .zip(pipe_r.iter())
-        .zip(pump_coeffs.iter().zip(pump_curve_idx.iter()))
+        .zip(pump_coeffs.iter().zip(link_curve_idx.iter()))
     {
         let py = link_py(
             link,
@@ -1107,6 +1120,47 @@ mod tests {
         );
         let input = std::fs::read(path).expect("fixture should be readable");
         parse(&input).expect("fixture should parse")
+    }
+
+    /// A valve's curve must be resolved before the iteration, not during it.
+    ///
+    /// A GPV reads its headloss curve and a PCV its loss-ratio curve on
+    /// every iteration of every timestep, so finding it by scanning the
+    /// curve list and comparing ids as strings costs the whole list every
+    /// time: on a network of 40 valves and 400 curves that scan was 89% of
+    /// the run. The index removes it, and the failure it can introduce is
+    /// silent rather than loud — an unresolved GPV closes and an
+    /// unresolved PCV falls back to its raw setting, both plausible
+    /// numbers. So the index is asserted to agree with the scan it
+    /// replaced, on every link that names a curve.
+    #[test]
+    fn a_valve_resolves_its_curve_before_the_iteration() {
+        for fixture in ["gpv_valve", "pcv_valve"] {
+            let network = load_fixture(fixture);
+            let favad = network.compute_favad();
+            let ctx = build_solver_context(&network, &favad).expect("solver context should build");
+
+            let mut checked = 0;
+            for (k, link) in network.links.iter().enumerate() {
+                let named = match &link.kind {
+                    LinkKind::Valve(v) => v.curve.clone(),
+                    LinkKind::Pump(p) => p.head_curve.clone(),
+                    LinkKind::Pipe(_) => None,
+                };
+                let Some(id) = named else {
+                    assert_eq!(ctx.link_curve_idx[k], None, "{fixture}: link {k}");
+                    continue;
+                };
+                let scanned = network.curves.iter().position(|c| c.id == id);
+                assert_eq!(
+                    ctx.link_curve_idx[k], scanned,
+                    "{fixture}: link {k} names curve {id}"
+                );
+                assert!(scanned.is_some(), "{fixture}: fixture should define {id}");
+                checked += 1;
+            }
+            assert_eq!(checked, 1, "{fixture} should have one curve-bearing link");
+        }
     }
 
     #[test]
