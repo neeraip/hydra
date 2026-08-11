@@ -47,7 +47,21 @@ impl Simulation {
     ///
     /// Runs the §2.9 validation checks. Returns `SessionError::ValidationFailed`
     /// if any check fails. On success the session transitions to `Loaded`.
-    pub fn load(&mut self, network: Network) -> Result<(), SessionError> {
+    pub fn load(&mut self, mut network: Network) -> Result<(), SessionError> {
+        // Derive the pattern index here rather than trusting the caller's.
+        //
+        // §8.3 accepts a network built programmatically as readily as a parsed
+        // one, and §8.5 requires a cache derived from a mutable property to be
+        // refreshed when that property changes — this is one, over `patterns`.
+        // A caller who assembles a network by hand, or edits `patterns` on a
+        // parsed one, would otherwise reach the solver with an index that is
+        // empty or stale, and a demand pattern that cannot be looked up is not
+        // an error anywhere: `total_demand` falls back to a multiplier of 1,
+        // so the pattern is silently dropped rather than loudly misapplied.
+        //
+        // Derived before validation, so the checks see what the solver will.
+        network.build_pattern_index();
+
         // Validate (§8.1.2 / §2.9).
         network.validate().map_err(SessionError::ValidationFailed)?;
 
@@ -799,6 +813,106 @@ mod tests {
     use super::*;
     use crate::test_support::TestNetworkBuilder;
     use crate::SimulationOptions;
+
+    /// Reservoir → J1, whose 10 L/s demand follows a pattern that doubles in
+    /// the second of two hours. Parsed rather than built, so the network
+    /// starts out exactly as a caller's would before they touch it.
+    const PATTERNED_DEMAND: &[u8] = b"\
+[JUNCTIONS]
+J1  0  10
+
+[RESERVOIRS]
+R1  100
+
+[PIPES]
+P1  R1  J1  1000  12  100  0  Open
+
+[PATTERNS]
+WANTED  1.0  2.0
+
+[DEMANDS]
+J1  10  WANTED
+
+[TIMES]
+Duration  2:00
+Hydraulic Timestep  1:00
+Pattern Timestep  1:00
+Report Timestep  1:00
+
+[OPTIONS]
+Units  LPS
+Headloss  H-W
+
+[END]
+";
+
+    /// The demand delivered at J1 at time `t`, in the internal unit.
+    fn j1_demand(sess: &Simulation, t: f64) -> f64 {
+        sess.get_node_result("J1", crate::NodeQuantity::Demand, t)
+            .expect("demand")
+    }
+
+    /// A caller's patterns must apply even when the caller never built the
+    /// index they are looked up through.
+    ///
+    /// §8.3 accepts a programmatically built network, and one assembled by
+    /// hand arrives with an empty `pattern_index` — nothing in the data model
+    /// obliges a caller to fill it, and the crate's own test builder fills it
+    /// for them, which is why nothing here saw this. A lookup that misses is
+    /// an error at no layer: `total_demand` falls back to a multiplier of 1,
+    /// so the pattern is silently discarded and the run quietly answers a
+    /// different question.
+    #[test]
+    fn a_hand_built_networks_patterns_are_not_silently_discarded() {
+        let mut network = crate::io::parse(PATTERNED_DEMAND).expect("parses");
+        // What a caller who assembled this themselves would hand over.
+        network.pattern_index = Default::default();
+
+        let mut sess = Simulation::from_network(network).expect("loads");
+        sess.run_hydraulics().expect("runs");
+
+        assert!(
+            (j1_demand(&sess, 0.0) - 0.010).abs() < 1e-9,
+            "first hour should draw the base demand, got {}",
+            j1_demand(&sess, 0.0)
+        );
+        assert!(
+            (j1_demand(&sess, 3600.0) - 0.020).abs() < 1e-9,
+            "second hour should follow the pattern, got {}",
+            j1_demand(&sess, 3600.0)
+        );
+    }
+
+    /// Editing `patterns` before loading must not misapply them.
+    ///
+    /// The index maps an id to a *position*, so inserting or reordering
+    /// leaves every entry after the edit pointing at a neighbour — which
+    /// applies a real pattern, just the wrong one. §8.5 requires a cache
+    /// derived from a mutable property to be refreshed when it changes, and
+    /// this is where that refresh has to happen for a caller who edits the
+    /// model the session is about to take ownership of.
+    #[test]
+    fn patterns_edited_before_load_are_not_misapplied() {
+        let mut network = crate::io::parse(PATTERNED_DEMAND).expect("parses");
+        // Insert ahead of the pattern in use. The stale index still says
+        // WANTED is at position 0, which is now this one.
+        network.patterns.insert(
+            0,
+            crate::Pattern {
+                id: "INSERTED".into(),
+                factors: vec![1.0, 9.0],
+            },
+        );
+
+        let mut sess = Simulation::from_network(network).expect("loads");
+        sess.run_hydraulics().expect("runs");
+
+        let second_hour = j1_demand(&sess, 3600.0);
+        assert!(
+            (second_hour - 0.020).abs() < 1e-9,
+            "should follow WANTED (×2), got {second_hour}"
+        );
+    }
 
     /// Reservoir → J1 → J2 two-pipe network with a 4 h EPS horizon.
     fn eps_network(quality_mode: QualityMode) -> Network {
