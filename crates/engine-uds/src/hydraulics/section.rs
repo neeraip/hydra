@@ -1404,8 +1404,7 @@ impl Section {
                     if y <= ys[i - 1] {
                         break;
                     }
-                    let y1 = ys[i].min(y);
-                    let w1 = interp(ys, ws, y1);
+                    let (y1, w1) = custom_edge(ys, ws, i, y);
                     area += 0.5 * (ws[i - 1] + w1) * (y1 - ys[i - 1]);
                 }
                 area
@@ -1576,8 +1575,7 @@ impl Section {
                     if y <= ys[i - 1] {
                         break;
                     }
-                    let y1 = ys[i].min(y);
-                    let w1 = interp(ys, ws, y1);
+                    let (y1, w1) = custom_edge(ys, ws, i, y);
                     let dy = y1 - ys[i - 1];
                     let dx = (w1 - ws[i - 1]) / 2.0;
                     p += 2.0 * (dy * dy + dx * dx).sqrt();
@@ -1977,6 +1975,26 @@ fn segment_area(r: f64, y: f64) -> f64 {
     r * r / 2.0 * (t - t.sin())
 }
 
+/// The top edge of custom-shape segment `i` when the water stands at `y`:
+/// its depth, and the section's width there.
+///
+/// A segment the water covers ends at its own top, where the width is the
+/// curve point `ws[i]` — reached through the interpolation expression
+/// rather than the point itself, because that is the arithmetic a walk up
+/// the section does and the two differ in the last bit. Only the topmost,
+/// partly filled segment needs a search at all, and the walk visits it
+/// last; searching at every segment instead made the walk quadratic in the
+/// curve's length, which a hundred-point shape curve pays for whenever the
+/// water stands high in the section.
+fn custom_edge(ys: &[f64], ws: &[f64], i: usize, y: f64) -> (f64, f64) {
+    let y1 = ys[i].min(y);
+    if y1 == ys[i] {
+        (y1, ws[i - 1] + (ws[i] - ws[i - 1]))
+    } else {
+        (y1, interp(ys, ws, y1))
+    }
+}
+
 /// Linear interpolation of `ws` against increasing `ys`.
 fn interp(ys: &[f64], ws: &[f64], y: f64) -> f64 {
     if y <= ys[0] {
@@ -2258,6 +2276,66 @@ mod tests {
         // At the minimum radius the bottom is a half-circle.
         let a_bot = PI * 1.0 * 1.0 / 2.0;
         assert!((b.section.area(1.0) - a_bot).abs() < 1e-12);
+    }
+
+    /// A submerged segment's width must need no search to find.
+    ///
+    /// The walk up a custom section skips the interpolation for every
+    /// segment the water covers, on the grounds that interpolating at a
+    /// segment's own top returns that segment's own width. That identity
+    /// is the whole reason the walk is linear rather than quadratic in the
+    /// curve's length, and it has to hold to the bit: a section whose area
+    /// drifts in the last place is a section whose routing diverges over a
+    /// long run, silently and only on the models with long shape curves.
+    #[test]
+    fn a_submerged_segment_needs_no_search() {
+        // Widths chosen so the shortcut is not free: at each of these
+        // steps `w_prev + (w - w_prev)` and `w` are different doubles, so
+        // reading the curve point directly would answer differently from
+        // the interpolation the walk performs. A smooth curve would let
+        // that substitution pass unnoticed.
+        let widths = [
+            1.005_306_656_257_829,
+            0.495_005_063_077_280_7,
+            1.970_256_695_467_568_7,
+            0.263_687_045_669_251_16,
+            2.929_952_561_499_114,
+            0.187_418_907_822_381_02,
+            1.665_846_173_843_195_8,
+            0.235_227_476_171_303_3,
+            2.941_515_800_103_117_4,
+            0.398_294_045_852_138_23,
+            1.5,
+        ];
+        let points: Vec<(f64, f64)> = widths
+            .iter()
+            .enumerate()
+            .map(|(i, w)| (i as f64 / widths.len() as f64, *w))
+            .collect();
+        // Unit full depth, so the build's scaling leaves the widths exact.
+        let s = build_section(XsectShape::Custom, [1.0, 0.0, 0.0, 0.0], 1.0, Some(&points))
+            .unwrap()
+            .section;
+        let Kind::Custom { ys, ws } = &s.kind else {
+            panic!("expected a custom section");
+        };
+        assert!(ys.len() > 10, "curve should be long enough to matter");
+
+        for i in 1..ys.len() {
+            // Any water line at or above this segment's top leaves it
+            // wholly submerged, whatever the depth above it.
+            for y in [ys[i], ys[i] + 1e-9, s.y_full()] {
+                let (y1, w1) = custom_edge(ys, ws, i, y);
+                assert_eq!(y1, ys[i], "segment {i} should end at its own top");
+                assert_eq!(w1, interp(ys, ws, ys[i]), "segment {i} width at {y}");
+            }
+            // Below its top it is the partly filled one, and the width is
+            // the interpolation at the water line itself.
+            let mid = (ys[i - 1] + ys[i]) / 2.0;
+            let (y1, w1) = custom_edge(ys, ws, i, mid);
+            assert_eq!(y1, mid);
+            assert_eq!(w1, interp(ys, ws, mid));
+        }
     }
 
     #[test]
