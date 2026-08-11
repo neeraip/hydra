@@ -2451,3 +2451,112 @@ C1  RECT_OPEN  2  2  0  0
     assert!(msg.contains("missing.dat"), "{msg}");
     assert!(msg.contains("was not supplied"), "{msg}");
 }
+
+/// Multi-pollutant hotstart files restore completely (§14.8): the reader
+/// consumes the layout the writer actually emits — P doubles per buildup
+/// slot, the leading one the value — so nothing after the first land-use
+/// block misaligns. Save → load → save is byte-identical, which no reader
+/// with the wrong stride could manage; the predecessor's own reader
+/// cannot read these files.
+#[test]
+fn a_multi_pollutant_hotstart_round_trips_buildup() {
+    let inp = "\
+[OPTIONS]
+FLOW_UNITS    CMS
+INFILTRATION  HORTON
+START_DATE    06/01/2024
+START_TIME    00:00
+END_DATE      06/01/2024
+END_TIME      08:00
+DRY_DAYS      5
+ROUTING_STEP  10
+WET_STEP      0:05:00
+REPORT_STEP   0:15:00
+
+[RAINGAGES]
+G1  INTENSITY  1:00  1.0  TIMESERIES  RAIN
+
+[SUBCATCHMENTS]
+S1  G1  J1  2  100  100  0.5  0
+
+[SUBAREAS]
+S1  0.012  0.1  0.05  0.05  25  OUTLET
+
+[INFILTRATION]
+S1  20  5  4  7  0
+
+[JUNCTIONS]
+J1  100.4  3
+
+[OUTFALLS]
+O1  100.0  FREE
+
+[CONDUITS]
+C1  J1  O1  200  0.013  0  0
+
+[XSECTIONS]
+C1  RECT_OPEN  2  2  0  0
+
+[POLLUTANTS]
+TSS   MG/L  0  0  0  0  NO
+LEAD  UG/L  0  0  0  0  NO  TSS  0.2
+
+[LANDUSES]
+RES
+
+[COVERAGES]
+S1  RES  100
+
+[BUILDUP]
+RES  TSS  POW  50  2  1  AREA
+
+[WASHOFF]
+RES  TSS  EXP  0.1  1  0  0
+
+[TIMESERIES]
+RAIN  0:00  25
+RAIN  1:00  25
+RAIN  2:00  0
+";
+    let (mut a, _, _) = Simulation::open(inp).expect("open");
+    while a.time() < 2.0 * 3600.0 {
+        a.step();
+    }
+    let mut saved = Vec::new();
+    a.save_hotstart(&mut saved).expect("save");
+
+    let (mut b, _, _) = Simulation::open(inp).expect("open");
+    b.load_hotstart(&saved).expect("multi-pollutant restore");
+    let mut resaved = Vec::new();
+    b.save_hotstart(&mut resaved).expect("resave");
+    // The routing block's lateral-inflow floats are runtime forcing the
+    // restore deliberately discards, so equality is asserted on the
+    // runoff block — everything before routing, buildup included. Its
+    // length: the whole file minus the computable routing block (2
+    // non-storage vertices and 1 link, np = 2 as f32s).
+    let routing_len = 2 * (8 + 2 * 4) + (12 + 2 * 4);
+    let runoff_a = &saved[..saved.len() - routing_len];
+    let runoff_b = &resaved[..resaved.len() - routing_len];
+    assert_eq!(saved.len(), resaved.len());
+    assert_eq!(
+        runoff_a, runoff_b,
+        "restore lost or misaligned runoff state"
+    );
+
+    // And the restored session resumes, not restarts.
+    let (da, db) = (a.depth("J1").unwrap(), b.depth("J1").unwrap());
+    assert!((da - db).abs() < 1e-4, "depth {da} vs {db}");
+
+    // §11.1: restored storage is the run's starting storage — the surface
+    // ledger closes over a hotstarted run instead of booking the restored
+    // ponded water as volume from nowhere.
+    b.run();
+    let surf = b.ledgers().surface.expect("surface ledger");
+    assert!(
+        surf.error_percent.abs() < 2.0,
+        "surface error {}% after restore (in {} out {})",
+        surf.error_percent,
+        surf.inflow,
+        surf.outflow
+    );
+}

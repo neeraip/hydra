@@ -248,14 +248,27 @@ results, not state — and the engine says so at start-up.
 1–2 layouts are refused with a typed error, their node-record tails and
 groundwater prefixes being formats this engine does not read) are an import
 and export format for the checkpoint contract of §12.3. The version-4
-storage residence time is read only from version-4 files. Import recovers what
-the format carries and names what it cannot: control-measure layer state is
-absent from the format entirely, and surface buildup is recoverable only for
-single-pollutant models — the predecessor's writer and reader disagree
-beyond that, its files never round-tripping multi-pollutant buildup. Export
-writes version 4, complete for single-pollutant models, with the same named
-omissions otherwise; this engine's own checkpoints (§12.3) are the lossless
-form.
+storage residence time is read only from version-4 files. Import recovers
+what the format carries and names what it cannot: control-measure layer
+state is absent from the format entirely. Surface buildup is read in the
+layout the predecessor's writer actually emits — $P$ doubles per land-use ×
+pollutant slot, of which the leading one is the value — so multi-pollutant
+files restore completely and the stream stays aligned; this engine's export
+emits the identical layout. Export writes version 4, complete but for the
+named control-measure omission; this engine's own checkpoints (§12.3) are
+the lossless form.
+
+> **CORRESPONDENCE:** the predecessor's hotstart writer emits
+> `Nobjects[POLLUT]` doubles per buildup slot while its reader consumes
+> one, so its own reader misreads every multi-pollutant file it writes —
+> the stream misaligns at the first land-use block and everything after
+> restores as garbage. This engine reads the writer's true layout instead:
+> multi-pollutant hotstart files restore correctly here and cannot restore
+> correctly in the tool that wrote them.
+>
+> *Source: `hotstart.c:414–423` (writer, `fwrite(x, sizeof(double),
+> Nobjects[POLLUT], f)` inside the per-pollutant loop) against `:483–491`
+> (reader, one `readDouble` per slot).*
 
 ### 14.9 Output
 

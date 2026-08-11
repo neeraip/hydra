@@ -1654,17 +1654,6 @@ impl Simulation {
         let n_links = get_i(&mut pos)? as usize;
         let n_pollut = get_i(&mut pos)? as usize;
         let flow_units = get_i(&mut pos)?;
-        // §14.8: the predecessor's writer and reader disagree on
-        // multi-constituent buildup, so such files misalign everything
-        // after the first land-use block — refuse rather than restore
-        // garbage.
-        if version >= 3 && n_pollut > 1 && n_land > 0 {
-            return Err(
-                "the predecessor hotstart format never round-trips multi-constituent \
-                 buildup; the stream misaligns beyond it, so this restore is refused (§14.8)"
-                    .into(),
-            );
-        }
         if n_sub != self.net.parcels.len()
             || n_land != self.net.land_uses.len()
             || n_nodes != self.net.vertices.len()
@@ -1748,6 +1737,11 @@ impl Simulation {
                             let mut row = vec![0.0; np];
                             for (ci, b) in row.iter_mut().enumerate() {
                                 *b = get_d(&mut pos)? * self.mass_cv(ci);
+                                // §14.8: the writer emits np doubles per
+                                // slot; the leading one is the value.
+                                for _ in 1..np {
+                                    let _ = get_d(&mut pos)?;
+                                }
                             }
                             let swept = get_d(&mut pos)? - 25_569.0;
                             slots.push((row, swept));
@@ -1758,7 +1752,16 @@ impl Simulation {
                         }
                     }
                 }
+                // §11.1: restored storage is this run's starting storage
+                // — the same rebasing the router applies below. Without
+                // it the restored ponded water drains as runoff that was
+                // never an inflow, and the surface ledger carries the
+                // difference all run.
+                surface.initial_storage = surface.stored_volume();
                 self.surface = Some(surface);
+                for (_, gw) in &mut self.aquifers {
+                    gw.initial_storage = gw.stored_volume();
+                }
             }
         }
 
@@ -1814,15 +1817,6 @@ impl Simulation {
                 message: "hotstart restored: the predecessor format carries no \
                           control-measure layer state; units start from their \
                           build state (§14.8)"
-                    .to_string(),
-            });
-        }
-        if np > 1 && !self.net.land_uses.is_empty() {
-            self.notices.push(RuntimeNotice {
-                t: 0.0,
-                message: "hotstart restored: the predecessor format does not \
-                          round-trip multi-constituent buildup; buildup beyond \
-                          the first constituent is unreliable (§14.8)"
                     .to_string(),
             });
         }
