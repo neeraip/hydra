@@ -375,6 +375,8 @@ Model-file bytes are parsed by `hydra-engine`'s I/O layer (`../model/spec.md` §
 
 Alternatively, a caller may construct a `Network` programmatically and pass it to `load()`. In this case all numeric values must be in the internal unit system (`../model/spec.md` §3) and the caller is responsible for conversion.
 
+The caller is responsible for the model's *stated* content only. Anything an implementation derives from that content for its own convenience — lookup structures, resolved references, precomputed coefficients — is the session's to build at `load()`, from the network as given, whatever the caller left in those fields. A caller who assembles a network by hand, or who edits one after parsing it, has no obligation to maintain derived state and no way to know what an implementation keeps. Deriving it anywhere but `load()` makes correctness depend on a caller honouring a contract that is not stated here, and the failure is silent: a reference that cannot be resolved yields a default rather than an error, so the run answers a different question without saying so.
+
 #### 8.1.1 Data Model Completeness
 
 The data model passed to `load()` must be capable of expressing every entity and property defined in `../model/spec.md` §2. No property may be silently omitted; every required field must be present and valid. (G5)
