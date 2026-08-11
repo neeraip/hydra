@@ -182,6 +182,26 @@ impl SurfaceQuality {
         }
     }
 
+    /// Re-take the §11.1 opening buildup from the state now held.
+    ///
+    /// A restore (§14.8) replaces the buildup the model was built with;
+    /// the loading ledger's inflow side must then open from what was
+    /// restored, not from what was discarded. Without this the ledger
+    /// counts the built buildup as an inflow that never washes off — a
+    /// hotstarted run reports near-total loading error while the cold run
+    /// of the same model closes.
+    pub fn rebase_initial_buildup(&mut self) {
+        let np = self.initial_buildup.len();
+        self.initial_buildup = (0..np)
+            .map(|ci| {
+                self.parcels
+                    .iter()
+                    .flat_map(|st| st.buildup.iter().map(move |row| row[ci]))
+                    .sum()
+            })
+            .collect();
+    }
+
     /// Buildup and ponded mass currently on the surfaces (U), §11.1.
     pub fn stored_mass(&self, ci: usize) -> f64 {
         self.parcels

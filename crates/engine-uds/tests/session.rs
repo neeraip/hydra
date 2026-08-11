@@ -2560,3 +2560,241 @@ RAIN  2:00  0
         surf.outflow
     );
 }
+
+/// A restore carries the water *quality* state, not just the water.
+///
+/// Two defects this pins, both invisible to a byte-identity check on the
+/// saved file (§14.8 restores the bytes correctly; what follows was
+/// wrong):
+///
+/// The §8.4 mixing form reads the previous step's volume to tell a vertex
+/// holding water from an empty one. Left at the volumes the session was
+/// *built* with — cold and dry — every restored vertex looked empty on
+/// the first step, and its concentration was replaced by the inflow
+/// mixture: a conduit restored at 1.30 mg/L read 0.006 one step later.
+///
+/// And the loading ledger opened from the buildup the model was built
+/// with rather than the buildup restored over it, reporting ~99% error
+/// on a run whose cold twin closes.
+#[test]
+fn a_hotstart_restores_quality_state_not_just_water() {
+    // Five antecedent dry days so there is buildup to wash off — the
+    // state whose ledger baseline the restore has to re-take.
+    let inp = washoff_model(
+        "[BUILDUP]
+RES  TSS  POW  50  2  1  AREA
+
+[WASHOFF]
+RES  TSS  EXP  0.1  1  0  0
+",
+    )
+    .replace(
+        "INFILTRATION  HORTON",
+        "INFILTRATION  HORTON\nDRY_DAYS      5",
+    );
+    // Mid-storm: the network is wet and carrying load, which is the
+    // state a restore has to preserve.
+    let (mut a, _, _) = Simulation::open(&inp).expect("open");
+    while a.time() < 1.5 * 3600.0 {
+        a.step();
+    }
+    let mut saved = Vec::new();
+    a.save_hotstart(&mut saved).expect("save");
+    let restored_conc = a.link_concentration("C1", "TSS").expect("conc");
+    assert!(restored_conc > 0.0, "the storm actually carried load");
+
+    let (mut b, _, _) = Simulation::open(&inp).expect("open");
+    b.load_hotstart(&saved).expect("load");
+
+    // One step must not wipe what the restore just loaded: the two
+    // sessions stay together rather than the restored one collapsing to
+    // its inflow mixture.
+    a.step();
+    b.step();
+    let (ca, cb) = (
+        a.link_concentration("C1", "TSS").unwrap(),
+        b.link_concentration("C1", "TSS").unwrap(),
+    );
+    assert!(
+        (ca - cb).abs() < 0.05 * ca.max(1e-9),
+        "restored concentration diverged after one step: {ca} vs {cb}",
+    );
+
+    // And the ledgers close over the hotstarted run — the loading ledger
+    // opening from the restored buildup, not the discarded one.
+    b.run();
+    let led = b.ledgers();
+    let (_, load) = &led.loading[0];
+    assert!(
+        load.error_percent.abs() < 5.0,
+        "loading error {}% after restore (in {} out {})",
+        load.error_percent,
+        load.inflow,
+        load.outflow
+    );
+    let (_, tss) = &led.constituents[0];
+    assert!(
+        tss.error_percent.abs() < 5.0,
+        "constituent error {}% after restore",
+        tss.error_percent
+    );
+}
+
+/// A realised record is the model's own series in every respect (§3.1) —
+/// including the §5 mutations and findings validation applies to one.
+///
+/// The wet-step reduction is the observable case: a gage recording finer
+/// than `WET_STEP` reduces it, and says so. Realising after validation
+/// let a file-sourced gage skip that, running a coarser hydrology step
+/// than the identical model with its record inlined — the equivalence
+/// this engine claims, quietly untrue.
+#[test]
+fn a_realised_record_gets_the_same_validation_as_an_inline_series() {
+    let model = |gage_line: &str, series: &str| {
+        format!(
+            "\
+[OPTIONS]
+FLOW_UNITS    CMS
+INFILTRATION  HORTON
+START_DATE    06/29/2012
+START_TIME    00:00
+END_DATE      06/29/2012
+END_TIME      02:00
+ROUTING_STEP  10
+WET_STEP      0:15:00
+REPORT_STEP   0:15:00
+
+[RAINGAGES]
+{gage_line}
+
+[SUBCATCHMENTS]
+S1  G1  J1  2  60  100  0.5  0
+
+[SUBAREAS]
+S1  0.012  0.1  0.05  0.05  25  OUTLET
+
+[INFILTRATION]
+S1  20  5  4  7  0
+
+[JUNCTIONS]
+J1  100.4  3
+
+[OUTFALLS]
+O1  100.0  FREE
+
+[CONDUITS]
+C1  J1  O1  200  0.013  0  0
+
+[XSECTIONS]
+C1  RECT_OPEN  2  2  0  0
+{series}
+"
+        )
+    };
+    let wet = [("00:05", 1.2), ("00:10", 0.8), ("00:15", 2.4)];
+    let inline_series: String = std::iter::once("\n[TIMESERIES]\n".to_string())
+        .chain(
+            wet.iter()
+                .map(|(t, v)| format!("RAIN  06/29/2012  {t}  {v}\n")),
+        )
+        .collect();
+    let (_, _, inline_findings) = Simulation::open(&model(
+        "G1  VOLUME  0:05  1.0  TIMESERIES  RAIN",
+        &inline_series,
+    ))
+    .expect("inline opens");
+
+    let record: String = wet
+        .iter()
+        .map(|(t, v)| {
+            let (h, m) = t.split_once(':').unwrap();
+            format!("sta7 2012 6 29 {h} {m} {v}\n")
+        })
+        .collect();
+    let readings = hydra_engine_uds::io::rain::parse_rain_file(&record).expect("record parses");
+    let (_, _, filed_findings) = Simulation::open_with_files(
+        &model("G1  VOLUME  0:05  1.0  FILE  \"rain.dat\"  sta7  MM", ""),
+        Vec::new(),
+        vec![("rain.dat".to_string(), readings)],
+    )
+    .expect("filed opens");
+
+    // The same finding, for the same reason, on both paths.
+    let mentions_wet_step = |fs: &[hydra_engine_uds::io::validate::ValidationDiagnostic]| {
+        fs.iter()
+            .filter(|f| f.to_string().contains("wet-weather step"))
+            .count()
+    };
+    assert_eq!(
+        mentions_wet_step(&inline_findings),
+        1,
+        "the inline model reduces its wet step: {inline_findings:?}"
+    );
+    assert_eq!(
+        mentions_wet_step(&filed_findings),
+        mentions_wet_step(&inline_findings),
+        "a realised record must reduce it too: {filed_findings:?}"
+    );
+}
+
+/// A record supplied for the wrong station is a missing input, not a dry
+/// model — and station ids compare without case, as every other id does.
+#[test]
+fn a_record_matching_no_station_refuses_and_case_does_not_matter() {
+    let model = |station: &str| {
+        format!(
+            "\
+[OPTIONS]
+FLOW_UNITS    CMS
+INFILTRATION  HORTON
+ROUTING_STEP  10
+
+[RAINGAGES]
+G1  VOLUME  0:05  1.0  FILE  \"rain.dat\"  {station}  MM
+
+[SUBCATCHMENTS]
+S1  G1  J1  2  60  100  0.5  0
+
+[SUBAREAS]
+S1  0.012  0.1  0.05  0.05  25  OUTLET
+
+[INFILTRATION]
+S1  20  5  4  7  0
+
+[JUNCTIONS]
+J1  100.4  3
+
+[OUTFALLS]
+O1  100.0  FREE
+
+[CONDUITS]
+C1  J1  O1  200  0.013  0  0
+
+[XSECTIONS]
+C1  RECT_OPEN  2  2  0  0
+"
+        )
+    };
+    let readings =
+        hydra_engine_uds::io::rain::parse_rain_file("STA7 2012 6 29 0 5 1.2\n").expect("parses");
+
+    // Case apart, this is the same station: it opens.
+    Simulation::open_with_files(
+        &model("sta7"),
+        Vec::new(),
+        vec![("rain.dat".to_string(), readings.clone())],
+    )
+    .expect("case-insensitive station match");
+
+    // A station the record does not hold refuses, naming both.
+    let err = match Simulation::open_with_files(
+        &model("elsewhere"),
+        Vec::new(),
+        vec![("rain.dat".to_string(), readings)],
+    ) {
+        Err(e) => format!("{e:?}"),
+        Ok(_) => panic!("opened dry on a record holding nothing for this gage"),
+    };
+    assert!(err.contains("elsewhere"), "{err}");
+    assert!(err.contains("rain.dat"), "{err}");
+}

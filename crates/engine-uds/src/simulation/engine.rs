@@ -303,11 +303,18 @@ impl Simulation {
         if diags.iter().any(|d| d.kind.is_error()) {
             return Err(OpenError::Parse(diags));
         }
+        // Before validation, not after: §3.1 says a realised record is
+        // treated exactly as if its series had been written in the model,
+        // and validation is where §5's mutations and every gage/series
+        // finding happen — the wet-step reduction to a finer gage interval
+        // among them. Realising afterwards left file-sourced gages
+        // silently skipping all of it, running a coarser hydrology step
+        // than the same model with the record inlined.
+        realise_file_gages(&mut net, &rain_files).map_err(OpenError::Surface)?;
         let findings = validate(&mut net);
         if findings.iter().any(|f| f.kind.is_error()) {
             return Err(OpenError::Validation(findings));
         }
-        realise_file_gages(&mut net, &rain_files).map_err(OpenError::Surface)?;
         let router = Router::build(&net).map_err(OpenError::Routing)?;
         let start_epoch_for_surface =
             days_from_civil(net.options.start_date) as f64 * 86_400.0 + net.options.start_time;
@@ -1810,6 +1817,19 @@ impl Simulation {
         }
         self.router.hotstart_apply(&depths, &links);
 
+        // §11.1/§8.4: what was restored is what this run starts with. The
+        // water ledgers rebase above; the quality state has to as well —
+        // its opening mass, its surface buildup baseline, and the previous
+        // volumes the mixing form reads to tell a full vertex from an
+        // empty one. Ordered after `hotstart_apply` because the volumes it
+        // reads are the restored ones.
+        if let Some(q) = &mut self.quality {
+            q.rebase_to_restored_state(&self.router);
+        }
+        if let Some(sq) = &mut self.surface_quality {
+            sq.rebase_initial_buildup();
+        }
+
         // What the format cannot carry is named (§14.8).
         if self.net.lid_usage.iter().len() > 0 {
             self.notices.push(RuntimeNotice {
@@ -2278,9 +2298,13 @@ fn realise_file_gages(
             (Some(RainFileUnit::Millimetres), true) => 1.0 / 25.4,
             _ => 1.0,
         };
+        // Station ids compare without case, as every other id in this
+        // engine does — and as the predecessor's own `strcomp` does. A
+        // record written `STA7` for a gage declaring `sta7` is the same
+        // station, not a dry run.
         let mut points: Vec<crate::model::TimeSeriesPoint> = readings
             .iter()
-            .filter(|r| r.station == *station)
+            .filter(|r| r.station.eq_ignore_ascii_case(station))
             .map(|r| crate::model::TimeSeriesPoint {
                 time: crate::model::SeriesTime::Absolute {
                     date: r.date,
@@ -2289,6 +2313,25 @@ fn realise_file_gages(
                 value: r.value * scale,
             })
             .collect();
+        // A supplied record holding nothing for this station is a missing
+        // input wearing a supplied file's clothes: the wrong file, a
+        // mistyped station, or a `FILE` line that named none at all.
+        // Silence here is the dry model the deferral existed to prevent.
+        if points.is_empty() {
+            return Err(SurfaceRefusal::Incomplete(if station.is_empty() {
+                format!(
+                    "gage {}: its FILE line names no station, so no reading in \
+                     {file:?} can belong to it — name the station after the file",
+                    net.gages[gi].id
+                )
+            } else {
+                format!(
+                    "gage {}: {file:?} holds no readings for station {station:?} — \
+                     check the station name, or supply the record that has it",
+                    net.gages[gi].id
+                )
+            }));
+        }
         points.sort_by(|a, b| {
             let key = |p: &crate::model::TimeSeriesPoint| match &p.time {
                 crate::model::SeriesTime::Absolute { date, seconds } => {

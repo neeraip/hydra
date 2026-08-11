@@ -163,6 +163,41 @@ impl NetworkQuality {
     /// Advance one accepted routing step (§8.4): `lat_flow` the assembled
     /// lateral inflows (m³/s) and `lat_mass[p][v]` the §8.1 lateral mass
     /// rates (unit·m³/s) held for the step.
+    /// Re-take the volumes and opening mass from the state now held.
+    ///
+    /// A restore (§14.8) replaces both the water and the concentrations,
+    /// and the mixing form of §8.4 reads the *previous* step's volume to
+    /// decide whether a vertex held anything worth mixing with. Left at
+    /// the volumes the session was built with — a cold, dry network —
+    /// every restored vertex looks empty on the first step and its
+    /// concentration is replaced by the inflow mixture, discarding the
+    /// state the restore just loaded and creating the mass that fills the
+    /// new volume. The opening mass is re-taken for the same reason the
+    /// water ledgers are (§11.1): what was restored is what this run
+    /// starts with.
+    pub fn rebase_to_restored_state(&mut self, router: &Router) {
+        let chans = router.channel_transport();
+        self.vol_prev = (0..self.c_vertex.first().map_or(0, Vec::len))
+            .map(|v| router.vertex_volume_now(v))
+            .collect();
+        self.chan_vol_prev = chans.iter().map(|c| c.4).collect();
+        self.initial_mass = self
+            .c_vertex
+            .iter()
+            .zip(&self.c_channel)
+            .map(|(cv, cc)| {
+                cv.iter()
+                    .zip(&self.vol_prev)
+                    .map(|(c, v)| c * v)
+                    .sum::<f64>()
+                    + cc.iter()
+                        .zip(&self.chan_vol_prev)
+                        .map(|(c, v)| c * v)
+                        .sum::<f64>()
+            })
+            .collect();
+    }
+
     pub fn update(
         &mut self,
         router: &Router,
