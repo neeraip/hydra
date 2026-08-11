@@ -185,7 +185,10 @@ export function NetworkListRow({
           display: "flex",
           alignItems: "center",
           gap: 6,
-          padding: `0 ${zoomable ? 26 : 8}px 0 8px`,
+          // The zoom lane is a fixed column whether or not this row can
+          // zoom: rows without the affordance keep the empty cell, so the
+          // value column lines up down a mixed list.
+          padding: "0 26px 0 8px",
           textAlign: "left",
           font: "inherit",
           cursor: "pointer",

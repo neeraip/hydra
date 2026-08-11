@@ -97,12 +97,14 @@ describe("a network list row", () => {
   });
 
   /**
-   * The zoom affordance widens a row's padding, which is why the fit
-   * tracks whether any row has one.
+   * The zoom lane is a fixed column whether or not a row can zoom: a row
+   * without the affordance keeps the empty cell, so the value column
+   * lines up down a mixed list instead of drifting 18px on exactly the
+   * rows that already lack something.
    */
-  it("is wider when it carries the zoom affordance", async () => {
+  it("is the same width with and without the zoom affordance", async () => {
     const plain = await widthOfRow(row({ id: "J1" }), true);
     const zoomable = await widthOfRow(row({ id: "J1", canZoom: true }), true);
-    expect(zoomable).toBeGreaterThan(plain);
+    expect(zoomable).toBe(plain);
   });
 });
