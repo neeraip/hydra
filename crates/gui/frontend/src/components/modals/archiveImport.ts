@@ -7,7 +7,7 @@
  * ternary inside the table's JSX is a decision nothing can call.
  */
 
-import type { ArchiveModelEntry, ArchiveScan } from "../../hooks";
+import type { ArchiveModelEntry, ArchiveScan, SidecarRef } from "../../hooks";
 
 /** One review-table row: an archive entry plus the user's answers. */
 export interface ArchiveRow {
@@ -25,7 +25,7 @@ export interface ArchiveRow {
   linkCount: number;
   findingCount: number;
   repairs: string[];
-  sidecars: string[];
+  sidecars: SidecarRef[];
   error: string | null;
 }
 
@@ -95,6 +95,28 @@ export function selectionsFrom(
       // rowImportable above guarantees engine is present.
       engine: row.engine as string,
     }));
+}
+
+/**
+ * What a row's sidecar references amount to: the carried ones travel with
+ * the project silently well, the missing ones are the warning. Named so
+ * the wizard's icon and tooltip cannot drift from each other.
+ */
+export function sidecarNote(
+  sidecars: SidecarRef[],
+): { tone: "ok" | "warn"; text: string } | null {
+  if (sidecars.length === 0) return null;
+  const missing = sidecars.filter((s) => !s.carried);
+  if (missing.length === 0) {
+    return {
+      tone: "ok",
+      text: `Imports ${sidecars.map((s) => s.label).join(", ")} with the project`,
+    };
+  }
+  return {
+    tone: "warn",
+    text: `References ${missing.map((s) => s.label).join(", ")} — not in this archive; runs will refuse until the data is supplied`,
+  };
 }
 
 /**

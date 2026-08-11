@@ -478,6 +478,56 @@ async fn process_queue(app: tauri::AppHandle) {
     }
 }
 
+/// Open a drainage session with every auxiliary record its model names —
+/// daily climate and external rain files (§12.1) — read from the
+/// project's `base/aux/` directory, where archive import placed them.
+/// A referenced file absent from `aux/` is simply not supplied: the
+/// engine then refuses the load naming exactly what is missing, which is
+/// the error the user should see.
+pub(crate) fn open_uds_with_aux(
+    text: &str,
+    aux_dir: &std::path::Path,
+) -> Result<hydra::uds::simulation::Simulation, String> {
+    use hydra::uds::model::{GageSource, TemperatureSource};
+
+    // Survey the declarations; parse problems are ignored here — the open
+    // below re-parses and reports them properly.
+    let (net, _) = hydra::uds::io::objects::parse_network(text);
+    let aux_text = |name: &str| {
+        let file_name = name.rsplit(['/', '\\']).next().unwrap_or(name);
+        std::fs::read_to_string(aux_dir.join(file_name)).ok()
+    };
+
+    let climate_records = match &net.climate.temperature {
+        Some(TemperatureSource::File { name, .. }) => match aux_text(name) {
+            Some(text) => hydra::uds::io::climate::parse_climate_file(&text)
+                .map_err(|e| format!("climate file {name:?}: {e}"))?,
+            None => Vec::new(),
+        },
+        _ => Vec::new(),
+    };
+
+    let mut rain_files: Vec<(String, Vec<hydra::uds::io::rain::RainReading>)> = Vec::new();
+    for gage in &net.gages {
+        let GageSource::File { file, .. } = &gage.source else {
+            continue;
+        };
+        if rain_files.iter().any(|(name, _)| name == file) {
+            continue;
+        }
+        if let Some(text) = aux_text(file) {
+            let readings = hydra::uds::io::rain::parse_rain_file(&text)
+                .map_err(|e| format!("rain record {file:?}: {e}"))?;
+            rain_files.push((file.clone(), readings));
+        }
+    }
+
+    let (sim, _diags, _findings) =
+        hydra::uds::simulation::Simulation::open_with_files(text, climate_records, rain_files)
+            .map_err(|e| format!("Cannot open the model: {e:?}"))?;
+    Ok(sim)
+}
+
 /// Run a single simulation on behalf of the queue processor.
 ///
 /// Reads the model entirely from disk and returns only success/failure —
@@ -527,8 +577,8 @@ async fn run_sim_for_queue(
         }
         "uds" => {
             let text = String::from_utf8_lossy(&raw_bytes).into_owned();
-            let (sim, _diags, _findings) = hydra::uds::simulation::Simulation::open(&text)
-                .map_err(|e| format!("Cannot open the model: {e:?}"))?;
+            let aux_dir = bundle::aux_dir(&app_data, project_id);
+            let sim = open_uds_with_aux(&text, &aux_dir)?;
             let duration_seconds = sim.duration();
             (
                 hydra::engines::EngineSession::from_uds(sim),

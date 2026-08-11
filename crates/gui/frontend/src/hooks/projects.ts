@@ -208,10 +208,21 @@ export interface ArchiveModelEntry {
   /** §14.10 repairs the import will apply, one message each — surfaced
    * before the user commits; the repair contract forbids silence. */
   repairs: string[];
-  /** External files the model references (rain, climate, interface) that an
-   * archive import does not carry: runs will refuse until they are inlined. */
-  sidecars: string[];
+  /** External files the model references (rain, climate, interface):
+   * carried into the project when the archive holds them, warned about
+   * when it does not. */
+  sidecars: SidecarRef[];
   error: string | null;
+}
+
+/** One referenced auxiliary file. Mirrors `commands::SidecarRef`. */
+export interface SidecarRef {
+  /** The name as the model wrote it. */
+  file: string;
+  /** Human label naming its role, e.g. `rain file "rain.dat"`. */
+  label: string;
+  /** Whether the archive holds it (matched by trailing file name). */
+  carried: boolean;
 }
 
 /** What a backend archive scan found. Mirrors `commands::ArchiveScan`. */

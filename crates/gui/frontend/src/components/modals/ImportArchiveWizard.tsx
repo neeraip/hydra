@@ -34,6 +34,7 @@ import {
   rowImportable,
   rowsFromScan,
   selectionsFrom,
+  sidecarNote,
   withEngineChosen,
 } from "./archiveImport";
 
@@ -138,7 +139,8 @@ export function ImportArchiveWizard({
         } on import`,
       );
     }
-    if (notes.length === 0 && row.sidecars.length === 0) return null;
+    const sidecar = sidecarNote(row.sidecars);
+    if (notes.length === 0 && sidecar === null) return null;
     return (
       <span
         style={{
@@ -148,14 +150,20 @@ export function ImportArchiveWizard({
           gap: 6,
         }}
       >
-        {row.sidecars.length > 0 && (
+        {sidecar && (
           <span
-            data-tooltip={`References ${row.sidecars.join(", ")} — not carried by this import; runs will refuse until the data is inlined`}
+            data-tooltip={sidecar.text}
             style={{ display: "inline-flex", alignItems: "center" }}
           >
-            <ExclamationTriangleIcon
-              style={{ width: 14, height: 14, color: "#f59e0b" }}
-            />
+            {sidecar.tone === "warn" ? (
+              <ExclamationTriangleIcon
+                style={{ width: 14, height: 14, color: "#f59e0b" }}
+              />
+            ) : (
+              <CheckIcon
+                style={{ width: 14, height: 14, color: "var(--accent)" }}
+              />
+            )}
           </span>
         )}
         {notes.join(" · ")}

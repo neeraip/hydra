@@ -5,6 +5,7 @@ import {
   rowImportable,
   rowsFromScan,
   selectionsFrom,
+  sidecarNote,
   withEngineChosen,
 } from "./archiveImport";
 
@@ -97,5 +98,30 @@ describe("the left-behind summary", () => {
     expect(
       leftBehindSummary(["a.dat", "b.dat", "c.txt", "d.txt", "e.txt"]),
     ).toBe("Not imported (not model files): a.dat, b.dat, c.txt and 2 more");
+  });
+});
+
+describe("the sidecar note", () => {
+  it("is silent for a model with no external references", () => {
+    expect(sidecarNote([])).toBeNull();
+  });
+
+  it("reports carried references as travelling with the project", () => {
+    const note = sidecarNote([
+      { file: "rain.dat", label: 'rain file "rain.dat"', carried: true },
+    ]);
+    expect(note?.tone).toBe("ok");
+    expect(note?.text).toContain("Imports");
+    expect(note?.text).toContain('rain file "rain.dat"');
+  });
+
+  it("warns about the missing ones, naming only them", () => {
+    const note = sidecarNote([
+      { file: "rain.dat", label: 'rain file "rain.dat"', carried: true },
+      { file: "hot.hsf", label: 'hotstart file "hot.hsf"', carried: false },
+    ]);
+    expect(note?.tone).toBe("warn");
+    expect(note?.text).toContain('hotstart file "hot.hsf"');
+    expect(note?.text).not.toContain("rain.dat");
   });
 });

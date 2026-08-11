@@ -55,12 +55,23 @@ pub struct ArchiveModelEntry {
     /// §14.10 repairs applied during the trial parse, one message each.
     /// Surfaced per the repair contract; the same repairs apply at create.
     pub repairs: Vec<String>,
-    /// External files the model references (rain, climate, interface).
-    /// The engine runs entirely from supplied bytes, so a run will refuse
-    /// until these are inlined — said here, before the user commits.
-    pub sidecars: Vec<String>,
+    /// External files the model references (rain, climate, interface):
+    /// carried into the project when the archive holds them, warned about
+    /// when it does not — said here, before the user commits.
+    pub sidecars: Vec<SidecarRef>,
     /// Why this entry cannot be imported, when it cannot.
     pub error: Option<String>,
+}
+
+/// One referenced auxiliary file: the name as the model wrote it, a
+/// human label saying what role it plays, and whether this archive holds
+/// it (matched by trailing file name).
+#[derive(serde::Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct SidecarRef {
+    pub file: String,
+    pub label: String,
+    pub carried: bool,
 }
 
 /// What a scan found: the model-shaped entries, described, and every other
@@ -124,37 +135,37 @@ fn model_extensions() -> Vec<String> {
 /// not carry into the project: rain gage records, climate files, and
 /// interface files read at run time. Named so the review table can warn
 /// before the user commits, instead of the run refusing after.
-fn uds_sidecar_refs(network: &hydra::uds::model::Network) -> Vec<String> {
+fn uds_sidecar_refs(network: &hydra::uds::model::Network) -> Vec<(String, String)> {
     use hydra::uds::model::{FileMode, GageSource, TemperatureSource};
-    let mut out: Vec<String> = Vec::new();
-    let mut push = |label: String| {
-        if !out.contains(&label) {
-            out.push(label);
+    let mut out: Vec<(String, String)> = Vec::new();
+    let mut push = |file: &str, role: &str| {
+        if !out.iter().any(|(f, _)| f == file) {
+            out.push((file.to_string(), format!("{role} \"{file}\"")));
         }
     };
     for gage in &network.gages {
         if let GageSource::File { file, .. } = &gage.source {
-            push(format!("rain file \"{file}\""));
+            push(file, "rain file");
         }
     }
     if let Some(TemperatureSource::File { name, .. }) = &network.climate.temperature {
-        push(format!("climate file \"{name}\""));
+        push(name, "climate file");
     }
     let iface = &network.interface_files;
-    for (slot, label) in [
+    for (slot, role) in [
         (&iface.rainfall, "rainfall interface file"),
         (&iface.runoff, "runoff interface file"),
         (&iface.rdii, "RDII interface file"),
     ] {
         if let Some((FileMode::Use, name)) = slot {
-            push(format!("{label} \"{name}\""));
+            push(name, role);
         }
     }
     if let Some(name) = &iface.hotstart_use {
-        push(format!("hotstart file \"{name}\""));
+        push(name, "hotstart file");
     }
     if let Some(name) = &iface.inflows {
-        push(format!("routing inflows file \"{name}\""));
+        push(name, "routing inflows file");
     }
     out
 }
@@ -204,7 +215,14 @@ fn describe_model_entry(path: String, stem: String, bytes: Vec<u8>) -> ArchiveMo
             entry.finding_count = imported.findings.len() as u32;
             entry.repairs = imported.repairs;
             if let ParsedModel::Uds { network, .. } = &parsed {
-                entry.sidecars = uds_sidecar_refs(network);
+                entry.sidecars = uds_sidecar_refs(network)
+                    .into_iter()
+                    .map(|(file, label)| SidecarRef {
+                        file,
+                        label,
+                        carried: false,
+                    })
+                    .collect();
             }
         }
         Err(e) => {
@@ -485,6 +503,19 @@ pub(crate) fn scan_archive_file(path: &std::path::Path) -> Result<ArchiveScan, S
             }),
         }
     }
+    // A referenced auxiliary file counts as carried when the archive holds
+    // an entry with the same trailing file name — the create step copies
+    // it into the project by exactly this match.
+    let other_basenames: Vec<String> = others
+        .iter()
+        .map(|p| split_entry_name(p).0.to_ascii_lowercase())
+        .collect();
+    for model in &mut models {
+        for sidecar in &mut model.sidecars {
+            let base = split_entry_name(&sidecar.file).0.to_ascii_lowercase();
+            sidecar.carried = other_basenames.contains(&base);
+        }
+    }
     Ok(ArchiveScan {
         archive_path: path.display().to_string(),
         models,
@@ -510,33 +541,88 @@ pub(crate) fn create_projects_from_archive_at(
             .filter_map(|(path, bytes)| bytes.map(|b| (path, b)))
             .collect();
     let mut outcomes = Vec::with_capacity(selections.len());
+    // Auxiliary files each created project references, by lowercased
+    // trailing name: filled per selection, served by a second walk.
+    let mut aux_wanted: std::collections::HashMap<String, Vec<String>> =
+        std::collections::HashMap::new();
     for selection in selections {
         let bytes = entries
             .remove(&selection.path)
             .unwrap_or_else(|| Err(format!("archive has no entry {:?}", selection.path)));
         let outcome = bytes.and_then(|bytes| create_one(app_data, bytes, &selection));
+        if let Ok((_, sidecars)) = &outcome {
+            for file in sidecars {
+                let base = split_entry_name(file).0.to_ascii_lowercase();
+                aux_wanted
+                    .entry(base)
+                    .or_default()
+                    .push(selection.id.clone());
+            }
+        }
         outcomes.push(ArchiveImportOutcome {
             path: selection.path,
             name: selection.name,
-            project: outcome.as_ref().ok().cloned(),
+            project: outcome.as_ref().ok().map(|(p, _)| p.clone()),
             error: outcome.err(),
         });
+    }
+
+    // Carry the referenced auxiliary files (§12.1: runs read them from the
+    // bundle). A copy failure is loud but non-fatal: the project exists,
+    // and its runs will name exactly what is missing.
+    if !aux_wanted.is_empty() {
+        let aux_entries = walk_archive(archive_path, &mut |p| {
+            let base = split_entry_name(p).0.to_ascii_lowercase();
+            aux_wanted.contains_key(&base)
+        })?;
+        for (entry_path, bytes) in aux_entries {
+            let base_name = split_entry_name(&entry_path).0.to_string();
+            let Some(Ok(bytes)) = bytes else { continue };
+            let Some(project_ids) = aux_wanted.get(&base_name.to_ascii_lowercase()) else {
+                continue;
+            };
+            for id in project_ids {
+                let dir = crate::meta::bundle::aux_dir(app_data, id);
+                let write = std::fs::create_dir_all(&dir)
+                    .map_err(|e| e.to_string())
+                    .and_then(|()| {
+                        crate::meta::bundle::atomic_write(&dir.join(&base_name), &bytes)
+                            .map_err(|e| e.to_string())
+                    });
+                if let Err(e) = write {
+                    for outcome in &mut outcomes {
+                        if outcome.project.as_ref().is_some_and(|p| p.id == *id) {
+                            outcome.error =
+                                Some(format!("project created, but {base_name:?}: {e}"));
+                        }
+                    }
+                }
+            }
+        }
     }
     Ok(outcomes)
 }
 
 /// The whole life of one selection: parse, persist. Any failure is this
-/// entry's alone.
+/// entry's alone. Returns the project and the auxiliary file names its
+/// model references, so the caller can carry them.
 fn create_one(
     app_data: &std::path::Path,
     bytes: Vec<u8>,
     selection: &ArchiveSelection,
-) -> Result<Project, String> {
+) -> Result<(Project, Vec<String>), String> {
     validate_id(&selection.id)?;
     require_gui_openable_engine(&selection.engine)?;
     let (_, stem, _) = split_entry_name(&selection.path);
     let (parsed, imported) = parse_model_bytes(&selection.engine, bytes, stem)?;
-    persist_new_project(
+    let sidecars = match &parsed {
+        ParsedModel::Uds { network, .. } => uds_sidecar_refs(network)
+            .into_iter()
+            .map(|(file, _)| file)
+            .collect(),
+        ParsedModel::Wds { .. } => Vec::new(),
+    };
+    let project = persist_new_project(
         app_data,
         &selection.id,
         selection.name.clone(),
@@ -544,7 +630,8 @@ fn create_one(
         &parsed.served_bytes(),
         imported.node_count,
         imported.link_count,
-    )
+    )?;
+    Ok((project, sidecars))
 }
 
 /// Open a native file-picker for a model archive and scan it. Returns
@@ -682,7 +769,11 @@ C1  CIRCULAR  1.0  0  0  0
         assert_eq!((drainage.node_count, drainage.link_count), (2, 1));
         // The review step must be able to warn about the rain file before
         // the user commits — a run will refuse until it is inlined.
-        assert_eq!(drainage.sidecars, vec!["rain file \"rain.dat\""]);
+        assert_eq!(drainage.sidecars.len(), 1);
+        assert_eq!(drainage.sidecars[0].file, "rain.dat");
+        assert_eq!(drainage.sidecars[0].label, "rain file \"rain.dat\"");
+        // The archive holds nets/rain.dat, so the reference is carried.
+        assert!(drainage.sidecars[0].carried);
 
         // Non-models are listed (the likely sidecars), resource-fork junk
         // is not.
@@ -834,11 +925,8 @@ C1  CIRCULAR  1.0  0  0  0
                 .iter()
                 .find(|m| m.path == "nets/drainage.inp")
                 .unwrap();
-            assert_eq!(
-                drainage.sidecars,
-                vec!["rain file \"rain.dat\""],
-                "{path:?}"
-            );
+            assert_eq!(drainage.sidecars.len(), 1, "{path:?}");
+            assert!(drainage.sidecars[0].carried, "{path:?}");
         }
     }
 
@@ -867,6 +955,43 @@ C1  CIRCULAR  1.0  0  0  0
             .path()
             .join("projects/44444444-4444-4444-4444-444444444444/base/model.inp")
             .exists());
+    }
+
+    /// The auxiliary files a model references travel with it: the create
+    /// copies them into the project's `base/aux/`, where the run path
+    /// reads them (§12.1).
+    #[test]
+    fn create_carries_referenced_sidecars_into_the_bundle() {
+        let rain: &[u8] = b"sta1 2020 1 1 0 0 1.0\n";
+        let archive = zip_of(&[
+            ("nets/drainage.inp", UDS_INP.as_bytes()),
+            ("forcing/rain.dat", rain),
+            ("forcing/unrelated.dat", b"noise"),
+        ]);
+        let app_data = tempfile::tempdir().expect("app data");
+        let outcomes = create_projects_from_archive_at(
+            app_data.path(),
+            archive.path(),
+            vec![ArchiveSelection {
+                path: "nets/drainage.inp".into(),
+                id: "55555555-5555-5555-5555-555555555555".into(),
+                name: "Drainage".into(),
+                engine: "uds".into(),
+            }],
+        )
+        .expect("create");
+        assert!(outcomes[0].project.is_some(), "{:?}", outcomes[0].error);
+        assert_eq!(outcomes[0].error, None);
+        let aux = app_data
+            .path()
+            .join("projects/55555555-5555-5555-5555-555555555555/base/aux");
+        assert_eq!(
+            std::fs::read(aux.join("rain.dat")).expect("carried"),
+            rain.to_vec(),
+            "the referenced record travels with the project"
+        );
+        // Only referenced files travel; the archive's other data does not.
+        assert!(!aux.join("unrelated.dat").exists());
     }
 
     /// A file that is no archive at all is refused by name, before any

@@ -329,6 +329,14 @@ pub mod bundle {
         base_dir(app_data, project_id).join("model.inp")
     }
 
+    /// Auxiliary records the model references by name — rain and climate
+    /// files — carried into the bundle (by archive import) and read back
+    /// at run time. One directory per project, shared by scenarios: a
+    /// scenario varies the model, not the weather that drove it.
+    pub fn aux_dir(app_data: &Path, project_id: &str) -> PathBuf {
+        base_dir(app_data, project_id).join("aux")
+    }
+
     pub fn scenario_model_path(app_data: &Path, project_id: &str, scenario_id: &str) -> PathBuf {
         scenario_dir(app_data, project_id, scenario_id).join("model.inp")
     }
