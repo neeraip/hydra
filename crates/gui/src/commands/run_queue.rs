@@ -522,9 +522,40 @@ pub(crate) fn open_uds_with_aux(
         }
     }
 
-    let (sim, _diags, _findings) =
+    let (mut sim, _diags, _findings) =
         hydra::uds::simulation::Simulation::open_with_files(text, climate_records, rain_files)
             .map_err(|e| format!("Cannot open the model: {e:?}"))?;
+
+    // Post-open auxiliary state, mirroring the CLI: a declared hotstart
+    // or routing-inflows file is loaded from aux/, and its absence is an
+    // error rather than a silent cold start — running without state the
+    // model asked for would answer a different question without saying so.
+    let aux_bytes = |name: &str| {
+        let file_name = name.rsplit(['/', '\\']).next().unwrap_or(name);
+        std::fs::read(aux_dir.join(file_name)).ok()
+    };
+    if let Some(name) = &net.interface_files.hotstart_use {
+        let bytes = aux_bytes(name).ok_or_else(|| {
+            format!(
+                "the model starts from hotstart file {name:?}, which was not \
+                 imported with it — re-import the model and locate the file"
+            )
+        })?;
+        sim.load_hotstart(&bytes)
+            .map_err(|e| format!("hotstart file {name:?}: {e}"))?;
+    }
+    if let Some(name) = &net.interface_files.inflows {
+        let text = aux_bytes(name)
+            .map(|b| String::from_utf8_lossy(&b).into_owned())
+            .ok_or_else(|| {
+                format!(
+                    "the model reads routing inflows file {name:?}, which was \
+                     not imported with it — re-import the model and locate the file"
+                )
+            })?;
+        sim.supply_routing_inflows(&text)
+            .map_err(|e| format!("routing inflows file {name:?}: {e}"))?;
+    }
     Ok(sim)
 }
 
@@ -673,6 +704,53 @@ enum QueueRunResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A minimal drainage model that starts from a hotstart file.
+    const HOTSTART_INP: &str = "\
+[OPTIONS]
+FLOW_UNITS  CMS
+ROUTING_STEP  10
+
+[FILES]
+USE HOTSTART se_hot_start_test.hsf
+
+[JUNCTIONS]
+J1  10  2
+
+[OUTFALLS]
+O1  9  FREE
+
+[CONDUITS]
+C1  J1  O1  100  0.013  0  0
+
+[XSECTIONS]
+C1  CIRCULAR  1.0  0  0  0
+";
+
+    /// The run path loads a declared hotstart from the bundle's aux/, and
+    /// refuses to run cold when it is absent — starting without state the
+    /// model asked for would answer a different question silently.
+    #[test]
+    fn a_declared_hotstart_loads_from_aux_or_refuses() {
+        // Absent: the error names the file the import should have carried.
+        let empty = tempfile::tempdir().expect("aux dir");
+        let err = match open_uds_with_aux(HOTSTART_INP, empty.path()) {
+            Err(e) => e,
+            Ok(_) => panic!("opened cold despite the declared hotstart"),
+        };
+        assert!(err.contains("se_hot_start_test.hsf"), "{err}");
+        assert!(err.contains("not imported"), "{err}");
+
+        // Present: a state file the engine itself saved loads cleanly.
+        let model_without = HOTSTART_INP.replace("USE HOTSTART se_hot_start_test.hsf", "");
+        let (donor, _, _) =
+            hydra::uds::simulation::Simulation::open(&model_without).expect("donor opens");
+        let mut hsf = Vec::new();
+        donor.save_hotstart(&mut hsf).expect("saves");
+        let aux = tempfile::tempdir().expect("aux dir");
+        std::fs::write(aux.path().join("se_hot_start_test.hsf"), &hsf).expect("write hsf");
+        open_uds_with_aux(HOTSTART_INP, aux.path()).expect("opens with hotstart");
+    }
 
     // ── pre-flight simulability check ─────────────────────────────────────
 
