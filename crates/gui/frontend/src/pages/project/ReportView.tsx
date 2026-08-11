@@ -256,6 +256,15 @@ export function ReportView() {
   useEffect(() => {
     if (!activeProjectId || !initialised) return;
     const projectId = activeProjectId;
+    // Clearing the timeout only cancels a generation that has not started.
+    // One already in flight still resolves, and a report of any size takes
+    // long enough for the user to have moved on — so a superseded run's
+    // answer is dropped rather than written. The `preview.format` check at
+    // the render site cannot do this job: it asks whether the *format*
+    // matches, and the preview also depends on the scenario, the template,
+    // the units and the run, so a stale answer that happens to share the
+    // format passed it and put another scenario's report on screen.
+    let cancelled = false;
     const handle = window.setTimeout(() => {
       generateReport({
         projectId,
@@ -266,14 +275,19 @@ export function ReportView() {
         unitSystem,
       })
         .then((rendered) => {
+          if (cancelled) return;
           setPreview({ format, content: rendered });
           setPreviewError(null);
         })
         .catch((err) => {
+          if (cancelled) return;
           setPreviewError(formatIpcError(err));
         });
     }, PREVIEW_DEBOUNCE_MS);
-    return () => window.clearTimeout(handle);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(handle);
+    };
   }, [
     activeProjectId,
     initialised,
