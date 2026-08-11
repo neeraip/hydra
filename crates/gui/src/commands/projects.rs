@@ -119,7 +119,7 @@ const GUI_EDITABLE_ENGINES: &[&str] = &["wds"];
 /// unopenable key means the engine runs from the CLI only. Collapsing them
 /// would leave a user unable to tell "upgrade Hydra" from "wait for it"
 /// from "use the CLI".
-fn require_gui_openable_engine(
+pub(crate) fn require_gui_openable_engine(
     key: &str,
 ) -> Result<&'static hydra::common::EngineDescriptor, String> {
     let descriptor = hydra::common::engine_by_key(key)
@@ -278,8 +278,29 @@ pub fn create_project(
     let (inp_bytes, node_count, link_count) =
         new_project_model(import_loaded_network, &mut state.0.lock());
 
-    let project_dir = bundle::project_dir(&app_data, &id);
-    let base_dir = bundle::base_dir(&app_data, &id);
+    persist_new_project(
+        &app_data, &id, name, engine, &inp_bytes, node_count, link_count,
+    )
+}
+
+/// Write a new project bundle to disk: directories, `meta.json`, and the
+/// base model. The write half of [`create_project`], shared with the
+/// archive import, which creates one project per selected entry without
+/// anything passing through managed state.
+///
+/// Callers have already validated the id and the engine key; this only
+/// persists.
+pub(crate) fn persist_new_project(
+    app_data: &std::path::Path,
+    id: &str,
+    name: String,
+    engine: String,
+    inp_bytes: &[u8],
+    node_count: u32,
+    link_count: u32,
+) -> Result<Project, String> {
+    let project_dir = bundle::project_dir(app_data, id);
+    let base_dir = bundle::base_dir(app_data, id);
     let scenarios_dir = project_dir.join("scenarios");
     std::fs::create_dir_all(&base_dir).map_err(|e| e.to_string())?;
     std::fs::create_dir_all(&scenarios_dir).map_err(|e| e.to_string())?;
@@ -288,7 +309,7 @@ pub fn create_project(
         version: 1,
         name,
         engine,
-        source_crs: source_crs_for_model(&inp_bytes),
+        source_crs: source_crs_for_model(inp_bytes),
         node_count,
         link_count,
         // No override: a new project follows the app-wide default until
@@ -297,14 +318,14 @@ pub fn create_project(
     };
     meta::write_project_meta(&project_dir, &meta)?;
 
-    bundle::atomic_write(&bundle::base_model_path(&app_data, &id), &inp_bytes)
+    bundle::atomic_write(&bundle::base_model_path(app_data, id), inp_bytes)
         .map_err(|e| e.to_string())?;
 
-    let modified_at = meta::mtime_secs(&bundle::base_model_path(&app_data, &id))
+    let modified_at = meta::mtime_secs(&bundle::base_model_path(app_data, id))
         .or_else(|| meta::mtime_secs(&project_dir))
         .unwrap_or_else(meta::now_secs);
     Ok(project_to_dto(
-        &id,
+        id,
         &meta,
         0,
         None,
@@ -1755,19 +1776,52 @@ pub async fn open_and_load_network(
     load_model_bytes(descriptor.key, bytes, file_stem, &state)
 }
 
-/// Parse model bytes with the engine that owns them, hold the result in
-/// managed state, and describe it for the wizard.
+/// A parsed import before it is stored or persisted anywhere: the parsed
+/// network in its engine's own shape, plus the bytes that become the
+/// project's `model.inp` — the original file for wds, the §14.10-repaired
+/// text for uds.
 ///
-/// Shared by the two ways a model reaches the wizard: choosing an engine and
-/// then a file, and choosing a file and letting the recognition contract
-/// name the engine (hydra-common spec §2.5.1). Both must produce the same
-/// project from the same file, which one body is the only way to guarantee.
-fn load_model_bytes(
+/// Split from the storing so an import can be *described* without touching
+/// the single-slot `NetworkState` — the archive scan parses many models,
+/// and holding each briefly in the one global slot would race the wizard.
+pub(crate) enum ParsedModel {
+    /// A water-distribution model and its element DTOs.
+    Wds {
+        raw_bytes: Vec<u8>,
+        network: Box<hydra::Network>,
+        dto: Box<NetworkDto>,
+    },
+    /// A drainage model: the served (possibly repaired) text.
+    Uds {
+        raw_text: String,
+        network: Box<hydra::uds::model::Network>,
+    },
+}
+
+impl ParsedModel {
+    /// The bytes a project created from this import persists as
+    /// `base/model.inp`.
+    pub(crate) fn served_bytes(&self) -> Vec<u8> {
+        match self {
+            ParsedModel::Wds { raw_bytes, .. } => raw_bytes.clone(),
+            ParsedModel::Uds { raw_text, .. } => raw_text.clone().into_bytes(),
+        }
+    }
+}
+
+/// Parse model bytes with the engine that owns them and describe the result
+/// for the wizard, without storing anything.
+///
+/// Shared by every way a model reaches the app: choosing an engine and then
+/// a file, choosing a file and letting the recognition contract name the
+/// engine (hydra-common spec §2.5.1), and each entry of an archive import.
+/// All must produce the same project from the same bytes, which one body is
+/// the only way to guarantee.
+pub(crate) fn parse_model_bytes(
     engine_key: &str,
     bytes: Vec<u8>,
     file_stem: String,
-    state: &tauri::State<'_, NetworkState>,
-) -> Result<Option<ImportedModel>, String> {
+) -> Result<(ParsedModel, ImportedModel), String> {
     let network = match engine_key {
         "wds" => {
             let (network, _validation_errors) =
@@ -1792,13 +1846,7 @@ fn load_model_bytes(
                 (network.vertices.len() as u32, network.links.len() as u32);
             let coordinates_projected =
                 coordinates_are_projected(super::uds_view::model_coordinates(&network));
-            *state.0.lock() = NetworkStateInner::LoadedUds {
-                raw_text: text,
-                network: std::sync::Arc::new(network),
-                owner_project_id: None,
-                owner_scenario_id: None,
-            };
-            return Ok(Some(ImportedModel {
+            let imported = ImportedModel {
                 network: dto,
                 node_count,
                 link_count,
@@ -1806,7 +1854,14 @@ fn load_model_bytes(
                 repairs,
                 coordinates_projected,
                 engine: engine_key.to_string(),
-            }));
+            };
+            return Ok((
+                ParsedModel::Uds {
+                    raw_text: text,
+                    network: Box::new(network),
+                },
+                imported,
+            ));
         }
         other => return Err(format!("no importer for engine {other:?}")),
     };
@@ -1820,25 +1875,57 @@ fn load_model_bytes(
     let mut dto = network_to_dto(&network);
     dto.file_stem = file_stem;
     let coordinates_projected = coordinates_are_projected(network.coordinates.values().copied());
-
-    *state.0.lock() = NetworkStateInner::Loaded {
-        raw_bytes: bytes,
-        dirty: false,
-        network: std::sync::Arc::new(network),
-        dto: dto.clone(),
-        owner_project_id: None,
-        owner_scenario_id: None,
-    };
     let (node_count, link_count) = (dto.nodes.len() as u32, dto.links.len() as u32);
-    Ok(Some(ImportedModel {
-        network: dto,
+    let imported = ImportedModel {
+        network: dto.clone(),
         node_count,
         link_count,
         findings,
         repairs: Vec::new(),
         coordinates_projected,
         engine: engine_key.to_string(),
-    }))
+    };
+    Ok((
+        ParsedModel::Wds {
+            raw_bytes: bytes,
+            network: Box::new(network),
+            dto: Box::new(dto),
+        },
+        imported,
+    ))
+}
+
+/// Parse model bytes, hold the result in managed state, and describe it for
+/// the wizard — [`parse_model_bytes`] plus the storing that the single-model
+/// import paths want.
+fn load_model_bytes(
+    engine_key: &str,
+    bytes: Vec<u8>,
+    file_stem: String,
+    state: &tauri::State<'_, NetworkState>,
+) -> Result<Option<ImportedModel>, String> {
+    let (parsed, imported) = parse_model_bytes(engine_key, bytes, file_stem)?;
+    *state.0.lock() = match parsed {
+        ParsedModel::Wds {
+            raw_bytes,
+            network,
+            dto,
+        } => NetworkStateInner::Loaded {
+            raw_bytes,
+            dirty: false,
+            network: std::sync::Arc::new(*network),
+            dto: *dto,
+            owner_project_id: None,
+            owner_scenario_id: None,
+        },
+        ParsedModel::Uds { raw_text, network } => NetworkStateInner::LoadedUds {
+            raw_text,
+            network: std::sync::Arc::new(*network),
+            owner_project_id: None,
+            owner_scenario_id: None,
+        },
+    };
+    Ok(Some(imported))
 }
 
 /// Open a native file-picker across every model format the GUI can open,

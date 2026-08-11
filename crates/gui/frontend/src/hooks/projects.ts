@@ -5,7 +5,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import type { UnitSystem } from "../units";
-import { tryInvoke, tryInvokeOr } from "./ipc";
+import { invoke, tryInvoke, tryInvokeOr } from "./ipc";
 
 // ── Project types ────────────────────────────────────────────────────────────
 //
@@ -185,6 +185,75 @@ export function useProject(
     () => projects.find((p) => p.id === id) ?? null,
     [id, projects],
   );
+}
+
+// ── Archive import ───────────────────────────────────────────────────────────
+
+/**
+ * One archive entry that looked like a model, described by the backend scan.
+ * Mirrors `commands::ArchiveModelEntry` exactly.
+ *
+ * `engine` is the single definite recognition claim; `candidates` the
+ * GUI-openable possibilities when no engine was definite (the user chooses);
+ * `error` the reason an entry that looked importable is not.
+ */
+export interface ArchiveModelEntry {
+  path: string;
+  stem: string;
+  engine: string | null;
+  candidates: string[];
+  nodeCount: number;
+  linkCount: number;
+  findingCount: number;
+  /** §14.10 repairs the import will apply, one message each — surfaced
+   * before the user commits; the repair contract forbids silence. */
+  repairs: string[];
+  /** External files the model references (rain, climate, interface) that an
+   * archive import does not carry: runs will refuse until they are inlined. */
+  sidecars: string[];
+  error: string | null;
+}
+
+/** What a backend archive scan found. Mirrors `commands::ArchiveScan`. */
+export interface ArchiveScan {
+  archivePath: string;
+  models: ArchiveModelEntry[];
+  /** Every non-model entry — the likely sidecars — listed so the review can
+   * say what will not be imported. */
+  others: string[];
+}
+
+/** The fate of one selection. Mirrors `commands::ArchiveImportOutcome`. */
+export interface ArchiveImportOutcome {
+  path: string;
+  name: string;
+  project: Project | null;
+  error: string | null;
+}
+
+/**
+ * Open a native file-picker for a `.zip` of models and scan it: every entry
+ * is recognised and trial-parsed exactly as a single-file import would be.
+ * Returns `null` when the dialog is cancelled. Throws on an unreadable
+ * archive — the caller owns the toast.
+ */
+export async function openAndScanArchive(): Promise<ArchiveScan | null> {
+  return invoke<ArchiveScan | null>("open_and_scan_archive", {});
+}
+
+/**
+ * Create one project per selected archive entry. Resolves whenever the
+ * archive itself was readable; each selection's own failure comes back in
+ * its outcome — partial success is reported, never rolled back.
+ */
+export async function createProjectsFromArchive(
+  archivePath: string,
+  selections: { path: string; name: string; engine: string }[],
+): Promise<ArchiveImportOutcome[]> {
+  return invoke<ArchiveImportOutcome[]>("create_projects_from_archive", {
+    archivePath,
+    selections,
+  });
 }
 
 /**

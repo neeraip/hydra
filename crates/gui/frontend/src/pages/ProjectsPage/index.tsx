@@ -23,13 +23,16 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAppState } from "../../AppContext";
 import { DeleteConfirmModal } from "../../components/modals/DeleteConfirmModal";
 import { DeleteProjectModal } from "../../components/modals/DeleteProjectModal";
+import { ImportArchiveWizard } from "../../components/modals/ImportArchiveWizard";
 import { NewProjectWizard } from "../../components/modals/NewProjectWizard";
 import { NewProjectButton } from "../../components/ui/NewProjectButton";
 import { RowMenu } from "../../components/ui/RowMenu";
 import {
+  type ArchiveScan,
   deleteAllSimulations,
   deleteProjectOnDisk,
   type ImportedModel,
+  openAndScanArchive,
   openBaseFolder,
   type Project,
   type ProjectState,
@@ -82,6 +85,19 @@ export function ProjectsPage() {
   // A model recognised before the wizard opened, so it can start from what
   // was read rather than asking for it again.
   const [wizardModel, setWizardModel] = useState<ImportedModel | null>(null);
+  // A scanned archive awaiting review; the modal owns the rest.
+  const [archiveScan, setArchiveScan] = useState<ArchiveScan | null>(null);
+
+  /** Pick a .zip of models and open the review on what the scan found. */
+  async function importArchive() {
+    try {
+      const scan = await openAndScanArchive();
+      if (!scan) return; // cancelled
+      setArchiveScan(scan);
+    } catch (e) {
+      showToast(formatIpcError(e), "error");
+    }
+  }
 
   // ── Bulk actions on the checkbox selection ───────────────────────────────
   const runBulk = useCallback(
@@ -522,6 +538,7 @@ export function ProjectsPage() {
             setWizardModel(model);
             setShowWizard(true);
           }}
+          onArchive={() => void importArchive()}
           onError={(message) => showToast(message, "error")}
         />
 
@@ -963,6 +980,23 @@ export function ProjectsPage() {
           onClose={() => {
             setShowWizard(false);
             bumpProjects();
+          }}
+        />
+      )}
+
+      {archiveScan && (
+        <ImportArchiveWizard
+          scan={archiveScan}
+          onClose={() => setArchiveScan(null)}
+          onDone={(created) => {
+            setArchiveScan(null);
+            bumpProjects();
+            showToast(
+              created === 1
+                ? "Created 1 project from the archive"
+                : `Created ${created} projects from the archive`,
+              "success",
+            );
           }}
         />
       )}

@@ -4,6 +4,7 @@ import { lazy, Suspense, useMemo, useState } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { useAppState } from "../AppContext";
+import { ImportArchiveWizard } from "../components/modals/ImportArchiveWizard";
 import { NewProjectWizard } from "../components/modals/NewProjectWizard";
 import { ReleaseNotesModal } from "../components/modals/ReleaseNotesModal";
 import { EngineGlyph } from "../components/ui/EngineGlyph";
@@ -13,14 +14,17 @@ import { PrimaryButton } from "../components/ui/PrimaryButton";
 import { placeholderSketch } from "../components/ui/placeholderSketch";
 import {
   ACCENT,
+  type ArchiveScan,
   engineByKey,
   formatInpImportError,
   type ImportedModel,
   openAndRecogniseNetwork,
+  openAndScanArchive,
   type Project,
   useEngines,
   useProjects,
 } from "../hooks";
+import { formatIpcError } from "../hooks/ipc";
 import { useSketches } from "../hooks/sketches";
 import {
   releaseHasNotes,
@@ -547,8 +551,14 @@ function SidebarSection({ title }: { title: string }) {
 // ── Home page ─────────────────────────────────────────────────────────────────
 
 export function HomePage() {
-  const { projectsVersion, createdProject, openProject, setPage, showToast } =
-    useAppState();
+  const {
+    projectsVersion,
+    createdProject,
+    openProject,
+    setPage,
+    showToast,
+    bumpProjects,
+  } = useAppState();
   const notes = useReleaseNotes();
   const { lastSeen, markSeen } = useLastSeenGuiVersion();
   const { updater, install, restart } = useUpdater();
@@ -590,6 +600,8 @@ export function HomePage() {
   }, [backendProjects, createdProject]);
 
   const [showWizard, setShowWizard] = useState(false);
+  // A scanned archive awaiting review; the modal owns the rest.
+  const [archiveScan, setArchiveScan] = useState<ArchiveScan | null>(null);
   // A model recognised before the wizard opened, so it starts from what was
   // read rather than asking for the engine and the file again.
   const [wizardModel, setWizardModel] = useState<ImportedModel | null>(null);
@@ -597,6 +609,17 @@ export function HomePage() {
   function startNewProject() {
     setWizardModel(null);
     setShowWizard(true);
+  }
+
+  /** Pick a .zip of models and open the review on what the scan found. */
+  async function importArchive() {
+    try {
+      const scan = await openAndScanArchive();
+      if (!scan) return; // cancelled
+      setArchiveScan(scan);
+    } catch (e) {
+      showToast(formatIpcError(e), "error");
+    }
   }
 
   /** Open a model file and let it name its own engine (hydra-common
@@ -696,6 +719,7 @@ export function HomePage() {
                     setWizardModel(model);
                     setShowWizard(true);
                   }}
+                  onArchive={() => void importArchive()}
                   onError={(message) => showToast(message, "error")}
                 />
               </div>
@@ -980,6 +1004,22 @@ export function HomePage() {
         <NewProjectWizard
           initial={wizardModel}
           onClose={() => setShowWizard(false)}
+        />
+      )}
+      {archiveScan && (
+        <ImportArchiveWizard
+          scan={archiveScan}
+          onClose={() => setArchiveScan(null)}
+          onDone={(created) => {
+            setArchiveScan(null);
+            bumpProjects();
+            showToast(
+              created === 1
+                ? "Created 1 project from the archive"
+                : `Created ${created} projects from the archive`,
+              "success",
+            );
+          }}
         />
       )}
       {licensesOpen && (

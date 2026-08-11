@@ -49,6 +49,7 @@
 //! discards all pending items (queue state is not persisted).
 
 mod about;
+mod archive;
 mod basemap_providers;
 mod binary_codec;
 mod generic_results;
@@ -69,6 +70,7 @@ mod uds_results;
 mod uds_view;
 
 pub use about::*;
+pub use archive::*;
 pub use basemap_providers::*;
 pub use binary_codec::*;
 pub use mutations::*;

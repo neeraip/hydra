@@ -25,6 +25,7 @@ export function NewProjectButton({
   size,
   onNew,
   onImported,
+  onArchive,
   onError,
 }: {
   size?: "sm";
@@ -32,6 +33,9 @@ export function NewProjectButton({
   onNew: () => void;
   /** A model was read and recognised; open the wizard on it. */
   onImported: (model: ImportedModel) => void;
+  /** The user chose "Import archive": the page owns the picker and the
+   * review flow, because they outlive this menu. */
+  onArchive: () => void;
   /** Why a chosen file could not be opened — including the deliberate
    * refusal to guess when no engine claims it (hydra-common §2.5.1). */
   onError: (message: string) => void;
@@ -160,6 +164,18 @@ export function NewProjectButton({
             className="legend-picker-option"
           >
             {busy ? "Opening…" : "Import from EPANET/SWMM (.inp)"}
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            disabled={busy}
+            onClick={() => {
+              setOpen(false);
+              onArchive();
+            }}
+            className="legend-picker-option"
+          >
+            Import archive of models (.zip)
           </button>
         </div>
       )}
