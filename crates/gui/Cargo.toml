@@ -44,6 +44,9 @@ tracing-appender = "0.2.5"
 # minimal feature set reads the deflate and stored entries ordinary tools
 # produce).
 zip = { version = "4", default-features = false, features = ["deflate"] }
+tar = "0.4.46"
+flate2 = "1.1.9"
+sevenz-rust2 = { version = "0.21.4", default-features = false, features = ["compress", "util"] }
 
 [dev-dependencies]
 tempfile = "3"

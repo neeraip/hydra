@@ -1,6 +1,7 @@
 //! Archive import: many models in, one project each out.
 //!
-//! A `.zip` chosen by the user is scanned entry by entry — every entry whose
+//! An archive chosen by the user — `.zip`, `.7z`, `.tar`, or `.tar.gz` —
+//! is scanned entry by entry: every entry whose
 //! extension any GUI-openable engine imports is read, recognised
 //! (hydra-common spec §2.5.1), and tolerant-parsed exactly as a single-file
 //! import would be, producing a manifest the review step renders. Creating
@@ -214,71 +215,263 @@ fn describe_model_entry(path: String, stem: String, bytes: Vec<u8>) -> ArchiveMo
     entry
 }
 
-/// Read one entry's bytes, bounded: an entry whose *declared* size exceeds
-/// the cap is refused before a byte is decompressed, and the read itself is
-/// clamped so a lying header cannot overshoot either.
-fn read_entry_bytes(
-    file: &mut zip::read::ZipFile<'_, impl Read + std::io::Seek>,
-    budget: &mut u64,
+/// The archive formats the import reads, told apart by file name — the
+/// same way the picker filters, so the two cannot disagree.
+enum ArchiveKind {
+    Zip,
+    SevenZ,
+    Tar,
+    TarGz,
+}
+
+fn archive_kind(path: &std::path::Path) -> Result<ArchiveKind, String> {
+    let name = path
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    if name.ends_with(".zip") {
+        Ok(ArchiveKind::Zip)
+    } else if name.ends_with(".7z") {
+        Ok(ArchiveKind::SevenZ)
+    } else if name.ends_with(".tar.gz") || name.ends_with(".tgz") {
+        Ok(ArchiveKind::TarGz)
+    } else if name.ends_with(".tar") {
+        Ok(ArchiveKind::Tar)
+    } else {
+        Err(format!(
+            "{name:?} is not a supported archive — this import reads \
+             .zip, .7z, .tar, and .tar.gz"
+        ))
+    }
+}
+
+/// One walked entry: its path inside the archive, and — when the walk's
+/// `read` callback asked for it — its bytes or its own read error. `None`
+/// means the entry was seen but deliberately not read.
+type WalkedEntry = (String, Option<Result<Vec<u8>, String>>);
+
+/// The walk's ceilings, spent as entries pass. One instance per walk, so
+/// the caps mean the same thing whatever the container format.
+struct WalkBudget {
+    entries: usize,
+    bytes: u64,
+}
+
+impl WalkBudget {
+    fn new() -> Self {
+        WalkBudget {
+            entries: MAX_ENTRIES,
+            bytes: MAX_TOTAL_BYTES,
+        }
+    }
+
+    /// Count one entry against the archive-wide ceiling; a breach fails
+    /// the whole walk (a malicious directory, not a bad entry).
+    fn count_entry(&mut self) -> Result<(), String> {
+        if self.entries == 0 {
+            return Err(format!(
+                "archive holds more than the {MAX_ENTRIES} entries this import accepts"
+            ));
+        }
+        self.entries -= 1;
+        Ok(())
+    }
+}
+
+/// Read one entry's bytes from any decompressed stream, bounded: a
+/// declared size over the cap is refused before a byte is read, and the
+/// read is clamped so a lying header cannot overshoot either.
+fn read_bounded(
+    reader: &mut dyn Read,
+    declared: u64,
+    budget: &mut WalkBudget,
 ) -> Result<Vec<u8>, String> {
-    let declared = file.size();
     if declared > MAX_ENTRY_BYTES {
         return Err(format!(
             "entry is {declared} bytes decompressed — larger than any model \
              this import accepts"
         ));
     }
-    if declared > *budget {
+    if declared > budget.bytes {
         return Err("archive exceeds the import's total decompressed-size budget".into());
     }
     let mut bytes = Vec::with_capacity(declared.min(1024 * 1024) as usize);
-    let mut clamped = file.take(declared + 1);
+    let mut clamped = reader.take(declared + 1);
     clamped.read_to_end(&mut bytes).map_err(|e| e.to_string())?;
     if bytes.len() as u64 > declared {
         return Err("entry decompresses past its declared size".into());
     }
-    *budget -= bytes.len() as u64;
+    budget.bytes -= bytes.len() as u64;
     Ok(bytes)
 }
 
-/// Scan an archive on disk into the review manifest.
-pub(crate) fn scan_archive_file(path: &std::path::Path) -> Result<ArchiveScan, String> {
+/// Walk every file entry of the archive at `path`, in order, reading the
+/// ones `read` asks for. The one place the container formats differ;
+/// everything above it — scan, create, caps — is format-blind.
+fn walk_archive(
+    path: &std::path::Path,
+    read: &mut dyn FnMut(&str) -> bool,
+) -> Result<Vec<WalkedEntry>, String> {
+    match archive_kind(path)? {
+        ArchiveKind::Zip => walk_zip(path, read),
+        ArchiveKind::SevenZ => walk_7z(path, read),
+        ArchiveKind::Tar => {
+            let file = std::fs::File::open(path).map_err(|e| e.to_string())?;
+            walk_tar(std::io::BufReader::new(file), read)
+        }
+        ArchiveKind::TarGz => {
+            let file = std::fs::File::open(path).map_err(|e| e.to_string())?;
+            walk_tar(
+                flate2::read::GzDecoder::new(std::io::BufReader::new(file)),
+                read,
+            )
+        }
+    }
+}
+
+fn walk_zip(
+    path: &std::path::Path,
+    read: &mut dyn FnMut(&str) -> bool,
+) -> Result<Vec<WalkedEntry>, String> {
     let file = std::fs::File::open(path).map_err(|e| e.to_string())?;
     let mut zip = zip::ZipArchive::new(std::io::BufReader::new(file))
         .map_err(|e| format!("not a readable zip archive: {e}"))?;
-    if zip.len() > MAX_ENTRIES {
-        return Err(format!(
-            "archive holds {} entries — more than the {MAX_ENTRIES} this import accepts",
-            zip.len()
-        ));
-    }
-    let extensions = model_extensions();
-    let mut models = Vec::new();
-    let mut others = Vec::new();
-    let mut budget = MAX_TOTAL_BYTES;
+    let mut budget = WalkBudget::new();
+    let mut out = Vec::new();
     for i in 0..zip.len() {
         let mut entry = zip.by_index(i).map_err(|e| e.to_string())?;
         if entry.is_dir() {
             continue;
         }
+        budget.count_entry()?;
         let entry_path = entry.name().to_string();
-        let file_name = entry_path.rsplit(['/', '\\']).next().unwrap_or("");
-        // Archive helpers' bookkeeping (macOS resource forks and the like),
-        // silently irrelevant rather than listed as leftovers.
-        if file_name.starts_with("._") || file_name == ".DS_Store" {
+        let declared = entry.size();
+        let bytes = read(&entry_path)
+            .then(|| read_bounded(&mut entry, declared, &mut budget))
+            .transpose();
+        out.push((
+            entry_path,
+            match bytes {
+                Ok(b) => b.map(Ok),
+                Err(e) => Some(Err(e)),
+            },
+        ));
+    }
+    Ok(out)
+}
+
+fn walk_tar(
+    reader: impl Read,
+    read: &mut dyn FnMut(&str) -> bool,
+) -> Result<Vec<WalkedEntry>, String> {
+    let mut archive = tar::Archive::new(reader);
+    let mut budget = WalkBudget::new();
+    let mut out = Vec::new();
+    for entry in archive
+        .entries()
+        .map_err(|e| format!("not a readable tar archive: {e}"))?
+    {
+        let mut entry = entry.map_err(|e| format!("unreadable tar entry: {e}"))?;
+        if !entry.header().entry_type().is_file() {
             continue;
         }
-        let (stem, ext) = match file_name.rsplit_once('.') {
-            Some((stem, ext)) if !stem.is_empty() => (stem.to_string(), ext.to_ascii_lowercase()),
-            _ => (file_name.to_string(), String::new()),
-        };
-        if !extensions.contains(&ext) {
-            others.push(entry_path);
+        budget.count_entry()?;
+        let entry_path = entry
+            .path()
+            .map_err(|e| e.to_string())?
+            .display()
+            .to_string();
+        let declared = entry.header().size().map_err(|e| e.to_string())?;
+        let bytes = read(&entry_path)
+            .then(|| read_bounded(&mut entry, declared, &mut budget))
+            .transpose();
+        out.push((
+            entry_path,
+            match bytes {
+                Ok(b) => b.map(Ok),
+                Err(e) => Some(Err(e)),
+            },
+        ));
+    }
+    Ok(out)
+}
+
+fn walk_7z(
+    path: &std::path::Path,
+    read: &mut dyn FnMut(&str) -> bool,
+) -> Result<Vec<WalkedEntry>, String> {
+    let mut seven = sevenz_rust2::ArchiveReader::open(path, sevenz_rust2::Password::empty())
+        .map_err(|e| format!("not a readable 7z archive: {e}"))?;
+    let mut budget = WalkBudget::new();
+    let mut out: Vec<WalkedEntry> = Vec::new();
+    let mut walk_error: Option<String> = None;
+    seven
+        .for_each_entries(|entry, reader| {
+            if entry.is_directory {
+                return Ok(true);
+            }
+            if let Err(e) = budget.count_entry() {
+                walk_error = Some(e);
+                return Ok(false);
+            }
+            let entry_path = entry.name.clone();
+            if read(&entry_path) {
+                let bytes = read_bounded(reader, entry.size, &mut budget);
+                out.push((entry_path, Some(bytes)));
+            } else {
+                // A solid block decodes front to back: later entries need
+                // the skipped one's data consumed, whether or not it was
+                // wanted. Drained to nowhere rather than held.
+                std::io::copy(reader, &mut std::io::sink()).ok();
+                out.push((entry_path, None));
+            }
+            Ok(true)
+        })
+        .map_err(|e| format!("not a readable 7z archive: {e}"))?;
+    if let Some(e) = walk_error {
+        return Err(e);
+    }
+    Ok(out)
+}
+
+/// The junk archive helpers scatter (macOS resource forks and the like) —
+/// silently irrelevant rather than listed as leftovers.
+fn is_archive_junk(file_name: &str) -> bool {
+    file_name.starts_with("._") || file_name == ".DS_Store"
+}
+
+/// An entry path's file name, stem, and lowercased extension.
+fn split_entry_name(entry_path: &str) -> (&str, String, String) {
+    let file_name = entry_path.rsplit(['/', '\\']).next().unwrap_or("");
+    match file_name.rsplit_once('.') {
+        Some((stem, ext)) if !stem.is_empty() => {
+            (file_name, stem.to_string(), ext.to_ascii_lowercase())
+        }
+        _ => (file_name, file_name.to_string(), String::new()),
+    }
+}
+
+/// Scan an archive on disk into the review manifest.
+pub(crate) fn scan_archive_file(path: &std::path::Path) -> Result<ArchiveScan, String> {
+    let extensions = model_extensions();
+    let wanted = |entry_path: &str| {
+        let (file_name, _, ext) = split_entry_name(entry_path);
+        !is_archive_junk(file_name) && extensions.contains(&ext)
+    };
+    let walked = walk_archive(path, &mut |p| wanted(p))?;
+
+    let mut models = Vec::new();
+    let mut others = Vec::new();
+    for (entry_path, bytes) in walked {
+        let (file_name, stem, _) = split_entry_name(&entry_path);
+        if is_archive_junk(file_name) {
             continue;
         }
-        match read_entry_bytes(&mut entry, &mut budget) {
-            Ok(bytes) => models.push(describe_model_entry(entry_path, stem, bytes)),
-            Err(e) => models.push(ArchiveModelEntry {
+        match bytes {
+            None => others.push(entry_path),
+            Some(Ok(bytes)) => models.push(describe_model_entry(entry_path, stem, bytes)),
+            Some(Err(e)) => models.push(ArchiveModelEntry {
                 path: entry_path,
                 stem,
                 engine: None,
@@ -301,17 +494,27 @@ pub(crate) fn scan_archive_file(path: &std::path::Path) -> Result<ArchiveScan, S
 
 /// Create one project per selection, against an `app_data` root — the
 /// command body, testable without a Tauri handle.
+///
+/// One walk serves every selection: streaming formats have no by-name
+/// access, and even for those that do, one pass is the honest cost.
 pub(crate) fn create_projects_from_archive_at(
     app_data: &std::path::Path,
     archive_path: &std::path::Path,
     selections: Vec<ArchiveSelection>,
 ) -> Result<Vec<ArchiveImportOutcome>, String> {
-    let file = std::fs::File::open(archive_path).map_err(|e| e.to_string())?;
-    let mut zip = zip::ZipArchive::new(std::io::BufReader::new(file))
-        .map_err(|e| format!("not a readable zip archive: {e}"))?;
+    let wanted: std::collections::HashSet<&str> =
+        selections.iter().map(|s| s.path.as_str()).collect();
+    let mut entries: std::collections::HashMap<String, Result<Vec<u8>, String>> =
+        walk_archive(archive_path, &mut |p| wanted.contains(p))?
+            .into_iter()
+            .filter_map(|(path, bytes)| bytes.map(|b| (path, b)))
+            .collect();
     let mut outcomes = Vec::with_capacity(selections.len());
     for selection in selections {
-        let outcome = create_one(app_data, &mut zip, &selection);
+        let bytes = entries
+            .remove(&selection.path)
+            .unwrap_or_else(|| Err(format!("archive has no entry {:?}", selection.path)));
+        let outcome = bytes.and_then(|bytes| create_one(app_data, bytes, &selection));
         outcomes.push(ArchiveImportOutcome {
             path: selection.path,
             name: selection.name,
@@ -322,27 +525,16 @@ pub(crate) fn create_projects_from_archive_at(
     Ok(outcomes)
 }
 
-/// The whole life of one selection: read, parse, persist. Any failure is
-/// this entry's alone.
+/// The whole life of one selection: parse, persist. Any failure is this
+/// entry's alone.
 fn create_one(
     app_data: &std::path::Path,
-    zip: &mut zip::ZipArchive<std::io::BufReader<std::fs::File>>,
+    bytes: Vec<u8>,
     selection: &ArchiveSelection,
 ) -> Result<Project, String> {
     validate_id(&selection.id)?;
     require_gui_openable_engine(&selection.engine)?;
-    let mut entry = zip
-        .by_name(&selection.path)
-        .map_err(|_| format!("archive has no entry {:?}", selection.path))?;
-    let mut budget = MAX_TOTAL_BYTES;
-    let bytes = read_entry_bytes(&mut entry, &mut budget)?;
-    let stem = entry
-        .name()
-        .rsplit(['/', '\\'])
-        .next()
-        .unwrap_or("")
-        .rsplit_once('.')
-        .map_or_else(|| selection.name.clone(), |(stem, _)| stem.to_string());
+    let (_, stem, _) = split_entry_name(&selection.path);
     let (parsed, imported) = parse_model_bytes(&selection.engine, bytes, stem)?;
     persist_new_project(
         app_data,
@@ -367,7 +559,7 @@ pub async fn open_and_scan_archive(app: tauri::AppHandle) -> Result<Option<Archi
         let path = dialog_app
             .dialog()
             .file()
-            .add_filter("Model archive", &["zip"])
+            .add_filter("Model archive", &["zip", "7z", "tar", "gz", "tgz"])
             .blocking_pick_file();
         let Some(path) = path else {
             return Ok(None);
@@ -443,7 +635,7 @@ C1  CIRCULAR  1.0  0  0  0
 
     /// Write a zip holding the given (name, bytes) entries to a temp file.
     fn zip_of(entries: &[(&str, &[u8])]) -> tempfile::NamedTempFile {
-        let file = tempfile::NamedTempFile::new().expect("temp file");
+        let file = tempfile::NamedTempFile::with_suffix(".zip").expect("temp file");
         let mut zip = zip::ZipWriter::new(file.reopen().expect("reopen"));
         let options = zip::write::SimpleFileOptions::default()
             .compression_method(zip::CompressionMethod::Deflated);
@@ -564,6 +756,125 @@ C1  CIRCULAR  1.0  0  0  0
             .join("projects")
             .join("33333333-3333-3333-3333-333333333333")
             .exists());
+    }
+
+    /// Build the same entries as a `.tar.gz` archive.
+    fn targz_of(entries: &[(&str, &[u8])]) -> tempfile::NamedTempFile {
+        let file = tempfile::NamedTempFile::with_suffix(".tar.gz").expect("temp file");
+        let gz = flate2::write::GzEncoder::new(
+            file.reopen().expect("reopen"),
+            flate2::Compression::default(),
+        );
+        let mut tar = tar::Builder::new(gz);
+        for (name, bytes) in entries {
+            let mut header = tar::Header::new_gnu();
+            header.set_size(bytes.len() as u64);
+            header.set_mode(0o644);
+            header.set_cksum();
+            tar.append_data(&mut header, name, *bytes).expect("append");
+        }
+        tar.into_inner()
+            .expect("tar finish")
+            .finish()
+            .expect("gz finish");
+        file
+    }
+
+    /// Build the same entries as a `.7z` archive.
+    fn sevenz_of(entries: &[(&str, &[u8])]) -> tempfile::NamedTempFile {
+        let file = tempfile::NamedTempFile::with_suffix(".7z").expect("temp file");
+        let mut writer =
+            sevenz_rust2::ArchiveWriter::new(file.reopen().expect("reopen")).expect("writer");
+        for (name, bytes) in entries {
+            writer
+                .push_archive_entry(
+                    sevenz_rust2::ArchiveEntry::new_file(name),
+                    Some(std::io::Cursor::new(bytes.to_vec())),
+                )
+                .expect("push entry");
+        }
+        writer.finish().expect("finish 7z");
+        file
+    }
+
+    /// Every container format answers the same scan the same way: the
+    /// walk is the only place formats differ, and this holds it to that.
+    #[test]
+    fn every_archive_format_scans_identically() {
+        let entries: &[(&str, &[u8])] = &[
+            (
+                "nets/water.inp",
+                super::super::test_fixtures::TEST_INP.as_bytes(),
+            ),
+            ("nets/drainage.inp", UDS_INP.as_bytes()),
+            ("nets/rain.dat", b"sta1 2020 1 1 0 0 1.0"),
+        ];
+        let archives: Vec<tempfile::NamedTempFile> =
+            vec![zip_of(entries), targz_of(entries), sevenz_of(entries)];
+        for archive in &archives {
+            let path = archive.path();
+            let scan = scan_archive_file(path).expect("scan");
+            let mut engines: Vec<_> = scan
+                .models
+                .iter()
+                .map(|m| (m.path.as_str(), m.engine.as_deref()))
+                .collect();
+            engines.sort_unstable();
+            assert_eq!(
+                engines,
+                vec![
+                    ("nets/drainage.inp", Some("uds")),
+                    ("nets/water.inp", Some("wds")),
+                ],
+                "{path:?}"
+            );
+            assert_eq!(scan.others, vec!["nets/rain.dat"], "{path:?}");
+            let drainage = scan
+                .models
+                .iter()
+                .find(|m| m.path == "nets/drainage.inp")
+                .unwrap();
+            assert_eq!(
+                drainage.sidecars,
+                vec!["rain file \"rain.dat\""],
+                "{path:?}"
+            );
+        }
+    }
+
+    /// Streaming formats have no by-name access; the create path's single
+    /// walk must serve them identically.
+    #[test]
+    fn create_reads_a_tar_gz_selection() {
+        let archive = targz_of(&[(
+            "water.inp",
+            super::super::test_fixtures::TEST_INP.as_bytes(),
+        )]);
+        let app_data = tempfile::tempdir().expect("app data");
+        let outcomes = create_projects_from_archive_at(
+            app_data.path(),
+            archive.path(),
+            vec![ArchiveSelection {
+                path: "water.inp".into(),
+                id: "44444444-4444-4444-4444-444444444444".into(),
+                name: "Water".into(),
+                engine: "wds".into(),
+            }],
+        )
+        .expect("create");
+        assert!(outcomes[0].project.is_some(), "{:?}", outcomes[0].error);
+        assert!(app_data
+            .path()
+            .join("projects/44444444-4444-4444-4444-444444444444/base/model.inp")
+            .exists());
+    }
+
+    /// A file that is no archive at all is refused by name, before any
+    /// container library guesses at its bytes.
+    #[test]
+    fn an_unsupported_extension_is_refused_with_the_supported_list() {
+        let err = scan_archive_file(std::path::Path::new("/tmp/models.rar")).unwrap_err();
+        assert!(err.contains(".zip, .7z, .tar, and .tar.gz"), "{err}");
     }
 
     #[test]

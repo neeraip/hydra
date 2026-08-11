@@ -175,7 +175,7 @@ export function NewProjectButton({
             }}
             className="legend-picker-option"
           >
-            Import archive of models (.zip)
+            Import archive of models (.zip, .7z, .tar)
           </button>
         </div>
       )}

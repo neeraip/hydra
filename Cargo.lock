@@ -2541,12 +2541,15 @@ version = "2.15.1"
 dependencies = [
  "base64 0.23.0",
  "chrono",
+ "flate2",
  "hydra-sdk",
  "keyring",
  "parking_lot",
  "reqwest",
  "serde",
  "serde_json",
+ "sevenz-rust2",
+ "tar",
  "tauri",
  "tauri-build",
  "tauri-plugin-dialog",
@@ -3404,6 +3407,12 @@ name = "lru-slab"
 version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "112b39cec0b298b6c1999fee3e31427f74f676e4cb9879ed1a121b43661a4154"
+
+[[package]]
+name = "lzma-rust2"
+version = "0.18.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "243cb2271683c2855cad62142cbf38199db439b1b1e1ccdd5a011342894dd7cc"
 
 [[package]]
 name = "mac"
@@ -5541,6 +5550,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "170fb83ab34de17dc69aa7c67482b22218ddb85da56546f9bd6b929e32a05930"
 dependencies = [
  "stable_deref_trait",
+]
+
+[[package]]
+name = "sevenz-rust2"
+version = "0.21.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "20acd38118edb830eb5a0bfacaf83c687b9995f48d6983cdac3cb18ce1d571cc"
+dependencies = [
+ "crc32fast",
+ "js-sys",
+ "lzma-rust2",
+ "wasm-bindgen",
 ]
 
 [[package]]
