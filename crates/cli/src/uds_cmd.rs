@@ -326,8 +326,13 @@ fn resolve_aux_path(model: &str, name: &str) -> Result<PathBuf, i32> {
     // Models carry paths from the machine they were authored on; a file
     // that moved beside the model is found by its trailing name, the same
     // fallback the engine and GUI apply.
-    let by_basename = name_path
-        .file_name()
+    // Split on either separator: a path authored on Windows carries
+    // backslashes that `file_name` does not treat as separators here, and
+    // an authored-elsewhere path is exactly the case this fallback is
+    // for. The engine and the GUI split the same way.
+    let by_basename = name
+        .rsplit(['/', '\\'])
+        .next()
         .map(|tail| base.join(tail))
         .filter(|p| p.exists());
     Ok(by_basename.unwrap_or(as_written))
