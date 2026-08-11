@@ -323,12 +323,12 @@ export function NewProjectWizard({ onClose, initial = null }: Props) {
       modifiedLabel: "Just now",
       nodeCount: detectedNodeCount,
       linkCount: detectedLinkCount,
-      // Degrees unless the model's own numbers say otherwise. A drawing
-      // grid is recorded as such so the canvas stops trying to place it on
-      // the earth; anything else keeps today's default and is answered on
-      // the map, where the choice can be checked.
-      sourceCrs:
-        coordsProjected && crsAnswer === "local" ? LOCAL_CRS : "EPSG:4326",
+      // Mirrors the backend's rule directionally (dev-browser fallback
+      // only — a persisted project gets the real answer from
+      // source_crs_for_model): projected coordinates are a drawing grid
+      // unless the user picks a datum on the map, where the choice can
+      // be checked.
+      sourceCrs: coordsProjected ? LOCAL_CRS : "EPSG:4326",
       insights: null,
       folderMissing: false,
     };

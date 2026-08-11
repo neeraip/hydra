@@ -412,27 +412,65 @@ pub(crate) const LOCAL_CRS: &str = "LOCAL";
 /// nothing, and the user can still correct it.
 fn source_crs_for_model(bytes: &[u8]) -> String {
     let text = String::from_utf8_lossy(bytes);
+    // The model's own declaration wins where it exists: [MAP] UNITS.
     let mut in_map = false;
+    let mut in_coords = false;
+    // What the coordinates themselves say, absent a declaration: `None`
+    // until a non-placeholder point is seen, then whether every one so
+    // far fits inside longitude/latitude ranges.
+    let mut all_lat_lng: Option<bool> = None;
     for line in text.lines() {
         let trimmed = line.trim();
         if trimmed.starts_with('[') {
-            in_map = trimmed.to_ascii_uppercase().starts_with("[MAP");
+            let header = trimmed.to_ascii_uppercase();
+            in_map = header.starts_with("[MAP");
+            in_coords = header.starts_with("[COORDINATES");
             continue;
         }
-        if !in_map || trimmed.is_empty() || trimmed.starts_with(';') {
+        if trimmed.is_empty() || trimmed.starts_with(';') {
             continue;
         }
-        let mut it = trimmed.split_whitespace();
-        if !it.next().is_some_and(|k| k.eq_ignore_ascii_case("UNITS")) {
-            continue;
+        if in_map {
+            let mut it = trimmed.split_whitespace();
+            if !it.next().is_some_and(|k| k.eq_ignore_ascii_case("UNITS")) {
+                continue;
+            }
+            match it.next().map(str::to_ascii_uppercase).as_deref() {
+                Some("DEGREES") => return "EPSG:4326".to_string(),
+                Some("FEET") | Some("METERS") | Some("NONE") => return LOCAL_CRS.to_string(),
+                // An unrecognised word declares nothing; the coordinates
+                // decide below.
+                _ => {}
+            }
         }
-        return match it.next().map(str::to_ascii_uppercase).as_deref() {
-            Some("DEGREES") => "EPSG:4326".to_string(),
-            Some("FEET") | Some("METERS") | Some("NONE") => LOCAL_CRS.to_string(),
-            _ => "EPSG:4326".to_string(),
-        };
+        if in_coords {
+            let mut it = trimmed.split_whitespace();
+            let _id = it.next();
+            let (Some(Ok(x)), Some(Ok(y))) = (
+                it.next().map(str::parse::<f64>),
+                it.next().map(str::parse::<f64>),
+            ) else {
+                continue;
+            };
+            // The importer writes (0, 0) for an element with no
+            // coordinate at all; placeholders say nothing.
+            if x == 0.0 && y == 0.0 {
+                continue;
+            }
+            let fits = (-180.0..=180.0).contains(&x) && (-90.0..=90.0).contains(&y);
+            all_lat_lng = Some(all_lat_lng.unwrap_or(true) && fits);
+        }
     }
-    "EPSG:4326".to_string()
+    // Undeclared: geographic only when the numbers could actually be
+    // degrees — every coordinate inside longitude/latitude ranges. A
+    // model whose coordinates rule that out, or that carries none at
+    // all, is a drawing grid until its author says otherwise: painting a
+    // basemap under a synthesized schematic — or placing a metric survey
+    // at null island — asserts an earth placement nobody chose.
+    match all_lat_lng {
+        Some(true) => "EPSG:4326".to_string(),
+        _ => LOCAL_CRS.to_string(),
+    }
 }
 
 /// The unit system a target's own model declares — `"si"` or `"us"`.
@@ -2495,7 +2533,7 @@ mod tests {
     /// local drawing grid must not be handed WGS84 — which would assert
     /// that a site grid in feet is longitude and latitude.
     #[test]
-    fn the_map_units_line_decides_a_new_project_crs() {
+    fn map_units_then_coordinates_decide_a_new_project_crs() {
         let with_units = |u: &str| {
             format!("[TITLE]\nx\n[MAP]\nDIMENSIONS 0 0 100 100\nUnits {u}\n[JUNCTIONS]\nJ1 1 1\n")
         };
@@ -2510,9 +2548,34 @@ mod tests {
             source_crs_for_model(with_units("Degrees").as_bytes()),
             "EPSG:4326",
         );
-        // Nothing to read: WGS84 stays the guess, correctable by the user.
+        // Nothing to read at all: a drawing grid, never a datum nobody
+        // chose — a coordinate-less model has no earth placement.
         assert_eq!(
             source_crs_for_model(b"[TITLE]\nx\n[JUNCTIONS]\nJ1 1 1\n"),
+            LOCAL_CRS,
+        );
+        // Undeclared units, coordinates that fit degrees: geographic.
+        assert_eq!(
+            source_crs_for_model(
+                b"[JUNCTIONS]\nJ1 1 1\n[COORDINATES]\nJ1 -122.41 37.77\nJ2 -122.40 37.78\n"
+            ),
+            "EPSG:4326",
+        );
+        // Undeclared units, coordinates degrees cannot hold: a grid.
+        assert_eq!(
+            source_crs_for_model(
+                b"[JUNCTIONS]\nJ1 1 1\n[COORDINATES]\nJ1 5500 8300\nJ2 -122.40 37.78\n"
+            ),
+            LOCAL_CRS,
+        );
+        // Placeholders alone say nothing: still a grid.
+        assert_eq!(
+            source_crs_for_model(b"[COORDINATES]\nJ1 0 0\nJ2 0 0\n"),
+            LOCAL_CRS,
+        );
+        // A declaration outranks the numbers, in both directions.
+        assert_eq!(
+            source_crs_for_model(b"[MAP]\nUnits Degrees\n[COORDINATES]\nJ1 5500 8300\n"),
             "EPSG:4326",
         );
         // UNITS belongs to [MAP]; the same word elsewhere must not steal it.
