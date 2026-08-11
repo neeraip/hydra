@@ -295,8 +295,18 @@ pub fn create_project(
         &app_data, &id, name, engine, &inp_bytes, node_count, link_count,
     )?;
     // The auxiliary records gathered at import travel into the bundle,
-    // where the run queue reads them (§12.1).
-    super::aux_files::write_aux_files(&app_data, &id, &aux_files)?;
+    // where the run queue reads them (§12.1). A failure here does not
+    // fail the creation: the project is on disk and openable, and a run
+    // that needs the missing record already refuses by name. Returning
+    // an error instead left the wizard reporting failure for a project
+    // the user would later find sitting in their list.
+    if let Err(e) = super::aux_files::write_aux_files(&app_data, &id, &aux_files) {
+        tracing::warn!(
+            project = %id,
+            error = %e,
+            "project created, but its data files could not be written into the bundle"
+        );
+    }
     Ok(project)
 }
 

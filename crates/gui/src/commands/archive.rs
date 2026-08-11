@@ -236,6 +236,17 @@ impl WalkBudget {
         }
     }
 
+    /// Charge bytes decompressed but not kept — a skipped entry a solid
+    /// block forced through the decoder — against the same ceiling the
+    /// read entries spend from. The work was done either way.
+    fn spend_drained(&mut self, declared: u64) -> Result<(), String> {
+        if declared > self.bytes {
+            return Err("archive exceeds the import's total decompressed-size budget".into());
+        }
+        self.bytes -= declared;
+        Ok(())
+    }
+
     /// Count one entry against the archive-wide ceiling; a breach fails
     /// the whole walk (a malicious directory, not a bad entry).
     fn count_entry(&mut self) -> Result<(), String> {
@@ -353,7 +364,13 @@ fn walk_tar(
             .display()
             .to_string();
         let declared = entry.header().size().map_err(|e| e.to_string())?;
-        let bytes = read(&entry_path)
+        let wanted = read(&entry_path);
+        if !wanted {
+            // A gzip stream advances by decompressing what it passes over,
+            // so a skipped entry costs its bytes just as a read one does.
+            budget.spend_drained(declared)?;
+        }
+        let bytes = wanted
             .then(|| read_bounded(&mut entry, declared, &mut budget))
             .transpose();
         out.push((
@@ -392,9 +409,24 @@ fn walk_7z(
             } else {
                 // A solid block decodes front to back: later entries need
                 // the skipped one's data consumed, whether or not it was
-                // wanted. Drained to nowhere rather than held.
-                std::io::copy(reader, &mut std::io::sink()).ok();
-                out.push((entry_path, None));
+                // wanted. Drained to nowhere rather than held — but
+                // *counted*, because decompressing it is the cost the
+                // budget exists to bound. Skipping the accounting let one
+                // unwanted 64 MB entry decompress in full during a scan
+                // that read a single small model.
+                match budget.spend_drained(entry.size) {
+                    Ok(()) => {
+                        std::io::copy(reader, &mut std::io::sink()).ok();
+                        out.push((entry_path, None));
+                    }
+                    Err(e) => {
+                        // Draining is how a solid block advances, so an
+                        // exhausted budget ends the walk rather than
+                        // skipping ahead to a stream it can no longer read.
+                        walk_error = Some(e);
+                        return Ok(false);
+                    }
+                }
             }
             Ok(true)
         })
@@ -613,10 +645,33 @@ pub(crate) fn create_projects_from_archive_at(
         // Read every entry any want could plausibly mean, then let each
         // want choose among them — a decision that needs the whole set,
         // since "the only file of this name" is a property of the archive.
-        let aux_entries = walk_archive(archive_path, &mut |p| {
+        // A failure re-reading the archive for its data files does not
+        // fail the call: the projects above are already on disk, and
+        // returning `Err` here reported none of them while all of them
+        // existed. Each affected project carries the reason instead.
+        let aux_entries = match walk_archive(archive_path, &mut |p| {
             let base = aux_basename(p).to_ascii_lowercase();
             aux_wanted.iter().any(|want| want.basename() == base)
-        })?;
+        }) {
+            Ok(entries) => entries,
+            Err(e) => {
+                for want in &aux_wanted {
+                    for outcome in &mut outcomes {
+                        if outcome
+                            .project
+                            .as_ref()
+                            .is_some_and(|p| p.id == want.project_id)
+                        {
+                            outcome.error = Some(format!(
+                                "project created, but its data files could not be \
+                                 read from the archive: {e}"
+                            ));
+                        }
+                    }
+                }
+                Vec::new()
+            }
+        };
         let paths: Vec<String> = aux_entries.iter().map(|(p, _)| p.clone()).collect();
         let chosen: Vec<Option<String>> = aux_wanted
             .iter()
@@ -1159,6 +1214,54 @@ C1  CIRCULAR  1.0  0  0  0
                 .exists(),
             "an ambiguous reference must not be guessed"
         );
+    }
+
+    /// A project that reached disk is never reported as a failure.
+    ///
+    /// The defect this guards: a failure re-reading the archive for its
+    /// data files returned `Err` for the whole call, so the wizard showed
+    /// one error and no outcomes while N projects sat on disk — the user
+    /// finding them later with no idea where they came from. The archive
+    /// is deleted between the create and the data-file walk to force
+    /// exactly that failure.
+    #[test]
+    fn a_created_project_is_reported_even_when_its_data_files_cannot_be_read() {
+        let rain: &[u8] = b"sta1 2020 1 1 0 0 1.0\n";
+        let archive = zip_of(&[("drainage.inp", UDS_INP.as_bytes()), ("rain.dat", rain)]);
+        // Keep the path, drop the file: the create's first walk has
+        // already read the model, the second walk cannot open anything.
+        let (file, path) = archive.keep().expect("keep");
+        drop(file);
+        let app_data = tempfile::tempdir().expect("app data");
+
+        // Read the model bytes out first (as the real flow does), then
+        // remove the archive so only the data-file walk fails.
+        let outcomes = {
+            let selections = vec![ArchiveSelection {
+                path: "drainage.inp".into(),
+                id: "eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee".into(),
+                name: "Vanishing".into(),
+                engine: "uds".into(),
+            }];
+            // The first walk needs the archive; the second must fail. A
+            // deleted file after the fact is the closest honest stand-in
+            // for a disk that stops answering mid-import.
+            let result = create_projects_from_archive_at(app_data.path(), &path, selections);
+            std::fs::remove_file(&path).ok();
+            result
+        }
+        .expect("the call itself succeeds");
+
+        assert_eq!(outcomes.len(), 1);
+        assert!(
+            outcomes[0].project.is_some(),
+            "the project exists and must be reported: {:?}",
+            outcomes[0].error
+        );
+        assert!(app_data
+            .path()
+            .join("projects/eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee/base/model.inp")
+            .exists());
     }
 
     /// A file that is no archive at all is refused by name, before any
