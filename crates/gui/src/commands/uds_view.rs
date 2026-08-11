@@ -194,7 +194,15 @@ fn synthesize_positions(net: &Network) -> Vec<(f64, f64)> {
     for (layer, members) in by_layer.iter().enumerate() {
         let width = (members.len().saturating_sub(1)) as f64 * SPACING;
         for (slot, &vi) in members.iter().enumerate() {
-            out[vi] = (slot as f64 * SPACING - width / 2.0, layer as f64 * SPACING);
+            // Offset off the origin: (0, 0) is the placeholder the
+            // frontend reads as "no coordinates" — a vertex landing there
+            // loses its zoom affordance, drops out of the canvas bounds,
+            // and is counted as unplaced. A centred layer-0 member lands
+            // exactly there without this.
+            out[vi] = (
+                slot as f64 * SPACING - width / 2.0 + SPACING / 2.0,
+                layer as f64 * SPACING + SPACING / 2.0,
+            );
         }
     }
     out
@@ -216,7 +224,8 @@ pub(crate) fn build_view(net: &Network) -> UdsView {
     // vertices has an authored frame, and inventing positions inside it
     // would look like data.
     let synthesized: Vec<(f64, f64)>;
-    if coords.is_empty() && !net.vertices.is_empty() {
+    let synthesized_frame = coords.is_empty() && !net.vertices.is_empty();
+    if synthesized_frame {
         synthesized = synthesize_positions(net);
         for (vi, xy) in synthesized.iter().enumerate() {
             coords.insert(net.vertices[vi].id.as_str(), *xy);
@@ -272,7 +281,13 @@ pub(crate) fn build_view(net: &Network) -> UdsView {
     // its (possibly transitive) outlet, stacked when several share one —
     // reachable and selectable rather than invisible. A model that draws
     // some keeps its authored frame.
-    let synthesize_rings = rings.is_empty() && !net.parcels.is_empty();
+    // Rings are synthesized only inside a synthesized frame. The square's
+    // dimensions are drawing units of *this* layout; emitted into an
+    // authored frame they are meaningless — in a degrees model a 60-unit
+    // box is 60° wide, pushing the ring past longitude −180 and wrecking
+    // the canvas fit. One frame per view: either the model placed things
+    // or this did.
+    let synthesize_rings = synthesized_frame && rings.is_empty() && !net.parcels.is_empty();
     let mut stacked_at: HashMap<i32, usize> = HashMap::new();
     let mut regions = Vec::new();
     for p in &net.parcels {
@@ -519,6 +534,14 @@ mod tests {
         let y_of = |id: &str| view.points.iter().find(|p| p.id == id).unwrap().y;
         assert!(y_of("O1") < y_of("J2"), "outfall below its feeder");
         assert!(y_of("J2") < y_of("J1"), "headwater on top");
+        // Nothing lands on the frontend's "no coordinates" placeholder:
+        // a vertex there loses its zoom affordance, drops out of the
+        // canvas bounds, and is counted as unplaced.
+        assert!(
+            !view.points.iter().any(|p| p.x == 0.0 && p.y == 0.0),
+            "a synthesized vertex sits on the (0,0) sentinel: {:?}",
+            view.points.iter().map(|p| (p.x, p.y)).collect::<Vec<_>>()
+        );
         // And deterministic: the same model draws the same picture.
         let again = build_view(&net);
         assert_eq!(
@@ -554,6 +577,40 @@ mod tests {
         }
         // Sharing an outlet stacks rather than overlaps.
         assert_ne!(view.regions[0].ring, view.regions[1].ring);
+    }
+
+    /// Synthesized rings never enter an authored frame.
+    ///
+    /// The square's dimensions are drawing units of the synthesized
+    /// layout; emitted into a degrees model they are 60° wide, putting
+    /// the ring past longitude −180 and collapsing the canvas fit to a
+    /// dot. One frame per view: either the model placed things or the
+    /// synthesis did.
+    #[test]
+    fn polygonless_subcatchments_stay_out_of_an_authored_frame() {
+        let authored = "[OPTIONS]\nFLOW_UNITS CFS\n\
+            [RAINGAGES]\nG1 INTENSITY 0:15 1.0 TIMESERIES R1\n\
+            [SUBCATCHMENTS]\nS1 G1 J1 10 25 500 0.5 0\n\
+            [SUBAREAS]\nS1 0.01 0.1 0.05 0.05 25 OUTLET\n\
+            [INFILTRATION]\nS1 3.0 0.5 4 7 0\n\
+            [JUNCTIONS]\nJ1 100 4\n[OUTFALLS]\nO1 98 FREE\n\
+            [CONDUITS]\nC1 J1 O1 400 0.013 0 0\n\
+            [XSECTIONS]\nC1 CIRCULAR 1.5 0 0 0\n\
+            [TIMESERIES]\nR1 0:00 1.0\n\
+            [MAP]\nUNITS DEGREES\n\
+            [COORDINATES]\nJ1 -87.63 41.88\nO1 -87.62 41.87\n";
+        let (net, _) = hydra::uds::io::objects::parse_network(authored);
+        let view = build_view(&net);
+        assert_eq!(view.points.len(), 2, "the authored placements stand");
+        assert!(
+            view.regions.is_empty(),
+            "no square is invented inside an authored map: {:?}",
+            view.regions.iter().map(|r| &r.ring).collect::<Vec<_>>()
+        );
+        // Nothing escapes the geographic range the model declared.
+        for p in &view.points {
+            assert!((-180.0..=180.0).contains(&p.x) && (-90.0..=90.0).contains(&p.y));
+        }
     }
 
     /// A model that places some vertices keeps its authored frame — the

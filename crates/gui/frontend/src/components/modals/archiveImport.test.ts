@@ -92,12 +92,13 @@ describe("the left-behind summary", () => {
   });
 
   it("names the first few and counts the rest", () => {
-    expect(leftBehindSummary(["rain.dat"])).toBe(
-      "Not imported (not model files): rain.dat",
-    );
+    // It states what these entries are, and defers "imported or not" to
+    // the per-model rows — which now do carry a model's data files.
+    expect(leftBehindSummary(["rain.dat"])).toContain("rain.dat");
+    expect(leftBehindSummary(["rain.dat"])).not.toContain("Not imported");
     expect(
       leftBehindSummary(["a.dat", "b.dat", "c.txt", "d.txt", "e.txt"]),
-    ).toBe("Not imported (not model files): a.dat, b.dat, c.txt and 2 more");
+    ).toContain("and 2 more");
   });
 });
 

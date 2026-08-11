@@ -35,6 +35,7 @@ import {
   openAndLoadNetwork,
   type Project,
   type SidecarRef,
+  updateProjectCrs,
   useEngines,
   useNetworkVersion,
   type ValidationFinding,
@@ -312,6 +313,15 @@ export function NewProjectWizard({ onClose, initial = null }: Props) {
     // card here left the user with a phantom project backed by nothing on
     // disk. The in-memory fallback exists only for the plain-browser dev
     // server.
+    // The coordinate answer has to reach the persisted bundle: the
+    // backend's own guess reads the model, and the user is answering
+    // *because* the model's numbers were ambiguous. Without this the
+    // question was decoration — the radio moved and nothing followed.
+    if (persisted && coordsProjected && crsAnswer === "local") {
+      await updateProjectCrs(persisted.id, LOCAL_CRS);
+      persisted.sourceCrs = LOCAL_CRS;
+    }
+
     if (!persisted && isTauri()) return;
 
     const project: Project = persisted ?? {

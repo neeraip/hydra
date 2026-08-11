@@ -17,7 +17,7 @@
 
 use std::io::Read;
 
-use super::aux_files::{uds_sidecar_refs, SidecarRef};
+use super::aux_files::{aux_basename, uds_sidecar_refs, SidecarRef};
 use super::projects::{
     app_data_dir, parse_model_bytes, persist_new_project, require_gui_openable_engine, validate_id,
     ParsedModel, Project,
@@ -405,6 +405,84 @@ fn walk_7z(
     Ok(out)
 }
 
+/// One project's want of one auxiliary file: which project, which
+/// directory its model sits in, and the reference as the model wrote it.
+///
+/// Matching is anchored to the model's own directory precisely because a
+/// bare trailing name is ambiguous across an archive — `site1/rain.dat`
+/// and `site2/rain.dat` are different rainfall, and a basename-keyed
+/// carry gave both projects whichever the walk reached last.
+struct AuxWant {
+    project_id: String,
+    /// Directory prefix of the model entry, `""` at the archive root.
+    model_dir: String,
+    /// The name as the model wrote it, path and all.
+    referenced: String,
+}
+
+impl AuxWant {
+    /// Whether `entry_path` sits where this want's model would look: the
+    /// reference resolved against the model's own directory (the
+    /// predecessor's convention), or the trailing name within that same
+    /// directory. Never a bare name from elsewhere in the archive — see
+    /// [`AuxWant::basename`] for the case where elsewhere is allowed.
+    fn matches(&self, entry_path: &str) -> bool {
+        let joined = if self.model_dir.is_empty() {
+            self.referenced.replace('\\', "/")
+        } else {
+            format!("{}/{}", self.model_dir, self.referenced.replace('\\', "/"))
+        };
+        let entry = entry_path.replace('\\', "/");
+        if entry.eq_ignore_ascii_case(&joined) {
+            return true;
+        }
+        let beside = if self.model_dir.is_empty() {
+            aux_basename(&self.referenced).to_string()
+        } else {
+            format!("{}/{}", self.model_dir, aux_basename(&self.referenced))
+        };
+        entry.eq_ignore_ascii_case(&beside)
+    }
+
+    /// The trailing name this want is looking for, lowercased.
+    fn basename(&self) -> String {
+        aux_basename(&self.referenced).to_ascii_lowercase()
+    }
+
+    /// Resolve this want against the archive's entries: the model's own
+    /// directory first, and failing that a file of the same name
+    /// elsewhere — but only when the archive holds exactly one.
+    ///
+    /// Both halves are needed by real archives. A collection with
+    /// `models/net.inp` beside `data/rain.dat` has one plausible answer
+    /// and should just work; a collection with `site1/` and `site2/` each
+    /// holding a `rain.dat` has two, and guessing there is what fed one
+    /// catchment's storm to the other. Ambiguity resolves to the model's
+    /// own directory or to nothing at all.
+    fn resolve<'a>(&self, entries: &'a [String]) -> Option<&'a String> {
+        if let Some(strict) = entries.iter().find(|e| self.matches(e)) {
+            return Some(strict);
+        }
+        let base = self.basename();
+        let mut same_name = entries
+            .iter()
+            .filter(|e| aux_basename(e).eq_ignore_ascii_case(&base));
+        match (same_name.next(), same_name.next()) {
+            (Some(only), None) => Some(only),
+            _ => None,
+        }
+    }
+}
+
+/// The directory part of an archive entry path, `""` at the root.
+fn entry_dir(entry_path: &str) -> String {
+    let normalised = entry_path.replace('\\', "/");
+    match normalised.rfind('/') {
+        Some(i) => normalised[..i].to_string(),
+        None => String::new(),
+    }
+}
+
 /// The junk archive helpers scatter (macOS resource forks and the like) —
 /// silently irrelevant rather than listed as leftovers.
 fn is_archive_junk(file_name: &str) -> bool {
@@ -458,14 +536,17 @@ pub(crate) fn scan_archive_file(path: &std::path::Path) -> Result<ArchiveScan, S
     // A referenced auxiliary file counts as carried when the archive holds
     // an entry with the same trailing file name — the create step copies
     // it into the project by exactly this match.
-    let other_basenames: Vec<String> = others
-        .iter()
-        .map(|p| split_entry_name(p).0.to_ascii_lowercase())
-        .collect();
+    // Resolved the same way the create step resolves it: against the
+    // model's own directory, never by bare name across the archive.
     for model in &mut models {
+        let model_dir = entry_dir(&model.path);
         for sidecar in &mut model.sidecars {
-            let base = split_entry_name(&sidecar.file).0.to_ascii_lowercase();
-            sidecar.carried = other_basenames.contains(&base);
+            let want = AuxWant {
+                project_id: String::new(),
+                model_dir: model_dir.clone(),
+                referenced: sidecar.file.clone(),
+            };
+            sidecar.carried = sidecar.supported && others.iter().any(|entry| want.matches(entry));
         }
     }
     Ok(ArchiveScan {
@@ -495,20 +576,26 @@ pub(crate) fn create_projects_from_archive_at(
     let mut outcomes = Vec::with_capacity(selections.len());
     // Auxiliary files each created project references, by lowercased
     // trailing name: filled per selection, served by a second walk.
-    let mut aux_wanted: std::collections::HashMap<String, Vec<String>> =
-        std::collections::HashMap::new();
+    // One want per (project, reference): the *model's* directory decides
+    // which entry serves it, so two models in sibling folders each
+    // naming `rain.dat` get their own neighbour's file rather than
+    // whichever the walk saw last.
+    let mut aux_wanted: Vec<AuxWant> = Vec::new();
     for selection in selections {
         let bytes = entries
             .remove(&selection.path)
             .unwrap_or_else(|| Err(format!("archive has no entry {:?}", selection.path)));
+        let model_dir = entry_dir(&selection.path);
         let outcome = bytes.and_then(|bytes| create_one(app_data, bytes, &selection));
         if let Ok((_, sidecars)) = &outcome {
             for file in sidecars {
-                let base = split_entry_name(file).0.to_ascii_lowercase();
-                aux_wanted
-                    .entry(base)
-                    .or_default()
-                    .push(selection.id.clone());
+                aux_wanted.push(AuxWant {
+                    project_id: selection.id.clone(),
+                    model_dir: model_dir.clone(),
+                    // The name the model wrote — what the run path
+                    // derives its read from, so what the bundle stores.
+                    referenced: file.clone(),
+                });
             }
         }
         outcomes.push(ArchiveImportOutcome {
@@ -523,29 +610,42 @@ pub(crate) fn create_projects_from_archive_at(
     // bundle). A copy failure is loud but non-fatal: the project exists,
     // and its runs will name exactly what is missing.
     if !aux_wanted.is_empty() {
+        // Read every entry any want could plausibly mean, then let each
+        // want choose among them — a decision that needs the whole set,
+        // since "the only file of this name" is a property of the archive.
         let aux_entries = walk_archive(archive_path, &mut |p| {
-            let base = split_entry_name(p).0.to_ascii_lowercase();
-            aux_wanted.contains_key(&base)
+            let base = aux_basename(p).to_ascii_lowercase();
+            aux_wanted.iter().any(|want| want.basename() == base)
         })?;
+        let paths: Vec<String> = aux_entries.iter().map(|(p, _)| p.clone()).collect();
+        let chosen: Vec<Option<String>> = aux_wanted
+            .iter()
+            .map(|want| want.resolve(&paths).cloned())
+            .collect();
         for (entry_path, bytes) in aux_entries {
-            let base_name = split_entry_name(&entry_path).0.to_string();
             let Some(Ok(bytes)) = bytes else { continue };
-            let Some(project_ids) = aux_wanted.get(&base_name.to_ascii_lowercase()) else {
-                continue;
-            };
-            for id in project_ids {
-                let dir = crate::meta::bundle::aux_dir(app_data, id);
+            for want in aux_wanted
+                .iter()
+                .zip(&chosen)
+                .filter(|(_, c)| c.as_deref() == Some(entry_path.as_str()))
+                .map(|(w, _)| w)
+            {
+                let dir = crate::meta::bundle::aux_dir(app_data, &want.project_id);
+                let stored = aux_basename(&want.referenced);
                 let write = std::fs::create_dir_all(&dir)
                     .map_err(|e| e.to_string())
                     .and_then(|()| {
-                        crate::meta::bundle::atomic_write(&dir.join(&base_name), &bytes)
+                        crate::meta::bundle::atomic_write(&dir.join(stored), &bytes)
                             .map_err(|e| e.to_string())
                     });
                 if let Err(e) = write {
                     for outcome in &mut outcomes {
-                        if outcome.project.as_ref().is_some_and(|p| p.id == *id) {
-                            outcome.error =
-                                Some(format!("project created, but {base_name:?}: {e}"));
+                        if outcome
+                            .project
+                            .as_ref()
+                            .is_some_and(|p| p.id == want.project_id)
+                        {
+                            outcome.error = Some(format!("project created, but {stored:?}: {e}"));
                         }
                     }
                 }
@@ -947,6 +1047,118 @@ C1  CIRCULAR  1.0  0  0  0
         );
         // Only referenced files travel; the archive's other data does not.
         assert!(!aux.join("unrelated.dat").exists());
+    }
+
+    /// Two models in sibling folders, each naming `rain.dat`, get their
+    /// own neighbour's rainfall — not whichever the walk reached last.
+    ///
+    /// The defect this guards: the carry was keyed by bare trailing name
+    /// across the whole archive, so both projects received the same file
+    /// and one of them silently ran on the other catchment's storm.
+    #[test]
+    fn same_named_sidecars_in_sibling_folders_stay_with_their_own_model() {
+        let archive = zip_of(&[
+            ("site1/drainage.inp", UDS_INP.as_bytes()),
+            ("site1/rain.dat", b"sta1 2020 1 1 0 0 1.0\n"),
+            ("site2/drainage.inp", UDS_INP.as_bytes()),
+            ("site2/rain.dat", b"sta1 2020 1 1 0 0 9.0\n"),
+        ]);
+        let app_data = tempfile::tempdir().expect("app data");
+        let outcomes = create_projects_from_archive_at(
+            app_data.path(),
+            archive.path(),
+            vec![
+                ArchiveSelection {
+                    path: "site1/drainage.inp".into(),
+                    id: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa".into(),
+                    name: "One".into(),
+                    engine: "uds".into(),
+                },
+                ArchiveSelection {
+                    path: "site2/drainage.inp".into(),
+                    id: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb".into(),
+                    name: "Two".into(),
+                    engine: "uds".into(),
+                },
+            ],
+        )
+        .expect("create");
+        assert!(outcomes.iter().all(|o| o.project.is_some()), "{outcomes:?}");
+
+        let rain_of = |id: &str| {
+            std::fs::read_to_string(
+                app_data
+                    .path()
+                    .join("projects")
+                    .join(id)
+                    .join("base/aux/rain.dat"),
+            )
+            .expect("carried")
+        };
+        assert!(
+            rain_of("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa").contains("1.0"),
+            "project One got its own catchment's rain"
+        );
+        assert!(
+            rain_of("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb").contains("9.0"),
+            "project Two got its own catchment's rain"
+        );
+    }
+
+    /// A reference resolves to a file elsewhere in the archive only when
+    /// the archive holds exactly one of that name — the `models/` beside
+    /// `data/` layout works, and the ambiguous one does not guess.
+    #[test]
+    fn a_sidecar_elsewhere_is_carried_only_when_it_is_unambiguous() {
+        let unique = zip_of(&[
+            ("models/drainage.inp", UDS_INP.as_bytes()),
+            ("data/rain.dat", b"sta1 2020 1 1 0 0 4.0\n"),
+        ]);
+        let app_data = tempfile::tempdir().expect("app data");
+        create_projects_from_archive_at(
+            app_data.path(),
+            unique.path(),
+            vec![ArchiveSelection {
+                path: "models/drainage.inp".into(),
+                id: "cccccccc-cccc-cccc-cccc-cccccccccccc".into(),
+                name: "Unique".into(),
+                engine: "uds".into(),
+            }],
+        )
+        .expect("create");
+        assert!(std::fs::read_to_string(
+            app_data
+                .path()
+                .join("projects/cccccccc-cccc-cccc-cccc-cccccccccccc/base/aux/rain.dat")
+        )
+        .expect("carried from data/")
+        .contains("4.0"));
+
+        // Two candidates, neither beside the model: no guess is made.
+        let ambiguous = zip_of(&[
+            ("models/drainage.inp", UDS_INP.as_bytes()),
+            ("a/rain.dat", b"sta1 2020 1 1 0 0 1.0\n"),
+            ("b/rain.dat", b"sta1 2020 1 1 0 0 9.0\n"),
+        ]);
+        let app2 = tempfile::tempdir().expect("app data");
+        create_projects_from_archive_at(
+            app2.path(),
+            ambiguous.path(),
+            vec![ArchiveSelection {
+                path: "models/drainage.inp".into(),
+                id: "dddddddd-dddd-dddd-dddd-dddddddddddd".into(),
+                name: "Ambiguous".into(),
+                engine: "uds".into(),
+            }],
+        )
+        .expect("create");
+        assert!(
+            !app2
+                .path()
+                .join("projects/dddddddd-dddd-dddd-dddd-dddddddddddd/base/aux/rain.dat")
+                .exists(),
+            "an ambiguous reference must not be guessed"
+        );
     }
 
     /// A file that is no archive at all is refused by name, before any

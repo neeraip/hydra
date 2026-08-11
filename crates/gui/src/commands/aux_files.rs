@@ -185,7 +185,10 @@ C1  CIRCULAR  1.0  0  0  0
             unreachable!()
         };
         assert_eq!(aux_files.len(), 1);
-        assert_eq!(aux_files[0].0, "RAIN.DAT");
+        // Stored under the name the *model* wrote, not the picked file's:
+        // the run path reads `rain.dat`, and on a case-sensitive
+        // filesystem `RAIN.DAT` would be a different file.
+        assert_eq!(aux_files[0].0, "rain.dat");
     }
 
     #[test]

@@ -130,14 +130,16 @@ export function sidecarNote(
 }
 
 /**
- * The footer's one-line account of what a scan found beyond the models,
- * empty when there is nothing to say. Named because it is a statement
- * about data loss — sidecar files do not travel into projects yet — and
- * that sentence should not be composable differently by two call sites.
+ * The footer's one-line account of the archive's non-model entries.
+ *
+ * It must not claim these are left behind: the data files a selected
+ * model references *are* carried now, and the rows say so per model. So
+ * the footer states what these entries are — everything that is not a
+ * model — and leaves "imported or not" to the row that knows.
  */
 export function leftBehindSummary(others: string[]): string {
   if (others.length === 0) return "";
   const shown = others.slice(0, 3).join(", ");
   const more = others.length > 3 ? ` and ${others.length - 3} more` : "";
-  return `Not imported (not model files): ${shown}${more}`;
+  return `Other files in this archive: ${shown}${more} — imported only where a selected model reads them`;
 }

@@ -111,9 +111,10 @@ describe("ImportArchiveWizard", () => {
         }) as HTMLButtonElement
       ).disabled,
     ).toBe(false);
-    // What the archive carries but the import does not.
+    // The footer names the archive's other files without contradicting
+    // the rows, which say per model whether each is carried.
     expect(
-      screen.getByText("Not imported (not model files): rain.dat"),
+      screen.getByText(/Other files in this archive: rain\.dat/),
     ).toBeTruthy();
   });
 

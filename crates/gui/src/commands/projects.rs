@@ -2000,6 +2000,8 @@ fn load_model_bytes(
                     let found = std::fs::read(dir.join(&source.file))
                         .or_else(|_| std::fs::read(dir.join(&base)));
                     if let Ok(bytes) = found {
+                        // Stored under the name the *model* wrote, which
+                        // is what the run path derives its read from.
                         aux_files.push((base, bytes));
                     }
                 }
@@ -2054,8 +2056,14 @@ pub(crate) fn attach_aux_bytes(
             reference.label
         ));
     }
-    aux_files.retain(|(name, _)| !name.eq_ignore_ascii_case(&base));
-    aux_files.push((base, bytes));
+    // Stored under the name the *model* wrote, not the name of the file
+    // the user happened to pick: the run path derives its read from the
+    // model's reference, so `RAIN.DAT` attached for a model saying
+    // `rain.dat` must land as `rain.dat` — a difference invisible on a
+    // case-insensitive filesystem and fatal on any other.
+    let stored = super::aux_files::aux_basename(&reference.file).to_string();
+    aux_files.retain(|(name, _)| !name.eq_ignore_ascii_case(&stored));
+    aux_files.push((stored, bytes));
     let gathered: Vec<String> = aux_files.iter().map(|(n, _)| n.clone()).collect();
     Ok(super::aux_files::sidecar_status(network, &gathered))
 }
