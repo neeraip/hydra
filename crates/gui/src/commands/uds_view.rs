@@ -129,11 +129,99 @@ fn link_kind(kind: &LinkKind) -> &'static str {
 /// elements. Elements without geometry are omitted; identifiers resolve
 /// case-insensitively nowhere — display sections quote ids as written,
 /// exactly as the model stores them.
+/// A deterministic schematic for a model that places nothing (see
+/// `build_view`): vertices in layers by hop distance from the outfalls —
+/// water at the bottom, headwaters at the top — spread evenly within
+/// each layer, unconnected components continuing beyond the deepest
+/// layer. Distances are arbitrary drawing units; the frontend fits the
+/// view to whatever bounds arrive.
+fn synthesize_positions(net: &Network) -> Vec<(f64, f64)> {
+    const SPACING: f64 = 100.0;
+    let n = net.vertices.len();
+    let mut neighbours: Vec<Vec<usize>> = vec![Vec::new(); n];
+    for l in &net.links {
+        neighbours[l.from].push(l.to);
+        neighbours[l.to].push(l.from);
+    }
+    // Layer 0: the outfalls — or, in a network without one, vertex 0.
+    let mut depth = vec![usize::MAX; n];
+    let mut queue = std::collections::VecDeque::new();
+    for (vi, v) in net.vertices.iter().enumerate() {
+        if matches!(v.kind, VertexKind::Outfall { .. }) {
+            depth[vi] = 0;
+            queue.push_back(vi);
+        }
+    }
+    if queue.is_empty() {
+        depth[0] = 0;
+        queue.push_back(0);
+    }
+    let mut deepest = 0;
+    while let Some(vi) = queue.pop_front() {
+        for &next in &neighbours[vi] {
+            if depth[next] == usize::MAX {
+                depth[next] = depth[vi] + 1;
+                deepest = deepest.max(depth[next]);
+                queue.push_back(next);
+            }
+        }
+    }
+    // Components the outfall search never reached: stacked in their own
+    // layers beyond the deepest, registration order.
+    for vi in 0..n {
+        if depth[vi] == usize::MAX {
+            deepest += 1;
+            depth[vi] = deepest;
+            let mut q = std::collections::VecDeque::from([vi]);
+            while let Some(u) = q.pop_front() {
+                for &next in &neighbours[u] {
+                    if depth[next] == usize::MAX {
+                        depth[next] = depth[u] + 1;
+                        deepest = deepest.max(depth[next]);
+                        q.push_back(next);
+                    }
+                }
+            }
+        }
+    }
+    // Within each layer, registration order, centred about x = 0; depth
+    // grows upward so outfalls sit at the bottom of the drawing.
+    let mut by_layer: Vec<Vec<usize>> = vec![Vec::new(); deepest + 1];
+    for vi in 0..n {
+        by_layer[depth[vi]].push(vi);
+    }
+    let mut out = vec![(0.0, 0.0); n];
+    for (layer, members) in by_layer.iter().enumerate() {
+        let width = (members.len().saturating_sub(1)) as f64 * SPACING;
+        for (slot, &vi) in members.iter().enumerate() {
+            out[vi] = (slot as f64 * SPACING - width / 2.0, layer as f64 * SPACING);
+        }
+    }
+    out
+}
+
 pub(crate) fn build_view(net: &Network) -> UdsView {
     // [COORDINATES]: vertex id → map position.
-    let coords: HashMap<&str, (f64, f64)> = parse_xy_lines(net, "[COORDINATES]")
+    let mut coords: HashMap<&str, (f64, f64)> = parse_xy_lines(net, "[COORDINATES]")
         .map(|(id, x, y)| (id, (x, y)))
         .collect();
+
+    // A model may carry no map placement at all — display sections are
+    // optional, and a hand-written or tutorial file often omits them. An
+    // element the viewer drops is an element the network list, canvas,
+    // and details cannot reach, so a placement is synthesized instead:
+    // vertices layered by hop distance from the outfalls, which reads as
+    // the schematic of a drainage network draining downward. Only the
+    // all-missing case is synthesized — a model that places *some*
+    // vertices has an authored frame, and inventing positions inside it
+    // would look like data.
+    let synthesized: Vec<(f64, f64)>;
+    if coords.is_empty() && !net.vertices.is_empty() {
+        synthesized = synthesize_positions(net);
+        for (vi, xy) in synthesized.iter().enumerate() {
+            coords.insert(net.vertices[vi].id.as_str(), *xy);
+        }
+    }
 
     let mut points = Vec::new();
     let mut point_index: HashMap<&str, i32> = HashMap::new();
@@ -179,24 +267,60 @@ pub(crate) fn build_view(net: &Network) -> UdsView {
     for (id, x, y) in parse_xy_lines(net, "[POLYGONS]") {
         rings.entry(id).or_default().push([x, y]);
     }
+    // The same optional-section rule as coordinates: a model that draws
+    // no polygons at all gets each subcatchment as a small square beside
+    // its (possibly transitive) outlet, stacked when several share one —
+    // reachable and selectable rather than invisible. A model that draws
+    // some keeps its authored frame.
+    let synthesize_rings = rings.is_empty() && !net.parcels.is_empty();
+    let mut stacked_at: HashMap<i32, usize> = HashMap::new();
     let mut regions = Vec::new();
     for p in &net.parcels {
-        let Some(ring) = rings.get(p.id.as_str()) else {
-            continue;
-        };
-        if ring.len() < 3 {
-            continue;
-        }
-        let outlet = match p.outlet {
-            ParcelOutlet::Vertex(vi) => {
-                *point_index.get(net.vertices[vi].id.as_str()).unwrap_or(&-1)
+        // Cascades resolve to the vertex the chain finally drains to.
+        let outlet_vertex = {
+            let mut hops = 0;
+            let mut current = p;
+            loop {
+                match current.outlet {
+                    ParcelOutlet::Vertex(vi) => break Some(vi),
+                    ParcelOutlet::Parcel(pi) => {
+                        hops += 1;
+                        if hops > net.parcels.len() {
+                            break None;
+                        }
+                        current = &net.parcels[pi];
+                    }
+                }
             }
-            ParcelOutlet::Parcel(_) => -1,
+        };
+        let outlet = outlet_vertex
+            .and_then(|vi| point_index.get(net.vertices[vi].id.as_str()).copied())
+            .unwrap_or(-1);
+        let ring: Vec<[f64; 2]> = match rings.get(p.id.as_str()) {
+            Some(ring) if ring.len() >= 3 => ring.clone(),
+            Some(_) => continue,
+            None if synthesize_rings && outlet >= 0 => {
+                let (cx, cy) = {
+                    let anchor = &points[outlet as usize];
+                    let stack = stacked_at.entry(outlet).or_insert(0);
+                    let slot = *stack;
+                    *stack += 1;
+                    (anchor.x - 70.0 - 75.0 * slot as f64, anchor.y + 55.0)
+                };
+                let r = 30.0;
+                vec![
+                    [cx - r, cy - r],
+                    [cx + r, cy - r],
+                    [cx + r, cy + r],
+                    [cx - r, cy + r],
+                ]
+            }
+            None => continue,
         };
         regions.push(ViewRegion {
             kind: "subcatchment",
             id: p.id.clone(),
-            ring: ring.clone(),
+            ring,
             outlet,
         });
     }
@@ -372,16 +496,78 @@ mod tests {
         assert_eq!(x0, 10.0);
     }
 
+    /// A model that places nothing still views completely.
+    ///
+    /// This reverses this module's earlier stance ("renders empty, not
+    /// broken"): in practice an empty view *was* broken — no canvas, no
+    /// network list, no way to reach any element — for a perfectly valid
+    /// model whose author never opened a map. Display sections are
+    /// optional; the elements are not.
     #[test]
-    fn a_model_without_a_map_renders_empty_not_broken() {
-        let bare = "[OPTIONS]\nFLOW_UNITS CFS\n[JUNCTIONS]\nJ1 100 4\n\
-                    [OUTFALLS]\nO1 98 FREE\n[CONDUITS]\nC1 J1 O1 400 0.013 0 0\n\
-                    [XSECTIONS]\nC1 CIRCULAR 1.5 0 0 0\n";
-        let (net, _) = hydra::uds::io::objects::parse_network(bare);
+    fn a_model_without_a_map_views_via_a_synthesized_schematic() {
+        let bare = "[OPTIONS]\nFLOW_UNITS CFS\n[JUNCTIONS]\nJ1 100 4\nJ2 99 4\n\
+                    [OUTFALLS]\nO1 98 FREE\n[CONDUITS]\nC1 J1 J2 400 0.013 0 0\n\
+                    C2 J2 O1 400 0.013 0 0\n\
+                    [XSECTIONS]\nC1 CIRCULAR 1.5 0 0 0\nC2 CIRCULAR 1.5 0 0 0\n";
+        let (net, diags) = hydra::uds::io::objects::parse_network(bare);
+        assert!(!diags.iter().any(|d| d.kind.is_error()), "{diags:?}");
         let view = build_view(&net);
-        assert!(view.points.is_empty());
-        assert!(view.polylines.is_empty());
-        assert!(view.regions.is_empty());
-        assert!(encode_uds_snapshot(&view).len() > 48);
+        assert_eq!(view.points.len(), 3, "every vertex is placed");
+        assert_eq!(view.polylines.len(), 2, "every link is drawable");
+        // The layout is a schematic: the outfall at the bottom, its
+        // upstream chain layered above it.
+        let y_of = |id: &str| view.points.iter().find(|p| p.id == id).unwrap().y;
+        assert!(y_of("O1") < y_of("J2"), "outfall below its feeder");
+        assert!(y_of("J2") < y_of("J1"), "headwater on top");
+        // And deterministic: the same model draws the same picture.
+        let again = build_view(&net);
+        assert_eq!(
+            view.points.iter().map(|p| (p.x, p.y)).collect::<Vec<_>>(),
+            again.points.iter().map(|p| (p.x, p.y)).collect::<Vec<_>>(),
+        );
+    }
+
+    /// Subcatchments of a polygon-less model appear as squares beside
+    /// their outlets — reachable and selectable rather than invisible —
+    /// including through a cascade, which anchors to the vertex the
+    /// chain finally drains to.
+    #[test]
+    fn polygonless_subcatchments_are_placed_beside_their_outlets() {
+        let inp = "[OPTIONS]\nFLOW_UNITS CFS\n\
+            [RAINGAGES]\nG1 INTENSITY 0:15 1.0 TIMESERIES R1\n\
+            [SUBCATCHMENTS]\nS1 G1 J1 10 25 500 0.5 0\nS2 G1 S1 5 25 300 0.5 0\n\
+            [SUBAREAS]\nS1 0.01 0.1 0.05 0.05 25 OUTLET\n\
+            S2 0.01 0.1 0.05 0.05 25 OUTLET\n\
+            [INFILTRATION]\nS1 3.0 0.5 4 7 0\nS2 3.0 0.5 4 7 0\n\
+            [JUNCTIONS]\nJ1 100 4\n[OUTFALLS]\nO1 98 FREE\n\
+            [CONDUITS]\nC1 J1 O1 400 0.013 0 0\n\
+            [XSECTIONS]\nC1 CIRCULAR 1.5 0 0 0\n\
+            [TIMESERIES]\nR1 0:00 1.0\n";
+        let (net, diags) = hydra::uds::io::objects::parse_network(inp);
+        assert!(!diags.iter().any(|d| d.kind.is_error()), "{diags:?}");
+        let view = build_view(&net);
+        assert_eq!(view.regions.len(), 2, "both subcatchments visible");
+        for region in &view.regions {
+            assert_eq!(region.ring.len(), 4, "a square each");
+            let anchor = &view.points[region.outlet as usize];
+            assert_eq!(anchor.id, "J1", "anchored to the draining vertex");
+        }
+        // Sharing an outlet stacks rather than overlaps.
+        assert_ne!(view.regions[0].ring, view.regions[1].ring);
+    }
+
+    /// A model that places some vertices keeps its authored frame — the
+    /// synthesis covers only the nothing-placed case, because invented
+    /// positions inside an authored map would look like data.
+    #[test]
+    fn authored_coordinates_are_never_mixed_with_synthesis() {
+        let partial = "[OPTIONS]\nFLOW_UNITS CFS\n[JUNCTIONS]\nJ1 100 4\n\
+                    [OUTFALLS]\nO1 98 FREE\n[CONDUITS]\nC1 J1 O1 400 0.013 0 0\n\
+                    [XSECTIONS]\nC1 CIRCULAR 1.5 0 0 0\n\
+                    [COORDINATES]\nJ1 100 200\n";
+        let (net, _) = hydra::uds::io::objects::parse_network(partial);
+        let view = build_view(&net);
+        assert_eq!(view.points.len(), 1, "only the authored placement");
+        assert_eq!(view.points[0].id, "J1");
     }
 }
