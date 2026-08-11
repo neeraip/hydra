@@ -81,34 +81,75 @@ pub(crate) fn run(args: &RunArgs, cli: &Cli, bytes: &[u8]) -> i32 {
         _ => Vec::new(),
     };
 
+    // External rain records (§14.12): one read per distinct file a gage
+    // names, resolved beside the model like every auxiliary file.
+    let mut rain_files: Vec<(String, Vec<hydra::uds::io::rain::RainReading>)> = Vec::new();
+    for gage in &net.gages {
+        let hydra::uds::model::GageSource::File { file, .. } = &gage.source else {
+            continue;
+        };
+        if rain_files.iter().any(|(name, _)| name == file) {
+            continue;
+        }
+        let path = match resolve_aux_path(&args.model, file) {
+            Ok(p) => p,
+            Err(code) => return code,
+        };
+        let rain_text = match std::fs::read_to_string(&path) {
+            Ok(t) => t,
+            Err(e) => {
+                emit_error(
+                    "io/rain",
+                    &format!("rain record {}: {e}", path.display()),
+                    None,
+                    None,
+                );
+                return EXIT_IO;
+            }
+        };
+        match hydra::uds::io::rain::parse_rain_file(&rain_text) {
+            Ok(readings) => rain_files.push((file.clone(), readings)),
+            Err(e) => {
+                emit_error(
+                    "input/rain",
+                    &format!("rain record {}: {e}", path.display()),
+                    None,
+                    None,
+                );
+                return EXIT_INPUT;
+            }
+        }
+    }
+
     // ── Open: parse, validate, build ──────────────────────────────────────────
-    let (mut sim, diags, findings) = match Simulation::open_with_climate(&text, climate_records) {
-        Ok(session) => session,
-        Err(OpenError::Parse(diags)) => {
-            for d in diags.iter().filter(|d| d.kind.is_error()) {
-                emit_error("input/parse", &d.to_string(), None, None);
+    let (mut sim, diags, findings) =
+        match Simulation::open_with_files(&text, climate_records, rain_files) {
+            Ok(session) => session,
+            Err(OpenError::Parse(diags)) => {
+                for d in diags.iter().filter(|d| d.kind.is_error()) {
+                    emit_error("input/parse", &d.to_string(), None, None);
+                }
+                return EXIT_INPUT;
             }
-            return EXIT_INPUT;
-        }
-        Err(OpenError::Validation(findings)) => {
-            for v in findings.iter().filter(|v| v.kind.is_error()) {
-                emit_error("validation/network", &v.to_string(), None, None);
+            Err(OpenError::Validation(findings)) => {
+                for v in findings.iter().filter(|v| v.kind.is_error()) {
+                    emit_error("validation/network", &v.to_string(), None, None);
+                }
+                return EXIT_INPUT;
             }
-            return EXIT_INPUT;
-        }
-        Err(OpenError::Routing(r)) => {
-            emit_error("input/unsupported", &r.to_string(), None, None);
-            return EXIT_INPUT;
-        }
-        Err(OpenError::Surface(s)) => {
-            emit_error("input/unsupported", &s.to_string(), None, None);
-            return EXIT_INPUT;
-        }
-        Err(OpenError::Controls(msg)) | Err(OpenError::Transport(msg)) => {
-            emit_error("input/unsupported", &msg, None, None);
-            return EXIT_INPUT;
-        }
-    };
+            Err(OpenError::Routing(r)) => {
+                emit_error("input/unsupported", &r.to_string(), None, None);
+                return EXIT_INPUT;
+            }
+            Err(OpenError::Surface(s)) => {
+                emit_error("input/unsupported", &s.to_string(), None, None);
+                return EXIT_INPUT;
+            }
+            Err(OpenError::Controls(msg)) | Err(OpenError::Transport(msg)) => {
+                emit_error("input/unsupported", &msg, None, None);
+                return EXIT_INPUT;
+            }
+        };
 
     // Warning-class import and validation findings, before the run so they
     // are visible even if it is long.
