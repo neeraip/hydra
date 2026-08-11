@@ -1,6 +1,6 @@
 [package]
 name = "hydra-gui"
-version = "2.15.1"
+version = "2.16.0"
 edition.workspace = true
 authors.workspace = true
 license.workspace = true
