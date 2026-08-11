@@ -24,11 +24,17 @@ describe("SidecarChecklist", () => {
         busy={false}
         onLocate={onLocate}
         sidecars={[
-          { file: "rain.dat", label: 'rain file "rain.dat"', carried: true },
+          {
+            file: "rain.dat",
+            label: 'rain file "rain.dat"',
+            carried: true,
+            supported: true,
+          },
           {
             file: "climate.txt",
             label: 'climate file "climate.txt"',
             carried: false,
+            supported: true,
           },
         ]}
       />,
@@ -47,7 +53,12 @@ describe("SidecarChecklist", () => {
         busy={true}
         onLocate={() => {}}
         sidecars={[
-          { file: "a.dat", label: 'rain file "a.dat"', carried: false },
+          {
+            file: "a.dat",
+            label: 'rain file "a.dat"',
+            carried: false,
+            supported: true,
+          },
         ]}
       />,
     );
@@ -55,5 +66,28 @@ describe("SidecarChecklist", () => {
       (screen.getByRole("button", { name: "Locate…" }) as HTMLButtonElement)
         .disabled,
     ).toBe(true);
+  });
+});
+
+describe("unsupported references", () => {
+  it("are named without a Locate button or a promise", () => {
+    render(
+      <SidecarChecklist
+        busy={false}
+        onLocate={() => {}}
+        sidecars={[
+          {
+            file: "ext.dat",
+            label: 'data series file "ext.dat"',
+            carried: true,
+            supported: false,
+          },
+        ]}
+      />,
+    );
+    expect(screen.getByText('data series file "ext.dat"')).toBeTruthy();
+    expect(screen.getByText("not supported yet")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Locate…" })).toBeNull();
+    expect(screen.queryByText("will be imported")).toBeNull();
   });
 });

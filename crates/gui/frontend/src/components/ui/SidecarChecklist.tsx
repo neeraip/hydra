@@ -51,7 +51,7 @@ export function SidecarChecklist({
               textAlign: "left",
             }}
           >
-            {sidecar.carried ? (
+            {sidecar.carried && sidecar.supported ? (
               <CheckIcon
                 aria-label="Included"
                 style={{
@@ -75,7 +75,17 @@ export function SidecarChecklist({
             <span style={{ flex: 1, overflowWrap: "anywhere" }}>
               {sidecar.label}
             </span>
-            {sidecar.carried ? (
+            {!sidecar.supported ? (
+              <span
+                style={{
+                  fontSize: "var(--text-sm)",
+                  color: "var(--status-warning)",
+                  flexShrink: 0,
+                }}
+              >
+                not supported yet
+              </span>
+            ) : sidecar.carried ? (
               <span
                 style={{
                   fontSize: "var(--text-sm)",
@@ -99,7 +109,7 @@ export function SidecarChecklist({
           </li>
         ))}
       </ul>
-      {sidecars.some((s) => !s.carried) && (
+      {sidecars.some((s) => s.supported && !s.carried) && (
         <div
           style={{
             fontSize: "var(--text-sm)",

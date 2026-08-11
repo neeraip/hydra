@@ -108,7 +108,12 @@ describe("the sidecar note", () => {
 
   it("reports carried references as travelling with the project", () => {
     const note = sidecarNote([
-      { file: "rain.dat", label: 'rain file "rain.dat"', carried: true },
+      {
+        file: "rain.dat",
+        label: 'rain file "rain.dat"',
+        carried: true,
+        supported: true,
+      },
     ]);
     expect(note?.tone).toBe("ok");
     expect(note?.text).toContain("Imports");
@@ -117,11 +122,36 @@ describe("the sidecar note", () => {
 
   it("warns about the missing ones, naming only them", () => {
     const note = sidecarNote([
-      { file: "rain.dat", label: 'rain file "rain.dat"', carried: true },
-      { file: "hot.hsf", label: 'hotstart file "hot.hsf"', carried: false },
+      {
+        file: "rain.dat",
+        label: 'rain file "rain.dat"',
+        carried: true,
+        supported: true,
+      },
+      {
+        file: "hot.hsf",
+        label: 'hotstart file "hot.hsf"',
+        carried: false,
+        supported: true,
+      },
     ]);
     expect(note?.tone).toBe("warn");
     expect(note?.text).toContain('hotstart file "hot.hsf"');
     expect(note?.text).not.toContain("rain.dat");
+  });
+});
+
+describe("unsupported references", () => {
+  it("outrank carried: a capability gap is never shown green", () => {
+    const note = sidecarNote([
+      {
+        file: "flows.txt",
+        label: 'rainfall interface file "flows.txt"',
+        carried: true,
+        supported: false,
+      },
+    ]);
+    expect(note?.tone).toBe("warn");
+    expect(note?.text).toContain("not supported yet");
   });
 });

@@ -319,7 +319,18 @@ fn resolve_aux_path(model: &str, name: &str) -> Result<PathBuf, i32> {
         return Ok(name_path.to_path_buf());
     }
     let base = Path::new(model).parent().unwrap_or(Path::new("."));
-    Ok(base.join(name_path))
+    let as_written = base.join(name_path);
+    if as_written.exists() {
+        return Ok(as_written);
+    }
+    // Models carry paths from the machine they were authored on; a file
+    // that moved beside the model is found by its trailing name, the same
+    // fallback the engine and GUI apply.
+    let by_basename = name_path
+        .file_name()
+        .map(|tail| base.join(tail))
+        .filter(|p| p.exists());
+    Ok(by_basename.unwrap_or(as_written))
 }
 
 /// Create `path` and stream `f` into it through a buffered writer.

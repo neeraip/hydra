@@ -168,10 +168,11 @@ fn describe_model_entry(path: String, stem: String, bytes: Vec<u8>) -> ArchiveMo
             if let ParsedModel::Uds { network, .. } = &parsed {
                 entry.sidecars = uds_sidecar_refs(network)
                     .into_iter()
-                    .map(|(file, label)| SidecarRef {
-                        file,
-                        label,
+                    .map(|source| SidecarRef {
+                        file: source.file,
+                        label: source.label,
                         carried: false,
+                        supported: source.supported,
                     })
                     .collect();
             }
@@ -566,10 +567,13 @@ fn create_one(
     require_gui_openable_engine(&selection.engine)?;
     let (_, stem, _) = split_entry_name(&selection.path);
     let (parsed, imported) = parse_model_bytes(&selection.engine, bytes, stem)?;
+    // Only the references a run can consume travel into aux/ — bytes
+    // nothing reads would dress an unsupported model as a complete one.
     let sidecars = match &parsed {
         ParsedModel::Uds { network, .. } => uds_sidecar_refs(network)
             .into_iter()
-            .map(|(file, _)| file)
+            .filter(|source| source.supported)
+            .map(|source| source.file)
             .collect(),
         ParsedModel::Wds { .. } => Vec::new(),
     };

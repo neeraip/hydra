@@ -1989,10 +1989,16 @@ fn load_model_bytes(
         ParsedModel::Uds { raw_text, network } => {
             let mut aux_files: Vec<(String, Vec<u8>)> = Vec::new();
             if let Some(dir) = source_dir {
-                for (file, _) in super::aux_files::uds_sidecar_refs(&network) {
-                    let base = super::aux_files::aux_basename(&file).to_string();
-                    let found =
-                        std::fs::read(dir.join(&file)).or_else(|_| std::fs::read(dir.join(&base)));
+                for source in super::aux_files::uds_sidecar_refs(&network) {
+                    // Only what a run can consume is gathered; an
+                    // unsupported reference is named to the wizard but
+                    // never quietly held.
+                    if !source.supported {
+                        continue;
+                    }
+                    let base = super::aux_files::aux_basename(&source.file).to_string();
+                    let found = std::fs::read(dir.join(&source.file))
+                        .or_else(|_| std::fs::read(dir.join(&base)));
                     if let Ok(bytes) = found {
                         aux_files.push((base, bytes));
                     }
@@ -2032,13 +2038,20 @@ pub(crate) fn attach_aux_bytes(
         return Err("no drainage model is loaded to attach files to".into());
     };
     let base = super::aux_files::aux_basename(file_name).to_string();
-    let referenced = super::aux_files::uds_sidecar_refs(network)
-        .iter()
-        .any(|(file, _)| super::aux_files::aux_basename(file).eq_ignore_ascii_case(&base));
-    if !referenced {
+    let reference = super::aux_files::uds_sidecar_refs(network)
+        .into_iter()
+        .find(|s| super::aux_files::aux_basename(&s.file).eq_ignore_ascii_case(&base));
+    let Some(reference) = reference else {
         return Err(format!(
             "the model does not reference a file named {base:?} — check the \
              model's [RAINGAGES] and climate declarations for the expected name"
+        ));
+    };
+    if !reference.supported {
+        return Err(format!(
+            "{} is declared by the model, but this format is not served yet — \
+             attaching it would change nothing",
+            reference.label
         ));
     }
     aux_files.retain(|(name, _)| !name.eq_ignore_ascii_case(&base));

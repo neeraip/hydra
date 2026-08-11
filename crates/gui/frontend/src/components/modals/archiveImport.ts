@@ -106,6 +106,16 @@ export function sidecarNote(
   sidecars: SidecarRef[],
 ): { tone: "ok" | "warn"; text: string } | null {
   if (sidecars.length === 0) return null;
+  // A reference the run cannot consume outranks everything: whether or
+  // not the archive holds the file, the model needs a capability, not a
+  // byte stream, and green here would promise one.
+  const unsupported = sidecars.filter((s) => !s.supported);
+  if (unsupported.length > 0) {
+    return {
+      tone: "warn",
+      text: `Uses ${unsupported.map((s) => s.label).join(", ")} — not supported yet; runs will refuse or read the data as empty`,
+    };
+  }
   const missing = sidecars.filter((s) => !s.carried);
   if (missing.length === 0) {
     return {

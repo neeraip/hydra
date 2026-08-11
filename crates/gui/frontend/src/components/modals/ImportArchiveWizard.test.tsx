@@ -57,7 +57,12 @@ const SCAN: ArchiveScan = {
       findingCount: 0,
       repairs: [],
       sidecars: [
-        { file: "rain.dat", label: 'rain file "rain.dat"', carried: true },
+        {
+          file: "rain.dat",
+          label: 'rain file "rain.dat"',
+          carried: true,
+          supported: true,
+        },
       ],
       error: null,
     },

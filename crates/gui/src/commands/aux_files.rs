@@ -9,13 +9,25 @@
 //! `base/aux/`, where the run queue reads it back.
 
 /// One referenced auxiliary file: the name as the model wrote it, a human
-/// label naming its role, and whether the import has its bytes in hand.
+/// label naming its role, whether the import has its bytes in hand, and
+/// whether a run can actually consume them. An unsupported reference is
+/// named — the user must know the model asks for it — but never promised:
+/// carrying bytes nothing reads is not an import.
 #[derive(serde::Serialize, Clone, Debug, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct SidecarRef {
     pub file: String,
     pub label: String,
     pub carried: bool,
+    pub supported: bool,
+}
+
+/// One reference as the survey finds it: name, role label, and whether
+/// the run path can consume supplied bytes.
+pub(crate) struct SidecarSource {
+    pub file: String,
+    pub label: String,
+    pub supported: bool,
 }
 
 /// The trailing file name of a reference as a model wrote it — models
@@ -25,39 +37,52 @@ pub(crate) fn aux_basename(name: &str) -> &str {
     name.rsplit(['/', '\\']).next().unwrap_or(name)
 }
 
-/// External files a drainage model references, as `(name as written,
-/// role label)` pairs, deduplicated in reference order.
-pub(crate) fn uds_sidecar_refs(network: &hydra::uds::model::Network) -> Vec<(String, String)> {
-    use hydra::uds::model::{FileMode, GageSource, TemperatureSource};
-    let mut out: Vec<(String, String)> = Vec::new();
-    let mut push = |file: &str, role: &str| {
-        if !out.iter().any(|(f, _)| f == file) {
-            out.push((file.to_string(), format!("{role} \"{file}\"")));
+/// External files a drainage model references, deduplicated in reference
+/// order. `supported` says whether the run path consumes supplied bytes:
+/// rain records, climate records, hotstart state, and routing inflows do;
+/// the rainfall/runoff/RDII interface formats and external `[TIMESERIES]`
+/// files are declared but not yet served (the engine refuses or reads
+/// empty), and the import must say so rather than promise them.
+pub(crate) fn uds_sidecar_refs(network: &hydra::uds::model::Network) -> Vec<SidecarSource> {
+    use hydra::uds::model::{FileMode, GageSource, TemperatureSource, TimeSeriesSource};
+    let mut out: Vec<SidecarSource> = Vec::new();
+    let mut push = |file: &str, role: &str, supported: bool| {
+        if !out.iter().any(|s| s.file == file) {
+            out.push(SidecarSource {
+                file: file.to_string(),
+                label: format!("{role} \"{file}\""),
+                supported,
+            });
         }
     };
     for gage in &network.gages {
         if let GageSource::File { file, .. } = &gage.source {
-            push(file, "rain file");
+            push(file, "rain file", true);
         }
     }
     if let Some(TemperatureSource::File { name, .. }) = &network.climate.temperature {
-        push(name, "climate file");
+        push(name, "climate file", true);
     }
     let iface = &network.interface_files;
+    if let Some(name) = &iface.hotstart_use {
+        push(name, "hotstart file", true);
+    }
+    if let Some(name) = &iface.inflows {
+        push(name, "routing inflows file", true);
+    }
     for (slot, role) in [
         (&iface.rainfall, "rainfall interface file"),
         (&iface.runoff, "runoff interface file"),
         (&iface.rdii, "RDII interface file"),
     ] {
         if let Some((FileMode::Use, name)) = slot {
-            push(name, role);
+            push(name, role, false);
         }
     }
-    if let Some(name) = &iface.hotstart_use {
-        push(name, "hotstart file");
-    }
-    if let Some(name) = &iface.inflows {
-        push(name, "routing inflows file");
+    for series in &network.timeseries {
+        if let TimeSeriesSource::External { file } = &series.source {
+            push(file, "data series file", false);
+        }
     }
     out
 }
@@ -70,14 +95,15 @@ pub(crate) fn sidecar_status(
 ) -> Vec<SidecarRef> {
     uds_sidecar_refs(network)
         .into_iter()
-        .map(|(file, label)| {
-            let base = aux_basename(&file).to_ascii_lowercase();
+        .map(|source| {
+            let base = aux_basename(&source.file).to_ascii_lowercase();
             SidecarRef {
                 carried: gathered_names
                     .iter()
                     .any(|n| n.to_ascii_lowercase() == base),
-                file,
-                label,
+                file: source.file,
+                label: source.label,
+                supported: source.supported,
             }
         })
         .collect()

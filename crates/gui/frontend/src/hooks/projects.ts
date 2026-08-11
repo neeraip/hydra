@@ -223,6 +223,10 @@ export interface SidecarRef {
   label: string;
   /** Whether the archive holds it (matched by trailing file name). */
   carried: boolean;
+  /** Whether a run can consume supplied bytes: rain, climate, hotstart,
+   * and routing-inflow records can; interface-file formats and external
+   * data series are declared but not served yet — named, never promised. */
+  supported: boolean;
 }
 
 /** What a backend archive scan found. Mirrors `commands::ArchiveScan`. */
