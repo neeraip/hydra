@@ -786,7 +786,29 @@ export function NewProjectWizard({ onClose, initial = null }: Props) {
                       ? `${detectedNodeCount.toLocaleString()} nodes`
                       : "Starter network"}
                   </span>
+                  {detectedSidecars.filter((s) => s.carried).length > 0 && (
+                    <span className="badge">
+                      {`+ ${detectedSidecars.filter((s) => s.carried).length} data file${
+                        detectedSidecars.filter((s) => s.carried).length === 1
+                          ? ""
+                          : "s"
+                      }`}
+                    </span>
+                  )}
                 </div>
+                {detectedSidecars.some((s) => !s.carried) && (
+                  <div
+                    style={{
+                      marginTop: 8,
+                      fontSize: "var(--text-sm)",
+                      color: "var(--status-warning)",
+                    }}
+                  >
+                    {detectedSidecars.filter((s) => !s.carried).length === 1
+                      ? "1 referenced data file is still missing — simulations will refuse until it is supplied."
+                      : `${detectedSidecars.filter((s) => !s.carried).length} referenced data files are still missing — simulations will refuse until they are supplied.`}
+                  </div>
+                )}
               </div>
             </div>
 
