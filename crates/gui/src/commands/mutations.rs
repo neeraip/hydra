@@ -621,6 +621,35 @@ pub fn patch_node_position(
     }
 }
 
+/// Rewrite a `[REPORT] NODES`/`LINKS` selection through `keep`, which
+/// returns the id an entry becomes or `None` to drop it.
+///
+/// These are the model's other id-keyed references to elements, and unlike
+/// coordinates or tags they are a plain list rather than a map, which is
+/// why they were easy to miss: nothing fails when they go stale. A
+/// selection left naming a renamed or deleted element writes an id into the
+/// saved file that resolves to nothing, and the element the user renamed
+/// quietly stops appearing in its own report.
+///
+/// A selection emptied by deletions becomes `None` rather than an empty
+/// list — `None` is what "report no items" means, and an empty list would
+/// write a bare `NODES` line.
+fn retarget_report_selection(
+    selection: &mut hydra::ReportSelection,
+    keep: impl Fn(&str) -> Option<String>,
+) {
+    let hydra::ReportSelection::Some(ids) = selection else {
+        // `All` and `None` name no element, so nothing can go stale.
+        return;
+    };
+    let kept: Vec<String> = ids.iter().filter_map(|id| keep(id)).collect();
+    *selection = if kept.is_empty() {
+        hydra::ReportSelection::None
+    } else {
+        hydra::ReportSelection::Some(kept)
+    };
+}
+
 /// Names of controls/rules that reference any of the given (old, 1-based)
 /// node or link indices — used to block deletion of a still-referenced
 /// element, mirroring `delete_curve`/`delete_pattern`'s safety check.
@@ -771,6 +800,13 @@ fn delete_element_from_network(
                 l.base.index = i + 1;
             }
             remap_controls_rules(network, &[node_1based], &dangling_idx);
+            retarget_report_selection(&mut network.report.nodes, |r| {
+                (r != id).then(|| r.to_string())
+            });
+            let gone: Vec<&str> = dangling.iter().map(|(lid, _)| lid.as_str()).collect();
+            retarget_report_selection(&mut network.report.links, |r| {
+                (!gone.contains(&r)).then(|| r.to_string())
+            });
         }
         "pipe" | "pump" | "valve" => {
             let pos = network
@@ -797,6 +833,9 @@ fn delete_element_from_network(
                 l.base.index = i + 1;
             }
             remap_controls_rules(network, &[], &[link_1based]);
+            retarget_report_selection(&mut network.report.links, |r| {
+                (r != id).then(|| r.to_string())
+            });
         }
         other => return Err(format!("unknown element kind '{}'", other)),
     }
@@ -806,9 +845,11 @@ fn delete_element_from_network(
 /// Remove a node or link from the in-memory network.
 ///
 /// `kind` must be one of `"junction"`, `"reservoir"`, `"tank"`, `"pipe"`,
-/// `"pump"`, or `"valve"`.  The element is removed from the relevant vec and
-/// all ancillary maps (`coordinates`, `vertices`, `node_tags`, `link_tags`).
-/// Any links that reference a deleted node are also removed (dangling links).
+/// `"pump"`, or `"valve"`.  The element is removed from the relevant vec,
+/// from all ancillary maps (`coordinates`, `vertices`, `node_tags`,
+/// `link_tags`), and from the `[REPORT]` selection that named it.
+/// Any links that reference a deleted node are also removed (dangling links),
+/// and they leave the `[REPORT] LINKS` selection with them.
 /// All node *and* link `base.index` values are rebuilt after deletion so the
 /// INP writer produces a valid file and later index-based operations
 /// (control/rule guards, `create_link`) see contiguous indices.
@@ -892,6 +933,9 @@ fn rename_element_in_network(
             if network.options.trace_node.as_deref() == Some(old_id) {
                 network.options.trace_node = Some(new_id.to_string());
             }
+            retarget_report_selection(&mut network.report.nodes, |id| {
+                Some(if id == old_id { new_id } else { id }.to_string())
+            });
         }
         "pipe" | "pump" | "valve" => {
             if !network.links.iter().any(|l| l.base.id == old_id) {
@@ -916,6 +960,9 @@ fn rename_element_in_network(
             if let Some(v) = network.link_tags.remove(old_id) {
                 network.link_tags.insert(new_id.to_string(), v);
             }
+            retarget_report_selection(&mut network.report.links, |id| {
+                Some(if id == old_id { new_id } else { id }.to_string())
+            });
         }
         other => return Err(format!("unknown element kind '{other}'")),
     }
@@ -1975,6 +2022,57 @@ mod tests {
     use crate::commands::test_fixtures::{loaded_state, TEST_INP};
 
     // ── structural-mutation helper ────────────────────────────────────────
+
+    /// A network whose `[REPORT]` section names two nodes and a link.
+    fn reported_network() -> hydra::Network {
+        // Before `[END]`, which is where the reader stops.
+        let inp = TEST_INP.replace("[END]", "[REPORT]\nNODES  J1  T1\nLINKS  P1\n\n[END]");
+        let network = hydra::io::parse(inp.as_bytes()).expect("fixture must parse");
+        assert!(
+            matches!(network.report.nodes, hydra::ReportSelection::Some(_)),
+            "fixture must actually carry a report selection"
+        );
+        network
+    }
+
+    fn report_ids(network: &hydra::Network) -> (Vec<String>, Vec<String>) {
+        let listed = |s: &hydra::ReportSelection| match s {
+            hydra::ReportSelection::Some(ids) => ids.clone(),
+            _ => Vec::new(),
+        };
+        (listed(&network.report.nodes), listed(&network.report.links))
+    }
+
+    /// `[REPORT] NODES`/`LINKS` name elements by id, so renaming one has to
+    /// carry the selection with it. Missing it leaves the saved model asking
+    /// for an element that no longer exists, and the element the user renamed
+    /// silently drops out of its own report.
+    #[test]
+    fn renaming_carries_the_report_selection() {
+        let mut network = reported_network();
+        rename_element_in_network(&mut network, "junction", "J1", "J1a").expect("rename");
+        rename_element_in_network(&mut network, "pipe", "P1", "P1a").expect("rename");
+
+        let (nodes, links) = report_ids(&network);
+        assert_eq!(nodes, ["J1a", "T1"], "renamed node should follow");
+        assert_eq!(links, ["P1a"], "renamed link should follow");
+    }
+
+    /// Deleting has the same obligation in the other direction: a selection
+    /// naming a deleted element round-trips a dangling id into the file.
+    #[test]
+    fn deleting_drops_the_report_selection() {
+        let mut network = reported_network();
+        // Deleting J1 cascades P1 and P2 with it, since both touch it.
+        delete_element_from_network(&mut network, "junction", "J1").expect("delete");
+
+        let (nodes, links) = report_ids(&network);
+        assert_eq!(nodes, ["T1"], "deleted node should be dropped");
+        assert!(
+            links.is_empty(),
+            "cascaded link should be dropped: {links:?}"
+        );
+    }
 
     #[test]
     fn normalize_title_lines_trims_and_rejects_newlines() {
