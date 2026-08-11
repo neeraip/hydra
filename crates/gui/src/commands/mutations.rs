@@ -358,11 +358,15 @@ fn refresh_element_dto(
                 .iter()
                 .find(|l| l.base.id == id)
                 .ok_or_else(|| format!("link '{id}' not found"))?;
+            // `nodes[i].base.index == i + 1` is a model invariant (see
+            // `Network`), which the solver already indexes on and every
+            // mutation here restores after a delete. Scanning for the index
+            // instead cost a walk of all 46k nodes twice per patched link,
+            // which a bulk edit pays for once per link it touches.
             let node_id_of = |idx: usize| {
                 network
                     .nodes
-                    .iter()
-                    .find(|n| n.base.index == idx)
+                    .get(idx.wrapping_sub(1))
                     .map(|n| n.base.id.clone())
                     .unwrap_or_default()
             };
@@ -2034,6 +2038,33 @@ mod tests {
     use crate::commands::test_fixtures::{loaded_state, TEST_INP};
 
     // ── structural-mutation helper ────────────────────────────────────────
+
+    /// The delta a patch emits must name the link's real endpoints.
+    ///
+    /// It resolves them by indexing `nodes` directly, which is only correct
+    /// while `nodes[i].base.index == i + 1` holds. Deleting rebuilds those
+    /// indices to keep it true, so this checks a link's endpoints after a
+    /// delete has shifted every node above it — where an off-by-one would
+    /// otherwise quietly relabel a pipe's ends in the canvas.
+    #[test]
+    fn a_patch_delta_names_the_links_real_endpoints() {
+        let mut network = hydra::io::parse(TEST_INP.as_bytes()).unwrap();
+        let mut dto = network_to_dto(&network);
+        // R1 is the first node, so removing it shifts J1 and T1 down one.
+        delete_element_from_network(&mut network, "reservoir", "R1").expect("delete");
+        let dto_after = network_to_dto(&network);
+
+        let patched = refresh_element_dto(&network, &mut dto, "pipe", "P2").expect("refresh");
+        let link = patched.link.expect("a link delta");
+        assert_eq!((link.from_id.as_str(), link.to_id.as_str()), ("J1", "T1"));
+
+        // And it agrees with the endpoints a full rebuild would report.
+        let rebuilt = dto_after.links.iter().find(|l| l.id == "P2").unwrap();
+        assert_eq!(
+            (link.from_id, link.to_id),
+            (rebuilt.from_id.clone(), rebuilt.to_id.clone())
+        );
+    }
 
     /// Every way a curve can be referenced must block its deletion.
     ///
