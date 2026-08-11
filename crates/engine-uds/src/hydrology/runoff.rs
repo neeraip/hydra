@@ -49,30 +49,45 @@ struct GageRain {
 }
 
 impl GageRain {
+    /// Both lookups below binary-search `intervals`, which §2.9 validation
+    /// guarantees is strictly increasing in start time — a series whose
+    /// timestamps do not increase is a fatal finding, and an external
+    /// record is realised before validation precisely so it is held to the
+    /// same rule. The comparisons are written exactly as the scans they
+    /// replace, so the answers are identical to the bit rather than to a
+    /// tolerance.
+    ///
+    /// It matters because a record is not a handful of points: an eleven
+    /// -year archival rain file is three quarters of a million intervals,
+    /// and scanning them on every gage query cost a fifth of the run.
+    ///
     /// The rain rate at an absolute epoch time.
     fn rate(&self, epoch: f64) -> f64 {
-        let mut r = 0.0;
-        for &(t0, v) in &self.intervals {
-            if epoch < t0 {
-                break;
-            }
-            r = if epoch < t0 + self.interval { v } else { 0.0 };
+        // The last interval that has started, exactly as the scan's
+        // "assign for every `t0 <= epoch`, keep the last" did.
+        let started = self.intervals.partition_point(|&(t0, _)| t0 <= epoch);
+        let Some(&(t0, v)) = started.checked_sub(1).map(|i| &self.intervals[i]) else {
+            return 0.0;
+        };
+        if epoch < t0 + self.interval {
+            v
+        } else {
+            0.0
         }
-        r
     }
 
     /// The next interval boundary strictly after `epoch`, for hydrology
     /// step truncation (§10.1).
     fn next_boundary(&self, epoch: f64) -> Option<f64> {
-        for &(t0, _) in &self.intervals {
-            if t0 > epoch {
-                return Some(t0);
-            }
-            if t0 + self.interval > epoch {
-                return Some(t0 + self.interval);
-            }
-        }
-        None
+        // The scan returned at the first interval satisfying either
+        // `t0 > epoch` or `t0 + interval > epoch`; with a positive
+        // interval the second subsumes the first, so its negation is the
+        // partition predicate.
+        let idx = self
+            .intervals
+            .partition_point(|&(t0, _)| t0 + self.interval <= epoch);
+        let &(t0, _) = self.intervals.get(idx)?;
+        Some(if t0 > epoch { t0 } else { t0 + self.interval })
     }
 }
 
