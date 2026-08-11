@@ -494,8 +494,8 @@ pub(crate) fn open_uds_with_aux(
     // below re-parses and reports them properly.
     let (net, _) = hydra::uds::io::objects::parse_network(text);
     let aux_text = |name: &str| {
-        let file_name = name.rsplit(['/', '\\']).next().unwrap_or(name);
-        std::fs::read_to_string(aux_dir.join(file_name)).ok()
+        let path = super::aux_files::aux_file_path(aux_dir, name)?;
+        std::fs::read_to_string(path).ok()
     };
 
     let climate_records = match &net.climate.temperature {
@@ -531,8 +531,8 @@ pub(crate) fn open_uds_with_aux(
     // error rather than a silent cold start — running without state the
     // model asked for would answer a different question without saying so.
     let aux_bytes = |name: &str| {
-        let file_name = name.rsplit(['/', '\\']).next().unwrap_or(name);
-        std::fs::read(aux_dir.join(file_name)).ok()
+        let path = super::aux_files::aux_file_path(aux_dir, name)?;
+        std::fs::read(path).ok()
     };
     if let Some(name) = &net.interface_files.hotstart_use {
         let bytes = aux_bytes(name).ok_or_else(|| {

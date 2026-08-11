@@ -37,6 +37,33 @@ pub(crate) fn aux_basename(name: &str) -> &str {
     name.rsplit(['/', '\\']).next().unwrap_or(name)
 }
 
+/// Where a reference's bytes live inside a bundle's `aux/`, or `None` when
+/// the name cannot name a file there.
+///
+/// Trimming the directories is usually enough, because models carry paths
+/// from the machine they were authored on and what is left is a plain file
+/// name. What it does not leave is a guarantee, and a model can come from
+/// anywhere — the archive import exists so a colleague can send you one.
+/// `..` survives the trim whole, and on Windows so does `C:rain.dat`,
+/// which carries a drive prefix: `Path::push` replaces the entire path
+/// when handed one of those, so the join lands on another drive rather
+/// than inside the bundle.
+///
+/// So the name is a plain file name or it is nothing. Refusing beats
+/// repairing — a repaired name is still the one the model expects to be
+/// honoured, and quietly reading or writing somewhere else answers a
+/// question nobody asked. `:` is refused on every platform, not only the
+/// one where it means a drive: a bundle is portable, and a name that
+/// cannot work on Windows should not be carried into a bundle on Linux
+/// and fail there later.
+pub(crate) fn aux_file_path(dir: &std::path::Path, referenced: &str) -> Option<std::path::PathBuf> {
+    let base = aux_basename(referenced);
+    if base.is_empty() || base == "." || base == ".." || base.contains([':', '/', '\\']) {
+        return None;
+    }
+    Some(dir.join(base))
+}
+
 /// External files a drainage model references, deduplicated in reference
 /// order. `supported` says whether the run path consumes supplied bytes:
 /// rain records, climate records, hotstart state, and routing inflows do;
@@ -121,7 +148,15 @@ pub(crate) fn write_aux_files(
     let dir = crate::meta::bundle::aux_dir(app_data, project_id);
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     for (name, bytes) in files {
-        crate::meta::bundle::atomic_write(&dir.join(name), bytes).map_err(|e| e.to_string())?;
+        // A name that cannot sit in `aux/` is skipped rather than failing
+        // the write, so the files that can still land. The run then
+        // refuses naming what it could not find, which is the report the
+        // user can act on.
+        let Some(path) = aux_file_path(&dir, name) else {
+            tracing::warn!(file = %name, "auxiliary file name is not a plain file name; not stored");
+            continue;
+        };
+        crate::meta::bundle::atomic_write(&path, bytes).map_err(|e| e.to_string())?;
     }
     Ok(())
 }
@@ -189,6 +224,67 @@ C1  CIRCULAR  1.0  0  0  0
         // the run path reads `rain.dat`, and on a case-sensitive
         // filesystem `RAIN.DAT` would be a different file.
         assert_eq!(aux_files[0].0, "rain.dat");
+    }
+
+    /// A model names its own auxiliary files, and an imported model is
+    /// someone else's file. So the names that would leave `aux/` are
+    /// refused rather than trimmed into something plausible.
+    #[test]
+    fn a_reference_that_would_leave_the_aux_directory_is_refused() {
+        let dir = std::path::Path::new("/app/projects/p1/base/aux");
+
+        // The ordinary cases still resolve, directories and all.
+        for (name, expect) in [
+            ("rain.dat", "rain.dat"),
+            ("forcing/rain.dat", "rain.dat"),
+            (r"C:\models\run\rain.dat", "rain.dat"),
+            ("../rain.dat", "rain.dat"),
+        ] {
+            assert_eq!(
+                aux_file_path(dir, name),
+                Some(dir.join(expect)),
+                "{name} should resolve to {expect}"
+            );
+        }
+
+        for name in [
+            "",
+            ".",
+            "..",
+            "forcing/..",
+            // A drive prefix and no separator: `Path::push` replaces the
+            // whole path on Windows, so this would land on drive C.
+            "C:rain.dat",
+            r"sub\..",
+        ] {
+            assert_eq!(aux_file_path(dir, name), None, "{name:?} should be refused");
+        }
+    }
+
+    /// The refusal has to hold at the write, not only in the helper.
+    #[test]
+    fn a_refused_reference_writes_nothing_and_lets_the_rest_through() {
+        let app_data = tempfile::tempdir().expect("app data");
+        write_aux_files(
+            app_data.path(),
+            "p1",
+            &[
+                ("C:escape.dat".into(), b"no".to_vec()),
+                ("rain.dat".into(), b"yes".to_vec()),
+            ],
+        )
+        .expect("the good file still lands");
+
+        let aux = app_data.path().join("projects/p1/base/aux");
+        assert_eq!(
+            std::fs::read(aux.join("rain.dat")).ok(),
+            Some(b"yes".into())
+        );
+        let stored: Vec<String> = std::fs::read_dir(&aux)
+            .expect("aux dir")
+            .filter_map(|e| Some(e.ok()?.file_name().to_string_lossy().into_owned()))
+            .collect();
+        assert_eq!(stored, ["rain.dat"], "only the plain name should be stored");
     }
 
     #[test]

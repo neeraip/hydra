@@ -686,12 +686,17 @@ pub(crate) fn create_projects_from_archive_at(
                 .map(|(w, _)| w)
             {
                 let dir = crate::meta::bundle::aux_dir(app_data, &want.project_id);
-                let stored = aux_basename(&want.referenced);
                 let write = std::fs::create_dir_all(&dir)
                     .map_err(|e| e.to_string())
                     .and_then(|()| {
-                        crate::meta::bundle::atomic_write(&dir.join(stored), &bytes)
-                            .map_err(|e| e.to_string())
+                        // A reference that cannot name a file inside `aux/`
+                        // is reported like any other write failure — the
+                        // model asked for it, so silence is not an option.
+                        let path = super::aux_files::aux_file_path(&dir, &want.referenced)
+                            .ok_or_else(|| {
+                                format!("{:?} is not a plain file name", want.referenced)
+                            })?;
+                        crate::meta::bundle::atomic_write(&path, &bytes).map_err(|e| e.to_string())
                     });
                 if let Err(e) = write {
                     for outcome in &mut outcomes {
@@ -700,7 +705,10 @@ pub(crate) fn create_projects_from_archive_at(
                             .as_ref()
                             .is_some_and(|p| p.id == want.project_id)
                         {
-                            outcome.error = Some(format!("project created, but {stored:?}: {e}"));
+                            outcome.error = Some(format!(
+                                "project created, but {:?}: {e}",
+                                aux_basename(&want.referenced)
+                            ));
                         }
                     }
                 }
