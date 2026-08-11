@@ -91,9 +91,20 @@ pub(crate) fn parse_gages(
             };
             GageSource::Series { series: ts }
         } else if t[4].eq_ignore_ascii_case("FILE") {
+            // Trailing unit token: the record's own depth unit (§2.4).
+            let unit = match t.get(7).map(|u| u.to_ascii_uppercase()) {
+                None => None,
+                Some(u) if u == "IN" => Some(crate::model::RainFileUnit::Inches),
+                Some(u) if u == "MM" => Some(crate::model::RainFileUnit::Millimetres),
+                Some(_) => {
+                    diags.push(bad(l, &t[7]));
+                    continue;
+                }
+            };
             GageSource::File {
                 file: t[5].clone(),
                 station: t.get(6).cloned().unwrap_or_default(),
+                unit,
             }
         } else {
             diags.push(bad(l, &t[4]));
@@ -641,6 +652,7 @@ TS1  0  0.5  1  0.25
         let GageSource::File {
             ref file,
             ref station,
+            ..
         } = net.gages[1].source
         else {
             panic!()

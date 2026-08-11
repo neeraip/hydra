@@ -2315,3 +2315,139 @@ TS1  12:00 0.0
     // It rained and the water left: this is a real run, not a dry no-op.
     assert!(led.outflow > 0.0, "nothing reached the outfall");
 }
+
+/// A file-sourced gage with its record supplied at load is the equivalent
+/// series (§3.1) — held to the same model with the record inlined, run for
+/// run, ledger for ledger.
+#[test]
+fn a_supplied_rain_record_equals_the_inline_series() {
+    // Volume form at a 5-minute interval, absolute dates, a wet hour with
+    // a dry gap — enough structure that an interval mix-up would show.
+    let base = |gage_line: &str, series: &str| {
+        format!(
+            "\
+[OPTIONS]
+FLOW_UNITS    CMS
+INFILTRATION  HORTON
+START_DATE    06/29/2012
+START_TIME    00:00
+END_DATE      06/29/2012
+END_TIME      06:00
+ROUTING_STEP  10
+WET_STEP      0:05:00
+REPORT_STEP   0:15:00
+
+[RAINGAGES]
+{gage_line}
+
+[SUBCATCHMENTS]
+S1  G1  J1  2  60  100  0.5  0
+
+[SUBAREAS]
+S1  0.012  0.1  0.05  0.05  25  OUTLET
+
+[INFILTRATION]
+S1  20  5  4  7  0
+
+[JUNCTIONS]
+J1  100.4  3
+
+[OUTFALLS]
+O1  100.0  FREE
+
+[CONDUITS]
+C1  J1  O1  200  0.013  0  0
+
+[XSECTIONS]
+C1  RECT_OPEN  2  2  0  0
+{series}
+"
+        )
+    };
+
+    let wet = [
+        ("00:05", 1.2),
+        ("00:10", 0.8),
+        ("00:15", 2.4),
+        // A dry gap, then a second burst.
+        ("01:30", 3.0),
+        ("01:35", 1.0),
+    ];
+    let inline_series: String = std::iter::once("\n[TIMESERIES]\n".to_string())
+        .chain(
+            wet.iter()
+                .map(|(t, v)| format!("RAIN  06/29/2012  {t}  {v}\n")),
+        )
+        .collect();
+    let inline = base("G1  VOLUME  0:05  1.0  TIMESERIES  RAIN", &inline_series);
+
+    let record: String = wet
+        .iter()
+        .map(|(t, v)| {
+            let (h, m) = t.split_once(':').unwrap();
+            format!("sta7 2012 6 29 {h} {m} {v}\n")
+        })
+        .chain(std::iter::once(
+            // Another station's readings, to be ignored.
+            "other 2012 6 29 0 5 99.0\n".to_string(),
+        ))
+        .collect();
+    let filed = base("G1  VOLUME  0:05  1.0  FILE  \"rain.dat\"  sta7  MM", "");
+
+    let readings = hydra_engine_uds::io::rain::parse_rain_file(&record).expect("record parses");
+    let (mut sim_inline, _, _) = Simulation::open(&inline).expect("inline opens");
+    let (mut sim_filed, _, _) =
+        Simulation::open_with_files(&filed, Vec::new(), vec![("rain.dat".to_string(), readings)])
+            .expect("filed opens");
+    sim_inline.run();
+    sim_filed.run();
+
+    let a = sim_inline.ledgers();
+    let b = sim_filed.ledgers();
+    let (sa, sb) = (a.surface.expect("surface"), b.surface.expect("surface"));
+    assert_eq!(sa.inflow, sb.inflow, "rain volumes differ");
+    assert_eq!(sa.outflow, sb.outflow);
+    assert_eq!(a.network.inflow, b.network.inflow);
+    assert_eq!(a.network.outflow, b.network.outflow);
+    assert!(sa.inflow > 0.0, "the storm actually rained");
+}
+
+/// A gage naming a record nobody supplied refuses the load, naming the
+/// file — absent rain data is a missing input, never a dry model.
+#[test]
+fn an_unsupplied_rain_record_refuses_the_load() {
+    let inp = "\
+[OPTIONS]
+FLOW_UNITS    CMS
+INFILTRATION  HORTON
+ROUTING_STEP  10
+
+[RAINGAGES]
+G1  VOLUME  0:05  1.0  FILE  \"missing.dat\"  sta1  MM
+
+[SUBCATCHMENTS]
+S1  G1  J1  2  60  100  0.5  0
+
+[SUBAREAS]
+S1  0.012  0.1  0.05  0.05  25  OUTLET
+
+[INFILTRATION]
+S1  20  5  4  7  0
+
+[JUNCTIONS]
+J1  100.4  3
+
+[OUTFALLS]
+O1  100.0  FREE
+
+[CONDUITS]
+C1  J1  O1  200  0.013  0  0
+
+[XSECTIONS]
+C1  RECT_OPEN  2  2  0  0
+";
+    let err = Simulation::open(inp).err().expect("refuses");
+    let msg = format!("{err:?}");
+    assert!(msg.contains("missing.dat"), "{msg}");
+    assert!(msg.contains("was not supplied"), "{msg}");
+}

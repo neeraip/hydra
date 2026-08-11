@@ -376,3 +376,33 @@ remains true when this engine is asked to parse by name. Recognition
 governs only *automatic routing*, where a wrong guess silently produces a
 confident wrong answer. Naming the engine explicitly supplies the evidence
 recognition lacked.
+
+### 14.12 External Rain Records
+
+A precipitation gage may source its record from an external file (§2.4 of
+the model specification): the gage declares a file name, a station
+identifier, and the record's depth unit. The engine performs no file I/O —
+the caller reads the file and supplies its text at load (§12.1); this
+section defines what that text means.
+
+The served format is the predecessor's **user-prepared** station format:
+one reading per line,
+
+```text
+station  year  month  day  hour  minute  value
+```
+
+seven whitespace-separated fields, with blank lines and lines opening `;`
+ignored. Readings for stations other than the gage's are skipped — one file
+may interleave many stations — and intervals with no reading are dry, so a
+record lists wet minutes only. Values are read in the record's own declared
+unit (`IN` or `MM`, defaulting to the model unit system's depth unit) and
+converted to the model's; their meaning — intensity, volume, or cumulative
+volume over the gage's recording interval, stamped at interval start — is
+the gage's declaration, exactly as for a supplied series (§3.1 of the
+hydrology specification). A malformed line is a parse error naming its line
+number, never skipped.
+
+The predecessor's archival formats (NWS and Environment-Canada tape and
+DSI layouts) are deferred (§1): a file in one of those layouts fails this
+format's parse and is refused with the parse's own reason.

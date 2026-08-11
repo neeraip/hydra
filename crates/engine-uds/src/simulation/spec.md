@@ -278,6 +278,11 @@ Energy is tallied as $\rho g\,Q\,\Delta H$ per §7.1.
 
 The session is phased: **create** → **load** (parse, validate — §5's
 mutations applied here) → **run**, stepwise or to completion → **results**.
+The load also accepts the contents of the auxiliary records a model may
+declare — daily climate records (§3.1) and external rain records (§14.12)
+— supplied by the caller, which owns all file I/O; a model declaring an
+auxiliary record the caller did not supply refuses the load with the
+record named.
 Every entry point is guarded by phase, returning a typed error rather than
 faulting. Between load and run the whole validated model is readable and
 design parameters writable; during the run, current-time results, running

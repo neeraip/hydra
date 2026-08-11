@@ -320,7 +320,8 @@ impl Surface {
             };
             if file_based {
                 return Err(SurfaceRefusal::Unsupported(
-                    "file-sourced rain gages (supply the record as a [TIMESERIES] section)",
+                    "file-sourced rain gages need their records supplied at load \
+                     (or inlined as a [TIMESERIES] section)",
                 ));
             }
             let mut intervals = Vec::new();

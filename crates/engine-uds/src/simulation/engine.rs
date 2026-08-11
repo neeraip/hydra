@@ -274,7 +274,7 @@ impl Simulation {
     pub fn open(
         input: &str,
     ) -> Result<(Simulation, Vec<Diagnostic>, Vec<ValidationDiagnostic>), OpenError> {
-        Simulation::open_with_climate(input, Vec::new())
+        Simulation::open_with_files(input, Vec::new(), Vec::new())
     }
 
     /// Load a model together with daily climate records (§3.1) — the
@@ -285,6 +285,20 @@ impl Simulation {
         input: &str,
         climate_records: Vec<crate::model::DailyClimate>,
     ) -> Result<(Simulation, Vec<Diagnostic>, Vec<ValidationDiagnostic>), OpenError> {
+        Simulation::open_with_files(input, climate_records, Vec::new())
+    }
+
+    /// Load a model together with every auxiliary record the caller read
+    /// for it (§12.1): daily climate records (§3.1), and external rain
+    /// records (§14.12) as `(file name, parsed readings)` — `io::rain`
+    /// parses their text. File-sourced gages are realised as the
+    /// equivalent series at load; a gage naming a file not supplied here
+    /// refuses the load with the file named.
+    pub fn open_with_files(
+        input: &str,
+        climate_records: Vec<crate::model::DailyClimate>,
+        rain_files: Vec<(String, Vec<crate::io::rain::RainReading>)>,
+    ) -> Result<(Simulation, Vec<Diagnostic>, Vec<ValidationDiagnostic>), OpenError> {
         let (mut net, diags) = parse_network(input);
         if diags.iter().any(|d| d.kind.is_error()) {
             return Err(OpenError::Parse(diags));
@@ -293,6 +307,7 @@ impl Simulation {
         if findings.iter().any(|f| f.kind.is_error()) {
             return Err(OpenError::Validation(findings));
         }
+        realise_file_gages(&mut net, &rain_files).map_err(OpenError::Surface)?;
         let router = Router::build(&net).map_err(OpenError::Routing)?;
         let start_epoch_for_surface =
             days_from_civil(net.options.start_date) as f64 * 86_400.0 + net.options.start_time;
@@ -2216,6 +2231,89 @@ impl Simulation {
 /// A tidal curve's stage at a clock time (s past midnight): linear in the
 /// curve — whose abscissae import converted to seconds — wrapping over
 /// the day.
+/// Realise file-sourced gages as the equivalent series (§3.1): each
+/// supplied record's station readings, unit-converted, become an appended
+/// series the gage then points at, so everything downstream treats the
+/// gage exactly as if the series had been written in the model. A gage
+/// naming a file the caller did not supply refuses the load.
+///
+/// A supplied name matches the gage's declaration as written, or failing
+/// that by trailing file name — models carry paths from the machine they
+/// were authored on, and the caller supplies the file it actually found.
+fn realise_file_gages(
+    net: &mut Network,
+    rain_files: &[(String, Vec<crate::io::rain::RainReading>)],
+) -> Result<(), crate::hydrology::runoff::SurfaceRefusal> {
+    use crate::hydrology::runoff::SurfaceRefusal;
+    use crate::model::{GageSource, RainFileUnit};
+
+    let basename = |name: &str| {
+        name.rsplit(['/', '\\'])
+            .next()
+            .unwrap_or(name)
+            .to_ascii_lowercase()
+    };
+    for gi in 0..net.gages.len() {
+        let GageSource::File {
+            ref file,
+            ref station,
+            unit,
+        } = net.gages[gi].source
+        else {
+            continue;
+        };
+        let supplied = rain_files
+            .iter()
+            .find(|(name, _)| name == file)
+            .or_else(|| {
+                rain_files
+                    .iter()
+                    .find(|(name, _)| basename(name) == basename(file))
+            });
+        let Some((_, readings)) = supplied else {
+            return Err(SurfaceRefusal::Incomplete(format!(
+                "gage {}: external rain record {file:?} was not supplied — \
+                 provide the file, or inline the record as a [TIMESERIES] section",
+                net.gages[gi].id
+            )));
+        };
+        // The record's declared depth unit, converted to the model's; an
+        // undeclared unit already reads in the model's (§14.12).
+        let scale = match (unit, net.options.flow_units.is_us()) {
+            (Some(RainFileUnit::Inches), false) => 25.4,
+            (Some(RainFileUnit::Millimetres), true) => 1.0 / 25.4,
+            _ => 1.0,
+        };
+        let mut points: Vec<crate::model::TimeSeriesPoint> = readings
+            .iter()
+            .filter(|r| r.station == *station)
+            .map(|r| crate::model::TimeSeriesPoint {
+                time: crate::model::SeriesTime::Absolute {
+                    date: r.date,
+                    seconds: r.seconds,
+                },
+                value: r.value * scale,
+            })
+            .collect();
+        points.sort_by(|a, b| {
+            let key = |p: &crate::model::TimeSeriesPoint| match &p.time {
+                crate::model::SeriesTime::Absolute { date, seconds } => {
+                    days_from_civil(*date) as f64 * 86_400.0 + seconds
+                }
+                crate::model::SeriesTime::Elapsed(s) => *s,
+            };
+            key(a).total_cmp(&key(b))
+        });
+        let series = net.timeseries.len();
+        net.timeseries.push(crate::model::TimeSeries {
+            id: format!("[rain record {file}:{station}]"),
+            source: crate::model::TimeSeriesSource::Points(points),
+        });
+        net.gages[gi].source = GageSource::Series { series };
+    }
+    Ok(())
+}
+
 fn tidal_stage(points: &[(f64, f64)], secs: f64) -> f64 {
     if points.is_empty() {
         return 0.0;

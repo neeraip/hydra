@@ -17,6 +17,7 @@ pub mod options;
 pub mod out_reader;
 pub mod out_writer;
 pub mod quality;
+pub mod rain;
 pub mod rpt_writer;
 pub mod snow_rdii;
 pub mod streets;

@@ -647,7 +647,19 @@ pub enum GageSource {
         file: String,
         /// Station identifier within the file.
         station: String,
+        /// The record's own depth unit; `None` follows the model unit
+        /// system (§2.4).
+        unit: Option<RainFileUnit>,
     },
+}
+
+/// The depth unit an external rain record declares (§2.4).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RainFileUnit {
+    /// Inches.
+    Inches,
+    /// Millimetres.
+    Millimetres,
 }
 
 /// A parcel (§2.4), assembled from its three sections.

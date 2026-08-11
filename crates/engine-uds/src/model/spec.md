@@ -70,8 +70,9 @@ predecessor:
 ### 2.4 Surface Entities
 
 **Precipitation gages** supply a precipitation record to one or more parcels,
-from a supplied series or an external record, expressed as intensity, volume, or
-cumulative volume over a fixed recording interval.
+from a supplied series or an external record — declared by file name, station
+identifier, and the record's own depth unit — expressed as intensity, volume,
+or cumulative volume over a fixed recording interval.
 
 **Parcels** are areas of land receiving precipitation from exactly one gage,
 discharging either to a network vertex or to another parcel, so that overland

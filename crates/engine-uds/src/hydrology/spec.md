@@ -24,6 +24,14 @@ supported external formats carrying end-of-interval stamps are shifted on
 read. Gridded rainfall is represented by one gage per cell or by area
 weighting.
 
+An external record whose text the caller supplied at load (format:
+interoperability §14.12) is realised as the equivalent series — the
+station's readings, unit-converted, become the gage's record, and
+everything downstream (form, interval, catch factor, snow split) treats
+the gage exactly as if that series had been written in the model. A gage
+naming a file the caller did not supply refuses the load with the file
+named: absent rain data is a missing input, never a dry record.
+
 **Temperature**, needed by snowmelt and Hargreaves evaporation, comes from a
 series (linearly interpolated) or from daily maximum/minimum climate records
 converted to instantaneous values by sinusoidal interpolation: the minimum
