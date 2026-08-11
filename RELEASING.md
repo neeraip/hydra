@@ -29,6 +29,11 @@ just bump minor
 # 2. Review and publish the library draft release from the GitHub releases page
 # 3. Publishing triggers the publish-crates workflow — wait for it to go green
 #    (hydra-sdk must be on crates.io before the CLI publish can succeed)
+# 4. Run the Docs workflow by hand if the hosted demo should show this
+#    release. The release asset above is built at the tag, but the copy on
+#    the docs site is not: docs.yml deliberately ignores engine changes so
+#    Pages is not rebuilt on every solver commit, so /try keeps running the
+#    previous engine until someone dispatches it.
 
 just bump-cli minor
 just bump-gui minor
@@ -48,7 +53,7 @@ just bump-cli patch   # and/or just bump-gui patch
 
 - **The bump refuses a stale checkout.** It fetches `origin/main` first and stops if this branch is behind or has diverged. A release tag here is immutable, so one cut from a checkout missing someone else's commits cannot be moved afterwards — only superseded by another version.
 - **Never push a `cli-v*` or `gui-v*` tag at the same time as a `v*` tag.** The CLI publish will race against the library publish and fail because `hydra-sdk` won't be on crates.io yet.
-- **Regenerate the third-party notices whenever dependencies moved** — `just licenses`, committed. The app shows them under Settings → About, and the licences of the packages Hydra ships ask that their copyright notices travel with the binary. `just ci` runs `just licenses-check` and fails on a stale file, so this normally lands with the dependency change rather than at release time.
+- **Regenerate the third-party notices whenever dependencies moved** — `just licenses`, committed. The app shows them under Settings → About, and the licences of the packages Hydra ships ask that their copyright notices travel with the binary. The `Licence Notices` workflow fails a pull request whose dependencies no longer match the committed file, so this lands with the dependency change rather than at release time. It did not always: the check lived only in `just ci`, which nobody runs on an auto-merged dependency bump, and the file drifted for a release at a time before anyone noticed.
 - **Never use these recipes just to set a version without intending a release.** They commit and tag, which triggers CI/CD. To reset or change a version without releasing, edit the relevant `Cargo.toml`, `tauri.conf.json`, and `crates/gui/frontend/package.json` files directly, run `cargo update --workspace`, and commit — no tag.
 
 ## GUI self-updater
