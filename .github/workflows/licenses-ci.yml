@@ -1,0 +1,83 @@
+name: Licence Notices
+
+# The notices the app shows under Settings → About are generated from the
+# GUI's own dependency graph, so they go stale the moment a dependency moves
+# and nothing about the change looks wrong. `just ci` has always checked
+# them; CI did not, which meant the check only ran when somebody happened to
+# run the full gate locally. Dependency bumps arrive continuously and merge
+# unattended, so in practice the file drifted between releases and was swept
+# up by hand — a notice that names a version the binary does not contain has
+# not travelled with the binary, which is the whole point of shipping it.
+#
+# A bump that changes what the app links will fail this. The fix is
+# `just licenses` and committing the result, which is a real part of the
+# change rather than an afterthought.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+  # Weekly safety net: catch toolchain/registry drift during push-quiet weeks.
+  schedule:
+    - cron: "30 6 * * 1"
+
+concurrency:
+  group: licenses-ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  notices:
+    name: Licence Notices
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    env:
+      CARGO_TERM_COLOR: always
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7.0.1
+        with:
+          fetch-depth: 1
+
+      # The script walks both dependency graphs and reads the licence text
+      # out of each package, so both toolchains and both sets of fetched
+      # dependencies have to be present — this is the one check that spans
+      # the two ecosystems, which is why it is its own workflow.
+      - name: Install Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1.17.0
+        with:
+          cache: false
+
+      - name: Cache Cargo artifacts
+        uses: Swatinem/rust-cache@v2.9.1
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      # `cargo metadata` is read unfiltered, so the registry must hold every
+      # platform's dependencies, not just this runner's.
+      - name: Fetch Cargo dependencies
+        run: cargo fetch --locked
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v6.0.9
+        with:
+          version: 10
+
+      - name: Install Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: 'pnpm'
+          cache-dependency-path: crates/gui/frontend/pnpm-lock.yaml
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+        working-directory: crates/gui/frontend
+
+      - name: Check the notices match the dependencies
+        run: python3 scripts/licenses.py --check
