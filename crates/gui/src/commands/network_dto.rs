@@ -351,6 +351,12 @@ pub enum NetworkStateInner {
         raw_text: String,
         /// Parsed uds network, for validation findings and future viewing.
         network: std::sync::Arc<hydra::uds::model::Network>,
+        /// Auxiliary records gathered for a not-yet-created project —
+        /// found beside the picked model or attached by the user — keyed
+        /// by the trailing file name the bundle will use. Consumed by
+        /// `create_project`, which writes them into `base/aux/`; always
+        /// empty for project-owned loads, whose aux files live on disk.
+        aux_files: Vec<(String, Vec<u8>)>,
         /// Same ownership semantics as `Loaded`.
         owner_project_id: Option<String>,
         /// Same ownership semantics as `Loaded`.

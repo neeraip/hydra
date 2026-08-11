@@ -17,6 +17,7 @@
 
 use std::io::Read;
 
+use super::aux_files::{uds_sidecar_refs, SidecarRef};
 use super::projects::{
     app_data_dir, parse_model_bytes, persist_new_project, require_gui_openable_engine, validate_id,
     ParsedModel, Project,
@@ -61,17 +62,6 @@ pub struct ArchiveModelEntry {
     pub sidecars: Vec<SidecarRef>,
     /// Why this entry cannot be imported, when it cannot.
     pub error: Option<String>,
-}
-
-/// One referenced auxiliary file: the name as the model wrote it, a
-/// human label saying what role it plays, and whether this archive holds
-/// it (matched by trailing file name).
-#[derive(serde::Serialize, Clone, Debug)]
-#[serde(rename_all = "camelCase")]
-pub struct SidecarRef {
-    pub file: String,
-    pub label: String,
-    pub carried: bool,
 }
 
 /// What a scan found: the model-shaped entries, described, and every other
@@ -127,45 +117,6 @@ fn model_extensions() -> Vec<String> {
                 }
             }
         }
-    }
-    out
-}
-
-/// External files a drainage model references but an archive import does
-/// not carry into the project: rain gage records, climate files, and
-/// interface files read at run time. Named so the review table can warn
-/// before the user commits, instead of the run refusing after.
-fn uds_sidecar_refs(network: &hydra::uds::model::Network) -> Vec<(String, String)> {
-    use hydra::uds::model::{FileMode, GageSource, TemperatureSource};
-    let mut out: Vec<(String, String)> = Vec::new();
-    let mut push = |file: &str, role: &str| {
-        if !out.iter().any(|(f, _)| f == file) {
-            out.push((file.to_string(), format!("{role} \"{file}\"")));
-        }
-    };
-    for gage in &network.gages {
-        if let GageSource::File { file, .. } = &gage.source {
-            push(file, "rain file");
-        }
-    }
-    if let Some(TemperatureSource::File { name, .. }) = &network.climate.temperature {
-        push(name, "climate file");
-    }
-    let iface = &network.interface_files;
-    for (slot, role) in [
-        (&iface.rainfall, "rainfall interface file"),
-        (&iface.runoff, "runoff interface file"),
-        (&iface.rdii, "RDII interface file"),
-    ] {
-        if let Some((FileMode::Use, name)) = slot {
-            push(name, role);
-        }
-    }
-    if let Some(name) = &iface.hotstart_use {
-        push(name, "hotstart file");
-    }
-    if let Some(name) = &iface.inflows {
-        push(name, "routing inflows file");
     }
     out
 }

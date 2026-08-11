@@ -50,6 +50,7 @@
 
 mod about;
 mod archive;
+mod aux_files;
 mod basemap_providers;
 mod binary_codec;
 mod generic_results;

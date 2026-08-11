@@ -24,6 +24,7 @@ import { useAppState } from "../../AppContext";
 import { LOCAL_CRS } from "../../canvas/coords";
 import { engineComponents } from "../../engine/registry";
 import {
+  attachAuxFile,
   createProjectOnDisk,
   type EngineInfo,
   formatInpImportError,
@@ -33,13 +34,15 @@ import {
   isEngineGuiOpenable,
   openAndLoadNetwork,
   type Project,
+  type SidecarRef,
   useEngines,
   useNetworkVersion,
   type ValidationFinding,
 } from "../../hooks";
-import { isTauri } from "../../hooks/ipc";
+import { formatIpcError, isTauri } from "../../hooks/ipc";
 import { NetworkThumbnail } from "../ui/NetworkThumbnail";
 import { PrimaryButton } from "../ui/PrimaryButton";
+import { SidecarChecklist } from "../ui/SidecarChecklist";
 
 interface Props {
   onClose: () => void;
@@ -203,6 +206,13 @@ export function NewProjectWizard({ onClose, initial = null }: Props) {
     initial?.coordinatesProjected ?? false,
   );
   const [crsAnswer, setCrsAnswer] = useState<"later" | "local">("later");
+  // Auxiliary files the model references, each carried or missing — the
+  // one thing that decides whether a file-forced drainage model can run
+  // at all once it becomes a project.
+  const [detectedSidecars, setDetectedSidecars] = useState<SidecarRef[]>(
+    initial?.sidecars ?? [],
+  );
+  const [locating, setLocating] = useState(false);
 
   const engine = engines.find((e) => e.key === engineKey) ?? null;
   // Engines whose model this GUI cannot edit have no starter-network path —
@@ -231,6 +241,22 @@ export function NewProjectWizard({ onClose, initial = null }: Props) {
     setDetectedRepairs([]);
     setCoordsProjected(false);
     setCrsAnswer("later");
+    setDetectedSidecars([]);
+  }
+
+  /** Point at a referenced data file on disk; the backend refuses one the
+   * model never names, so a mis-aimed pick cannot silently do nothing. */
+  async function handleLocateAux() {
+    if (locating) return;
+    setLocating(true);
+    try {
+      const refreshed = await attachAuxFile();
+      if (refreshed) setDetectedSidecars(refreshed);
+    } catch (e) {
+      showToast(formatIpcError(e), "error");
+    } finally {
+      setLocating(false);
+    }
   }
 
   async function handleBrowse() {
@@ -245,6 +271,7 @@ export function NewProjectWizard({ onClose, initial = null }: Props) {
         setDetectedRepairs(result.repairs ?? []);
         setCoordsProjected(result.coordinatesProjected ?? false);
         setCrsAnswer("later");
+        setDetectedSidecars(result.sidecars ?? []);
         if (result.repairs?.length) {
           showToast(
             `Imported with ${result.repairs.length} repair${
@@ -545,8 +572,14 @@ export function NewProjectWizard({ onClose, initial = null }: Props) {
                   </div>
                   {(coordsProjected ||
                     detectedFindings.length > 0 ||
-                    detectedRepairs.length > 0) && (
+                    detectedRepairs.length > 0 ||
+                    detectedSidecars.length > 0) && (
                     <div style={REVIEW_DETAILS}>
+                      <SidecarChecklist
+                        sidecars={detectedSidecars}
+                        busy={locating}
+                        onLocate={() => void handleLocateAux()}
+                      />
                       {coordsProjected && (
                         <div>
                           <div style={REVIEW_LABEL}>Coordinates</div>

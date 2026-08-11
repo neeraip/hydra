@@ -12,6 +12,7 @@ import type { ValidationFinding } from "./issues";
 import type { NetworkSummary } from "./NetworkDataContext";
 import { useNetworkData } from "./NetworkDataContext";
 import { useNetworkVersion } from "./NetworkVersionContext";
+import type { SidecarRef } from "./projects";
 
 // ── Binary network snapshot decoding ───────────────────────────────────────
 //
@@ -508,6 +509,9 @@ export interface ImportedModel {
   /** The engine that owns this model — recognised from the file when the
    * caller did not name one. */
   engine: string;
+  /** Auxiliary files the model references: carried when the import has
+   * their bytes (found beside the model or attached), missing otherwise. */
+  sidecars: SidecarRef[];
 }
 
 /** Convert backend/Tauri import errors into concise toast-safe text. */

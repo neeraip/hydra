@@ -257,6 +257,16 @@ export async function openAndScanArchive(): Promise<ArchiveScan | null> {
  * archive itself was readable; each selection's own failure comes back in
  * its outcome — partial success is reported, never rolled back.
  */
+/**
+ * Pick an auxiliary file on disk and attach it to the drainage model held
+ * for import; `create_project` then writes it into the bundle. Returns the
+ * refreshed reference list, or `null` when the dialog is cancelled. Throws
+ * when the picked file is one the model never references.
+ */
+export async function attachAuxFile(): Promise<SidecarRef[] | null> {
+  return invoke<SidecarRef[] | null>("attach_aux_file", {});
+}
+
 export async function createProjectsFromArchive(
   archivePath: string,
   selections: { path: string; name: string; engine: string }[],

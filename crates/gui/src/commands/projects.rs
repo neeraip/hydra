@@ -211,26 +211,39 @@ const STARTER_NODE_COUNT: u32 = 1;
 /// Split out of `create_project` so the choice can be tested without a Tauri
 /// handle: this is the decision that, when inferred from managed state alone,
 /// copied a previously-opened project into a project asked to be empty.
-fn new_project_model(import: bool, guard: &mut NetworkStateInner) -> (Vec<u8>, u32, u32) {
+type NewProjectModel = (Vec<u8>, u32, u32, Vec<(String, Vec<u8>)>);
+
+fn new_project_model(import: bool, guard: &mut NetworkStateInner) -> NewProjectModel {
     if !import {
-        return (STARTER_INP.to_vec(), STARTER_NODE_COUNT, 0);
+        return (STARTER_INP.to_vec(), STARTER_NODE_COUNT, 0, Vec::new());
     }
     // `up_to_date_raw_bytes` re-serialises first when in-memory edits have
     // not been flushed yet.
     let bytes = guard.current_model_bytes();
     match (&*guard, bytes) {
-        (NetworkStateInner::Loaded { dto, .. }, Some(bytes)) => {
-            (bytes, dto.nodes.len() as u32, dto.links.len() as u32)
-        }
+        (NetworkStateInner::Loaded { dto, .. }, Some(bytes)) => (
+            bytes,
+            dto.nodes.len() as u32,
+            dto.links.len() as u32,
+            Vec::new(),
+        ),
         // A uds import: the model text as imported, counted from the parsed
-        // network. Falling through to the starter here would silently write
-        // an EPANET model into an urban-drainage project.
-        (NetworkStateInner::LoadedUds { network, .. }, Some(bytes)) => (
+        // network, together with whatever auxiliary records the import
+        // gathered beside the model or the user attached. Falling through
+        // to the starter here would silently write an EPANET model into an
+        // urban-drainage project.
+        (
+            NetworkStateInner::LoadedUds {
+                network, aux_files, ..
+            },
+            Some(bytes),
+        ) => (
             bytes,
             network.vertices.len() as u32,
             network.links.len() as u32,
+            aux_files.clone(),
         ),
-        _ => (STARTER_INP.to_vec(), STARTER_NODE_COUNT, 0),
+        _ => (STARTER_INP.to_vec(), STARTER_NODE_COUNT, 0, Vec::new()),
     }
 }
 
@@ -275,12 +288,16 @@ pub fn create_project(
     }
     let app_data = app_data_dir(&app)?;
 
-    let (inp_bytes, node_count, link_count) =
+    let (inp_bytes, node_count, link_count, aux_files) =
         new_project_model(import_loaded_network, &mut state.0.lock());
 
-    persist_new_project(
+    let project = persist_new_project(
         &app_data, &id, name, engine, &inp_bytes, node_count, link_count,
-    )
+    )?;
+    // The auxiliary records gathered at import travel into the bundle,
+    // where the run queue reads them (§12.1).
+    super::aux_files::write_aux_files(&app_data, &id, &aux_files)?;
+    Ok(project)
 }
 
 /// Write a new project bundle to disk: directories, `meta.json`, and the
@@ -1580,6 +1597,10 @@ pub struct ImportedModel {
     /// it, so the one path that *discovers* it (recognition, §2.5.1) and
     /// the one that is told it return the same shape.
     pub engine: String,
+    /// Auxiliary files the model references: carried when the import has
+    /// their bytes in hand (found beside the model, or attached), warned
+    /// about otherwise — the wizard says which before the user commits.
+    pub sidecars: Vec<super::aux_files::SidecarRef>,
 }
 
 /// Whether a model's own coordinates rule out longitude and latitude.
@@ -1773,7 +1794,7 @@ pub async fn open_and_load_network(
     //
     // Runs still use the strict `parse`, so an unsimulable network cannot
     // reach the solver.
-    load_model_bytes(descriptor.key, bytes, file_stem, &state)
+    load_model_bytes(descriptor.key, bytes, file_stem, &state, path_buf.parent())
 }
 
 /// A parsed import before it is stored or persisted anywhere: the parsed
@@ -1854,6 +1875,7 @@ pub(crate) fn parse_model_bytes(
                 repairs,
                 coordinates_projected,
                 engine: engine_key.to_string(),
+                sidecars: super::aux_files::sidecar_status(&network, &[]),
             };
             return Ok((
                 ParsedModel::Uds {
@@ -1884,6 +1906,7 @@ pub(crate) fn parse_model_bytes(
         repairs: Vec::new(),
         coordinates_projected,
         engine: engine_key.to_string(),
+        sidecars: Vec::new(),
     };
     Ok((
         ParsedModel::Wds {
@@ -1898,13 +1921,20 @@ pub(crate) fn parse_model_bytes(
 /// Parse model bytes, hold the result in managed state, and describe it for
 /// the wizard — [`parse_model_bytes`] plus the storing that the single-model
 /// import paths want.
+///
+/// `source_dir` is where the model file came from, when it came from disk:
+/// auxiliary files a drainage model references are looked for there — the
+/// name as written first, its trailing file name second — and every one
+/// found is gathered for `create_project` to write into the bundle, with
+/// the wizard told which references are covered and which are not.
 fn load_model_bytes(
     engine_key: &str,
     bytes: Vec<u8>,
     file_stem: String,
     state: &tauri::State<'_, NetworkState>,
+    source_dir: Option<&std::path::Path>,
 ) -> Result<Option<ImportedModel>, String> {
-    let (parsed, imported) = parse_model_bytes(engine_key, bytes, file_stem)?;
+    let (parsed, mut imported) = parse_model_bytes(engine_key, bytes, file_stem)?;
     *state.0.lock() = match parsed {
         ParsedModel::Wds {
             raw_bytes,
@@ -1918,14 +1948,94 @@ fn load_model_bytes(
             owner_project_id: None,
             owner_scenario_id: None,
         },
-        ParsedModel::Uds { raw_text, network } => NetworkStateInner::LoadedUds {
-            raw_text,
-            network: std::sync::Arc::new(*network),
-            owner_project_id: None,
-            owner_scenario_id: None,
-        },
+        ParsedModel::Uds { raw_text, network } => {
+            let mut aux_files: Vec<(String, Vec<u8>)> = Vec::new();
+            if let Some(dir) = source_dir {
+                for (file, _) in super::aux_files::uds_sidecar_refs(&network) {
+                    let base = super::aux_files::aux_basename(&file).to_string();
+                    let found =
+                        std::fs::read(dir.join(&file)).or_else(|_| std::fs::read(dir.join(&base)));
+                    if let Ok(bytes) = found {
+                        aux_files.push((base, bytes));
+                    }
+                }
+            }
+            let gathered: Vec<String> = aux_files.iter().map(|(n, _)| n.clone()).collect();
+            imported.sidecars = super::aux_files::sidecar_status(&network, &gathered);
+            NetworkStateInner::LoadedUds {
+                raw_text,
+                network: std::sync::Arc::new(*network),
+                aux_files,
+                owner_project_id: None,
+                owner_scenario_id: None,
+            }
+        }
     };
     Ok(Some(imported))
+}
+
+/// Attach one auxiliary file's bytes to the drainage model currently held
+/// for import (§12.1): stored under its trailing name for `create_project`
+/// to write into the bundle, replacing an earlier attachment of the same
+/// name. Refuses a file the model never references — attaching it would
+/// silently do nothing, and the picker was probably aimed at the wrong
+/// file. Returns the refreshed sidecar status the wizard renders.
+///
+/// The decision half of `attach_aux_file`, callable without a dialog.
+pub(crate) fn attach_aux_bytes(
+    inner: &mut NetworkStateInner,
+    file_name: &str,
+    bytes: Vec<u8>,
+) -> Result<Vec<super::aux_files::SidecarRef>, String> {
+    let NetworkStateInner::LoadedUds {
+        network, aux_files, ..
+    } = inner
+    else {
+        return Err("no drainage model is loaded to attach files to".into());
+    };
+    let base = super::aux_files::aux_basename(file_name).to_string();
+    let referenced = super::aux_files::uds_sidecar_refs(network)
+        .iter()
+        .any(|(file, _)| super::aux_files::aux_basename(file).eq_ignore_ascii_case(&base));
+    if !referenced {
+        return Err(format!(
+            "the model does not reference a file named {base:?} — check the \
+             model's [RAINGAGES] and climate declarations for the expected name"
+        ));
+    }
+    aux_files.retain(|(name, _)| !name.eq_ignore_ascii_case(&base));
+    aux_files.push((base, bytes));
+    let gathered: Vec<String> = aux_files.iter().map(|(n, _)| n.clone()).collect();
+    Ok(super::aux_files::sidecar_status(network, &gathered))
+}
+
+/// Open a native file-picker for an auxiliary file the loaded drainage
+/// model references, and attach its bytes for `create_project` to carry.
+/// Returns `null` when the dialog is cancelled.
+#[tauri::command]
+pub async fn attach_aux_file(
+    state: tauri::State<'_, NetworkState>,
+    app: tauri::AppHandle,
+) -> Result<Option<Vec<super::aux_files::SidecarRef>>, String> {
+    use tauri_plugin_dialog::DialogExt;
+
+    let dialog_app = app.clone();
+    let path = tauri::async_runtime::spawn_blocking(move || {
+        dialog_app.dialog().file().blocking_pick_file()
+    })
+    .await
+    .map_err(|e| format!("file dialog task panicked: {e}"))?;
+    let Some(path) = path else {
+        return Ok(None);
+    };
+    let path = path.into_path().map_err(|e| e.to_string())?;
+    let file_name = path
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("")
+        .to_string();
+    let bytes = std::fs::read(&path).map_err(|e| e.to_string())?;
+    attach_aux_bytes(&mut state.0.lock(), &file_name, bytes).map(Some)
 }
 
 /// Open a native file-picker across every model format the GUI can open,
@@ -1986,7 +2096,7 @@ pub async fn open_and_recognise_network(
     let descriptor = hydra::engines::route(&bytes).map_err(|e| e.to_string())?;
     // Routing says whose the file is, not that this build can open it.
     require_gui_openable_engine(descriptor.key)?;
-    load_model_bytes(descriptor.key, bytes, file_stem, &state)
+    load_model_bytes(descriptor.key, bytes, file_stem, &state, path_buf.parent())
 }
 
 /// Persist the currently loaded network (`NetworkState`) back into the named
@@ -2150,6 +2260,8 @@ pub fn load_project_network(
         *state.0.lock() = NetworkStateInner::LoadedUds {
             raw_text: text,
             network: std::sync::Arc::new(network),
+            // Project-owned: aux files live on disk in base/aux/.
+            aux_files: Vec::new(),
             owner_project_id: Some(project_id.clone()),
             owner_scenario_id: scenario_id.clone(),
         };
@@ -2842,11 +2954,12 @@ mod tests {
         let mut guard = NetworkStateInner::LoadedUds {
             raw_text: model.to_string(),
             network: std::sync::Arc::new(network),
+            aux_files: Vec::new(),
             owner_project_id: None,
             owner_scenario_id: None,
         };
 
-        let (bytes, node_count, link_count) = new_project_model(true, &mut guard);
+        let (bytes, node_count, link_count, _) = new_project_model(true, &mut guard);
         assert_eq!(bytes, model.as_bytes(), "must persist the imported model");
         assert_eq!(node_count, 2, "J1 + O1");
         assert_eq!(link_count, 1, "C1");
@@ -3059,7 +3172,7 @@ R1  0.0  0.0
             owner_scenario_id: None,
         };
 
-        let (bytes, nodes, links) = new_project_model(false, &mut loaded);
+        let (bytes, nodes, links, _) = new_project_model(false, &mut loaded);
         assert_eq!(
             bytes, STARTER_INP,
             "an empty project gets the starter model"
@@ -3069,7 +3182,7 @@ R1  0.0  0.0
         // Counts must describe the bytes written: reporting the loaded
         // network's counts here would mark the project "ready" and make every
         // has-a-network check downstream disagree with the file on disk.
-        let (bytes, nodes, links) = new_project_model(true, &mut loaded);
+        let (bytes, nodes, links, _) = new_project_model(true, &mut loaded);
         assert_eq!(bytes, LOADED_INP.as_bytes(), "an import gets those bytes");
         assert_eq!((nodes, links), (2, 1));
     }
@@ -3077,7 +3190,7 @@ R1  0.0  0.0
     #[test]
     fn importing_with_nothing_loaded_falls_back_to_the_starter_model() {
         let mut empty = NetworkStateInner::Empty;
-        let (bytes, nodes, links) = new_project_model(true, &mut empty);
+        let (bytes, nodes, links, _) = new_project_model(true, &mut empty);
         assert_eq!(bytes, STARTER_INP);
         assert_eq!((nodes, links), (STARTER_NODE_COUNT, 0));
     }

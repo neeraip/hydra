@@ -105,6 +105,7 @@ fn main() {
             commands::open_scenario_folder,
             commands::open_and_load_network,
             commands::open_and_scan_archive,
+            commands::attach_aux_file,
             commands::create_projects_from_archive,
             commands::open_and_recognise_network,
             commands::get_network_snapshot,
