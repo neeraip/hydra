@@ -101,6 +101,7 @@ import { sourceCoordinate } from "./CanvasView/dropPoint";
 import { InvalidCrsOverlay } from "./CanvasView/InvalidCrsOverlay";
 import { NodeSizeSlider } from "./CanvasView/NodeSizeSlider";
 import { SchematicAspectSlider } from "./CanvasView/SchematicAspectSlider";
+import { toolAvailableIn } from "./CanvasView/toolAvailability";
 import { useCrsReprojection } from "./CanvasView/useCrsReprojection";
 import { ViewportControls } from "./CanvasView/ViewportControls";
 import { wdsValuation } from "./criteriaValuation";
@@ -2038,21 +2039,11 @@ export function CanvasView({ isActive = true }: { isActive?: boolean }) {
     };
   }, [inspectorOccupies]);
 
-  // Reset to Select when switching to Schematic if the active tool is map-only.
-  //
-  // What makes a tool map-only is that it reads or writes a *coordinate*:
-  // `add-node` and `edit` place one, and the schematic's positions are synthetic
-  // BFS output rather than the network's own geometry; `measure` reports a
-  // distance, which is meaningless in that space. `add-link` writes only its two
-  // node ids, so it works anywhere — and schematic is arguably where connecting
-  // nodes is easiest to see.
+  // Reset to Select when switching to a view the active tool cannot work
+  // in. Which tools those are is `toolAvailableIn`'s decision, so it can
+  // be read and tested without mounting the canvas.
   useEffect(() => {
-    if (
-      viewMode === "schematic" &&
-      (activeTool === "edit" ||
-        activeTool === "add-node" ||
-        activeTool === "measure")
-    ) {
+    if (!toolAvailableIn(viewMode, activeTool)) {
       setActiveTool("select");
     }
   }, [viewMode, activeTool]);
