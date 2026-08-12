@@ -302,6 +302,14 @@ pub struct AttributeInfoDto {
     pub label: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub quantity: Option<hydra::common::QuantityDescriptor>,
+    /// Whether a write to this attribute may be offered (§4.5.1).
+    pub editable: bool,
+    /// The value's shape and bounds — what a form needs to know which
+    /// control to draw for it, before any element exists to read.
+    pub kind: hydra::common::OptionKind,
+    /// The kind whose elements this attribute may name (§4.5.1.1).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub references: Option<String>,
 }
 
 #[tauri::command]
@@ -318,12 +326,15 @@ pub fn list_element_attributes(engine: String, kind: String) -> Vec<AttributeInf
     attrs
         .into_iter()
         .map(|attr| AttributeInfoDto {
-            key: attr.key,
-            label: attr.label,
             quantity: attr
                 .quantity
                 .as_deref()
                 .and_then(super::uds_results::quantity_descriptor),
+            key: attr.key,
+            label: attr.label,
+            editable: attr.editable,
+            kind: attr.kind,
+            references: attr.references,
         })
         .collect()
 }

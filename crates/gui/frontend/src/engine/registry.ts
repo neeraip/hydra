@@ -13,6 +13,7 @@
 
 import type { ComponentType } from "react";
 import { ANIMATED_LINK_VARIABLES } from "../canvas/linkPulse";
+import { CreateElementModal } from "../components/modals/CreateElementModal";
 import {
   CatalogCriteriaControl,
   WdsCriteriaControl,
@@ -22,7 +23,6 @@ import { ElementsView } from "../pages/project/ElementsView";
 import type { Region } from "../types/network";
 import { UdsAnalysisView } from "./uds/AnalysisView";
 import { UdsCreateLinkModal } from "./uds/CreateLinkModal";
-import { UdsCreateNodeModal } from "./uds/CreateNodeModal";
 import { UdsLinkInspectorBody } from "./uds/LinkInspectorBody";
 import { UdsNodeInspectorBody } from "./uds/NodeInspectorBody";
 import { UdsOverviewComposition } from "./uds/OverviewComposition";
@@ -282,6 +282,7 @@ const WDS: EngineComponents = {
   // could be edited so differently — a staged save on one side and a
   // write-through on the other, for no reason a user could name.
   EditorView: ElementsView,
+  CreateNodeModal: CreateElementModal,
   editorFocusesElements: true,
   settingsEditable: true,
   undoableRemoval: true,
@@ -313,7 +314,7 @@ const UDS: EngineComponents = {
   NodeInspectorBody: UdsNodeInspectorBody,
   LinkInspectorBody: UdsLinkInspectorBody,
   RegionInspectorBody: UdsRegionInspectorBody,
-  CreateNodeModal: UdsCreateNodeModal,
+  CreateNodeModal: CreateElementModal,
   CreateLinkModal: UdsCreateLinkModal,
   // The drainage Editor reveals a focused element: it shows the element's
   // own kind and scrolls to its row. It could not when it was a single

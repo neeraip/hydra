@@ -338,7 +338,12 @@ export function ElementsView() {
             // map has and a table does not — so its table offers no add
             // rather than a dialog with two more blanks in it.
             onAdd={
-              activeClass === "point" && creatableHere
+              // Three things have to be true, and the third is the one
+              // that was missing: the kind can be created, a position
+              // can place it, and there is a dialog to ask for one. The
+              // button appeared without the last of those and did
+              // nothing when pressed.
+              CreateNode && activeClass === "point" && creatableHere
                 ? () => setAdding(true)
                 : undefined
             }

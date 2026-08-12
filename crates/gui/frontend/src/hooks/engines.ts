@@ -13,6 +13,7 @@
 import { useEffect, useState } from "react";
 import { registerElementBadges } from "../types/elementTypes";
 import { tryInvokeOr } from "./ipc";
+import type { OptionKind } from "./reports";
 import type { GenericQuantity } from "./results";
 
 /** One source-model file format an engine imports (hydra-common spec §2.2).
@@ -230,6 +231,13 @@ export interface ElementAttributeInfo {
   key: string;
   label: string;
   quantity?: GenericQuantity;
+  /** Whether a write to this attribute may be offered (§4.5.1). */
+  editable: boolean;
+  /** The value's shape and bounds — what a create form needs to know
+   * which control to draw, before any element exists to read. */
+  kind: OptionKind;
+  /** The kind whose elements this attribute may name (§4.5.1.1). */
+  references?: string;
 }
 
 // Static per engine and kind, exactly as the kind catalog is.
