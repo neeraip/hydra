@@ -178,6 +178,33 @@ const fn q(
 /// The display attributes of one element kind, or empty for an unknown id —
 /// advisory, like a block-options description.
 pub fn attribute_schema(kind_id: &str) -> Vec<AttributeDescriptor> {
+    let mut schema = own_attributes(kind_id);
+    // Last, and after every one of the model's own values: a tag is a
+    // note the modeller keeps beside the element, not something the
+    // solver reads. Offered for every kind the tag section can name,
+    // which is every kind that is an element rather than a container.
+    if taggable(kind_id) {
+        schema.push(rw("tag", "Tag", text(), None));
+    }
+    schema
+}
+
+/// Whether `[TAGS]` can name this kind — the spatial classes, which for
+/// this engine is its nodes and its links. A curve or a pattern is a
+/// container the section has no grammar for.
+fn taggable(kind_id: &str) -> bool {
+    ELEMENT_KINDS.iter().any(|k| {
+        k.id == kind_id
+            && matches!(
+                k.class,
+                ElementClass::Point | ElementClass::Polyline | ElementClass::Region
+            )
+    })
+}
+
+/// The attributes a kind has of its own, before the ones every element
+/// carries.
+fn own_attributes(kind_id: &str) -> Vec<AttributeDescriptor> {
     match kind_id {
         "junction" => vec![
             rw("elevation", "Elevation", num(), Some("elevation")),
@@ -277,7 +304,7 @@ fn descriptor(
         kind,
         quantity: quantity.map(str::to_string),
         editable,
-        references: referenced_kind(key).map(str::to_string),
+        references: referenced_kinds(key),
     }
 }
 
@@ -288,15 +315,13 @@ fn descriptor(
 /// because the answer is a property of the key: wherever a schema
 /// publishes it, it means the same thing. A key absent from here is not
 /// a reference, which is the common case.
-fn referenced_kind(key: &str) -> Option<&'static str> {
-    Some(match key {
-        "demandPattern" => "pattern",
-        "headPattern" => "pattern",
-        "speedPattern" => "pattern",
-        "volumeCurve" => "curve",
-        "headCurve" => "curve",
-        _ => return None,
-    })
+fn referenced_kinds(key: &str) -> Vec<String> {
+    let one = |kind: &str| vec![kind.to_string()];
+    match key {
+        "demandPattern" | "headPattern" | "speedPattern" => one("pattern"),
+        "volumeCurve" | "headCurve" => one("curve"),
+        _ => Vec::new(),
+    }
 }
 
 fn num() -> OptionKind {
@@ -427,14 +452,15 @@ mod tests {
         let mut seen = 0;
         for kind in ELEMENT_KINDS {
             for a in attribute_schema(kind.id) {
-                let Some(target) = a.references else { continue };
-                assert!(
-                    ELEMENT_KINDS.iter().any(|k| k.id == target),
-                    "{}.{} references '{target}', which is not a kind",
-                    kind.id,
-                    a.key
-                );
-                seen += 1;
+                for target in &a.references {
+                    assert!(
+                        ELEMENT_KINDS.iter().any(|k| k.id == *target),
+                        "{}.{} references '{target}', which is not a kind",
+                        kind.id,
+                        a.key
+                    );
+                    seen += 1;
+                }
             }
         }
         assert!(seen > 0, "no attribute declares a reference");

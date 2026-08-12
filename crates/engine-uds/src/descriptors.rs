@@ -343,10 +343,37 @@ const fn q(
 /// The display attributes of one element kind, or empty for an unknown id —
 /// advisory, like a block-options description.
 pub fn attribute_schema(kind_id: &str) -> Vec<AttributeDescriptor> {
+    let mut schema = own_attributes(kind_id);
+    // Last, and after every one of the model's own values: a tag is a
+    // note the modeller keeps beside the element, not something the
+    // solver reads. Offered for every kind the tag section can name —
+    // its three object words are subcatchment, node and link, which is
+    // the three spatial classes.
+    if taggable(kind_id) {
+        schema.push(rw("tag", "Tag", text(), None));
+    }
+    schema
+}
+
+/// Whether `[TAGS]` can name this kind. A curve, a pattern or a time
+/// series is a container the section has no grammar for.
+fn taggable(kind_id: &str) -> bool {
+    ELEMENT_KINDS.iter().any(|k| {
+        k.id == kind_id
+            && matches!(
+                k.class,
+                ElementClass::Point | ElementClass::Polyline | ElementClass::Region
+            )
+    })
+}
+
+/// The attributes a kind has of its own, before the ones every element
+/// carries.
+fn own_attributes(kind_id: &str) -> Vec<AttributeDescriptor> {
     match kind_id {
         "subcatchment" => vec![
             attr("raingage", "Rain gage", text(), None),
-            attr("outlet", "Outlet", text(), None),
+            rw("outlet", "Outlet", text(), None),
             rw("area", "Area", num(), Some("area")),
             rw("width", "Width", num(), Some("length")),
             rw("slope", "Slope", num(), Some("percent")),
@@ -599,7 +626,7 @@ fn descriptor(
         kind,
         quantity: quantity.map(str::to_string),
         editable,
-        references: referenced_kind(key).map(str::to_string),
+        references: referenced_kinds(key),
     }
 }
 
@@ -610,17 +637,31 @@ fn descriptor(
 /// because the answer is a property of the key: wherever a schema
 /// publishes it, it means the same thing. A key absent from here is not
 /// a reference, which is the common case.
-fn referenced_kind(key: &str) -> Option<&'static str> {
-    Some(match key {
-        "raingage" => "raingage",
-        // Deliberately not here: a subcatchment's outlet names a vertex
-        // of any kind *or* another subcatchment, and a divider's
-        // diverted link names a link of any kind. One kind id cannot say
-        // that, and naming one of them would offer completions that omit
-        // most of the valid answers — worse than offering none, because
-        // a list that looks complete is read as complete.
-        _ => return None,
-    })
+fn referenced_kinds(key: &str) -> Vec<String> {
+    match key {
+        "raingage" => vec!["raingage".to_string()],
+        // Every kind of conveyance node, *and* another subcatchment:
+        // runoff either enters the network or cascades overland. This is
+        // the attribute §4.5.1.1 was widened for — one kind id could not
+        // say it, so the outlet went unwritable while it stayed one.
+        "outlet" => kinds_of_class(ElementClass::Point)
+            .chain(std::iter::once("subcatchment".to_string()))
+            .collect(),
+        // A link of any kind, so the divider knows which way the
+        // diverted flow leaves.
+        "divertedLink" => kinds_of_class(ElementClass::Polyline).collect(),
+        _ => Vec::new(),
+    }
+}
+
+/// The ids of every kind in a class, in catalog order — which is
+/// presentation order, so an application offering them offers them the
+/// way this engine would list them.
+fn kinds_of_class(class: ElementClass) -> impl Iterator<Item = String> {
+    ELEMENT_KINDS
+        .iter()
+        .filter(move |k| k.class == class)
+        .map(|k| k.id.to_string())
 }
 
 fn num() -> OptionKind {
@@ -759,14 +800,15 @@ mod tests {
         let mut seen = 0;
         for kind in ELEMENT_KINDS {
             for a in attribute_schema(kind.id) {
-                let Some(target) = a.references else { continue };
-                assert!(
-                    ELEMENT_KINDS.iter().any(|k| k.id == target),
-                    "{}.{} references '{target}', which is not a kind",
-                    kind.id,
-                    a.key
-                );
-                seen += 1;
+                for target in &a.references {
+                    assert!(
+                        ELEMENT_KINDS.iter().any(|k| k.id == *target),
+                        "{}.{} references '{target}', which is not a kind",
+                        kind.id,
+                        a.key
+                    );
+                    seen += 1;
+                }
             }
         }
         assert!(seen > 0, "no attribute declares a reference");
@@ -799,13 +841,17 @@ mod tests {
         }
     }
 
-    /// An attribute is marked editable here only if it is a number.
+    /// An attribute is marked editable here only if a cell can hold it.
     ///
-    /// Not a rule of the contract — the water-distribution engine marks
-    /// references and choices editable and is right to. It is a rule of
-    /// *this* engine's write, which takes a number: marking a referent
-    /// editable would have the editor offer a numeric field for a
-    /// cross-section shape, and the write refuse every use of it.
+    /// A number or free text — which since the tag and the outlet became
+    /// writable includes text that names another element. Never a shape:
+    /// a cross-section carries four geometry values behind one label, so
+    /// an editor offering a field for it would refuse every use of it.
+    ///
+    /// This asserts the *shape* an editable attribute may have. That the
+    /// write actually accepts each one is asserted where the write is,
+    /// by reading every editable key back after setting it — neither
+    /// test would catch what the other does.
     #[test]
     fn only_values_are_marked_editable() {
         for kind in ELEMENT_KINDS {
@@ -814,9 +860,11 @@ mod tests {
                     assert!(
                         matches!(
                             a.kind,
-                            OptionKind::Number { .. } | OptionKind::Integer { .. }
+                            OptionKind::Number { .. }
+                                | OptionKind::Integer { .. }
+                                | OptionKind::Text { .. }
                         ),
-                        "{}.{} is editable but is not a number",
+                        "{}.{} is editable but is neither a number nor text",
                         kind.id,
                         a.key
                     );

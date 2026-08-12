@@ -627,7 +627,7 @@ names.
 
 | Field | Meaning | Constraints |
 |---|---|---|
-| `references` | Kind id (§4.2) whose elements this attribute may name | Absent for a value that is not a reference. |
+| `references` | Kind ids (§4.2) whose elements this attribute may name | Empty for a value that is not a reference. |
 
 Without it a reference is indistinguishable from free text, and an
 application can only offer a box to type a name into — where the names
@@ -636,13 +636,19 @@ reference to nothing. With it, the same generic surface can offer the
 ids that exist, and can say that a value naming no element is wrong
 before the engine has to.
 
-**A value that may name more than one kind declares nothing.** The field
-holds one kind id, and an attribute whose target may be a node *or* an
-areal element — a drainage subcatchment's outlet is exactly this — cannot
-be described by it. Naming one of the possibilities would offer a list
-that omits most of the valid answers, and a list that looks complete is
-read as complete. Widening this to several kinds is an additive change
-here when an engine's editor needs it; guessing in the meantime is not.
+**It is a list because a reference is not always to one kind.** A
+drainage subcatchment's outlet may name a conveyance node *or* another
+subcatchment, and an earlier revision of this section held a single kind
+id and said so — that such an attribute "declares nothing", and that
+widening the field was an additive change to make when an engine's
+editor needed one. It did: the attribute stayed unwritable, and
+re-routing a catchment was the one topological edit no surface offered.
+
+The list is the complete set of kinds an application may offer for the
+value, in the engine's own presentation order. Naming a subset would be
+worse than naming none, because a list that looks complete is read as
+complete — so an engine that cannot enumerate its targets leaves this
+empty and gets a box to type into, which is honest.
 
 It is advisory like the rest of the schema: an engine validates
 references itself, and remains free to accept one this field did not
@@ -675,6 +681,47 @@ application's handling of the model as a whole, and a contract that
 guessed here would be wrong for every model that is a drawing rather than
 a map.
 
+#### 4.5.2.1 Ends
+
+Elements of the `polyline` class have two **ends**, each naming another
+element, and both are editable through this contract.
+
+An end is not an attribute, for the reason position is not one: it is
+implied by the class. §4.1 already requires an application to draw a
+polyline as a line between two elements, so it already presumes the
+polyline has two of them. Leaving them to the schema would let an engine
+publish a line an application must draw and cannot reconnect — and would
+let two engines call the same two ends by different names, which is the
+difference this section exists to keep off the screen.
+
+The two ends are **ordered**, and the order is meaning rather than
+storage. It is the sign convention for whatever the polyline carries: a
+result reported as positive flows from the first end to the second. So
+they are addressed as *first* and *second* and never as an unordered
+pair, and an application that offers to swap them is offering to reverse
+the element.
+
+**What an end may name is the engine's judgement, not a declared kind.**
+§4.5.1.1 carries one kind id for a reference and says that a value which
+may name several kinds declares nothing — and an end is exactly that
+case, since a line in any real model may run to several kinds of thing.
+An application therefore offers the elements whose class can be an end,
+which it already knows from §4.1, and the engine refuses what it will not
+accept. As everywhere else here, the write is the authority.
+
+Two rules are the contract's rather than any engine's, because they
+follow from what a polyline *is*:
+
+- An end must name an element that exists. Setting one to a name the
+  model does not hold refuses; it does not create the element, and it
+  does not leave the line attached to nothing.
+- The two ends must differ. A polyline from a thing to itself is not a
+  short line, it is not a line.
+
+Everything else is the engine's: which kinds may be an end, whether a
+particular one may be reconnected at all, and what a reconnection costs
+in its file.
+
 #### 4.5.3 Creation
 
 A kind descriptor (§4.2) carries whether elements of it may be
@@ -700,8 +747,10 @@ true; one that offers every kind and fails on submit is teaching them the
 same thing later and less kindly.
 
 What a new element needs is exactly what this contract already describes:
-an identifier, a position if its class is spatial (§4.5.2), and values
-for its editable attributes (§4.5.1). Everything else is the engine's
+an identifier, somewhere to be — a position (§4.5.2), or two ends
+(§4.5.2.1) for a polyline, which is placed by what it joins rather than
+by a coordinate — and values for its editable attributes (§4.5.1).
+Everything else is the engine's
 default, and defaults are the engine's judgement — a zero maximum depth
 that means "raise it to the crown of the highest connecting conduit" is a
 sensible default in one engine and meaningless in another.
