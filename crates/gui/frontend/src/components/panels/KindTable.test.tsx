@@ -380,6 +380,24 @@ describe("KindTable virtualisation", () => {
     expect(total).toBeGreaterThan(100_000);
   });
 
+  it("does nothing when asked for a row it does not have", async () => {
+    // Why a caller has to wait for the row to exist before asking. A
+    // create appends the element and refetches; a reveal fired in
+    // between finds nothing and scrolls nowhere, which reads as the
+    // dialog having done nothing at all.
+    const { container, rerender } = render(
+      <KindTable elements={many} activeId="C99999" revealToken={1} />,
+    );
+    const scroller = container.querySelector<HTMLElement>(
+      "div[style*='overflow']",
+    );
+    if (!scroller) throw new Error("no scroll container");
+    scroller.scrollTop = 400;
+    rerender(<KindTable elements={many} activeId="C99999" revealToken={2} />);
+    await new Promise((r) => requestAnimationFrame(r));
+    expect(scroller.scrollTop).toBe(400);
+  });
+
   it("reveals a row that is nowhere near the top", async () => {
     const { container, rerender } = render(
       <KindTable elements={many} activeId="C4000" revealToken={1} />,

@@ -97,13 +97,20 @@ export function ElementsView() {
   // The rail is keyed by catalog kind id and so is the request, so nothing
   // here maps between the two vocabularies — a kind this file has never
   // heard of reveals correctly.
+  // An element to bring into view once the table holds it.
+  //
+  // Two things ask for this and neither can act immediately: the
+  // inspector's "Open in editor" arrives before the kind's rows have
+  // been fetched, and a create arrives before the refetch that will
+  // contain the new element. So the request is recorded and spent when
+  // the row actually exists, rather than fired at a table that does not
+  // have it yet and silently doing nothing.
+  const [revealId, setRevealId] = useState<string | null>(null);
   const [revealToken, setRevealToken] = useState(0);
   useEffect(() => {
     if (!editorFocus) return;
     setActiveKind(editorFocus.kind);
-    // Follows the request's nonce, so opening the same element twice moves
-    // the table both times.
-    setRevealToken(editorFocus.nonce);
+    setRevealId(editorFocus.id);
   }, [editorFocus]);
 
   const { elements, refetch } = useKindElements(
@@ -124,6 +131,14 @@ export function ElementsView() {
     activeScenarioId,
     referenced,
   );
+
+  useEffect(() => {
+    if (revealId == null || !elements.ids.includes(revealId)) return;
+    setRevealId(null);
+    // A token rather than the id, because the same element can be asked
+    // for twice running and the table has to move both times.
+    setRevealToken((t) => t + 1);
+  }, [revealId, elements.ids]);
 
   // The table redraws from a refetch rather than from what was typed:
   // the backend is the one that knows what the value became, and a cell
@@ -368,6 +383,12 @@ export function ElementsView() {
             setAdding(false);
             refetch();
             select(id);
+            // A new element goes where the model puts it, which is the
+            // end — so on any real network it lands below the fold and
+            // the dialog appears to have done nothing. Taking the reader
+            // there is honest about where it went; pinning it to the top
+            // would not be.
+            setRevealId(id);
           }}
           onCancel={() => setAdding(false)}
         />
