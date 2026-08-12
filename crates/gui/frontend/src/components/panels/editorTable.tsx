@@ -253,3 +253,121 @@ export function SortTh({
     </th>
   );
 }
+
+/* ── Row actions ─────────────────────────────────────────────────────────── */
+
+/** Trailing header cell for the actions column (blank, narrow). */
+export function ActionsTh() {
+  return (
+    <th
+      aria-label="Actions"
+      style={{
+        width: 1,
+        borderBottom: "1px solid var(--border)",
+        padding: "7px 10px",
+      }}
+    />
+  );
+}
+
+const ACTION_BUTTON: React.CSSProperties = {
+  display: "inline-flex",
+  alignItems: "center",
+  justifyContent: "center",
+  width: 22,
+  height: 22,
+  padding: 0,
+  border: "none",
+  borderRadius: 4,
+  background: "transparent",
+  cursor: "pointer",
+};
+
+/**
+ * One icon action on a row.
+ *
+ * `disabledReason` doubles as the tooltip: an action that is off has to
+ * say why, or the reader is left to guess whether it is broken. An
+ * action with no reason and no handler is simply not rendered by its
+ * caller — a permanently dead icon teaches nothing.
+ */
+export function ActionIcon({
+  title,
+  disabledReason,
+  danger,
+  onClick,
+  children,
+}: {
+  title: string;
+  disabledReason?: string;
+  danger?: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  const disabled = disabledReason != null;
+  const resting = disabled
+    ? "var(--text-disabled)"
+    : danger
+      ? "rgba(230, 120, 120, 0.9)"
+      : "var(--text-secondary)";
+  return (
+    <button
+      type="button"
+      disabled={disabled}
+      data-tooltip={disabledReason ?? title}
+      aria-label={title}
+      onClick={(e) => {
+        // The row beneath is selectable; an action is not a selection.
+        e.stopPropagation();
+        if (!disabled) onClick();
+      }}
+      style={{
+        ...ACTION_BUTTON,
+        color: resting,
+        cursor: disabled ? "not-allowed" : "pointer",
+      }}
+      onMouseEnter={(e) => {
+        if (disabled) return;
+        e.currentTarget.style.background = "var(--bg-card-hover)";
+        e.currentTarget.style.color = danger
+          ? "rgb(240, 130, 130)"
+          : "var(--text-primary)";
+      }}
+      onMouseLeave={(e) => {
+        e.currentTarget.style.background = "transparent";
+        e.currentTarget.style.color = resting;
+      }}
+    >
+      {children}
+    </button>
+  );
+}
+
+/** The cell the actions sit in: narrow, right-aligned, revealed on hover
+ * and kept visible on the selected row (`.ne-row-actions`). */
+export function RowActionsCell({
+  selected,
+  children,
+}: {
+  selected: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <td
+      style={{
+        borderBottom: "1px solid var(--border)",
+        padding: "0 8px",
+        textAlign: "right",
+        whiteSpace: "nowrap",
+        width: 1,
+      }}
+    >
+      <div
+        className={`ne-row-actions${selected ? " is-visible" : ""}`}
+        style={{ display: "inline-flex", gap: 1 }}
+      >
+        {children}
+      </div>
+    </td>
+  );
+}

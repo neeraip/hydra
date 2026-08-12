@@ -3,7 +3,10 @@ import {
   PencilSquareIcon,
   TrashIcon,
 } from "@heroicons/react/16/solid";
-import type React from "react";
+import {
+  ActionIcon,
+  RowActionsCell as ActionsCell,
+} from "../../../components/panels/editorTable";
 import { ELEMENT_TEMP_ID_PREFIX } from "../../../hooks/DraftContext";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -19,85 +22,7 @@ import { ELEMENT_TEMP_ID_PREFIX } from "../../../hooks/DraftContext";
 
 export type RowAction = "map" | "rename" | "delete";
 
-/** Trailing header cell for the actions column (blank, narrow). */
-export function ActionsTh() {
-  return (
-    <th
-      aria-label="Actions"
-      style={{
-        width: 1,
-        borderBottom: "1px solid var(--border)",
-        padding: "7px 10px",
-      }}
-    />
-  );
-}
-
-const iconBtnBase: React.CSSProperties = {
-  display: "inline-flex",
-  alignItems: "center",
-  justifyContent: "center",
-  width: 22,
-  height: 22,
-  padding: 0,
-  border: "none",
-  borderRadius: 4,
-  background: "transparent",
-  cursor: "pointer",
-};
-
-function ActionIcon({
-  title,
-  disabled,
-  danger,
-  onClick,
-  children,
-}: {
-  title: string;
-  disabled?: boolean;
-  danger?: boolean;
-  onClick: () => void;
-  children: React.ReactNode;
-}) {
-  return (
-    <button
-      type="button"
-      disabled={disabled}
-      data-tooltip={title}
-      onClick={(e) => {
-        e.stopPropagation();
-        if (!disabled) onClick();
-      }}
-      style={{
-        ...iconBtnBase,
-        color: disabled
-          ? "var(--text-disabled)"
-          : danger
-            ? "rgba(230, 120, 120, 0.9)"
-            : "var(--text-secondary)",
-        cursor: disabled ? "not-allowed" : "pointer",
-      }}
-      onMouseEnter={(e) => {
-        if (disabled) return;
-        (e.currentTarget as HTMLButtonElement).style.background =
-          "var(--bg-card-hover)";
-        (e.currentTarget as HTMLButtonElement).style.color = danger
-          ? "rgb(240, 130, 130)"
-          : "var(--text-primary)";
-      }}
-      onMouseLeave={(e) => {
-        (e.currentTarget as HTMLButtonElement).style.background = "transparent";
-        (e.currentTarget as HTMLButtonElement).style.color = disabled
-          ? "var(--text-disabled)"
-          : danger
-            ? "rgba(230, 120, 120, 0.9)"
-            : "var(--text-secondary)";
-      }}
-    >
-      {children}
-    </button>
-  );
-}
+export { ActionsTh } from "../../../components/panels/editorTable";
 
 export function RowActionsCell({
   kind,
@@ -130,47 +55,34 @@ export function RowActionsCell({
   }
 
   return (
-    <td
-      style={{
-        borderBottom: "1px solid var(--border)",
-        padding: "0 8px",
-        textAlign: "right",
-        whiteSpace: "nowrap",
-        width: 1,
-      }}
-    >
-      <div
-        className={`ne-row-actions${isSelected ? " is-visible" : ""}`}
-        style={{ display: "inline-flex", gap: 1 }}
+    <ActionsCell selected={isSelected}>
+      <ActionIcon
+        title="Show on map"
+        disabledReason={isTemp ? "Save the row first to locate it" : undefined}
+        onClick={() => onAction("map", kind, id)}
       >
-        <ActionIcon
-          title={isTemp ? "Save the row first to locate it" : "Show on map"}
-          disabled={isTemp}
-          onClick={() => onAction("map", kind, id)}
-        >
-          <MapPinIcon style={{ width: 13, height: 13 }} />
-        </ActionIcon>
-        <ActionIcon
-          title={
-            isTemp
-              ? "Save the row first to rename it"
-              : hasStagedEdits
-                ? "Save or discard this row's edits to rename"
-                : "Rename"
-          }
-          disabled={isTemp || hasStagedEdits}
-          onClick={() => onAction("rename", kind, id)}
-        >
-          <PencilSquareIcon style={{ width: 13, height: 13 }} />
-        </ActionIcon>
-        <ActionIcon
-          title="Delete"
-          danger
-          onClick={() => onAction("delete", kind, id)}
-        >
-          <TrashIcon style={{ width: 13, height: 13 }} />
-        </ActionIcon>
-      </div>
-    </td>
+        <MapPinIcon style={{ width: 13, height: 13 }} />
+      </ActionIcon>
+      <ActionIcon
+        title="Rename"
+        disabledReason={
+          isTemp
+            ? "Save the row first to rename it"
+            : hasStagedEdits
+              ? "Save or discard this row's edits to rename"
+              : undefined
+        }
+        onClick={() => onAction("rename", kind, id)}
+      >
+        <PencilSquareIcon style={{ width: 13, height: 13 }} />
+      </ActionIcon>
+      <ActionIcon
+        title="Delete"
+        danger
+        onClick={() => onAction("delete", kind, id)}
+      >
+        <TrashIcon style={{ width: 13, height: 13 }} />
+      </ActionIcon>
+    </ActionsCell>
   );
 }

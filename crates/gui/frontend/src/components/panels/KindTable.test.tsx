@@ -472,3 +472,51 @@ describe("KindTable positions", () => {
     expect(first?.textContent).toBe("J2");
   });
 });
+
+/**
+ * A table of elements is where a reader finds one, so what they then
+ * want to do to it belongs on the row rather than behind a selection
+ * and a trip elsewhere. Each action appears only when its handler is
+ * given, so an engine that cannot do one shows nothing for it.
+ */
+describe("KindTable row actions", () => {
+  it("offers only the actions it was given", () => {
+    render(<KindTable elements={junctions} onDelete={() => {}} />);
+    expect(screen.getAllByLabelText("Delete").length).toBeGreaterThan(0);
+    expect(screen.queryByLabelText("Rename")).toBeNull();
+    expect(screen.queryByLabelText("Show on map")).toBeNull();
+  });
+
+  it("spends no column on actions when there are none", () => {
+    // A permanently empty trailing column is width taken from the data
+    // for nothing.
+    const { container } = render(<KindTable elements={junctions} />);
+    expect(container.querySelector('th[aria-label="Actions"]')).toBeNull();
+  });
+
+  it("acts on the row it sits in", () => {
+    const onRename = vi.fn();
+    render(<KindTable elements={junctions} onRename={onRename} />);
+    const buttons = screen.getAllByLabelText("Rename");
+    fireEvent.click(buttons[1]);
+    expect(onRename).toHaveBeenCalledWith("J2");
+  });
+
+  it("does not select the row it acts on", () => {
+    // Clicking an action is not choosing the row: the click stops at
+    // the button, or every delete would also move the selection to the
+    // element being removed.
+    const onSelect = vi.fn();
+    const onDelete = vi.fn();
+    render(
+      <KindTable
+        elements={junctions}
+        onSelect={onSelect}
+        onDelete={onDelete}
+      />,
+    );
+    fireEvent.click(screen.getAllByLabelText("Delete")[0]);
+    expect(onDelete).toHaveBeenCalledWith("J1");
+    expect(onSelect).not.toHaveBeenCalled();
+  });
+});

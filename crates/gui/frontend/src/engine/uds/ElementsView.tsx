@@ -17,8 +17,11 @@ import { PencilSquareIcon } from "@heroicons/react/16/solid";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useActiveProject, useAppState } from "../../AppContext";
 import { useCanvasSelection } from "../../canvas/selection-context";
+import { DeleteConfirmModal } from "../../components/modals/DeleteConfirmModal";
+import { RenameElementModal } from "../../components/modals/RenameElementModal";
 import { KindTable } from "../../components/panels/KindTable";
 import {
+  deleteElement,
   patchNodePosition,
   useCollectionDetail,
   useElementKinds,
@@ -26,6 +29,8 @@ import {
   useKindElements,
 } from "../../hooks";
 import { useElementAttributeWrite } from "../../hooks/useAttributeWrite";
+import { useElementRename } from "../../hooks/useElementRename";
+import { deletionSummary } from "../../pages/project/CanvasView/deletionSummary";
 import {
   type EditorSection,
   EditorShell,
@@ -36,7 +41,8 @@ import { railGroupBreak } from "./railGroups";
 
 export function UdsElementsView() {
   const { project } = useActiveProject();
-  const { activeScenarioId, editorFocus, showToast } = useAppState();
+  const { activeScenarioId, editorFocus, showToast, setProjectView } =
+    useAppState();
   const {
     selectNode,
     selectLink,
@@ -44,7 +50,10 @@ export function UdsElementsView() {
     selectedNodeId,
     selectedLinkId,
     selectedRegionId,
+    zoomToNode,
+    zoomToLink,
   } = useCanvasSelection();
+  const renameFlow = useElementRename();
 
   const kinds = useElementKinds(project?.engine);
   const counts = useKindCounts(project?.id, activeScenarioId);
@@ -121,6 +130,40 @@ export function UdsElementsView() {
     [refetch, showToast],
   );
 
+  // Memoised because the reveal action closes over it: a fresh function
+  // each render would make that callback fresh too, which is the same as
+  // not memoising it at all.
+  const select = useCallback(
+    (id: string) => {
+      if (activeClass === "point") selectNode(id);
+      else if (activeClass === "polyline") selectLink(id);
+      else if (activeClass === "region") selectRegion(id);
+      else setOpenContainer(id);
+    },
+    [activeClass, selectNode, selectLink, selectRegion],
+  );
+
+  // The row actions: find it, name it, remove it. Each is the same
+  // operation the canvas inspector offers, reached from the table
+  // because the table is where a reader finds the element in the first
+  // place.
+  const onReveal = useCallback(
+    (id: string) => {
+      select(id);
+      setProjectView("canvas");
+      // Deferred so the canvas has activated and its map exists — the
+      // same wait the water-distribution editor takes.
+      window.setTimeout(() => {
+        if (activeClass === "polyline") zoomToLink(id);
+        else zoomToNode(id);
+      }, 220);
+    },
+    [activeClass, select, setProjectView, zoomToNode, zoomToLink],
+  );
+
+  const [renaming, setRenaming] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState<string | null>(null);
+
   // A container's row reports only its size, so selecting one opens what
   // is actually inside it. A local selection, not the canvas's: a curve
   // has no geometry to highlight.
@@ -163,13 +206,6 @@ export function UdsElementsView() {
           : activeClass === "region"
             ? selectedRegionId
             : null;
-
-  function select(id: string) {
-    if (activeClass === "point") selectNode(id);
-    else if (activeClass === "polyline") selectLink(id);
-    else if (activeClass === "region") selectRegion(id);
-    else setOpenContainer(id);
-  }
 
   // `present` is empty only before the engine's catalog arrives, which is
   // not the same as an empty model — that is every count being zero.
@@ -260,6 +296,9 @@ export function UdsElementsView() {
             onSelect={select}
             onEdit={onEdit}
             onMove={onMove}
+            onReveal={spatial ? onReveal : undefined}
+            onRename={setRenaming}
+            onDelete={setDeleting}
             revealToken={revealToken || undefined}
           />
           {containerId && (
@@ -267,6 +306,43 @@ export function UdsElementsView() {
           )}
         </div>
       )}
+      {renaming && kind && (
+        <RenameElementModal
+          kind={kind}
+          id={renaming}
+          onSubmit={async (newId) => {
+            const target = renaming;
+            setRenaming(null);
+            if (await renameFlow(kind, target, newId)) {
+              refetch();
+              select(newId.trim());
+            }
+          }}
+          onClose={() => setRenaming(null)}
+        />
+      )}
+      <DeleteConfirmModal
+        open={!!deleting}
+        elementKind={kind ?? ""}
+        elementId={deleting ?? ""}
+        // A drainage vertex takes its conduits with it; a conduit and a
+        // subcatchment take nothing.
+        takesLinks={activeClass === "point"}
+        onConfirm={async () => {
+          const target = deleting;
+          setDeleting(null);
+          if (!target || !kind) return;
+          try {
+            const removed = await deleteElement(kind, target);
+            const summary = deletionSummary(removed);
+            if (summary) showToast(summary, "info");
+            refetch();
+          } catch (err) {
+            showToast(`Could not delete ${target}: ${err}`, "error");
+          }
+        }}
+        onCancel={() => setDeleting(null)}
+      />
     </EditorShell>
   );
 }

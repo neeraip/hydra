@@ -27,6 +27,11 @@
 // shorter, separators too faint to read as a grid, no hover, and every
 // row of a several-thousand-conduit model mounted at once.
 
+import {
+  MapPinIcon,
+  PencilSquareIcon,
+  TrashIcon,
+} from "@heroicons/react/16/solid";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { KindElements } from "../../hooks";
 import { formatElementAttribute } from "../../hooks/network";
@@ -35,10 +40,13 @@ import { useUnitSystem } from "../../units";
 import { EditableNumber } from "../ui/EditableNumber";
 import { cellEditor } from "./cellEditor";
 import {
+  ActionIcon,
+  ActionsTh,
   EDITOR_TD,
   editorRowHeight,
   editorRowHover,
   editorRowStyle,
+  RowActionsCell,
   SortTh,
   useVirtualRows,
   VirtualSpacerRow,
@@ -63,6 +71,9 @@ export function KindTable({
   onSelect,
   onEdit,
   onMove,
+  onReveal,
+  onRename,
+  onDelete,
   revealToken,
 }: {
   /** §4.4 property columns for this kind. */
@@ -94,6 +105,17 @@ export function KindTable({
    * appear.
    */
   onMove?: (id: string, x: number, y: number) => Promise<void> | void;
+  /**
+   * Per-row actions, each offered only when its handler is given.
+   *
+   * A table of elements is where a reader finds one, so the things they
+   * then want to do to it belong on the row rather than behind a
+   * selection and a trip elsewhere. An engine that cannot rename shows
+   * no rename; the column disappears entirely when none are given.
+   */
+  onReveal?: (id: string) => void;
+  onRename?: (id: string) => void;
+  onDelete?: (id: string) => void;
   /**
    * Bumped by the caller to mean "bring `activeId` into view now".
    *
@@ -212,7 +234,9 @@ export function KindTable({
   // the way out, and they carry no quantity for the same reason. A
   // model may be a map or a drawing and this table cannot tell.
   const placed = elements.positions.length === elements.ids.length;
-  const columnCount = elements.columns.length + 1 + (placed ? 2 : 0);
+  const hasActions = !!(onReveal || onRename || onDelete);
+  const columnCount =
+    elements.columns.length + 1 + (placed ? 2 : 0) + (hasActions ? 1 : 0);
 
   if (elements.ids.length === 0) {
     return (
@@ -334,6 +358,7 @@ export function KindTable({
                     markUnsorted
                   />
                 ))}
+                {hasActions && <ActionsTh />}
               </tr>
             </thead>
             <tbody>
@@ -471,6 +496,37 @@ export function KindTable({
                         </td>
                       );
                     })}
+                    {hasActions && (
+                      <RowActionsCell selected={isSelected}>
+                        {onReveal && (
+                          <ActionIcon
+                            title="Show on map"
+                            onClick={() => onReveal(id)}
+                          >
+                            <MapPinIcon style={{ width: 13, height: 13 }} />
+                          </ActionIcon>
+                        )}
+                        {onRename && (
+                          <ActionIcon
+                            title="Rename"
+                            onClick={() => onRename(id)}
+                          >
+                            <PencilSquareIcon
+                              style={{ width: 13, height: 13 }}
+                            />
+                          </ActionIcon>
+                        )}
+                        {onDelete && (
+                          <ActionIcon
+                            title="Delete"
+                            danger
+                            onClick={() => onDelete(id)}
+                          >
+                            <TrashIcon style={{ width: 13, height: 13 }} />
+                          </ActionIcon>
+                        )}
+                      </RowActionsCell>
+                    )}
                   </tr>
                 );
               })}
