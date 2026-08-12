@@ -1327,6 +1327,18 @@ const XSECT_WORDS: &[&str] = &[
     "STREET",
 ];
 
+/// The `[XSECTIONS]` keyword naming a shape (§14.13.5).
+///
+/// Reads the same parallel tables import matches against, the other way
+/// round, so the writer's vocabulary cannot drift from the reader's.
+pub(crate) fn xsect_word(shape: XsectShape) -> &'static str {
+    XSECT_SHAPES
+        .iter()
+        .position(|s| *s == shape)
+        .and_then(|i| XSECT_WORDS.get(i).copied())
+        .unwrap_or("DUMMY")
+}
+
 const XSECT_SHAPES: &[XsectShape] = &[
     XsectShape::Dummy,
     XsectShape::Circular,

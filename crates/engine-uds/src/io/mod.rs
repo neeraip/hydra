@@ -9,6 +9,7 @@ pub mod admin;
 pub mod climate;
 pub mod hydrology;
 pub mod iface;
+pub mod inp_writer;
 pub mod keywords;
 pub mod lex;
 pub mod lid;
