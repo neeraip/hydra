@@ -25,32 +25,8 @@ use super::network_dto::NetworkState;
 use super::projects::{app_data_dir, validate_target_ids};
 use super::results::uds_network_for_target;
 
-/// One Properties row: engine-authored label, plus either a numeric SI
-/// value with its quantity descriptor or a display text.
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ElementAttributeDto {
-    /// The engine's schema key — what [`set_element_attribute`] is keyed
-    /// by, so a caller that read a row can write it back.
-    pub key: String,
-    /// Whether this row can be written. Read from the same table the
-    /// setter consults, so an editable row and a settable key cannot
-    /// disagree.
-    pub editable: bool,
-    pub label: String,
-    /// Numeric value in SI units; interpret via `quantity`.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub number: Option<f64>,
-    /// Display text for non-numeric attributes.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub text: Option<String>,
-    /// The §5 quantity descriptor for `number`, absent for unitless values.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub quantity: Option<QuantityDescriptor>,
-}
-
 /// A schema key's extracted value.
-enum AttrValue {
+pub(crate) enum AttrValue {
     Number(f64),
     Text(String),
 }
@@ -229,41 +205,16 @@ fn link_values(
 
 /// Properties rows for one element: the §4 schema's rows, in schema order,
 /// with values the model actually carries.
-pub fn element_attributes(net: &Network, element_id: &str) -> Option<Vec<ElementAttributeDto>> {
-    let (kind, mut values) = extract(net, element_id)?;
-    let rows = hydra::uds::descriptors::attribute_schema(kind)
-        .into_iter()
-        .filter_map(|attr| {
-            let value = values.remove(attr.key.as_str())?;
-            let quantity = attr.quantity.as_deref().and_then(|key| {
-                hydra::uds::descriptors::QUANTITIES
-                    .iter()
-                    .find(|q| q.key == key)
-                    .copied()
-            });
-            Some(match value {
-                AttrValue::Number(n) => ElementAttributeDto {
-                    key: attr.key.clone(),
-                    editable: is_writable(kind, &attr.key),
-                    label: attr.label,
-                    number: Some(n),
-                    text: None,
-                    quantity,
-                },
-                AttrValue::Text(t) => ElementAttributeDto {
-                    key: attr.key.clone(),
-                    // A text row states a referent or a choice; setting
-                    // one is a different operation from setting a number.
-                    editable: false,
-                    label: attr.label,
-                    number: None,
-                    text: Some(t),
-                    quantity: None,
-                },
-            })
-        })
-        .collect();
-    Some(rows)
+pub fn element_attributes(
+    net: &Network,
+    element_id: &str,
+) -> Option<Vec<super::element_attrs::ElementAttributeDto>> {
+    let (kind, values) = extract(net, element_id)?;
+    Some(super::element_attrs::rows_from_schema(
+        hydra::uds::descriptors::attribute_schema(kind),
+        values,
+        super::uds_results::quantity_descriptor,
+    ))
 }
 
 /// One column of a kind's property table: an engine-declared attribute
@@ -917,7 +868,7 @@ pub fn kind_elements(net: &Network, kind: &str) -> KindElementsDto {
                 })
                 .collect();
             KindColumnDto {
-                editable: is_writable(kind, &attr.key),
+                editable: attr.editable,
                 key: attr.key,
                 label: attr.label,
                 quantity,
@@ -973,26 +924,6 @@ pub fn get_inlet_couplings(
             })
         })
         .collect())
-}
-
-/// Engine-described attribute rows for one element of the target's model.
-/// `Ok(None)` for engines that serve their attributes elsewhere (wds) or
-/// for an unknown element id.
-#[tauri::command(async)]
-pub fn get_element_details(
-    app: tauri::AppHandle,
-    state: tauri::State<'_, NetworkState>,
-    project_id: String,
-    scenario_id: Option<String>,
-    element_id: String,
-) -> Result<Option<Vec<ElementAttributeDto>>, String> {
-    validate_target_ids(&project_id, scenario_id.as_deref())?;
-    let app_data = app_data_dir(&app)?;
-    if super::projects::project_engine_key(&app_data, &project_id) != "uds" {
-        return Ok(None);
-    }
-    let network = uds_network_for_target(&app_data, &state, &project_id, scenario_id.as_deref())?;
-    Ok(element_attributes(&network, &element_id))
 }
 
 #[cfg(test)]
@@ -1515,6 +1446,7 @@ pub fn set_element_attribute(
 /// question the engine already answers: it claimed a divider's maximum
 /// and initial depth were writable while the schema published neither,
 /// so the rows never appeared and nothing said they were missing.
+#[allow(dead_code)]
 pub(crate) fn is_writable(kind: &str, key: &str) -> bool {
     hydra::uds::descriptors::attribute_schema(kind)
         .iter()

@@ -411,6 +411,18 @@ impl NetworkStateInner {
     /// model can hold state the format has no spelling for (§14.13.6),
     /// and a save that silently wrote a file meaning something else
     /// would be the failure that refusal exists to prevent.
+    /// The loaded water-distribution network, or `None` when the state
+    /// holds a drainage model or nothing at all.
+    ///
+    /// A read-only borrow, unlike the text accessors below: nothing here
+    /// re-serialises, so nothing needs `&mut`.
+    pub(crate) fn wds_network(&self) -> Option<&hydra::Network> {
+        match self {
+            NetworkStateInner::Loaded { network, .. } => Some(network),
+            _ => None,
+        }
+    }
+
     pub(crate) fn uds_current_text(&mut self) -> Option<Result<&str, String>> {
         let NetworkStateInner::LoadedUds {
             raw_text,

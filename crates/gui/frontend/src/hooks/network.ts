@@ -1339,8 +1339,15 @@ export async function setElementAttribute(
 }
 
 /**
- * Engine-described attribute rows for one element. `null` outside Tauri,
- * for engines that serve attributes elsewhere (wds), or for an unknown id.
+ * Engine-described attribute rows for one element, from whichever engine
+ * holds the model.
+ *
+ * `null` outside Tauri, for a project whose engine this build cannot
+ * open, and for an id no element answers to. It used to be null for
+ * water distribution too, which served the same values as typed columns
+ * in the network snapshot under names the frontend chose — two roads to
+ * one feature, and the reason a surface could show one engine's element
+ * and not the other's.
  */
 export async function getElementDetails(
   projectId: string,

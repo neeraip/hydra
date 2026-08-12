@@ -193,7 +193,7 @@ pub struct ResultMetaDto {
 }
 
 /// The §5 quantity descriptor for a wds catalog quantity key.
-fn wds_quantity(key: &str) -> Option<hydra::common::QuantityDescriptor> {
+pub(crate) fn wds_quantity(key: &str) -> Option<hydra::common::QuantityDescriptor> {
     hydra::descriptors::QUANTITIES
         .iter()
         .find(|q| q.key == key)
